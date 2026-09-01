@@ -46,11 +46,20 @@ _CASES = [(0.4, 0.2, 1.0, 0.1), (-0.7, 0.35, 2.5, 0.05), (1.3, 0.9, -0.4, 0.2)]
 _MIN_ORDER = {GridType.CELL_CENTERED: 2.6, GridType.VERTEX_CENTERED: 1.7}
 
 
-def test_the_conversion_is_the_robin_pair_for_zero_total_flux():
-    """`J . n = 0` is `alpha*rho + beta*drho/dn = 0` with alpha = v and beta = -sign*D."""
-    assert normal_frame_coefficients(0.4, 0.2, -1.0) == (0.4, 0.2)
+def test_the_conversion_returns_the_normal_frame_pair():
+    """`J . n = v_n*rho - D*drho/dn = 0` is Robin with `alpha = v.n` and `beta = -D`.
+
+    Pinned as the NORMAL-FRAME pair, not merely as a pair that happens to give the right ghost. An
+    earlier draft returned `(v, -sign*D)` -- `sign` times this one. It yields an identical ghost,
+    because scaling both coefficients leaves a homogeneous Robin condition unchanged, and it passed
+    every value test in this file. It is still wrong for a function with this name: it diverges the
+    moment a caller has a non-zero right-hand side (1.045455 against 0.590909 at `g = 0.5`), and it
+    puts the sign on the diffusion coefficient rather than on the velocity being projected.
+    """
+    assert normal_frame_coefficients(0.4, 0.2, -1.0) == (-0.4, -0.2)
     assert normal_frame_coefficients(0.4, 0.2, +1.0) == (0.4, -0.2)
     assert normal_frame_coefficients(-0.7, 0.35, +1.0) == (-0.7, -0.35)
+    assert normal_frame_coefficients(-0.7, 0.35, -1.0) == (0.7, -0.35)
 
 
 @pytest.mark.parametrize("grid_type", _CENTRINGS, ids=lambda g: g.name)
@@ -59,7 +68,15 @@ def test_the_conversion_is_the_robin_pair_for_zero_total_flux():
 def test_the_ghost_is_robin_evaluated_at_the_converted_pair(grid_type, sign, v, D, u, dx):
     """The delegation, stated as an identity a re-implementation would break."""
     alpha, beta = normal_frame_coefficients(v, D, sign)
-    assert ghost_cell_fp_no_flux(u, v, D, dx, sign, grid_type) == ghost_cell_robin(u, 0.0, alpha, beta, dx, grid_type)
+    # The scale is `ghost_cell_fp_no_flux`'s own and is not decoration: `ghost_cell_robin`'s
+    # singularity threshold is absolute while the quantity it tests has units (#2217), so the pair
+    # is scaled by `-2*dx` to make that threshold mean what this function's predicate meant before
+    # #2128. Only its magnitude matters -- robin tests an absolute value -- and the scale leaves
+    # the condition, and therefore the ghost, unchanged.
+    scale = 2.0 * dx
+    assert ghost_cell_fp_no_flux(u, v, D, dx, sign, grid_type) == ghost_cell_robin(
+        u, 0.0, scale * alpha, scale * beta, dx, grid_type
+    )
 
 
 @pytest.mark.parametrize("grid_type", _CENTRINGS, ids=lambda g: g.name)
@@ -106,8 +123,16 @@ def test_the_cell_centred_degeneracy_refuses_instead_of_reflecting():
     with pytest.raises(ValueError, match="singular ghost cell formula"):
         ghost_cell_fp_no_flux(u, v_degenerate, D, dx, sign, GridType.CELL_CENTERED)
 
-    nearby = ghost_cell_fp_no_flux(u, 0.5 * v_degenerate, D, dx, sign, GridType.CELL_CENTERED)
-    assert np.isfinite(nearby), "the guard over-fired: a non-degenerate configuration must still solve"
+    # Over-fire control, asserted against the closed form rather than `isfinite`, which passes on
+    # any finite wrong answer -- including the `interior_value` this change stopped returning.
+    v_near = 0.5 * v_degenerate
+    v_n = v_near * sign
+    expected = u * (2.0 * D + v_n * dx) / (2.0 * D - v_n * dx)
+    assert ghost_cell_fp_no_flux(u, v_near, D, dx, sign, GridType.CELL_CENTERED) == pytest.approx(expected)
+
+    # And the case the scaling exists for: `v_n = 0` is homogeneous Neumann, so the ghost is exactly
+    # `interior_value`. Delegating an UNSCALED pair refused this on a coarse grid (#2217).
+    assert ghost_cell_fp_no_flux(u, 0.0, 5e-12, 10.0, sign, GridType.CELL_CENTERED) == pytest.approx(u)
 
 
 @pytest.mark.parametrize("diffusion", [0.0, 1e-13], ids=["D_zero", "D_below_threshold"])

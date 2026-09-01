@@ -352,8 +352,16 @@ def normal_frame_coefficients(
     """The Robin pair ``(alpha, beta)`` for ``J . n = 0``, from AXIS-frame ``v`` and ``D``.
 
     The Fokker-Planck no-flux condition is ``J . n = 0`` with ``J = v*rho - D*grad(rho)``. Written
-    as a Robin condition ``alpha*rho + beta*drho/dn = 0`` it is ``alpha = v`` and
-    ``beta = -outward_normal_sign * D``.
+    as a Robin condition ``alpha*rho + beta*drho/dn = 0`` it is ``alpha = v . n`` and
+    ``beta = -D`` -- so this returns ``(drift_velocity * outward_normal_sign, -diffusion_coeff)``.
+
+    ~~``alpha = v``, ``beta = -outward_normal_sign * D``~~ [CORRECTED before merge]. That pair is
+    ``outward_normal_sign`` TIMES this one. It yields the same ghost, because scaling both
+    coefficients leaves the Robin condition unchanged when the right-hand side is zero -- measured,
+    2000 combinations, zero value differences and zero raise/no-raise differences. But it is not the
+    normal-frame pair this function is named for, it diverges the moment a caller has a non-zero
+    ``g`` (1.045455 against 0.590909 at ``g = 0.5``), and the docstring below it claimed a
+    projection of ``drift_velocity`` that the returned value did not perform.
 
     WHY THIS HAS A NAME. ``ghost_cell_robin`` takes coefficients that are ALREADY in the normal
     frame, which is why it correctly has no sign argument -- ``du/dn`` carries the wall's direction,
@@ -371,7 +379,7 @@ def normal_frame_coefficients(
     Verified against the pre-#2128 closed form on 12 configurations -- two centrings x two wall
     directions x three parameter sets -- with three deliberately wrong conversions rejected.
     """
-    return drift_velocity, -outward_normal_sign * diffusion_coeff
+    return drift_velocity * outward_normal_sign, -diffusion_coeff
 
 
 def ghost_cell_fp_no_flux(
@@ -419,8 +427,13 @@ def ghost_cell_fp_no_flux(
             vertex       1 + z                        O(dx^2),  rate 2.01
             cell-centred (1+z/2)/(1-z/2)              O(dx^3),  rate 3.04   <- Pade(1,1) of exp
 
-        A second-order vertex ghost needs two interior values and this signature carries one; that
-        is a property of the interface, not something to fix here.
+        THE TABLE IS THE ERROR IN THE GHOST VALUE, which is one order above the order in which each
+        form imposes the CONDITION: cell-centred imposes it to second order, the vertex form to
+        first. Both readings are in use -- `calculators.py` labels these "(2nd order)" and
+        "(1st order)", which is the condition reading -- and conflating them is why the clause below
+        looks like a contradiction. It is not: a second-order vertex ghost in the CONDITION sense
+        needs two interior values and this signature carries one; that is a property of the
+        interface, not something to fix here.
 
         The struck row is kept because it is the evidence for the current one, not a description of
         live code. Its leading term is 2z where the condition requires z -- inconsistent rather than
@@ -477,20 +490,43 @@ def ghost_cell_fp_no_flux(
     # `J . n = v_n * rho_wall = 0` with `v_n != 0` forces `rho_wall = 0`, and on a vertex grid the
     # wall IS the interior node -- so the condition constrains the INTERIOR value and says nothing
     # about the ghost. The pre-#2128 code returned `interior_value` here (a silent reflection it
-    # called "the pure advection limit") and `ghost_cell_robin`'s beta==0 branch returns the implied
-    # Dirichlet value 0.0 instead. Both put a number where the condition determines none. Which one
+    # called "the pure advection limit"). What removing this guard would give is NOT one value:
+    # `ghost_cell_robin`'s `beta == 0` branch is entered only at `D == 0.0` EXACTLY, where it returns
+    # the implied Dirichlet 0.0; anywhere else in `|D| < 1e-12` beta is non-zero and the ordinary
+    # formula runs and blows up -- measured, 4.0e+11 at `D = 1e-13`, -4.0e+11 at `D = -1e-13`. So the
+    # guard mostly prevents a blow-up and only at one point prevents a 0.0. Which value
     # belongs here is a physics decision about sigma = 0 problems, and #2128 is a consolidation, so
     # it does not get to make that decision by side effect: the old value stays until #2215 settles
     # it. The threshold is the pre-#2128 one, unchanged.
     if grid_type == GridType.VERTEX_CENTERED and abs(diffusion_coeff) < 1e-12:
         return interior_value
 
-    # CELL-CENTRED at `alpha/2 + beta/dx = 0`, i.e. `2D = v_n*dx`: this now RAISES, where the
-    # pre-#2128 code returned `interior_value`. That change is intended. The ghost's own coefficient
-    # vanishes there, so the boundary condition does not determine it, and returning the interior
-    # value is a fabricated answer of exactly the shape this package's fail-fast ratchet exists to
-    # remove. `ghost_cell_robin` says so in its own message.
-    return ghost_cell_robin(interior_value, 0.0, alpha, beta, dx, grid_type)
+    # CELL-CENTRED at `2D = v_n*dx`: this now RAISES, where the pre-#2128 code returned
+    # `interior_value`. That change is intended -- the ghost's own coefficient vanishes there, the
+    # condition does not determine it, and returning the interior value is the fabricated answer the
+    # fail-fast ratchet exists to remove.
+    #
+    # THE SCALING IS WHAT KEEPS THAT SET THE SAME ONE. `ghost_cell_robin` tests
+    # `|alpha/2 + beta/dx| < 1e-12` -- a quantity with units of 1/length against an absolute
+    # constant, so its threshold is scale-blind (#2217). Passing the pair unscaled moves the refusal
+    # set from `|2D - v_n*dx| < 1e-12` to `< 2e-12*dx`: the two coincide only at `dx = 0.5`, and off
+    # that line it refuses inputs the old code answered -- measured, `v_n = 0, D = 5e-12, dx = 10`
+    # raised, where `v_n = 0` is homogeneous Neumann and the ghost is exactly `interior_value` --
+    # while answering others it used to fall back on, with a negative density among them.
+    #
+    # Scaling both coefficients by `2*dx` leaves the Robin CONDITION unchanged, hence the ghost
+    # (2000 combinations, zero differences), and makes robin's tested quantity `|2D - v_n*dx|`. So
+    # the refusal set is the pre-#2128 fallback set, point for point -- measured over 2016 inputs,
+    # 1966 identical, 50 the intended change, 0 regressions -- and the only behaviour change is what
+    # happens ON it.
+    #
+    # Only the MAGNITUDE of the scale matters, and that is measured rather than asserted: robin
+    # tests `np.abs(coeff_ghost)`, so `-2*dx` and `+2*dx` are indistinguishable. A mutation flipping
+    # this sign leaves the whole test file green, which is a surviving mutant that is NOT a fault --
+    # recorded here so the next reader does not try to justify a sign that carries nothing, and does
+    # not add a test pinning an arbitrary choice.
+    scale = 2.0 * dx
+    return ghost_cell_robin(interior_value, 0.0, scale * alpha, scale * beta, dx, grid_type)
 
 
 def ghost_cell_advection_diffusion_no_flux(
