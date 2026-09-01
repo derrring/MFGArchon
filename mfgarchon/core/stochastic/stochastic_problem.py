@@ -344,8 +344,24 @@ class StochasticMFGProblem(MFGProblem):
                 # per-point loop; that fallback is the sole reason today's answers are correct.
                 #
                 # So the size is CHECKED rather than assumed. A batch call must return one value per
-                # point; anything else is the user's H not vectorising the way the caller assumed,
-                # and it must say so here rather than hand a consumer N^2 values to index into.
+                # point; anything else is the user's H not vectorising the way the caller assumed.
+                #
+                # WHAT THIS ACTUALLY BUYS, measured on a real conditional Hamiltonian at N = 21,
+                # because two earlier versions of this comment got it wrong in both directions:
+                #
+                #   __call__ (batch)   raises the ValueError below
+                #   dm                 (21,)  -- was 441 values, silently
+                #   dp                 (21,1) -- correct before and after
+                #
+                # It is NOT "refused loudly": both `dm` and `dp` wrap their batch attempt in
+                # `except (TypeError, ValueError)` (hamiltonian.py:1211 and :1262), so this error
+                # never reaches the caller -- it fires and is caught, every time.
+                # It is NOT a no-op either: before this check, nothing in `dm` RAISED. The (N,N)
+                # result simply flowed through `.ravel()` and the central difference and came back
+                # as N^2 values, so the except had nothing to catch and the FP-coupling primitive
+                # returned garbage of the wrong length. Making the batch attempt fail is what
+                # engages the per-point fallback that was there all along.
+                # So: a correctness fix for `dm`, invisible on `dp`, and no new user-visible error.
                 array = np.asarray(value)
                 if array.size == 1:
                     return array.item()

@@ -23,7 +23,8 @@ path for ten months.
 WHAT THESE CATCH, and why the second test is the load-bearing one. A test that only asserted
 `solve()` returns would pass on a conditional problem whose Hamiltonian ignores the noise entirely
 -- and that is not hypothetical: the obvious fixture, `lambda x, p, m, theta: 0.5 * p**2 + 0.1 * m`,
-has no theta in it, runs clean, and reports `mc_error_u` of exactly 0.0 because every sample
+has no theta in it, runs clean, and reports an `mc_error_u` indistinguishable from zero (exactly
+0.0 for some (K, values) pairs and ~1e-17 for others -- see the note at the assertion) because every sample
 produces the same solve. It would certify a `create_conditional_problem` that silently dropped
 theta. So the fixture here makes the Hamiltonian depend on theta and asserts the samples DIFFER.
 """
@@ -97,11 +98,13 @@ def test_the_noise_actually_reaches_the_conditional_solve():
     # Asserted on the SAMPLES, not on their std, and against a physical threshold rather than
     # zero (#2197 review). `max(u_std) > 0` looked equivalent and was not: it is a float
     # zero-threshold on a sample standard deviation, and over K bit-identical values np.std is
-    # EXACTLY 0.0 only when the division by K is exact. Measured over identical samples:
-    # K = 2, 4, 5, 8, 9, 10, 11 give 0.0, while K = 3, 6, 7, 12 give ~8e-18. So at K = 4 the old
-    # assertion happened to separate the fixed code from a theta-dropping one, and at K = 3 the
-    # identical test PASSED on the very defect its docstring names. Anyone retuning K for runtime
-    # or Monte-Carlo smoothness would have disarmed the only guard on the noise coupling, silently.
+    # EXACTLY 0.0 only when the arithmetic happens to be exact -- which depends on BOTH K and the
+    # values being averaged. An earlier version of this comment published a table of "safe" K, and
+    # that table was itself measured on one scalar and does not survive a realistic field: K = 5
+    # gives 0.0 for one set of values and 7.8e-18 for another. There is no table; that is the point.
+    # What is certain is that some (K, values) pairs give exactly 0.0 and some do not, so the old
+    # assertion's discriminating power was an accident, and anyone retuning K for runtime or
+    # Monte-Carlo smoothness could have disarmed the only guard on the noise coupling, silently.
     #
     # The pairwise sample separation has no such accident: when theta never reaches the conditional
     # problem the samples are bit-identical, so this is exactly 0.0. Measured here on the fix,

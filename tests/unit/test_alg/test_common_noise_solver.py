@@ -673,6 +673,7 @@ class TestParallelResultPairing:
 
         paths = [np.full(3, float(k)) for k in range(4)]
         released = threading.Event()
+        completion_order: list[float] = []
 
         def _stub(noise_path):
             # Index 0 finishes LAST: it waits for the others, which release it on the way out.
@@ -682,6 +683,7 @@ class TestParallelResultPairing:
                 released.wait(timeout=5.0)
             elif marker == 3.0:
                 released.set()
+            completion_order.append(marker)
             return (np.full(2, marker), np.full(2, -marker), True)
 
         solver = CommonNoiseMFGSolver.__new__(CommonNoiseMFGSolver)
@@ -697,5 +699,11 @@ class TestParallelResultPairing:
             f"correspond to noise_paths[k]"
         )
         # CONTROL: the stub really did finish out of order, so the assertion above is not passing
-        # because the pool happened to be sequential.
-        assert released.is_set(), "the forced completion order did not happen; the test proves nothing"
+        # because the pool happened to run sequentially. `released.is_set()` was here and could NOT
+        # fail -- the marker==3.0 branch sets it unconditionally, including under a sequential pool.
+        # The observable that discriminates is the COMPLETION order the stub recorded.
+        assert completion_order[0] != 0.0, (
+            f"index 0 completed first ({completion_order}), so nothing forced out-of-order "
+            f"completion and this test would pass on the appending version too"
+        )
+        assert set(completion_order) == {0.0, 1.0, 2.0, 3.0}, completion_order

@@ -276,10 +276,14 @@ class TestLQCommonNoiseAnalytical:
         assert error < 5.0, f"Terminal condition error: {error} (approximate analytical solution)"
 
     @pytest.mark.skip(
-        reason="#2191 implemented the conditional solver, so the ORIGINAL reason is gone; this now "
-        "fails on lambda pickling under the default parallel=True -- AttributeError: Can't get "
-        "local object 'create_lq_common_noise_problem.<locals>.<lambda>'. Un-skipping needs the "
-        "fixture's callables at module level, or parallel=False. Tracked in #2206."
+        reason="The ORIGINAL reason -- 'Requires conditional MFG solver implementation' -- was "
+        "removed by #2191, which implements it. What blocks it now is NOT established, and this "
+        "reason has already named the wrong blocker twice: first the implementation gap after it "
+        "was closed, then lambda pickling under parallel=True, which is real but not sufficient -- "
+        "review reports the test still fails with parallel=False, on the analytical oracle itself. "
+        "That disagreement is the open question and it is bigger than this test: it would mean the "
+        "solver and its only analytical oracle do not agree. Investigated in #2206; do not re-skip "
+        "this with a new single-cause reason without measuring it."
     )
     def test_full_solution_convergence(self):
         """

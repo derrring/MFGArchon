@@ -20,9 +20,10 @@
   the Hamiltonian depend on the noise and asserts the samples differ: the obvious fixture,
   `0.5 * p**2 + 0.1 * m`, has no `theta` in it and runs clean, so it would certify a
   `create_conditional_problem` that silently dropped the noise, which is precisely what the dead
-  assignment did. ~~and reports a Monte-Carlo spread of exactly 0.0~~ — only when `K` makes the
-  sample mean exact; the assertion is now on the pairwise sample separation, which is exactly zero
-  whenever the noise is dropped, at every `K`.
+  assignment did. ~~and reports a Monte-Carlo spread of exactly 0.0~~ — only when the arithmetic
+  happens to be exact, which depends on BOTH `K` and the values being averaged; the assertion is now
+  on the pairwise sample separation, which is structurally zero whenever the noise is dropped, at
+  every `K` and for every set of values.
 
 - **The conditional problem inherits the parent's terminal condition** (Issue #2191, found in
   review). `StochasticMFGProblem` normalised the terminal cost as `terminal_cost or g`, and
