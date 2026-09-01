@@ -18,7 +18,9 @@ Verbatim from the GFDM paper, `eq:mms_reference` / `eq:mms_system`, on Ω = (0,L
 
 The pair actually used here is NOT the paper's verbatim one -- see C and BETA below for why and for
 what each change buys. The sources were re-derived for THIS pair symbolically (sympy, from the
-definitions of u and m) and cross-checked against the hand-written vectorised forms in this file to
+definitions of u and m) and cross-checked against the hand-written vectorised forms this file used to carry (#2201 replaced
+them with the shared assembly in `mfgarchon.utils.manufactured`; the cross-check stands as the
+provenance of the pair, not as a description of code still here) to
 5.6e-17 / 1.1e-19 over 400 random (t,x), against residual scales 2.3e-01 / 4.5e-04. That comparison
 can fail: perturbing s_fp by 1e-7 relative registers as 4.5e-11.
 
@@ -108,6 +110,7 @@ from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.utils.manufactured import ManufacturedPair, check_pair, fp_source, hjb_source
 
 L, T, SIGMA, ZETA = 20.0, 4.0, 1.0, 0.5
 # HALF a period, not the paper's full one. sin(cL) = 0 either way, so the pair stays Neumann
@@ -150,36 +153,75 @@ def m_star(t, x1, x2):
     return (1.0 + _a2(t) * np.cos(2 * C * x1) * np.cos(4 * C * x2)) / L**2
 
 
-def s_hjb(t, x1, x2):
-    """S_HJB = -d_t u + (1/2)|grad u|^2 + zeta*m - (sigma^2/2) Lap u."""
-    du_dt = _a1p(t) * (np.cos(C * x1) + BETA * np.cos(C * x2))
-    grad_sq = (_a1(t) * C) ** 2 * (np.sin(C * x1) ** 2 + BETA**2 * np.sin(C * x2) ** 2)
-    lap_u = -_a1(t) * C**2 * (np.cos(C * x1) + BETA * np.cos(C * x2))
-    return -du_dt + 0.5 * grad_sq + ZETA * m_star(t, x1, x2) - 0.5 * SIGMA**2 * lap_u
+LAMBDA = 1.0
+
+# The Hamiltonian the SOURCE is assembled from, deliberately SEPARATE from the one `_solve` puts on
+# the problem. Every discrimination table in this file supplies a wrong coefficient at problem
+# CONSTRUCTION while the source stays closed over the true constants; routing both through one
+# object would make each mutant self-consistent and the test unable to fail at all.
+_TRUE_HAMILTONIAN = SeparableHamiltonian(
+    control_cost=QuadraticControlCost(lambda_=LAMBDA),
+    coupling=lambda m: ZETA * m,
+    coupling_dm=lambda _m: ZETA,
+)
+
+# The exact pair and its analytic derivatives. The ASSEMBLY of these into S_HJB / S_FP is owned by
+# `mfgarchon.utils.manufactured` (#2201) and is no longer written here: the sign conventions in this
+# file's header are what that module encodes, and stating them twice is how they drift apart.
+PAIR = ManufacturedPair(
+    u=lambda t, x: u_star(t, x[..., 0], x[..., 1]),
+    u_t=lambda t, x: _a1p(t) * (np.cos(C * x[..., 0]) + BETA * np.cos(C * x[..., 1])),
+    grad_u=lambda t, x: np.stack(
+        [-_a1(t) * C * np.sin(C * x[..., 0]), -BETA * _a1(t) * C * np.sin(C * x[..., 1])], axis=-1
+    ),
+    hess_u=lambda t, x: _diag_hessian(
+        -_a1(t) * C**2 * np.cos(C * x[..., 0]), -BETA * _a1(t) * C**2 * np.cos(C * x[..., 1])
+    ),
+    m=lambda t, x: m_star(t, x[..., 0], x[..., 1]),
+    m_t=lambda t, x: _a2p(t) * np.cos(2 * C * x[..., 0]) * np.cos(4 * C * x[..., 1]) / L**2,
+    grad_m=lambda t, x: np.stack(
+        [
+            -2 * C * _a2(t) * np.sin(2 * C * x[..., 0]) * np.cos(4 * C * x[..., 1]) / L**2,
+            -4 * C * _a2(t) * np.cos(2 * C * x[..., 0]) * np.sin(4 * C * x[..., 1]) / L**2,
+        ],
+        axis=-1,
+    ),
+    hess_m=lambda t, x: _hess_m(t, x),
+    name="coupled_2d_no_flux",
+)
 
 
-def s_fp(t, x1, x2):
-    """S_FP = d_t m - div(m grad u) - (sigma^2/2) Lap m."""
-    dm_dt = _a2p(t) * np.cos(2 * C * x1) * np.cos(4 * C * x2) / L**2
-    m = m_star(t, x1, x2)
-    gm1 = -2 * C * _a2(t) * np.sin(2 * C * x1) * np.cos(4 * C * x2) / L**2
-    gm2 = -4 * C * _a2(t) * np.cos(2 * C * x1) * np.sin(4 * C * x2) / L**2
-    gu1 = -_a1(t) * C * np.sin(C * x1)
-    gu2 = -BETA * _a1(t) * C * np.sin(C * x2)
-    lap_u = -_a1(t) * C**2 * (np.cos(C * x1) + BETA * np.cos(C * x2))
-    lap_m = -20 * C**2 * _a2(t) * np.cos(2 * C * x1) * np.cos(4 * C * x2) / L**2
-    return dm_dt - (gm1 * gu1 + gm2 * gu2 + m * lap_u) - 0.5 * SIGMA**2 * lap_m
+def _diag_hessian(d00, d11):
+    """A ``(N, 2, 2)`` Hessian with zero cross term -- correct for u*, which is a separable SUM."""
+    hess = np.zeros((len(np.atleast_1d(d00)), 2, 2))
+    hess[:, 0, 0], hess[:, 1, 1] = d00, d11
+    return hess
 
 
-def _split(x):
-    """Split the solver's point array into (x1, x2). Raises rather than guessing.
+def _hess_m(t, x):
+    """m* is a PRODUCT, so its cross derivative is non-zero -- the one this file supplies that an
+    isotropic sigma multiplies by exactly zero. `check_pair` is what audits it; see the test below."""
+    hess = np.zeros((len(x), 2, 2))
+    common = _a2(t) * np.cos(2 * C * x[..., 0]) * np.cos(4 * C * x[..., 1]) / L**2
+    hess[:, 0, 0] = -4 * C**2 * common
+    hess[:, 1, 1] = -16 * C**2 * common
+    hess[:, 0, 1] = hess[:, 1, 0] = 8 * C**2 * _a2(t) * np.sin(2 * C * x[..., 0]) * np.sin(4 * C * x[..., 1]) / L**2
+    return hess
 
-    The previous version fell back to ``(a.ravel(), a.ravel())`` for any other shape, which aliases
-    x2 := x1 and evaluates BOTH manufactured sources on the degenerate diagonal x1 == x2 -- a
-    plausible, wrong source field, silently. In an oracle that is the one failure that cannot be
-    afforded: the test would keep passing while measuring the scheme against the wrong exact
-    solution. Instrumented over a full converged solve, that branch was taken 0 times out of 64, so
-    it bought nothing and risked everything. The repo's own rule is at
+
+s_hjb = hjb_source(PAIR, _TRUE_HAMILTONIAN, SIGMA)
+s_fp = fp_source(PAIR, _TRUE_HAMILTONIAN, SIGMA)
+
+
+def _points(x):
+    """Return the solver's point array as ``(N, 2)``. Raises rather than guessing.
+
+    A previous version split this into ``(x1, x2)`` and fell back to ``(a.ravel(), a.ravel())`` for
+    any other shape, which aliases x2 := x1 and evaluates BOTH manufactured sources on the
+    degenerate diagonal x1 == x2 -- a plausible, wrong source field, silently. In an oracle that is
+    the one failure that cannot be afforded: the test would keep passing while measuring the scheme
+    against the wrong exact solution. Instrumented over a full converged solve, that branch was
+    taken 0 times out of 64, so it bought nothing and risked everything. The repo's own rule is at
     `utils/pde_coefficients.py:114` -- "the prior silent fallback masked a malformed problem".
 
     Note this convention is not universal in the library: `FPFVMSolver` passes
@@ -189,21 +231,26 @@ def _split(x):
     """
     a = np.asarray(x, dtype=float)
     if a.ndim >= 2 and a.shape[-1] == 2:
-        return a[..., 0], a[..., 1]
+        return a.reshape(-1, 2)
     raise TypeError(
-        f"_split expected an (N, 2) point array from the solver, got shape {a.shape}. "
+        f"_points expected an (N, 2) point array from the solver, got shape {a.shape}. "
         "Aliasing x2 := x1 would evaluate the manufactured sources on the diagonal and the test "
         "would pass while measuring the wrong exact solution (see #2019 for the FVM convention)."
     )
 
 
-def _solve(nx: int, nt: int):
+def _build_problem(nx: int, nt: int):
     grid = TensorProductGrid(bounds=[(0.0, L)] * 2, Nx_points=[nx] * 2, boundary_conditions=no_flux_bc(dimension=2))
     components = MFGComponents(
         m_initial=lambda p: float(m_star(0.0, np.asarray(p).ravel()[0], np.asarray(p).ravel()[1])),
         u_terminal=lambda p: float(u_star(T, np.asarray(p).ravel()[0], np.asarray(p).ravel()[1])),
         hamiltonian=SeparableHamiltonian(
-            control_cost=QuadraticControlCost(control_cost=1.0),
+            # LAMBDA, not a literal: the source's Hamiltonian is a separate OBJECT by design
+            # (see _TRUE_HAMILTONIAN) but the two must agree on the VALUE, or the source
+            # manufactures a different equation than the solver integrates. `control_cost=` and
+            # `lambda_=` are aliases for the same parameter, so the divergence was invisible by
+            # eye. The documented mutation protocol still works: replace this with 1.05 * LAMBDA.
+            control_cost=QuadraticControlCost(control_cost=LAMBDA),
             coupling=lambda m: ZETA * m,
             coupling_dm=lambda _m: ZETA,
         ),
@@ -220,9 +267,14 @@ def _solve(nx: int, nt: int):
         # against a control where sigma=1.1 moves the same solve by 1.672e-02.
         coupling_coefficient=1.0,
         components=components,
-        source_term_hjb=lambda x, m, v, t: s_hjb(t, *_split(x)).ravel(),
-        source_term_fp=lambda x, m, v, t: s_fp(t, *_split(x)).ravel(),
+        source_term_hjb=lambda x, m, v, t: s_hjb(t, _points(x)),
+        source_term_fp=lambda x, m, v, t: s_fp(t, _points(x)),
     )
+    return problem
+
+
+def _solve(nx: int, nt: int):
+    problem = _build_problem(nx, nt)
     result = FixedPointIterator(
         problem, hjb_solver=HJBFDMSolver(problem), fp_solver=FPFDMSolver(problem), relaxation=1.0
     ).solve(max_iterations=200, tolerance=1e-6, verbose=False)
@@ -269,7 +321,16 @@ def test_coupled_2d_no_flux_converges_at_first_order():
     Family 1, wrong diffusion (sigma at construction, so D = k*sigma^2/2):
 
         k       eu(11)      eu(21)      eu(31)      EOC u           EOC-assert  level-assert
-        1.00    3.0125e-01  1.5759e-01  1.0534e-01   0.935,  0.993  pass        pass
+        1.00    ~~3.0125e-01  1.5759e-01  1.0534e-01   0.935,  0.993~~ pass    pass
+                3.0111e-01  1.5775e-01  1.0549e-01   0.933,  0.992  pass        pass
+        # [SUPERSEDED 2026-08-31] SUPERSEDED-BY: #2201. The CLEAN row is the reference row of
+        # BOTH tables below and had gone stale at #2145; re-measured on the current tree and
+        # updated in BOTH -- an earlier revision of this note said 'both' while updating only
+        # Family 1, leaving Family 2's clean row byte-identical to the string struck above it.
+        # Every
+        # pass/FAIL verdict in both tables is unaffected. The mutant rows are NOT re-measured
+        # here and remain pre-#2145 -- lambda=1.50's eu(11) reads 5.4156e-01 against a measured
+        # 5.2801e-01, so read the mutant columns as ordinal, not as current levels.
         1.05    3.0241e-01  1.6042e-01  1.1106e-01   0.915,  0.907  pass        pass
         1.10    3.1101e-01  1.7715e-01  1.3559e-01   0.812,  0.659  FAIL        pass
         1.15    3.2640e-01  2.0434e-01  1.7092e-01   0.676,  0.440  FAIL        FAIL
@@ -279,7 +340,7 @@ def test_coupled_2d_no_flux_converges_at_first_order():
     Family 2, wrong drift scale (control_cost lambda, so alpha = -grad U / lambda):
 
         lambda  eu(11)      eu(21)      eu(31)      EOC u           EOC-assert  level-assert
-        1.00    3.0125e-01  1.5759e-01  1.0534e-01   0.935,  0.993  pass        pass
+        1.00    3.0111e-01  1.5775e-01  1.0549e-01   0.933,  0.992  pass        pass
         1.05    3.1276e-01  1.7232e-01  1.2388e-01   0.860,  0.814  pass        pass
         1.20    3.8375e-01  2.6818e-01  2.3543e-01   0.517,  0.321  FAIL        FAIL
         1.50    5.4156e-01  4.5111e-01  4.2713e-01   0.264,  0.135  FAIL        FAIL
@@ -374,3 +435,64 @@ def test_coupled_2d_no_flux_converges_at_first_order():
         f"band (order_u={order_u}). EOC is a ratio and cannot see an error scaled uniformly across "
         f"levels; this bound is the only thing that can."
     )
+
+
+@pytest.mark.integration
+def test_the_manufactured_pair_is_its_own_derivatives():
+    """The pair's six analytic derivatives, audited against a finite difference of u* and m*.
+
+    This is the ONLY check here whose oracle is outside the scheme and outside the assembly. The
+    convergence study above cannot do it: an isotropic sigma contracts `tr(D . Hess)` over the
+    diagonal only, so `hess_m`'s cross term -- the one derivative in this file that no other line
+    states -- is multiplied by exactly zero and a wrong value for it is invisible to every
+    assertion above. Measured: flipping its sign moves s_fp by 0.000e+00 at this sigma.
+
+    It also covers the direction the study is blind to for a different reason: `u*` is a separable
+    SUM, so `hess_u`'s cross term is structurally zero and no choice of sigma can exercise it.
+    """
+    rng = np.random.default_rng(20260831)
+    x = rng.uniform(0.0, L, size=(200, 2))
+    check_pair(PAIR, 0.37 * T, x)
+
+
+@pytest.mark.integration
+def test_the_pair_audit_would_catch_a_wrong_cross_derivative():
+    """Discrimination for the test above: it must FAIL on the defect it claims to catch, and that
+    defect must be invisible to the source assembly -- otherwise the audit is redundant, not the
+    only check."""
+    rng = np.random.default_rng(20260831)
+    x = rng.uniform(0.0, L, size=(200, 2))
+    broken = ManufacturedPair(
+        **{**PAIR.__dict__, "hess_m": lambda t, xx: _hess_m(t, xx) * np.array([[1, -1], [-1, 1]])}
+    )
+
+    assert np.max(np.abs(fp_source(broken, _TRUE_HAMILTONIAN, SIGMA)(0.37 * T, x) - s_fp(0.37 * T, x))) == 0.0
+    with pytest.raises(ValueError, match="hess_m"):
+        check_pair(broken, 0.37 * T, x)
+
+
+@pytest.mark.integration
+def test_the_source_and_the_solver_agree_on_the_coefficients():
+    """The two Hamiltonians are separate OBJECTS on purpose; they must agree on the VALUES.
+
+    `_TRUE_HAMILTONIAN` must not be the problem's Hamiltonian -- every mutant in the tables above
+    perturbs the problem while the source stays closed over the true constants, and one object would
+    make each mutant self-consistent and this whole file unable to fail. But separateness is exactly
+    what lets the two drift: `control_cost=` and `lambda_=` are aliases for one parameter, so a
+    literal at one site and a named constant at the other look identical by eye.
+
+    Detection belonged only to the slow tier before this test existed. Measured: with the source at
+    LAMBDA = 1.0 and the solver at a literal 1.0, changing LAMBDA alone left the CI-selected tests
+    green (2 passed, 1 deselected) while moving the manufactured source by 1.888e-02 against a scale
+    of 2.314e-01 -- the scheme verified against an equation nobody solves, which is the failure
+    `mfgarchon.utils.manufactured` exists to prevent.
+    """
+    problem = _build_problem(*LEVELS[0])
+    solver_side = problem.components.hamiltonian.control_cost.lambda_
+    source_side = _TRUE_HAMILTONIAN.control_cost.lambda_
+    assert solver_side == source_side, (
+        f"the solver integrates lambda={solver_side} while the manufactured source was assembled "
+        f"with lambda={source_side}; the study would measure the scheme against an equation nobody "
+        f"solves, and converge cleanly doing it."
+    )
+    assert problem.sigma == SIGMA, f"solver sigma={problem.sigma} vs source sigma={SIGMA}"

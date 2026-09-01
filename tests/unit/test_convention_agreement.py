@@ -96,6 +96,25 @@ class TestSigmaToDiffusionAgreement:
         torch D-application (optional, off-paper backends) has no convention pin yet."""
         assert 0.5 * sigma**2 == diffusion_from_volatility(sigma)
 
+    @pytest.mark.parametrize("sigma", SIGMAS)
+    def test_manufactured_source_assembly_resolves_through_the_converter(self, sigma):
+        """Issue #2201: the MMS source assembly is a path in this population too, and it was not.
+
+        ``manufactured._diffusion_tensor`` decided sigma -> D privately: it squared a scalar and a
+        ``(d,)`` vector but returned a ``(d, d)`` argument UNCHANGED, calling the result a
+        covariance. A ``(d, d)`` volatility is the symmetric standard-deviation matrix S with
+        D = 1/2 S S^T (RFC #1596), so the same isotropic sigma written the two natural ways gave two
+        different diffusion terms -- the #1506 failure, reproduced inside the module written to give
+        the schemes an external oracle. A manufactured source is the one artifact whose silent error
+        cannot be caught downstream: the scheme reproduces it and the convergence study passes."""
+        from mfgarchon.utils.manufactured import _diffusion_tensor
+
+        d_reference = 0.5 * sigma * sigma
+        scalar = _diffusion_tensor(sigma, 2, None)
+        tensor = _diffusion_tensor(np.diag([sigma, sigma]), 2, "tensor")
+        np.testing.assert_allclose(scalar, d_reference * np.eye(2), rtol=0, atol=1e-15)
+        np.testing.assert_allclose(tensor, scalar, rtol=0, atol=1e-15)
+
     def test_hjb_scalar_and_diagonal_tensor_diffusion_agree(self):
         """Issue #1506: the HJB-FDM scalar and tensor diffusion paths must apply the SAME power of
         sigma. The tensor path passed raw sigma_diag (sigma) as axis_weights into a stencil that uses
