@@ -885,8 +885,15 @@ class HJBFDMSolver(BaseHJBSolver):
                         "sigma_ij terms (diagonal approximation). This is an O(1) error on the "
                         "cross-derivative operator 2*sum_{i<j} D_ij d2u/dx_i dx_j -- NOT a small "
                         "correction (Issue #1079). The result is only meaningful when the "
-                        "off-diagonals are physically negligible; pass a scalar or diagonal "
-                        "sigma to avoid the approximation.",
+                        "off-diagonals are physically negligible. There is one alternative and it "
+                        "is not yet a supported API: HJBSemiLagrangianSolver DOES discretise the "
+                        "cross-derivative, measured first order on an off-diagonal Sigma (EOC "
+                        "1.040, 1.017, against 0.718, 0.385 with that term dropped, Issue #2198), "
+                        "but it reads `problem.sigma`, and no constructor route accepts a (d, d) "
+                        "volatility there -- `sigma=`, `volatility=` and `diffusion=` all reject "
+                        "it as a malformed spatial field (Issue #2204). Reaching it today means "
+                        "assigning `problem.sigma = S` AFTER construction, which is unsupported. "
+                        "Otherwise pass a scalar or diagonal sigma and accept the approximation.",
                         UserWarning,
                         stacklevel=3,
                     )
@@ -900,8 +907,15 @@ class HJBFDMSolver(BaseHJBSolver):
                         "sigma_ij terms (diagonal approximation). This is an O(1) error on the "
                         "cross-derivative operator 2*sum_{i<j} D_ij d2u/dx_i dx_j -- NOT a small "
                         "correction (Issue #1079). The result is only meaningful when the "
-                        "off-diagonals are physically negligible; pass a scalar or diagonal "
-                        "sigma to avoid the approximation.",
+                        "off-diagonals are physically negligible. There is one alternative and it "
+                        "is not yet a supported API: HJBSemiLagrangianSolver DOES discretise the "
+                        "cross-derivative, measured first order on an off-diagonal Sigma (EOC "
+                        "1.040, 1.017, against 0.718, 0.385 with that term dropped, Issue #2198), "
+                        "but it reads `problem.sigma`, and no constructor route accepts a (d, d) "
+                        "volatility there -- `sigma=`, `volatility=` and `diffusion=` all reject "
+                        "it as a malformed spatial field (Issue #2204). Reaching it today means "
+                        "assigning `problem.sigma = S` AFTER construction, which is unsupported. "
+                        "Otherwise pass a scalar or diagonal sigma and accept the approximation.",
                         UserWarning,
                         stacklevel=3,
                     )

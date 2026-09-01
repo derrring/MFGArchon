@@ -30,9 +30,12 @@ by nobody having tried.
 
 STATUS: `_SWALLOWERS` is empty -- nothing silently discards a source any more, which is what #2020
 was about. ~~every solver here now HONOURS a source~~ [CORRECTED 2026-08-21] that was true of the
-six rows this file had; it covered 6 of 21 concrete solvers. Eight more are now rows, and five of
-them REFUSE -- `HJBSemiLagrangianSolver`, `FPGFDMSolver`, `FPParticleSolver`, `FPSLSolver`,
-`FPSLJacobianSolver`. Refusing is a correct outcome and not a defect, but "every solver honours a
+six rows this file had; it covered 6 of 21 concrete solvers. Eight more are now rows, and ~~five~~ **four** of
+them REFUSE -- ~~`HJBSemiLagrangianSolver`,~~ `FPGFDMSolver`, `FPParticleSolver`, `FPSLSolver`,
+`FPSLJacobianSolver`. [CORRECTED 2026-09-01] `HJBSemiLagrangianSolver` moved to `honours` in #2198:
+it threads a source through its operator-splitting path (the default `diffusion_method="adi"`),
+which is what made the Semi-Lagrangian family MMS-reachable and produced the first anisotropic
+order measurement in this repository. It still refuses on its three other variants. Refusing is a correct outcome and not a defect, but "every solver honours a
 source" and "every solver in my list honours a source" are different claims, and the list was the
 smaller half of the population.
 
@@ -278,7 +281,13 @@ _CASES = [
     ("HJBGFDMSolver", _hjb_gfdm, "honours"),
     ("HJBWENOSolver", _hjb_weno, "honours"),  # 1-D only -- see the factory
     ("FPFVMSolver", _fp_fvm, "honours"),
-    ("HJBSemiLagrangianSolver", _hjb_semi_lagrangian, "refuses"),
+    # 2026-09-01 (#2198): was "refuses". HJBSemiLagrangianSolver now honours a source on its
+    # operator-splitting path -- the default diffusion_method="adi", which this driver exercises.
+    # It still REFUSES on canonical_cs, the L-based DPP path and stochastic, each of which replaces
+    # that path rather than adding to it; those refusals are asserted in
+    # tests/integration/test_sl_mms_anisotropic_2198.py, which also measures the order the channel
+    # bought: EOC 1.039, 1.017 isotropic and 1.040, 1.017 with an off-diagonal Sigma.
+    ("HJBSemiLagrangianSolver", _hjb_semi_lagrangian, "honours"),
     ("FPGFDMSolver", _fp_gfdm, "refuses"),
     ("FPParticleSolver", _fp_particle, "refuses"),
     ("FPSLSolver", _fp_sl, "refuses"),
