@@ -274,7 +274,8 @@ class BlockIterator(BaseCouplingIterator):
     ) -> NDArray:
         """Solve HJB equation with given density."""
         # Issue #934: Progress handled via context routing
-        kwargs = self._build_hjb_kwargs(volatility_field=self.volatility_field)
+        # Issue #2207: same omission as FictitiousPlay -- no source was composed here at all.
+        kwargs = self._build_hjb_kwargs(M=M, U=U_prev, volatility_field=self.volatility_field)
         return self.hjb_solver.solve_hjb_system(M, U_terminal, U_prev, **kwargs)
 
     def _solve_fp(self, M_initial: NDArray, U: NDArray, M_current: NDArray | None = None) -> NDArray:
@@ -295,7 +296,7 @@ class BlockIterator(BaseCouplingIterator):
         _M_curr = M_current if M_current is not None else M_initial
 
         if self._fp_sig_params is not None:
-            kwargs = self._build_fp_kwargs(volatility_field=self.volatility_field)
+            kwargs = self._build_fp_kwargs(M=_M_curr, U=U, volatility_field=self.volatility_field)
             # Issue #1043 Phase 2: route through single-source convention, same as
             # FixedPointIterator.solve() (fixed_point_iterator.py:720-728).
             # Previously used a sig-probe heuristic (Issue #919) that put U directly

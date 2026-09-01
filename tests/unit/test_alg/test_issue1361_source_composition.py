@@ -5,15 +5,19 @@
 Picard coupler and the coupled-Newton ``MFGResidual`` path consume one copy of
 the convention (the bug class behind #1259 and #1285 was a private second copy).
 
-These pins assert:
+These pins assert that the shared ``compose_hjb_source`` / ``compose_fp_source``
+reproduce the prior ``FixedPointIterator`` closures byte-for-byte across a battery
+of inputs — a verbatim reference copy of the pre-#1361 logic is held below, and is
+the external half of the comparison. If the shared helper ever drifts from the
+pinned convention, these fail.
 
-1. The shared ``compose_hjb_source`` / ``compose_fp_source`` reproduce the prior
-   ``FixedPointIterator`` closures byte-for-byte across a battery of inputs
-   (a verbatim reference copy of the pre-#1361 logic is held below).
-2. ``FixedPointIterator._compose_*`` now delegate to the shared helpers and
-   therefore agree with them exactly.
-
-If the shared helper ever drifts from the pinned convention, these fail.
+~~2. ``FixedPointIterator._compose_*`` now delegate to the shared helpers and
+therefore agree with them exactly.~~ [SUPERSEDED 2026-09-01 by #2207] Those two
+delegates are deleted; composition moved into
+``BaseCouplingIterator._build_*_kwargs`` so every coupling loop gets it and not
+only the one that remembered to call them. The arm asserting it was retargeted at
+``compose_*`` by that change, which made it compare the helper against itself —
+structurally tautological — so it is deleted rather than left reading as coverage.
 
 Issue #1382: the HJB source convention changed from ``v = 0`` to the
 value-function slice ``v_t`` (the documented ``(x, m, v, t)`` contract), and the
@@ -29,7 +33,6 @@ from __future__ import annotations
 
 import numpy as np
 
-from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
 from mfgarchon.alg.numerical.coupling.graph_coupling import _get_time_slice
 from mfgarchon.alg.numerical.coupling.source_composition import (
     _problem_hjb_source_terms,
@@ -149,11 +152,11 @@ def _field_configs(gs: int):
 
 
 # ---------------------------------------------------------------------------
-# Agreement: shared helper == verbatim reference, and == FixedPointIterator delegate
+# Agreement: shared helper == verbatim pre-#1361 reference
 # ---------------------------------------------------------------------------
 
 
-def test_hjb_composition_matches_reference_and_delegate():
+def test_hjb_composition_matches_the_verbatim_reference():
     gs = _grid_size(_make_problem())
     M = _row_indexed(gs)
     U = 2.0 * _row_indexed(gs) + 0.5
@@ -163,20 +166,16 @@ def test_hjb_composition_matches_reference_and_delegate():
         problem = _make_problem(**kw)
         shared = compose_hjb_source(problem, M, U)
         ref = _ref_compose_hjb_source(problem, M, U)
-        delegate = FixedPointIterator._compose_hjb_source(_StubIterator(problem), M, U)
 
         # Existence agreement: helper returns None iff reference returns None.
         assert (shared is None) == (ref is None), name
-        assert (shared is None) == (delegate is None), name
         if shared is None:
             continue
         for k in range(_NT + 1):
             t = k * problem.dt
             a = shared(t, x)
             b = ref(t, x)
-            c = delegate(t, x)
             np.testing.assert_array_equal(a, b, err_msg=f"{name} t={t}: shared != reference (HJB)")
-            np.testing.assert_array_equal(a, c, err_msg=f"{name} t={t}: shared != FixedPointIterator delegate (HJB)")
 
 
 def test_hjb_source_receives_value_function_slice():
@@ -206,7 +205,7 @@ def test_hjb_source_receives_value_function_slice():
         np.testing.assert_array_equal(parts["source"], 0.03 * v_expected, err_msg=f"t={t}: v-dependent term wrong")
 
 
-def test_fp_composition_matches_reference_and_delegate():
+def test_fp_composition_matches_the_verbatim_reference():
     gs = _grid_size(_make_problem())
     M = _row_indexed(gs)
     V = 3.0 * _row_indexed(gs) - 1.0
@@ -216,18 +215,13 @@ def test_fp_composition_matches_reference_and_delegate():
         problem = _make_problem(**kw)
         shared = compose_fp_source(problem, M, V)
         ref = _ref_compose_fp_source(problem, M, V)
-        delegate = FixedPointIterator._compose_fp_source(_StubIterator(problem), M, V)
 
         assert (shared is None) == (ref is None), name
-        assert (shared is None) == (delegate is None), name
         if shared is None:
             continue
         for k in range(_NT + 1):
             t = k * problem.dt
             np.testing.assert_array_equal(shared(t, x), ref(t, x), err_msg=f"{name} t={t}: shared != reference (FP)")
-            np.testing.assert_array_equal(
-                shared(t, x), delegate(t, x), err_msg=f"{name} t={t}: shared != delegate (FP)"
-            )
 
 
 def test_no_fields_returns_none():
@@ -235,10 +229,3 @@ def test_no_fields_returns_none():
     M = _row_indexed(_grid_size(problem))
     assert compose_hjb_source(problem, M, M) is None
     assert compose_fp_source(problem, M, M) is None
-
-
-class _StubIterator:
-    """Minimal stand-in carrying only ``.problem`` (the only attribute compose reads)."""
-
-    def __init__(self, problem) -> None:
-        self.problem = problem

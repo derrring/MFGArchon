@@ -388,7 +388,11 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             self.learning_rate_history.append(alpha)
 
             # 1. Solve HJB backward — progress handled via context routing (#934)
-            hjb_kwargs = self._build_hjb_kwargs(volatility_field=self.volatility_field)
+            # Issue #2207: this call composed no source at all before -- a problem carrying
+            # source_term_hjb / nonlocal_operator solved here without it, bit-identically
+            # to one that carried neither. The iterates are now required and the builder
+            # composes.
+            hjb_kwargs = self._build_hjb_kwargs(M=M_old, U=U_old, volatility_field=self.volatility_field)
             U_new = self.hjb_solver.solve_hjb_system(M_old, U_terminal, U_old, **hjb_kwargs)
 
             # Issue #1718: the FP call below composes its drift from U_new, so a non-finite U_new
@@ -408,7 +412,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             # Previously FictitiousPlay called _build_fp_kwargs(drift_field=U_new) which
             # silently passed the value function U as the velocity alpha* to FPFDMSolver
             # (wrong physics: FPFDMSolver treats drift_field as alpha, not potential).
-            fp_kwargs = self._build_fp_kwargs(volatility_field=self.volatility_field)
+            fp_kwargs = self._build_fp_kwargs(M=M_old, U=U_new, volatility_field=self.volatility_field)
             if self._fp_sig_params is not None:
                 drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
                     self.problem,

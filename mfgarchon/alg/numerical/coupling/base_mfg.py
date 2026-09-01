@@ -5,6 +5,11 @@ import numbers
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
+# Issue #2207: the builders below COMPOSE the problem's source rather than receiving one,
+# so this module is the single consumer of the #1361 composition owner for every
+# BaseCouplingIterator subclass. Runtime, not TYPE_CHECKING -- it is called, not annotated.
+from .source_composition import compose_fp_source, compose_hjb_source
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -190,10 +195,21 @@ class BaseCouplingIterator(ABC):
     def _build_hjb_kwargs(
         self,
         *,
+        M: np.ndarray,
+        U: np.ndarray,
         volatility_field: float | np.ndarray | Any | None = None,
-        source_term: Callable | None = None,
     ) -> dict[str, Any]:
         """Build kwargs for solve_hjb_system, respecting solver capabilities.
+
+        ``M`` and ``U`` are the iterates the problem's source is composed FROM, and they are
+        REQUIRED. They replace a ``source_term=`` callable the caller had to compose itself, which
+        is the whole of Issue #2207: the guard below fires on a source that was *handed over*, so a
+        loop that never composed one never reached it. Measured before this change, on one problem
+        and one solver pair with ``source_term_hjb`` a constant 50.0 --
+        ``FixedPointIterator`` moved ``max|U|`` by 8.75 and called the source 15 times, while
+        ``FictitiousPlayIterator`` and ``BlockGaussSeidelIterator`` both returned a bit-identical
+        ``U`` and called it 0 times. Making the iterates required rather than the source optional is
+        what removes the omission: a loop that does not pass them does not compile a call.
 
         Progress is handled automatically via context routing (Issue #934) —
         solver's ``create_progress_bar`` detects the parent ``HierarchicalProgress``.
@@ -201,7 +217,12 @@ class BaseCouplingIterator(ABC):
         kwargs: dict[str, Any] = {}
         params = self._hjb_sig_params
         if params is None:
+            # KNOWN HOLE, tracked separately: signature introspection failed, so both the
+            # volatility resolution and the source guard below are skipped and a live source is
+            # dropped here in silence -- the same shape as #2207 one level up. Deciding what an
+            # unreadable signature should mean (refuse, or assume it accepts) is not this change's.
             return kwargs
+        source_term = compose_hjb_source(self.problem, M, U)
         kwargs.update(
             resolve_volatility_kwarg(
                 params,
@@ -227,18 +248,25 @@ class BaseCouplingIterator(ABC):
     def _build_fp_kwargs(
         self,
         *,
+        M: np.ndarray,
+        U: np.ndarray,
         drift_field: np.ndarray | Callable | Any | None = None,
         volatility_field: float | np.ndarray | Any | None = None,
-        source_term: Callable | None = None,
     ) -> dict[str, Any]:
         """Build kwargs for solve_fp_system, respecting solver capabilities.
+
+        ``M`` and ``U`` are required and are the iterates the FP source is composed from; see
+        :meth:`_build_hjb_kwargs` for why they are not optional (Issue #2207). Note the pairing
+        differs by side: the HJB source binds the PREVIOUS value iterate (Issue #1259, so the
+        nonlocal term reads ``J[v_old]``), the FP source binds the NEW one.
 
         Progress is handled automatically via context routing (Issue #934).
         """
         kwargs: dict[str, Any] = {}
         params = self._fp_sig_params
         if params is None:
-            return kwargs
+            return kwargs  # same hole as the HJB side; see there.
+        source_term = compose_fp_source(self.problem, M, U)
         if "drift_field" in params and drift_field is not None:
             kwargs["drift_field"] = drift_field
         kwargs.update(
