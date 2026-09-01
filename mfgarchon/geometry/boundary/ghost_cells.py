@@ -498,6 +498,20 @@ def ghost_cell_fp_no_flux(
     # belongs here is a physics decision about sigma = 0 problems, and #2128 is a consolidation, so
     # it does not get to make that decision by side effect: the old value stays until #2215 settles
     # it. The threshold is the pre-#2128 one, unchanged.
+    # FIELD-VALUED `D` is refused on BOTH centrings, which is what `main` did and what #2128's own
+    # acceptance asks for ("works or raises identically on both centrings"). Without this the vertex
+    # guard below -- a scalar `abs()` -- raises on an array while the cell path now answers, an
+    # asymmetry this consolidation would have introduced by side effect. Array-valued `D` is a
+    # capability neither centring had; adding it is not this change's. Field-valued DRIFT is
+    # untouched and does now work on the cell path, which is a gain `main` did not have.
+    if np.ndim(diffusion_coeff) != 0:
+        raise NotImplementedError(
+            f"ghost_cell_fp_no_flux: field-valued diffusion_coeff (shape "
+            f"{np.shape(diffusion_coeff)}) is not supported at either centring. The pre-#2128 code "
+            f"raised on both; #2128 kept that rather than enabling it on one centring only. A "
+            f"field-valued drift_velocity IS supported."
+        )
+
     if grid_type == GridType.VERTEX_CENTERED and abs(diffusion_coeff) < 1e-12:
         return interior_value
 
@@ -514,17 +528,30 @@ def ghost_cell_fp_no_flux(
     # raised, where `v_n = 0` is homogeneous Neumann and the ghost is exactly `interior_value` --
     # while answering others it used to fall back on, with a negative density among them.
     #
-    # Scaling both coefficients by `2*dx` leaves the Robin CONDITION unchanged, hence the ghost
-    # (2000 combinations, zero differences), and makes robin's tested quantity `|2D - v_n*dx|`. So
-    # the refusal set is the pre-#2128 fallback set, point for point -- measured over 2016 inputs,
-    # 1966 identical, 50 the intended change, 0 regressions -- and the only behaviour change is what
-    # happens ON it.
+    # Scaling both coefficients by `2*dx` leaves the Robin CONDITION unchanged, hence the ghost, and
+    # makes robin's tested quantity `|2D - v_n*dx|` -- this function's own pre-#2128 predicate.
     #
-    # Only the MAGNITUDE of the scale matters, and that is measured rather than asserted: robin
-    # tests `np.abs(coeff_ghost)`, so `-2*dx` and `+2*dx` are indistinguishable. A mutation flipping
-    # this sign leaves the whole test file green, which is a surviving mutant that is NOT a fault --
-    # recorded here so the next reader does not try to justify a sign that carries nothing, and does
-    # not add a test pinning an arbitrary choice.
+    # AGREES, BUT NOT BIT-EXACTLY, and the difference is confined to where it cannot matter. robin
+    # computes `alpha/2 + beta/dx`, so `beta/dx` is `-2*fl(fl(dx*D)/dx)`, and `fl(dx*D)/dx != D` for
+    # about 10% of random pairs. The two predicates therefore disagree within roughly `4*|D|*2^-52`
+    # of the threshold -- reachable, and measured: an input needing `2D` and `v_n*dx` to agree to ~13
+    # significant figures flips the verdict through the public `ghost_cell_advection_diffusion_no_flux`.
+    # Both sides return garbage there (4.8e+13 on one side of it), so the verdict is arbitrary in
+    # that band, which is why this is stated as a bound rather than repaired.
+    #
+    # Outside that band the refusal set is the pre-#2128 fallback set: 0 regressions in either
+    # direction over a 132,480-input sweep, against 2,688 in the same sweep with the scaling removed.
+    #
+    # Only the MAGNITUDE of the scale matters, measured rather than asserted: a mutation flipping
+    # this sign leaves the whole test file green, and 400,000 draws over 16 decades found no input
+    # distinguishing `2*dx` from `-2*dx`. A surviving mutant that is NOT a fault.
+    #
+    # TWO reasons, not one, and an earlier draft of this comment gave only the first. The
+    # raise/no-raise verdict is invariant because robin tests `np.abs(coeff_ghost)`. The VALUE is
+    # invariant for a different reason -- with `rhs = 0` the scale multiplies numerator and
+    # denominator alike, so the quotient is unchanged. That is homogeneity, not the guard, and it
+    # stops holding the moment a caller passes a non-zero `g`. A reader given only the guard reason
+    # would conclude the sign is free in general. It is not.
     scale = 2.0 * dx
     return ghost_cell_robin(interior_value, 0.0, scale * alpha, scale * beta, dx, grid_type)
 

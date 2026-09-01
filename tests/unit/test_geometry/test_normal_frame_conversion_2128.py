@@ -70,7 +70,7 @@ def test_the_ghost_is_robin_evaluated_at_the_converted_pair(grid_type, sign, v, 
     alpha, beta = normal_frame_coefficients(v, D, sign)
     # The scale is `ghost_cell_fp_no_flux`'s own and is not decoration: `ghost_cell_robin`'s
     # singularity threshold is absolute while the quantity it tests has units (#2217), so the pair
-    # is scaled by `-2*dx` to make that threshold mean what this function's predicate meant before
+    # is scaled by `2*dx` to make that threshold mean what this function's predicate meant before
     # #2128. Only its magnitude matters -- robin tests an absolute value -- and the scale leaves
     # the condition, and therefore the ghost, unchanged.
     scale = 2.0 * dx
@@ -158,6 +158,35 @@ def test_the_vertex_zero_diffusion_value_is_preserved_not_inherited(diffusion):
     #: the discontinuity #2215 records -- pinned here so "preserved" means the value AND its edge.
     live = ghost_cell_fp_no_flux(u, v, 1e-9, dx, sign, GridType.VERTEX_CENTERED)
     assert live > 1e6, "above the guard's threshold the vertex branch must be live, not clamped"
+
+
+def test_field_valued_inputs_behave_the_same_on_both_centrings():
+    """#2128's own acceptance bullet: "works or raises identically on both centrings".
+
+    Two different surfaces, and the delegation moved them in opposite directions:
+
+    - **Field-valued `D`** — `main` raised on both centrings. The delegation made the CELL path
+      answer while the vertex guard, a scalar `abs()`, kept raising: an asymmetry introduced by side
+      effect, and a capability neither centring had. Refused on both, which is `main`'s behaviour and
+      the acceptance bullet's. Enabling it is a separate change.
+    - **Field-valued drift** — `main` raised on the cell path (`truth value of an array is
+      ambiguous`) and the delegation makes it work on both. That is a genuine gain, unclaimed until
+      the review found it, and pinned here so it is not lost silently.
+    """
+    u = np.ones(3)
+
+    for grid_type in _CENTRINGS:
+        with pytest.raises(NotImplementedError, match="field-valued diffusion_coeff"):
+            ghost_cell_fp_no_flux(u, 0.4, np.array([0.2, 1e-13, 0.5]), 0.1, +1.0, grid_type)
+
+    drift = np.array([0.4, -0.2, 1.1])
+    for grid_type in _CENTRINGS:
+        got = ghost_cell_fp_no_flux(u, drift, 0.2, 0.1, +1.0, grid_type)
+        assert np.shape(got) == (3,), f"{grid_type.name}: a field-valued drift must stay elementwise"
+        assert np.all(np.isfinite(got))
+        #: Elementwise, not broadcast-collapsed: three distinct drifts must give three distinct
+        #: ghosts, which a mean-collapse or a scalar fallback would not.
+        assert len(set(np.round(got, 12))) == 3
 
 
 if __name__ == "__main__":
