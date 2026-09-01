@@ -28,12 +28,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
+from mfgarchon.core.hamiltonian import HamiltonianBase
 from mfgarchon.core.mfg_problem import MFGComponents, MFGProblem
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    import numpy as np
 
     from mfgarchon.core.stochastic.noise_processes import NoiseProcess
 
@@ -155,7 +156,23 @@ class StochasticMFGProblem(MFGProblem):
 
         # Normalize terminal cost attribute names (Issue #543 - eliminate hasattr)
         # Support both 'g' (MFGProblem standard) and 'terminal_cost' (simplified API)
-        self._terminal_cost_normalized = getattr(self, "terminal_cost", None) or getattr(self, "g", None)
+        #
+        # #2197 review: `terminal_cost` and `g` were the WHOLE chain, and `MFGProblem` defines
+        # NEITHER -- measured, `hasattr` is False for both -- so this was unconditionally None and
+        # every conditional solve fell through `g_conditional` to a literal 0.0. The parent's
+        # terminal condition was silently discarded: end-to-end, `u_mean` was bit-identical for
+        # `u_terminal = 0.5x^2` and for no terminal cost at all (0.000e+00), against an `m_initial`
+        # control on the same surface that moves it by 1.988e-03. That is the failure this whole
+        # class of bug is named for -- a broken fallback reaching for an attribute nobody defines,
+        # which reads as a deliberate default.
+        #
+        # `components.u_terminal` is where a terminal condition actually lives on this hierarchy,
+        # and it is the same place `create_conditional_problem` already reads `m_initial` from.
+        self._terminal_cost_normalized = (
+            getattr(self, "terminal_cost", None)
+            or getattr(self, "g", None)
+            or (self.components.u_terminal if self.components is not None else None)
+        )
 
         # Validate configuration
         if noise_process is not None and conditional_hamiltonian is None:
@@ -277,80 +294,113 @@ class StochasticMFGProblem(MFGProblem):
             >>> conditional_problem = problem.create_conditional_problem(noise_path)
             >>> # Now solve conditional_problem as standard MFG
         """
-        # Create components for conditional problem
-        conditional_components = MFGComponents(
-            description="Conditional MFG with noise path (seed dependent)",
-            problem_type="conditional_mfg",
-        )
+        # A frozen-noise Hamiltonian, as a real `HamiltonianBase` (#2191).
+        #
+        # This used to construct an EMPTY `MFGComponents` and then attach `hamiltonian_func` /
+        # `hamiltonian_dm_func` to it. Neither is a field of `MFGComponents`, so those two lines set
+        # attributes nothing reads; and the constructor validates that a Hamiltonian or Lagrangian
+        # is present, so it raised before ever reaching them. The result was that
+        # `CommonNoiseMFGSolver.solve()` could not complete a single conditional solve. No test
+        # noticed: the three test files that mention common noise only CONSTRUCT the solver.
+        #
+        # The two APIs disagree on shape, which is why this is an adapter and not a cast.
+        # `HamiltonianBase.__call__` takes (x, m, p, t) of VALUES; the old component callables took
+        # (x_idx, m_at_x, p_values, t_idx) of grid indices, with `p` arriving as a
+        # forward/backward dict to be averaged. `theta` is bound from the frozen path here, so the
+        # conditional problem is an ordinary deterministic MFG to everything downstream -- which is
+        # the whole point of conditioning on a realisation.
+        path = np.asarray(noise_path, dtype=float)
 
-        # Spatial grid (geometry-first API); captured by the closures below.
-        x_grid = self.geometry.get_spatial_grid()
+        class _FrozenNoiseHamiltonian(HamiltonianBase):
+            """H(x, m, p, t) with theta read from one frozen realisation of the noise."""
 
-        # Create wrapper functions that incorporate noise path
-        # These must match the MFGComponents API signature
-        def conditional_H(x_idx, m_at_x, p_values, t_idx, x_position=None, current_time=None, problem=None):
-            """Hamiltonian with frozen noise path."""
-            import numpy as np
+            def __init__(self, problem: StochasticMFGProblem, realisation: np.ndarray) -> None:
+                super().__init__()
+                self._problem = problem
+                self._path = realisation
 
-            # Get scalar values from grid-based inputs
-            x = x_position if x_position is not None else x_grid[x_idx]
-            t = current_time if current_time is not None else t_idx * self.dt
-            m = m_at_x
+            def _theta(self, t: float) -> float:
+                dt = self._problem.dt
+                idx = round(t / dt) if dt > 0 else 0
+                return float(self._path[min(max(idx, 0), len(self._path) - 1)])
 
-            # Extract gradient from p_values dict (use average of forward/backward)
-            if isinstance(p_values, dict):
-                p_fwd = p_values.get("forward", 0.0)
-                p_bwd = p_values.get("backward", 0.0)
-                p = 0.5 * (p_fwd + p_bwd) if not (np.isnan(p_fwd) or np.isnan(p_bwd)) else 0.0
-            else:
-                p = p_values  # Assume scalar
+            def __call__(self, x, m, p, t=0.0):
+                value = self._problem.H_conditional(x, p, m, self._theta(t), t)
+                # `HamiltonianBase.__call__` is a POINT evaluation: x and p are shape (d,) and the
+                # result is a scalar. A user's `conditional_hamiltonian` is written pointwise but
+                # numpy-broadcasts, so on a 1-D problem it hands back shape (1,) -- and the base
+                # class's finite-difference `dm`/`dp`, which `MFGProblem.__init__`'s
+                # derivative-consistency check calls, then fail with "only 0-dimensional arrays can
+                # be converted to Python scalars". Collapsing a size-1 result honours the contract.
+                #
+                # ~~anything larger is a vectorised call and is passed through untouched~~
+                # [CORRECTED 2026-09-01, #2197 review] That reasoning is false for exactly the
+                # pointwise user functions this class documents. In BATCH, HamiltonianBase supplies
+                # x and p as (N, d) and m as (N,), so a pointwise `0.5*p**2 + theta*m` broadcasts
+                # (N,1) against (N,) to (N, N). Measured on a real conditional solve: `__call__`
+                # returned (21, 21) where (21,) was expected, and `dm` -- the documented FP-coupling
+                # primitive -- returned 441 values with NO exception at all. Only `dp` came back
+                # right, via a defensive try/except in the base class that silently falls back to a
+                # per-point loop; that fallback is the sole reason today's answers are correct.
+                #
+                # So the size is CHECKED rather than assumed. A batch call must return one value per
+                # point; anything else is the user's H not vectorising the way the caller assumed.
+                #
+                # WHAT THIS ACTUALLY BUYS, measured on a real conditional Hamiltonian at N = 21,
+                # because two earlier versions of this comment got it wrong in both directions:
+                #
+                #   __call__ (batch)   raises the ValueError below
+                #   dm                 (21,)  -- was 441 values, silently
+                #   dp                 (21,1) -- correct before and after
+                #
+                # It is NOT "refused loudly": both `dm` and `dp` wrap their batch attempt in
+                # `except (TypeError, ValueError)` (hamiltonian.py:1211 and :1262), so this error
+                # never reaches the caller -- it fires and is caught, every time.
+                # It is NOT a no-op either: before this check, nothing in `dm` RAISED. The (N,N)
+                # result simply flowed through `.ravel()` and the central difference and came back
+                # as N^2 values, so the except had nothing to catch and the FP-coupling primitive
+                # returned garbage of the wrong length. Making the batch attempt fail is what
+                # engages the per-point fallback that was there all along.
+                # So: a correctness fix for `dm`, invisible on `dp`, and no new user-visible error.
+                array = np.asarray(value)
+                if array.size == 1:
+                    return array.item()
+                expected = np.shape(m)[0] if np.ndim(m) >= 1 else np.shape(x)[0] if np.ndim(x) >= 1 else 1
+                if array.size != expected:
+                    raise ValueError(
+                        f"conditional_hamiltonian returned {array.size} values for a batch of "
+                        f"{expected} points (shape {array.shape}). A pointwise H such as "
+                        f"`0.5*p**2 + theta*m` broadcasts (N,1) against (N,) to (N,N) when the "
+                        f"caller passes x, p as (N, d) and m as (N,). Write it to reduce over the "
+                        f"control axis -- e.g. `0.5*np.sum(p**2, axis=-1) + theta*m` -- or accept "
+                        f"only point evaluations. (#2197: this used to pass through untouched, and "
+                        f"HamiltonianBase.dm then returned N^2 values with no error.)"
+                    )
+                return value
 
-            # Get noise value at this time
-            theta_t = noise_path[min(t_idx, len(noise_path) - 1)]
-
-            # Call simplified API Hamiltonian
-            return self.H_conditional(x, p, m, theta_t, t)
-
-        def conditional_H_dm(x_idx, m_at_x, p_values, t_idx, x_position=None, current_time=None, problem=None):
-            """Hamiltonian derivative w.r.t. m using finite differences."""
-            import numpy as np
-
-            # Get scalar values
-            x = x_position if x_position is not None else x_grid[x_idx]
-            t = current_time if current_time is not None else t_idx * self.dt
-            m = m_at_x
-
-            # Extract gradient
-            if isinstance(p_values, dict):
-                p_fwd = p_values.get("forward", 0.0)
-                p_bwd = p_values.get("backward", 0.0)
-                p = 0.5 * (p_fwd + p_bwd) if not (np.isnan(p_fwd) or np.isnan(p_bwd)) else 0.0
-            else:
-                p = p_values
-
-            # Get noise value
-            theta_t = noise_path[min(t_idx, len(noise_path) - 1)]
-
-            # Compute ∂H/∂m using central finite difference
-            eps = 1e-6
-            H_plus = self.H_conditional(x, p, m + eps, theta_t, t)
-            H_minus = self.H_conditional(x, p, m - eps, theta_t, t)
-            return (H_plus - H_minus) / (2 * eps)
+            def is_smooth(self) -> bool:
+                # Unknowable: `conditional_hamiltonian` is a user callable. Reporting True would
+                # route solvers down smooth-only paths on a function that may not be one.
+                return False
 
         def conditional_g(x):
-            """Terminal cost with final noise value."""
-            theta_T = noise_path[-1]
-            return self.g_conditional(x, theta_T)
+            """Terminal cost evaluated at the noise's final value."""
+            return self.g_conditional(x, path[-1])
 
-        conditional_components.hamiltonian_func = conditional_H
-        conditional_components.hamiltonian_dm_func = conditional_H_dm
-        conditional_components.u_terminal = conditional_g
-
-        # Preserve other problem components
+        component_kwargs: dict[str, Any] = {
+            "hamiltonian": _FrozenNoiseHamiltonian(self, path),
+            "u_terminal": conditional_g,
+            "description": "Conditional MFG with noise path (seed dependent)",
+            "problem_type": "conditional_mfg",
+        }
         if self.components is not None:
-            conditional_components.m_initial = self.components.m_initial
-            conditional_components.boundary_conditions = self.components.boundary_conditions
-            conditional_components.parameters = self.components.parameters.copy()
+            component_kwargs["m_initial"] = self.components.m_initial
+            if getattr(self.components, "boundary_conditions", None) is not None:
+                component_kwargs["boundary_conditions"] = self.components.boundary_conditions
+            if getattr(self.components, "parameters", None) is not None:
+                component_kwargs["parameters"] = self.components.parameters.copy()
+
+        conditional_components = MFGComponents(**component_kwargs)
 
         # Create conditional problem
         conditional_problem = MFGProblem(

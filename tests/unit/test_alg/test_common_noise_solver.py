@@ -572,16 +572,28 @@ class TestCommonNoiseSolverConfiguration:
         assert callable(solver.conditional_solver_factory)
 
         # `callable` is satisfied by any function at all, including the custom-factory branch this
-        # test exists to distinguish itself from. Assert what the default factory DOES -- the
-        # documented "uses problem.solve() API" contract and its verbose suppression -- without
+        # test exists to distinguish itself from. Assert what the default factory DOES -- that it
+        # returns a SOLVER which defers to `problem.solve()` with verbose suppressed -- without
         # running a solve.
+        #
+        # This previously asserted `factory(recorder) == "sentinel"`, i.e. that the factory returns
+        # the RESULT directly. That pinned the defect: the declared type is
+        # `Callable[[MFGProblem], MFGSolverProtocol]` and `_solve_conditional_mfg` calls `.solve()`
+        # on what it gets back, so the old default made that site raise
+        # `AttributeError: 'SolverResult' object has no attribute 'solve'` (#2191). The call was
+        # unreachable at the time, behind a `create_conditional_problem` that failed first.
         class _Recorder:
             def solve(self, **kwargs):
                 self.kwargs = kwargs
                 return "sentinel"
 
         recorder = _Recorder()
-        assert solver.conditional_solver_factory(recorder) == "sentinel"
+        conditional_solver = solver.conditional_solver_factory(recorder)
+        assert hasattr(conditional_solver, "solve"), (
+            "the factory must return a solver, not a result -- the caller invokes .solve() on it"
+        )
+        assert not hasattr(recorder, "kwargs"), "the factory must not solve eagerly"
+        assert conditional_solver.solve() == "sentinel"
         assert recorder.kwargs == {"verbose": False}
 
     def test_mc_config_created_when_not_provided(self):
@@ -627,3 +639,71 @@ class TestCommonNoiseSolverConfiguration:
         # Custom value
         solver_custom = CommonNoiseMFGSolver(problem, num_noise_samples=10, num_workers=4)
         assert solver_custom.num_workers == 4
+
+
+class TestParallelResultPairing:
+    """`u_samples[k]` must be the solve of `noise_paths[k]` (#2197 review).
+
+    `_solve_parallel` collected results with `as_completed` and `solutions.append(...)`, so results
+    landed in COMPLETION order while `noise_paths` reaches `CommonNoiseMFGResult` in SAMPLING order.
+    The submission index was already captured as the futures dict's value and simply never read.
+
+    Measured before the fix, recovering each sample's true path through an analytic oracle: the
+    permutation was non-identity in 4 of 4 trials ([1,0,3,2,4,5], [2,3,4,0,5,1], ...) against a
+    sequential control that was identity in 2 of 2 with residual exactly 0.
+
+    Why it hid: `u_mean`, `u_std` and the MC errors are means and stds OVER samples, so they are
+    permutation-invariant and looked correct. Only the per-sample fields were corrupted -- and they
+    re-permuted on every run, so a fixed seed did not make it reproducible.
+
+    This test does not spawn processes. `parallel=True` end-to-end needs every callable on the
+    problem to be picklable, which the fixtures here are not (measured: `AttributeError: Can't get
+    local object '_problem.<locals>.<lambda>'`). Swapping in a thread pool exercises the same
+    collection logic, which is where the defect was, and lets the completion order be FORCED rather
+    than raced -- a race would make the test pass by luck most runs.
+    """
+
+    def test_results_are_placed_by_submission_index_not_completion_order(self, monkeypatch):
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        import mfgarchon.alg.numerical.stochastic.common_noise_solver as solver_module
+
+        monkeypatch.setattr(solver_module, "ProcessPoolExecutor", ThreadPoolExecutor)
+
+        paths = [np.full(3, float(k)) for k in range(4)]
+        released = threading.Event()
+        completion_order: list[float] = []
+
+        def _stub(noise_path):
+            # Index 0 finishes LAST: it waits for the others, which release it on the way out.
+            # Completion order is therefore exactly the reverse-ish of submission, deterministically.
+            marker = float(noise_path[0])
+            if marker == 0.0:
+                released.wait(timeout=5.0)
+            elif marker == 3.0:
+                released.set()
+            completion_order.append(marker)
+            return (np.full(2, marker), np.full(2, -marker), True)
+
+        solver = CommonNoiseMFGSolver.__new__(CommonNoiseMFGSolver)
+        solver.K = len(paths)
+        solver.num_workers = 4
+        solver._solve_conditional_mfg = _stub
+
+        solutions = solver._solve_parallel(paths, verbose=False)
+
+        recovered = [float(u[0]) for u, _m, _c in solutions]
+        assert recovered == [0.0, 1.0, 2.0, 3.0], (
+            f"solutions came back in {recovered}, not submission order -- u_samples[k] would not "
+            f"correspond to noise_paths[k]"
+        )
+        # CONTROL: the stub really did finish out of order, so the assertion above is not passing
+        # because the pool happened to run sequentially. `released.is_set()` was here and could NOT
+        # fail -- the marker==3.0 branch sets it unconditionally, including under a sequential pool.
+        # The observable that discriminates is the COMPLETION order the stub recorded.
+        assert completion_order[0] != 0.0, (
+            f"index 0 completed first ({completion_order}), so nothing forced out-of-order "
+            f"completion and this test would pass on the appending version too"
+        )
+        assert set(completion_order) == {0.0, 1.0, 2.0, 3.0}, completion_order
