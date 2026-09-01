@@ -59,8 +59,10 @@ FP drift: alpha* = H.optimal_control(grad u*) = -grad u*/lambda for this quadrat
   `fp_drift_coefficient(problem)` -- it returns 1/control_cost.lambda_ for such a Hamiltonian and
   never reaches the `coupling_coefficient` fallback (#1420 / G-017). It is NOT a package-wide
   universal, and an earlier draft of this block claimed one: an AST census finds 10 call sites in
-  7 files, and the velocity-channel families (FVM / FEM / meshless-Galerkin, and the network
-  solvers) resolve the drift through `H.optimal_control` and call that helper ZERO times --
+  7 files, and the velocity-channel FP families (FVM / FEM / meshless-Galerkin FP, and the
+  network solvers) resolve the drift through `H.optimal_control` and call that helper ZERO times.
+  The FP scope word is load-bearing: `meshless_galerkin/hjb_solver.py:118` IS one of those 10
+  call sites, so dropping it makes the sentence contradict its own census --
   `utils/pde_coefficients.py:47-50` already says so. Outside the scope above the fallback is live:
   a non-separable Hamiltonian returns `coupling_coefficient` itself.
   Measured at the SOLVE, which is the level the claim is about: at lambda = 1.0, a full coupled
@@ -70,7 +72,9 @@ FP drift: alpha* = H.optimal_control(grad u*) = -grad u*/lambda for this quadrat
   `test_coupled_mms_2d_no_flux.py` had already corrected in itself -- right value, wrong reason,
   which is exactly why it left no trace.
 sigma vs D: D = sigma^2/2 -- `diffusion_from_volatility` is the one converter. Pass sigma
-  via sigma=; the (2*pi^2*sigma^2) coefficients below already encode (sigma^2/2)*k^2.
+  via sigma=; the (2*pi^2*sigma^2) coefficients this file used to spell out
+  already encoded (sigma^2/2)*k^2 -- they are gone since #2201, and the diffusion term now comes
+  from the shared assembly, which resolves sigma through `diffusion_from_volatility`.
 
 FALSE-SAFETY GUARDS encoded here
 --------------------------------
@@ -209,8 +213,9 @@ class CoupledSinusoid1D(ManufacturedSolution):
         # source, or it becomes self-consistent and the study converges cleanly on the wrong
         # equation. Measured on the 2D sibling: mutating lambda on BOTH sides gives EOC u
         # 0.918/0.985 and PASSES, where the one-sided mutant gives 0.253/0.123 and fails.
-        # They must agree on the VALUES, which is what `test_the_source_and_the_solver_agree`
-        # pins -- both read `mfg.lam`, so there is no literal here to drift.
+        # They must agree on the VALUES. Here both read `mfg.lam`, so there is no literal to
+        # drift; the 2D sibling, where one site was a literal, pins it with
+        # `test_the_source_and_the_solver_agree_on_the_coefficients`.
         hamiltonian = SeparableHamiltonian(
             control_cost=QuadraticControlCost(lambda_=lam),
             coupling=lambda m: self.c_f * m,
@@ -259,7 +264,7 @@ def _solve_coupled(mfg: CoupledSinusoid1D, Nx: int, Nt: int, T: float):
     problem = _build_problem(mfg, Nx, Nt, T)
     hjb_solver = HJBFDMSolver(problem)
     fp_solver = FPFDMSolver(problem)
-    # relaxation=1.0 (undamped Picard): empirically converges in ~14-19 outer
+    # relaxation=1.0 (undamped Picard): empirically converges in 10 outer
     # iterations for the parameters used here. relaxation=0.5/0.8 reach the SAME
     # fixed point but take far more iterations (>100), making the test
     # impractically slow; the converged (u_h, m_h) is relaxation-independent
@@ -299,7 +304,7 @@ class TestCoupledMMSConvergence:
     Parameters (validated, not guessed): a=0.2, b=0.15, c_f=0.3, sigma=0.25,
     lambda=1.0, coupling_coefficient=1.0 (=1/lambda), T=0.2. These keep the
     advective drift modest relative to diffusion so the undamped Picard converges
-    in ~14-19 iterations and the FP density stays well-behaved, while still
+    in 10 iterations and the FP density stays well-behaved, while still
     exercising an ACTIVE bidirectional coupling (c_f>0 and a non-zero grad-u
     drift cross term).
 
@@ -319,7 +324,13 @@ class TestCoupledMMSConvergence:
     "verified before committing the threshold", and a false measurement is worse than none. The
     conclusion strengthens rather than reverses: the real ratios are ABOVE the recorded ones, so
     the margin over the 1.5 threshold is ~21% on the binding field (m), not the ~17% stated below.
-    Both Picard iterations converged (14-19 outer iterations).
+    Both Picard iterations converged (~~14-19~~ **10** outer iterations).
+    [SUPERSEDED 2026-09-01] SUPERSEDED-BY: #2201. Re-measured: 10 at Nx = 21, 31 and 61, with a
+    control that fires -- the same probe gives 4 / 10 / 16 at tolerance 1e-3 / 1e-6 / 1e-9, so the
+    instrument is not pinned at 10. Also stale at base d1a4c473, so not caused by the #2201
+    migration -- but it sat inside the block whose note says "re-measured on the current tree",
+    which had re-measured the error rows above it and not this line. Two further copies at :265
+    and :305 carried the same figure and are corrected.
 
     Threshold: ratios > 1.5 for BOTH u and m -- the precedent set by the
     single-equation source MMS tests (test_mms_validation.py:399 and :796). With
@@ -384,15 +395,21 @@ class TestCoupledMMSConvergence:
         assert np.allclose(diff, expected), "Coupling term missing from S_HJB"
         # `assert mfg.c > 0.0` stood here and became vacuous at #2201, which removed its only
         # reader: the drift now comes from the Hamiltonian, so `c` constrains nothing this test is
-        # about. The coupling strength this test IS about is c_f.
-        assert mfg.c_f > 0.0
+        # about. It is deleted rather than re-pointed at `c_f`: this test constructs
+        # `CoupledSinusoid1D(c_f=0.3)` above, so `assert mfg.c_f > 0.0` would restate a literal the
+        # test itself supplied and guard only against __init__ dropping it. The substantive
+        # assertion is the allclose on `diff` above -- it fails if the coupling term is missing
+        # from S_HJB, which is what this test is named for.
         assert np.any(np.abs(diff) > 0.0)
 
     def test_the_drift_scale_follows_lambda_not_coupling_coefficient(self):
         """The header used to call `coupling_coefficient` an INDEPENDENT knob set to match 1/lambda.
-        It is inert: `fp_drift_coefficient` -- which every drift resolution site in the package
-        reads -- returns 1/control_cost.lambda_ for a quadratic-MINIMIZE SeparableHamiltonian and
-        never reaches the `coupling_coefficient` fallback.
+        It is inert ON THIS PROBLEM'S SOLVER PATH: the FDM FP/HJB families resolve the drift
+        through `fp_drift_coefficient`, which returns 1/control_cost.lambda_ for a
+        quadratic-MINIMIZE SeparableHamiltonian and never reaches the `coupling_coefficient`
+        fallback. Not a package-wide universal -- the velocity-channel FP solvers (FVM, FEM,
+        meshless-Galerkin FP) and the network solvers resolve the drift through
+        `H.optimal_control` and never call that helper.
 
         This matters for the source, not just the prose: an assembly that scaled the transport by
         `c` would silently manufacture a different equation than the solver integrates the moment
