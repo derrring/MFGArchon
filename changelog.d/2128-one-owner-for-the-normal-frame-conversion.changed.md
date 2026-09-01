@@ -7,8 +7,17 @@ exact zero-flux profile `rho * exp(v_n*dx/D)`, which neither function implements
 configurations, re-measured on the shipped build: 5 bit-identical, 6 at 1 ulp, and 1 at 3 ulps
 (4e-16 relative), all from summation order. (#2128)
 
-One behaviour change, intended: cell-centred at `2D = v_n*dx`, where the ghost's own coefficient
-vanishes and the condition determines nothing, now raises instead of silently returning
-`interior_value`. The vertex-centred `D ~ 0` degeneracy is a different condition and its pre-existing
-value is preserved behind an explicit guard rather than inherited from Robin — that choice is a
-physics question and is #2215's, not a consolidation's. (#2128, #2215)
+Three behaviour changes, all intended and all narrow:
+
+1. Cell-centred at `2D = v_n*dx`, where the ghost's own coefficient vanishes and the condition
+   determines nothing, now raises instead of silently returning `interior_value`.
+2. Multi-element `diffusion_coeff` now raises `NotImplementedError` on both centrings. Previously it
+   raised `ValueError` for size > 1 on both and — because `bool()` on a one-element array is legal —
+   was silently accepted at size 1. Size-1 is still accepted; only the exception **type** for size > 1
+   changed, which is a public-API change for any caller catching `ValueError` here.
+3. A field-valued `drift_velocity` now works on the cell-centred path, where it previously raised
+   `ValueError: truth value of an array is ambiguous`. A gain, not a regression.
+
+The vertex-centred `D ~ 0` degeneracy is a different condition and its pre-existing value is
+preserved behind an explicit guard rather than inherited from Robin — that choice is a physics
+question and is #2215's, not a consolidation's. (#2128, #2215)

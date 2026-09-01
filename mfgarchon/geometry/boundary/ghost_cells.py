@@ -484,6 +484,33 @@ def ghost_cell_fp_no_flux(
         - Achdou & Lauriere (2020): Mean Field Games and Applications, Section on FP BCs
         - LeVeque (2002): Finite Volume Methods for Hyperbolic Problems
     """
+    # MULTI-ELEMENT `D` is refused on BOTH centrings. Placed before the conversion so a list reaches
+    # this message rather than dying on `-diffusion_coeff` with a bare TypeError.
+    #
+    # THE PREDICATE IS `size != 1`, NOT `ndim != 0`, and the difference is not pedantry. `main`'s
+    # guard was `if abs(denominator) < 1e-12`, and `bool()` on a ONE-ELEMENT array is legal, so
+    # `main` ACCEPTED shape-(1,) and (1,1) and raised `ValueError` only for size > 1. `ndim != 0`
+    # refuses the size-1 case too -- an undeclared capability removal inside a consolidation, which
+    # is the thing this branch keeps promising not to do, and a draft of this guard shipped it. That
+    # acceptance is an accident of `bool()` on a one-element array rather than a designed feature; it
+    # is preserved because #2128 is a consolidation, and whether to keep it is a separate question.
+    #
+    # Without the guard the vertex path -- a scalar `abs()` -- raises on an array while the cell path
+    # now answers: an asymmetry this delegation would have introduced by side effect, which #2128's
+    # own acceptance ("works or raises identically on both centrings") forbids. Field-valued DRIFT is
+    # untouched and now works on BOTH centrings, where `main` raised on the cell path.
+    #
+    # The exception TYPE changed here: `main` raised `ValueError`, this raises `NotImplementedError`.
+    # No in-tree caller catches either on this path; an external one might.
+    if np.size(diffusion_coeff) != 1:
+        raise NotImplementedError(
+            f"ghost_cell_fp_no_flux: multi-element diffusion_coeff (shape "
+            f"{np.shape(diffusion_coeff)}) is not supported at either centring. The pre-#2128 code "
+            f"raised ValueError here for size > 1 and accepted a size-1 array; this refuses size > 1 "
+            f"on both centrings rather than enabling it on one only. A field-valued drift_velocity "
+            f"IS supported."
+        )
+
     alpha, beta = normal_frame_coefficients(drift_velocity, diffusion_coeff, outward_normal_sign)
 
     # VERTEX-CENTRED, D ~ 0: old behaviour preserved DELIBERATELY, and it is not obviously right.
@@ -498,20 +525,6 @@ def ghost_cell_fp_no_flux(
     # belongs here is a physics decision about sigma = 0 problems, and #2128 is a consolidation, so
     # it does not get to make that decision by side effect: the old value stays until #2215 settles
     # it. The threshold is the pre-#2128 one, unchanged.
-    # FIELD-VALUED `D` is refused on BOTH centrings, which is what `main` did and what #2128's own
-    # acceptance asks for ("works or raises identically on both centrings"). Without this the vertex
-    # guard below -- a scalar `abs()` -- raises on an array while the cell path now answers, an
-    # asymmetry this consolidation would have introduced by side effect. Array-valued `D` is a
-    # capability neither centring had; adding it is not this change's. Field-valued DRIFT is
-    # untouched and does now work on the cell path, which is a gain `main` did not have.
-    if np.ndim(diffusion_coeff) != 0:
-        raise NotImplementedError(
-            f"ghost_cell_fp_no_flux: field-valued diffusion_coeff (shape "
-            f"{np.shape(diffusion_coeff)}) is not supported at either centring. The pre-#2128 code "
-            f"raised on both; #2128 kept that rather than enabling it on one centring only. A "
-            f"field-valued drift_velocity IS supported."
-        )
-
     if grid_type == GridType.VERTEX_CENTERED and abs(diffusion_coeff) < 1e-12:
         return interior_value
 

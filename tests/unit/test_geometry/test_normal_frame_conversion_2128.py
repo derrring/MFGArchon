@@ -165,10 +165,13 @@ def test_field_valued_inputs_behave_the_same_on_both_centrings():
 
     Two different surfaces, and the delegation moved them in opposite directions:
 
-    - **Field-valued `D`** — `main` raised on both centrings. The delegation made the CELL path
-      answer while the vertex guard, a scalar `abs()`, kept raising: an asymmetry introduced by side
-      effect, and a capability neither centring had. Refused on both, which is `main`'s behaviour and
-      the acceptance bullet's. Enabling it is a separate change.
+    - **Multi-element `D`** — `main` raised `ValueError` for size > 1 and, because `bool()` on a
+      one-element array is legal, silently ACCEPTED shape-(1,). The delegation made the CELL path
+      answer for any array while the vertex guard, a scalar `abs()`, kept raising: an asymmetry
+      introduced by side effect. Refused on both for size > 1, size-1 still accepted — `main`'s
+      acceptance set exactly. A draft guarded on `ndim != 0`, which also refused size-1: an
+      undeclared capability removal inside a consolidation, and the reason this arm pins the size-1
+      case rather than only the refusal.
     - **Field-valued drift** — `main` raised on the cell path (`truth value of an array is
       ambiguous`) and the delegation makes it work on both. That is a genuine gain, unclaimed until
       the review found it, and pinned here so it is not lost silently.
@@ -176,17 +179,32 @@ def test_field_valued_inputs_behave_the_same_on_both_centrings():
     u = np.ones(3)
 
     for grid_type in _CENTRINGS:
-        with pytest.raises(NotImplementedError, match="field-valued diffusion_coeff"):
+        with pytest.raises(NotImplementedError, match="multi-element diffusion_coeff"):
             ghost_cell_fp_no_flux(u, 0.4, np.array([0.2, 1e-13, 0.5]), 0.1, +1.0, grid_type)
 
+        #: size-1 is `main`'s acceptance set and must survive the guard, which a draft's
+        #: `ndim != 0` predicate silently removed.
+        got = ghost_cell_fp_no_flux(1.0, 0.4, np.array([0.2]), 0.1, +1.0, grid_type)
+        assert np.shape(got) == (1,)
+        assert np.isfinite(got).all()
+
+    #: Asserted against the closed form PER ELEMENT, not against shape and finiteness. An earlier
+    #: draft of this arm checked `isfinite` plus "three distinct values", and an array-only defect --
+    #: each boundary point receiving another point's drift -- passed it AND the entire 1348-test
+    #: geometry suite, because no scalar test can express a permutation. That is the same defect
+    #: round 1 raised against this file's over-fire control, re-created in the arm added to pin an
+    #: array capability. Only a per-element oracle sees it.
     drift = np.array([0.4, -0.2, 1.1])
+    D, dx, sign = 0.2, 0.1, +1.0
+    v_n = drift * sign
+    expected = {
+        GridType.CELL_CENTERED: u * (2.0 * D + v_n * dx) / (2.0 * D - v_n * dx),
+        GridType.VERTEX_CENTERED: u * (D + v_n * dx) / D,
+    }
     for grid_type in _CENTRINGS:
-        got = ghost_cell_fp_no_flux(u, drift, 0.2, 0.1, +1.0, grid_type)
+        got = ghost_cell_fp_no_flux(u, drift, D, dx, sign, grid_type)
         assert np.shape(got) == (3,), f"{grid_type.name}: a field-valued drift must stay elementwise"
-        assert np.all(np.isfinite(got))
-        #: Elementwise, not broadcast-collapsed: three distinct drifts must give three distinct
-        #: ghosts, which a mean-collapse or a scalar fallback would not.
-        assert len(set(np.round(got, 12))) == 3
+        np.testing.assert_allclose(got, expected[grid_type], rtol=1e-14)
 
 
 if __name__ == "__main__":
