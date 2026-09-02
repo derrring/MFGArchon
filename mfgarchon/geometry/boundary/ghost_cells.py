@@ -495,9 +495,13 @@ def ghost_cell_fp_no_flux(
     NEGATIVE density -- ``-1.0`` for ``interior=1, v=0.4, dx=0.1`` -- because the closed form becomes
     ``(v_n*dx)/(-v_n*dx)``. ``main`` returns the same value by the same arithmetic, so this is
     inherited rather than caused. The vertex path guards ``D ~ 0`` and returns ``interior_value``, so
-    the two centrings disagree about zero diffusion; #2215 asks the physics question for the vertex
-    side and #2219 for this one. Stated here because #2128's acceptance asks for ``D -> 0`` to have a
-    stated behaviour, and "it returns a negative density and nobody decided that" is the honest one.
+    the two centrings disagree about zero diffusion. #2220 asks the physics question for both sides
+    at once and reframes it: at ``D = 0`` the equation is first order, so an outflow wall admits no
+    boundary condition and an inflow wall admits exactly one. A ghost-cell scheme must still supply a
+    number either way -- what is absent at outflow is a number the BOUNDARY CONDITION determines, and
+    the standard choice there is extrapolation. Stated here because #2128's acceptance asks for
+    ``D -> 0`` to have a stated behaviour, and "it returns a negative density and nobody decided
+    that" is the honest one.
 
     Example:
         >>> # Left boundary with leftward drift (into boundary)
@@ -554,7 +558,7 @@ def ghost_cell_fp_no_flux(
     # formula runs and blows up -- measured, 4.0e+11 at `D = 1e-13`, -4.0e+11 at `D = -1e-13`. So the
     # guard mostly prevents a blow-up and only at one point prevents a 0.0. Which value
     # belongs here is a physics decision about sigma = 0 problems, and #2128 is a consolidation, so
-    # it does not get to make that decision by side effect: the old value stays until #2215 settles
+    # it does not get to make that decision by side effect: the old value stays until #2220 settles
     # it. The threshold is the pre-#2128 one, unchanged.
     if grid_type == GridType.VERTEX_CENTERED and abs(diffusion_coeff) < 1e-12:
         return interior_value

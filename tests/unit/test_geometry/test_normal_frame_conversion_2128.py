@@ -139,7 +139,7 @@ def test_the_cell_centred_degeneracy_refuses_instead_of_reflecting():
 
 @pytest.mark.parametrize("diffusion", [0.0, 1e-13], ids=["D_zero", "D_below_threshold"])
 def test_the_vertex_zero_diffusion_value_is_preserved_not_inherited(diffusion):
-    """The OTHER degeneracy, and this one is pinned so the delegation does NOT change it (#2215).
+    """The OTHER degeneracy, and this one is pinned so the delegation does NOT change it (#2220).
 
     Vertex-centred with `D ~ 0` is a different condition from the cell-centred one above: there the
     ghost's coefficient vanishes, here `beta` does. `J . n = v_n*rho_wall = 0` with `v_n != 0` forces
@@ -149,17 +149,56 @@ def test_the_vertex_zero_diffusion_value_is_preserved_not_inherited(diffusion):
     Both put a number where nothing is determined.
 
     #2128 is a consolidation and does not get to pick between them by side effect, so the old value
-    is preserved behind an explicit guard and the choice is #2215's. This test exists to make the
+    is preserved behind an explicit guard and the choice is #2220's. This test exists to make the
     preservation deliberate: if the guard is removed, this fails rather than the value quietly
     becoming 0.0.
+
+    `v_n` here is `+0.4`, i.e. OUTFLOW, which is the sign where the preserved value turns out to be
+    right: at `D = 0` the equation is first order and an outflow wall admits no condition, and
+    copying the interior into the ghost is the standard non-reflecting treatment. So this arm pins a
+    correct value for a reason the code does not know -- the sign is never read. The inflow half is
+    the defect pin below.
     """
     u, v, dx, sign = 1.0, 0.4, 0.1, +1.0
     assert ghost_cell_fp_no_flux(u, v, diffusion, dx, sign, GridType.VERTEX_CENTERED) == u
 
     #: The threshold is the pre-#2128 one. Just above it the branch is live and enormous, which is
-    #: the discontinuity #2215 records -- pinned here so "preserved" means the value AND its edge.
+    #: the discontinuity #2220 records -- pinned here so "preserved" means the value AND its edge.
     live = ghost_cell_fp_no_flux(u, v, 1e-9, dx, sign, GridType.VERTEX_CENTERED)
     assert live > 1e6, "above the guard's threshold the vertex branch must be live, not clamped"
+
+
+@pytest.mark.parametrize("grid_type", _CENTRINGS)
+def test_zero_diffusion_ignores_the_sign_of_the_normal_velocity(grid_type):
+    """RECORDED DEFECT, not a contract. Retirement condition is in the assertion message (#2220).
+
+    At `D = 0` the Fokker-Planck equation drops to first order, and a first-order equation admits a
+    boundary condition on the INFLOW side only. So `v_n < 0` and `v_n > 0` are two different
+    problems: outflow may impose nothing, inflow may impose one condition and `J . n = v_n*rho = 0`
+    forces `rho_wall = 0`. Both centrings currently return the same number for both signs -- the
+    vertex guard tests `abs(D)`, and the cell-centred closed form cancels `sign` against itself.
+
+    Pinned rather than fixed because #2216 is a consolidation. Pinned rather than left silent
+    because the pin one function up is unlabelled and would otherwise read as a specification for a
+    value we now know is imposed on the wrong half of the domain.
+
+    Measured before writing, with a control that separates: at `D = 0.5` the same call returns 1.08
+    at `sign=+1` and 0.92 at `sign=-1`, so the equality below is a property of `D = 0` and not of
+    the probe.
+    """
+    u, v, dx = 1.0, 0.4, 0.1
+    outflow = ghost_cell_fp_no_flux(u, v, 0.0, dx, +1.0, grid_type)
+    inflow = ghost_cell_fp_no_flux(u, v, 0.0, dx, -1.0, grid_type)
+    assert outflow == inflow, (
+        "the two signs now differ, which is what #2220 asks for -- delete this defect pin and "
+        "assert the intended inflow/outflow behaviour instead"
+    )
+
+    #: The control, in the same invocation: away from the degeneracy the same call IS sign-sensitive,
+    #: so a broken probe cannot pass this test by returning one number for everything.
+    assert ghost_cell_fp_no_flux(u, v, 0.5, dx, +1.0, grid_type) != ghost_cell_fp_no_flux(
+        u, v, 0.5, dx, -1.0, grid_type
+    ), "probe is inert: this call must separate the signs at D = 0.5"
 
 
 def test_field_valued_inputs_behave_the_same_on_both_centrings():
@@ -275,10 +314,10 @@ def test_zero_diffusion_has_a_stated_behaviour_on_both_centrings():
     face, the face value is `(rho_g + rho_i)/2`, and `v_n * rho_wall = 0` with `v_n != 0` forces
     `rho_g = -rho_i` -- and `main` returns the same value by the same expression, so #2128 inherited
     it rather than causing it. Whether a Fokker-Planck solver should accept a negative ghost is
-    #2219's question.
+    #2220's question.
 
     Vertex-centred returns `interior_value`, because the guard preserved from before #2128 fires
-    there. Whether THAT is right is #2215's question.
+    there. Whether THAT is right is #2220's question.
 
     Pinned as the status quo, not as an endorsement: the point is that both are now stated and a
     change to either fails a test instead of moving silently.
