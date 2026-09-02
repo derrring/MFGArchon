@@ -1642,12 +1642,45 @@ def solve_hjb_timestep_newton(
     # nothing said so -- `converged` is local and never returned, so no caller could see it, and
     # the outer Picard loop treated a failed HJB solve exactly like a successful one.
     if not converged and max_newton_iterations > 0:
+        # #1878: name the REGIME, not just the symptom. "Residual stopped decreasing" reads as a
+        # solver defect, and on this path it usually is not one -- measured, the analytic Jacobian
+        # agrees with a finite-difference Jacobian of this residual to 2e-08 relative, and the
+        # residual is smooth (one-sided directional derivatives agree to five digits at a failing
+        # state). What is hard is the problem: at sigma = 0 the HJB loses its second-order term and
+        # is a first-order Hamilton-Jacobi equation, where characteristics cross and the discrete
+        # system near that time is genuinely difficult. Measured across six 1-D fixtures -- varying
+        # terminal condition, initial density, coupling strength and resolution -- counting THIS
+        # warning rather than a hand-rolled residual norm, because the claim is about what the
+        # library reports: sigma = 0 emits 9 to 28 of them with outer errors 17 to 3000, while
+        # sigma = 0.4 emits ZERO on all six with errors 0.002 to 0.085. Refining the grid makes it
+        # WORSE, not better (Nx 21 -> 41: 12 -> 28). A caller reading only the symptom will go
+        # looking for a bug in the Jacobian; this clause points at the regime instead.
+        _sigma_scalar: float | None = None
+        _s = problem.sigma if sigma_at_n is None else sigma_at_n
+        if isinstance(_s, (int, float, np.floating, np.integer)):
+            _sigma_scalar = float(_s)
+        elif isinstance(_s, np.ndarray) and _s.size:
+            _sigma_scalar = float(np.max(np.abs(_s)))
+        _degenerate = _sigma_scalar is not None and _sigma_scalar < 1e-12
+        _regime = (
+            (
+                " This problem is DETERMINISTIC (sigma = 0, which is MFGProblem's default when no "
+                "sigma or diffusion is given), so the HJB is first order and Newton on the discrete "
+                "form is hard here for reasons that are not a solver defect -- refining the grid "
+                "makes it worse, not better. A semi-Lagrangian scheme (NumericalScheme.SL_LINEAR) "
+                "follows characteristics and uses no Newton at all on this class; measured on six "
+                "1-D fixtures it stays bounded where this path does not. If the intended model has "
+                "diffusion, pass sigma=... or diffusion=... (Issue #1878)."
+            )
+            if _degenerate
+            else ""
+        )
         warnings.warn(
             f"HJB inner Newton did not converge at t_idx={t_idx_n}: {stop_reason} after "
             f"{max_newton_iterations} iterations, residual {final_residual_norm:.3e} against a "
             f"tolerance of {newton_tolerance:.3e}. The value function returned for this timestep "
             f"is not a root of the discrete HJB, and the outer iteration will consume it as if "
-            f"it were (Issue #1745).",
+            f"it were (Issue #1745).{_regime}",
             RuntimeWarning,
             stacklevel=2,
         )

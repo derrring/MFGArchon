@@ -31,6 +31,41 @@ class NumericalScheme(Enum):
         >>> problem = create_crowd_problem(...)
         >>> result = problem.solve(scheme=NumericalScheme.FDM_UPWIND)
 
+    Regime, not only dimension (#1878)
+    ----------------------------------
+
+    The "Use case" lines below are about dimension, scaling and smoothness. They are not the whole
+    of the choice: **a scheme that is right at one diffusion regime can be the wrong pairing at
+    another, and this library does not enforce the pairing -- it reports what happens.**
+
+    The case that bites, because it is the DEFAULT: ``MFGProblem`` with neither ``sigma`` nor
+    ``diffusion`` is deterministic, ``sigma = 0``. The HJB then loses its second-order term and is a
+    first-order Hamilton-Jacobi equation, where characteristics cross and the value function
+    develops kinks. Newton on the discrete FDM form is genuinely hard there -- not because the
+    solver is defective, but because the problem is.
+
+    Measured on six 1-D fixtures, varying terminal condition, initial density, coupling strength and
+    resolution, counting the library's own inner-Newton non-convergence warnings over 5 Picard
+    sweeps:
+
+    ========================  ==================  ==================
+    scheme / regime           sigma = 0           sigma = 0.4
+    ========================  ==================  ==================
+    FDM_UPWIND, warnings      9 to 28             **0 on all six**
+    FDM_UPWIND, outer error   17 to 3000          0.002 to 0.085
+    SL_LINEAR, outer error    0.099 to 0.332      --
+    ========================  ==================  ==================
+
+    Two things there are worth more than the numbers. **Refining the grid makes it worse**, not
+    better -- 12 warnings at ``Nx = 21`` against 28 at ``Nx = 41`` -- so it is not an accuracy
+    problem you can spend resolution on. And ``SL_LINEAR`` uses **no Newton at all** on this class,
+    because a semi-Lagrangian scheme follows the characteristics rather than solving a nonlinear
+    system across them; it stays bounded on every fixture where FDM does not.
+
+    So: at ``sigma = 0`` prefer a semi-Lagrangian scheme, or state the diffusion the model actually
+    has. Neither is enforced. ``FDM_CENTERED`` at ``sigma = 0`` raises outright on the smoke
+    fixture, which is the same statement made by a refusal rather than by a warning.
+
     Duality Guarantees
     ------------------
 

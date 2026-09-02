@@ -153,7 +153,21 @@ AGREEMENT_RTOL = 0.07  # matches tests/integration/test_fvm_hjb_coupling.py:175
 
 
 def _smoke_problem():
-    """The tests/integration/test_three_mode_api.py fixture."""
+    """The tests/integration/test_three_mode_api.py fixture.
+
+    NO `sigma` IS PASSED, so this is `MFGProblem`'s documented deterministic default,
+    `sigma = 0`, and the HJB it poses is FIRST ORDER. That is not incidental to what the 1-D cells
+    measure: at `sigma = 0` the FDM inner Newton emits 9 to 28 non-convergence warnings across six
+    1-D fixtures and none at `sigma = 0.4`, refining the grid makes it worse rather than better, and
+    `SL_LINEAR` needs no Newton at all (#1878).
+
+    So the 1-D cells and the 2-D cells are NOT the same experiment: `_smoke_problem_2d` states
+    `sigma=0.4`. A reader comparing their statuses is varying scheme, dimension and DIFFUSION REGIME
+    at once, and the regime is the axis this matrix does not have. Recorded here rather than in the
+    baselined artifact, because adding a field to every cell's artifact would drop the `intended`
+    note of all nine non-PASS cells -- the carry-forward compares the whole artifact -- and rewriting
+    seven notes whose measurements have not been re-derived is a worse trade than a docstring.
+    """
     from mfgarchon import MFGProblem
     from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
     from mfgarchon.core.mfg_components import MFGComponents
@@ -179,6 +193,9 @@ def _smoke_problem():
 
 def _smoke_problem_2d():
     """The 1-D smoke fixture lifted to 2-D, unchanged in everything but dimension.
+
+    STATES `sigma=0.4`, where its 1-D sibling takes the `sigma = 0` default -- so the two are not
+    the same experiment and their statuses are not comparable on the scheme axis alone (#1878).
 
     Deliberately the same Gaussian, the same no-flux boundaries, the same coupling: a
     cell that differs from its 1-D sibling only in dimension is what makes "works in
