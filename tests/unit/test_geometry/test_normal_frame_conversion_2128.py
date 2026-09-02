@@ -34,6 +34,7 @@ import numpy as np
 from mfgarchon.geometry.boundary.ghost_cells import (
     GridType,
     ghost_cell_fp_no_flux,
+    ghost_cell_robin,
     normal_frame_coefficients,
 )
 
@@ -141,11 +142,9 @@ def test_the_vertex_zero_diffusion_value_is_preserved_not_inherited(diffusion):
     preservation deliberate: if the guard is removed, this fails rather than the value quietly
     becoming 0.0.
 
-    [CORRECTED round 7, refined round 8] An earlier version called the preserved value "correct" at
-    `v_n > 0`, on the argument that copying the interior into the ghost is the standard outflow
-    treatment. That flattered the value being preserved and the measurement does not support it.
-    With `J . n = v_n*rho_wall - D*d(rho)/dn` in each centring's own wall geometry, at `D = 0`,
-    SWEEPING the ghost rather than evaluating it at one point:
+    The preserved value is NOT "correct at outflow", which is the tempting reading. With
+    `J . n = v_n*rho_wall - D*d(rho)/dn` in each centring's own wall geometry, at `D = 0`, SWEEPING
+    the ghost rather than evaluating it at one point:
 
         ghost ->        1.0     0.0    -1.0    17.0
         vertex J.n     +0.4    +0.4    +0.4    +0.4     <- CONSTANT in the ghost
@@ -284,39 +283,100 @@ def test_field_valued_inputs_behave_the_same_on_both_centrings():
             np.testing.assert_allclose(got, expected, rtol=1e-15)
 
 
-@pytest.mark.parametrize(
-    ("diffusion", "must_raise", "wrong_scale"),
-    [
-        (3.75e-13, True, "4*dx under-fires: it answers where the pre-#2128 predicate refused"),
-        (7.0e-13, False, "1*dx over-fires: it refuses where the pre-#2128 predicate answered"),
-    ],
-    ids=["under_fire_guard", "over_fire_guard"],
-)
-def test_the_scales_magnitude_is_pinned_from_both_sides(diffusion, must_raise, wrong_scale):
-    """`ghost_cell_fp_no_flux` scales the Robin pair by `2*dx`, and the 2 is load-bearing.
+@pytest.mark.parametrize("grid_type", _CENTRINGS, ids=lambda g: g.name)
+def test_the_singularity_verdict_is_invariant_under_rescaling_the_pair(grid_type):
+    """[REPLACED #2217] This was `test_the_scales_magnitude_is_pinned_from_both_sides`, and it
+    pinned a defect.
 
-    `ghost_cell_robin`'s singularity threshold is absolute while the quantity it tests has units
-    (#2217), so the scale is what makes that threshold mean `|2D - v_n*dx| < 1e-12` -- this
-    function's own pre-#2128 predicate. Only the magnitude carries anything: the sign is provably
-    free and is deliberately unpinned, which the source says.
+    That test asserted `ghost_cell_fp_no_flux` must RAISE at `v_n = 0, D = 3.75e-13, dx = 1`. But
+    `v_n = 0` is homogeneous Neumann: the condition is `-D * drho/dn = 0`, the ghost is exactly the
+    interior value, and the problem is well posed at every `D > 0`. It asserted the raise because
+    `ghost_cell_robin`'s threshold was ABSOLUTE while the quantity it tests carries units, so the
+    refusal boundary moved with `dx` and with however the caller happened to scale its pair. Round 6
+    of #2216 wrote this test to pin the `2*dx` scaling that papered over that -- pinning the
+    workaround, and with it the defect underneath.
 
-    THE MAGNITUDE WAS NOT PINNED, and that is why this test exists. `scale = 4*dx` passed the entire
-    geometry suite while disagreeing with the pre-#2128 refusal set on 20,006 of 133,141
-    near-threshold draws -- 52 lines of comment argued the magnitude matters and no assertion held
-    it. Both directions are pinned here because a wrong magnitude fails asymmetrically: too large
-    under-fires, too small over-fires, and a one-sided test admits half of them.
+    #2217 made the threshold relative, so the scaling is inert and gone, and what is worth pinning
+    is the invariance itself: scaling `(alpha, beta)` by any non-zero constant leaves the VERDICT
+    unchanged, because `coeff_ghost` depends on the scale and the physical wall does not.
 
-    At `v_n = 0` and `dx = 1.0` the tested quantity is `k*D` for `scale = k*dx`, so the guard fires
-    iff `k*D < 1e-12` while the reference predicate fires iff `2*D < 1e-12`. The two `D` values below
-    are chosen to sit between those thresholds, one on each side.
+    NOT the ghost, in general. Scaling `alpha` and `beta` by `s` turns `alpha*u + beta*du/dn = g` into `... = g/s`, which is the same
+    wall only at `g = 0`. Every call below passes `rhs_value = 0.0`, which is why the value
+    assertion holds here at all; at `g = 0.7, alpha = 2, beta = 0.5, dx = 0.1` the ghost moves 99%
+    across three decades of scale, nowhere near a cancellation point.
+    `normal_frame_coefficients`' docstring carries the same qualification and is the copy to
+    follow.
+
+    Measured before this was written: against the absolute threshold, 96 of 144 coefficient
+    families built to straddle the cancellation point changed verdict under rescaling. Against the
+    relative one, 0 of 144.
+
+    THE VERTEX ARM IS INERT AGAINST THAT MUTANT and is kept anyway -- stated so it does not read as
+    coverage it is not. Restoring the absolute threshold kills the cell arm and this one PASSES,
+    because the vertex branch never computes `coeff_ghost`; its own predicate is `abs(beta) == 0`,
+    which is scale-invariant for a different reason (`s*0 == 0` for every finite `s`). It guards a
+    change that would give the vertex branch a magnitude-based threshold, which is exactly the
+    change #2217 asks someone to consider next.
     """
-    v, dx, u, sign = 0.0, 1.0, 1.0, +1.0
-    if must_raise:
-        with pytest.raises(ValueError, match="singular ghost cell formula"):
-            ghost_cell_fp_no_flux(u, v, diffusion, dx, sign, GridType.CELL_CENTERED)
-    else:
-        #: `v_n = 0` is homogeneous Neumann, so the ghost is exactly the interior value.
-        assert ghost_cell_fp_no_flux(u, v, diffusion, dx, sign, GridType.CELL_CENTERED) == pytest.approx(u), wrong_scale
+    u, dx = 1.0, 0.1
+    #: built AT the cancellation point -- generic pairs put |alpha/2 + beta/dx| near 1, where no
+    #: scaling in 12 decades crosses 1e-12, so they cannot express this defect at all.
+    for alpha in (-2.0, 0.5, 2.0):
+        for r in (0.0, 1e-15, 1e-11, 1e-3):
+            beta = (r - 1.0) * alpha * dx / 2.0
+            verdicts, ghosts = set(), []
+            for s in (1e-6, 1e-3, 1.0, 1e3, 1e6):
+                try:
+                    ghosts.append(ghost_cell_robin(u, 0.0, s * alpha, s * beta, dx, grid_type))
+                    verdicts.add("ok")
+                except ValueError:
+                    verdicts.add("raise")
+            assert len(verdicts) == 1, (
+                f"alpha={alpha} r={r}: rescaling the pair changed the refuse/answer verdict "
+                f"({verdicts}) -- the threshold is scale-blind again (#2217)"
+            )
+            #: The VALUE is a separate claim and it does NOT hold everywhere, which the first
+            #: version of this test asserted and was wrong about. Near cancellation the ghost is
+            #: `something / tiny`: `alpha/2` and `beta/dx` nearly annihilate, rescaling perturbs
+            #: each rounding, and the quotient moves by 1.6e-5 relative at `r = 1e-11`. That is
+            #: conditioning, not a defect, and it is why #2217's acceptance test must be read as
+            #: "same verdict" -- the "same ghost" half holds only where the condition is well
+            #: conditioned. Asserted there, and deliberately not asserted in the cancellation band.
+            #: 1.6e-5 is measured on THIS family; the changelog carries the same number.
+            if ghosts and r >= 1e-3:
+                np.testing.assert_allclose(
+                    ghosts,
+                    ghosts[0],
+                    rtol=1e-9,
+                    err_msg=f"alpha={alpha} r={r}: ghost moved under rescaling AWAY from cancellation",
+                )
+
+
+def test_homogeneous_neumann_is_answered_not_refused():
+    """The well-posed case #2217 reports being rejected, pinned on the public alias.
+
+    `v_n = 0` makes the wall condition `-D * drho/dn = 0` at every `D > 0`, so the ghost is the
+    interior value, and the absolute threshold refused it whenever `2D < 1e-12`.
+
+    That is one direction of the change, not all of it, and a count from any one grid is not a
+    characterisation: above `D = 1/2` there is a band the old code answered and this one refuses.
+    `ghost_cell_fp_no_flux`'s own comment is the one owner for both directions.
+    """
+    #: 2*D must be BELOW the old absolute 1e-12 for a row to discriminate. `7e-13` and `5e-12` give
+    #: 1.4e-12 and 1e-11, which the pre-#2217 code answered too -- so 8 of these 16 rows pin nothing
+    #: and are a smoke check. The discriminating rows are the first two.
+    for D in (1e-13, 3.75e-13, 7.0e-13, 5e-12):
+        for dx in (0.001, 0.1, 1.0, 10.0):
+            got = ghost_cell_fp_no_flux(1.0, 0.0, D, dx, +1.0, GridType.CELL_CENTERED)
+            assert got == pytest.approx(1.0), f"D={D} dx={dx}: homogeneous Neumann must answer"
+
+    #: CONTROL, in the same invocation: the guard must still fire where the ghost really is
+    #: undetermined, or this test would pass over a predicate that never refuses anything.
+    with pytest.raises(ValueError, match="singular ghost cell formula"):
+        ghost_cell_fp_no_flux(1.0, 2.0, 0.1, 0.1, +1.0, GridType.CELL_CENTERED)
+    #: and the wholly degenerate pair, where the scale itself is 0 and a strict `<` would answer
+    with pytest.raises(ValueError, match="singular ghost cell formula"):
+        ghost_cell_robin(1.0, 0.0, 0.0, 0.0, 0.1, GridType.CELL_CENTERED)
 
 
 def test_zero_diffusion_has_a_stated_behaviour_on_both_centrings():

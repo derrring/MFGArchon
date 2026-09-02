@@ -206,9 +206,37 @@ def ghost_cell_robin(
 
     # alpha, beta and rhs_value may be FIELDS -- one value per boundary point. The impermeable
     # wall of a Fokker-Planck equation is this condition with alpha = the outward normal drift,
-    # which varies along the boundary and is recomputed each Picard iterate. The arithmetic
-    # above is already elementwise; only this guard needed to stop assuming a scalar.
-    singular = np.abs(coeff_ghost) < 1e-12
+    # which varies along the boundary and is recomputed each Picard iterate. The arithmetic above
+    # is already elementwise; only this guard needed to stop assuming a scalar.
+    #
+    # #2217: the threshold is RELATIVE because `coeff_ghost` carries units and the pair has no
+    # canonical normalisation -- against an absolute constant, a caller who multiplied its pair by
+    # 100 to keep familiar units moved the refusal boundary by 100. The scale is
+    # `max(|alpha|/2, |beta|/dx)`, the larger of the two terms whose cancellation this predicate is
+    # about, so it fires on genuine cancellation rather than on both terms merely being small.
+    # Normalising by `max(|alpha|, |beta|)` instead is equally scale-invariant and still wrong: it
+    # is not invariant under a change of LENGTH UNIT, since `x -> L*x` sends `beta -> L*beta` and
+    # `dx -> L*dx`, so its verdict differs measured in cm and in m. `|alpha|/2 + |beta|/dx` is
+    # correct and strictly more conservative for no gain.
+    #
+    # `<=` and not `<`: at `alpha = beta = 0` the scale is 0, and a strict `<` would compare
+    # `0 < 0` and ANSWER a condition that carries no information.
+    #
+    # WHAT THIS DOES NOT GIVE YOU, both owed to callers:
+    #  - Rescaling leaves the ghost unchanged only at `rhs_value == 0`, because scaling by `s`
+    #    turns `alpha*u + beta*du/dn = g` into `... = g/s`. At `g = 0.7, alpha = 2, beta = 0.5,
+    #    dx = 0.1` the ghost moves 99% across three decades of `s`, far from any cancellation.
+    #    The Fokker-Planck wall always passes `g = 0`; a caller with `g != 0` does not get this.
+    #  - Invariance fails at the top of the float range: `s = 1e308` overflows `beta/dx` to `inf`,
+    #    and `inf <= 1e-12*inf` is True, so a well-conditioned pair raises. Powers of two do not
+    #    escape it. Unrepaired -- an overflowing pair has no meaningful ghost either way.
+    #
+    # DIRECT CALLERS (`calculators.py`, `_compat.py`, `applicator_fdm.py`, two passing `g != 0`):
+    # #2217 moved this refusal set in BOTH directions for you, not only through the FP wall. The
+    # new/old threshold ratio is `S = max(|alpha|/2, |beta|/dx)` -- wider at `S > 1`, narrower at
+    # `S < 1`. Exact cancellation still refuses either way.
+    coeff_scale = np.maximum(np.abs(alpha) / 2.0, np.abs(beta) / dx)
+    singular = np.abs(coeff_ghost) <= 1e-12 * coeff_scale
     if np.any(singular):
         where = (
             ""
@@ -382,17 +410,14 @@ def normal_frame_coefficients(
     flipped conversion sign approximates ``exp(-z)`` instead and collapses that order. Per-element
     values are pinned separately at both centrings and both wall directions.
 
-    IF YOU ARE THE SECOND CALLER THIS EXISTS FOR, READ THIS. The pair returned here is the
-    mathematically correct one and it is NOT sufficient on its own: handing it straight to
-    :func:`ghost_cell_robin` gives the right ghost and the WRONG refusal set, because robin's
-    singularity threshold is absolute while the quantity it tests has units (#2217). Measured --
-    unscaled, ``v_n = 0, D = 5e-12, dx = 10`` raises where the condition is homogeneous Neumann and
-    the ghost is exactly the interior value. :func:`ghost_cell_fp_no_flux` multiplies both
-    coefficients by ``2*dx`` first, which leaves the condition and the ghost unchanged and makes
-    robin's threshold mean ``|2D - v_n*dx| < 1e-12``. Any caller routing this pair into robin needs
-    the same scaling until #2217 lands. With a non-zero right-hand side the scaling is NOT free --
-    three plausible choices give 0.944, -0.167 and 0.944 at ``g = 0.5`` -- so a caller with ``g != 0``
-    has a question this function does not answer.
+    IF YOU ARE THE SECOND CALLER THIS EXISTS FOR, READ THIS. Since #2217 you may hand this pair
+    straight to :func:`ghost_cell_robin`: its threshold is relative, so no caller needs a scaling.
+    What you still do not get is the case that was never about the threshold -- with a non-zero
+    right-hand side, rescaling the pair is NOT free. Scaling ``alpha`` and ``beta`` by ``s`` turns
+    ``alpha*u + beta*du/dn = g`` into ``... = g/s``, a different wall -- three plausible choices give
+    0.944, -0.167 and 0.944 at ``g = 0.5``. The Fokker-Planck wall always passes ``g = 0``, which is
+    why scaling was ever safe there; a caller with ``g != 0`` has a question this function does not
+    answer.
     """
     return drift_velocity * outward_normal_sign, -diffusion_coeff
 
@@ -566,60 +591,24 @@ def ghost_cell_fp_no_flux(
     if grid_type == GridType.VERTEX_CENTERED and abs(diffusion_coeff) < 1e-12:
         return interior_value
 
-    # CELL-CENTRED at `2D = v_n*dx`: this now RAISES, where the pre-#2128 code returned
-    # `interior_value`. That change is intended -- the ghost's own coefficient vanishes there, the
-    # condition does not determine it, and returning the interior value is the fabricated answer the
-    # fail-fast ratchet exists to remove.
+    # CELL-CENTRED at `2D = v_n*dx`: this RAISES, where the pre-#2128 code returned
+    # `interior_value`. Intended -- the ghost's own coefficient vanishes there, the condition does
+    # not determine it, and returning the interior value is the fabricated answer the fail-fast
+    # ratchet exists to remove.
     #
-    # THE SCALING IS WHAT KEEPS THAT SET THE SAME ONE. `ghost_cell_robin` tests
-    # `|alpha/2 + beta/dx| < 1e-12` -- a quantity with units of 1/length against an absolute
-    # constant, so its threshold is scale-blind (#2217). Passing the pair unscaled moves the refusal
-    # set from `|2D - v_n*dx| < 1e-12` to `< 2e-12*dx`: the two coincide only at `dx = 0.5`, and off
-    # that line it refuses inputs the old code answered -- measured, `v_n = 0, D = 5e-12, dx = 10`
-    # raised, where `v_n = 0` is homogeneous Neumann and the ghost is exactly `interior_value` --
-    # while answering others it used to fall back on, with a negative density among them.
+    # The pair is passed UNSCALED. Before #2217 it was scaled by `2*dx` to compensate for robin's
+    # absolute threshold; that threshold is now relative, so the scaling is inert and gone.
     #
-    # Scaling both coefficients by `2*dx` leaves the Robin CONDITION unchanged, hence the ghost, and
-    # makes robin's tested quantity `|2D - v_n*dx|` -- this function's own pre-#2128 predicate.
-    #
-    # ALL OF THIS PARAGRAPH IS THE CELL PATH. At vertex centring there is no band: the predicate is
-    # this module's own `abs(D) < 1e-12`, bit-identical to `main`'s, and robin's `coeff_ghost` is
-    # never computed.
-    #
-    # AGREES, BUT NOT BIT-EXACTLY, and the difference is confined to where it cannot matter.
-    # `alpha/2` recovers `fl(dx*v_n)` exactly -- halving is exact -- so the only divergence is
-    # `2*(D~ - D)` with `D~ = fl(fl(dx*D)/dx)`, and `fl(dx*D)/dx != D` for about 10% of random pairs.
-    # Two roundings at half an ulp each bound it by `2*|D|*2^-52`; measured over 400,000
-    # near-threshold draws the worst ratio is 1.97, so 2 is the tight constant and a draft's `4` was
-    # loose by exactly that factor. HYPOTHESIS, and it is real: `fl(dx*D)` must be normal. At
-    # `D = 1e-300, dx = 1e-20` the disagreement exceeds the band by eleven orders of magnitude, and
-    # at `dx = D = 1e200` the scaled pair overflows to `inf` and the ghost is a silent `nan` where
-    # `main` returned 3.0. Both are outside any physical magnitude, and both are outside the sweeps
-    # below, whose grids are products of moderate values.
-    #
-    # The two predicates therefore disagree within `2*|D|*2^-52`
-    # of the threshold -- reachable, and measured: an input needing `2D` and `v_n*dx` to agree to ~13
-    # significant figures flips the verdict through the public `ghost_cell_advection_diffusion_no_flux`.
-    # Both sides return garbage there (4.8e+13 on one side of it), so the verdict is arbitrary in
-    # that band, which is why this is stated as a bound rather than repaired.
-    #
-    # Outside that band the refusal set is the pre-#2128 fallback set: 0 regressions in either
-    # direction over a 132,480-input sweep, against 2,688 in the same sweep with the scaling removed.
-    #
-    # Only the MAGNITUDE of the scale matters, measured rather than asserted: a mutation flipping
-    # this sign leaves the whole test file green, and 400,000 draws over 16 decades found no input
-    # distinguishing `2*dx` from `-2*dx`. A surviving mutant that is NOT a fault.
-    #
-    # TWO reasons, not one, and an earlier draft of this comment gave only the first. The
-    # raise/no-raise verdict is invariant because robin tests `np.abs(coeff_ghost)` -- a CELL-path
-    # mechanism; the vertex branch never computes `coeff_ghost` and its verdicts (`abs(_beta) == 0`)
-    # are sign-blind for a different reason. The VALUE is
-    # invariant for a different reason -- with `rhs = 0` the scale multiplies numerator and
-    # denominator alike, so the quotient is unchanged. That is homogeneity, not the guard, and it
-    # stops holding the moment a caller passes a non-zero `g`. A reader given only the guard reason
-    # would conclude the sign is free in general. It is not.
-    scale = 2.0 * dx
-    return ghost_cell_robin(interior_value, 0.0, scale * alpha, scale * beta, dx, grid_type)
+    # #2217 MOVED THIS REFUSAL SET IN BOTH DIRECTIONS, and the two are mirrors of one number. Near
+    # cancellation the old code refuses below `D = 1/2` and the new code refuses above it, at every
+    # `dx`: the old effective threshold on `coeff_ghost` was `1e-12/(2*dx)`, the new one at
+    # cancellation is `1e-12*(D/dx)`, and `dx` cancels. So which direction a sweep reports is a
+    # property of which side of 1/2 its `D` values sample -- NEITHER direction is dominant, and a
+    # count from one grid is not a characterisation. Neither direction is a regression either:
+    # `2D` and `v_n*dx` agree to ~13 significant figures in that band and the old answers there were
+    # cancellation garbage. The headline case going the other way is `v_n = 0`, homogeneous Neumann,
+    # where the ghost is exactly `interior_value` and refusing it was the defect #2217 reports.
+    return ghost_cell_robin(interior_value, 0.0, alpha, beta, dx, grid_type)
 
 
 def ghost_cell_advection_diffusion_no_flux(
