@@ -219,7 +219,8 @@ def ghost_cell_robin(
     # corrected in review. What the verdict must be invariant under is therefore the SCALING, which
     # `coeff_ghost` depends on and the physical wall does not -- against an absolute 1e-12 it was
     # not: over 144 inputs built to straddle the cancellation point the verdict flipped under
-    # rescaling in 96.
+    # rescaling in 96. Concretely, and this is the sentence worth keeping -- a caller that multiplied
+    # its pair by 100 to keep the coefficients in familiar units moved the refusal boundary by 100.
     #
     # The scale is `max(|alpha|/2, |beta|/dx)` -- the larger of the two terms whose cancellation
     # this predicate is about -- so it fires on GENUINE cancellation rather than on both terms
@@ -236,6 +237,20 @@ def ghost_cell_robin(
     # `<=` and not `<`, and that is the whole handling of the degenerate pair: at alpha = beta = 0
     # the scale is 0, so a strict `<` would compare `0 < 0` and ANSWER a condition that carries no
     # information at all. `<=` raises there, as the absolute threshold did.
+    # NOT invariant at the top of the float range, and the qualification is owed: at
+    # `alpha=2, beta=0.5, dx=0.1` -- `coeff_ghost = 6`, nowhere near cancellation -- `s = 1e308`
+    # overflows `beta/dx` to `inf`, so `coeff_scale` is `inf` and `inf <= 1e-12*inf` is True and this
+    # raises. Powers of two do not escape it (`s = 2**1023` also raises). Exotic, and left unrepaired
+    # because a pair that overflows has no meaningful ghost either way -- but "exactly
+    # scale-invariant" is false as an unqualified claim, and the message below then prints
+    # `alpha/2 + beta/dx = 0` for a value that is `inf`.
+    #
+    # DIRECT CALLERS: this refusal set moves in BOTH directions for anyone not coming through
+    # `ghost_cell_fp_no_flux`, and three modules do (`calculators.py`, `_compat.py`,
+    # `applicator_fdm.py`), two of them passing a non-zero `g`. The new/old threshold ratio is
+    # `S = max(|alpha|/2, |beta|/dx)`: it widens the refusal set when `S > 1` and narrows it when
+    # `S < 1`. Measured at `g = 0.7`: `alpha=-200, beta=1, dx=0.01` went ok -> raise, and
+    # `alpha=-0.02, beta=0.01, dx=1` went raise -> ok. Exact cancellation still refuses under both.
     coeff_scale = np.maximum(np.abs(alpha) / 2.0, np.abs(beta) / dx)
     singular = np.abs(coeff_ghost) <= 1e-12 * coeff_scale
     if np.any(singular):
@@ -411,17 +426,21 @@ def normal_frame_coefficients(
     flipped conversion sign approximates ``exp(-z)`` instead and collapses that order. Per-element
     values are pinned separately at both centrings and both wall directions.
 
-    IF YOU ARE THE SECOND CALLER THIS EXISTS FOR, READ THIS. The pair returned here is the
-    mathematically correct one and it is NOT sufficient on its own: handing it straight to
-    :func:`ghost_cell_robin` gives the right ghost and the WRONG refusal set, because robin's
-    singularity threshold is absolute while the quantity it tests has units (#2217). Measured --
-    unscaled, ``v_n = 0, D = 5e-12, dx = 10`` raises where the condition is homogeneous Neumann and
-    the ghost is exactly the interior value. :func:`ghost_cell_fp_no_flux` multiplies both
-    coefficients by ``2*dx`` first, which leaves the condition and the ghost unchanged and makes
-    robin's threshold mean ``|2D - v_n*dx| < 1e-12``. Any caller routing this pair into robin needs
-    the same scaling until #2217 lands. With a non-zero right-hand side the scaling is NOT free --
-    three plausible choices give 0.944, -0.167 and 0.944 at ``g = 0.5`` -- so a caller with ``g != 0``
-    has a question this function does not answer.
+    IF YOU ARE THE SECOND CALLER THIS EXISTS FOR, READ THIS. ~~Handing this pair straight to
+    :func:`ghost_cell_robin` gives the right ghost and the WRONG refusal set … any caller routing
+    this pair into robin needs the same ``2*dx`` scaling until #2217 lands.~~
+    [SUPERSEDED 2026-09-02] SUPERSEDED-BY: #2217. Every sentence of that paragraph was falsified by
+    the change that fixed it, and the correction commit for the round before this one CITED this
+    docstring as the copy to follow while its own diff was making it false. Robin's threshold is now
+    relative, ``v_n = 0, D = 5e-12, dx = 10`` answers unscaled, :func:`ghost_cell_fp_no_flux` no
+    longer scales, and no caller needs to.
+
+    WHAT STILL HOLDS, and it is the part that was never about the threshold: with a non-zero
+    right-hand side, rescaling the pair is NOT free. Scaling ``alpha`` and ``beta`` by ``s`` turns
+    ``alpha*u + beta*du/dn = g`` into ``... = g/s``, a different wall -- three plausible choices give
+    0.944, -0.167 and 0.944 at ``g = 0.5``. The Fokker-Planck wall always passes ``g = 0``, which is
+    why scaling was ever safe there; a caller with ``g != 0`` has a question this function does not
+    answer.
     """
     return drift_velocity * outward_normal_sign, -diffusion_coeff
 
@@ -616,7 +635,15 @@ def ghost_cell_fp_no_flux(
     # are not a characterisation -- a 720-input grid shows 12 such changes, a 1944-input grid shows
     # 106, spanning `v_n = 0` and `v_n = +/-1e-13` over several `D`.
     #
-    # THE OTHER DIRECTION EXISTS, and a pre-review version of this comment asserted it did not.
+    # BOTH DIRECTIONS HAVE THE SAME EXACT CRITERION, and it is the same number. A pre-review
+    # version of this comment asserted the answer -> refusal direction did not exist at all, and the
+    # version after that gave it an exact `iff` while leaving refusal -> answer as an anecdote about
+    # `v_n = 0`. They are mirrors: near cancellation the old code refuses below `D = 1/2` and the new
+    # code refuses above it, at every `dx`, and which direction a sweep reports is decided by which
+    # side of 1/2 its `D` values sample. Measured on one construction, varying only `D`:
+    # `D in {0.6, 1, 2, 10}` gives 232 answer -> refusal and 0 the other way; `D in {0.05, 0.1, 0.25,
+    # 0.4}` gives 0 and 1230. So DO NOT call either direction dominant -- that is a property of the
+    # grid, exactly as the counts below are.
     # Inputs the old code answered and this one refuses occupy a band with a sharp entry condition:
     # the old effective threshold on `coeff_ghost` was `1e-12/(2*dx)` (the `2*dx` scaling), the new
     # one at cancellation is `1e-12*(D/dx)`, so the band is non-empty exactly when `D > 1/2`.

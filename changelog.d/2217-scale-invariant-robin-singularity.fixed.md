@@ -27,7 +27,20 @@ code answered and this one refuses occupy a band that is non-empty exactly when 
 Measured, sweeping `v_n` through cancellation at three spacings: 0 hits at `D = 0.25` and `0.4`,
 then 28 at `D = 0.6`, 134 at `D = 1.0`, 266 at `D = 10`. Not regressions — `2D` and `v_n·dx` agree
 to ~13 significant figures there and the old answers were cancellation garbage (`-2.0e12` at one
-such point) — but a widening, recorded rather than left to be found later. Generic coefficients are
+such point) — but a widening, recorded rather than left to be found later.
+
+**The two directions are mirrors of the same number, so neither is "dominant".** Near cancellation
+the old code refuses below `D = 1/2` and the new code refuses above it, at every `dx`. Which
+direction a sweep reports is decided by which side of `1/2` its `D` values sample: varying only `D`
+on one construction, `D ∈ {0.6, 1, 2, 10}` gives 232 answer→refusal and 0 the other way, while
+`D ∈ {0.05, 0.1, 0.25, 0.4}` gives 0 and 1230. An earlier version of this fragment gave the
+answer→refusal side an exact criterion and left the other side an anecdote about `v_n = 0`.
+
+**`ghost_cell_robin`'s own refusal set moves both ways too**, for the three modules that call it
+directly rather than through the FP wall, two of which pass a non-zero `g`. The new/old threshold
+ratio is `S = max(|alpha|/2, |beta|/dx)` — wider when `S > 1`, narrower when `S < 1`. Measured at
+`g = 0.7`: `alpha=-200, beta=1, dx=0.01` went ok → raise; `alpha=-0.02, beta=0.01, dx=1` went
+raise → ok. Exact cancellation still refuses under both. Generic coefficients are
 untouched: at `alpha, beta ~ 1` and `dx ~ 0.01–0.1` neither threshold fires.
 
 **`ghost_cell_fp_no_flux` no longer scales its pair by `2*dx`.** That scaling existed only to make
@@ -54,6 +67,6 @@ cancellation. First, scaling `alpha` and `beta` by `s` turns `alpha*u + beta*du/
 `... = g/s`, so the wall is unchanged only at `g = 0`; with `g = 0.7, alpha = 2, beta = 0.5,
 dx = 0.1` the ghost moves 99% across three decades of scale, nowhere near cancellation. The FP wall
 always passes `g = 0`, which is why the invariance test can assert a value at all. Second, inside
-the cancellation band the ghost is `something / tiny` and rescaling perturbs it by ~1e-5 relative at
+the cancellation band the ghost is `something / tiny` and rescaling perturbs it by 1.6e-5 relative at
 `r = 1e-11` — conditioning, not a defect. The **"same verdict"** half is the one that holds
 everywhere, and is what this fix delivers. (#2217)

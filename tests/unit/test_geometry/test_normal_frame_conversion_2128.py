@@ -341,10 +341,13 @@ def test_the_singularity_verdict_is_invariant_under_rescaling_the_pair(grid_type
             #: The VALUE is a separate claim and it does NOT hold everywhere, which the first
             #: version of this test asserted and was wrong about. Near cancellation the ghost is
             #: `something / tiny`: `alpha/2` and `beta/dx` nearly annihilate, rescaling perturbs
-            #: each rounding, and the quotient moves by ~7e-6 relative at `r = 1e-11`. That is
+            #: each rounding, and the quotient moves by 1.6e-5 relative at `r = 1e-11`. That is
             #: conditioning, not a defect, and it is why #2217's acceptance test must be read as
             #: "same verdict" -- the "same ghost" half holds only where the condition is well
             #: conditioned. Asserted there, and deliberately not asserted in the cancellation band.
+            #: 1.6e-5 is re-measured on THIS family. `~7e-6` stood here and `~1e-5` in the changelog
+            #: for one commit: one measurement with two owners, both wrong, and the wronger copy was
+            #: the one next to the assertion.
             if ghosts and r >= 1e-3:
                 np.testing.assert_allclose(
                     ghosts,
@@ -366,6 +369,9 @@ def test_homogeneous_neumann_is_answered_not_refused():
     `D = 1/2` there is a band of inputs the old code answered and this one refuses. Both are
     characterised in `ghost_cell_fp_no_flux`'s own comment, which is the one owner for it.
     """
+    #: 2*D must be BELOW the old absolute 1e-12 for a row to discriminate. `7e-13` and `5e-12` give
+    #: 1.4e-12 and 1e-11, which the pre-#2217 code answered too -- so 8 of these 16 rows pin nothing
+    #: and are a smoke check. The discriminating rows are the first two.
     for D in (1e-13, 3.75e-13, 7.0e-13, 5e-12):
         for dx in (0.001, 0.1, 1.0, 10.0):
             got = ghost_cell_fp_no_flux(1.0, 0.0, D, dx, +1.0, GridType.CELL_CENTERED)
