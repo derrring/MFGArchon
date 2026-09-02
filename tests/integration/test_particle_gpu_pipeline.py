@@ -53,8 +53,15 @@ except (ImportError, Exception):
 class TestParticleGPUPipeline:
     """Test full GPU particle evolution pipeline."""
 
-    def test_gpu_matches_cpu_numerically(self):
-        """GPU pipeline should match CPU pipeline numerically."""
+    def test_torch_cpu_matches_numpy(self):
+        """The torch backend path agrees with the numpy path on this fixture.
+
+        NEITHER side is a GPU: the comparand below is ``TorchBackend(device="cpu")``, so this
+        pins numpy-vs-torch dispatch, not CPU-vs-device. The old name said GPU.
+
+        Its discrimination is NOT established, and the tolerances below are not defended --
+        see #2210. Do not read a green here as evidence that the torch path is correct.
+        """
         # Create simple problem
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(
@@ -123,7 +130,13 @@ class TestParticleGPUPipeline:
         np.testing.assert_allclose(mean_cpu, mean_gpu, rtol=0.3, atol=0.1)
 
     def test_gpu_pipeline_runs_without_errors(self):
-        """GPU pipeline should complete without errors."""
+        """The particle pipeline runs to completion on the MPS device.
+
+        A capability cell: it answers "does this configuration run at all", not "is the
+        answer right". What it does and does not discriminate is not established -- see
+        #2210. The device and precision are explicit because #1921 made the old
+        ``device="mps"`` default construction raise rather than narrow in silence.
+        """
         geometry = TensorProductGrid(bounds=[(-1.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(
             geometry=geometry,
@@ -141,7 +154,10 @@ class TestParticleGPUPipeline:
         Nt_points = problem.Nt + 1  # Temporal grid points
         U_drift = np.zeros((Nt_points, Nx_points))
 
-        backend = TorchBackend(device="mps")  # Test on actual MPS device
+        # MPS has no float64 at all, so #1921 refuses the default rather than narrowing in
+        # silence. This test asks whether the particle pipeline runs on the device at all,
+        # and every assertion below is decade-wide (mass to rtol=0.3), so float32 carries it.
+        backend = TorchBackend(device="mps", precision="float32")
         solver = FPParticleSolver(
             problem,
             num_particles=5000,
@@ -235,80 +251,3 @@ class TestParticleGPUPipeline:
         # them and reporting a plausible density. The refusal is asserted in
         # test_gpu_particle_refuses_absorbing_bc_1910.py; the loop above therefore no longer feeds
         # Dirichlet to this backend.
-
-
-@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
-class TestGPUPerformance:
-    """Performance tests for GPU pipeline."""
-
-    def test_gpu_faster_than_cpu_for_large_N(self):
-        """GPU should be faster than CPU for large particle counts."""
-        import time
-
-        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(
-            geometry=geometry,
-            Nt=50,
-            T=1.0,
-            sigma=0.1,
-            components=_default_components(),
-        )
-
-        m_initial = np.exp(-((problem.geometry.get_spatial_grid().squeeze() - 0.5) ** 2) / 0.1)
-        dx = problem.geometry.get_grid_spacing()[0]
-        m_initial = m_initial / (np.sum(m_initial) * dx)
-
-        (Nx_points,) = problem.geometry.get_grid_shape()  # 1D spatial grid
-        Nt_points = problem.Nt + 1  # Temporal grid points
-        U_drift = np.zeros((Nt_points, Nx_points))
-
-        N = 10000  # Large particle count
-
-        # CPU timing
-        solver_cpu = FPParticleSolver(
-            problem,
-            num_particles=N,
-            kde_bandwidth=0.1,
-            boundary_conditions=periodic_bc(dimension=1),
-        )
-        solver_cpu.backend = None
-
-        start = time.time()
-        _M_cpu = solver_cpu.solve_fp_system(m_initial, U_drift)
-        time_cpu = time.time() - start
-
-        # GPU timing
-        backend_gpu = TorchBackend(device="mps")
-        solver_gpu = FPParticleSolver(
-            problem,
-            num_particles=N,
-            kde_bandwidth=0.1,
-            boundary_conditions=periodic_bc(dimension=1),
-        )
-        solver_gpu.backend = backend_gpu
-
-        start = time.time()
-        _M_gpu = solver_gpu.solve_fp_system(m_initial, U_drift)
-        time_gpu = time.time() - start
-
-        speedup = time_cpu / time_gpu
-
-        Nt_points = problem.geometry.get_grid_shape()[0] - 1  # intervals
-        print(f"\nGPU Pipeline Performance (N={N}, Nt={Nt_points}):")
-        print(f"  CPU time: {time_cpu:.2f}s")
-        print(f"  GPU time: {time_gpu:.2f}s")
-        print(f"  Speedup: {speedup:.2f}x")
-
-        # Phase 2.1 Complete: Internal GPU KDE eliminates transfers
-        # Realistic expectation: 1.5-2x speedup for N=10k-100k on MPS
-        # (CUDA would achieve higher speedup, MPS has kernel overhead)
-        if speedup >= 1.5:
-            print(f"  ✅ Phase 2.1 success: {speedup:.2f}x (MPS architecture)")
-        elif speedup >= 1.0:
-            print(f"  ⚠️  Modest speedup: {speedup:.2f}x (consider larger N)")
-        else:
-            print(f"  ❌ Slower on GPU: {speedup:.2f}x (problem size too small)")
-
-        # Assert that pipeline executes correctly
-        # Performance validation happens in benchmarks/particle_gpu_speedup_analysis.py
-        assert speedup > 0.1  # Sanity check: not catastrophically slow
