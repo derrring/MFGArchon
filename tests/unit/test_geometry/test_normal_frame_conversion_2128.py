@@ -38,9 +38,6 @@ from mfgarchon.geometry.boundary.ghost_cells import (
 )
 
 _CENTRINGS = [GridType.CELL_CENTERED, GridType.VERTEX_CENTERED]
-#: (v, D, interior, dx). Includes a negative drift and an interior value below zero, so a sign
-#: error in the conversion cannot cancel against a symmetric fixture.
-_CASES = [(0.4, 0.2, 1.0, 0.1), (-0.7, 0.35, 2.5, 0.05), (1.3, 0.9, -0.4, 0.2)]
 #: Stated orders against exp(z) (#2068): 3.04 cell-centred, 2.01 vertex. Asserted with margin.
 _MIN_ORDER = {GridType.CELL_CENTERED: 2.6, GridType.VERTEX_CENTERED: 1.7}
 
@@ -144,23 +141,28 @@ def test_the_vertex_zero_diffusion_value_is_preserved_not_inherited(diffusion):
     preservation deliberate: if the guard is removed, this fails rather than the value quietly
     becoming 0.0.
 
-    [CORRECTED round 7] An earlier version of this paragraph called the preserved value "correct"
-    at `v_n > 0`, on the argument that copying the interior into the ghost is the standard outflow
-    treatment. That was wrong in the direction that flatters the value being preserved, and the
-    measurement inverts it. With `J . n = v_n*rho_wall - D*d(rho)/dn` evaluated in each centring's
-    own wall geometry, at `D = 0`:
+    [CORRECTED round 7, refined round 8] An earlier version called the preserved value "correct" at
+    `v_n > 0`, on the argument that copying the interior into the ghost is the standard outflow
+    treatment. That flattered the value being preserved and the measurement does not support it.
+    With `J . n = v_n*rho_wall - D*d(rho)/dn` in each centring's own wall geometry, at `D = 0`,
+    SWEEPING the ghost rather than evaluating it at one point:
 
-        vertex, wall IS the node, rho_wall = 1.0   ->  J.n = +0.4 (outflow), -0.4 (inflow)
-        cell,   wall is the face, rho_wall = 0.0   ->  J.n =  0   at BOTH signs
-        control, D = 0.5, all four                 ->  |J.n| <= 6.7e-16
+        ghost ->        1.0     0.0    -1.0    17.0
+        vertex J.n     +0.4    +0.4    +0.4    +0.4     <- CONSTANT in the ghost
+        cell   J.n     +0.4    +0.2     0.0    +3.6     <- -1.0 is the unique zero
+        control, D = 0.5, all four cases: |J.n| <= 6.7e-16
 
-    So the value preserved here LEAKS through a wall `types.py` defines as impermeable -- NO_FLUX
-    and REFLECTING are one concept there, so "non-reflecting treatment" named the condition this
-    function is not -- while the cell-centred `-1.0` that the `ghost_cells.py` docstring frames as
-    the pathology satisfies the contract exactly. On a vertex grid no ghost value can move
-    `rho_wall` at all, so the honest reading is that this function's stated contract is
-    UNSATISFIABLE at `D = 0` on this centring, which is a sharper form of #2220's
-    over-specification, not an exception to it.
+    Read the vertex row as a NEGATIVE result: `J . n` does not respond to the ghost at all, because
+    the wall IS the node and `D * anything = 0`. So the flux this centring leaks through a wall
+    `types.py` defines as impermeable -- NO_FLUX and REFLECTING are one concept there, so
+    "non-reflecting treatment" named the condition this function is not -- is a property of the
+    CENTRING at `D = 0`, not of the value `1.0`. No ghost can fix it and no ghost can be blamed for
+    it, so this function's stated contract is UNSATISFIABLE at `D = 0` on this centring: a sharper
+    form of #2220's over-specification, not an exception to it.
+
+    The cell row is the discriminating one and runs the other way -- there the ghost does move
+    `rho_wall`, and the `-1.0` that the `ghost_cells.py` docstring frames as a pathology is the
+    unique value satisfying the contract.
 
     Two consequences for how to read this test. It preserves the status quo and does not endorse
     it; #2220 must not cite it as evidence for keeping this value. And no first-order argument
@@ -355,7 +357,9 @@ def test_the_conversion_is_reachable_from_the_package_surface():
     #: `hasattr` alone passes through the lazy compat map and cannot see a missing `__all__`
     #: entry -- round 7 found the export half-landed with this test green. The convention is
     #: measured from the siblings, not assumed: they sit in `ghost_cells.__all__` and NOT in
-    #: `boundary.__all__`, and each also has a lazy-map line. All three are required.
+    #: `boundary.__all__`, and each also has a lazy-map line. All three are required. Adding to
+    #: `ghost_cells.__all__` also widens `applicator_base.__all__`, built here by star-import --
+    #: consistent with the siblings, and not asserted here because it is that module's convention.
     assert "normal_frame_coefficients" in ghost_cells.__all__, (
         "the owner is missing from ghost_cells.__all__, so `import *` does not yield it"
     )

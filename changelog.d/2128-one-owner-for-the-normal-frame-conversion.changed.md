@@ -7,8 +7,11 @@ exact zero-flux profile `rho * exp(v_n*dx/D)`, which neither function implements
 configurations, re-measured on the shipped build: 5 bit-identical, 6 at 1 ulp, and 1 at 3 ulps
 (4e-16 relative), all from summation order. Those figures describe those 12 configurations and are
 not a bound: an independent round-7 sweep of 68,400 inputs found a maximum of 8 ulp, plus 78 inputs
-where `main` returned exactly `0.0` and the new code returns +/-1e-16 -- a sign flip at the ghost
-density's zero crossing, harmless and disclosed rather than claimed away. (#2128)
+where `main` returned exactly `0.0` and the new code returns +/-1e-16 -- a sign flip at the CELL
+branch's zero crossing. Nor is 8 ulp a bound: the vertex branch has its own zero crossing where both
+results are around 1e-15 and ulp distance stops meaning anything (`u=-3.7, v=-0.1, D=0.01, dx=0.1`:
+6.4e-16 against 1.3e-15, an absolute difference of 6.9e-16). Disclosed rather than claimed away.
+(#2128)
 
 Three behaviour changes, all intended and all narrow:
 
