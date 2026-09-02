@@ -142,11 +142,9 @@ def test_the_vertex_zero_diffusion_value_is_preserved_not_inherited(diffusion):
     preservation deliberate: if the guard is removed, this fails rather than the value quietly
     becoming 0.0.
 
-    [CORRECTED round 7, refined round 8] An earlier version called the preserved value "correct" at
-    `v_n > 0`, on the argument that copying the interior into the ghost is the standard outflow
-    treatment. That flattered the value being preserved and the measurement does not support it.
-    With `J . n = v_n*rho_wall - D*d(rho)/dn` in each centring's own wall geometry, at `D = 0`,
-    SWEEPING the ghost rather than evaluating it at one point:
+    The preserved value is NOT "correct at outflow", which is the tempting reading. With
+    `J . n = v_n*rho_wall - D*d(rho)/dn` in each centring's own wall geometry, at `D = 0`, SWEEPING
+    the ghost rather than evaluating it at one point:
 
         ghost ->        1.0     0.0    -1.0    17.0
         vertex J.n     +0.4    +0.4    +0.4    +0.4     <- CONSTANT in the ghost
@@ -302,8 +300,7 @@ def test_the_singularity_verdict_is_invariant_under_rescaling_the_pair(grid_type
     is the invariance itself: scaling `(alpha, beta)` by any non-zero constant leaves the VERDICT
     unchanged, because `coeff_ghost` depends on the scale and the physical wall does not.
 
-    NOT the ghost, in general, and a pre-review version of this docstring said otherwise. Scaling
-    `alpha` and `beta` by `s` turns `alpha*u + beta*du/dn = g` into `... = g/s`, which is the same
+    NOT the ghost, in general. Scaling `alpha` and `beta` by `s` turns `alpha*u + beta*du/dn = g` into `... = g/s`, which is the same
     wall only at `g = 0`. Every call below passes `rhs_value = 0.0`, which is why the value
     assertion holds here at all; at `g = 0.7, alpha = 2, beta = 0.5, dx = 0.1` the ghost moves 99%
     across three decades of scale, nowhere near a cancellation point.
@@ -345,9 +342,7 @@ def test_the_singularity_verdict_is_invariant_under_rescaling_the_pair(grid_type
             #: conditioning, not a defect, and it is why #2217's acceptance test must be read as
             #: "same verdict" -- the "same ghost" half holds only where the condition is well
             #: conditioned. Asserted there, and deliberately not asserted in the cancellation band.
-            #: 1.6e-5 is re-measured on THIS family. `~7e-6` stood here and `~1e-5` in the changelog
-            #: for one commit: one measurement with two owners, both wrong, and the wronger copy was
-            #: the one next to the assertion.
+            #: 1.6e-5 is measured on THIS family; the changelog carries the same number.
             if ghosts and r >= 1e-3:
                 np.testing.assert_allclose(
                     ghosts,
@@ -363,11 +358,9 @@ def test_homogeneous_neumann_is_answered_not_refused():
     `v_n = 0` makes the wall condition `-D * drho/dn = 0` at every `D > 0`, so the ghost is the
     interior value, and the absolute threshold refused it whenever `2D < 1e-12`.
 
-    That is the DOMINANT difference the fix makes, not the entire one, and a pre-review version of
-    this docstring claimed the latter on the strength of one grid. The counts are grid-dependent --
-    720 inputs give 12 changes, 1944 give 106 -- and the opposite direction exists too: above
-    `D = 1/2` there is a band of inputs the old code answered and this one refuses. Both are
-    characterised in `ghost_cell_fp_no_flux`'s own comment, which is the one owner for it.
+    That is one direction of the change, not all of it, and a count from any one grid is not a
+    characterisation: above `D = 1/2` there is a band the old code answered and this one refuses.
+    `ghost_cell_fp_no_flux`'s own comment is the one owner for both directions.
     """
     #: 2*D must be BELOW the old absolute 1e-12 for a row to discriminate. `7e-13` and `5e-12` give
     #: 1.4e-12 and 1e-11, which the pre-#2217 code answered too -- so 8 of these 16 rows pin nothing

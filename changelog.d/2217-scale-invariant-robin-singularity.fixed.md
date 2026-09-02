@@ -10,9 +10,9 @@ The threshold is `max(|alpha|/2, |beta|/dx)`, so it fires on genuine cancellatio
 both terms merely being small. Two alternatives were measured and rejected. `|alpha|/2 + |beta|/dx`
 is equally invariant and strictly more conservative for no gain. Normalising the pair by
 `max(|alpha|, |beta|)` — #2217's own preferred option — is **equally scale-invariant**, both being
-positively homogeneous of degree 1; its defect is **dimensional**, in that its effective tolerance
-drifts with `dx`: measured 2.0e-12 at `dx = 0.01` and `0.1`, then 1.0e-11 at `dx = 10` and 1.0e-10
-at `dx = 100`, where the chosen scale holds 1.0e-12 throughout. The comparison is `<=` rather than
+positively homogeneous of degree 1. Its defect is **dimensional**: it is not invariant under a
+change of length unit, since `x -> L*x` sends `beta -> L*beta` and `dx -> L*dx`, so its verdict
+differs measured in cm and in m. The chosen scale is invariant under both. The comparison is `<=` rather than
 `<`, so the wholly degenerate pair `alpha = beta = 0`, where the scale is itself 0, still raises.
 
 **The refusal set moves in both directions, and the counts are grid-dependent.** The dominant
