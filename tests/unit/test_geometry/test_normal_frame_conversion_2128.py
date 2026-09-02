@@ -195,10 +195,10 @@ def test_field_valued_inputs_behave_the_same_on_both_centrings():
         #: shape and finiteness: the THIRD time on this branch that an arm pinning an array
         #: capability shipped without a value oracle. Measured before this line existed -- a defect
         #: corrupting only the array-`D` path (`D -> 2D` for arrays) passed this arm, this file, and
-        #: all 1348 tests in `tests/unit/test_geometry`.
+        #: the whole geometry suite (1348 tests at that measurement).
         #: Both accepted shapes, both wall directions, and a non-unit interior -- `main` accepts
         #: shape-(1,1) too, `ghost_cells.py` names it in the acceptance set it preserves, and a
-        #: predicate refusing only it went green on all 1348 geometry tests.
+        #: predicate refusing only it went green on the whole geometry suite (1348 tests then).
         for shape in ((1,), (1, 1)):
             for sign in (-1.0, +1.0):
                 interior, v, D, dx = 2.5, 0.4, 0.2, 0.1
@@ -220,7 +220,7 @@ def test_field_valued_inputs_behave_the_same_on_both_centrings():
     drift = np.array([0.4, -0.2, 1.1])
     D, dx = 0.2, 0.1
     #: BOTH wall directions. An earlier draft passed `sign = +1.0` only, so a defect applying the
-    #: sign wrongly on the array path -- and only there -- went green on all 1348 geometry tests.
+    #: sign wrongly on the array path -- and only there -- went green on the whole geometry suite (1348 tests then).
     for grid_type in _CENTRINGS:
         for sign in (-1.0, +1.0):
             v_n = drift * sign
@@ -231,6 +231,31 @@ def test_field_valued_inputs_behave_the_same_on_both_centrings():
             got = ghost_cell_fp_no_flux(u, drift, D, dx, sign, grid_type)
             assert np.shape(got) == (3,), f"{grid_type.name}: a field drift must stay elementwise"
             np.testing.assert_allclose(got, expected, rtol=1e-15)
+
+
+def test_the_conversion_is_reachable_from_the_package_surface():
+    """The owner must be importable the way a second caller would import it.
+
+    This function exists so a caller holding axis-frame `v` and `D` does not write the copy again.
+    That argument is only true if such a caller can reach it. It was not: `normal_frame_coefficients`
+    was absent from `geometry/boundary/__init__.py`'s lazy map while both its siblings resolved, so
+    the public path raised `AttributeError` and only the deep module path worked -- which is how
+    THIS FILE imports it, so the tests could not see the gap. Two rounds called it non-blocking; it
+    stops being non-blocking once the deliverable's stated purpose depends on it.
+
+    Pinned here because removing that line failed nothing: 2064 tests passed with the export gone.
+    """
+    import mfgarchon.geometry.boundary as boundary
+
+    assert hasattr(boundary, "normal_frame_coefficients"), (
+        "normal_frame_coefficients is not on the package surface. Add it to the lazy map in "
+        "geometry/boundary/__init__.py beside ghost_cell_fp_no_flux -- the docstring's 'a second "
+        "caller would otherwise write the copy again' is false while it is unreachable."
+    )
+    #: Same object by both routes, so the export cannot drift to a different symbol.
+    assert boundary.normal_frame_coefficients is normal_frame_coefficients
+    #: Control: a name that is not exported must still fail, or this test passes on any module.
+    assert not hasattr(boundary, "zzz_not_an_exported_name")
 
 
 if __name__ == "__main__":
