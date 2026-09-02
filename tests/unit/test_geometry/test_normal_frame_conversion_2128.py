@@ -108,13 +108,15 @@ def test_the_ghost_converges_to_the_exact_zero_flux_profile(grid_type, sign):
 
 
 def test_the_cell_centred_degeneracy_refuses_instead_of_reflecting():
-    """BEHAVIOUR CHANGE, the only one in #2128, pinned deliberately.
+    """The behaviour change this file's degeneracy carries, pinned deliberately.
 
     At `alpha/2 + beta/dx = 0` -- equivalently `2D = v_n*dx` -- the ghost's own coefficient vanishes,
     so the condition does not determine it. The pre-#2128 code returned `interior_value` there, a
     silent fallback it called "the pure advection limit"; `ghost_cell_robin` raises, and the
     delegation makes the refusal win. Measured on `u=1, v=4, D=0.2, dx=0.1`: `1.0` before, ValueError
-    after, and that is the whole behavioural diff of this change.
+    after. It is not the branch's only one -- three are enumerated in the changelog fragment, and an
+    earlier draft of this docstring said otherwise, which round 3 corrected in the changelog and left
+    here.
 
     The second arm is the over-fire control -- halving the drift leaves the degeneracy and must solve.
     """
@@ -165,8 +167,9 @@ def test_field_valued_inputs_behave_the_same_on_both_centrings():
 
     Two different surfaces, and the delegation moved them in opposite directions:
 
-    - **Multi-element `D`** — `main` raised `ValueError` for size > 1 and, because `bool()` on a
-      one-element array is legal, silently ACCEPTED shape-(1,). The delegation made the CELL path
+    - **Multi-element `D`** — `main` raised `ValueError` for a multi-element ndarray and `TypeError`
+      for a list or tuple, and — because `bool()` on a one-element array is legal — silently ACCEPTED
+      shape-(1,) and shape-(1,1). The delegation made the CELL path
       answer for any array while the vertex guard, a scalar `abs()`, kept raising: an asymmetry
       introduced by side effect. Refused on both for size > 1, size-1 still accepted — `main`'s
       acceptance set exactly. A draft guarded on `ndim != 0`, which also refused size-1: an
@@ -176,7 +179,12 @@ def test_field_valued_inputs_behave_the_same_on_both_centrings():
       ambiguous`) and the delegation makes it work on both. That is a genuine gain, unclaimed until
       the review found it, and pinned here so it is not lost silently.
     """
-    u = np.ones(3)
+    #: NON-UNIT interior, and it is load-bearing. An earlier draft used `np.ones(3)` and a size-1
+    #: interior of 1.0, so `interior_value` factored out of both oracles entirely -- a mutant
+    #: dropping it (returning the ghost for interior 1 whatever the caller passed) went green on all
+    #: 1348 geometry tests. A value oracle whose fixture makes a factor invisible is not a value
+    #: oracle for that factor.
+    u = np.array([1.0, 2.5, -0.4])
 
     for grid_type in _CENTRINGS:
         with pytest.raises(NotImplementedError, match="multi-element diffusion_coeff"):
@@ -188,13 +196,20 @@ def test_field_valued_inputs_behave_the_same_on_both_centrings():
         #: capability shipped without a value oracle. Measured before this line existed -- a defect
         #: corrupting only the array-`D` path (`D -> 2D` for arrays) passed this arm, this file, and
         #: all 1348 tests in `tests/unit/test_geometry`.
-        got = ghost_cell_fp_no_flux(1.0, 0.4, np.array([0.2]), 0.1, +1.0, grid_type)
-        assert np.shape(got) == (1,)
-        expected_size1 = {
-            GridType.CELL_CENTERED: (2 * 0.2 + 0.4 * 0.1) / (2 * 0.2 - 0.4 * 0.1),
-            GridType.VERTEX_CENTERED: (0.2 + 0.4 * 0.1) / 0.2,
-        }[grid_type]
-        np.testing.assert_allclose(got, [expected_size1], rtol=1e-15)
+        #: Both accepted shapes, both wall directions, and a non-unit interior -- `main` accepts
+        #: shape-(1,1) too, `ghost_cells.py` names it in the acceptance set it preserves, and a
+        #: predicate refusing only it went green on all 1348 geometry tests.
+        for shape in ((1,), (1, 1)):
+            for sign in (-1.0, +1.0):
+                interior, v, D, dx = 2.5, 0.4, 0.2, 0.1
+                v_n = v * sign
+                got = ghost_cell_fp_no_flux(interior, v, np.full(shape, D), dx, sign, grid_type)
+                assert np.shape(got) == shape, f"{grid_type.name}: shape {shape} must be preserved"
+                expected_1 = {
+                    GridType.CELL_CENTERED: interior * (2 * D + v_n * dx) / (2 * D - v_n * dx),
+                    GridType.VERTEX_CENTERED: interior * (D + v_n * dx) / D,
+                }[grid_type]
+                np.testing.assert_allclose(got, np.full(shape, expected_1), rtol=1e-15)
 
     #: Asserted against the closed form PER ELEMENT, not against shape and finiteness. An earlier
     #: draft of this arm checked `isfinite` plus "three distinct values", and an array-only defect --
@@ -203,16 +218,19 @@ def test_field_valued_inputs_behave_the_same_on_both_centrings():
     #: round 1 raised against this file's over-fire control, re-created in the arm added to pin an
     #: array capability. Only a per-element oracle sees it.
     drift = np.array([0.4, -0.2, 1.1])
-    D, dx, sign = 0.2, 0.1, +1.0
-    v_n = drift * sign
-    expected = {
-        GridType.CELL_CENTERED: u * (2.0 * D + v_n * dx) / (2.0 * D - v_n * dx),
-        GridType.VERTEX_CENTERED: u * (D + v_n * dx) / D,
-    }
+    D, dx = 0.2, 0.1
+    #: BOTH wall directions. An earlier draft passed `sign = +1.0` only, so a defect applying the
+    #: sign wrongly on the array path -- and only there -- went green on all 1348 geometry tests.
     for grid_type in _CENTRINGS:
-        got = ghost_cell_fp_no_flux(u, drift, D, dx, sign, grid_type)
-        assert np.shape(got) == (3,), f"{grid_type.name}: a field-valued drift must stay elementwise"
-        np.testing.assert_allclose(got, expected[grid_type], rtol=1e-15)
+        for sign in (-1.0, +1.0):
+            v_n = drift * sign
+            expected = {
+                GridType.CELL_CENTERED: u * (2.0 * D + v_n * dx) / (2.0 * D - v_n * dx),
+                GridType.VERTEX_CENTERED: u * (D + v_n * dx) / D,
+            }[grid_type]
+            got = ghost_cell_fp_no_flux(u, drift, D, dx, sign, grid_type)
+            assert np.shape(got) == (3,), f"{grid_type.name}: a field drift must stay elementwise"
+            np.testing.assert_allclose(got, expected, rtol=1e-15)
 
 
 if __name__ == "__main__":

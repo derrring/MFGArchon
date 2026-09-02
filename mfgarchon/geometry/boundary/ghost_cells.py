@@ -489,7 +489,8 @@ def ghost_cell_fp_no_flux(
     #
     # THE PREDICATE IS `size != 1`, NOT `ndim != 0`, and the difference is not pedantry. `main`'s
     # guard was `if abs(denominator) < 1e-12`, and `bool()` on a ONE-ELEMENT array is legal, so
-    # `main` ACCEPTED shape-(1,) and (1,1) and raised `ValueError` only for size > 1. `ndim != 0`
+    # `main` ACCEPTED shape-(1,) and (1,1); it raised `ValueError` for a multi-element ndarray and
+    # `TypeError` for a list or tuple. `ndim != 0`
     # refuses the size-1 case too -- an undeclared capability removal inside a consolidation, which
     # is the thing this branch keeps promising not to do, and a draft of this guard shipped it. That
     # acceptance is an accident of `bool()` on a one-element array rather than a designed feature; it

@@ -223,6 +223,7 @@ def __getattr__(name: str):
         "high_order_ghost_dirichlet": ("ghost_cells", "high_order_ghost_dirichlet"),
         "high_order_ghost_neumann": ("ghost_cells", "high_order_ghost_neumann"),
         "ghost_cell_fp_no_flux": ("ghost_cells", "ghost_cell_fp_no_flux"),
+        "normal_frame_coefficients": ("ghost_cells", "normal_frame_coefficients"),
         "ghost_cell_advection_diffusion_no_flux": ("ghost_cells", "ghost_cell_advection_diffusion_no_flux"),
         "ghost_cell_linear_extrapolation": ("ghost_cells", "ghost_cell_linear_extrapolation"),
         "ghost_cell_quadratic_extrapolation": ("ghost_cells", "ghost_cell_quadratic_extrapolation"),

@@ -12,9 +12,10 @@ Three behaviour changes, all intended and all narrow:
 1. Cell-centred at `2D = v_n*dx`, where the ghost's own coefficient vanishes and the condition
    determines nothing, now raises instead of silently returning `interior_value`.
 2. Multi-element `diffusion_coeff` now raises `NotImplementedError` on both centrings. Previously it
-   raised `ValueError` for size > 1 on both and — because `bool()` on a one-element array is legal —
-   was silently accepted at size 1. Size-1 is still accepted; only the exception **type** for size > 1
-   changed, which is a public-API change for any caller catching `ValueError` here.
+   raised `ValueError` for a multi-element ndarray and `TypeError` for a list or tuple, and — because
+   `bool()` on a one-element array is legal — silently accepted size 1. Size-1 is still accepted; only
+   the exception **type** changed, which is a public-API change for a caller catching **either**
+   `ValueError` or `TypeError` here.
 3. A field-valued `drift_velocity` now works on the cell-centred path, where it previously raised
    `ValueError: truth value of an array is ambiguous`. A gain, not a regression.
 
