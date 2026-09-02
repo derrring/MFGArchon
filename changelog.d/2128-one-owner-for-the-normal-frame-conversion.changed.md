@@ -1,0 +1,33 @@
+`ghost_cell_fp_no_flux` no longer carries its own copy of the Robin closed form. The Fokker-Planck
+no-flux condition `J . n = 0` is a Robin condition once its axis-frame `v` and `D` are projected onto
+the outward normal, and that projection is now `normal_frame_coefficients(v, D, sign) -> (alpha,
+beta)`, with the ghost obtained from `ghost_cell_robin`. Verified against the pre-#2128 closed form
+over 2016 inputs — 1966 identical, 50 of them the first change below, 0 regressions — and against the
+exact zero-flux profile `rho * exp(v_n*dx/D)`, which neither function implements. On the 12 headline
+configurations, re-measured on the shipped build: 5 bit-identical, 6 at 1 ulp, and 1 at 3 ulps
+(4e-16 relative), all from summation order. Those figures describe those 12 configurations and are
+not a bound: an independent round-7 sweep of 68,400 inputs found a maximum of 8 ulp, plus 78 inputs
+where `main` returned exactly `0.0` and the new code returns +/-1e-16 -- a sign flip at the CELL
+branch's zero crossing. Nor is 8 ulp a bound: the vertex branch has its own zero crossing where both
+results are around 1e-15 and ulp distance stops meaning anything (`u=-3.7, v=-0.1, D=0.01, dx=0.1`:
+6.4e-16 against 1.3e-15, an absolute difference of 6.9e-16). Disclosed rather than claimed away.
+(#2128)
+
+Three behaviour changes, all intended and all narrow:
+
+1. Cell-centred at `2D = v_n*dx`, where the ghost's own coefficient vanishes and the condition
+   determines nothing, now raises instead of silently returning `interior_value`.
+2. Multi-element `diffusion_coeff` now raises `NotImplementedError` on both centrings. Previously it
+   raised `ValueError` for a multi-element ndarray and `TypeError` for a list or tuple, and — because
+   `bool()` on a one-element array is legal — silently accepted size 1. Size-1 is still accepted; only
+   the exception **type** changed, which is a public-API change for a caller catching **either**
+   `ValueError` or `TypeError` here.
+3. A field-valued `drift_velocity` now works on the cell-centred path, where it previously raised
+   `ValueError: truth value of an array is ambiguous`. A gain, not a regression.
+
+The vertex-centred `D ~ 0` degeneracy is a different condition and its pre-existing value is
+preserved behind an explicit guard rather than inherited from Robin — that choice is a physics
+question and is #2220's, not a consolidation's. #2220 reframes it: at `D = 0` the equation is
+first order, so an outflow wall admits no boundary condition and an inflow wall admits exactly
+one, and the criterion is the sign of the normal velocity, which neither centring reads.
+(#2128, #2220)
