@@ -233,6 +233,61 @@ def test_field_valued_inputs_behave_the_same_on_both_centrings():
             np.testing.assert_allclose(got, expected, rtol=1e-15)
 
 
+@pytest.mark.parametrize(
+    ("diffusion", "must_raise", "wrong_scale"),
+    [
+        (3.75e-13, True, "4*dx under-fires: it answers where the pre-#2128 predicate refused"),
+        (7.0e-13, False, "1*dx over-fires: it refuses where the pre-#2128 predicate answered"),
+    ],
+    ids=["under_fire_guard", "over_fire_guard"],
+)
+def test_the_scales_magnitude_is_pinned_from_both_sides(diffusion, must_raise, wrong_scale):
+    """`ghost_cell_fp_no_flux` scales the Robin pair by `2*dx`, and the 2 is load-bearing.
+
+    `ghost_cell_robin`'s singularity threshold is absolute while the quantity it tests has units
+    (#2217), so the scale is what makes that threshold mean `|2D - v_n*dx| < 1e-12` -- this
+    function's own pre-#2128 predicate. Only the magnitude carries anything: the sign is provably
+    free and is deliberately unpinned, which the source says.
+
+    THE MAGNITUDE WAS NOT PINNED, and that is why this test exists. `scale = 4*dx` passed the entire
+    geometry suite while disagreeing with the pre-#2128 refusal set on 20,006 of 133,141
+    near-threshold draws -- 52 lines of comment argued the magnitude matters and no assertion held
+    it. Both directions are pinned here because a wrong magnitude fails asymmetrically: too large
+    under-fires, too small over-fires, and a one-sided test admits half of them.
+
+    At `v_n = 0` and `dx = 1.0` the tested quantity is `k*D` for `scale = k*dx`, so the guard fires
+    iff `k*D < 1e-12` while the reference predicate fires iff `2*D < 1e-12`. The two `D` values below
+    are chosen to sit between those thresholds, one on each side.
+    """
+    v, dx, u, sign = 0.0, 1.0, 1.0, +1.0
+    if must_raise:
+        with pytest.raises(ValueError, match="singular ghost cell formula"):
+            ghost_cell_fp_no_flux(u, v, diffusion, dx, sign, GridType.CELL_CENTERED)
+    else:
+        #: `v_n = 0` is homogeneous Neumann, so the ghost is exactly the interior value.
+        assert ghost_cell_fp_no_flux(u, v, diffusion, dx, sign, GridType.CELL_CENTERED) == pytest.approx(u), wrong_scale
+
+
+def test_zero_diffusion_has_a_stated_behaviour_on_both_centrings():
+    """#2128 acceptance: `D -> 0` must have a stated, TESTED behaviour. It now has both, and they differ.
+
+    Cell-centred returns a NEGATIVE ghost density. That is what the condition says -- the wall is the
+    face, the face value is `(rho_g + rho_i)/2`, and `v_n * rho_wall = 0` with `v_n != 0` forces
+    `rho_g = -rho_i` -- and `main` returns the same value by the same expression, so #2128 inherited
+    it rather than causing it. Whether a Fokker-Planck solver should accept a negative ghost is
+    #2219's question.
+
+    Vertex-centred returns `interior_value`, because the guard preserved from before #2128 fires
+    there. Whether THAT is right is #2215's question.
+
+    Pinned as the status quo, not as an endorsement: the point is that both are now stated and a
+    change to either fails a test instead of moving silently.
+    """
+    interior, v, dx, sign = 1.0, 0.4, 0.1, +1.0
+    assert ghost_cell_fp_no_flux(interior, v, 0.0, dx, sign, GridType.CELL_CENTERED) == pytest.approx(-interior)
+    assert ghost_cell_fp_no_flux(interior, v, 0.0, dx, sign, GridType.VERTEX_CENTERED) == pytest.approx(interior)
+
+
 def test_the_conversion_is_reachable_from_the_package_surface():
     """The owner must be importable the way a second caller would import it.
 

@@ -378,6 +378,18 @@ def normal_frame_coefficients(
 
     Verified against the pre-#2128 closed form on 12 configurations -- two centrings x two wall
     directions x three parameter sets -- with three deliberately wrong conversions rejected.
+
+    IF YOU ARE THE SECOND CALLER THIS EXISTS FOR, READ THIS. The pair returned here is the
+    mathematically correct one and it is NOT sufficient on its own: handing it straight to
+    :func:`ghost_cell_robin` gives the right ghost and the WRONG refusal set, because robin's
+    singularity threshold is absolute while the quantity it tests has units (#2217). Measured --
+    unscaled, ``v_n = 0, D = 5e-12, dx = 10`` raises where the condition is homogeneous Neumann and
+    the ghost is exactly the interior value. :func:`ghost_cell_fp_no_flux` multiplies both
+    coefficients by ``2*dx`` first, which leaves the condition and the ghost unchanged and makes
+    robin's threshold mean ``|2D - v_n*dx| < 1e-12``. Any caller routing this pair into robin needs
+    the same scaling until #2217 lands. With a non-zero right-hand side the scaling is NOT free --
+    three plausible choices give 0.944, -0.167 and 0.944 at ``g = 0.5`` -- so a caller with ``g != 0``
+    has a question this function does not answer.
     """
     return drift_velocity * outward_normal_sign, -diffusion_coeff
 
@@ -469,6 +481,23 @@ def ghost_cell_fp_no_flux(
 
     Returns:
         Ghost cell value that ensures zero total flux at boundary
+
+    Raises:
+        NotImplementedError: ``diffusion_coeff`` has more than one element, at either centring.
+            ``main`` raised ``ValueError`` for a multi-element ndarray and ``TypeError`` for a list
+            or tuple; this refuses everything but size 1, with one type, on both centrings (#2128).
+            A field-valued ``drift_velocity`` IS supported.
+        ValueError: cell-centred, at ``2D = v_n*dx``, where the ghost's own coefficient vanishes and
+            the condition does not determine it. Raised by :func:`ghost_cell_robin`, which this
+            delegates to. Before #2128 this returned ``interior_value`` silently.
+
+    KNOWN, UNGUARDED, AND NOT INTRODUCED HERE: cell-centred with ``D = 0`` and ``v_n != 0`` returns a
+    NEGATIVE density -- ``-1.0`` for ``interior=1, v=0.4, dx=0.1`` -- because the closed form becomes
+    ``(v_n*dx)/(-v_n*dx)``. ``main`` returns the same value by the same arithmetic, so this is
+    inherited rather than caused. The vertex path guards ``D ~ 0`` and returns ``interior_value``, so
+    the two centrings disagree about zero diffusion; #2215 asks the physics question for the vertex
+    side and #2219 for this one. Stated here because #2128's acceptance asks for ``D -> 0`` to have a
+    stated behaviour, and "it returns a negative density and nobody decided that" is the honest one.
 
     Example:
         >>> # Left boundary with leftward drift (into boundary)
