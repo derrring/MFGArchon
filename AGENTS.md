@@ -118,6 +118,39 @@ Internally: the iterator calls `problem.using_resolved_bc(state)` each Picard st
 
 ## 🧪 Testing — repo strategy
 
+### Admission ⚠️ — a test earns its place before it is written (#2227)
+
+**Do not write a test because a change "should have one".** 243 files and 58,785 lines were deleted
+on 2026-09-03 for being unauditable: 5,632 test functions, no way to read them at a cost anyone would
+pay, and a suite you cannot audit is not an asset. Adding to it casually is how it got there.
+
+**The work unit is the CONVENTION, not the test.** `[Principle] Conventions Index` names 35
+load-bearing conventions; `scripts/discrimination_baseline.json` carries a falsifiable mutation for 24
+of them, each with an `owner` field naming what it breaks. Before writing a test, say which convention
+it defends. If it defends none, that is the answer.
+
+**A new test must be one of these, and the PR says which** — the same ladder as § *Closing out a fix*,
+used here as an admission criterion rather than a report:
+
+1. **It kills a mutation.** Run `scripts/test_discrimination.py`; state the mutation by name. This is
+   the only class that is checkable rather than argued.
+2. **It is an external oracle** — a law the scheme must reproduce, computed independently of the
+   scheme. `M(0) @ expm(Qt)`, `rho_i * exp(v_n*dx/D)`, an LQG closed form. These do not rot when the
+   API changes, because they pin mathematics rather than signatures.
+3. **It is a labelled defect pin** with its own retirement condition, so fixing the defect trips it
+   and the failure message is the instruction.
+4. **It guards an instrument** in `scripts/` — the capability matrix, the ratchets, their baselines.
+
+Anything else is the class that was just deleted. `hasattr`, a signature, `raises(TypeError)` — those
+rot the first time the API moves, and they rot **silently**, still passing while measuring nothing.
+
+**Nothing here licenses deleting a test on a count.** The deletable set is the structurally
+tautological one, found by *reading*; inert-by-counting is a different set and #1715 records five
+genuine cross-path pins inside it. The 2026-09-03 keep-set was built from `killmatrix.json` —
+measurement — and its positive control immediately caught a criterion that would have deleted
+`test_capability_warnings.py`.
+
+
 Cross-project testing discipline governs **what** a test must cover (edge/stress/failure cases, "coverage = paths whose failure you'd catch"). This section governs **where** a test lives — a hybrid approach for research code that evolves fast:
 
 - **Unit tests (`tests/unit`, `tests/integration`)** — stable public APIs (`problem.solve()`, factories), core infra (config/problem/result/backend), numerical correctness that must not regress. Run in CI on every commit.
