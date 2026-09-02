@@ -715,8 +715,16 @@ def _regime_switching_cell():
             [#1798] Until this change the gate required each regime's mass to stay CONSTANT to
             1e-6. That is a false invariant: the generator `Q` transfers mass between regimes by
             construction, so per-regime mass follows `M(t) = M(0) expm(Q t)` and only the SUM is
-            conserved. The cell was therefore red on a proposition that is false of a correct
-            solver, which is worse than no check -- it teaches a reader to ignore the report.
+            conserved. The old clause was not merely inert -- it was ANTI-CORRELATED with
+            correctness on the axis it named. The only way to hold per-regime mass constant is to
+            not transfer mass at all, so a transposed or sign-flipped transfer would have PASSED it
+            (constant masses, zero drift) and fails the oracle at 8.9e-02.
+
+            The same oracle is asserted, on this same fixture, by
+            `test_regime_masses_track_the_markov_chain_closed_form` (#1802/#1906), which predates
+            this change at a tighter 5e-3 against a different denominator. This cell is not that
+            test: it is the capability instrument, which records what the configuration does rather
+            than gating a unit claim, and its verdict must also read `_solved`.
 
             The tolerance is NOT relaxed to fit, which #1767 named as the route the matrix exists
             to catch. The quantity is replaced. Measured on this fixture: per-regime departure from
@@ -726,16 +734,34 @@ def _regime_switching_cell():
 
             The gate is the expm oracle, because this cell is a member of `MASS_ORACLE_CELLS` and
             that membership is a claim its verdict must read mass. Non-negativity and finiteness
-            alone do not: measured, the harness's own 10% density mutation moves `min_density` from
-            1.087e-04 to 1.141e-04, no separation at all, so a gate without a mass term would let
-            the matrix's own control walk through.
+            alone do not read it: measured in process, the harness's 10% density mutation moves
+            `min_density` from 1.087e-04 to 1.141e-04 -- and UPWARD, away from the `>= -1e-12`
+            threshold, so the non-discrimination is total rather than marginal. `--self-test` does
+            not exercise this today, because it mutates only PASS cells and this one is FAIL; the
+            argument is what the gate must survive if the cell ever recovers, not a control that
+            runs now.
 
             THE TOLERANCE IS BRACKETED BY MEASUREMENT ON BOTH SIDES, not fitted to one. It must
-            admit a correct solve at this resolution -- 2.43e-03, first order in dt at Nt=10 -- and
-            refuse the injected drift the self-test uses -- 1.11e-01. 1e-2 sits a factor of 4 above
-            the first and 11 below the second. Total-mass drift separates comparably
-            (1.40e-03 -> 1.02e-01) and is recorded rather than gated, because the oracle subsumes
-            it: a leak in the sum shows up as a departure from `M(0) expm(Q t)` too.
+            admit a correct solve at this fixture -- 2.43e-03 -- and refuse the injected drift the
+            self-test uses -- 1.11e-01. 1e-2 sits a factor of 4 above the first and 11 below the
+            second.
+
+            THAT 2.43e-03 IS NOT A dt TERM, and a draft of this docstring said it was. At the
+            shipped 3-sweep budget it barely moves under refinement -- 2.43e-03 at Nt=10 against
+            2.10e-03 at Nt=80, an 8x refinement removing 14% where first order predicts 87% -- so it
+            is a Picard-lag floor. `tests/unit/test_alg/test_regime_switching_iterator.py` already
+            said so beside its own expm assertion: the residual is the lagged inflow plus the
+            piecewise-constant-in-time source, and it does not clean up under dt-refinement at fixed
+            iteration count. First order appears only once the iteration is converged.
+
+            Total-mass drift separates comparably (1.40e-03 -> 1.02e-01) and is recorded rather than
+            gated, because the oracle PROVABLY subsumes it: Q has zero row sums, so expm(Qt) has
+            unit row sums, so every oracle row sums to the initial total -- a leak in the sum is a
+            departure from the oracle and is bounded by the same 1e-2.
+
+            The denominator is `|m0|.max()`. Both regimes start equal here so it does not matter;
+            on a fixture with unequal shares an error concentrated in the small regime would be
+            diluted by the mass ratio.
             """
             per_regime = []
             masses = []
@@ -975,6 +1001,12 @@ def _summarise_known(art: dict) -> str:
         return f"mass drift {art['max_drift']:.3e}, min M {art.get('min_density', float('nan')):.3e}"
     if art.get("max_rel_drift") is not None:
         return f"rel mass drift {art['max_rel_drift']:.3e}, min M {art.get('min_density', float('nan')):.3e}"
+    if art.get("max_rel_vs_expm_oracle") is not None:
+        return (
+            f"rel vs expm oracle {art['max_rel_vs_expm_oracle']:.3e}, "
+            f"total drift {art.get('max_rel_total_mass_drift', float('nan')):.3e}, "
+            f"min M {art.get('min_density', float('nan')):.3e}"
+        )
     return json.dumps(art, default=str)
 
 
