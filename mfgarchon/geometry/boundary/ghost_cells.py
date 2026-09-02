@@ -210,18 +210,28 @@ def ghost_cell_robin(
     # above is already elementwise; only this guard needed to stop assuming a scalar.
     # #2217: the threshold must be RELATIVE, because `coeff_ghost` carries units and the pair
     # (alpha, beta) has no canonical normalisation. Scaling the pair by any non-zero constant
-    # leaves the Robin condition -- and therefore the ghost -- unchanged, so it must leave the
-    # refuse/answer verdict unchanged too. Against an absolute 1e-12 it did not: measured over 144
-    # inputs built to straddle the cancellation point, the verdict flipped under rescaling in 96 of
-    # them, and a caller that multiplied its pair by 100 to keep familiar units moved the refusal
-    # boundary by 100.
+    # leaves the Robin condition unchanged WHEN `rhs_value` IS ZERO -- and only then, because
+    # scaling `alpha` and `beta` by `s` turns `alpha*u + beta*du/dn = g` into `... = g/s`. At
+    # `g = 0` that is no condition at all and the ghost is invariant; at `g != 0` it is a different
+    # wall, and the ghost moves by 99% at `alpha=2, beta=0.5, dx=0.1, g=0.7` far from any
+    # cancellation. The docstring of `normal_frame_coefficients` states the same qualification and
+    # is the copy to follow; an unqualified version of this sentence shipped in #2221 and was
+    # corrected in review. What the verdict must be invariant under is therefore the SCALING, which
+    # `coeff_ghost` depends on and the physical wall does not -- against an absolute 1e-12 it was
+    # not: over 144 inputs built to straddle the cancellation point the verdict flipped under
+    # rescaling in 96.
     #
     # The scale is `max(|alpha|/2, |beta|/dx)` -- the larger of the two terms whose cancellation
     # this predicate is about -- so it fires on GENUINE cancellation rather than on both terms
-    # merely being small. Two rejected alternatives, both measured: `|alpha|/2 + |beta|/dx` is also
-    # scale-invariant but strictly more conservative for no gain, and normalising the pair by
-    # `max(|alpha|, |beta|)` -- which #2217 proposed as the cleanest -- is NOT scale-invariant,
-    # because it does not account for `dx`; it still flipped 4 of the 144.
+    # merely being small. Two rejected alternatives. `|alpha|/2 + |beta|/dx` is equally invariant
+    # and strictly more conservative for no gain. Normalising the pair by `max(|alpha|, |beta|)` --
+    # #2217's own preferred option -- fails for a reason this comment got WRONG before review: it
+    # is exactly as scale-invariant as the chosen one, both being positively homogeneous of degree
+    # 1, and the "4 of 144" once cited here was rounding in decimal rescalings of on-threshold
+    # inputs, not scale-variance (under exact power-of-two rescalings both flip 0). Its real defect
+    # is dimensional: its EFFECTIVE tolerance drifts with `dx` -- measured 2.0e-12 at `dx = 0.01`
+    # and 0.1, then 1.0e-11 at `dx = 10` and 1.0e-10 at `dx = 100`, where the chosen scale holds
+    # 1.0e-12 throughout.
     #
     # `<=` and not `<`, and that is the whole handling of the degenerate pair: at alpha = beta = 0
     # the scale is 0, so a strict `<` would compare `0 < 0` and ANSWER a condition that carries no
@@ -600,12 +610,22 @@ def ghost_cell_fp_no_flux(
     # 9.3e-16 relative, with 0 verdict changes.
     #
     # THE REFUSAL SET MOVED, and that is the point of #2217, not a side effect. It is no longer
-    # `|2D - v_n*dx| < 1e-12`. Measured against the pre-#2217 code over 720 inputs, exactly 12
-    # differ and all are the same case: `v_n = 0` at `D = 1e-13`, every `dx`, both wall signs,
-    # cell-centred, where the old code RAISED. `v_n = 0` is homogeneous Neumann, the ghost is
-    # exactly `interior_value`, and refusing it was the well-posed problem #2217 reports being
-    # rejected. All 12 changes are refusals that became answers; none is an answer that became a
-    # refusal.
+    # `|2D - v_n*dx| < 1e-12`. The dominant direction is refusal -> answer, and its headline case is
+    # `v_n = 0`, which is homogeneous Neumann: the ghost is exactly `interior_value` and refusing it
+    # was the well-posed problem #2217 reports being rejected. Counts here are GRID-DEPENDENT and
+    # are not a characterisation -- a 720-input grid shows 12 such changes, a 1944-input grid shows
+    # 106, spanning `v_n = 0` and `v_n = +/-1e-13` over several `D`.
+    #
+    # THE OTHER DIRECTION EXISTS, and a pre-review version of this comment asserted it did not.
+    # Inputs the old code answered and this one refuses occupy a band with a sharp entry condition:
+    # the old effective threshold on `coeff_ghost` was `1e-12/(2*dx)` (the `2*dx` scaling), the new
+    # one at cancellation is `1e-12*(D/dx)`, so the band is non-empty exactly when `D > 1/2`.
+    # Measured, sweeping `v_n` through cancellation at three spacings: 0 hits at `D = 0.25` and
+    # `0.4`, then 28 at `D = 0.6`, 134 at `D = 1.0`, 266 at `D = 10`. Those are not regressions --
+    # `2D` and `v_n*dx` agree to ~13 significant figures there and the old answers were cancellation
+    # garbage (-2.0e12 at one such point), so refusing is the better behaviour -- but it is a
+    # widening of the refusal set on a function whose owner has live callers in four modules, and it
+    # is recorded rather than discovered later.
     #
     # Two consequences of the removal worth stating because the old comment block asserted them:
     # the scaled pair's overflow at `dx = D = 1e200` (a silent `nan` where `main` returned 3.0) and

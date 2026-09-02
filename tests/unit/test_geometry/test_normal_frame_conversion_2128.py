@@ -299,8 +299,16 @@ def test_the_singularity_verdict_is_invariant_under_rescaling_the_pair(grid_type
     workaround, and with it the defect underneath.
 
     #2217 made the threshold relative, so the scaling is inert and gone, and what is worth pinning
-    is the invariance itself: scaling `(alpha, beta)` by any non-zero constant leaves the Robin
-    condition unchanged, so it must leave BOTH the verdict and the ghost unchanged.
+    is the invariance itself: scaling `(alpha, beta)` by any non-zero constant leaves the VERDICT
+    unchanged, because `coeff_ghost` depends on the scale and the physical wall does not.
+
+    NOT the ghost, in general, and a pre-review version of this docstring said otherwise. Scaling
+    `alpha` and `beta` by `s` turns `alpha*u + beta*du/dn = g` into `... = g/s`, which is the same
+    wall only at `g = 0`. Every call below passes `rhs_value = 0.0`, which is why the value
+    assertion holds here at all; at `g = 0.7, alpha = 2, beta = 0.5, dx = 0.1` the ghost moves 99%
+    across three decades of scale, nowhere near a cancellation point.
+    `normal_frame_coefficients`' docstring carries the same qualification and is the copy to
+    follow.
 
     Measured before this was written: against the absolute threshold, 96 of 144 coefficient
     families built to straddle the cancellation point changed verdict under rescaling. Against the
@@ -350,10 +358,13 @@ def test_homogeneous_neumann_is_answered_not_refused():
     """The well-posed case #2217 reports being rejected, pinned on the public alias.
 
     `v_n = 0` makes the wall condition `-D * drho/dn = 0` at every `D > 0`, so the ghost is the
-    interior value. The absolute threshold refused it whenever `2D < 1e-12` -- measured, that is the
-    ENTIRE difference the #2217 fix makes to this function: over 720 inputs exactly 12 verdicts
-    moved, all of them this case at `D = 1e-13`, every `dx`, both wall signs, cell-centred, and all
-    of them refusals that became answers.
+    interior value, and the absolute threshold refused it whenever `2D < 1e-12`.
+
+    That is the DOMINANT difference the fix makes, not the entire one, and a pre-review version of
+    this docstring claimed the latter on the strength of one grid. The counts are grid-dependent --
+    720 inputs give 12 changes, 1944 give 106 -- and the opposite direction exists too: above
+    `D = 1/2` there is a band of inputs the old code answered and this one refuses. Both are
+    characterised in `ghost_cell_fp_no_flux`'s own comment, which is the one owner for it.
     """
     for D in (1e-13, 3.75e-13, 7.0e-13, 5e-12):
         for dx in (0.001, 0.1, 1.0, 10.0):
