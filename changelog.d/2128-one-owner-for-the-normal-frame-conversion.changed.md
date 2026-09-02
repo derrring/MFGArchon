@@ -5,7 +5,10 @@ beta)`, with the ghost obtained from `ghost_cell_robin`. Verified against the pr
 over 2016 inputs — 1966 identical, 50 of them the first change below, 0 regressions — and against the
 exact zero-flux profile `rho * exp(v_n*dx/D)`, which neither function implements. On the 12 headline
 configurations, re-measured on the shipped build: 5 bit-identical, 6 at 1 ulp, and 1 at 3 ulps
-(4e-16 relative), all from summation order. (#2128)
+(4e-16 relative), all from summation order. Those figures describe those 12 configurations and are
+not a bound: an independent round-7 sweep of 68,400 inputs found a maximum of 8 ulp, plus 78 inputs
+where `main` returned exactly `0.0` and the new code returns +/-1e-16 -- a sign flip at the ghost
+density's zero crossing, harmless and disclosed rather than claimed away. (#2128)
 
 Three behaviour changes, all intended and all narrow:
 
@@ -21,4 +24,7 @@ Three behaviour changes, all intended and all narrow:
 
 The vertex-centred `D ~ 0` degeneracy is a different condition and its pre-existing value is
 preserved behind an explicit guard rather than inherited from Robin — that choice is a physics
-question and is #2215's, not a consolidation's. (#2128, #2215)
+question and is #2220's, not a consolidation's. #2220 reframes it: at `D = 0` the equation is
+first order, so an outflow wall admits no boundary condition and an inflow wall admits exactly
+one, and the criterion is the sign of the normal velocity, which neither centring reads.
+(#2128, #2220)

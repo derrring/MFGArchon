@@ -376,8 +376,11 @@ def normal_frame_coefficients(
     this is": a caller already holding ``v . n`` passes ``+1.0`` at BOTH walls. Reading it as a wall
     identifier is what produced #2063.
 
-    Verified against the pre-#2128 closed form on 12 configurations -- two centrings x two wall
-    directions x three parameter sets -- with three deliberately wrong conversions rejected.
+    Verified against an EXTERNAL oracle, not against the delegation: the exact zero-flux profile
+    ``rho_interior * exp(v_n*dx/D)``, which neither this function nor :func:`ghost_cell_robin`
+    implements, is approached at each branch's order (~3 cell, ~2 vertex) under refinement, and a
+    flipped conversion sign approximates ``exp(-z)`` instead and collapses that order. Per-element
+    values are pinned separately at both centrings and both wall directions.
 
     IF YOU ARE THE SECOND CALLER THIS EXISTS FOR, READ THIS. The pair returned here is the
     mathematically correct one and it is NOT sufficient on its own: handing it straight to
@@ -745,6 +748,7 @@ __all__ = [
     "high_order_ghost_neumann",
     # Physics-aware ghost cell (for advection-diffusion/FP)
     "ghost_cell_fp_no_flux",
+    "normal_frame_coefficients",
     "ghost_cell_advection_diffusion_no_flux",
     # Extrapolation ghost cell (for unbounded domains)
     "ghost_cell_linear_extrapolation",

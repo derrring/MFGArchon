@@ -122,12 +122,7 @@ class DirichletCalculator:
         u_boundary = (u_ghost + u_interior) / 2 = g  (cell-centered)
         => u_ghost = 2*g - u_interior
 
-    Supports vectorized operations for efficient array processing -- for the interior values and for
-    `drift_velocity`, which may be a field. `diffusion_coeff` may NOT: `ghost_cell_fp_no_flux`
-    refuses more than one element at either centring (#2128), so a `ZeroFluxCalculator` constructed
-    with an array `diffusion_coeff` raises `NotImplementedError` at `compute` time even though the
-    constructor accepts it. Before #2128 the same call raised `ValueError` on the cell path and
-    answered on the vertex path; #2128 made the two agree by refusing both.
+    Supports vectorized operations for efficient array processing.
     """
 
     def __init__(
@@ -461,7 +456,12 @@ class ZeroFluxCalculator:
 
     **For zero gradient (du/dn = 0), use ZeroGradientCalculator instead.**
 
-    Supports vectorized operations for efficient array processing.
+    Supports vectorized operations for efficient array processing -- for the interior values and for
+    `drift_velocity`, which may be a field. `diffusion_coeff` may NOT: `ghost_cell_fp_no_flux`
+    refuses more than one element at either centring (#2128), so a `ZeroFluxCalculator` constructed
+    with an array `diffusion_coeff` raises `NotImplementedError` at `compute` time even though the
+    constructor accepts it. Before #2128 the same call raised `ValueError` on the cell path and
+    answered on the vertex path; #2128 made the two agree by refusing both.
     """
 
     def __init__(

@@ -34,7 +34,6 @@ import numpy as np
 from mfgarchon.geometry.boundary.ghost_cells import (
     GridType,
     ghost_cell_fp_no_flux,
-    ghost_cell_robin,
     normal_frame_coefficients,
 )
 
@@ -62,21 +61,13 @@ def test_the_conversion_returns_the_normal_frame_pair():
     assert normal_frame_coefficients(-0.7, 0.35, -1.0) == (0.7, -0.35)
 
 
-@pytest.mark.parametrize("grid_type", _CENTRINGS, ids=lambda g: g.name)
-@pytest.mark.parametrize("sign", [-1.0, +1.0], ids=["min_wall", "max_wall"])
-@pytest.mark.parametrize(("v", "D", "u", "dx"), _CASES)
-def test_the_ghost_is_robin_evaluated_at_the_converted_pair(grid_type, sign, v, D, u, dx):
-    """The delegation, stated as an identity a re-implementation would break."""
-    alpha, beta = normal_frame_coefficients(v, D, sign)
-    # The scale is `ghost_cell_fp_no_flux`'s own and is not decoration: `ghost_cell_robin`'s
-    # singularity threshold is absolute while the quantity it tests has units (#2217), so the pair
-    # is scaled by `2*dx` to make that threshold mean what this function's predicate meant before
-    # #2128. Only its magnitude matters -- robin tests an absolute value -- and the scale leaves
-    # the condition, and therefore the ghost, unchanged.
-    scale = 2.0 * dx
-    assert ghost_cell_fp_no_flux(u, v, D, dx, sign, grid_type) == ghost_cell_robin(
-        u, 0.0, scale * alpha, scale * beta, dx, grid_type
-    )
+#: [DELETED round 7] `test_the_ghost_is_robin_evaluated_at_the_converted_pair` lived here: 12
+#: parametrisations asserting `ghost_cell_fp_no_flux(...) == ghost_cell_robin(u, 0.0, 2*dx*alpha,
+#: 2*dx*beta, ...)`. That is the function's body restated, so it is structurally tautological, which
+#: AGENTS.md names as the deletable set -- and it could not even see a wrong scale, because scaling a
+#: homogeneous Robin pair leaves the ghost unchanged, as its own comment said. Measured in round 7:
+#: 2 kills out of 10 mutants, both also caught by arms that remain. The external oracle below and
+#: the per-element value pins are what carry the delegation.
 
 
 @pytest.mark.parametrize("grid_type", _CENTRINGS, ids=lambda g: g.name)
@@ -153,11 +144,29 @@ def test_the_vertex_zero_diffusion_value_is_preserved_not_inherited(diffusion):
     preservation deliberate: if the guard is removed, this fails rather than the value quietly
     becoming 0.0.
 
-    `v_n` here is `+0.4`, i.e. OUTFLOW, which is the sign where the preserved value turns out to be
-    right: at `D = 0` the equation is first order and an outflow wall admits no condition, and
-    copying the interior into the ghost is the standard non-reflecting treatment. So this arm pins a
-    correct value for a reason the code does not know -- the sign is never read. The inflow half is
-    the defect pin below.
+    [CORRECTED round 7] An earlier version of this paragraph called the preserved value "correct"
+    at `v_n > 0`, on the argument that copying the interior into the ghost is the standard outflow
+    treatment. That was wrong in the direction that flatters the value being preserved, and the
+    measurement inverts it. With `J . n = v_n*rho_wall - D*d(rho)/dn` evaluated in each centring's
+    own wall geometry, at `D = 0`:
+
+        vertex, wall IS the node, rho_wall = 1.0   ->  J.n = +0.4 (outflow), -0.4 (inflow)
+        cell,   wall is the face, rho_wall = 0.0   ->  J.n =  0   at BOTH signs
+        control, D = 0.5, all four                 ->  |J.n| <= 6.7e-16
+
+    So the value preserved here LEAKS through a wall `types.py` defines as impermeable -- NO_FLUX
+    and REFLECTING are one concept there, so "non-reflecting treatment" named the condition this
+    function is not -- while the cell-centred `-1.0` that the `ghost_cells.py` docstring frames as
+    the pathology satisfies the contract exactly. On a vertex grid no ghost value can move
+    `rho_wall` at all, so the honest reading is that this function's stated contract is
+    UNSATISFIABLE at `D = 0` on this centring, which is a sharper form of #2220's
+    over-specification, not an exception to it.
+
+    Two consequences for how to read this test. It preserves the status quo and does not endorse
+    it; #2220 must not cite it as evidence for keeping this value. And no first-order argument
+    covers it, because the parametrisation also runs `D = 1e-13`, where the equation is second
+    order and the exact profile `rho_i*exp(v_n*dx/D)` overflows to `inf` while the code returns
+    `1.0`.
     """
     u, v, dx, sign = 1.0, 0.4, 0.1, +1.0
     assert ghost_cell_fp_no_flux(u, v, diffusion, dx, sign, GridType.VERTEX_CENTERED) == u
@@ -190,8 +199,9 @@ def test_zero_diffusion_ignores_the_sign_of_the_normal_velocity(grid_type):
     outflow = ghost_cell_fp_no_flux(u, v, 0.0, dx, +1.0, grid_type)
     inflow = ghost_cell_fp_no_flux(u, v, 0.0, dx, -1.0, grid_type)
     assert outflow == inflow, (
-        "the two signs now differ, which is what #2220 asks for -- delete this defect pin and "
-        "assert the intended inflow/outflow behaviour instead"
+        "the two signs now differ, which is what #2220 asks for -- delete this defect pin AND "
+        "retarget test_zero_diffusion_has_a_stated_behaviour_on_both_centrings, which pins the "
+        "same status quo and fails on the same change, then assert the intended behaviour"
     )
 
     #: The control, in the same invocation: away from the degeneracy the same call IS sign-sensitive,
@@ -340,6 +350,19 @@ def test_the_conversion_is_reachable_from_the_package_surface():
     Pinned here because removing that line failed nothing: 2064 tests passed with the export gone.
     """
     import mfgarchon.geometry.boundary as boundary
+    import mfgarchon.geometry.boundary.ghost_cells as ghost_cells
+
+    #: `hasattr` alone passes through the lazy compat map and cannot see a missing `__all__`
+    #: entry -- round 7 found the export half-landed with this test green. The convention is
+    #: measured from the siblings, not assumed: they sit in `ghost_cells.__all__` and NOT in
+    #: `boundary.__all__`, and each also has a lazy-map line. All three are required.
+    assert "normal_frame_coefficients" in ghost_cells.__all__, (
+        "the owner is missing from ghost_cells.__all__, so `import *` does not yield it"
+    )
+    #: CONTROL: a sibling must satisfy the same assertion, or this pins a convention that does
+    #: not exist. And `boundary.__all__` is NOT the surface -- no sibling is in it.
+    assert "ghost_cell_fp_no_flux" in ghost_cells.__all__, "control failed: wrong __all__ surface"
+    assert "ghost_cell_fp_no_flux" not in boundary.__all__, "control failed: siblings are not in boundary.__all__"
 
     assert hasattr(boundary, "normal_frame_coefficients"), (
         "normal_frame_coefficients is not on the package surface. Add it to the lazy map in "
