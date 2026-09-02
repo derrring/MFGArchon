@@ -640,8 +640,12 @@ def _regime_switching_cell():
     outflow is no longer passed to the FP solver as a lagged source, and both regime
     densities are now strictly positive (min 8.4e-04), stable under dt-refinement. The
     fixture stays at NT=10 for continuity of the record, not to preserve a defect.
-    SUPERSEDED-BY: the cell's `intended` note in capability_baseline.json, and #1798 --
-    what fails here now is this cell's own per-regime mass oracle, not the solve.
+    SUPERSEDED-BY: the cell's `intended` note in capability_baseline.json.
+
+    [#1798, 2026-09-02] That per-regime mass oracle is gone. It required each regime's mass to stay
+    constant to 1e-6, which the generator makes false by construction -- only the SUM is conserved.
+    The gate now reads an external oracle, `M(0) expm(Q t)`, and the cell is red on
+    `picard_converged` alone, the same axis as its FDM and SL siblings.
 
     Reached through the deep module path. ``RegimeSwitchingIterator`` is exported from
     no package ``__init__``, so unlike every other cell here this one is not on the
@@ -649,6 +653,8 @@ def _regime_switching_cell():
     """
 
     def run():
+        from scipy.linalg import expm
+
         from mfgarchon import MFGProblem
         from mfgarchon.alg.numerical.coupling.regime_switching_iterator import (
             RegimeSwitchingIterator,
@@ -689,9 +695,12 @@ def _regime_switching_cell():
         # (#1603 / RFC #1574 C14) and three other library validations, so a refusal
         # here is a capability statement. Wrapping it would make that ERROR, and ERROR
         # is never baselined -- the refusal could then never be recorded at all.
+        # Named because the VERDICT needs it: `Q` is the oracle, not just configuration. Row sums
+        # are zero, so the total mass is conserved and each regime's is not -- see the verdict.
+        Q = np.array([[-0.1, 0.1], [0.2, -0.2]])
         iterator = RegimeSwitchingIterator(
             problems=problems,
-            regime_config=RegimeSwitchingConfig(transition_matrix=np.array([[-0.1, 0.1], [0.2, -0.2]])),
+            regime_config=RegimeSwitchingConfig(transition_matrix=Q),
             hjb_solvers=[HJBFDMSolver(p) for p in problems],
             fp_solvers=[FPFDMSolver(p) for p in problems],
             max_iterations=3,
@@ -701,27 +710,72 @@ def _regime_switching_cell():
         result = iterator.solve()
 
         def verdict():
+            """Gate the property this cell is NAMED for; measure mass against the real oracle.
+
+            [#1798] Until this change the gate required each regime's mass to stay CONSTANT to
+            1e-6. That is a false invariant: the generator `Q` transfers mass between regimes by
+            construction, so per-regime mass follows `M(t) = M(0) expm(Q t)` and only the SUM is
+            conserved. The cell was therefore red on a proposition that is false of a correct
+            solver, which is worse than no check -- it teaches a reader to ignore the report.
+
+            The tolerance is NOT relaxed to fit, which #1767 named as the route the matrix exists
+            to catch. The quantity is replaced. Measured on this fixture: per-regime departure from
+            constancy 8.88e-02, which is almost entirely the physical transfer; departure from the
+            expm oracle 2.43e-03; total-mass drift 1.40e-03. The last two are the scheme's actual
+            error and are the same order, consistent with first order in dt at Nt=10.
+
+            The gate is the expm oracle, because this cell is a member of `MASS_ORACLE_CELLS` and
+            that membership is a claim its verdict must read mass. Non-negativity and finiteness
+            alone do not: measured, the harness's own 10% density mutation moves `min_density` from
+            1.087e-04 to 1.141e-04, no separation at all, so a gate without a mass term would let
+            the matrix's own control walk through.
+
+            THE TOLERANCE IS BRACKETED BY MEASUREMENT ON BOTH SIDES, not fitted to one. It must
+            admit a correct solve at this resolution -- 2.43e-03, first order in dt at Nt=10 -- and
+            refuse the injected drift the self-test uses -- 1.11e-01. 1e-2 sits a factor of 4 above
+            the first and 11 below the second. Total-mass drift separates comparably
+            (1.40e-03 -> 1.02e-01) and is recorded rather than gated, because the oracle subsumes
+            it: a leak in the sum shows up as a departure from `M(0) expm(Q t)` too.
+            """
             per_regime = []
+            masses = []
             for k, dens in enumerate(result.densities):
                 M = _apply_mutation(np.asarray(dens, dtype=float))
                 mass = np.asarray(problems[0].geometry.integrate(M), dtype=float)  # #2145
+                masses.append(mass)
                 per_regime.append(
                     {
                         "regime": k,
                         "min_density": float(M.min()),
-                        "max_rel_drift": float(np.abs(mass - mass[0]).max() / abs(mass[0])),
+                        #: departure from CONSTANCY. Physical, not error: this is what Q transfers.
+                        "max_rel_transfer": float(np.abs(mass - mass[0]).max() / abs(mass[0])),
                         "all_finite": bool(np.isfinite(M).all()),
                     }
                 )
+            mass_t = np.stack(masses, axis=1)  # (Nt+1, n_regimes), rows = time
+            m0 = mass_t[0]
+            total = mass_t.sum(axis=1)
+            oracle = np.stack([m0 @ expm(Q * t) for t in np.linspace(0.0, problems[0].T, mass_t.shape[0])])
             art = {
                 "regimes": per_regime,
                 "min_density": min(r["min_density"] for r in per_regime),
-                "max_rel_drift": max(r["max_rel_drift"] for r in per_regime),
                 "all_finite": all(r["all_finite"] for r in per_regime),
-                "tolerance": 1e-6,
+                #: EXTERNAL ORACLE, recorded not gated: integrating the FP system over a no-flux
+                #: domain leaves dM/dt = M Q, hence M(t) = M(0) expm(Q t), computed here without
+                #: reference to the scheme. AGENTS.md names this oracle by name.
+                "max_rel_vs_expm_oracle": float(np.abs(mass_t - oracle).max() / np.abs(m0).max()),
+                #: the quantity that IS conserved, since Q's rows sum to zero.
+                "max_rel_total_mass_drift": float(np.abs(total - total[0]).max() / abs(total[0])),
+                "max_rel_transfer": max(r["max_rel_transfer"] for r in per_regime),
             }
             art |= _picard_verdict(result)
-            ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-6 and _solved(art)
+            art["oracle_tolerance"] = 1e-2
+            ok = (
+                art["all_finite"]
+                and art["min_density"] >= -1e-12
+                and art["max_rel_vs_expm_oracle"] <= art["oracle_tolerance"]
+                and _solved(art)
+            )
             return ("PASS" if ok else "FAIL"), art
 
         return _measure("regime mass/non-negativity", verdict)
