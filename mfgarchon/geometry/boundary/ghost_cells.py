@@ -506,7 +506,8 @@ def ghost_cell_fp_no_flux(
         raise NotImplementedError(
             f"ghost_cell_fp_no_flux: multi-element diffusion_coeff (shape "
             f"{np.shape(diffusion_coeff)}) is not supported at either centring. The pre-#2128 code "
-            f"raised ValueError here for size > 1 and accepted a size-1 array; this refuses size > 1 "
+            f"raised ValueError here for a multi-element ndarray (TypeError for a list or tuple) and "
+            f"accepted a size-1 array; this refuses everything but size 1 "
             f"on both centrings rather than enabling it on one only. A field-valued drift_velocity "
             f"IS supported."
         )
@@ -544,9 +545,22 @@ def ghost_cell_fp_no_flux(
     # Scaling both coefficients by `2*dx` leaves the Robin CONDITION unchanged, hence the ghost, and
     # makes robin's tested quantity `|2D - v_n*dx|` -- this function's own pre-#2128 predicate.
     #
-    # AGREES, BUT NOT BIT-EXACTLY, and the difference is confined to where it cannot matter. robin
-    # computes `alpha/2 + beta/dx`, so `beta/dx` is `-2*fl(fl(dx*D)/dx)`, and `fl(dx*D)/dx != D` for
-    # about 10% of random pairs. The two predicates therefore disagree within roughly `4*|D|*2^-52`
+    # ALL OF THIS PARAGRAPH IS THE CELL PATH. At vertex centring there is no band: the predicate is
+    # this module's own `abs(D) < 1e-12`, bit-identical to `main`'s, and robin's `coeff_ghost` is
+    # never computed.
+    #
+    # AGREES, BUT NOT BIT-EXACTLY, and the difference is confined to where it cannot matter.
+    # `alpha/2` recovers `fl(dx*v_n)` exactly -- halving is exact -- so the only divergence is
+    # `2*(D~ - D)` with `D~ = fl(fl(dx*D)/dx)`, and `fl(dx*D)/dx != D` for about 10% of random pairs.
+    # Two roundings at half an ulp each bound it by `2*|D|*2^-52`; measured over 400,000
+    # near-threshold draws the worst ratio is 1.97, so 2 is the tight constant and a draft's `4` was
+    # loose by exactly that factor. HYPOTHESIS, and it is real: `fl(dx*D)` must be normal. At
+    # `D = 1e-300, dx = 1e-20` the disagreement exceeds the band by eleven orders of magnitude, and
+    # at `dx = D = 1e200` the scaled pair overflows to `inf` and the ghost is a silent `nan` where
+    # `main` returned 3.0. Both are outside any physical magnitude, and both are outside the sweeps
+    # below, whose grids are products of moderate values.
+    #
+    # The two predicates therefore disagree within `2*|D|*2^-52`
     # of the threshold -- reachable, and measured: an input needing `2D` and `v_n*dx` to agree to ~13
     # significant figures flips the verdict through the public `ghost_cell_advection_diffusion_no_flux`.
     # Both sides return garbage there (4.8e+13 on one side of it), so the verdict is arbitrary in
@@ -560,7 +574,9 @@ def ghost_cell_fp_no_flux(
     # distinguishing `2*dx` from `-2*dx`. A surviving mutant that is NOT a fault.
     #
     # TWO reasons, not one, and an earlier draft of this comment gave only the first. The
-    # raise/no-raise verdict is invariant because robin tests `np.abs(coeff_ghost)`. The VALUE is
+    # raise/no-raise verdict is invariant because robin tests `np.abs(coeff_ghost)` -- a CELL-path
+    # mechanism; the vertex branch never computes `coeff_ghost` and its verdicts (`abs(_beta) == 0`)
+    # are sign-blind for a different reason. The VALUE is
     # invariant for a different reason -- with `rhs = 0` the scale multiplies numerator and
     # denominator alike, so the quotient is unchanged. That is homogeneity, not the guard, and it
     # stops holding the moment a caller passes a non-zero `g`. A reader given only the guard reason

@@ -183,10 +183,18 @@ def test_field_valued_inputs_behave_the_same_on_both_centrings():
             ghost_cell_fp_no_flux(u, 0.4, np.array([0.2, 1e-13, 0.5]), 0.1, +1.0, grid_type)
 
         #: size-1 is `main`'s acceptance set and must survive the guard, which a draft's
-        #: `ndim != 0` predicate silently removed.
+        #: `ndim != 0` predicate silently removed. Asserted against the closed form, not against
+        #: shape and finiteness: the THIRD time on this branch that an arm pinning an array
+        #: capability shipped without a value oracle. Measured before this line existed -- a defect
+        #: corrupting only the array-`D` path (`D -> 2D` for arrays) passed this arm, this file, and
+        #: all 1348 tests in `tests/unit/test_geometry`.
         got = ghost_cell_fp_no_flux(1.0, 0.4, np.array([0.2]), 0.1, +1.0, grid_type)
         assert np.shape(got) == (1,)
-        assert np.isfinite(got).all()
+        expected_size1 = {
+            GridType.CELL_CENTERED: (2 * 0.2 + 0.4 * 0.1) / (2 * 0.2 - 0.4 * 0.1),
+            GridType.VERTEX_CENTERED: (0.2 + 0.4 * 0.1) / 0.2,
+        }[grid_type]
+        np.testing.assert_allclose(got, [expected_size1], rtol=1e-15)
 
     #: Asserted against the closed form PER ELEMENT, not against shape and finiteness. An earlier
     #: draft of this arm checked `isfinite` plus "three distinct values", and an array-only defect --
@@ -204,7 +212,7 @@ def test_field_valued_inputs_behave_the_same_on_both_centrings():
     for grid_type in _CENTRINGS:
         got = ghost_cell_fp_no_flux(u, drift, D, dx, sign, grid_type)
         assert np.shape(got) == (3,), f"{grid_type.name}: a field-valued drift must stay elementwise"
-        np.testing.assert_allclose(got, expected[grid_type], rtol=1e-14)
+        np.testing.assert_allclose(got, expected[grid_type], rtol=1e-15)
 
 
 if __name__ == "__main__":
