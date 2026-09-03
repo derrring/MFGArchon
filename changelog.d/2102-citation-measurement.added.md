@@ -1,6 +1,6 @@
 - **`scripts/check_citations.py` — measures `path.py:NNN` citations in prose that no longer point at
   what they name** (Issue #2102). A line number in a document is a claim with an expiry date, and
-  nothing marked it when it stopped being true. Measured on this repository: **13 of 32 adjudicable
+  nothing marked it when it stopped being true. **Measured when this was written and not since** (live values: run the script; they were 12 of 28 = 43% on 2026-09-03, and the per-file split below has moved too): **13 of 32 adjudicable
   citations (41%) name a symbol that is not within 12 lines of the cited line**. By citing file: `tests/` 6 of 13, `changelog.d/`
   5 of 11, `mfgarchon/` 1 of 3, `AGENTS.md` 1 of 1, `scripts/` 0 of 3, `docs/` 0 of 1. `mfgarchon/`
   source comments are the class outside every checker in `scripts/`, and they are not where the

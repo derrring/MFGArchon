@@ -3,7 +3,7 @@
 
 A line number in a document is a claim with an expiry date, and nothing marks it when it stops
 being true. At `WINDOW = 12`: 12 of the 28 adjudicable citations in this repository's live prose
--- 41% -- name a symbol that is not near the cited line (Issue #2102).
+-- 43% -- name a symbol that is not near the cited line (Issue #2102).
 
 THIS IS A REVIEW QUEUE, NOT A DEFECT LIST, and the distinction is measured rather than modest.
 All 12 rows were read by hand, and they contain both kinds -- **genuinely wrong citations, and the
@@ -25,8 +25,8 @@ positional rule sees a clause boundary. So the instrument reports a superset and
 which is the shape `local_ci.sh` already uses for assertion strength: a review queue, not a delete
 list.
 
-That is 12 of the 28 that are JUDGED AT ALL, and the coverage figure belongs beside it: 103
-citations are recorded `unadjudicable`, a large majority. Quoting the 41% bare reads as "41% of
+That is 12 of the 28 that are JUDGED AT ALL, and the coverage figure belongs beside it: 94
+citations are recorded `unadjudicable`, a large majority. Quoting the 43% bare reads as "43% of
 this repository's citations are wrong" and would be #1918's own failure committed against this
 report.
 
@@ -43,7 +43,7 @@ between anchored and drifted:
     drifted  56.2%  53.1%  46.9%  40.6%  37.5%  34.4%  25.0%  21.9%
 
 There is no plateau, so quote the number with its window, never bare. The one WINDOW-INDEPENDENT
-statement available is the floor: **7 of the 32 adjudicable citations survive any window**, each
+statement available is the floor: **7 of the then-32 adjudicable citations survived any window** (NOT re-measured since; the denominator is 28 today -- run the script rather than quoting this), each
 naming a symbol that is not in the target file at all. `WINDOW = 12` is a choice, not a
 measurement, and it is the constant a reader should attack first.
 

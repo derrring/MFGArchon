@@ -162,10 +162,15 @@ def test_the_repo_scan_reports_a_denominator():
     mistake and break again on the next change of size -- and #1767 records tolerance-fitting as a
     route the ratchets exist to catch.
 
-    So the number is chosen from the failure it guards instead: a scan that collects nothing, or
-    that walks the wrong root, returns single digits. 1000 leaves that failure roughly three decades
-    of headroom while tracking nothing. If this fires, look at `cas.scan`'s walk before looking at
-    the suite.
+    So the number is chosen from the failure it guards instead. Measured: a wrong root, a
+    non-existent root and an empty directory all return **0**, not "single digits" as an earlier
+    version of this docstring said -- so there is no "three decades of headroom" either; there is a
+    floor above zero, which is what the guard needs. 1000 sits 2.8x below the live 2,809, so it is
+    not fitted to the measurement. It is also NOT a fresh derivation: it is the floor
+    `test_the_scan_reaches_the_real_tree_and_finds_both_kinds` has used since before the reset, so
+    this reunifies with an existing owner rather than inventing a second one. It does not track
+    nothing -- it trips if the suite falls below 1,000 functions, 36% of live. A round number with
+    margin, honestly described. If it fires, look at `cas.scan`'s walk before looking at the suite.
     """
     weak, total = cas.scan(pathlib.Path(cas.REPO) / "tests")
     assert total > 1000, f"the scan collected only {total} tests; the denominator looks wrong"

@@ -120,8 +120,8 @@ Internally: the iterator calls `problem.using_resolved_bc(state)` each Picard st
 
 ### Admission ⚠️ — a test earns its place before it is written (#2227)
 
-**Do not write a test because a change "should have one".** 243 files and 58,785 lines were deleted
-on 2026-09-02 for being unauditable: 5,642 test functions and no way to read them at a cost anyone
+**Do not write a test because a change "should have one".** 238 files and 57,811 lines were deleted
+on 2026-09-03 for being unauditable: 5,643 test functions and no way to read them at a cost anyone
 would pay. Adding to it casually is how it got there.
 
 **THREE SECTIONS, THREE JOBS — do not read any of them as overruling another.** An earlier version of
@@ -132,13 +132,14 @@ other. They do not, because they answer different questions:
 | section | question |
 |---|---|
 | § *Closing out a fix* | what does a **fix** end with? — and *"there is no oracle for this yet"* plus a filed issue is an accepted close-out that writes **no test at all** |
+| — the residue | that section's classes 3 and 4 ARE written tests, and class 4 is a happy-path assertion this section does not admit. **That tension is real and is not dissolved here.** Read it as: a happy-path assertion can be an honest way to CLOSE a fix, admitted as such and saying what it would not catch; it is not a reason to ADD a test to the suite. If you find yourself writing one anyway, that is the moment to file the "no oracle yet" issue instead |
 | **§ Admission** (here) | does a **test**, once someone proposes writing one, earn its place? |
-| § *Testing — repo strategy* | **where** does a test live, once it has earned one? Its table says which *kind* a thing gets **if** a test is written; it does not oblige one |
+| the *where* table below | **where** does a test live, once it has earned one? It says which *kind* a thing gets **if** a test is written; it does not oblige one. It sits under this same `##` heading, not in a sibling section — an earlier version of this row pointed at `§ Testing — repo strategy`, which is the `##` that CONTAINS this subsection |
 
 **A new test must be one of these, and the PR says which:**
 
 1. **It kills a mutation.** Check it **cheaply**: `scripts/discrimination_killmatrix.json` maps node ID
-   → mutations killed, so a re-run of the 40-minute sweep is not the price of admission — and that
+   → mutations killed, so a re-run of the sweep is not the price of admission (~26 min, seven full-suite runs, measured at `test_discrimination_ratchet.py:3` -- an earlier version of this line said 40, which was my estimate, not a measurement) — and that
    sweep plants mutations in the real tree and leaves them behind when killed (#1849, #2229), so
    prefer the recorded map and re-measure only when adding a mutation.
 2. **It is an external oracle** — a law the scheme must reproduce, computed independently of it.
@@ -153,7 +154,7 @@ the first time the API moves, and they rot **silently**, still passing while mea
 
 **"Which convention does it defend" is a question, not a lookup.** The Joplin `[Principle] Conventions
 Index` names 35 conventions and `scripts/discrimination_baseline.json` carries 24 mutations, and the
-two sets are **nearly disjoint** — of the 15 issue numbers the mutation owners cite, 2 appear in the
+two sets are **nearly disjoint** — of the 19 issue numbers the mutation owners cite, 2 appear in the
 index. An earlier version of this section implied the 24 were a subset of the 35 and that ~11
 conventions were uncovered; the real figure is closer to 29 of 35, and the mutations defend a dozen
 conventions the index does not name. So a test defending something on neither list is admissible
@@ -163,7 +164,7 @@ convention in the test rather than cite the index.
 
 **Nothing here licenses deleting a test on a count.** The deletable set is the structurally
 tautological one, found by *reading*; inert-by-counting is a different set, and #1715 records five
-genuine cross-path pins inside it. When the 2026-09-02 keep-set was built, arm 1 was applied by
+genuine cross-path pins inside it. When the 2026-09-03 keep-set was built, arm 1 was applied by
 measurement and arms 2–4 by judgement — and review found all three judgement arms had dropped
 something they should have kept, including the only test of an instrument the gate runs and the only
 expressible test of the `Sigma Sigma^T` convention. **Apply arms 2–4 by reading the candidate, not by
