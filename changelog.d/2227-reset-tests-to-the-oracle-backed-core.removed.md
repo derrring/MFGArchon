@@ -1,12 +1,10 @@
-**238 test files and 57,811 lines deleted, net.** Tracked `.py` under `tests/` goes from 463 files /
-135,016 lines to **225 / 77,205**; counting all tracked files it is 466 → 228. Git history is the
-archive, the same disposition #1710 gave `archive/` and the one that removed `alg/neural/` and
-`alg/reinforcement/`.
+**The deletion removed 243 test files and 58,785 lines** (`bf44de93`). Review restored six, so the
+change against `main` is **238 files**. Line totals are deliberately NOT restated here: they moved
+three times during review and again afterwards, and a figure tracking the branch tip is one that will
+be wrong by the time you read it. `git diff --stat main...HEAD -- tests/` owns them.
 
-The deletion itself was 243 files / 58,785 lines; review restored six, and these are the net figures
-after that. An earlier draft of this fragment kept the pre-restore numbers, which is the same defect
-class it goes on to record twice below — a figure in a shipping artifact that stopped tracking the
-thing it names.
+Git history is the archive, the same disposition #1710 gave `archive/` and the one that removed
+`alg/neural/` and `alg/reinforcement/`.
 
 **Why:** a suite you cannot audit is not an asset. 5,643 test functions, and reading them file by
 file was estimated at roughly six days of full-time review — an estimate, with no measured basis.
