@@ -1,8 +1,10 @@
 """
 Integration tests for GPU particle pipeline (Phase 2).
 
-Tests end-to-end numerical accuracy and performance of full GPU
-particle evolution compared to CPU baseline.
+Tests that the particle pipeline runs on the MPS device, and that the torch dispatch path
+agrees with the numpy one. It measures no performance and holds no GPU-vs-CPU comparison:
+the timing test was removed (#2210) -- its only assertion admitted a 10x slowdown -- and the
+performance claim has no oracle (#2224).
 """
 
 import pytest
@@ -157,6 +159,10 @@ class TestParticleGPUPipeline:
         # MPS has no float64 at all, so #1921 refuses the default rather than narrowing in
         # silence. This test asks whether the particle pipeline runs on the device at all,
         # and every assertion below is decade-wide (mass to rtol=0.3), so float32 carries it.
+        import torch
+
+        if not torch.backends.mps.is_available():
+            pytest.skip("no MPS device on this machine")
         backend = TorchBackend(device="mps", precision="float32")
         solver = FPParticleSolver(
             problem,

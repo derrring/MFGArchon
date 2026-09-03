@@ -9,9 +9,11 @@
   raises `ValueError: u_terminal (terminal condition) must be provided in MFGComponents` on its
   first call, before any timing, and its own `:65` is `TorchBackend(device=device)` at default
   float64 -- the construction this very issue exists to fix. Nothing in any tier runs `benchmarks/`.
-  Filed rather than fixed here.
+  Filed as #2224 rather than fixed here.
 
-  Also removed with it: the only MPS x `periodic_bc` cell for the particle pipeline. The remaining
+  Also removed with it: the only MPS x `periodic_bc` cell for the particle pipeline, and with
+  it the largest MPS configuration the suite exercises anywhere — the surviving MPS cell runs half
+  the particles, a fifth of the timesteps and a smaller grid. The remaining
   `device="mps"` constructions in `tests/` are the #1921 guard assertion, this file's `no_flux`
   capability cell, and two `TorchKDE` tests that do not exercise the pipeline.
 
