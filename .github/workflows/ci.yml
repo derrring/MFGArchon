@@ -231,7 +231,12 @@ jobs:
         OPENBLAS_NUM_THREADS: 1
         MKL_NUM_THREADS: 1
       run: |
-        pytest tests/unit/test_core tests/unit/test_config -v \
+        # tests/unit/test_config is gone: #2227 kept only oracle-backed, mutation-killing,
+        # defect-pinning and instrument-guarding tests, and none of that directory qualified.
+        # Naming a path git no longer tracks makes pytest collect NOTHING and report
+        # "no tests ran" -- which is how this was found, and it is invisible locally because
+        # a stale __pycache__ leaves the directory present in a working tree.
+        pytest tests/unit/test_core -v \
           -n auto \
           -m "not slow and not optional_torch and not benchmark and not experimental and not environment" \
           --junitxml=junit.xml -o junit_family=legacy --maxfail=10 \
