@@ -310,7 +310,15 @@ class TestVaryingTensorDiffusion:
         assert Du.shape == (30, 30)
         assert np.all(np.isfinite(Du))
 
-        # Measured interior error 1.245e-13 at n=30 (and 5.685e-13 at n=60); margin ~800x.
+        # ROUND-OFF, not truncation, and the distinction matters for reading this number. The
+        # scheme is exact for this fixture -- u is quadratic and each Sigma component affine,
+        # so the two-point face average is the exact midpoint value -- and the residual is
+        # amplified by 1/h^2, so it GROWS under refinement: 8.660e-15 (n=15), 1.245e-13 (30),
+        # 5.685e-13 (60), 2.181e-12 (120), 1.131e-11 (240). The margin against atol 1e-10 falls
+        # 11548x -> 803x -> 176x -> 46x -> 8.8x with it, so it is a property of n=30 alone and
+        # this assertion would fail on round-off somewhere above n~700. An earlier revision of
+        # this line quoted the n=30 and n=60 values side by side, which reads as a convergence
+        # check and is its exact opposite.
         expected = 0.3 + 0.4 * X + 0.2 * Y
         np.testing.assert_allclose(Du[3:-3, 3:-3], expected[3:-3, 3:-3], atol=1e-10)
 
