@@ -154,9 +154,26 @@ def test_a_separation_assertion_is_the_strongest_class_not_the_weakest():
 
 
 def test_the_repo_scan_reports_a_denominator():
-    """Never a bare count: '0 of unknown' and '0 of all' render identically (#1901 class 2)."""
+    """Never a bare count: '0 of unknown' and '0 of all' render identically (#1901 class 2).
+
+    THE FLOOR GUARDS AN INERT SCAN, NOT A SUITE SIZE (#2227). It was 4000, calibrated to a suite of
+    ~5,600 test functions; the reset took the tree to ~2,800 and the assertion failed on a scan that
+    was working perfectly. Re-calibrating it to sit just under the new count would repeat the
+    mistake and break again on the next change of size -- and #1767 records tolerance-fitting as a
+    route the ratchets exist to catch.
+
+    So the number is chosen from the failure it guards instead. Measured: a wrong root, a
+    non-existent root and an empty directory all return **0**, not "single digits" as an earlier
+    version of this docstring said -- so there is no "three decades of headroom" either; there is a
+    floor above zero, which is what the guard needs. 1000 sits 2.8x below the live 2,809, so it is
+    not fitted to the measurement. It is also NOT a fresh derivation: it is the floor
+    `test_the_scan_reaches_the_real_tree_and_finds_both_kinds` has used since before the reset, so
+    this reunifies with an existing owner rather than inventing a second one. It does not track
+    nothing -- it trips if the suite falls below 1,000 functions, 36% of live. A round number with
+    margin, honestly described. If it fires, look at `cas.scan`'s walk before looking at the suite.
+    """
     weak, total = cas.scan(pathlib.Path(cas.REPO) / "tests")
-    assert total > 4000, f"the scan collected only {total} tests; the denominator looks wrong"
+    assert total > 1000, f"the scan collected only {total} tests; the denominator looks wrong"
     assert 0 < len(weak) < total
 
 

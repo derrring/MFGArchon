@@ -576,11 +576,18 @@ step "Single-source ratchet"
 "${PYS[@]}" scripts/check_single_source.py --baseline scripts/single_source_baseline.json
 check $? "no new site restating a single-owner quantity"
 
-# Over 200 `path.py:NNN` citations sit in tracked prose and nothing checked them; 19 of the 39 that
-# can be judged -- 49% -- point at a line their named symbol has moved away from (#2102). Checking
-# the number is in range is nearly useless: exactly one of 226 points past EOF. So a citation counts
-# as judged only when ITS OWN LINE names a symbol; nothing is borrowed from a neighbour, and the
-# other 154 are recorded unadjudicable rather than passing. Two numbers are pinned, not one:
+# `path.py:NNN` citations sit in tracked prose and nothing checked them; a large fraction of the
+# judgeable ones point at a line their named symbol has moved away from (#2102). Checking that the
+# number is merely in range is nearly useless. So a citation counts as judged only when ITS OWN LINE
+# names a symbol; nothing is borrowed from a neighbour, and the rest are recorded unadjudicable
+# rather than passing.
+#
+# THE FIGURES ARE NOT RESTATED HERE, DELIBERATELY (#2227). They were -- 19 of 39, 49%, one of 226
+# past EOF, 154 unadjudicable -- and every one had rotted: live is 12 of 28, 43%, ZERO past EOF, 94.
+# This block is a seventh owner of a number `check_citations.py` already owns, and it is invisible to
+# that checker, which scans `.md` and `.py` only. A correction that claimed to have found all six
+# copies missed this one for exactly that reason. Run `python scripts/check_citations.py` for the
+# current values; do not paste them back. Two numbers are pinned, not one:
 # `drifted` bidirectionally, and `adjudicable` against SHRINKING, because deleting the symbol name
 # from the prose otherwise lowers `drifted` and reads as an improvement. The baseline records WHICH
 # claims are drifted, not only how many: counts alone are satisfied by a compensating pair, and
