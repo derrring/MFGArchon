@@ -86,16 +86,20 @@ class TestDiagonalTensorEqualsScalar:
         # The comparison the test is named for. Under periodic BC the divergence-form operator
         # with a constant diagonal tensor is exactly the weighted sum of component-wise Laplacians.
         #
-        # Note which weight lands on which axis: sigma_x = 0.2 is the tensor's FIRST index but it
-        # multiplies the Laplacian along ARRAY AXIS 1, because _tensor_diffusion_2d unpacks
-        # `Ny, Nx = u.shape` (tensor_calculus.py). The nD branch, `_tensor_diffusion_nd`,
-        # uses the opposite convention -- tensor axis i acts on array axis i.
+        # Note which weight lands on which axis: tensor axis i acts on array axis i, the same
+        # convention as the nD branch `_tensor_diffusion_nd`, so sigma_x multiplies the Laplacian
+        # along ARRAY AXIS 0.
+        #
+        # ~~sigma_x ... multiplies the Laplacian along ARRAY AXIS 1, because _tensor_diffusion_2d
+        # unpacks `Ny, Nx = u.shape` ... the nD branch uses the opposite convention~~
+        # [SUPERSEDED 2026-09-03 by #1911] That reading was correct as a measurement and wrong as
+        # a contract: the two branches really did disagree, and this test pinned the 2-D one.
         lap_axis0 = (np.roll(m, -1, axis=0) - 2 * m + np.roll(m, 1, axis=0)) / dx**2
         lap_axis1 = (np.roll(m, -1, axis=1) - 2 * m + np.roll(m, 1, axis=1)) / dy**2
-        # Measured: max deviation 2.1e-14 (worst over 300 random draws) against a signal of
-        # amplitude ~38; atol 1e-12 is ~47x margin. The swapped assignment
-        # (sigma_x*lap_axis0 + sigma_y*lap_axis1) differs by ~22, so this separates the two.
-        np.testing.assert_allclose(result_diag, sigma_y * lap_axis0 + sigma_x * lap_axis1, atol=1e-12)
+        # Measured: max deviation 1.4e-14 (worst over 300 random draws) against a signal of
+        # amplitude ~46; atol 1e-12 is ~70x margin. The swapped assignment
+        # (sigma_y*lap_axis0 + sigma_x*lap_axis1) differs by ~22, so this separates the two.
+        np.testing.assert_allclose(result_diag, sigma_x * lap_axis0 + sigma_y * lap_axis1, atol=1e-12)
 
 
 class TestAnisotropic2D:
@@ -122,20 +126,23 @@ class TestAnisotropic2D:
         # tensor, under which the axis assignment is invisible; a symmetric probe (X**2 + Y**2)
         # is invariant under the swap and must not be used here.
         #
-        # CONVENTION, as measured: _tensor_diffusion_2d unpacks `Ny, Nx = u.shape`, so the
-        # tensor's FIRST index addresses the SECOND array axis. With meshgrid(indexing="ij"),
-        # u = X**2 varies along array axis 0 and yields 2*D[1,1], not 2*D[0,0].
-        # This is the OPPOSITE of the nD branch (see TestNDDispatcher.test_3d_tensor_diffusion,
-        # where tensor axis i acts on array axis i). tensor_calculus.py's two branches.
+        # CONVENTION: the tensor's FIRST index addresses the FIRST array axis, the same as the
+        # nD branch (see TestNDDispatcher.test_3d_tensor_diffusion). With meshgrid(indexing="ij"),
+        # u = X**2 varies along array axis 0 and yields 2*D[0,0].
+        #
+        # ~~the tensor's FIRST index addresses the SECOND array axis ... yields 2*D[1,1], not
+        # 2*D[0,0]. This is the OPPOSITE of the nD branch~~ [SUPERSEDED 2026-09-03 by #1911]
+        # The disagreement between the two branches was real and is what #1911 fixed; this test
+        # had pinned the 2-D side of it.
         x = np.linspace(0, 1, 16)
         X, Y = np.meshgrid(x, x, indexing="ij")
         hx = x[1] - x[0]
         D = np.array([[0.2, 0.0], [0.0, 0.05]])
-        # Measured deviations 3.1e-15 (X) and 1.3e-14 (Y); atol 1e-10 is >7000x margin.
+        # Measured deviations 1.3e-14 (X) and 3.1e-15 (Y); atol 1e-10 is >7000x margin.
         rx = diffusion(X**2, D, [hx, hx], bc=periodic_bc(dimension=2))
-        np.testing.assert_allclose(rx[2:-2, 2:-2], 2 * D[1, 1], atol=1e-10)
+        np.testing.assert_allclose(rx[2:-2, 2:-2], 2 * D[0, 0], atol=1e-10)
         ry = diffusion(Y**2, D, [hx, hx], bc=periodic_bc(dimension=2))
-        np.testing.assert_allclose(ry[2:-2, 2:-2], 2 * D[0, 0], atol=1e-10)
+        np.testing.assert_allclose(ry[2:-2, 2:-2], 2 * D[1, 1], atol=1e-10)
 
     def test_spatially_varying_tensor(self):
         """Test with spatially-varying diffusion tensor."""

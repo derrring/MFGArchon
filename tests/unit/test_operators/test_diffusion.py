@@ -280,15 +280,21 @@ class TestVaryingTensorDiffusion:
         varying path, so its coefficient-gradient terms are zero), and finiteness cannot see a
         dropped coefficient gradient or a swapped axis.
 
-        Note which closed form holds. Measured with an asymmetric probe on a rectangular grid:
-        the kernel pairs ``Sigma[..., 0, 0]`` with ``spacings[0]`` and array axis **1**, and
-        ``Sigma[..., 1, 1]`` with ``spacings[1]`` and array axis **0** -- tensor index and
-        spacing travel together, so this is the "xy" (matrix/image) axis order, the reverse of
-        the ``indexing="ij"`` ordering these fixtures build their meshgrids with. Reading X as
-        the first tensor axis instead gives 0.3 + 0.4X + 0.2Y, which is off by 0.27 here. Both
-        the constant-tensor and varying-tensor paths agree on this ordering. Nothing else in the
-        file pins it: the diagonal test sums 2a + 2b, the identity test uses the identity, and
-        the broadcast test compares two paths -- all three are invariant under an axis swap.
+        ``Sigma[..., 0, 0]`` is paired with ``spacings[0]`` and array axis **0**, i.e. the
+        ``indexing="ij"`` order these fixtures build their meshgrids with. With
+        ``Sigma_xx = 0.1(1+X)``, ``Sigma_yy = 0.05(1+Y)`` and ``u = X^2 + Y^2``,
+        ``div(Sigma grad u) = d_x(0.2X + 0.2X^2) + d_y(0.1Y + 0.1Y^2) = 0.3 + 0.4X + 0.2Y``.
+
+        ~~this is the "xy" (matrix/image) axis order, the reverse of ``indexing="ij"``~~
+        [SUPERSEDED 2026-09-03 by #1911] Until then this test asserted ``0.3 + 0.2X + 0.1Y``
+        and its docstring recorded the swap as the kernel's contract, noting that the "ij"
+        reading "gives 0.3 + 0.4X + 0.2Y, which is off by 0.27 here". That was the defect,
+        measured correctly and pinned without a label saying so: tensor index and spacing did
+        travel together, onto the wrong axis, and the caller's array is ``[x, y]``. The library
+        consequence was that the direction with the larger sigma diffused less. What made the
+        swap invisible elsewhere is unchanged and still worth knowing: the diagonal test sums
+        2a + 2b, the identity test uses the identity, and the broadcast test compares two paths
+        -- all three are invariant under an axis swap.
         """
         X, Y, dx, dy = _2d_grid(30, 30)
         u = X**2 + Y**2
@@ -304,8 +310,8 @@ class TestVaryingTensorDiffusion:
         assert Du.shape == (30, 30)
         assert np.all(np.isfinite(Du))
 
-        # Measured interior error 1.25e-13 at n=30 (and 5.9e-13 at n=60); margin ~800x.
-        expected = 0.3 + 0.2 * X + 0.1 * Y
+        # Measured interior error 1.245e-13 at n=30 (and 5.685e-13 at n=60); margin ~800x.
+        expected = 0.3 + 0.4 * X + 0.2 * Y
         np.testing.assert_allclose(Du[3:-3, 3:-3], expected[3:-3, 3:-3], atol=1e-10)
 
     @pytest.mark.unit
