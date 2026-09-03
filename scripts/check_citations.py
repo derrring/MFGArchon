@@ -2,11 +2,11 @@
 """Measure `path.py:NNN` citations in durable prose that no longer point at what they name.
 
 A line number in a document is a claim with an expiry date, and nothing marks it when it stops
-being true. At `WINDOW = 12`: 13 of the 32 adjudicable citations in this repository's live prose
+being true. At `WINDOW = 12`: 12 of the 28 adjudicable citations in this repository's live prose
 -- 41% -- name a symbol that is not near the cited line (Issue #2102).
 
 THIS IS A REVIEW QUEUE, NOT A DEFECT LIST, and the distinction is measured rather than modest.
-All 11 rows were read by hand, and they contain both kinds -- **genuinely wrong citations, and the
+All 12 rows were read by hand, and they contain both kinds -- **genuinely wrong citations, and the
 instrument mis-attributing a symbol** -- in a proportion two independent hand-reads disagreed
 about, so none is stated here. The row whose disposition was already settled, a claim withdrawn
 under this repository's retraction convention (#2112), has left the population: the prose carrying
@@ -25,7 +25,7 @@ positional rule sees a clause boundary. So the instrument reports a superset and
 which is the shape `local_ci.sh` already uses for assertion strength: a review queue, not a delete
 list.
 
-That is 13 of the 32 that are JUDGED AT ALL, and the coverage figure belongs beside it: 103
+That is 12 of the 28 that are JUDGED AT ALL, and the coverage figure belongs beside it: 103
 citations are recorded `unadjudicable`, a large majority. Quoting the 41% bare reads as "41% of
 this repository's citations are wrong" and would be #1918's own failure committed against this
 report.
@@ -785,7 +785,7 @@ def compare_to_baseline(result: dict, path: Path) -> int:
             + "\n      - the citation is right and this line's backticked name belongs to a"
             + "\n        neighbouring clause. Then change nothing and record it -- a"
             + "\n        legitimate outcome, not a workaround."
-            + "\n    Of the 11 rows in the standing backlog (#2112 recorded one more, a"
+            + "\n    Of the 12 rows in the standing backlog (#2112 recorded one more, a"
             + "\n    withdrawn claim, whose prose has since been deleted) two independent"
             + "\n    hand-reads disagreed about which fall in which kind -- so no proportion"
             + "\n    here is worth acting on. Read the line."

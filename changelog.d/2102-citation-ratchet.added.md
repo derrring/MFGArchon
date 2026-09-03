@@ -9,9 +9,9 @@ beside a citation moves it to `unadjudicable` where nothing judges it. A version
 design -- collating `changelog.d/` into the exempt `CHANGELOG.md` moves rows -- which is step 3 of
 the version-bump checklist in `AGENTS.md`.
 
-  The recorded set is a **review queue, not a defect list**. All 11 rows were read by hand, as part of a
+  The recorded set is a **review queue, not a defect list**. All 12 rows were read by hand, as part of a
   larger backlog that has since shrunk. One row that left it was a withdrawn claim -- neither of
-  the other two classes -- and its prose was deleted (#2112). The 13 contain both genuinely wrong citations and cases of
+  the other two classes -- and its prose was deleted (#2112). The 12 contain both genuinely wrong citations and cases of
   the instrument attributing a symbol from a different clause on the same line -- **and no
   proportion between them is worth acting on.** An independent re-read returned the mirror image on
   the rows it covered, so the classes are hard to tell apart even by hand, and a backlog this size

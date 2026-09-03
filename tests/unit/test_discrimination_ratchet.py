@@ -18,6 +18,7 @@ import ast
 import importlib.util
 import inspect
 import json
+import re
 import sys
 import textwrap
 from pathlib import Path
@@ -113,6 +114,55 @@ def test_shipped_baseline_covers_every_declared_mutation(td):
     baseline = json.loads(_BASELINE.read_text())["mutations"]
     assert set(baseline) == {m.name for m in td.MUTATIONS}, (
         "scripts/discrimination_baseline.json is out of sync with MUTATIONS; regenerate with --write-baseline"
+    )
+
+
+def test_every_killer_node_id_still_resolves(td):
+    """The killmatrix is a list of node IDs, and a node ID has an expiry date.
+
+    ADMISSION (AGENTS.md): class 4, guards an instrument. `discrimination_killmatrix.json` is the
+    only measurement-produced keep-list this repository has, and #2227 adjudicated a 243-file
+    deletion against it. Nothing checked that its entries still name tests that exist -- so three
+    had been stale since #2181/#2185 renamed a class in `test_fp_particle_solver.py`, and the
+    deletion's acceptance had to be re-derived by hand instead of read off a gate. A file-level
+    check cannot see this: the file survives, the `def` survives, the CLASS moved (#2176).
+
+    Reported, not gated at zero: staleness accumulates legitimately between re-records, and failing
+    the suite for it would push someone to re-record rather than to look. What must not happen is
+    that it accumulates INVISIBLY, which is the state this test ends.
+
+    MUTATION-VERIFIED in process: pretending the largest killer file is deleted takes the stale count
+    3 -> 64, well past the bound. The first mutant tried moved it 3 -> 3 and looked like a dead
+    guard -- the file chosen was created after the killmatrix was recorded and is not a killer at
+    all, so mutant and control were the same case. A file that is not in the matrix SHOULD NOT move
+    this count, and that is the control, not the mutant.
+    """
+    matrix = json.loads((_BASELINE.parent / "discrimination_killmatrix.json").read_text())["killed_by"]
+    tests_root = _BASELINE.parent.parent / "tests"
+    stale = []
+    for nid in matrix:
+        rel, _, tail = nid.partition("::")
+        path = _BASELINE.parent.parent / rel
+        if not path.is_file():
+            stale.append((nid, "file gone"))
+            continue
+        src = path.read_text(encoding="utf-8", errors="ignore")
+        parts = [p.split("[")[0] for p in tail.split("::")]
+        missing = [q for q in parts if not re.search(rf"^\s*(?:class|def) {re.escape(q)}\b", src, re.M)]
+        if missing:
+            stale.append((nid, f"missing {missing}"))
+
+    #: CONTROL: the population must be non-empty and the walk must reach real files, or an empty
+    #: `stale` says nothing. A bare "0 stale" over 0 entries is the null result this repo's record
+    #: keeps catching.
+    assert len(matrix) > 100, f"killmatrix collapsed to {len(matrix)} entries; the check is inert"
+    assert tests_root.is_dir(), "tests/ not found from the baseline's location; the walk is wrong"
+
+    known = 3  # #2176: stale since #2181/#2185, a class rename in test_fp_particle_solver.py
+    assert len(stale) <= known, (
+        f"{len(stale)} killer node IDs no longer resolve, above the {known} recorded in #2176: "
+        f"{stale[:8]}. Either a deletion took a killer -- check before merging it -- or the "
+        f"killmatrix needs re-recording and this bound needs moving WITH a note saying why."
     )
 
 

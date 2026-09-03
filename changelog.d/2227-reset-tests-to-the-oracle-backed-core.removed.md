@@ -1,55 +1,104 @@
-**243 test files and 58,785 lines deleted.** `tests/` goes from 463 files / 135,016 lines to 220 /
-76,231. Git history is the archive, the same disposition #1710 gave `archive/` and the one that
-removed `alg/neural/` and `alg/reinforcement/`.
+**243 test files and 58,785 lines deleted.** Tracked `.py` under `tests/` goes from 463 files /
+135,016 lines to 220 / 76,231 (counting all tracked files, including a README and two `.npz`
+fixtures, it is 466 → 223). Git history is the archive, the same disposition #1710 gave `archive/`
+and the one that removed `alg/neural/` and `alg/reinforcement/`.
 
-**Why, in one line:** a suite you cannot audit is not an asset, and this one could not be audited —
-5,632 test functions, and reading them file by file was costed at roughly six days of full-time
-review.
+**Why:** a suite you cannot audit is not an asset. 5,642 test functions, and reading them file by
+file was estimated at roughly six days of full-time review — an estimate, with no measured basis.
 
-**What replaced "audit the tests" as the question.** The `[Principle] Conventions Index` names **35**
-load-bearing conventions. `scripts/discrimination_baseline.json` carries a falsifiable mutation for
-**24** of them, each with an `owner` field naming the convention it breaks. So the work unit is 35,
-not 5,632 — three orders of magnitude — and the convention↔test map already existed in the
-repository rather than needing to be built.
+## What replaced "audit the tests" as the question
 
-Measured before the deletion: **every one of the 24 is defended.** `kill_count` runs 2 … 168, median
-22, **no zeros and no single points of failure**. The three thinnest, at 2 each, are the ones worth
-adding to rather than anything worth removing:
+The Joplin `[Principle] Conventions Index` names **35** load-bearing conventions;
+`scripts/discrimination_baseline.json` carries **24** falsifiable mutations, each with an `owner`
+field. That makes the reviewable unit **tens, not thousands** — 5,642 / 35 is a factor of about 160,
+not the "three orders of magnitude" an earlier draft claimed.
 
-- absent BC defaults to clamp/absorbing (#1698)
-- `SolverResult.mass_conservation_error` is drift from the initial mass, not deviation from 1
-- Picard convergence requires **both** the relative and the absolute criterion
+**The two sets are nearly disjoint, which an earlier draft got badly wrong.** It said the 24 were a
+falsifiable form *of* the 35 and that ~11 conventions were uncovered. Of the 15 issue numbers the
+mutation owners cite, **2** appear in the index; roughly 6–9 of the 24 land on index rows. So the
+uncovered figure is closer to **29 of 35**, and the mutations defend a dozen conventions the index
+does not name. Note also that the index is a **private Joplin note**: no reader of this changelog can
+resolve it.
 
-## The keep-set was built from measurement, then controlled
+Measured before the deletion, **every one of the 24 mutations is defended**: `kill_count` 2 … 168,
+median **21.5**, no zeros, no ones. The three at the floor of 2:
 
-Not from a keyword grep. The union of: every file containing a test that **kills a mutation**
-(`discrimination_killmatrix.json`, 125 files — measured, not matched); files carrying an **external
-oracle**; **defect pins** with retirement conditions; tests that **guard the instruments** in
-`scripts/`; the ratchet's own self-test; `conftest.py` and `__init__.py`.
+| convention | killers |
+|---|---|
+| absent BC defaults to clamp/absorbing (#1698) | 2 |
+| `SolverResult.mass_conservation_error` is drift from the initial mass, not deviation from 1 | 2 |
+| Picard convergence requires **both** the relative and the absolute criterion | 2 |
 
-The instrument-guard category exists because the **positive control caught its absence**: a first
-keep-set would have deleted `tests/unit/test_capability_warnings.py`, which carries the `== 12`
-defect pin for #1878 and the `library_said` machinery. That is the contamination this repository has
-recorded in five of five mechanical criteria, caught here by running the control rather than by
-trusting the criterion.
+`kill_count` counts tests that *notice* a mutation, so it tracks how widely the mutated code is
+exercised rather than defensive depth — 168 is a constant everything routes through, not a
+convention 84× better defended. What makes these three thin is a fact the count does not show: **each
+has both killers inside a single file**, so one file-level loss takes each to zero in one step. All
+three are already recorded by name in #2148.
 
-**The deletion's own acceptance test, run after:** 613 of the 614 killer node IDs survive, **0**
-killer files deleted, and **no convention's `kill_count` reached zero**. One node's function name no
-longer resolves, taking `particle_mass_counting_measure` from 13 to 12. Control: a file known to be
-deleted reports missing.
+## The keep-set: one arm measured, three judged, and the three judged arms all failed
 
-**Remaining suite:** 3,583 passed, 3 skipped, 20 xfailed in 150 s on the gate's marker set.
+Union of: files containing a test that **kills a mutation** (`killmatrix.json`, 125 files —
+measured); **external-oracle** files; **defect pins**; tests **guarding the instruments** in
+`scripts/`; the ratchet self-test; `conftest.py`/`__init__.py`.
 
-## Two mechanical consequences, both recorded rather than worked around
+Arm 1 was applied by measurement. Arms 2–4 were applied by keyword, and independent review found each
+had dropped something it should have kept. Restored:
 
-`scripts/citation_baseline.json` re-recorded — 42 citations pointed at deleted files. That moved the
-standing backlog from 13 rows to 11, and the number is hand-written in **three** places
-(`check_citations.py` twice, one changelog fragment); its own test says so while failing: *"Every
-copy must be edited together, which is why there should not be three."* All three updated. The
-statement remains true: the 11 are the survivors of the 13 that were read by hand.
+- `test_check_assertion_strength.py` — the **only** test of `scripts/check_assertion_strength.py`, an
+  instrument the gate itself runs.
+- `test_fp_particle_anisotropic_sigma_1256.py` and `test_issue_1079_anisotropic_sigma.py` — an Itô-isometry
+  oracle on a **non-symmetric** Σ, with an explicit anti-tautology control. Without it the surviving
+  pin tests only symmetric Σ, where `ΣΣᵀ ≡ ΣᵀΣ`, and the transpose-order convention becomes
+  **inexpressible** in the tree.
+- `test_issue1285_source_term_time_slice.py`, `test_hjb_1071_control_cost_lambda.py`,
+  `test_mfg_caplog.py` — the last being the contract test for the fixture `AGENTS.md` mandates, which
+  otherwise had six consumers and no test of its own.
 
-The discrimination sweep was **not** re-run end to end. It plants 24 mutations and runs the suite for
-each, roughly 40 minutes, and a run killed by a harness timeout leaves a mutant in the tree — its own
-guard says the `finally` "survives neither SIGKILL nor a harness timeout" (#1849). That happened
-twice today. The killer-survival check above answers the same question in seconds and without
-mutating anything. (#2227)
+Earlier, the **positive control** had already caught a fourth: a first keep-set would have deleted
+`test_capability_warnings.py`, carrying the `== 12` defect pin for #1878.
+
+## Acceptance: the deletion is cleaner than the first claim
+
+| | |
+|---|---|
+| killer node IDs resolving after the deletion | **611 / 614** |
+| killer node IDs **lost to this deletion** | **0** |
+| killer files deleted | 0 (and 0 before, so this figure discriminates nothing) |
+| conventions reaching `kill_count` 0 | 0 |
+
+The three unresolved node IDs were **already** unresolvable on `main` — a class rename in
+`test_fp_particle_solver.py`, a file this change does not touch, from #2181/#2185. That is the
+pre-existing killmatrix staleness #2176 was filed for, and this PR's node-ID check is the first
+instrument that surfaces it. Its true effect is `particle_mass_counting_measure` 13 → **11** and
+`optimal_control_sign` 40 → **39**, neither caused here.
+
+An earlier draft said "613 of 614 survive" and attributed one loss to this change. Both halves were
+wrong, in opposite directions, because the check used a `def <name>` regex that a class rename
+satisfies while the node ID does not resolve.
+
+## Mechanical consequences
+
+- `citation_baseline.json` re-recorded. **The deletion moved `missing` from 40 to 42** — an earlier
+  draft read the post-state, 42, as the number of citations pointing at deleted files; the number
+  caused here is **2**. The standing backlog moved 13 → **12** (13 → 11 at the deletion, back to 12
+  once review restored six files), and that figure is hand-written in **six** durable sites, not the
+  three the test's regex happens to span. All six now agree.
+  A checker cannot audit the predicate defining its own population, and its passing does not certify
+  that every copy was found.
+- `warning_baseline.json` re-recorded: **336 → 212** identities. The checker refused to write without
+  a census — *"Nothing was measured, so this says nothing about whether warnings changed"* — which is
+  the correct refusal.
+- The full discrimination sweep was **not** re-run: ~40 minutes, and a run killed by a timeout leaves
+  a mutant in the production tree (#1849, #2229 — it happened twice during this work). The node-ID
+  check answers the same question in seconds and mutates nothing.
+- The CI smoke tier named `tests/unit/test_config`, which this change emptied; pytest given a
+  non-existent path collects **nothing** and reports "no tests ran". Invisible locally, because a
+  stale `__pycache__` left the directory present in a working tree.
+
+## What this does not claim
+
+**That the deleted volume was worthless** — only that its value could not be established at a price
+worth paying. **Rebuild cost has never been measured**, for this suite or any other. And the
+discrimination *fraction* will rise sharply because the denominator shrank while the killers were
+kept: **that is arithmetic, not improvement**, the same misreading the record already documents from
+when the mutation table grew 6 → 24. The gate prints its own staleness warning saying so. (#2227)
