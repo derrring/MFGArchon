@@ -14,7 +14,7 @@ remains true after the MFGArchon-specific names and facts are removed.
 ### MFGArchon: Public Infrastructure Package
 Production-ready infrastructure for Mean Field Games research and applications.
 
-**Scope**: ✅ core infrastructure (solvers, backends, config, geometry, workflow, visualization); ✅ classical numerical algorithms (FDM, FEM, GFDM); ⛔ the neural and RL families (DGM, PINN, Actor-Critic, PPO) are **out of scope as code and deleted** — see the next section; ✅ standard examples (LQ, crowd motion, traffic flow, tutorials).
+**Scope**: ✅ core infrastructure (solvers, backends, config, geometry, workflow, visualization); ✅ classical numerical algorithms (FDM, FEM, GFDM); ⛔ the neural and RL families (DGM, PINN, Actor-Critic, PPO) are **out of scope as code (deleted); the direction stays open** — see the next section; ✅ standard examples (LQ, crowd motion, traffic flow, tutorials).
 
 ### `alg/neural/` and `alg/reinforcement/` were deleted, not frozen
 
@@ -163,7 +163,8 @@ as a uniform density that cannot separate a gradient-form bug from a correct sch
 
 Use the **`mfg_caplog`** fixture (`tests/conftest.py`), never plain `caplog`. `MFGLogger` sets
 `propagate = False` (`logger.py:211`), so whether `caplog` sees an mfgarchon record differs by
-pytest version, and the two versions in use here disagree. `mfg_caplog` removes the dependence.
+pytest version, and the two in use here — the gate interpreter's and the one `uv run --group dev`
+resolves — disagree. `mfg_caplog` removes the dependence.
 
 ```python
 def test_the_drift_is_reported(mfg_caplog):
@@ -180,7 +181,6 @@ nothing silently.
 The discipline that catches it is at the call site: **pair every absence assertion with a presence
 assertion on the same logger name**, so a typo fails the presence half loudly.
 
-
 ### Closing out a fix ⚠️ — name the oracle, or say there isn't one
 
 "Add a test" is **not** the default close-out for a fix here. Most of this suite does not react when
@@ -191,7 +191,6 @@ defended very unevenly — some by a single-digit number of tests, some by over 
 the suite result, with its own staleness flag when the suite has moved since the baseline was
 recorded. A fraction copied into this file goes stale the day the mutation list or the suite moves,
 and both move — the baseline was re-recorded six times in the month to 2026-08-22.
-
 
 **Read the vector, not the fraction** — an aggregate over the whole suite cannot show a convention
 held by two tests, which is the thing you would act on (#2148). Two cautions when you do:
@@ -241,7 +240,7 @@ Do **not** edit: `mfgarchon/__init__.py` (reads `importlib.metadata`), `workflow
 - **Branch naming (MANDATORY)**: `<type>/<short-description>` — `feature/ fix/ chore/ docs/ refactor/ test/`.
 - **Never commit directly to `main`.** ⚠️ **Nothing enforces this — not the server, and not the local hook either.** Re-check with `gh api repos/derrring/MFGArchon/rules/branches/main` (the effective-rules endpoint, which covers org rules and migrated required workflows); an empty array means no branch rule applies. The pre-push hook does not close the gap: it runs `scripts/local_ci.sh`, which contains no branch logic at all (`grep -i branch scripts/local_ci.sh` → nothing) and no `no-commit-to-branch` hook is configured — it gates *test quality*, not *which ref you are on*, so a green suite on `main` pushes cleanly. Treat this as a discipline you keep, not a wall that stops you. Create the PR when you push; delete merged branches.
 - **Prune local branches periodically**: `./scripts/prune_local_branches.sh` **classifies and prints evidence; it never deletes.** Deletion stays manual because each of its three signals can be wrong in a way that costs unmerged work — the content check reverse-applies against the *working tree* rather than `main`, so its verdict moves with the checkout and with uncommitted edits; the merged-PR check matches head-ref *names*, and a head-ref name can belong to more than one merged PR; and a 3–4 digit run in a branch name may be a grid size rather than an issue. Read the branch, record the sha, then `git branch -D`. The script aborts rather than guessing if the merged-PR fetch looks truncated. Note `git status` never reports what a worktree costs: one `??` entry at best, and nothing at all under an ignored path such as `.claude/worktrees/` (`.gitignore:77`), so use `git worktree list`.
-- **PR granularity is a preference, not a mandate.** Granular (one fix / PR) is fine; batch *related, low-risk* fixes into one PR (one commit each, `Closes #A #B #C`) when convenient to save CI runs. Split out anything *risky / independent / large (>~1d)* regardless. The two pains that made granularity costly — CHANGELOG conflicts and red-main — are removed by *mechanism*: the fragment changelog, and the full-suite gate that now runs **locally** (`./scripts/local_ci.sh`, wired as a pre-push hook) rather than on GitHub. So this stays a convenience call, not a rule to remember.
+- **PR granularity is a preference, not a mandate.** Granular (one fix / PR) is fine; batch *related, low-risk* fixes into one PR (one commit each, `Closes #A #B #C`) when convenient to save CI runs. Split out anything *risky / independent / large (>~1d)* regardless.
 - **Changelog per PR (#1521)**: add a `changelog.d/<slug>.<category>.md` fragment (category ∈ `added/changed/deprecated/removed/fixed`) — do **not** edit `CHANGELOG.md`. Fragments are separate files, so PRs never conflict on the changelog (batched or not). See `changelog.d/README.md`.
 - **Before merge**: the **local** full suite is authoritative — `./scripts/local_ci.sh` (see *Pre-commit / pre-merge checks*). GitHub's PR checks are a fast tier only and green there is **not** sufficient.
 - **Review before merge (MANDATORY)**: run an **independent adversarial review** of the PR before merging — a fresh reviewer (subagent / cross-model / worktree-isolated), *not* just author self-review. Merge only when it returns MERGE-OK, or after fixing every blocker it raises; re-review after applying fixes. Local-green ≠ correct.
@@ -295,7 +294,7 @@ and `scripts/local_ci.sh` exits before any check when that path is not under the
 `importlib.import_module(package)` — a real in-process import that no import-shaped text pattern and
 no AST import-scan can see. Run the blocking finder over the actual invocation instead.
 
-**Set `MFG_PYTHON`; `PYTHONPATH` is not yours to remember** — the gate exports it for itself
+**Set `MFG_PYTHON`; `PYTHONPATH` is not yours to remember** — the gate binds it for itself
 (#2154) — bound onto its own `scripts/*.py` invocations, deliberately **not** an `export`, because
 `-P` removes CWD from `sys.path` but not `PYTHONPATH`, and an exported root re-arms the `-m`
 shadowing the `-P` exists to prevent. That is what makes the pre-push hook usable from a worktree. `MFG_PYTHON` stays yours:
