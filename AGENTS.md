@@ -120,28 +120,14 @@ Internally: the iterator calls `problem.using_resolved_bc(state)` each Picard st
 
 ### Admission ⚠️ — a test earns its place before it is written (#2227)
 
-**Do not write a test because a change "should have one".** 238 files and 57,811 lines were deleted
-on 2026-09-03 for being unauditable: 5,643 test functions and no way to read them at a cost anyone
-would pay. Adding to it casually is how it got there.
-
-**THREE SECTIONS, THREE JOBS — do not read any of them as overruling another.** An earlier version of
-this section claimed to be "the same ladder" as § *Closing out a fix* and was not: the ladders differ
-in order and in membership, and the claim made two sections of this file appear to contradict each
-other. They do not, because they answer different questions:
-
-| section | question |
-|---|---|
-| § *Closing out a fix* | what does a **fix** end with? — and *"there is no oracle for this yet"* plus a filed issue is an accepted close-out that writes **no test at all** |
-| — the residue | that section's classes 3 and 4 ARE written tests, and class 4 is a happy-path assertion this section does not admit. **That tension is real and is not dissolved here.** Read it as: a happy-path assertion can be an honest way to CLOSE a fix, admitted as such and saying what it would not catch; it is not a reason to ADD a test to the suite. If you find yourself writing one anyway, that is the moment to file the "no oracle yet" issue instead |
-| **§ Admission** (here) | does a **test**, once someone proposes writing one, earn its place? |
-| the *where* table below | **where** does a test live, once it has earned one? It says which *kind* a thing gets **if** a test is written; it does not oblige one. It sits under this same `##` heading, not in a sibling section — an earlier version of this row pointed at `§ Testing — repo strategy`, which is the `##` that CONTAINS this subsection |
+**Do not write a test because a change "should have one".** Most of this suite was deleted for being
+unauditable; adding to it casually is how it got there.
 
 **A new test must be one of these, and the PR says which:**
 
-1. **It kills a mutation.** Check it **cheaply**: `scripts/discrimination_killmatrix.json` maps node ID
-   → mutations killed, so a re-run of the sweep is not the price of admission (~26 min, seven full-suite runs, measured at `test_discrimination_ratchet.py:3` -- an earlier version of this line said 40, which was my estimate, not a measurement) — and that
-   sweep plants mutations in the real tree and leaves them behind when killed (#1849, #2229), so
-   prefer the recorded map and re-measure only when adding a mutation.
+1. **It kills a mutation.** `scripts/discrimination_killmatrix.json` maps node ID → mutations killed:
+   read it. Re-running the sweep is not the price of admission — it takes ~26 min and leaves
+   mutations in the tree when killed (#1849, #2229) — so re-measure only when adding a mutation.
 2. **It is an external oracle** — a law the scheme must reproduce, computed independently of it.
    `M(0) @ expm(Qt)`, `rho_i * exp(v_n*dx/D)`, an LQG closed form, an Itô isometry. These do not rot
    when the API moves, because they pin mathematics rather than signatures.
@@ -149,26 +135,35 @@ other. They do not, because they answer different questions:
    it and the failure message is the instruction.
 4. **It guards an instrument** in `scripts/` — the capability matrix, the ratchets, their baselines.
 
-Anything else is the class that was deleted. `hasattr`, a signature, `raises(TypeError)` — those rot
-the first time the API moves, and they rot **silently**, still passing while measuring nothing.
+`hasattr`, a signature, `raises(TypeError)`: these rot the first time the API moves, and they rot
+**silently**, still passing while measuring nothing.
 
-**"Which convention does it defend" is a question, not a lookup.** The Joplin `[Principle] Conventions
-Index` names 35 conventions and `scripts/discrimination_baseline.json` carries 24 mutations, and the
-two sets are **nearly disjoint** — of the 19 issue numbers the mutation owners cite, 2 appear in the
-index. An earlier version of this section implied the 24 were a subset of the 35 and that ~11
-conventions were uncovered; the real figure is closer to 29 of 35, and the mutations defend a dozen
-conventions the index does not name. So a test defending something on neither list is admissible
-under class 1 or 2 on its own merits. Note also that the index is a **private Joplin note**, not a
-repository artifact: a reader outside this machine cannot resolve it, which is a reason to state the
-convention in the test rather than cite the index.
+**Three questions, three sections. None overrules another.**
+
+| question | answered by |
+|---|---|
+| what does a **fix** end with? | § *Closing out a fix* — and *"there is no oracle for this yet"* plus a filed issue is an accepted close-out that writes **no test** |
+| does a proposed **test** earn its place? | here |
+| **where** does an admitted test live? | the table below, under this same `##`. It says which *kind* a thing gets **if** a test is written; it does not oblige one |
+
+~~This section is the same ladder as § *Closing out a fix*, used for admission rather than as a
+report.~~ **[RETRACTED 2026-09-03]** The ladders differ in order and in membership. The residue is
+real and is not dissolved: that section's class 4 is a happy-path assertion this one does not admit.
+Read it as — a happy-path assertion can be an honest way to **close** a fix, admitted as such and
+saying what it would not catch; it is not a reason to **add** a test. Writing one anyway is the
+moment to file the "no oracle yet" issue instead.
+
+**"Which convention does it defend" is a question, not a lookup.** The Joplin `[Principle]
+Conventions Index` names 35 conventions and `scripts/discrimination_baseline.json` carries 24
+mutations, and **the two sets are nearly disjoint** (measured in #2227). Neither is the list. A test
+defending something on neither is admissible
+under class 1 or 2 on its own merits. The index is a private Joplin note that a reader outside this
+machine cannot open, so state the convention in the test rather than cite the index.
 
 **Nothing here licenses deleting a test on a count.** The deletable set is the structurally
-tautological one, found by *reading*; inert-by-counting is a different set, and #1715 records five
-genuine cross-path pins inside it. When the 2026-09-03 keep-set was built, arm 1 was applied by
-measurement and arms 2–4 by judgement — and review found all three judgement arms had dropped
-something they should have kept, including the only test of an instrument the gate runs and the only
-expressible test of the `Sigma Sigma^T` convention. **Apply arms 2–4 by reading the candidate, not by
-matching a keyword.**
+tautological one, found by **reading**; inert-by-counting is a different set, and #1715 records five
+genuine cross-path pins inside it. Classes 2–4 are judgements: apply them by reading the candidate,
+never by matching a keyword.
 
 Cross-project testing discipline governs **what** a test must cover (edge/stress/failure cases, "coverage = paths whose failure you'd catch"). This section governs **where** a test lives — a hybrid approach for research code that evolves fast:
 
