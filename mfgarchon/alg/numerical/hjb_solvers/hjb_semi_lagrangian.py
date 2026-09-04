@@ -953,7 +953,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         across all dimensions.
 
         Args:
-            U: Solution array of shape (Nx,) for 1D, (Ny, Nx) for 2D, etc.
+            U: Solution array of shape (Nx,) for 1D, (Nx, Ny) for 2D, etc. Axis 0 is x;
+                measured (5, 13, 7) for Nx_points=[13, 7] (#2235)
             time: Current time for time-dependent BC values
 
         Returns:

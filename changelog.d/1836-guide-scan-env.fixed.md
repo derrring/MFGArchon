@@ -17,8 +17,7 @@
   quiet about what it was built to catch. The scope rule is read from the ratchet that owns it
   (`check_internal_deprecation.FROZEN`) rather than restated, and both branches of the guard are
   pinned against the nightly's own 20-module failure.
-  Installing numba is not inert: `USE_NUMBA` flips to True and three `@njit` kernels become
+  Installing numba is not inert: `USE_NUMBA` flips to True and the `@njit` kernels become
   compiled. Measured rather than assumed — collection is identical in all four shards with and
   without it, and no test in the nightly's marker selection branches on numba availability, so
   the change moves that tier toward the local gate, whose environment already has it.
-

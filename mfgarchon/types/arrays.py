@@ -116,7 +116,12 @@ type DensityArray = NDArray
 """
 Discretized density function array.
 
-Shape: (Nx+1,) for 1D, matches SpatialGrid shape
+Shape: (Nx,) for 1D, matches SpatialGrid shape
+
+~~(Nx+1,)~~ [SUPERSEDED 2026-09-04 by #2235] It said `(Nx+1,)` AND "matches
+SpatialGrid", which stopped being satisfiable when `SpatialGrid` above was corrected to
+`(Nx,)` -- the two lines were consistent while both were wrong and contradicted each other
+once one was fixed. Measured: `Nx_points=[21]` gives a density of shape `(21,)`.
 """
 
 # === Legacy Compatibility ===

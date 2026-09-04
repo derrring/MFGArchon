@@ -24,8 +24,8 @@ class SpatialTemporalState(NamedTuple):
     intermediate solution states during solving.
 
     Attributes:
-        u: Value function array, shape (Nt+1, Nx+1)
-        m: Density function array, shape (Nt+1, Nx+1)
+        u: Value function array, shape (Nt+1, Nx) -- Nx is the POINT count (#2235)
+        m: Density function array, shape (Nt+1, Nx)
         iteration: Current iteration number
         residual: Current residual/error measure
         metadata: Additional solver-specific data
