@@ -616,14 +616,25 @@ class FPGFDMSolver(BaseFPSolver):
             # Forward Euler update: dm/dt = -div(m*alpha) + D*Laplacian(m) + S
             dm_dt = -advection + diffusion
             if source_term is not None:
-                # Evaluated at the level being computed, as fp_fdm.py does. A sign error here is
-                # not silent: it drives the manufactured error to O(1) and the measured order to 0,
-                # so the study that verifies the wiring verifies the sign in the same run.
-                s_values = np.asarray(source_term((t_idx + 1) * dt, self.collocation_points), dtype=float).ravel()
+                # Evaluated at t_n, the level every OTHER term in this expression is evaluated at.
+                # This update is explicit forward Euler -- `m + dt * (L(m^n) + S)` -- so pairing an
+                # operator at t_n with a source at t_{n+1} would mix two levels inside one
+                # expression. `fp_fdm.py` uses `source_term(t_next, x_grid)` because that path is
+                # IMPLICIT, where t_{n+1} is the level of its operator; the package convention is
+                # the level the operator is evaluated at, not the literal t_next (#2020).
+                #
+                # Measured, nx=41, both choices consistent and the gap clean O(dt):
+                #   nt=200/400/800/1600, |S(t_n+1) - S(t_n)| = 1.13e-05, 5.63e-06, 2.81e-06, 1.41e-06
+                # S(t_n) sits on the space-limited floor at once (1.535e-04 -> 1.539e-04, flat)
+                # while S(t_{n+1}) descends toward it from above (1.648e-04 -> 1.553e-04).
+                #
+                # A sign error here is not silent: flipping it puts the error at 1.041e-01, about
+                # twice the no-source 5.25e-02, against 1.65e-04 with the sign right.
+                s_values = np.asarray(source_term(t_idx * dt, self.collocation_points), dtype=float).ravel()
                 if s_values.size != self.n_points:
                     raise ValueError(
                         f"FPGFDMSolver: source_term returned {s_values.size} values at "
-                        f"t={(t_idx + 1) * dt:.6g}, expected {self.n_points} (one per collocation "
+                        f"t={t_idx * dt:.6g}, expected {self.n_points} (one per collocation "
                         f"point). The package convention is source_term(t, x) -> (N,) with x of "
                         f"shape (N, d) taken from the collocation points."
                     )
