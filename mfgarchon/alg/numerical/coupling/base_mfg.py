@@ -146,8 +146,15 @@ def resolve_source_kwarg(params: Any, source_term: Any, solver_name: str, method
 
     Third of the ``resolve_*`` family, beside :func:`resolve_volatility_kwarg` and
     ``resolve_fp_drift_kwargs``. One owner for the forwarding decision, which until #2200 was
-    restated at both call sites below with a separate message each. The restatement is what let the
-    two drift apart, and it is the same mechanism #1783 produced on the volatility side.
+    restated at **all four** coupling call sites -- both Picard sides
+    (:class:`BaseCouplingIterator`) and both Newton sides (``MFGResidual``) -- with a separate
+    message each. The restatement is what let them drift apart, and it is the same mechanism #1783
+    produced on the volatility side.
+
+    ~~restated at both call sites below~~ [CORRECTED 2026-09-04] The first version of this
+    docstring said "both", twice, and routed two. The sibling four lines up has said "all four"
+    since #1783. Undercounting its own call sites, in the function whose subject is that a restated
+    claim drifts, is the joke the reviewer had to point out.
 
     What this owns, and what it does not. It owns **whether the solver can take a source at all**,
     the **callable convention at the boundary**, and the **refusal message**. It does not own the
@@ -160,10 +167,18 @@ def resolve_source_kwarg(params: Any, source_term: Any, solver_name: str, method
     evaluation points -- ``geometry.get_spatial_grid()`` for grid solvers, the collocation points
     for GFDM, which is where that scheme discretises.
 
-    Two outcomes, not the three ``resolve_volatility_kwarg`` has. A volatility field can be
-    *indistinguishable* from ``problem.sigma``, so dropping it changes nothing and dropping is
-    correct; a composed source has no such case. It is present or absent, and dropping a present
-    one always solves a different problem.
+    Two outcomes, not the three ``resolve_volatility_kwarg`` has, and the reason is a default
+    rather than the nature of the quantity. ``MFGProblem.volatility_field`` **defaults to**
+    ``problem.sigma``, so the coupling loop hands a non-None field on every ordinary solve and
+    refusing those would be a refusal to run at all -- hence the third outcome, drop-when-
+    indistinguishable. ``compose_hjb_source`` returns ``None`` unless the user set a field, so a
+    non-None source is always something the caller asked for.
+
+    ~~a composed source has no such case~~ [CORRECTED 2026-09-04] It does: a ``source_term_hjb``
+    returning identically zero is indistinguishable from none. What rules the third outcome out is
+    that the comparison is not available here -- ``matches_problem_sigma`` compares a value against
+    a scalar, while a source is a closure that would have to be evaluated over the whole grid and
+    every time level to answer the same question.
 
     - **The solver names the parameter: forward it.**
     - **It does not: raise.** A ``**kwargs`` override does not count. Signature introspection
@@ -172,11 +187,20 @@ def resolve_source_kwarg(params: Any, source_term: Any, solver_name: str, method
       the assumption that produced #1316, and the reason
       ``tests/unit/test_alg/test_source_term_channel_2020.py``'s ``_SWALLOWERS`` ratchet exists.
 
-    ~~"Use an FDM solver"~~ [CORRECTED 2026-09-04] Both messages replaced here said that, and it
+    ~~"Use an FDM solver"~~ [CORRECTED 2026-09-04] All four messages replaced here said that. It
     was true when written and is no longer: after #1991, #2198 and #2020 the HJB side has six
     solvers that accept a source and the FP side seven. A live error message naming one of them is
-    advice that has stopped being executable, so this one states the RULE and points at the census
-    that owns the list, rather than carrying a copy of it.
+    advice that has stopped being executable.
+
+    ~~points at the census that owns the list~~ [CORRECTED again, same day] Pointing at
+    ``tests/unit/test_alg/...`` was worse than the list it replaced. ``pyproject.toml``'s
+    ``exclude = [... "tests*" ...]`` keeps that directory out of the wheel, so a ``pip install``
+    user hitting this is sent to a file that is not on their machine -- and this was the only
+    runtime-raised string in the package citing a ``tests/`` path.
+    ``geometry/boundary/invariants.py`` had already decided the same question the other way: *"It
+    lives in the library rather than in tests/ because tests are not the only consumer."* The
+    message now gives the reader a one-liner they can run against any candidate solver, which
+    ships with nothing and cannot rot because it IS this function's own predicate.
     """
     if source_term is None:
         return {}
@@ -188,9 +212,11 @@ def resolve_source_kwarg(params: Any, source_term: Any, solver_name: str, method
         f"solve a different problem (Issue #1424). Either declare `source_term` on the solver's "
         f"{method} -- the convention is source_term(t, x) -> (N,) with x of shape (N, d) at the "
         f"solver's own evaluation points -- or remove the term from the problem. A solver taking "
-        f"**kwargs does not count as accepting it: the parameter must be named. Which solvers "
-        f"currently accept one is measured in tests/unit/test_alg/test_source_term_channel_2020.py, "
-        f"which owns that list; this message deliberately does not carry a copy of it."
+        f"**kwargs does not count as accepting it: the parameter must be named. To find one that "
+        f"does, ask any candidate the same question this check asks: "
+        f"`'source_term' in inspect.signature(solver.{method}).parameters`. That is deliberately a "
+        f"predicate rather than a list -- a list in an error message goes stale, and this one is "
+        f"the check itself."
     )
 
 
