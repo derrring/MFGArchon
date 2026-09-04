@@ -32,6 +32,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.linalg import solve_banded
 
+from mfgarchon.utils.numerical.implicit_diffusion import NeumannCNStencil, neumann_cn_stencil, neumann_cn_step
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, validate_symmetric_psd
 
 
@@ -60,7 +61,6 @@ def solve_crank_nicolson_diffusion_1d(
     Returns:
         Solution after implicit diffusion step, shape (Nx,)
     """
-    Nx = len(U_star)
     dx = x_grid[1] - x_grid[0]
 
     # Diffusion coefficient: alpha = D * dt/dx^2, D = sigma^2/2 (Issue #811, single source).
@@ -71,42 +71,18 @@ def solve_crank_nicolson_diffusion_1d(
         return _crank_nicolson_periodic_1d(U_star, alpha, theta)
 
     # --- Neumann BC (default) ---
-
-    # Build tridiagonal system: A * u^n = b
-    # where A = (I - theta*alpha*L), b = (I + (1-theta)*alpha*L) * u*
-
-    # Tridiagonal matrix coefficients
-    # Main diagonal: 1 + 2*theta*alpha
-    # Off-diagonals: -theta*alpha
-    main_diag = np.ones(Nx) * (1.0 + 2.0 * theta * alpha)
-    off_diag = np.ones(Nx - 1) * (-theta * alpha)
-
-    # Build banded matrix format for solve_banded (upper_diag, main_diag, lower_diag)
-    ab = np.zeros((3, Nx))
-    ab[0, 1:] = off_diag  # Upper diagonal
-    ab[1, :] = main_diag  # Main diagonal
-    ab[2, :-1] = off_diag  # Lower diagonal
-
-    # Build right-hand side: b = (I + (1-theta)*alpha*L) * u*
-    b = np.zeros(Nx)
-    for i in range(1, Nx - 1):
-        b[i] = (1.0 - 2.0 * (1.0 - theta) * alpha) * U_star[i] + (1.0 - theta) * alpha * (U_star[i - 1] + U_star[i + 1])
-
-    # Boundary conditions (Neumann: du/dx = 0)
-    # Left boundary (i=0)
-    b[0] = (1.0 - (1.0 - theta) * alpha) * U_star[0] + (1.0 - theta) * alpha * U_star[1]
-    ab[1, 0] = 1.0 + theta * alpha  # Modified main diagonal
-    ab[0, 1] = -theta * alpha  # Upper diagonal
-
-    # Right boundary (i=Nx-1)
-    b[Nx - 1] = (1.0 - (1.0 - theta) * alpha) * U_star[Nx - 1] + (1.0 - theta) * alpha * U_star[Nx - 2]
-    ab[1, Nx - 1] = 1.0 + theta * alpha  # Modified main diagonal
-    ab[2, Nx - 2] = -theta * alpha  # Lower diagonal
-
-    # Solve tridiagonal system
-    u_new = solve_banded((1, 1), ab, b)
-
-    return u_new
+    #
+    # One owner since #2237: `utils.numerical.implicit_diffusion.neumann_cn_step`. This function
+    # and four others were producing the SAME operator -- measured by reconstructing each from its
+    # action on the standard basis, max|difference| 0.000e+00 against `FPSLSolver`'s inline version
+    # and 2.22e-16 against `adjoint.operators.build_diffusion_matrix_1d`. Each of the five carried
+    # its own comment justifying a choice the other four had also made without knowing.
+    #
+    # `half_wall` is what this function already implemented, so routing here is bit-identical --
+    # verified, not asserted. It is NOT endorsed: it is the wall #2145 removed from
+    # `operators.differential.laplacian`, first order here against second for `mirror`. Switching
+    # it moves every value function in the library, so it is #2243, not this change.
+    return neumann_cn_step(U_star, dt, sigma, dx, treatment="half_wall", theta=theta)
 
 
 def _crank_nicolson_periodic_1d(
@@ -515,27 +491,21 @@ def solve_1d_diffusion_along_axis(
 
     N_axis = U.shape[axis]
 
-    # Tridiagonal coefficients (same for all lines)
-    main_coef = 1.0 + 2.0 * theta * alpha
-    off_coef = -theta * alpha
+    # Coefficients come from the one owner (#2237). This sweep and four other implementations were
+    # each deriving them, and agreed on every number except the wall row -- which is why the wall is
+    # the only thing `treatment` selects there. `half_wall` reproduces what this function already
+    # did, to 1.11e-16 (the batched Thomas below against a direct banded solve). On why it is kept
+    # rather than endorsed, see `solve_crank_nicolson_diffusion_1d` above and #2243.
+    st = neumann_cn_stencil(alpha, treatment="half_wall", theta=theta)
 
-    # RHS coefficients
-    main_rhs = 1.0 - 2.0 * (1.0 - theta) * alpha
-    off_rhs = (1.0 - theta) * alpha
-
-    # Build RHS vectorized: b = (I + (1-θ)*α*L) * u
-    # Shape: (n_lines, N_axis)
+    # Build RHS vectorized: b = (I + (1-theta)*alpha*L) * u, shape (n_lines, N_axis)
     b = np.zeros_like(U_2d)
-
-    # Interior points (vectorized over all lines)
-    b[:, 1:-1] = main_rhs * U_2d[:, 1:-1] + off_rhs * (U_2d[:, :-2] + U_2d[:, 2:])
-
-    # Neumann: du/dx = 0 (ghost point reflection). The periodic branch returned above.
-    b[:, 0] = (1.0 - (1.0 - theta) * alpha) * U_2d[:, 0] + off_rhs * U_2d[:, 1]
-    b[:, -1] = (1.0 - (1.0 - theta) * alpha) * U_2d[:, -1] + off_rhs * U_2d[:, -2]
+    b[:, 1:-1] = st.explicit_main * U_2d[:, 1:-1] + st.explicit_off * (U_2d[:, :-2] + U_2d[:, 2:])
+    b[:, 0] = st.explicit_wall_main * U_2d[:, 0] + st.explicit_wall_off * U_2d[:, 1]
+    b[:, -1] = st.explicit_wall_main * U_2d[:, -1] + st.explicit_wall_off * U_2d[:, -2]
 
     # Solve tridiagonal systems using vectorized Thomas algorithm
-    U_new_2d = thomas_solve_batched(main_coef, off_coef, b, theta, alpha, N_axis, bc_type)
+    U_new_2d = thomas_solve_batched(st, b, N_axis, bc_type)
 
     # Reshape back and move axis to original position
     U_new_transposed = U_new_2d.reshape(original_shape)
@@ -543,11 +513,8 @@ def solve_1d_diffusion_along_axis(
 
 
 def thomas_solve_batched(
-    main_coef: float,
-    off_coef: float,
+    st: NeumannCNStencil,
     b: np.ndarray,
-    theta: float,
-    alpha: float,
     N: int,
     bc_type: str = "neumann",
 ) -> np.ndarray:
@@ -563,11 +530,8 @@ def thomas_solve_batched(
     into two tridiagonal solves.
 
     Args:
-        main_coef: Main diagonal coefficient (interior points)
-        off_coef: Off-diagonal coefficient
+        st: The theta-scheme stencil from `neumann_cn_stencil` -- interior and wall coefficients
         b: Right-hand side, shape (n_lines, N)
-        theta: Implicitness parameter
-        alpha: Diffusion parameter
         N: Size of each system
         bc_type: 'neumann' (default) or 'periodic'
 
@@ -575,25 +539,24 @@ def thomas_solve_batched(
         Solution x, shape (n_lines, N)
     """
     if bc_type == "periodic":
-        return _thomas_solve_batched_periodic(main_coef, off_coef, b, N)
+        return _thomas_solve_batched_periodic(st.implicit_main, st.implicit_off, b, N)
 
     n_lines = b.shape[0]
 
     # Build full diagonal arrays with boundary modifications
-    main_diag = np.full(N, main_coef)
-    # NOTE (#1904 node-centring half, surfaced by #2145's wall census): these two rows carry HALF
-    # the interior coefficient (`1 + theta*alpha` against `1 + 2*theta*alpha`), which is the same
-    # half-a-wall stencil #2145 corrected in the FP assemblies. Here the consequence is ACCURACY,
-    # not conservation -- the HJB is not a conservation law, so there is no measure to telescope
-    # against and no mass to lose; what a halved wall row costs is the order there, which #1935
-    # measured at 0.00 against 2.00 on the FP side. Left as-is deliberately: #2145 is scoped to the
-    # measure and the FP walls, and changing an HJB wall stencil moves every value function in the
-    # library. Recorded so the census is complete rather than silently short.
-    main_diag[0] = 1.0 + theta * alpha  # Neumann BC
-    main_diag[-1] = 1.0 + theta * alpha  # Neumann BC
+    main_diag = np.full(N, st.implicit_main)
+    # The wall rows, and the only place the treatment acts. `half_wall` carries HALF the interior
+    # coefficient, which costs order at the wall: EOC 0.73/0.87/0.94 against 2.00/2.00/2.00 for
+    # `mirror`, on an exact heat solution. Kept as it was because switching it moves every value
+    # function in the library (#2243); the alternative now has a name and a measured cost, so the
+    # choice is stated rather than inherited.
+    main_diag[0] = st.implicit_wall_main
+    main_diag[-1] = st.implicit_wall_main
 
-    upper_diag = np.full(N - 1, off_coef)
-    lower_diag = np.full(N - 1, off_coef)
+    upper_diag = np.full(N - 1, st.implicit_off)
+    lower_diag = np.full(N - 1, st.implicit_off)
+    upper_diag[0] = st.implicit_wall_off
+    lower_diag[-1] = st.implicit_wall_off
 
     # Forward elimination (vectorized over all lines)
     # c' and d' arrays

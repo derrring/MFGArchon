@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 import numpy as np
 from scipy import sparse
 
+from mfgarchon.utils.numerical.implicit_diffusion import cn_alpha, neumann_cn_stencil
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 if TYPE_CHECKING:
@@ -277,13 +278,16 @@ def build_diffusion_matrix_1d(
         For Dirichlet BC with zero values, the matrix is also symmetric.
         For periodic BC, the matrix is symmetric (circulant structure).
     """
-    alpha = diffusion_from_volatility(sigma) * dt / dx**2
+    # Coefficients from the one owner (#2237). This builder and three other implementations were
+    # each deriving them; reconstructed from their action on the standard basis they agreed to
+    # 2.22e-16, and the comment below -- "ghost = interior" -- named the treatment this code does
+    # NOT do. It carries the half wall row (half the interior coefficient), which is what
+    # `treatment="half_wall"` is; the mirror row the comment describes is the other value.
+    st = neumann_cn_stencil(cn_alpha(dt, sigma, dx), treatment="half_wall", theta=theta)
+    alpha = st.alpha
 
-    # Main diagonal
-    main = np.ones(Nx) * (1.0 + 2.0 * theta * alpha)
-
-    # Off-diagonals
-    off = np.ones(Nx - 1) * (-theta * alpha)
+    main = np.ones(Nx) * st.implicit_main
+    off = np.ones(Nx - 1) * st.implicit_off
 
     # Build tridiagonal
     diagonals = [off, main, off]
@@ -293,10 +297,10 @@ def build_diffusion_matrix_1d(
 
     # Apply boundary conditions
     if bc_type == "neumann":
-        # Neumann: du/dx = 0 → ghost = interior
-        # Modify boundary rows to reflect this
-        A[0, 0] = 1.0 + theta * alpha
-        A[Nx - 1, Nx - 1] = 1.0 + theta * alpha
+        A[0, 0] = st.implicit_wall_main
+        A[0, 1] = st.implicit_wall_off
+        A[Nx - 1, Nx - 1] = st.implicit_wall_main
+        A[Nx - 1, Nx - 2] = st.implicit_wall_off
     elif bc_type == "dirichlet":
         # Dirichlet: u = 0 at boundary
         # Boundary rows become identity (or handle separately)
@@ -344,8 +348,11 @@ def build_diffusion_matrix_2d(
     else:
         dx_x, dx_y = dx
 
-    alpha_x = diffusion_from_volatility(sigma) * dt / dx_x**2
-    alpha_y = diffusion_from_volatility(sigma) * dt / dx_y**2
+    # Same owner as the 1D builder (#2237). This assembly is the SIXTH implementation of that wall
+    # -- the 1D census could not see it, because it probed the 1D path. Found by sweeping for
+    # `dt/dx^2` beside a tridiagonal assembly, with the five known sites as the control.
+    st_x = neumann_cn_stencil(cn_alpha(dt, sigma, dx_x), treatment="half_wall", theta=theta)
+    st_y = neumann_cn_stencil(cn_alpha(dt, sigma, dx_y), treatment="half_wall", theta=theta)
 
     # Build sparse matrix
     A = sparse.lil_matrix((N, N))
@@ -358,47 +365,38 @@ def build_diffusion_matrix_2d(
         for j in range(Ny):
             k = idx(i, j)
 
-            # Main diagonal
-            diag = 1.0 + 2.0 * theta * (alpha_x + alpha_y)
-
-            # Interior point
-            is_boundary = i == 0 or i == Nx - 1 or j == 0 or j == Ny - 1
-
-            if bc_type == "neumann" and is_boundary:
-                # Adjust for Neumann BC
-                if i == 0:
-                    diag -= theta * alpha_x
-                if i == Nx - 1:
-                    diag -= theta * alpha_x
-                if j == 0:
-                    diag -= theta * alpha_y
-                if j == Ny - 1:
-                    diag -= theta * alpha_y
-
-            A[k, k] = diag
+            # The diagonal is 1 plus one term per axis, and a Neumann wall replaces only its own
+            # axis's term -- which is exactly the 1D wall row, applied per direction.
+            at_x_wall = bc_type == "neumann" and i in (0, Nx - 1)
+            at_y_wall = bc_type == "neumann" and j in (0, Ny - 1)
+            A[k, k] = (
+                1.0
+                + (st_x.implicit_wall_diag_term if at_x_wall else st_x.implicit_diag_term)
+                + (st_y.implicit_wall_diag_term if at_y_wall else st_y.implicit_diag_term)
+            )
 
             # Off-diagonal: x-direction
             if i > 0:
-                A[k, idx(i - 1, j)] = -theta * alpha_x
+                A[k, idx(i - 1, j)] = st_x.implicit_off
             if i < Nx - 1:
-                A[k, idx(i + 1, j)] = -theta * alpha_x
+                A[k, idx(i + 1, j)] = st_x.implicit_off
 
             # Off-diagonal: y-direction
             if j > 0:
-                A[k, idx(i, j - 1)] = -theta * alpha_y
+                A[k, idx(i, j - 1)] = st_y.implicit_off
             if j < Ny - 1:
-                A[k, idx(i, j + 1)] = -theta * alpha_y
+                A[k, idx(i, j + 1)] = st_y.implicit_off
 
             # Periodic BC
             if bc_type == "periodic":
                 if i == 0:
-                    A[k, idx(Nx - 1, j)] = -theta * alpha_x
+                    A[k, idx(Nx - 1, j)] = st_x.implicit_off
                 if i == Nx - 1:
-                    A[k, idx(0, j)] = -theta * alpha_x
+                    A[k, idx(0, j)] = st_x.implicit_off
                 if j == 0:
-                    A[k, idx(i, Ny - 1)] = -theta * alpha_y
+                    A[k, idx(i, Ny - 1)] = st_y.implicit_off
                 if j == Ny - 1:
-                    A[k, idx(i, 0)] = -theta * alpha_y
+                    A[k, idx(i, 0)] = st_y.implicit_off
 
     return A.tocsr()
 
