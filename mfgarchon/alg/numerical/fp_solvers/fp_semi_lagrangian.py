@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.interpolate import interp1d
-from scipy.linalg import solve_banded
 
 # Import BC infrastructure from HJB-SL (reuse unified components)
 from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import (
@@ -45,7 +44,8 @@ from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.operators.stencils.finite_difference import laplacian_with_bc
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, fp_drift_coefficient
+from mfgarchon.utils.numerical.implicit_diffusion import neumann_cn_step
+from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
 
 from .base_fp import BaseFPSolver, DriftConvention
 
@@ -436,8 +436,6 @@ class FPSLJacobianSolver(BaseFPSolver):
         Returns:
             Density at next time step, shape (Nx,)
         """
-        Nx = len(m)
-
         # Step 1: Advection with Jacobian correction
         # ==========================================
         # Trace characteristics backward: x_departure = x - alpha * dt
@@ -489,37 +487,24 @@ class FPSLJacobianSolver(BaseFPSolver):
 
         # Step 2: Diffusion via Crank-Nicolson
         # ====================================
-        D = diffusion_from_volatility(sigma)
-        r = D * dt / (self.dx**2)
-
-        # Build RHS: (I + r/2 * L) * m_advected
-        rhs = np.zeros(Nx)
-        # Interior points
-        rhs[1:-1] = m_advected[1:-1] + (r / 2) * (m_advected[:-2] - 2 * m_advected[1:-1] + m_advected[2:])
-        # Neumann BC: dm/dx = 0 at boundaries
-        # Use ghost points: m[-1] = m[0], m[Nx] = m[Nx-1]
-        rhs[0] = m_advected[0] + (r / 2) * (2 * m_advected[1] - 2 * m_advected[0])
-        rhs[-1] = m_advected[-1] + (r / 2) * (2 * m_advected[-2] - 2 * m_advected[-1])
-
-        # Build tridiagonal matrix (I - r/2 * L) for Crank-Nicolson
-        # Use banded format: ab[0] = upper diagonal, ab[1] = main, ab[2] = lower
-        ab = np.zeros((3, Nx))
-
-        # Main diagonal: 1 + r
-        ab[1, :] = 1 + r
-
-        # Off-diagonals: -r/2
-        ab[0, 1:] = -r / 2  # upper diagonal
-        ab[2, :-1] = -r / 2  # lower diagonal
-
-        # Neumann BC modifications:
-        # At i=0: (1+r)*m[0] - r*m[1] = rhs[0]
-        # At i=Nx-1: -r*m[Nx-2] + (1+r)*m[Nx-1] = rhs[Nx-1]
-        ab[0, 1] = -r  # upper at position 1 (affects row 0)
-        ab[2, -2] = -r  # lower at position Nx-2 (affects row Nx-1)
-
-        # Solve tridiagonal system
-        m_new = solve_banded((1, 1), ab, rhs)
+        # `mirror` is the ghost-point reflection m[-1] = m[1] this block already implemented, now
+        # named and owned (#2237). Of the six implementations of this step in the library, this is
+        # the only one that has it -- the other five carry the wall row at half the interior
+        # coefficient, and reconstructed from their action on the standard basis the gap is
+        # 2.72e-02.
+        #
+        # This solver has the right one, and the deprecated class is the one that has it. On an
+        # endpoint-inclusive grid the wall lies ON the end node and that node owns h/2, so the mass
+        # is the trapezoid integral -- #2145's decision, which `operators.differential.laplacian`
+        # carries in full. `mirror` holds it to 3.3e-16 at n=21 where the half wall drifts it by
+        # 1.2e-01, and it is second order at the wall against first (EOC 2.00 against 0.94).
+        #
+        # Which makes the renormalization below consistent rather than compensating: it measures
+        # with `np.trapezoid`, the same functional this wall conserves, so on the diffusion side it
+        # has nothing to correct. What it absorbs is the Jacobian and splatting drift it was
+        # written for. A half wall here would have given it the wall's drift to absorb as well --
+        # silently, since the correction succeeds either way.
+        m_new = neumann_cn_step(m_advected, dt, sigma, self.dx, treatment="mirror")
 
         # Ensure non-negativity
         m_new = np.maximum(m_new, 0)

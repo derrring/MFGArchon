@@ -28,7 +28,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
-from scipy.linalg import solve_banded
 
 from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import (
     adi_diffusion_step,
@@ -46,7 +45,8 @@ from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, fp_drift_coefficient
+from mfgarchon.utils.numerical.implicit_diffusion import neumann_cn_step
+from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
 
 from .base_fp import BaseFPSolver, DriftConvention
 from .fp_sl_splatting import splat_1d, splat_nd
@@ -456,38 +456,24 @@ class FPSLSolver(BaseFPSolver):
             enforce_periodic_value_nd(m_star, axis=0)
             return solve_crank_nicolson_diffusion_1d(m_star, dt, sigma, self.x_grid, bc_type="periodic")
 
-        # Neumann / zero-flux path (preserved from Issue #708: FV stencil for mass
-        # conservation; the standard ghost-point strong-form method breaks ∫m).
-        D = diffusion_from_volatility(sigma)
-        r = D * dt / (self.dx**2)
-
-        # Build RHS: (I + r/2 * L_fv) * m_star
-        # L_fv uses zero-flux (one-sided) boundary stencil
-        rhs = np.zeros(self.Nx)
-        # Interior points: standard 3-point stencil
-        rhs[1:-1] = m_star[1:-1] + (r / 2) * (m_star[:-2] - 2 * m_star[1:-1] + m_star[2:])
-        # Boundary points: zero-flux (finite volume) stencil
-        # L[0] = (m[1] - m[0])/dx^2, so (I + r/2*L)[0] = m[0] + r/2*(m[1] - m[0])
-        rhs[0] = m_star[0] + (r / 2) * (m_star[1] - m_star[0])
-        rhs[-1] = m_star[-1] + (r / 2) * (m_star[-2] - m_star[-1])
-
-        # Build tridiagonal matrix (I - r/2 * L_fv) for Crank-Nicolson
-        # Interior: (I - r/2*L) has [r/2, 1+r, r/2] pattern
-        # Boundary: zero-flux gives [-1, 1]/dx^2, so (I - r/2*L) has [1+r/2, -r/2]
-        ab = np.zeros((3, self.Nx))
-        # Main diagonal
-        ab[1, :] = 1 + r  # Interior: 1 + r
-        ab[1, 0] = 1 + r / 2  # Left boundary: 1 + r/2
-        ab[1, -1] = 1 + r / 2  # Right boundary: 1 + r/2
-        # Upper diagonal (superdiagonal)
-        ab[0, 1:] = -r / 2  # Interior
-        ab[0, 1] = -r / 2  # Left boundary (same coefficient)
-        # Lower diagonal (subdiagonal)
-        ab[2, :-1] = -r / 2  # Interior
-        ab[2, -2] = -r / 2  # Right boundary (same coefficient)
-
-        # Solve tridiagonal system
-        m_new = solve_banded((1, 1), ab, rhs)
+        # Zero-flux path. Issue #708 recorded this stencil as an FV choice specific to this
+        # solver -- "the standard ghost-point strong-form method breaks the integral of m". #2237
+        # reconstructed every implementation's operator from its action on the standard basis, and
+        # found both halves of that sentence wrong.
+        #
+        # Not specific: this block was producing the SAME operator as the HJB's CN, its ADI sweep,
+        # and the adjoint package's two matrix builders -- 0.000e+00 against the first.
+        #
+        # And backwards. On an endpoint-inclusive grid the wall lies ON the end node and that node
+        # owns h/2, so the mass is the trapezoid integral. `half_wall` conserves sum(m) and drifts
+        # the trapezoid by 1.2e-01 at n=21; the ghost-point method it warns against conserves the
+        # trapezoid to 3.3e-16. The half-cell FV derivation yields the ghost-point coefficient, not
+        # this one. #2145 settled that measure and moved `operators.differential.laplacian` onto
+        # the ghost-point stencil; this family never followed.
+        #
+        # Routing here is bit-identical -- verified, not asserted. The correction is #2243: on
+        # #2237's own MMS, this one parameter is the whole 1.989e-03 against 2.806e-05.
+        m_new = neumann_cn_step(m_star, dt, sigma, self.dx, treatment="half_wall")
 
         # Ensure non-negativity
         m_new = self._clip_nonneg(m_new)
