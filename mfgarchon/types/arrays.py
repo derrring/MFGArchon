@@ -24,8 +24,20 @@ type SolutionArray = NDArray
 """
 2D spatio-temporal solution array.
 
-Shape: (Nt+1, Nx+1) for 1D problems
-       (Nt+1, Ny+1, Nx+1) for 2D problems
+Shape: (Nt+1, Nx) for 1D problems
+       (Nt+1, Nx, Ny) for 2D problems
+
+Axis 0 is time; the spatial axes follow the library's `indexing="ij"` order, so axis 1
+is x. Nx and Ny are POINT counts (`TensorProductGrid.Nx_points`), not interval counts.
+Measured: `Nx_points=[13, 7], Nt=4` gives `(5, 13, 7)`, and `Nx_points=[21], Nt=4`
+gives `(5, 21)`.
+
+~~(Nt+1, Ny+1, Nx+1) for 2D~~ [SUPERSEDED 2026-09-04 by #2235] That reading put y on
+axis 1 and added an interval-to-point conversion the geometry does not do. It is the
+file an author writing a new 2-D kernel reads first, and #1911 is what happens then:
+a kernel written to it paired the tensor row and the grid spacing with the wrong axis,
+so the direction with the larger sigma diffused less. Nothing enforced either reading --
+these aliases are bare `NDArray` -- so the contradiction never failed anything.
 
 Used for: u(t,x) value function, m(t,x) density function
 """
@@ -35,7 +47,7 @@ type SpatialGrid = NDArray
 """
 Spatial coordinate array.
 
-Shape: (Nx+1,) for 1D, (Ny+1, Nx+1) for 2D
+Shape: (Nx,) for 1D, (Nx, Ny) for 2D -- `indexing="ij"`, axis 0 is x (#2235)
 
 Used for: x-coordinates, spatial mesh points
 """

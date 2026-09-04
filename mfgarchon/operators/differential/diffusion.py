@@ -31,7 +31,6 @@ Created: 2026-01-25 (Issue #625 - tensor_calculus migration)
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -43,36 +42,6 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from mfgarchon.geometry.boundary import BoundaryConditions
-
-# =============================================================================
-# Numba JIT Support
-# =============================================================================
-
-try:
-    from numba import njit
-
-    NUMBA_AVAILABLE = True
-except ImportError:
-    NUMBA_AVAILABLE = False
-
-    def njit(*args, **kwargs):
-        """Dummy decorator when Numba not available."""
-
-        def decorator(func):
-            return func
-
-        if len(args) == 1 and callable(args[0]):
-            return args[0]
-        return decorator
-
-
-USE_NUMBA = os.environ.get("MFG_USE_NUMBA", "auto")
-if USE_NUMBA == "auto":
-    USE_NUMBA = NUMBA_AVAILABLE
-elif USE_NUMBA.lower() in ("true", "1", "yes"):
-    USE_NUMBA = True
-else:
-    USE_NUMBA = False
 
 
 class DiffusionOperator(LinearOperator):
@@ -346,110 +315,6 @@ class DiffusionOperator(LinearOperator):
             f"  shape={self.shape}\n"
             f")"
         )
-
-
-# =============================================================================
-# Numba JIT Kernels
-# =============================================================================
-
-
-@njit(cache=True)
-def _compute_tensor_kernel_2d(
-    m_padded: np.ndarray,
-    Sigma: np.ndarray,
-    dx: float,
-    dy: float,
-) -> np.ndarray:
-    """JIT-compiled kernel for 2D full tensor diffusion."""
-    Ny, Nx = Sigma.shape[0], Sigma.shape[1]
-    result = np.zeros((Ny, Nx))
-
-    for i in range(Ny):
-        for j in range(Nx):
-            s11 = Sigma[i, j, 0, 0]
-            s12 = Sigma[i, j, 0, 1]
-            s21 = Sigma[i, j, 1, 0]
-            s22 = Sigma[i, j, 1, 1]
-
-            # Face-averaged tensor components
-            if j < Nx - 1:
-                s11_xp = 0.5 * (s11 + Sigma[i, j + 1, 0, 0])
-                s12_xp = 0.5 * (s12 + Sigma[i, j + 1, 0, 1])
-            else:
-                s11_xp, s12_xp = s11, s12
-
-            if j > 0:
-                s11_xm = 0.5 * (s11 + Sigma[i, j - 1, 0, 0])
-                s12_xm = 0.5 * (s12 + Sigma[i, j - 1, 0, 1])
-            else:
-                s11_xm, s12_xm = s11, s12
-
-            if i < Ny - 1:
-                s21_yp = 0.5 * (s21 + Sigma[i + 1, j, 1, 0])
-                s22_yp = 0.5 * (s22 + Sigma[i + 1, j, 1, 1])
-            else:
-                s21_yp, s22_yp = s21, s22
-
-            if i > 0:
-                s21_ym = 0.5 * (s21 + Sigma[i - 1, j, 1, 0])
-                s22_ym = 0.5 * (s22 + Sigma[i - 1, j, 1, 1])
-            else:
-                s21_ym, s22_ym = s21, s22
-
-            # Padded indices
-            ip, jp = i + 1, j + 1
-
-            # Gradients at faces
-            dm_dx_xp = (m_padded[ip, jp + 1] - m_padded[ip, jp]) / dx
-            dm_dy_xp = (
-                0.25
-                * (
-                    (m_padded[ip + 1, jp + 1] - m_padded[ip - 1, jp + 1])
-                    + (m_padded[ip + 1, jp] - m_padded[ip - 1, jp])
-                )
-                / dy
-            )
-
-            dm_dx_xm = (m_padded[ip, jp] - m_padded[ip, jp - 1]) / dx
-            dm_dy_xm = (
-                0.25
-                * (
-                    (m_padded[ip + 1, jp] - m_padded[ip - 1, jp])
-                    + (m_padded[ip + 1, jp - 1] - m_padded[ip - 1, jp - 1])
-                )
-                / dy
-            )
-
-            dm_dy_yp = (m_padded[ip + 1, jp] - m_padded[ip, jp]) / dy
-            dm_dx_yp = (
-                0.25
-                * (
-                    (m_padded[ip + 1, jp + 1] - m_padded[ip + 1, jp - 1])
-                    + (m_padded[ip, jp + 1] - m_padded[ip, jp - 1])
-                )
-                / dx
-            )
-
-            dm_dy_ym = (m_padded[ip, jp] - m_padded[ip - 1, jp]) / dy
-            dm_dx_ym = (
-                0.25
-                * (
-                    (m_padded[ip, jp + 1] - m_padded[ip, jp - 1])
-                    + (m_padded[ip - 1, jp + 1] - m_padded[ip - 1, jp - 1])
-                )
-                / dx
-            )
-
-            # Fluxes
-            Fx_xp = s11_xp * dm_dx_xp + s12_xp * dm_dy_xp
-            Fx_xm = s11_xm * dm_dx_xm + s12_xm * dm_dy_xm
-            Fy_yp = s21_yp * dm_dx_yp + s22_yp * dm_dy_yp
-            Fy_ym = s21_ym * dm_dx_ym + s22_ym * dm_dy_ym
-
-            # Divergence
-            result[i, j] = (Fx_xp - Fx_xm) / dx + (Fy_yp - Fy_ym) / dy
-
-    return result
 
 
 # =============================================================================

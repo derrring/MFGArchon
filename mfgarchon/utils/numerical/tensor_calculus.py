@@ -916,55 +916,6 @@ def _compute_full_tensor_kernel_2d(
     return result
 
 
-@njit(cache=True)
-def _compute_diagonal_kernel_2d(
-    m_padded: np.ndarray,
-    sigma_x: np.ndarray,
-    sigma_y: np.ndarray,
-    dx: float,
-    dy: float,
-) -> np.ndarray:
-    """JIT-compiled kernel for 2D diagonal tensor diffusion."""
-    Ny, Nx = sigma_x.shape
-    result = np.zeros((Ny, Nx))
-
-    for i in range(Ny):
-        for j in range(Nx):
-            ip, jp = i + 1, j + 1
-
-            # x-direction
-            if j < Nx - 1:
-                sigma_x_xp = 0.5 * (sigma_x[i, j] + sigma_x[i, j + 1])
-            else:
-                sigma_x_xp = sigma_x[i, j]
-            if j > 0:
-                sigma_x_xm = 0.5 * (sigma_x[i, j] + sigma_x[i, j - 1])
-            else:
-                sigma_x_xm = sigma_x[i, j]
-
-            dm_dx_xp = (m_padded[ip, jp + 1] - m_padded[ip, jp]) / dx
-            dm_dx_xm = (m_padded[ip, jp] - m_padded[ip, jp - 1]) / dx
-            div_x = (sigma_x_xp * dm_dx_xp - sigma_x_xm * dm_dx_xm) / dx
-
-            # y-direction
-            if i < Ny - 1:
-                sigma_y_yp = 0.5 * (sigma_y[i, j] + sigma_y[i + 1, j])
-            else:
-                sigma_y_yp = sigma_y[i, j]
-            if i > 0:
-                sigma_y_ym = 0.5 * (sigma_y[i, j] + sigma_y[i - 1, j])
-            else:
-                sigma_y_ym = sigma_y[i, j]
-
-            dm_dy_yp = (m_padded[ip + 1, jp] - m_padded[ip, jp]) / dy
-            dm_dy_ym = (m_padded[ip, jp] - m_padded[ip - 1, jp]) / dy
-            div_y = (sigma_y_yp * dm_dy_yp - sigma_y_ym * dm_dy_ym) / dy
-
-            result[i, j] = div_x + div_y
-
-    return result
-
-
 # =============================================================================
 # Tensor Diffusion: Dimension-specific implementations
 # =============================================================================
