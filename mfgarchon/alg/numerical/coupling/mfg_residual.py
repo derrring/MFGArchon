@@ -28,7 +28,7 @@ import numpy as np
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.utils.mfg_logging import get_logger
 
-from .base_mfg import assert_bc_providers_resolvable, resolve_volatility_kwarg
+from .base_mfg import assert_bc_providers_resolvable, resolve_source_kwarg, resolve_volatility_kwarg
 from .fixed_point_utils import resolve_fp_drift_kwargs
 from .source_composition import compose_fp_source, compose_hjb_source
 
@@ -248,16 +248,15 @@ class MFGResidual:
             # the problem defines a source but this HJB solver's signature lacks source_term,
             # raise rather than solve the wrong problem. (Picard: base_mfg._build_hjb_kwargs.)
             hjb_source = compose_hjb_source(self.problem, M, U_prev)
-            if hjb_source is not None:
-                if "source_term" not in self._hjb_sig_params:
-                    raise NotImplementedError(
-                        f"{type(self.hjb_solver).__name__}.solve_hjb_system does not accept "
-                        f"'source_term', but the problem defines a source / nonlocal term. "
-                        f"Silently dropping it in the Newton residual would solve the wrong problem "
-                        f"(Issues #1424, #1430) — the Newton path must fail loud like Picard. Use an "
-                        f"FDM HJB solver, or remove source_term_hjb / nonlocal_operator."
-                    )
-                kwargs["source_term"] = hjb_source
+            kwargs.update(
+                resolve_source_kwarg(
+                    self._hjb_sig_params,
+                    hjb_source,
+                    type(self.hjb_solver).__name__,
+                    "solve_hjb_system",
+                    "HJB",
+                )
+            )
 
         return self.hjb_solver.solve_hjb_system(M, self.U_terminal, U_prev, **kwargs)
 
@@ -309,15 +308,7 @@ class MFGResidual:
         # Issue #1430: fail loud like Picard (Issue #1424) rather than silently dropping a
         # composed FP source the solver cannot accept.
         fp_source = compose_fp_source(self.problem, M, U)
-        if fp_source is not None:
-            if "source_term" not in params:
-                raise NotImplementedError(
-                    f"{type(self.fp_solver).__name__}.solve_fp_system does not accept 'source_term', "
-                    f"but the problem defines an FP source term. Silently dropping it in the Newton "
-                    f"residual would solve the wrong problem (Issues #1424, #1430) — the Newton path "
-                    f"must fail loud like Picard. Use an FDM FP solver, or remove source_term_fp."
-                )
-            kwargs["source_term"] = fp_source
+        kwargs.update(resolve_source_kwarg(params, fp_source, type(self.fp_solver).__name__, "solve_fp_system", "FP"))
 
         drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
             self.problem, params, self.drift_field, U, M, drift_convention=self._fp_drift_convention

@@ -141,6 +141,59 @@ def resolve_volatility_kwarg(
     )
 
 
+def resolve_source_kwarg(params: Any, source_term: Any, solver_name: str, method: str, side: str) -> dict[str, Any]:
+    """The ``source_term`` kwarg for ``method``, or ``{}`` when there is nothing to forward.
+
+    Third of the ``resolve_*`` family, beside :func:`resolve_volatility_kwarg` and
+    ``resolve_fp_drift_kwargs``. One owner for the forwarding decision, which until #2200 was
+    restated at both call sites below with a separate message each. The restatement is what let the
+    two drift apart, and it is the same mechanism #1783 produced on the volatility side.
+
+    What this owns, and what it does not. It owns **whether the solver can take a source at all**,
+    the **callable convention at the boundary**, and the **refusal message**. It does not own the
+    consumption: the HJB half subtracts from a Newton residual (``base_hjb.py``, ``Phi_U -=
+    source_term``) and the FP half adds to a timestep (``fp_fdm_time_stepping.py``,
+    ``M_next += dt * source_term``). Those are genuinely different and belong to the schemes.
+
+    The convention, which is uniform by construction from here rather than by habit:
+    ``source_term(t: float, x: NDArray[(N, d)]) -> NDArray[(N,)]``, with ``x`` the solver's own
+    evaluation points -- ``geometry.get_spatial_grid()`` for grid solvers, the collocation points
+    for GFDM, which is where that scheme discretises.
+
+    Two outcomes, not the three ``resolve_volatility_kwarg`` has. A volatility field can be
+    *indistinguishable* from ``problem.sigma``, so dropping it changes nothing and dropping is
+    correct; a composed source has no such case. It is present or absent, and dropping a present
+    one always solves a different problem.
+
+    - **The solver names the parameter: forward it.**
+    - **It does not: raise.** A ``**kwargs`` override does not count. Signature introspection
+      answers "does this callable name the parameter", not "can this solver consume it", and
+      treating ``VAR_KEYWORD`` as accept-anything assumes a solver consumes what it swallows --
+      the assumption that produced #1316, and the reason
+      ``tests/unit/test_alg/test_source_term_channel_2020.py``'s ``_SWALLOWERS`` ratchet exists.
+
+    ~~"Use an FDM solver"~~ [CORRECTED 2026-09-04] Both messages replaced here said that, and it
+    was true when written and is no longer: after #1991, #2198 and #2020 the HJB side has six
+    solvers that accept a source and the FP side seven. A live error message naming one of them is
+    advice that has stopped being executable, so this one states the RULE and points at the census
+    that owns the list, rather than carrying a copy of it.
+    """
+    if source_term is None:
+        return {}
+    if "source_term" in params:
+        return {"source_term": source_term}
+    raise NotImplementedError(
+        f"{solver_name}.{method} does not accept 'source_term', but the problem composed a non-None "
+        f"{side} source. Its signature is ({', '.join(sorted(params))}). Silently dropping it would "
+        f"solve a different problem (Issue #1424). Either declare `source_term` on the solver's "
+        f"{method} -- the convention is source_term(t, x) -> (N,) with x of shape (N, d) at the "
+        f"solver's own evaluation points -- or remove the term from the problem. A solver taking "
+        f"**kwargs does not count as accepting it: the parameter must be named. Which solvers "
+        f"currently accept one is measured in tests/unit/test_alg/test_source_term_channel_2020.py, "
+        f"which owns that list; this message deliberately does not carry a copy of it."
+    )
+
+
 class BaseCouplingIterator(ABC):
     """
     Abstract base class for iterative coupling solvers (Picard, block, fictitious play).
@@ -233,16 +286,7 @@ class BaseCouplingIterator(ABC):
                 "HJB",
             )
         )
-        if source_term is not None:
-            if "source_term" not in params:
-                raise NotImplementedError(
-                    f"{self._hjb_solver_name}.solve_hjb_system does not accept 'source_term', but the "
-                    f"problem defines a source / nonlocal / obstacle term (composed into a non-None HJB "
-                    f"source). Silently dropping it would solve the wrong problem (Issue #1424). Use an "
-                    f"FDM HJB solver, or remove source_term_hjb / nonlocal_operator / obstacle from the "
-                    f"problem."
-                )
-            kwargs["source_term"] = source_term
+        kwargs.update(resolve_source_kwarg(params, source_term, self._hjb_solver_name, "solve_hjb_system", "HJB"))
         return kwargs
 
     def _build_fp_kwargs(
@@ -305,15 +349,7 @@ class BaseCouplingIterator(ABC):
                 "FP",
             )
         )
-        if source_term is not None:
-            if "source_term" not in params:
-                raise NotImplementedError(
-                    f"{self._fp_solver_name}.solve_fp_system does not accept 'source_term', but the "
-                    f"problem defines an FP source term (composed into a non-None FP source). Silently "
-                    f"dropping it would solve the wrong problem (Issue #1424). Use an FDM FP solver, or "
-                    f"remove source_term_fp from the problem."
-                )
-            kwargs["source_term"] = source_term
+        kwargs.update(resolve_source_kwarg(params, source_term, self._fp_solver_name, "solve_fp_system", "FP"))
         return kwargs
 
     @abstractmethod
