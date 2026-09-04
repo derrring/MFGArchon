@@ -74,7 +74,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -422,3 +422,180 @@ def check_pair(pair: ManufacturedPair, t: float, x: NDArray, *, tolerance: float
             f"difference of u / m beyond tolerance {tolerance:.1e} -- {detail}. All errors: "
             f"{ {name: f'{value:.3e}' for name, value in sorted(errors.items())} }."
         )
+
+
+# --------------------------------------------------------------------------------------------
+# Generating a pair from (geometry, BC family)  --  Issue #2201
+# --------------------------------------------------------------------------------------------
+# Every manufactured pair in this repository was hand-written for one geometry and one boundary
+# condition, so "this solver is MMS-unreachable" was ambiguous between a real gap and a fixture
+# that was never admissible for it. Six `ManufacturedPair(...)` constructions existed when this
+# was written, in four files; three of them exist to test THIS module (one is deliberately wrong,
+# to make `check_pair` fire) and are not candidates for generation.
+
+
+@dataclass(frozen=True)
+class GeneratedPair:
+    """A pair together with the boundary conditions it satisfies exactly.
+
+    ``bc_u`` and ``bc_m`` are separate because they are separate. Under NO_FLUX and PERIODIC they
+    coincide and one object would do; under DIRICHLET they do not -- ``u`` vanishes on every wall
+    while ``m`` sits at ``m_floor`` there, because a density that touches zero at the wall is
+    refused by the solvers (see ``pair_for``). Returning one BC would work today and would have to
+    change the first time a family distinguishes them, which is the point at which an interface
+    change is most expensive.
+    """
+
+    pair: ManufacturedPair
+    bc_u: Any
+    bc_m: Any
+    bc_type: Any
+
+
+def _profile(kind: str) -> tuple[Callable, Callable, Callable, float]:
+    """``(f, f', f'', period_factor)`` for the per-axis profile of each family."""
+    if kind == "no_flux":
+        # cos(pi z): f'(0) = f'(1) = 0, so d_n = 0 on every wall of every axis.
+        return (
+            lambda z: np.cos(np.pi * z),
+            lambda z: -np.pi * np.sin(np.pi * z),
+            lambda z: -(np.pi**2) * np.cos(np.pi * z),
+            np.pi,
+        )
+    if kind == "periodic":
+        # cos(2 pi z): value AND derivative agree at z = 0 and z = 1.
+        return (
+            lambda z: np.cos(2 * np.pi * z),
+            lambda z: -2 * np.pi * np.sin(2 * np.pi * z),
+            lambda z: -((2 * np.pi) ** 2) * np.cos(2 * np.pi * z),
+            2 * np.pi,
+        )
+    if kind == "dirichlet":
+        # sin(pi z): vanishes on every wall.
+        return (
+            lambda z: np.sin(np.pi * z),
+            lambda z: np.pi * np.cos(np.pi * z),
+            lambda z: -(np.pi**2) * np.sin(np.pi * z),
+            np.pi,
+        )
+    raise AssertionError(kind)
+
+
+def pair_for(
+    geometry: Any,
+    bc_type: Any,
+    *,
+    u_amplitude: float = 0.5,
+    m_amplitude: float = 0.3,
+    m_floor: float = 1.0,
+    name: str | None = None,
+) -> GeneratedPair:
+    """A ``(u*, m*)`` that satisfies ``bc_type`` on ``geometry``'s walls exactly, with its BCs.
+
+    The shape is a separable product of one profile per axis, on the geometry's own bounds:
+    ``cos(pi z)`` for NO_FLUX (zero normal derivative), ``cos(2 pi z)`` for PERIODIC (value and
+    derivative agree across the seam), ``sin(pi z)`` for DIRICHLET (vanishes on every wall), with
+    ``z`` the coordinate normalised onto ``[0, 1]`` per axis. Derivatives are analytic, as
+    :class:`ManufacturedPair` requires -- differentiating numerically would put the difference's own
+    truncation error into a source that is supposed to be exact.
+
+    ``m`` carries ``m_floor`` and ``u`` does not, and that asymmetry is measured rather than
+    stylistic. A homogeneous-Dirichlet density is zero at the wall, so the exact solution touches
+    zero there and any negative truncation error at the wall IS a negative density: driving
+    ``FPFDMSolver`` with such a pair raises at timestep 1 of 17, ``density went to -2.928e-02``,
+    from ``clip_nonnegative_or_raise``. With ``m_floor > 0`` the same study runs and gives the
+    first Dirichlet-wall convergence order this repository has measured: interior EOC 1.05 and 0.99
+    over nx = 21, 41, 81, which is what the default ``divergence_upwind`` should give.
+
+    ROBIN is refused, and the reason is not in this function. Measured at the time of writing:
+    ``FPFDMSolver``, ``FPFVMSolver``, ``FPGFDMSolver``, ``FPSLSolver`` and ``HJBFDMSolver`` all
+    raise ``NotImplementedError`` at CONSTRUCTION for a ROBIN segment (``_validate_bc_support``,
+    #1456); only ``HJBGFDMSolver`` accepts one, and per ``robin_bc``'s own docstring only for the
+    adjoint-consistent ``Robin(0, 1)`` case, while the FEM pair reads Robin coefficients but takes
+    a constant ``g`` only. A generated Robin pair would have no consumer able to run it. The
+    generator side is ready when that changes: ``g`` for a Robin wall is not a constraint the pair
+    must satisfy but a quantity computed FROM it, ``g = alpha*m + beta*d_n m`` evaluated at the
+    wall, so only ``_profile`` and the BC construction below need a branch.
+    """
+    from mfgarchon.geometry.boundary import dirichlet_bc, no_flux_bc, periodic_bc
+
+    bounds = np.asarray(geometry.bounds, dtype=float)
+    if bounds.ndim != 2 or bounds.shape[1] != 2:
+        raise ValueError(
+            f"pair_for: geometry.bounds must be (d, 2); got shape {bounds.shape}. Only "
+            f"rectangular product geometries carry a separable per-axis profile."
+        )
+    dim = bounds.shape[0]
+    lo, span = bounds[:, 0], bounds[:, 1] - bounds[:, 0]
+    if not np.all(span > 0):
+        raise ValueError(f"pair_for: every axis needs positive extent; got spans {span}.")
+
+    key = getattr(bc_type, "value", bc_type)
+    if key in ("no_flux", "reflecting", "neumann"):
+        kind, bc_u, bc_m = "no_flux", no_flux_bc(dimension=dim), no_flux_bc(dimension=dim)
+    elif key == "periodic":
+        kind, bc_u, bc_m = "periodic", periodic_bc(dimension=dim), periodic_bc(dimension=dim)
+    elif key == "dirichlet":
+        kind = "dirichlet"
+        bc_u = dirichlet_bc(dimension=dim, value=0.0)
+        bc_m = dirichlet_bc(dimension=dim, value=m_floor)
+    elif key == "robin":
+        raise NotImplementedError(
+            "pair_for: ROBIN is not generated, and the blocker is downstream of this function. "
+            "FPFDMSolver, FPFVMSolver, FPGFDMSolver, FPSLSolver and HJBFDMSolver each raise "
+            "NotImplementedError for a ROBIN segment at CONSTRUCTION (#1456), so a generated pair "
+            "would have no consumer that can run it. See this function's docstring for what the "
+            "generator side would need, which is one branch."
+        )
+    else:
+        raise NotImplementedError(f"pair_for: no profile for boundary condition {key!r}.")
+
+    f, df, ddf = _profile(kind)[:3]
+
+    def _z(x: NDArray) -> NDArray:
+        return (_points(x) - lo) / span
+
+    def phi(x: NDArray) -> NDArray:
+        return np.prod(f(_z(x)), axis=1)
+
+    def grad_phi(x: NDArray) -> NDArray:
+        z = _z(x)
+        base, deriv = f(z), df(z)
+        out = np.empty_like(z)
+        for k in range(dim):
+            col = base.copy()
+            col[:, k] = deriv[:, k]
+            out[:, k] = np.prod(col, axis=1) / span[k]
+        return out
+
+    def hess_phi(x: NDArray) -> NDArray:
+        z = _z(x)
+        base, deriv, second = f(z), df(z), ddf(z)
+        n = z.shape[0]
+        out = np.empty((n, dim, dim))
+        for i in range(dim):
+            for j in range(dim):
+                col = base.copy()
+                if i == j:
+                    col[:, i] = second[:, i]
+                else:
+                    col[:, i] = deriv[:, i]
+                    col[:, j] = deriv[:, j]
+                out[:, i, j] = np.prod(col, axis=1) / (span[i] * span[j])
+        return out
+
+    a, a_t = (lambda t: u_amplitude * (1.0 + t)), (lambda t: u_amplitude)
+    b, b_t = (lambda t: m_amplitude * (1.0 + 0.5 * t)), (lambda t: 0.5 * m_amplitude)
+
+    pair = ManufacturedPair(
+        u=lambda t, x: a(t) * phi(x),
+        u_t=lambda t, x: a_t(t) * phi(x),
+        grad_u=lambda t, x: a(t) * grad_phi(x),
+        hess_u=lambda t, x: a(t) * hess_phi(x),
+        m=lambda t, x: m_floor + b(t) * phi(x),
+        m_t=lambda t, x: b_t(t) * phi(x),
+        grad_m=lambda t, x: b(t) * grad_phi(x),
+        hess_m=lambda t, x: b(t) * hess_phi(x),
+        name=name or f"generated-{kind}-{dim}d",
+    )
+    return GeneratedPair(pair=pair, bc_u=bc_u, bc_m=bc_m, bc_type=bc_type)

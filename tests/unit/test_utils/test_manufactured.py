@@ -31,6 +31,8 @@ from mfgarchon.core.hamiltonian import (
     QuadraticControlCost,
     SeparableHamiltonian,
 )
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import BCType, no_flux_bc
 from mfgarchon.utils.manufactured import (
     ManufacturedPair,
     _diffusion_tensor,
@@ -38,6 +40,7 @@ from mfgarchon.utils.manufactured import (
     fp_source,
     hjb_source,
     pair_derivative_errors,
+    pair_for,
 )
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
@@ -292,3 +295,74 @@ class TestCheckPair:
         for field in baseline:
             mutated = ManufacturedPair(**{**pair.__dict__, field: lambda t, x, f=field: 1.3 * getattr(pair, f)(t, x)})
             assert pair_derivative_errors(mutated, 1.3, points)[field] > 1e-2, field
+
+
+# --------------------------------------------------------------------------------------------
+# pair_for  --  Issue #2201
+# --------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("family", ["no_flux", "periodic", "dirichlet"])
+@pytest.mark.parametrize("dim", [1, 2])
+def test_a_generated_pair_satisfies_the_boundary_condition_it_names(family, dim):
+    """Checked by the BC's OWN definition, face by face, not by a norm over the whole gradient.
+
+    This is the property the generator exists to provide, and its failure is silent: a pair whose
+    profile no longer satisfies the wall still runs, still converges, and measures the order of a
+    problem nobody posed. Measured by mutating `_profile`: swapping the NO_FLUX profile from
+    `cos` to `sin` moves that family's worst wall residual from 2.5e-16 to 2.0e+00, and swapping
+    DIRICHLET's from `sin` to `cos` moves its 8.0e-17 to 6.5e-01 -- each contaminating only its
+    own family, which is why the parametrisation is per family rather than one aggregate.
+
+    The normal component is what the wall constrains. An earlier version of this check took
+    `max|grad u|` over all components and read 2.0e+00 in 2-D as a failure; that was the
+    TANGENTIAL derivative, which no boundary condition here says anything about.
+    """
+    bounds = [(0.0, 1.0)] if dim == 1 else [(0.0, 2.0), (0.0, 1.0)]
+    points = [21] if dim == 1 else [9, 7]
+    geometry = TensorProductGrid(bounds=bounds, Nx_points=points, boundary_conditions=no_flux_bc(dimension=dim))
+    generated = pair_for(geometry, BCType(family))
+    x = geometry.get_spatial_grid()
+
+    worst, where = 0.0, ""
+    for axis, (low, high) in enumerate(bounds):
+        for value in (low, high):
+            face = np.abs(x[:, axis] - value) < 1e-12
+            assert face.any(), f"no grid point on axis {axis} at {value} -- the probe found no wall"
+            wall = x[face]
+            if family == "dirichlet":
+                residual = float(np.abs(generated.pair.u(0.3, wall)).max())
+            else:
+                residual = float(np.abs(generated.pair.grad_u(0.3, wall)[:, axis]).max())
+            if residual > worst:
+                worst, where = residual, f"axis {axis} at {value}"
+
+    assert worst < 1e-12, (
+        f"{family} in {dim}-D: worst wall residual {worst:.3e} at {where}, against a machine-zero "
+        f"baseline of 2.5e-16 (no_flux), 1.0e-15 (periodic), 8.0e-17 (dirichlet). The generated "
+        f"pair does not satisfy the boundary condition it is named for, so any study using it "
+        f"measures a different problem."
+    )
+
+
+def test_a_generated_density_stays_positive_at_a_dirichlet_wall():
+    """`m_floor` is measured, not stylistic, and this pins the reason.
+
+    A homogeneous-Dirichlet density is zero at the wall, so the exact solution touches zero and any
+    negative truncation error there IS a negative density -- driving `FPFDMSolver` with such a pair
+    raises at timestep 1 of 17, `density went to -2.928e-02`, from `clip_nonnegative_or_raise`.
+    """
+    geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
+    generated = pair_for(geometry, BCType("dirichlet"), m_floor=1.0)
+    x = geometry.get_spatial_grid()
+    m = generated.pair.m(0.3, x)
+    assert m.min() > 0.0, f"generated density reaches {m.min():.3e} -- a solver would refuse it"
+    walls = np.abs(m[[0, -1]] - 1.0)
+    assert walls.max() < 1e-12, f"m at the walls is not m_floor: off by {walls.max():.3e}"
+
+
+def test_robin_is_refused_and_says_where_the_blocker_is():
+    """Refusing is a behaviour; the message has to carry the reason or the next reader re-derives it."""
+    geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
+    with pytest.raises(NotImplementedError, match="ROBIN"):
+        pair_for(geometry, BCType("robin"))
