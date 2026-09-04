@@ -239,15 +239,6 @@ def _fp_gfdm():
     return lambda f: s.solve_fp_system(np.ones(_N) / _N, drift_field=u, **({"source_term": f} if f else {}))
 
 
-def _fp_particle():
-    from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
-
-    p = _grid_problem()
-    u = np.zeros((p.Nt + 1, _N))
-    s = FPParticleSolver(p)
-    return lambda f: s.solve_fp_system(np.ones(_N) / _N, potential_field=u, **({"source_term": f} if f else {}))
-
-
 def _fp_sl():
     from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
 
@@ -288,10 +279,35 @@ _CASES = [
     # tests/integration/test_sl_mms_anisotropic_2198.py, which also measures the order the channel
     # bought: EOC 1.039, 1.017 isotropic and 1.040, 1.017 with an off-diagonal Sigma.
     ("HJBSemiLagrangianSolver", _hjb_semi_lagrangian, "honours"),
-    ("FPGFDMSolver", _fp_gfdm, "refuses"),
-    ("FPParticleSolver", _fp_particle, "refuses"),
-    ("FPSLSolver", _fp_sl, "refuses"),
-    ("FPSLJacobianSolver", _fp_sl_jacobian, "refuses"),
+    # 2026-09-04 (#2020): was "refuses" -- and the refusal was a bare argument-binding
+    # TypeError, i.e. the parameter was simply absent, which #2020's own body distinguishes
+    # from a refusal ("Refusing is a behaviour; an absent signature is not"). It is now
+    # threaded into the forward-Euler update on the collocation points. What the channel
+    # bought, measured: with the source the interior error at nx=41 is 1.55e-04 against
+    # 5.25e-02 without it, 159x; and the family's spatial order became measurable for the
+    # first time -- interior EOC 1.02, 0.89, 0.82, 0.84 over nx 11..161, boundary 1.73 down
+    # to 1.09, space-limited (holding nx=41 and refining nt 200->3200 moves the error 1.00x).
+    # That is BELOW the second order the HJB half of GFDM measures
+    # (test_gfdm_mms_source_1991.py). Recorded, not diagnosed, and deliberately not pinned:
+    # no derivation here says what the correct rate for this operator is, and pinning a
+    # rate nobody derived would turn it into a specification.
+    ("FPGFDMSolver", _fp_gfdm, "honours"),
+    # 2026-09-04 (#2020): both were "refuses", and both refusals were a bare argument-binding
+    # TypeError -- the parameter was absent, which #2020's own body separates from a refusal
+    # ("Refusing is a behaviour; an absent signature is not"). Each now takes the source as a
+    # Lie-splitting substep after its transport step, derived rather than guessed: the adjoint
+    # step is an explicit linear operator M^{n+1} = A M^n (A the splatting matrix) and the
+    # Jacobian step an explicit map M^{n+1} = T(M^n), so in both cases the forcing is
+    # + dt * S(t_{n+1}, .), first order in time, which is each scheme's own order. That is the
+    # discriminator against the three HJB-SL variants #2198 still refuses, where the forcing would
+    # have to enter an implicit alpha* fixed point or a sampled characteristic.
+    #
+    # Measured at nx=41, nt=200 on 1 + 0.3(1+t)cos(pi x) with zero drift, interior error:
+    #   FPSLSolver          5.03e-02 without the source -> 1.99e-03 with it, 25x
+    #   FPSLJacobianSolver  5.21e-02 without the source -> 2.81e-05 with it, 1857x
+    # The improvement is the sign check: a flipped sign moves the error the other way.
+    ("FPSLSolver", _fp_sl, "honours"),
+    ("FPSLJacobianSolver", _fp_sl_jacobian, "honours"),
 ]
 
 
@@ -307,6 +323,16 @@ _CASES = [
 #: construct-and-drive machinery for exactly the solvers this fixture cannot construct or drive.
 #: Re-verify a reason before relying on it; each was measured on 2026-08-21.
 _UNCOVERED: dict[str, str] = {
+    "FPParticleSolver": (
+        "structurally inapplicable, not a hole -- it evolves particle POSITIONS and the density is a "
+        "KDE reconstruction of them, so there is no cell to which dt * S could be added. The solver "
+        "says so itself: 'A particle method carries no mass -- positions have no scale' "
+        "(fp_particle.py, #2181). Moved out of the MMS denominator rather than counted as unreachable, "
+        "which is the action the oracle-taxonomy note specified for this case: its external oracle is an "
+        "exact law (reflected/absorbed Brownian mirror images, OU with common random numbers), not a "
+        "manufactured source. #2020 lists three kinds of unreachability -- missing wiring, structurally "
+        "inapplicable, wrong specimen -- and this is the second."
+    ),
     "FPSLAdjointSolver": "alias -- overrides only __init__ and shares FPSLSolver.solve_fp_system, "
     "so a row here would measure the same method object twice",
     "NetworkHJBSolver": "needs a network problem; raises NotImplementedError about node BCs on a grid",

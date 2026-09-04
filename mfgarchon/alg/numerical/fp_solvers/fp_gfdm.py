@@ -456,6 +456,7 @@ class FPGFDMSolver(BaseFPSolver):
         m_initial_condition: np.ndarray,
         drift_field: np.ndarray | Callable | None = None,
         volatility_field: float | np.ndarray | Callable | None = None,
+        source_term: Callable | None = None,
         show_progress: bool | None = None,
     ) -> np.ndarray:
         """
@@ -480,6 +481,15 @@ class FPGFDMSolver(BaseFPSolver):
             volatility_field: Volatility coefficient σ (SDE noise). If None, uses problem.sigma.
                             Currently only scalar volatility supported.
                             Note: Internally converted to diffusion D = σ²/2 for FP equation.
+            source_term: Manufactured forcing S(t, x) -> (N,), with x the collocation points of
+                shape (N, d) (Issue #2020). It enters the equation as
+                ``dm/dt + div(m α) = D Δm + S``, i.e. it is ADDED to ``dm_dt``, the same sign and
+                the same package-wide callable convention as the FDM path
+                (``fp_fdm_time_stepping.py``: ``M_next += dt * source_term``). Evaluated at the NEW
+                time level, matching ``fp_fdm.py``'s ``source_term(t_next, x_grid)``. This is what
+                lets a manufactured solution reach this solver; before #2020 the parameter was
+                absent from the signature, so passing one raised ``TypeError`` and the family's
+                convergence order had never been measured.
             show_progress: Display progress bar (not yet implemented)
 
         Returns:
@@ -603,8 +613,21 @@ class FPGFDMSolver(BaseFPSolver):
             laplacian = self.gfdm_operator.laplacian(m_current)
             diffusion = diffusion_coeff * laplacian
 
-            # Forward Euler update: dm/dt = -div(m*alpha) + D*Laplacian(m)
+            # Forward Euler update: dm/dt = -div(m*alpha) + D*Laplacian(m) + S
             dm_dt = -advection + diffusion
+            if source_term is not None:
+                # Evaluated at the level being computed, as fp_fdm.py does. A sign error here is
+                # not silent: it drives the manufactured error to O(1) and the measured order to 0,
+                # so the study that verifies the wiring verifies the sign in the same run.
+                s_values = np.asarray(source_term((t_idx + 1) * dt, self.collocation_points), dtype=float).ravel()
+                if s_values.size != self.n_points:
+                    raise ValueError(
+                        f"FPGFDMSolver: source_term returned {s_values.size} values at "
+                        f"t={(t_idx + 1) * dt:.6g}, expected {self.n_points} (one per collocation "
+                        f"point). The package convention is source_term(t, x) -> (N,) with x of "
+                        f"shape (N, d) taken from the collocation points."
+                    )
+                dm_dt = dm_dt + s_values
             M_solution[t_idx + 1, :] = m_current + dt * dm_dt
 
             # Issue #1683: this clipped, then renormalised to the initial mass, and warned
