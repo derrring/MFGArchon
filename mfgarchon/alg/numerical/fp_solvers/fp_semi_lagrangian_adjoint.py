@@ -52,6 +52,8 @@ from .base_fp import BaseFPSolver, DriftConvention
 from .fp_sl_splatting import splat_1d, splat_nd
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from mfgarchon.core.mfg_problem import MFGProblem
     from mfgarchon.geometry import BoundaryConditions
 
@@ -249,6 +251,7 @@ class FPSLSolver(BaseFPSolver):
         M_initial: np.ndarray | None = None,
         potential_field: np.ndarray | None = None,
         volatility_field: float | np.ndarray | None = None,
+        source_term: Callable | None = None,
         show_progress: bool | None = None,
         # Deprecated parameters
         drift_field: np.ndarray | None = None,  # Deprecated: renamed to potential_field
@@ -317,6 +320,25 @@ class FPSLSolver(BaseFPSolver):
             desc="FP-SL Adjoint",
         )
 
+        # `source_term` enters as a Lie-splitting substep AFTER the transport step (#2020). The
+        # adjoint step is an explicit linear operator on the density -- M^{n+1} = A M^n, where A is
+        # the splatting matrix -- so a source makes it M^{n+1} = A M^n + dt * S(t_{n+1}, .), which
+        # is a one-line derivation and first order in time, matching the scheme's own order. That
+        # is why this family is wired and the three HJB-SL variants named in #2198 are not: there
+        # the forcing would have to enter an implicit alpha* fixed point or a sampled
+        # characteristic, and neither has been derived.
+        source_points = self.problem.geometry.get_spatial_grid() if source_term is not None else None
+
+        def _source_increment(t: float) -> np.ndarray:
+            values = np.asarray(source_term(t, source_points), dtype=float).ravel()
+            if values.size != M[0].size:
+                raise ValueError(
+                    f"FPSLSolver: source_term returned {values.size} values at t={t:.6g}, expected "
+                    f"{M[0].size}. The package convention is source_term(t, x) -> (N,) with x of "
+                    f"shape (N, d) from geometry.get_spatial_grid()."
+                )
+            return values
+
         # Forward time stepping (dimension-agnostic dispatch)
         for n in timestep_range:
             if self.dimension == 1:
@@ -324,11 +346,15 @@ class FPSLSolver(BaseFPSolver):
                 U_n = potential_field[n, :]
                 alpha = self._compute_velocity_1d(U_n)
                 M[n + 1, :] = self._adjoint_sl_step_1d(M[n, :], alpha, self.dt, sigma)
+                if source_term is not None:
+                    M[n + 1, :] += self.dt * _source_increment((n + 1) * self.dt)
             else:
                 # nD solve
                 U_n = potential_field[n].reshape(self.grid_shape)
                 alpha = self._compute_velocity_nd(U_n)
                 M[n + 1] = self._adjoint_sl_step_nd(M[n].reshape(self.grid_shape), alpha, self.dt, sigma)
+                if source_term is not None:
+                    M[n + 1] += self.dt * _source_increment((n + 1) * self.dt).reshape(M[n + 1].shape)
 
         return M
 

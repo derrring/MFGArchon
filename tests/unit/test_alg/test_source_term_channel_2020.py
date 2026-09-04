@@ -30,9 +30,14 @@ by nobody having tried.
 
 STATUS: `_SWALLOWERS` is empty -- nothing silently discards a source any more, which is what #2020
 was about. ~~every solver here now HONOURS a source~~ [CORRECTED 2026-08-21] that was true of the
-six rows this file had; it covered 6 of 21 concrete solvers. Eight more are now rows, and ~~five~~ **four** of
-them REFUSE -- ~~`HJBSemiLagrangianSolver`,~~ `FPGFDMSolver`, `FPParticleSolver`, `FPSLSolver`,
-`FPSLJacobianSolver`. [CORRECTED 2026-09-01] `HJBSemiLagrangianSolver` moved to `honours` in #2198:
+six rows this file had; it covered 6 of 21 concrete solvers. Eight more are now rows, and ~~five~~ ~~four~~ **one** of
+them REFUSES -- ~~`HJBSemiLagrangianSolver`,~~ ~~`FPGFDMSolver`,~~ `FPParticleSolver`,
+~~`FPSLSolver`,~~ ~~`FPSLJacobianSolver`~~. [CORRECTED 2026-09-04] The other three were wired in
+#2020, and their "refusals" had been bare argument-binding `TypeError`s -- the parameter was simply
+absent, which #2020's own body separates from a refusal. `FPParticleSolver` now refuses by RAISING
+and naming what it would cost to wire (per-particle Feynman-Kac weights); it was briefly moved to
+`_UNCOVERED` instead, and independent review showed that classification was wrong.
+[CORRECTED 2026-09-01] `HJBSemiLagrangianSolver` moved to `honours` in #2198:
 it threads a source through its operator-splitting path (the default `diffusion_method="adi"`),
 which is what made the Semi-Lagrangian family MMS-reachable and produced the first anisotropic
 order measurement in this repository. It still refuses on its three other variants. Refusing is a correct outcome and not a defect, but "every solver honours a
@@ -288,10 +293,59 @@ _CASES = [
     # tests/integration/test_sl_mms_anisotropic_2198.py, which also measures the order the channel
     # bought: EOC 1.039, 1.017 isotropic and 1.040, 1.017 with an off-diagonal Sigma.
     ("HJBSemiLagrangianSolver", _hjb_semi_lagrangian, "honours"),
-    ("FPGFDMSolver", _fp_gfdm, "refuses"),
+    # 2026-09-04 (#2020): was "refuses" -- and the refusal was a bare argument-binding
+    # TypeError, i.e. the parameter was simply absent, which #2020's own body distinguishes
+    # from a refusal ("Refusing is a behaviour; an absent signature is not"). It is now
+    # threaded into the forward-Euler update on the collocation points, at t_n -- the level every
+    # other term in that expression sits at. (`fp_fdm.py` uses t_{n+1} because it is IMPLICIT; the
+    # convention is the operator's level, not the literal t_next. Review caught the first version
+    # copying t_{n+1} across that boundary: both are consistent and the gap is clean O(dt), but
+    # t_n reaches the space floor at once while t_{n+1} descends to it from above.)
+    #
+    # What the channel bought, measured: with the source the interior error at nx=41, nt=200 is
+    # 1.535e-04 against 5.199e-02 without it, 339x; and the family's spatial order became
+    # measurable for the first time -- interior EOC 1.00, 0.88, 0.83, 0.88 over nx 11..161,
+    # space-limited (holding nx=41 and refining nt 200->3200 moves the error 1.00x).
+    # That is BELOW the second order the HJB half of GFDM measures
+    # (test_gfdm_mms_source_1991.py). Recorded, not diagnosed, and deliberately not pinned:
+    # no derivation here says what the correct rate for this operator is, and pinning a
+    # rate nobody derived would turn it into a specification.
+    ("FPGFDMSolver", _fp_gfdm, "honours"),
+    # 2026-09-04 (#2020): both were "refuses", and both refusals were a bare argument-binding
+    # TypeError -- the parameter was absent, which #2020's own body separates from a refusal
+    # ("Refusing is a behaviour; an absent signature is not"). Each now takes the source as a
+    # Lie-splitting substep after its transport step, derived rather than guessed: the adjoint
+    # step is an explicit linear operator M^{n+1} = A M^n (A the splatting matrix) and the
+    # Jacobian step an explicit map M^{n+1} = T(M^n), so in both cases the forcing is
+    # + dt * S(t_{n+1}, .), first order in time, which is each scheme's own order. That is the
+    # discriminator against the three HJB-SL variants #2198 still refuses, where the forcing would
+    # have to enter an implicit alpha* fixed point or a sampled characteristic.
+    #
+    # Measured at nx=41, nt=200 on 1 + 0.3(1+t)cos(pi x) with zero drift, interior error:
+    #   FPSLSolver          5.03e-02 without the source -> 1.99e-03 with it, 25x
+    #   FPSLJacobianSolver  5.21e-02 without the source -> 2.81e-05 with it, 1857x
+    #
+    # The sign is checked by MEASUREMENT, not by the improvement being large. Flipping the sign of
+    # the substep in each solver and re-running the same fixture gives 1.026e-01 (FPSLSolver) and
+    # 1.043e-01 (FPSLJacobianSolver), i.e. roughly TWICE the no-source error, which is what
+    # subtracting what should be added does to the deviation. Correct sign is 52x and 3716x better
+    # than flipped. FPGFDMSolver behaves the same: 1.041e-01 flipped against 1.648e-04 correct.
+    # 2026-09-04 (#2020): stays a ROW, and refuses honestly. It was briefly moved to `_UNCOVERED`
+    # as "structurally inapplicable"; independent review showed that reason was wrong. It kills one
+    # candidate entry point (an additive cell update -- there are no cells) and was presented as
+    # settling the question. Three others do die: KDE is invariant to particle COUNT (measured --
+    # duplicating all 4000 particles moves the integral 0.16%, killing half moves it 0.2%, against
+    # a control where doubling the density moves it 100%); a term in the reconstruction cannot
+    # survive a density re-derived from positions each step; and Girsanov reweighting changes the
+    # drift and cannot create mass. But PER-PARTICLE WEIGHTS survive: for a manufactured m bounded
+    # away from zero an additive S is exactly the reaction term c = S/m, carried by Feynman-Kac
+    # weights w_i *= exp(dt * c(t, X_i)). `_estimate_density_at_particles` already gives m at the
+    # particles, `gaussian_kde` takes `weights=`, and this package already calls it that way in
+    # `operators/interpolation/projection.py:669`. So it is a hole with a named cost, not an
+    # impossibility, and it belongs in the denominator where the cost stays visible.
     ("FPParticleSolver", _fp_particle, "refuses"),
-    ("FPSLSolver", _fp_sl, "refuses"),
-    ("FPSLJacobianSolver", _fp_sl_jacobian, "refuses"),
+    ("FPSLSolver", _fp_sl, "honours"),
+    ("FPSLJacobianSolver", _fp_sl_jacobian, "honours"),
 ]
 
 

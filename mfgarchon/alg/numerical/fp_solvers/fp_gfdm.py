@@ -456,6 +456,7 @@ class FPGFDMSolver(BaseFPSolver):
         m_initial_condition: np.ndarray,
         drift_field: np.ndarray | Callable | None = None,
         volatility_field: float | np.ndarray | Callable | None = None,
+        source_term: Callable | None = None,
         show_progress: bool | None = None,
     ) -> np.ndarray:
         """
@@ -480,6 +481,15 @@ class FPGFDMSolver(BaseFPSolver):
             volatility_field: Volatility coefficient σ (SDE noise). If None, uses problem.sigma.
                             Currently only scalar volatility supported.
                             Note: Internally converted to diffusion D = σ²/2 for FP equation.
+            source_term: Manufactured forcing S(t, x) -> (N,), with x the collocation points of
+                shape (N, d) (Issue #2020). It enters the equation as
+                ``dm/dt + div(m α) = D Δm + S``, i.e. it is ADDED to ``dm_dt``, the same sign and
+                the same package-wide callable convention as the FDM path
+                (``fp_fdm_time_stepping.py``: ``M_next += dt * source_term``). Evaluated at the NEW
+                time level, matching ``fp_fdm.py``'s ``source_term(t_next, x_grid)``. This is what
+                lets a manufactured solution reach this solver; before #2020 the parameter was
+                absent from the signature, so passing one raised ``TypeError`` and the family's
+                convergence order had never been measured.
             show_progress: Display progress bar (not yet implemented)
 
         Returns:
@@ -603,8 +613,32 @@ class FPGFDMSolver(BaseFPSolver):
             laplacian = self.gfdm_operator.laplacian(m_current)
             diffusion = diffusion_coeff * laplacian
 
-            # Forward Euler update: dm/dt = -div(m*alpha) + D*Laplacian(m)
+            # Forward Euler update: dm/dt = -div(m*alpha) + D*Laplacian(m) + S
             dm_dt = -advection + diffusion
+            if source_term is not None:
+                # Evaluated at t_n, the level every OTHER term in this expression is evaluated at.
+                # This update is explicit forward Euler -- `m + dt * (L(m^n) + S)` -- so pairing an
+                # operator at t_n with a source at t_{n+1} would mix two levels inside one
+                # expression. `fp_fdm.py` uses `source_term(t_next, x_grid)` because that path is
+                # IMPLICIT, where t_{n+1} is the level of its operator; the package convention is
+                # the level the operator is evaluated at, not the literal t_next (#2020).
+                #
+                # Measured, nx=41, both choices consistent and the gap clean O(dt):
+                #   nt=200/400/800/1600, |S(t_n+1) - S(t_n)| = 1.13e-05, 5.63e-06, 2.81e-06, 1.41e-06
+                # S(t_n) sits on the space-limited floor at once (1.535e-04 -> 1.539e-04, flat)
+                # while S(t_{n+1}) descends toward it from above (1.648e-04 -> 1.553e-04).
+                #
+                # A sign error here is not silent: flipping it puts the error at 1.041e-01, about
+                # twice the no-source 5.25e-02, against 1.65e-04 with the sign right.
+                s_values = np.asarray(source_term(t_idx * dt, self.collocation_points), dtype=float).ravel()
+                if s_values.size != self.n_points:
+                    raise ValueError(
+                        f"FPGFDMSolver: source_term returned {s_values.size} values at "
+                        f"t={t_idx * dt:.6g}, expected {self.n_points} (one per collocation "
+                        f"point). The package convention is source_term(t, x) -> (N,) with x of "
+                        f"shape (N, d) taken from the collocation points."
+                    )
+                dm_dt = dm_dt + s_values
             M_solution[t_idx + 1, :] = m_current + dt * dm_dt
 
             # Issue #1683: this clipped, then renormalised to the initial mass, and warned

@@ -218,6 +218,7 @@ class FPSLJacobianSolver(BaseFPSolver):
         M_initial: np.ndarray | None = None,
         potential_field: np.ndarray | Callable | None = None,
         volatility_field: float | np.ndarray | Callable | None = None,
+        source_term: Callable | None = None,
         show_progress: bool | None = None,
         # Deprecated parameters
         drift_field: np.ndarray | Callable | None = None,  # Deprecated: renamed to potential_field
@@ -293,6 +294,13 @@ class FPSLJacobianSolver(BaseFPSolver):
             desc="FP-SL (forward)",
         )
 
+        # `source_term` enters as a Lie-splitting substep AFTER the SL step (#2020). `_sl_step`
+        # maps the density forward by tracing characteristics and applying the Jacobian
+        # correction -- an explicit map M^{n+1} = T(M^n) -- so a forcing makes it
+        # M^{n+1} = T(M^n) + dt * S(t_{n+1}, .). First order in time, which is this scheme's own
+        # order, so the splitting adds no error term the scheme did not already carry.
+        source_points = self.problem.geometry.get_spatial_grid() if source_term is not None else None
+
         # Forward time stepping
         for n in timestep_range:
             # Compute velocity field alpha = -grad(U) at current time
@@ -310,6 +318,17 @@ class FPSLJacobianSolver(BaseFPSolver):
                 self.dt,
                 sigma,
             )
+
+            if source_term is not None:
+                s_values = np.asarray(source_term((n + 1) * self.dt, source_points), dtype=float).ravel()
+                if s_values.size != Nx:
+                    raise ValueError(
+                        f"FPSLJacobianSolver: source_term returned {s_values.size} values at "
+                        f"t={(n + 1) * self.dt:.6g}, expected {Nx}. The package convention is "
+                        f"source_term(t, x) -> (N,) with x of shape (N, d) from "
+                        f"geometry.get_spatial_grid()."
+                    )
+                M[n + 1, :] += self.dt * s_values
 
         return M
 

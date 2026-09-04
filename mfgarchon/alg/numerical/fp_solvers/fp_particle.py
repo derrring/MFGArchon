@@ -1429,6 +1429,7 @@ class FPParticleSolver(BaseFPSolver):
         initial_particles: np.ndarray | None = None,
         drift_needs_density: bool = True,
         potential_field: np.ndarray | None = None,
+        source_term: Callable | None = None,
     ) -> np.ndarray:
         """Solve the FP system, and return it at the mass the caller handed in (#2181).
 
@@ -1481,6 +1482,24 @@ class FPParticleSolver(BaseFPSolver):
         The target is measured with `geometry.integrate`, so the quantity this solver preserves is
         the same functional the library reports (#2145).
         """
+        if source_term is not None:
+            raise NotImplementedError(
+                "FPParticleSolver: `source_term` is not wired here, and the reason is a "
+                "missing mechanism rather than an impossibility (#2020). This scheme evolves "
+                "particle POSITIONS and reconstructs the density by KDE, so there is no cell to "
+                "which `dt * S` can be added -- but that only rules out an additive cell update. "
+                "For a manufactured m bounded away from zero an additive S is exactly the "
+                "multiplicative reaction term c = S/m, which a particle method carries through "
+                "per-particle Feynman-Kac weights w_i *= exp(dt * c(t, X_i)); "
+                "`_estimate_density_at_particles` already supplies m at the particle locations, "
+                "`scipy.stats.gaussian_kde` accepts `weights=`, and this package already calls it "
+                "that way in `operators/interpolation/projection.py`. What is missing is a weight "
+                "carried on the particle state, `reflection_kde` accepting weights, and a decision "
+                "about how that interacts with the caller-mass restoration in `_to_caller_mass`. "
+                "Refusing is a behaviour and an absent signature is not, so this raises rather "
+                "than binding nothing."
+            )
+
         self._mass_target = self._caller_mass(M_initial)
         self._mass_weights = self._quadrature_weights() if self._mass_target is not None else None
         self._mass_factor = None  # calibrated on the first KDE reconstruction of THIS solve
