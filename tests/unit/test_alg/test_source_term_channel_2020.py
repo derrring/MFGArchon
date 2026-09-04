@@ -305,7 +305,12 @@ _CASES = [
     # Measured at nx=41, nt=200 on 1 + 0.3(1+t)cos(pi x) with zero drift, interior error:
     #   FPSLSolver          5.03e-02 without the source -> 1.99e-03 with it, 25x
     #   FPSLJacobianSolver  5.21e-02 without the source -> 2.81e-05 with it, 1857x
-    # The improvement is the sign check: a flipped sign moves the error the other way.
+    #
+    # The sign is checked by MEASUREMENT, not by the improvement being large. Flipping the sign of
+    # the substep in each solver and re-running the same fixture gives 1.026e-01 (FPSLSolver) and
+    # 1.043e-01 (FPSLJacobianSolver), i.e. roughly TWICE the no-source error, which is what
+    # subtracting what should be added does to the deviation. Correct sign is 52x and 3716x better
+    # than flipped. FPGFDMSolver behaves the same: 1.041e-01 flipped against 1.648e-04 correct.
     ("FPSLSolver", _fp_sl, "honours"),
     ("FPSLJacobianSolver", _fp_sl_jacobian, "honours"),
 ]
