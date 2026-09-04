@@ -171,6 +171,27 @@ def build_diffusion_matrix(
     return A.tocsr()
 
 
+BC_TYPES: tuple[str, ...] = ("neumann", "dirichlet", "periodic")
+"""The boundary conditions this module's operator builders discretise."""
+
+
+def _checked_bc_type(bc_type: str, builder: str) -> str:
+    """Reject a `bc_type` no branch below handles, instead of silently taking an else (#2242).
+
+    Every builder here dispatched on `bc_type` with an implicit fallthrough, so an unrecognised
+    string returned a well-formed matrix for some OTHER boundary condition. That is how
+    `build_diffusion_matrix_2d`'s missing Dirichlet branch stayed invisible: asking for Dirichlet
+    and asking for nonsense produced byte-identical matrices, and neither raised.
+    """
+    if bc_type not in BC_TYPES:
+        raise ValueError(
+            f"{builder}: bc_type must be one of {list(BC_TYPES)}, got {bc_type!r}. It is rejected "
+            f"rather than defaulted because the fallthrough returns a valid matrix for a boundary "
+            f"condition you did not ask for, and nothing downstream can tell."
+        )
+    return bc_type
+
+
 def _build_1d_laplacian(N: int, bc_type: str) -> sparse.csr_matrix:
     """
     Build 1D discrete Laplacian operator (negative Laplacian).
@@ -181,6 +202,8 @@ def _build_1d_laplacian(N: int, bc_type: str) -> sparse.csr_matrix:
     The negative Laplacian -Δ has positive diagonal, ensuring the
     diffusion matrix (I + θα(-Δ)) is positive definite.
     """
+    _checked_bc_type(bc_type, "_build_1d_laplacian")
+
     # Main diagonal: 2
     main = np.ones(N) * 2.0
     # Off-diagonals: -1
@@ -278,6 +301,8 @@ def build_diffusion_matrix_1d(
         For Dirichlet BC with zero values, the matrix is also symmetric.
         For periodic BC, the matrix is symmetric (circulant structure).
     """
+    _checked_bc_type(bc_type, "build_diffusion_matrix_1d")
+
     # Coefficients from the one owner (#2237). This builder and three other implementations were
     # each deriving them; reconstructed from their action on the standard basis they agreed to
     # 2.22e-16, and the comment below -- "ghost = interior" -- named the treatment this code does
@@ -348,6 +373,8 @@ def build_diffusion_matrix_2d(
     else:
         dx_x, dx_y = dx
 
+    _checked_bc_type(bc_type, "build_diffusion_matrix_2d")
+
     # Same owner as the 1D builder (#2237). This assembly is the SIXTH implementation of that wall
     # -- the 1D census could not see it, because it probed the 1D path. Found by sweeping for
     # `dt/dx^2` beside a tridiagonal assembly, with the five known sites as the control.
@@ -364,6 +391,14 @@ def build_diffusion_matrix_2d(
     for i in range(Nx):
         for j in range(Ny):
             k = idx(i, j)
+
+            # Dirichlet: the boundary row is the identity, exactly as `build_diffusion_matrix_1d`
+            # does it (#2242). Before this branch existed, `bc_type="dirichlet"` fell through to
+            # the interior stencil everywhere -- byte-identical to passing a nonsense string, and
+            # differing from the 1D builder on what the same argument means.
+            if bc_type == "dirichlet" and (i in (0, Nx - 1) or j in (0, Ny - 1)):
+                A[k, k] = 1.0
+                continue
 
             # The diagonal is 1 plus one term per axis, and a Neumann wall replaces only its own
             # axis's term -- which is exactly the 1D wall row, applied per direction.
@@ -430,6 +465,11 @@ def build_advection_matrix_1d(
         The upwind matrix for advection and the splatting matrix for FP
         are transposes when using consistent boundary handling.
     """
+    # Validated, but NOT given per-type branches: the `else` below deliberately treats Neumann and
+    # Dirichlet alike (an identity row at an inflow wall), which is a stated choice rather than a
+    # missing case. Only the unchecked string was the defect here (#2242).
+    _checked_bc_type(bc_type, "build_advection_matrix_1d")
+
     CFL = dt / dx
     A = sparse.lil_matrix((Nx, Nx))
 
