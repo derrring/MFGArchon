@@ -27,8 +27,8 @@ Standard solver return type: (U, M, convergence_info)
 This is the legacy return format used by most numerical solvers.
 
 Args:
-    U: Value function array, shape (Nt+1, Nx+1)
-    M: Density function array, shape (Nt+1, Nx+1)
+    U: Value function array, shape (Nt+1, Nx) -- Nx is the POINT count (#2235)
+    M: Density function array, shape (Nt+1, Nx)
     convergence_info: Dict with keys like 'converged', 'iterations', 'residual'
 """
 

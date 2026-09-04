@@ -367,7 +367,8 @@ class FPFDMSolver(BaseFPSolver):
         Parameters
         ----------
         M_initial : np.ndarray
-            Initial density m₀(x). Shape: (Nx+1,) for 1D or (N1-1, N2-1, ...) for nD
+            Initial density m₀(x). Shape: (Nx,) for 1D or (N1, N2, ...) for nD, where each
+            Ni is a POINT count from `TensorProductGrid.Nx_points` (#2235)
         drift_field : np.ndarray or callable, optional
             Drift velocity specification (Issue #573):
             - None: Zero drift (pure diffusion)
@@ -397,8 +398,8 @@ class FPFDMSolver(BaseFPSolver):
         Returns
         -------
         np.ndarray
-            Density evolution. Shape: (Nt+1, Nx+1) for 1D or
-            (Nt+1, N1-1, N2-1, ...) for nD
+            Density evolution. Shape: (Nt+1, Nx) for 1D or (Nt+1, N1, N2, ...) for nD.
+            Measured: (5, 21) for Nx_points=[21] and (5, 13, 7) for [13, 7] (#2235)
 
         Examples
         --------

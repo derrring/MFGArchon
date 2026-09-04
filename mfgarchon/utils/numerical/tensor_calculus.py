@@ -809,143 +809,109 @@ def _compute_full_tensor_kernel_2d(
     dx: float,
     dy: float,
 ) -> np.ndarray:
-    """JIT-compiled kernel for 2D full tensor diffusion."""
-    Ny, Nx = Sigma.shape[0], Sigma.shape[1]
-    result = np.zeros((Ny, Nx))
+    """JIT-compiled kernel for 2D full tensor diffusion.
 
-    for i in range(Ny):
-        for j in range(Nx):
-            s11 = Sigma[i, j, 0, 0]
-            s12 = Sigma[i, j, 0, 1]
-            s21 = Sigma[i, j, 1, 0]
-            s22 = Sigma[i, j, 1, 1]
+    Axis order is the library's: ``axis 0`` is x with spacing ``dx``, ``axis 1`` is y with
+    ``dy``, matching ``np.meshgrid(..., indexing="ij")`` and ``_tensor_diffusion_nd``, which
+    is axis-generic and is the reference this kernel is pinned against.
 
-            # Face-averaged tensor components
-            if j < Nx - 1:
-                s11_xp = 0.5 * (s11 + Sigma[i, j + 1, 0, 0])
-                s12_xp = 0.5 * (s12 + Sigma[i, j + 1, 0, 1])
+    Until #1911 this kernel read ``Ny, Nx = Sigma.shape`` and paired row 0 of the tensor with
+    ``axis 1``, i.e. it was written in the ``[y, x]`` matrix layout while every caller hands it
+    an ``[x, y]`` array. Both the tensor component AND the spacing were therefore applied to
+    the wrong axis, and the two errors do not cancel: on a Gaussian under `diag(0.15, 0.0628)`
+    the direction with the LARGER sigma spread LESS (Var growth 3.08e-04 against 7.17e-04,
+    ratio 0.43 where free diffusion predicts 5.71). A square grid with an isotropic tensor
+    hides it; `dx != dy` alone is enough to break it even at `D = 0.3 I`.
+    """
+    Nx, Ny = Sigma.shape[0], Sigma.shape[1]
+    result = np.zeros((Nx, Ny))
+
+    for i in range(Nx):
+        for j in range(Ny):
+            s_xx = Sigma[i, j, 0, 0]
+            s_xy = Sigma[i, j, 0, 1]
+            s_yx = Sigma[i, j, 1, 0]
+            s_yy = Sigma[i, j, 1, 1]
+
+            # Face-averaged tensor components. Row 0 lives on the x faces (axis 0, i +- 1),
+            # row 1 on the y faces (axis 1, j +- 1).
+            if i < Nx - 1:
+                s_xx_xp = 0.5 * (s_xx + Sigma[i + 1, j, 0, 0])
+                s_xy_xp = 0.5 * (s_xy + Sigma[i + 1, j, 0, 1])
             else:
-                s11_xp, s12_xp = s11, s12
-
-            if j > 0:
-                s11_xm = 0.5 * (s11 + Sigma[i, j - 1, 0, 0])
-                s12_xm = 0.5 * (s12 + Sigma[i, j - 1, 0, 1])
-            else:
-                s11_xm, s12_xm = s11, s12
-
-            if i < Ny - 1:
-                s21_yp = 0.5 * (s21 + Sigma[i + 1, j, 1, 0])
-                s22_yp = 0.5 * (s22 + Sigma[i + 1, j, 1, 1])
-            else:
-                s21_yp, s22_yp = s21, s22
+                s_xx_xp, s_xy_xp = s_xx, s_xy
 
             if i > 0:
-                s21_ym = 0.5 * (s21 + Sigma[i - 1, j, 1, 0])
-                s22_ym = 0.5 * (s22 + Sigma[i - 1, j, 1, 1])
+                s_xx_xm = 0.5 * (s_xx + Sigma[i - 1, j, 0, 0])
+                s_xy_xm = 0.5 * (s_xy + Sigma[i - 1, j, 0, 1])
             else:
-                s21_ym, s22_ym = s21, s22
+                s_xx_xm, s_xy_xm = s_xx, s_xy
+
+            if j < Ny - 1:
+                s_yx_yp = 0.5 * (s_yx + Sigma[i, j + 1, 1, 0])
+                s_yy_yp = 0.5 * (s_yy + Sigma[i, j + 1, 1, 1])
+            else:
+                s_yx_yp, s_yy_yp = s_yx, s_yy
+
+            if j > 0:
+                s_yx_ym = 0.5 * (s_yx + Sigma[i, j - 1, 1, 0])
+                s_yy_ym = 0.5 * (s_yy + Sigma[i, j - 1, 1, 1])
+            else:
+                s_yx_ym, s_yy_ym = s_yx, s_yy
 
             # Padded indices
             ip, jp = i + 1, j + 1
 
-            # Gradients at faces
-            dm_dx_xp = (m_padded[ip, jp + 1] - m_padded[ip, jp]) / dx
+            # Gradients at the two x faces (axis 0)
+            dm_dx_xp = (m_padded[ip + 1, jp] - m_padded[ip, jp]) / dx
             dm_dy_xp = (
-                0.25
-                * (
-                    (m_padded[ip + 1, jp + 1] - m_padded[ip - 1, jp + 1])
-                    + (m_padded[ip + 1, jp] - m_padded[ip - 1, jp])
-                )
-                / dy
-            )
-
-            dm_dx_xm = (m_padded[ip, jp] - m_padded[ip, jp - 1]) / dx
-            dm_dy_xm = (
-                0.25
-                * (
-                    (m_padded[ip + 1, jp] - m_padded[ip - 1, jp])
-                    + (m_padded[ip + 1, jp - 1] - m_padded[ip - 1, jp - 1])
-                )
-                / dy
-            )
-
-            dm_dy_yp = (m_padded[ip + 1, jp] - m_padded[ip, jp]) / dy
-            dm_dx_yp = (
                 0.25
                 * (
                     (m_padded[ip + 1, jp + 1] - m_padded[ip + 1, jp - 1])
                     + (m_padded[ip, jp + 1] - m_padded[ip, jp - 1])
                 )
-                / dx
+                / dy
             )
 
-            dm_dy_ym = (m_padded[ip, jp] - m_padded[ip - 1, jp]) / dy
-            dm_dx_ym = (
+            dm_dx_xm = (m_padded[ip, jp] - m_padded[ip - 1, jp]) / dx
+            dm_dy_xm = (
                 0.25
                 * (
                     (m_padded[ip, jp + 1] - m_padded[ip, jp - 1])
                     + (m_padded[ip - 1, jp + 1] - m_padded[ip - 1, jp - 1])
                 )
+                / dy
+            )
+
+            # Gradients at the two y faces (axis 1)
+            dm_dy_yp = (m_padded[ip, jp + 1] - m_padded[ip, jp]) / dy
+            dm_dx_yp = (
+                0.25
+                * (
+                    (m_padded[ip + 1, jp + 1] - m_padded[ip - 1, jp + 1])
+                    + (m_padded[ip + 1, jp] - m_padded[ip - 1, jp])
+                )
+                / dx
+            )
+
+            dm_dy_ym = (m_padded[ip, jp] - m_padded[ip, jp - 1]) / dy
+            dm_dx_ym = (
+                0.25
+                * (
+                    (m_padded[ip + 1, jp] - m_padded[ip - 1, jp])
+                    + (m_padded[ip + 1, jp - 1] - m_padded[ip - 1, jp - 1])
+                )
                 / dx
             )
 
             # Fluxes
-            Fx_xp = s11_xp * dm_dx_xp + s12_xp * dm_dy_xp
-            Fx_xm = s11_xm * dm_dx_xm + s12_xm * dm_dy_xm
-            Fy_yp = s21_yp * dm_dx_yp + s22_yp * dm_dy_yp
-            Fy_ym = s21_ym * dm_dx_ym + s22_ym * dm_dy_ym
+            Fx_xp = s_xx_xp * dm_dx_xp + s_xy_xp * dm_dy_xp
+            Fx_xm = s_xx_xm * dm_dx_xm + s_xy_xm * dm_dy_xm
+            Fy_yp = s_yx_yp * dm_dx_yp + s_yy_yp * dm_dy_yp
+            Fy_ym = s_yx_ym * dm_dx_ym + s_yy_ym * dm_dy_ym
 
             # Divergence
             result[i, j] = (Fx_xp - Fx_xm) / dx + (Fy_yp - Fy_ym) / dy
-
-    return result
-
-
-@njit(cache=True)
-def _compute_diagonal_kernel_2d(
-    m_padded: np.ndarray,
-    sigma_x: np.ndarray,
-    sigma_y: np.ndarray,
-    dx: float,
-    dy: float,
-) -> np.ndarray:
-    """JIT-compiled kernel for 2D diagonal tensor diffusion."""
-    Ny, Nx = sigma_x.shape
-    result = np.zeros((Ny, Nx))
-
-    for i in range(Ny):
-        for j in range(Nx):
-            ip, jp = i + 1, j + 1
-
-            # x-direction
-            if j < Nx - 1:
-                sigma_x_xp = 0.5 * (sigma_x[i, j] + sigma_x[i, j + 1])
-            else:
-                sigma_x_xp = sigma_x[i, j]
-            if j > 0:
-                sigma_x_xm = 0.5 * (sigma_x[i, j] + sigma_x[i, j - 1])
-            else:
-                sigma_x_xm = sigma_x[i, j]
-
-            dm_dx_xp = (m_padded[ip, jp + 1] - m_padded[ip, jp]) / dx
-            dm_dx_xm = (m_padded[ip, jp] - m_padded[ip, jp - 1]) / dx
-            div_x = (sigma_x_xp * dm_dx_xp - sigma_x_xm * dm_dx_xm) / dx
-
-            # y-direction
-            if i < Ny - 1:
-                sigma_y_yp = 0.5 * (sigma_y[i, j] + sigma_y[i + 1, j])
-            else:
-                sigma_y_yp = sigma_y[i, j]
-            if i > 0:
-                sigma_y_ym = 0.5 * (sigma_y[i, j] + sigma_y[i - 1, j])
-            else:
-                sigma_y_ym = sigma_y[i, j]
-
-            dm_dy_yp = (m_padded[ip + 1, jp] - m_padded[ip, jp]) / dy
-            dm_dy_ym = (m_padded[ip, jp] - m_padded[ip - 1, jp]) / dy
-            div_y = (sigma_y_yp * dm_dy_yp - sigma_y_ym * dm_dy_ym) / dy
-
-            result[i, j] = div_x + div_y
 
     return result
 
@@ -1025,11 +991,14 @@ def _tensor_diffusion_2d(
     """2D tensor diffusion with optional Numba JIT."""
     from mfgarchon.geometry.boundary import pad_array_with_ghosts
 
-    Ny, Nx = u.shape
+    # axis 0 is x, axis 1 is y -- the library's `indexing="ij"` order, and the order
+    # `_tensor_diffusion_nd` uses. Read as `Ny, Nx` until #1911, which put the tensor row and
+    # the spacing on the wrong axis together.
+    Nx, Ny = u.shape
 
     # Expand constant tensor
     if Sigma.ndim == 2:
-        Sigma_full = np.tile(Sigma, (Ny, Nx, 1, 1))
+        Sigma_full = np.tile(Sigma, (Nx, Ny, 1, 1))
     else:
         Sigma_full = Sigma
 
@@ -1074,27 +1043,28 @@ def _tensor_diffusion_2d(
     if USE_NUMBA and NUMBA_AVAILABLE:
         return _compute_full_tensor_kernel_2d(u_padded, Sigma_full, dx, dy)
 
-    # Pure NumPy fallback (simplified)
-    dm_dx_x = (u_padded[1:-1, 1:] - u_padded[1:-1, :-1]) / dx
-    dm_dy_y = (u_padded[1:, 1:-1] - u_padded[:-1, 1:-1]) / dy
-    dm_dx_y = 0.5 * ((u_padded[1:, 2:] - u_padded[1:, :-2]) + (u_padded[:-1, 2:] - u_padded[:-1, :-2])) / (2 * dx)
-    dm_dy_x = 0.5 * ((u_padded[2:, 1:] - u_padded[:-2, 1:]) + (u_padded[2:, :-1] - u_padded[:-2, :-1])) / (2 * dy)
+    # Pure NumPy fallback (simplified). Same axis order as the JIT kernel above: the x faces
+    # are along axis 0 and carry dx, the y faces along axis 1 and carry dy (#1911).
+    dm_dx_x = (u_padded[1:, 1:-1] - u_padded[:-1, 1:-1]) / dx
+    dm_dy_y = (u_padded[1:-1, 1:] - u_padded[1:-1, :-1]) / dy
+    dm_dy_x = 0.5 * ((u_padded[1:, 2:] - u_padded[1:, :-2]) + (u_padded[:-1, 2:] - u_padded[:-1, :-2])) / (2 * dy)
+    dm_dx_y = 0.5 * ((u_padded[2:, 1:] - u_padded[:-2, 1:]) + (u_padded[2:, :-1] - u_padded[:-2, :-1])) / (2 * dx)
 
     # Face-averaged tensors
-    Sigma_x_faces = np.zeros((Ny, Nx + 1, 2, 2))
-    Sigma_x_faces[:, 1:-1, :, :] = 0.5 * (Sigma_full[:, 1:, :, :] + Sigma_full[:, :-1, :, :])
-    Sigma_x_faces[:, 0, :, :] = Sigma_full[:, 0, :, :]
-    Sigma_x_faces[:, -1, :, :] = Sigma_full[:, -1, :, :]
+    Sigma_x_faces = np.zeros((Nx + 1, Ny, 2, 2))
+    Sigma_x_faces[1:-1, :, :, :] = 0.5 * (Sigma_full[1:, :, :, :] + Sigma_full[:-1, :, :, :])
+    Sigma_x_faces[0, :, :, :] = Sigma_full[0, :, :, :]
+    Sigma_x_faces[-1, :, :, :] = Sigma_full[-1, :, :, :]
 
-    Sigma_y_faces = np.zeros((Ny + 1, Nx, 2, 2))
-    Sigma_y_faces[1:-1, :, :, :] = 0.5 * (Sigma_full[1:, :, :, :] + Sigma_full[:-1, :, :, :])
-    Sigma_y_faces[0, :, :, :] = Sigma_full[0, :, :, :]
-    Sigma_y_faces[-1, :, :, :] = Sigma_full[-1, :, :, :]
+    Sigma_y_faces = np.zeros((Nx, Ny + 1, 2, 2))
+    Sigma_y_faces[:, 1:-1, :, :] = 0.5 * (Sigma_full[:, 1:, :, :] + Sigma_full[:, :-1, :, :])
+    Sigma_y_faces[:, 0, :, :] = Sigma_full[:, 0, :, :]
+    Sigma_y_faces[:, -1, :, :] = Sigma_full[:, -1, :, :]
 
     Fx = Sigma_x_faces[:, :, 0, 0] * dm_dx_x + Sigma_x_faces[:, :, 0, 1] * dm_dy_x
     Fy = Sigma_y_faces[:, :, 1, 0] * dm_dx_y + Sigma_y_faces[:, :, 1, 1] * dm_dy_y
 
-    return (Fx[:, 1:] - Fx[:, :-1]) / dx + (Fy[1:, :] - Fy[:-1, :]) / dy
+    return (Fx[1:, :] - Fx[:-1, :]) / dx + (Fy[:, 1:] - Fy[:, :-1]) / dy
 
 
 def _tensor_diffusion_nd(

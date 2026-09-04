@@ -994,7 +994,10 @@ class PreallocatedGhostBuffer:
         Initialize pre-allocated ghost buffer.
 
         Args:
-            interior_shape: Shape of the interior domain (Ny, Nx) for 2D, etc.
+            interior_shape: Shape of the interior domain, (Nx, Ny) for 2D, etc. -- the
+                library's `indexing="ij"` order, axis 0 is x (#2235). The code here names
+                no axis (it uses only `len()` and per-element arithmetic), so this docstring
+                was the only thing asserting an order, and it asserted the reverse one.
             boundary_conditions: BC specification
             domain_bounds: Domain bounds for mixed BCs
             dtype: Data type for the buffer
