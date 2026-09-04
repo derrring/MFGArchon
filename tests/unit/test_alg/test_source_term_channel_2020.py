@@ -18,9 +18,18 @@ WHAT IS AND IS NOT AT RISK
 --------------------------
 The coupling layer is NOT the hazard. `resolve_volatility_kwarg` in `coupling/base_mfg.py` treats
 `**kwargs` as *not* accepting a parameter and raises; the `source_term` branch beside it has done the
-same since #1424, and `test_kwarg_gate_var_keyword_1783.py` pins that end-to-end on both the Picard
-and the Newton path. Anything going through `FixedPointIterator` or `MFGResidual` gets a loud
+same since #1424 ~~and `test_kwarg_gate_var_keyword_1783.py` pins that end-to-end on both the Picard
+and the Newton path~~. Anything going through `FixedPointIterator` or `MFGResidual` gets a loud
 refusal.
+
+[CORRECTED 2026-09-04] That pin no longer exists: `test_kwarg_gate_var_keyword_1783.py` was one of
+the 243 files removed by the test reset (#2227/#2230), so the sentence above cited a guard that had
+been gone for a day. The BEHAVIOUR is unchanged and was smoke-checked when #2200 gave the decision
+an owner (`resolve_source_kwarg`, same file): source None yields `{}`, a named parameter is
+forwarded, and both an absent parameter and a `**kwargs`-only signature raise with the parameter
+named, the signature printed, and the rule stated. What is gone is anything that would notice if
+that stopped being true -- a real gap, and a pre-existing one, since the two restatements #2200
+replaced were equally unguarded once the file went.
 
 The hazard is the DIRECT call, which bypasses that gate. Surveyed at the time of writing, no test in
 the suite drives a manufactured solution through a swallowing solver -- the six direct
