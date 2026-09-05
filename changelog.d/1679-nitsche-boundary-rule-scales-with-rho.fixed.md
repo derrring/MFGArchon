@@ -15,7 +15,7 @@
   1.33e1 → 1.33e1).
 
   The guarantee is a **bound**, not a constant: points per support radius lie in
-  `[2*n_gauss, 2*n_gauss + n_gauss*rho/max_side)`. It reads 12.60 at `n = 11, 16, 21, 26` only
+  `[2*n_gauss, 2*n_gauss + n_gauss*rho/max_side]`. It reads 12.60 at `n = 11, 16, 21, 26` only
   because `ceil(4(n-1)/7)` happens to equal `0.6(n-1)` at those values; at n=7 it is 14.00 and at
   n=13, 12.25. The factor of two is where accuracy plateaus, not a copied constant — at n=21 the
   error is 6.7375e-05 at one cell per radius, 5.9721e-05 at two, and 5.9726e-05 at both four and

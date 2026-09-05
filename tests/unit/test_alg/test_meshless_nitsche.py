@@ -166,26 +166,37 @@ class TestBoundaryRuleResolvesTheSupportScale:
     EOC test above stayed green through the whole defect.
     """
 
-    LEVELS = (7, 11, 16, 21, 26)
+    # (n, rho/h). The last two deliberately break the collinearity of the first five:
+    # with rho = 3.5h at every level, rho and cloud size move together, and a rule keyed on
+    # NODE COUNT alone reproduces the shipped n_cells exactly (4, 6, 9, 12, 15) -- so the
+    # ladder cannot tell "scales with 1/rho" from "scales with the cloud". At (21, 2.0) the
+    # node-count rule gives 12 where the shipped rule gives 20, and at (11, 6.0) it gives 6
+    # where the shipped rule gives 4. Measured; rho/h = 1.5 is not usable here because the
+    # MLS moment matrix is ill-conditioned before the boundary rule is reached.
+    LEVELS = ((7, 3.5), (11, 3.5), (16, 3.5), (21, 3.5), (26, 3.5), (21, 2.0), (11, 6.0))
     N_GAUSS = 6
     N_FACES = 4  # the unit square's four bounding-box faces
-    MAX_SIDE = 1.0
 
-    def _boundary_points(self, n):
-        """``(Q_b, rho)`` from the SHIPPED path, with the volume rule stubbed out.
+    def _boundary_points(self, n, rho_over_h):
+        """``(Q_b, rho, max_side)`` from the SHIPPED path, with the volume rule stubbed out.
 
         ``_segment_quadrature`` reads only ``rho``/``dim``/``dof_coordinates``, so the volume
-        quadrature is replaced by a 1-point dummy: the assertion below is about the boundary
-        rule, and building the real volume rule costs ~5 s at n=26 for something never read.
+        quadrature is replaced by a 1-point dummy: the assertion is about the boundary rule,
+        and building the real volume rule costs ~5 s at n=26 for something never read. The
+        stub was checked to produce byte-identical ``x_b``/``w_b``/``n_b`` against
+        ``discretization_from_cloud`` at every level.
+
+        ``max_side`` comes from ``_domain_bounds`` rather than a hard-coded 1.0, so the two
+        do not silently disagree if the fixture ever stops being the unit square.
         """
         ax = np.linspace(0.0, 1.0, n)
         nodes = np.stack([m.ravel() for m in np.meshgrid(ax, ax, indexing="ij")], axis=1)
-        rho = 3.5 / (n - 1)
+        rho = rho_over_h / (n - 1)
         disc = MeshlessGalerkinDiscretization(nodes, rho, 2, np.array([[0.5, 0.5]]), np.array([1.0]), backend="numpy")
         bc = _dirichlet_bc(dict.fromkeys(("x_min", "x_max", "y_min", "y_max"), 0.0), dim=2)
         bounds = _domain_bounds(disc)
         q_b = sum(len(_segment_quadrature(s, disc, bounds, self.N_GAUSS)[0]) for s in dirichlet_segments(bc))
-        return q_b, rho
+        return q_b, rho, max(hi - lo for lo, hi in bounds)
 
     def test_the_rule_holds_two_cells_per_support_radius_at_every_level(self):
         """The contract, asserted directly -- NOT the raw point count.
@@ -208,9 +219,9 @@ class TestBoundaryRuleResolvesTheSupportScale:
         """
         floor = 2 * self.N_GAUSS
         observed = {}
-        for n in self.LEVELS:
-            q_b, rho = self._boundary_points(n)
-            observed[n] = (q_b / self.N_FACES) * rho / self.MAX_SIDE
+        for n, ratio in self.LEVELS:
+            q_b, rho, max_side = self._boundary_points(n, ratio)
+            observed[(n, ratio)] = (q_b / self.N_FACES) * rho / max_side
         worst = min(observed.values())
         assert worst >= floor, (
             f"boundary rule resolves less than {floor} points per support radius: {observed} "
@@ -230,4 +241,9 @@ class TestBoundaryRuleResolvesTheSupportScale:
         """
         errs = [_poisson_2d(n) for n in (7, 11)]
         rate = np.log(errs[0] / errs[1]) / np.log((1 / 6) / (1 / 10))
+        # A rate alone is scale-free and a corrupted operator can converge fast to nonsense:
+        # zeroing every boundary weight makes A singular and gives errs ~ 2.8e+16 / 2.9e+14,
+        # rate +8.95, which passes a rate-only assertion. Measured. The floor is 14x above
+        # the shipped 7.07e-04 and 18 orders below that corruption.
+        assert errs[-1] < 1e-2, f"2-D Nitsche error is not small at n=11 (#1679): {errs}"
         assert rate > 1.5, f"2-D Nitsche does not converge under refinement (#1679): rate {rate:+.2f}, errs {errs}"
