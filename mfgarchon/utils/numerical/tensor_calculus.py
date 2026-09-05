@@ -930,8 +930,15 @@ def _compute_full_tensor_kernel_2d(
                 if j == Ny - 1:
                     Fy_yp = 0.0
 
-            # Divergence
-            result[i, j] = (Fx_xp - Fx_xm) / dx + (Fy_yp - Fy_ym) / dy
+            # Divergence. On a node-centred grid the wall lies ON the end node, so that node owns
+            # HALF a cell along the axis it is a wall of, and only along that axis -- the face
+            # areas transverse to it are halved too, and the two halvings cancel there (#2233).
+            # Dividing by the full dx everywhere is the cell-centred volume, and it is what made
+            # the wall row converge to half of div(D grad u): order 0.00, error -> 0.099 on an
+            # affine tensor. With the half cell the same measurement is first order.
+            cx = 2.0 / dx if (zero_wall_flux and (i == 0 or i == Nx - 1)) else 1.0 / dx
+            cy = 2.0 / dy if (zero_wall_flux and (j == 0 or j == Ny - 1)) else 1.0 / dy
+            result[i, j] = (Fx_xp - Fx_xm) * cx + (Fy_yp - Fy_ym) * cy
 
     return result
 
@@ -1121,7 +1128,14 @@ def _tensor_diffusion_2d(
         Fy[:, 0] = 0.0
         Fy[:, -1] = 0.0
 
-    return (Fx[1:, :] - Fx[:-1, :]) / dx + (Fy[:, 1:] - Fy[:, :-1]) / dy
+    # The same half-cell volume as the JIT kernel; see the comment there (#2233).
+    cx = np.full((Nx, 1), 1.0 / dx)
+    cy = np.full((1, Ny), 1.0 / dy)
+    if zero_wall_flux:
+        cx[0, 0] = cx[-1, 0] = 2.0 / dx
+        cy[0, 0] = cy[0, -1] = 2.0 / dy
+
+    return (Fx[1:, :] - Fx[:-1, :]) * cx + (Fy[:, 1:] - Fy[:, :-1]) * cy
 
 
 def _tensor_diffusion_nd(
@@ -1222,7 +1236,14 @@ def _tensor_diffusion_nd(
         slice_plus_i[i] = slice(1, None)
         slice_minus_i[i] = slice(None, -1)
 
-        result += (F_i[tuple(slice_plus_i)] - F_i[tuple(slice_minus_i)]) / spacings[i]
+        # Half-cell volume on this axis's two wall slabs; see the 2-D kernel (#2233).
+        coeff = np.full(shape[i], 1.0 / spacings[i])
+        if zero_wall_flux:
+            coeff[0] = coeff[-1] = 2.0 / spacings[i]
+        broadcast = [1] * d
+        broadcast[i] = shape[i]
+
+        result += (F_i[tuple(slice_plus_i)] - F_i[tuple(slice_minus_i)]) * coeff.reshape(broadcast)
 
     return result
 

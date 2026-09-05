@@ -21,6 +21,7 @@ from mfgarchon.geometry.boundary import (
     no_flux_bc,
     periodic_bc,
 )
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
 from mfgarchon.utils.numerical.tensor_calculus import diffusion
 
 
@@ -312,11 +313,17 @@ class TestBoundaryConditions:
 
         # No flux through the boundary means the integral of the divergence vanishes
         # (divergence theorem) -- the property the FP side of every MFG problem here relies on.
-        # Measured |sum| <= 2.5e-16 (worst over 300 random 8x8 draws); 1e-12 is a ~4000x margin.
         # This discriminates the BC rather than merely holding: the same expression under
         # dirichlet_bc measures ~3.1 on the same input, so a silent degradation of the no-flux
         # ghost treatment to the Dirichlet one fails here.
-        assert abs(np.sum(result) * dx * dy) < 1e-12
+        #
+        # The integral is the GRID's, not `sum * dx * dy` (#2233). #2145 made the measure on a
+        # node-centred grid the trapezoid, and #2233 gave this operator the half-cell wall volume
+        # that measure implies -- so the rectangle rule now reads a leak of 5.09e-01 where the
+        # grid measure reads 1.80e-16. Same shape of stale expectation as #2189.
+        wx = quadrature_weights_1d(np.arange(m.shape[0]) * dx)
+        wy = quadrature_weights_1d(np.arange(m.shape[1]) * dy)
+        assert abs(float((np.multiply.outer(wx, wy) * result).sum())) < 1e-12
 
 
 class TestNDDispatcher:
