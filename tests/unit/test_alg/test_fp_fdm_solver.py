@@ -948,10 +948,15 @@ class TestFPFDMSolverTensorDiffusion:
 
         assert M.shape == (problem.Nt + 1, Nx, Ny)
         assert np.all(M >= 0)
-        # No-flux walls on both axes: the tensor path must not create or destroy mass. Measured
-        # |mass - 1| = 2.2e-16 at every step, ~4e6 inside this tolerance.
-        masses = np.sum(M, axis=(1, 2)) * domain.spacing[0] * domain.spacing[1]
-        np.testing.assert_allclose(masses, 1.0, atol=1e-9)
+        # No-flux walls on both axes: the tensor path must not create or destroy mass.
+        #
+        # Measured with the GRID's quadrature, not `sum * dx * dy` (#2233). #2145 made the measure
+        # on a node-centred grid the trapezoid, and #2233 gave this operator the half-cell wall
+        # volume that measure implies. In this exact solve the rectangle rule now drifts 3.551e-04
+        # while the grid measure holds to 2.221e-16 -- the same stale-expectation shape as #2189.
+        # The initial condition is normalised in the same measure, or step 0 is already off.
+        masses = np.array([domain.integrate(M[k]) for k in range(M.shape[0])])
+        np.testing.assert_allclose(masses / masses[0], 1.0, atol=1e-9)
         # The anisotropy this tensor requests is NOT asserted, because it does not hold at this
         # commit: with sigma_parallel = 0.15 on axis 0 and sigma_perp = 0.0628 on axis 1, the
         # measured second-moment growth is 1.74e-04 along x against 7.17e-04 along y -- the wrong
