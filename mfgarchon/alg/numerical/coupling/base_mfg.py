@@ -75,6 +75,47 @@ def assert_paired_solver_sigma(hjb_solver: Any, fp_solver: Any, context: str) ->
         )
 
 
+def resolve_supported_backend(backend: Any, iterator_name: str) -> None:
+    """Normalise the only backend the coupling loop runs on, and refuse the rest (#2250).
+
+    Both coupling iterators annotated ``backend`` as ``str | None`` and documented it as a
+    name, then used it as an object in exactly one place -- the cold-start allocation
+    ``self.U = self.backend.zeros(...)``. So every non-``None`` value raised
+    ``AttributeError: 'str' object has no attribute 'zeros'``, including ``"numpy"``, the
+    backend already in use. The ``is not None`` guard hid it: the default is ``None``, which
+    took the ``np.zeros`` branch, so the whole suite and every example ran the working path.
+    It became reachable when ``config.backend.type`` started arriving through
+    ``config/translator.py`` (``5610e1af``, fixing #1284's dropped fields).
+
+    **Resolving the name is not the fix, and this was measured before choosing.** With
+    ``create_backend(backend)`` substituted in, the allocation succeeds and the loop dies
+    further in: ``JAX arrays are immutable and do not support in-place item assignment``,
+    and ``can't assign a numpy.ndarray to a torch.DoubleTensor``. That allocation was the
+    ONLY use of ``self.backend``, so the parameter bought one array of a type the rest of
+    the loop cannot write into -- wired and inert, not unwired. #1922 is the capability
+    ("selecting a backend is not an operation this package supports") and names this same
+    ``__setitem__`` wall.
+
+    ``None`` and ``"numpy"`` both describe what actually runs, so both normalise to ``None``
+    and the loop keeps its ``np.zeros`` path. Anything else is refused here, naming #1922.
+    Returning ``None`` rather than a backend object is what lets the callers drop the
+    unreachable allocation branch entirely.
+    """
+    if backend is None:
+        return None
+    if isinstance(backend, str) and backend.lower() == "numpy":
+        # The loop's np.zeros path IS the NumPy backend; storing the name would only
+        # re-arm the attribute error this function exists to remove.
+        return None
+    raise NotImplementedError(
+        f"{iterator_name}: backend={backend!r} was accepted and then ignored except for one "
+        f"array allocation, which the rest of the loop cannot write into (jax arrays are "
+        f"immutable; a torch tensor rejects numpy assignment). The coupling loop runs on "
+        f"NumPy only -- pass backend=None or 'numpy'. Backend selection is tracked in "
+        f"#1922; this refusal is #2250."
+    )
+
+
 def matches_problem_sigma(problem: Any, volatility_field: Any) -> bool:
     """Whether this field is indistinguishable from the problem's own sigma.
 

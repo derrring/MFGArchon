@@ -68,36 +68,23 @@ def hjb_config_to_kwargs(
         For non-default fields that cannot be applied to the selected scheme,
         or that have no current mapping.
     """
-    from mfgarchon.config.mfg_methods import (
-        FDMConfig,
-        FEMConfig,
-        GFDMConfig,
-        NewtonConfig,
-        SLConfig,
-        WENOConfig,
-    )
-    from mfgarchon.config.mfg_methods import (
-        HJBConfig as _DefaultHJBConfig,
-    )
     from mfgarchon.types import NumericalScheme
 
     kwargs: dict[str, Any] = {}
-    default_hjb = _DefaultHJBConfig()
 
     # ------------------------------------------------------------------
     # Newton sub-config: tolerance, max_iterations, relaxation
     # Applies to FDM, GFDM, SL (all Newton-based inner solvers).
     # ------------------------------------------------------------------
     newton = hjb_cfg.newton
-    default_newton = NewtonConfig()
 
-    if newton.tolerance != default_newton.tolerance:
+    if "tolerance" in newton.model_fields_set:
         kwargs["newton_tolerance"] = newton.tolerance
 
-    if newton.max_iterations != default_newton.max_iterations:
+    if "max_iterations" in newton.model_fields_set:
         kwargs["max_newton_iterations"] = newton.max_iterations
 
-    if newton.relaxation != default_newton.relaxation:
+    if "relaxation" in newton.model_fields_set:
         # `relaxation` is a constructor kwarg for HJBFDMSolver; GFDM / SL
         # solvers do not expose it at construction time.
         if scheme in (NumericalScheme.FDM_UPWIND, NumericalScheme.FDM_CENTERED):
@@ -112,7 +99,7 @@ def hjb_config_to_kwargs(
     # ------------------------------------------------------------------
     # Top-level fields: method, accuracy_order, boundary_conditions
     # ------------------------------------------------------------------
-    if hjb_cfg.method != default_hjb.method:
+    if "method" in hjb_cfg.model_fields_set:
         # Each scheme maps to the HJBConfig.method literal whose solver it builds.
         # FVM_{UPWIND,MUSCL} pair the upwind HJB-FDM solver (method "fdm").
         # MESHLESS_GALERKIN has no HJBConfig.method literal analog and is absent here
@@ -145,12 +132,12 @@ def hjb_config_to_kwargs(
                 "In Safe/Auto mode the scheme selects the solver class. Refs #1155."
             )
 
-    if hjb_cfg.accuracy_order != default_hjb.accuracy_order:
+    if "accuracy_order" in hjb_cfg.model_fields_set:
         raise NotImplementedError(
             f"config.hjb.accuracy_order={hjb_cfg.accuracy_order} is not yet mapped to a solver kwarg. Refs #1155."
         )
 
-    if hjb_cfg.boundary_conditions != default_hjb.boundary_conditions:
+    if "boundary_conditions" in hjb_cfg.model_fields_set:
         raise NotImplementedError(
             f"config.hjb.boundary_conditions={hjb_cfg.boundary_conditions!r} is "
             "not yet mapped to HJB solver kwargs. Refs #1155."
@@ -161,8 +148,7 @@ def hjb_config_to_kwargs(
     # ------------------------------------------------------------------
     is_fdm_scheme = scheme in (NumericalScheme.FDM_UPWIND, NumericalScheme.FDM_CENTERED)
     if hjb_cfg.fdm is not None:
-        default_fdm = FDMConfig()
-        if hjb_cfg.fdm != default_fdm:
+        if hjb_cfg.fdm.model_fields_set:
             if not is_fdm_scheme:
                 raise NotImplementedError(
                     f"config.hjb.fdm has non-default values but "
@@ -170,7 +156,7 @@ def hjb_config_to_kwargs(
                     "Refs #1155."
                 )
             _fdm_hjb_map = {"upwind": "gradient_upwind", "central": "gradient_centered"}
-            if hjb_cfg.fdm.scheme != default_fdm.scheme:
+            if "scheme" in hjb_cfg.fdm.model_fields_set:
                 if hjb_cfg.fdm.scheme in _fdm_hjb_map:
                     kwargs["advection_scheme"] = _fdm_hjb_map[hjb_cfg.fdm.scheme]
                 else:
@@ -178,7 +164,7 @@ def hjb_config_to_kwargs(
                         f"config.hjb.fdm.scheme={hjb_cfg.fdm.scheme!r} has no "
                         "mapping to HJBFDMSolver advection_scheme. Refs #1155."
                     )
-            if hjb_cfg.fdm.time_stepping != default_fdm.time_stepping:
+            if "time_stepping" in hjb_cfg.fdm.model_fields_set:
                 raise NotImplementedError(
                     f"config.hjb.fdm.time_stepping={hjb_cfg.fdm.time_stepping!r} is not yet mapped. Refs #1155."
                 )
@@ -187,8 +173,7 @@ def hjb_config_to_kwargs(
     # GFDM sub-config
     # ------------------------------------------------------------------
     if hjb_cfg.gfdm is not None:
-        default_gfdm = GFDMConfig()
-        if hjb_cfg.gfdm != default_gfdm:
+        if hjb_cfg.gfdm.model_fields_set:
             if scheme != NumericalScheme.GFDM:
                 raise NotImplementedError(
                     f"config.hjb.gfdm has non-default values but "
@@ -202,8 +187,7 @@ def hjb_config_to_kwargs(
     # ------------------------------------------------------------------
     is_sl_scheme = scheme in (NumericalScheme.SL_LINEAR, NumericalScheme.SL_CUBIC)
     if hjb_cfg.sl is not None:
-        default_sl = SLConfig()
-        if hjb_cfg.sl != default_sl:
+        if hjb_cfg.sl.model_fields_set:
             if not is_sl_scheme:
                 raise NotImplementedError(
                     f"config.hjb.sl has non-default values but "
@@ -216,16 +200,14 @@ def hjb_config_to_kwargs(
     # WENO sub-config — not yet mapped
     # ------------------------------------------------------------------
     if hjb_cfg.weno is not None:
-        default_weno = WENOConfig()
-        if hjb_cfg.weno != default_weno:
+        if hjb_cfg.weno.model_fields_set:
             raise NotImplementedError("config.hjb.weno is not yet mapped to HJBWENOSolver kwargs. Refs #1155.")
 
     # ------------------------------------------------------------------
     # FEM sub-config — element order comes from scheme, not config
     # ------------------------------------------------------------------
     if hjb_cfg.fem is not None:
-        default_fem = FEMConfig()
-        if hjb_cfg.fem != default_fem:
+        if hjb_cfg.fem.model_fields_set:
             raise NotImplementedError(
                 "config.hjb.fem sub-config is not yet mapped to HJBFEMSolver "
                 "kwargs (element order is taken from the NumericalScheme). "
@@ -237,72 +219,67 @@ def hjb_config_to_kwargs(
 
 def _map_gfdm_to_hjb_kwargs(gfdm_cfg: Any, kwargs: dict[str, Any]) -> None:
     """Map GFDMConfig non-default fields to HJBGFDMSolver kwargs (in-place)."""
-    from mfgarchon.config.mfg_methods import GFDMConfig as _Def
 
-    d = _Def()
-
-    if gfdm_cfg.delta != d.delta:
+    if "delta" in gfdm_cfg.model_fields_set:
         kwargs["delta"] = gfdm_cfg.delta
-    if gfdm_cfg.taylor_order != d.taylor_order:
+    if "taylor_order" in gfdm_cfg.model_fields_set:
         kwargs["taylor_order"] = gfdm_cfg.taylor_order
-    if gfdm_cfg.weight_function != d.weight_function:
+    if "weight_function" in gfdm_cfg.model_fields_set:
         kwargs["weight_function"] = gfdm_cfg.weight_function
-    if gfdm_cfg.weight_scale != d.weight_scale:
+    if "weight_scale" in gfdm_cfg.model_fields_set:
         kwargs["weight_scale"] = gfdm_cfg.weight_scale
-    if gfdm_cfg.congestion_mode != d.congestion_mode:
+    if "congestion_mode" in gfdm_cfg.model_fields_set:
         kwargs["congestion_mode"] = gfdm_cfg.congestion_mode
 
     # QP sub-config
     _qp_map = {"none": "none", "auto": "qp_m_matrix", "always": "joint_socp"}
-    if gfdm_cfg.qp.optimization_level != d.qp.optimization_level:
+    if "optimization_level" in gfdm_cfg.qp.model_fields_set:
         kwargs["monotonicity_scheme"] = _qp_map[gfdm_cfg.qp.optimization_level]
-    if gfdm_cfg.qp.solver != d.qp.solver:
+    if "solver" in gfdm_cfg.qp.model_fields_set:
         kwargs["qp_solver"] = gfdm_cfg.qp.solver
-    if gfdm_cfg.qp.warm_start != d.qp.warm_start:
+    if "warm_start" in gfdm_cfg.qp.model_fields_set:
         kwargs["qp_warm_start"] = gfdm_cfg.qp.warm_start
-    if gfdm_cfg.qp.constraint_mode != d.qp.constraint_mode:
+    if "constraint_mode" in gfdm_cfg.qp.model_fields_set:
         kwargs["qp_constraint_mode"] = gfdm_cfg.qp.constraint_mode
 
     # Neighborhood sub-config
-    if gfdm_cfg.neighborhood.mode != d.neighborhood.mode:
+    if "mode" in gfdm_cfg.neighborhood.model_fields_set:
         kwargs["neighborhood_mode"] = gfdm_cfg.neighborhood.mode
-    if gfdm_cfg.neighborhood.k_neighbors != d.neighborhood.k_neighbors:
+    if "k_neighbors" in gfdm_cfg.neighborhood.model_fields_set:
         kwargs["k_neighbors"] = gfdm_cfg.neighborhood.k_neighbors
-    if gfdm_cfg.neighborhood.adaptive != d.neighborhood.adaptive:
+    if "adaptive" in gfdm_cfg.neighborhood.model_fields_set:
         kwargs["adaptive_neighborhoods"] = gfdm_cfg.neighborhood.adaptive
-    if gfdm_cfg.neighborhood.k_min != d.neighborhood.k_min:
+    if "k_min" in gfdm_cfg.neighborhood.model_fields_set:
         kwargs["k_min"] = gfdm_cfg.neighborhood.k_min
-    if gfdm_cfg.neighborhood.max_delta_multiplier != d.neighborhood.max_delta_multiplier:
+    if "max_delta_multiplier" in gfdm_cfg.neighborhood.model_fields_set:
         kwargs["max_delta_multiplier"] = gfdm_cfg.neighborhood.max_delta_multiplier
 
     # Derivative sub-config
-    if gfdm_cfg.derivative.method != d.derivative.method:
+    if "method" in gfdm_cfg.derivative.model_fields_set:
         kwargs["derivative_method"] = gfdm_cfg.derivative.method
-    if gfdm_cfg.derivative.rbf_kernel != d.derivative.rbf_kernel:
+    if "rbf_kernel" in gfdm_cfg.derivative.model_fields_set:
         kwargs["rbf_kernel"] = gfdm_cfg.derivative.rbf_kernel
-    if gfdm_cfg.derivative.rbf_poly_degree != d.derivative.rbf_poly_degree:
+    if "rbf_poly_degree" in gfdm_cfg.derivative.model_fields_set:
         kwargs["rbf_poly_degree"] = gfdm_cfg.derivative.rbf_poly_degree
 
     # Boundary accuracy sub-config
-    if gfdm_cfg.boundary_accuracy.local_coordinate_rotation != d.boundary_accuracy.local_coordinate_rotation:
+    if "local_coordinate_rotation" in gfdm_cfg.boundary_accuracy.model_fields_set:
         kwargs["use_local_coordinate_rotation"] = gfdm_cfg.boundary_accuracy.local_coordinate_rotation
-    if gfdm_cfg.boundary_accuracy.ghost_nodes != d.boundary_accuracy.ghost_nodes:
+    if "ghost_nodes" in gfdm_cfg.boundary_accuracy.model_fields_set:
         kwargs["use_ghost_nodes"] = gfdm_cfg.boundary_accuracy.ghost_nodes
-    if gfdm_cfg.boundary_accuracy.wind_dependent_bc != d.boundary_accuracy.wind_dependent_bc:
+    if "wind_dependent_bc" in gfdm_cfg.boundary_accuracy.model_fields_set:
         kwargs["use_wind_dependent_bc"] = gfdm_cfg.boundary_accuracy.wind_dependent_bc
 
 
 def _map_sl_to_hjb_kwargs(sl_cfg: Any, kwargs: dict[str, Any]) -> None:
     """Map SLConfig non-default fields to HJBSemiLagrangianSolver kwargs (in-place)."""
-    from mfgarchon.config.mfg_methods import SLConfig as _Def
 
-    d = _Def()
     _rk_map: dict[int, str] = {1: "explicit_euler", 2: "rk2", 4: "rk4"}
 
-    if sl_cfg.interpolation_method != d.interpolation_method:
+    if "interpolation_method" in sl_cfg.model_fields_set:
         kwargs["interpolation_method"] = sl_cfg.interpolation_method
 
-    if sl_cfg.rk_order != d.rk_order:
+    if "rk_order" in sl_cfg.model_fields_set:
         if sl_cfg.rk_order in _rk_map:
             kwargs["characteristic_solver"] = _rk_map[sl_cfg.rk_order]
         else:
@@ -311,7 +288,7 @@ def _map_sl_to_hjb_kwargs(sl_cfg: Any, kwargs: dict[str, Any]) -> None:
                 f"values {list(_rk_map.keys())}. Refs #1155."
             )
 
-    if sl_cfg.cfl_number != d.cfl_number:
+    if "cfl_number" in sl_cfg.model_fields_set:
         raise NotImplementedError(
             f"config.hjb.sl.cfl_number={sl_cfg.cfl_number} is not yet mapped to "
             "HJBSemiLagrangianSolver params. Refs #1155."
@@ -347,19 +324,9 @@ def fp_config_to_kwargs(
     NotImplementedError
         For non-default fields that cannot be applied to the selected scheme.
     """
-    from mfgarchon.config.mfg_methods import (
-        FDMConfig,
-        FEMConfig,
-        NetworkConfig,
-        ParticleConfig,
-    )
-    from mfgarchon.config.mfg_methods import (
-        FPConfig as _DefaultFPConfig,
-    )
     from mfgarchon.types import NumericalScheme
 
     kwargs: dict[str, Any] = {}
-    default_fp = _DefaultFPConfig()
     is_fdm_scheme = scheme in (NumericalScheme.FDM_UPWIND, NumericalScheme.FDM_CENTERED)
 
     # ------------------------------------------------------------------
@@ -377,7 +344,7 @@ def fp_config_to_kwargs(
         NumericalScheme.FEM_P1: "fem",
         NumericalScheme.FEM_P2: "fem",
     }
-    if fp_cfg.method != default_fp.method:
+    if "method" in fp_cfg.model_fields_set:
         expected = _scheme_fp_method.get(scheme)
         if expected is None:
             # No FPConfig.method literal corresponds to this scheme, so a non-default
@@ -399,8 +366,7 @@ def fp_config_to_kwargs(
     # FDM sub-config
     # ------------------------------------------------------------------
     if fp_cfg.fdm is not None:
-        default_fdm = FDMConfig()
-        if fp_cfg.fdm != default_fdm:
+        if fp_cfg.fdm.model_fields_set:
             if not is_fdm_scheme:
                 raise NotImplementedError(
                     f"config.fp.fdm has non-default values but "
@@ -412,7 +378,7 @@ def fp_config_to_kwargs(
                 "upwind": "divergence_upwind",
                 "central": "divergence_centered",
             }
-            if fp_cfg.fdm.scheme != default_fdm.scheme:
+            if "scheme" in fp_cfg.fdm.model_fields_set:
                 if fp_cfg.fdm.scheme in _fdm_fp_map:
                     kwargs["advection_scheme"] = _fdm_fp_map[fp_cfg.fdm.scheme]
                 else:
@@ -420,7 +386,7 @@ def fp_config_to_kwargs(
                         f"config.fp.fdm.scheme={fp_cfg.fdm.scheme!r} has no "
                         "mapping to FPFDMSolver advection_scheme. Refs #1155."
                     )
-            if fp_cfg.fdm.time_stepping != default_fdm.time_stepping:
+            if "time_stepping" in fp_cfg.fdm.model_fields_set:
                 raise NotImplementedError(
                     f"config.fp.fdm.time_stepping={fp_cfg.fdm.time_stepping!r} is not yet mapped. Refs #1155."
                 )
@@ -429,8 +395,7 @@ def fp_config_to_kwargs(
     # Particle sub-config: no current Safe/Auto scheme creates FPParticleSolver
     # ------------------------------------------------------------------
     if fp_cfg.particle is not None:
-        default_particle = ParticleConfig()
-        if fp_cfg.particle != default_particle:
+        if fp_cfg.particle.model_fields_set:
             raise NotImplementedError(
                 "config.fp.particle has non-default values but no Safe/Auto mode "
                 "scheme creates FPParticleSolver. Use Expert Mode "
@@ -449,16 +414,14 @@ def fp_config_to_kwargs(
     # Network sub-config — not yet mapped
     # ------------------------------------------------------------------
     if fp_cfg.network is not None:
-        default_network = NetworkConfig()
-        if fp_cfg.network != default_network:
+        if fp_cfg.network.model_fields_set:
             raise NotImplementedError("config.fp.network is not yet mapped. Refs #1155.")
 
     # ------------------------------------------------------------------
     # FEM sub-config — not yet mapped
     # ------------------------------------------------------------------
     if fp_cfg.fem is not None:
-        default_fem = FEMConfig()
-        if fp_cfg.fem != default_fem:
+        if fp_cfg.fem.model_fields_set:
             raise NotImplementedError("config.fp.fem sub-config is not yet mapped to FPFEMSolver kwargs. Refs #1155.")
 
     return kwargs
@@ -515,20 +478,18 @@ def backend_config_to_kwargs(backend_cfg: BackendConfig) -> dict[str, Any]:
     dict
         ``backend`` entry if type is non-default; otherwise empty.
     """
-    from mfgarchon.config.core import BackendConfig as _Def
 
-    d = _Def()
     kwargs: dict[str, Any] = {}
 
-    if backend_cfg.type != d.type:
+    if "type" in backend_cfg.model_fields_set:
         kwargs["backend"] = backend_cfg.type
 
-    if backend_cfg.device != d.device:
+    if "device" in backend_cfg.model_fields_set:
         raise NotImplementedError(
             f"config.backend.device={backend_cfg.device!r} is not yet threaded to solvers. Refs #1155."
         )
 
-    if backend_cfg.precision != d.precision:
+    if "precision" in backend_cfg.model_fields_set:
         raise NotImplementedError(
             f"config.backend.precision={backend_cfg.precision!r} is not yet threaded to solvers. Refs #1155."
         )
@@ -543,13 +504,11 @@ def check_logging_config(logging_cfg: LoggingConfig) -> None:
     the current solver infrastructure (Refs #1155).  Calling this function
     ensures users get a clear error rather than silent discard.
     """
-    from mfgarchon.config.core import LoggingConfig as _Def
 
-    d = _Def()
     non_default = [
         f"{name}={getattr(logging_cfg, name)!r}"
         for name in ("level", "progress_bar", "save_intermediate", "output_dir")
-        if getattr(logging_cfg, name) != getattr(d, name)
+        if name in logging_cfg.model_fields_set
     ]
     if non_default:
         raise NotImplementedError(
