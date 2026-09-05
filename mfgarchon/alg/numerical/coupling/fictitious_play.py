@@ -42,7 +42,12 @@ from mfgarchon.utils.iteration.schedules import (
 )
 from mfgarchon.utils.solver_result import SolverResult
 
-from .base_mfg import BaseCouplingIterator, assert_bc_providers_resolvable, assert_paired_solver_sigma
+from .base_mfg import (
+    BaseCouplingIterator,
+    assert_bc_providers_resolvable,
+    assert_paired_solver_sigma,
+    resolve_supported_backend,
+)
 from .fixed_point_utils import (
     check_convergence_criteria,
     diverged_value_function,
@@ -128,7 +133,10 @@ class FictitiousPlayIterator(BaseCouplingIterator):
     ):
         super().__init__(problem)
         assert_bc_providers_resolvable(self.problem, "FictitiousPlayIterator")
-        self.backend = backend
+        # #2250: refuse at construction rather than as an AttributeError deep inside
+        # solve(). Only None is supported -- see refuse_backend_selection for why resolving
+        # the name was measured and rejected.
+        self.backend = resolve_supported_backend(backend, "FictitiousPlayIterator")
         self.hjb_solver = hjb_solver
         self.fp_solver = fp_solver
         assert_paired_solver_sigma(hjb_solver, fp_solver, "FictitiousPlayIterator")
@@ -339,12 +347,10 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             self.U, self.M = warm_start
         else:
             # Cold start initialization
-            if self.backend is not None:
-                self.U = self.backend.zeros((num_time_steps, *shape))
-                self.M = self.backend.zeros((num_time_steps, *shape))
-            else:
-                self.U = np.zeros((num_time_steps, *shape))
-                self.M = np.zeros((num_time_steps, *shape))
+            # #2250: self.backend is now always None (the only supported value), so the
+            # backend-allocation fork this replaced was unreachable and is gone with it.
+            self.U = np.zeros((num_time_steps, *shape))
+            self.M = np.zeros((num_time_steps, *shape))
 
             if num_time_steps > 0:
                 if len(shape) == 1:
