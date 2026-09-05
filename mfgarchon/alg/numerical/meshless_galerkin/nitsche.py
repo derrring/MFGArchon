@@ -120,21 +120,28 @@ def _segment_quadrature(segment, disc, bounds, n_gauss):
     """Boundary quadrature ``(x_b, w_b, n_b)`` for one Dirichlet segment.
 
     A segment carrying ``sdf_region`` (a curved boundary, #1139) is integrated on the
-    level set ``{sdf_region = 0}`` via ``surface_quadrature``; the background resolution
-    mirrors the cloud scale (``n_cells ~ max bbox side / rho``). Otherwise the existing
+    level set ``{sdf_region = 0}`` via ``surface_quadrature``; otherwise the
     axis-aligned bounding-box face rule (``boundary_tensor_gauss``) is used.
+
+    Both branches size their cell count off the cloud scale (``n_cells ~ max bbox side
+    / rho``). The integrand is ``phi_i phi_j`` and ``phi_i (n . grad phi_j)``, which
+    varies on the MLS support scale ``rho`` and therefore gets *finer* under
+    refinement; a rule whose cell count does not follow it resolves less of the
+    integrand at every level (#1679).
     """
+    max_side = max(b - a for a, b in bounds)
+    # Cells per support radius, not per domain: rho shrinks with the cloud, so this
+    # count grows under refinement while a fixed one silently does not.
+    n_cells = max(1, int(np.ceil(2.0 * max_side / disc.rho)))
     sdf = getattr(segment, "sdf_region", None)
     if sdf is not None:
-        # Boundary marching grid finer than the support radius for a smooth boundary
-        # curve; the boundary points still need rho-coverage (checked below).
-        max_side = max(b - a for a, b in bounds)
-        n_cells = max(16, int(np.ceil(2.0 * max_side / disc.rho)))
-        x_b, w_b, n_b = surface_quadrature(sdf, bounds, n_cells)
+        # A marching grid over a smooth curve needs a floor the flat-face rule does
+        # not: the level set has to be found before it can be integrated.
+        x_b, w_b, n_b = surface_quadrature(sdf, bounds, max(16, n_cells))
         _check_boundary_node_coverage(x_b, disc)
         return x_b, w_b, n_b
     faces = _segment_faces(segment, disc.dim)
-    return boundary_tensor_gauss(bounds, faces, n_gauss=n_gauss)
+    return boundary_tensor_gauss(bounds, faces, n_cells=n_cells, n_gauss=n_gauss)
 
 
 def _evaluate_g(value, x_b: NDArray) -> NDArray:

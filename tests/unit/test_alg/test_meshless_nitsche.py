@@ -17,7 +17,11 @@ from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
 from mfgarchon.alg.numerical.meshless_galerkin.mls_basis import shape_functions_and_grads
-from mfgarchon.alg.numerical.meshless_galerkin.nitsche import assemble_nitsche_terms
+from mfgarchon.alg.numerical.meshless_galerkin.nitsche import (
+    _segment_quadrature,
+    assemble_nitsche_terms,
+    dirichlet_segments,
+)
 from mfgarchon.alg.numerical.meshless_galerkin.quadrature import boundary_tensor_gauss
 from mfgarchon.geometry.boundary import BoundaryConditions
 from mfgarchon.geometry.boundary.types import BCSegment, BCType
@@ -121,3 +125,69 @@ class TestManufacturedConvergence:
         """u(x)=1+2x, f=0, g=(1,3): exercises the f_sym + f_pen data path; reproduced ~exactly."""
         err, _, _ = _poisson_1d(101, lambda x: 1.0 + 2.0 * x, lambda x: np.zeros_like(x))
         assert err < 1e-5
+
+
+def _poisson_2d(n: int, gamma: float = 100.0, degree: int = 2):
+    """Manufactured ``-D lap(u) = f`` on the unit square, ``u = sin(pi x) sin(pi y)``.
+
+    Homogeneous Dirichlet imposed weakly on all four faces; structured ``n x n`` cloud,
+    ``rho = 3.5 h``. Returns the RMS error of the RECONSTRUCTED field ``phi @ U``.
+    """
+    ax = np.linspace(0.0, 1.0, n)
+    nodes = np.stack([m.ravel() for m in np.meshgrid(ax, ax, indexing="ij")], axis=1)
+    disc = discretization_from_cloud(nodes, delta=3.5 / (n - 1), degree=degree, n_gauss=6)
+    K, M = disc.stiffness(), disc.mass()
+    bc = _dirichlet_bc(dict.fromkeys(("x_min", "x_max", "y_min", "y_max"), 0.0), dim=2)
+    N_block, _ = assemble_nitsche_terms(disc, bc, D, gamma, n_gauss=6, include_data=True)
+    f = D * 2.0 * np.pi**2 * np.sin(np.pi * nodes[:, 0]) * np.sin(np.pi * nodes[:, 1])
+    U = spsolve((D * K + N_block).tocsr(), M @ f)
+    phi_nodes, _ = shape_functions_and_grads(nodes, nodes, disc._rho, disc._exps, "numpy")
+    u_exact = np.sin(np.pi * nodes[:, 0]) * np.sin(np.pi * nodes[:, 1])
+    return float(np.sqrt(np.mean((phi_nodes @ U - u_exact) ** 2)))
+
+
+class TestBoundaryRuleResolvesTheSupportScale:
+    """#1679: the Dirichlet boundary rule must refine with the cloud, not with the domain.
+
+    The Nitsche boundary integrand is ``phi_i phi_j`` and ``phi_i (n . grad phi_j)``, which
+    varies on the MLS support scale ``rho``. ``rho`` shrinks under refinement, so a rule
+    whose cell count does not follow it resolves strictly less of the integrand at every
+    level. Before the fix, ``_segment_quadrature`` took ``boundary_tensor_gauss``'s
+    ``n_cells=1`` default: the 2-D rule stayed at 24 points from n=11 to n=26 while the
+    volume rule grew 3600 -> 22500, and the manufactured 2-D EOC ran -0.49 / -0.93 / -0.84.
+    Levels stop at n=21 here because the count is the claim and n=26 costs 5 s to build.
+
+    ``d >= 2`` IS REQUIRED and is not a preference. ``quadrature.py``'s 1-D face is a single
+    point of unit surface measure, computed on a branch that never reads ``n_cells``, so a
+    1-D fixture cannot fail either assertion however the rule is sized -- which is why the
+    1-D EOC test above stayed green throughout.
+    """
+
+    def test_boundary_point_count_grows_as_the_support_radius_shrinks(self):
+        """Structural pin. A fixed-size rule holds this count constant; the shipped one does not.
+
+        Retirement condition: this trips if the boundary rule ever stops scaling with 1/rho.
+        """
+        bounds = [(0.0, 1.0), (0.0, 1.0)]
+        bc = _dirichlet_bc(dict.fromkeys(("x_min", "x_max", "y_min", "y_max"), 0.0), dim=2)
+        counts = []
+        for n in (11, 16, 21):
+            ax = np.linspace(0.0, 1.0, n)
+            nodes = np.stack([m.ravel() for m in np.meshgrid(ax, ax, indexing="ij")], axis=1)
+            disc = discretization_from_cloud(nodes, delta=3.5 / (n - 1), degree=2, n_gauss=6)
+            counts.append(sum(len(_segment_quadrature(s, disc, bounds, 6)[0]) for s in dirichlet_segments(bc)))
+        assert counts == sorted(counts), f"boundary rule is not monotone in 1/rho: {counts}"
+        assert counts[0] < counts[-1], (
+            f"boundary rule does not refine with the cloud: {counts} (pre-#1679 this was [24, 24, 24])"
+        )
+
+    def test_manufactured_2d_dirichlet_converges(self):
+        """External oracle: ``u = sin(pi x) sin(pi y)`` is exact and computed independently.
+
+        Measured at the fix: rate +3.13 over n = 7 -> 11. Pinned at 1.5 because the claim is
+        that the scheme CONVERGES, not that it attains any particular order. With the boundary
+        rule pinned at one cell the same two levels give -4.24, so this cannot pass by accident.
+        """
+        errs = [_poisson_2d(n) for n in (7, 11)]
+        rate = np.log(errs[0] / errs[1]) / np.log((1 / 6) / (1 / 10))
+        assert rate > 1.5, f"2-D Nitsche does not converge under refinement (#1679): rate {rate:+.2f}, errs {errs}"
