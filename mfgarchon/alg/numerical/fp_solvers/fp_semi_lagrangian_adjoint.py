@@ -714,20 +714,31 @@ if __name__ == "__main__":
     l2_to_gibbs = np.sqrt(np.trapezoid((m_final_norm - m_gibbs) ** 2, x))
     print(f"\n   Final L2 to Gibbs: {l2_to_gibbs:.4e}")
 
-    # Test 3: Mass conservation (Issue #708)
-    print("\n3. Testing mass conservation (Issue #708 fix)...")
+    # Test 3: Mass conservation (Issue #708, corrected by #2243)
+    print("\n3. Testing mass conservation (Issue #708 / #2243)...")
 
-    # sum(m) is the conserved quantity for SL adjoint
-    sum_m_initial = np.sum(M[0])
-    sum_m_final = np.sum(M[-1])
-    sum_m_error = abs(sum_m_final - sum_m_initial) / sum_m_initial
+    # The conserved quantity is the GRID MEASURE, not sum(m). #708 recorded sum(m), which was the
+    # right pairing for the `half_wall` diffusion of the day; since #2243 both half-steps carry the
+    # trapezoid instead. `x` is this block's own grid, defined above.
+    from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d as _w1d
 
-    print(f"   sum(m) initial: {sum_m_initial:.6f}")
-    print(f"   sum(m) final:   {sum_m_final:.6f}")
-    print(f"   sum(m) error:   {sum_m_error:.2e}")
+    weights = _w1d(x)
+    mass_initial = float(weights @ M[0])
+    mass_final = float(weights @ M[-1])
+    mass_error = abs(mass_final - mass_initial) / mass_initial
 
-    assert sum_m_error < 1e-10, f"Mass conservation failed: error={sum_m_error:.2e}"
+    print(f"   grid measure initial: {mass_initial:.6f}")
+    print(f"   grid measure final:   {mass_final:.6f}")
+    print(f"   grid measure error:   {mass_error:.2e}")
+
+    assert mass_error < 1e-10, f"Mass conservation failed: error={mass_error:.2e}"
     print("   Mass conservation: OK (error < 1e-10)")
+
+    # The other half, so this cannot pass on a solver that conserves everything: `sum(m)` is what
+    # the pre-#2243 pairing held, and it must NOT be conserved now. Neither wall conserves both.
+    sum_m_error = abs(np.sum(M[-1]) - np.sum(M[0])) / np.sum(M[0])
+    print(f"   sum(m) error:         {sum_m_error:.2e}  (expected NON-zero since #2243)")
+    assert sum_m_error > 1e-6, "sum(m) was also conserved -- that is the `half_wall` pairing"
 
     # Test 4: Compare with Backward SL
     print("\n4. Comparing with Backward SL (deprecated FPSLJacobianSolver)...")
@@ -806,17 +817,22 @@ if __name__ == "__main__":
 
     print(f"   Output shape: {M_2d.shape}")
 
-    # Check mass conservation (sum(m) invariant)
-    sum_m_2d_initial = np.sum(M_2d[0])
-    sum_m_2d_final = np.sum(M_2d[-1])
-    sum_m_2d_error = abs(sum_m_2d_final - sum_m_2d_initial) / sum_m_2d_initial
-    print(f"   sum(m) initial: {sum_m_2d_initial:.6f}")
-    print(f"   sum(m) final:   {sum_m_2d_final:.6f}")
-    print(f"   sum(m) error:   {sum_m_2d_error:.2e}")
+    # Check mass conservation, in the GRID MEASURE -- the nD twin of Test 3 above, and the same
+    # correction: a corner node owns hx*hy/4, so `sum(m)` is a different functional here too
+    # (#2145, #2243). `TensorProductGrid.integrate` is the owner; it is what a user would call.
+    mass_2d_initial = float(domain_2d.integrate(M_2d[0]))
+    mass_2d_final = float(domain_2d.integrate(M_2d[-1]))
+    mass_2d_error = abs(mass_2d_final - mass_2d_initial) / mass_2d_initial
+    print(f"   grid measure initial: {mass_2d_initial:.6f}")
+    print(f"   grid measure final:   {mass_2d_final:.6f}")
+    print(f"   grid measure error:   {mass_2d_error:.2e}")
 
-    # ADI may have slightly worse mass conservation
-    assert sum_m_2d_error < 1e-6, f"2D mass conservation failed: error={sum_m_2d_error:.2e}"
+    assert mass_2d_error < 1e-6, f"2D mass conservation failed: error={mass_2d_error:.2e}"
     print("   2D mass conservation: OK (error < 1e-6)")
+
+    sum_m_2d_error = abs(np.sum(M_2d[-1]) - np.sum(M_2d[0])) / np.sum(M_2d[0])
+    print(f"   sum(m) error:         {sum_m_2d_error:.2e}  (expected NON-zero since #2243)")
+    assert sum_m_2d_error > 1e-6, "sum(m) was also conserved -- that is the `half_wall` pairing"
 
     # Check that density concentrates at center
     m_2d_final = M_2d[-1]

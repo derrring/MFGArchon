@@ -520,12 +520,21 @@ SURFACE_NOT_HONOURED = {
     ("HJBGFDMSolver", "DIRICHLET"): ("#1822 declares DIRICHLET, solve returns NaN", AssertionError),
     ("FPGFDMSolver", "NEUMANN"): ("#1822 density goes invalid mid-solve", ValueError),
     ("FPGFDMSolver", "NO_FLUX"): ("#1822 density goes invalid mid-solve", ValueError),
-    # Mass converges 5.62e-02 -> 3.07e-02 and then the Nx=81 solve raises, so the third point
-    # that would settle the trend does not exist. Listed under the raise, not under the trend.
-    ("FPSLSolver", "NEUMANN"): ("#1822 Nx=81 solve raises", ValueError),
-    ("FPSLSolver", "NO_FLUX"): ("#1822 Nx=81 solve raises", ValueError),
-    ("FPSLAdjointSolver", "NEUMANN"): ("#1822 Nx=81 solve raises", ValueError),
-    ("FPSLAdjointSolver", "NO_FLUX"): ("#1822 Nx=81 solve raises", ValueError),
+    # FPSLSolver / FPSLAdjointSolver under NEUMANN and NO_FLUX were listed here as
+    # "#1822 Nx=81 solve raises" and were REMOVED by #2243, which switched their diffusion wall to
+    # the mirror stencil. Read what that did and did not do, because the two are easy to swap:
+    #
+    #   - What changed: the no-flux BC residual at Nx=21 went 2.6256e-02 -> 4.4409e-16. The strong
+    #     form is now satisfied to round-off on the coarse grid, so the test returns at its first
+    #     level ("exact at the coarse grid", below) and never builds a refinement trend.
+    #   - What did NOT change: the Nx=81 solve still raises the same ValueError, measured under
+    #     both walls. It is `mass_fabrication_gate` refusing to clip a density that went to
+    #     -4.30e-01, which would fabricate ~0.53% of the mass -- the library declining to report a
+    #     number it did not compute, not a defect. These four entries were filing that refusal as a
+    #     failure to honour a BC, which it never was.
+    #
+    # So this is a pin retired because the property it guarded is now met by a different route, and
+    # the raise it named is unreached rather than fixed. #2243's PR carries both measurements.
     ("FPSLJacobianSolver", "PERIODIC"): ("#1822 deprecated, retirement in #1756", AssertionError),
 }
 

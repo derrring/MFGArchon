@@ -37,10 +37,19 @@ conservation under the wrong weights, and the half wall's accuracy cost "was nev
 conservation; it was the price of the wrong measure". #2145 moved both of that operator's branches
 onto the mirror stencil.
 
-#2243 MOVED THE REST. Every call site in the package now names ``mirror``; ``half_wall`` has none.
-That change is what made the library answer the wall question one way, and it is measured in the
-PR that closed #2243 -- the wall EOC 0.73/0.87/0.94 -> 2.00/2.00/2.00 through the shipped routines,
-and `FPSLSolver` landing exactly on `FPSLJacobianSolver`, which had ``mirror`` from the start.
+#2243 MOVED THE REST. Every call site OF THIS MODULE now names ``mirror``; ``half_wall`` has none.
+Measured in the PR that closed #2243 -- the wall EOC 0.73/0.87/0.94 -> 2.00/2.00/2.00 through the
+shipped routines, and `FPSLSolver` landing exactly on `FPSLJacobianSolver`, which had ``mirror``
+from the start.
+
+**That is a statement about this module's consumers and NOT about the library.** A separate family
+implements the same wall through ghost padding rather than through a stencil, and is still on the
+half wall: `geometry.boundary` ZeroGradientCalculator, `operators.stencils.laplacian_with_bc`,
+`operators.differential.LaplacianOperator.__call__`/`_matvec` (whose own `as_scipy_sparse` is on
+the mirror, so that class answers differently by route), `operators.differential.DiffusionOperator`,
+and `base_hjb._compute_laplacian_1d` -- which is HJB-FDM's residual path. They were consistent with
+the SL/CN family before #2243 and are not now. Filed separately; do not read the paragraph above as
+covering them.
 
 ``half_wall`` REMAINS A NAME, with no caller, and deliberately: it is what makes the pin in
 `tests/unit/test_utils/test_neumann_cn_wall_2237.py` discriminating. That test asserts each wall

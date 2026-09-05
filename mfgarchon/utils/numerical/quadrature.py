@@ -15,9 +15,11 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from numpy.typing import NDArray
 
-__all__ = ["quadrature_weights_1d"]
+__all__ = ["quadrature_weights_1d", "quadrature_weights_nd"]
 
 
 def quadrature_weights_1d(coordinates: NDArray) -> NDArray:
@@ -45,3 +47,23 @@ def quadrature_weights_1d(coordinates: NDArray) -> NDArray:
     w[-1] = (x[-1] - x[-2]) / 2.0
     w[1:-1] = (x[2:] - x[:-2]) / 2.0
     return w
+
+
+def quadrature_weights_nd(coordinates: Sequence[NDArray]) -> NDArray:
+    """The control volume each node owns on a tensor-product grid: the outer product of the axes.
+
+    A corner node owns ``prod(h_d / 2)``, an edge node one half-factor per axis it is a wall of,
+    an interior node ``prod(h_d)``. Shape is ``tuple(len(c) for c in coordinates)``, so it
+    broadcasts against a field laid out like the grid, and ``(w * field).sum()`` is the integral.
+
+    ``d = 1`` is not a special case -- it returns `quadrature_weights_1d` of the single axis. That
+    matters: a caller that reaches for a 1-D helper and an nD helper has two implementations of one
+    convention, which is the defect #2237 and #2243 were about. There is one here.
+    """
+    axes = list(coordinates)
+    if not axes:
+        raise ValueError("quadrature_weights_nd needs at least one axis")
+    weights = quadrature_weights_1d(axes[0])
+    for axis in axes[1:]:
+        weights = np.multiply.outer(weights, quadrature_weights_1d(axis))
+    return weights

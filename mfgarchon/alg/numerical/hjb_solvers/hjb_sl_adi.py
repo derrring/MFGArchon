@@ -498,9 +498,13 @@ def solve_1d_diffusion_along_axis(
 
     # Coefficients come from the one owner (#2237). This sweep and four other implementations were
     # each deriving them, and agreed on every number except the wall row -- which is why the wall is
-    # the only thing `treatment` selects there. `mirror` since #2243, matching the 1D path above;
-    # the two must not diverge, since `_adi_diffusion_step` dispatches to the 1D routine at d=1 and
-    # a wall that changed with the dimension would be invisible in every 1D test.
+    # the only thing `treatment` selects there. `mirror` since #2243, matching the 1D path above.
+    #
+    # The two must not diverge, and the reason is the CALLER, not this module: `adi_diffusion_step`
+    # below sweeps every axis through here unconditionally and never reaches
+    # `solve_crank_nicolson_diffusion_1d`, while `HJBSemiLagrangianSolver._adi_diffusion_step`
+    # routes d == 1 to that routine and d >= 2 to this one. So one solver reaches both walls
+    # depending only on the dimension of the problem it was handed.
     st = neumann_cn_stencil(alpha, treatment="mirror", theta=theta)
 
     # Build RHS vectorized: b = (I + (1-theta)*alpha*L) * u, shape (n_lines, N_axis)

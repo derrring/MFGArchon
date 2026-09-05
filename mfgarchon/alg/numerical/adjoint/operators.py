@@ -4,8 +4,17 @@ Adjoint-consistent operator construction utilities.
 This module provides tools for constructing discrete operators that satisfy
 the adjoint relationship A_FP = A_HJB^T.
 
+WHICH INNER PRODUCT (#2243). Every adjointness statement in this module is taken in the GRID
+MEASURE ``W = diag(w)``, ``w`` the trapezoid weights from `utils.numerical.quadrature`, and not in
+the uniform one. `A_FP = A_HJB^T` above is the uniform statement and is the one that does NOT hold
+at a Neumann wall: measured on `build_diffusion_matrix_1d` at N=7, ``|A - A^T| = 1.44e-02`` while
+``|WA - (WA)^T| = 0``. That is the same substitution #2145 found behind ``1^T L = 0`` -- this grid
+is endpoint-inclusive, the wall lies ON the end node, and uniform weights are not the measure it
+carries. Before #2243 the wall row was ``half_wall`` and the two statements were the other way
+round, which is why this docstring used to say "symmetric".
+
 Key utilities:
-- Diffusion operator construction (symmetric → self-adjoint)
+- Diffusion operator construction (self-adjoint in the grid measure; see above)
 - Advection operator construction (upwind with boundary handling)
 - Combined operator for operator-splitting schemes
 
@@ -17,8 +26,8 @@ For Semi-Lagrangian schemes with operator splitting:
     FP:  m^{n+1} = Diffuse(Splat(m^n, x_dest))
 
 Adjoint relationships:
-1. **Diffusion**: If both use same Neumann BC with symmetric Laplacian,
-   the diffusion matrices are self-adjoint (symmetric).
+1. **Diffusion**: If both use the same Neumann BC, the diffusion matrices are self-adjoint in the
+   grid measure -- ``W A = (W A)^T``, not ``A = A^T``. See the note at the top of this module.
 
 2. **Advection**: Interpolation and Splatting are adjoint for interior points
    if weights are transposed. Boundary handling must match:
@@ -127,8 +136,12 @@ def build_diffusion_matrix(
         Sparse CSR matrix of shape (prod(grid_shape), prod(grid_shape))
 
     Note:
-        For Neumann and periodic BC, the matrix is symmetric (self-adjoint).
-        This is crucial for adjoint consistency in MFG systems.
+        For periodic BC the matrix is symmetric. For Neumann it is self-adjoint **in the grid
+        measure** since #2243 -- ``W A = (W A)^T``, and ``A != A^T``; this dispatcher routes
+        ndim == 1 to `build_diffusion_matrix_1d` and ndim >= 2 through `_build_1d_laplacian`, and
+        both carry the same wall, so the statement does not change with the dimension. Adjoint
+        consistency in an MFG system is a statement in the measure the grid carries; see the note
+        at the top of this module for why the uniform one is the wrong pairing here.
     """
     # Normalize inputs
     if isinstance(grid_shape, int):
@@ -227,8 +240,10 @@ def _build_1d_laplacian(N: int, bc_type: str) -> sparse.csr_matrix:
         #
         # Ghost-point reflection `u_{-1} = u_1`: the wall row is `[factor, -factor]` against the
         # interior `[-1, 2, -1]`, so `mirror` doubles the off-diagonal rather than halving the
-        # diagonal. The comment here used to say "ghost cell equals interior" while the code did
-        # the other thing -- one of the three #2237 found naming a treatment they did not use.
+        # diagonal. The comment here used to say "ghost cell equals interior" -- a treatment the
+        # code did not implement. That is the same shape as the three #2237 found, and a FOURTH
+        # instance of it: #2237 never touched this function (`git show c4cac0c9 -- operators.py`
+        # does not mention it), which is the other half of it having stayed invisible.
         factor = wall_factor("mirror")
         L[0, 0] = L[N - 1, N - 1] = factor
         L[0, 1] = L[N - 1, N - 2] = -factor
@@ -317,8 +332,11 @@ def build_diffusion_matrix_1d(
         (#2145), and ``A != A^T`` by 1.44e-02 at N=7. Before #2243 the wall row was the half wall
         and the two statements were the other way round. The uniform inner product is not the one
         this grid has, so bare symmetry was never the property to want; ``W``-symmetry is.
-        For Dirichlet BC with zero values, the matrix is symmetric.
-        For periodic BC, the matrix is symmetric (circulant structure) -- there is no wall row.
+        For periodic BC the matrix IS symmetric (circulant, 0.000e+00) -- there is no wall row.
+        For Dirichlet it is **not**, and never was: the boundary row is the identity while its
+        column keeps the interior's ``-theta*alpha``, so ``max|A - A^T| = 1.44e-02`` at N=7. The
+        line that used to claim otherwise was wrong before #2243 as well; it is corrected here
+        rather than left beside a sentence that is now precise about the Neumann case.
     """
     _checked_bc_type(bc_type, "build_diffusion_matrix_1d")
 
@@ -328,11 +346,14 @@ def build_diffusion_matrix_1d(
     # already claimed ("ghost = interior") while the code did the other thing.
     #
     # Self-adjointness MOVES INNER PRODUCT with the wall; it is not lost. Measured on the built
-    # matrix at N=7, `W` the trapezoid weights (#2145):
+    # matrix at N=7, dx=1/6, with `W = diag(quadrature_weights_1d(...))` -- the library's own
+    # quadrature owner, whose weights carry the `dx` factor. (Unnormalised `(1/2, 1, ..., 1, 1/2)`
+    # gives the same statement with the middle column 6x larger, `1/dx`; say which `W` or the
+    # number cannot be reproduced.)
     #
     #                 max|A - A^T|   max|WA - (WA)^T|
-    #     half_wall     0.000e+00       7.200e-03
-    #     mirror        1.440e-02       0.000e+00
+    #     half_wall     0.000e+00       1.200e-03
+    #     mirror        1.440e-02       8.674e-19
     #
     # Same shape as the conservation column, and for the same reason: the half wall was a coherent
     # scheme measured against an inner product this grid does not carry. `W` is the one it does, so
@@ -1047,19 +1068,41 @@ def verify_operator_splitting_adjoint(
 # Smoke Test
 # =============================================================================
 
+
+def _grid_measure_symmetry(A: sparse.spmatrix, spacings: tuple[NDArray, ...]) -> tuple[bool, float]:
+    """Is ``A`` self-adjoint in the GRID MEASURE, i.e. is ``W A`` symmetric? (#2243)
+
+    A Neumann wall row is not symmetric under uniform weights and does not need to be: this grid is
+    endpoint-inclusive, the end node owns h/2, and ``W`` is the inner product it carries. Used by
+    the smoke block below, which asserted bare symmetry until #2243 moved the wall.
+    """
+    from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
+
+    weights = np.ones(1)
+    for coordinates in spacings:
+        weights = np.kron(weights, quadrature_weights_1d(np.asarray(coordinates, dtype=float)))
+    weighted = sparse.diags(weights) @ sparse.csr_matrix(A)
+    asymmetry = float(np.abs((weighted - weighted.T).toarray()).max())
+    return asymmetry < 1e-12 * max(1.0, float(np.abs(weighted.toarray()).max())), asymmetry
+
+
 if __name__ == "__main__":
     """Quick validation of operator construction utilities."""
     print("Testing adjoint operator utilities...")
     print()
 
-    # Test 1: Diffusion matrix symmetry (primitive API)
+    # Test 1: Diffusion matrix self-adjointness (primitive API)
     print("Test 1: Diffusion matrix with Neumann BC (primitive API)")
     Nx = 20
     A_diff = build_diffusion_matrix_1d(Nx, dx=0.1, sigma=0.2, dt=0.01, bc_type="neumann")
-    is_sym, err = check_operator_adjoint(A_diff, A_diff)
-    print(f"  Symmetric (self-adjoint): {is_sym}")
+    is_sym, err = _grid_measure_symmetry(A_diff, (np.arange(Nx) * 0.1,))
+    print(f"  Self-adjoint in the grid measure: {is_sym}")
     print(f"  Asymmetry error: {err:.2e}")
-    assert is_sym, "Neumann diffusion should be symmetric"
+    assert is_sym, "Neumann diffusion should be self-adjoint in the grid measure"
+    # And the other half: bare symmetry must NOT hold, or the wall is not `mirror` (#2243).
+    bare_sym, bare_err = check_operator_adjoint(A_diff, A_diff)
+    print(f"  Symmetric under UNIFORM weights: {bare_sym} (expected False since #2243, err {bare_err:.2e})")
+    assert not bare_sym, "uniform symmetry is the `half_wall` signature; the wall should be `mirror`"
     print("  PASSED")
     print()
 
@@ -1107,9 +1150,9 @@ if __name__ == "__main__":
             boundary_conditions=neumann_bc(dimension=1),
         )
         A_diff_1d = build_diffusion_matrix_from_geometry(grid_1d, sigma=0.2, dt=0.01)
-        is_sym, err = check_operator_adjoint(A_diff_1d, A_diff_1d)
-        print(f"  1D grid: shape={A_diff_1d.shape}, symmetric={is_sym}")
-        assert is_sym, "1D diffusion should be symmetric"
+        is_sym, err = _grid_measure_symmetry(A_diff_1d, tuple(grid_1d.coordinates))
+        print(f"  1D grid: shape={A_diff_1d.shape}, self-adjoint in the grid measure={is_sym}")
+        assert is_sym, "1D diffusion should be self-adjoint in the grid measure (#2243)"
 
         # 2D geometry
         grid_2d = TensorProductGrid(
@@ -1118,9 +1161,9 @@ if __name__ == "__main__":
             boundary_conditions=neumann_bc(dimension=2),
         )
         A_diff_2d = build_diffusion_matrix_from_geometry(grid_2d, sigma=0.2, dt=0.01)
-        is_sym, err = check_operator_adjoint(A_diff_2d, A_diff_2d)
-        print(f"  2D grid: shape={A_diff_2d.shape}, symmetric={is_sym}")
-        assert is_sym, "2D diffusion should be symmetric"
+        is_sym, err = _grid_measure_symmetry(A_diff_2d, tuple(grid_2d.coordinates))
+        print(f"  2D grid: shape={A_diff_2d.shape}, self-adjoint in the grid measure={is_sym}")
+        assert is_sym, "2D diffusion should be self-adjoint in the grid measure (#2243)"
 
         # Boundary indices
         bi = get_boundary_indices_from_geometry(grid_2d)

@@ -22,19 +22,28 @@ import pytest
 
 import numpy as np
 
+from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.adjoint.operators import build_diffusion_matrix, build_diffusion_matrix_2d
 from mfgarchon.alg.numerical.fp_solvers import FPSLSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import adi_diffusion_step, solve_crank_nicolson_diffusion_1d
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
-from mfgarchon.core.mfg_problem import MFGComponents, MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
-from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d, quadrature_weights_nd
 
 SIGMA = 0.4
 T_END = 0.05
 NSTEP = 200
 D = SIGMA**2 / 2.0
+
+# Zero coupling and zero potential, so `solve_fp_system` transports and diffuses the density it is
+# handed and nothing else. `M_initial=` is passed explicitly at every call site below, so
+# `Conditions.m_initial` is never the density under test.
+_ZERO_COUPLING_HAMILTONIAN = SeparableHamiltonian(
+    control_cost=QuadraticControlCost(control_cost=1.0),
+    coupling=lambda m: 0.0 * np.asarray(m),
+    coupling_dm=lambda m: 0.0 * np.asarray(m),
+)
 
 
 def _heat_eoc(stepper, levels=(21, 41, 81, 161), dims: int = 1) -> tuple[list[float], list[float]]:
@@ -77,10 +86,15 @@ def test_the_1d_crank_nicolson_call_site_is_second_order_at_the_wall():
 def test_the_adi_call_site_is_second_order_at_the_wall(dims):
     """The ADI sweep is a SEPARATE call site (`solve_1d_diffusion_along_axis`), not the 1-D routine.
 
-    d = 2 is here because the sweep is per-axis and a wall on one axis coexists with an interior on
-    the other; d = 1 is here because `_adi_diffusion_step` dispatches to the 1-D routine at d = 1,
-    so a wall that changed with the dimension would be invisible in either alone. This is a
-    code-path argument, not "prefer 2D".
+    d = 2 is here because the sweep is per-axis, so a wall on one axis coexists with an interior on
+    the other -- a configuration the 1-D case cannot present.
+
+    d = 1 is NOT here for wall discrimination: `adi_diffusion_step` sweeps every axis through the
+    same routine unconditionally, so both parametrisations separate the same wall mutant. It is
+    here for the shape branch -- at d = 1 the function reshapes and then `ravel()`s its result, a
+    path d = 2 never takes. Stating the weaker reason is the point: the stronger one was written
+    first and was false (it claimed a d == 1 dispatch that lives in `HJBSemiLagrangianSolver`, not
+    in `adi_diffusion_step`), which is the failure this whole file exists to catch.
     """
     levels = (21, 41, 81, 161) if dims == 1 else (11, 21, 41, 81)
 
@@ -95,28 +109,31 @@ def test_the_adi_call_site_is_second_order_at_the_wall(dims):
 
 
 def test_the_fp_solver_conserves_the_grid_measure_and_not_the_rectangle_rule():
-    """#2145's decision, asserted through a real `FPSLSolver` solve rather than on the operator.
+    """#2145's decision, measured on the DIFFUSION half-step as the solver actually runs it.
 
-    Both halves are load-bearing. Asserting only that the grid measure is held would pass on a
-    solver that held BOTH -- and the rectangle drift is what says the wall changed, since
-    `half_wall` has the two the other way round: 3.3e-14 rectangle against 1.1e-02 trapezoid on
-    the nx=81 version of this fixture.
+    `potential_field` is zero here, which makes the drift zero and the forward splat the identity,
+    so what this exercises is the CN step inside `FPSLSolver` -- deliberately, to isolate the wall
+    from the transport. It is therefore NOT a statement about the composite solver: with the
+    transport inert both walls conserve their own measure exactly, so this fixture cannot see a
+    splat and a wall that disagree. The test above it drives the transport and covers that.
+
+    Both halves of the assertion are load-bearing. Asserting only that the grid measure is held
+    would pass on a scheme that held BOTH -- and the rectangle drift is what says the wall changed,
+    since `half_wall` has the two the other way round: 3.3e-14 rectangle against 1.1e-02 trapezoid
+    on the nx=81 version of this fixture.
     """
     nx, nt, t_end, sigma = 41, 200, 0.6, 0.5
     x = np.linspace(0.0, 1.0, nx)
     m0 = np.exp(-60.0 * (x - 0.5) ** 2)
 
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=no_flux_bc(dimension=1))
-    components = MFGComponents(
-        m_initial=lambda xx: np.exp(-60.0 * (np.asarray(xx) - 0.5) ** 2),
-        u_terminal=lambda xx: 0.0,
-        hamiltonian=SeparableHamiltonian(
-            control_cost=QuadraticControlCost(control_cost=1.0),
-            coupling=lambda m: 0.0 * np.asarray(m),
-            coupling_dm=lambda m: 0.0 * np.asarray(m),
-        ),
+    m0 = m0 / float(grid.integrate(m0))  # unit mass on the grid's own measure; the library does not rescale
+    problem = MFGProblem(
+        model=Model(hamiltonian=_ZERO_COUPLING_HAMILTONIAN, sigma=sigma),
+        domain=grid,
+        conditions=Conditions(m_initial=lambda p: 1.0, u_terminal=lambda p: 0.0, T=t_end),
+        Nt=nt,
     )
-    problem = MFGProblem(geometry=grid, T=t_end, Nt=nt, sigma=sigma, components=components)
     M = np.asarray(FPSLSolver(problem).solve_fp_system(M_initial=m0.copy(), potential_field=np.zeros((nt + 1, nx))))
 
     # CONTROL. The two measures differ by `dx*(m[0] + m[-1])/2`, so a fixture whose wall values do
@@ -177,3 +194,95 @@ def test_the_diffusion_matrix_is_self_adjoint_in_the_grid_measure():
     assert np.abs(a - a.T).max() > 1e-6, (
         "the matrix is symmetric in the UNIFORM inner product, which is the half wall's signature"
     )
+
+
+@pytest.mark.parametrize("dims", [1, 2])
+def test_the_transport_and_diffusion_half_steps_conserve_the_same_measure(dims):
+    """The pairing, which is the half of #2243 that a zero-drift fixture cannot see.
+
+    Both dimensions, because `splat_1d` and `splat_nd` reach DIFFERENT kernels -- `splat_linear_1d`
+    against `splat_linear_nd` -- and each carries the reweighting separately. Measured: reverting
+    only `splat_nd`'s half killed nothing in the 1-D version of this test, which is what a
+    code-path argument for d = 2 looks like when it is made rather than asserted.
+
+    `FPSLSolver` is splat-then-diffuse. The splat kernels are exact transposes of interpolation and
+    conserve `sum(m)`; the `mirror` diffusion conserves the trapezoid. If the two disagree the
+    composite conserves NEITHER, and the error grows under refinement rather than shrinking --
+    measured on this fixture at nx = 26/51/101/201/401, relative trapezoid drift went
+    6.3e-03 -> 7.6e-02 while `half_wall` gave 8.2e-02 -> 1.3e-02. So #2243 moved the splat onto the
+    grid measure too, which is the weighting #708 removed when the diffusion still carried
+    `half_wall`; the two are one decision taken at two half-steps.
+
+    Every mass fixture in #2243's own issue and its first draft used `potential_field = zeros`,
+    which makes the transport the identity and reports both measures conserved on any pairing. The
+    control below is what makes this one able to fail.
+    """
+    nx, nt, t_end, sigma = (41, 200, 1.0, 0.2) if dims == 1 else (21, 60, 0.4, 0.2)
+    axes = [np.linspace(0.0, 1.0, nx)] * dims
+    mesh = np.meshgrid(*axes, indexing="ij")
+
+    def density(point):
+        """Scalar per point: `MFGComponents.m_initial` is evaluated pointwise, not vectorised."""
+        return float(np.exp(-30.0 * ((np.asarray(point, dtype=float).ravel() - 0.4) ** 2).sum()) + 0.05)
+
+    m0 = np.exp(-30.0 * sum((g - 0.4) ** 2 for g in mesh)) + 0.05
+
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0)] * dims, Nx_points=[nx] * dims, boundary_conditions=no_flux_bc(dimension=dims)
+    )
+    m0 = m0 / float(grid.integrate(m0))  # unit mass on the grid's own measure; the library does not rescale
+    problem = MFGProblem(
+        model=Model(hamiltonian=_ZERO_COUPLING_HAMILTONIAN, sigma=sigma),
+        domain=grid,
+        conditions=Conditions(m_initial=lambda p: 1.0, u_terminal=lambda p: 0.0, T=t_end),
+        Nt=nt,
+    )
+    # A NON-ZERO potential: u = -0.5 * sum(x_d) drives a constant drift into the far walls.
+    potential = np.tile(-0.5 * sum(mesh), (nt + 1, *([1] * dims)))
+    M = np.asarray(FPSLSolver(problem).solve_fp_system(M_initial=m0.copy(), potential_field=potential))
+
+    # CONTROL: the transport must actually have moved the density, or the splat is the identity and
+    # this test cannot distinguish a paired scheme from a crossed one.
+    displacement = float(np.abs(M[-1] - m0).max()) / float(m0.max())
+    assert displacement > 0.1, (
+        f"the density barely moved (relative {displacement:.3e}); with the transport inactive this "
+        f"fixture reports both measures conserved on either pairing and asserts nothing"
+    )
+
+    drift = abs(float(grid.integrate(M[-1])) - float(grid.integrate(m0))) / float(grid.integrate(m0))
+    assert drift < 1e-11, (
+        f"the grid measure drifted by {drift:.3e} through a driven solve. The two half-steps have "
+        f"stopped agreeing on a measure: check that `splat_1d`/`splat_nd` still transport `w * m` "
+        f"and that the diffusion wall is still `mirror`. Fixing only one of the two is worse than "
+        f"fixing neither."
+    )
+
+
+def test_the_nd_diffusion_matrix_conserves_the_grid_measure():
+    """An ORACLE for the nD wall, because the agreement check above cannot supply one.
+
+    `test_build_diffusion_matrix_answers_the_same_at_one_and_two_dimensions` compares two
+    implementations, so it is silent when both move together -- measured: reverting BOTH
+    `adjoint/operators.py` sites to `half_wall` at once leaves the entire gate suite green. An
+    external oracle is what closes that, and `w^T A = w^T` is one: it is a statement about the
+    operator against the measure the grid carries (#2145), computed without reference to any other
+    implementation.
+
+    `A` here is the IMPLICIT matrix, so the invariant is on its inverse -- `w^T A^{-1} = w^T`,
+    equivalently `A^T w = w`. Asserting it on `A` directly would be asserting the wrong identity
+    and would fail on a correct operator.
+    """
+    shape, dx = (5, 5), (0.25, 1.0 / 6.0)
+    a = build_diffusion_matrix(shape, dx, SIGMA, 0.01, 0.5, "neumann").toarray()
+    w = quadrature_weights_nd([np.arange(n) * h for n, h in zip(shape, dx, strict=True)]).ravel()
+
+    kept = np.abs(a.T @ w - w).max() / np.abs(w).max()
+    assert kept < 1e-12, (
+        f"the nD diffusion operator does not preserve the grid measure ({kept:.3e}); its wall is "
+        f"not `mirror`. `half_wall` gives 3.9e-02 here -- and conserves the UNIFORM sum instead."
+    )
+    # The other half: it must NOT conserve the uniform sum, or the wall did not move. Neither wall
+    # conserves both, so without this the check passes on `half_wall` under a different weighting.
+    uniform = np.ones(a.shape[0])
+    lost = np.abs(a.T @ uniform - uniform).max()
+    assert lost > 1e-6, f"the uniform sum was also preserved ({lost:.3e}), which is the `half_wall` signature"

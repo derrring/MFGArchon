@@ -44,7 +44,7 @@ from mfgarchon.geometry.protocols import (
     SupportsRegionMarking,
 )
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
-from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d, quadrature_weights_nd
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -711,9 +711,7 @@ class TensorProductGrid(
                 f"do not match the grid {spatial}; integrate() reduces the TRAILING axes so that a "
                 f"(time, *spatial) history returns one value per time row"
             )
-        weights = self.quadrature_weights(0)
-        for d in range(1, nd):
-            weights = np.multiply.outer(weights, self.quadrature_weights(d))
+        weights = quadrature_weights_nd(tuple(self.coordinates[:nd]))
         return (arr * weights).sum(axis=tuple(range(arr.ndim - nd, arr.ndim)))
 
     def integrate_boundary(self, field: NDArray, axis: int) -> NDArray | float:

@@ -15,6 +15,39 @@ Mathematical Foundation:
     then FP uses splatting matrix P^T with column sums = 1.
     This ensures sum(P^T @ m) = sum(m) exactly.
 
+WHICH MASS THE KERNELS CONSERVE, AND WHY THE DISPATCHERS REWEIGHT (#2243).
+    `sum(m)` is not the mass on this library's grid. `TensorProductGrid` is endpoint-inclusive, so
+    the wall lies ON the end node and that node owns h/2: the mass is the trapezoid integral
+    `w^T m`, which is #2145's decision. The kernels here are exact transposes of interpolation and
+    therefore conserve `sum(m)` -- measured on the reconstructed operator at n=21, `1^T S = 1^T` to
+    0.000e+00 while `w^T S` drifts by 1.0e-02. So `splat_1d` and `splat_nd` transport `w * m` and
+    divide the deposit back by `w`, which makes the step conserve the integral instead.
+
+    THIS IS HALF OF ONE DECISION; the other half is the diffusion wall. #708 removed exactly this
+    weighting, on the ground that "SL theory uses sum(m)" and "Crank-Nicolson diffusion also
+    preserves sum(m) with Neumann BC". The second clause was true of the `half_wall` stencil the
+    diffusion step carried at the time and is false of the `mirror` stencil it carries since #2243.
+
+    THE INVARIANT CLAIM IS EXACTNESS, NOT A RATE. Paired, one measure is conserved exactly at every
+    resolution; crossed, NEITHER is, and how the residue then behaves under refinement depends on
+    the fixture -- do not quote a rate for it. Measured on `FPSLSolver`, relative trapezoid drift
+    over nx = 26/51/101/201/401, drift `u = -0.5x` (a constant push into the right wall),
+    T=1, sigma=0.2:
+
+        half_wall + unweighted splat   8.2e-02 .. 1.3e-02   O(h); exact in `sum(m)` instead
+        mirror    + unweighted splat   6.3e-03 .. 7.6e-02   grows on THIS fixture
+        mirror    + weighted splat     2.5e-15 .. 2.7e-13   exact
+        half_wall + weighted splat     2.4e+00 at nx=101    the other crossed pairing
+
+    Independent review measured the same crossed pairing on `u = 0.5 cos(2 pi x)` and got a drift
+    that FALLS at about O(h^1.5) rather than growing. Both runs agree on what matters -- neither
+    measure is conserved -- and disagree on the rate, which is why the row above names its fixture
+    and this paragraph names the other one.
+
+    So #708's pairing was coherent and conserved the wrong functional. Do not change one half
+    without the other, and do not read the kernels' `sum(m)` property as the solver's conservation
+    property -- it is not, and has not been the one that matters since #2145.
+
 Module structure per issue #392:
     fp_sl_splatting.py - Splatting methods for adjoint semi-Lagrangian FP solver
 
@@ -33,6 +66,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
+
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_nd
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -286,15 +321,23 @@ def splat_1d(
 
     Returns:
         Splat result
+
+    Note:
+        Transports the MASS ``w * m`` and divides the deposit back by ``w`` (#2243). The kernels
+        below are pure transposes of interpolation and conserve ``sum(m)``; this wrapper is what
+        makes the step conserve the integral. See the module docstring for why the two differ.
     """
+    measure = quadrature_weights_nd((x_grid,))
+    weighted = np.asarray(m, dtype=float) * measure
     if method == "linear":
-        return splat_linear_1d(m, x_dest, x_grid, dx, xmin, xmax)
+        deposited = splat_linear_1d(weighted, x_dest, x_grid, dx, xmin, xmax)
     elif method == "cubic":
-        return splat_cubic_1d(m, x_dest, x_grid, dx, xmin, xmax)
+        deposited = splat_cubic_1d(weighted, x_dest, x_grid, dx, xmin, xmax)
     elif method == "quintic":
-        return splat_quintic_1d(m, x_dest, x_grid, dx, xmin, xmax)
+        deposited = splat_quintic_1d(weighted, x_dest, x_grid, dx, xmin, xmax)
     else:
         raise ValueError(f"Unknown splatting method: {method}. Use 'linear', 'cubic', or 'quintic'.")
+    return deposited / measure
 
 
 # =============================================================================
@@ -410,9 +453,15 @@ def splat_nd(
     Note:
         Cubic and quintic splatting for nD would require tensor products of 1D kernels.
         Currently only linear is supported for nD.
+
+        Transports the MASS ``w * m`` and divides back, exactly as `splat_1d` does; here ``w`` is
+        the outer product of the per-axis trapezoid weights, so a corner node owns ``h_x h_y / 4``
+        (#2243).
     """
+    measure = quadrature_weights_nd(grid_coordinates)
     if method == "linear":
-        return splat_linear_nd(m, x_dest, grid_coordinates, grid_shape, bounds)
+        weighted = np.asarray(m, dtype=float).reshape(grid_shape) * measure
+        return splat_linear_nd(weighted, x_dest, grid_coordinates, grid_shape, bounds) / measure
     elif method in ("cubic", "quintic"):
         raise NotImplementedError(
             f"'{method}' splatting not yet implemented for nD. Use 'linear' or implement "
