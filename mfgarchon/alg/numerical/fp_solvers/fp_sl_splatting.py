@@ -28,19 +28,24 @@ WHICH MASS THE KERNELS CONSERVE, AND WHY THE DISPATCHERS REWEIGHT (#2243).
 WHAT THE REWEIGHTING COSTS, because it is not free and the price has a location.
     `W^-1 P^T W` is the correct adjoint of interpolation IN THE GRID MEASURE, and it is no longer
     zeroth-order consistent at the node ADJACENT to each wall. One advection substep, uniform shift
-    `a*h` strictly inside the domain, error at node 1 over n = 21/41/81/161/321:
+    `a*h` with `a = 0.3` on `m(x) = exp(-2x) + 0.5`, strictly inside the domain -- the shift and the
+    density are both part of the measurement, exactly as for the `w^T S` figure above -- error at
+    node 1 over n = 21/41/81/161/321:
 
         unweighted   +9.9e-04  +2.6e-04  +6.5e-05  +1.6e-05  +4.1e-06     O(h^2)
         weighted     -2.2401e-01 -2.2474e-01 -2.2494e-01 -2.2498e-01 -2.2500e-01
 
-    i.e. exactly `-a*m0/2`, FLAT under 16x refinement. That is an O(1) truncation error at one node,
+    i.e. exactly `-a*m0/2` (0.3 * 1.5 / 2 = 0.225), FLAT under 16x refinement. Under a LEFTWARD
+    shift the same O(1) error appears at node n-2 instead, which is why this says "each wall"
+    rather than "the left wall". That is an O(1) truncation error at one node,
     and it is the price of `w^T`-exactness: the wall node owns h/2, so a deposit crossing into it
     from a full cell cannot be both mass-exact and pointwise-consistent under this kernel.
 
     Consequence, measured on #1855's Gibbs fixture: the L-inf wall error is WORSE in a
     mid-refinement band -- 1.28x at nx=81, peaking at 1.35x at nx=101 -- decaying to 1.02x by
     nx=641, and up to 1.44x under a stronger drift (slope 2.0, nx=81). In 2D it is 1.27x at nx=81.
-    `L1` is equal or better everywhere, and the mass is exact everywhere. It does not grow under
+    `L1` is equal or better everywhere, and the mass drift is 1e-14 to 1.2e-11 relative over up to
+    25600 steps against 2e-03 to 2.3e-02 for the unweighted pairing. It does not grow under
     refinement in any regime measured; it is a band, not a divergence.
 
     THIS IS HALF OF ONE DECISION; the other half is the diffusion wall. #708 removed exactly this

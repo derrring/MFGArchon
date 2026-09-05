@@ -301,12 +301,17 @@ class TestExpertMode:
         # stated retirement condition was to fix both half-steps at once, which #2243 did:
         #
         #                       mass (grid measure)      nodal sum
-        #     before #2243      7.7298e-02               2.220e-16
-        #     after             4.4409e-16               2.2623e-01
+        #     before #2243      7.7298e-02 relative      4.4409e-16
+        #     after             4.4409e-16 relative      2.2623e-01
+        #
+        # RELATIVE, because the assertion above is ABSOLUTE and on this fixture the two differ:
+        # `mass[0] = 0.545951` here, so the absolute drift is 4.2201e-02. They coincided at
+        # `cdafd823`, where the fixture's initial mass was exactly 1.000000 -- which is how a
+        # ratio-framed prose figure and a difference-framed assertion came to share a table.
         #
         # THE 2.2335e-01 THIS BLOCK USED TO QUOTE IS STALE, and the correction is worth keeping
         # rather than silently swapping: it was exact when written at `cdafd823` (min mass ratio
-        # 0.7766546588), and 28 commits later, at `3b390f2b`, the same test method measures
+        # 0.7766546588), and 27 commits later, at `3b390f2b`, the same test method measures
         # 7.7298e-02 -- a 2.9x shrink, most plausibly #2233/#2252 moving the FDM no-flux wall and
         # with it this pairing's `U`. A defect's magnitude is a function of the tree, so a number
         # recorded beside one is only true of the commit that recorded it.
