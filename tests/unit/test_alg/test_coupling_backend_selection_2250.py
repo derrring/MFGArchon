@@ -24,11 +24,11 @@ import pytest
 
 import numpy as np
 
+from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.coupling.base_mfg import resolve_supported_backend
 from mfgarchon.alg.numerical.coupling.fictitious_play import FictitiousPlayIterator
 from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
-from mfgarchon.core.mfg_problem import MFGComponents, MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
@@ -36,16 +36,24 @@ ITERATORS = [FixedPointIterator, FictitiousPlayIterator]
 
 
 def _problem():
+    """v1.0 API, and a density whose grid-measure mass is exactly 1.
+
+    Both matter to the warnings ratchet: the legacy ``MFGProblem(geometry=, components=)``
+    form emits a DeprecationWarning, and an unnormalised ``m_initial`` emits the #1887
+    "mass is not 1" UserWarning. A new test should not be the thing that teaches either.
+    """
     return MFGProblem(
-        geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)),
-        T=0.1,
-        Nt=4,
-        sigma=0.3,
-        components=MFGComponents(
-            m_initial=lambda x: np.exp(-30 * (x - 0.5) ** 2),
-            u_terminal=lambda x: 0.0 * x,
+        model=Model(
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m),
+            sigma=0.3,
         ),
+        domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)),
+        conditions=Conditions(
+            u_terminal=lambda x: np.squeeze(0.5 * (np.asarray(x) - 0.5) ** 2),
+            m_initial=lambda x: 1.0,  # uniform on [0, 1]: grid-measure mass is exactly 1
+            T=0.1,
+        ),
+        Nt=4,
     )
 
 
