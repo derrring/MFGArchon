@@ -808,6 +808,7 @@ def _compute_full_tensor_kernel_2d(
     Sigma: np.ndarray,
     dx: float,
     dy: float,
+    zero_wall_flux: bool,
 ) -> np.ndarray:
     """JIT-compiled kernel for 2D full tensor diffusion.
 
@@ -910,6 +911,25 @@ def _compute_full_tensor_kernel_2d(
             Fy_yp = s_yx_yp * dm_dx_yp + s_yy_yp * dm_dy_yp
             Fy_ym = s_yx_ym * dm_dx_ym + s_yy_ym * dm_dy_ym
 
+            # No-flux means the WHOLE normal flux vanishes at the wall, not merely its
+            # normal-gradient part (#2232). Edge-padded ghosts zero `dm_dx` at an x wall, which
+            # kills `s_xx * dm_dx` and leaves `s_xy * dm_dy` -- so with an off-diagonal tensor the
+            # wall face still carried flux, and since this divergence telescopes, the domain sum of
+            # the operator equals exactly those leftover boundary fluxes.
+            #
+            # For a DIAGONAL tensor `s_xy = s_yx = 0` and these four assignments are no-ops, which
+            # is why every scalar and diagonal path is bit-identical across this change, and why
+            # the defect could sit here behind a passing conservation test.
+            if zero_wall_flux:
+                if i == 0:
+                    Fx_xm = 0.0
+                if i == Nx - 1:
+                    Fx_xp = 0.0
+                if j == 0:
+                    Fy_ym = 0.0
+                if j == Ny - 1:
+                    Fy_yp = 0.0
+
             # Divergence
             result[i, j] = (Fx_xp - Fx_xm) / dx + (Fy_yp - Fy_ym) / dy
 
@@ -979,6 +999,34 @@ def _tensor_diffusion_1d(
         return (flux[1:] - flux[:-1]) / dx
 
 
+def _is_no_flux(bc: BoundaryConditions | None) -> bool:
+    """Is this a uniform zero-flux wall, the case whose boundary face flux must vanish (#2232)?
+
+    NEUMANN is deliberately NOT included, and that exclusion is the point of the issue. Homogeneous
+    Neumann states ``dm/dn = 0``; no-flux states ``(D grad m).n = 0``. With a diagonal tensor the two
+    coincide, which is why the library had been treating them as one condition. With an off-diagonal
+    tensor they are different conditions and only the second is a conservation law -- so a caller
+    who asked for NEUMANN keeps the gradient condition it asked for, unchanged.
+    """
+    if bc is None:
+        return False
+
+    # Uniformity is asked FIRST because `BoundaryConditions.type` raises `ValueError` on a mixed
+    # BC ("type property only valid for uniform BCs"), and a `getattr(bc, "type", None)` does not
+    # absorb that -- only `AttributeError`. Reading `.type` first crashed a mixed-BC call that
+    # works on main, which is a regression this ordering avoids rather than a case it handles.
+    segments = getattr(bc, "segments", None)
+    if segments is not None:
+        if not getattr(bc, "is_uniform", False) or not segments:
+            return False
+        from mfgarchon.geometry.boundary import BCType
+
+        return segments[0].bc_type == BCType.NO_FLUX
+
+    bc_type = getattr(bc, "type", None)
+    return isinstance(bc_type, str) and bc_type.lower() == "no_flux"
+
+
 def _tensor_diffusion_2d(
     u: NDArray,
     Sigma: NDArray,
@@ -1039,9 +1087,11 @@ def _tensor_diffusion_2d(
         # Default to periodic if no BC specified
         u_padded = np.pad(u, 1, mode="wrap")
 
+    zero_wall_flux = _is_no_flux(bc)
+
     # Use JIT kernel if available
     if USE_NUMBA and NUMBA_AVAILABLE:
-        return _compute_full_tensor_kernel_2d(u_padded, Sigma_full, dx, dy)
+        return _compute_full_tensor_kernel_2d(u_padded, Sigma_full, dx, dy, zero_wall_flux)
 
     # Pure NumPy fallback (simplified). Same axis order as the JIT kernel above: the x faces
     # are along axis 0 and carry dx, the y faces along axis 1 and carry dy (#1911).
@@ -1063,6 +1113,13 @@ def _tensor_diffusion_2d(
 
     Fx = Sigma_x_faces[:, :, 0, 0] * dm_dx_x + Sigma_x_faces[:, :, 0, 1] * dm_dy_x
     Fy = Sigma_y_faces[:, :, 1, 0] * dm_dx_y + Sigma_y_faces[:, :, 1, 1] * dm_dy_y
+
+    # The same four faces the JIT kernel zeroes; see the comment there for why (#2232).
+    if zero_wall_flux:
+        Fx[0, :] = 0.0
+        Fx[-1, :] = 0.0
+        Fy[:, 0] = 0.0
+        Fy[:, -1] = 0.0
 
     return (Fx[1:, :] - Fx[:-1, :]) / dx + (Fy[:, 1:] - Fy[:, :-1]) / dy
 
@@ -1095,6 +1152,7 @@ def _tensor_diffusion_nd(
     else:
         u_padded = np.pad(u, 1, mode="wrap")
 
+    zero_wall_flux = _is_no_flux(bc)
     result = np.zeros(shape, dtype=u.dtype)
 
     for i in range(d):
@@ -1149,6 +1207,15 @@ def _tensor_diffusion_nd(
             Sigma_ij_faces[tuple(slice_last)] = Sigma_ij[tuple(slice_last)]
 
             F_i += Sigma_ij_faces * dm_dxj
+
+        # The two walls on this axis, zeroed for the same reason as in the 2-D kernel (#2232).
+        if zero_wall_flux:
+            wall_low = [slice(None)] * d
+            wall_low[i] = 0
+            wall_high = [slice(None)] * d
+            wall_high[i] = -1
+            F_i[tuple(wall_low)] = 0.0
+            F_i[tuple(wall_high)] = 0.0
 
         slice_plus_i = [slice(None)] * d
         slice_minus_i = [slice(None)] * d
