@@ -469,11 +469,12 @@ class FPSLSolver(BaseFPSolver):
         # the trapezoid by 1.2e-01 at n=21; the ghost-point method it warns against conserves the
         # trapezoid to 3.3e-16. The half-cell FV derivation yields the ghost-point coefficient, not
         # this one. #2145 settled that measure and moved `operators.differential.laplacian` onto
-        # the ghost-point stencil; this family never followed.
+        # the ghost-point stencil; this family did not follow until #2243.
         #
-        # Routing here is bit-identical -- verified, not asserted. The correction is #2243: on
-        # #2237's own MMS, this one parameter is the whole 1.989e-03 against 2.806e-05.
-        m_new = neumann_cn_step(m_star, dt, sigma, self.dx, treatment="half_wall")
+        # #2243 applied the correction. On #2237's own MMS this one parameter was the whole gap:
+        # 1.989e-03 -> 2.806e-05, landing exactly on `FPSLJacobianSolver`, which has had `mirror`
+        # all along. The sigma=0 control is unchanged at 6.458e-13, so the transport is untouched.
+        m_new = neumann_cn_step(m_star, dt, sigma, self.dx, treatment="mirror")
 
         # Ensure non-negativity
         m_new = self._clip_nonneg(m_new)

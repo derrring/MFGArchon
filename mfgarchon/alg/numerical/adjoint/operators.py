@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 import numpy as np
 from scipy import sparse
 
-from mfgarchon.utils.numerical.implicit_diffusion import cn_alpha, neumann_cn_stencil
+from mfgarchon.utils.numerical.implicit_diffusion import cn_alpha, neumann_cn_stencil, wall_factor
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 if TYPE_CHECKING:
@@ -214,9 +214,24 @@ def _build_1d_laplacian(N: int, bc_type: str) -> sparse.csr_matrix:
     L = sparse.diags(diagonals, offsets, shape=(N, N), format="lil")
 
     if bc_type == "neumann":
-        # Neumann: ghost cell equals interior → reduce diagonal at boundaries
-        L[0, 0] = 1.0
-        L[N - 1, N - 1] = 1.0
+        # The SEVENTH implementation of the wall #2237 censused, and the one it could not see: its
+        # sweep looked for a `dt/dx^2` beside a tridiagonal assembly, and this builds the bare
+        # Laplacian with `alpha` applied later by `build_diffusion_matrix`. It carried its own
+        # `1.0` -- the half wall -- and reaching it needed ndim >= 2, where the 1D probe never went.
+        #
+        # It moves with the rest in #2243 because it is not an independent choice: `build_diffusion_matrix`
+        # routes ndim == 1 to `build_diffusion_matrix_1d` and ndim >= 2 here, so leaving this at the
+        # half wall would make ONE function return a different wall depending on the dimension.
+        # Measured before the switch: `build_diffusion_matrix((5,5))` and `build_diffusion_matrix_2d((5,5))`
+        # agreed to 0.000e+00, and both agree again after it.
+        #
+        # Ghost-point reflection `u_{-1} = u_1`: the wall row is `[factor, -factor]` against the
+        # interior `[-1, 2, -1]`, so `mirror` doubles the off-diagonal rather than halving the
+        # diagonal. The comment here used to say "ghost cell equals interior" while the code did
+        # the other thing -- one of the three #2237 found naming a treatment they did not use.
+        factor = wall_factor("mirror")
+        L[0, 0] = L[N - 1, N - 1] = factor
+        L[0, 1] = L[N - 1, N - 2] = -factor
     elif bc_type == "dirichlet":
         # Dirichlet: boundary values fixed → identity rows
         L[0, :] = 0
@@ -297,18 +312,32 @@ def build_diffusion_matrix_1d(
         Sparse CSR matrix of shape (Nx, Nx)
 
     Note:
-        For Neumann BC, the matrix is symmetric → self-adjoint.
-        For Dirichlet BC with zero values, the matrix is also symmetric.
-        For periodic BC, the matrix is symmetric (circulant structure).
+        For Neumann BC the matrix is self-adjoint **in the grid measure** since #2243 --
+        ``W A = (W A)^T`` with ``W`` the trapezoid weights the endpoint-inclusive grid carries
+        (#2145), and ``A != A^T`` by 1.44e-02 at N=7. Before #2243 the wall row was the half wall
+        and the two statements were the other way round. The uniform inner product is not the one
+        this grid has, so bare symmetry was never the property to want; ``W``-symmetry is.
+        For Dirichlet BC with zero values, the matrix is symmetric.
+        For periodic BC, the matrix is symmetric (circulant structure) -- there is no wall row.
     """
     _checked_bc_type(bc_type, "build_diffusion_matrix_1d")
 
     # Coefficients from the one owner (#2237). This builder and three other implementations were
     # each deriving them; reconstructed from their action on the standard basis they agreed to
-    # 2.22e-16, and the comment below -- "ghost = interior" -- named the treatment this code does
-    # NOT do. It carries the half wall row (half the interior coefficient), which is what
-    # `treatment="half_wall"` is; the mirror row the comment describes is the other value.
-    st = neumann_cn_stencil(cn_alpha(dt, sigma, dx), treatment="half_wall", theta=theta)
+    # 2.22e-16, on the half wall. `mirror` since #2243 -- the treatment the pre-#2237 comment here
+    # already claimed ("ghost = interior") while the code did the other thing.
+    #
+    # Self-adjointness MOVES INNER PRODUCT with the wall; it is not lost. Measured on the built
+    # matrix at N=7, `W` the trapezoid weights (#2145):
+    #
+    #                 max|A - A^T|   max|WA - (WA)^T|
+    #     half_wall     0.000e+00       7.200e-03
+    #     mirror        1.440e-02       0.000e+00
+    #
+    # Same shape as the conservation column, and for the same reason: the half wall was a coherent
+    # scheme measured against an inner product this grid does not carry. `W` is the one it does, so
+    # `mirror` is the self-adjoint operator here and the docstring's Note says so.
+    st = neumann_cn_stencil(cn_alpha(dt, sigma, dx), treatment="mirror", theta=theta)
     alpha = st.alpha
 
     main = np.ones(Nx) * st.implicit_main
@@ -378,8 +407,12 @@ def build_diffusion_matrix_2d(
     # Same owner as the 1D builder (#2237). This assembly is the SIXTH implementation of that wall
     # -- the 1D census could not see it, because it probed the 1D path. Found by sweeping for
     # `dt/dx^2` beside a tridiagonal assembly, with the five known sites as the control.
-    st_x = neumann_cn_stencil(cn_alpha(dt, sigma, dx_x), treatment="half_wall", theta=theta)
-    st_y = neumann_cn_stencil(cn_alpha(dt, sigma, dx_y), treatment="half_wall", theta=theta)
+    #
+    # `mirror` since #2243, with `_build_1d_laplacian` -- the seventh site, which `build_diffusion_matrix`
+    # reaches for the same grid shape. The two must name the same wall or one function answers
+    # differently by dimension; measured equal to 0.000e+00 before the switch and after it.
+    st_x = neumann_cn_stencil(cn_alpha(dt, sigma, dx_x), treatment="mirror", theta=theta)
+    st_y = neumann_cn_stencil(cn_alpha(dt, sigma, dx_y), treatment="mirror", theta=theta)
 
     # Build sparse matrix
     A = sparse.lil_matrix((N, N))
@@ -410,17 +443,29 @@ def build_diffusion_matrix_2d(
                 + (st_y.implicit_wall_diag_term if at_y_wall else st_y.implicit_diag_term)
             )
 
-            # Off-diagonal: x-direction
+            # Off-diagonal: the wall row's diagonal and its off-diagonal are ONE decision, and this
+            # block used to take only half of it -- the diagonal above from `implicit_wall_*`, the
+            # neighbour below from the interior `implicit_off`. Under `half_wall` those two are the
+            # same number, so the split was invisible; under `mirror` it made the wall row carry a
+            # doubled diagonal against a single-weight neighbour, i.e. a row that is not any
+            # stencil. Caught by the agreement check against `build_diffusion_matrix`'s nD path,
+            # which the two agreed on to 0.000e+00 before the switch and disagreed on by 6.4e-03
+            # after -- so the check is what found it, not a reading of this loop (#2243).
+            #
+            # A wall node has one neighbour along that axis and the ghost reflects onto it, so the
+            # single neighbour carries the whole coupling.
+            off_x = st_x.implicit_wall_off if at_x_wall else st_x.implicit_off
+            off_y = st_y.implicit_wall_off if at_y_wall else st_y.implicit_off
             if i > 0:
-                A[k, idx(i - 1, j)] = st_x.implicit_off
+                A[k, idx(i - 1, j)] = off_x
             if i < Nx - 1:
-                A[k, idx(i + 1, j)] = st_x.implicit_off
+                A[k, idx(i + 1, j)] = off_x
 
             # Off-diagonal: y-direction
             if j > 0:
-                A[k, idx(i, j - 1)] = st_y.implicit_off
+                A[k, idx(i, j - 1)] = off_y
             if j < Ny - 1:
-                A[k, idx(i, j + 1)] = st_y.implicit_off
+                A[k, idx(i, j + 1)] = off_y
 
             # Periodic BC
             if bc_type == "periodic":
