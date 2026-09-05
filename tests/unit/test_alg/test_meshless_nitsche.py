@@ -15,9 +15,13 @@ import numpy as np
 from scipy.linalg import eigvalsh
 from scipy.sparse.linalg import spsolve
 
-from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
+from mfgarchon.alg.numerical.meshless_galerkin.discretization import (
+    MeshlessGalerkinDiscretization,
+    discretization_from_cloud,
+)
 from mfgarchon.alg.numerical.meshless_galerkin.mls_basis import shape_functions_and_grads
 from mfgarchon.alg.numerical.meshless_galerkin.nitsche import (
+    _domain_bounds,
     _segment_quadrature,
     assemble_nitsche_terms,
     dirichlet_segments,
@@ -151,34 +155,66 @@ class TestBoundaryRuleResolvesTheSupportScale:
 
     The Nitsche boundary integrand is ``phi_i phi_j`` and ``phi_i (n . grad phi_j)``, which
     varies on the MLS support scale ``rho``. ``rho`` shrinks under refinement, so a rule
-    whose cell count does not follow it resolves strictly less of the integrand at every
+    whose resolution does not follow it resolves strictly less of the integrand at every
     level. Before the fix, ``_segment_quadrature`` took ``boundary_tensor_gauss``'s
     ``n_cells=1`` default: the 2-D rule stayed at 24 points from n=11 to n=26 while the
     volume rule grew 3600 -> 22500, and the manufactured 2-D EOC ran -0.49 / -0.93 / -0.84.
-    Levels stop at n=21 here because the count is the claim and n=26 costs 5 s to build.
 
-    ``d >= 2`` IS REQUIRED and is not a preference. ``quadrature.py``'s 1-D face is a single
-    point of unit surface measure, computed on a branch that never reads ``n_cells``, so a
-    1-D fixture cannot fail either assertion however the rule is sized -- which is why the
-    1-D EOC test above stayed green throughout.
+    ``d >= 2`` IS REQUIRED and is not a preference. ``quadrature.py`` builds a 1-D face as a
+    single point of unit surface measure, on a branch that never reads ``n_cells``, so a 1-D
+    fixture cannot fail either assertion however the rule is sized -- which is why the 1-D
+    EOC test above stayed green through the whole defect.
     """
 
-    def test_boundary_point_count_grows_as_the_support_radius_shrinks(self):
-        """Structural pin. A fixed-size rule holds this count constant; the shipped one does not.
+    LEVELS = (7, 11, 16, 21, 26)
+    N_GAUSS = 6
+    N_FACES = 4  # the unit square's four bounding-box faces
+    MAX_SIDE = 1.0
 
-        Retirement condition: this trips if the boundary rule ever stops scaling with 1/rho.
+    def _boundary_points(self, n):
+        """``(Q_b, rho)`` from the SHIPPED path, with the volume rule stubbed out.
+
+        ``_segment_quadrature`` reads only ``rho``/``dim``/``dof_coordinates``, so the volume
+        quadrature is replaced by a 1-point dummy: the assertion below is about the boundary
+        rule, and building the real volume rule costs ~5 s at n=26 for something never read.
         """
-        bounds = [(0.0, 1.0), (0.0, 1.0)]
+        ax = np.linspace(0.0, 1.0, n)
+        nodes = np.stack([m.ravel() for m in np.meshgrid(ax, ax, indexing="ij")], axis=1)
+        rho = 3.5 / (n - 1)
+        disc = MeshlessGalerkinDiscretization(nodes, rho, 2, np.array([[0.5, 0.5]]), np.array([1.0]), backend="numpy")
         bc = _dirichlet_bc(dict.fromkeys(("x_min", "x_max", "y_min", "y_max"), 0.0), dim=2)
-        counts = []
-        for n in (11, 16, 21):
-            ax = np.linspace(0.0, 1.0, n)
-            nodes = np.stack([m.ravel() for m in np.meshgrid(ax, ax, indexing="ij")], axis=1)
-            disc = discretization_from_cloud(nodes, delta=3.5 / (n - 1), degree=2, n_gauss=6)
-            counts.append(sum(len(_segment_quadrature(s, disc, bounds, 6)[0]) for s in dirichlet_segments(bc)))
-        assert counts == sorted(counts), f"boundary rule is not monotone in 1/rho: {counts}"
-        assert counts[0] < counts[-1], (
-            f"boundary rule does not refine with the cloud: {counts} (pre-#1679 this was [24, 24, 24])"
+        bounds = _domain_bounds(disc)
+        q_b = sum(len(_segment_quadrature(s, disc, bounds, self.N_GAUSS)[0]) for s in dirichlet_segments(bc))
+        return q_b, rho
+
+    def test_the_rule_holds_two_cells_per_support_radius_at_every_level(self):
+        """The contract, asserted directly -- NOT the raw point count.
+
+        A growing count is not the property: a rule can add points while still resolving
+        *less* of the support scale. Measured: with the coefficient halved the counts go
+        [24, 48, 72, 72] -- monotone, so a count-only pin passes -- while points per support
+        radius decay 4.20 -> 3.15 and the manufactured EOC reaches -9.19 at n=21.
+
+        So assert what the formula promises: ``n_cells >= 2 * max_side / rho``, i.e. at least
+        two cells, hence ``2 * n_gauss`` quadrature points, within every support radius along
+        a face.
+
+        This pins the CONTRACT, not convergence, and deliberately so: measured, it fires on
+        the pre-#1679 rule (2.10 at n=11 down to 0.84 at n=26, against a floor of 12) and on
+        coefficients 0.5, 1.0 and 1.5, passing only at the shipped 2.0. Coefficient 1.0 does
+        still converge, so this is stricter than "it converges" -- weakening the constant is
+        exactly the decision that should have to trip a test and be re-argued. Retirement
+        condition: it trips whenever the rule stops delivering two cells per support radius.
+        """
+        floor = 2 * self.N_GAUSS
+        observed = {}
+        for n in self.LEVELS:
+            q_b, rho = self._boundary_points(n)
+            observed[n] = (q_b / self.N_FACES) * rho / self.MAX_SIDE
+        worst = min(observed.values())
+        assert worst >= floor, (
+            f"boundary rule resolves less than {floor} points per support radius: {observed} "
+            f"(pre-#1679 this ran 2.10 at n=11 down to 0.84 at n=26)"
         )
 
     def test_manufactured_2d_dirichlet_converges(self):
@@ -187,6 +223,10 @@ class TestBoundaryRuleResolvesTheSupportScale:
         Measured at the fix: rate +3.13 over n = 7 -> 11. Pinned at 1.5 because the claim is
         that the scheme CONVERGES, not that it attains any particular order. With the boundary
         rule pinned at one cell the same two levels give -4.24, so this cannot pass by accident.
+
+        What this does NOT catch on its own: a rule that is merely too coarse rather than
+        unscaled still converges over 7 -> 11 and only turns at n=21, which costs 16 s. The
+        assertion above is what covers that case, and it costs nothing.
         """
         errs = [_poisson_2d(n) for n in (7, 11)]
         rate = np.log(errs[0] / errs[1]) / np.log((1 / 6) / (1 / 10))

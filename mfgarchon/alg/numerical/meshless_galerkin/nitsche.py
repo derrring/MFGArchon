@@ -123,11 +123,21 @@ def _segment_quadrature(segment, disc, bounds, n_gauss):
     level set ``{sdf_region = 0}`` via ``surface_quadrature``; otherwise the
     axis-aligned bounding-box face rule (``boundary_tensor_gauss``) is used.
 
-    Both branches size their cell count off the cloud scale (``n_cells ~ max bbox side
-    / rho``). The integrand is ``phi_i phi_j`` and ``phi_i (n . grad phi_j)``, which
-    varies on the MLS support scale ``rho`` and therefore gets *finer* under
-    refinement; a rule whose cell count does not follow it resolves less of the
-    integrand at every level (#1679).
+    Both branches size their cell count off the cloud scale: **two cells per support
+    radius**, so at least ``2 * n_gauss`` points fall within every ``rho`` along a face.
+    The integrand is ``phi_i phi_j`` and ``phi_i (n . grad phi_j)``, which varies on the
+    MLS support scale ``rho`` and therefore gets *finer* under refinement; a rule whose
+    resolution does not follow it resolves less of the integrand at every level (#1679).
+
+    The factor of two is where the accuracy plateaus, not a copied constant. On the
+    #1679 manufactured Poisson at n=21 the solution error reads 6.7375e-05 at one cell
+    per radius and 5.9721e-05 at two, while four and eight both give 5.9726e-05.
+
+    Deliberately conservative for an anisotropic box: ``max_side`` is the largest side
+    of the bounding box, while ``boundary_tensor_gauss`` applies ``n_cells`` to each
+    face's own free axes. It therefore never under-resolves, but a box of 1 x 0.01
+    over-refines its short faces. Making that per-face needs a per-face ``n_cells``,
+    which this function cannot express today.
     """
     max_side = max(b - a for a, b in bounds)
     # Cells per support radius, not per domain: rho shrinks with the cloud, so this
