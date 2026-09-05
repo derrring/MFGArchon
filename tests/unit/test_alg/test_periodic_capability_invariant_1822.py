@@ -524,7 +524,8 @@ SURFACE_NOT_HONOURED = {
     # "#1822 Nx=81 solve raises" and were REMOVED by #2243, which switched their diffusion wall to
     # the mirror stencil. Read what that did and did not do, because the two are easy to swap:
     #
-    #   - What changed: the no-flux BC residual at Nx=21 went 2.6256e-02 -> 4.4409e-16. The strong
+    #   - What changed: the no-flux BC residual at Nx=21 went 5.6191e-02 -> 4.4409e-16, measured
+    #     with this module's own `_residual_of(_solve_with_bc(...))` on `main` at 3b390f2b. The strong
     #     form is now satisfied to round-off on the coarse grid, so the test returns at its first
     #     level ("exact at the coarse grid", below) and never builds a refinement trend.
     #   - What did NOT change: the Nx=81 solve still raises the same ValueError, measured under

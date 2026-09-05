@@ -301,12 +301,19 @@ class TestExpertMode:
         # stated retirement condition was to fix both half-steps at once, which #2243 did:
         #
         #                       mass (grid measure)      nodal sum
-        #     before #2243      2.2335e-01               2.220e-16
+        #     before #2243      7.7298e-02               2.220e-16
         #     after             4.4409e-16               2.2623e-01
         #
-        # The trapezoid mass no longer falls 1.000000 -> 0.776655 in a single step; it does not move
-        # at all. `mass_rtol` therefore drops from 3e-1 to machine precision -- the bound was sized
-        # for the defect, so leaving it would keep a 30%-wide gate over a scheme that is now exact.
+        # THE 2.2335e-01 THIS BLOCK USED TO QUOTE IS STALE, and the correction is worth keeping
+        # rather than silently swapping: it was exact when written at `cdafd823` (min mass ratio
+        # 0.7766546588), and 28 commits later, at `3b390f2b`, the same test method measures
+        # 7.7298e-02 -- a 2.9x shrink, most plausibly #2233/#2252 moving the FDM no-flux wall and
+        # with it this pairing's `U`. A defect's magnitude is a function of the tree, so a number
+        # recorded beside one is only true of the commit that recorded it.
+        #
+        # The trapezoid mass no longer moves at all (min ratio 1.000000). `mass_rtol` therefore
+        # drops from 3e-1 to machine precision -- the bound was sized for the defect, so leaving it
+        # would keep a 30%-wide gate over a scheme that is now exact.
         _assert_is_a_plausible_solution(solve_result, problem, mass_rtol=1e-12, nodal_sum=True)
 
     def test_expert_mode_partial_injection_raises_error(self):

@@ -19,9 +19,29 @@ WHICH MASS THE KERNELS CONSERVE, AND WHY THE DISPATCHERS REWEIGHT (#2243).
     `sum(m)` is not the mass on this library's grid. `TensorProductGrid` is endpoint-inclusive, so
     the wall lies ON the end node and that node owns h/2: the mass is the trapezoid integral
     `w^T m`, which is #2145's decision. The kernels here are exact transposes of interpolation and
-    therefore conserve `sum(m)` -- measured on the reconstructed operator at n=21, `1^T S = 1^T` to
-    0.000e+00 while `w^T S` drifts by 1.0e-02. So `splat_1d` and `splat_nd` transport `w * m` and
-    divide the deposit back by `w`, which makes the step conserve the integral instead.
+    therefore conserve `sum(m)` -- measured on the reconstructed operator at n=21 with a 0.4-cell
+    uniform shift, `1^T S = 1^T` to 0.000e+00 while `w^T S` drifts by 1.0e-02. (The second figure
+    scales with the shift -- 0.2 cells gives 5.0e-03 -- so the shift is part of the measurement.)
+    So `splat_1d` and `splat_nd` transport `w * m` and divide the deposit back by `w`, which makes
+    the step conserve the integral instead.
+
+WHAT THE REWEIGHTING COSTS, because it is not free and the price has a location.
+    `W^-1 P^T W` is the correct adjoint of interpolation IN THE GRID MEASURE, and it is no longer
+    zeroth-order consistent at the node ADJACENT to each wall. One advection substep, uniform shift
+    `a*h` strictly inside the domain, error at node 1 over n = 21/41/81/161/321:
+
+        unweighted   +9.9e-04  +2.6e-04  +6.5e-05  +1.6e-05  +4.1e-06     O(h^2)
+        weighted     -2.2401e-01 -2.2474e-01 -2.2494e-01 -2.2498e-01 -2.2500e-01
+
+    i.e. exactly `-a*m0/2`, FLAT under 16x refinement. That is an O(1) truncation error at one node,
+    and it is the price of `w^T`-exactness: the wall node owns h/2, so a deposit crossing into it
+    from a full cell cannot be both mass-exact and pointwise-consistent under this kernel.
+
+    Consequence, measured on #1855's Gibbs fixture: the L-inf wall error is WORSE in a
+    mid-refinement band -- 1.28x at nx=81, peaking at 1.35x at nx=101 -- decaying to 1.02x by
+    nx=641, and up to 1.44x under a stronger drift (slope 2.0, nx=81). In 2D it is 1.27x at nx=81.
+    `L1` is equal or better everywhere, and the mass is exact everywhere. It does not grow under
+    refinement in any regime measured; it is a band, not a divergence.
 
     THIS IS HALF OF ONE DECISION; the other half is the diffusion wall. #708 removed exactly this
     weighting, on the ground that "SL theory uses sum(m)" and "Crank-Nicolson diffusion also
@@ -47,6 +67,16 @@ WHICH MASS THE KERNELS CONSERVE, AND WHY THE DISPATCHERS REWEIGHT (#2243).
     So #708's pairing was coherent and conserved the wrong functional. Do not change one half
     without the other, and do not read the kernels' `sum(m)` property as the solver's conservation
     property -- it is not, and has not been the one that matters since #2145.
+
+WHERE THE REWEIGHTING PAYS MOST: the PERIODIC seam, which has no wall at all.
+    `enforce_periodic_value_nd` folds the two coincident endpoints by their mean. Unweighted, the
+    splat deposits into both as if each owned a full cell, and the fold then HALVES the seam
+    density. Against a travelling decaying cosine on a periodic domain -- an external oracle with
+    no boundary anywhere -- the unweighted pairing DIVERGES and the weighted one is O(h):
+
+        unweighted   relLinf 2.39e-01 -> 3.29e-01 over nx 41..321   order -0.11 -0.14 -0.21
+        weighted     relLinf 1.79e-02 -> 2.03e-03                   order +0.98 +1.04 +1.12
+        mass drift   15-19%  ->  ~1e-14
 
 Module structure per issue #392:
     fp_sl_splatting.py - Splatting methods for adjoint semi-Lagrangian FP solver

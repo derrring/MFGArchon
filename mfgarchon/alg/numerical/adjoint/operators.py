@@ -4,14 +4,16 @@ Adjoint-consistent operator construction utilities.
 This module provides tools for constructing discrete operators that satisfy
 the adjoint relationship A_FP = A_HJB^T.
 
-WHICH INNER PRODUCT (#2243). Every adjointness statement in this module is taken in the GRID
+WHICH INNER PRODUCT (#2243). Every NEUMANN adjointness statement in this module is taken in the GRID
 MEASURE ``W = diag(w)``, ``w`` the trapezoid weights from `utils.numerical.quadrature`, and not in
 the uniform one. `A_FP = A_HJB^T` above is the uniform statement and is the one that does NOT hold
 at a Neumann wall: measured on `build_diffusion_matrix_1d` at N=7, ``|A - A^T| = 1.44e-02`` while
 ``|WA - (WA)^T| = 0``. That is the same substitution #2145 found behind ``1^T L = 0`` -- this grid
 is endpoint-inclusive, the wall lies ON the end node, and uniform weights are not the measure it
 carries. Before #2243 the wall row was ``half_wall`` and the two statements were the other way
-round, which is why this docstring used to say "symmetric".
+round, which is why this docstring used to say "symmetric". PERIODIC is the exception and is stated
+as bare symmetry throughout, correctly: it has no wall row, and measured it gives
+``max|A - A^T| = 0.000e+00`` against ``max|WA - (WA)^T| = 1.200e-03``.
 
 Key utilities:
 - Diffusion operator construction (self-adjoint in the grid measure; see above)
@@ -1076,11 +1078,9 @@ def _grid_measure_symmetry(A: sparse.spmatrix, spacings: tuple[NDArray, ...]) ->
     endpoint-inclusive, the end node owns h/2, and ``W`` is the inner product it carries. Used by
     the smoke block below, which asserted bare symmetry until #2243 moved the wall.
     """
-    from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
+    from mfgarchon.utils.numerical.quadrature import quadrature_weights_nd
 
-    weights = np.ones(1)
-    for coordinates in spacings:
-        weights = np.kron(weights, quadrature_weights_1d(np.asarray(coordinates, dtype=float)))
+    weights = quadrature_weights_nd(list(spacings)).ravel()
     weighted = sparse.diags(weights) @ sparse.csr_matrix(A)
     asymmetry = float(np.abs((weighted - weighted.T).toarray()).max())
     return asymmetry < 1e-12 * max(1.0, float(np.abs(weighted.toarray()).max())), asymmetry

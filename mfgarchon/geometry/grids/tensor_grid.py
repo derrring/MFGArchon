@@ -738,9 +738,7 @@ class TensorProductGrid(
                 f"not match the face {face_shape} of axis {axis}"
             )
         axes = [d for d in range(self._dimension) if d != axis]
-        weights = self.quadrature_weights(axes[0])
-        for d in axes[1:]:
-            weights = np.multiply.outer(weights, self.quadrature_weights(d))
+        weights = quadrature_weights_nd([self.coordinates[d] for d in axes])
         return (arr * weights).sum(axis=tuple(range(arr.ndim - nd, arr.ndim)))
 
     # ============================================================================

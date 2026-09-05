@@ -279,7 +279,7 @@ def test_the_nd_diffusion_matrix_conserves_the_grid_measure():
     kept = np.abs(a.T @ w - w).max() / np.abs(w).max()
     assert kept < 1e-12, (
         f"the nD diffusion operator does not preserve the grid measure ({kept:.3e}); its wall is "
-        f"not `mirror`. `half_wall` gives 3.9e-02 here -- and conserves the UNIFORM sum instead."
+        f"not `mirror`. `half_wall` gives 1.040e-02 here -- and conserves the UNIFORM sum instead."
     )
     # The other half: it must NOT conserve the uniform sum, or the wall did not move. Neither wall
     # conserves both, so without this the check passes on `half_wall` under a different weighting.
