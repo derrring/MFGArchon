@@ -76,12 +76,46 @@ def test_dpp_error_does_not_grow_with_the_potential(v_amp):
     )
 
 
+# The quantity below is a DISAGREEMENT between two schemes, not either one's error, and the
+# threshold has to come from that. Both are first order, so the difference is first order and its
+# successive ratio approaches 2 from BELOW; only a coincidence puts it above 2.
+#
+# It sat above 2 until #2243, and the coincidence is measurable. Against a refined reference
+# (HJBFDMSolver at nx=1281, nt=640) at nx=81:
+#
+#     SL with the pre-#2243 half wall   4.779e-03      HJBFDMSolver, same grid   5.047e-03
+#     SL with the mirror wall           1.951e-04
+#
+# The two pre-#2243 columns are the same size because both schemes were carrying an O(h) error of
+# the same magnitude -- NOT because either was accurate. Their DIFFERENCE was 2.676e-04, twenty
+# times smaller than either error, and that near-cancellation is what the old 2.0 bar was riding
+# on: it passed with a margin of 0.45% (measured ratio 2.009). Since #2243 the SL solution is 24x
+# closer to the reference than it was, so the difference below is now essentially FDM's own error
+# and its ratio is the honest first-order one.
+#
+# Measured ratios over nx = 81 -> 161 -> 321 -> 641:
+#
+#     |SL_half   - FDM|   2.009, 2.007, 2.004     <- rides the cancellation
+#     |SL_mirror - FDM|   1.959, 1.980, 1.990     <- first order, approaching 2 from below
+#
+# The defect this test exists to reject is a PLATEAU: pre-#1645 the error was ``V + O(h)`` and the
+# ratios were 1.0018 / 1.0007. 1.70 rejects that with a 70% margin and clears the measured 1.959
+# with 15% to spare. It is not a loosened tolerance -- the old number described a cancellation that
+# no longer exists, and 2.0 was never a property of a first-order difference.
+_MIN_REFINEMENT_RATIO = 1.70
+
+
 def test_dpp_error_converges_under_refinement():
     """Convergence, not just smallness: the pre-fix error PLATEAUED (ratios 1.0018 / 1.0007).
 
     A tolerance at one resolution cannot distinguish a wrong limit from a merely-small error, so
     this guards a failure class the coarse detection tests above cannot: a wrong limit whose
     magnitude happens to sit under their tolerance.
+
+    There is no manufactured solution available here to measure against instead: the DPP path
+    refuses ``source_term`` (pinned in ``test_sl_mms_anisotropic_2198.py``), so an independent
+    scheme at the same grid is the only reference this path has. See the block above for what that
+    costs and where the threshold comes from.
 
     Deliberately NOT marked ``slow``. It costs +3.4 s on the local gate under ``-n auto`` (xdist
     absorbs its ~39 s serial cost), and ``@slow`` currently means "runs nowhere": nightly aborts
@@ -93,4 +127,8 @@ def test_dpp_error_converges_under_refinement():
         fdm = _solve(HJBFDMSolver, 2.0, nx, nt)
         errors.append(float(np.abs(sl - fdm).max()))
 
-    assert errors[1] < errors[0] / 2.0, f"error did not at least halve under refinement: {errors}"
+    ratio = errors[0] / errors[1]
+    assert ratio > _MIN_REFINEMENT_RATIO, (
+        f"the SL-FDM difference is not converging: ratio {ratio:.4f} over {errors}. A plateau -- "
+        f"the #1645 defect, error = V + O(h) -- measures 1.0018; first order measures 1.959 here."
+    )

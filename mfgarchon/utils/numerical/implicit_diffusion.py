@@ -35,19 +35,34 @@ THIS IS NOT AN OPEN TRADE-OFF; #2145 SETTLED IT. `operators.differential.laplaci
 argument in full: on this grid ``w^T L = 0`` is the statement that holds, ``1^T L = 0`` is column
 conservation under the wrong weights, and the half wall's accuracy cost "was never the price of
 conservation; it was the price of the wrong measure". #2145 moved both of that operator's branches
-onto the mirror stencil. The SL/CN family never followed, which is why five of the six call sites
-here still take ``half_wall``.
+onto the mirror stencil.
 
-``half_wall`` is therefore kept as a name for what those five already do, NOT as a defensible
-alternative. Switching them is a numerical change that moves every value function and every density
-in the library, so it is its own change with its own evidence, not a line in a consolidation. What
-this module does is make the choice visible at each call site and give it one definition.
+#2243 MOVED THE REST. Every call site OF THIS MODULE now names ``mirror``; ``half_wall`` has none.
+Measured in the PR that closed #2243 -- the wall EOC 0.73/0.87/0.94 -> 2.00/2.00/2.00 through the
+shipped routines, and `FPSLSolver` landing exactly on `FPSLJacobianSolver`, which had ``mirror``
+from the start.
 
-One caution while both exist: the library also carries two mass conventions, and they pair with the
-two walls. `utils.numerical.flux_diagnostics.compute_mass_conservation_error` uses
-``sum(M) * cell_volume``, which ``half_wall`` conserves; eleven other sites use ``np.trapezoid``,
-which ``mirror`` conserves. A solver on one wall checked against the other convention will report
-drift that is the convention's, not the solver's.
+**That is a statement about this module's consumers and NOT about the library.** A separate family
+implements the same wall through ghost padding rather than through a stencil, and is still on the
+half wall: `geometry.boundary` ZeroGradientCalculator, `operators.stencils.laplacian_with_bc`,
+`operators.differential.LaplacianOperator.__call__`/`_matvec` (whose own `as_scipy_sparse` is on
+the mirror, so that class answers differently by route), `operators.differential.DiffusionOperator`,
+and `base_hjb._compute_laplacian_1d` -- which is HJB-FDM's residual path. They were consistent with
+the SL/CN family before #2243 and are not now. Filed separately; do not read the paragraph above as
+covering them.
+
+``half_wall`` REMAINS A NAME, with no caller, and deliberately: it is what makes the pin in
+`tests/unit/test_utils/test_neumann_cn_wall_2237.py` discriminating. That test asserts each wall
+conserves its own measure AND measurably not the other, so deleting the loser would leave a check
+that passes on any wall. Keeping it costs one dict entry; it is not an offer, and `treatment` has
+no default so nothing acquires it by omission.
+
+One caution that outlives the switch: the library carries two mass conventions, and they pair with
+the two walls. `utils.numerical.flux_diagnostics.compute_mass_conservation_error` uses
+``sum(M) * cell_volume``, which ``half_wall`` conserved; the ``np.trapezoid`` sites are the ones
+``mirror`` conserves. Since #2243 the solvers are all on ``mirror``, so a mass check written with
+the rectangle rule will report drift that is the convention's and not the solver's -- which is
+exactly the shape of the eight failures #2233 hit and #2189 recorded after #2145.
 
 What each wall does is pinned in `tests/unit/test_utils/test_neumann_cn_wall_2237.py`, against both
 weightings and against an exact heat solution -- oracles independent of the scheme.
@@ -66,11 +81,39 @@ if TYPE_CHECKING:
 
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
-__all__ = ["NeumannCNStencil", "WallTreatment", "cn_alpha", "neumann_cn_step", "neumann_cn_stencil"]
+__all__ = [
+    "NeumannCNStencil",
+    "WallTreatment",
+    "cn_alpha",
+    "neumann_cn_step",
+    "neumann_cn_stencil",
+    "wall_factor",
+]
 
 WallTreatment = Literal["half_wall", "mirror"]
 
 _WALL_FACTOR: dict[str, float] = {"half_wall": 1.0, "mirror": 2.0}
+
+
+def wall_factor(treatment: WallTreatment) -> float:
+    """How many interior coefficients the wall row carries: 1.0 for ``half_wall``, 2.0 for ``mirror``.
+
+    The whole difference between the two treatments is this number, so it has one definition. It is
+    exposed separately from `neumann_cn_stencil` because a consumer may hold the wall decision
+    without holding a diffusion number: `adjoint.operators._build_1d_laplacian` assembles the bare
+    negative Laplacian (interior row ``[-1, 2, -1]``, wall row ``[factor, -factor]``) and ``alpha``
+    enters later, at the caller. Before #2243 that site carried its own ``1.0``, which is how it
+    stayed outside #2237's census.
+    """
+    factor = _WALL_FACTOR.get(treatment)
+    if factor is None:
+        raise ValueError(
+            f"treatment must be one of {sorted(_WALL_FACTOR)}, got {treatment!r}. The two are not "
+            f"interchangeable and neither is a safe default: 'half_wall' conserves sum(m) and is "
+            f"first order at the wall; 'mirror' conserves the trapezoid integral -- the mass on an "
+            f"endpoint-inclusive grid, per #2145 -- and is second order."
+        )
+    return factor
 
 
 @dataclass(frozen=True)
@@ -126,18 +169,14 @@ def neumann_cn_stencil(
 
     ``treatment`` selects the wall row and nothing else; the interior is identical either way. It
     is required rather than defaulted: the defect this module was written for is six call sites
-    each carrying a wall nobody had to state, and a default would let a seventh do the same. See
-    the module docstring for what each conserves, measured. Callers holding ``alpha`` already --
-    the ADI sweep does -- pass it straight in; nothing here needs ``dt``, ``sigma`` or ``dx``.
+    each carrying a wall nobody had to state, and a default would let a seventh do the same. There
+    WAS a seventh -- `adjoint.operators._build_1d_laplacian`, found while doing #2243, invisible to
+    #2237's census because it holds the wall without holding ``alpha``; it now shares this module's
+    `wall_factor`. See the module docstring for what each treatment conserves, measured. Callers
+    holding ``alpha`` already -- the ADI sweep does -- pass it straight in; nothing here needs
+    ``dt``, ``sigma`` or ``dx``.
     """
-    factor = _WALL_FACTOR.get(treatment)
-    if factor is None:
-        raise ValueError(
-            f"treatment must be one of {sorted(_WALL_FACTOR)}, got {treatment!r}. The two are not "
-            f"interchangeable and neither is a safe default: 'half_wall' conserves sum(m) and is "
-            f"first order at the wall; 'mirror' conserves the trapezoid integral -- the mass on an "
-            f"endpoint-inclusive grid, per #2145 -- and is second order."
-        )
+    factor = wall_factor(treatment)
     implicit_off = -theta * alpha
     explicit_off = (1.0 - theta) * alpha
     return NeumannCNStencil(

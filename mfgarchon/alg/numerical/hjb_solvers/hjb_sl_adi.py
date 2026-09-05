@@ -78,11 +78,16 @@ def solve_crank_nicolson_diffusion_1d(
     # and 2.22e-16 against `adjoint.operators.build_diffusion_matrix_1d`. Each of the five carried
     # its own comment justifying a choice the other four had also made without knowing.
     #
-    # `half_wall` is what this function already implemented, so routing here is bit-identical --
-    # verified, not asserted. It is NOT endorsed: it is the wall #2145 removed from
-    # `operators.differential.laplacian`, first order here against second for `mirror`. Switching
-    # it moves every value function in the library, so it is #2243, not this change.
-    return neumann_cn_step(U_star, dt, sigma, dx, treatment="half_wall", theta=theta)
+    # `mirror` since #2243. Until then this carried `half_wall` -- the wall #2145 had already
+    # removed from `operators.differential.laplacian` for conserving the wrong measure. Against an
+    # exact heat solution the wall goes EOC 0.73/0.87/0.94 -> 2.00/2.00/2.00 and the error at
+    # nx=161 drops 2.05e-03 -> 1.22e-06.
+    #
+    # A value function has no mass to conserve, so the trade #2145 weighed does not even arise
+    # here: the half wall was paying an order at the wall and buying nothing. The rate of the SL
+    # solve as a whole is still capped at 1 by the transport, so what this buys is the constant,
+    # not the order -- see #2243's PR for the measured MMS levels.
+    return neumann_cn_step(U_star, dt, sigma, dx, treatment="mirror", theta=theta)
 
 
 def _crank_nicolson_periodic_1d(
@@ -493,10 +498,14 @@ def solve_1d_diffusion_along_axis(
 
     # Coefficients come from the one owner (#2237). This sweep and four other implementations were
     # each deriving them, and agreed on every number except the wall row -- which is why the wall is
-    # the only thing `treatment` selects there. `half_wall` reproduces what this function already
-    # did, to 1.11e-16 (the batched Thomas below against a direct banded solve). On why it is kept
-    # rather than endorsed, see `solve_crank_nicolson_diffusion_1d` above and #2243.
-    st = neumann_cn_stencil(alpha, treatment="half_wall", theta=theta)
+    # the only thing `treatment` selects there. `mirror` since #2243, matching the 1D path above.
+    #
+    # The two must not diverge, and the reason is the CALLER, not this module: `adi_diffusion_step`
+    # below sweeps every axis through here unconditionally and never reaches
+    # `solve_crank_nicolson_diffusion_1d`, while `HJBSemiLagrangianSolver._adi_diffusion_step`
+    # routes d == 1 to that routine and d >= 2 to this one. So one solver reaches both walls
+    # depending only on the dimension of the problem it was handed.
+    st = neumann_cn_stencil(alpha, treatment="mirror", theta=theta)
 
     # Build RHS vectorized: b = (I + (1-theta)*alpha*L) * u, shape (n_lines, N_axis)
     b = np.zeros_like(U_2d)
@@ -545,11 +554,8 @@ def thomas_solve_batched(
 
     # Build full diagonal arrays with boundary modifications
     main_diag = np.full(N, st.implicit_main)
-    # The wall rows, and the only place the treatment acts. `half_wall` carries HALF the interior
-    # coefficient, which costs order at the wall: EOC 0.73/0.87/0.94 against 2.00/2.00/2.00 for
-    # `mirror`, on an exact heat solution. Kept as it was because switching it moves every value
-    # function in the library (#2243); the alternative now has a name and a measured cost, so the
-    # choice is stated rather than inherited.
+    # The wall rows, and the only place the treatment acts. `st` decides which; the assembly here
+    # is the same either way, which is what let #2237's census reconstruct it from the basis.
     main_diag[0] = st.implicit_wall_main
     main_diag[-1] = st.implicit_wall_main
 

@@ -488,14 +488,16 @@ class FPSLJacobianSolver(BaseFPSolver):
         # Step 2: Diffusion via Crank-Nicolson
         # ====================================
         # `mirror` is the ghost-point reflection m[-1] = m[1] this block already implemented, now
-        # named and owned (#2237). Of the six implementations of this step in the library, this is
-        # the only one that has it -- the other five carry the wall row at half the interior
-        # coefficient, and reconstructed from their action on the standard basis the gap is
-        # 2.72e-02.
+        # named and owned (#2237). It was the ONLY site in the library that had it: the other five
+        # carried the wall row at half the interior coefficient, and reconstructed from their action
+        # on the standard basis the gap was 2.72e-02. #2243 moved them here rather than the other
+        # way, so the line below is no longer the odd one out -- and the ordering hazard it created
+        # is gone with it. Until #2243 this @deprecated class held the only correct wall in the
+        # library and removing it would have deleted that; now `FPSLSolver` has it too, which is the
+        # precondition #2237's close-out put on #2238.
         #
-        # This solver has the right one, and the deprecated class is the one that has it. On an
-        # endpoint-inclusive grid the wall lies ON the end node and that node owns h/2, so the mass
-        # is the trapezoid integral -- #2145's decision, which `operators.differential.laplacian`
+        # On an endpoint-inclusive grid the wall lies ON the end node and that node owns h/2, so the
+        # mass is the trapezoid integral -- #2145's decision, which `operators.differential.laplacian`
         # carries in full. `mirror` holds it to 3.3e-16 at n=21 where the half wall drifts it by
         # 1.2e-01, and it is second order at the wall against first (EOC 2.00 against 0.94).
         #
