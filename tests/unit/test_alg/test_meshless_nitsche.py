@@ -15,9 +15,17 @@ import numpy as np
 from scipy.linalg import eigvalsh
 from scipy.sparse.linalg import spsolve
 
-from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
+from mfgarchon.alg.numerical.meshless_galerkin.discretization import (
+    MeshlessGalerkinDiscretization,
+    discretization_from_cloud,
+)
 from mfgarchon.alg.numerical.meshless_galerkin.mls_basis import shape_functions_and_grads
-from mfgarchon.alg.numerical.meshless_galerkin.nitsche import assemble_nitsche_terms
+from mfgarchon.alg.numerical.meshless_galerkin.nitsche import (
+    _domain_bounds,
+    _segment_quadrature,
+    assemble_nitsche_terms,
+    dirichlet_segments,
+)
 from mfgarchon.alg.numerical.meshless_galerkin.quadrature import boundary_tensor_gauss
 from mfgarchon.geometry.boundary import BoundaryConditions
 from mfgarchon.geometry.boundary.types import BCSegment, BCType
@@ -121,3 +129,121 @@ class TestManufacturedConvergence:
         """u(x)=1+2x, f=0, g=(1,3): exercises the f_sym + f_pen data path; reproduced ~exactly."""
         err, _, _ = _poisson_1d(101, lambda x: 1.0 + 2.0 * x, lambda x: np.zeros_like(x))
         assert err < 1e-5
+
+
+def _poisson_2d(n: int, gamma: float = 100.0, degree: int = 2):
+    """Manufactured ``-D lap(u) = f`` on the unit square, ``u = sin(pi x) sin(pi y)``.
+
+    Homogeneous Dirichlet imposed weakly on all four faces; structured ``n x n`` cloud,
+    ``rho = 3.5 h``. Returns the RMS error of the RECONSTRUCTED field ``phi @ U``.
+    """
+    ax = np.linspace(0.0, 1.0, n)
+    nodes = np.stack([m.ravel() for m in np.meshgrid(ax, ax, indexing="ij")], axis=1)
+    disc = discretization_from_cloud(nodes, delta=3.5 / (n - 1), degree=degree, n_gauss=6)
+    K, M = disc.stiffness(), disc.mass()
+    bc = _dirichlet_bc(dict.fromkeys(("x_min", "x_max", "y_min", "y_max"), 0.0), dim=2)
+    N_block, _ = assemble_nitsche_terms(disc, bc, D, gamma, n_gauss=6, include_data=True)
+    f = D * 2.0 * np.pi**2 * np.sin(np.pi * nodes[:, 0]) * np.sin(np.pi * nodes[:, 1])
+    U = spsolve((D * K + N_block).tocsr(), M @ f)
+    phi_nodes, _ = shape_functions_and_grads(nodes, nodes, disc._rho, disc._exps, "numpy")
+    u_exact = np.sin(np.pi * nodes[:, 0]) * np.sin(np.pi * nodes[:, 1])
+    return float(np.sqrt(np.mean((phi_nodes @ U - u_exact) ** 2)))
+
+
+class TestBoundaryRuleResolvesTheSupportScale:
+    """#1679: the Dirichlet boundary rule must refine with the cloud, not with the domain.
+
+    The Nitsche boundary integrand is ``phi_i phi_j`` and ``phi_i (n . grad phi_j)``, which
+    varies on the MLS support scale ``rho``. ``rho`` shrinks under refinement, so a rule
+    whose resolution does not follow it resolves strictly less of the integrand at every
+    level. Before the fix, ``_segment_quadrature`` took ``boundary_tensor_gauss``'s
+    ``n_cells=1`` default: the 2-D rule stayed at 24 points from n=11 to n=26 while the
+    volume rule grew 3600 -> 22500, and the manufactured 2-D EOC ran -0.49 / -0.93 / -0.84.
+
+    ``d >= 2`` IS REQUIRED and is not a preference. ``quadrature.py`` builds a 1-D face as a
+    single point of unit surface measure, on a branch that never reads ``n_cells``, so a 1-D
+    fixture cannot fail either assertion however the rule is sized -- which is why the 1-D
+    EOC test above stayed green through the whole defect.
+    """
+
+    # (n, rho/h). The last two deliberately break the collinearity of the first five:
+    # with rho = 3.5h at every level, rho and cloud size move together, and a rule keyed on
+    # NODE COUNT alone reproduces the shipped n_cells exactly (4, 6, 9, 12, 15) -- so the
+    # ladder cannot tell "scales with 1/rho" from "scales with the cloud". At (21, 2.0) the
+    # node-count rule gives 12 where the shipped rule gives 20, and at (11, 6.0) it gives 6
+    # where the shipped rule gives 4. Measured; rho/h = 1.5 is not usable here because the
+    # MLS moment matrix is ill-conditioned before the boundary rule is reached.
+    LEVELS = ((7, 3.5), (11, 3.5), (16, 3.5), (21, 3.5), (26, 3.5), (21, 2.0), (11, 6.0))
+    N_GAUSS = 6
+    N_FACES = 4  # the unit square's four bounding-box faces
+
+    def _boundary_points(self, n, rho_over_h):
+        """``(Q_b, rho, max_side)`` from the SHIPPED path, with the volume rule stubbed out.
+
+        ``_segment_quadrature`` reads only ``rho``/``dim``/``dof_coordinates``, so the volume
+        quadrature is replaced by a 1-point dummy: the assertion is about the boundary rule,
+        and building the real volume rule costs ~5 s at n=26 for something never read. The
+        stub was checked to produce byte-identical ``x_b``/``w_b``/``n_b`` against
+        ``discretization_from_cloud`` at every level.
+
+        ``max_side`` comes from ``_domain_bounds`` rather than a hard-coded 1.0, so the two
+        do not silently disagree if the fixture ever stops being the unit square.
+        """
+        ax = np.linspace(0.0, 1.0, n)
+        nodes = np.stack([m.ravel() for m in np.meshgrid(ax, ax, indexing="ij")], axis=1)
+        rho = rho_over_h / (n - 1)
+        disc = MeshlessGalerkinDiscretization(nodes, rho, 2, np.array([[0.5, 0.5]]), np.array([1.0]), backend="numpy")
+        bc = _dirichlet_bc(dict.fromkeys(("x_min", "x_max", "y_min", "y_max"), 0.0), dim=2)
+        bounds = _domain_bounds(disc)
+        q_b = sum(len(_segment_quadrature(s, disc, bounds, self.N_GAUSS)[0]) for s in dirichlet_segments(bc))
+        return q_b, rho, max(hi - lo for lo, hi in bounds)
+
+    def test_the_rule_holds_two_cells_per_support_radius_at_every_level(self):
+        """The contract, asserted directly -- NOT the raw point count.
+
+        A growing count is not the property: a rule can add points while still resolving
+        *less* of the support scale. Measured: with the coefficient halved the counts go
+        [24, 48, 72, 72] -- monotone, so a count-only pin passes -- while points per support
+        radius decay 4.20 -> 3.15 and the manufactured EOC reaches -9.19 at n=21.
+
+        So assert what the formula promises: ``n_cells >= 2 * max_side / rho``, i.e. at least
+        two cells, hence ``2 * n_gauss`` quadrature points, within every support radius along
+        a face.
+
+        This pins the CONTRACT, not convergence, and deliberately so: measured, it fires on
+        the pre-#1679 rule (2.10 at n=11 down to 0.84 at n=26, against a floor of 12) and on
+        coefficients 0.5, 1.0 and 1.5, passing only at the shipped 2.0. Coefficient 1.0 does
+        still converge, so this is stricter than "it converges" -- weakening the constant is
+        exactly the decision that should have to trip a test and be re-argued. Retirement
+        condition: it trips whenever the rule stops delivering two cells per support radius.
+        """
+        floor = 2 * self.N_GAUSS
+        observed = {}
+        for n, ratio in self.LEVELS:
+            q_b, rho, max_side = self._boundary_points(n, ratio)
+            observed[(n, ratio)] = (q_b / self.N_FACES) * rho / max_side
+        worst = min(observed.values())
+        assert worst >= floor, (
+            f"boundary rule resolves less than {floor} points per support radius: {observed} "
+            f"(pre-#1679 this ran 2.10 at n=11 down to 0.84 at n=26)"
+        )
+
+    def test_manufactured_2d_dirichlet_converges(self):
+        """External oracle: ``u = sin(pi x) sin(pi y)`` is exact and computed independently.
+
+        Measured at the fix: rate +3.13 over n = 7 -> 11. Pinned at 1.5 because the claim is
+        that the scheme CONVERGES, not that it attains any particular order. With the boundary
+        rule pinned at one cell the same two levels give -4.24, so this cannot pass by accident.
+
+        What this does NOT catch on its own: a rule that is merely too coarse rather than
+        unscaled still converges over 7 -> 11 and only turns at n=21, which costs 16 s. The
+        assertion above is what covers that case, and it costs nothing.
+        """
+        errs = [_poisson_2d(n) for n in (7, 11)]
+        rate = np.log(errs[0] / errs[1]) / np.log((1 / 6) / (1 / 10))
+        # A rate alone is scale-free and a corrupted operator can converge fast to nonsense:
+        # zeroing every boundary weight makes A singular and gives errs ~ 2.8e+16 / 2.9e+14,
+        # rate +8.95, which passes a rate-only assertion. Measured. The floor is 14x above
+        # the shipped 7.07e-04 and 18 orders below that corruption.
+        assert errs[-1] < 1e-2, f"2-D Nitsche error is not small at n=11 (#1679): {errs}"
+        assert rate > 1.5, f"2-D Nitsche does not converge under refinement (#1679): rate {rate:+.2f}, errs {errs}"
