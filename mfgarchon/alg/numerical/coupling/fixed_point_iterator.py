@@ -930,41 +930,49 @@ class FixedPointIterator(BaseCouplingIterator):
             # fabricating a zero.
             mass_conservation_error = None
         else:
-            # #2157: the gate used to be `geometry.volume_element()` -- a different method from the
-            # one that supplies the number. Only `TensorProductGrid` had it, and only
-            # `TensorProductGrid` has `integrate`, so it was a spelling of "is this a
-            # TensorProductGrid" that would have refused any future geometry able to integrate.
-            # It now asks the question the comment always claimed to ask.
-            integrate = getattr(self.problem.geometry, "integrate", None)
-            if not callable(integrate):
-                # No measure, so no total mass, so no conservation error to report. None says "not
-                # measured"; 0.0 would be a valid measurement and must not stand in for one.
-                #
-                # The `np.sum(M)` fallback that used to sit here went with the old gate. Reaching it
-                # required a geometry with a volume element and no integral, which no class in this
-                # package has -- and it was the counting measure #2145 removed everywhere else.
-                mass_conservation_error = None
+            # #2188: a solver whose state holds information the grid density discards (e.g. how
+            # many particles are still alive) gets to report its own number instead of the
+            # generic one below, which cannot see it. None means "nothing solver-specific";
+            # every non-particle solver's default returns that, so this changes nothing for them.
+            solver_override = self.fp_solver.mass_conservation_error_override() if self.fp_solver is not None else None
+            if solver_override is not None:
+                mass_conservation_error = solver_override
             else:
-                try:
-                    mass_per_step = np.asarray(integrate(self.M), dtype=float)
-                except (ValueError, NotImplementedError):
-                    # `integrate` refuses a geometry that has no measure -- a single-node axis is the
-                    # case that exists. Found by independent review of #2145: without this, a
-                    # completed solve on a one-point grid threw from result construction.
+                # #2157: the gate used to be `geometry.volume_element()` -- a different method from the
+                # one that supplies the number. Only `TensorProductGrid` had it, and only
+                # `TensorProductGrid` has `integrate`, so it was a spelling of "is this a
+                # TensorProductGrid" that would have refused any future geometry able to integrate.
+                # It now asks the question the comment always claimed to ask.
+                integrate = getattr(self.problem.geometry, "integrate", None)
+                if not callable(integrate):
+                    # No measure, so no total mass, so no conservation error to report. None says "not
+                    # measured"; 0.0 would be a valid measurement and must not stand in for one.
                     #
-                    # The try is narrowed to this ONE call, which is what lets the deliberate
-                    # non-positive-mass raise below live outside it and escape. That used to need a
-                    # private `_MassNotMeasurableError` to climb out of a wider try; the sentinel is
-                    # gone because the structure now carries the distinction instead of a class.
+                    # The `np.sum(M)` fallback that used to sit here went with the old gate. Reaching it
+                    # required a geometry with a volume element and no integral, which no class in this
+                    # package has -- and it was the counting measure #2145 removed everywhere else.
                     mass_conservation_error = None
                 else:
-                    initial_mass = float(mass_per_step[0])
-                    if not np.isfinite(initial_mass) or initial_mass <= 0.0:
-                        raise ValueError(
-                            f"initial density has non-positive or non-finite total mass ({initial_mass!r}); "
-                            "mass conservation is undefined and the solve that produced it is already wrong"
-                        )
-                    mass_conservation_error = float(np.max(np.abs(mass_per_step / initial_mass - 1.0)))
+                    try:
+                        mass_per_step = np.asarray(integrate(self.M), dtype=float)
+                    except (ValueError, NotImplementedError):
+                        # `integrate` refuses a geometry that has no measure -- a single-node axis is the
+                        # case that exists. Found by independent review of #2145: without this, a
+                        # completed solve on a one-point grid threw from result construction.
+                        #
+                        # The try is narrowed to this ONE call, which is what lets the deliberate
+                        # non-positive-mass raise below live outside it and escape. That used to need a
+                        # private `_MassNotMeasurableError` to climb out of a wider try; the sentinel is
+                        # gone because the structure now carries the distinction instead of a class.
+                        mass_conservation_error = None
+                    else:
+                        initial_mass = float(mass_per_step[0])
+                        if not np.isfinite(initial_mass) or initial_mass <= 0.0:
+                            raise ValueError(
+                                f"initial density has non-positive or non-finite total mass ({initial_mass!r}); "
+                                "mass conservation is undefined and the solve that produced it is already wrong"
+                            )
+                        mass_conservation_error = float(np.max(np.abs(mass_per_step / initial_mass - 1.0)))
 
         # Construct result
         result = SolverResult(

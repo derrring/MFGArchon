@@ -225,7 +225,7 @@ class FPParticleSolver(BaseFPSolver):
         self._mass_target: float | None = None
         self._mass_weights: np.ndarray | None = None
         self._mass_factor: float | None = None
-        self.M_particles_trajectory: np.ndarray | None = None
+        self.M_particles_trajectory: np.ndarray | list | None = None
         # Issue #1412: per-solve volatility override (the resolved scalar sigma the grid-drift
         # paths use), set by solve_fp_system instead of mutating the shared problem.sigma.
         # None => use problem.sigma. Explicit init for object-shape stability (CLAUDE.md).
@@ -766,6 +766,71 @@ class FPParticleSolver(BaseFPSolver):
 
         # Backward compatible: return grid density only
         return M_density_on_grid
+
+    def mass_conservation_error_override(self) -> float | None:
+        """Fraction of particles absorbed, computed from `M_particles_trajectory` rather than
+        the KDE-reconstructed grid density (#2188): see `BaseFPSolver.mass_conservation_error_override`
+        for why the grid density cannot see this at all.
+
+        Same functional form as the grid-based measurement it replaces --
+        `max_t |count_t / count_0 - 1|` in place of `max_t |mass_t / mass_0 - 1|` -- applied to
+        the one quantity the grid projection throws away: how many particles are still alive.
+
+        THREE representations of "how many survived", not two -- the second was found only by
+        running `preserve_indices=True` and checking, not by reading the docstring of
+        `_finalize_particle_solve`, which does not mention it:
+
+        1. Non-absorbing BC: a fixed-shape array (Nt, num_particles[, dim]). Every slice has the
+           same length and no NaN. Correctly gives 0.0 -- no-flux absorbs nothing.
+        2. Absorbing BC, `preserve_indices=False` (compact removal, the default): a list of
+           variable-length arrays, one per timestep. The array's own length IS the surviving
+           count.
+        3. Absorbing BC, `preserve_indices=True`: ALSO a list, but every entry has the SAME
+           length -- absorbed particles are marked NaN in place rather than dropped, so
+           `len(t)` is constant and reads as zero absorption. Counting by length alone silently
+           reproduces #2188 one representation down. The count that matters is non-NaN rows.
+        """
+        trajectory = self.M_particles_trajectory
+        if trajectory is None:
+            # No solve has run on this instance yet, so there is nothing of this solver's own to
+            # report. This is the ONE honest use of None here: the caller falls through to the
+            # generic measurement, which is equally undefined at this point.
+            return None
+        slices = trajectory if isinstance(trajectory, list) else [trajectory[t] for t in range(trajectory.shape[0])]
+        counts = np.array([self._surviving_particle_count(s) for s in slices], dtype=float)
+        # `counts.size == 0` before indexing counts[0]: an empty trajectory would otherwise raise
+        # IndexError here rather than the ValueError this branch is written to raise. Unreachable
+        # from a real solve, which always records at least the initial slice -- but the guard and
+        # the index have to be in this order for the designed error to be the one that fires.
+        initial_count = counts[0] if counts.size else 0.0
+        if initial_count <= 0:
+            # RAISE rather than return None, and the asymmetry with the `trajectory is None` case
+            # above is the point. `None` does not mean "not measurable" to the caller -- it means
+            # "no override, use the generic grid measurement", which for this solver is exactly
+            # the KDE-on-the-grid path #2188 discredited. Returning None here handed a solve that
+            # started with zero particles back to that path, which duly produced a plausible
+            # float (measured: 0.875) for a configuration carrying no density at all.
+            #
+            # Symmetric with the grid branch in `FixedPointIterator`, which raises ValueError on a
+            # non-positive initial mass rather than reporting one: a solve with no mass to conserve
+            # is already wrong, and saying so is the only honest answer.
+            raise ValueError(
+                f"the particle trajectory starts with {int(initial_count)} live particles, so mass "
+                "conservation is undefined and the solve that produced it is already wrong "
+                "(FPParticleSolver(num_particles=0), or every particle absorbed before the first "
+                "recorded step)"
+            )
+        return float(np.max(np.abs(counts / initial_count - 1.0)))
+
+    @staticmethod
+    def _surviving_particle_count(particles_at_t: np.ndarray) -> int:
+        """Live particles at one timestep: absorption either shrinks the array (compact removal)
+        or marks a row NaN in place (`preserve_indices=True`) -- length alone sees only the
+        first. A row counts as absorbed if ANY of its coordinates is NaN."""
+        arr = np.asarray(particles_at_t)
+        if arr.ndim <= 1:
+            return int(np.sum(~np.isnan(arr)))
+        return int(np.sum(~np.isnan(arr).any(axis=-1)))
 
     def _create_timestep_range(self, n_steps: int, desc: str = "FP Particle"):
         """

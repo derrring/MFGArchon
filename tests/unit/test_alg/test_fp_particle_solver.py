@@ -63,10 +63,16 @@ class TestFPParticleSolverInitialization:
         assert solver.fp_method_name == "Particle"
         assert solver.num_particles == 5000
         assert solver.kde_bandwidth == "scott"
-        # NONE since #2181. ALL pins every slice on the measure SolverResult.mass_conservation_error
-        # reports, making it identically round-off -- conservation by fiat, the shape #1683 removed
-        # from the FDM, GFDM and network FP paths. INITIAL_ONLY was removed in the same change: it
-        # was bitwise identical to NONE, because pinning the calibration slice IS calibrating on it.
+        # NONE since #2181. ALL pins every slice on the GRID measure, making that measure
+        # identically round-off -- conservation by fiat, the shape #1683 removed from the FDM,
+        # GFDM and network FP paths. INITIAL_ONLY was removed in the same change: it was bitwise
+        # identical to NONE, because pinning the calibration slice IS calibrating on it.
+        #
+        # [UPDATED #2188] This no longer describes SolverResult.mass_conservation_error: since
+        # #2188 the particle path reports absorption (a particle count), not the grid measure, so
+        # the field reads 0.0 under BOTH normalisations. Measured: NONE and ALL both report 0.0
+        # while the hand-computed grid drift moves 5.85e-03 -> 2.22e-16. The fiat concern above
+        # is about the grid measure itself and stands; it is just no longer what the field shows.
         assert solver.kde_normalization == KDENormalization.NONE
         # Default BC comes from geometry (TensorProductGrid), which is "no_flux"
         assert solver.boundary_conditions.type == "no_flux"

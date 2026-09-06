@@ -156,8 +156,10 @@ class TestFPParticleSolverBasic:
         #
         # What is true now: t=0 is pinned exactly to the caller's mass on the GRID measure, and every
         # later slice carries one factor, so BOTH functionals drift after t=0. Neither is held flat.
-        # The bound below is on the grid measure because that is the one `problem.initial_mass` and
-        # `SolverResult.mass_conservation_error` report.
+        # The bound below is on the grid measure because that is the one `problem.initial_mass`
+        # reports. ([UPDATED #2188] `SolverResult.mass_conservation_error` used to report it too;
+        # on the particle path it now reports absorption instead, so this bound is checked here by
+        # hand rather than read off that field.)
         assert np.max(np.abs(masses / target - 1.0)) < 1e-2, (
             f"mass drifted by {np.max(np.abs(masses / target - 1.0)):.2e} from the initial mass"
         )
