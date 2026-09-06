@@ -4,17 +4,35 @@ Translator: MFGSolverConfig fields -> solver constructor kwargs.
 Maps validated config.hjb / config.fp / config.picard fields to the
 corresponding HJB/FP/FixedPointIterator constructor kwargs (Issue #1155).
 
-Rule
-----
-Only pass fields whose value differs from the Pydantic config default.
-If equal to default: skip (let solver use its own default).
-If non-default with a clear mapping: thread it.
-If non-default with no mapping (unsupported or wrong scheme): raise
-  NotImplementedError with "Refs #1155".
+Rule (#2266)
+------------
+TWO questions, deliberately answered by two different tests.
 
-This design preserves backward compatibility: existing code that relies on
-solver-level defaults is unaffected unless the user explicitly sets a
-non-default config value.
+**What to thread** is a question about INTENT: pass a field the caller explicitly
+set, whatever its value -- ``field in cfg.model_fields_set``. The old rule compared
+against the Pydantic default and was sound only where that default equalled the
+solver constructor's, which for ``max_newton_iterations`` (10 vs 30) and
+``interpolation_method`` ('cubic' vs 'linear') it did not: a caller who wrote the
+config's own documented default silently got the solver's different value.
+
+**Whether to refuse as unmapped** is a question about EFFECT: would honouring this
+change anything? That still compares VALUES. Writing a field's own default into a
+YAML is ordinary practice -- this package's own documented example does it -- and
+asks for nothing the library is not already doing, so refusing it would be noise.
+A non-default value for a field with no mapping is a real request the library
+cannot satisfy, and raises NotImplementedError with "Refs #1155".
+
+A **scheme mismatch** -- an ``hjb.sl`` block under an FDM scheme, or an
+``fp.method`` that contradicts the scheme -- is refused on INTENT, because
+configuring a solver you are not using is an error at any value.
+
+``model_fields_set`` means "supplied by the caller", and two things have to hold for
+that to be true: a validator that assigns a derived default must un-record it (see
+``BaseConfig._forget_derived``), and a config dump must use ``exclude_unset`` so a
+``to_yaml``/``from_yaml`` round trip preserves it. Both are fixed alongside this.
+
+Backward compatibility is unchanged where it mattered: a config nobody has touched
+still threads nothing, so callers relying on solver defaults are unaffected.
 
 BackendConfig.type threading
 -----------------------------
@@ -47,7 +65,7 @@ def hjb_config_to_kwargs(
     hjb_cfg: HJBConfig,
     scheme: NumericalScheme,
 ) -> dict[str, Any]:
-    """Map HJBConfig non-default fields to HJB solver constructor kwargs.
+    """Map explicitly-set HJBConfig fields to HJB solver constructor kwargs.
 
     Parameters
     ----------
@@ -68,6 +86,8 @@ def hjb_config_to_kwargs(
         For non-default fields that cannot be applied to the selected scheme,
         or that have no current mapping.
     """
+    from mfgarchon.config.mfg_methods import FDMConfig, FEMConfig, WENOConfig
+    from mfgarchon.config.mfg_methods import HJBConfig as _DefaultHJBConfig
     from mfgarchon.types import NumericalScheme
 
     kwargs: dict[str, Any] = {}
@@ -132,12 +152,19 @@ def hjb_config_to_kwargs(
                 "In Safe/Auto mode the scheme selects the solver class. Refs #1155."
             )
 
-    if "accuracy_order" in hjb_cfg.model_fields_set:
+    # UNMAPPED-REFUSAL sites below compare VALUES, not `model_fields_set`, and the split is
+    # deliberate (#2266). Threading asks "did the caller express intent"; refusing-as-unmapped asks
+    # "would honouring this change anything". Writing a field's own default into a YAML -- standard
+    # practice, and what this package's own documented example does -- asks for nothing the library
+    # is not already doing, so refusing it would be noise. A non-default value IS a request the
+    # library cannot satisfy, and that still raises.
+    _hjb_d = _DefaultHJBConfig()
+    if hjb_cfg.accuracy_order != _hjb_d.accuracy_order:
         raise NotImplementedError(
             f"config.hjb.accuracy_order={hjb_cfg.accuracy_order} is not yet mapped to a solver kwarg. Refs #1155."
         )
 
-    if "boundary_conditions" in hjb_cfg.model_fields_set:
+    if hjb_cfg.boundary_conditions != _hjb_d.boundary_conditions:
         raise NotImplementedError(
             f"config.hjb.boundary_conditions={hjb_cfg.boundary_conditions!r} is "
             "not yet mapped to HJB solver kwargs. Refs #1155."
@@ -151,9 +178,7 @@ def hjb_config_to_kwargs(
         if hjb_cfg.fdm.model_fields_set:
             if not is_fdm_scheme:
                 raise NotImplementedError(
-                    f"config.hjb.fdm has non-default values but "
-                    f"scheme={scheme.value} does not use a FDM HJB solver. "
-                    "Refs #1155."
+                    f"config.hjb.fdm is configured but scheme={scheme.value} does not use a FDM HJB solver. Refs #1155."
                 )
             _fdm_hjb_map = {"upwind": "gradient_upwind", "central": "gradient_centered"}
             if "scheme" in hjb_cfg.fdm.model_fields_set:
@@ -164,7 +189,7 @@ def hjb_config_to_kwargs(
                         f"config.hjb.fdm.scheme={hjb_cfg.fdm.scheme!r} has no "
                         "mapping to HJBFDMSolver advection_scheme. Refs #1155."
                     )
-            if "time_stepping" in hjb_cfg.fdm.model_fields_set:
+            if hjb_cfg.fdm.time_stepping != FDMConfig().time_stepping:
                 raise NotImplementedError(
                     f"config.hjb.fdm.time_stepping={hjb_cfg.fdm.time_stepping!r} is not yet mapped. Refs #1155."
                 )
@@ -176,7 +201,7 @@ def hjb_config_to_kwargs(
         if hjb_cfg.gfdm.model_fields_set:
             if scheme != NumericalScheme.GFDM:
                 raise NotImplementedError(
-                    f"config.hjb.gfdm has non-default values but "
+                    f"config.hjb.gfdm is configured but "
                     f"scheme={scheme.value} does not use a GFDM HJB solver. "
                     "Refs #1155."
                 )
@@ -190,9 +215,7 @@ def hjb_config_to_kwargs(
         if hjb_cfg.sl.model_fields_set:
             if not is_sl_scheme:
                 raise NotImplementedError(
-                    f"config.hjb.sl has non-default values but "
-                    f"scheme={scheme.value} does not use a SL HJB solver. "
-                    "Refs #1155."
+                    f"config.hjb.sl is configured but scheme={scheme.value} does not use a SL HJB solver. Refs #1155."
                 )
             _map_sl_to_hjb_kwargs(hjb_cfg.sl, kwargs)
 
@@ -200,14 +223,14 @@ def hjb_config_to_kwargs(
     # WENO sub-config — not yet mapped
     # ------------------------------------------------------------------
     if hjb_cfg.weno is not None:
-        if hjb_cfg.weno.model_fields_set:
+        if hjb_cfg.weno != WENOConfig():
             raise NotImplementedError("config.hjb.weno is not yet mapped to HJBWENOSolver kwargs. Refs #1155.")
 
     # ------------------------------------------------------------------
     # FEM sub-config — element order comes from scheme, not config
     # ------------------------------------------------------------------
     if hjb_cfg.fem is not None:
-        if hjb_cfg.fem.model_fields_set:
+        if hjb_cfg.fem != FEMConfig():
             raise NotImplementedError(
                 "config.hjb.fem sub-config is not yet mapped to HJBFEMSolver "
                 "kwargs (element order is taken from the NumericalScheme). "
@@ -218,7 +241,7 @@ def hjb_config_to_kwargs(
 
 
 def _map_gfdm_to_hjb_kwargs(gfdm_cfg: Any, kwargs: dict[str, Any]) -> None:
-    """Map GFDMConfig non-default fields to HJBGFDMSolver kwargs (in-place)."""
+    """Map explicitly-set GFDMConfig fields to HJBGFDMSolver kwargs (in-place)."""
 
     if "delta" in gfdm_cfg.model_fields_set:
         kwargs["delta"] = gfdm_cfg.delta
@@ -272,7 +295,8 @@ def _map_gfdm_to_hjb_kwargs(gfdm_cfg: Any, kwargs: dict[str, Any]) -> None:
 
 
 def _map_sl_to_hjb_kwargs(sl_cfg: Any, kwargs: dict[str, Any]) -> None:
-    """Map SLConfig non-default fields to HJBSemiLagrangianSolver kwargs (in-place)."""
+    """Map explicitly-set SLConfig fields to HJBSemiLagrangianSolver kwargs (in-place)."""
+    from mfgarchon.config.mfg_methods import SLConfig as _SLDef
 
     _rk_map: dict[int, str] = {1: "explicit_euler", 2: "rk2", 4: "rk4"}
 
@@ -288,7 +312,7 @@ def _map_sl_to_hjb_kwargs(sl_cfg: Any, kwargs: dict[str, Any]) -> None:
                 f"values {list(_rk_map.keys())}. Refs #1155."
             )
 
-    if "cfl_number" in sl_cfg.model_fields_set:
+    if sl_cfg.cfl_number != _SLDef().cfl_number:
         raise NotImplementedError(
             f"config.hjb.sl.cfl_number={sl_cfg.cfl_number} is not yet mapped to "
             "HJBSemiLagrangianSolver params. Refs #1155."
@@ -304,7 +328,7 @@ def fp_config_to_kwargs(
     fp_cfg: FPConfig,
     scheme: NumericalScheme,
 ) -> dict[str, Any]:
-    """Map FPConfig non-default fields to FP solver constructor kwargs.
+    """Map explicitly-set FPConfig fields to FP solver constructor kwargs.
 
     Parameters
     ----------
@@ -324,6 +348,7 @@ def fp_config_to_kwargs(
     NotImplementedError
         For non-default fields that cannot be applied to the selected scheme.
     """
+    from mfgarchon.config.mfg_methods import FDMConfig, FEMConfig, NetworkConfig, ParticleConfig
     from mfgarchon.types import NumericalScheme
 
     kwargs: dict[str, Any] = {}
@@ -351,7 +376,7 @@ def fp_config_to_kwargs(
             # method cannot be reconciled with it. Fail loud rather than silently
             # discarding the user's intent (the scheme selects the FP solver class). Refs #1155.
             raise NotImplementedError(
-                f"config.fp.method={fp_cfg.method!r} is non-default but "
+                f"config.fp.method={fp_cfg.method!r} conflicts with "
                 f"scheme={scheme.value} has no FPConfig.method analog to validate "
                 "against (the scheme selects the FP solver class directly). Refs #1155."
             )
@@ -369,9 +394,7 @@ def fp_config_to_kwargs(
         if fp_cfg.fdm.model_fields_set:
             if not is_fdm_scheme:
                 raise NotImplementedError(
-                    f"config.fp.fdm has non-default values but "
-                    f"scheme={scheme.value} does not use a FDM FP solver. "
-                    "Refs #1155."
+                    f"config.fp.fdm is configured but scheme={scheme.value} does not use a FDM FP solver. Refs #1155."
                 )
             # FP needs divergence (conservative) form; HJB uses gradient form.
             _fdm_fp_map = {
@@ -386,7 +409,7 @@ def fp_config_to_kwargs(
                         f"config.fp.fdm.scheme={fp_cfg.fdm.scheme!r} has no "
                         "mapping to FPFDMSolver advection_scheme. Refs #1155."
                     )
-            if "time_stepping" in fp_cfg.fdm.model_fields_set:
+            if fp_cfg.fdm.time_stepping != FDMConfig().time_stepping:
                 raise NotImplementedError(
                     f"config.fp.fdm.time_stepping={fp_cfg.fdm.time_stepping!r} is not yet mapped. Refs #1155."
                 )
@@ -395,7 +418,7 @@ def fp_config_to_kwargs(
     # Particle sub-config: no current Safe/Auto scheme creates FPParticleSolver
     # ------------------------------------------------------------------
     if fp_cfg.particle is not None:
-        if fp_cfg.particle.model_fields_set:
+        if fp_cfg.particle != ParticleConfig():
             raise NotImplementedError(
                 "config.fp.particle has non-default values but no Safe/Auto mode "
                 "scheme creates FPParticleSolver. Use Expert Mode "
@@ -414,14 +437,14 @@ def fp_config_to_kwargs(
     # Network sub-config — not yet mapped
     # ------------------------------------------------------------------
     if fp_cfg.network is not None:
-        if fp_cfg.network.model_fields_set:
+        if fp_cfg.network != NetworkConfig():
             raise NotImplementedError("config.fp.network is not yet mapped. Refs #1155.")
 
     # ------------------------------------------------------------------
     # FEM sub-config — not yet mapped
     # ------------------------------------------------------------------
     if fp_cfg.fem is not None:
-        if fp_cfg.fem.model_fields_set:
+        if fp_cfg.fem != FEMConfig():
             raise NotImplementedError("config.fp.fem sub-config is not yet mapped to FPFEMSolver kwargs. Refs #1155.")
 
     return kwargs
@@ -479,17 +502,20 @@ def backend_config_to_kwargs(backend_cfg: BackendConfig) -> dict[str, Any]:
         ``backend`` entry if type is non-default; otherwise empty.
     """
 
+    from mfgarchon.config.core import BackendConfig as _BackendDef
+
     kwargs: dict[str, Any] = {}
 
     if "type" in backend_cfg.model_fields_set:
         kwargs["backend"] = backend_cfg.type
 
-    if "device" in backend_cfg.model_fields_set:
+    _bk_d = _BackendDef()
+    if backend_cfg.device != _bk_d.device:
         raise NotImplementedError(
             f"config.backend.device={backend_cfg.device!r} is not yet threaded to solvers. Refs #1155."
         )
 
-    if "precision" in backend_cfg.model_fields_set:
+    if backend_cfg.precision != _bk_d.precision:
         raise NotImplementedError(
             f"config.backend.precision={backend_cfg.precision!r} is not yet threaded to solvers. Refs #1155."
         )
@@ -505,10 +531,13 @@ def check_logging_config(logging_cfg: LoggingConfig) -> None:
     ensures users get a clear error rather than silent discard.
     """
 
+    from mfgarchon.config.core import LoggingConfig as _LogDef
+
+    _log_d = _LogDef()
     non_default = [
         f"{name}={getattr(logging_cfg, name)!r}"
         for name in ("level", "progress_bar", "save_intermediate", "output_dir")
-        if name in logging_cfg.model_fields_set
+        if getattr(logging_cfg, name) != getattr(_log_d, name)
     ]
     if non_default:
         raise NotImplementedError(

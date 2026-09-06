@@ -52,16 +52,19 @@ def load_solver_config(path: str | Path) -> SolverConfig:
 
         hjb:
           method: fdm
-          accuracy_order: 2
         fp:
-          method: particle
-          particle:
-            num_particles: 5000
+          method: fdm
         picard:
           max_iterations: 50
           tolerance: 1.0e-6
         backend:
           type: numpy
+
+    Every key you write is honoured (#2266), so ``hjb.method`` / ``fp.method`` must agree with
+    the scheme the solve uses -- in Safe and Auto mode the scheme selects the solver class, and
+    naming a different method is a contradiction rather than a preference. Auto mode selects an
+    FDM pair for a plain grid, which is why this example says ``fdm`` on both sides; pairing
+    ``fp.method: particle`` with it now raises instead of silently running FDM.
 
     A ``solver:``-wrapped YAML is a different format and this function refuses it by name
     rather than dropping the keys. Such files were an OmegaConf idiom; that layer was removed
@@ -131,8 +134,13 @@ def save_solver_config(config: SolverConfig, path: str | Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Dump config, excluding None values and using JSON-serializable format
-    config_dict = config.model_dump(exclude_none=True, mode="json")
+    # exclude_unset, not exclude_none (#2266): a saved config records what the CALLER set, so
+    # reloading it reproduces the same `model_fields_set` and the translator threads the same
+    # fields. Under exclude_none every field was written out, so `from_yaml` returned a config
+    # in which everything read as explicitly set -- and after #2266 that made a round-tripped
+    # config raise NotImplementedError on all four translator entry points. Use
+    # `model_dump(mode="json")` if you want the effective values rather than the supplied ones.
+    config_dict = config.model_dump(exclude_unset=True, mode="json")
 
     with open(path, "w") as f:
         yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False, indent=2, allow_unicode=True)

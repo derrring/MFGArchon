@@ -21,7 +21,7 @@ from mfgarchon.utils.deprecation import validate_kwargs
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.solver_result import SolverResult
 
-from .base_mfg import BaseCouplingIterator, assert_paired_solver_sigma, resolve_supported_backend
+from .base_mfg import BaseCouplingIterator, allocate_state_arrays, assert_paired_solver_sigma, resolve_backend
 from .fixed_point_utils import (
     check_convergence_criteria,
     diverged_value_function,
@@ -72,7 +72,9 @@ class FixedPointIterator(BaseCouplingIterator):
         use_anderson: Enable Anderson acceleration
         anderson_depth: Anderson acceleration memory depth
         anderson_beta: Anderson acceleration mixing parameter
-        backend: Backend name ('numpy', 'torch', 'jax', etc.)
+        backend: Backend NAME (resolved via ``create_backend``) or a backend OBJECT, or None.
+            Only backends whose arrays the loop can write into carry a solve -- jax and
+            torch are refused at allocation, naming #1922 (see ``allocate_state_arrays``).
         volatility_field: Optional diffusion override (float, array, or callable)
             - None: Use problem.sigma (default)
             - float: Constant diffusion
@@ -159,7 +161,7 @@ class FixedPointIterator(BaseCouplingIterator):
         # #2250: refuse at construction rather than as an AttributeError deep inside
         # solve(). Only None is supported -- see refuse_backend_selection for why resolving
         # the name was measured and rejected.
-        self.backend = resolve_supported_backend(backend, "FixedPointIterator")
+        self.backend = resolve_backend(backend, "FixedPointIterator")
         self.hjb_solver = hjb_solver
         self.fp_solver = fp_solver
         self.config = config
@@ -495,10 +497,10 @@ class FixedPointIterator(BaseCouplingIterator):
             self.U, self.M = warm_start
         else:
             # Cold start initialization
-            # #2250: self.backend is now always None (the only supported value), so the
-            # backend-allocation fork this replaced was unreachable and is gone with it.
-            self.U = np.zeros((num_time_steps, *shape))
-            self.M = np.zeros((num_time_steps, *shape))
+            # #2250: one owner for the allocation, so a backend that cannot carry a solve is
+            # refused HERE -- which is the only place that also sees a backend assigned after
+            # construction, as this repository's own acceleration example does.
+            self.U, self.M = allocate_state_arrays(self.backend, (num_time_steps, *shape), "FixedPointIterator")
 
             if num_time_steps > 0:
                 # Set boundary conditions

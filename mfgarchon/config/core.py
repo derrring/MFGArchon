@@ -36,6 +36,25 @@ class BaseConfig(BaseModel):
     ``extra="forbid"`` never sees it. An alias translated after validation would raise instead.
     """
 
+    def _forget_derived(self, *fields: str) -> None:
+        """Un-record a field this model's own validator just assigned (#2266).
+
+        ``model_fields_set`` means "supplied by the caller", and ``config/translator.py``
+        reads it to decide which fields to thread to a solver. Pydantic records a
+        ``model_validator(mode="after")`` assignment there exactly as it records a caller's
+        value, so a validator that fills in a default makes the model lie about its own
+        provenance: measured, a FRESH ``FEMConfig()`` reported ``{'quadrature_order'}``, a
+        fresh ``HJBConfig()`` reported ``{'fdm'}``, and a fresh ``FPConfig()`` reported
+        ``{'particle'}`` -- so the translator refused configurations nobody had configured,
+        and FEM was unreachable through Safe and Auto mode.
+
+        Call this immediately after such an assignment, naming only the fields the validator
+        itself set. A field the caller supplied never reaches those branches (they are all
+        guarded by ``is None``), so this cannot erase a real one.
+        """
+        for field in fields:
+            self.__pydantic_fields_set__.discard(field)
+
     model_config = ConfigDict(extra="forbid")
 
 
@@ -232,10 +251,13 @@ class MFGSolverConfig(BaseConfig):
     >>> # From YAML file
     >>> config = MFGSolverConfig.from_yaml("config.yaml")
 
-    >>> # Programmatically
+    >>> # Programmatically. Every field you name is honoured (#2266), so `hjb.method` and
+    >>> # `fp.method` must agree with the scheme the solve uses -- in Safe and Auto mode the
+    >>> # scheme selects the solver class, and naming a different method is a contradiction,
+    >>> # not a preference. Auto mode picks an FDM pair for a plain grid.
     >>> config = MFGSolverConfig(
-    ...     hjb=HJBConfig(method="fdm", accuracy_order=2),
-    ...     fp=FPConfig(method="particle", particle=ParticleConfig(num_particles=5000)),
+    ...     hjb=HJBConfig(method="fdm"),
+    ...     fp=FPConfig(method="fdm"),
     ...     picard=PicardConfig(max_iterations=50, tolerance=1e-6)
     ... )
 
@@ -297,7 +319,9 @@ class MFGSolverConfig(BaseConfig):
         dict
             Configuration as nested dictionary
         """
-        return self.model_dump(exclude_none=True, mode="json")
+        # exclude_unset, not exclude_none: see save_solver_config (#2266). This dumps what the
+        # caller supplied, so a to_yaml/from_yaml round trip preserves `model_fields_set`.
+        return self.model_dump(exclude_unset=True, mode="json")
 
 
 # Backward compatibility alias

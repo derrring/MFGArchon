@@ -29,3 +29,35 @@
 
   An untouched config still threads nothing, so callers relying on solver defaults are unaffected —
   that was the whole point of the original rule and it is preserved.
+
+  **Two questions, two tests — refined after adversarial review.** Threading asks about INTENT
+  (`field in model_fields_set`); refusing a field as *unmapped* asks about EFFECT and still compares
+  values. Writing a field's own default into a YAML is ordinary practice — this package's documented
+  example does it — and asks for nothing the library is not already doing, so refusing it would be
+  noise. A scheme *mismatch* is refused on intent, because configuring a solver you are not using is
+  an error at any value.
+
+- **`model_fields_set` now means what it says** (Issue #2266). Two things made it lie, both found by
+  adversarial review and neither covered by any test:
+
+  A `model_validator(mode="after")` that *assigns* is recorded by Pydantic exactly as a caller's
+  value would be. A **fresh** `FEMConfig()` reported `{'quadrature_order'}`, a fresh `HJBConfig()`
+  reported `{'fdm'}`, and a fresh `FPConfig()` reported `{'particle'}` — so the translator refused
+  configurations nobody had configured, and **FEM was unreachable through Safe and Auto mode**. New
+  single owner `BaseConfig._forget_derived`, called in each of the three validators at the point of
+  assignment; every branch is guarded by `is None`, so it can never erase a caller's value.
+
+  And `save_solver_config` / `model_dump_yaml` dumped with `exclude_none`, not `exclude_unset`, so
+  every field was written out and `from_yaml` returned a config in which *everything* read as
+  explicitly set — a round trip raised `NotImplementedError` on all four translator entry points.
+  Both now use `exclude_unset`, so a save/load round trip preserves provenance.
+
+- **The coupling loop resolves a backend name and refuses one it cannot write into** (Issue #2250,
+  revised after review). A backend *object* is passed through and a *name* is resolved via
+  `create_backend` — a `NumPyBackend` object solved end to end before this change, so refusing it
+  would have been a capability regression, and the repository's own
+  `examples/basic/solvers/acceleration_comparison.py` assigns one. Whether the allocated array can
+  be **written** is checked at the allocation, in `allocate_state_arrays`, not in the constructor:
+  `self.backend` is a public attribute that callers assign *after* construction, so a constructor
+  guard cannot see that path and — with the allocation branch present — would silently ignore it.
+  jax and torch are refused there with a message naming #1922 instead of failing deep in the solve.

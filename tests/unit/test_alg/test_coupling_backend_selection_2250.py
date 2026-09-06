@@ -1,4 +1,4 @@
-"""Both coupling iterators refuse a backend they cannot run on (Issue #2250).
+"""A backend name resolves, an object passes through, and an unusable one is refused (#2250).
 
 `FixedPointIterator` and `FictitiousPlayIterator` annotated ``backend`` as ``str | None``
 and documented it as a name, then used it as an object in exactly one place -- the
@@ -25,9 +25,10 @@ import pytest
 import numpy as np
 
 from mfgarchon import Conditions, MFGProblem, Model
-from mfgarchon.alg.numerical.coupling.base_mfg import resolve_supported_backend
+from mfgarchon.alg.numerical.coupling.base_mfg import allocate_state_arrays, resolve_backend
 from mfgarchon.alg.numerical.coupling.fictitious_play import FictitiousPlayIterator
 from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
+from mfgarchon.backends import create_backend
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
@@ -57,28 +58,83 @@ def _problem():
     )
 
 
-class TestBackendSelectionIsRefusedNotIgnored:
-    @pytest.mark.parametrize("iterator_cls", ITERATORS, ids=lambda c: c.__name__)
-    @pytest.mark.parametrize("backend", ["jax", "torch", "numba"])
-    def test_an_unsupported_backend_is_refused_at_construction(self, iterator_cls, backend):
-        """Refused where it is passed, not as an AttributeError deep inside solve()."""
-        problem = _problem()
-        with pytest.raises(NotImplementedError, match="#2250"):
-            iterator_cls(problem, hjb_solver=None, fp_solver=None, backend=backend)
+class TestBackendSelectionIsResolvedOrRefused:
+    """A name resolves, an object passes through, and one that cannot carry a solve is refused."""
 
     @pytest.mark.parametrize("iterator_cls", ITERATORS, ids=lambda c: c.__name__)
-    @pytest.mark.parametrize("backend", [None, "numpy", "NumPy"])
-    def test_the_backend_the_loop_actually_runs_on_is_accepted_and_normalised(self, iterator_cls, backend):
-        """``None`` and ``"numpy"`` both describe what runs, so both normalise to ``None``.
+    def test_a_backend_name_is_resolved_to_an_object(self, iterator_cls):
+        """Storing the NAME is what raised `'str' object has no attribute 'zeros'`."""
+        it = iterator_cls(_problem(), hjb_solver=None, fp_solver=None, backend="numpy")
+        assert not isinstance(it.backend, str)
+        assert hasattr(it.backend, "zeros")
 
-        Storing the *name* is what re-arms the original AttributeError, so asserting the
-        stored value is ``None`` -- not merely that construction succeeded -- is the half
-        that would catch a fix which only stopped raising.
-        """
+    @pytest.mark.parametrize("iterator_cls", ITERATORS, ids=lambda c: c.__name__)
+    def test_a_backend_object_is_passed_through_unchanged(self, iterator_cls):
+        """A NumPyBackend object solved end to end before this change, so refusing it would be
+        a capability regression rather than a fix -- `acceleration_comparison.py` passes one."""
+        backend = create_backend("numpy")
         it = iterator_cls(_problem(), hjb_solver=None, fp_solver=None, backend=backend)
-        assert it.backend is None
+        assert it.backend is backend
 
-    def test_a_non_name_non_backend_value_is_refused(self):
-        """An int is neither a name nor a backend; the message names #1922, the capability."""
+    @pytest.mark.parametrize("iterator_cls", ITERATORS, ids=lambda c: c.__name__)
+    def test_none_stays_none(self, iterator_cls):
+        assert iterator_cls(_problem(), hjb_solver=None, fp_solver=None, backend=None).backend is None
+
+    def test_a_non_backend_value_is_refused_by_type(self):
+        with pytest.raises(TypeError, match="#2250"):
+            resolve_backend(42, "T")
+
+    def test_a_backend_that_accepts_only_its_own_type_is_refused(self):
+        """The asymmetric case, and the one a self-assignment probe cannot see.
+
+        A torch tensor accepts its own element back -- ``U[0] = U[0]`` succeeds -- and rejects
+        the numpy array the coupling loop actually assigns. Measured on shape (3, 4): the
+        symmetric probe reads ok / TypeError / **ok** for numpy / jax / torch, while assigning
+        a numpy row reads ok / TypeError / TypeError. So a probe written the obvious way passes
+        torch and fails jax while both are equally unusable, and torch reached the solve and
+        died there instead. This fake reproduces exactly that asymmetry.
+        """
+
+        class _OwnTypeOnly:
+            class _Arr(np.ndarray):
+                def __setitem__(self, key, value):
+                    if not isinstance(value, _OwnTypeOnly._Arr):
+                        raise TypeError("can't assign a numpy.ndarray to this array")
+                    super().__setitem__(key, value)
+
+            def zeros(self, shape):
+                return np.zeros(shape).view(self._Arr)
+
         with pytest.raises(NotImplementedError, match="#1922"):
-            resolve_supported_backend(42, "T")
+            allocate_state_arrays(_OwnTypeOnly(), (3, 4), "T")
+
+    def test_an_unwritable_backend_is_refused_at_allocation_with_a_reason(self):
+        """The check lives at the allocation, not the constructor, and that is load-bearing.
+
+        ``self.backend`` is a plain public attribute and this repository's own example
+        (``examples/basic/solvers/acceleration_comparison.py``) assigns to it AFTER
+        construction. A constructor-only guard cannot see that path, and with the allocation
+        branch present it would silently ignore the assigned backend -- the exact
+        wrong-config-silently-ignored failure #2250 exists to remove.
+        """
+
+        class _Immutable:
+            def zeros(self, shape):
+                a = np.zeros(shape)
+                a.flags.writeable = False
+                return a
+
+        with pytest.raises(NotImplementedError, match="#1922"):
+            allocate_state_arrays(_Immutable(), (3, 4), "T")
+
+    def test_a_writable_backend_allocates_normally(self):
+        """The control for the test above: same call, a backend that CAN be written."""
+        U, M = allocate_state_arrays(create_backend("numpy"), (3, 4), "T")
+        U[0, 0] = 1.0
+        assert U.shape == (3, 4)
+        assert M.shape == (3, 4)
+
+    def test_no_backend_allocates_numpy(self):
+        U, M = allocate_state_arrays(None, (3, 4), "T")
+        assert isinstance(U, np.ndarray)
+        assert isinstance(M, np.ndarray)
