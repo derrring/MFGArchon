@@ -15,6 +15,7 @@ import numpy as np
 
 from mfgarchon.alg.base_solver import BaseOptimizationSolver
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.numerical.flux_diagnostics import compute_mass_conservation_error
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -457,6 +458,14 @@ class SinkhornMFGSolver(BaseOptimizationSolver):
         return density_change < self.config.mfg_tolerance and cost_change < self.config.mfg_tolerance
 
     def _compute_mass_conservation_error(self, densities: NDArray) -> float:
-        """Compute mass conservation error."""
-        total_masses = [np.trapezoid(density, self.spatial_grid) for density in densities]
-        return np.std(total_masses)
+        """Standard deviation of the total mass across the trajectory, in the grid measure.
+
+        The measure comes from the one owner (#2145, #2260): ``compute_mass_conservation_error``
+        already builds the correct per-timestep mass history with the trapezoid weights this
+        module used to re-derive with a bare ``np.trapezoid`` loop. Only the AGGREGATION here is
+        this solver's own -- std across the trajectory, not max deviation from the initial slice
+        -- because a Sinkhorn density need not start at its own converged mass the way a
+        time-marched solve does.
+        """
+        mass_history = compute_mass_conservation_error(np.asarray(densities), spacing=self.dx)["mass_history"]
+        return float(np.std(mass_history))
