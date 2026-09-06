@@ -659,10 +659,11 @@ def compute_mass_conservation_error(
     node a full cell reaching outside the declared domain, over-counting by
     ``spacing * (M[..., 0] + M[..., -1]) / 2`` per axis. On an endpoint-inclusive grid (what
     ``TensorProductGrid`` builds) that is not a rounding difference: an exactly-conservative
-    solve can read as ~3% drift from it alone, and ``is_conservative`` was publishing a
-    verdict in that wrong measure. Measured on issue #2260's own fixture (FPSLSolver at the
-    #2258 mirror-wall convention): drift 2.021e-14 in the grid measure was reported here as
-    2.6692% and ``is_conservative=False``.
+    solve can read as several percent drift from it alone, and ``is_conservative`` was
+    publishing a verdict in that wrong measure. Measured directly: `FPSLSolver`, driven
+    transport (the fixture in ``tests/unit/test_alg/test_sl_cn_wall_2243.py``, potential
+    ``u = -0.5x``, nx=41, nt=200), grid-measure drift 8.549e-15 -- reported by the pre-fix
+    formula on the identical output as 9.2685% and ``is_conservative=False``.
 
     Args:
         M: Density evolution array, shape (Nt+1, Nx+1) for 1D

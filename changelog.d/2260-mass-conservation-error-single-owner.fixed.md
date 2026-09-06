@@ -5,8 +5,10 @@
   boundary nodes each own half a cell, not a full one. Before #2258 the SL/CN family conserved
   `sum(m)` by construction, so the bug agreed with the family it measured by accident; #2258 moved
   that family onto the grid measure, and from that merge the disagreement became **every SL solve**.
-  Measured: `FPSLSolver`, driven transport, exactly conservative in the grid measure
-  (drift 2.021e-14), reported by this function as 2.6692% drift and `is_conservative=False`.
+  Measured directly: `FPSLSolver`, driven transport (the fixture in
+  `tests/unit/test_alg/test_sl_cn_wall_2243.py`, potential `u = -0.5x`, nx=41, nt=200), grid-measure
+  drift 8.549e-15 — reported by the pre-fix formula on the identical output as 9.2685% drift and
+  `is_conservative=False`.
 
   The function now builds its weights the same way `FluxDiagnostics._axis_weights` already did —
   via `quadrature_weights_nd`, not a second derivation of the trapezoid formula. The returned dict
