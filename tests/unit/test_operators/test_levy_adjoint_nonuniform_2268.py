@@ -17,21 +17,35 @@ I first admitted this as class 2 and that was wrong. The identity under test is
 
 and `apply_adjoint` reaches `J^T` through `as_sparse()`, which is assembled column by column
 from `_matvec`. So the identity reduces to `sum_i v_i (J^T W m)_i == sum_j W_j m_j (Jv)_j`,
-which is **true for every linear J and every positive W**. Nothing external is computed, and
-this file cannot see a wrong J at all. Measured, by mutating the operator itself:
+which is **true for every linear J and every positive W**. Nothing external is computed.
 
-    scale the whole operator by 3          -> 5 passed
-    flip the compensator sign (-= to +=)   -> 5 passed
-    drop the -v(x) term                    -> 5 passed
-    drop the Levy density from the weight  -> 5 passed
+Measured, by mutating the operator itself. A LINEAR wrong J is invisible here:
 
-What it does pin is `apply_adjoint` against `_matvec`: dropping the `W^{-1}...W` conjugation,
-either half of it, or assuming a constant W each fail 3 of 5. That is the defect #2268 names
-and the reason this file earns its place -- but the claim to be verifying the operator's
-mathematics was false, and would have kept passing while J was arbitrarily wrong.
+    scale the whole operator by 3           -> 5 passed
+    drop the -v(x) term                     -> 5 passed
+    drop the Levy density nu_k from w_k     -> 5 passed
 
-Retirement condition: if `as_sparse()` ever stops being derived from `_matvec`, this file
-becomes a genuine cross-implementation oracle and this note should be rewritten, not deleted.
+A NON-linear one is not, because `op @ v` goes through `_matvec` while `J^T` comes from its
+column expansion, and the two stop agreeing:
+
+    affine: return ... + 1.0                -> 3 failed
+
+so the scope is "cannot see a wrong *linear* J", not "cannot see a wrong J". What it does pin
+is `apply_adjoint` against `_matvec`: dropping the `W^{-1}...W` conjugation, either half of
+it, or assuming a constant W each fail 3 of 5. That is the defect #2268 names and the reason
+this file earns its place -- but the claim to be verifying the operator's mathematics was
+false, and would have kept passing while J was arbitrarily wrong in the linear class.
+
+One mutation is deliberately NOT in that table. Flipping the compensator sign changes this
+fixture by 3.5e-16: `GaussianJumps(mu=0.0)` is symmetric and the Gauss-Legendre nodes are
+symmetric about 0, so the compensator's whole contribution `sum_k w_k nu_k z_k` is -3.5e-18.
+An earlier version of this docstring listed it as a surviving mutation, which was a null
+measurement presented as evidence. The standing consequence: **this fixture cannot test the
+compensator at all**, and a test that needs to must use an asymmetric jump measure.
+
+Retirement: this pin retires with `apply_adjoint`. If that method is deleted, or stops
+conjugating by `W`, the pin has nothing left to assert and should go with it. It does not
+retire on a fix, because it guards a live relation rather than recording a defect.
 """
 
 from __future__ import annotations
