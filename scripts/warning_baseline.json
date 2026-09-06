@@ -1,6 +1,6 @@
 {
   "_comment": "Warning identities the suite emits (#2119). Keyed (file, kind, digits-normalised text[:40]) -- NOT line numbers, which move under any edit, and NOT occurrence counts, which jitter run to run. Bidirectional: a new identity is a regression, a removed one is progress that must be recorded here. `occurrences` is reported, never gated. `toolchain_when_written` is attribution for a later diff (#2158), also never gated; a value of `ambiguous:a|b` or `unreadable` cannot be written here, because it would name a broken environment rather than a version. Regenerate with --write-baseline.",
-  "occurrences_when_written": 3799,
+  "occurrences_when_written": 3738,
   "toolchain_when_written": {
     "python": "3.12.13",
     "pytest": "9.1.1",
@@ -25,7 +25,6 @@
     "mfgarchon/alg/numerical/weak_form_fp_solver.py\tUserWarning\tWeak-form/FEM solver uses a single scala",
     "mfgarchon/core/stochastic/stochastic_problem.py\tUserWarning\tinitial density mass N.N on the grid mea",
     "mfgarchon/extensions/topology.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
-    "mfgarchon/extensions/topology.py\tUserWarning\tinitial density mass N.N on the point-av",
     "mfgarchon/geometry/graph/network_geometry.py\tFutureWarning\tInput has data type intN, but the output",
     "mfgarchon/operators/differential/function_gradient.py\tRuntimeWarning\tinvalid value encountered in subtract",
     "mfgarchon/utils/convergence/convergence_monitors.py\tUserWarning\tWasserstein computation failed: operands",

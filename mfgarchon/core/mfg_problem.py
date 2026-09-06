@@ -2183,10 +2183,30 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         objects, not fallbacks of one: a network has no cell volume at all, and an unstructured
         geometry has no quadrature. Reporting a number without saying which of them produced it is
         what #1887 calls the invisible convention.
+
+        The network branch gates on ``self.is_network`` -- which reads ``geometry.geometry_type``
+        -- and not on ``self.dimension`` (#2177). ``NetworkMFGProblem`` sets ``dimension =
+        "network"`` AFTER ``super().__init__()``, and this runs inside it, so the old guard read
+        ``dimension == 2``: a network problem describing itself as two-dimensional during its own
+        construction. It fell through to ``point-average``, publishing ``1/N`` under the name
+        "initial density mass" and warning that it was not 1, with a remedy -- divide by the
+        integral -- that could not work because the density already summed to 1.
+        The branch was NOT dead in general -- ``_init_network`` sets ``dimension = "network"`` at
+        line ~1156, which runs from ``__init__`` BEFORE ``_initialize_functions``, so
+        ``MFGProblem(network=<graph>)`` always reached it. What was unreachable is the
+        *geometry-first* network path: ``NetworkMFGProblem`` and ``MFGProblem(geometry=<network>)``,
+        both of which now measure on the nodes too. (#2177's own body says the branch was dead; that
+        is true only of the path it was looking at.)
+
+        ``node-sum`` is also the functional the network FP solver conserves --
+        ``alg/numerical/network_solvers/fp_network.py`` uses ``float(np.sum(M[0, :]))`` as its own
+        total mass -- so this puts ``problem.initial_mass`` on the same measure as the solve.
+
+        Same lesson as #2157: gate on the thing you are about to use.
         """
         m = np.asarray(self.m_initial)
         integrate = getattr(self.geometry, "integrate", None)
-        if self.dimension != "network" and callable(integrate):
+        if not self.is_network and callable(integrate):
             try:
                 return float(integrate(m)), "grid"
             except ValueError as exc:
@@ -2202,7 +2222,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                     "carries no measure and no Fokker-Planck problem is posed on it. Give the axis "
                     "at least two points."
                 ) from exc
-        if self.dimension == "network":
+        if self.is_network:
             return float(np.sum(m)), "node-sum"
         if self.dimension == 1:
             dx = self._get_spacing() or 1.0
