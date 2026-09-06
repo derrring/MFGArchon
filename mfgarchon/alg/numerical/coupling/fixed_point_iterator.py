@@ -36,6 +36,7 @@ logger = get_logger(__name__)
 if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
+    from mfgarchon.backends.base_backend import BaseBackend
     from mfgarchon.config import MFGSolverConfig
     from mfgarchon.core.mfg_problem import MFGProblem
 
@@ -128,7 +129,7 @@ class FixedPointIterator(BaseCouplingIterator):
         use_anderson: bool = False,
         anderson_depth: int = 5,
         anderson_beta: float = 1.0,
-        backend: str | None = None,
+        backend: str | BaseBackend | None = None,
         volatility_field: float | np.ndarray | Any | None = None,  # Phase 2.3
         drift_field: np.ndarray | Any | None = None,  # Phase 2.3
         adaptive_relaxation: bool = False,
@@ -158,9 +159,9 @@ class FixedPointIterator(BaseCouplingIterator):
                 warn_on_unrecognized=True,
             )
         super().__init__(problem)
-        # #2250: refuse at construction rather than as an AttributeError deep inside
-        # solve(). Only None is supported -- see refuse_backend_selection for why resolving
-        # the name was measured and rejected.
+        # #2250: resolved here for a fast failure on an obviously bad value; resolved
+        # again in allocate_state_arrays, which also catches a name or bad type assigned
+        # to self.backend after construction (a public attribute -- see resolve_backend).
         self.backend = resolve_backend(backend, "FixedPointIterator")
         self.hjb_solver = hjb_solver
         self.fp_solver = fp_solver

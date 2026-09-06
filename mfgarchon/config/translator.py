@@ -141,7 +141,7 @@ def hjb_config_to_kwargs(
             # method cannot be reconciled with it. Fail loud rather than silently
             # discarding the user's intent (the scheme selects the solver class). Refs #1155.
             raise NotImplementedError(
-                f"config.hjb.method={hjb_cfg.method!r} is non-default but "
+                f"config.hjb.method={hjb_cfg.method!r} was explicitly set, but "
                 f"scheme={scheme.value} has no HJBConfig.method analog to validate "
                 "against (the scheme selects the HJB solver class directly). Refs #1155."
             )
@@ -376,7 +376,7 @@ def fp_config_to_kwargs(
             # method cannot be reconciled with it. Fail loud rather than silently
             # discarding the user's intent (the scheme selects the FP solver class). Refs #1155.
             raise NotImplementedError(
-                f"config.fp.method={fp_cfg.method!r} conflicts with "
+                f"config.fp.method={fp_cfg.method!r} was explicitly set, but "
                 f"scheme={scheme.value} has no FPConfig.method analog to validate "
                 "against (the scheme selects the FP solver class directly). Refs #1155."
             )

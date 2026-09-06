@@ -20,16 +20,20 @@ Retirement condition: these trip if a new validator assigns without calling
 
 from __future__ import annotations
 
+import importlib
 import inspect
+import pkgutil
 import tempfile
 from pathlib import Path
 
 import pydantic
 import pytest
 
-import mfgarchon.config.core as core_mod
-import mfgarchon.config.mfg_methods as methods_mod
+import numpy as np
+
+import mfgarchon.config as config_pkg
 from mfgarchon.config import MFGSolverConfig
+from mfgarchon.config.array_validation import ExperimentConfig, MFGGridConfig
 from mfgarchon.config.mfg_methods import FEMConfig, HJBConfig
 from mfgarchon.config.translator import (
     backend_config_to_kwargs,
@@ -41,17 +45,50 @@ from mfgarchon.types import NumericalScheme
 
 
 def _config_classes():
-    """Every config model in the package, so this is a census and not a sample."""
-    for mod in (core_mod, methods_mod):
-        for name, cls in vars(mod).items():
+    """Every config model in the package -- every module, not two named ones -- so this
+    is a census and not a sample of it. A prior version scanned only ``core`` and
+    ``mfg_methods`` and its docstring claimed the whole package anyway; a census that
+    hard-codes its own population is not one.
+    """
+    for mod_info in pkgutil.iter_modules(config_pkg.__path__):
+        mod = importlib.import_module(f"mfgarchon.config.{mod_info.name}")
+        for name, cls in list(vars(mod).items()):
             if inspect.isclass(cls) and issubclass(cls, pydantic.BaseModel) and cls.__module__ == mod.__name__:
                 yield name, cls
+
+
+# Classes with required fields cannot be constructed fresh with no arguments; each gets
+# the smallest valid construction instead, so the census still reaches them. The bar this
+# clears is minimal: valid enough to build, not a realistic fixture.
+_MINIMAL_ARGS = {
+    "MFGGridConfig": lambda: {"Nx": 10, "Nt": 10},
+    "MFGArrays": lambda: {
+        "U_solution": np.zeros((11, 11)),  # (Nx+1, Nt+1): MFGGridConfig(Nx=10, Nt=10) below
+        # A uniform density on [0, 1] with Nx=10 integrates (trapezoid) to exactly 1 at
+        # every row, so the class's own mass-conservation validator has nothing to warn
+        # about -- this test is a provenance census, not a physics fixture.
+        "M_solution": np.ones((11, 11)),
+        "grid_config": MFGGridConfig(Nx=10, Nt=10),
+    },
+    # Distinct, evenly-spaced points: array_validation.py warns on duplicates and on an
+    # uneven spacing ratio > 10, neither of which this census is about.
+    "CollocationConfig": lambda: {
+        "points": np.linspace(0.0, 1.0, 5).reshape(-1, 1),
+        "grid_config": MFGGridConfig(Nx=10, Nt=10),
+    },
+    "ExperimentConfig": lambda: {"grid_config": MFGGridConfig(Nx=10, Nt=10), "experiment_name": "e"},
+}
+
+
+def _fresh_fields(cls):
+    kwargs = _MINIMAL_ARGS.get(cls.__name__, dict)()
+    return cls(**kwargs).model_fields_set - kwargs.keys()
 
 
 class TestAFreshConfigHasSuppliedNothing:
     def test_no_config_class_reports_a_field_nobody_set(self):
         """A census, not a sample: the defect was found in one class and was in three."""
-        lying = {name: cls().model_fields_set for name, cls in _config_classes() if _fresh_fields(cls)}
+        lying = {name: fields for name, cls in _config_classes() if (fields := _fresh_fields(cls))}
         assert not lying, f"these report fields nobody supplied: {lying}"
 
     def test_a_supplied_field_is_still_recorded(self):
@@ -63,12 +100,12 @@ class TestAFreshConfigHasSuppliedNothing:
         """Un-recording provenance must not stop the validator doing its job: 2p+1 at p=1."""
         assert FEMConfig().quadrature_order == 3
 
-
-def _fresh_fields(cls):
-    try:
-        return cls().model_fields_set
-    except Exception:
-        return set()
+    def test_a_required_field_config_still_needs_covering(self):
+        """The control for the required-arg branch: ExperimentConfig cannot be built with
+        no arguments at all, which is what makes `_MINIMAL_ARGS` necessary rather than
+        an unused convenience."""
+        with pytest.raises(pydantic.ValidationError):
+            ExperimentConfig()
 
 
 class TestAYamlRoundTripPreservesProvenance:

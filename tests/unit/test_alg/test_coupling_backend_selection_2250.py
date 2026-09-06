@@ -29,6 +29,7 @@ from mfgarchon.alg.numerical.coupling.base_mfg import allocate_state_arrays, res
 from mfgarchon.alg.numerical.coupling.fictitious_play import FictitiousPlayIterator
 from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
 from mfgarchon.backends import create_backend
+from mfgarchon.backends.base_backend import BaseBackend
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
@@ -95,7 +96,10 @@ class TestBackendSelectionIsResolvedOrRefused:
         died there instead. This fake reproduces exactly that asymmetry.
         """
 
+        @BaseBackend.register
         class _OwnTypeOnly:
+            """Registered as a virtual `BaseBackend` subclass -- see `_Immutable` above."""
+
             class _Arr(np.ndarray):
                 def __setitem__(self, key, value):
                     if not isinstance(value, _OwnTypeOnly._Arr):
@@ -118,7 +122,12 @@ class TestBackendSelectionIsResolvedOrRefused:
         wrong-config-silently-ignored failure #2250 exists to remove.
         """
 
+        @BaseBackend.register
         class _Immutable:
+            """Registered as a virtual `BaseBackend` subclass so it passes `resolve_backend`'s
+            isinstance check without implementing every abstract method -- the point of this
+            fake is the writability probe, not backend typing."""
+
             def zeros(self, shape):
                 a = np.zeros(shape)
                 a.flags.writeable = False

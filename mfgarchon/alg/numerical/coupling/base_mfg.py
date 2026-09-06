@@ -93,10 +93,14 @@ def resolve_backend(backend: Any, iterator_name: str) -> Any:
     assigns one post-construction and ``docs/user/guides/phase2_features.md`` documents that
     both spellings are accepted.
 
+    Called twice, deliberately: once at construction (fail fast on an obviously bad value)
+    and again inside ``allocate_state_arrays`` (catch a NAME or a bad type assigned to
+    ``self.backend`` after construction, since a plain public attribute admits that and a
+    constructor check cannot see it). Idempotent on an already-resolved backend, so the
+    second call is not a second decision.
+
     Whether the allocated array can actually be WRITTEN is a separate question, checked at
-    the allocation site by ``allocate_state_arrays`` -- not here -- because ``self.backend``
-    is a plain public attribute that callers assign after construction, and a constructor
-    check cannot see that.
+    the allocation site by ``allocate_state_arrays``.
     """
     if backend is None:
         return None
@@ -131,8 +135,16 @@ def allocate_state_arrays(backend: Any, shape: tuple[int, ...], iterator_name: s
     example assigns to it AFTER construction, so a constructor-only check would let that path
     through -- and, once the allocation branch is present, silently ignore it.
 
+    ``backend`` is re-resolved here, not assumed already resolved. A NAME assigned to
+    ``self.backend`` after construction reaches this call unresolved, and calling
+    ``backend.zeros(shape)`` on a string reproduces #2250's exact original signature
+    (``AttributeError: 'str' object has no attribute 'zeros'``) -- measured before this
+    line was added. ``resolve_backend`` is idempotent on an object, so the ordinary
+    resolved-at-construction path costs one ``isinstance`` check.
+
     #1922 is the capability ("selecting a backend is not an operation this package supports").
     """
+    backend = resolve_backend(backend, iterator_name)
     if backend is None:
         return np.zeros(shape), np.zeros(shape)
     U = backend.zeros(shape)
