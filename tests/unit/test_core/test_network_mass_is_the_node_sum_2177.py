@@ -12,15 +12,25 @@ Three things were wrong at once and the third caused the others:
    "initial density mass", while the density already summed to 1.
 2. The #1887 warning fired as a false positive, with a remedy — divide by the integral —
    that could not work, because dividing a density that already sums to 1 changes nothing.
-3. The ``node-sum`` branch written for exactly this case never executed, and
-   ``NetworkMFGProblem`` is the only network problem class, so it was dead as written.
+3. The ``node-sum`` branch never executed *on this path*. It was not dead in general:
+   ``_init_network`` sets ``dimension`` before ``_initialize_functions`` runs, so
+   ``MFGProblem(network=<graph>)`` always reached it. What was unreachable is the
+   geometry-first route -- ``NetworkMFGProblem`` and ``MFGProblem(geometry=<network>)``.
+   #2177's body calls the branch dead; that holds only of the path it examined.
 
 The gate now reads ``self.is_network``, which derives from ``geometry.geometry_type`` and is
 already correct at measure time. Same lesson as #2157: gate on the thing you are about to
 use. Note this does NOT depend on the constructor ordering being changed — ``topology.py``
 carries a comment explaining why ``dimension`` is set late, and that ordering is untouched.
 
-Retirement condition: these trip if the network branch is ever gated on something not
+These are admitted under AGENTS.md class 1 -- they kill a mutation. On pre-fix ``main`` three
+of the four fail; mutating ``is_network`` to a constant separates them again in both directions
+(always-True fails only the grid control, always-False fails only the three network tests).
+They are NOT class 3: a class-3 pin holds a defect that is *not* being fixed, so that fixing it
+trips the pin, and these assert behaviour this same change installs.
+
+Delete them when ``initial_mass`` stops being published, or when the network measure gains a
+second legitimate spelling; they trip if the network branch is ever gated on something not
 available at measure time again, or if ``point-average`` starts claiming a network.
 """
 

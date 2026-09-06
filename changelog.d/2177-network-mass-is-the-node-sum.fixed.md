@@ -7,9 +7,26 @@
   Three symptoms, one cause. On a 5x5 `GridNetwork` whose density already summed to 1,
   `problem.initial_mass` reported **0.04** under the name "initial density mass"; the #1887 warning
   fired as a false positive with a remedy that could not work, since dividing a density that already
-  sums to 1 by its integral changes nothing; and the `node-sum` branch written for exactly this case
-  never executed. `NetworkMFGProblem` is the only network problem class, so that branch was dead as
-  written. Now: `initial_mass = 1.0`, `initial_mass_measure = 'node-sum'`, no warning.
+  sums to 1 by its integral changes nothing; and the `node-sum` branch never executed on this path.
+
+  **The branch was not dead in general.** `_init_network` sets `dimension = "network"` before
+  `_initialize_functions` runs, so `MFGProblem(network=<graph>)` always reached it. What was
+  unreachable is the *geometry-first* route, and both of its entry points move:
+
+  | | before | after |
+  |:---|:---|:---|
+  | `NetworkMFGProblem(GridNetwork)` | `point-average` 0.04 + warning | `node-sum` 1.0, no warning |
+  | `MFGProblem(geometry=<NetworkGeometry>)` | `point-average` 0.04 + warning | `node-sum` 1.0, no warning |
+  | `MFGProblem(network=<nx.Graph>)` | `node-sum` — already correct | unchanged |
+
+  #2177's body states the branch was dead; that is true only of the path it examined, and the second
+  row above is a fix the issue does not mention.
+
+  **`node-sum` is the measure the solve itself uses.** `alg/numerical/network_solvers/fp_network.py`
+  takes `float(np.sum(M[0, :]))` as its own total mass, with a comment stating that the node masses
+  *are* the mass functional and "the ratio needs no weights". So this puts `problem.initial_mass` on
+  the same functional the network FP solver conserves, rather than merely on a different one that is
+  less wrong.
 
   The gate reads `self.is_network` — which derives from `geometry.geometry_type` and is already
   correct at measure time — rather than a new predicate, because that question already had an owner.

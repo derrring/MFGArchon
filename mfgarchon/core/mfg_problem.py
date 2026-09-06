@@ -2191,7 +2191,17 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         construction. It fell through to ``point-average``, publishing ``1/N`` under the name
         "initial density mass" and warning that it was not 1, with a remedy -- divide by the
         integral -- that could not work because the density already summed to 1.
-        ``NetworkMFGProblem`` is the only network problem class, so the branch was dead as written.
+        The branch was NOT dead in general -- ``_init_network`` sets ``dimension = "network"`` at
+        line ~1156, which runs from ``__init__`` BEFORE ``_initialize_functions``, so
+        ``MFGProblem(network=<graph>)`` always reached it. What was unreachable is the
+        *geometry-first* network path: ``NetworkMFGProblem`` and ``MFGProblem(geometry=<network>)``,
+        both of which now measure on the nodes too. (#2177's own body says the branch was dead; that
+        is true only of the path it was looking at.)
+
+        ``node-sum`` is also the functional the network FP solver conserves --
+        ``alg/numerical/network_solvers/fp_network.py`` uses ``float(np.sum(M[0, :]))`` as its own
+        total mass -- so this puts ``problem.initial_mass`` on the same measure as the solve.
+
         Same lesson as #2157: gate on the thing you are about to use.
         """
         m = np.asarray(self.m_initial)
