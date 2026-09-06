@@ -46,6 +46,17 @@ class SolverResult:
             the coupling path had no writer. For boundary conditions that remove mass --
             Dirichlet or absorbing walls -- the deviation is physical outflow rather than an
             error, so read it against the boundary condition in use.
+
+            The FUNCTIONAL this measures is solver-family-dependent, not one fixed formula
+            (Issue #2188). For a grid-based FP solver ``mass(t)`` is the density's integral over
+            the domain, via the geometry's own measure. For ``FPParticleSolver`` it is instead
+            the FRACTION OF PARTICLES ABSORBED: the grid density it hands back is a
+            kernel-density reconstruction that integrates to ~1 whatever particle count it is
+            built from, so it cannot see absorption at all -- measured, a solve that lost 99.6%
+            of its particles reported LESS error through the grid integral than one that lost
+            none. ``FPParticleSolver.mass_conservation_error_override`` supplies the number
+            actually conserved; see ``BaseFPSolver.mass_conservation_error_override`` for the
+            general seam a solver uses to report this.
     """
 
     U: NDArray[np.floating]
@@ -92,7 +103,8 @@ class SolverResult:
             ergodic_constant: Ergodic constant lambda for stationary MFG
             policy: Optimal control policy alpha*(t, x) as callable
             mass_conservation_error: max|mass(t)/mass(0) - 1| over time steps -- the drift from the
-            initial mass, not the deviation from 1.0 (Issue #875, #1672), or None
+            initial mass, not the deviation from 1.0 (Issue #875, #1672), or None. The functional
+            is solver-family-dependent (Issue #2188) -- see the class docstring above.
         """
         # Initialize dataclass fields
         self.U = U

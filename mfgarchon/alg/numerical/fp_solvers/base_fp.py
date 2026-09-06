@@ -120,6 +120,26 @@ class BaseFPSolver(BaseNumericalSolver):
     # signature-sniffing it would replace carries paper-number risk, deferred).
     _drift_convention: DriftConvention = DriftConvention.VELOCITY
 
+    def mass_conservation_error_override(self) -> float | None:
+        """This solver's own account of mass conservation, when the generic grid-density
+        measurement cannot see what actually happened (Issue #2188).
+
+        `FixedPointIterator` measures mass conservation by integrating `self.M` -- the grid
+        density -- over the domain. That is correct for every solver whose `M` genuinely is
+        the density. It is not correct for `FPParticleSolver`: `M` there is a kernel-density
+        reconstruction that integrates to ~1 *whatever particle count it is built from*, so an
+        absorbing boundary that kills 99.6% of the particles and a no-flux boundary that kills
+        none are indistinguishable through `M` -- measured, the 99.6%-loss run reported LESS
+        error than the 0%-loss run, because what the grid integral actually tracked was
+        `sigma`, through the KDE bandwidth, not absorption at all.
+
+        Returning `None` (the default) means: no solver-specific measurement exists, use the
+        generic grid-density one. A solver overrides this only when its own state holds
+        information the grid projection discards -- see `FPParticleSolver`, whose
+        `M_particles_trajectory` still has the particle count `M` does not.
+        """
+        return None
+
     def __init__(self, problem: MFGProblem, config: BaseConfig | None = None) -> None:
         """
         Initializes the FP solver with the MFG problem definition.

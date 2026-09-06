@@ -346,6 +346,11 @@ def test_mass_conservation_is_still_measured_when_fp_ran_before_the_divergence()
     losing_mass = np.ones(shape) / Nx * np.linspace(1.0, 0.1, shape[0])[:, None]
     fp_solver = Mock()
     fp_solver.solve_fp_system.side_effect = lambda *a, **k: losing_mass
+    # #2188: a real BaseFPSolver's mass_conservation_error_override() returns None by default,
+    # meaning "nothing solver-specific, use the generic grid measurement below". A bare Mock
+    # fabricates a truthy Mock object for any unconfigured method instead, which the iterator
+    # would then treat as an override and use in place of the measurement this test is about.
+    fp_solver.mass_conservation_error_override.return_value = None
 
     result = FixedPointIterator(problem=problem, hjb_solver=hjb_solver, fp_solver=fp_solver, relaxation=0.5).solve(
         max_iterations=10, tolerance=1e-6
