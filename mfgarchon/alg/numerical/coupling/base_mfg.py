@@ -5,6 +5,8 @@ import numbers
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 # Issue #2207: the builders below COMPOSE the problem's source rather than receiving one,
 # so this module is the single consumer of the #1361 composition owner for every
 # BaseCouplingIterator subclass. Runtime, not TYPE_CHECKING -- it is called, not annotated.
@@ -12,8 +14,6 @@ from .source_composition import compose_fp_source, compose_hjb_source
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    import numpy as np
 
     from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
     from mfgarchon.core.mfg_problem import MFGProblem
@@ -73,6 +73,97 @@ def assert_paired_solver_sigma(hjb_solver: Any, fp_solver: Any, context: str) ->
             f"the volatility -- the Picard fixed point would correspond to neither problem. Build both "
             f"solvers from the same MFGProblem, or use create_paired_solvers. Issue #1603."
         )
+
+
+def resolve_backend(backend: Any, iterator_name: str) -> Any:
+    """Turn a backend NAME into a backend OBJECT; pass an object through (Issue #2250).
+
+    Both coupling iterators annotated ``backend`` as ``str | None`` and documented it as a
+    name, then used it as an object in the cold-start allocation
+    ``self.U = self.backend.zeros(...)``. So every non-``None`` STRING raised
+    ``AttributeError: 'str' object has no attribute 'zeros'``, including ``"numpy"``, the
+    backend already in use. The ``is not None`` guard hid it: the default is ``None``, which
+    takes the ``np.zeros`` branch, so the whole suite and every example ran the working path.
+    It became reachable when ``config.backend.type`` started arriving through
+    ``config/translator.py`` (``5610e1af``, fixing #1284's dropped fields).
+
+    An OBJECT is passed through untouched, and that matters: a ``NumPyBackend`` object took
+    the allocation branch and solved correctly, so refusing it would be a capability
+    regression rather than a fix. ``examples/basic/solvers/acceleration_comparison.py``
+    assigns one post-construction and ``docs/user/guides/phase2_features.md`` documents that
+    both spellings are accepted.
+
+    Called twice, deliberately: once at construction (fail fast on an obviously bad value)
+    and again inside ``allocate_state_arrays`` (catch a NAME or a bad type assigned to
+    ``self.backend`` after construction, since a plain public attribute admits that and a
+    constructor check cannot see it). Idempotent on an already-resolved backend, so the
+    second call is not a second decision.
+
+    Whether the allocated array can actually be WRITTEN is a separate question, checked at
+    the allocation site by ``allocate_state_arrays``.
+    """
+    if backend is None:
+        return None
+    if isinstance(backend, str):
+        from mfgarchon.backends import create_backend
+
+        return create_backend(backend)
+    from mfgarchon.backends.base_backend import BaseBackend
+
+    if isinstance(backend, BaseBackend):
+        return backend
+    raise TypeError(
+        f"{iterator_name}: backend must be a backend name (str), a BaseBackend instance, or "
+        f"None; got {type(backend).__name__}. Refs #2250."
+    )
+
+
+def allocate_state_arrays(backend: Any, shape: tuple[int, ...], iterator_name: str) -> tuple[Any, Any]:
+    """Cold-start ``(U, M)``, refusing a backend whose arrays the coupling loop cannot write.
+
+    The loop assigns into ``U`` and ``M`` by index throughout. A JAX array is immutable and a
+    torch tensor rejects a numpy right-hand side, so allocating from those backends produced
+    arrays that failed later, deep in the solve, with a message about the array rather than
+    about the configuration: ``JAX arrays are immutable and do not support in-place item
+    assignment``, ``can't assign a numpy.ndarray to a torch.DoubleTensor``.
+
+    So allocate, then probe one write, with the value type the loop uses. Measured on
+    ``(3, 4)``: assigning a numpy row gives ok / TypeError / TypeError for numpy / jax / torch,
+    while self-assignment gives ok / TypeError / **ok** -- torch passes a symmetric probe and
+    fails the real one. This sits at the allocation rather than in the constructor
+    deliberately: ``self.backend`` is a public attribute and the repository's own
+    example assigns to it AFTER construction, so a constructor-only check would let that path
+    through -- and, once the allocation branch is present, silently ignore it.
+
+    ``backend`` is re-resolved here, not assumed already resolved. A NAME assigned to
+    ``self.backend`` after construction reaches this call unresolved, and calling
+    ``backend.zeros(shape)`` on a string reproduces #2250's exact original signature
+    (``AttributeError: 'str' object has no attribute 'zeros'``) -- measured before this
+    line was added. ``resolve_backend`` is idempotent on an object, so the ordinary
+    resolved-at-construction path costs one ``isinstance`` check.
+
+    #1922 is the capability ("selecting a backend is not an operation this package supports").
+    """
+    backend = resolve_backend(backend, iterator_name)
+    if backend is None:
+        return np.zeros(shape), np.zeros(shape)
+    U = backend.zeros(shape)
+    M = backend.zeros(shape)
+    try:
+        # Assign a NUMPY row, because that is what the loop does -- not `U[0] = U[0]`, which is
+        # symmetric and cannot see an asymmetric defect: measured, a torch tensor accepts its own
+        # element back (probe reads "writable") and rejects the numpy array the solve actually
+        # hands it. jax refuses both, so a self-assignment probe passes torch and fails jax while
+        # both are equally unusable.
+        U[0] = np.zeros(shape[1:])
+    except (TypeError, ValueError) as exc:
+        raise NotImplementedError(
+            f"{iterator_name}: backend {type(backend).__name__} allocates arrays the coupling "
+            f"loop cannot write into ({type(exc).__name__}: {exc}). The loop assigns U and M by "
+            f"index at every step, so this backend cannot carry a solve. Pass backend=None or a "
+            f"NumPy backend. Backend selection is tracked in #1922; this refusal is #2250."
+        ) from exc
+    return U, M
 
 
 def matches_problem_sigma(problem: Any, volatility_field: Any) -> bool:

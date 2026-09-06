@@ -104,6 +104,8 @@ class FEMConfig(BaseConfig):
         if self.quadrature_order is None:
             # 2p+1 rule: exact for products of basis functions
             self.quadrature_order = 2 * self.element_order + 1
+            # Derived here, not supplied by the caller -- see BaseConfig._forget_derived (#2266).
+            self._forget_derived("quadrature_order")
         if self.quadrature_order < 1:
             raise ValueError("quadrature_order must be >= 1")
         return self
@@ -447,16 +449,23 @@ class HJBConfig(BaseConfig):
     @model_validator(mode="after")
     def validate_method_config(self) -> HJBConfig:
         """Auto-populate method-specific config if not provided."""
+        # Each branch fires only when the field is None, i.e. the caller supplied nothing, so
+        # `_forget_derived` can never erase a real value (#2266).
         if self.method == "fdm" and self.fdm is None:
             self.fdm = FDMConfig()
+            self._forget_derived("fdm")
         elif self.method == "fem" and self.fem is None:
             self.fem = FEMConfig()
+            self._forget_derived("fem")
         elif self.method == "gfdm" and self.gfdm is None:
             self.gfdm = GFDMConfig()
+            self._forget_derived("gfdm")
         elif self.method == "semi_lagrangian" and self.sl is None:
             self.sl = SLConfig()
+            self._forget_derived("sl")
         elif self.method == "weno" and self.weno is None:
             self.weno = WENOConfig()
+            self._forget_derived("weno")
         return self
 
 
@@ -491,12 +500,17 @@ class FPConfig(BaseConfig):
     @model_validator(mode="after")
     def validate_method_config(self) -> FPConfig:
         """Auto-populate method-specific config if not provided."""
+        # See the HJB twin above: each branch is guarded by `is None` (#2266).
         if self.method == "fdm" and self.fdm is None:
             self.fdm = FDMConfig()
+            self._forget_derived("fdm")
         elif self.method == "fem" and self.fem is None:
             self.fem = FEMConfig()
+            self._forget_derived("fem")
         elif self.method == "particle" and self.particle is None:
             self.particle = ParticleConfig()
+            self._forget_derived("particle")
         elif self.method == "network" and self.network is None:
             self.network = NetworkConfig()
+            self._forget_derived("network")
         return self

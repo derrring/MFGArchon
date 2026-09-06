@@ -21,7 +21,7 @@ from mfgarchon.utils.deprecation import validate_kwargs
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.solver_result import SolverResult
 
-from .base_mfg import BaseCouplingIterator, assert_paired_solver_sigma
+from .base_mfg import BaseCouplingIterator, allocate_state_arrays, assert_paired_solver_sigma, resolve_backend
 from .fixed_point_utils import (
     check_convergence_criteria,
     diverged_value_function,
@@ -36,6 +36,7 @@ logger = get_logger(__name__)
 if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
+    from mfgarchon.backends.base_backend import BaseBackend
     from mfgarchon.config import MFGSolverConfig
     from mfgarchon.core.mfg_problem import MFGProblem
 
@@ -72,7 +73,9 @@ class FixedPointIterator(BaseCouplingIterator):
         use_anderson: Enable Anderson acceleration
         anderson_depth: Anderson acceleration memory depth
         anderson_beta: Anderson acceleration mixing parameter
-        backend: Backend name ('numpy', 'torch', 'jax', etc.)
+        backend: Backend NAME (resolved via ``create_backend``) or a backend OBJECT, or None.
+            Only backends whose arrays the loop can write into carry a solve -- jax and
+            torch are refused at allocation, naming #1922 (see ``allocate_state_arrays``).
         volatility_field: Optional diffusion override (float, array, or callable)
             - None: Use problem.sigma (default)
             - float: Constant diffusion
@@ -126,7 +129,7 @@ class FixedPointIterator(BaseCouplingIterator):
         use_anderson: bool = False,
         anderson_depth: int = 5,
         anderson_beta: float = 1.0,
-        backend: str | None = None,
+        backend: str | BaseBackend | None = None,
         volatility_field: float | np.ndarray | Any | None = None,  # Phase 2.3
         drift_field: np.ndarray | Any | None = None,  # Phase 2.3
         adaptive_relaxation: bool = False,
@@ -156,7 +159,10 @@ class FixedPointIterator(BaseCouplingIterator):
                 warn_on_unrecognized=True,
             )
         super().__init__(problem)
-        self.backend = backend
+        # #2250: resolved here for a fast failure on an obviously bad value; resolved
+        # again in allocate_state_arrays, which also catches a name or bad type assigned
+        # to self.backend after construction (a public attribute -- see resolve_backend).
+        self.backend = resolve_backend(backend, "FixedPointIterator")
         self.hjb_solver = hjb_solver
         self.fp_solver = fp_solver
         self.config = config
@@ -492,12 +498,10 @@ class FixedPointIterator(BaseCouplingIterator):
             self.U, self.M = warm_start
         else:
             # Cold start initialization
-            if self.backend is not None:
-                self.U = self.backend.zeros((num_time_steps, *shape))
-                self.M = self.backend.zeros((num_time_steps, *shape))
-            else:
-                self.U = np.zeros((num_time_steps, *shape))
-                self.M = np.zeros((num_time_steps, *shape))
+            # #2250: one owner for the allocation, so a backend that cannot carry a solve is
+            # refused HERE -- which is the only place that also sees a backend assigned after
+            # construction, as this repository's own acceleration example does.
+            self.U, self.M = allocate_state_arrays(self.backend, (num_time_steps, *shape), "FixedPointIterator")
 
             if num_time_steps > 0:
                 # Set boundary conditions
