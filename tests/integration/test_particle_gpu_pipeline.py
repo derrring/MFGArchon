@@ -254,6 +254,12 @@ class TestParticleGPUPipeline:
         # no longer returns a density byte-identical to no-flux, because it no longer returns one
         # at all. #1910 is closed by REFUSAL, not by implementation -- the GPU evolution loop still
         # cannot remove particles at a DIRICHLET segment, and now says so instead of reflecting
-        # them and reporting a plausible density. The refusal is asserted in
-        # test_gpu_particle_refuses_absorbing_bc_1910.py; the loop above therefore no longer feeds
+        # them and reporting a plausible density. The loop above therefore no longer feeds
         # Dirichlet to this backend.
+        #
+        # The refusal itself is live in `FPParticleSolver._solve_fp_system_gpu`, which raises
+        # NotImplementedError when `_needs_segment_aware_bc()` is true. It currently has NO test
+        # asserting it: the pin that did was deleted by 18d8cc80 (#2227). Named by symbol and not
+        # by line, and stated as unpinned rather than pinned, because the previous wording here
+        # cited a file that does not exist -- which reads as coverage that is not there. Tracked
+        # in #2257.
