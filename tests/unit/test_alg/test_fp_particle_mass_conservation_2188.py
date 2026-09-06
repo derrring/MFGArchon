@@ -221,7 +221,14 @@ class TestBothAbsorbingRepresentationsAgreeThroughARealSolve:
                 sigma=0.3,
             ),
             domain=grid,
-            conditions=Conditions(m_initial=lambda p: 1.0, u_terminal=lambda p: 0.0, T=T),
+            conditions=Conditions(
+                # 1 / |domain| so the grid-measure mass is exactly 1: this corridor is 4x2, and a
+                # uniform 1.0 would carry mass 8 and trip the #1887 "mass is not 1" warning, which
+                # the gate's warnings ratchet correctly refuses as a NEW identity from a new test.
+                m_initial=lambda p: 1.0 / (Lx * Ly),
+                u_terminal=lambda p: 0.0,
+                T=T,
+            ),
             Nt=Nt,
         )
         return problem, bc
