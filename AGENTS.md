@@ -239,8 +239,8 @@ the suite result, with its own staleness flag when the suite has moved since the
 recorded. A fraction copied into this file goes stale the day the mutation list or the suite moves,
 and both move — the baseline was re-recorded six times in the month to 2026-08-22.
 
-**The same expiry governs a quantified claim in an issue, and there the number is mandatory
-(§ *Bug fixes from research*), so the anchor is too.** Write it over something that cannot move — a
+**The same expiry governs a quantified claim in an issue; where the number is mandatory
+(§ *Bug fixes from research*), so is the anchor.** Write it over something that cannot move — a
 commit sha, a count over past commits, a published constant — or name the command that owns it.
 `Seven of ten HJB solvers drop source_term` expires on the next fix; the same sentence at a named
 sha does not, and neither does `26 of the 85 tests this campaign added`, which is quantified over
@@ -250,8 +250,9 @@ runs backwards — read what an existing claim quantifies over and you know whet
 expired, without executing it.
 
 The **title** carries this hardest, because it is what a reader takes without opening anything:
-#1991's title read "Seven of ten" while the tree said three, and #1878's read "78-90%" at 24%. When
-a re-derivation moves the number, move the title with it in the same pass.
+measured 2026-09-06, #1991's title read "Seven of ten" where the tree gave three, and #1878's
+read "78-90%" where the fixture gave 24%. When a re-derivation moves the number, move the title
+with it in the same pass.
 
 **Read the vector, not the fraction** — an aggregate over the whole suite cannot show a convention
 held by two tests, which is the thing you would act on (#2148). Two cautions when you do:
@@ -307,6 +308,8 @@ Do **not** edit: `mfgarchon/__init__.py` (reads `importlib.metadata`), `workflow
 - **Review before merge (MANDATORY)**: run an **independent adversarial review** of the PR before merging — a fresh reviewer (subagent / cross-model / worktree-isolated), *not* just author self-review. Merge only when it returns MERGE-OK, or after fixing every blocker it raises; re-review after applying fixes. Local-green ≠ correct.
 
 ### GitHub issue/PR management ⚠️ MANDATORY
+
+**A quantified claim in an issue — above all in its title — must be anchored or it expires**; see § *Closing out a fix*, which owns the rule.
 
 **Every issue carries all 4 label dimensions**: `priority:` (high/medium/low), `area:` (algorithms/config/core/documentation/geometry/performance/testing/visualization), `size:` (small=hrs–1d / medium=1–3d / large=1+wk), `type:` (bug/enhancement/chore/refactor/infrastructure/research/type-checking/question). Multiple `area:` allowed; one `priority:`/`size:` each; no bare labels (all prefixed). Workflow-state prefixes: `status:` (blocked/in-review/needs-testing), `resolution:` (merged/superseded/wontfix/duplicate/invalid). Non-taxonomic (GitHub conventions): `good first issue`, `help wanted`, `automated`.
 
