@@ -9,14 +9,26 @@ The test satisfying it was deleted by `18d8cc80` (#2227), leaving the constraint
 something untrue. This restores the binding half only -- not the deleted file, whose other
 cases were happy-path assertions the #2227 admission bar removed on purpose.
 
-Admission class: **class 1, it kills a mutation** (AGENTS.md § Testing). Four mutations of
-`apply_adjoint`, each measured and each failing 3 of these 5 tests: dropping the `W^{-1}...W`
-conjugation, dropping either half alone, and assuming a constant `W`. They are named here so
-the claim is reproducible; they are deliberately NOT added to
-`scripts/discrimination_baseline.json`, so this file does not move the gate's printed
-discrimination fraction. That section's own wording licenses this -- "Re-running the sweep is
-not the price of admission ... re-measure only when adding a mutation" -- and nothing here
-adds one.
+Admission class: **class 1, it kills a mutation** (AGENTS.md § Testing). **Three** distinct
+mutations of `apply_adjoint`, each measured: dropping the `W^{-1}...W` conjugation, and
+dropping either half alone.
+
+Not four. An earlier version of this line counted "assuming a constant W" as a fourth, and it
+is the same mutation as the first: for constant `c`, `W^{-1} J^T W m = c^{-1} J^T (c m) =
+J^T m` identically. Measured, `max|const_W - drop_conj|` is 0.0 at `c=1`, 2.3e-13 at
+`c=W.mean()`, against a control of 1.9e+02 separating either from the true adjoint. Inflating
+an evidence count by double-counting is the same failure this file's own history records
+twice already, so the correction stays visible.
+
+Each of the three fails **3 of these 5** tests -- and 3 is the ceiling, not a score: only
+`test_duality_holds_on_a_nonuniform_grid` and the two parametrized mass-pairing cases call
+`apply_adjoint` at all. The other two tests guard the fixture and the W-free transpose and
+cannot fail on any mutation of it.
+
+The three are named here so the claim is reproducible. They are deliberately NOT added to
+`scripts/discrimination_baseline.json`. AGENTS.md admits this directly -- "A test defending
+something on neither is admissible under class 1 or 2 on its own merits" -- and the killmatrix
+is a sweep snapshot no test written today can appear in.
 
 I claimed class 2 (external oracle) first, and then class 3 (defect pin). Both were wrong, and
 the second was wrong in a way worth leaving on the record: this file guards a live, correct
@@ -40,13 +52,22 @@ so the scope is "cannot see a wrong *linear* J", not "cannot see a wrong J".
 
 One mutation is deliberately NOT in those tables. Flipping the compensator sign is a no-op on
 this fixture: `GaussianJumps(mu=0.0)` is symmetric and the Gauss-Legendre nodes are symmetric
-about 0, so the compensator's contribution `sum_k w_k nu_k z_k` cancels to exactly 0.0 under
-`math.fsum` (-3.5e-18 under `np.sum`; the disagreement is the cancellation, largest single term
-2.0e-2), and the assembled operator moves by 1.8e-16 in relative Frobenius norm. An earlier
-version of this docstring listed it as a surviving mutation, which was a null measurement
-presented as evidence. The standing consequence: **this fixture cannot test the compensator at
-all**, and a test that needs to must use an asymmetric jump measure (`mu=0.05` moves it by
-5e-2).
+about 0, so the compensator's contribution `S = sum_k w_k nu_k z_k` cancels to exactly 0.0
+under `math.fsum` (-3.5e-18 under `np.sum`; the disagreement IS the cancellation, largest
+single term 2.0e-2), and the assembled operator moves by **less than 1e-15 in relative
+Frobenius norm** on both grids.
+
+Stated as a bound rather than a digit on purpose: the value is roundoff and moves with the
+measurement route. Toggling `compensate=` gives 1.77e-16 on this fixture and 1.67e-16 on a
+uniform grid; an independent reviewer, mutating via a subclass that re-spells `_matvec`, got
+2.10e-16 and 1.78e-16 for the same quantities. Every route agrees it is zero to machine
+precision and none of them agrees on a digit, so a digit would be the un-anchored figure this
+file's own subject warns about.
+
+An earlier version listed this as a surviving mutation, which was a null measurement presented
+as evidence. The standing consequence: **this fixture cannot test the compensator at all**. A
+test that needs to must use an asymmetric jump measure -- at `mu=0.05`, `S` itself moves to
+4.99e-2 (the referent is `S`, not the Frobenius change, which moves to 7.8e-3).
 """
 
 from __future__ import annotations
