@@ -41,7 +41,7 @@ Novel/experimental algorithms, unpublished methods. **Key principle**: MFG-Resea
 
 ### Bug fixes from research ⚠️ CRITICAL
 Before modifying MFGArchon for a bug found in mfg-research:
-1. GitHub issue with quantified validation evidence.
+1. GitHub issue with quantified validation evidence — anchored so it does not expire (§ *Closing out a fix*).
 2. Standalone validation experiment in mfg-research demonstrating the fix.
 3. Discussion + approval of approach.
 4. Reference the validation experiment in code comments:
@@ -238,6 +238,20 @@ defended very unevenly — some by a single-digit number of tests, some by over 
 the suite result, with its own staleness flag when the suite has moved since the baseline was
 recorded. A fraction copied into this file goes stale the day the mutation list or the suite moves,
 and both move — the baseline was re-recorded six times in the month to 2026-08-22.
+
+**The same expiry governs a quantified claim in an issue, and there the number is mandatory
+(§ *Bug fixes from research*), so the anchor is too.** Write it over something that cannot move — a
+commit sha, a count over past commits, a published constant — or name the command that owns it.
+`Seven of ten HJB solvers drop source_term` expires on the next fix; the same sentence at a named
+sha does not, and neither does `26 of the 85 tests this campaign added`, which is quantified over
+history rather than over the tree. That is the whole test: **a claim quantified over the current
+tree drifts the moment someone fixes it; one quantified over immutable history cannot.** It also
+runs backwards — read what an existing claim quantifies over and you know whether it has already
+expired, without executing it.
+
+The **title** carries this hardest, because it is what a reader takes without opening anything:
+#1991's title read "Seven of ten" while the tree said three, and #1878's read "78-90%" at 24%. When
+a re-derivation moves the number, move the title with it in the same pass.
 
 **Read the vector, not the fraction** — an aggregate over the whole suite cannot show a convention
 held by two tests, which is the thing you would act on (#2148). Two cautions when you do:
