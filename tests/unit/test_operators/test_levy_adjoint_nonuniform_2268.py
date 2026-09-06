@@ -9,13 +9,29 @@ The test satisfying it was deleted by `18d8cc80` (#2227), leaving the constraint
 something untrue. This restores the binding half only -- not the deleted file, whose other
 cases were happy-path assertions the #2227 admission bar removed on purpose.
 
-Admission class: **external oracle**. The discrete duality identity
+Admission class: **labelled defect pin** (AGENTS.md class 3), not an external oracle.
+
+I first admitted this as class 2 and that was wrong. The identity under test is
 
     <J[v], m>_W = <v, J*[m]>_W,    <f, g>_W = sum_i W_i f_i g_i
 
-is a property of the L^2(W) adjoint, computed here from the operator's own published
-`grid` and `integration_weights` rather than from anything the implementation returns.
-It pins mathematics, so it does not rot when the API moves (#2268).
+and `apply_adjoint` reaches `J^T` through `as_sparse()`, which is assembled column by column
+from `_matvec`. So the identity reduces to `sum_i v_i (J^T W m)_i == sum_j W_j m_j (Jv)_j`,
+which is **true for every linear J and every positive W**. Nothing external is computed, and
+this file cannot see a wrong J at all. Measured, by mutating the operator itself:
+
+    scale the whole operator by 3          -> 5 passed
+    flip the compensator sign (-= to +=)   -> 5 passed
+    drop the -v(x) term                    -> 5 passed
+    drop the Levy density from the weight  -> 5 passed
+
+What it does pin is `apply_adjoint` against `_matvec`: dropping the `W^{-1}...W` conjugation,
+either half of it, or assuming a constant W each fail 3 of 5. That is the defect #2268 names
+and the reason this file earns its place -- but the claim to be verifying the operator's
+mathematics was false, and would have kept passing while J was arbitrarily wrong.
+
+Retirement condition: if `as_sparse()` ever stops being derived from `_matvec`, this file
+becomes a genuine cross-implementation oracle and this note should be rewritten, not deleted.
 """
 
 from __future__ import annotations
@@ -47,10 +63,12 @@ def _operator(grid: np.ndarray) -> LevyIntegroDiffOperator:
 
 
 def _fields(grid: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Two fields that are not proportional and not symmetric under x -> 2*pi - x.
+    """Two fields that are not proportional.
 
-    A symmetric pair cannot separate an adjoint that transposes from one that also
-    reweights, so the asymmetry is load-bearing rather than decorative.
+    They are also asymmetric under x -> 2*pi - x, but that is incidental and NOT what makes
+    the test work: review measured a genuinely symmetric pair separating `J^T` from
+    `W^{-1} J^T W` at rel err 1.08, better than the 1.00 this pair gives. An earlier version
+    of this docstring claimed the asymmetry was load-bearing. It is not.
     """
     v = np.sin(grid) + 0.3 * np.cos(3.0 * grid)
     m = np.exp(-2.0 * (grid - 1.0) ** 2) + 0.1
