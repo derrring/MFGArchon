@@ -27,3 +27,21 @@
 
   `SolverResult.mass_conservation_error`'s docstring now says the functional is
   solver-family-dependent, per the issue's own closing request.
+
+  **Two user-visible consequences, stated because neither is obvious from the change.** A solve whose
+  particle trajectory starts with zero live particles (`num_particles=0`, or every particle absorbed
+  before the first recorded step) now raises `ValueError` from result construction rather than
+  completing. It previously returned a plausible float — 0.875 on the fixture that found it —
+  manufactured by the very grid path this issue discredits, because returning `None` there meant "no
+  override, use the generic measurement" rather than "not measurable". A solve that absorbs 100% of
+  its particles *during* the run is unaffected and reports `1.0`: the initial count is recorded before
+  any boundary condition is applied.
+
+  And on the particle path the field no longer reflects KDE normalisation at all: it reads `0.0` for
+  every non-absorbing solve under both `KDENormalization.NONE` and `ALL` (measured; the hand-computed
+  grid drift over the same pair still moves 5.85e-03 → 2.22e-16). That is the point — absorption is
+  what the field now reports — but two things follow. An existing caller asserting
+  `result.mass_conservation_error < tol` on a no-flux particle solve is now asserting nothing. And the
+  reconstruction drift #2181 deliberately left measurable is no longer surfaced by any field; it is
+  recomputable from `result.M` and the geometry's own integral, as this issue's own regression test
+  does.

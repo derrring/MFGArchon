@@ -22,9 +22,12 @@ accounting. An earlier version of this paragraph said the opposite -- that `sum(
 while the grid measure drifted -- which described a design this branch replaced, and contradicted two
 assertions the same change wrote.
 
-**The default is `NONE`, not `ALL`.** Pinning every slice makes
-`SolverResult.mass_conservation_error` identically 4.4e-16: mass conservation by fiat, which is what
-#1683 removed from the FDM, GFDM and network FP paths and which this solver was the last instance of.
+**The default is `NONE`, not `ALL`.** Pinning every slice makes the GRID measure identically
+4.4e-16: mass conservation by fiat, which is what #1683 removed from the FDM, GFDM and network FP
+paths and which this solver was the last instance of. ([UPDATED #2188] this said
+`SolverResult.mass_conservation_error` rather than "the grid measure". Since #2188 that field
+reports particle absorption on this path, not the grid measure, and reads 0.0 under both
+normalisations -- the rationale below is unchanged, but the field is no longer where you see it.)
 So every slice carries one factor calibrated on the first, leaving the reconstruction's own drift
 measurable. `INITIAL_ONLY` was removed in the same change: pinning the calibration slice is the same
 arithmetic as calibrating on it, so it was bitwise identical to `NONE`.

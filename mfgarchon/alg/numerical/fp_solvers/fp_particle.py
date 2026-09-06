@@ -798,7 +798,11 @@ class FPParticleSolver(BaseFPSolver):
             return None
         slices = trajectory if isinstance(trajectory, list) else [trajectory[t] for t in range(trajectory.shape[0])]
         counts = np.array([self._surviving_particle_count(s) for s in slices], dtype=float)
-        initial_count = counts[0]
+        # `counts.size == 0` before indexing counts[0]: an empty trajectory would otherwise raise
+        # IndexError here rather than the ValueError this branch is written to raise. Unreachable
+        # from a real solve, which always records at least the initial slice -- but the guard and
+        # the index have to be in this order for the designed error to be the one that fires.
+        initial_count = counts[0] if counts.size else 0.0
         if initial_count <= 0:
             # RAISE rather than return None, and the asymmetry with the `trajectory is None` case
             # above is the point. `None` does not mean "not measurable" to the caller -- it means
