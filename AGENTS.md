@@ -250,7 +250,7 @@ runs backwards — read what an existing claim quantifies over and you know whet
 expired, without executing it.
 
 The **title** carries this hardest, because it is what a reader takes without opening anything:
-measured 2026-09-06, #1991's title read "Seven of ten" where the tree gave three, and #1878's
+measured at `dccc66bd`, #1991's title read "Seven of ten" where the tree gave three, and #1878's
 read "78-90%" where the fixture gave 24%. When a re-derivation moves the number, move the title
 with it in the same pass.
 
