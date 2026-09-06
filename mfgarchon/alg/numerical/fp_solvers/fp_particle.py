@@ -792,12 +792,30 @@ class FPParticleSolver(BaseFPSolver):
         """
         trajectory = self.M_particles_trajectory
         if trajectory is None:
+            # No solve has run on this instance yet, so there is nothing of this solver's own to
+            # report. This is the ONE honest use of None here: the caller falls through to the
+            # generic measurement, which is equally undefined at this point.
             return None
         slices = trajectory if isinstance(trajectory, list) else [trajectory[t] for t in range(trajectory.shape[0])]
         counts = np.array([self._surviving_particle_count(s) for s in slices], dtype=float)
         initial_count = counts[0]
         if initial_count <= 0:
-            return None
+            # RAISE rather than return None, and the asymmetry with the `trajectory is None` case
+            # above is the point. `None` does not mean "not measurable" to the caller -- it means
+            # "no override, use the generic grid measurement", which for this solver is exactly
+            # the KDE-on-the-grid path #2188 discredited. Returning None here handed a solve that
+            # started with zero particles back to that path, which duly produced a plausible
+            # float (measured: 0.875) for a configuration carrying no density at all.
+            #
+            # Symmetric with the grid branch in `FixedPointIterator`, which raises ValueError on a
+            # non-positive initial mass rather than reporting one: a solve with no mass to conserve
+            # is already wrong, and saying so is the only honest answer.
+            raise ValueError(
+                f"the particle trajectory starts with {int(initial_count)} live particles, so mass "
+                "conservation is undefined and the solve that produced it is already wrong "
+                "(FPParticleSolver(num_particles=0), or every particle absorbed before the first "
+                "recorded step)"
+            )
         return float(np.max(np.abs(counts / initial_count - 1.0)))
 
     @staticmethod

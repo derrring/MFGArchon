@@ -163,6 +163,10 @@ class TestMassConservationErrorOverrideDirectly:
             np.array([0.0] * 5 + [np.nan] * 5),
         ]
 
+        # Pin the VALUE independently first -- 5 of 10 survive, so 0.5 -- then the agreement.
+        # Asserting only that the two representations agree would compare the method under test
+        # against itself, which pins invariance and no number at all.
+        assert fp.mass_conservation_error_override() == pytest.approx(0.5)
         assert fp.mass_conservation_error_override() == compact.mass_conservation_error_override()
 
     def test_no_trajectory_yet_gives_none(self):
@@ -181,3 +185,80 @@ class TestNonParticleSolversAreUnaffected:
         from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
 
         assert BaseFPSolver.mass_conservation_error_override is not FPParticleSolver.mass_conservation_error_override
+
+
+class TestBothAbsorbingRepresentationsAgreeThroughARealSolve:
+    """The `preserve_indices=True` representation, driven through an actual solver.
+
+    The 1-D fixtures above cannot reach it: `preserve_indices=True` raises
+    `NotImplementedError` on the 1-D path, so every other test in this file exercises only the
+    compact-removal encoding. This class uses the 2-D absorbing corridor -- the same construction
+    `test_fp_particle_solver.py::TestFPParticlePreserveIndices` uses -- because it is the only
+    harness in the suite that can produce the NaN-marked encoding at all.
+
+    Without this, representation 3 would be verified solely by hand-built arrays, and the claim
+    that the two encodings agree on real solver output would rest on nothing committed.
+    """
+
+    @staticmethod
+    def _corridor():
+        Lx, Ly, Nt, T = 4.0, 2.0, 20, 1.0
+        bc = BoundaryConditions(
+            segments=[
+                BCSegment(name="left", bc_type=BCType.NEUMANN, value=0.0, boundary="x_min"),
+                BCSegment(name="right", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max"),
+                BCSegment(name="bottom", bc_type=BCType.NEUMANN, value=0.0, boundary="y_min"),
+                BCSegment(name="top", bc_type=BCType.NEUMANN, value=0.0, boundary="y_max"),
+            ],
+            dimension=2,
+        )
+        grid = TensorProductGrid([(0, Lx), (0, Ly)], Nx_points=[21, 11], boundary_conditions=bc)
+        problem = MFGProblem(
+            model=Model(
+                hamiltonian=SeparableHamiltonian(
+                    control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m
+                ),
+                sigma=0.3,
+            ),
+            domain=grid,
+            conditions=Conditions(m_initial=lambda p: 1.0, u_terminal=lambda p: 0.0, T=T),
+            Nt=Nt,
+        )
+        return problem, bc
+
+    def _solve(self, preserve_indices: bool, seed: int = 42) -> float:
+        np.random.seed(seed)
+        problem, bc = self._corridor()
+        solver = FPParticleSolver(
+            problem,
+            num_particles=500,
+            density_mode="query_only",
+            boundary_conditions=bc,
+            preserve_indices=preserve_indices,
+        )
+        init = np.random.uniform([0.5, 0.5], [1.5, 1.5], (500, 2))
+        solver.solve_fp_system(
+            initial_particles=init,
+            drift_field=lambda t, x, m: np.column_stack([np.full(len(x), 2.0), np.zeros(len(x))]),
+            volatility_field=0.3,
+            drift_needs_density=False,
+            show_progress=False,
+        )
+        return solver.mass_conservation_error_override()
+
+    def test_the_two_encodings_of_absorption_report_the_same_loss(self):
+        """Same seed, same physics, two internal encodings of "who is still alive" -- the reported
+        loss must not depend on which one the solver happened to store.
+
+        This is the test that would have caught the first draft of this fix, which counted
+        `len()` per slice: under `preserve_indices=True` the length is constant by construction,
+        so it read 0.0 absorption while the compact encoding read the true loss.
+        """
+        compact = self._solve(preserve_indices=False)
+        nan_marked = self._solve(preserve_indices=True)
+
+        assert compact > 0.0, "the corridor must actually absorb particles, or this proves nothing"
+        assert nan_marked == pytest.approx(compact, rel=1e-12), (
+            f"the NaN-marked encoding reported {nan_marked!r} where compact removal reported "
+            f"{compact!r} on identical physics -- the encoding is leaking into the measurement"
+        )

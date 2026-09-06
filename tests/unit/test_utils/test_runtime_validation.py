@@ -210,6 +210,11 @@ def test_fixed_point_nan_early_termination():
     # Mock FP solver: returns valid density
     fp_solver = Mock()
     fp_solver.solve_fp_system.return_value = np.ones((num_time_steps, *spatial_shape)) / Nx
+    # #2188: this FP step completes, so the iterator reaches the override call. A bare Mock would
+    # fabricate a truthy Mock there and put it in SolverResult.mass_conservation_error, whose
+    # contract is `float | None`. Nothing here asserts on that field, so it would stay green while
+    # carrying a type-contract violation.
+    fp_solver.mass_conservation_error_override.return_value = None
 
     # Create iterator and solve
     iterator = FixedPointIterator(
@@ -272,6 +277,7 @@ def test_fp_is_not_solved_after_hjb_returns_nonfinite():
 
     fp_solver = Mock()
     fp_solver.solve_fp_system.side_effect = fp_side_effect
+    fp_solver.mass_conservation_error_override.return_value = None  # #2188, see above
 
     FixedPointIterator(problem=problem, hjb_solver=hjb_solver, fp_solver=fp_solver, relaxation=0.5).solve(
         max_iterations=10, tolerance=1e-6
