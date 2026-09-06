@@ -5,7 +5,9 @@
   removed on purpose. Note the operator's own `if __name__ == "__main__"` block already asserted this
   at `1e-10`; nothing runs it, so the gap was in CI rather than in the repository.
 
-  Admitted as a **labelled defect pin**, not an external oracle. `apply_adjoint` reaches `J^T`
+  Admitted under **class 1, it kills a mutation** — four `apply_adjoint` mutations, each failing 3 of
+  the 5 tests, named in the file so the claim is reproducible and deliberately not added to
+  `discrimination_baseline.json`. Not an external oracle, which is what the first draft claimed. `apply_adjoint` reaches `J^T`
   through `as_sparse()`, which is assembled from `_matvec`, so the identity holds for any linear `J`
   and positive `W`: scaling the operator by 3, dropping the `-v(x)` term, or dropping the Lévy
   density all leave five tests passing. A *non-linear* wrong `J` is caught (an affine return fails 3
