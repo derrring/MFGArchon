@@ -231,21 +231,6 @@ class BaseVariationalSolver(BaseOptimizationSolver):
 
         return np.linalg.norm(residual) * np.sqrt(self.dx * self.dt)
 
-    def compute_mass_conservation_error(self, density_evolution: NDArray) -> float:
-        """
-        Check mass conservation: ∫m(t,x)dx = constant
-
-        Args:
-            density_evolution: m(t,x) shape (Nt+1, Nx_points) - Nt+1 time points
-
-        Returns:
-            Maximum mass conservation error over time
-        """
-        total_mass = trapezoid(density_evolution, x=self.x_grid, axis=1)
-        initial_mass = total_mass[0]
-        mass_errors = np.abs(total_mass - initial_mass)
-        return np.max(mass_errors)
-
     def create_initial_guess(self, strategy: str = "uniform") -> NDArray:
         """
         Create initial guess for density evolution.

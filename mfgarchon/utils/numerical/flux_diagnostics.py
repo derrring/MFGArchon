@@ -46,7 +46,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d, quadrature_weights_nd
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -649,28 +649,46 @@ def compute_mass_conservation_error(
 ) -> dict[str, float]:
     """Quick mass conservation check without full flux diagnostics.
 
+    Uses the grid measure (#2145, #2260): trapezoid weights along each axis, built from
+    ``spacing`` the same way ``FluxDiagnostics._axis_weights`` does -- via
+    ``quadrature_weights_nd`` rather than a second derivation, since #2145 already found 169
+    places that had one. ``spacing`` implies a uniform axis, so the exact origin of the
+    rebuilt coordinates does not matter: the weights depend only on differences between them.
+
+    ``sum(M) * prod(spacing)`` -- the rectangle rule this replaced -- gives every boundary
+    node a full cell reaching outside the declared domain, over-counting by
+    ``spacing * (M[..., 0] + M[..., -1]) / 2`` per axis. On an endpoint-inclusive grid (what
+    ``TensorProductGrid`` builds) that is not a rounding difference: an exactly-conservative
+    solve can read as ~3% drift from it alone, and ``is_conservative`` was publishing a
+    verdict in that wrong measure. Measured on issue #2260's own fixture (FPSLSolver at the
+    #2258 mirror-wall convention): drift 2.021e-14 in the grid measure was reported here as
+    2.6692% and ``is_conservative=False``.
+
     Args:
         M: Density evolution array, shape (Nt+1, Nx+1) for 1D
            or (Nt+1, Nx+1, Ny+1) for 2D
         spacing: Grid spacing
 
     Returns:
-        Dictionary with mass conservation statistics
+        Dictionary with mass conservation statistics. ``"measure"`` names the quadrature
+        this verdict is about, per #2260's own closing question -- it was never optional
+        once the answer is a boolean rather than a number a reader can re-interpret.
     """
     if isinstance(spacing, (int, float)):
         spacing = (spacing,)
 
-    # Compute cell volume
-    cell_volume = float(np.prod(spacing))
-
-    # Compute mass at each timestep
-    # M has shape (Nt+1, *spatial_shape) where spatial_shape has ndim = len(spacing)
-    # Sum over all spatial dimensions (axes 1, 2, ..., M.ndim-1)
     if M.ndim < 2:
         raise ValueError(f"Array must have at least 2 dimensions (time + space), got {M.ndim}")
 
+    spatial_shape = M.shape[1:]
+    if len(spacing) != len(spatial_shape):
+        raise ValueError(f"spacing has {len(spacing)} entries but M has {len(spatial_shape)} spatial dimensions")
+
+    coordinates = [np.arange(n, dtype=float) * float(h) for n, h in zip(spatial_shape, spacing, strict=True)]
+    weights = quadrature_weights_nd(coordinates)
+
     spatial_axes = tuple(range(1, M.ndim))  # (1,) for 1D, (1, 2) for 2D, etc.
-    mass_history = np.sum(M, axis=spatial_axes) * cell_volume
+    mass_history = np.sum(M * weights, axis=spatial_axes)
 
     initial_mass = mass_history[0]
     final_mass = mass_history[-1]
@@ -684,6 +702,7 @@ def compute_mass_conservation_error(
         "mass_drift_percent": float(drift_pct),
         "mass_history": mass_history.tolist(),
         "is_conservative": drift_pct < 1.0,
+        "measure": "grid",
     }
 
 

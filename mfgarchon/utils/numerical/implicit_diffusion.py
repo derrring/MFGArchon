@@ -57,12 +57,16 @@ conserves its own measure AND measurably not the other, so deleting the loser wo
 that passes on any wall. Keeping it costs one dict entry; it is not an offer, and `treatment` has
 no default so nothing acquires it by omission.
 
-One caution that outlives the switch: the library carries two mass conventions, and they pair with
-the two walls. `utils.numerical.flux_diagnostics.compute_mass_conservation_error` uses
-``sum(M) * cell_volume``, which ``half_wall`` conserved; the ``np.trapezoid`` sites are the ones
-``mirror`` conserves. Since #2243 the solvers are all on ``mirror``, so a mass check written with
-the rectangle rule will report drift that is the convention's and not the solver's -- which is
-exactly the shape of the eight failures #2233 hit and #2189 recorded after #2145.
+One caution that outlived the switch, [FIXED 2026-09-06, #2260]: the library carried two mass
+conventions, and they paired with the two walls. `utils.numerical.flux_diagnostics.compute_mass_conservation_error`
+used ``sum(M) * cell_volume``, which ``half_wall`` conserved; the ``np.trapezoid`` sites are the
+ones ``mirror`` conserves. Since #2243 the solvers are all on ``mirror``, so a mass check written
+with the rectangle rule reported drift that was the convention's and not the solver's -- exactly the
+shape of the eight failures #2233 hit and #2189 recorded after #2145, and what made an
+exactly-conservative SL solve read as ~2.7% drift and ``is_conservative=False`` (#2260).
+`compute_mass_conservation_error` now uses the grid measure (`quadrature_weights_nd`), the same one
+``mirror`` conserves, so this caution no longer applies to it. A caller with its own
+``sum(M) * cell_volume`` inline is still on the wrong convention.
 
 What each wall does is pinned in `tests/unit/test_utils/test_neumann_cn_wall_2237.py`, against both
 weightings and against an exact heat solution -- oracles independent of the scheme.
