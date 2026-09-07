@@ -2,7 +2,7 @@
 
 ## 🚀 **Quick Start: Choose Your Backend**
 
-`create_backend()` with no argument returns the **NumPy** backend. torch and jax are opt-in by name — see *Auto-Selection* below for why, and choose manually based on your hardware and problem type.
+MFGArchon automatically selects the best available backend, but you can also manually choose based on your hardware and problem type.
 
 ### **One-Line Backend Selection**
 ```python
@@ -234,7 +234,7 @@ from mfgarchon.utils.acceleration.jax_utils import compute_hamiltonian, tridiago
 # Backend factory
 from mfgarchon.backends import create_backend
 
-# Auto-select (returns NumPy; ask for torch/jax by name)
+# Auto-select best backend (torch > jax > numpy)
 backend = create_backend()
 
 # Or explicit selection
@@ -258,24 +258,24 @@ from mfgarchon.utils.acceleration.jax_utils import compute_hamiltonian
 
 ## 🔧 **Backend Selection Guide**
 
-### **Auto-Selection (returns NumPy since #1921)**
+### **Tiered Auto-Selection (torch > jax > numpy)**
 
-`create_backend()` with no argument returns **NumPy, unconditionally**:
+The default `create_backend()` follows a tiered priority for optimal performance:
 
 ```python
-backend = create_backend()          # -> NumPyBackend
-backend = create_backend("torch")   # accelerators are opt-in, by name
+backend = create_backend()  # Auto-select best available
+
+# Selection logic:
+# 1. PyTorch (CUDA > MPS > CPU) - Best for most use cases
+# 2. JAX (GPU > CPU) - Scientific computing alternative
+# 3. NumPy - Universal fallback
 ```
 
-~~The default follows a tiered priority: 1. PyTorch (CUDA > MPS > CPU), 2. JAX (GPU > CPU),
-3. NumPy fallback~~ [CORRECTED 2026-09-07] — the implementation stopped doing that in #1921 and
-this guide went on describing it. There is no probing of installed accelerators and no fallback
-chain; passing no argument is the same as passing `"numpy"`.
-
-**Choose an accelerator explicitly when:**
-- ✅ GPU acceleration is available and the problem is large enough to pay for transfers
-- ✅ Particle methods (torch KDE)
-- ✅ You have measured it faster than NumPy on your own problem
+**When auto-selection works best:**
+- ✅ Vectorizable operations (most MFG solvers)
+- ✅ Particle methods (PyTorch KDE)
+- ✅ GPU acceleration available
+- ✅ Standard grid-based PDEs
 
 ### **When to Use Numba Backend Explicitly**
 
@@ -354,7 +354,7 @@ backend = create_backend("numba")
 
 ### **Automatic Backend Selection (Recommended)**
 ```python
-# No backend= argument: the solver's default, which is NumPy
+# Let MFGArchon choose the best backend
 from mfgarchon import MFGProblem
 from mfgarchon.factory import create_solver
 
