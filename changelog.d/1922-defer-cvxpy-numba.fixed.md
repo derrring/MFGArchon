@@ -15,9 +15,10 @@
 
   Guarded by a **timing** assertion in `test_optional_backends_are_not_imported_eagerly.py`, not a
   scope one: it constrains *when* these may be imported, never *where* they may be used, so any
-  number of deferred call sites satisfy it. It skips loudly rather than passing vacuously when the
-  package is absent — CI installs no extras, so an unguarded assertion would have been green on
-  every runner while measuring nothing.
+  number of deferred call sites satisfy it. It skips loudly rather than passing vacuously where the
+  package is absent, which is not uniform across runners: `ci.yml` and `python-compat.yml` install
+  no extras and skip there, while `nightly.yml`, `discrimination.yml` and `deprecation-check.yml`
+  install `[numerical]` plus numba, so the assertion is live on them.
 
   Not addressed here: jax, which reaches `sys.modules` by a different route
   (`utils/acceleration/__init__.py` runs `import jax` to compute `HAS_JAX`) and needs that package's

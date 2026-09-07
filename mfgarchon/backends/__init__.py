@@ -7,7 +7,7 @@ This module provides different computational backends for MFG solving:
 - Numba: CPU JIT compilation for imperative algorithms
 - NumPy: CPU baseline for compatibility
 
-Tiered auto-selection priority: torch > jax > numpy
+Auto-selection returns the NumPy backend; torch and jax must be asked for by name.
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ def create_backend(backend_name: str | None = None, **kwargs):
         Backend instance
 
     Example:
-        >>> # Auto-select (torch > jax > numpy)
+        >>> # Auto-select (returns NumPy; ask for torch/jax by name)
         >>> backend = create_backend()
 
         >>> # Explicit choice

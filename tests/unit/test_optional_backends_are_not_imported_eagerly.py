@@ -199,15 +199,24 @@ def test_the_numpy_backend_does_not_import_a_solver_it_never_uses(pkg):
     """
     loaded = _modules_after(_BACKEND_PROBE)
 
-    # A guard that cannot fail is not a guard. cvxpy lives in the `[numerical]`/`[all]` extras and
-    # numba in `[all]`; CI installs `-e . --group dev` with NO extras, so on every runner this
-    # assertion would pass while measuring nothing. That is exactly how the torch guard above was
-    # vacuously green on nightly and python-compat until review caught it. Skip loudly instead.
+    # A guard that cannot fail is not a guard, and which runners it discriminates on is NOT
+    # uniform -- an earlier draft of this comment said "CI installs no extras", which is false and
+    # in the damaging direction:
+    #
+    #   ci.yml, python-compat.yml   `-e . --group dev`              -> both absent, SKIPS here
+    #   nightly.yml, discrimination.yml, deprecation-check.yml
+    #                               `-e .[numerical] --group dev numba` -> both present, ASSERTS
+    #
+    # nightly's unit shard runs `pytest tests/unit` ignoring only `test_backends/` and
+    # `test_visualization/`; this file is at the root of `tests/unit`, so the assertion is LIVE
+    # there. The torch guard above was vacuous on nightly for a different reason -- torch is in
+    # `[nn]`/`[all]`, which nightly does not install.
     if not loaded[f"{pkg}__installed"]:
         pytest.skip(
             f"{pkg} is not installed in this environment, so the assertion below cannot fail here. "
-            f"It discriminates only where {pkg} is present (`pip install -e .[numerical]` for cvxpy, "
-            f"`[all]` for numba). A pass here is vacuous, not evidence."
+            f"It discriminates where {pkg} is present -- `[numerical]` carries cvxpy, `[all]` carries "
+            f"numba, and nightly/discrimination/deprecation-check install both. A pass HERE is "
+            f"vacuous, not evidence."
         )
 
     assert not loaded[pkg], (

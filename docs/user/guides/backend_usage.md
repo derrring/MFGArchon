@@ -234,7 +234,7 @@ from mfgarchon.utils.acceleration.jax_utils import compute_hamiltonian, tridiago
 # Backend factory
 from mfgarchon.backends import create_backend
 
-# Auto-select best backend (torch > jax > numpy)
+# Auto-select (returns NumPy; ask for torch/jax by name)
 backend = create_backend()
 
 # Or explicit selection
@@ -258,7 +258,7 @@ from mfgarchon.utils.acceleration.jax_utils import compute_hamiltonian
 
 ## 🔧 **Backend Selection Guide**
 
-### **Tiered Auto-Selection (torch > jax > numpy)**
+### **Auto-Selection (returns NumPy since #1921)**
 
 The default `create_backend()` follows a tiered priority for optimal performance:
 

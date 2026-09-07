@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 numba = None
-NUMBA_AVAILABLE: bool | None = None
+_NUMBA_AVAILABLE: bool | None = None
 
 
 def _numba() -> bool:
@@ -37,17 +37,17 @@ def _numba() -> bool:
     Semantics unchanged from the `try: import numba` this replaced -- True means the import
     succeeded, not that the package is discoverable.
     """
-    global numba, NUMBA_AVAILABLE
-    if NUMBA_AVAILABLE is None:
+    global numba, _NUMBA_AVAILABLE
+    if _NUMBA_AVAILABLE is None:
         try:
             import numba as _nb
 
             numba = _nb
-            NUMBA_AVAILABLE = True
+            _NUMBA_AVAILABLE = True
         except ImportError:
             numba = None
-            NUMBA_AVAILABLE = False
-    return NUMBA_AVAILABLE
+            _NUMBA_AVAILABLE = False
+    return _NUMBA_AVAILABLE
 
 
 try:
