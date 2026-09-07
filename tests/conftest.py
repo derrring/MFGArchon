@@ -720,16 +720,23 @@ def still_refused():
     - assert that the guarded path was REACHED, before entering this block;
     - write ``retirement`` so it states what was observed and names the other causes, rather than
       declaring the capability landed.
+
+    **Name a cause only if the pin observes it.** Measured on this fixture's own callers (#2288): a
+    message declaring "#1700 landed" fired byte-identically when a *different* change removed the
+    raise, and its instruction was then wrong. Where an absence has two plausible causes, check them
+    separately and give each its own message.
+
+    ``exc_type`` selects the refusal to catch, defaulting to ``NotImplementedError`` (#2288). Two
+    things it does not do. It is annotated ``type[Exception]``, so the tuple form ``except`` accepts
+    is not supported -- and ``tests/`` is outside the gate's mypy scope, so a tuple would fail at
+    runtime rather than at check time. And it is the knob by which a caller can break another
+    caller's design: ``test_gpu_particle_refuses_absorbing_bc_1910.py`` relies on an
+    ``AssertionError`` from its own premise check passing through this block uncaught, which a broad
+    ``exc_type`` would silently swallow.
     """
 
     @contextlib.contextmanager
     def _still_refused(match: str, retirement: str, exc_type: type[Exception] = NotImplementedError):
-        """``exc_type`` widens this to any refusal, not only ``NotImplementedError`` (#2288).
-
-        A second caller needed ``ValueError`` -- a defect pinned while its own fix is open -- and a
-        hardcoded type is exactly the owner signature that makes the next caller write a third copy
-        of the capture-and-re-read idiom instead of calling this.
-        """
         raised: Exception | None = None
         try:
             yield

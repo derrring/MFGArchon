@@ -37,10 +37,20 @@ from mfgarchon.geometry.boundary.bc_utils import (
 
 CONSUMER = {"consumer": "TestSolver", "alternative": "Use one BC type across axes."}
 
-_RETIRE_1700B = """RETIREMENT CONDITION MET -- #1700 part B has landed and `get_bc_type_string` now
-resolves a segment-free BC through its `default_bc` instead of raising. Delete THIS assertion and
-keep the two above it: the guard/lookup split is a responsibility argument (#2284) and never
-depended on this ValueError existing. Do NOT restore the raise."""
+_RETIRE_1700B = """`get_bc_type_string` no longer raises on a segment-free BC.
+
+That is #1700 part B landing, which this assertion exists to notice: it calls that configuration
+legitimate, so the ValueError is a defect and its removal is progress. Delete the two assertions
+below and keep the rest of this test -- the guard/lookup split is a responsibility argument (#2284)
+and never depended on the ValueError existing. Do NOT restore the raise."""
+
+_LOOKUP_NO_LONGER_REACHED = """`checked_bc_type_string` did not raise on a segment-free BC, but
+`get_bc_type_string` still does -- so #1700 has NOT landed and the composite has stopped routing
+through the lookup.
+
+The split (#2284) was meant to leave `checked_bc_type_string` as guard-then-lookup. Restore the
+lookup, or if the composite is deliberately gone, re-point this test at whatever now owns
+collapse-to-a-value rather than deleting it."""
 
 
 def _seg(name, bc_type, boundary):
@@ -257,19 +267,32 @@ def test_the_guard_and_the_lookup_are_separable_2284(still_refused):
 
     Mutation, measured for #2284: appending `get_bc_type_string(boundary_conditions)` to
     `refuse_mixed_per_axis` -- the split semantically undone -- kills this test and only this one.
-    Control 18 passed on this file.
+    Measured at `2fde3917` over the 17 files matching
+    `grep -rlE 'semi_lagrangian|bc_utils|checked_bc_type_string|geometric_operations' tests/`:
+    1 failed, 361 passed, 7 xfailed.
 
-    **The third assertion pins an open defect, deliberately, and retires with it.** That `ValueError`
-    is #1700 part B, which calls an empty segment list with a uniform default "a legitimate
-    configuration" -- so it is a bug, not a contract, and the first two assertions are what this
-    test is really for.
+    **The last two assertions pin an open defect, deliberately, and retire with it.** That
+    `ValueError` is #1700 part B, which calls an empty segment list with a uniform default "a
+    legitimate configuration" -- so it is a bug, not a contract, and the first two assertions are
+    what this test is really for. They are two rather than one so that the absence has a cause: the
+    lookup is checked directly, then the composite, and each carries the message true of its own
+    trigger.
     """
     segment_free = BoundaryConditions(dimension=2, segments=[], default_bc=BCType.NO_FLUX)
 
     assert geometric_operations(segment_free) == {"reflect"}
     assert refuse_mixed_per_axis(segment_free, **CONSUMER) is None
 
+    # The CAUSE, observed where it lives. #1700B is about `get_bc_type_string`, so that is what the
+    # retirement condition has to watch. Asserting only the composite cannot separate "#1700 landed"
+    # from "the composite stopped calling the lookup" -- measured for #2288: replacing
+    # `checked_bc_type_string`'s body with `return None`, leaving `get_bc_type_string` untouched and
+    # still raising, produced a byte-identical retirement message declaring #1700 had landed.
     with still_refused("only valid for uniform BCs", _RETIRE_1700B, ValueError):
+        get_bc_type_string(segment_free)
+
+    # ...and that the composite still routes through it, which is the other cause and its own message.
+    with still_refused("only valid for uniform BCs", _LOOKUP_NO_LONGER_REACHED, ValueError):
         checked_bc_type_string(segment_free, **CONSUMER)
 
 

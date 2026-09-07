@@ -88,10 +88,12 @@ _COLLAPSE_REFUSAL = {
 def _checked_bc_type_string(bc) -> str:
     """Collapse ``bc`` to the single BC type the SL fold applies to every axis, or refuse.
 
-    Thin wrapper over :func:`checked_bc_type_string`, which is the one owner of this collapse for
-    every solver whose fold is per-axis blind (Issues #1560, #1697). It lives here only to bind the
-    consumer name and the suggested alternative; the logic, including the ``default_bc`` union that
-    a segments-only guard would miss, belongs to ``bc_utils``.
+    Thin wrapper over :func:`checked_bc_type_string` -- the refusal plus the lookup -- for the
+    sites that need the collapsed value. The refusal itself is owned by
+    :func:`refuse_mixed_per_axis` since #2284, which is what :func:`_refuse_mixed_per_axis` binds
+    for the constructor. This lives here only to bind the consumer name and the suggested
+    alternative; the logic, including the ``default_bc`` union that a segments-only guard would
+    miss, belongs to ``bc_utils``.
     """
     return checked_bc_type_string(bc, **_COLLAPSE_REFUSAL)
 
