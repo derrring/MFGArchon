@@ -32,6 +32,7 @@ from mfgarchon.geometry.boundary.bc_utils import (
     checked_bc_type_string,
     geometric_operations,
     get_bc_type_string,
+    refuse_mixed_per_axis,
 )
 
 CONSUMER = {"consumer": "TestSolver", "alternative": "Use one BC type across axes."}
@@ -240,3 +241,79 @@ def test_an_object_carrying_neither_field_is_not_a_segmented_bc():
 
     assert geometric_operations(SimpleNamespace(type="periodic")) == set()
     assert geometric_operations(None) == set()
+
+
+def test_the_guard_and_the_lookup_are_separable_2284():
+    """`refuse_mixed_per_axis` is the predicate; `checked_bc_type_string` is it plus the lookup.
+
+    They were one function until #2284, and the difference is not cosmetic: a segment-free BC asks
+    for exactly one geometric operation, so the guard passes it, while `get_bc_type_string` raises
+    `ValueError` on it. A caller that wants only the refusal must not inherit that.
+    """
+    segment_free = BoundaryConditions(dimension=2, segments=[], default_bc=BCType.NO_FLUX)
+
+    assert geometric_operations(segment_free) == {"reflect"}
+    assert refuse_mixed_per_axis(segment_free, **CONSUMER) is None
+
+    with pytest.raises(ValueError, match="only valid for uniform BCs"):
+        checked_bc_type_string(segment_free, **CONSUMER)
+
+
+def test_hjb_sl_refuses_the_rename_signature_at_construction_2284():
+    """The wiring, not the helper -- and the defect the consolidation actually closed.
+
+    `HJBSemiLagrangianSolver.__init__` carried its own copy of the collapse predicate until #2284.
+    The copy read `getattr(bc, "default_bc", None)`, so on the #1691 rename signature -- `segments`
+    present, `default_bc` renamed away -- it treated the absence as "no default" and constructed,
+    while `geometric_operations` refuses to guess and raises. The per-axis disagreement carried by
+    the renamed field was invisible to construction.
+
+    Mutation, measured for #2284: restoring the inline block in `__init__` (its own `_sl_ops` set
+    over `segments` plus `getattr(bc, "default_bc", None)`) kills this test and only this test.
+    Asserting on `refuse_mixed_per_axis` alone would not -- those assertions stay green with the
+    constructor reverted, which is why this one builds the solver.
+    """
+    from mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian import HJBSemiLagrangianSolver
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+    from mfgarchon.core.mfg_components import MFGComponents
+    from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid
+
+    class RenamedBC:
+        """Every segment agrees, so only the renamed default carries the disagreement."""
+
+        def __init__(self):
+            self.segments = [
+                _seg("wx", BCType.NO_FLUX, "x_min"),
+                _seg("ex", BCType.NO_FLUX, "x_max"),
+                _seg("wy", BCType.NO_FLUX, "y_min"),
+                _seg("ey", BCType.NO_FLUX, "y_max"),
+            ]
+            self.default = BCType.PERIODIC  # not `default_bc`
+            self.dimension = 2
+
+        def get_bc_type_string(self):
+            return "no_flux"
+
+    # The premise: the segments alone do NOT disagree, so a segments-only union sees nothing.
+    duck = RenamedBC()
+    assert len({seg.bc_type for seg in duck.segments}) == 1
+
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[6, 6], boundary_conditions=no_flux_bc(dimension=2)
+    )
+    H = SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0))
+    problem = MFGProblem(
+        geometry=grid,
+        T=0.2,
+        Nt=2,
+        sigma=0.1,
+        components=MFGComponents(hamiltonian=H, u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0),
+    )
+
+    class _WithRenamedBC(HJBSemiLagrangianSolver):
+        def get_boundary_conditions(self):
+            return duck
+
+    with pytest.raises(AttributeError, match="has 'segments' but no 'default_bc'"):
+        _WithRenamedBC(problem=problem)
