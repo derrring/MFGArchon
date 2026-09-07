@@ -31,6 +31,13 @@ named, the signature printed, and the rule stated. What is gone is anything that
 that stopped being true -- a real gap, and a pre-existing one, since the two restatements #2200
 replaced were equally unguarded once the file went.
 
+[RESTORED 2026-09-07, #2257] `test_kwarg_gate_var_keyword_1783.py` is back, and the refusal is now
+pinned on BOTH paths: `test_the_meshless_pair_forwards_and_a_swallowing_solver_is_refused` (Picard,
+through `FixedPointIterator`) and `test_the_newton_path_refuses_a_swallowing_solver` (Newton,
+through `MFGResidual`). The struck sentence above is still not restored, because its "that" covered
+both branches and only the volatility one is held: `resolve_source_kwarg` has no pin, which is the
+part of the gap that is still real.
+
 The hazard is the DIRECT call, which bypasses that gate. Surveyed at the time of writing, no test in
 the suite drives a manufactured solution through a swallowing solver -- the six direct
 `source_term=` call sites are all on `HJBFDMSolver`, `FPFDMSolver`, `HJBGFDMSolver`,
