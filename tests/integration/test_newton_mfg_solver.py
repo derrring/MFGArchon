@@ -62,10 +62,13 @@ def _default_components():
     )
 
 
-# Paired with @pytest.mark.slow on every class that uses it. `manual` ALONE is not enough:
-# scripts/local_ci.sh filters `not slow and not benchmark and not experimental and not
-# optional_torch and not environment` -- no `not manual` -- so a manual-only test still
-# runs in the authoritative 2.5-minute gate. `manual` is what excludes it from nightly.
+# Paired with @pytest.mark.slow on every class that uses it.
+#
+# This comment previously said `manual` ALONE is not enough, because local_ci.sh's filter carried
+# no `not manual`. That was true when written (ef6c4bb2) and is now false: scripts/ci_markers.txt
+# is the single owner of the marker expression, local_ci.sh reads it with `-m "$(cat ...)"`, and
+# it carries `not manual`. The `slow` pairing is kept -- it is what excludes these from nightly,
+# which does run manual-marked tests.
 _newton = pytest.mark.manual
 
 
