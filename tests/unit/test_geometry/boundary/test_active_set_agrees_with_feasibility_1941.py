@@ -55,9 +55,7 @@ def _pointwise_infeasible(constraint_type: str, psi: np.ndarray, u: np.ndarray, 
     """
     return np.array(
         [
-            not ObstacleConstraint(psi[i : i + 1], constraint_type=constraint_type).is_feasible(
-                u[i : i + 1], tol=tol
-            )
+            not ObstacleConstraint(psi[i : i + 1], constraint_type=constraint_type).is_feasible(u[i : i + 1], tol=tol)
             for i in range(u.size)
         ]
     )
@@ -123,9 +121,9 @@ def test_the_bilateral_constraint_holds_the_same_relation_on_both_bounds(tol):
         u = bound + sign * offsets
         violating = np.array(
             [
-                not BilateralConstraint(
-                    lower_bound=lower[i : i + 1], upper_bound=upper[i : i + 1]
-                ).is_feasible(u[i : i + 1], tol=tol)
+                not BilateralConstraint(lower_bound=lower[i : i + 1], upper_bound=upper[i : i + 1]).is_feasible(
+                    u[i : i + 1], tol=tol
+                )
                 for i in range(u.size)
             ]
         )

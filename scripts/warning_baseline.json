@@ -1,6 +1,6 @@
 {
   "_comment": "Warning identities the suite emits (#2119). Keyed (file, kind, digits-normalised text[:40]) -- NOT line numbers, which move under any edit, and NOT occurrence counts, which jitter run to run. Bidirectional: a new identity is a regression, a removed one is progress that must be recorded here. `occurrences` is reported, never gated. `toolchain_when_written` is attribution for a later diff (#2158), also never gated; a value of `ambiguous:a|b` or `unreadable` cannot be written here, because it would name a broken environment rather than a version. Regenerate with --write-baseline.",
-  "occurrences_when_written": 3738,
+  "occurrences_when_written": 3751,
   "toolchain_when_written": {
     "python": "3.12.13",
     "pytest": "9.1.1",
@@ -23,6 +23,7 @@
     "mfgarchon/alg/numerical/hjb_solvers/hjb_gfdm.py\tMatrixRankWarning\tMatrix is exactly singular",
     "mfgarchon/alg/numerical/hjb_solvers/hjb_gfdm.py\tUserWarning\tHJBHowardSolver: running on non-SOCP ste",
     "mfgarchon/alg/numerical/weak_form_fp_solver.py\tUserWarning\tWeak-form/FEM solver uses a single scala",
+    "mfgarchon/alg/numerical/weak_form_hjb_solver.py\tUserWarning\tWeak-form/FEM solver uses a single scala",
     "mfgarchon/core/stochastic/stochastic_problem.py\tUserWarning\tinitial density mass N.N on the grid mea",
     "mfgarchon/extensions/topology.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
     "mfgarchon/geometry/graph/network_geometry.py\tFutureWarning\tInput has data type intN, but the output",
@@ -164,6 +165,8 @@
     "tests/unit/test_alg/test_issue_1189_fp_sigma_migration.py\tUserWarning\tConverting a tensor with requires_grad=T",
     "tests/unit/test_alg/test_issue_1248_volatility_forwarding.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
     "tests/unit/test_alg/test_issue_1248_volatility_forwarding.py\tUserWarning\tinitial density mass N.N on the grid mea",
+    "tests/unit/test_alg/test_kwarg_gate_var_keyword_1783.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
+    "tests/unit/test_alg/test_kwarg_gate_var_keyword_1783.py\tUserWarning\tinitial density mass N.N on the grid mea",
     "tests/unit/test_alg/test_meshless_stabilization.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
     "tests/unit/test_alg/test_meshless_stabilization.py\tUserWarning\tinitial density mass N.N on the grid mea",
     "tests/unit/test_alg/test_particle_multi_exit.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
@@ -174,6 +177,8 @@
     "tests/unit/test_alg/test_periodic_capability_invariant_1822.py\tUserWarning\tHJBGFDMSolver: no `monotonicity_scheme` ",
     "tests/unit/test_alg/test_periodic_torus_oracle_1822.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
     "tests/unit/test_alg/test_regime_switching_iterator.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
+    "tests/unit/test_alg/test_rfc1574_phase0_guards_1560_1564.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
+    "tests/unit/test_alg/test_rfc1574_phase0_guards_1560_1564.py\tDeprecationWarning\tmixed_bc is deprecated since vN.N.N. Use",
     "tests/unit/test_alg/test_s1_drift_convention_routing.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
     "tests/unit/test_alg/test_s1_drift_convention_routing.py\tUserWarning\tinitial density mass N.N on the grid mea",
     "tests/unit/test_alg/test_s4_ic_dof_mismatch.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",

@@ -58,12 +58,17 @@ def _still_refused(match: str):
     `pytest.raises` reports "DID NOT RAISE", which tells a future reader that something broke but
     not that the something is this pin's own success condition.
     """
+    raised: NotImplementedError | None = None
     try:
         yield
     except NotImplementedError as exc:
-        assert match in str(exc), f"refused, but not for the pinned reason: {exc}"
-    else:
+        raised = exc
+
+    # Captured and re-read outside the handler rather than asserted inside it: PT017 wants
+    # `pytest.raises` there, and `pytest.raises` is the thing this helper exists to replace.
+    if raised is None:
         pytest.fail(_RETIREMENT)
+    assert match in str(raised), f"refused, but not for the pinned reason: {raised}"
 
 
 def _problem(bc):
