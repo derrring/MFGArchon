@@ -34,8 +34,9 @@ than to restore the raise.
 `current_strategy.name == "cpu"` dispatch, not by `backend="torch"`: a threshold change that routes
 2000 particles to the CPU path -- which honours the absorbing wall -- also produces no raise, and
 would print the retirement message for a guard that is still live. So each test here asserts that
-the GPU strategy was actually selected, and the retirement text states what was observed rather
-than declaring the capability landed.
+the GPU strategy was actually selected -- in a `finally`, so the check runs on the raising path and
+the non-raising path alike and precedes the retirement -- and the retirement text states what was
+observed rather than declaring the capability landed.
 """
 
 from __future__ import annotations
@@ -63,8 +64,9 @@ which of these happened before acting:
     wall, using `test_the_cpu_path_absorbs_at_the_same_wall` below as the oracle for how many.
   * the refusal was moved or dropped without the capability landing -- restore it.
 
-The strategy assertion above already excludes the third cause (the solve was routed to the CPU
-path, which honours the wall). See #1910."""
+A third cause -- the solve was routed to the CPU path, which honours the wall -- cannot produce this
+message: `_assert_gpu_path_was_taken` runs in a `finally` inside this block and fails first, saying
+which strategy ran. So if you are reading this, the GPU path was taken. See #1910."""
 
 
 def _problem(bc):
@@ -110,8 +112,17 @@ def test_the_gpu_path_refuses_an_absorbing_wall(still_refused):
     pytest.importorskip("torch")
     solver = _solver("torch", dirichlet_bc(0.0, dimension=1))
     with still_refused("segment-aware absorbing", _RETIREMENT):
-        _solve(solver)
-    _assert_gpu_path_was_taken(solver)
+        try:
+            _solve(solver)
+        finally:
+            # `finally`, and inside the block -- not a line after it. `still_refused` ends in
+            # `pytest.fail`, which propagates out of the context manager, so a trailing assertion
+            # never runs on exactly the path whose message would claim that it had. The strategy is
+            # only recorded during the solve, so it cannot be checked before; this is the one place
+            # it runs whether the solve raised or not, and before the absence is interpreted.
+            # An AssertionError here is not a NotImplementedError, so it passes through
+            # `still_refused` untouched and reports the routing instead of a false retirement.
+            _assert_gpu_path_was_taken(solver)
 
 
 def test_the_gpu_path_still_runs_a_uniform_wall():
@@ -119,6 +130,13 @@ def test_the_gpu_path_still_runs_a_uniform_wall():
 
     `total_absorbed` is deliberately not asserted here: it is a CPU-only counter (see the module
     docstring), so `== 0` on this path is the constructor's initial value and cannot fail.
+
+    `_assert_gpu_path_was_taken` is what this test discriminates on -- it fails when the selector
+    stops choosing the GPU strategy. The three assertions after it are admitted as happy-path
+    checks and no mutant is offered for them: for a Gaussian KDE, non-negativity and a non-zero
+    final row are close to structurally guaranteed, so only `isfinite` would plausibly catch
+    anything, and only a blow-up. They say the solve returned something usable, not that it
+    returned the right thing.
     """
     pytest.importorskip("torch")
     solver = _solver("torch", no_flux_bc(dimension=1))

@@ -346,6 +346,11 @@ def test_one_membership_test_in_the_coupling_package():
     that dropped the field silently. A single-owner guard scoped to one class cannot see the
     neighbouring path, which is the whole shape it exists to catch.
 
+    What it does not reach: the scan matches one literal spelling -- double quotes, trailing space --
+    over a flat `glob("*.py")`. A single-quoted copy, or one in a future subpackage of `coupling/`,
+    evades it. `assert len(modules) >= 4` is the reach control for the second of those; the package
+    is flat today and the spelling is the one the owner uses.
+
     Mutation, measured for #2257: a second `"volatility_field" in ` membership test added to
     `mfg_residual.py` -- the pre-#1783 shape -- kills this test and nothing else in this file
     (control 8 passed; mutated 1 failed). Nothing else in the repository holds it either: the
