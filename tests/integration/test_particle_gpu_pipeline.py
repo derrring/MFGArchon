@@ -258,8 +258,9 @@ class TestParticleGPUPipeline:
         # Dirichlet to this backend.
         #
         # The refusal itself is live in `FPParticleSolver._solve_fp_system_gpu`, which raises
-        # NotImplementedError when `_needs_segment_aware_bc()` is true. It currently has NO test
-        # asserting it: the pin that did was deleted by 18d8cc80 (#2227). Named by symbol and not
-        # by line, and stated as unpinned rather than pinned, because the previous wording here
-        # cited a file that does not exist -- which reads as coverage that is not there. Tracked
-        # in #2257.
+        # NotImplementedError when `_needs_segment_aware_bc()` is true. It is asserted by
+        # `test_gpu_particle_refuses_absorbing_bc_1910.py::test_the_gpu_path_refuses_an_absorbing_wall`,
+        # restored in #2257 after 18d8cc80 (#2227) deleted it. Named by symbol as well as by file,
+        # because the wording before #2277 cited a file that did not exist -- which reads as
+        # coverage that is not there, and a stale pointer in the other direction reads as a gap
+        # that is not there.

@@ -16,7 +16,7 @@ Three lines below, the same function already raised for exactly this situation w
 ADMISSION (#2257). Class 1, not class 3: the gate is a permanent contract, not a defect awaiting
 repair, so there is no state of the world in which it retires and a retirement condition would be a
 fiction. Restored on measured kills instead. Each mutation below was applied to the source, this
-file run alone, and the source restored; the unmutated control is 6 passed / 0 failed.
+file run alone, and the source restored; the unmutated control is 8 passed / 0 failed.
 
 =========================================================  =====
 mutation                                                   kills
@@ -27,20 +27,30 @@ the sigma-match exemption dropped (raise on every solve)       2
 ``mfg_residual`` HJB site forwards ``None``                    1
 ``mfg_residual`` FP site forwards ``None``                     1
 "**kwargs does not count" cut from the refusal message         1
+a second inline membership test in ``mfg_residual``            1
+the HJB site's owner call replaced by an inline copy           2
 =========================================================  =====
 
-``test_every_coupling_path_routes_through_one_owner`` was NOT restored with the rest. It asserted
-``uses["base_mfg.py"] == 3`` and ``uses["mfg_residual.py"] == 2`` -- counts that are a function of
-the branch tip, not of the convention, so a legitimate fifth call site turns it red while a call
-site that keeps the call and passes the wrong argument leaves it green. Its own successor says so:
-``test_the_newton_path_refuses_the_same_pair_the_picard_path_does`` exercises what that one counted,
-and the two ``None`` rows above are mutations it kills and the counting test did not.
+``test_every_coupling_path_routes_through_one_owner`` carried FIVE assertions and only two of them
+were branch-tip counts. ``uses["base_mfg.py"] == 3`` and ``uses["mfg_residual.py"] == 2`` are: a
+legitimate fifth call site turns them red while a call site that keeps the call and passes the wrong
+argument leaves them green. Those two are not restored --
+``test_the_newton_path_refuses_the_same_pair_the_picard_path_does`` exercises what they counted, and
+the two ``None`` rows above are mutations it kills and the counting test did not.
+
+The other two state the convention itself -- exactly one membership test on the parameter name may
+exist in the coupling package, and it must be the owner's. That is invariant under adding a call
+site, and its violation is what produced #1783 twice (Picard first, then two inline copies in
+``mfg_residual`` found while reviewing the fix). Nothing else holds it: the five entries of
+``scripts/single_source_baseline.json`` do not include this decision. Restored as
+``test_one_membership_test_in_the_coupling_package``.
 """
 
 from __future__ import annotations
 
 import functools
 import inspect
+import pathlib
 from dataclasses import dataclass
 from typing import Any
 
@@ -48,6 +58,7 @@ import pytest
 
 import numpy as np
 
+from mfgarchon.alg.numerical.coupling import base_mfg
 from mfgarchon.alg.numerical.coupling.base_mfg import resolve_volatility_kwarg
 
 
@@ -129,8 +140,9 @@ def test_a_numpy_scalar_is_not_a_hazard():
     assert resolve_volatility_kwarg(kw_only, np.float32(0.3), p, "X", "solve_hjb_system", "HJB") == {}
 
 
-def test_the_meshless_pair_is_refused_end_to_end():
-    """The real configuration, through the public constructor.
+def test_the_meshless_pair_forwards_and_a_swallowing_solver_is_refused():
+    """The real configuration, through the public constructor: forwarding to the pair that names
+    the parameter, then the refusal against one that does not.
 
     `volatility_field` is a CONSTRUCTOR argument of the iterator, not a `solve()` kwarg -- passing
     it to `solve()` is swallowed by **kwargs and never reaches the gate, which is how a first
@@ -269,9 +281,11 @@ def test_the_newton_path_refuses_the_same_pair_the_picard_path_does():
     hjb = MeshlessGalerkinHJBSolver(problem, points, delta=delta)
     fp = MeshlessGalerkinFPSolver(problem, points, delta=delta)
     # #2020: this solver now names the parameter, so the Newton path must FORWARD to it rather than
-    # refuse. The refusal half of the Newton gate is covered by the stub in the Picard test above;
-    # what this one still pins uniquely is that mfg_residual's two call sites route through the
-    # single owner rather than carrying inline copies.
+    # refuse. What this test pins is that forwarding, at both mfg_residual sites -- not that they
+    # route through the single owner, which an inline copy would satisfy identically; that is
+    # `test_one_membership_test_in_the_coupling_package`. The Newton REFUSAL is
+    # `test_the_newton_path_refuses_a_swallowing_solver` below; the stub in the Picard test above
+    # does not cover it, being driven through FixedPointIterator.
     assert "volatility_field" in inspect.signature(hjb.solve_hjb_system).parameters
 
     shape = (problem.Nt + 1, n)
@@ -318,3 +332,98 @@ def test_the_newton_path_refuses_the_same_pair_the_picard_path_does():
 
     # No field, no refusal -- the Newton path must still run ordinarily.
     MFGResidual(problem, hjb, fp).compute_hjb_output(M0, U0)
+
+
+def test_one_membership_test_in_the_coupling_package():
+    """One owner for "does this signature name the parameter", scanned across the package.
+
+    Restored from `test_every_coupling_path_routes_through_one_owner` without its two per-file call
+    counts, which are a function of the branch tip. This half is not: adding a legitimate call site
+    increments `uses`, never `inline`.
+
+    The first version of that test read `inspect.getsource(BaseCouplingIterator)` and was green while
+    `mfg_residual` -- the Newton coupling path, in the same package -- carried two live inline copies
+    that dropped the field silently. A single-owner guard scoped to one class cannot see the
+    neighbouring path, which is the whole shape it exists to catch.
+
+    Mutation, measured for #2257: a second `"volatility_field" in ` membership test added to
+    `mfg_residual.py` -- the pre-#1783 shape -- kills this test and nothing else in this file
+    (control 8 passed; mutated 1 failed). Nothing else in the repository holds it either: the
+    volatility-forwarding decision is not among the five entries of
+    `scripts/single_source_baseline.json`.
+    """
+    package = pathlib.Path(base_mfg.__file__).parent
+    modules = sorted(package.glob("*.py"))
+    assert len(modules) >= 4, f"expected the coupling package, found {len(modules)} files"
+
+    inline = {m.name: m.read_text(encoding="utf-8").count('"volatility_field" in ') for m in modules}
+    assert sum(inline.values()) == 1, (
+        f"exactly one membership test may exist -- the one inside resolve_volatility_kwarg. Found "
+        f"{ {k: v for k, v in inline.items() if v} }. An inline copy is the form that dropped the "
+        f"value silently on both Picard (#1783) and Newton (found reviewing the #1783 fix)."
+    )
+    assert inline["base_mfg.py"] == 1, "the surviving one must be the owner's"
+
+
+def test_the_newton_path_refuses_a_swallowing_solver():
+    """The Newton REFUSAL, which no test exercised before this one (#2257).
+
+    The stub in `test_the_meshless_pair_forwards_and_a_swallowing_solver_is_refused` is driven
+    through `FixedPointIterator`, so it covers the Picard path only. `MFGResidual` caches
+    `inspect.signature(hjb_solver.solve_hjb_system)` at construction, so the stub must be in place
+    before the residual is built -- which is also why the spies elsewhere in this file do not need
+    `functools.wraps` when installed after construction and do need it when installed before.
+
+    Mutation, measured for #2257: replacing the `resolve_volatility_kwarg` call at the
+    `mfg_residual` HJB site with `if "volatility_field" in params: kwargs[...] = ...` -- the
+    pre-#1783 shape, which both loses the refusal and reintroduces an inline copy -- kills TWO:
+    this test and `test_one_membership_test_in_the_coupling_package`. Control 8 passed.
+    """
+    from mfgarchon.alg.numerical.coupling.mfg_residual import MFGResidual
+    from mfgarchon.alg.numerical.meshless_galerkin.fp_solver import MeshlessGalerkinFPSolver
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+    from mfgarchon.core.mfg_components import MFGComponents
+    from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import no_flux_bc
+
+    n = 21
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
+    problem = MFGProblem(
+        geometry=grid,
+        T=0.2,
+        Nt=5,
+        sigma=0.3,
+        components=MFGComponents(
+            m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
+            u_terminal=lambda x: 0.0,
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=1.0),
+                coupling=lambda m: m,
+                coupling_dm=lambda m: 1.0,
+            ),
+        ),
+    )
+    points = np.linspace(0.0, 1.0, n).reshape(-1, 1)
+    fp = MeshlessGalerkinFPSolver(problem, points, delta=2.6 / np.sqrt(n))
+
+    class _SwallowingHJB:
+        hjb_method_name = "SwallowingHJB"
+
+        def __init__(self, problem):
+            self.problem = problem
+
+        def solve_hjb_system(self, *args, **kwargs):  # names neither parameter
+            raise AssertionError("the gate must refuse before the solver is reached")
+
+    swallow = _SwallowingHJB(problem)
+    assert "volatility_field" not in inspect.signature(swallow.solve_hjb_system).parameters, (
+        "the stub must have the **kwargs shape, or this tests nothing"
+    )
+
+    shape = (problem.Nt + 1, n)
+    M0 = np.tile(np.ones(n) / n, (problem.Nt + 1, 1))
+    U0 = np.zeros(shape)
+    residual = MFGResidual(problem, swallow, fp, volatility_field=np.linspace(0.5, 0.9, n))
+    with pytest.raises(NotImplementedError, match="does not accept 'volatility_field'"):
+        residual.compute_hjb_output(M0, U0)

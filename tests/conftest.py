@@ -703,6 +703,42 @@ def mfg_caplog() -> MFGLogCapture:
     return MFGLogCapture()
 
 
+@pytest.fixture
+def still_refused():
+    """One owner for the class-3 defect-pin idiom: assert a refusal, and make its DISAPPEARANCE an
+    instruction rather than a bare red (#2257).
+
+    ``pytest.raises`` reports "DID NOT RAISE", which tells a future reader that something broke but
+    not that the something is this pin's own success condition. This replaces it, so the failure
+    message carries the retirement condition.
+
+    **"Nothing was raised" has more causes than "the capability landed."** A duplicate copy of the
+    guard removed elsewhere, or a dispatch routed around the guarded branch, prints the retirement
+    message exactly as loudly as the fix the pin was written to demand. Two obligations follow, and
+    the helper cannot discharge either for you:
+
+    - assert that the guarded path was REACHED, before entering this block;
+    - write ``retirement`` so it states what was observed and names the other causes, rather than
+      declaring the capability landed.
+    """
+
+    @contextlib.contextmanager
+    def _still_refused(match: str, retirement: str):
+        raised: NotImplementedError | None = None
+        try:
+            yield
+        except NotImplementedError as exc:
+            raised = exc
+
+        # Captured and re-read outside the handler rather than asserted inside it: PT017 wants
+        # `pytest.raises` there, and `pytest.raises` is the thing this helper exists to replace.
+        if raised is None:
+            pytest.fail(retirement)
+        assert match in str(raised), f"refused, but not for the pinned reason: {raised}"
+
+    return _still_refused
+
+
 # =============================================================================
 # Cleanup Utilities
 # =============================================================================

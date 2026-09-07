@@ -12,22 +12,33 @@ Measured before the refusal, 2000 particles, `dirichlet_bc(0.0)`, seed 12345:
     torch  no_flux       absorbed 0
     torch  dirichlet(0)  absorbed 0      <- and returns a finite non-negative density of mass ~1
 
-`no_flux` reading 0 on both backends is the positive control: the difference is the BC type, not
-the backend. A caller asking for an absorbing wall got a reflecting one and nothing said so.
+**Only the numpy pair is evidence, and the asymmetry is the point.** `total_absorbed` is
+incremented in `_apply_boundary_conditions_segment_aware` and
+`_apply_boundary_conditions_with_flux_limits`, both CPU-only, and `_solve_fp_system_gpu` neither
+increments nor resets it. So the two torch rows read 0 whatever the wall does: they cannot
+distinguish "reflected the particles" from "does not count". What established that the torch path
+ignored the BC is the numpy contrast (0 against 4) plus the finite mass-~1 density torch returned
+for a wall that should have removed particles. A caller asking for an absorbing wall got a
+reflecting one and nothing said so.
 
 This is not the implementation -- the GPU loop still cannot remove particles. It is the refusal,
 which is what turns a known limitation from a wrong answer into an error.
 
-ADMISSION (#2257). Class 3, a defect pin, and the retirement condition is stated where it can fire:
+ADMISSION (#2257). Class 3, a defect pin. The retirement condition is stated where it can fire:
 when the GPU loop learns to remove particles the refusal stops being raised, this file goes red on
-`test_the_gpu_path_refuses_an_absorbing_wall`, and the failure message says to delete it rather than
-to restore the raise. That is the whole point of the class -- a pin whose retirement is invisible
-becomes an obstacle to the fix it was written to demand.
+`test_the_gpu_path_refuses_an_absorbing_wall`, and the failure message says to delete it rather
+than to restore the raise.
+
+**A pin whose trigger is "nothing was raised" fires on more than the fix.** Whether
+`_solve_fp_system_gpu` runs at all is decided by `strategy_selector.select_strategy(...)` and the
+`current_strategy.name == "cpu"` dispatch, not by `backend="torch"`: a threshold change that routes
+2000 particles to the CPU path -- which honours the absorbing wall -- also produces no raise, and
+would print the retirement message for a guard that is still live. So each test here asserts that
+the GPU strategy was actually selected, and the retirement text states what was observed rather
+than declaring the capability landed.
 """
 
 from __future__ import annotations
-
-import contextlib
 
 import pytest
 
@@ -40,35 +51,20 @@ from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import dirichlet_bc, no_flux_bc
 
-pytestmark = pytest.mark.filterwarnings("ignore")
-
 _NX, _NT = 41, 15
 
-_RETIREMENT = """RETIREMENT CONDITION MET -- the GPU particle loop no longer refuses an absorbing
-wall, which is what this pin existed to demand. Do NOT restore the raise. Delete this file and
-replace it with a test of the behaviour that took its place: that the torch backend REMOVES
-particles at a Dirichlet wall, with `test_the_cpu_path_absorbs_at_the_same_wall` below as the
-oracle for how many. See #1910."""
+_RETIREMENT = """The GPU particle path did not refuse an absorbing wall.
 
+That is the retirement condition ONLY if `_solve_fp_system_gpu` learned to remove particles. Check
+which of these happened before acting:
 
-@contextlib.contextmanager
-def _still_refused(match: str):
-    """Assert the refusal, and make its disappearance an instruction rather than a bare red.
+  * the GPU loop now absorbs -- then this pin has done its job. Do NOT restore the raise: delete
+    this file and replace it with a test that the torch backend REMOVES particles at a Dirichlet
+    wall, using `test_the_cpu_path_absorbs_at_the_same_wall` below as the oracle for how many.
+  * the refusal was moved or dropped without the capability landing -- restore it.
 
-    `pytest.raises` reports "DID NOT RAISE", which tells a future reader that something broke but
-    not that the something is this pin's own success condition.
-    """
-    raised: NotImplementedError | None = None
-    try:
-        yield
-    except NotImplementedError as exc:
-        raised = exc
-
-    # Captured and re-read outside the handler rather than asserted inside it: PT017 wants
-    # `pytest.raises` there, and `pytest.raises` is the thing this helper exists to replace.
-    if raised is None:
-        pytest.fail(_RETIREMENT)
-    assert match in str(raised), f"refused, but not for the pinned reason: {raised}"
+The strategy assertion above already excludes the third cause (the solve was routed to the CPU
+path, which honours the wall). See #1910."""
 
 
 def _problem(bc):
@@ -86,33 +82,70 @@ def _problem(bc):
     )
 
 
-def _solve(backend: str, bc):
+def _solver(backend: str, bc) -> FPParticleSolver:
     np.random.seed(12345)
-    solver = FPParticleSolver(_problem(bc), num_particles=2000, kde_bandwidth=0.1, backend=backend)
+    return FPParticleSolver(_problem(bc), num_particles=2000, kde_bandwidth=0.1, backend=backend)
+
+
+def _solve(solver: FPParticleSolver) -> np.ndarray:
     x = np.linspace(0.0, 1.0, _NX)
-    M = solver.solve_fp_system(np.exp(-50 * (x - 0.5) ** 2), np.zeros((_NT + 1, _NX)))
-    return solver, M
+    return solver.solve_fp_system(np.exp(-50 * (x - 0.5) ** 2), np.zeros((_NT + 1, _NX)))
 
 
-def test_the_gpu_path_refuses_an_absorbing_wall():
+def _assert_gpu_path_was_taken(solver: FPParticleSolver) -> None:
+    """The pin's premise: this solve reached `_solve_fp_system_gpu`.
+
+    `solve_fp_system` sets `current_strategy` before dispatching on `current_strategy.name`, so the
+    attribute is populated even when the GPU branch then raises. Without this, a selector change
+    that sends the solve to the CPU path is indistinguishable from the capability landing.
+    """
+    assert solver.current_strategy is not None, "no strategy recorded; solve_fp_system did not dispatch"
+    assert solver.current_strategy.name != "cpu", (
+        f"routed to the {solver.current_strategy.name!r} strategy, not the GPU path -- this pin's "
+        f"premise does not hold and its result says nothing about the GPU absorbing branch"
+    )
+
+
+def test_the_gpu_path_refuses_an_absorbing_wall(still_refused):
     pytest.importorskip("torch")
-    with _still_refused("segment-aware absorbing"):
-        _solve("torch", dirichlet_bc(0.0, dimension=1))
+    solver = _solver("torch", dirichlet_bc(0.0, dimension=1))
+    with still_refused("segment-aware absorbing", _RETIREMENT):
+        _solve(solver)
+    _assert_gpu_path_was_taken(solver)
 
 
 def test_the_gpu_path_still_runs_a_uniform_wall():
-    """The refusal must be scoped to the BC it cannot honour, not to the backend."""
+    """The refusal must be scoped to the BC it cannot honour, not to the backend.
+
+    `total_absorbed` is deliberately not asserted here: it is a CPU-only counter (see the module
+    docstring), so `== 0` on this path is the constructor's initial value and cannot fail.
+    """
     pytest.importorskip("torch")
-    solver, M = _solve("torch", no_flux_bc(dimension=1))
-    assert solver.total_absorbed == 0
-    assert np.all(np.isfinite(M))
+    solver = _solver("torch", no_flux_bc(dimension=1))
+    M = _solve(solver)
+    _assert_gpu_path_was_taken(solver)
+
+    assert np.all(np.isfinite(M)), "the GPU loop returned a non-finite density"
+    assert np.all(M >= 0.0), "a KDE density went negative"
+    assert M[-1].sum() > 0.0, "the final density is identically zero; no particles survived a reflecting wall"
 
 
 def test_the_cpu_path_absorbs_at_the_same_wall():
-    """The external oracle. Without it, the refusal above could be pinning a wall that removes
-    nothing on either backend, which is a different (and duller) fact."""
-    solver, _ = _solve("numpy", dirichlet_bc(0.0, dimension=1))
+    """The oracle for the refusal: the same wall on the backend that implements it.
+
+    Without this, the refusal above could be pinning a wall that removes nothing on either backend,
+    which is a different (and duller) fact. Both assertions can fail here, because the CPU path is
+    the one that maintains the counter.
+
+    The 4 particles quoted in the module docstring are deterministic, not a sample: `_solver` calls
+    `np.random.seed(12345)` before construction and `FPParticleSolver` falls back to the global
+    `np.random` when given no seed. The count is a fixture artifact, not a property of the wall --
+    what is asserted is the sign.
+    """
+    solver = _solver("numpy", dirichlet_bc(0.0, dimension=1))
+    _solve(solver)
     assert solver.total_absorbed > 0, "the absorbing wall removes nothing on CPU either"
 
-    control, _ = _solve("numpy", no_flux_bc(dimension=1))
+    control = _solver("numpy", no_flux_bc(dimension=1))
+    _solve(control)
     assert control.total_absorbed == 0, "a reflecting wall absorbed particles; the counter is wrong"

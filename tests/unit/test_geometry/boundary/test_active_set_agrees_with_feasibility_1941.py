@@ -5,9 +5,9 @@ two-sided. A point that VIOLATES the constraint was therefore reported INACTIVE 
 method runs on infeasible iterates by construction, since that is the state before projection. So
 the old form returned an empty active set on exactly the points that needed attention. #1941
 
-ADMISSION (#2257). This is a consistency assertion, not a defect pin, and it carries no retirement
-condition because the invariant is permanent: the two predicates are two routes to one inequality
-and must not disagree, whatever the tolerance is later tuned to. The earlier version of this file
+ADMISSION (#2257). Class 1, on the kills recorded below. No retirement condition, because the
+invariant is permanent: the two predicates are two routes to one inequality and must not disagree,
+whatever the tolerance is later tuned to. The earlier version of this file
 asserted hard-coded expected masks -- `[True, True, False, False, False]` and three more -- which
 pinned a particular tolerance VERDICT alongside the invariant, so tuning `tol` would have turned it
 red without anything being wrong. What is asserted here instead is the RELATION.
@@ -16,15 +16,30 @@ Pointwise feasibility is built by slicing the field into single-point constraint
 same public `is_feasible`, rather than by restating its inequality in the test. A restatement can
 agree with a broken implementation; a second route through the real predicate cannot.
 
-Mutation, measured for #2257: `get_active_set` reverted to the two-sided `np.abs(u - psi) < tol` in
-`ObstacleConstraint` and to `|u - bound| < tol` in `BilateralConstraint`, both at once, since the
-bilateral copy is reached only through its own branch. Unmutated 15 passed; mutated 13 failed --
-8 of 8 obstacle parametrizations, 4 of 4 bilateral, and the regional-mask test.
+**The standing hazard of an agreement test applies here and is not closed.** If `get_active_set` is
+later consolidated to call `is_feasible`, the relation below becomes tautological and passes over a
+broken owner -- the better the consolidation, the less this file proves. What survives that is
+`test_a_point_exactly_at_the_bound_is_binding`, which is a statement about one predicate rather than
+about the pair.
 
-The two that survive are `test_a_field_with_slack_far_larger_than_the_tolerance_has_an_empty_active_set`,
-and that is what they are for: the two-sided form is also correct on a strictly interior field, so a
-survivor there says the control is measuring the vice it was written for (an all-True active set)
-rather than the defect. A control that dies with the mutation would not have been one.
+Two mutations, measured for #2257. Control: 23 passed.
+
+1. `get_active_set` reverted to the two-sided `np.abs(u - psi) < tol` in `ObstacleConstraint` and to
+   `|u - bound| < tol` in `BilateralConstraint`, both at once, since the bilateral copy is reached
+   only through its own branch -- 13 failed: 8 of 8 obstacle parametrizations, 4 of 4 bilateral, and
+   the regional-mask test.
+2. The at-bound half narrowed to a strict `u < obstacle`, and the bilateral pair likewise -- 8
+   failed, exactly the parametrizations of `test_a_point_exactly_at_the_bound_is_binding`.
+
+**They kill disjoint sets, which is why both halves are here.** At `u == psi` the two-sided form
+gives `|0| < tol` and reports the bound active, so mutation 1 is correct exactly where mutation 2 is
+wrong; a file holding only the relation would have let the second through.
+
+Of the ten survivors of mutation 1, eight are those at-bound parametrizations and two are
+`test_a_field_with_slack_far_larger_than_the_tolerance_has_an_empty_active_set` -- and that is what
+the slack pair is for: the two-sided form is also correct on a strictly interior field, so a survivor
+there says the control is measuring the vice it was written for (an all-True active set) rather than
+the defect. A control that dies with the mutation would not have been one.
 """
 
 from __future__ import annotations
@@ -87,6 +102,38 @@ def test_a_point_the_feasibility_test_rejects_must_be_reported_binding(constrain
         f"{constraint_type} bound, tol={tol}: points {np.flatnonzero(violating & ~active).tolist()} "
         f"are infeasible by is_feasible and inactive by get_active_set. An active-set method would "
         f"skip exactly the points that need projecting."
+    )
+
+
+@pytest.mark.parametrize("constraint_type", ["lower", "upper"])
+@pytest.mark.parametrize("tol", _TOLS)
+def test_a_point_exactly_at_the_bound_is_binding(constraint_type, tol):
+    """`u == psi` is FEASIBLE, so the implication above is silent there -- and "at the bound" is the
+    definition of the active set, not a tolerance verdict.
+
+    The replaced version of this file asserted it inside hard-coded masks. Those pinned a tolerance
+    verdict alongside it, which is why they went; this half did not deserve to go with them.
+
+    Mutation, measured for #2257: `active = u <= self.obstacle + tol` narrowed to `u < self.obstacle`
+    (and the bilateral pair likewise) leaves every other test in this file green -- violating points
+    still satisfy the strict inequality, and the slack control still has an empty active set -- and
+    kills exactly the 8 parametrizations here. Control 23 passed.
+    """
+    sign = 1.0 if constraint_type == "lower" else -1.0
+    psi = np.zeros(9)
+    u = sign * _offsets(tol)
+    at_bound = u == psi
+    assert at_bound.any(), "the sweep contains no point exactly at the bound; it tests nothing"
+
+    # Feasibility through the same pointwise route the file uses everywhere else: `is_feasible`
+    # reduces over the whole field, and this field deliberately contains violations.
+    assert not _pointwise_infeasible(constraint_type, psi, u, tol)[at_bound].any(), (
+        "a point exactly on the bound must be feasible"
+    )
+
+    constraint = ObstacleConstraint(psi, constraint_type=constraint_type)
+    assert np.all(constraint.get_active_set(u, tol=tol)[at_bound]), (
+        f"{constraint_type} bound, tol={tol}: a point exactly at the bound is not reported binding"
     )
 
 
