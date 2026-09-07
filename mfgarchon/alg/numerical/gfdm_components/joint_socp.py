@@ -45,13 +45,37 @@ from scipy.spatial import cKDTree
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-try:
-    import cvxpy as cp
+cp = None
+_CVXPY_AVAILABLE: bool | None = None
 
-    _CVXPY_AVAILABLE = True
-except ImportError:
-    cp = None
-    _CVXPY_AVAILABLE = False
+
+def _cvxpy() -> bool:
+    """Import cvxpy on first use; report whether it is usable. Caches either way.
+
+    Deferred so that importing a backend does not pay cvxpy (#1922): this was the only
+    module-level `import cvxpy` in the package, and it put cvxpy in `sys.modules` for anyone
+    who touched `mfgarchon.backends.numpy_backend`.
+
+    **The semantics are deliberately unchanged.** True means the import SUCCEEDED, exactly as
+    the `try: import cvxpy` this replaced. `importlib.util.find_spec("cvxpy")` would answer a
+    different question -- "is it discoverable" -- and the two diverge on an installed-but-broken
+    cvxpy, where find_spec says yes and the import still raises. That is precisely the case the
+    three callers below degrade gracefully on, so swapping the predicate would turn a handled
+    fallback into a crash inside the solver. This repository already carries that divergence:
+    `hjb_gfdm.py:50` computes a `CVXPY_AVAILABLE` from find_spec while this file computes one
+    from the import, and they disagree in that case.
+    """
+    global cp, _CVXPY_AVAILABLE
+    if _CVXPY_AVAILABLE is None:
+        try:
+            import cvxpy as _cp
+
+            cp = _cp
+            _CVXPY_AVAILABLE = True
+        except ImportError:
+            cp = None
+            _CVXPY_AVAILABLE = False
+    return _CVXPY_AVAILABLE
 
 
 # =============================================================================
@@ -172,7 +196,7 @@ def solve_joint_socp_at_stencil(
             objective: cvxpy objective value (None for fast-path return)
             via:       "wendland_lsq_fast_path" | "socp_clarabel"
     """
-    if not _CVXPY_AVAILABLE:
+    if not _cvxpy():
         return {
             "status": "solver_error",
             "message": "cvxpy not installed; cannot run joint SOCP. pip install cvxpy.",
@@ -357,7 +381,7 @@ def solve_relaxed_joint_socp_at_stencil(
     and "eps_C_max" diagnostics. Status is always "feasible" except on solver
     error.
     """
-    if not _CVXPY_AVAILABLE:
+    if not _cvxpy():
         return {
             "status": "solver_error",
             "message": "cvxpy not installed",
@@ -569,7 +593,7 @@ class PrecomputedJointSocpStencils:
         visibility_samples: int = 10,
         visibility_margin: float = 0.0,
     ):
-        if not _CVXPY_AVAILABLE:
+        if not _cvxpy():
             raise ImportError("cvxpy is required for joint SOCP. Install with: pip install cvxpy")
         # Single source of truth: neighborhoods + points + delta. With the
         # legacy `op.get_derivative_weights()` fallback removed in v0.25.0,
