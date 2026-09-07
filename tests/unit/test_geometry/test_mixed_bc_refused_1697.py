@@ -37,6 +37,11 @@ from mfgarchon.geometry.boundary.bc_utils import (
 
 CONSUMER = {"consumer": "TestSolver", "alternative": "Use one BC type across axes."}
 
+_RETIRE_1700B = """RETIREMENT CONDITION MET -- #1700 part B has landed and `get_bc_type_string` now
+resolves a segment-free BC through its `default_bc` instead of raising. Delete THIS assertion and
+keep the two above it: the guard/lookup split is a responsibility argument (#2284) and never
+depended on this ValueError existing. Do NOT restore the raise."""
+
 
 def _seg(name, bc_type, boundary):
     return BCSegment(name=name, bc_type=bc_type, boundary=boundary)
@@ -243,19 +248,28 @@ def test_an_object_carrying_neither_field_is_not_a_segmented_bc():
     assert geometric_operations(None) == set()
 
 
-def test_the_guard_and_the_lookup_are_separable_2284():
+def test_the_guard_and_the_lookup_are_separable_2284(still_refused):
     """`refuse_mixed_per_axis` is the predicate; `checked_bc_type_string` is it plus the lookup.
 
     They were one function until #2284, and the difference is not cosmetic: a segment-free BC asks
     for exactly one geometric operation, so the guard passes it, while `get_bc_type_string` raises
     `ValueError` on it. A caller that wants only the refusal must not inherit that.
+
+    Mutation, measured for #2284: appending `get_bc_type_string(boundary_conditions)` to
+    `refuse_mixed_per_axis` -- the split semantically undone -- kills this test and only this one.
+    Control 18 passed on this file.
+
+    **The third assertion pins an open defect, deliberately, and retires with it.** That `ValueError`
+    is #1700 part B, which calls an empty segment list with a uniform default "a legitimate
+    configuration" -- so it is a bug, not a contract, and the first two assertions are what this
+    test is really for.
     """
     segment_free = BoundaryConditions(dimension=2, segments=[], default_bc=BCType.NO_FLUX)
 
     assert geometric_operations(segment_free) == {"reflect"}
     assert refuse_mixed_per_axis(segment_free, **CONSUMER) is None
 
-    with pytest.raises(ValueError, match="only valid for uniform BCs"):
+    with still_refused("only valid for uniform BCs", _RETIRE_1700B, ValueError):
         checked_bc_type_string(segment_free, **CONSUMER)
 
 

@@ -723,11 +723,17 @@ def still_refused():
     """
 
     @contextlib.contextmanager
-    def _still_refused(match: str, retirement: str):
-        raised: NotImplementedError | None = None
+    def _still_refused(match: str, retirement: str, exc_type: type[Exception] = NotImplementedError):
+        """``exc_type`` widens this to any refusal, not only ``NotImplementedError`` (#2288).
+
+        A second caller needed ``ValueError`` -- a defect pinned while its own fix is open -- and a
+        hardcoded type is exactly the owner signature that makes the next caller write a third copy
+        of the capture-and-re-read idiom instead of calling this.
+        """
+        raised: Exception | None = None
         try:
             yield
-        except NotImplementedError as exc:
+        except exc_type as exc:
             raised = exc
 
         # Captured and re-read outside the handler rather than asserted inside it: PT017 wants

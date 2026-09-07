@@ -166,11 +166,15 @@ def refuse_mixed_per_axis(boundary_conditions: Any, *, consumer: str, alternativ
     raises ``NotImplementedError`` when it is not.
 
     Split out of :func:`checked_bc_type_string` (#2284), which does this **and** returns the
-    collapsed type. The two are separate responsibilities and their callers differ: a solver's
-    constructor wants the refusal and has no use for the value, and importing the lookup's own
-    failure mode into construction is not free. Measured: ``BoundaryConditions(segments=[],
-    default_bc=NO_FLUX)`` asks for one operation and passes this guard, while
-    ``get_bc_type_string`` raises ``ValueError`` on it -- a live path today, reached at solve time.
+    collapsed type. **The reason is the responsibility split, which holds on its own**: a solver's
+    constructor wants the refusal and has no use for the value, so it should not be able to fail for
+    reasons belonging to a lookup it never asked for.
+
+    The concrete instance that made it visible is a **defect, not a contract**, and it has its own
+    issue: ``BoundaryConditions(segments=[], default_bc=NO_FLUX)`` asks for one operation and passes
+    this guard, while ``get_bc_type_string`` raises ``ValueError`` on it (#1700 part B, open --
+    "an empty segment list with a uniform default is a legitimate configuration"). When #1700 lands
+    that ValueError goes and this paragraph's example goes with it; the paragraph above does not.
 
     Call it at the point of use, not only at construction: solvers re-read
     ``get_boundary_conditions()`` at solve time, so a construction-time check alone is bypassed by

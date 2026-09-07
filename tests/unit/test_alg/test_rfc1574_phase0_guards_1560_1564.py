@@ -17,25 +17,18 @@ A pin without that is what makes a capability harder to add than to leave missin
 implementing per-axis BC in the SL solver finds a red test asserting the refusal and cannot tell
 whether it is a regression they caused or the pin's own success.
 
-WHAT THE #1560 PIN COVERS, AND WHAT IT DOES NOT
------------------------------------------------
-The #1560 predicate exists TWICE. `bc_utils.checked_bc_type_string` is the single owner, and
-`hjb_semi_lagrangian.__init__` carries an inline copy with its own message.
+WHAT THE #1560 PIN COVERS
+-------------------------
+One owner: `bc_utils.refuse_mixed_per_axis`, which `HJBSemiLagrangianSolver` calls at construction
+and, through the `_checked_bc_type_string` wrapper, at every solve-time site.
 
-Disabling the owner leaves this file green -- but NOT because the SL solver does not call it. It
-does, constantly: `_checked_bc_type_string` (`hjb_semi_lagrangian.py:79`) wraps the owner and is
-called at seven solve-time sites. The reason is narrower and is what a reader needs: **this pin
-only CONSTRUCTS the solver**, and the construction-time inline copy fires before any of those seven
-sites is reached. So the pin holds the inline construction guard and nothing else.
+The predicate existed TWICE until #2284 -- an inline copy in `__init__`, which had already diverged
+from the owner -- and this pin then held that copy and nothing else. It now holds the owner.
+Measured: disabling the owner's raise turns `test_sl_mixed_per_axis_bc_fails_loud_1560` red, where
+before the consolidation the same mutation left this file green (4 passed either way).
 
-Two consequences, both stated rather than worked around, because the duplication is #2284 and not
-this file's to fix:
-
-- The copies have already diverged. On the #1691 rename signature (`segments` present, `default_bc`
-  absent) the owner raises `AttributeError` and the inline copy lets the BC through.
-- While the duplication stands, per-axis handling landing in the OWNER alone would leave the inline
-  copy raising and this pin green -- the retirement would never fire. That is a real gap in this
-  pin's reach and it closes when #2284 does.
+That closes the reach gap this file used to record. Per-axis handling landing in the owner alone can
+no longer leave the pin green, because there is no second copy left to keep raising.
 """
 
 from __future__ import annotations
@@ -52,17 +45,13 @@ from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid
 _RETIRE_1560 = """HJBSemiLagrangianSolver did not refuse a mixed per-axis BC at construction.
 
 That is the retirement condition ONLY if the solver now HONOURS per-axis BC, which is the RFC #1574
-phase this pin existed to demand. It is not the only way to get here: the construction-time guard
-is an inline copy of `bc_utils.checked_bc_type_string` (#2284), and removing that copy without
-implementing anything produces exactly this failure while the refusal stays live at solve time.
-
-Check which happened:
+phase this pin existed to demand. Check which happened:
 
   * per-axis handling landed -- do NOT restore the raise. Delete this test and replace it with one
     that checks the ops are applied PER AXIS: no-flux on x must reflect while periodic on y wraps,
     which is the collapse the refusal was standing in for.
-  * the guard was consolidated or moved -- the refusal is still the correct behaviour; re-point this
-    pin at wherever it now lives.
+  * the guard moved -- `bc_utils.refuse_mixed_per_axis` has been its one owner since #2284, so the
+    refusal is still the correct behaviour and this pin wants re-pointing, not deleting.
 
 `test_sl_uniform_bc_still_constructs_1560` stays either way. See #1560, #2284."""
 
