@@ -22,12 +22,33 @@ from scipy.sparse import linalg as sp_linalg
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-try:
-    import numba
+numba = None
+_NUMBA_AVAILABLE: bool | None = None
 
-    NUMBA_AVAILABLE = True
-except ImportError:
-    NUMBA_AVAILABLE = False
+
+def _numba() -> bool:
+    """Import numba on first use; report whether it is usable. Caches either way.
+
+    Deferred for the same reason as cvxpy in `joint_socp.py` (#1922): this was the route by
+    which `import mfgarchon.backends.numpy_backend` loaded numba, via
+    `utils/__init__.py` -> `utils/performance/__init__.py`. Measured: deferring this one site
+    removes numba from `sys.modules` on that import.
+
+    Semantics unchanged from the `try: import numba` this replaced -- True means the import
+    succeeded, not that the package is discoverable.
+    """
+    global numba, _NUMBA_AVAILABLE
+    if _NUMBA_AVAILABLE is None:
+        try:
+            import numba as _nb
+
+            numba = _nb
+            _NUMBA_AVAILABLE = True
+        except ImportError:
+            numba = None
+            _NUMBA_AVAILABLE = False
+    return _NUMBA_AVAILABLE
+
 
 try:
     import jax
@@ -616,7 +637,7 @@ class ParallelSparseOperations:
         Returns:
             Result of matrix-vector products
         """
-        if NUMBA_AVAILABLE:
+        if _numba():
             # Use Numba for parallel operations if available
             return ParallelSparseOperations._numba_parallel_matvec(matrix, vectors)
         else:
@@ -626,7 +647,7 @@ class ParallelSparseOperations:
     @staticmethod
     def _numba_parallel_matvec(matrix: csr_matrix, vectors: np.ndarray) -> np.ndarray:
         """Numba-accelerated parallel matrix-vector multiplication."""
-        if not NUMBA_AVAILABLE:
+        if not _numba():
             raise ImportError("Numba not available for parallel operations")
 
         # This would contain actual Numba implementation
@@ -750,7 +771,7 @@ class AccelerationBackend:
         """Detect available acceleration backends."""
         backends = {
             "numpy": True,  # Always available
-            "numba": NUMBA_AVAILABLE,
+            "numba": _numba(),
             "jax": JAX_AVAILABLE,
         }
 
@@ -813,7 +834,7 @@ class AccelerationBackend:
         """
         backend = backend or self.current_backend
 
-        if backend == "numba" and NUMBA_AVAILABLE:
+        if backend == "numba" and _numba():
             return numba.jit(func, nopython=True)
         elif backend.startswith("jax") and JAX_AVAILABLE:
             return jax.jit(func)

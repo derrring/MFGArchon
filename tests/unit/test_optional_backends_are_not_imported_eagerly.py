@@ -23,9 +23,15 @@ Deferring only
 test asserts the outcome — torch is absent — rather than the shape of either file: an outcome
 assertion cannot be satisfied by fixing one site and calling it done.
 
-jax is NOT asserted here. It still arrives through cvxpy, a third-party chain this repository
-does not control, so there is no outcome to pin yet (#1930). The probe collects its presence for
-the record only. (~~asserted separately and more weakly~~ [CORRECTED 2026-08-14] -- there was no
+jax is NOT asserted here, but ~~it still arrives through cvxpy, a third-party chain this
+repository does not control~~ [CORRECTED 2026-09-07] is false: traced with an `__import__` hook,
+jax is already in `sys.modules` before cvxpy is reached. Its route is
+`mfgarchon/__init__.py` -> `utils/adjoint_validation.py` -> ... -> `utils/acceleration/__init__.py`,
+which does `import jax` to COMPUTE `HAS_JAX` (it calls `jax.devices()`), so importing the flag
+imports the thing the flag is about. Deferring cvxpy does not move it -- measured. jax needs
+`utils/acceleration` to re-export its jax-backed names lazily, which is a larger change and its own
+issue (#1922). The probe collects its presence for the record only.
+(~~asserted separately and more weakly~~ [CORRECTED 2026-08-14] -- there was no
 such assertion; the sentence described a test that was never written.)
 """
 
@@ -156,6 +162,75 @@ def test_importing_the_package_does_not_import_torch():
         "costs ~0.8s. Three routes reach it and cutting one leaves the others -- check both "
         "`backends/__init__.py` (eager `register_backend('torch', ...)`) and "
         "`utils/acceleration/__init__.py` (eager `from .torch_utils import ...`). #1930"
+    )
+
+
+_BACKEND_PROBE = (
+    "import sys, json, importlib.util\n"
+    "import mfgarchon.backends.numpy_backend\n"
+    "import mfgarchon\n"
+    "d = {p: p in sys.modules for p in ('cvxpy', 'numba', 'jax', 'torch')}\n"
+    "d.update({p + '__installed': importlib.util.find_spec(p) is not None for p in ('cvxpy', 'numba')})\n"
+    "d['__tree__'] = mfgarchon.__file__\n"
+    "print(json.dumps(d))\n"
+)
+
+
+@pytest.mark.parametrize("pkg", ["cvxpy", "numba"])
+def test_the_numpy_backend_does_not_import_a_solver_it_never_uses(pkg):
+    """Choosing the NumPy backend must not pay for cvxpy or numba (#1922).
+
+    **This is a TIMING guard, not a SCOPE guard, and the difference is load-bearing.** It says
+    nothing about where cvxpy or numba may be used -- optimization is deliberately unrestricted,
+    and any number of DEFERRED call sites satisfy this test. It goes red only when someone adds a
+    module-level import of one of them to the tree reached by importing a backend, which is the
+    thing worth stopping regardless of how widely the package is used. Read as a scope restriction
+    it would be routed around; read as written it costs a legitimate user nothing.
+
+    Measured before the fix: `import mfgarchon.backends.numpy_backend` put cvxpy and numba in
+    `sys.modules`. One eager site each -- `gfdm_components/joint_socp.py` (the only module-level
+    `import cvxpy` in the package) and `utils/performance/optimization.py`, reached via
+    `utils/__init__.py`. Deferring each one alone is sufficient; that was checked rather than
+    assumed, because the torch case in this same file needed two sites and cutting either alone
+    changed nothing.
+
+    jax is deliberately absent from this parametrisation: it arrives by a different route that
+    deferring these does not touch. See the module docstring.
+    """
+    loaded = _modules_after(_BACKEND_PROBE)
+
+    # A guard that cannot fail is not a guard, and which runners it discriminates on is NOT
+    # uniform -- an earlier draft of this comment said "CI installs no extras", which is false and
+    # in the damaging direction:
+    #
+    # Installing a package and RUNNING this test are different questions, and a draft of this
+    # comment conflated them. What actually holds, checked per workflow at the pytest invocation
+    # and not at the pip line:
+    #
+    #   nightly.yml          [numerical]+numba, `pytest tests/unit` ignoring only test_backends/
+    #                        and test_visualization/  -> collected, ASSERTS
+    #   discrimination.yml   [numerical]+numba, via scripts/test_discrimination.py -> ASSERTS
+    #   deprecation-check.yml  installs both and never invokes pytest at all -> does not run this
+    #   python-compat.yml    no extras -> collected, SKIPS
+    #   ci.yml               no extras; on pull_request it runs only tests/unit/test_core, so this
+    #                        file is NOT COLLECTED. It is collected on `release`, where it skips.
+    #
+    # So the guard is live on exactly two runners. The torch guard above was vacuous on nightly for
+    # a different reason -- torch is in `[nn]`/`[all]`, which nightly does not install.
+    if not loaded[f"{pkg}__installed"]:
+        pytest.skip(
+            f"{pkg} is not installed in this environment, so the assertion below cannot fail here. "
+            f"It discriminates where {pkg} is present -- `[numerical]` carries cvxpy, `[all]` carries "
+            f"numba, and nightly/discrimination run this test with both installed. A pass HERE is "
+            f"vacuous, not evidence."
+        )
+
+    assert not loaded[pkg], (
+        f"`import mfgarchon.backends.numpy_backend` loaded {pkg}. A user who chose the NumPy "
+        f"backend should not pay for a solver it never calls. Look for a module-level "
+        f"`import {pkg}` on the eager tree and defer it behind a cached helper -- keeping the "
+        f"try/except semantics, not swapping in `find_spec`, which answers a different question "
+        f"and diverges on an installed-but-broken package. #1922"
     )
 
 
