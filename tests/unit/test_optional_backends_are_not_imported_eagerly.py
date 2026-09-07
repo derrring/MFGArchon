@@ -203,19 +203,25 @@ def test_the_numpy_backend_does_not_import_a_solver_it_never_uses(pkg):
     # uniform -- an earlier draft of this comment said "CI installs no extras", which is false and
     # in the damaging direction:
     #
-    #   ci.yml, python-compat.yml   `-e . --group dev`              -> both absent, SKIPS here
-    #   nightly.yml, discrimination.yml, deprecation-check.yml
-    #                               `-e .[numerical] --group dev numba` -> both present, ASSERTS
+    # Installing a package and RUNNING this test are different questions, and a draft of this
+    # comment conflated them. What actually holds, checked per workflow at the pytest invocation
+    # and not at the pip line:
     #
-    # nightly's unit shard runs `pytest tests/unit` ignoring only `test_backends/` and
-    # `test_visualization/`; this file is at the root of `tests/unit`, so the assertion is LIVE
-    # there. The torch guard above was vacuous on nightly for a different reason -- torch is in
-    # `[nn]`/`[all]`, which nightly does not install.
+    #   nightly.yml          [numerical]+numba, `pytest tests/unit` ignoring only test_backends/
+    #                        and test_visualization/  -> collected, ASSERTS
+    #   discrimination.yml   [numerical]+numba, via scripts/test_discrimination.py -> ASSERTS
+    #   deprecation-check.yml  installs both and never invokes pytest at all -> does not run this
+    #   python-compat.yml    no extras -> collected, SKIPS
+    #   ci.yml               no extras; on pull_request it runs only tests/unit/test_core, so this
+    #                        file is NOT COLLECTED. It is collected on `release`, where it skips.
+    #
+    # So the guard is live on exactly two runners. The torch guard above was vacuous on nightly for
+    # a different reason -- torch is in `[nn]`/`[all]`, which nightly does not install.
     if not loaded[f"{pkg}__installed"]:
         pytest.skip(
             f"{pkg} is not installed in this environment, so the assertion below cannot fail here. "
             f"It discriminates where {pkg} is present -- `[numerical]` carries cvxpy, `[all]` carries "
-            f"numba, and nightly/discrimination/deprecation-check install both. A pass HERE is "
+            f"numba, and nightly/discrimination run this test with both installed. A pass HERE is "
             f"vacuous, not evidence."
         )
 
