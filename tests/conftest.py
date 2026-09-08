@@ -730,8 +730,12 @@ def still_refused():
     things about it, both measured rather than assumed. **A tuple works and the annotation says it
     does not**: ``except`` accepts one and nothing else here reads ``exc_type``, so
     ``exc_type=(ValueError, TypeError)`` runs correctly; mypy rejects it against
-    ``type[Exception]``, and the gate runs mypy over ``mfgarchon/config`` only, so nothing checks
-    it. The annotation is documentation, and a tuple violating it passes silently. **And it is the
+    ``type[Exception]`` -- and nothing checks that, for **two** reasons, of which the second is the
+    one that bites. The gate runs mypy over ``mfgarchon/config`` only; and even with ``tests/`` in
+    scope it would still say nothing, because ``pyproject.toml`` sets ``check_untyped_defs = false``
+    and every call site is an unannotated ``def test_x(still_refused)``, whose body mypy skips
+    entirely. Widening the scope would not enforce this annotation. It is documentation, and a
+    tuple violating it passes silently. **And it is the
     knob by which a caller can break another caller's design**:
     ``test_gpu_particle_refuses_absorbing_bc_1910.py`` relies on an ``AssertionError`` from its own
     premise check passing through this block uncaught, which a broad ``exc_type`` would swallow.

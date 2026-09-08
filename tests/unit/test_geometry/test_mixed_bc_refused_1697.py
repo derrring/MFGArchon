@@ -42,7 +42,10 @@ _RETIRE_1700B = """`get_bc_type_string` no longer raises on a segment-free BC.
 That is #1700 part B landing, which this assertion exists to notice: it calls that configuration
 legitimate, so the ValueError is a defect and its removal is progress. Delete THIS assertion and the
 one after it -- you are standing at the first of the two -- and the paragraph of the test docstring
-that introduces them. Keep everything above: the guard/lookup split is a responsibility argument
+that introduces them, and the comment blocks above each -- they explain assertions that will no
+longer exist. Keep the rest, with ONE edit: the docstring's opening paragraph states as present fact
+that `get_bc_type_string` raises `ValueError` on a segment-free BC, which is exactly what stops being
+true, so that clause goes with the assertions. The guard/lookup split is a responsibility argument
 (#2284) and never depended on the ValueError existing. Do NOT restore the raise."""
 
 _LOOKUP_NO_LONGER_REACHED = """`checked_bc_type_string` did not raise on a segment-free BC, but
@@ -271,7 +274,7 @@ def test_the_guard_and_the_lookup_are_separable_2284(still_refused):
     Measured in #2288 over the 17 files matching
     `grep -rlE 'semi_lagrangian|bc_utils|checked_bc_type_string|geometric_operations' tests/`:
     1 failed, 361 passed, 7 xfailed. Anchored to the PR rather than to a branch sha because this
-    repository squash-merges, so a branch commit is not an ancestor of `main` and a reader greping
+    repository squash-merges, so a branch commit is not an ancestor of `main` and a reader grepping
     history for it finds nothing.
 
     **The last two assertions pin an open defect, deliberately, and retire with it.** That
