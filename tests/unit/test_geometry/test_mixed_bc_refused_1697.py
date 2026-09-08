@@ -40,9 +40,10 @@ CONSUMER = {"consumer": "TestSolver", "alternative": "Use one BC type across axe
 _RETIRE_1700B = """`get_bc_type_string` no longer raises on a segment-free BC.
 
 That is #1700 part B landing, which this assertion exists to notice: it calls that configuration
-legitimate, so the ValueError is a defect and its removal is progress. Delete the two assertions
-below and keep the rest of this test -- the guard/lookup split is a responsibility argument (#2284)
-and never depended on the ValueError existing. Do NOT restore the raise."""
+legitimate, so the ValueError is a defect and its removal is progress. Delete THIS assertion and the
+one after it -- you are standing at the first of the two -- and the paragraph of the test docstring
+that introduces them. Keep everything above: the guard/lookup split is a responsibility argument
+(#2284) and never depended on the ValueError existing. Do NOT restore the raise."""
 
 _LOOKUP_NO_LONGER_REACHED = """`checked_bc_type_string` did not raise on a segment-free BC, but
 `get_bc_type_string` still does -- so #1700 has NOT landed and the composite has stopped routing
@@ -267,9 +268,11 @@ def test_the_guard_and_the_lookup_are_separable_2284(still_refused):
 
     Mutation, measured for #2284: appending `get_bc_type_string(boundary_conditions)` to
     `refuse_mixed_per_axis` -- the split semantically undone -- kills this test and only this one.
-    Measured at `2fde3917` over the 17 files matching
+    Measured in #2288 over the 17 files matching
     `grep -rlE 'semi_lagrangian|bc_utils|checked_bc_type_string|geometric_operations' tests/`:
-    1 failed, 361 passed, 7 xfailed.
+    1 failed, 361 passed, 7 xfailed. Anchored to the PR rather than to a branch sha because this
+    repository squash-merges, so a branch commit is not an ancestor of `main` and a reader greping
+    history for it finds nothing.
 
     **The last two assertions pin an open defect, deliberately, and retire with it.** That
     `ValueError` is #1700 part B, which calls an empty segment list with a uniform default "a

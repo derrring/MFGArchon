@@ -12,8 +12,11 @@ permutation available**. A guard unioning only over `segments` lets that form th
 `bc_utils.geometric_operations` unions both, and `bc_utils.checked_bc_type_string` is now the one
 owner of the refusal for HJB-SL (#1560) and FP-SL (#1697) alike -- the private helper added to
 `hjb_semi_lagrangian.py` in #1696 is now a thin wrapper that only binds the consumer name.
-(~~`checked_bc_type_string`~~ `refuse_mixed_per_axis` since #2284, which split the refusal out from
-the collapse-to-a-value; both fragments are unreleased, so this names the owner as it will ship.)
+(~~`checked_bc_type_string`~~ `refuse_mixed_per_axis` **[CORRECTED 2026-09-08 by #2288]**, which
+split the refusal out from the collapse-to-a-value. Both fragments are unreleased and collate into
+the same section, so this names the owner as it will ship. The sentence above about the private
+helper is now incomplete rather than false: there are two, `_checked_bc_type_string` for the
+solve-time sites and `_refuse_mixed_per_axis` for the constructor.)
 
 FPSLSolver now caches only an explicitly-passed BC and otherwise resolves the geometry live at each point of use, so the guard sees a BC replaced after construction rather than a construction-time snapshot -- the bypass it exists to close.
 

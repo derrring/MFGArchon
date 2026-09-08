@@ -727,12 +727,14 @@ def still_refused():
     separately and give each its own message.
 
     ``exc_type`` selects the refusal to catch, defaulting to ``NotImplementedError`` (#2288). Two
-    things it does not do. It is annotated ``type[Exception]``, so the tuple form ``except`` accepts
-    is not supported -- and ``tests/`` is outside the gate's mypy scope, so a tuple would fail at
-    runtime rather than at check time. And it is the knob by which a caller can break another
-    caller's design: ``test_gpu_particle_refuses_absorbing_bc_1910.py`` relies on an
-    ``AssertionError`` from its own premise check passing through this block uncaught, which a broad
-    ``exc_type`` would silently swallow.
+    things about it, both measured rather than assumed. **A tuple works and the annotation says it
+    does not**: ``except`` accepts one and nothing else here reads ``exc_type``, so
+    ``exc_type=(ValueError, TypeError)`` runs correctly; mypy rejects it against
+    ``type[Exception]``, and the gate runs mypy over ``mfgarchon/config`` only, so nothing checks
+    it. The annotation is documentation, and a tuple violating it passes silently. **And it is the
+    knob by which a caller can break another caller's design**:
+    ``test_gpu_particle_refuses_absorbing_bc_1910.py`` relies on an ``AssertionError`` from its own
+    premise check passing through this block uncaught, which a broad ``exc_type`` would swallow.
     """
 
     @contextlib.contextmanager
