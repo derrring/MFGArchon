@@ -16,9 +16,15 @@ cannot do is prevent the overwrite, which happens before it ever runs; that is w
 the writer.
 
 ADMISSION (#2287). Class 4 — it guards an instrument, the census that `check_warnings.py` consumes.
+Two tests, not four: the defect, and the control without which a writer that never writes would
+satisfy it. Two more were written and cut — that `tests_run` sums every outcome kind, and that an
+unset census path means no write. Both exercise behaviour this change did not touch, which is the
+"should have one" shape § *Admission* refuses, and this package is pre-1.0 with the surface still
+moving.
+
 The writer is called directly with a stub reporter rather than by spawning pytest inside pytest: the
-defect is a branch in the writer, and a subprocess would pay two interpreter starts to exercise the
-same line.
+defect is a branch in the writer, and a subprocess would pay two interpreter starts for the same
+line.
 """
 
 from __future__ import annotations
@@ -70,24 +76,3 @@ def test_a_collect_only_session_does_not_overwrite_a_real_census(census):
     _writer()(_reporter(warnings=[]), 0, None)  # collect-only: no outcomes at all
 
     assert census.read_text() == before, "a zero-outcome session overwrote a real census"
-
-
-def test_the_guard_counts_every_outcome_kind_not_just_passes(census):
-    """`tests_run` sums passed, failed, xfailed and skipped.
-
-    A run that is entirely skips or entirely failures measured something and must still be written;
-    counting only passes would discard exactly the sessions worth looking at.
-    """
-    for kind in ("failed", "xfailed", "skipped"):
-        census.unlink(missing_ok=True)
-        _writer()(_reporter(**{kind: [1]}), 0, None)
-        assert census.exists(), f"a session of only {kind} outcomes was treated as measuring nothing"
-        assert json.loads(census.read_text())["tests_run"] == 1
-
-
-def test_no_census_path_means_no_write(tmp_path, monkeypatch):
-    """The env var is the opt-in; without it the hook must not touch the filesystem."""
-    monkeypatch.delenv("MFGARCHON_WARNING_CENSUS", raising=False)
-    _writer()(_reporter(passed=[1]), 0, None)
-
-    assert not list(tmp_path.iterdir()), "the writer wrote something with no census path set"
