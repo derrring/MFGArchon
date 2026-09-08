@@ -119,6 +119,8 @@ def test_the_gpu_path_refuses_an_absorbing_wall(still_refused):
         observed=_OBSERVED,
         causes=_CAUSES,
         premise=lambda: _assert_gpu_path_was_taken(solver),
+        premise_establishes="the GPU strategy was selected, so this solve reached "
+        "`_solve_fp_system_gpu` rather than the CPU path, which honours the wall",
     ):
         _solve(solver)
 

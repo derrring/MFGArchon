@@ -14,6 +14,7 @@ import platform
 import shutil
 import sys
 import tempfile
+import textwrap
 from collections.abc import Callable
 from pathlib import Path
 
@@ -733,8 +734,10 @@ def still_refused():
     - ``excluded`` -- a sentence naming what already rules the other causes out, when that is a
       preceding assertion rather than a callable.
 
-    **The contract is enforced at call time, on every green run**, not when the pin finally retires.
-    A check that only fires at retirement is one nobody meets for years.
+    **The contract is enforced when the block is ENTERED, on every green run**, not when the pin
+    finally retires. (`@contextlib.contextmanager` defers the body, so constructing the manager
+    validates nothing -- entering it does.) A check that only fires at retirement is one nobody
+    meets for years.
 
     **What this cannot do, measured rather than assumed.** An earlier draft also refused an
     ``observed`` that concluded rather than observed, by matching words. Every evasion tried walked
@@ -744,11 +747,14 @@ def still_refused():
     Nothing here finds a **missing** cause. What it buys is that the single-cause message, which is
     the shape all three incidents took, becomes an act of commission rather than of omission.
 
-    ``exc_type`` selects the refusal to catch. It is the knob by which one caller can break
-    another's design: ``test_gpu_particle_refuses_absorbing_bc_1910.py`` relies on an
-    ``AssertionError`` from its own ``premise`` passing through uncaught, which a broad ``exc_type``
-    would swallow. ``tests/`` is outside the gate's mypy scope, so the annotation is documentation
-    rather than a check.
+    ``exc_type`` selects the refusal to catch. Two things about it, both measured rather than
+    assumed. **A tuple works and the annotation says it does not**: ``except`` accepts one and
+    nothing else here reads ``exc_type``, so ``exc_type=(ValueError, TypeError)`` runs correctly;
+    mypy rejects it against ``type[Exception]``, and the gate runs mypy over ``mfgarchon/config``
+    only, so nothing checks it. The annotation is documentation, and a tuple violating it passes
+    silently. **And it is the knob by which one caller can break another's design**:
+    ``test_gpu_particle_refuses_absorbing_bc_1910.py`` relies on an ``AssertionError`` from its own
+    ``premise`` passing through uncaught, which a broad ``exc_type`` would swallow.
     """
 
     @contextlib.contextmanager
@@ -758,6 +764,7 @@ def still_refused():
         observed: str,
         causes: dict[str, str],
         premise: Callable[[], None] | None = None,
+        premise_establishes: str | None = None,
         excluded: str | None = None,
         exc_type: type[Exception] = NotImplementedError,
     ):
@@ -765,7 +772,13 @@ def still_refused():
             raise ValueError("`observed` is required: state what the pin SAW, not what it concludes.")
         if not causes:
             raise ValueError("`causes` must name at least one cause, each with its instruction.")
-        if len(causes) < 2 and premise is None and excluded is None:
+        if premise is not None and not premise_establishes:
+            raise ValueError(
+                "`premise` requires `premise_establishes`: this fixture knows only that a callable "
+                "returned, not what that proves. Name what it establishes so the rendered claim is "
+                "yours and a reader can check it (#2290)."
+            )
+        if len(causes) < 2 and premise is None and not excluded:
             raise ValueError(
                 "A single-cause retirement message is refused (#2288). 'The refusal stopped' has "
                 "more causes than 'the capability landed'. Either name the others in `causes`, or "
@@ -774,16 +787,18 @@ def still_refused():
             )
 
         raised: Exception | None = None
-        premise_ran = False
         try:
-            try:
-                yield
-            finally:
-                if premise is not None:
-                    premise()
-                    premise_ran = True
+            yield
         except exc_type as exc:
             raised = exc
+        finally:
+            # In the `finally` of the SAME try, so `except exc_type` above cannot see it. With the
+            # premise nested inside instead, a premise raising `exc_type` was captured as the
+            # guard's refusal: the pin passed GREEN having measured nothing, and `match` was checked
+            # against the premise's exception rather than the guard's (#2290 review, case 7).
+            # Both paths still reach it, which is the property `premise` exists for.
+            if premise is not None:
+                premise()
 
         # Captured and re-read outside the handler rather than asserted inside it: PT017 wants
         # `pytest.raises` there, and `pytest.raises` is the thing this helper exists to replace.
@@ -794,15 +809,23 @@ def still_refused():
                 if len(causes) > 1
                 else "That is the retirement condition only if:"
             )
-            lines += [f"  * {cause} -- {instruction}" for cause, instruction in causes.items()]
+            for cause, instruction in causes.items():
+                # Wrapped: the hand-written messages this replaced wrapped at ~100 columns, and
+                # pytest prefixes every line with `E `. An artifact whose only job is to be read
+                # should not emit a 250-character line (#2290 review).
+                lines += textwrap.wrap(
+                    f"{cause} -- {instruction}",
+                    width=96,
+                    initial_indent="  * ",
+                    subsequent_indent="    ",
+                )
             if excluded:
                 lines += ["", f"Already ruled out: {excluded}"]
-            # From `premise_ran`, not from `premise is not None`. The correct implementation runs
-            # it in a `finally` so the two always agree -- but a sentence asserted from the presence
-            # of a PARAMETER rather than from the fact of running is this fixture's own subject, and
-            # it printed exactly that under a mutation while measuring (#2288).
-            if premise_ran:
-                lines += ["", "The premise check ran and passed, so the guarded path was reached."]
+            # The caller's sentence, not the fixture's. An earlier version rendered "so the guarded
+            # path was reached" from the fixture's own voice -- a conclusion it cannot observe, since
+            # it knows only that a callable returned. `premise=lambda: None` printed it (#2290).
+            if premise is not None:
+                lines += ["", f"The premise check ran and passed: {premise_establishes}."]
             pytest.fail("\n".join(lines))
         assert match in str(raised), f"refused, but not for the pinned reason: {raised}"
 

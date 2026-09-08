@@ -48,11 +48,11 @@ _CAUSES_1560 = {
     "per-axis handling landed": (
         "the RFC #1574 phase this pin existed to demand. Do NOT restore the raise: delete this test "
         "and replace it with one checking the ops are applied PER AXIS -- no-flux on x reflecting "
-        "while periodic on y wraps, which is the collapse the refusal stood in for"
+        "while periodic on y wraps, which is the collapse the refusal stood in for. `test_sl_uniform_bc_still_constructs_1560` stays either way. See #1560"
     ),
     "the guard moved": (
         "`bc_utils.refuse_mixed_per_axis` has been its one owner since #2284, so the refusal is "
-        "still correct behaviour and this pin wants re-pointing, not deleting"
+        "still correct behaviour and this pin wants re-pointing, not deleting. See #1560, #2284"
     ),
 }
 
@@ -62,11 +62,11 @@ _CAUSES_1564 = {
     "the operator now assembles a Dirichlet boundary": (
         "do NOT restore the raise. Delete this test and replace it with one checking the operator is "
         "no longer mass-conserving at a Dirichlet boundary -- the row sums must show outflow, which "
-        "is what the hardcoded no-flux assembly could not express"
+        "is what the hardcoded no-flux assembly could not express. `test_build_linearized_operator_ok_on_no_flux_1564` stays either way. See #1564"
     ),
     "the guard was moved or dropped with the assembly unchanged": (
         "the operator is silently reporting a mass-conserving wall for an absorbing one, which is "
-        "the defect the refusal replaced -- restore it"
+        "the defect the refusal replaced -- restore it. See #1564"
     ),
 }
 

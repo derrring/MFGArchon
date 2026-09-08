@@ -42,12 +42,17 @@ _OBSERVED_1700B = "`get_bc_type_string` no longer raises on a segment-free BC."
 _CAUSES_1700B = {
     "#1700 part B landed": (
         "which this assertion exists to notice -- that issue calls the configuration legitimate, so "
-        "the ValueError is a defect and its removal is progress. Delete this assertion and the one "
-        "below it, keep the rest of this test: the guard/lookup split (#2284) is a responsibility "
+        "the ValueError is a defect and its removal is progress. Delete THIS assertion and the one "
+        "after it -- you are standing at the first of the two -- and the docstring paragraph that "
+        "introduces them. Keep everything above: the guard/lookup split (#2284) is a responsibility "
         "argument and never depended on the ValueError existing. Do NOT restore the raise"
     ),
-    "`get_bc_type_string` was renamed or re-routed": (
-        "the lookup still owes this refusal somewhere; re-point this assertion at wherever it lives"
+    # NOT "renamed": renaming `get_bc_type_string` aborts collection, because `tests/conftest.py`
+    # imports `mfgarchon.geometry.boundary`, which re-exports it. The pin could never print that
+    # cause, and naming a cause the pin cannot observe is what this fixture exists to prevent --
+    # caught in the #2290 review, in the diff that introduced the fixture (#2288).
+    "the lookup was re-routed internally, still importable under this name": (
+        "the refusal is owed by whatever now resolves a segment-free BC; re-point this assertion"
     ),
 }
 
@@ -276,9 +281,11 @@ def test_the_guard_and_the_lookup_are_separable_2284(still_refused):
 
     Mutation, measured for #2284: appending `get_bc_type_string(boundary_conditions)` to
     `refuse_mixed_per_axis` -- the split semantically undone -- kills this test and only this one.
-    Measured at `2fde3917` over the 17 files matching
+    Measured in #2288 over the 17 files matching
     `grep -rlE 'semi_lagrangian|bc_utils|checked_bc_type_string|geometric_operations' tests/`:
-    1 failed, 361 passed, 7 xfailed.
+    1 failed, 361 passed, 7 xfailed. Anchored to the PR rather than to a branch sha because this
+    repository squash-merges, so a branch commit is not an ancestor of `main` and a reader greping
+    history for it finds nothing.
 
     **The last two assertions pin an open defect, deliberately, and retire with it.** That
     `ValueError` is #1700 part B, which calls an empty segment list with a uniform default "a

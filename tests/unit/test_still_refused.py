@@ -12,8 +12,10 @@ observed and enumerates the causes, and a single-cause message is refused unless
 the others. This file pins that refusal and the premise's placement, because both are silent when
 broken -- a pin whose guarantee has been removed looks exactly like one that still has it.
 
-ADMISSION (#2288). Class 1, on the mutations recorded per test. This is the shape
-`tests/unit/test_mfg_caplog.py` uses for the sibling fixture in the same conftest.
+ADMISSION (#2288, #2290). Class 1 for the five tests that record a mutation below; the rest are
+the negative controls those mutations need, without which a fixture that refused everything
+would pass. This is the shape `tests/unit/test_mfg_caplog.py` uses for the sibling fixture in
+the same conftest.
 
 WHAT THIS FILE DOES NOT PIN, because nothing mechanical can: that the enumerated causes are
 COMPLETE, and that an `excluded=` sentence is true. Both are free text and a caller can be wrong in
@@ -50,7 +52,18 @@ def test_a_single_cause_message_is_refused(still_refused):
     ("kwargs", "why"),
     [
         ({"causes": _TWO_CAUSES}, "two causes stand on their own"),
-        ({"causes": _ONE_CAUSE, "premise": lambda: None}, "a premise excludes the others"),
+        (
+            {
+                "causes": _ONE_CAUSE,
+                "premise": lambda: None,
+                # A no-op premise establishes nothing, and saying so is the point: the
+                # fixture renders this sentence, so a reader of the failure sees the claim
+                # and can judge it. An earlier version asserted "the guarded path was
+                # reached" in the fixture's own voice for exactly this premise (#2290).
+                "premise_establishes": "nothing -- this is the fixture's own test",
+            },
+            "a premise satisfies the gate; whether it EXCLUDES anything is the caller's claim",
+        ),
         ({"causes": _ONE_CAUSE, "excluded": "the assertion above rules it out"}, "excluded does too"),
     ],
 )
@@ -60,11 +73,22 @@ def test_the_three_admissible_shapes_are_accepted(still_refused, kwargs, why):
         raise NotImplementedError("x")
 
 
-def test_an_empty_observation_or_no_cause_is_refused(still_refused):
-    """Both are the message rendering itself into nothing."""
-    for bad in ({"observed": "", "causes": _TWO_CAUSES}, {"observed": _OBSERVED, "causes": {}}):
-        with pytest.raises(ValueError), still_refused("x", **bad):
-            raise NotImplementedError("x")
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"observed": "", "causes": _TWO_CAUSES}, "`observed` is required"),
+        ({"observed": _OBSERVED, "causes": {}}, "must name at least one cause"),
+    ],
+)
+def test_an_empty_observation_or_no_cause_is_refused(still_refused, kwargs, match):
+    """Both are the message rendering itself into nothing.
+
+    `match=` per case, and parametrized rather than looped: a bare `pytest.raises(ValueError)` here
+    was satisfied by the SINGLE-CAUSE branch's ValueError, so deleting the `if not causes` guard
+    killed nothing and a half-failure was unattributable (#2290 review).
+    """
+    with pytest.raises(ValueError, match=match), still_refused("x", **kwargs):
+        raise NotImplementedError("x")
 
 
 def _raise_it():
@@ -95,10 +119,19 @@ def test_the_premise_runs_on_the_raising_and_the_non_raising_path(still_refused,
     The discriminating edit is not where the call sits but which paths reach it.
     """
     ran = []
-    ctx = still_refused("x", observed=_OBSERVED, causes=_ONE_CAUSE, premise=lambda: ran.append(1))
+    ctx = still_refused(
+        "x",
+        observed=_OBSERVED,
+        causes=_ONE_CAUSE,
+        premise=lambda: ran.append(1),
+        premise_establishes="that this test's premise ran",
+    )
     with contextlib.suppress(BaseException), ctx:
         body()
-    assert ran, f"the premise did not run on the {path} path"
+    # `== [1]`, not a bare `assert ran`: the premise must run exactly once. A bare name is also what
+    # `check_assertion_strength.py` counts as weak, and it is right to -- `ran` being truthy does not
+    # say the premise ran once rather than twice, which a badly placed `finally` could do.
+    assert ran == [1], f"the premise ran {len(ran)} times on the {path} path, expected once"
 
 
 def _failing_premise():
@@ -120,6 +153,7 @@ def test_a_failing_premise_reports_itself_rather_than_the_retirement(still_refus
             observed=_OBSERVED,
             causes=_ONE_CAUSE,
             premise=_failing_premise,
+            premise_establishes="nothing -- it raises",
         ),
     ):
         pass
@@ -143,3 +177,68 @@ def test_a_refusal_for_the_wrong_reason_is_not_a_pass(still_refused):
         still_refused("the pinned substring", observed=_OBSERVED, causes=_TWO_CAUSES),
     ):
         raise NotImplementedError("some other refusal entirely")
+
+
+def test_a_premise_without_its_claim_is_refused(still_refused):
+    """`premise` obliges `premise_establishes`, because the fixture cannot supply that sentence.
+
+    It knows only that a zero-argument callable returned. What that PROVES is the caller's claim, so
+    the caller writes it and a reader of the failure can judge it. An earlier version asserted "so
+    the guarded path was reached" in the fixture's own voice, and rendered it for `premise=lambda:
+    None` -- the defect this fixture exists to prevent, relocated into the fixture (#2290).
+
+    Mutation, measured for #2290: deleting the `premise is not None and not premise_establishes`
+    branch from `tests/conftest.py` kills this test and only this one.
+    """
+    with (
+        pytest.raises(ValueError, match="requires `premise_establishes`"),
+        still_refused("x", observed=_OBSERVED, causes=_ONE_CAUSE, premise=lambda: None),
+    ):
+        raise NotImplementedError("x")
+
+
+def test_an_empty_excluded_does_not_satisfy_the_gate(still_refused):
+    """`excluded=""` must not walk past the single-cause refusal.
+
+    It did: the gate tested `excluded is None` while the renderer tested `if excluded:`, so an empty
+    string satisfied the gate and rendered nothing -- producing the bare single-cause message the
+    fixture exists to refuse, with no false sentence required (#2290 review, B1).
+
+    Mutation, measured for #2290: restoring `excluded is None` in the gate kills this test and only
+    this one.
+    """
+    with (
+        pytest.raises(ValueError, match="single-cause retirement message is refused"),
+        still_refused("x", observed=_OBSERVED, causes=_ONE_CAUSE, excluded=""),
+    ):
+        raise NotImplementedError("x")
+
+
+def test_a_premise_raising_the_pinned_type_is_not_mistaken_for_the_refusal(still_refused):
+    """The guard never refused, so this must not pass -- however the premise failed.
+
+    With `premise()` nested inside the `try` that `except exc_type` guards, a premise raising
+    `exc_type` was captured AS the refusal: the pin passed green having measured nothing, and when
+    the premise's message happened to contain `match`, `match` was checked against the wrong
+    exception entirely (#2290 review, B3). No current call site collides, but
+    `test_mixed_bc_refused_1697.py` already pins with `exc_type=ValueError`, and library code
+    raising `ValueError` inside a premise is ordinary.
+
+    Mutation, measured for #2290: nesting the premise back inside the guarded `try` kills this test
+    and only this one.
+    """
+
+    def premise_raising_the_pinned_type():
+        raise NotImplementedError("x -- and this contains the match string")
+
+    with (
+        pytest.raises(NotImplementedError, match="this contains the match string"),
+        still_refused(
+            "x",
+            observed=_OBSERVED,
+            causes=_ONE_CAUSE,
+            premise=premise_raising_the_pinned_type,
+            premise_establishes="nothing -- it raises the pinned type",
+        ),
+    ):
+        pass  # the guard does NOT refuse
