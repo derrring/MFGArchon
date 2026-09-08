@@ -39,14 +39,19 @@ CONSUMER = {"consumer": "TestSolver", "alternative": "Use one BC type across axe
 
 _RETIRE_1700B = """`get_bc_type_string` no longer raises on a segment-free BC.
 
-That is #1700 part B landing, which this assertion exists to notice: it calls that configuration
-legitimate, so the ValueError is a defect and its removal is progress. Delete THIS assertion and the
-one after it -- you are standing at the first of the two -- and the paragraph of the test docstring
-that introduces them, and the comment blocks above each -- they explain assertions that will no
-longer exist. Keep the rest, with ONE edit: the docstring's opening paragraph states as present fact
-that `get_bc_type_string` raises `ValueError` on a segment-free BC, which is exactly what stops being
-true, so that clause goes with the assertions. The guard/lookup split is a responsibility argument
-(#2284) and never depended on the ValueError existing. Do NOT restore the raise."""
+That is #1700 part B landing, which this assertion exists to notice: the issue calls that
+configuration legitimate, so the ValueError is a defect and its removal is progress. Do NOT restore
+the raise. You are standing at the first of two assertions. Delete, in this order:
+
+  1. this assertion and its comment block;
+  2. the one after it and its comment block;
+  3. the docstring paragraph beginning "The last two assertions pin an open defect";
+  4. in the docstring's SECOND paragraph, the clause ", while `get_bc_type_string` raises
+     `ValueError` on it" -- and rewrite what remains, because the sentence's contrast and the
+     "that" in the sentence after it both depend on the clause you just removed.
+
+Everything else stays: the guard/lookup split (#2284) is a responsibility argument and never
+depended on the ValueError existing."""
 
 _LOOKUP_NO_LONGER_REACHED = """`checked_bc_type_string` did not raise on a segment-free BC, but
 `get_bc_type_string` still does -- so #1700 has NOT landed and the composite has stopped routing
