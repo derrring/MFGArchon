@@ -720,14 +720,35 @@ def still_refused():
     - assert that the guarded path was REACHED, before entering this block;
     - write ``retirement`` so it states what was observed and names the other causes, rather than
       declaring the capability landed.
+
+    **Name a cause only if the pin observes it.** Measured on this fixture's own callers (#2288): a
+    message declaring "#1700 landed" fired byte-identically when a *different* change removed the
+    raise, and its instruction was then wrong. Where an absence has two plausible causes, check them
+    separately and give each its own message.
+
+    ``exc_type`` selects the refusal to catch, defaulting to ``NotImplementedError`` (#2288). Two
+    things about it, both measured rather than assumed. **A tuple works and the annotation says it
+    does not**: ``except`` accepts one and nothing else here reads ``exc_type``, so
+    ``exc_type=(ValueError, TypeError)`` runs correctly; mypy rejects it against
+    ``type[Exception]`` -- and nothing checks that, for a reason no configuration change reaches.
+    The gate runs mypy over ``mfgarchon/config`` only, but widening that would not help: the fixture
+    arrives as an **unannotated parameter**, so it is ``Any``, and a call through ``Any`` is
+    unchecked whatever else is set. Measured on the real shape against a control that fires under
+    both settings -- flipping ``check_untyped_defs`` moves an untyped def calling the helper
+    *directly* and does not move the call through the fixture parameter at all. An earlier version
+    of this paragraph named ``check_untyped_defs = false`` as the cause; that was the mechanism for
+    a different line. The annotation is documentation, and a tuple violating it passes silently. **And it is the
+    knob by which a caller can break another caller's design**:
+    ``test_gpu_particle_refuses_absorbing_bc_1910.py`` relies on an ``AssertionError`` from its own
+    premise check passing through this block uncaught, which a broad ``exc_type`` would swallow.
     """
 
     @contextlib.contextmanager
-    def _still_refused(match: str, retirement: str):
-        raised: NotImplementedError | None = None
+    def _still_refused(match: str, retirement: str, exc_type: type[Exception] = NotImplementedError):
+        raised: Exception | None = None
         try:
             yield
-        except NotImplementedError as exc:
+        except exc_type as exc:
             raised = exc
 
         # Captured and re-read outside the handler rather than asserted inside it: PT017 wants

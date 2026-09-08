@@ -32,9 +32,34 @@ from mfgarchon.geometry.boundary.bc_utils import (
     checked_bc_type_string,
     geometric_operations,
     get_bc_type_string,
+    refuse_mixed_per_axis,
 )
 
 CONSUMER = {"consumer": "TestSolver", "alternative": "Use one BC type across axes."}
+
+_RETIRE_1700B = """`get_bc_type_string` no longer raises on a segment-free BC.
+
+That is #1700 part B landing, which this assertion exists to notice: the issue calls that
+configuration legitimate, so the ValueError is a defect and its removal is progress. Do NOT restore
+the raise. You are standing at the first of two assertions. Delete, in this order:
+
+  1. this assertion and its comment block;
+  2. the one after it and its comment block;
+  3. the docstring paragraph beginning "The last two assertions pin an open defect";
+  4. in the docstring's SECOND paragraph, the clause ", while `get_bc_type_string` raises
+     `ValueError` on it" -- and rewrite what remains, because the sentence's contrast and the
+     "that" in the sentence after it both depend on the clause you just removed.
+
+Everything else stays: the guard/lookup split (#2284) is a responsibility argument and never
+depended on the ValueError existing."""
+
+_LOOKUP_NO_LONGER_REACHED = """`checked_bc_type_string` did not raise on a segment-free BC, but
+`get_bc_type_string` still does -- so #1700 has NOT landed and the composite has stopped routing
+through the lookup.
+
+The split (#2284) was meant to leave `checked_bc_type_string` as guard-then-lookup. Restore the
+lookup, or if the composite is deliberately gone, re-point this test at whatever now owns
+collapse-to-a-value rather than deleting it."""
 
 
 def _seg(name, bc_type, boundary):
@@ -240,3 +265,103 @@ def test_an_object_carrying_neither_field_is_not_a_segmented_bc():
 
     assert geometric_operations(SimpleNamespace(type="periodic")) == set()
     assert geometric_operations(None) == set()
+
+
+def test_the_guard_and_the_lookup_are_separable_2284(still_refused):
+    """`refuse_mixed_per_axis` is the predicate; `checked_bc_type_string` is it plus the lookup.
+
+    They were one function until #2284, and the difference is not cosmetic: a segment-free BC asks
+    for exactly one geometric operation, so the guard passes it, while `get_bc_type_string` raises
+    `ValueError` on it. A caller that wants only the refusal must not inherit that.
+
+    Mutation, measured for #2284: appending `get_bc_type_string(boundary_conditions)` to
+    `refuse_mixed_per_axis` -- the split semantically undone -- kills this test and only this one.
+    Measured in #2288 over the 17 files matching
+    `grep -rlE 'semi_lagrangian|bc_utils|checked_bc_type_string|geometric_operations' tests/`:
+    1 failed, 361 passed, 7 xfailed. Anchored to the PR rather than to a branch sha because this
+    repository squash-merges, so a branch commit is not an ancestor of `main` and a reader grepping
+    history for it finds nothing.
+
+    **The last two assertions pin an open defect, deliberately, and retire with it.** That
+    `ValueError` is #1700 part B, which calls an empty segment list with a uniform default "a
+    legitimate configuration" -- so it is a bug, not a contract, and the first two assertions are
+    what this test is really for. They are two rather than one so that the absence has a cause: the
+    lookup is checked directly, then the composite, and each carries the message true of its own
+    trigger.
+    """
+    segment_free = BoundaryConditions(dimension=2, segments=[], default_bc=BCType.NO_FLUX)
+
+    assert geometric_operations(segment_free) == {"reflect"}
+    assert refuse_mixed_per_axis(segment_free, **CONSUMER) is None
+
+    # The CAUSE, observed where it lives. #1700B is about `get_bc_type_string`, so that is what the
+    # retirement condition has to watch. Asserting only the composite cannot separate "#1700 landed"
+    # from "the composite stopped calling the lookup" -- measured for #2288: replacing
+    # `checked_bc_type_string`'s body with `return None`, leaving `get_bc_type_string` untouched and
+    # still raising, produced a byte-identical retirement message declaring #1700 had landed.
+    with still_refused("only valid for uniform BCs", _RETIRE_1700B, ValueError):
+        get_bc_type_string(segment_free)
+
+    # ...and that the composite still routes through it, which is the other cause and its own message.
+    with still_refused("only valid for uniform BCs", _LOOKUP_NO_LONGER_REACHED, ValueError):
+        checked_bc_type_string(segment_free, **CONSUMER)
+
+
+def test_hjb_sl_refuses_the_rename_signature_at_construction_2284():
+    """The wiring, not the helper -- and the defect the consolidation actually closed.
+
+    `HJBSemiLagrangianSolver.__init__` carried its own copy of the collapse predicate until #2284.
+    The copy read `getattr(bc, "default_bc", None)`, so on the #1691 rename signature -- `segments`
+    present, `default_bc` renamed away -- it treated the absence as "no default" and constructed,
+    while `geometric_operations` refuses to guess and raises. The per-axis disagreement carried by
+    the renamed field was invisible to construction.
+
+    Mutation, measured for #2284: restoring the inline block in `__init__` (its own `_sl_ops` set
+    over `segments` plus `getattr(bc, "default_bc", None)`) kills this test and only this test.
+    Asserting on `refuse_mixed_per_axis` alone would not -- those assertions stay green with the
+    constructor reverted, which is why this one builds the solver.
+    """
+    from mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian import HJBSemiLagrangianSolver
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+    from mfgarchon.core.mfg_components import MFGComponents
+    from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid
+
+    class RenamedBC:
+        """Every segment agrees, so only the renamed default carries the disagreement."""
+
+        def __init__(self):
+            self.segments = [
+                _seg("wx", BCType.NO_FLUX, "x_min"),
+                _seg("ex", BCType.NO_FLUX, "x_max"),
+                _seg("wy", BCType.NO_FLUX, "y_min"),
+                _seg("ey", BCType.NO_FLUX, "y_max"),
+            ]
+            self.default = BCType.PERIODIC  # not `default_bc`
+            self.dimension = 2
+
+        def get_bc_type_string(self):
+            return "no_flux"
+
+    # The premise: the segments alone do NOT disagree, so a segments-only union sees nothing.
+    duck = RenamedBC()
+    assert len({seg.bc_type for seg in duck.segments}) == 1
+
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[6, 6], boundary_conditions=no_flux_bc(dimension=2)
+    )
+    H = SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0))
+    problem = MFGProblem(
+        geometry=grid,
+        T=0.2,
+        Nt=2,
+        sigma=0.1,
+        components=MFGComponents(hamiltonian=H, u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0),
+    )
+
+    class _WithRenamedBC(HJBSemiLagrangianSolver):
+        def get_boundary_conditions(self):
+            return duck
+
+    with pytest.raises(AttributeError, match="has 'segments' but no 'default_bc'"):
+        _WithRenamedBC(problem=problem)

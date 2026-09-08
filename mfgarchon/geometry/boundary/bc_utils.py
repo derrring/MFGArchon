@@ -158,19 +158,31 @@ def geometric_operations(boundary_conditions: Any) -> set[str]:
     return ops
 
 
-def checked_bc_type_string(boundary_conditions: Any, *, consumer: str, alternative: str) -> str | None:
-    """Collapse ``boundary_conditions`` to one BC type, or refuse if that would change the physics.
+def refuse_mixed_per_axis(boundary_conditions: Any, *, consumer: str, alternative: str) -> None:
+    """Refuse a BC whose segments ask for more than one geometric operation. #1560, #1697.
 
-    The single owner of the per-axis collapse for solvers whose fold applies one geometric
-    operation to every axis (Issues #1560, #1697). Callers get either a BC type they may safely
-    apply to all axes, or ``NotImplementedError``.
+    **The single owner of the per-axis collapse guard**, for every solver whose fold applies one
+    geometric operation to every axis. Returns ``None`` when the configuration is honourable and
+    raises ``NotImplementedError`` when it is not.
 
-    Call this at the point of use, not only at construction: solvers re-read
+    Split out of :func:`checked_bc_type_string` (#2284), which does this **and** returns the
+    collapsed type. **The reason is the responsibility split, which holds on its own**: a solver's
+    constructor wants the refusal and has no use for the value, so it should not be able to fail for
+    reasons belonging to a lookup it never asked for.
+
+    The concrete instance that made it visible is a **defect, not a contract**, and it has its own
+    issue: ``BoundaryConditions(segments=[], default_bc=NO_FLUX)`` asks for one operation and passes
+    this guard, while ``get_bc_type_string`` raises ``ValueError`` on it (#1700 part B, open --
+    "an empty segment list with a uniform default is a legitimate configuration"). When #1700 lands
+    that ValueError goes and this paragraph's example goes with it; the paragraph above does not.
+
+    Call it at the point of use, not only at construction: solvers re-read
     ``get_boundary_conditions()`` at solve time, so a construction-time check alone is bypassed by
-    a BC that is unset when the solver is built, or replaced afterwards.
+    a BC that is unset when the solver is built, or replaced afterwards. Construction as well, not
+    instead: a refusal the caller gets when handing the BC over beats one it gets on first solve.
 
     Args:
-        boundary_conditions: the BC to collapse.
+        boundary_conditions: the BC to check.
         consumer: the refusing component, named in the error (e.g. ``"HJBSemiLagrangianSolver"``).
         alternative: what the caller should use instead, appended to the error message.
 
@@ -185,6 +197,15 @@ def checked_bc_type_string(boundary_conditions: Any, *, consumer: str, alternati
             "operation to every axis, so the result depends on segment order rather than on "
             f"which wall carries which condition. {alternative}"
         )
+
+
+def checked_bc_type_string(boundary_conditions: Any, *, consumer: str, alternative: str) -> str | None:
+    """Collapse ``boundary_conditions`` to one BC type, or refuse if that would change the physics.
+
+    The guard plus the lookup, for callers that need the collapsed value. Callers that need only
+    the refusal call :func:`refuse_mixed_per_axis`, which is where the predicate now lives.
+    """
+    refuse_mixed_per_axis(boundary_conditions, consumer=consumer, alternative=alternative)
     return get_bc_type_string(boundary_conditions)
 
 
