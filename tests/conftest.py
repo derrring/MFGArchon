@@ -14,6 +14,7 @@ import platform
 import shutil
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -708,45 +709,101 @@ def still_refused():
     """One owner for the class-3 defect-pin idiom: assert a refusal, and make its DISAPPEARANCE an
     instruction rather than a bare red (#2257).
 
-    ``pytest.raises`` reports "DID NOT RAISE", which tells a future reader that something broke but
-    not that the something is this pin's own success condition. This replaces it, so the failure
-    message carries the retirement condition.
+    ``pytest.raises`` reports "DID NOT RAISE", which says something broke but not that the something
+    is this pin's own success condition. This replaces it, so the failure message carries the
+    retirement condition.
 
-    **"Nothing was raised" has more causes than "the capability landed."** A duplicate copy of the
-    guard removed elsewhere, or a dispatch routed around the guarded branch, prints the retirement
-    message exactly as loudly as the fix the pin was written to demand. Two obligations follow, and
-    the helper cannot discharge either for you:
+    **"Nothing was raised" has more causes than "the capability landed."** Measured three times in
+    one session (#2283, #2288), each caught by an independent reviewer and never by the author, the
+    second written inside the commit fixing the first: a message named a cause the pin did not
+    observe, and its instruction was then wrong. Once, replacing a helper's body with ``return None``
+    produced a byte-identical message declaring that a different, unrelated fix had landed.
 
-    - assert that the guarded path was REACHED, before entering this block;
-    - write ``retirement`` so it states what was observed and names the other causes, rather than
-      declaring the capability landed.
+    So the message is not a string the caller writes. It is rendered from what the pin **observed**
+    and the **causes** that could produce it:
 
-    **Name a cause only if the pin observes it.** Measured on this fixture's own callers (#2288): a
-    message declaring "#1700 landed" fired byte-identically when a *different* change removed the
-    raise, and its instruction was then wrong. Where an absence has two plausible causes, check them
-    separately and give each its own message.
+    - ``observed`` -- what the pin saw, as an observation.
+    - ``causes`` -- ``{cause: instruction}``, at least two, because a single-cause message is the
+      defect above. One is allowed only with ``premise`` or ``excluded``.
+    - ``premise`` -- a callable that establishes the guarded path was reached. It runs in a
+      ``finally`` **inside** the block, so it executes on the raising and the non-raising path
+      alike and precedes the interpretation. A check placed after the ``with`` does not run on the
+      path that prints the message, because ``pytest.fail`` propagates out of the context manager --
+      which is what incident #1 was.
+    - ``excluded`` -- a sentence naming what already rules the other causes out, when that is a
+      preceding assertion rather than a callable.
 
-    ``exc_type`` selects the refusal to catch, defaulting to ``NotImplementedError`` (#2288). Two
-    things it does not do. It is annotated ``type[Exception]``, so the tuple form ``except`` accepts
-    is not supported -- and ``tests/`` is outside the gate's mypy scope, so a tuple would fail at
-    runtime rather than at check time. And it is the knob by which a caller can break another
-    caller's design: ``test_gpu_particle_refuses_absorbing_bc_1910.py`` relies on an
-    ``AssertionError`` from its own premise check passing through this block uncaught, which a broad
-    ``exc_type`` would silently swallow.
+    **The contract is enforced at call time, on every green run**, not when the pin finally retires.
+    A check that only fires at retirement is one nobody meets for years.
+
+    **What this cannot do, measured rather than assumed.** An earlier draft also refused an
+    ``observed`` that concluded rather than observed, by matching words. Every evasion tried walked
+    past it -- rewording dodges a word list, one cause restated twice satisfies the count, and
+    ``excluded`` can simply be false -- and it caught nothing the structural rule did not. It was
+    dropped: a gate that reads as protection while providing none is this fixture's own subject.
+    Nothing here finds a **missing** cause. What it buys is that the single-cause message, which is
+    the shape all three incidents took, becomes an act of commission rather than of omission.
+
+    ``exc_type`` selects the refusal to catch. It is the knob by which one caller can break
+    another's design: ``test_gpu_particle_refuses_absorbing_bc_1910.py`` relies on an
+    ``AssertionError`` from its own ``premise`` passing through uncaught, which a broad ``exc_type``
+    would swallow. ``tests/`` is outside the gate's mypy scope, so the annotation is documentation
+    rather than a check.
     """
 
     @contextlib.contextmanager
-    def _still_refused(match: str, retirement: str, exc_type: type[Exception] = NotImplementedError):
+    def _still_refused(
+        match: str,
+        *,
+        observed: str,
+        causes: dict[str, str],
+        premise: Callable[[], None] | None = None,
+        excluded: str | None = None,
+        exc_type: type[Exception] = NotImplementedError,
+    ):
+        if not observed:
+            raise ValueError("`observed` is required: state what the pin SAW, not what it concludes.")
+        if not causes:
+            raise ValueError("`causes` must name at least one cause, each with its instruction.")
+        if len(causes) < 2 and premise is None and excluded is None:
+            raise ValueError(
+                "A single-cause retirement message is refused (#2288). 'The refusal stopped' has "
+                "more causes than 'the capability landed'. Either name the others in `causes`, or "
+                "pass `premise=` (a check that excludes them, run on both paths) or `excluded=` "
+                "(a sentence naming what already rules them out)."
+            )
+
         raised: Exception | None = None
+        premise_ran = False
         try:
-            yield
+            try:
+                yield
+            finally:
+                if premise is not None:
+                    premise()
+                    premise_ran = True
         except exc_type as exc:
             raised = exc
 
         # Captured and re-read outside the handler rather than asserted inside it: PT017 wants
         # `pytest.raises` there, and `pytest.raises` is the thing this helper exists to replace.
         if raised is None:
-            pytest.fail(retirement)
+            lines = [observed, ""]
+            lines.append(
+                "That is the retirement condition ONLY if one of these holds. Check which:"
+                if len(causes) > 1
+                else "That is the retirement condition only if:"
+            )
+            lines += [f"  * {cause} -- {instruction}" for cause, instruction in causes.items()]
+            if excluded:
+                lines += ["", f"Already ruled out: {excluded}"]
+            # From `premise_ran`, not from `premise is not None`. The correct implementation runs
+            # it in a `finally` so the two always agree -- but a sentence asserted from the presence
+            # of a PARAMETER rather than from the fact of running is this fixture's own subject, and
+            # it printed exactly that under a mutation while measuring (#2288).
+            if premise_ran:
+                lines += ["", "The premise check ran and passed, so the guarded path was reached."]
+            pytest.fail("\n".join(lines))
         assert match in str(raised), f"refused, but not for the pinned reason: {raised}"
 
     return _still_refused

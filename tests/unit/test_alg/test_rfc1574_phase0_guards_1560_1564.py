@@ -42,31 +42,36 @@ from mfgarchon.core.mfg_problem import MFGComponents, MFGProblem
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, dirichlet_bc, no_flux_bc
 from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid
 
-_RETIRE_1560 = """HJBSemiLagrangianSolver did not refuse a mixed per-axis BC at construction.
+_OBSERVED_1560 = "HJBSemiLagrangianSolver did not refuse a mixed per-axis BC at construction."
 
-That is the retirement condition ONLY if the solver now HONOURS per-axis BC, which is the RFC #1574
-phase this pin existed to demand. Check which happened:
+_CAUSES_1560 = {
+    "per-axis handling landed": (
+        "the RFC #1574 phase this pin existed to demand. Do NOT restore the raise: delete this test "
+        "and replace it with one checking the ops are applied PER AXIS -- no-flux on x reflecting "
+        "while periodic on y wraps, which is the collapse the refusal stood in for"
+    ),
+    "the guard moved": (
+        "`bc_utils.refuse_mixed_per_axis` has been its one owner since #2284, so the refusal is "
+        "still correct behaviour and this pin wants re-pointing, not deleting"
+    ),
+}
 
-  * per-axis handling landed -- do NOT restore the raise. Delete this test and replace it with one
-    that checks the ops are applied PER AXIS: no-flux on x must reflect while periodic on y wraps,
-    which is the collapse the refusal was standing in for.
-  * the guard moved -- `bc_utils.refuse_mixed_per_axis` has been its one owner since #2284, so the
-    refusal is still the correct behaviour and this pin wants re-pointing, not deleting.
+_OBSERVED_1564 = "build_linearized_operator did not refuse a Dirichlet BC."
 
-`test_sl_uniform_bc_still_constructs_1560` stays either way. See #1560, #2284."""
+_CAUSES_1564 = {
+    "the operator now assembles a Dirichlet boundary": (
+        "do NOT restore the raise. Delete this test and replace it with one checking the operator is "
+        "no longer mass-conserving at a Dirichlet boundary -- the row sums must show outflow, which "
+        "is what the hardcoded no-flux assembly could not express"
+    ),
+    "the guard was moved or dropped with the assembly unchanged": (
+        "the operator is silently reporting a mass-conserving wall for an absorbing one, which is "
+        "the defect the refusal replaced -- restore it"
+    ),
+}
 
-_RETIRE_1564 = """build_linearized_operator did not refuse a Dirichlet BC.
-
-That is the retirement condition ONLY if the operator now ASSEMBLES a Dirichlet boundary rather
-than hardcoding no-flux. If instead the guard was moved or dropped with the assembly unchanged, the
-operator is silently reporting a mass-conserving wall for an absorbing one, which is the defect the
-refusal replaced -- restore it.
-
-If the capability landed: do NOT restore the raise. Delete this test and replace it with one that
-checks the operator is no longer mass-conserving at a Dirichlet boundary -- the row sums must show
-outflow, which is precisely what the hardcoded no-flux assembly could not express.
-
-`test_build_linearized_operator_ok_on_no_flux_1564` stays either way. See #1564."""
+# `test_sl_uniform_bc_still_constructs_1560` and
+# `test_build_linearized_operator_ok_on_no_flux_1564` stay under either disposition.
 
 
 def _components() -> MFGComponents:
@@ -97,7 +102,7 @@ def test_sl_mixed_per_axis_bc_fails_loud_1560(still_refused):
         # supplied as NEUMANN and the constructor leaves None. Passed explicitly for that reason.
         default_bc=BCType.NEUMANN,
     )
-    with still_refused("mixed per-axis", _RETIRE_1560):
+    with still_refused("mixed per-axis", observed=_OBSERVED_1560, causes=_CAUSES_1560):
         HJBSemiLagrangianSolver(problem=_problem(mixed, [(0.0, 1.0), (0.0, 1.0)], [6, 6]))
 
 
@@ -115,7 +120,7 @@ def test_build_linearized_operator_fails_loud_on_dirichlet_1564(still_refused):
     treated as mass-conserving no-flux."""
     solver = HJBFDMSolver(problem=_problem(dirichlet_bc(dimension=1), [(0.0, 1.0)], [11]))
     U, M = np.zeros(11), np.ones(11) / 11
-    with still_refused("1564", _RETIRE_1564):
+    with still_refused("1564", observed=_OBSERVED_1564, causes=_CAUSES_1564):
         solver.build_linearized_operator(U, M, time=0.0)
 
 

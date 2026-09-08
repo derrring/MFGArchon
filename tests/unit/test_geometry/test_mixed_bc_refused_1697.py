@@ -37,20 +37,29 @@ from mfgarchon.geometry.boundary.bc_utils import (
 
 CONSUMER = {"consumer": "TestSolver", "alternative": "Use one BC type across axes."}
 
-_RETIRE_1700B = """`get_bc_type_string` no longer raises on a segment-free BC.
+_OBSERVED_1700B = "`get_bc_type_string` no longer raises on a segment-free BC."
 
-That is #1700 part B landing, which this assertion exists to notice: it calls that configuration
-legitimate, so the ValueError is a defect and its removal is progress. Delete the two assertions
-below and keep the rest of this test -- the guard/lookup split is a responsibility argument (#2284)
-and never depended on the ValueError existing. Do NOT restore the raise."""
+_CAUSES_1700B = {
+    "#1700 part B landed": (
+        "which this assertion exists to notice -- that issue calls the configuration legitimate, so "
+        "the ValueError is a defect and its removal is progress. Delete this assertion and the one "
+        "below it, keep the rest of this test: the guard/lookup split (#2284) is a responsibility "
+        "argument and never depended on the ValueError existing. Do NOT restore the raise"
+    ),
+    "`get_bc_type_string` was renamed or re-routed": (
+        "the lookup still owes this refusal somewhere; re-point this assertion at wherever it lives"
+    ),
+}
 
-_LOOKUP_NO_LONGER_REACHED = """`checked_bc_type_string` did not raise on a segment-free BC, but
-`get_bc_type_string` still does -- so #1700 has NOT landed and the composite has stopped routing
-through the lookup.
+_OBSERVED_COMPOSITE = "`checked_bc_type_string` did not raise on a segment-free BC."
 
-The split (#2284) was meant to leave `checked_bc_type_string` as guard-then-lookup. Restore the
-lookup, or if the composite is deliberately gone, re-point this test at whatever now owns
-collapse-to-a-value rather than deleting it."""
+_CAUSES_COMPOSITE = {
+    "the composite stopped routing through the lookup": (
+        "the split (#2284) was meant to leave `checked_bc_type_string` as guard-then-lookup. Restore "
+        "the lookup, or if the composite is deliberately gone, re-point this test at whatever now "
+        "owns collapse-to-a-value rather than deleting it"
+    ),
+}
 
 
 def _seg(name, bc_type, boundary):
@@ -288,11 +297,24 @@ def test_the_guard_and_the_lookup_are_separable_2284(still_refused):
     # from "the composite stopped calling the lookup" -- measured for #2288: replacing
     # `checked_bc_type_string`'s body with `return None`, leaving `get_bc_type_string` untouched and
     # still raising, produced a byte-identical retirement message declaring #1700 had landed.
-    with still_refused("only valid for uniform BCs", _RETIRE_1700B, ValueError):
+    with still_refused(
+        "only valid for uniform BCs",
+        observed=_OBSERVED_1700B,
+        causes=_CAUSES_1700B,
+        exc_type=ValueError,
+    ):
         get_bc_type_string(segment_free)
 
-    # ...and that the composite still routes through it, which is the other cause and its own message.
-    with still_refused("only valid for uniform BCs", _LOOKUP_NO_LONGER_REACHED, ValueError):
+    # ...and that the composite still routes through it. One cause, because the assertion above
+    # already excluded the other -- which is what `excluded=` records, and why the fixture accepts
+    # a single cause here.
+    with still_refused(
+        "only valid for uniform BCs",
+        observed=_OBSERVED_COMPOSITE,
+        causes=_CAUSES_COMPOSITE,
+        excluded="the assertion above proves `get_bc_type_string` still raises, so #1700 has not landed",
+        exc_type=ValueError,
+    ):
         checked_bc_type_string(segment_free, **CONSUMER)
 
 
