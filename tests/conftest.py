@@ -1168,6 +1168,24 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         "tests_run": sum(len(terminalreporter.stats.get(k, [])) for k in ("passed", "failed", "xfailed", "skipped")),
         "toolchain": toolchain,
     }
+    if payload["tests_run"] == 0:
+        # A session that ran nothing has nothing to census, and writing anyway DESTROYS a real one
+        # (#2287). `scripts/local_ci.sh` exports MFGARCHON_WARNING_CENSUS and leaves it exported, so
+        # every later pytest invocation in that run inherits it -- and `report_discrimination.py`
+        # issues `pytest --collect-only` AFTER the ratchet has read the census. Measured: the gate's
+        # own census went from 225 identities to 0 identities / 294 bytes, so `--write-baseline` --
+        # which the ratchet's failure message instructs you to run -- could not be fed from the
+        # artifact the gate had just produced.
+        #
+        # Guarded here rather than in that one caller because the next collect-only invocation would
+        # rediscover it. `check_warnings.py`'s MIN_TESTS floor already refuses a census this thin;
+        # what it cannot do is prevent the overwrite, which happens before it ever runs.
+        #
+        # A SMALL run still overwrites a large one. That is a different hazard, it was not measured
+        # here, and the reader's floor catches it; widening this guard to cover it would be
+        # speculative.
+        return
+
     try:
         target = Path(out)
         target.parent.mkdir(parents=True, exist_ok=True)
