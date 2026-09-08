@@ -37,9 +37,11 @@ _ONE_CAUSE = {"the capability landed": "delete this pin"}
 def test_a_single_cause_message_is_refused(still_refused):
     """The load-bearing rule. Without it the fixture is the old free-form one wearing a new shape.
 
-    Mutation, measured for #2288: deleting the `len(causes) < 2 and premise is None and excluded is
-    None` branch from `tests/conftest.py` kills this test and only this one across the fixture's
-    five call sites and this file.
+    Mutation, re-measured at #2290, control 42: deleting the
+    `len(causes) < 2 and premise is None and not excluded` branch from `tests/conftest.py` kills
+    TWO -- this test and `test_an_empty_excluded_does_not_satisfy_the_gate`, which asserts on the
+    same branch. The #2288 docstring said "this test and only this one" and quoted the pre-#2290
+    `excluded is None` spelling; both went stale when that test was added beside it.
     """
     with (
         pytest.raises(ValueError, match="single-cause retirement message is refused"),
@@ -110,9 +112,11 @@ def test_the_premise_runs_on_the_raising_and_the_non_raising_path(still_refused,
 
     Mutation, measured for #2288: running `premise()` only inside the `except exc_type` branch --
     so it fires when the guard refused and not when it did not, which is incident #1's shape --
-    kills this test's non-raising parametrization and
-    `test_a_failing_premise_reports_itself_rather_than_the_retirement`. Control 35 passed across
-    this file and the fixture's four call-site files; mutated, 2 failed.
+    kills THREE: this test's non-raising parametrization,
+    `test_a_failing_premise_reports_itself_rather_than_the_retirement`, and
+    `test_a_premise_raising_the_pinned_type_is_not_mistaken_for_the_refusal`. Control 42 across this
+    file and the fixture's three call-site files. The #2288 docstring said 35 and 2; both went stale
+    when this file grew beside them, which is what a count over the current tree does.
 
     A weaker mutation kills nothing and is recorded because it was the one first claimed here:
     moving `premise()` to after the `except` still runs it on both paths, so the property survives.
@@ -242,3 +246,30 @@ def test_a_premise_raising_the_pinned_type_is_not_mistaken_for_the_refusal(still
         ),
     ):
         pass  # the guard does NOT refuse
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "exc", "match"),
+    [
+        ({"causes": ["cause one", "cause two"]}, TypeError, "must be a mapping"),
+        ({"causes": {"a": "", "b": ""}}, ValueError, "every cause needs an instruction"),
+        ({"causes": _TWO_CAUSES, "match_override": ""}, ValueError, "`match` is required"),
+    ],
+)
+def test_the_renderer_cannot_be_reached_in_a_state_it_would_die_in(still_refused, kwargs, exc, match):
+    """Everything the renderer needs is checked at ENTRY, because the renderer runs only at retirement.
+
+    This is the fixture's own headline applied to itself. A list of causes passed every gate and then
+    died with `AttributeError: 'list' object has no attribute 'items'` in the renderer -- so the pin
+    was green for years and destroyed its own instruction at the one moment it existed for. Two
+    causes with empty instructions rendered `  * a --`, satisfying the count and defeating the
+    class-3 rule that the message IS the instruction. An empty `match` made the pin green on a
+    refusal for an entirely different reason. All three found in the #2290 review, all three in the
+    diff that introduced the gate they walked past.
+
+    Mutations, measured for #2290, control 42: deleting each of the three entry checks in
+    `tests/conftest.py` kills exactly its own parametrization here and nothing else.
+    """
+    m = kwargs.pop("match_override", "x")
+    with pytest.raises(exc, match=match), still_refused(m, observed=_OBSERVED, **kwargs):
+        raise NotImplementedError("x")

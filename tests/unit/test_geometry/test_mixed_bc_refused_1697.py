@@ -47,10 +47,16 @@ _CAUSES_1700B = {
         "introduces them. Keep everything above: the guard/lookup split (#2284) is a responsibility "
         "argument and never depended on the ValueError existing. Do NOT restore the raise"
     ),
-    # NOT "renamed": renaming `get_bc_type_string` aborts collection, because `tests/conftest.py`
-    # imports `mfgarchon.geometry.boundary`, which re-exports it. The pin could never print that
-    # cause, and naming a cause the pin cannot observe is what this fixture exists to prevent --
-    # caught in the #2290 review, in the diff that introduced the fixture (#2288).
+    # NOT "renamed": renaming `get_bc_type_string` aborts collection, so the pin could never print
+    # that cause -- and naming a cause the pin cannot observe is what this fixture exists to prevent,
+    # caught in the #2290 review inside the diff that introduced the fixture (#2288).
+    #
+    # The chain is an EAGER import, not the boundary package's re-export, which an earlier version
+    # of this comment named: `geometry/boundary/__init__.py:163` is a lazy `__getattr__` (map at
+    # :237) and is never consulted. Traced: `tests/conftest.py` -> `mfgarchon/__init__.py` ->
+    # `utils/adjoint_validation.py` -> `alg/numerical/fp_solvers/__init__.py:35` ->
+    # `fp_semi_lagrangian.py:37`, which imports the name directly. An unobserved causal claim, in
+    # the comment explaining why unobserved causal claims are refused. Corrected in #2290.
     "the lookup was re-routed internally, still importable under this name": (
         "the refusal is owed by whatever now resolves a segment-free BC; re-point this assertion"
     ),

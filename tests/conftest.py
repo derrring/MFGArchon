@@ -15,7 +15,7 @@ import shutil
 import sys
 import tempfile
 import textwrap
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import pytest
@@ -744,17 +744,23 @@ def still_refused():
     past it -- rewording dodges a word list, one cause restated twice satisfies the count, and
     ``excluded`` can simply be false -- and it caught nothing the structural rule did not. It was
     dropped: a gate that reads as protection while providing none is this fixture's own subject.
-    Nothing here finds a **missing** cause. What it buys is that the single-cause message, which is
-    the shape all three incidents took, becomes an act of commission rather than of omission.
+    Nothing here finds a **missing** cause, and a no-op ``premise`` satisfies the single-cause gate
+    while establishing nothing -- the ``excluded``-can-be-false hole on the channel that reads as a
+    mechanism rather than as an assertion. What this buys is narrow and worth stating exactly: the
+    single-cause message, which is the shape all three incidents took, becomes an act of commission
+    rather than of omission, and every claim in the rendered text is attributable to a caller.
 
     ``exc_type`` selects the refusal to catch. Two things about it, both measured rather than
     assumed. **A tuple works and the annotation says it does not**: ``except`` accepts one and
     nothing else here reads ``exc_type``, so ``exc_type=(ValueError, TypeError)`` runs correctly;
     mypy rejects it against ``type[Exception]``, and the gate runs mypy over ``mfgarchon/config``
     only, so nothing checks it. The annotation is documentation, and a tuple violating it passes
-    silently. **And it is the knob by which one caller can break another's design**:
-    ``test_gpu_particle_refuses_absorbing_bc_1910.py`` relies on an ``AssertionError`` from its own
-    ``premise`` passing through uncaught, which a broad ``exc_type`` would swallow.
+    silently. **A broad ``exc_type`` can no longer swallow a premise's failure**, though an
+    earlier version of this paragraph said it could: since ``premise()`` moved to the ``finally`` of
+    the same ``try`` the handler is attached to (#2290), the handler is already past when it runs.
+    Measured over ``NotImplementedError``, ``AssertionError``, ``Exception`` and ``BaseException``:
+    the premise's ``AssertionError`` escapes in every case. ``test_gpu_particle_refuses_absorbing_bc_1910.py``
+    relies on that, and it is now structural rather than a convention its callers must respect.
     """
 
     @contextlib.contextmanager
@@ -768,10 +774,29 @@ def still_refused():
         excluded: str | None = None,
         exc_type: type[Exception] = NotImplementedError,
     ):
+        if not match:
+            raise ValueError(
+                "`match` is required: an empty string matches any refusal of the right type, so the "
+                "pin goes green on a refusal for an entirely different reason (#2290)."
+            )
         if not observed:
             raise ValueError("`observed` is required: state what the pin SAW, not what it concludes.")
+        if not isinstance(causes, Mapping):
+            # A list passes `not causes` and `len(causes) < 2` and then dies with
+            # `AttributeError: 'list' object has no attribute 'items'` in the renderer -- which runs
+            # ONLY on the retirement path, so the pin would be green for years and then destroy its
+            # own instruction at the one moment it exists for. That is the failure this fixture's
+            # own docstring claims to prevent, so it is checked here rather than there (#2290).
+            raise TypeError(f"`causes` must be a mapping of cause -> instruction, not {type(causes).__name__}.")
         if not causes:
             raise ValueError("`causes` must name at least one cause, each with its instruction.")
+        blank = [cause for cause, instruction in causes.items() if not str(instruction).strip()]
+        if blank:
+            raise ValueError(
+                f"every cause needs an instruction; these have none: {blank}. Two causes with empty "
+                "instructions satisfy the count and render `  * a --`, which defeats the class-3 rule "
+                "that the failure message IS the instruction (#2290)."
+            )
         if premise is not None and not premise_establishes:
             raise ValueError(
                 "`premise` requires `premise_establishes`: this fixture knows only that a callable "
@@ -820,12 +845,12 @@ def still_refused():
                     subsequent_indent="    ",
                 )
             if excluded:
-                lines += ["", f"Already ruled out: {excluded}"]
+                lines += ["", *textwrap.wrap(f"Already ruled out: {excluded}", width=96)]
             # The caller's sentence, not the fixture's. An earlier version rendered "so the guarded
             # path was reached" from the fixture's own voice -- a conclusion it cannot observe, since
             # it knows only that a callable returned. `premise=lambda: None` printed it (#2290).
             if premise is not None:
-                lines += ["", f"The premise check ran and passed: {premise_establishes}."]
+                lines += ["", *textwrap.wrap(f"The premise check ran and passed: {premise_establishes}.", width=96)]
             pytest.fail("\n".join(lines))
         assert match in str(raised), f"refused, but not for the pinned reason: {raised}"
 
