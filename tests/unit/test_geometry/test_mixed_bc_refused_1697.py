@@ -42,14 +42,14 @@ _OBSERVED_1700B = "`get_bc_type_string` no longer raises on a segment-free BC."
 _CAUSES_1700B = {
     "#1700 part B landed": (
         "which this assertion exists to notice -- that issue calls the configuration legitimate, so "
-        "the ValueError is a defect and its removal is progress. Delete THIS assertion and the one "
-        "after it -- you are standing at the first of the two -- the docstring paragraph that "
-        "introduces them, and the comment blocks above each, which explain assertions that will no "
-        "longer exist. Keep the rest, with ONE edit: the docstring's opening paragraph states as "
-        "present fact that `get_bc_type_string` raises `ValueError` on a segment-free BC, which is "
-        "exactly what stops being true, so that clause goes with the assertions. The guard/lookup "
-        "split (#2284) is a responsibility argument and never depended on the ValueError existing. "
-        "Do NOT restore the raise"
+        "the ValueError is a defect and its removal is progress. Do NOT restore the raise. You are "
+        "standing at the first of two assertions; delete, in this order: (1) this assertion and its "
+        "comment block; (2) the one after it and its comment block; (3) the docstring paragraph "
+        'beginning "The last two assertions pin an open defect"; (4) in the docstring\'s SECOND '
+        'paragraph, the clause ", while `get_bc_type_string` raises `ValueError` on it" -- and '
+        'rewrite what remains, because the sentence\'s contrast and the "that" after it both depend '
+        "on the clause you removed. Everything else stays: the guard/lookup split (#2284) is a "
+        "responsibility argument and never depended on the ValueError existing"
     ),
     # NOT "renamed": renaming `get_bc_type_string` aborts collection, so the pin could never print
     # that cause -- and naming a cause the pin cannot observe is what this fixture exists to prevent,
