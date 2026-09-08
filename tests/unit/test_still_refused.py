@@ -12,7 +12,7 @@ observed and enumerates the causes, and a single-cause message is refused unless
 the others. This file pins that refusal and the premise's placement, because both are silent when
 broken -- a pin whose guarantee has been removed looks exactly like one that still has it.
 
-ADMISSION (#2288, #2290). Class 1 for the five tests that record a mutation below; the rest are
+ADMISSION (#2288, #2290). Class 1 for the six tests that record a mutation below; the rest are
 the negative controls those mutations need, without which a fixture that refused everything
 would pass. This is the shape `tests/unit/test_mfg_caplog.py` uses for the sibling fixture in
 the same conftest.
@@ -252,7 +252,7 @@ def test_a_premise_raising_the_pinned_type_is_not_mistaken_for_the_refusal(still
     ("kwargs", "exc", "match"),
     [
         ({"causes": ["cause one", "cause two"]}, TypeError, "must be a mapping"),
-        ({"causes": {"a": "", "b": ""}}, ValueError, "every cause needs an instruction"),
+        ({"causes": {"a": "", "b": ""}}, ValueError, "every cause needs a name and an instruction"),
         ({"causes": _TWO_CAUSES, "match_override": ""}, ValueError, "`match` is required"),
     ],
 )
@@ -272,4 +272,45 @@ def test_the_renderer_cannot_be_reached_in_a_state_it_would_die_in(still_refused
     """
     m = kwargs.pop("match_override", "x")
     with pytest.raises(exc, match=match), still_refused(m, observed=_OBSERVED, **kwargs):
+        raise NotImplementedError("x")
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match_arg", "why"),
+    [
+        ({"causes": _ONE_CAUSE, "excluded": " "}, "x", "excluded=' ' restored the bare single-cause message"),
+        (
+            {"causes": _ONE_CAUSE, "premise": lambda: None, "premise_establishes": " "},
+            "x",
+            "premise_establishes=' ' put the fixture's voice back",
+        ),
+        ({"causes": _TWO_CAUSES}, " ", "match=' ' made the pin green on an unrelated refusal"),
+        ({"causes": {"cause one": "i", "": "j"}}, "x", "an unnamed cause satisfied the two-cause quota"),
+    ],
+)
+def test_a_single_space_does_not_satisfy_any_gate(still_refused, kwargs, match_arg, why):
+    """One predicate for every channel. `why` names what each blank defeated before #2290.
+
+    Three of the previous round's four fixes were defeated by a single space, because the correct
+    predicate was used on exactly one channel -- the one added that round -- and `not X` on the
+    rest, while cause KEYS were unchecked entirely. Every gate installed in rounds 3, 4 and 5 fell
+    to the same character.
+
+    Mutation, measured for #2290, control 47: replacing `_blank` with `not X` in the fixture kills
+    three of these four parametrizations (the key case survives, since `not ""` is already true).
+    """
+    with pytest.raises(ValueError), still_refused(match_arg, observed=_OBSERVED, **kwargs):
+        raise NotImplementedError("some other refusal entirely, unrelated to the pin")
+
+
+def test_a_premise_claim_without_a_premise_is_refused(still_refused):
+    """`premise_establishes` alone is never rendered, so it reads as a claim that is not made.
+
+    Mutation, measured for #2290: deleting the `premise is None and premise_establishes is not None`
+    branch kills this test and only this one.
+    """
+    with (
+        pytest.raises(ValueError, match="never rendered"),
+        still_refused("x", observed=_OBSERVED, causes=_TWO_CAUSES, premise_establishes="something"),
+    ):
         raise NotImplementedError("x")

@@ -777,12 +777,26 @@ def still_refused():
         excluded: str | None = None,
         exc_type: type[Exception] = NotImplementedError,
     ):
-        if not match:
+        def _blank(value: object) -> bool:
+            """One predicate for every channel (#2290).
+
+            `not X` and `not str(X).strip()` were used for the same job on different arguments, so a
+            single space walked past three gates installed in consecutive rounds: `excluded=" "`
+            restored the bare single-cause message, `premise_establishes=" "` put the fixture's voice
+            back, and `match=" "` made the pin green on an unrelated refusal. Cause KEYS were not
+            checked at all. Measured, all four.
+            """
+            # `value is None` first: `str(None)` is the truthy `"None"`, so a bare
+            # `not str(value).strip()` reports the absent argument as PROVIDED and every gate that
+            # tests it stops firing. Caught by this file's own pins within a minute of writing it.
+            return value is None or not str(value).strip()
+
+        if _blank(match):
             raise ValueError(
                 "`match` is required: an empty string matches any refusal of the right type, so the "
                 "pin goes green on a refusal for an entirely different reason (#2290)."
             )
-        if not observed:
+        if _blank(observed):
             raise ValueError("`observed` is required: state what the pin SAW, not what it concludes.")
         if not isinstance(causes, Mapping):
             # A list passes `not causes` and `len(causes) < 2` and then dies with
@@ -793,20 +807,22 @@ def still_refused():
             raise TypeError(f"`causes` must be a mapping of cause -> instruction, not {type(causes).__name__}.")
         if not causes:
             raise ValueError("`causes` must name at least one cause, each with its instruction.")
-        blank = [cause for cause, instruction in causes.items() if not str(instruction).strip()]
+        blank = [c for c, i in causes.items() if _blank(c) or _blank(i)]
         if blank:
             raise ValueError(
-                f"every cause needs an instruction; these have none: {blank}. Two causes with empty "
-                "instructions satisfy the count and render `  * a --`, which defeats the class-3 rule "
-                "that the failure message IS the instruction (#2290)."
+                f"every cause needs a name and an instruction; these are blank: {blank}. Two causes with "
+                "empty instructions satisfy the count and render `  * a --`, which defeats the class-3 "
+                "rule that the failure message IS the instruction (#2290)."
             )
-        if premise is not None and not premise_establishes:
+        if premise is None and premise_establishes is not None:
+            raise ValueError("`premise_establishes` without `premise` is never rendered; drop one or add the other.")
+        if premise is not None and _blank(premise_establishes):
             raise ValueError(
                 "`premise` requires `premise_establishes`: this fixture knows only that a callable "
                 "returned, not what that proves. Name what it establishes so the rendered claim is "
                 "yours and a reader can check it (#2290)."
             )
-        if len(causes) < 2 and premise is None and not excluded:
+        if len(causes) < 2 and premise is None and _blank(excluded):
             raise ValueError(
                 "A single-cause retirement message is refused (#2288). 'The refusal stopped' has "
                 "more causes than 'the capability landed'. Either name the others in `causes`, or "
