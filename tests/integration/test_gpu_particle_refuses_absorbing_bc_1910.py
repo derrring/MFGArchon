@@ -54,19 +54,15 @@ from mfgarchon.geometry.boundary import dirichlet_bc, no_flux_bc
 
 _NX, _NT = 41, 15
 
-_RETIREMENT = """The GPU particle path did not refuse an absorbing wall.
+_OBSERVED = "The GPU particle path did not refuse an absorbing wall."
 
-That is the retirement condition ONLY if `_solve_fp_system_gpu` learned to remove particles. Check
-which of these happened before acting:
-
-  * the GPU loop now absorbs -- then this pin has done its job. Do NOT restore the raise: delete
-    this file and replace it with a test that the torch backend REMOVES particles at a Dirichlet
-    wall, using `test_the_cpu_path_absorbs_at_the_same_wall` below as the oracle for how many.
-  * the refusal was moved or dropped without the capability landing -- restore it.
-
-A third cause -- the solve was routed to the CPU path, which honours the wall -- cannot produce this
-message: `_assert_gpu_path_was_taken` runs in a `finally` inside this block and fails first, saying
-which strategy ran. So if you are reading this, the GPU path was taken. See #1910."""
+_CAUSES = {
+    "the GPU loop now absorbs": (
+        "this pin has done its job. Do NOT restore the raise: delete this file and replace it with a "
+        "test that the torch backend REMOVES particles at a Dirichlet wall, using "
+        "`test_the_cpu_path_absorbs_at_the_same_wall` below as the oracle for how many. See #1910"
+    ),
+}
 
 
 def _problem(bc):
@@ -111,18 +107,22 @@ def _assert_gpu_path_was_taken(solver: FPParticleSolver) -> None:
 def test_the_gpu_path_refuses_an_absorbing_wall(still_refused):
     pytest.importorskip("torch")
     solver = _solver("torch", dirichlet_bc(0.0, dimension=1))
-    with still_refused("segment-aware absorbing", _RETIREMENT):
-        try:
-            _solve(solver)
-        finally:
-            # `finally`, and inside the block -- not a line after it. `still_refused` ends in
-            # `pytest.fail`, which propagates out of the context manager, so a trailing assertion
-            # never runs on exactly the path whose message would claim that it had. The strategy is
-            # only recorded during the solve, so it cannot be checked before; this is the one place
-            # it runs whether the solve raised or not, and before the absence is interpreted.
-            # An AssertionError here is not a NotImplementedError, so it passes through
-            # `still_refused` untouched and reports the routing instead of a false retirement.
-            _assert_gpu_path_was_taken(solver)
+    # `premise=` rather than a line after the block. `still_refused` ends in `pytest.fail`, which
+    # propagates out of the context manager, so a trailing assertion never runs on exactly the path
+    # whose message would claim it had -- which is what this pin shipped with, once (#2288). The
+    # fixture runs the premise in a `finally` inside the block, so it fires whether the solve raised
+    # or not and before the absence is interpreted. The strategy is only recorded during the solve,
+    # so it cannot be checked before. `causes` therefore has one entry: the premise excludes the
+    # other, which is why the fixture accepts a single cause here and refuses one without it.
+    with still_refused(
+        "segment-aware absorbing",
+        observed=_OBSERVED,
+        causes=_CAUSES,
+        premise=lambda: _assert_gpu_path_was_taken(solver),
+        premise_establishes="the GPU strategy was selected, so this solve reached "
+        "`_solve_fp_system_gpu` rather than the CPU path, which honours the wall",
+    ):
+        _solve(solver)
 
 
 def test_the_gpu_path_still_runs_a_uniform_wall():

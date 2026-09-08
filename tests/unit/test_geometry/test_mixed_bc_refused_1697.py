@@ -37,29 +37,50 @@ from mfgarchon.geometry.boundary.bc_utils import (
 
 CONSUMER = {"consumer": "TestSolver", "alternative": "Use one BC type across axes."}
 
-_RETIRE_1700B = """`get_bc_type_string` no longer raises on a segment-free BC.
+_OBSERVED_1700B = "`get_bc_type_string` no longer raises on a segment-free BC."
 
-That is #1700 part B landing, which this assertion exists to notice: the issue calls that
-configuration legitimate, so the ValueError is a defect and its removal is progress. Do NOT restore
-the raise. You are standing at the first of two assertions. Delete, in this order:
+_CAUSES_1700B = {
+    "#1700 part B landed": (
+        "which this assertion exists to notice -- that issue calls the configuration legitimate, so "
+        "the ValueError is a defect and its removal is progress. Do NOT restore the raise. You are "
+        "standing at the first of two assertions; delete, in this order: (1) this assertion and its "
+        "comment block; (2) the one after it and its comment block; (3) the docstring paragraph "
+        'beginning "The last two assertions pin an open defect"; (4) in the docstring\'s SECOND '
+        'paragraph, the clause ", while `get_bc_type_string` raises `ValueError` on it" -- and '
+        'rewrite what remains, because the sentence\'s contrast and the "that" after it both depend '
+        "on the clause you removed. Everything else stays: the guard/lookup split (#2284) is a "
+        "responsibility argument and never depended on the ValueError existing"
+    ),
+    # NOT "renamed": renaming `get_bc_type_string` aborts collection, so the pin could never print
+    # that cause -- and naming a cause the pin cannot observe is what this fixture exists to prevent,
+    # caught in the #2290 review inside the diff that introduced the fixture (#2288).
+    #
+    # The chain is an EAGER import, not the boundary package's re-export: `boundary/__init__.py:163`
+    # is a lazy `__getattr__` (dict at :236) and is never consulted. Traced by applying the rename
+    # and reading the traceback, which is the only way any version of this comment has been right:
+    #
+    #   tests/conftest.py:59 -> mfgarchon/__init__.py:10 -> utils/__init__.py:30
+    #     -> utils/adjoint_validation.py:55 -> alg/__init__.py:15 -> alg/numerical/__init__.py:24
+    #     -> alg/numerical/fp_solvers/__init__.py:35 -> fp_semi_lagrangian.py:37
+    #
+    # Two earlier versions of this comment named chains with hops that do not exist -- one of them
+    # written to correct the other, and taken from a review rather than re-run. Both got the
+    # conclusion right and the mechanism wrong, in the comment explaining why unobserved causal
+    # claims are refused. Corrected in #2290 from the traceback above.
+    "the lookup was re-routed internally, still importable under this name": (
+        "the refusal is owed by whatever now resolves a segment-free BC; re-point this assertion"
+    ),
+}
 
-  1. this assertion and its comment block;
-  2. the one after it and its comment block;
-  3. the docstring paragraph beginning "The last two assertions pin an open defect";
-  4. in the docstring's SECOND paragraph, the clause ", while `get_bc_type_string` raises
-     `ValueError` on it" -- and rewrite what remains, because the sentence's contrast and the
-     "that" in the sentence after it both depend on the clause you just removed.
+_OBSERVED_COMPOSITE = "`checked_bc_type_string` did not raise on a segment-free BC."
 
-Everything else stays: the guard/lookup split (#2284) is a responsibility argument and never
-depended on the ValueError existing."""
-
-_LOOKUP_NO_LONGER_REACHED = """`checked_bc_type_string` did not raise on a segment-free BC, but
-`get_bc_type_string` still does -- so #1700 has NOT landed and the composite has stopped routing
-through the lookup.
-
-The split (#2284) was meant to leave `checked_bc_type_string` as guard-then-lookup. Restore the
-lookup, or if the composite is deliberately gone, re-point this test at whatever now owns
-collapse-to-a-value rather than deleting it."""
+_CAUSES_COMPOSITE = {
+    "the composite stopped routing through the lookup": (
+        "the split (#2284) was meant to leave `checked_bc_type_string` as guard-then-lookup. Restore "
+        "the lookup, or if the composite is deliberately gone, re-point this test at whatever now "
+        "owns collapse-to-a-value rather than deleting it"
+    ),
+}
 
 
 def _seg(name, bc_type, boundary):
@@ -299,11 +320,24 @@ def test_the_guard_and_the_lookup_are_separable_2284(still_refused):
     # from "the composite stopped calling the lookup" -- measured for #2288: replacing
     # `checked_bc_type_string`'s body with `return None`, leaving `get_bc_type_string` untouched and
     # still raising, produced a byte-identical retirement message declaring #1700 had landed.
-    with still_refused("only valid for uniform BCs", _RETIRE_1700B, ValueError):
+    with still_refused(
+        "only valid for uniform BCs",
+        observed=_OBSERVED_1700B,
+        causes=_CAUSES_1700B,
+        exc_type=ValueError,
+    ):
         get_bc_type_string(segment_free)
 
-    # ...and that the composite still routes through it, which is the other cause and its own message.
-    with still_refused("only valid for uniform BCs", _LOOKUP_NO_LONGER_REACHED, ValueError):
+    # ...and that the composite still routes through it. One cause, because the assertion above
+    # already excluded the other -- which is what `excluded=` records, and why the fixture accepts
+    # a single cause here.
+    with still_refused(
+        "only valid for uniform BCs",
+        observed=_OBSERVED_COMPOSITE,
+        causes=_CAUSES_COMPOSITE,
+        excluded="the assertion above proves `get_bc_type_string` still raises, so #1700 has not landed",
+        exc_type=ValueError,
+    ):
         checked_bc_type_string(segment_free, **CONSUMER)
 
 

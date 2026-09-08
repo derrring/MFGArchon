@@ -14,6 +14,8 @@ import platform
 import shutil
 import sys
 import tempfile
+import textwrap
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import pytest
@@ -708,53 +710,169 @@ def still_refused():
     """One owner for the class-3 defect-pin idiom: assert a refusal, and make its DISAPPEARANCE an
     instruction rather than a bare red (#2257).
 
-    ``pytest.raises`` reports "DID NOT RAISE", which tells a future reader that something broke but
-    not that the something is this pin's own success condition. This replaces it, so the failure
-    message carries the retirement condition.
+    ``pytest.raises`` reports "DID NOT RAISE", which says something broke but not that the something
+    is this pin's own success condition. This replaces it, so the failure message carries the
+    retirement condition.
 
-    **"Nothing was raised" has more causes than "the capability landed."** A duplicate copy of the
-    guard removed elsewhere, or a dispatch routed around the guarded branch, prints the retirement
-    message exactly as loudly as the fix the pin was written to demand. Two obligations follow, and
-    the helper cannot discharge either for you:
+    **"Nothing was raised" has more causes than "the capability landed."** Measured three times in
+    one session (#2283, #2288), each caught by an independent reviewer and never by the author, the
+    second written inside the commit fixing the first: a message named a cause the pin did not
+    observe, and its instruction was then wrong. Once, replacing a helper's body with ``return None``
+    produced a byte-identical message declaring that a different, unrelated fix had landed.
 
-    - assert that the guarded path was REACHED, before entering this block;
-    - write ``retirement`` so it states what was observed and names the other causes, rather than
-      declaring the capability landed.
+    So the message is not a string the caller writes. It is rendered from what the pin **observed**
+    and the **causes** that could produce it:
 
-    **Name a cause only if the pin observes it.** Measured on this fixture's own callers (#2288): a
-    message declaring "#1700 landed" fired byte-identically when a *different* change removed the
-    raise, and its instruction was then wrong. Where an absence has two plausible causes, check them
-    separately and give each its own message.
+    - ``observed`` -- what the pin saw, as an observation.
+    - ``causes`` -- ``{cause: instruction}``, at least two, because a single-cause message is the
+      defect above. One is allowed only with ``premise`` or ``excluded``.
+    - ``premise`` -- a callable that establishes the guarded path was reached. It runs in a
+      ``finally`` **inside** the block, so it executes on the raising and the non-raising path
+      alike and precedes the interpretation. A check placed after the ``with`` does not run on the
+      path that prints the message, because ``pytest.fail`` propagates out of the context manager --
+      which is what incident #1 was.
+    - ``excluded`` -- a sentence naming what already rules the other causes out, when that is a
+      preceding assertion rather than a callable.
 
-    ``exc_type`` selects the refusal to catch, defaulting to ``NotImplementedError`` (#2288). Two
-    things about it, both measured rather than assumed. **A tuple works and the annotation says it
-    does not**: ``except`` accepts one and nothing else here reads ``exc_type``, so
-    ``exc_type=(ValueError, TypeError)`` runs correctly; mypy rejects it against
-    ``type[Exception]`` -- and nothing checks that, for a reason no configuration change reaches.
-    The gate runs mypy over ``mfgarchon/config`` only, but widening that would not help: the fixture
-    arrives as an **unannotated parameter**, so it is ``Any``, and a call through ``Any`` is
-    unchecked whatever else is set. Measured on the real shape against a control that fires under
-    both settings -- flipping ``check_untyped_defs`` moves an untyped def calling the helper
-    *directly* and does not move the call through the fixture parameter at all. An earlier version
-    of this paragraph named ``check_untyped_defs = false`` as the cause; that was the mechanism for
-    a different line. The annotation is documentation, and a tuple violating it passes silently. **And it is the
-    knob by which a caller can break another caller's design**:
-    ``test_gpu_particle_refuses_absorbing_bc_1910.py`` relies on an ``AssertionError`` from its own
-    premise check passing through this block uncaught, which a broad ``exc_type`` would swallow.
+    **The contract is enforced when the block is ENTERED, on every green run**, not when the pin
+    finally retires. (`@contextlib.contextmanager` defers the body, so constructing the manager
+    validates nothing -- entering it does.) A check that only fires at retirement is one nobody
+    meets for years.
+
+    **What this cannot do, measured rather than assumed.** An earlier draft also refused an
+    ``observed`` that concluded rather than observed, by matching words. Every evasion tried walked
+    past it -- rewording dodges a word list, one cause restated twice satisfies the count, and
+    ``excluded`` can simply be false -- and it caught nothing the structural rule did not. It was
+    dropped: a gate that reads as protection while providing none is this fixture's own subject.
+    Nothing here finds a **missing** cause, and a no-op ``premise`` satisfies the single-cause gate
+    while establishing nothing -- the ``excluded``-can-be-false hole on the channel that reads as a
+    mechanism rather than as an assertion. What this buys is narrow and worth stating exactly: the
+    single-cause message, which is the shape all three incidents took, becomes an act of commission
+    rather than of omission, and every claim in the rendered text is attributable to a caller.
+
+    ``exc_type`` selects the refusal to catch. Two things about it, both measured rather than
+    assumed. **A tuple works and the annotation says it does not**: ``except`` accepts one and
+    nothing else here reads ``exc_type``, so ``exc_type=(ValueError, TypeError)`` runs correctly;
+    mypy rejects it against ``type[Exception]`` -- and nothing checks that, for a reason
+    no configuration change reaches. The gate runs mypy over ``mfgarchon/config`` only, but widening
+    that would not help: the fixture arrives as an **unannotated parameter**, so it is ``Any``, and a
+    call through ``Any`` is unchecked whatever else is set. Measured on the real shape against a
+    control that fires under both settings -- flipping ``check_untyped_defs`` moves an untyped def
+    calling the helper *directly* and does not move the call through the fixture parameter at all.
+    An earlier version named ``check_untyped_defs = false`` as the cause; that was the mechanism for
+    a different line. The annotation is documentation, and a tuple violating it passes silently. **A broad ``exc_type`` can no longer swallow a premise's failure**, though an
+    earlier version of this paragraph said it could: since ``premise()`` moved to the ``finally`` of
+    the same ``try`` the handler is attached to (#2290), the handler is already past when it runs.
+    Measured over ``NotImplementedError``, ``AssertionError``, ``Exception`` and ``BaseException``:
+    the premise's ``AssertionError`` escapes in every case. ``test_gpu_particle_refuses_absorbing_bc_1910.py``
+    relies on that, and it is now structural rather than a convention its callers must respect.
     """
 
     @contextlib.contextmanager
-    def _still_refused(match: str, retirement: str, exc_type: type[Exception] = NotImplementedError):
+    def _still_refused(
+        match: str,
+        *,
+        observed: str,
+        causes: dict[str, str],
+        premise: Callable[[], None] | None = None,
+        premise_establishes: str | None = None,
+        excluded: str | None = None,
+        exc_type: type[Exception] = NotImplementedError,
+    ):
+        def _blank(value: object) -> bool:
+            """One predicate for every channel (#2290).
+
+            `not X` and `not str(X).strip()` were used for the same job on different arguments, so a
+            single space walked past three gates installed in consecutive rounds: `excluded=" "`
+            restored the bare single-cause message, `premise_establishes=" "` put the fixture's voice
+            back, and `match=" "` made the pin green on an unrelated refusal. Cause KEYS were not
+            checked at all. Measured, all four.
+            """
+            # `value is None` first: `str(None)` is the truthy `"None"`, so a bare
+            # `not str(value).strip()` reports the absent argument as PROVIDED and every gate that
+            # tests it stops firing. Caught by this file's own pins within a minute of writing it.
+            return value is None or not str(value).strip()
+
+        if _blank(match):
+            raise ValueError(
+                "`match` is required: an empty string matches any refusal of the right type, so the "
+                "pin goes green on a refusal for an entirely different reason (#2290)."
+            )
+        if _blank(observed):
+            raise ValueError("`observed` is required: state what the pin SAW, not what it concludes.")
+        if not isinstance(causes, Mapping):
+            # A list passes `not causes` and `len(causes) < 2` and then dies with
+            # `AttributeError: 'list' object has no attribute 'items'` in the renderer -- which runs
+            # ONLY on the retirement path, so the pin would be green for years and then destroy its
+            # own instruction at the one moment it exists for. That is the failure this fixture's
+            # own docstring claims to prevent, so it is checked here rather than there (#2290).
+            raise TypeError(f"`causes` must be a mapping of cause -> instruction, not {type(causes).__name__}.")
+        if not causes:
+            raise ValueError("`causes` must name at least one cause, each with its instruction.")
+        blank = [c for c, i in causes.items() if _blank(c) or _blank(i)]
+        if blank:
+            raise ValueError(
+                f"every cause needs a name and an instruction; these are blank: {blank}. Two causes with "
+                "empty instructions satisfy the count and render `  * a --`, which defeats the class-3 "
+                "rule that the failure message IS the instruction (#2290)."
+            )
+        if premise is None and premise_establishes is not None:
+            raise ValueError("`premise_establishes` without `premise` is never rendered; drop one or add the other.")
+        if premise is not None and _blank(premise_establishes):
+            raise ValueError(
+                "`premise` requires `premise_establishes`: this fixture knows only that a callable "
+                "returned, not what that proves. Name what it establishes so the rendered claim is "
+                "yours and a reader can check it (#2290)."
+            )
+        if len(causes) < 2 and premise is None and _blank(excluded):
+            raise ValueError(
+                "A single-cause retirement message is refused (#2288). 'The refusal stopped' has "
+                "more causes than 'the capability landed'. Either name the others in `causes`, or "
+                "pass `premise=` (a check that excludes them, run on both paths) or `excluded=` "
+                "(a sentence naming what already rules them out)."
+            )
+
         raised: Exception | None = None
         try:
             yield
         except exc_type as exc:
             raised = exc
+        finally:
+            # In the `finally` of the SAME try, so `except exc_type` above cannot see it. With the
+            # premise nested inside instead, a premise raising `exc_type` was captured as the
+            # guard's refusal: the pin passed GREEN having measured nothing, and `match` was checked
+            # against the premise's exception rather than the guard's (#2290 review, case 7).
+            # Both paths still reach it, which is the property `premise` exists for.
+            if premise is not None:
+                premise()
 
         # Captured and re-read outside the handler rather than asserted inside it: PT017 wants
         # `pytest.raises` there, and `pytest.raises` is the thing this helper exists to replace.
         if raised is None:
-            pytest.fail(retirement)
+            lines = [observed, ""]
+            lines.append(
+                "That is the retirement condition ONLY if one of these holds. Check which:"
+                if len(causes) > 1
+                else "That is the retirement condition only if:"
+            )
+            for cause, instruction in causes.items():
+                # Wrapped: the hand-written messages this replaced wrapped at ~100 columns, and
+                # pytest prefixes every line with `E `. An artifact whose only job is to be read
+                # should not emit a 250-character line (#2290 review).
+                lines += textwrap.wrap(
+                    f"{cause} -- {instruction}",
+                    width=96,
+                    initial_indent="  * ",
+                    subsequent_indent="    ",
+                )
+            if excluded:
+                lines += ["", *textwrap.wrap(f"Already ruled out: {excluded}", width=96)]
+            # The caller's sentence, not the fixture's. An earlier version rendered "so the guarded
+            # path was reached" from the fixture's own voice -- a conclusion it cannot observe, since
+            # it knows only that a callable returned. `premise=lambda: None` printed it (#2290).
+            if premise is not None:
+                lines += ["", *textwrap.wrap(f"The premise check ran and passed: {premise_establishes}.", width=96)]
+            pytest.fail("\n".join(lines))
         assert match in str(raised), f"refused, but not for the pinned reason: {raised}"
 
     return _still_refused
