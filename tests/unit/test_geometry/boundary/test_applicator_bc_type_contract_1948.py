@@ -6,10 +6,12 @@ list of known cases cannot have, and the reason the discrimination ratchet's 24 
 2 of `BCType`'s 8 members. #1948
 
 `GraphApplicator` is indexed by its own alphabet and over TWO axes, (`GraphBCType` × `field_type`),
-because its dispatch branches on the field type inside every arm — DIRICHLET pins only the value
-field, ABSORBING does opposite things to the two halves, SOURCE injects only into the density. Both
-axes are derived, the second from `apply`'s own `Literal`, so the growth property above holds for a
-new field type as well as a new member.
+because THREE of its five arms branch on the field type inside themselves — DIRICHLET pins only the
+value field, ABSORBING does opposite things to the two halves, SOURCE injects only into the density.
+NEUMANN and CUSTOM do not, so four of the ten cells are two labels over one code path; that is the
+honest cost of indexing by the specification rather than by the branch, and it is recorded here
+rather than left for a reader to discover. Both axes are derived, the second from `apply`'s own
+`Literal`, so the growth property above holds for a new field type as well as a new member.
 
 What a declaration asserts: that a branch exists. Whether that branch is *correct* is a separate
 axis, per cell, tracked at #1946 — `FDMApplicator` handles both `EXTRAPOLATION_*` in the sense this
@@ -226,9 +228,12 @@ def test_the_product_is_derived_from_the_enum_and_not_listed():
     rows that nobody has decided about. That automatic growth is the whole mechanism.
 
     The graph product is derived the same way on both of its axes, so the same sentence holds for a
-    new `GraphBCType` member and for a new `field_type`."""
+    new `GraphBCType` member and for a new `field_type` -- but it is pinned by
+    `test_the_graph_field_type_axis_matches_what_this_table_decided` and NOT by a line here. The
+    obvious `len(_GRAPH_CELLS) == len(list(GraphBCType)) * len(_GRAPH_FIELD_TYPES)` is true by
+    construction of the comprehension that builds `_GRAPH_CELLS`, so no production change can redden
+    it; measured, it passes while the product silently halves."""
     assert len(_CELLS) == len(_APPLICATORS) * len(list(BCType))
-    assert len(_GRAPH_CELLS) == len(list(GraphBCType)) * len(_GRAPH_FIELD_TYPES)
 
 
 @pytest.mark.parametrize(
@@ -285,16 +290,27 @@ def test_each_cell_either_applies_or_refuses(name, cls, call, field, bc_type):
 #: and it needed nine lines of comment to explain why eight `xfail(strict=True)` rows were not bugs
 #: -- which is the tell that the encoding was wrong, not that the applicator was.
 #:
-#: The SECOND axis is `field_type`, and a table without it measures the fixture rather than the
-#: class. Every branch of `GraphApplicator.apply` tests `field_type` INSIDE itself: DIRICHLET pins
-#: only the value field (#1471), ABSORBING does opposite things to the two halves (#1478), SOURCE
-#: injects only into the density. The dispatch surface is therefore the product, and a
-#: single-`field_type` table sees one column of it. Measured 2026-09-10 against the version indexed
-#: by `GraphBCType` alone, which called `apply` at its default `field_type="value"`: it recorded
-#: SOURCE as silent when it applies on "density", recorded CUSTOM as silent for a fixture reason
-#: (see `_graph_value`), and recorded DIRICHLET as applying while its density half was silent and
-#: out of view. Three of five rows carried a classification that was not a fact about the class,
-#: and no reader of that table could have told.
+#: The SECOND axis is `field_type`. THREE of the five arms of `GraphApplicator.apply` branch on it
+#: inside themselves -- DIRICHLET pins only the value field (#1471), ABSORBING does opposite things
+#: to the two halves (#1478), SOURCE injects only into the density -- so the dispatch surface is the
+#: product and a single-`field_type` table sees one column of it. NEUMANN (a bare `pass`) and CUSTOM
+#: (which branches on `callable(bc.value)`) do NOT read `field_type`, so their four cells are two
+#: labels over one code path each. Ten cells cover seven distinct paths, and saying so here is
+#: cheaper than letting the count read as coverage it does not have.
+#:
+#: Measured 2026-09-10 against the version indexed by `GraphBCType` alone, which called `apply` at
+#: its default `field_type="value"`, three of its five rows did not say what their label claimed --
+#: and the three do NOT share one cause, which is why the fix has two halves:
+#:
+#:   SOURCE     recorded silent    WRONG about the member: it applies on "density"   -- the axis
+#:   DIRICHLET  recorded applying  INCOMPLETE: the verdict was true, the density      -- the axis
+#:                                 half was silent, unmarked and out of view
+#:   CUSTOM     recorded silent    WRONG about the member: it applies given the       -- the fixture
+#:                                 callable its API documents (see `_graph_value`)
+#:
+#: The axis alone leaves six cells silent, not four; CUSTOM's arm never reads `field_type`, so only
+#: the per-member fixture moves it. No reader of the old table could have told, in any of the three
+#: cases: it was green either way.
 #:
 #: The cross-alphabet question is real and is not this table's: `BCType` and `GraphBCType` share the
 #: `.value` strings {"dirichlet", "neumann"} while being different members, so a `BCType` handed to
@@ -326,7 +342,12 @@ def _custom_node_bc(field: npt.NDArray[np.floating], node: int, t: float) -> flo
 
 
 def _graph_value(bc_type: GraphBCType) -> float | Callable[..., float]:
-    """The `value` each member's own API asks for: a callable for CUSTOM, a scalar for the rest.
+    """The `value` each member's dispatch arm can actually use: a callable for CUSTOM, a scalar else.
+
+    "Its own API" would be too strong for one member: `set_absorbing_nodes` takes no `value` at all
+    and hard-codes `0.0`, so the 2.5 below is not what an ABSORBING region is built with. Both
+    verdicts are unchanged by it (the arm writes `value` on "value" and `0.0` on "density", and 2.5
+    and 0.0 both differ from every node in `_NODES`), so this is stated rather than fixed.
 
     Not a convenience. `NodeBC.value` is annotated `float | Callable[[int, float], float]` and
     `NodeBC.get_value` calls it that way, while the CUSTOM branch of `apply` calls it as
@@ -361,22 +382,77 @@ _GRAPH_KNOWN_SILENT: set[tuple[GraphBCType, str]] = {
 }
 
 
-def test_the_graph_field_type_axis_is_read_from_production_and_cannot_empty_quietly():
-    """A derived population that silently empties yields zero rows, which reads as a clean table.
+#: The field types this table has DECIDED about. The axis itself stays derived, so the product
+#: grows on its own; this is the direction deriving cannot give you. A derived population can shrink
+#: as quietly as it grows, and shrinking reads as a clean run: measured 2026-09-10, narrowing the
+#: annotation to `Literal["value"]` halves the graph product from ten cells to five and the file
+#: reports `47 passed, 4 xfailed` -- no failure, and the two orphaned "density" entries in
+#: `_GRAPH_KNOWN_SILENT` simply stop matching anything.
+_GRAPH_FIELD_TYPES_DECIDED = frozenset({"value", "density"})
 
-    `_graph_field_types` reads an annotation, so an annotation loosened to `str` would leave
-    `get_args` returning `()` and the graph product with no cells at all -- no failure, no rows, and
-    the count assertion above satisfied by 0 == 5 * 0. This asserts the axis is non-empty and that
-    production agrees with it in both directions: every derived member is accepted by `apply`, and
-    one that is not a member is refused (the #1940 guard).
+
+def test_the_graph_field_type_axis_matches_what_this_table_decided():
+    """Derived population, pinned content: growth is automatic, shrinkage is loud.
+
+    Three failure modes, and the first two are why a bare `assert _GRAPH_FIELD_TYPES` is not enough:
+
+        annotation -> `str`                 `get_args` returns () -- zero cells, nothing red
+        annotation -> `Literal["value"]`    five cells instead of ten, nothing red
+        annotation gains a member           five new cells nobody has decided about
+
+    The equality catches all three and makes each of them someone's decision. What it does NOT catch
+    is the opposite drift: `apply` states its vocabulary twice, once as the `Literal` this axis reads
+    and once as the tuple in its own guard, and a member added to the GUARD alone leaves the axis and
+    this pin unmoved. That direction is unclosed, and is stated rather than implied.
     """
-    assert _GRAPH_FIELD_TYPES, "the field_type axis derived from `apply` is empty; the graph product has no cells"
+    assert set(_GRAPH_FIELD_TYPES) == _GRAPH_FIELD_TYPES_DECIDED, (
+        f"`apply`'s Literal is now {sorted(_GRAPH_FIELD_TYPES)} while this table has decided about "
+        f"{sorted(_GRAPH_FIELD_TYPES_DECIDED)}. Growth adds cells nobody has ruled on; shrinkage "
+        f"drops cells silently. Decide what the applicator does for each, then move this pin."
+    )
 
     for field_type in _GRAPH_FIELD_TYPES:
         GraphApplicator(num_nodes=_NODES.size).apply(_NODES.copy(), field_type=field_type)
 
     with pytest.raises(ValueError, match="field_type must be"):
         GraphApplicator(num_nodes=_NODES.size).apply(_NODES.copy(), field_type="VALUE")
+
+
+def test_no_graph_cell_refuses_by_accident():
+    """A refusal must be deliberate. `_apply_and_classify` reports `ValueError` and `TypeError` as
+    "refused" too, so without this a cell that starts raising for a BUG reason scores as compliant.
+
+    Not hypothetical: `_graph_value` records the two-argument callable raising `TypeError` from
+    inside the CUSTOM arm, which reads exactly like a branch that had been fixed to refuse.
+
+    This is a sweep and not a line inside the parametrised cell above, and the difference is
+    load-bearing. Four of the ten cells carry `xfail(strict=True)`, which absorbs a failing
+    assertion as an expected failure -- measured 2026-09-10: with the NEUMANN arm raising
+    `TypeError`, the same assertion written inside the cell left the file at `50 passed, 6 xfailed`.
+    Those four are exactly the cells a #1948 step-2 fix will touch, so they are the ones that must
+    not be exempt from it. Nothing marks this test, so it fires on all ten.
+
+    `NotImplementedError` is the refusal the rest of this family raises and what #1948 asks for
+    ("an unhandled type must raise with the type named"). `_apply_and_classify` returns its message
+    bare and prefixes the type name only for the other two, so the absence of that prefix is the
+    discriminator.
+    """
+    accidental = []
+    for bc_type, field_type in _GRAPH_CELLS:
+        applicator = GraphApplicator(num_nodes=_NODES.size).add_node_bc(
+            NodeBC(nodes=[0, _NODES.size - 1], bc_type=bc_type, value=_graph_value(bc_type), name="s")
+        )
+        outcome, result = _apply_and_classify(
+            lambda _t, _a=applicator, _f=field_type: _a.apply(_NODES.copy(), field_type=_f),
+            bc_type,
+        )
+        if outcome == "refused" and result.startswith(("ValueError:", "TypeError:")):
+            accidental.append(f"{bc_type.name}/{field_type}: {result}")
+
+    assert not accidental, (
+        "GraphApplicator refused these cells with an exception that reads as a bug rather than as a "
+        "declared refusal; this table would otherwise score them compliant:\n  " + "\n  ".join(accidental)
+    )
 
 
 @pytest.mark.parametrize(
@@ -412,6 +488,10 @@ def test_each_graph_cell_either_applies_or_refuses(bc_type, field_type):
     )
 
     if outcome == "refused":
+        # Whether the refusal is a DELIBERATE one is asserted by
+        # `test_no_graph_cell_refuses_by_accident`, deliberately NOT here: these cells carry
+        # `xfail(strict=True)`, which absorbs any assertion failure as an expected one, so a check
+        # placed here cannot fire on the four cells most likely to acquire a wrong refusal.
         return
 
     assert not np.allclose(result, field), (
