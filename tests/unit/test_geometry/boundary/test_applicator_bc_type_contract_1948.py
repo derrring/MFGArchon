@@ -18,7 +18,7 @@ import numpy as np
 
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
 from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator
-from mfgarchon.geometry.boundary.applicator_graph import GraphApplicator, NodeBC
+from mfgarchon.geometry.boundary.applicator_graph import GraphApplicator, GraphBCType, NodeBC
 from mfgarchon.geometry.boundary.applicator_implicit import ImplicitApplicator
 from mfgarchon.geometry.boundary.applicator_interpolation import InterpolationApplicator
 from mfgarchon.geometry.boundary.applicator_meshfree import MeshfreeApplicator
@@ -94,8 +94,8 @@ _APPLICATORS = [
     ),
     (
         # No `apply` at all -- `enforce_values` is this applicator's only imposition entry point,
-        # and it is the one `hjb_semi_lagrangian.py:966` calls. Driving it through `apply` would
-        # measure an absent method rather than the class.
+        # and it is the one `HJBSemiLagrangianSolver` calls on its `interp_bc_applicator`. Driving
+        # it through `apply` would measure an absent method rather than the class.
         "InterpolationApplicator",
         InterpolationApplicator,
         lambda t: InterpolationApplicator(dimension=1).enforce_values(
@@ -114,70 +114,40 @@ _APPLICATORS = [
         lambda t: ParticleApplicator().apply(_PARTICLES.copy(), _uniform_bc(t, 1), [(0.0, 1.0)])[0],
         _PARTICLES,
     ),
-    (
-        # Carries its BC on the applicator rather than in the call, and in its OWN alphabet:
-        # `NodeBC.bc_type` is a `GraphBCType`, whose ABSORBING/SOURCE/CUSTOM have no `BCType`
-        # counterpart and whose DIRICHLET shares a `.value` string with `BCType.DIRICHLET` without
-        # being the same member. Feeding it a `BCType` is therefore not a mistake in this table --
-        # it is the cross-alphabet cell that no `BCType`-indexed census has ever covered, and the
-        # thing this row exists to classify.
-        "GraphApplicator",
-        GraphApplicator,
-        lambda t: (
-            GraphApplicator(num_nodes=_NODES.size)
-            .add_node_bc(NodeBC(nodes=[0, _NODES.size - 1], bc_type=t, value=2.5, name="s"))
-            .apply(_NODES.copy())
-        ),
-        _NODES,
-    ),
 ]
 
-#: Cells that come back SILENT -- neither applying the condition nor refusing it. Each is a known
-#: gap, marked `xfail(strict=True)` VIA THE PARAMETRISATION (see `_param`) so that fixing one turns
-#: this table red for "unexpectedly passing" and forces the reader back here rather than leaving a
-#: stale exemption. It was an imperative `pytest.xfail()` until 2026-09-09, which aborts before the
-#: assertion and therefore could never report XPASS -- the promise in this comment was false for as
-#: long as it was written that way.
+#: Cells that come back SILENT -- neither applying the condition nor refusing it. Marked
+#: `xfail(strict=True)` VIA THE PARAMETRISATION (see `_param`), so fixing one turns this table red
+#: for "unexpectedly passing" and forces the reader back here. It was an imperative `pytest.xfail()`
+#: until 2026-09-09, which aborts before the assertion and so could never report XPASS -- the
+#: promise this comment used to make was false for as long as it was written that way.
 #:
-#: Not all of these are DECLARED cells. `GraphApplicator` and `InterpolationApplicator` both have
-#: `_SUPPORTED_BC_TYPES = None`, so the declaration half of the contract does not apply to them; the
-#: silence half does, and that is what these entries record.
-#: Refusing them instead is not free: `MeshfreeApplicator` is reachable from `base_solver.apply_bc`,
-#: so withdrawing the declaration would turn a silent no-op into a raise on a live path. That is a
-#: step-2 decision (#1948), not a side effect of writing the table.
+#: The one entry here is not a DECLARED cell: `InterpolationApplicator` has
+#: `_SUPPORTED_BC_TYPES = None`, so there is no declaration to withdraw and the earlier version of
+#: this comment -- which argued from `MeshfreeApplicator` being reachable from
+#: `base_solver.apply_bc` -- was defending cells the set does not contain.
 _KNOWN_SILENT: set[tuple[str, BCType]] = {
-    # GraphApplicator speaks its OWN alphabet: `NodeBC.bc_type` is a `GraphBCType`, and its
-    # ABSORBING/SOURCE/CUSTOM members have no `BCType` counterpart while its DIRICHLET shares a
-    # `.value` string with `BCType.DIRICHLET` without being the same member. Handed any `BCType`,
-    # `apply` matches no branch, has no terminal `else`, and returns the field untouched with no
-    # warning -- measured here for all eight members. `get_boundary_nodes()` drops the node too.
-    # The identical failure was found and guarded for this method's `field_type` parameter (#1940);
-    # `bc_type` was left open, and these eight cells are that gap.
-    *(("GraphApplicator", t) for t in BCType),
-    # `InterpolationApplicator` extrapolates by ORDER (`extrapolation_order=2` on the constructor),
-    # so the two EXTRAPOLATION_* members select nothing -- the order is already fixed and the
-    # branch has nothing left to do. Silent rather than refusing.
+    # `InterpolationApplicator` extrapolates by ORDER (`extrapolation_order` on the constructor), so
+    # the two EXTRAPOLATION_* members select nothing: the order is already fixed and the branch has
+    # nothing left to do. Silent rather than refusing.
     ("InterpolationApplicator", BCType.EXTRAPOLATION_LINEAR),
     ("InterpolationApplicator", BCType.EXTRAPOLATION_QUADRATIC),
 }
 
-#: Applicators that never adopted `_SUPPORTED_BC_TYPES` at all. `None` means "not migrated", which
+#: Applicators that never adopted `_SUPPORTED_BC_TYPES`. `None`, or the attribute being absent,
+#: means "not migrated" -- which
 #: `test_a_declaration_that_is_absent_disables_the_gate_rather_than_failing_closed` establishes as a
-#: deliberate convention (#1456) rather than a violation -- so the declaration half of the contract
-#: cannot be asserted here yet, and asserting it would only restate the same gap eight times per
-#: applicator.
+#: deliberate convention (#1456) rather than a violation. The declaration half of the contract
+#: cannot be asserted for them; the SILENCE half still is.
 #:
-#: The SILENCE half still applies to them and is still asserted below. That is the half worth having:
-#: it needs no declaration to be meaningful, and it is the property that holds across all six
-#: applicators even though their return types deliberately do not (P1).
-#:
-#: Retirement: give one of these a `_SUPPORTED_BC_TYPES` and its rows start failing the
-#: `assert declared` line for every type it applies but does not list. Remove it from this set then,
-#: and decide the eight cells -- which is the same forcing function `_KNOWN_SILENT` has.
+#: The exemption ASSERTS ITS OWN PREMISE rather than promising a retirement in prose. A name-keyed
+#: `if` around the assertion is skipped forever once an applicator migrates -- measured on the first
+#: version of this change: giving `ParticleApplicator` a `_SUPPORTED_BC_TYPES` left the table at
+#: 43 passed / 10 xfailed, tripping nothing. That is the same promise-without-a-mechanism defect
+#: this file fixes for `_KNOWN_SILENT`, and it does not get to reappear two definitions later.
 _UNDECLARED_APPLICATORS: set[str] = {
     "InterpolationApplicator",
     "ParticleApplicator",
-    "GraphApplicator",
 }
 
 _CELLS = [(name, cls, call, field, bc_type) for name, cls, call, field in _APPLICATORS for bc_type in BCType]
@@ -271,7 +241,11 @@ def test_each_cell_either_applies_or_refuses(name, cls, call, field, bc_type):
         assert not declared, f"{name} declares {bc_type.name} yet refused it: {result}"
         return
 
-    if name not in _UNDECLARED_APPLICATORS:
+    if name in _UNDECLARED_APPLICATORS:
+        assert getattr(cls, "_SUPPORTED_BC_TYPES", None) is None, (
+            f"{name} has migrated to _SUPPORTED_BC_TYPES; remove it from _UNDECLARED_APPLICATORS and decide its cells"
+        )
+    else:
         assert declared, f"{name} does not declare {bc_type.name} but applied it without refusing"
 
     baseline = np.asarray(field)
@@ -281,6 +255,75 @@ def test_each_cell_either_applies_or_refuses(name, cls, call, field, bc_type):
             f"that from a condition that was applied and happened to change nothing; declare it "
             f"unsupported, or make the branch do something."
         )
+
+
+#: `GraphApplicator` gets its OWN product, against its OWN alphabet. #1948 is explicit that this is
+#: the encoding it wants: "GraphApplicator is measured against GraphBCType, not BCType -- the family
+#: distinction is real and the test must encode it rather than flatten it", and its opening section
+#: puts the pairing beyond dispute: "GraphApplicator carrying its own GraphBCType (five members,
+#: disjoint from BCType) is likewise correct ... None of that is in question."
+#:
+#: An earlier version of this file indexed it by `BCType` instead and recorded the eight resulting
+#: cells as known gaps. That flattened exactly the distinction the issue asks the test to encode,
+#: and it needed nine lines of comment to explain why eight `xfail(strict=True)` rows were not bugs
+#: -- which is the tell that the encoding was wrong, not that the applicator was.
+#:
+#: The cross-alphabet question is real and is not this table's: `BCType` and `GraphBCType` share the
+#: `.value` strings {"dirichlet", "neumann"} while being different members, so a `BCType` handed to
+#: `NodeBC` matches no branch and returns the field untouched. That belongs with the alphabet work,
+#: not here.
+_GRAPH_CELLS = [(t,) for t in GraphBCType]
+
+#: Graph cells that come back silent, with the same `xfail(strict=True)` mechanism and the same
+#: retirement as `_KNOWN_SILENT`. Measured 2026-09-09: DIRICHLET and ABSORBING apply; these three do
+#: not.
+#:
+#: NEUMANN is the interesting one and the reason this table forbids silence even where it looks
+#: harmless. The enum documents it as "Zero flux (no change)", so a no-op may well be the CORRECT
+#: answer on a graph -- and that is precisely the case the module docstring names: a caller cannot
+#: distinguish it from an unhandled type. Deciding whether it should apply-and-say-so or refuse is
+#: #1948 step 2, not a thing to settle by leaving the branch quiet.
+_GRAPH_KNOWN_SILENT: set[GraphBCType] = {
+    GraphBCType.NEUMANN,
+    GraphBCType.SOURCE,
+    GraphBCType.CUSTOM,
+}
+
+
+@pytest.mark.parametrize(
+    "bc_type",
+    [
+        pytest.param(
+            t,
+            marks=(
+                [pytest.mark.xfail(strict=True, reason=f"GraphApplicator is silent on {t.name}; #1948 step 2")]
+                if t in _GRAPH_KNOWN_SILENT
+                else []
+            ),
+        )
+        for (t,) in _GRAPH_CELLS
+    ],
+    ids=[t.name for (t,) in _GRAPH_CELLS],
+)
+def test_each_graph_cell_either_applies_or_refuses(bc_type):
+    """Same contract as the table above, over the alphabet this applicator actually speaks.
+
+    Derived from `GraphBCType`, so a new member raises the uncovered-cell count on its own -- the
+    property the main table has and the reason neither list is hand-maintained.
+    """
+    field = _NODES.copy()
+    applicator = GraphApplicator(num_nodes=_NODES.size).add_node_bc(
+        NodeBC(nodes=[0, _NODES.size - 1], bc_type=bc_type, value=2.5, name="s")
+    )
+    outcome, result = _apply_and_classify(lambda _t: applicator.apply(field.copy()), bc_type)
+
+    if outcome == "refused":
+        return
+
+    assert not np.allclose(result, field), (
+        f"GraphApplicator returned the field unchanged for GraphBCType.{bc_type.name}. A caller "
+        f"cannot tell that from a condition that was applied and happened to change nothing."
+    )
 
 
 def test_a_declaration_that_is_absent_disables_the_gate_rather_than_failing_closed():
