@@ -5,6 +5,12 @@ fail until someone decides what each applicator does with it — which is the pr
 list of known cases cannot have, and the reason the discrimination ratchet's 24 mutations name only
 2 of `BCType`'s 8 members. #1948
 
+`GraphApplicator` is indexed by its own alphabet and over TWO axes, (`GraphBCType` × `field_type`),
+because its dispatch branches on the field type inside every arm — DIRICHLET pins only the value
+field, ABSORBING does opposite things to the two halves, SOURCE injects only into the density. Both
+axes are derived, the second from `apply`'s own `Literal`, so the growth property above holds for a
+new field type as well as a new member.
+
 What a declaration asserts: that a branch exists. Whether that branch is *correct* is a separate
 axis, per cell, tracked at #1946 — `FDMApplicator` handles both `EXTRAPOLATION_*` in the sense this
 file measures while writing unset memory on the uniform path.
@@ -12,9 +18,13 @@ file measures while writing unset memory on the uniform path.
 
 from __future__ import annotations
 
+import typing
+from typing import TYPE_CHECKING
+
 import pytest
 
 import numpy as np
+import numpy.typing as npt
 
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
 from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator
@@ -24,6 +34,9 @@ from mfgarchon.geometry.boundary.applicator_interpolation import InterpolationAp
 from mfgarchon.geometry.boundary.applicator_meshfree import MeshfreeApplicator
 from mfgarchon.geometry.boundary.applicator_particle import ParticleApplicator
 from mfgarchon.geometry.implicit.hypersphere import Hypersphere
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _CENTRE = np.array([0.5, 0.5])
 _RADIUS = 0.4
@@ -210,8 +223,12 @@ def test_the_cloud_has_interior():
 
 def test_the_product_is_derived_from_the_enum_and_not_listed():
     """If someone adds a `BCType` member, this count moves and the parametrised test below gains
-    rows that nobody has decided about. That automatic growth is the whole mechanism."""
+    rows that nobody has decided about. That automatic growth is the whole mechanism.
+
+    The graph product is derived the same way on both of its axes, so the same sentence holds for a
+    new `GraphBCType` member and for a new `field_type`."""
     assert len(_CELLS) == len(_APPLICATORS) * len(list(BCType))
+    assert len(_GRAPH_CELLS) == len(list(GraphBCType)) * len(_GRAPH_FIELD_TYPES)
 
 
 @pytest.mark.parametrize(
@@ -257,72 +274,150 @@ def test_each_cell_either_applies_or_refuses(name, cls, call, field, bc_type):
         )
 
 
-#: `GraphApplicator` gets its OWN product, against its OWN alphabet. #1948 is explicit that this is
-#: the encoding it wants: "GraphApplicator is measured against GraphBCType, not BCType -- the family
-#: distinction is real and the test must encode it rather than flatten it", and its opening section
-#: puts the pairing beyond dispute: "GraphApplicator carrying its own GraphBCType (five members,
-#: disjoint from BCType) is likewise correct ... None of that is in question."
+#: `GraphApplicator` gets its OWN product, against its OWN alphabet, over TWO axes. #1948 is
+#: explicit about the first: "GraphApplicator is measured against GraphBCType, not BCType -- the
+#: family distinction is real and the test must encode it rather than flatten it", and its opening
+#: section puts the pairing beyond dispute: "GraphApplicator carrying its own GraphBCType (five
+#: members, disjoint from BCType) is likewise correct ... None of that is in question."
 #:
 #: An earlier version of this file indexed it by `BCType` instead and recorded the eight resulting
 #: cells as known gaps. That flattened exactly the distinction the issue asks the test to encode,
 #: and it needed nine lines of comment to explain why eight `xfail(strict=True)` rows were not bugs
 #: -- which is the tell that the encoding was wrong, not that the applicator was.
 #:
+#: The SECOND axis is `field_type`, and a table without it measures the fixture rather than the
+#: class. Every branch of `GraphApplicator.apply` tests `field_type` INSIDE itself: DIRICHLET pins
+#: only the value field (#1471), ABSORBING does opposite things to the two halves (#1478), SOURCE
+#: injects only into the density. The dispatch surface is therefore the product, and a
+#: single-`field_type` table sees one column of it. Measured 2026-09-10 against the version indexed
+#: by `GraphBCType` alone, which called `apply` at its default `field_type="value"`: it recorded
+#: SOURCE as silent when it applies on "density", recorded CUSTOM as silent for a fixture reason
+#: (see `_graph_value`), and recorded DIRICHLET as applying while its density half was silent and
+#: out of view. Three of five rows carried a classification that was not a fact about the class,
+#: and no reader of that table could have told.
+#:
 #: The cross-alphabet question is real and is not this table's: `BCType` and `GraphBCType` share the
 #: `.value` strings {"dirichlet", "neumann"} while being different members, so a `BCType` handed to
-#: `NodeBC` matches no branch and returns the field untouched. That belongs with the alphabet work,
-#: not here.
-_GRAPH_CELLS = [(t,) for t in GraphBCType]
+#: `NodeBC` matches no branch and returns the field untouched. That belongs with the alphabet work
+#: at #2292, not here.
+def _graph_field_types() -> tuple[str, ...]:
+    """The second axis, read from `apply`'s own `Literal` rather than listed here.
+
+    Same property the first axis gets from `GraphBCType`: adding a field type makes this table grow
+    rows nobody has decided about. A hand-written copy would be the incident log the module
+    docstring rejects, and there is a live reason to distrust one -- #1940 was a `field_type` string
+    that matched no branch and returned the field untouched.
+
+    `localns` is required because `applicator_graph` keeps `NDArray` under `if TYPE_CHECKING` while
+    `from __future__ import annotations` defers the whole signature, so `get_type_hints` cannot
+    resolve the `field` parameter without being handed that name.
+    """
+    hints = typing.get_type_hints(GraphApplicator.apply, localns={"NDArray": npt.NDArray})
+    return typing.get_args(hints["field_type"])
+
+
+_GRAPH_FIELD_TYPES = _graph_field_types()
+
+
+def _custom_node_bc(field: npt.NDArray[np.floating], node: int, t: float) -> float:
+    """The callable `set_custom_bc` documents and constructs: `(field, node, t) -> float`."""
+    del t
+    return 0.5 * float(field[node])
+
+
+def _graph_value(bc_type: GraphBCType) -> float | Callable[..., float]:
+    """The `value` each member's own API asks for: a callable for CUSTOM, a scalar for the rest.
+
+    Not a convenience. `NodeBC.value` is annotated `float | Callable[[int, float], float]` and
+    `NodeBC.get_value` calls it that way, while the CUSTOM branch of `apply` calls it as
+    `(field, node, t)` -- the signature `set_custom_bc` documents and then constructs a `NodeBC`
+    with. One field carries two incompatible callable contracts, selected by `bc_type`, which is
+    #1948's "no shared contract" one level below the applicators.
+
+    So the CUSTOM cell reports whichever of three outcomes the fixture chooses, from an applicator
+    that never changes. Measured 2026-09-10: a scalar falls through the branch's `callable(bc.value)`
+    guard and reads SILENT, the two-argument `(node, t)` form raises `TypeError` and reads REFUSED,
+    and the documented three-argument form applies. Only the third is a fact about the class.
+    """
+    return _custom_node_bc if bc_type is GraphBCType.CUSTOM else 2.5
+
+
+_GRAPH_CELLS = [(t, ft) for t in GraphBCType for ft in _GRAPH_FIELD_TYPES]
 
 #: Graph cells that come back silent, with the same `xfail(strict=True)` mechanism and the same
-#: retirement as `_KNOWN_SILENT`. Measured 2026-09-09: DIRICHLET and ABSORBING apply; these three do
-#: not.
+#: retirement as `_KNOWN_SILENT`. Measured 2026-09-10 over the whole product: four of ten.
 #:
-#: NEUMANN is the interesting one and the reason this table forbids silence even where it looks
-#: harmless. The enum documents it as "Zero flux (no change)", so a no-op may well be the CORRECT
-#: answer on a graph -- and that is precisely the case the module docstring names: a caller cannot
-#: distinguish it from an unhandled type. Deciding whether it should apply-and-say-so or refuse is
-#: #1948 step 2, not a thing to settle by leaving the branch quiet.
-_GRAPH_KNOWN_SILENT: set[GraphBCType] = {
-    GraphBCType.NEUMANN,
-    GraphBCType.SOURCE,
-    GraphBCType.CUSTOM,
+#: Every one is a DELIBERATE non-application whose only announcement is a source comment --
+#: DIRICHLET "belongs to the VALUE field (HJB u), not the density field" (#1471), SOURCE "for value
+#: functions, source nodes don't modify u", NEUMANN "no change ... handled by solver". That makes
+#: them the defect class #1948 is about rather than exceptions to it: a caller cannot distinguish a
+#: deliberate no-op from an unhandled type, which is why this table forbids silence even where it
+#: looks harmless. Whether each should apply-and-say-so or refuse is #1948 step 2.
+_GRAPH_KNOWN_SILENT: set[tuple[GraphBCType, str]] = {
+    (GraphBCType.DIRICHLET, "density"),
+    (GraphBCType.SOURCE, "value"),
+    (GraphBCType.NEUMANN, "value"),
+    (GraphBCType.NEUMANN, "density"),
 }
 
 
+def test_the_graph_field_type_axis_is_read_from_production_and_cannot_empty_quietly():
+    """A derived population that silently empties yields zero rows, which reads as a clean table.
+
+    `_graph_field_types` reads an annotation, so an annotation loosened to `str` would leave
+    `get_args` returning `()` and the graph product with no cells at all -- no failure, no rows, and
+    the count assertion above satisfied by 0 == 5 * 0. This asserts the axis is non-empty and that
+    production agrees with it in both directions: every derived member is accepted by `apply`, and
+    one that is not a member is refused (the #1940 guard).
+    """
+    assert _GRAPH_FIELD_TYPES, "the field_type axis derived from `apply` is empty; the graph product has no cells"
+
+    for field_type in _GRAPH_FIELD_TYPES:
+        GraphApplicator(num_nodes=_NODES.size).apply(_NODES.copy(), field_type=field_type)
+
+    with pytest.raises(ValueError, match="field_type must be"):
+        GraphApplicator(num_nodes=_NODES.size).apply(_NODES.copy(), field_type="VALUE")
+
+
 @pytest.mark.parametrize(
-    "bc_type",
+    ("bc_type", "field_type"),
     [
         pytest.param(
             t,
+            ft,
             marks=(
-                [pytest.mark.xfail(strict=True, reason=f"GraphApplicator is silent on {t.name}; #1948 step 2")]
-                if t in _GRAPH_KNOWN_SILENT
+                [pytest.mark.xfail(strict=True, reason=f"GraphApplicator is silent on {t.name}/{ft}; #1948 step 2")]
+                if (t, ft) in _GRAPH_KNOWN_SILENT
                 else []
             ),
         )
-        for (t,) in _GRAPH_CELLS
+        for (t, ft) in _GRAPH_CELLS
     ],
-    ids=[t.name for (t,) in _GRAPH_CELLS],
+    ids=[f"{t.name}-{ft}" for (t, ft) in _GRAPH_CELLS],
 )
-def test_each_graph_cell_either_applies_or_refuses(bc_type):
-    """Same contract as the table above, over the alphabet this applicator actually speaks.
+def test_each_graph_cell_either_applies_or_refuses(bc_type, field_type):
+    """Same contract as the table above, over the alphabet and the field types this class speaks.
 
-    Derived from `GraphBCType`, so a new member raises the uncovered-cell count on its own -- the
-    property the main table has and the reason neither list is hand-maintained.
+    Both axes are derived -- `GraphBCType` and `apply`'s own `Literal` -- so a new member of either
+    raises the uncovered-cell count on its own. That is what neither list being hand-maintained
+    buys, and it is the property #1948 asks for.
     """
     field = _NODES.copy()
     applicator = GraphApplicator(num_nodes=_NODES.size).add_node_bc(
-        NodeBC(nodes=[0, _NODES.size - 1], bc_type=bc_type, value=2.5, name="s")
+        NodeBC(nodes=[0, _NODES.size - 1], bc_type=bc_type, value=_graph_value(bc_type), name="s")
     )
-    outcome, result = _apply_and_classify(lambda _t: applicator.apply(field.copy()), bc_type)
+    outcome, result = _apply_and_classify(
+        lambda _t: applicator.apply(field.copy(), field_type=field_type),
+        bc_type,
+    )
 
     if outcome == "refused":
         return
 
     assert not np.allclose(result, field), (
-        f"GraphApplicator returned the field unchanged for GraphBCType.{bc_type.name}. A caller "
-        f"cannot tell that from a condition that was applied and happened to change nothing."
+        f"GraphApplicator returned the field unchanged for GraphBCType.{bc_type.name} on "
+        f"field_type={field_type!r}. A caller cannot tell that from a condition that was applied "
+        f"and happened to change nothing."
     )
 
 
