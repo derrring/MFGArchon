@@ -164,7 +164,13 @@ def test_every_killer_node_id_still_resolves(td):
     assert len(matrix) > 100, f"killmatrix collapsed to {len(matrix)} entries; the check is inert"
     assert tests_root.is_dir(), "tests/ not found from the baseline's location; the walk is wrong"
 
-    known = 3  # #2176: stale since #2181/#2185, a class rename in test_fp_particle_solver.py
+    #: 0 since #2285 re-recorded the matrix at `2c923694`. The three #2176 entries -- a class rename
+    #: in test_fp_particle_solver.py from #2181/#2185 -- are simply absent from the new killed_by,
+    #: measured: main's matrix has exactly those 3 stale against this tree, the new one has none.
+    #: Leaving the bound at 3 would have left three slots of SILENT tolerance on the one guard whose
+    #: docstring says staleness must not accumulate invisibly, which is the same rule this file's
+    #: kill counts already obey -- a change that removes staleness records it in the same change.
+    known = 0
     assert len(stale) <= known, (
         f"{len(stale)} killer node IDs no longer resolve, above the {known} recorded in #2176: "
         f"{stale[:8]}. Either a deletion took a killer -- check before merging it -- or the "

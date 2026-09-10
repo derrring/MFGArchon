@@ -128,15 +128,21 @@ unauditable; adding to it casually is how it got there.
    `baseline_seconds` 198.2 plus 3814.6s over 24 mutations (min 105, median 141, max 344) in the
    matrix measured at `2c923694`. That figure is a property of the file beside it, so when the file
    is re-recorded the cost is re-derivable from it and nobody has to trust this line:
-   `python -c "import json;d=json.load(open('scripts/discrimination_killmatrix.json'));
-   print((d['baseline_seconds']+sum(m['seconds'] for m in d['mutations'].values()))/60)"`.
+
+   ```bash
+   "$MFG_PYTHON" -c "import json; d = json.load(open('scripts/discrimination_killmatrix.json')); print((d['baseline_seconds'] + sum(m['seconds'] for m in d['mutations'].values())) / 60)"
+   ```
 
    ⚠️ **Run it in a detached worktree or the kills are fake.** The script mutates the checkout in
    place (`REPO = Path(__file__).resolve().parent.parent`) and its own docstring records #1677 — a
-   worktree run can leave the *original* module imported, giving all-zero kills that read as
-   "nothing discriminates". That happens because **both** `.venv` and `mfg_env` editable-install
-   `mfgarchon` to the main checkout, so the naive worktree run imports the unmutated tree. The way
-   past it, which the trap note alone does not give you:
+   run that leaves the *original* module imported gives all-zero kills that read as "nothing
+   discriminates". Both `.venv` and `mfg_env` editable-install `mfgarchon` to the main checkout, so
+   that is the tree an import can fall back to. **Measured, and weaker than it sounds:** setuptools
+   *appends* `_EditableFinder` to `sys.meta_path`, after `PathFinder` — so a `cd <worktree>` alone
+   already resolves `mfgarchon` to the worktree with no `PYTHONPATH` at all. Bind it anyway; it is
+   one token, it does not depend on cwd surviving whatever the script does, and the script's own
+   `_assert_import_is_the_mutated_tree` (`test_discrimination.py:502`) then *confirms* the tree
+   rather than you assuming it. The recipe:
 
    ```bash
    git worktree add --detach /tmp/wt-discrim <sha>
@@ -145,10 +151,19 @@ unauditable; adding to it casually is how it got there.
        --write-baseline scripts/discrimination_baseline.json
    ```
 
-   `PYTHONPATH` wins over the editable install, so `REPO` and the imported package are one tree, and
-   the script's own `_assert_import_is_the_mutated_tree` confirms it rather than you asserting it.
    Write **both** files from the one run: `--write-baseline` alone leaves the matrix at the old run,
    which the script says in its own error message.
+
+   **The two JSONs land inside the worktree, so copy them back and tear it down** — neither is
+   automatic, and a worktree `git status` cannot see:
+
+   ```bash
+   cp /tmp/wt-discrim/scripts/discrimination_{killmatrix,baseline}.json scripts/
+   git worktree remove --force /tmp/wt-discrim && git worktree prune
+   ```
+
+   And **do not let two sessions write these files**: they are one artifact pair recorded by one run,
+   `git status` shows no sign of another checkout mid-sweep, and the second writer silently wins.
 
 2. **It is an external oracle** — a law the scheme must reproduce, computed independently of it.
    `M(0) @ expm(Qt)`, `rho_i * exp(v_n*dx/D)`, an LQG closed form, an Itô isometry. These do not rot
