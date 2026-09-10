@@ -297,36 +297,30 @@ def test_the_natural_bc_parameter_gates_the_neumann_arm():
         fp._robin_operator_terms(0.125)
 
 
-def test_a_default_bc_is_refused_only_where_no_segment_covers_the_boundary():
-    """The coverage guard, and the regression a cruder version of it caused.
+def test_the_public_factory_path_assembles():
+    """The regression a guard for the `default_bc` channel caused, twice, and the reason it is gone.
 
-    `default_bc` is the fall-through for boundary the segments do not cover, so data reaching only
-    that way is silently dropped (#1686). But every `*_bc()` factory sets BOTH channels in lockstep:
-    `neumann_bc(5.0)` yields a segment AND `default_bc=NEUMANN, default_value=5.0`. A guard reading
-    the default channel alone therefore rejects the library's own public API -- measured, it did, and
-    no test here saw it because they all build `BoundaryConditions(segments=...)` directly and leave
-    `default_bc` None. That is the exact shape such a guard cannot see.
+    Every `*_bc()` factory sets BOTH channels in lockstep: `neumann_bc(5.0)` yields a segment AND
+    `default_bc=NEUMANN, default_value=5.0`. A guard reading the default channel alone therefore
+    rejects the library's own public API -- measured, it did, and nothing here saw it because these
+    tests build `BoundaryConditions(segments=...)` directly and leave `default_bc` None, the one
+    shape such a guard cannot see. Its replacement asked whether the segments COVER the boundary and
+    under-refused on `boundary="left"`, an alias `parse_boundary_face` resolves and the raw lookup
+    does not. Both are removed; the fall-through gap is disclosed and filed.
+
+    What survives is this: the documented way of asking for the condition must assemble it.
     """
     from mfgarchon.alg.numerical.fem.bc_adapter import assemble_robin_terms
     from mfgarchon.geometry.boundary import neumann_bc
 
     basis = HJBFEMSolver(_problem(_segments("neumann", 0.0)), order=1)._basis
 
-    # Covered: the factory's own segment spans the boundary, so the default is inert.
     _, rhs = assemble_robin_terms(basis, neumann_bc(_G, dimension=2), 0.125, natural_bc="gradient")
-    assert rhs is not None, (
-        "neumann_bc(g) is the library's public way to ask for this condition and it must assemble. "
-        "A guard that reads default_bc without asking what the segments cover rejects it."
+    assert rhs is not None, "neumann_bc(g) is the library's public way to ask for this condition and it must assemble."
+    assert rhs.sum() == pytest.approx(0.125 * _G * 4.0, rel=1e-12), (
+        "the factory's segment carries no `boundary`, so it spans the whole boundary -- perimeter 4, "
+        "not the 2 of the two named walls."
     )
-
-    # Uncovered: nothing carries the condition, so it would reach no assembly.
-    with pytest.raises(NotImplementedError, match="covered by no BCSegment"):
-        assemble_robin_terms(
-            basis,
-            BoundaryConditions(dimension=2, segments=[], default_bc=BCType.NEUMANN, default_value=_G),
-            0.125,
-            natural_bc="gradient",
-        )
 
 
 @pytest.mark.parametrize(
