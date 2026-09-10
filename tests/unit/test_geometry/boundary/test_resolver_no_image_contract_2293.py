@@ -5,9 +5,13 @@ one protocol, and disagree on what happens to a member with no image in `MathBCT
 HJB logs a WARNING and returns `ResolvedBC(NEUMANN, alpha=1, beta=0, g=0)` — a well-formed
 homogeneous Neumann wall the caller cannot distinguish from a real resolution.
 
-Retirement: give `HJBResolver` the `else: raise` its sibling already has, and
-`test_the_hjb_resolver_still_returns_a_default_instead_of_refusing` fails with an instruction. Delete
-that test then, and `test_both_resolvers_refuse_a_member_they_cannot_map` becomes the whole file.
+Retirement, DEMONSTRATED rather than asserted (2026-09-10): give `HJBResolver` the raise its
+sibling already has and three of the five tests here fail — the `[HJB]` param reports XPASS(strict),
+and the two that assert the defect fail carrying the instruction that says to delete them. Delete
+them then, and `test_both_resolvers_refuse_a_member_they_cannot_map` becomes the whole file.
+
+A pin whose failure has never been observed is an assertion, not a pin, which is the class this file
+is filed under; the demonstration is what makes it admissible.
 
 Why a pin rather than a fix here: choosing the failure mode is a contract decision (#1471 already
 wrote it down as "total-or-fail-loud"), and #2295 is why nothing caught the divergence — the layer
@@ -84,13 +88,26 @@ def test_the_hjb_resolver_still_returns_a_default_instead_of_refusing(caplog):
     fix could each leave in place: that a value comes back at all, that the value is the homogeneous
     Neumann wall specifically, and that the original member survives on the returned object — the
     last being the only thing that lets a consumer notice after the fact.
+
+    The `except` is not defensive. The fix makes `resolve` RAISE, so an `assert resolved is not
+    None` below it never evaluates and the test dies on the traceback instead — measured 2026-09-10
+    by applying the fix: this test failed with a bare `ValueError` and the instruction it exists to
+    deliver was never printed. Same shape as the imperative-`pytest.xfail` trap this file already
+    records: a check placed where the surrounding mechanism swallows it.
     """
-    with caplog.at_level(logging.WARNING, logger="mfgarchon.geometry.boundary.resolution"):
-        resolved = HJBResolver().resolve(_segment(_NO_IMAGE), _STATE)
+    try:
+        with caplog.at_level(logging.WARNING, logger="mfgarchon.geometry.boundary.resolution"):
+            resolved = HJBResolver().resolve(_segment(_NO_IMAGE), _STATE)
+    except (ValueError, NotImplementedError, TypeError) as exc:
+        pytest.fail(
+            "HJBResolver now REFUSES an unmappable member instead of defaulting to a wall. That is "
+            "the #2293 fix: delete this test, and remove the xfail from "
+            f"test_both_resolvers_refuse_a_member_they_cannot_map.\n  it raised: {type(exc).__name__}: {exc}"
+        )
 
     assert resolved is not None, (
-        "HJBResolver now refuses an unmappable member. That is the #2293 fix: delete this test and "
-        "remove the xfail from test_both_resolvers_refuse_a_member_they_cannot_map."
+        "HJBResolver returned None rather than a ResolvedBC. That is neither the recorded defect "
+        "nor the #2293 fix; resolve now has a third behaviour and this file describes none of it."
     )
     assert resolved.math_type is MathBCType.NEUMANN
     assert (resolved.value, resolved.alpha, resolved.beta) == (0.0, 1.0, 0.0)
@@ -108,11 +125,19 @@ def test_the_two_resolvers_disagree_and_that_is_the_defect():
     """
     segment = _segment(_NO_IMAGE)
 
-    hjb_returned = HJBResolver().resolve(segment, _STATE)
+    # Same reason as the `except` above: once HJB refuses, this call raises and the instruction
+    # below it becomes unreachable. Measured under the fix before it was written this way.
+    try:
+        hjb_returned = HJBResolver().resolve(segment, _STATE)
+    except (ValueError, NotImplementedError, TypeError) as exc:
+        pytest.fail(
+            "both resolvers now refuse, so the contract is shared and #2293 is fixed. Delete this "
+            f"test.\n  HJBResolver raised: {type(exc).__name__}: {exc}"
+        )
 
     with pytest.raises(ValueError, match="unrecognized"):
         FPResolver().resolve(segment, _STATE)
 
     assert hjb_returned is not None, (
-        "both resolvers now refuse: the contract is shared and #2293 is fixed. Delete this test."
+        "HJBResolver returned None rather than the recorded default wall; #2293 has changed shape."
     )
