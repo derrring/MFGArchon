@@ -6,7 +6,9 @@ solvers. Users specify BC via BCSegment; this module translates to skfem operati
 
 Mapping:
     BCType.DIRICHLET → condense() with boundary DOFs and values
-    BCType.NEUMANN   → natural BC (default in weak form, no action needed)
+    BCType.NEUMANN   → natural BC. Homogeneous (g=0): no action. Inhomogeneous (g!=0): the
+                       boundary load D*int_dOmega g phi_i, assembled by ``assemble_robin_terms``
+                       as ROBIN(alpha=0, beta=1, g) — the same condition (Issue #2294)
     BCType.NO_FLUX   → same as NEUMANN (zero normal derivative)
     BCType.ROBIN     → operator augmentation (NOT condensation): a D-scaled FacetBasis boundary
                        mass + load assembled by ``assemble_robin_terms`` and folded into the
@@ -46,7 +48,9 @@ def apply_bc_to_fem_system(
     Apply BoundaryConditions to assembled FEM system (A, rhs).
 
     For Dirichlet segments: condense the system (eliminate boundary DOFs).
-    For Neumann/no-flux: no action (natural BC in weak form).
+    For Neumann/no-flux: no condensation (natural BC in weak form). An INHOMOGENEOUS Neumann
+    still owes a boundary load; that is an operator augmentation like Robin, assembled by
+    ``assemble_robin_terms`` and folded in upstream, not applied here (Issue #2294).
     For Robin: no action here — the Robin boundary mass + load are an operator augmentation
     assembled by ``assemble_robin_terms`` and folded into ``M/dt + D*K`` upstream (Robin dofs
     stay free, so they are not condensed). For Periodic: raises ``NotImplementedError``
@@ -80,7 +84,9 @@ def apply_bc_to_fem_system(
             dirichlet_values.extend(values)
 
         elif segment.bc_type in (BCType.NEUMANN, BCType.NO_FLUX, BCType.REFLECTING):
-            # Natural BC — no action needed in weak form
+            # Natural BC — nothing to CONDENSE, which is all this function does. An
+            # inhomogeneous Neumann (g != 0) does owe a boundary load; it is assembled by
+            # ``assemble_robin_terms`` and folded into M/dt + D*K upstream (Issue #2294).
             pass
 
         elif segment.bc_type == BCType.ROBIN:
@@ -272,10 +278,18 @@ def assemble_robin_terms(
     to ``M/dt + D*K`` and ``rhs_robin`` to each timestep RHS. The boundary mass is symmetric, so
     the FP Robin term is the adjoint (identical) of the HJB one (Type-A duality preserved).
 
-    Summed over all ``BCType.ROBIN`` segments; each carries ``alpha``, ``beta``, and a constant
-    ``value`` (``g``). Returns ``(None, None)`` when there are no Robin segments (no-op, so the
-    natural/Dirichlet paths are byte-unchanged). Callable / ``BCValueProvider`` ``g`` and
-    ``beta == 0`` (pure Dirichlet) fail loud — only constant ``g`` is implemented (Issue #1237).
+    Summed over all ``BCType.ROBIN`` segments, each carrying its own ``alpha``, ``beta`` and
+    constant ``value`` (``g``), **and over every inhomogeneous** ``BCType.NEUMANN`` **segment**
+    (Issue #2294): ``du/dn = g`` is ``ROBIN(alpha=0, beta=1, g)``, so it contributes the load and
+    no mass. Those coefficients are synthesized, never read off the segment — ``BCSegment``
+    defaults ``alpha=1.0, beta=0.0``, which is the Dirichlet weighting and a different condition.
+    ``NO_FLUX`` and ``REFLECTING`` are excluded: both are homogeneous here, and ``NO_FLUX`` on
+    the FP side is ``J.n = 0``, a Robin condition in ``m`` owned by ``FPResolver``.
+
+    Returns ``(None, None)`` when nothing contributes — no Robin segments and no Neumann segment
+    with ``g != 0`` — so the natural/Dirichlet paths stay byte-unchanged. Callable /
+    ``BCValueProvider`` ``g`` and ``beta == 0`` (pure Dirichlet) fail loud — only constant ``g``
+    is implemented (Issue #1237).
     """
     if bc is None:
         return None, None
@@ -285,8 +299,8 @@ def assemble_robin_terms(
 
     from mfgarchon.geometry.boundary.types import BCType
 
-    robin_segments = [s for s in bc.segments if s.bc_type == BCType.ROBIN]
-    if not robin_segments:
+    boundary_segments = [s for s in bc.segments if s.bc_type in (BCType.ROBIN, BCType.NEUMANN)]
+    if not boundary_segments:
         return None, None
 
     mesh = basis.mesh
@@ -304,39 +318,58 @@ def assemble_robin_terms(
     A_robin = sparse.csr_matrix((n_dof, n_dof))
     rhs_robin = np.zeros(n_dof)
 
-    for segment in robin_segments:
-        # Issue #1979: guard alpha and beta the way `g` is guarded below. Without this, a
-        # provider-valued coefficient reaches float() and raises a bare builtin TypeError --
-        # unnamed, ungreppable, and silent about what the caller should do instead.
-        for _name, _coeff in (("alpha", getattr(segment, "alpha", 1.0)), ("beta", getattr(segment, "beta", 0.0))):
-            if not isinstance(_coeff, (int, float)):
-                raise NotImplementedError(
-                    f"Robin segment '{segment.name}' has a non-constant {_name} "
-                    f"({type(_coeff).__name__}). Only a constant {_name} is implemented for the FEM "
-                    "Robin operator augmentation; callable / BCValueProvider coefficients are "
-                    "deferred (Issue #1237). For an adjoint-consistent (state-dependent) Robin BC, "
-                    "resolve the provider to a constant before the solve -- "
-                    "`bc.with_resolved_providers(state)`."
-                )
-        alpha = float(getattr(segment, "alpha", 1.0))
-        beta = float(getattr(segment, "beta", 0.0))
-        if beta == 0.0:
-            raise NotImplementedError(
-                f"Robin segment '{segment.name}' has beta=0, i.e. a pure Dirichlet condition "
-                "(alpha*u = g). Use BCType.DIRICHLET for that; a Robin term requires beta != 0 "
-                "(Issue #1237)."
-            )
+    contributed = False
+    for segment in boundary_segments:
+        kind = "Robin" if segment.bc_type == BCType.ROBIN else "Neumann"
 
         g = getattr(segment, "value", 0.0)
         if not isinstance(g, (int, float)):
             raise NotImplementedError(
-                f"Robin segment '{segment.name}' has a non-constant value ({type(g).__name__}). "
-                "Only a constant g is implemented for the FEM Robin boundary load; callable / "
-                "BCValueProvider Robin data is deferred (Issue #1237). For an adjoint-consistent "
-                "(state-dependent) Robin BC, resolve the provider to a constant before the solve."
+                f"{kind} segment '{segment.name}' has a non-constant value ({type(g).__name__}). "
+                f"Only a constant g is implemented for the FEM {kind} boundary load; callable / "
+                "BCValueProvider data is deferred (Issue #1237). For an adjoint-consistent "
+                "(state-dependent) BC, resolve the provider to a constant before the solve."
             )
         g = float(g)
 
+        if segment.bc_type == BCType.NEUMANN:
+            # Issue #2294: `du/dn = g` is `ROBIN(alpha=0, beta=1, g)` -- the same mathematical
+            # condition, so it owes the same boundary load `D * int_dOmega g phi_i` and no boundary
+            # mass. The arm in `apply_bc_to_fem_system` is a bare `pass` because a natural BC is not
+            # a condensation; that is correct and is not where the term was missing.
+            #
+            # The coefficients are SYNTHESIZED, never read off the segment: `BCSegment` defaults
+            # alpha=1.0, beta=0.0 (the Dirichlet weighting), so a Neumann segment's own alpha/beta
+            # describe a different condition entirely and using them would divide by zero.
+            alpha, beta = 0.0, 1.0
+            if g == 0.0:
+                # Homogeneous: mass and load are both zero. Skipping keeps `(None, None)` for every
+                # existing natural-BC solve, so those stay byte-identical.
+                continue
+        else:
+            # Issue #1979: guard alpha and beta the way `g` is guarded above. Without this, a
+            # provider-valued coefficient reaches float() and raises a bare builtin TypeError --
+            # unnamed, ungreppable, and silent about what the caller should do instead.
+            for _name, _coeff in (("alpha", getattr(segment, "alpha", 1.0)), ("beta", getattr(segment, "beta", 0.0))):
+                if not isinstance(_coeff, (int, float)):
+                    raise NotImplementedError(
+                        f"Robin segment '{segment.name}' has a non-constant {_name} "
+                        f"({type(_coeff).__name__}). Only a constant {_name} is implemented for the "
+                        "FEM Robin operator augmentation; callable / BCValueProvider coefficients "
+                        "are deferred (Issue #1237). For an adjoint-consistent (state-dependent) "
+                        "Robin BC, resolve the provider to a constant before the solve -- "
+                        "`bc.with_resolved_providers(state)`."
+                    )
+            alpha = float(getattr(segment, "alpha", 1.0))
+            beta = float(getattr(segment, "beta", 0.0))
+            if beta == 0.0:
+                raise NotImplementedError(
+                    f"Robin segment '{segment.name}' has beta=0, i.e. a pure Dirichlet condition "
+                    "(alpha*u = g). Use BCType.DIRICHLET for that; a Robin term requires beta != 0 "
+                    "(Issue #1237)."
+                )
+
+        contributed = True
         facets = _find_segment_facets(mesh, segment)
         fb = FacetBasis(mesh, elem, facets=facets)
 
@@ -345,5 +378,11 @@ def assemble_robin_terms(
 
         A_robin = A_robin + D * (alpha / beta) * M_bnd
         rhs_robin = rhs_robin + D * (g / beta) * load_bnd
+
+    # A bc holding only homogeneous Neumann segments reaches here having contributed nothing. It
+    # must return the same `(None, None)` as a bc with no segments at all, or the caller adds an
+    # all-zero matrix and vector and the solve stops being byte-identical to the one before #2294.
+    if not contributed:
+        return None, None
 
     return A_robin.tocsr(), rhs_robin
