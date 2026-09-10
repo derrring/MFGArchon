@@ -30,11 +30,10 @@ import pytest
 
 import numpy as np
 
+from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
 from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
-from mfgarchon.core.mfg_components import MFGComponents
-from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
 
 _G = 5.0
@@ -49,12 +48,20 @@ def _problem(segments):
     geometry = Mesh2D(domain_type="rectangle", bounds=(0.0, 1.0, 0.0, 1.0))
     geometry.mesh_data = skfem_to_meshdata(skfem.MeshTri.init_sqsymmetric().refined(2))
     geometry.boundary_conditions = BoundaryConditions(dimension=2, segments=segments)
-    components = MFGComponents(
-        m_initial=lambda x: 1.0,
-        u_terminal=lambda x: 0.0,
-        hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0), coupling=lambda m: 0.0),
+    hamiltonian = SeparableHamiltonian(
+        control_cost=QuadraticControlCost(control_cost=1.0),
+        coupling=lambda m: 0.0 * np.asarray(m),
+        coupling_dm=lambda m: 0.0 * np.asarray(m),
     )
-    return MFGProblem(geometry=geometry, T=0.1, Nt=3, sigma=0.5, components=components, coupling_coefficient=0.0)
+    # The v1.0 API, not the legacy `MFGProblem(geometry=, components=, ...)`. That form is
+    # deprecated, and the warning census gates on it: a new file using it adds a warning identity
+    # and turns the gate red, which is #2119 working as intended.
+    return MFGProblem(
+        model=Model(hamiltonian=hamiltonian, sigma=0.5),
+        domain=geometry,
+        conditions=Conditions(m_initial=lambda p: 1.0, u_terminal=lambda p: 0.0, T=0.1),
+        Nt=3,
+    )
 
 
 def _segments(kind: str, g: float):
