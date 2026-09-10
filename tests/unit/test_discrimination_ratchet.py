@@ -1,7 +1,10 @@
 """Pinning tests for the discrimination ratchet (scripts/test_discrimination.py).
 
-The sweep itself takes ~26 minutes (seven full-suite runs), so it is a weekly job, not
-a gate. These tests pin the parts that decide what the sweep MEANS, which is where it
+The sweep costs ~67 minutes -- 25 full-suite runs, one baseline plus one per mutation -- so it is a
+weekly job, not a gate. Derive it rather than trust this line; `scripts/discrimination_killmatrix.json`
+records `baseline_seconds` and a per-mutation `seconds`, and AGENTS.md carries the one-liner.
+(~~26 minutes, seven runs~~: both were wrong. 26 was 2.6x low against the file it shipped beside, and
+`MUTATIONS` has held 24 entries, not six, for as long as the matrix has recorded them.) These tests pin the parts that decide what the sweep MEANS, which is where it
 can silently stop working:
 
 - the three-way verdict, which separates "no test covers this convention" (a finding)
@@ -130,9 +133,20 @@ def test_every_killer_node_id_still_resolves(td):
     called all three a rename. Either way a file-level check reports clean; only the node ID sees it
     (#2176).
 
-    Reported, not gated at zero: staleness accumulates legitimately between re-records, and failing
-    the suite for it would push someone to re-record rather than to look. What must not happen is
-    that it accumulates INVISIBLY, which is the state this test ends.
+    ~~Reported, not gated at zero: staleness accumulates legitimately between re-records, and
+    failing the suite for it would push someone to re-record rather than to look.~~
+    **[SUPERSEDED 2026-09-11, #2285]** Gated at zero, because the alternative was never built.
+    Measured: with a tolerance of 3, planting 1, 2 or 3 unresolvable killer IDs leaves this test
+    GREEN and emits nothing -- the assertion message is the only channel and it is switched off
+    below the bound. Nothing else reports stale killer node IDs either: no print or warn path in
+    this file, and `report_discrimination.py`'s staleness line is about suite SIZE, a different
+    quantity (control: the same grep finds `killed_by` in 6 files). So a non-zero tolerance did not
+    trade a red for a report; it traded a red for silence, which is the INVISIBLE accumulation the
+    paragraph above says must not happen.
+
+    The cost argument was wrong too. A red does not force a 67-minute re-record: the message below
+    says "this bound needs moving WITH a note saying why", which is a one-line bump. Re-recording is
+    one of two options it offers, not the price of the red.
 
     MUTATION-VERIFIED in process: pretending the largest killer file is deleted takes the stale count
     3 -> 64, well past the bound. The first mutant tried moved it 3 -> 3 and looked like a dead
@@ -164,18 +178,16 @@ def test_every_killer_node_id_still_resolves(td):
     assert len(matrix) > 100, f"killmatrix collapsed to {len(matrix)} entries; the check is inert"
     assert tests_root.is_dir(), "tests/ not found from the baseline's location; the walk is wrong"
 
-    #: HEADROOM for drift between re-records, not a record of specific entries. #2285 re-recorded the
-    #: matrix at `2c923694`, so the three #2176 entries are gone and the measured stale count is **0
-    #: today** -- main's matrix has exactly those three against this tree, the new one has none.
+    #: 0, and there is no tolerance to tune. #2285 re-recorded the matrix at `2c923694`, so the three
+    #: #2176 entries are gone and the measured count is 0 -- main's matrix has exactly those three
+    #: against this tree, the new one none. A non-zero bound denoted three specific entries; once
+    #: they went it denoted nothing, and it was kept at 3 only because it had been 3.
     #:
-    #: Deliberately NOT tightened to 0. See "Reported, not gated at zero" above: staleness
-    #: accumulates legitimately between re-records, and a red here pushes the reader toward a
-    #: 67-minute re-record instead of a look. A first attempt at this change set it to 0 on the
-    #: argument that 3 was "silent tolerance"; that argument is against the design this file already
-    #: states, and setting it to 0 while leaving that paragraph standing left one assertion with two
-    #: contradictory specs. What must not happen is INVISIBLE accumulation, and the failure message
-    #: below prints the offending IDs.
-    known = 3
+    #: This constant was the blocker in two consecutive review rounds and the loop below it in
+    #: none. Setting it to 0 removes the only tunable thing here, which is the point: see the
+    #: superseded paragraph above for the measurement that says a tolerance buys silence rather
+    #: than a report.
+    known = 0
     assert len(stale) <= known, (
         f"{len(stale)} killer node IDs no longer resolve, above the {known} recorded in #2176: "
         f"{stale[:8]}. Either a deletion took a killer -- check before merging it -- or the "

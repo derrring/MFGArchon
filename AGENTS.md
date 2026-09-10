@@ -122,7 +122,13 @@ unauditable; adding to it casually is how it got there.
 **A new test must be one of these, and the PR says which:**
 
 1. **It kills a mutation.** `scripts/discrimination_killmatrix.json` maps node ID → mutations killed:
-   read it. Re-running the sweep is not the price of admission — so re-measure only when adding a
+   read it. **The matrix is evidence FOR keeping a test; its complement is not a delete-list.** A
+   sweep validates this ground and only this one, while a test earns its place on any of the four
+   here — so the zero-killer set is full of classes 2–4 that are invisible to it. Measured at
+   `2c923694` (#2285): 92 zero-killer files holding 1,511 tests, among them 463 named defect pins
+   and every ratchet guard in `scripts/`; the largest is `tests/unit/test_utils/test_convergence.py`
+   at 66, and `test_discrimination_ratchet.py` at 60 is a zero-killer *by construction* because the
+   sweep excludes it. Deleting on a zero count is the error #1715 and #1901 already record. Re-running the sweep is not the price of admission — so re-measure only when adding a
    mutation. It leaves mutations in the tree when killed (#1849, #2229), and it is **expensive**:
    ~~about 26 min~~ **67 min**, derived from the run's own record rather than estimated —
    `baseline_seconds` 198.2 plus 3814.6s over 24 mutations (min 105, median 141, max 344) in the
@@ -161,13 +167,16 @@ unauditable; adding to it casually is how it got there.
    automatic, and a worktree `git status` cannot see:
 
    ```bash
-   cp /tmp/wt-discrim/scripts/discrimination_{killmatrix,baseline}.json scripts/ \
+   cp /tmp/wt-discrim/scripts/discrimination_killmatrix.json scripts/ \
+     && cp /tmp/wt-discrim/scripts/discrimination_baseline.json scripts/ \
      && git worktree remove --force /tmp/wt-discrim && git worktree prune
    ```
 
-   The `&&` is load-bearing: `--force` deletes the only copy of a 67-minute measurement, and on a
-   shell without brace expansion the `cp` fails while the delete still runs. The `cp` also clobbers
-   silently — which is the hazard the next paragraph warns about, so check `git status` after it
+   `--force` is **required**, not a convenience: the sweep leaves mutations in the tree when killed,
+   so the worktree is dirty by construction and plain `git worktree remove` refuses it every time
+   (measured, git 2.54.0: *"contains modified or untracked files, use --force to delete it"*). The
+   `&&` chain is what makes that safe — `--force` deletes the only copy of a 67-minute measurement,
+   so a failed `cp` must not reach it. The `cp` clobbers silently, so check `git status` afterwards
    rather than assuming you were the only writer.
 
    And **do not let two sessions write these files**: they are one artifact pair recorded by one run,
