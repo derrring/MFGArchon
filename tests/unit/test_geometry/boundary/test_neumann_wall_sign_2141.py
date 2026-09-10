@@ -6,10 +6,19 @@ at a different point: `bc_applicator = FDMApplicator(...)` for the ghost-cell wo
 Handed the same `neumann_bc(value=g)`, they do two different wrong things:
 
     FDMApplicator             imposes du/dn = -g at the LEFT wall and +g at the right
-    InterpolationApplicator   imposes du/dn = 0 at both walls, whatever g is
+    InterpolationApplicator   ignores g entirely: g=0 and g=0.7 are BIT-IDENTICAL
 
 The first is a sign error on one wall, the second is the value being dropped -- the same defect
 #2294 records for the FEM natural-BC arm, in a second place.
+
+Do not read the second row as "it imposes du/dn = 0". It does not, and the file's own xfail cell
+prints the contradicting number. `InterpolationApplicator` defaults to `extrapolation_order=2`, so
+the Neumann path takes `enforce_neumann_value_nd`'s zero-flux branch, `u[0] = (4*u[1] - u[2])/3` --
+a vanishing SECOND derivative, not a vanishing normal one. What it actually imposes therefore depends
+on the field: measured, -0.100000 / +0.566667 on this file's `quadratic`, -1.0 / +1.0 on a linear
+ramp, and 0 only on a constant. The invariant that IS true of every field, and the one the test
+asserts, is that the result does not depend on `g` at all. Getting this wrong points whoever retires
+#2141 at the wrong target -- "make it impose du/dn = 0" is not the fix.
 
 MEASURED AT THE APPLICATOR, NOT THROUGH A SOLVE, and that is the point of this file. Driving it
 through `HJBSemiLagrangianSolver` reproduces `du/dn = -0.7` at N = 11 and then drifts with

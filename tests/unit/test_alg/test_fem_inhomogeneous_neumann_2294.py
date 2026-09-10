@@ -1,11 +1,16 @@
 """Both FEM solvers declare `honors_inhomogeneous_neumann` and drop the flux value. #2294
 
-RECORDED DEFECT, not a contract. `bc_adapter._apply_bc_to_system` has one arm for the natural-BC
+RECORDED DEFECT, not a contract. `bc_adapter.apply_bc_to_fem_system` has one arm for the natural-BC
 family — `BCType.NEUMANN`, `NO_FLUX`, `REFLECTING` — whose body is a bare `pass` under the comment
 "Natural BC — no action needed in weak form". That is true for a HOMOGENEOUS Neumann condition and
 false for an inhomogeneous one: `beta * du/dn = g` with `g != 0` contributes a boundary load
-`(D/beta) * int_dOmega g phi_i` to the weak form, which nothing assembles. The `ROBIN` arm
-immediately below it assembles exactly that term.
+`(D/beta) * int_dOmega g phi_i` to the weak form, which nothing assembles.
+
+The `ROBIN` arm immediately below it is ALSO a bare `pass`, and saying otherwise sends a reader to
+the wrong place. Robin is an operator augmentation rather than a condensation, so its boundary mass
+and load are built by `bc_adapter.assemble_robin_terms` and folded in upstream through the solvers'
+`_robin_operator_terms` hook. That function — not either arm — is where the natural-BC load has to be
+routed, and it is the line the retirement below actually changes.
 
 So `g` is accepted, stored on the segment, carried to the adapter, and discarded — while both
 solvers report `honors_inhomogeneous_neumann = True`. Neither declares it; both inherit `True` from
