@@ -66,6 +66,9 @@ EXIT_INSTRUMENT_BROKEN = 2
 _ERROR_LINE = re.compile(r"^(?P<path>[^:]+):\d+:(?:\d+:)? error:")
 _CHECKED = re.compile(r"checked (\d+) source file")
 _SUCCESS = re.compile(r"no issues found in (\d+) source file")
+#: mypy counting its OWN findings. Independent of any pattern of ours over its body, which is
+#: what makes it the authority rather than a third opinion -- see `scan()`.
+_FOUND = re.compile(r"Found (\d+) error")
 _NO_FILES = "no .py[i] files in directory"
 
 
@@ -133,15 +136,31 @@ def scan() -> tuple[dict[str, int], int]:
             f"stderr tail: {result.stderr.strip().splitlines()[-3:] if result.stderr.strip() else '(empty)'}"
         )
     counts = attribute(out)
-    # The parser checks itself against a cruder count of the SAME output. A regex that stops
-    # matching mypy's line format returns a small plausible number and nothing says so -- measured:
-    # a pattern missing the optional column matched 23 of 1304 and the baseline would have pinned 23.
+
+    # THREE counts of one run, and they are not three opinions. `attribute()` and the raw substring
+    # count are both OUR patterns over mypy's body, so they share a population and can be wrong
+    # together; `Found N errors` is mypy counting its own findings and is the only one whose
+    # population we did not choose. It is therefore the authority, and the other two are checked
+    # against it.
+    #
+    # Measured while writing this: a pattern missing mypy's optional column attributed 23 of 1304
+    # and would have pinned a baseline blind to the rest. Separately, a peer's census of the same
+    # tree read 924 from a grep over the body with `pretty = true` still on -- the wrapping moves
+    # with COLUMNS -- while their reading of `Found N errors` was correct at the same moment. Same
+    # tool, same invocation, two instruments; only the one with a self-chosen population was wrong.
     raw = sum(1 for line in out.splitlines() if ": error:" in line)
-    if sum(counts.values()) != raw:
+    declared = int(f.group(1)) if (f := _FOUND.search(out)) else (0 if _SUCCESS.search(out) else None)
+    if declared is None:
         raise RuntimeError(
-            f"the error-line parser attributed {sum(counts.values())} of {raw} error lines. "
-            f"mypy's output format has moved and this script's pattern no longer matches it; "
-            f"the difference would otherwise be reported as an improvement."
+            "mypy printed neither 'Found N errors' nor a success line, so it did not report a total "
+            "of its own and there is nothing to check this script's parsing against."
+        )
+    if sum(counts.values()) != declared or raw != declared:
+        raise RuntimeError(
+            f"mypy reports {declared} errors; this script attributed {sum(counts.values())} and a "
+            f"raw substring count of the same output found {raw}. mypy's own total is the authority "
+            f"and this script's pattern no longer matches its output format; the difference would "
+            f"otherwise be reported as an improvement."
         )
     return counts, int(m.group(1))
 
@@ -374,6 +393,10 @@ def _self_test() -> int:
     want = {"alg": 2, "geometry": 1, ROOT_BUCKET: 1}
     if got != want:
         failures.append(f"attribute() parsed {got}, expected {want} -- both mypy line formats must count")
+    if _FOUND.search("Found 4 errors in 4 files (checked 10 source files)") is None:
+        failures.append("_FOUND no longer matches mypy's own total line, so the authority is unreadable")
+    if _FOUND.search("Success: no issues found in 6 source files") is not None:
+        failures.append("_FOUND matches a success line, so a clean run would be read as an error total")
 
     # Drive the caller's return, not just the comparison.
     import tempfile
