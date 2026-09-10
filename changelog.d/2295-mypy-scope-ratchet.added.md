@@ -11,8 +11,8 @@ defaults to 0 reports them clean. Measured while writing this: that reading gave
 where one is clean and four are unmeasured. Every count is therefore stored beside a status, and a
 package that leaves the scan fails the ratchet instead of reporting zero.
 
-The script's own control caught the script's own defect. mypy emits `path:LINE:COLUMN: error:` under
-this repo's `show_column_numbers`, and a pattern written for `path:LINE: error:` matched 23 of 1304
+The script's own control caught the script's own defect. mypy emits `path:LINE:COLUMN: error:` for
+almost every finding, and a pattern written for `path:LINE: error:` matched 23 of 1304
 lines — a small, plausible number that would have pinned a baseline blind to the other 1281. `scan()`
 now cross-checks the parser against a raw substring count of the same output and refuses to report
 when they disagree, and the self-test exercises `attribute()` on both line formats rather than only

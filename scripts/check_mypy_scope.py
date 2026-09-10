@@ -26,13 +26,21 @@ files in directory` are different sentences and this script never conflates them
 
 TWO MEASUREMENT CHOICES, both forced by measurement rather than taste:
 
-- ONE invocation over `mfgarchon`, attributed by path prefix, not fourteen invocations. Measured:
-  one run is ~10 s against ~23 s cold for a single package, and the two agree exactly -- 1304 error
+- ONE invocation over `mfgarchon`, attributed by path prefix, not fourteen invocations. The whole
+  tree costs about what ONE cold package costs -- 31-32 s cold against 22 s for `config` alone, and
+  0.5-0.8 s warm -- so fourteen invocations buy nothing. The two routes agree exactly: 1304 error
   lines whole-package against 1302 summed per-package, the difference being the two `_root` errors
   in files directly under `mfgarchon/` that no `mfgarchon/<pkg>/` prefix matches. That bucket is
   real, it is small, and a naive prefix rule drops it silently, so it is carried explicitly.
-- `--no-pretty`. `pretty = true` in pyproject.toml wraps mypy's messages across lines at a width
-  that moves with COLUMNS, so a line count taken without it is a function of the terminal.
+- `--no-pretty`, for output size and determinism -- NOT because the count would otherwise move with
+  the terminal. That reason was published in an earlier revision of this file and is false: measured
+  at COLUMNS 40/80/100/200/400 under `pretty`, the `": error:"` count is 1304 at every width,
+  because mypy still emits one `path:line:col: error:` header per finding and only the message body
+  wraps. What DOES move with the width is a SPACE-delimited pattern: `" error: "` gives 0, 924,
+  1290, 1304, 1304 across those same widths, because `pretty` indents the diagnostic line. So the
+  hazard belongs to the pattern's anchoring, not to the flag, and this script anchors on the colon.
+  `--no-pretty` is kept because it makes the output 1818 lines instead of 4438-8545 and identical at
+  every width.
 
 Exit 0 clean, 1 the tree moved against the baseline, 2 the instrument could not measure.
 """
@@ -60,9 +68,12 @@ EXIT_OK = 0
 EXIT_MOVED = 1
 EXIT_INSTRUMENT_BROKEN = 2
 
-#: `path:LINE: error:` OR `path:LINE:COL: error:` -- this repo has `show_column_numbers`, and a
-#: pattern without the optional column matched 23 of 1304 lines and dropped the rest in silence.
-#: `scan()` cross-checks this against a raw substring count for exactly that reason.
+#: `path:LINE: error:` OR `path:LINE:COL: error:`. A pattern without the optional column matched
+#: 23 of 1304 lines and dropped the rest in silence, which is why `scan()` cross-checks it.
+#: The 23 are not a rounding of the setting: `show_column_numbers` explains why 1281 lines DO carry
+#: a column, and all 23 that do not are exactly one diagnostic class, `[unused-ignore]`, which has
+#: no column to print however the setting is configured (measured: 23 of 23, and 0 unused-ignore
+#: lines carry a column, against 123 `[assignment]` lines that do).
 _ERROR_LINE = re.compile(r"^(?P<path>[^:]+):\d+:(?:\d+:)? error:")
 _CHECKED = re.compile(r"checked (\d+) source file")
 _SUCCESS = re.compile(r"no issues found in (\d+) source file")
