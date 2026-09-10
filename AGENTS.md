@@ -125,10 +125,23 @@ unauditable; adding to it casually is how it got there.
    read it. **The matrix is evidence FOR keeping a test; its complement is not a delete-list.** A
    sweep validates this ground and only this one, while a test earns its place on any of the four
    here — so the zero-killer set is full of classes 2–4 that are invisible to it. Measured at
-   `2c923694` (#2285): 92 zero-killer files holding 1,511 tests, among them 463 named defect pins
+   `2c923694` (#2285): **91 zero-killer files holding 1,451 tests**, among them 463 named defect pins
    and every ratchet guard in `scripts/`; the largest is `tests/unit/test_utils/test_convergence.py`
-   at 66, and `test_discrimination_ratchet.py` at 60 is a zero-killer *by construction* because the
-   sweep excludes it. Deleting on a zero count is the error #1715 and #1901 already record.
+   at 66. `test_discrimination_ratchet.py` is **not** among them and must be subtracted from any such
+   count — `--ignore={SELF_TESTS}` removes it from every run, because it fails under *every* mutation
+   and would add +1 to every kill count. Deleting on a zero count is the error #1715 and #1901
+   already record.
+
+   **Kill count is a property column, not a criterion** — neither sufficient nor necessary, which is
+   the same shape this repo already found in mass conservation (`feedback_mutation_testing_calibration`;
+   a scheme can conserve to 1e-12 with a decaying wall-gradient ratio, and `FPSLJacobianSolver` is
+   non-conservative by construction and correct). Not sufficient: a test can kill `optimal_control_sign`
+   incidentally while pinning nothing it claims. Not necessary, and this is the direction that is
+   invisible: the 24 mutations are a **fixed, small alphabet**, so a test pinning a 25th convention
+   reads zero however sharp it is. Measured 2026-09-11 —
+   `test_fem_inhomogeneous_neumann_2294.py` and `test_resolver_no_image_contract_2293.py` are both
+   zero-killers here while together killing seven mutations written against their own targets
+   (a dropped `D`, a sum-preserving lump, a wall swap, four of the `natural_bc` machinery).
 
    **And every count is over `tests` under `scripts/ci_markers.txt`, a selection whose complement is
    not merely unmeasured but unmeasurable by this instrument.** pytest counts the excluded set
