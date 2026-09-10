@@ -540,7 +540,7 @@ check $? "workflows parse, declare jobs, and have no dangling needs"
 # purpose: this is the ONE visible place asserting that every instrument is controlled, and if that
 # internal call is ever dropped the coverage would vanish with nothing here to say so.
 step "Ratchet self-tests (the instruments, before their numbers)"
-for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation check_citations check_warnings check_manifests; do
+for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation check_citations check_warnings check_manifests check_mypy_scope; do
   "${PYS[@]}" "scripts/${_selftest}.py" --self-test || { check 1 "ratchet self-tests: ${_selftest} cannot see what it counts"; }
 done
 check 0 "every fast ratchet still detects what it claims to detect"
@@ -601,6 +601,23 @@ check $? "no new site restating a single-owner quantity"
 step "Citation ratchet"
 "${PYS[@]}" scripts/check_citations.py --check-baseline scripts/citation_baseline.json
 check $? "no citation newly entered the review queue, and none left it unrecorded"
+
+# The mypy step above checks mfgarchon/config -- 1 of this package's 14 top-level subpackages,
+# scope copied from ci.yml, which states why (raw mypy pulls 1800+ transitive errors). The other
+# thirteen had no number at all, so nothing said whether they were getting worse. This records one
+# per package and fails in BOTH directions; it does not widen what the gate step gates.
+# Cost, measured in this file's own order rather than estimated: 1.8 s warm. Cold it is 11.3 s ON
+# TOP of the config step's 22.1 s, so the gate's cold mypy cost goes 22 s -> 33 s. An earlier
+# revision of this comment said the step above "pays it anyway" on a fresh checkout; that is false
+# and withdrawn -- config's closure is not the tree's, and 11 s is the number that lands on a new
+# contributor.
+# The half that is not a count: an EXCLUDED package is not scanned by mypy at all, so a census that
+# reads its silence as 0 reports it clean. Measured while writing this -- that reading gave five
+# clean packages where one is clean and four are unmeasured. Status is stored beside every count and
+# a package leaving the scan fails rather than reporting zero.
+step "MyPy scope ratchet (the thirteen subpackages the gate step does not check)"
+"${PYS[@]}" scripts/check_mypy_scope.py --check-baseline scripts/mypy_scope_baseline.json
+check $? "no package's type-error count moved, and none left the scan"
 
 if [[ $FAST -eq 0 ]]; then
   # ~40 s. Not in --fast: every cell is a real coupled solve, so this is the one check

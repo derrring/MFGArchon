@@ -1,0 +1,37 @@
+{
+  "_comment": "Type errors per top-level package (#2295). The gate's own mypy step checks mfgarchon/config only; this records the other thirteen so they cannot get worse unnoticed. Bidirectional: an improvement fails until it is recorded here. `status` is the half that matters -- an EXCLUDED package is not scanned by mypy at all, so its absence from `counts` means 'not measured', never 'clean'. Regenerate with: python scripts/check_mypy_scope.py --write-baseline",
+  "checked_source_files": 274,
+  "toolchain_when_written": {
+    "python": "3.12.13",
+    "mypy": "mypy 2.3.0 (compiled: yes)"
+  },
+  "status": {
+    "alg": "measured",
+    "backends": "excluded",
+    "config": "measured",
+    "core": "measured",
+    "extensions": "measured",
+    "factory": "measured",
+    "geometry": "measured",
+    "hooks": "measured",
+    "meta": "measured",
+    "operators": "measured",
+    "types": "measured",
+    "utils": "excluded",
+    "visualization": "excluded",
+    "workflow": "excluded"
+  },
+  "counts": {
+    "_root": 2,
+    "alg": 784,
+    "config": 0,
+    "core": 136,
+    "extensions": 4,
+    "factory": 3,
+    "geometry": 335,
+    "hooks": 1,
+    "meta": 2,
+    "operators": 35,
+    "types": 2
+  }
+}
