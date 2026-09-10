@@ -1,30 +1,46 @@
-"""An inhomogeneous Neumann wall contributes its boundary load to both FEM solvers. #2294
+"""An inhomogeneous Neumann wall reaches the HJB weak form, and the FP weak form refuses it. #2294
 
 `du/dn = g` with `g != 0` owes the weak form a boundary load `D * int_dOmega g phi_i`. It is an
 operator augmentation, not a condensation, so it is assembled by `bc_adapter.assemble_robin_terms`
-and folded into `M/dt + D*K` through the solvers' `_robin_operator_terms` hook — the arms in
-`apply_bc_to_fem_system` are correctly bare `pass`, since there is nothing there to condense.
+and folded into `M/dt + D*K` through `_robin_operator_terms`.
 
-WAS A RECORDED DEFECT PIN (#2294), retired 2026-09-10 by its own stated condition. The natural-BC
-family had no assembly at all: `g` was accepted, stored on the segment, carried to the adapter and
-discarded, while both solvers reported `honors_inhomogeneous_neumann = True` — inherited from
-`BaseMFGSolver` and declared on neither, which is why the capability census could not see it
-(#1975). `NEUMANN(g=0)` and `NEUMANN(g=5)` gave bit-identical fields. Routing the natural-BC load
-through `assemble_robin_terms` moved both solvers by `6.185279e-01`, the exact figure this file
-recorded as the ROBIN-vs-NEUMANN gap before the fix, so the term now assembled is the term that was
-missing.
+THE TWO HALVES ARE NOT THE SAME CONDITION, and this file exists as much for that as for the load.
 
-WHY THE TWO-SPELLINGS COMPARISON IS NO LONGER THE ORACLE. It was, while the fork was open: `NEUMANN`
-went one way and `ROBIN(alpha=0, beta=1, g)` another. The fix routes both through one owner, and
-agreement between two spellings of one call is then close to tautological — it would pass over a
-broken owner, and the better the consolidation the less it proves. It is kept below for the one
-thing it still separates (that the synthesized coefficients match a user-spelled Robin) and is
-labelled as that, not as evidence the load is right.
+- **HJB** integrates only `-D*Delta u` by parts; `H` is a mass term, not a divergence. The boundary
+  term it leaves is `-D*du/dn`, so its natural condition constrains the GRADIENT and `NEUMANN(g)` is
+  exactly `ROBIN(alpha=0, beta=1, g)`.
+- **FP** assembles `div(v m)` on the volume basis with no facet term (`_build_advection` returns
+  `-C.T`). The boundary term it leaves is the TOTAL FLUX `J.n = v m - D grad m`. Adding the same
+  load there would impose `J.n = -D*g`, which coincides with `dm/dn = g` only where the drift has no
+  normal component at the wall.
 
-`test_the_boundary_load_matches_the_boundary_measure` is what adjudicates the load now. It is an
-external oracle: by partition of unity `sum_i int_dOmega phi_i = |dOmega_seg|`, so the assembled
-load must sum to `D * g * |dOmega_seg|` with the measure taken from the domain's own bounds. Nothing
-in it is computed by the code under test.
+Measured 2026-09-10, driving `FPFEMSolver` with a wall-crossing drift: at `g=0` mass is conserved to
+`6.7e-15` where `dm/dn = 0` would leak by `-int (a.n) m`, and at `g=5` the injection rate is exactly
+`D*g*|dOmega| = 1.25` and IDENTICAL with and without drift, where the gradient reading would differ
+by `int (a.n) m`. So `FPFEMSolver` now declares `honors_inhomogeneous_neumann = False` and the #1686
+gate refuses the problem before the solve rather than solving a different one.
+
+WAS A RECORDED DEFECT PIN, retired 2026-09-10 by its own stated condition: the natural-BC family had
+no assembly at all, `g` was accepted and discarded, and both solvers claimed
+`honors_inhomogeneous_neumann = True`. Routing the load moved both by `6.185279e-01`, the figure this
+file recorded as the ROBIN-vs-NEUMANN gap.
+
+WHY THE TWO-SPELLINGS COMPARISON IS NOT THE ORACLE. It was, while the fork was open. Once both
+spellings route through one owner, agreement is close to tautological -- it would pass over a broken
+owner. `test_the_boundary_load_is_the_partition_of_unity_on_the_named_walls` adjudicates the load
+now: the FEM basis is a partition of unity, so on a wall of uniform facet length `h` the load is
+`D*g*h` at interior wall nodes and half that at the two end nodes, summing to `D*g*|dOmega_seg|` --
+every number taken from the domain's own bounds, none from the code under test.
+
+It pins the load's SUPPORT, its DISTRIBUTION and its TOTAL, because an adversarial review found that
+pinning the total alone let three mutations through: a sum-preserving uniform lump, moving the load
+to the opposite pair of equal-measure walls, and flipping the sign where the solver consumes it. The
+first two are killed here, measured. The third is not, and cannot be: this file stops at
+`_robin_operator_terms`, which returns the assembled terms and says nothing about how a solver adds
+them. The sign at the point of consumption is pinned by `test_fem_robin_bc.py::TestRobinSolveLoopWiring`
+-- `test_hjb_linear_loop_fixed_point` and `test_hjb_newton_loop_fixed_point` both go red when the two
+HJB fold-in sites are negated, and `test_fp_forward_loop_fixed_point` covers the FP side. Named rather
+than duplicated.
 """
 
 from __future__ import annotations
@@ -43,10 +59,16 @@ from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
 
 _G = 5.0
 
-#: The domain is the unit square and the two segments below sit on `x_min` and `x_max`, so the
-#: measure the load integrates over is 1 + 1. Taken from the bounds passed to `Mesh2D`, never from
-#: the mesh or the assembly — that is what keeps the oracle external.
-_BOUNDARY_MEASURE = 2.0
+#: The domain is the unit square and the two segments sit on `x_min` and `x_max`, so the measure the
+#: load integrates over is the sum of their Y-EXTENTS, 1 + 1. Taken from the bounds passed to
+#: `Mesh2D`, never from the mesh or the assembly -- that is what keeps the oracle external. Named for
+#: the y-extent on purpose: changing the y-bounds invalidates it and changing the x-bounds does not.
+_WALL_Y_EXTENT = 1.0
+_BOUNDARY_MEASURE = 2 * _WALL_Y_EXTENT
+
+#: `MeshTri.init_sqsymmetric().refined(2)` puts 8 facets of equal length on each wall.
+_FACETS_PER_WALL = 8
+_H = _WALL_Y_EXTENT / _FACETS_PER_WALL
 
 
 def _problem(segments):
@@ -75,7 +97,7 @@ def _problem(segments):
 
 
 def _segments(kind: str, g: float):
-    """`NEUMANN(g)` and `ROBIN(alpha=0, beta=1, g)` are the same condition, `du/dn = g`."""
+    """`NEUMANN(g)` and `ROBIN(alpha=0, beta=1, g)` are the same condition for the HJB weak form."""
     extra = {"alpha": 0.0, "beta": 1.0} if kind == "robin" else {}
     bc_type = BCType.ROBIN if kind == "robin" else BCType.NEUMANN
     return [
@@ -94,10 +116,12 @@ def _solve(solver_name: str, kind: str, g: float):
     cls = HJBFEMSolver if solver_name == "HJBFEMSolver" else FPFEMSolver
     solver = cls(_problem(_segments(kind, g)), order=1)
     x = solver._disc.dof_coordinates[:, 0]
-    steps = np.zeros((4, x.size))
     if solver_name == "HJBFEMSolver":
         return np.asarray(solver.solve_hjb_system(M_density=np.ones((4, x.size)), U_terminal=np.sin(np.pi * x)))
-    return np.asarray(solver.solve_fp_system(m_initial=1.0 + 0.5 * np.sin(np.pi * x), U_solution_for_drift=steps))
+    # `potential_field` is the drift channel and is the parameter this solver actually has;
+    # an earlier version of this file passed `U_solution_for_drift=`, which `solve_fp_system`
+    # swallows through `**kwargs`, so every FP arm here ran at zero drift (found in review).
+    return np.asarray(solver.solve_fp_system(m_initial=1.0 + 0.5 * np.sin(np.pi * x), potential_field=None))
 
 
 _SOLVERS = ["HJBFEMSolver", "FPFEMSolver"]
@@ -107,11 +131,11 @@ _SOLVERS = ["HJBFEMSolver", "FPFEMSolver"]
 def test_the_solve_is_not_degenerate(solver_name):
     """POSITIVE CONTROL, and the one the obvious version of this file gets wrong.
 
-    Several claims below are a diff coming back as zero, so a solve that returns a constant makes
+    Several claims here are a diff coming back as zero, so a solve that returns a constant makes
     them vacuous. This is not hypothetical: with `U_terminal` left at the components' flat `0.0`,
-    `HJBFEMSolver` returns a field that is identically zero — spread `0.000000e+00`, `0` of `324`
-    DOFs non-zero — and every zero-diff assertion here passes for a reason that has nothing to do
-    with #2294 and kept passing after it was fixed.
+    `HJBFEMSolver` returns a field that is identically zero -- spread `0.000000e+00`, `0` of `324`
+    DOFs non-zero -- and every zero-diff assertion here passes for a reason that has nothing to do
+    with #2294.
 
     An external control on a DIFFERENT condition does not close this. Dirichlet moves the field by
     `5.0` even on that degenerate solve, because it writes boundary DOFs directly rather than
@@ -130,114 +154,149 @@ def test_the_solve_is_not_degenerate(solver_name):
     )
 
 
-@pytest.mark.parametrize("solver_name", _SOLVERS)
-def test_the_boundary_load_matches_the_boundary_measure(solver_name):
-    """THE ORACLE. A law the assembly must reproduce, computed without it.
+def test_the_boundary_load_is_the_partition_of_unity_on_the_named_walls():
+    """THE ORACLE. A law the assembly must reproduce, computed without it. HJB only -- see the FP test.
 
-    The finite-element basis is a partition of unity on the boundary, so `sum_i int_dOmega phi_i`
-    is the measure of the facets integrated over — `_BOUNDARY_MEASURE`, read off the domain bounds.
-    The load `D * (g/beta) * int_dOmega phi_i` must therefore sum to `D * g * |dOmega_seg|` for a
-    Neumann segment, where `beta = 1` by the condition's own definition.
+    The FEM basis is a partition of unity on the boundary, so on a wall of uniform facet length `h`
+    the load `D*g*int phi_i` is `D*g*h` at an interior wall node, half that at each of the two end
+    nodes, and `D*g*|dOmega_seg|` in total. Everything on the right-hand side comes from the domain
+    bounds and the facet count; nothing comes from the code under test.
 
-    What it separates, none of which the two-spellings comparison can: a wrong `D` scaling, a sign
-    error, a `beta` synthesized as anything but 1, a facet set that is not the named wall, and a
-    load assembled twice. It caught the last of those during the fix — an oracle run against a raw
-    `skfem` mesh rather than the solver's reported 4x this figure, because `_find_segment_facets`
-    silently falls back to the whole boundary on an untagged mesh. The solver path tags
-    `x_min/x_max/y_min/y_max` and is unaffected, which is why this test drives the solver's own hook
-    rather than calling the assembler with a hand-built basis.
+    THREE THINGS ARE PINNED, and an adversarial review is why it is three rather than one. Pinning
+    the total alone let a sum-preserving uniform lump through, and let the load move to `y_min`/`y_max`
+    -- an equal-measure pair -- with all twelve tests passing. So:
+
+    * SUPPORT -- non-zero only on DOFs of the named walls (`x = 0` or `x = 1`);
+    * DISTRIBUTION -- exactly two distinct magnitudes, in ratio 2:1;
+    * TOTAL -- `D*g*|dOmega_seg|`.
 
     `alpha = 0` is asserted through the boundary mass: a Neumann condition has no zeroth-order term,
-    so `A_robin` must carry no entries at all.
+    so `A_robin` must carry no entries.
     """
-    cls = HJBFEMSolver if solver_name == "HJBFEMSolver" else FPFEMSolver
-    solver = cls(_problem(_segments("neumann", _G)), order=1)
+    solver = HJBFEMSolver(_problem(_segments("neumann", _G)), order=1)
     D = 0.125
+    A_robin, rhs = solver._robin_operator_terms(D)
 
-    A_robin, rhs_robin = solver._robin_operator_terms(D)
+    assert rhs is not None, f"HJBFEMSolver assembles no boundary load for NEUMANN(g={_G}); that is #2294."
 
-    assert rhs_robin is not None, f"{solver_name} assembles no boundary load for NEUMANN(g={_G}); that is #2294."
-    expected = D * _G * _BOUNDARY_MEASURE
-    assert rhs_robin.sum() == pytest.approx(expected, rel=1e-12), (
-        f"{solver_name}: the NEUMANN(g={_G}) boundary load sums to {rhs_robin.sum():.12f}, and the "
-        f"partition of unity over a boundary of measure {_BOUNDARY_MEASURE} requires "
-        f"D*g*|dOmega| = {expected:.12f}. Ratio {rhs_robin.sum() / expected:.6f}."
+    x = solver._disc.dof_coordinates[:, 0]
+    on_named_walls = np.isclose(x, 0.0) | np.isclose(x, 1.0)
+    loaded = ~np.isclose(rhs, 0.0)
+
+    assert not np.any(loaded & ~on_named_walls), (
+        f"the load is non-zero on {int(np.sum(loaded & ~on_named_walls))} DOF(s) that are not on "
+        f"x_min or x_max. It is being integrated over facets other than the named segments."
+    )
+    assert np.array_equal(loaded, on_named_walls), (
+        f"{int(np.sum(on_named_walls & ~loaded))} DOF(s) on the named walls carry no load; the "
+        f"facet set is a subset of the segments, not the segments."
+    )
+
+    magnitudes = np.sort(np.unique(np.round(rhs[loaded], 12)))
+    assert magnitudes.size == 2, (
+        f"expected exactly two distinct load magnitudes (interior wall node and end node), got "
+        f"{magnitudes.size}: {magnitudes}. A uniform load over the same facets has one."
+    )
+    assert magnitudes[1] == pytest.approx(2 * magnitudes[0], rel=1e-12), (
+        f"the two magnitudes {magnitudes} are not in ratio 2:1. An end node owns half a facet."
+    )
+    assert magnitudes[1] == pytest.approx(D * _G * _H, rel=1e-12), (
+        f"interior wall node carries {magnitudes[1]:.12f}, and the partition of unity over a facet "
+        f"of length {_H} requires D*g*h = {D * _G * _H:.12f}."
+    )
+
+    expected_total = D * _G * _BOUNDARY_MEASURE
+    assert rhs.sum() == pytest.approx(expected_total, rel=1e-12), (
+        f"the load sums to {rhs.sum():.12f}; the partition of unity over a boundary of measure "
+        f"{_BOUNDARY_MEASURE} requires D*g*|dOmega| = {expected_total:.12f}."
     )
     assert A_robin.nnz == 0, (
-        f"{solver_name}: NEUMANN has no zeroth-order term, so its boundary mass must be empty, but "
-        f"A_robin carries {A_robin.nnz} entries. alpha was synthesized as something other than 0."
+        f"NEUMANN has no zeroth-order term, so its boundary mass must be empty, but A_robin carries "
+        f"{A_robin.nnz} entries. alpha was synthesized as something other than 0."
     )
 
 
-@pytest.mark.parametrize("solver_name", _SOLVERS)
-def test_a_homogeneous_neumann_wall_still_assembles_nothing(solver_name):
-    """The regression the fix could have caused, and the reason the g=0 arm returns early.
+def test_the_fp_weak_form_refuses_the_condition_it_cannot_express():
+    """#2294's other half. `FPFEMSolver` must not accept `dm/dn = g`, because it cannot impose it.
 
-    Every solve written before #2294 used a homogeneous natural BC. If the new branch assembled a
-    zero mass and a zero load for those instead of declining, the hook would return matrices where
-    it used to return `(None, None)`, and the caller would add them — arithmetic that is a no-op in
-    exact terms and not guaranteed to be one in floating point. `None` keeps those solves on
-    literally the same code path they were on.
+    `_build_advection` assembles `div(v m)` on the volume basis and returns `-C.T` with no facet
+    term, so this weak form's natural boundary condition is the total flux `J.n`. Adding the HJB
+    load would impose `J.n = -D*g` while the caller wrote `dm/dn = g` -- equal only where the drift
+    has no normal component at the wall, which is exactly the configuration a test is most likely to
+    use and least likely to notice.
+
+    Retirement: if FP ever gains the advection facet term (#1237), it can honour the condition, and
+    then `honors_inhomogeneous_neumann` goes back to True and this test says so by failing.
+    """
+    with pytest.raises((NotImplementedError, ValueError)) as excinfo:
+        FPFEMSolver(_problem(_segments("neumann", _G)), order=1)
+
+    assert not FPFEMSolver.honors_inhomogeneous_neumann, (
+        "FPFEMSolver declares it honours an inhomogeneous Neumann again. If the advection facet "
+        "term now exists, delete this test; if not, the declaration is false and #1686's gate is "
+        "no longer refusing the problem."
+    )
+    assert "NEUMANN" in str(excinfo.value).upper()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [0.0, -0.0, np.float64(0.0), np.float32(0.0), np.int64(0), np.array(0.0)],
+    ids=["float", "neg_zero", "float64", "float32", "int64", "array"],
+)
+@pytest.mark.parametrize("solver_name", _SOLVERS)
+def test_a_homogeneous_neumann_wall_assembles_nothing_whatever_its_dtype(solver_name, value):
+    """The regression the fix could have caused, and an adversarial review did find in a first cut.
+
+    Every solve written before #2294 used a homogeneous natural BC. Two ways to break them: assemble
+    a zero mass and load instead of declining, so the caller adds matrices where it used to add
+    nothing; or decide "is this zero" with `isinstance(g, (int, float))`, which is False for
+    `np.float32(0.0)` and turned a homogeneous wall into a raise. The predicate has one owner,
+    `bc_utils.describe_inhomogeneous_bc_data`, and this asserts the arm uses it.
     """
     cls = HJBFEMSolver if solver_name == "HJBFEMSolver" else FPFEMSolver
     solver = cls(_problem(_segments("neumann", 0.0)), order=1)
+    solver._bc.segments[0].value = value
 
     assert solver._robin_operator_terms(0.125) == (None, None), (
-        f"{solver_name} now assembles a term for a HOMOGENEOUS Neumann wall. It contributes nothing "
-        f"mathematically, so the hook must decline rather than hand back zeros: every pre-#2294 "
-        f"solve used this branch and must stay bit-identical."
+        f"{solver_name} assembles a term for a HOMOGENEOUS Neumann wall valued "
+        f"{value!r} ({type(value).__name__}). It contributes nothing mathematically, so the hook "
+        f"must decline rather than hand back zeros, and it must recognise zero whatever its dtype."
     )
 
 
-@pytest.mark.parametrize("solver_name", _SOLVERS)
-def test_the_two_spellings_agree_when_the_flux_is_zero(solver_name):
-    """`NEUMANN(0)` and `ROBIN(alpha=0, beta=1, 0)` are the same condition and must still agree.
+def test_the_two_spellings_of_one_condition_agree():
+    """CONSISTENCY, not an oracle -- see the module docstring. HJB only.
 
-    They reach the assembler differently after the fix — Neumann declines at `g == 0` while Robin
-    assembles an all-zero mass and load — so this asserts that the two routes are indistinguishable
-    in the result, which is the byte-identity claim the early return above exists to protect.
+    Both spellings route through `assemble_robin_terms`, so this cannot adjudicate whether the load
+    is right. What it still separates is the SYNTHESIS: `NEUMANN` fabricates `(alpha, beta) = (0, 1)`
+    while `ROBIN` reads the pair off the segment, so a synthesis of `beta = -1` or `alpha = 1` shows
+    up here. A review confirmed the scope precisely: mutations confined to the Neumann branch are
+    killed by this test, and the tautology is exactly co-extensive with mutations that move both.
     """
-    neumann = _solve(solver_name, "neumann", 0.0)
-    robin = _solve(solver_name, "robin", 0.0)
-
-    assert np.array_equal(neumann, robin), (
-        f"{solver_name}: NEUMANN(0) and ROBIN(alpha=0, beta=1, 0) are the same condition but differ "
-        f"by {np.max(np.abs(neumann - robin)):.3e}."
-    )
-
-
-@pytest.mark.parametrize("solver_name", _SOLVERS)
-def test_the_two_spellings_of_one_condition_agree(solver_name):
-    """CONSISTENCY, not an oracle — see the module docstring.
-
-    Both spellings now route through `assemble_robin_terms`, so this cannot adjudicate whether the
-    load is right; `test_the_boundary_load_matches_the_boundary_measure` does that. What it still
-    separates is the synthesis: `NEUMANN` fabricates `(alpha, beta) = (0, 1)` while `ROBIN` reads
-    the pair off the segment, so a synthesis of `beta = -1` or `alpha = 1` shows up here as a
-    disagreement between two spellings of one condition.
-    """
-    neumann = _solve(solver_name, "neumann", _G)
-    robin = _solve(solver_name, "robin", _G)
+    neumann = _solve("HJBFEMSolver", "neumann", _G)
+    robin = _solve("HJBFEMSolver", "robin", _G)
 
     assert np.allclose(neumann, robin), (
-        f"{solver_name}: NEUMANN(g={_G}) and ROBIN(alpha=0, beta=1, g={_G}) are the same condition "
-        f"and differ by {np.max(np.abs(neumann - robin)):.6e}."
+        f"HJBFEMSolver: NEUMANN(g={_G}) and ROBIN(alpha=0, beta=1, g={_G}) are the same condition "
+        f"for this weak form and differ by {np.max(np.abs(neumann - robin)):.6e}."
     )
 
 
-@pytest.mark.parametrize("solver_name", _SOLVERS)
-def test_the_declaration_is_now_true(solver_name):
-    """The declaration half. `honors_inhomogeneous_neumann` was `True` while the value was dropped.
+def test_each_solver_declares_the_capability_it_actually_has():
+    """The declaration half, and why no census caught the original defect.
 
-    It is still `True` and still declared on neither solver — inherited from `BaseMFGSolver` — but
-    it is now accurate. The second assertion is kept from the pin: a sweep over own-class attributes
-    sees nothing to check here, which is the blindness #1975 records, so if either solver ever
-    declares the flag on its own class that is a deliberate act worth reading.
+    `honors_inhomogeneous_neumann` was `True` on both solvers while the value was dropped, and
+    DECLARED on neither -- inherited from `BaseMFGSolver`, so a sweep over own-class attributes saw
+    nothing to check, which is the blindness #1975 records. Now HJB inherits a `True` that is
+    finally accurate and FP declares its own `False`, which is what makes #1686's gate fire.
     """
-    cls = HJBFEMSolver if solver_name == "HJBFEMSolver" else FPFEMSolver
-
-    assert getattr(cls, "honors_inhomogeneous_neumann", None) is True
-    assert "honors_inhomogeneous_neumann" not in vars(cls), (
-        f"{cls.__name__} now declares honors_inhomogeneous_neumann on its own class. If it declares "
-        f"False, an inhomogeneous Neumann has regressed; if True, the census can finally see it."
+    assert HJBFEMSolver.honors_inhomogeneous_neumann is True
+    assert "honors_inhomogeneous_neumann" not in vars(HJBFEMSolver), (
+        "HJBFEMSolver now declares the flag on its own class. If it declares False, an "
+        "inhomogeneous Neumann has regressed; if True, the census can finally see it."
+    )
+    assert vars(FPFEMSolver).get("honors_inhomogeneous_neumann") is False, (
+        "FPFEMSolver must declare False on its OWN class, not inherit True: its natural boundary "
+        "condition is the total flux, so it cannot impose dm/dn = g (#2294)."
     )

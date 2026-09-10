@@ -6,9 +6,15 @@ solvers. Users specify BC via BCSegment; this module translates to skfem operati
 
 Mapping:
     BCType.DIRICHLET → condense() with boundary DOFs and values
-    BCType.NEUMANN   → natural BC. Homogeneous (g=0): no action. Inhomogeneous (g!=0): the
-                       boundary load D*int_dOmega g phi_i, assembled by ``assemble_robin_terms``
-                       as ROBIN(alpha=0, beta=1, g) — the same condition (Issue #2294)
+    BCType.NEUMANN   → natural BC. Homogeneous (g=0): no action, whatever the value's dtype.
+                       Inhomogeneous (g!=0): assemblable ONLY where the weak form's natural
+                       condition constrains the gradient — the HJB side, which integrates just
+                       -D*Delta u by parts. There NEUMANN(g) is ROBIN(alpha=0, beta=1, g) and the
+                       load is D*int_dOmega g phi_i. The FP side integrates div(v m) on the volume
+                       basis with no facet term, so ITS natural condition is the total flux J.n;
+                       the same load would impose J.n = -D*g, a different condition. FP therefore
+                       declares honors_inhomogeneous_neumann = False and #1686's gate refuses it
+                       (Issue #2294)
     BCType.NO_FLUX   → same as NEUMANN (zero normal derivative)
     BCType.ROBIN     → operator augmentation (NOT condensation): a D-scaled FacetBasis boundary
                        mass + load assembled by ``assemble_robin_terms`` and folded into the
@@ -49,8 +55,8 @@ def apply_bc_to_fem_system(
 
     For Dirichlet segments: condense the system (eliminate boundary DOFs).
     For Neumann/no-flux: no condensation (natural BC in weak form). An INHOMOGENEOUS Neumann
-    still owes a boundary load; that is an operator augmentation like Robin, assembled by
-    ``assemble_robin_terms`` and folded in upstream, not applied here (Issue #2294).
+    still owes a boundary load on the HJB side; that is an operator augmentation like Robin,
+    assembled by ``assemble_robin_terms`` and folded in upstream, not applied here (Issue #2294).
     For Robin: no action here — the Robin boundary mass + load are an operator augmentation
     assembled by ``assemble_robin_terms`` and folded into ``M/dt + D*K`` upstream (Robin dofs
     stay free, so they are not condensed). For Periodic: raises ``NotImplementedError``
@@ -262,6 +268,8 @@ def assemble_robin_terms(
     basis: skfem.Basis,
     bc: BoundaryConditions | None,
     D: float,
+    *,
+    natural_bc: str = "flux",
 ) -> tuple[sparse.csr_matrix, NDArray] | tuple[None, None]:
     r"""Assemble the Robin operator augmentation for the weak-form diffusion operator.
 
@@ -280,11 +288,15 @@ def assemble_robin_terms(
 
     Summed over all ``BCType.ROBIN`` segments, each carrying its own ``alpha``, ``beta`` and
     constant ``value`` (``g``), **and over every inhomogeneous** ``BCType.NEUMANN`` **segment**
-    (Issue #2294): ``du/dn = g`` is ``ROBIN(alpha=0, beta=1, g)``, so it contributes the load and
-    no mass. Those coefficients are synthesized, never read off the segment — ``BCSegment``
-    defaults ``alpha=1.0, beta=0.0``, which is the Dirichlet weighting and a different condition.
-    ``NO_FLUX`` and ``REFLECTING`` are excluded: both are homogeneous here, and ``NO_FLUX`` on
-    the FP side is ``J.n = 0``, a Robin condition in ``m`` owned by ``FPResolver``.
+    (Issue #2294) **when the caller passes** ``natural_bc="gradient"``: for a weak form that
+    integrates only ``-D*Delta u`` by parts, ``du/dn = g`` is ``ROBIN(alpha=0, beta=1, g)`` and
+    contributes the load and no mass. Those coefficients are synthesized, never read off the
+    segment — ``BCSegment`` defaults ``alpha=1.0, beta=0.0``, the Dirichlet weighting.
+    ``natural_bc="flux"`` (the default, because it is the restrictive one) **refuses** an
+    inhomogeneous Neumann: a weak form whose boundary term is the total flux ``J.n`` cannot impose
+    ``dm/dn = g``, and assembling the same load there would silently impose ``J.n = -D*g``.
+    ``NO_FLUX`` and ``REFLECTING`` are excluded throughout: both are homogeneous here, and
+    ``NO_FLUX`` on the FP side is ``J.n = 0``, owned by ``FPResolver``.
 
     Returns ``(None, None)`` when nothing contributes — no Robin segments and no Neumann segment
     with ``g != 0`` — so the natural/Dirichlet paths stay byte-unchanged. Callable /
@@ -294,10 +306,39 @@ def assemble_robin_terms(
     if bc is None:
         return None, None
 
+    from types import SimpleNamespace
+
     import skfem
     from skfem import BilinearForm, FacetBasis, LinearForm
 
+    from mfgarchon.geometry.boundary.bc_utils import describe_inhomogeneous_bc_data
     from mfgarchon.geometry.boundary.types import BCType
+
+    def _is_inhomogeneous(*segments, default_bc=None, default_value=None):
+        """Is any of these boundary data NOT verifiably zero?
+
+        Delegated, never re-implemented. ``describe_inhomogeneous_bc_data`` is this
+        repository's single owner for that predicate, and its docstring records why: #1686's
+        hole was a guard reading only ``segments``, and #1802 wrote a second copy and
+        reproduced the same hole 300 lines away. A local ``isinstance(g, (int, float))``
+        would reject ``np.float32(0.0)`` -- a homogeneous wall -- and accept nothing it
+        should. This asks the owner instead, one channel at a time.
+        """
+        return describe_inhomogeneous_bc_data(
+            SimpleNamespace(segments=segments, default_bc=default_bc, default_value=default_value),
+            bc_types={BCType.NEUMANN},
+        )
+
+    # The fall-through channel. This function assembles from `bc.segments`, so an inhomogeneous
+    # Neumann arriving through `default_bc` would be accepted and silently dropped -- exactly
+    # #1686's hole. It cannot be assembled here, so it is refused here.
+    if _is_inhomogeneous(default_bc=getattr(bc, "default_bc", None), default_value=getattr(bc, "default_value", None)):
+        raise NotImplementedError(
+            "Inhomogeneous Neumann data arriving through `default_bc` / `default_value` is not "
+            "assembled by the FEM weak form: this function reads `bc.segments`. Attach the "
+            "condition to a BCSegment instead. Refusing rather than solving with the value "
+            "dropped (Issues #2294, #1686)."
+        )
 
     boundary_segments = [s for s in bc.segments if s.bc_type in (BCType.ROBIN, BCType.NEUMANN)]
     if not boundary_segments:
@@ -320,17 +361,26 @@ def assemble_robin_terms(
 
     contributed = False
     for segment in boundary_segments:
+        if segment.bc_type == BCType.NEUMANN and not _is_inhomogeneous(segment):
+            # Verifiably zero: contributes neither mass nor load. Skipping keeps `(None, None)`
+            # for every homogeneous natural-BC solve, so those stay on the code path they were
+            # on before #2294. The owner -- not `isinstance` -- decides "is this zero", which is
+            # why `np.float32(0.0)`, `np.int64(0)` and an all-zero array remain the no-op they
+            # have always been.
+            continue
+
         kind = "Robin" if segment.bc_type == BCType.ROBIN else "Neumann"
 
         g = getattr(segment, "value", 0.0)
-        if not isinstance(g, (int, float)):
+        try:
+            g = float(g)
+        except (TypeError, ValueError):
             raise NotImplementedError(
                 f"{kind} segment '{segment.name}' has a non-constant value ({type(g).__name__}). "
                 f"Only a constant g is implemented for the FEM {kind} boundary load; callable / "
                 "BCValueProvider data is deferred (Issue #1237). For an adjoint-consistent "
                 "(state-dependent) BC, resolve the provider to a constant before the solve."
-            )
-        g = float(g)
+            ) from None
 
         if segment.bc_type == BCType.NEUMANN:
             # Issue #2294: `du/dn = g` is `ROBIN(alpha=0, beta=1, g)` -- the same mathematical
@@ -341,11 +391,15 @@ def assemble_robin_terms(
             # The coefficients are SYNTHESIZED, never read off the segment: `BCSegment` defaults
             # alpha=1.0, beta=0.0 (the Dirichlet weighting), so a Neumann segment's own alpha/beta
             # describe a different condition entirely and using them would divide by zero.
+            if natural_bc != "gradient":
+                raise NotImplementedError(
+                    f"Inhomogeneous Neumann segment '{segment.name}' (g={g}) on a weak form whose "
+                    "natural boundary condition is the TOTAL FLUX J.n, not the gradient. Adding the "
+                    "load D*int g phi here would impose J.n = -D*g, which equals dm/dn = g only "
+                    "where the drift has no normal component at the wall -- a different condition "
+                    "wearing the same name (Issues #2294, #1237)."
+                )
             alpha, beta = 0.0, 1.0
-            if g == 0.0:
-                # Homogeneous: mass and load are both zero. Skipping keeps `(None, None)` for every
-                # existing natural-BC solve, so those stay byte-identical.
-                continue
         else:
             # Issue #1979: guard alpha and beta the way `g` is guarded above. Without this, a
             # provider-valued coefficient reaches float() and raises a bare builtin TypeError --

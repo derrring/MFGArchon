@@ -179,10 +179,16 @@ class HJBFEMSolver(WeakFormHJBSolver):
         """Robin boundary operator augmentation (Issue #1237): the D-scaled boundary mass
         ``D*(alpha/beta)*int_dOmega phi_i phi_j`` (folded into ``M/dt + D*K``) and load
         ``D*(1/beta)*int_dOmega g phi_i`` (added to each RHS), assembled over the Robin facets
-        via ``skfem.FacetBasis``. ``(None, None)`` when no Robin segment is present."""
+        via ``skfem.FacetBasis``. ``(None, None)`` when no Robin segment is present.
+
+        ``natural_bc="gradient"``: the HJB weak form integrates only ``-D*Delta u`` by parts (H is
+        a mass term, not a divergence), so the boundary term it leaves is ``-D*du/dn`` and its
+        natural condition constrains the GRADIENT. That is what makes ``NEUMANN(g)`` assemblable
+        here as ``ROBIN(alpha=0, beta=1, g)`` -- and it is why ``FPFEMSolver`` cannot do the same
+        (Issue #2294)."""
         from .bc_adapter import assemble_robin_terms
 
-        return assemble_robin_terms(self._basis, self._bc, D)
+        return assemble_robin_terms(self._basis, self._bc, D, natural_bc="gradient")
 
 
 if __name__ == "__main__":

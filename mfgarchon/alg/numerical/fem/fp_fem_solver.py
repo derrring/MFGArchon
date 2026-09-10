@@ -103,6 +103,13 @@ class FPFEMSolver(WeakFormFPSolver):
 
         return apply_bc_to_fem_system(matrix, rhs, self._basis, self._bc)
 
+    #: Issue #2294. This solver's natural boundary condition is the total flux ``J.n = 0``, not
+    #: ``dm/dn = 0``, because ``_build_advection`` never integrates ``div(v m)`` by parts onto the
+    #: facets. So it cannot express ``dm/dn = g`` and must not claim to: declaring this False makes
+    #: ``BaseNumericalSolver._validate_bc_support`` refuse an inhomogeneous Neumann BEFORE the solve,
+    #: through the one owner that reads the ``default_bc`` fall-through as well (#1686).
+    honors_inhomogeneous_neumann = False
+
     def _robin_operator_terms(self, D: float):
         """Robin boundary operator augmentation, adjoint of the HJB term (Issue #1237).
 
@@ -110,10 +117,16 @@ class FPFEMSolver(WeakFormFPSolver):
         from integrating the FP diffusion operator ``-D*Delta m`` by parts, plus the boundary load
         ``D*(1/beta)*int_dOmega g phi_i``. Because the boundary mass is symmetric, this is identical
         to the HJB Robin term, so ``A_FP = A_HJB^T`` is preserved for the diffusion+Robin block.
-        Assembled via ``skfem.FacetBasis``; ``(None, None)`` when no Robin segment is present."""
+        Assembled via ``skfem.FacetBasis``; ``(None, None)`` when no Robin segment is present.
+
+        ``natural_bc="flux"``: ``_build_advection`` assembles ``div(v m)`` on the VOLUME basis with
+        no facet term, so the boundary term this weak form leaves is the TOTAL flux ``J.n``, not
+        ``dm/dn``. An inhomogeneous ``NEUMANN(g)`` is therefore refused rather than assembled --
+        adding ``D*int g phi`` would impose ``J.n = -D*g``, a different condition wearing the same
+        name (Issue #2294)."""
         from .bc_adapter import assemble_robin_terms
 
-        return assemble_robin_terms(self._basis, self._bc, D)
+        return assemble_robin_terms(self._basis, self._bc, D, natural_bc="flux")
 
     # --- advection from drift via exact quadrature-point gradient of U --------
     def _build_advection(self, U_n: NDArray, D: float = 0.0) -> sparse.csr_matrix:
