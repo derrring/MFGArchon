@@ -33,8 +33,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from mfgarchon.utils.mfg_logging import get_logger
-
 if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
@@ -45,8 +43,6 @@ from .conditions import (
 )
 from .providers import is_provider
 from .types import BCSegment, BCType
-
-logger = get_logger(__name__)
 
 # =============================================================================
 # Mathematical BC types (post-resolution, no ambiguity)
@@ -238,17 +234,11 @@ class HJBResolver:
                 original_bc_type=segment.bc_type,
             )
 
-        # Unknown BCType: default to Neumann(0) with warning
-        logger.warning(
-            "HJBResolver: unrecognized BCType %s on segment '%s', defaulting to NEUMANN(g=0)",
-            segment.bc_type,
-            segment.name,
-        )
-        return ResolvedBC(
-            math_type=MathBCType.NEUMANN,
-            value=0.0,
-            segment_name=segment.name,
-            original_bc_type=segment.bc_type,
+        raise ValueError(
+            f"HJBResolver: unrecognized BCType {segment.bc_type} on segment '{segment.name}'. "
+            "It used to log a WARNING and default to NEUMANN(g=0), which is a homogeneous "
+            "reflecting wall imposed on a condition nobody wrote -- well-posed, convergent, and "
+            "indistinguishable at the call site from a resolution that succeeded."
         )
 
 

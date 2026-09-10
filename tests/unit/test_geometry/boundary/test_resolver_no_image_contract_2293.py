@@ -1,26 +1,23 @@
-"""Both resolvers must refuse a BC member they cannot map. One of them returns a default instead.
+"""Both resolvers refuse a BC member they cannot map. One protocol, one failure contract.
 
-RECORDED DEFECT, not a contract (#2293). `HJBResolver` and `FPResolver` live in one file, implement
-one protocol, and disagree on what happens to a member with no image in `MathBCType`: FP raises,
-HJB logs a WARNING and returns `ResolvedBC(NEUMANN, alpha=1, beta=0, g=0)` — a well-formed
-homogeneous Neumann wall the caller cannot distinguish from a real resolution.
+The contract is #1471's, written down there as "total-or-fail-loud (no best-effort collapse)".
+`HJBResolver` and `FPResolver` live in one file and implement one protocol, so they owe the same
+answer to a member with no image in `MathBCType`.
 
-Retirement, DEMONSTRATED rather than asserted (2026-09-10): give `HJBResolver` the raise its
-sibling already has and three of the five tests here fail — the `[HJB]` param reports XPASS(strict),
-and the two that assert the defect fail carrying the instruction that says to delete them. Delete
-them then, and `test_both_resolvers_refuse_a_member_they_cannot_map` becomes the whole file.
+WAS A RECORDED DEFECT PIN (#2293), retired 2026-09-10 by its own stated condition. `HJBResolver`
+logged a WARNING and returned `ResolvedBC(NEUMANN, alpha=1, beta=0, g=0)` — a well-formed
+homogeneous Neumann wall the caller could not distinguish from a real resolution — while `FPResolver`
+raised. Giving HJB the raise turned the `[HJB]` param XPASS(strict) and failed the two tests that
+asserted the defect, each printing the instruction that said to delete it. Both are deleted; this is
+what the file's own docstring said it would become.
 
-A pin whose failure has never been observed is an assertion, not a pin, which is the class this file
-is filed under; the demonstration is what makes it admissible.
-
-Why a pin rather than a fix here: choosing the failure mode is a contract decision (#1471 already
-wrote it down as "total-or-fail-loud"), and #2295 is why nothing caught the divergence — the layer
-is not type-checked and 0 of its 9 functions execute in a 60-configuration census.
+What it defends now: a caller handed a member outside `BCType` gets an exception from either
+resolver, never a wall. The failure mode this rules out is the silent one — a default reflecting
+boundary is well-posed and convergent, so a solve built on it runs to completion and answers a
+question nobody asked.
 """
 
 from __future__ import annotations
-
-import logging
 
 import pytest
 
@@ -44,11 +41,12 @@ def _segment(bc_type):
 
 
 def test_the_state_is_sufficient_for_a_member_that_does_have_an_image():
-    """Positive control for every refusal in this file.
+    """Positive control for the refusal below.
 
     Without it, `FPResolver` raising on `_NO_IMAGE` proves nothing: that resolver also raises when
     `solver_state` lacks `drift`, with a different message, and the two are indistinguishable from a
-    test that only asserts "it raised".
+    test that only asserts "it raised". The same now goes for `HJBResolver`, which is why the
+    control covers both.
     """
     from mfgarchon.geometry.boundary import no_flux_bc
 
@@ -58,86 +56,8 @@ def test_the_state_is_sufficient_for_a_member_that_does_have_an_image():
     assert FPResolver().resolve(segment, _STATE).math_type is MathBCType.ROBIN
 
 
-@pytest.mark.parametrize(
-    "resolver",
-    [
-        # The mark goes on the PARAM, not inside the body. An imperative `pytest.xfail()` aborts
-        # before the assertion runs, so the cell can never report XPASS and the exemption becomes
-        # permanent -- measured under this repository's `xfail_strict = true`, the marker form on a
-        # passing test gives FAILED [XPASS(strict)] and the imperative form gives a silent `xfailed`.
-        # The first draft of this file used the imperative form while its docstring promised the
-        # marker's behaviour, which is the same defect #1948's table carried.
-        pytest.param(
-            HJBResolver(),
-            marks=pytest.mark.xfail(strict=True, reason="#2293: HJBResolver defaults instead of refusing"),
-        ),
-        pytest.param(FPResolver()),
-    ],
-    ids=["HJB", "FP"],
-)
+@pytest.mark.parametrize("resolver", [HJBResolver(), FPResolver()], ids=["HJB", "FP"])
 def test_both_resolvers_refuse_a_member_they_cannot_map(resolver):
     """The contract #1471 already wrote down: "total-or-fail-loud (no best-effort collapse)"."""
-    with pytest.raises((ValueError, NotImplementedError, TypeError)):
+    with pytest.raises((ValueError, NotImplementedError, TypeError), match="unrecognized"):
         resolver.resolve(_segment(_NO_IMAGE), _STATE)
-
-
-def test_the_hjb_resolver_still_returns_a_default_instead_of_refusing(caplog):
-    """RECORDED DEFECT (#2293). This asserts the WRONG behaviour on purpose.
-
-    Fixing #2293 trips it, and the message below is the instruction. It pins three things a partial
-    fix could each leave in place: that a value comes back at all, that the value is the homogeneous
-    Neumann wall specifically, and that the original member survives on the returned object — the
-    last being the only thing that lets a consumer notice after the fact.
-
-    The `except` is not defensive. The fix makes `resolve` RAISE, so an `assert resolved is not
-    None` below it never evaluates and the test dies on the traceback instead — measured 2026-09-10
-    by applying the fix: this test failed with a bare `ValueError` and the instruction it exists to
-    deliver was never printed. Same shape as the imperative-`pytest.xfail` trap this file already
-    records: a check placed where the surrounding mechanism swallows it.
-    """
-    try:
-        with caplog.at_level(logging.WARNING, logger="mfgarchon.geometry.boundary.resolution"):
-            resolved = HJBResolver().resolve(_segment(_NO_IMAGE), _STATE)
-    except (ValueError, NotImplementedError, TypeError) as exc:
-        pytest.fail(
-            "HJBResolver now REFUSES an unmappable member instead of defaulting to a wall. That is "
-            "the #2293 fix: delete this test, and remove the xfail from "
-            f"test_both_resolvers_refuse_a_member_they_cannot_map.\n  it raised: {type(exc).__name__}: {exc}"
-        )
-
-    assert resolved is not None, (
-        "HJBResolver returned None rather than a ResolvedBC. That is neither the recorded defect "
-        "nor the #2293 fix; resolve now has a third behaviour and this file describes none of it."
-    )
-    assert resolved.math_type is MathBCType.NEUMANN
-    assert (resolved.value, resolved.alpha, resolved.beta) == (0.0, 1.0, 0.0)
-    assert resolved.original_bc_type is _NO_IMAGE
-
-    assert caplog.records, "the default is now silent as well as wrong; #2293 got worse rather than fixed"
-
-
-def test_the_two_resolvers_disagree_and_that_is_the_defect():
-    """The pair, asserted together, because neither half alone shows the contract is not shared.
-
-    A reader who sees only the FP raise concludes the contract is fail-loud; a reader who sees only
-    the HJB default concludes it is best-effort. The file states which it is by asserting both on
-    one input.
-    """
-    segment = _segment(_NO_IMAGE)
-
-    # Same reason as the `except` above: once HJB refuses, this call raises and the instruction
-    # below it becomes unreachable. Measured under the fix before it was written this way.
-    try:
-        hjb_returned = HJBResolver().resolve(segment, _STATE)
-    except (ValueError, NotImplementedError, TypeError) as exc:
-        pytest.fail(
-            "both resolvers now refuse, so the contract is shared and #2293 is fixed. Delete this "
-            f"test.\n  HJBResolver raised: {type(exc).__name__}: {exc}"
-        )
-
-    with pytest.raises(ValueError, match="unrecognized"):
-        FPResolver().resolve(segment, _STATE)
-
-    assert hjb_returned is not None, (
-        "HJBResolver returned None rather than the recorded default wall; #2293 has changed shape."
-    )

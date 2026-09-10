@@ -173,6 +173,13 @@ def test_the_permissive_default_is_claimed_by_inheritance():
         (own.add(names[0]) if owner == names[0] else inherited.setdefault(owner, set()).add(names[0]))
     assert own == {
         "FPFDMSolver",
+        # Issue #2294: FPFEMSolver declares it False. `_build_advection` assembles div(v m) on the
+        # volume basis with no facet term, so this weak form's natural condition is the total flux
+        # J.n, not dm/dn -- the same distinction `_run` below is the external oracle for. It moved
+        # from inherited to own, which is the direction #1975 exists to encourage: an inherited
+        # default is invisible to a census, and this one was inherited True while the value was
+        # being dropped.
+        "FPFEMSolver",
         "FPFVMSolver",
         "FPGFDMSolver",
         "FPParticleSolver",
