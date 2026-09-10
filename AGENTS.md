@@ -131,14 +131,21 @@ unauditable; adding to it casually is how it got there.
    sweep excludes it. Deleting on a zero count is the error #1715 and #1901 already record.
 
    **And every count is over `tests` under `scripts/ci_markers.txt`, a selection whose complement is
-   not merely unmeasured but unmeasurable by this instrument.** The excluded set is 108-158 test
-   functions, 2.8-4.1% of the selection, disproportionately the oracles —
-   `test_weak_form_source_mms_2020.py`, `tests/validation/test_duality_convergence.py`,
-   `test_mass_conservation_1d.py` — because value correlates with runtime, runtime with `slow`, and
-   `slow` with exclusion. Measured 2026-09-11: one run over 28 of those files did not finish in
-   3600 s, against 160.5 s per run for the whole filtered suite — **>= 22x, so a 24-mutation sweep
-   over them is >= 25 hours.** So `kill_count: 2` means two defenders *in that selection*, and the
-   marker filter is not a knob that could be widened. Re-running the sweep is not the price of admission — so re-measure only when adding a
+   not merely unmeasured but unmeasurable by this instrument.** pytest counts the excluded set
+   itself: `3822/4030 tests collected (208 deselected)` at `2c923694` — **208 tests, 5.2%**, spread
+   over 42 files and disproportionately the oracles (`test_weak_form_source_mms_2020.py`,
+   `tests/validation/test_duality_convergence.py`, `test_mass_conservation_1d.py`), because value
+   correlates with runtime, runtime with `slow`, and `slow` with exclusion.
+
+   Measured 2026-09-11: one run over 28 of those 42 files did not finish in 3600 s, against 160.5 s
+   per run for the whole filtered suite — **>= 22x, so a 24-mutation sweep over them is >= 25
+   hours.** That ratio is per RUN and is a lower bound twice over: the run was truncated, and it
+   covered two thirds of the excluded files. A per-TEST figure is NOT derivable from it — the 3600 s
+   covers 28 files while 208 is the count over all 42, which is the two-denominators error this very
+   paragraph exists to prevent.
+
+   So `kill_count: 2` means two defenders *in that selection*, and the marker filter is not a knob
+   that could be widened. Re-running the sweep is not the price of admission — so re-measure only when adding a
    mutation. It leaves mutations in the tree when killed (#1849, #2229), and it is **expensive**:
    ~~about 26 min~~ **67 min**, derived from the run's own record rather than estimated —
    `baseline_seconds` 198.2 plus 3814.6s over 24 mutations (min 105, median 141, max 344) in the
