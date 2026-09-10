@@ -164,13 +164,18 @@ def test_every_killer_node_id_still_resolves(td):
     assert len(matrix) > 100, f"killmatrix collapsed to {len(matrix)} entries; the check is inert"
     assert tests_root.is_dir(), "tests/ not found from the baseline's location; the walk is wrong"
 
-    #: 0 since #2285 re-recorded the matrix at `2c923694`. The three #2176 entries -- a class rename
-    #: in test_fp_particle_solver.py from #2181/#2185 -- are simply absent from the new killed_by,
-    #: measured: main's matrix has exactly those 3 stale against this tree, the new one has none.
-    #: Leaving the bound at 3 would have left three slots of SILENT tolerance on the one guard whose
-    #: docstring says staleness must not accumulate invisibly, which is the same rule this file's
-    #: kill counts already obey -- a change that removes staleness records it in the same change.
-    known = 0
+    #: HEADROOM for drift between re-records, not a record of specific entries. #2285 re-recorded the
+    #: matrix at `2c923694`, so the three #2176 entries are gone and the measured stale count is **0
+    #: today** -- main's matrix has exactly those three against this tree, the new one has none.
+    #:
+    #: Deliberately NOT tightened to 0. See "Reported, not gated at zero" above: staleness
+    #: accumulates legitimately between re-records, and a red here pushes the reader toward a
+    #: 67-minute re-record instead of a look. A first attempt at this change set it to 0 on the
+    #: argument that 3 was "silent tolerance"; that argument is against the design this file already
+    #: states, and setting it to 0 while leaving that paragraph standing left one assertion with two
+    #: contradictory specs. What must not happen is INVISIBLE accumulation, and the failure message
+    #: below prints the offending IDs.
+    known = 3
     assert len(stale) <= known, (
         f"{len(stale)} killer node IDs no longer resolve, above the {known} recorded in #2176: "
         f"{stale[:8]}. Either a deletion took a killer -- check before merging it -- or the "

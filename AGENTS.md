@@ -138,9 +138,12 @@ unauditable; adding to it casually is how it got there.
    run that leaves the *original* module imported gives all-zero kills that read as "nothing
    discriminates". Both `.venv` and `mfg_env` editable-install `mfgarchon` to the main checkout, so
    that is the tree an import can fall back to. **Measured, and weaker than it sounds:** setuptools
-   *appends* `_EditableFinder` to `sys.meta_path`, after `PathFinder` — so a `cd <worktree>` alone
-   already resolves `mfgarchon` to the worktree with no `PYTHONPATH` at all. Bind it anyway; it is
-   one token, it does not depend on cwd surviving whatever the script does, and the script's own
+   *appends* `_EditableFinder` to `sys.meta_path`, after `PathFinder` — so under `-c` and `-m`, which
+   both put cwd on `sys.path`, a `cd <worktree>` alone already resolves `mfgarchon` to the worktree
+   with no `PYTHONPATH`. **Not under script form**: `python scripts/foo.py` puts the *script's*
+   directory on `sys.path[0]` and never cwd, and the import then falls through to the editable
+   install — measured, it resolves to the main checkout. Bind `PYTHONPATH` because of that asymmetry,
+   not as a belt-and-braces token, and because the script's own
    `_assert_import_is_the_mutated_tree` (`test_discrimination.py:502`) then *confirms* the tree
    rather than you assuming it. The recipe:
 
@@ -158,9 +161,14 @@ unauditable; adding to it casually is how it got there.
    automatic, and a worktree `git status` cannot see:
 
    ```bash
-   cp /tmp/wt-discrim/scripts/discrimination_{killmatrix,baseline}.json scripts/
-   git worktree remove --force /tmp/wt-discrim && git worktree prune
+   cp /tmp/wt-discrim/scripts/discrimination_{killmatrix,baseline}.json scripts/ \
+     && git worktree remove --force /tmp/wt-discrim && git worktree prune
    ```
+
+   The `&&` is load-bearing: `--force` deletes the only copy of a 67-minute measurement, and on a
+   shell without brace expansion the `cp` fails while the delete still runs. The `cp` also clobbers
+   silently — which is the hazard the next paragraph warns about, so check `git status` after it
+   rather than assuming you were the only writer.
 
    And **do not let two sessions write these files**: they are one artifact pair recorded by one run,
    `git status` shows no sign of another checkout mid-sweep, and the second writer silently wins.
