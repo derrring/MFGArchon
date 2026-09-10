@@ -294,7 +294,10 @@ def assemble_robin_terms(
     segment — ``BCSegment`` defaults ``alpha=1.0, beta=0.0``, the Dirichlet weighting.
     ``natural_bc="flux"`` (the default, because it is the restrictive one) **refuses** an
     inhomogeneous Neumann: a weak form whose boundary term is the total flux ``J.n`` cannot impose
-    ``dm/dn = g``, and assembling the same load there would silently impose ``J.n = -D*g``.
+    ``dm/dn = g``, and assembling the same load there would silently impose ``J.n = -D*g``. Note the
+    scope: that refusal is keyed on the ``NEUMANN`` **spelling**. ``ROBIN(alpha=0, beta=1, g)`` is
+    the same condition and is still assembled under ``"flux"``, which is pre-existing behaviour with
+    its own tests and its own #1237 disclosure -- not something this parameter closes.
     ``NO_FLUX`` and ``REFLECTING`` are excluded throughout: both are homogeneous here, and
     ``NO_FLUX`` on the FP side is ``J.n = 0``, owned by ``FPResolver``.
 
@@ -329,16 +332,31 @@ def assemble_robin_terms(
             bc_types={BCType.NEUMANN},
         )
 
-    # The fall-through channel. This function assembles from `bc.segments`, so an inhomogeneous
-    # Neumann arriving through `default_bc` would be accepted and silently dropped -- exactly
-    # #1686's hole. It cannot be assembled here, so it is refused here.
+    # The fall-through channel. `default_bc` applies to whatever boundary the segments do NOT
+    # cover, and this function assembles from segments alone, so data reaching only that way would
+    # be silently dropped -- #1686's hole. What must NOT happen is refusing a caller whose segments
+    # already carry the condition: every `*_bc()` factory sets both channels in lockstep
+    # (`neumann_bc(5.0)` yields one segment AND `default_bc=NEUMANN, default_value=5.0`), so a guard
+    # reading the default alone rejects the library's own public API. Measured: it did, and no test
+    # saw it, because the tests build `BoundaryConditions(segments=...)` directly and leave
+    # `default_bc` None -- the one shape that bypasses such a guard.
+    #
+    # So the question is coverage, and it is computed rather than assumed: union the segments' own
+    # facets and compare against the mesh boundary. Nothing uncovered -> the default is inert.
+    mesh = basis.mesh
     if _is_inhomogeneous(default_bc=getattr(bc, "default_bc", None), default_value=getattr(bc, "default_value", None)):
-        raise NotImplementedError(
-            "Inhomogeneous Neumann data arriving through `default_bc` / `default_value` is not "
-            "assembled by the FEM weak form: this function reads `bc.segments`. Attach the "
-            "condition to a BCSegment instead. Refusing rather than solving with the value "
-            "dropped (Issues #2294, #1686)."
-        )
+        covered = set()
+        for seg in bc.segments or ():
+            covered.update(np.asarray(_find_segment_facets(mesh, seg)).tolist())
+        uncovered = set(np.asarray(mesh.boundary_facets()).tolist()) - covered
+        if uncovered:
+            raise NotImplementedError(
+                f"Inhomogeneous Neumann data arrives through `default_bc` / `default_value` and "
+                f"{len(uncovered)} of {len(set(np.asarray(mesh.boundary_facets()).tolist()))} boundary "
+                "facets are covered by no BCSegment, so that data reaches no assembly: this function "
+                "builds the boundary load from `bc.segments`. Give the uncovered boundary its own "
+                "BCSegment. Refusing rather than solving with the value dropped (Issues #2294, #1686)."
+            )
 
     boundary_segments = [s for s in bc.segments if s.bc_type in (BCType.ROBIN, BCType.NEUMANN)]
     if not boundary_segments:
@@ -373,6 +391,13 @@ def assemble_robin_terms(
 
         g = getattr(segment, "value", 0.0)
         try:
+            # `str` is excluded deliberately: `float("5")` succeeds, so a bare `float()` would
+            # ACCEPT a string boundary datum that the previous `isinstance(g, (int, float))` guard
+            # refused. Widening a guard while fixing a different one is how a fix ships a second
+            # defect; the widening that IS wanted here is numeric dtypes (np.float32, np.int64,
+            # a 0-d array), which `float()` handles and `isinstance` did not.
+            if isinstance(g, str):
+                raise TypeError(f"boundary value is a string: {g!r}")
             g = float(g)
         except (TypeError, ValueError):
             raise NotImplementedError(

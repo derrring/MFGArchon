@@ -123,7 +123,13 @@ class FPFEMSolver(WeakFormFPSolver):
         no facet term, so the boundary term this weak form leaves is the TOTAL flux ``J.n``, not
         ``dm/dn``. An inhomogeneous ``NEUMANN(g)`` is therefore refused rather than assembled --
         adding ``D*int g phi`` would impose ``J.n = -D*g``, a different condition wearing the same
-        name (Issue #2294)."""
+        name (Issue #2294).
+
+        **The refusal covers that SPELLING, not the condition.** ``ROBIN(alpha=0, beta=1, g)`` is the
+        same condition and still assembles here, producing a load vector bit-identical to the one
+        refused (measured, ``max|diff| = 0.0``). The Robin path predates #2294 and the total-flux
+        character of an inhomogeneous Robin is already declared out of scope by
+        ``weak_form_fp_solver``'s own note (#1237); it is filed rather than widened here."""
         from .bc_adapter import assemble_robin_terms
 
         return assemble_robin_terms(self._basis, self._bc, D, natural_bc="flux")

@@ -12,7 +12,9 @@ THE TWO HALVES ARE NOT THE SAME CONDITION, and this file exists as much for that
 - **FP** assembles `div(v m)` on the volume basis with no facet term (`_build_advection` returns
   `-C.T`). The boundary term it leaves is the TOTAL FLUX `J.n = v m - D grad m`. Adding the same
   load there would impose `J.n = -D*g`, which coincides with `dm/dn = g` only where the drift has no
-  normal component at the wall.
+  normal component at the wall. The refusal is keyed on the SPELLING: `ROBIN(alpha=0, beta=1, g)`
+  still assembles on the FP side and gives a load bit-identical to the refused one. Pre-existing,
+  disclosed under #1237, filed rather than widened here.
 
 Measured 2026-09-10, driving `FPFEMSolver` with a wall-crossing drift: at `g=0` mass is conserved to
 `6.7e-15` where `dm/dn = 0` would leak by `-int (a.n) m`, and at `g=5` the injection rate is exactly
@@ -118,10 +120,15 @@ def _solve(solver_name: str, kind: str, g: float):
     x = solver._disc.dof_coordinates[:, 0]
     if solver_name == "HJBFEMSolver":
         return np.asarray(solver.solve_hjb_system(M_density=np.ones((4, x.size)), U_terminal=np.sin(np.pi * x)))
-    # `potential_field` is the drift channel and is the parameter this solver actually has;
-    # an earlier version of this file passed `U_solution_for_drift=`, which `solve_fp_system`
-    # swallows through `**kwargs`, so every FP arm here ran at zero drift (found in review).
-    return np.asarray(solver.solve_fp_system(m_initial=1.0 + 0.5 * np.sin(np.pi * x), potential_field=None))
+    # `potential_field` is the drift channel and is the parameter this solver actually has. An
+    # earlier version passed `U_solution_for_drift=`, which `solve_fp_system` swallows through
+    # `**kwargs`, so every FP arm ran at ZERO DRIFT -- and zero drift is precisely the regime in
+    # which `J.n = 0` and `dm/dn = 0` coincide, i.e. the one configuration that cannot see #2294's
+    # FP half. Renaming the parameter alone did not fix that; a value is needed. `U = -x` gives
+    # `alpha* = -grad U = (+1, 0)`, so the wall-normal component is non-zero at both x walls.
+    return np.asarray(
+        solver.solve_fp_system(m_initial=1.0 + 0.5 * np.sin(np.pi * x), potential_field=np.tile(-x, (4, 1)))
+    )
 
 
 _SOLVERS = ["HJBFEMSolver", "FPFEMSolver"]
@@ -216,8 +223,18 @@ def test_the_boundary_load_is_the_partition_of_unity_on_the_named_walls():
     )
 
 
-def test_the_fp_weak_form_refuses_the_condition_it_cannot_express():
-    """#2294's other half. `FPFEMSolver` must not accept `dm/dn = g`, because it cannot impose it.
+def test_the_fp_solver_refuses_the_neumann_spelling():
+    """#2294's other half, named for what it actually checks.
+
+    NOT "the FP weak form refuses the condition": it refuses this SPELLING. `ROBIN(alpha=0, beta=1, g)`
+    is the same mathematical condition and still reaches the FP assembly, producing a load vector
+    bit-identical to the one refused here (`max|diff| = 0.0`, measured). That path is pre-existing,
+    has its own tests, and `weak_form_fp_solver.py` already discloses the total-flux character of an
+    inhomogeneous Robin as out of scope for #1237 -- so it is filed, not widened here.
+
+    What this test covers is ONE enforcement path: `_validate_bc_support`, reached from
+    `FPFEMSolver.__init__`, refusing on `honors_inhomogeneous_neumann = False`. It does not reach
+    `assemble_robin_terms`; `test_the_natural_bc_parameter_gates_the_neumann_arm` covers that.
 
     `_build_advection` assembles `div(v m)` on the volume basis and returns `-C.T` with no facet
     term, so this weak form's natural boundary condition is the total flux `J.n`. Adding the HJB
@@ -237,6 +254,79 @@ def test_the_fp_weak_form_refuses_the_condition_it_cannot_express():
         "no longer refusing the problem."
     )
     assert "NEUMANN" in str(excinfo.value).upper()
+
+
+def test_the_natural_bc_parameter_gates_the_neumann_arm():
+    """The new mechanism, pinned at the level it lives on. An adversarial review found it unpinned.
+
+    `test_the_fp_solver_refuses_the_neumann_spelling` never reaches `assemble_robin_terms` -- the
+    #1686 gate stops the solve at construction -- so every mutation of the new machinery survived it:
+    neutering the `natural_bc != "gradient"` check, flipping `FPFEMSolver`'s call to `"gradient"`, and
+    flipping the parameter default. A test named for a mechanism that is satisfied by a different one
+    is the failure this file exists to avoid, one level up. So this calls the function directly.
+    """
+    from mfgarchon.alg.numerical.fem.bc_adapter import assemble_robin_terms
+
+    # The SOLVER's basis, never a hand-built one. `MeshTri.init_sqsymmetric()` carries no boundary
+    # tags, so `_find_segment_facets` falls back to the whole perimeter (#2301) and a named wall
+    # silently becomes the boundary -- which is 4x the load and reads as a defect in the assembly.
+    # That fallback cost this branch a false accusation against correct code once already.
+    solver = HJBFEMSolver(_problem(_segments("neumann", _G)), order=1)
+    basis, bc = solver._basis, solver._bc
+
+    _, rhs = assemble_robin_terms(basis, bc, 0.125, natural_bc="gradient")
+    assert rhs is not None, "the gradient-natural weak form must assemble the load"
+    assert rhs.sum() == pytest.approx(0.125 * _G * _BOUNDARY_MEASURE, rel=1e-12)
+
+    with pytest.raises(NotImplementedError, match="TOTAL FLUX"):
+        assemble_robin_terms(basis, bc, 0.125, natural_bc="flux")
+
+    # The default is the RESTRICTIVE one on purpose: a caller who forgets gets the refusal, not
+    # silently wrong physics. Flipping it to "gradient" is a one-word change with no other symptom.
+    with pytest.raises(NotImplementedError, match="TOTAL FLUX"):
+        assemble_robin_terms(basis, bc, 0.125)
+
+    # FPFEMSolver's OWN call site, reached by a route production does not take -- and deliberately.
+    # `_validate_bc_support` refuses an inhomogeneous Neumann at construction, so the backstop below
+    # it is unreachable through the public path and a mutation of the argument survives every
+    # behavioural test (measured). Constructing on a homogeneous wall and then swapping the bc is
+    # the only way to exercise the second layer, and a backstop nothing exercises is a comment.
+    fp = FPFEMSolver(_problem(_segments("neumann", 0.0)), order=1)
+    fp._bc = bc
+    with pytest.raises(NotImplementedError, match="TOTAL FLUX"):
+        fp._robin_operator_terms(0.125)
+
+
+def test_a_default_bc_is_refused_only_where_no_segment_covers_the_boundary():
+    """The coverage guard, and the regression a cruder version of it caused.
+
+    `default_bc` is the fall-through for boundary the segments do not cover, so data reaching only
+    that way is silently dropped (#1686). But every `*_bc()` factory sets BOTH channels in lockstep:
+    `neumann_bc(5.0)` yields a segment AND `default_bc=NEUMANN, default_value=5.0`. A guard reading
+    the default channel alone therefore rejects the library's own public API -- measured, it did, and
+    no test here saw it because they all build `BoundaryConditions(segments=...)` directly and leave
+    `default_bc` None. That is the exact shape such a guard cannot see.
+    """
+    from mfgarchon.alg.numerical.fem.bc_adapter import assemble_robin_terms
+    from mfgarchon.geometry.boundary import neumann_bc
+
+    basis = HJBFEMSolver(_problem(_segments("neumann", 0.0)), order=1)._basis
+
+    # Covered: the factory's own segment spans the boundary, so the default is inert.
+    _, rhs = assemble_robin_terms(basis, neumann_bc(_G, dimension=2), 0.125, natural_bc="gradient")
+    assert rhs is not None, (
+        "neumann_bc(g) is the library's public way to ask for this condition and it must assemble. "
+        "A guard that reads default_bc without asking what the segments cover rejects it."
+    )
+
+    # Uncovered: nothing carries the condition, so it would reach no assembly.
+    with pytest.raises(NotImplementedError, match="covered by no BCSegment"):
+        assemble_robin_terms(
+            basis,
+            BoundaryConditions(dimension=2, segments=[], default_bc=BCType.NEUMANN, default_value=_G),
+            0.125,
+            natural_bc="gradient",
+        )
 
 
 @pytest.mark.parametrize(
@@ -262,6 +352,25 @@ def test_a_homogeneous_neumann_wall_assembles_nothing_whatever_its_dtype(solver_
         f"{solver_name} assembles a term for a HOMOGENEOUS Neumann wall valued "
         f"{value!r} ({type(value).__name__}). It contributes nothing mathematically, so the hook "
         f"must decline rather than hand back zeros, and it must recognise zero whatever its dtype."
+    )
+
+
+@pytest.mark.parametrize("solver_name", _SOLVERS)
+def test_the_two_spellings_agree_when_the_flux_is_zero(solver_name):
+    """CONTROL, restored -- it was deleted in the previous round without replacement.
+
+    At `g = 0` the two spellings reach the assembler by different routes: Neumann declines at the
+    verifiably-zero check while Robin assembles an all-zero mass and load. The results must be
+    indistinguishable, which is the byte-identity claim the early return exists to protect. It also
+    holds on BOTH solvers, where the `g != 0` comparison is HJB-only -- so this is the only place the
+    FP half of the spelling equivalence is still checked.
+    """
+    neumann = _solve(solver_name, "neumann", 0.0)
+    robin = _solve(solver_name, "robin", 0.0)
+
+    assert np.array_equal(neumann, robin), (
+        f"{solver_name}: NEUMANN(0) and ROBIN(alpha=0, beta=1, 0) are the same condition but differ "
+        f"by {np.max(np.abs(neumann - robin)):.3e}."
     )
 
 
