@@ -318,7 +318,7 @@ def assemble_robin_terms(
     from mfgarchon.geometry.boundary.bc_utils import describe_inhomogeneous_bc_data
     from mfgarchon.geometry.boundary.types import BCType
 
-    def _is_inhomogeneous(*segments, default_bc=None, default_value=None):
+    def _is_inhomogeneous(*segments):
         """Is any of these boundary data NOT verifiably zero?
 
         Delegated, never re-implemented. ``describe_inhomogeneous_bc_data`` is this
@@ -326,10 +326,11 @@ def assemble_robin_terms(
         hole was a guard reading only ``segments``, and #1802 wrote a second copy and
         reproduced the same hole 300 lines away. A local ``isinstance(g, (int, float))``
         would reject ``np.float32(0.0)`` -- a homogeneous wall -- and accept nothing it
-        should. This asks the owner instead, one channel at a time.
+        should. This asks the owner instead, per segment: the ``default_bc`` channel is deliberately
+        excluded here because this function assembles from segments and cannot honour it (#2305).
         """
         return describe_inhomogeneous_bc_data(
-            SimpleNamespace(segments=segments, default_bc=default_bc, default_value=default_value),
+            SimpleNamespace(segments=segments, default_bc=None, default_value=None),
             bc_types={BCType.NEUMANN},
         )
 
@@ -376,16 +377,28 @@ def assemble_robin_terms(
         g = getattr(segment, "value", 0.0)
         try:
             # `float()` alone is WIDER than the `isinstance(g, (int, float))` it replaces: it takes
-            # `"5"`, `b"5"`, `np.array("5")`, `Decimal`, `Fraction`. Widening one guard while fixing
-            # another is how a fix ships a second defect, and a first attempt here caught only the
-            # plain `str`. The widening that IS wanted is numeric dtypes -- np.float32, np.int64, a
-            # 0-d float array -- so the test is "is this a real number", not "can float() parse it".
-            if isinstance(g, np.ndarray):
-                if g.ndim != 0 or not np.issubdtype(g.dtype, np.number):
-                    raise TypeError(f"boundary value is a {g.ndim}-d {g.dtype} array")
-            elif not isinstance(g, numbers.Real):
+            # `"5"`, `b"5"`, `np.array("5")`, `Decimal`. Widening one guard while fixing another is
+            # how a fix ships a second defect, and a first attempt here caught only the plain `str`.
+            # The widening that IS wanted is numeric dtypes -- np.float32, np.int64, a 0-d float
+            # array -- so the test is "is this a real number", not "can float() parse it".
+            # `Fraction` is admitted deliberately: it IS a real number, and a rational boundary datum
+            # is a legitimate thing to write. `Decimal` is not `numbers.Real` and stays out.
+            # Only the DTYPE is checked, not the rank: `numpy>=2.0` (pyproject.toml:38) removed
+            # size-1 array coercion, so `float()` already raises TypeError for every non-0-d array
+            # -- measured on 1-d/1-elem, 1-d/2-elem and 2-d. A rank check here was unreachable, and
+            # a mutation deleting it survived the suite, which is what unreachable looks like from
+            # the outside. The dtype check is NOT redundant: `float(np.array("5"))` succeeds.
+            if isinstance(g, np.ndarray) and not np.issubdtype(g.dtype, np.number):
+                raise TypeError(f"boundary value is a {g.dtype} array")
+            if not isinstance(g, (np.ndarray, numbers.Real)):
                 raise TypeError(f"boundary value is not a real number: {type(g).__name__}")
             g = float(g)
+            # A non-finite datum assembles a NaN load and every downstream solve returns NaN with no
+            # error -- the failure this module's guards exist to convert into a refusal. `main`
+            # already admitted `float("nan")` and `np.float64("nan")` (np.float64 subclasses float),
+            # so this closes a pre-existing path as well as the 0-d-array one the widening opened.
+            if not np.isfinite(g):
+                raise TypeError(f"boundary value is not finite: {g}")
         except (TypeError, ValueError):
             raise NotImplementedError(
                 f"{kind} segment '{segment.name}' has a non-constant value ({type(g).__name__}). "

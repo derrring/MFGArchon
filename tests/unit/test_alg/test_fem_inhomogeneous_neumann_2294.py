@@ -48,6 +48,8 @@ than duplicated.
 from __future__ import annotations
 
 import functools
+from decimal import Decimal
+from fractions import Fraction
 
 import pytest
 
@@ -267,10 +269,13 @@ def test_the_natural_bc_parameter_gates_the_neumann_arm():
     """
     from mfgarchon.alg.numerical.fem.bc_adapter import assemble_robin_terms
 
-    # The SOLVER's basis, never a hand-built one. `MeshTri.init_sqsymmetric()` carries no boundary
-    # tags, so `_find_segment_facets` falls back to the whole perimeter (#2301) and a named wall
-    # silently becomes the boundary -- which is 4x the load and reads as a defect in the assembly.
-    # That fallback cost this branch a false accusation against correct code once already.
+    # The SOLVER's basis, never a hand-built one -- and the distinction is between two meshes, not
+    # two spellings. Measured: a RAW `MeshTri.init_sqsymmetric().refined(2)` has `boundaries=None`,
+    # so `_find_segment_facets` falls back and `boundary="x_min"` resolves to 32 of 32 facets;
+    # the same mesh routed through `skfem_to_meshdata` carries `x_min/x_max/y_min/y_max` and
+    # resolves to 8 of 32. Building the basis by hand therefore inflates this load 4x (#2301), which
+    # reads as a defect in the assembly and once cost this branch a false accusation against
+    # correct code.
     solver = HJBFEMSolver(_problem(_segments("neumann", _G)), order=1)
     basis, bc = solver._basis, solver._bc
 
@@ -321,6 +326,57 @@ def test_the_public_factory_path_assembles():
         "the factory's segment carries no `boundary`, so it spans the whole boundary -- perimeter 4, "
         "not the 2 of the two named walls."
     )
+
+
+@pytest.mark.parametrize(
+    ("value", "accepted"),
+    [
+        (5.0, True),
+        (np.float64(5.0), True),
+        (np.float32(5.0), True),
+        (np.int64(5), True),
+        (np.array(5.0), True),
+        (Fraction(1, 2), True),
+        ("5", False),
+        (b"5", False),
+        (np.array("5"), False),
+        (np.array([5.0]), False),
+        (Decimal("0.5"), False),
+        (float("nan"), False),
+        (np.float64("inf"), False),
+    ],
+    ids=["5.0", "f64", "f32", "i64", "arr0d", "frac", "str", "bytes", "strarr", "arr1d", "decimal", "nan", "inf"],
+)
+def test_the_value_guard_admits_real_numbers_and_nothing_else(value, accepted):
+    """The guard itself, which an adversarial review found pinned by NOTHING -- 4 of 4 mutations
+    survived, including reverting it to the bare `float()` that accepts `"5"`.
+
+    The reason is worth stating because it is subtle and it defeated three rewrites: the dtype
+    parametrisation below uses only ZEROS, and a zero takes the `_is_inhomogeneous` early `continue`
+    and never reaches the value guard. **The dtype test and the dtype guard sat on opposite sides of
+    a branch.** So this one carries non-zero values, which is the only way to reach the guard at all.
+
+    What it pins: real numbers in (including numpy scalars, 0-d numeric arrays and `Fraction`),
+    string-shaped and non-real carriers out (`Decimal` is not `numbers.Real`), 1-d arrays out, and
+    **non-finite out** -- a NaN datum otherwise assembles a NaN load and every downstream solve
+    returns NaN with no error.
+    """
+    import skfem
+
+    from mfgarchon.alg.numerical.fem.bc_adapter import assemble_robin_terms
+
+    basis = skfem.Basis(skfem.MeshTri.init_sqsymmetric().refined(2), skfem.ElementTriP1())
+    bc = BoundaryConditions(
+        dimension=2, segments=[BCSegment(name="L", bc_type=BCType.NEUMANN, value=value, boundary="x_min")]
+    )
+
+    if accepted:
+        _, rhs = assemble_robin_terms(basis, bc, 0.125, natural_bc="gradient")
+        assert rhs is not None, f"{value!r} is a real number and must assemble a load"
+        assert np.isfinite(rhs).all(), f"{value!r} assembled a non-finite load: {rhs.sum()}"
+    else:
+        with pytest.raises(NotImplementedError, match="non-constant value"):
+            assemble_robin_terms(basis, bc, 0.125, natural_bc="gradient")
 
 
 @pytest.mark.parametrize(
