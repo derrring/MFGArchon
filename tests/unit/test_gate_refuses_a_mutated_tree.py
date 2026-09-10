@@ -20,8 +20,40 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[2]
 GATE = REPO / "scripts" / "local_ci.sh"
+
+
+#: The gate selects an interpreter carrying ruff AND mypy (`local_ci.sh` `resolved_python`), and
+#: aborts with `GATE CANNOT RUN` before printing a single `gate ...` line when none exists. Every
+#: test below that INVOKES the gate then fails on a missing line rather than on the behaviour it is
+#: about. That is what happened: the weekly discrimination sweep runs the full suite on a GitHub
+#: runner with no such interpreter, and these tests failed there on 2026-08-24, 08-31 and 09-07 --
+#: four consecutive weeks of red whose cause was the environment, not the gate. A stable red is
+#: zero signal, so the notification became scenery.
+#:
+#: Skipping names the real precondition rather than the symptom: if a runner ever installs the
+#: pinned toolchain, these un-skip on their own. `CI=true` would not do that.
+def _gate_can_run() -> bool:
+    for candidate in ("python", "python3", "/opt/homebrew/Caskroom/miniforge/base/envs/mfg_env/bin/python"):
+        exe = shutil.which(candidate) if not candidate.startswith("/") else candidate
+        if not exe or not Path(exe).exists():
+            continue
+        if all(
+            subprocess.run([exe, "-P", "-m", tool, "--version"], capture_output=True).returncode == 0
+            for tool in ("ruff", "mypy")
+        ):
+            return True
+    return False
+
+
+needs_gate = pytest.mark.skipif(
+    not _gate_can_run(),
+    reason="no interpreter here carries both ruff and mypy, so `local_ci.sh` aborts with GATE CANNOT "
+    "RUN before emitting any `gate ...` line; these assert on that output (#2285)",
+)
 
 
 def test_the_gate_greps_for_the_marker_at_the_point_of_consumption():
@@ -46,6 +78,7 @@ def test_every_mutation_carries_the_marker_the_guard_greps_for():
     assert not missing, f"mutations whose `new` text carries no marker, so the gate cannot see them: {missing}"
 
 
+@needs_gate
 def test_the_guard_actually_refuses(tmp_path):
     """Behavioural, not textual: plant a marker, run the gate, require exit 2.
 
