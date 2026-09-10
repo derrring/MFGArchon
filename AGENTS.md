@@ -122,8 +122,34 @@ unauditable; adding to it casually is how it got there.
 **A new test must be one of these, and the PR says which:**
 
 1. **It kills a mutation.** `scripts/discrimination_killmatrix.json` maps node ID → mutations killed:
-   read it. Re-running the sweep is not the price of admission — it takes ~26 min and leaves
-   mutations in the tree when killed (#1849, #2229) — so re-measure only when adding a mutation.
+   read it. Re-running the sweep is not the price of admission — so re-measure only when adding a
+   mutation. It leaves mutations in the tree when killed (#1849, #2229), and it is **expensive**:
+   ~~about 26 min~~ **67 min**, derived from the run's own record rather than estimated —
+   `baseline_seconds` 198.2 plus 3814.6s over 24 mutations (min 105, median 141, max 344) in the
+   matrix measured at `2c923694`. That figure is a property of the file beside it, so when the file
+   is re-recorded the cost is re-derivable from it and nobody has to trust this line:
+   `python -c "import json;d=json.load(open('scripts/discrimination_killmatrix.json'));
+   print((d['baseline_seconds']+sum(m['seconds'] for m in d['mutations'].values()))/60)"`.
+
+   ⚠️ **Run it in a detached worktree or the kills are fake.** The script mutates the checkout in
+   place (`REPO = Path(__file__).resolve().parent.parent`) and its own docstring records #1677 — a
+   worktree run can leave the *original* module imported, giving all-zero kills that read as
+   "nothing discriminates". That happens because **both** `.venv` and `mfg_env` editable-install
+   `mfgarchon` to the main checkout, so the naive worktree run imports the unmutated tree. The way
+   past it, which the trap note alone does not give you:
+
+   ```bash
+   git worktree add --detach /tmp/wt-discrim <sha>
+   cd /tmp/wt-discrim && PYTHONPATH=/tmp/wt-discrim "$MFG_PYTHON" scripts/test_discrimination.py \
+       --json scripts/discrimination_killmatrix.json \
+       --write-baseline scripts/discrimination_baseline.json
+   ```
+
+   `PYTHONPATH` wins over the editable install, so `REPO` and the imported package are one tree, and
+   the script's own `_assert_import_is_the_mutated_tree` confirms it rather than you asserting it.
+   Write **both** files from the one run: `--write-baseline` alone leaves the matrix at the old run,
+   which the script says in its own error message.
+
 2. **It is an external oracle** — a law the scheme must reproduce, computed independently of it.
    `M(0) @ expm(Qt)`, `rho_i * exp(v_n*dx/D)`, an LQG closed form, an Itô isometry. These do not rot
    when the API moves, because they pin mathematics rather than signatures.
