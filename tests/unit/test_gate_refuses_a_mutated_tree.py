@@ -20,6 +20,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[2]
 GATE = REPO / "scripts" / "local_ci.sh"
 
@@ -104,6 +106,16 @@ def test_the_guard_actually_refuses(tmp_path):
 
     assert proc.returncode == 2, f"expected GATE CANNOT RUN (exit 2), got {proc.returncode}"
     assert "GATE CANNOT RUN" in proc.stdout
+
+    # exit 2 and `GATE CANNOT RUN` are shared by the mutation refusal and every ENVIRONMENT refusal,
+    # so skip only on the interpreter ones, by their own wording (`local_ci.sh:183` and `:208`). A
+    # coarser key -- exit code, or `GATE CANNOT RUN` alone, or "no mutation marker" -- would swallow
+    # the defect the next two assertions exist to catch. Measured: this is why the weekly sweep was
+    # red on 2026-08-17, 08-24, 08-31 and 09-07; a runner has no interpreter with the pinned
+    # toolchain, and the test then failed on a missing filename instead of skipping. (#2285)
+    if "no interpreter found with" in proc.stdout or "is unusable" in proc.stdout:
+        pytest.skip(f"the gate could not resolve an interpreter here:\n{proc.stdout[:400]}")
+
     assert "bc_utils.py" in proc.stdout, "the refusal must name the file, or recovery is a search"
     assert "mutation marker" in proc.stdout, (
         "exit 2 is also the environment-failure code, so the code alone does not say the mutation "

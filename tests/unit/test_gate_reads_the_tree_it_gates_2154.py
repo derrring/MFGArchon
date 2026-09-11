@@ -27,6 +27,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 GATE = REPO / "scripts" / "local_ci.sh"
 
+
 GATE_LINE = re.compile(r"^printf '(?:\\n)?gate (\w+)\s*:", re.M)
 PACKAGE_LINE = re.compile(r"^gate package\s*:\s*(\S.*?)\s*$", re.M)
 RUFF_LINE = re.compile(r"^gate ruff\s*:\s*(\S.*?)\s*$", re.M)
@@ -138,6 +139,13 @@ def test_the_tool_invocations_are_not_shadowable_from_the_tree(tmp_path):
     (planted / "__main__.py").write_text("print('SHADOWED-RUFF 99.99.99')\n")
 
     _, out = _run(root)
+    # Same discriminator `_package_line` uses, for the same reason: no `gate interpreter` line means
+    # the gate never reached its own head, so there is no `gate ruff` line to read and the failure
+    # would be about the environment rather than about shadowing. This test reads RUFF_LINE directly
+    # instead of going through `_package_line`, which is why it -- alone of the four here -- FAILED
+    # rather than skipped on the weekly runner for four consecutive weeks (#2285).
+    if "gate interpreter" not in out:
+        pytest.skip(f"the gate never reached its own head under {sys.executable}:\n{out[:400]}")
     m = RUFF_LINE.search(out)
     assert m, f"no `gate ruff` line to check:\n{out[:800]}"
     assert "SHADOWED" not in m.group(1), (

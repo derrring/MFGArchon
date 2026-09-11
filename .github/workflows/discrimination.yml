@@ -1,13 +1,17 @@
 name: Weekly Test-Discrimination Sweep
 
 # Measures which tests notice a change to a convention the library single-sources,
-# by mutating each one and running the suite. Weekly, not nightly: it is seven full
-# suite runs (~26 min measured locally), and the quantity it tracks moves on the
+# by mutating each one and running the suite. Weekly, not nightly: it is 25 full suite
+# runs -- one baseline plus one per mutation -- and the quantity it tracks moves on the
 # timescale of a campaign, not a commit.
 #
-# It answers what #1715 asked and #1701 generalises. Measured 2026-07-27 over 5,665
-# collected tests: 184 (3.2%) notice any of the six conventions, 176 of them notice
-# exactly one, and one convention -- the absent-BC default -- is noticed by nothing.
+# It answers what #1715 asked and #1701 generalises. Measured 2026-09-10 at 2c923694 over
+# 3,822 collected tests (#2285): 665 (17.4%) notice at least one of the 24 conventions and
+# none is left undefended. ~~2026-07-27, 5,665 collected, 184 (3.2%), six conventions~~
+# -- that read predates the #2227 reset, which removed 2,927 collected tests.
+#
+# Do not restate the cost here; derive it from the matrix, which records `baseline_seconds`
+# and a per-mutation `seconds`. At 2c923694 that is 198.2 + 3814.6 s = 67 min.
 #
 # The ratchet is per-mutation kill COUNTS, not test names. That is deliberate: this
 # population cannot be selected by name at all. `*_agree` / `*_matches` / `*_equals`
@@ -31,8 +35,8 @@ jobs:
   discrimination:
     name: mutation sweep
     runs-on: ubuntu-latest
-    # ~29 min locally (measured: 212 s baseline + 348 s for the largest mutation + five
-    # smaller runs). A GH runner is ~7x slower on this suite, so ~200 min -- 180 would
+    # ~67 min locally at 2c923694 (198.2 s baseline + 3814.6 s over 24 mutations; largest
+    # 344.4 s, median 141.1 s). A GH runner is ~7x slower on this suite, so ~200 min -- 180 would
     # have timed out, and the artifact upload is `if: !cancelled()`, so the failure issue
     # would have arrived with no kill matrix to diagnose from. Matches nightly.yml.
     timeout-minutes: 300
@@ -110,7 +114,8 @@ jobs:
             'stopped applying because the source moved, or it improved and the baseline has',
             'not recorded it yet. The run output names which.',
             '',
-            'Reproduce locally (~26 min):',
+            'Reproduce locally (~67 min at 2c923694; derive the current cost from',
+            '`baseline_seconds` + the per-mutation `seconds` in the kill matrix):',
             '```bash',
             'python scripts/test_discrimination.py --check-baseline scripts/discrimination_baseline.json',
             '```',

@@ -122,8 +122,96 @@ unauditable; adding to it casually is how it got there.
 **A new test must be one of these, and the PR says which:**
 
 1. **It kills a mutation.** `scripts/discrimination_killmatrix.json` maps node ID → mutations killed:
-   read it. Re-running the sweep is not the price of admission — it takes ~26 min and leaves
-   mutations in the tree when killed (#1849, #2229) — so re-measure only when adding a mutation.
+   read it. **The matrix is evidence FOR keeping a test; its complement is not a delete-list.** A
+   sweep validates this ground and only this one, while a test earns its place on any of the four
+   here — so the zero-killer set is full of classes 2–4 that are invisible to it. Measured at
+   `2c923694` (#2285): **91 zero-killer files holding 1,451 tests**, among them 463 named defect pins
+   and every ratchet guard in `scripts/`; the largest is `tests/unit/test_utils/test_convergence.py`
+   at 66. `test_discrimination_ratchet.py` is **not** among them and must be subtracted from any such
+   count — `--ignore={SELF_TESTS}` removes it from every run, because it fails under *every* mutation
+   and would add +1 to every kill count. Deleting on a zero count is the error #1715 and #1901
+   already record.
+
+   **Kill count is a property column, not a criterion** — neither sufficient nor necessary, which is
+   the same shape this repo already found in mass conservation (`feedback_mutation_testing_calibration`;
+   a scheme can conserve to 1e-12 with a decaying wall-gradient ratio, and `FPSLJacobianSolver` is
+   non-conservative by construction and correct). Not sufficient: a test can kill `optimal_control_sign`
+   incidentally while pinning nothing it claims. Not necessary, and this is the direction that is
+   invisible: the 24 mutations are a **fixed, small alphabet**, so a test pinning a 25th convention
+   reads zero however sharp it is. Measured 2026-09-11 —
+   `test_fem_inhomogeneous_neumann_2294.py` and `test_resolver_no_image_contract_2293.py` are both
+   zero-killers here while together killing seven mutations written against their own targets
+   (a dropped `D`, a sum-preserving lump, a wall swap, four of the `natural_bc` machinery).
+
+   **And every count is over `tests` under `scripts/ci_markers.txt`, a selection whose complement is
+   not merely unmeasured but unmeasurable by this instrument.** pytest counts the excluded set
+   itself: `3822/4030 tests collected (208 deselected)` at `2c923694` — **208 tests, 5.2%**, spread
+   over 42 files and disproportionately the oracles (`test_weak_form_source_mms_2020.py`,
+   `tests/validation/test_duality_convergence.py`, `test_mass_conservation_1d.py`), because value
+   correlates with runtime, runtime with `slow`, and `slow` with exclusion.
+
+   Measured 2026-09-11: one run over 28 of those 42 files did not finish in 3600 s, against 160.5 s
+   per run for the whole filtered suite — **>= 22x, so a 24-mutation sweep over them is >= 25
+   hours.** That ratio is per RUN and is a lower bound twice over: the run was truncated, and it
+   covered two thirds of the excluded files. A per-TEST figure is NOT derivable from it — the 3600 s
+   covers 28 files while 208 is the count over all 42, which is the two-denominators error this very
+   paragraph exists to prevent.
+
+   So `kill_count: 2` means two defenders *in that selection*, and the marker filter is not a knob
+   that could be widened. Re-running the sweep is not the price of admission — so re-measure only when adding a
+   mutation. It leaves mutations in the tree when killed (#1849, #2229), and it is **expensive**:
+   ~~about 26 min~~ **67 min**, derived from the run's own record rather than estimated —
+   `baseline_seconds` 198.2 plus 3814.6s over 24 mutations (min 105, median 141, max 344) in the
+   matrix measured at `2c923694`. That figure is a property of the file beside it, so when the file
+   is re-recorded the cost is re-derivable from it and nobody has to trust this line:
+
+   ```bash
+   "$MFG_PYTHON" -c "import json; d = json.load(open('scripts/discrimination_killmatrix.json')); print((d['baseline_seconds'] + sum(m['seconds'] for m in d['mutations'].values())) / 60)"
+   ```
+
+   ⚠️ **Run it in a detached worktree or the kills are fake.** The script mutates the checkout in
+   place (`REPO = Path(__file__).resolve().parent.parent`) and its own docstring records #1677 — a
+   run that leaves the *original* module imported gives all-zero kills that read as "nothing
+   discriminates". Both `.venv` and `mfg_env` editable-install `mfgarchon` to the main checkout, so
+   that is the tree an import can fall back to. **Measured, and weaker than it sounds:** setuptools
+   *appends* `_EditableFinder` to `sys.meta_path`, after `PathFinder` — so under `-c` and `-m`, which
+   both put cwd on `sys.path`, a `cd <worktree>` alone already resolves `mfgarchon` to the worktree
+   with no `PYTHONPATH`. **Not under script form**: `python scripts/foo.py` puts the *script's*
+   directory on `sys.path[0]` and never cwd, and the import then falls through to the editable
+   install — measured, it resolves to the main checkout. Bind `PYTHONPATH` because of that asymmetry,
+   not as a belt-and-braces token, and because the script's own
+   `_assert_import_is_the_mutated_tree` (`test_discrimination.py:502`) then *confirms* the tree
+   rather than you assuming it. The recipe:
+
+   ```bash
+   git worktree add --detach /tmp/wt-discrim <sha>
+   cd /tmp/wt-discrim && PYTHONPATH=/tmp/wt-discrim "$MFG_PYTHON" scripts/test_discrimination.py \
+       --json scripts/discrimination_killmatrix.json \
+       --write-baseline scripts/discrimination_baseline.json
+   ```
+
+   Write **both** files from the one run: `--write-baseline` alone leaves the matrix at the old run,
+   which the script says in its own error message.
+
+   **The two JSONs land inside the worktree, so copy them back and tear it down** — neither is
+   automatic, and a worktree `git status` cannot see:
+
+   ```bash
+   cp /tmp/wt-discrim/scripts/discrimination_killmatrix.json scripts/ \
+     && cp /tmp/wt-discrim/scripts/discrimination_baseline.json scripts/ \
+     && git worktree remove --force /tmp/wt-discrim && git worktree prune
+   ```
+
+   `--force` is **required**, not a convenience: the sweep leaves mutations in the tree when killed,
+   so the worktree is dirty by construction and plain `git worktree remove` refuses it every time
+   (measured, git 2.54.0: *"contains modified or untracked files, use --force to delete it"*). The
+   `&&` chain is what makes that safe — `--force` deletes the only copy of a 67-minute measurement,
+   so a failed `cp` must not reach it. The `cp` clobbers silently, so check `git status` afterwards
+   rather than assuming you were the only writer.
+
+   And **do not let two sessions write these files**: they are one artifact pair recorded by one run,
+   `git status` shows no sign of another checkout mid-sweep, and the second writer silently wins.
+
 2. **It is an external oracle** — a law the scheme must reproduce, computed independently of it.
    `M(0) @ expm(Qt)`, `rho_i * exp(v_n*dx/D)`, an LQG closed form, an Itô isometry. These do not rot
    when the API moves, because they pin mathematics rather than signatures.
