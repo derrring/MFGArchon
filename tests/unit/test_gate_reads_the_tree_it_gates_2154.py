@@ -28,36 +28,6 @@ REPO = Path(__file__).resolve().parents[2]
 GATE = REPO / "scripts" / "local_ci.sh"
 
 
-#: The gate selects an interpreter carrying ruff AND mypy (`local_ci.sh` `resolved_python`), and
-#: aborts with `GATE CANNOT RUN` before printing a single `gate ...` line when none exists. Every
-#: test below that INVOKES the gate then fails on a missing line rather than on the behaviour it is
-#: about. That is what happened: the weekly discrimination sweep runs the full suite on a GitHub
-#: runner with no such interpreter, and these tests failed there on 2026-08-24, 08-31 and 09-07 --
-#: four consecutive weeks of red whose cause was the environment, not the gate. A stable red is
-#: zero signal, so the notification became scenery.
-#:
-#: Skipping names the real precondition rather than the symptom: if a runner ever installs the
-#: pinned toolchain, these un-skip on their own. `CI=true` would not do that.
-def _gate_can_run() -> bool:
-    for candidate in ("python", "python3", "/opt/homebrew/Caskroom/miniforge/base/envs/mfg_env/bin/python"):
-        exe = shutil.which(candidate) if not candidate.startswith("/") else candidate
-        if not exe or not Path(exe).exists():
-            continue
-        if all(
-            subprocess.run([exe, "-P", "-m", tool, "--version"], capture_output=True).returncode == 0
-            for tool in ("ruff", "mypy")
-        ):
-            return True
-    return False
-
-
-needs_gate = pytest.mark.skipif(
-    not _gate_can_run(),
-    reason="no interpreter here carries both ruff and mypy, so `local_ci.sh` aborts with GATE CANNOT "
-    "RUN before emitting any `gate ...` line; these assert on that output (#2285)",
-)
-
-
 GATE_LINE = re.compile(r"^printf '(?:\\n)?gate (\w+)\s*:", re.M)
 PACKAGE_LINE = re.compile(r"^gate package\s*:\s*(\S.*?)\s*$", re.M)
 RUFF_LINE = re.compile(r"^gate ruff\s*:\s*(\S.*?)\s*$", re.M)
@@ -105,7 +75,6 @@ def _package_line(out: str) -> str:
     pytest.skip(f"the gate never reached its own head under {sys.executable}:\n{out[:600]}")
 
 
-@needs_gate
 def test_the_gate_imports_the_tree_it_is_gating(tmp_path):
     root = _tree(tmp_path, "second_tree", package=True)
     _, out = _run(root)
@@ -115,7 +84,6 @@ def test_the_gate_imports_the_tree_it_is_gating(tmp_path):
     assert REFUSAL not in out, f"refused a tree whose own package it should have found:\n{out[:800]}"
 
 
-@needs_gate
 def test_the_gate_refuses_a_package_from_outside_the_tree(tmp_path):
     """Exit 2, not 1: nothing was measured, which is what `cannot_run` means and what
     `scripts/gate_hook.sh` branches on. Exit 1 is the content verdict, `GATE RED -- do not push`,
@@ -137,7 +105,6 @@ def test_the_gate_refuses_a_package_from_outside_the_tree(tmp_path):
     assert "PASS" not in out, f"a check ran after the refusal:\n{out[:800]}"
 
 
-@needs_gate
 def test_entering_through_a_symlink_is_not_a_refusal(tmp_path):
     """The permission half. Without it a guard that refused everything would pass the other tests.
 
@@ -152,7 +119,6 @@ def test_entering_through_a_symlink_is_not_a_refusal(tmp_path):
     assert REFUSAL not in out, f"false refusal on a tree entered through a symlink:\n{out[:800]}"
 
 
-@needs_gate
 def test_the_tool_invocations_are_not_shadowable_from_the_tree(tmp_path):
     """The regression this change was reworked to avoid, and the reason the path is an array.
 
@@ -173,6 +139,13 @@ def test_the_tool_invocations_are_not_shadowable_from_the_tree(tmp_path):
     (planted / "__main__.py").write_text("print('SHADOWED-RUFF 99.99.99')\n")
 
     _, out = _run(root)
+    # Same discriminator `_package_line` uses, for the same reason: no `gate interpreter` line means
+    # the gate never reached its own head, so there is no `gate ruff` line to read and the failure
+    # would be about the environment rather than about shadowing. This test reads RUFF_LINE directly
+    # instead of going through `_package_line`, which is why it -- alone of the four here -- FAILED
+    # rather than skipped on the weekly runner for four consecutive weeks (#2285).
+    if "gate interpreter" not in out:
+        pytest.skip(f"the gate never reached its own head under {sys.executable}:\n{out[:400]}")
     m = RUFF_LINE.search(out)
     assert m, f"no `gate ruff` line to check:\n{out[:800]}"
     assert "SHADOWED" not in m.group(1), (
