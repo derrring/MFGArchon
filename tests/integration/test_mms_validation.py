@@ -731,71 +731,73 @@ class TestMMSHJB1D:
 
     def test_backward_heat_periodic_convergence(self):
         """
-        Test HJB convergence for backward heat equation with periodic BC.
+        HJBFDMSolver converges at first order in space on a manufactured solution, periodic BC.
 
-        Uses MMS (Method of Manufactured Solutions): the backward heat solution
-        u(t,x) = A*cos(kx)*exp(-Dk^2(T-t)) solves the backward heat equation
-        exactly. The quadratic Hamiltonian H(p) = |p|^2/2 introduces a residual
-        that we supply as a source term S = H(grad u_exact).
+        u(t,x) = A*cos(kx)*exp(-Dk^2(T-t)) solves the backward heat equation, so with
+        H(p) = |p|^2/2 the source S = H(grad u_exact) makes it exact for the full HJB.
 
-        With this source, the solver should recover u_exact and show convergence
-        as the grid is refined.
+        The Hamiltonian carries no density term, because S cancels |p|^2/2 and nothing else
+        (#1991). This test used the module's default components until then, whose
+        `coupling = m` with M = 1/Nx adds a constant S never cancelled: an error of T/Nx,
+        first order in its own right. On HJBWENOSolver the same fixture reads as first order
+        for that reason alone, and as second order without the coupling.
+
+        The ladder starts at Nx = 81 because below it the error is not monotone in Nx, for the
+        semi-Lagrangian solver on this fixture as well: at Nt = 400 FDM gives 5.26e-02 at
+        Nx = 31 and 7.34e-02 at Nx = 41 (measured at 7c9f120b). Nt is held at 20. Refining Nt
+        from 25 to 200 at Nx = 321 moves the error by 7%, so the ratios below are spatial.
+
+        The ratio band, against scripts/test_discrimination.py mutations applied at 19cbc975:
+
+            correct                          ratios 1.96, 2.07
+            diffusion_scalar_2x              ratios 1.13, 1.07
+            hjb_marches_forward_in_time      ratios 1.00, 1.00
+            godunov_branch_swap              ratios 2.7e+04, 1.92  <- only the upper bound sees it
+
+        The swap is unstable at the coarsest level only (error 7.2e+02 at Nx = 81, then 2.6e-02),
+        so a ratio far above 2 is not truncation error.
+
+        It cannot see grid_spacing_uses_point_count (h = L/n): ratios 1.97, 2.08, with a smaller
+        error than the correct spacing at every level. An O(h) change to the stencil spacing is
+        invisible to a first-order order test. The version before #1991 killed that mutation
+        only by failing a 1.5 bound at 1.486.
         """
         from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
         from mfgarchon.geometry import periodic_bc
 
         sigma = 0.2
         T = 0.3
+        Nt = 20
 
         manufactured = BackwardHeatSolution1D(sigma=sigma, amplitude=1.0, T=T)
+        components = MFGComponents(
+            m_initial=lambda x: np.ones_like(x),
+            u_terminal=lambda x: 0.0,
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
+        )
 
-        resolutions = [21, 41, 81]
         errors = []
-
-        for Nx in resolutions:
-            # Pass BC to geometry - solvers retrieve BC via geometry.get_boundary_conditions()
-            bc = periodic_bc(dimension=1)
-            geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[Nx], boundary_conditions=bc)
-            problem = MFGProblem(geometry=geometry, T=T, Nt=Nx, sigma=sigma, components=_default_components())
-
+        for Nx in (81, 161, 321):
+            geometry = TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[Nx], boundary_conditions=periodic_bc(dimension=1)
+            )
+            problem = MFGProblem(geometry=geometry, T=T, Nt=Nt, sigma=sigma, components=components)
             x_grid = geometry.coordinates[0]
 
-            # Terminal condition from manufactured solution
-            u_terminal = manufactured.terminal_condition(x_grid)
-
-            # Zero density coupling (pure HJB without MFG coupling)
-            M_zero = np.ones((problem.Nt + 1, Nx)) / Nx  # Uniform density
-            # Initialize U_coupling_prev to zeros (first Picard iteration)
-            U_prev = np.zeros((problem.Nt + 1, Nx))
-
-            solver = HJBFDMSolver(problem)
-
-            # MMS source term: S(t, x) = H(grad u_exact) = |grad u_exact|^2 / 2
-            # Wraps hjb_source to accept (t, x_grid) with x_grid as (N, d) ndarray
-            def source_fn(t, x_arr, _mfg=manufactured):
-                return _mfg.hjb_source(t, x_arr)
-
-            # Solve HJB backward in time with source term
-            U_numerical = solver.solve_hjb_system(
-                M_density=M_zero,
-                U_terminal=u_terminal,
-                U_coupling_prev=U_prev,
-                source_term=source_fn,
+            U_numerical = HJBFDMSolver(problem).solve_hjb_system(
+                M_density=np.ones((Nt + 1, Nx)),
+                U_terminal=manufactured.terminal_condition(x_grid),
+                U_coupling_prev=np.zeros((Nt + 1, Nx)),
+                source_term=lambda t, x_arr: manufactured.hjb_source(t, x_arr),
             )
-
-            # Compare initial time solution (t=0) with exact
-            u_exact_initial = manufactured.solution(0.0, x_grid)
-            error = np.sqrt(np.mean((U_numerical[0, :] - u_exact_initial) ** 2))
-            errors.append(error)
+            errors.append(np.sqrt(np.mean((U_numerical[0, :] - manufactured.solution(0.0, x_grid)) ** 2)))
 
         errors = np.array(errors)
         ratios = errors[:-1] / errors[1:]
-        orders = np.log(ratios) / np.log(2)
-
-        # HJB FDM should give ~1st order convergence (upwind scheme)
-        assert np.all(ratios > 1.5), (
-            f"HJB convergence ratio too low: {ratios} (orders: {orders}). "
-            f"Errors: {errors}. Expected ratio >1.5 for upwind scheme."
+        assert np.all((ratios > 1.6) & (ratios < 2.6)), (
+            f"HJB FDM error ratios under halving h are {ratios} (errors {errors}); a first-order "
+            f"scheme gives about 2. Below 1.6 the error is not converging at first order; above 2.6 "
+            f"the coarse error is not truncation error."
         )
 
     def test_hjb_terminal_condition_preserved(self):
