@@ -742,10 +742,14 @@ class TestMMSHJB1D:
         first order in its own right. On HJBWENOSolver the same fixture reads as first order
         for that reason alone, and as second order without the coupling.
 
-        The ladder starts at Nx = 81 because below it the error is not monotone in Nx, for the
-        semi-Lagrangian solver on this fixture as well: at Nt = 400 FDM gives 5.26e-02 at
-        Nx = 31 and 7.34e-02 at Nx = 41 (measured at 7c9f120b). Nt is held at 20. Refining Nt
-        from 25 to 200 at Nx = 321 moves the error by 7%, so the ratios below are spatial.
+        The ladder starts at Nx = 81 because below it the error is not monotone in Nx: at
+        Nt = 400 FDM gives 5.26e-02 at Nx = 31 and 7.34e-02 at Nx = 41 (measured at 7c9f120b).
+        That is the #2308 defect, not only grid alignment. `gradient_upwind` is non-monotone at a
+        discrete local minimum, it fires when x = 0.5 is a node, and it grows with
+        r = (kh/sigma)^2. From Nx = 81, r <= 0.154, and this ladder's ratios under the
+        Rouy-Tourin rule #2308 proposes are 2.02, 2.08 (measured at d3a6ab17), inside the band
+        below. Nt is held at 20. Refining Nt from 25 to 200 at Nx = 321 moves the error by 7%,
+        so the ratios below are spatial.
 
         The ratio band, against scripts/test_discrimination.py mutations applied at 19cbc975:
 
@@ -796,8 +800,9 @@ class TestMMSHJB1D:
         ratios = errors[:-1] / errors[1:]
         assert np.all((ratios > 1.6) & (ratios < 2.6)), (
             f"HJB FDM error ratios under halving h are {ratios} (errors {errors}); a first-order "
-            f"scheme gives about 2. Below 1.6 the error is not converging at first order; above 2.6 "
-            f"the coarse error is not truncation error."
+            f"scheme gives about 2. Below 1.6 it is not converging at first order. Above 2.6 either the "
+            f"coarse level is not in the asymptotic regime (godunov_branch_swap blows up at Nx = 81) or "
+            f"the scheme's order changed; re-derive the band before moving it."
         )
 
     def test_hjb_terminal_condition_preserved(self):

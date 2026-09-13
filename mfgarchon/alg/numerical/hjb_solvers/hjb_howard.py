@@ -649,8 +649,9 @@ class HJBHowardSolver:
         volatility_field, source_term
             Refused when not None. Both have one owner elsewhere: the volatility is a
             constructor argument, and a source reaches this solver through the constructor's
-            `running_cost`, which `HJBGFDMSolver(inner_solver="howard", source_term=...)` fills
-            with the sign conversion that slot needs.
+            `running_cost`, which
+            `HJBGFDMSolver(..., inner_solver="howard").solve_hjb_system(..., source_term=...)`
+            fills with the sign conversion that slot needs.
 
         Returns
         -------

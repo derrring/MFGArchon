@@ -322,7 +322,7 @@ _CASES = [
     ("HJBSemiLagrangianSolver", _hjb_semi_lagrangian, "honours"),
     # #1991: not a BaseHJBSolver, so no walk here found it; it swallowed the source through
     # `**_unused`. It refuses rather than honours because a source already reaches it through the
-    # constructor's `running_cost`, filled by `HJBGFDMSolver(inner_solver="howard")`.
+    # constructor's `running_cost`, filled by `HJBGFDMSolver(inner_solver="howard").solve_hjb_system(source_term=...)`.
     ("HJBHowardSolver", _hjb_howard, "refuses"),
     # 2026-09-04 (#2020): was "refuses" -- and the refusal was a bare argument-binding
     # TypeError, i.e. the parameter was simply absent, which #2020's own body distinguishes
@@ -535,13 +535,22 @@ def test_the_swallowing_set_has_not_grown():
     came to carry a row that was wrong when written.
 
     The population is `_solver_classes()`, so a class outside both base hierarchies is in it; the
-    class-definition gate cannot reach such a class, which makes this the only check that does. The
-    guarded names are the bases' own `_GUARDED_PARAMETERS`, so this and that gate cannot disagree
-    about which parameters must not be swallowed.
+    class-definition gate cannot reach such a class, which makes this the only check that does.
+
+    The guarded names are written here, not read from the bases' `_GUARDED_PARAMETERS`. Read from
+    there, a gate that stopped guarding `source_term` would take this witness down with it: review
+    of #2307 set both lists to `("volatility_field",)`, added a class swallowing `source_term`, and
+    this test stayed green. Stated independently, and checked against each gate, the two fail
+    separately.
     """
+    guarded = {"source_term", "volatility_field"}
+    for base in (BaseHJBSolver, BaseFPSolver):
+        assert guarded <= set(base._GUARDED_PARAMETERS), (
+            f"{base.__name__}._GUARDED_PARAMETERS = {base._GUARDED_PARAMETERS} no longer guards "
+            f"{sorted(guarded - set(base._GUARDED_PARAMETERS))}, so a subclass can swallow it again."
+        )
     found = _solver_classes()
     assert len(found) >= 15, f"expected the full solver population, found {len(found)}"
-    guarded = set(BaseHJBSolver._GUARDED_PARAMETERS) | set(BaseFPSolver._GUARDED_PARAMETERS)
 
     swallow = set()
     for name, (cls, method) in found.items():
@@ -555,3 +564,32 @@ def test_the_swallowing_set_has_not_grown():
         f"Added means a new solver joined the #2020 defect. Removed means one was fixed -- update "
         f"_SWALLOWERS and the 'swallows' rows in _CASES."
     )
+
+
+def test_howard_refuses_a_volatility_field_its_constructor_owns():
+    """`HJBHowardSolver` is the one solver the class-definition gate cannot reach (#1991), so its
+    `volatility_field` refusal has no other witness. The swallow ratchet only sees an unnamed
+    `**kwargs`; a named parameter that is then ignored passes it. Review of #2307 mutated the
+    refusal to `if volatility_field is not None and False:` and 78 tests stayed green.
+
+    The presence half is the control: the same value through the constructor must move the answer,
+    or the refusal would be guarding a parameter that means nothing.
+    """
+    from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
+    from mfgarchon.alg.numerical.hjb_solvers.hjb_howard import HJBHowardSolver
+
+    p = _grid_problem()
+    provider = HJBGFDMSolver(p, collocation_points=np.linspace(0.0, 1.0, _N).reshape(-1, 1))
+    u_terminal = (np.linspace(0.0, 1.0, _N) - 0.5) ** 2
+
+    def howard(**kwargs):
+        with pytest.warns(UserWarning, match="non-SOCP"):
+            return HJBHowardSolver(p, stencil_provider=provider, alpha_star=lambda x, grad, m, t: -grad, **kwargs)
+
+    with pytest.raises(NotImplementedError, match="volatility_field"):
+        howard().solve_hjb_system(None, u_terminal, volatility_field=3.0)
+
+    moved = np.abs(
+        howard(volatility_field=3.0).solve_hjb_system(None, u_terminal) - howard().solve_hjb_system(None, u_terminal)
+    )
+    assert moved.max() > 1e-3, f"volatility_field=3.0 through the constructor moved U by {moved.max():.3e}"
