@@ -675,7 +675,7 @@ class HJBHowardSolver:
             raise NotImplementedError(
                 "HJBHowardSolver.solve_hjb_system does not accept source_term: a source enters "
                 "through the constructor's running_cost, at the sign that slot needs. Use "
-                "HJBGFDMSolver(inner_solver='howard').solve_hjb_system(source_term=...), which "
+                "HJBGFDMSolver(..., inner_solver='howard').solve_hjb_system(..., source_term=...), which "
                 "does that conversion (Issue #1991)."
             )
         if volatility_field is not None:

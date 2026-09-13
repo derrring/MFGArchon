@@ -322,7 +322,7 @@ _CASES = [
     ("HJBSemiLagrangianSolver", _hjb_semi_lagrangian, "honours"),
     # #1991: not a BaseHJBSolver, so no walk here found it; it swallowed the source through
     # `**_unused`. It refuses rather than honours because a source already reaches it through the
-    # constructor's `running_cost`, filled by `HJBGFDMSolver(inner_solver="howard").solve_hjb_system(source_term=...)`.
+    # constructor's `running_cost`, filled by `HJBGFDMSolver(..., inner_solver="howard").solve_hjb_system(..., source_term=...)`.
     ("HJBHowardSolver", _hjb_howard, "refuses"),
     # 2026-09-04 (#2020): was "refuses" -- and the refusal was a bare argument-binding
     # TypeError, i.e. the parameter was simply absent, which #2020's own body distinguishes
@@ -433,7 +433,7 @@ def _solver_classes() -> dict[str, tuple[type, str]]:
             if not inspect.isclass(obj) or obj in (BaseHJBSolver, BaseFPSolver):
                 continue
             for method in ("solve_hjb_system", "solve_fp_system"):
-                if inspect.isfunction(getattr(obj, method, None)):
+                if callable(getattr(obj, method, None)):
                     found[obj.__name__] = (obj, method)
     assert not failed, f"modules that would hide a solver from this census: {failed}"
     assert "HJBFDMSolver" in found, "the walk did not find a solver known to exist -- the query is wrong"
@@ -586,8 +586,11 @@ def test_howard_refuses_a_volatility_field_its_constructor_owns():
         with pytest.warns(UserWarning, match="non-SOCP"):
             return HJBHowardSolver(p, stencil_provider=provider, alpha_star=lambda x, grad, m, t: -grad, **kwargs)
 
-    with pytest.raises(NotImplementedError, match="volatility_field"):
-        howard().solve_hjb_system(None, u_terminal, volatility_field=3.0)
+    # 0.0 as well as 3.0: a truthiness check (`if volatility_field:`) refuses 3.0 and ignores 0.0,
+    # and 0.0 through the constructor is not a no-op -- it removes the diffusion.
+    for value in (3.0, 0.0):
+        with pytest.raises(NotImplementedError, match="volatility_field"):
+            howard().solve_hjb_system(None, u_terminal, volatility_field=value)
 
     moved = np.abs(
         howard(volatility_field=3.0).solve_hjb_system(None, u_terminal) - howard().solve_hjb_system(None, u_terminal)
