@@ -232,6 +232,17 @@ def _hjb_weno():
     return lambda f: s.solve_hjb_system(m, np.zeros(_N), u, **({"source_term": f} if f else {}))
 
 
+def _hjb_howard():
+    from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
+    from mfgarchon.alg.numerical.hjb_solvers.hjb_howard import HJBHowardSolver
+
+    p = _grid_problem()
+    provider = HJBGFDMSolver(p, collocation_points=np.linspace(0.0, 1.0, _N).reshape(-1, 1))
+    with pytest.warns(UserWarning, match="non-SOCP"):
+        s = HJBHowardSolver(p, stencil_provider=provider, alpha_star=lambda x, grad, m, t: -grad)
+    return lambda f: s.solve_hjb_system(None, np.zeros(_N), **({"source_term": f} if f else {}))
+
+
 def _fp_fvm():
     from mfgarchon.alg.numerical.fp_solvers.fp_fvm import FPFVMSolver
 
@@ -309,6 +320,10 @@ _CASES = [
     # tests/integration/test_sl_mms_anisotropic_2198.py, which also measures the order the channel
     # bought: EOC 1.039, 1.017 isotropic and 1.040, 1.017 with an off-diagonal Sigma.
     ("HJBSemiLagrangianSolver", _hjb_semi_lagrangian, "honours"),
+    # #1991: not a BaseHJBSolver, so no walk here found it; it swallowed the source through
+    # `**_unused`. It refuses rather than honours because a source already reaches it through the
+    # constructor's `running_cost`, filled by `HJBGFDMSolver(..., inner_solver="howard").solve_hjb_system(..., source_term=...)`.
+    ("HJBHowardSolver", _hjb_howard, "refuses"),
     # 2026-09-04 (#2020): was "refuses" -- and the refusal was a bare argument-binding
     # TypeError, i.e. the parameter was simply absent, which #2020's own body distinguishes
     # from a refusal ("Refusing is a behaviour; an absent signature is not"). It is now
@@ -391,37 +406,37 @@ _UNCOVERED: dict[str, str] = {
 }
 
 
-def _concrete_solvers() -> set[str]:
-    """Every concrete BaseHJBSolver / BaseFPSolver subclass under `mfgarchon.alg.numerical`.
+def _solver_classes() -> dict[str, tuple[type, str]]:
+    """Every class under `mfgarchon.alg` that has a `solve_hjb_system` or `solve_fp_system`.
 
-    Discovery must not be keyed on the property under audit, so no signature and no membership of
-    `_CASES` takes part in choosing the population.
+    Name -> (class, method name). Discovery must not be keyed on the property under audit, so no
+    signature and no membership of `_CASES` takes part in choosing the population.
+
+    Keyed on HAVING the method, not on subclassing a base (#1991). Both walks in this file used
+    `issubclass(obj, (BaseHJBSolver, BaseFPSolver))`, and `HJBHowardSolver` subclasses neither: its
+    `solve_hjb_system` ended in `**_unused` and discarded `source_term` bitwise, invisible to both
+    tests and to the class-definition gate, which is also installed through those bases. At
+    `7c9f120b` this predicate admits exactly that one class beyond the old 21 and drops none.
     """
-    import importlib
-    import pkgutil
-
-    import mfgarchon.alg.numerical as _numerical
-
-    found: set[str] = set()
+    found: dict[str, tuple[type, str]] = {}
     failed: list[str] = []
-    for info in pkgutil.walk_packages(_numerical.__path__, _numerical.__name__ + "."):
+    for info in pkgutil.walk_packages(_alg.__path__, _alg.__name__ + "."):
         try:
-            module = importlib.import_module(info.name)
+            module = import_module(info.name)
         except Exception as exc:
             # Recorded, not swallowed: a solver hidden behind an ImportError would otherwise
-            # surface only as a baffling `assert 20 == 21`, blaming the count for a module that
-            # never loaded. `test_the_swallowing_set_has_not_grown` already guards its walk this
-            # way; this one did not.
+            # surface only as a baffling count mismatch, blaming the count for a module that
+            # never loaded.
             failed.append(f"{info.name}: {type(exc).__name__}")
             continue
         for obj in vars(module).values():
-            if (
-                inspect.isclass(obj)
-                and issubclass(obj, (BaseHJBSolver, BaseFPSolver))
-                and obj not in (BaseHJBSolver, BaseFPSolver)
-            ):
-                found.add(obj.__name__)
+            if not inspect.isclass(obj) or obj in (BaseHJBSolver, BaseFPSolver):
+                continue
+            for method in ("solve_hjb_system", "solve_fp_system"):
+                if callable(getattr(obj, method, None)):
+                    found[obj.__name__] = (obj, method)
     assert not failed, f"modules that would hide a solver from this census: {failed}"
+    assert "HJBFDMSolver" in found, "the walk did not find a solver known to exist -- the query is wrong"
     return found
 
 
@@ -432,10 +447,10 @@ def test_every_concrete_solver_is_covered_or_named():
     solvers someone thought of. It covered 6 of 21 until 2026-08-21 -- every FDM, FEM and meshless
     path, and none of GFDM, WENO, FVM, semi-Lagrangian or particle -- and nothing said so.
     """
-    population = _concrete_solvers()
+    population = set(_solver_classes())
     covered = {c[0] for c in _CASES}
 
-    # The informative assertion FIRST. `len(population) == 21` fires on the commonest real event --
+    # The informative assertion FIRST. `len(population) == 22` fires on the commonest real event --
     # someone adds a solver -- and its message is a bare count, which blames the wrong thing.
     unaccounted = population - covered - set(_UNCOVERED)
     assert unaccounted == set(), (
@@ -443,7 +458,7 @@ def test_every_concrete_solver_is_covered_or_named():
         f"Add a row if the fixture can drive it, or name the reason it cannot."
     )
 
-    assert len(population) == 21, sorted(population)
+    assert len(population) == 22, sorted(population)
     assert covered - population == set(), f"rows for classes that are not in the population: {covered - population}"
 
     stale = set(_UNCOVERED) - population
@@ -518,36 +533,66 @@ def test_the_swallowing_set_has_not_grown():
     ``WeakFormFPSolver``, ``HJBFEMSolver`` -> ``WeakFormHJBSolver``). A ``__dict__``-only census
     reads "not overridden" as "inherits the base, therefore accepts", which is how #1991's table
     came to carry a row that was wrong when written.
-    """
-    found: dict[str, type] = {}
-    failed = []
-    for mod in pkgutil.walk_packages(_alg.__path__, _alg.__name__ + "."):
-        try:
-            module = import_module(mod.name)
-        except Exception:  # a module that cannot import cannot contribute a solver
-            failed.append(mod.name)
-            continue
-        for obj in vars(module).values():
-            if not inspect.isclass(obj):
-                continue
-            for base, method in ((BaseHJBSolver, "solve_hjb_system"), (BaseFPSolver, "solve_fp_system")):
-                if issubclass(obj, base) and obj is not base:
-                    found[obj.__name__] = getattr(obj, method)
 
-    assert not failed, f"modules failed to import, so the population is short: {failed}"
-    assert "HJBFDMSolver" in found, "the walk did not find a solver known to exist -- the query is wrong"
+    The population is `_solver_classes()`, so a class outside both base hierarchies is in it; the
+    class-definition gate cannot reach such a class, which makes this the only check that does.
+
+    The guarded names are written here, not read from the bases' `_GUARDED_PARAMETERS`. Read from
+    there, a gate that stopped guarding `source_term` would take this witness down with it: review
+    of #2307 set both lists to `("volatility_field",)`, added a class swallowing `source_term`, and
+    this test stayed green. Stated independently, and checked against each gate, the two fail
+    separately.
+    """
+    guarded = {"source_term", "volatility_field"}
+    for base in (BaseHJBSolver, BaseFPSolver):
+        assert guarded <= set(base._GUARDED_PARAMETERS), (
+            f"{base.__name__}._GUARDED_PARAMETERS = {base._GUARDED_PARAMETERS} no longer guards "
+            f"{sorted(guarded - set(base._GUARDED_PARAMETERS))}, so a subclass can swallow it again."
+        )
+    found = _solver_classes()
     assert len(found) >= 15, f"expected the full solver population, found {len(found)}"
 
-    swallow = {
-        name
-        for name, fn in found.items()
-        if "source_term" not in inspect.signature(fn).parameters
-        and any(p.kind is inspect.Parameter.VAR_KEYWORD for p in inspect.signature(fn).parameters.values())
-    }
+    swallow = set()
+    for name, (cls, method) in found.items():
+        params = inspect.signature(getattr(cls, method)).parameters
+        if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()) and guarded - set(params):
+            swallow.add(name)
     assert swallow == _SWALLOWERS, (
-        f"the set of solvers that swallow `source_term` through **kwargs changed.\n"
+        f"the set of solvers that swallow {sorted(guarded)} through **kwargs changed.\n"
         f"  added:   {sorted(swallow - _SWALLOWERS)}\n"
         f"  removed: {sorted(_SWALLOWERS - swallow)}\n"
         f"Added means a new solver joined the #2020 defect. Removed means one was fixed -- update "
         f"_SWALLOWERS and the 'swallows' rows in _CASES."
     )
+
+
+def test_howard_refuses_a_volatility_field_its_constructor_owns():
+    """`HJBHowardSolver` is the one solver the class-definition gate cannot reach (#1991), so its
+    `volatility_field` refusal has no other witness. The swallow ratchet only sees an unnamed
+    `**kwargs`; a named parameter that is then ignored passes it. Review of #2307 mutated the
+    refusal to `if volatility_field is not None and False:` and 78 tests stayed green.
+
+    The presence half is the control: the same value through the constructor must move the answer,
+    or the refusal would be guarding a parameter that means nothing.
+    """
+    from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
+    from mfgarchon.alg.numerical.hjb_solvers.hjb_howard import HJBHowardSolver
+
+    p = _grid_problem()
+    provider = HJBGFDMSolver(p, collocation_points=np.linspace(0.0, 1.0, _N).reshape(-1, 1))
+    u_terminal = (np.linspace(0.0, 1.0, _N) - 0.5) ** 2
+
+    def howard(**kwargs):
+        with pytest.warns(UserWarning, match="non-SOCP"):
+            return HJBHowardSolver(p, stencil_provider=provider, alpha_star=lambda x, grad, m, t: -grad, **kwargs)
+
+    # 0.0 as well as 3.0: a truthiness check (`if volatility_field:`) refuses 3.0 and ignores 0.0,
+    # and 0.0 through the constructor is not a no-op -- it removes the diffusion.
+    for value in (3.0, 0.0):
+        with pytest.raises(NotImplementedError, match="volatility_field"):
+            howard().solve_hjb_system(None, u_terminal, volatility_field=value)
+
+    moved = np.abs(
+        howard(volatility_field=3.0).solve_hjb_system(None, u_terminal) - howard().solve_hjb_system(None, u_terminal)
+    )
+    assert moved.max() > 1e-3, f"volatility_field=3.0 through the constructor moved U by {moved.max():.3e}"
