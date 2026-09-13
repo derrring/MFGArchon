@@ -633,7 +633,9 @@ class HJBHowardSolver:
         M_density: np.ndarray | None,
         U_terminal: np.ndarray,
         cross_density=None,
-        **_unused,
+        *,
+        volatility_field: float | np.ndarray | None = None,
+        source_term: Callable | None = None,
     ) -> np.ndarray:
         """Backward sweep using Howard inner.
 
@@ -644,19 +646,41 @@ class HJBHowardSolver:
             treated as zero (no MFG coupling).
         U_terminal : np.ndarray
             Terminal condition `U(T, x)`, shape `(n,)`.
+        volatility_field, source_term
+            Refused when not None. Both have one owner elsewhere: the volatility is a
+            constructor argument, and a source reaches this solver through the constructor's
+            `running_cost`, which `HJBGFDMSolver(inner_solver="howard", source_term=...)` fills
+            with the sign conversion that slot needs.
 
         Returns
         -------
         np.ndarray
             Value function `U(t, x)`, shape `(Nt+1, n)`. `U[Nt] == U_terminal`.
         """
-        # Issue #1071: named explicitly (not swallowed by **_unused) so a multi-population
-        # cross-density trajectory fails loud here rather than silently decoupling — it would
-        # never reach Howard's policy-iteration evaluation.
+        # Issue #1071: named explicitly so a multi-population cross-density trajectory fails loud
+        # here rather than silently decoupling — it would never reach Howard's policy-iteration
+        # evaluation.
         if cross_density is not None:
             raise NotImplementedError(
                 "HJBHowardSolver does not support multi-population cross-density coupling "
                 "(Issue #1071). Use HJBFDMSolver for multi-population MFG."
+            )
+        # Issue #1991: this signature ended in `**_unused`, and this class is not a BaseHJBSolver,
+        # so neither the #2020 class-definition gate nor the source_term census could see it.
+        # Measured at 7c9f120b: a source that raises when called was never called, and
+        # `volatility_field=3.0` left U bitwise unchanged while the same value through the
+        # constructor moved it by 0.60.
+        if source_term is not None:
+            raise NotImplementedError(
+                "HJBHowardSolver.solve_hjb_system does not accept source_term: a source enters "
+                "through the constructor's running_cost, at the sign that slot needs. Use "
+                "HJBGFDMSolver(inner_solver='howard').solve_hjb_system(source_term=...), which "
+                "does that conversion (Issue #1991)."
+            )
+        if volatility_field is not None:
+            raise NotImplementedError(
+                "HJBHowardSolver.solve_hjb_system does not accept volatility_field: pass it to "
+                "HJBHowardSolver(volatility_field=...), which owns it (Issue #1991)."
             )
         if self._static is None:
             self._static = self._build_static()

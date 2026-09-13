@@ -232,6 +232,17 @@ def _hjb_weno():
     return lambda f: s.solve_hjb_system(m, np.zeros(_N), u, **({"source_term": f} if f else {}))
 
 
+def _hjb_howard():
+    from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
+    from mfgarchon.alg.numerical.hjb_solvers.hjb_howard import HJBHowardSolver
+
+    p = _grid_problem()
+    provider = HJBGFDMSolver(p, collocation_points=np.linspace(0.0, 1.0, _N).reshape(-1, 1))
+    with pytest.warns(UserWarning, match="non-SOCP"):
+        s = HJBHowardSolver(p, stencil_provider=provider, alpha_star=lambda x, grad, m, t: -grad)
+    return lambda f: s.solve_hjb_system(None, np.zeros(_N), **({"source_term": f} if f else {}))
+
+
 def _fp_fvm():
     from mfgarchon.alg.numerical.fp_solvers.fp_fvm import FPFVMSolver
 
@@ -309,6 +320,10 @@ _CASES = [
     # tests/integration/test_sl_mms_anisotropic_2198.py, which also measures the order the channel
     # bought: EOC 1.039, 1.017 isotropic and 1.040, 1.017 with an off-diagonal Sigma.
     ("HJBSemiLagrangianSolver", _hjb_semi_lagrangian, "honours"),
+    # #1991: not a BaseHJBSolver, so no walk here found it; it swallowed the source through
+    # `**_unused`. It refuses rather than honours because a source already reaches it through the
+    # constructor's `running_cost`, filled by `HJBGFDMSolver(inner_solver="howard")`.
+    ("HJBHowardSolver", _hjb_howard, "refuses"),
     # 2026-09-04 (#2020): was "refuses" -- and the refusal was a bare argument-binding
     # TypeError, i.e. the parameter was simply absent, which #2020's own body distinguishes
     # from a refusal ("Refusing is a behaviour; an absent signature is not"). It is now
@@ -391,37 +406,37 @@ _UNCOVERED: dict[str, str] = {
 }
 
 
-def _concrete_solvers() -> set[str]:
-    """Every concrete BaseHJBSolver / BaseFPSolver subclass under `mfgarchon.alg.numerical`.
+def _solver_classes() -> dict[str, tuple[type, str]]:
+    """Every class under `mfgarchon.alg` that has a `solve_hjb_system` or `solve_fp_system`.
 
-    Discovery must not be keyed on the property under audit, so no signature and no membership of
-    `_CASES` takes part in choosing the population.
+    Name -> (class, method name). Discovery must not be keyed on the property under audit, so no
+    signature and no membership of `_CASES` takes part in choosing the population.
+
+    Keyed on HAVING the method, not on subclassing a base (#1991). Both walks in this file used
+    `issubclass(obj, (BaseHJBSolver, BaseFPSolver))`, and `HJBHowardSolver` subclasses neither: its
+    `solve_hjb_system` ended in `**_unused` and discarded `source_term` bitwise, invisible to both
+    tests and to the class-definition gate, which is also installed through those bases. At
+    `7c9f120b` this predicate admits exactly that one class beyond the old 21 and drops none.
     """
-    import importlib
-    import pkgutil
-
-    import mfgarchon.alg.numerical as _numerical
-
-    found: set[str] = set()
+    found: dict[str, tuple[type, str]] = {}
     failed: list[str] = []
-    for info in pkgutil.walk_packages(_numerical.__path__, _numerical.__name__ + "."):
+    for info in pkgutil.walk_packages(_alg.__path__, _alg.__name__ + "."):
         try:
-            module = importlib.import_module(info.name)
+            module = import_module(info.name)
         except Exception as exc:
             # Recorded, not swallowed: a solver hidden behind an ImportError would otherwise
-            # surface only as a baffling `assert 20 == 21`, blaming the count for a module that
-            # never loaded. `test_the_swallowing_set_has_not_grown` already guards its walk this
-            # way; this one did not.
+            # surface only as a baffling count mismatch, blaming the count for a module that
+            # never loaded.
             failed.append(f"{info.name}: {type(exc).__name__}")
             continue
         for obj in vars(module).values():
-            if (
-                inspect.isclass(obj)
-                and issubclass(obj, (BaseHJBSolver, BaseFPSolver))
-                and obj not in (BaseHJBSolver, BaseFPSolver)
-            ):
-                found.add(obj.__name__)
+            if not inspect.isclass(obj) or obj in (BaseHJBSolver, BaseFPSolver):
+                continue
+            for method in ("solve_hjb_system", "solve_fp_system"):
+                if inspect.isfunction(getattr(obj, method, None)):
+                    found[obj.__name__] = (obj, method)
     assert not failed, f"modules that would hide a solver from this census: {failed}"
+    assert "HJBFDMSolver" in found, "the walk did not find a solver known to exist -- the query is wrong"
     return found
 
 
@@ -432,10 +447,10 @@ def test_every_concrete_solver_is_covered_or_named():
     solvers someone thought of. It covered 6 of 21 until 2026-08-21 -- every FDM, FEM and meshless
     path, and none of GFDM, WENO, FVM, semi-Lagrangian or particle -- and nothing said so.
     """
-    population = _concrete_solvers()
+    population = set(_solver_classes())
     covered = {c[0] for c in _CASES}
 
-    # The informative assertion FIRST. `len(population) == 21` fires on the commonest real event --
+    # The informative assertion FIRST. `len(population) == 22` fires on the commonest real event --
     # someone adds a solver -- and its message is a bare count, which blames the wrong thing.
     unaccounted = population - covered - set(_UNCOVERED)
     assert unaccounted == set(), (
@@ -443,7 +458,7 @@ def test_every_concrete_solver_is_covered_or_named():
         f"Add a row if the fixture can drive it, or name the reason it cannot."
     )
 
-    assert len(population) == 21, sorted(population)
+    assert len(population) == 22, sorted(population)
     assert covered - population == set(), f"rows for classes that are not in the population: {covered - population}"
 
     stale = set(_UNCOVERED) - population
@@ -518,34 +533,23 @@ def test_the_swallowing_set_has_not_grown():
     ``WeakFormFPSolver``, ``HJBFEMSolver`` -> ``WeakFormHJBSolver``). A ``__dict__``-only census
     reads "not overridden" as "inherits the base, therefore accepts", which is how #1991's table
     came to carry a row that was wrong when written.
+
+    The population is `_solver_classes()`, so a class outside both base hierarchies is in it; the
+    class-definition gate cannot reach such a class, which makes this the only check that does. The
+    guarded names are the bases' own `_GUARDED_PARAMETERS`, so this and that gate cannot disagree
+    about which parameters must not be swallowed.
     """
-    found: dict[str, type] = {}
-    failed = []
-    for mod in pkgutil.walk_packages(_alg.__path__, _alg.__name__ + "."):
-        try:
-            module = import_module(mod.name)
-        except Exception:  # a module that cannot import cannot contribute a solver
-            failed.append(mod.name)
-            continue
-        for obj in vars(module).values():
-            if not inspect.isclass(obj):
-                continue
-            for base, method in ((BaseHJBSolver, "solve_hjb_system"), (BaseFPSolver, "solve_fp_system")):
-                if issubclass(obj, base) and obj is not base:
-                    found[obj.__name__] = getattr(obj, method)
-
-    assert not failed, f"modules failed to import, so the population is short: {failed}"
-    assert "HJBFDMSolver" in found, "the walk did not find a solver known to exist -- the query is wrong"
+    found = _solver_classes()
     assert len(found) >= 15, f"expected the full solver population, found {len(found)}"
+    guarded = set(BaseHJBSolver._GUARDED_PARAMETERS) | set(BaseFPSolver._GUARDED_PARAMETERS)
 
-    swallow = {
-        name
-        for name, fn in found.items()
-        if "source_term" not in inspect.signature(fn).parameters
-        and any(p.kind is inspect.Parameter.VAR_KEYWORD for p in inspect.signature(fn).parameters.values())
-    }
+    swallow = set()
+    for name, (cls, method) in found.items():
+        params = inspect.signature(getattr(cls, method)).parameters
+        if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()) and guarded - set(params):
+            swallow.add(name)
     assert swallow == _SWALLOWERS, (
-        f"the set of solvers that swallow `source_term` through **kwargs changed.\n"
+        f"the set of solvers that swallow {sorted(guarded)} through **kwargs changed.\n"
         f"  added:   {sorted(swallow - _SWALLOWERS)}\n"
         f"  removed: {sorted(_SWALLOWERS - swallow)}\n"
         f"Added means a new solver joined the #2020 defect. Removed means one was fixed -- update "
