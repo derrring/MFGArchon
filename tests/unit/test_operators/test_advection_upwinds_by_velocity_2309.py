@@ -60,9 +60,18 @@ def test_every_explicit_update_coefficient_is_nonnegative(assemble, form: str, v
     )
 
 
+def _apply_operator(v: np.ndarray, form: str, m: np.ndarray) -> np.ndarray:
+    return AdvectionOperator(v[None, :], [_H], (_N,), scheme="upwind", form=form)(m)
+
+
+def _apply_tensor_calculus(v: np.ndarray, form: str, m: np.ndarray) -> np.ndarray:
+    return advection(m, [v], [_H], form=form, method="upwind")
+
+
+@pytest.mark.parametrize("apply", [_apply_operator, _apply_tensor_calculus], ids=["operator", "tensor_calculus"])
 @pytest.mark.parametrize("form", ["gradient", "divergence"])
 @pytest.mark.parametrize("sign", [1.0, -1.0])
-def test_a_constant_velocity_update_stays_between_each_node_and_its_upwind_neighbour(form: str, sign: float):
+def test_a_constant_velocity_update_stays_between_each_node_and_its_upwind_neighbour(apply, form: str, sign: float):
     """The same property on a smooth profile, where the selection is the one the operator makes on real data.
 
     The coefficient test above assembles the operator column by column from unit spikes, and a spike's one-sided
@@ -72,13 +81,13 @@ def test_a_constant_velocity_update_stays_between_each_node_and_its_upwind_neigh
     on the falling side does not.
     """
     m = 1.0 + 0.5 * np.cos(2 * np.pi * _X) + 0.2 * np.sin(6 * np.pi * _X)
-    operator = AdvectionOperator(np.full((1, _N), sign), [_H], (_N,), scheme="upwind", form=form)
-    updated = m - 0.4 * _H * operator(m)
+    updated = m - 0.4 * _H * apply(np.full(_N, sign), form, m)
     upwind_neighbour = np.roll(m, 1) if sign > 0 else np.roll(m, -1)
     low, high = np.minimum(m, upwind_neighbour), np.maximum(m, upwind_neighbour)
     outside = float(np.maximum(low - updated, updated - high).max())
     assert outside < 1e-12, (
-        f"form={form}, v={sign:+.0f}: the update leaves [m_i, m_upwind] by {outside:.3e} -- a downwind selection (#2309)"
+        f"{apply.__name__}, form={form}, v={sign:+.0f}: the update leaves [m_i, m_upwind] by {outside:.3e} -- a "
+        f"downwind selection (#2309)"
     )
 
 
