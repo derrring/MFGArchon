@@ -173,7 +173,7 @@ class TestHJBFDMSolverSolveHJBSystem:
         """Test that solve_hjb_system returns correct shape."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=1.0, Nt=30, components=_default_components())
-        solver = HJBFDMSolver(problem)
+        solver = HJBFDMSolver(problem, newton_tolerance=1e-8)
 
         Nt_points = problem.Nt_points
         Nx_points = problem.geometry.get_grid_shape()[0]
@@ -191,8 +191,12 @@ class TestHJBFDMSolverSolveHJBSystem:
 
         # Closed form: M == 1 everywhere, zero terminal cost, coupling f(m) = m and no-flux walls
         # leave no spatial gradient, so U(t, x) = -(T - t) * m = -(T - t). This pins the sign of the
-        # coupling term and the time integration together. Measured max error 2.25e-12 (spatial
-        # spread 1.41e-12); atol=1e-9 leaves ~440x margin.
+        # coupling term and the time integration together. Measured max error 5.97e-13 with
+        # newton_tolerance=1e-8; atol=1e-9 leaves ~1700x margin. The tolerance is explicit since #2308:
+        # at the default 1e-6 the Newton residual after the first update lands at 7.4e-07, just under
+        # tolerance, and the solve stops 7.2e-07 from the closed form. Before #2308 the same residual sat
+        # at 1.5e-06, just over, so a third iteration ran and reached 2.2e-12 -- the old pin held by that
+        # margin alone.
         t_grid = np.linspace(0.0, problem.T, Nt_points)
         expected = np.tile((-(problem.T - t_grid))[:, None], (1, Nx_points))
         np.testing.assert_allclose(U_solution, expected, atol=1e-9)
@@ -463,7 +467,7 @@ class TestHJBFDMSolverDiagonalTensor:
         )
         problem = MFGProblem(geometry=domain, T=0.05, Nt=5, sigma=0.1, components=_default_components_2d())
 
-        solver = HJBFDMSolver(problem, solver_type="newton")
+        solver = HJBFDMSolver(problem, solver_type="newton", newton_tolerance=1e-8)
 
         # Get grid shape
         Nx, Ny = domain.get_grid_shape()
@@ -502,8 +506,9 @@ class TestHJBFDMSolverDiagonalTensor:
 
         # Closed form: M == 0.5 everywhere, zero terminal cost, f(m) = m and 2D no-flux walls leave
         # no gradient to advect, so U(t, x, y) = -(T - t) * 0.5 uniformly -- whatever the anisotropy
-        # of the tensor. Measured max error 4.75e-15 (spatial spread 3.57e-15); atol=1e-12 leaves
-        # ~200x margin.
+        # of the tensor. Measured max error 1.19e-15 with newton_tolerance=1e-8; atol=1e-12 leaves ~800x
+        # margin. At the default 1e-6 it is 6.3e-10 since #2308, for the reason the 1-D closed form above
+        # records: the Newton residual now lands just under the tolerance, where it used to sit just over.
         t_grid = np.linspace(0.0, problem.T, Nt_points)
         expected = np.tile((-(problem.T - t_grid) * 0.5)[:, None], (1, Nx * Ny))
         np.testing.assert_allclose(U_solution.reshape(Nt_points, -1), expected, atol=1e-12)

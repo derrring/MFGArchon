@@ -19,6 +19,12 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+from mfgarchon.operators.stencils.finite_difference import (
+    fix_boundaries_one_sided,
+    gradient_central,
+    gradient_upwind,
+)
+
 # =============================================================================
 # Numba JIT Support
 # =============================================================================
@@ -149,12 +155,12 @@ def gradient(
 
         # Compute gradient with selected scheme
         if scheme == "central":
-            grad_d = _gradient_central(u_work, d, h, xp)
+            grad_d = gradient_central(u_work, d, h, xp)
         elif scheme == "upwind":
-            grad_d = _gradient_upwind(u_work, d, h, xp)
+            grad_d = gradient_upwind(u_work, d, h, xp)
         elif scheme == "one_sided":
-            grad_d = _gradient_central(u_work, d, h, xp)
-            grad_d = _fix_boundaries_one_sided(grad_d, u_work, d, h, xp)
+            grad_d = gradient_central(u_work, d, h, xp)
+            grad_d = fix_boundaries_one_sided(grad_d, u_work, d, h, xp)
         else:
             raise ValueError(f"Unknown gradient scheme: {scheme}")
 
@@ -678,55 +684,6 @@ def advection(
 # =============================================================================
 # Private Helper Functions
 # =============================================================================
-
-
-def _gradient_central(u: NDArray, axis: int, h: float, xp: type) -> NDArray:
-    """Central difference: (u[i+1] - u[i-1]) / (2h)."""
-    return (_roll(xp, u, -1, axis) - _roll(xp, u, 1, axis)) / (2 * h)
-
-
-def _gradient_forward(u: NDArray, axis: int, h: float, xp: type) -> NDArray:
-    """Forward difference: (u[i+1] - u[i]) / h."""
-    return (_roll(xp, u, -1, axis) - u) / h
-
-
-def _gradient_backward(u: NDArray, axis: int, h: float, xp: type) -> NDArray:
-    """Backward difference: (u[i] - u[i-1]) / h."""
-    return (u - _roll(xp, u, 1, axis)) / h
-
-
-def _gradient_upwind(u: NDArray, axis: int, h: float, xp: type) -> NDArray:
-    """Godunov upwind: select based on sign of central gradient."""
-    grad_forward = _gradient_forward(u, axis, h, xp)
-    grad_backward = _gradient_backward(u, axis, h, xp)
-    grad_central = (grad_forward + grad_backward) / 2.0
-    return xp.where(grad_central >= 0, grad_backward, grad_forward)
-
-
-def _fix_boundaries_one_sided(grad: NDArray, u: NDArray, axis: int, h: float, xp: type) -> NDArray:
-    """Replace boundary values with second-order one-sided differences.
-
-    Mirrors ``operators.stencils.finite_difference.fix_boundaries_one_sided``
-    (single source of truth for the one-sided boundary convention). Uses 3-point
-    O(h^2) stencils so a central-interior gradient stays O(h^2) at the edges
-    (Issue #1084); falls back to first-order when the axis has only 2 points.
-    """
-    ndim = u.ndim
-    n = u.shape[axis]
-
-    def _at(idx: int) -> tuple:
-        s = [slice(None)] * ndim
-        s[axis] = idx
-        return tuple(s)
-
-    if n >= 3:
-        grad[_at(0)] = (-3.0 * u[_at(0)] + 4.0 * u[_at(1)] - u[_at(2)]) / (2.0 * h)
-        grad[_at(-1)] = (3.0 * u[_at(-1)] - 4.0 * u[_at(-2)] + u[_at(-3)]) / (2.0 * h)
-    else:
-        grad[_at(0)] = (u[_at(1)] - u[_at(0)]) / h
-        grad[_at(-1)] = (u[_at(-1)] - u[_at(-2)]) / h
-
-    return grad
 
 
 def _apply_ghost_cells_nd(u: NDArray, bc: BoundaryConditions, time: float) -> NDArray:

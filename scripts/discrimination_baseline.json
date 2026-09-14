@@ -1,8 +1,8 @@
 {
   "_comment": "Kill counts per mutated convention. --check-baseline fails when a count DROPS (discrimination lost) and when one RISES (record the gain in the same change). Counts, not test names: this population cannot be selected by name -- the agreement-shaped patterns give 51, 114 or 156 depending on the regex.",
   "_measured_at": {
-    "collected": 3846,
-    "commit": "d3a6ab17",
+    "collected": 3857,
+    "commit": "240c39dc",
     "excluded": "tests/unit/test_discrimination_ratchet.py",
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment and not manual",
     "paths": [
@@ -31,7 +31,7 @@
       "status": "ok"
     },
     "diffusion_scalar_2x": {
-      "kill_count": 188,
+      "kill_count": 187,
       "owner": "D = sigma^2/2 for scalar sigma (#811)",
       "status": "ok"
     },
@@ -41,7 +41,7 @@
       "status": "ok"
     },
     "fp_initial_condition_written_at_final_index": {
-      "kill_count": 129,
+      "kill_count": 128,
       "owner": "The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, fp_fdm_time_stepping.py:797, whose own docstring states the convention at :681: \"- Forward time evolution: k=0 -> Nt-1\". No issue n",
       "status": "ok"
     },
@@ -56,8 +56,8 @@
       "status": "ok"
     },
     "godunov_branch_swap": {
-      "kill_count": 30,
-      "owner": "Godunov upwind takes the BACKWARD difference where the central gradient is >= 0 -- the library's one statement of the upwind selection rule, consumed by the HJB residual, the HJB Jacobian, GradientOperator and AdvectionOperator (#1896 items 3-4 turn on it)",
+      "kill_count": 93,
+      "owner": "Rouy-Tourin upwind takes the clamped BACKWARD part max(backward, 0) where it dominates the clamped forward part min(forward, 0) in magnitude -- the library's one statement of the upwind selection rule (#2308), consumed by the HJB residual, the HJB Jacobian, GradientOperator and AdvectionOperator (#1896 items 3-4 turn on it)",
       "status": "ok"
     },
     "grid_interval_count_reads_as_points": {
@@ -71,7 +71,7 @@
       "status": "ok"
     },
     "hjb_marches_forward_in_time": {
-      "kill_count": 21,
+      "kill_count": 24,
       "owner": "The HJB marches BACKWARD in time, from the terminal row down to t=0, while the FP marches forward -- the adjoint pairing. Single site: base_hjb.py:1780, the only time loop in solve_hjb_system_backward. The M-indexing that rides on it is documented in the same loop body at base_hjb.py:1790: \"# BUG #7",
       "status": "ok"
     },
@@ -128,6 +128,11 @@
     "upwind_jacobian_tiebreak_inverted": {
       "kill_count": 5,
       "owner": "on rows where forward and backward agree in VALUE, the upwind Jacobian's row is decided by sign(central), matching the residual's own selector -- the one place #1896 left the rule restated rather than measured (#1896 item 3)",
+      "status": "ok"
+    },
+    "upwind_minimum_takes_a_one_sided_difference": {
+      "kill_count": 62,
+      "owner": "at a discrete local minimum (backward < 0 < forward) the upwind momentum is 0, the Godunov value for an H even in each momentum component and nondecreasing in its magnitude; selecting on sign(central) returned the one-sided difference of smaller magnitude there, a non-monotone numerical Hamiltonian that Newton still converges on (#2308)",
       "status": "ok"
     }
   }

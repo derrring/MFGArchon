@@ -209,12 +209,13 @@ class TestGradientUpwind:
         instead of `grad_central`.
 
         A quadratic with an interior extremum puts a node exactly on the tie, `grad_central == 0.0`
-        to the bit. The documented rule sends it to the backward stencil (`>= 0`).
+        to the bit.
 
-        **Both** signs are needed. At a maximum `grad_backward` is positive, so a mutant predicate
-        reading `grad_backward` agrees with the correct one by coincidence and survives; at a
-        minimum it is negative and they part. One extremum is not a probe of the tie, it is a probe
-        of one side of it.
+        **Both** signs are needed, and since #2308 they pin different things. At the MAXIMUM the
+        backward part equals minus the forward part, and ``>=`` sends it to the backward stencil;
+        ``>`` would send it forward. At the MINIMUM ``backward < 0 < forward``, the Godunov
+        momentum for ``|p|^2/2`` is the minimiser of ``p^2`` over ``[backward, forward]``, which is 0
+        -- and the sign-of-central rule this replaced returned the backward difference there.
         """
         n = 100
         x = np.linspace(0, 1, n, endpoint=False)
@@ -231,7 +232,13 @@ class TestGradientUpwind:
             assert bwd[tie] != fwd[tie], f"{label}: the branches must disagree at the tie"
 
             got = gradient_upwind(u, axis=0, h=h)[tie]
-            assert got == bwd[tie], f"{label}: grad_central == 0 must take the backward branch, as the >= says"
+            if label == "maximum":
+                assert got == bwd[tie], f"maximum: the tie must take the backward branch, as the >= says (got {got!r})"
+            else:
+                assert got == 0.0, (
+                    f"minimum: backward {bwd[tie]:.3e} < 0 < forward {fwd[tie]:.3e}, so the momentum must be 0, "
+                    f"got {got!r} -- the #2308 defect returned the backward difference here"
+                )
 
     @pytest.mark.unit
     def test_result_shape(self):
@@ -250,6 +257,10 @@ class TestGradientUpwind:
         Measured decision margin: the smallest ``|grad_central|`` on the interior is 0.102, so no
         node sits near the tie and rounding cannot flip a selection here. The tie itself is a
         different case and is pinned by ``test_the_selection_predicate_is_pinned_not_only_the_branch_bodies``.
+
+        The expected value is the Godunov momentum for ``|p|^2/2`` written a different way from the
+        implementation (#2308): ``clip(0, backward, forward)`` when ``backward <= forward``, else
+        the difference of larger magnitude.
         """
         h = 0.1
         u = np.random.default_rng(0).standard_normal(50)
@@ -270,11 +281,40 @@ class TestGradientUpwind:
             "backward) -- it cannot see an array-wide selection"
         )
 
+        godunov = np.where(bwd <= fwd, np.clip(0.0, bwd, fwd), np.where(np.abs(bwd) >= np.abs(fwd), bwd, fwd))
         np.testing.assert_array_equal(
             du[interior],
-            np.where(grad_central >= 0, bwd, fwd)[interior],
+            godunov[interior],
             err_msg="Godunov selection must be applied per node, not once for the whole array",
         )
+        minima = (bwd[interior] < 0) & (fwd[interior] > 0)
+        assert minima.sum() >= 5, f"only {minima.sum()} discrete minima: the zero branch is barely exercised"
+
+    @pytest.mark.unit
+    def test_the_numerical_hamiltonian_is_monotone_and_godunov(self):
+        """#2308's contract, independent of any fixture: ``H(p(a, b)) = |p|^2/2`` with ``a`` the
+        backward and ``b`` the forward difference must be nondecreasing in ``a``, nonincreasing in
+        ``b``, and equal to the Godunov value -- the minimum of ``p^2/2`` over ``[a, b]`` when
+        ``a <= b``, the maximum over ``[b, a]`` otherwise -- computed here by dense sampling rather
+        than by any closed form.
+
+        The sign-of-central rule this replaced breaks monotonicity on exactly the quadrant
+        ``a < 0 < b`` (900 of 900 probes there, 0 elsewhere, at ae58102c, in #2308).
+        """
+        h = 0.5
+        values = np.linspace(-3.0, 3.0, 41)
+        a, b = np.meshgrid(values, values, indexing="ij")
+        u = np.stack([-a * h, np.zeros_like(a), b * h])  # node 1: backward a, forward b
+        hamiltonian = 0.5 * gradient_upwind(u, axis=0, h=h)[1] ** 2
+
+        assert np.all(np.diff(hamiltonian, axis=0) >= -1e-12), "not nondecreasing in the backward difference"
+        assert np.all(np.diff(hamiltonian, axis=1) <= 1e-12), "not nonincreasing in the forward difference"
+
+        samples = np.linspace(0.0, 1.0, 2001)
+        interval = a[..., None] + (b - a)[..., None] * samples
+        dense = 0.5 * interval**2
+        godunov = np.where(a <= b, dense.min(axis=-1), dense.max(axis=-1))
+        assert np.abs(hamiltonian - godunov).max() < 1e-12 + 0.5 * (6.0 / 2000) ** 2
 
 
 # =============================================================================

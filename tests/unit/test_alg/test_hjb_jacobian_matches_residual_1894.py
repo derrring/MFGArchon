@@ -88,9 +88,13 @@ def test_the_jacobian_linearises_the_residual_at_the_boundary(sigma: float):
 
 def test_the_interior_was_already_right_and_still_is():
     """Guards the fix from over-reaching: the interior is a finite-difference truncation floor, not
-    zero, and it must not move. It was 3.32e-06 before and after."""
+    zero. ~~It was 3.32e-06 before and after.~~ [CORRECTED 2026-09-14] That floor was the two-sided
+    FD straddling a kink at the grid centre, where this state has its minimum: 2.65e-06 at ae58102c.
+    #2308 made the upwind momentum 0 on a neighbourhood of a strict minimum, so that row is
+    differentiable and the floor is 7.05e-08; the boundary rows are unchanged to the digit
+    (6.015e-09, 1.221e-08) under both rules."""
     _, _, interior = _directional_error(0.5)
-    assert 1e-7 < interior < 1e-4, f"interior max = {interior:.3e}"
+    assert 1e-9 < interior < 1e-4, f"interior max = {interior:.3e}"
 
 
 def test_the_extraction_refuses_an_operator_that_has_no_jacobian():
