@@ -455,7 +455,7 @@ class AdvectionOperator(LinearOperator):
         when the operator is linear in the field. Both schemes are, under homogeneous boundary
         conditions: upwinding selects by the sign of the fixed velocity (#2309). A nonzero boundary
         value -- Dirichlet, Neumann or Robin -- makes the operator affine, ``op(0) != 0``, and the
-        matrix is then not the operator for either scheme. With ``v = 1 + 2x``, ``m = sin(2 pi x) + 2``
+        matrix is then not the operator for either scheme (#2318). With ``v = 1 + 2x``, ``m = sin(2 pi x) + 2``
         on 9 points, divergence form, ``max|A @ m - op(m)|`` is 136 centered and 272 upwind under
         ``dirichlet(1.0)``. Before #2309 the upwind selection read the sign of the field, the operator
         was nonlinear, and this method refused ``scheme="upwind"`` (#1981).
