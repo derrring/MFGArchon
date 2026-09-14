@@ -318,13 +318,13 @@ class TestConservativeAdvection:
                 m, drift, (0.1,), 1, bc=dirichlet_bc(value=0.0, dimension=1), mass_conservative=True
             )
 
-    def test_default_path_byte_identical_golden(self):
+    def test_default_path_is_the_donor_cell_difference_under_a_positive_drift(self):
         """The DEFAULT (mass_conservative=False) divergence upwinds by the sign of the velocity (#2309).
 
         With a uniform drift ``v = 0.4 > 0`` every face takes its flux from the left, so the result is
-        the backward difference of ``v * m`` at every node, walls included: the no-flux ghost equals the
-        boundary value, so the low wall reads 0 and the high wall reads ``v (m_10 - m_9) / h``. Computed
-        here from ``m``, not frozen.
+        the donor-cell (backward) difference of ``v * m`` at every node, walls included: the no-flux ghost
+        equals the boundary value, so the low wall reads 0 and the high wall reads ``v (m_10 - m_9) / h``.
+        Computed here from ``m`` by that formula, not by the scheme, and not frozen.
 
         This pinned frozen values until #2309, and they were ``[0, .819, .938, -.938, -.819, 0]`` at every
         second node -- symmetric about the peak under a drift that is not, which is the signature of

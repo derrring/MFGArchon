@@ -167,7 +167,7 @@ def gradient_upwind(u: NDArray, axis: int, h: float, xp: type = np) -> NDArray:
 
     Scope: this is a statement about the HJB momentum. Outside the condition above -- a
     ``DualHamiltonian`` whose Lagrangian is minimised away from ``0`` or bounded asymmetrically, or
-    a ``CongestionHamiltonian`` with ``c(m) <= 0`` -- it is not Godunov, and neither was the rule
+    a ``CongestionHamiltonian`` with ``c(m) < 0`` -- it is not Godunov, and neither was the rule
     it replaced; the two are wrong on different pairs there, so neither is the better one (#2311).
     Transport (``v . grad m``) upwinds by the sign of the velocity, not of any gradient, so this is
     not the upwind rule for advection either (#2309), nor for reinitialisation, which upwinds by the
@@ -218,13 +218,16 @@ def gradient_upwind_by_velocity(u: NDArray, v: NDArray, axis: int, h: float, xp:
 
 def divergence_upwind_by_velocity(flux: NDArray, v: NDArray, axis: int, h: float, xp: Any = np) -> NDArray:
     """
-    Derivative of a transport flux ``v * m`` along ``axis``, each face taking the flux from upwind.
+    Derivative of a transport flux ``v * m`` along ``axis``, split by the sign of each node's velocity.
 
-    The face velocity is ``v_{i+1/2} = (v_i + v_{i+1}) / 2``; the face flux is ``flux_i`` where
-    ``v_{i+1/2} >= 0`` and ``flux_{i+1}`` where it is negative; the result is
-    ``(F_{i+1/2} - F_{i-1/2}) / h``. Periodic through ``np.roll``, so pad with ghost cells first for
-    any other boundary. The one statement of this rule: `AdvectionOperator`'s non-conservative
-    divergence and `tensor_calculus.advection` both call it (#2309).
+    The face flux is ``F_{i+1/2} = [v_i >= 0] flux_i + [v_{i+1} < 0] flux_{i+1}``: a node sends its
+    flux only across the face its own velocity points at. The result is ``(F_{i+1/2} - F_{i-1/2}) / h``,
+    and the explicit update ``m - dt * D F`` has nonnegative coefficients for ``max|v| dt / h <= 1``
+    whatever the sign pattern of ``v``. Selecting a whole node flux by the sign of the face-averaged
+    velocity is not: where the flow diverges, ``v_i < 0 <= v_{i+1/2}`` sends ``v_i m_i`` downwind, a
+    coefficient of ``-CFL`` at a velocity step. Periodic through ``np.roll``, so pad with ghost cells
+    first for any other boundary. `AdvectionOperator`'s non-conservative divergence and
+    `tensor_calculus.advection` both call it (#2309).
 
     Args:
         flux: Node flux ``v * m`` along ``axis``
@@ -236,8 +239,8 @@ def divergence_upwind_by_velocity(flux: NDArray, v: NDArray, axis: int, h: float
     Returns:
         Upwinded divergence contribution with the same shape as ``flux``
     """
-    v_face = 0.5 * (v + _roll(xp, v, -1, axis))
-    face_flux = xp.where(v_face >= 0, flux, _roll(xp, flux, -1, axis))
+    zero = xp.zeros_like(flux)
+    face_flux = xp.where(v >= 0, flux, zero) + _roll(xp, xp.where(v < 0, flux, zero), -1, axis)
     return (face_flux - _roll(xp, face_flux, 1, axis)) / h
 
 

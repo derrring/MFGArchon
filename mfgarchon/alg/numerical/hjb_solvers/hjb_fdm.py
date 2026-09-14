@@ -96,6 +96,8 @@ if TYPE_CHECKING:
 
 #: Momentum magnitudes the upwind-hypothesis probe evaluates H at, per axis, with both signs.
 _UPWIND_PROBE_MAGNITUDES = (0.0, 0.25, 1.0, 4.0)
+#: Densities it evaluates H at. Positive, because a coupling such as ``-1/m`` is singular at vacuum.
+_UPWIND_PROBE_DENSITIES = (0.5, 1.0)
 
 
 def _refuse_a_hamiltonian_the_upwind_momentum_cannot_serve(problem: MFGProblem, dimension: int) -> None:
@@ -104,22 +106,26 @@ def _refuse_a_hamiltonian_the_upwind_momentum_cannot_serve(problem: MFGProblem, 
     Rouy-Tourin, per axis, is the Godunov numerical Hamiltonian exactly when ``H`` is even in each
     momentum component and nondecreasing in its magnitude. Outside that -- a ``DualHamiltonian`` whose
     Lagrangian is minimised away from 0 or bounded asymmetrically, a ``CongestionHamiltonian`` with
-    ``c(m) <= 0`` -- the solve completes to a finite, wrong answer with no warning.
+    ``c(m) < 0`` -- the solve completes to a finite, wrong answer with no warning.
 
-    A probe, not a proof: ``H`` is evaluated at two grid points, two densities and the momenta in
-    ``_UPWIND_PROBE_MAGNITUDES`` along each axis with the other components at 0 and 1, and a violation
-    at any of those raises. A function-based problem (``hamiltonian_class is None``) has no point
-    evaluation to probe and is not checked.
+    A probe, not a proof: ``H`` is evaluated at two grid points, the densities in
+    ``_UPWIND_PROBE_DENSITIES`` and the momenta in ``_UPWIND_PROBE_MAGNITUDES`` along each axis with the
+    other components at 0 and 1, and a violation at any of those raises. An ``H`` that violates the
+    hypothesis only elsewhere is not caught. The tolerance scales with the variation of ``H`` along
+    the probed line, not with its value, so an additive constant in ``H`` cannot hide a violation. A
+    problem with no class-based Hamiltonian (``hamiltonian_class is None``) has nothing to probe.
     """
     H = problem.hamiltonian_class
     if H is None:
         return
+    rounding = 64.0 * np.finfo(float).eps
     points = np.asarray(problem.geometry.get_spatial_grid(), dtype=float).reshape(-1, dimension)
     for x in (points[0], points[len(points) // 2]):
-        for m in (0.0, 1.0):
+        for m in _UPWIND_PROBE_DENSITIES:
             for axis in range(dimension):
                 for other in (0.0,) if dimension == 1 else (0.0, 1.0):
                     previous = None
+                    h_zero = None
                     for magnitude in _UPWIND_PROBE_MAGNITUDES:
                         p_pos = np.full(dimension, other)
                         p_pos[axis] = magnitude
@@ -127,7 +133,10 @@ def _refuse_a_hamiltonian_the_upwind_momentum_cannot_serve(problem: MFGProblem, 
                         p_neg[axis] = -magnitude
                         h_pos = float(np.asarray(H(x, m, p_pos, t=0.0)).ravel()[0])
                         h_neg = float(np.asarray(H(x, m, p_neg, t=0.0)).ravel()[0])
-                        tolerance = 1e-6 * (1.0 + abs(h_pos))
+                        if h_zero is None:
+                            h_zero = h_pos
+                        spread = abs(h_pos - h_zero) + abs(h_neg - h_zero)
+                        tolerance = 1e-6 * (1.0 + spread) + rounding * abs(h_zero)
                         if abs(h_pos - h_neg) > tolerance:
                             violation = (
                                 f"not even: H(p={p_pos.tolist()}) = {h_pos:.6g}, H(p={p_neg.tolist()}) = {h_neg:.6g}"
@@ -145,8 +154,9 @@ def _refuse_a_hamiltonian_the_upwind_momentum_cannot_serve(problem: MFGProblem, 
                             f"momentum, which is the Godunov numerical Hamiltonian only for an H even in each "
                             f"momentum component and nondecreasing in its magnitude (#2311). "
                             f"{type(H).__name__} is not, at x={x.tolist()}, m={m}: {violation}. "
-                            f"advection_scheme='gradient_centered' selects no upwind momentum and runs, but is "
-                            f"not monotone; a monotone scheme for this H is #2311."
+                            f"advection_scheme='gradient_centered' selects no upwind momentum and is not monotone; "
+                            f"it cannot solve a DualHamiltonian in d >= 2 either (#2315). A monotone upwind momentum "
+                            f"for this H is #2316."
                         )
 
 

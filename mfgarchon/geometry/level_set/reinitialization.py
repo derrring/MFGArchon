@@ -167,8 +167,8 @@ def _godunov_gradient_magnitude(
     ghost cells put it. The padding is the grid's own boundary condition at ``time=0``, as
     ``get_gradient_operator(scheme="upwind")`` applied it.
 
-    Measured at e1517262 before this: the ``S > 0`` form was used everywhere, which is downwind where
-    ``phi0 < 0``, so the exact signed distance ``x - 0.5`` drifted to 1.10e+01 after 100 iterations
+    Measured at 6c0610d2, before this: the ``S > 0`` form was used everywhere, which is downwind where
+    ``phi0 < 0``, so the exact signed distance ``x - 0.5`` drifted by 2.99e+01 after 100 iterations
     and a ``phi0 < 0`` minimum moved by 3.73e-02 on the default call.
     """
     from mfgarchon.geometry.boundary import pad_array_with_ghosts

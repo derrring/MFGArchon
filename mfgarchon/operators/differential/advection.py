@@ -50,6 +50,26 @@ if TYPE_CHECKING:
     from mfgarchon.geometry.boundary import BoundaryConditions
 
 
+def velocity_boundary_conditions(bc: BoundaryConditions) -> BoundaryConditions:
+    """The conditions to pad a velocity with: wrap where ``bc`` wraps, hold the edge value elsewhere.
+
+    ``bc`` constrains the transported density, not the velocity. Padding the velocity with it turns a
+    Dirichlet value ``g`` into a ghost velocity ``2g - v_0``, and upwinding by the sign of the velocity
+    (#2309) then reads the density's boundary value as a flow direction: an outflow wall under
+    ``dirichlet(1.0)`` drew mass in from the ghost node.
+    """
+    from dataclasses import replace
+
+    from mfgarchon.geometry.boundary import BCType
+
+    segments = [
+        seg if seg.bc_type == BCType.PERIODIC else replace(seg, bc_type=BCType.NEUMANN, value=0.0)
+        for seg in bc.segments
+    ]
+    default = bc.default_bc if bc.default_bc in (None, BCType.PERIODIC) else BCType.NEUMANN
+    return replace(bc, segments=segments, default_bc=default, default_value=0.0)
+
+
 class AdvectionOperator(LinearOperator):
     """
     Discrete advection operator for tensor product grids.
@@ -262,10 +282,10 @@ class AdvectionOperator(LinearOperator):
             from mfgarchon.geometry.boundary import pad_array_with_ghosts
 
             m_work = pad_array_with_ghosts(m, self.bc, ghost_depth=1, time=self.time)
-            # Also pad velocity field
+            v_bc = velocity_boundary_conditions(self.bc)
             v_work = np.stack(
                 [
-                    pad_array_with_ghosts(self.velocity_field[d], self.bc, ghost_depth=1, time=self.time)
+                    pad_array_with_ghosts(self.velocity_field[d], v_bc, ghost_depth=1, time=self.time)
                     for d in range(self.dimension)
                 ],
                 axis=0,
@@ -428,75 +448,35 @@ class AdvectionOperator(LinearOperator):
         """
         Convert operator to scipy sparse matrix (CSR format).
 
-        **REFUSES for scheme="upwind" (#1981).** The docstring used to carry this as a
-        recommendation -- "❌ Do NOT use for implicit solver Jacobians" -- and the code did not
-        enforce it, so the caller got a matrix instead of an error.
-
-        There is no matrix to extract. Upwinding chooses its difference direction from the local
-        sign of the field, so the operator is NONLINEAR, and probing it with unit vectors
-        linearises it around impulses. Measured on a 9-point grid against the operator's own
-        ``__call__`` with a smooth field ``m = sin(2 pi x) + 2``:
-
-            velocity      scheme     form         max|A @ m - op(m)|
-            constant 1    centered   either                0.000000
-            constant 1    upwind     either               27.313708
-            linear 1+2x   centered   either                0.000000
-            linear 1+2x   upwind     divergence           80.000000
-            linear 1+2x   upwind     gradient             47.798990
-
-        `centered` is exact, so the extraction machinery is sound; the upwind matrix simply is not
-        the operator -- and not only for a varying velocity. #1981 reported the narrower symptom,
-        that `form="divergence"` and `form="gradient"` extract BYTE-IDENTICAL matrices under upwind
-        while `__call__` separates them by 48.97: the form is honoured by the operator and lost by
-        the extraction. That is one consequence of a matrix that does not represent the operator in
-        any case.
-
-        For an implicit solver, build the advection matrix from the VELOCITY sign rather than the
-        field's (see the `fp_fdm_alg_*` modules), which is linear and does have a matrix.
+        Each column is the operator applied to a unit vector, so the matrix is the operator exactly
+        when the operator is linear in the field. Both schemes are, under homogeneous boundary
+        conditions: upwinding selects by the sign of the fixed velocity (#2309). An inhomogeneous
+        Dirichlet value makes the operator affine, and the matrix is then not the operator for either
+        scheme -- probing adds the boundary offset to every column (``dirichlet(1.0)`` on a 9-point
+        grid: off by 408 centered, 272 upwind). Before #2309 the upwind selection read the sign of
+        the field, the operator was nonlinear, and this method refused ``scheme="upwind"`` (#1981).
 
         Args:
             max_grid_size: Maximum allowed grid size (default 100,000).
                 Raises ValueError if exceeded.
 
         Returns:
-            Sparse CSR matrix representing the advection operator evaluated
-            on unit vectors (may not equal operator on smooth fields for Godunov).
+            Sparse CSR matrix ``A`` with ``A @ m == op(m)`` to rounding under homogeneous boundary
+            conditions.
 
         Raises:
             ValueError: If grid too large (N > max_grid_size)
-            NotImplementedError: If ``scheme="upwind"`` -- see above.
 
         Example:
-            >>> # Exploratory use (understand stencil structure)
             >>> adv_op = AdvectionOperator(v, spacings=[0.1], field_shape=(100,))
             >>> A_adv = adv_op.as_scipy_sparse()
             >>> print(f"Sparsity: {A_adv.nnz / (100*100) * 100:.1f}%")
 
-            >>> # For implicit solvers, use velocity-based construction instead:
-            >>> # See mfgarchon/alg/numerical/fp_solvers/fp_fdm_alg_gradient_upwind.py
-
         Notes:
             - Returns CSR format for efficient matrix-vector products
             - Slower than direct assembly (O(N²) vs O(N))
-            - Godunov limitation documented in Issue #597 Milestone 3
-            - Suitable for analysis, not for production implicit solvers
         """
         import scipy.sparse as sparse
-
-        if self.scheme == "upwind":
-            raise NotImplementedError(
-                "AdvectionOperator.as_scipy_sparse() is not available for scheme='upwind' "
-                "(Issue #1981). Upwinding picks its difference direction from the local sign of "
-                "the field, so the operator is NONLINEAR and has no matrix; probing it with unit "
-                "vectors linearises it around impulses. Measured against this operator's own "
-                "__call__ on a smooth field, the extracted matrix is off by 27.3 even for a "
-                "CONSTANT velocity, and it loses `form=` entirely -- 'divergence' and 'gradient' "
-                "extract byte-identical matrices where __call__ separates them by 48.97.\n"
-                "\n"
-                "Use scheme='centered', which is exact here (0.000000 against __call__), or build "
-                "the advection matrix from the VELOCITY sign rather than the field's -- that is "
-                "linear and does have a matrix (see the `fp_fdm_alg_*` modules)."
-            )
 
         N = int(np.prod(self.field_shape))
 

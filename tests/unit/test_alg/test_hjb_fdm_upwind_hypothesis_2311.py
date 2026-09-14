@@ -25,14 +25,15 @@ from mfgarchon.geometry import TensorProductGrid, no_flux_bc
 
 
 class _ShiftedQuadraticL(LagrangianBase):
-    """``L = |alpha - beta|^2 / 2``, minimised at ``alpha = beta``."""
+    """``L = |alpha - beta|^2 / 2 - offset``, minimised at ``alpha = beta``; ``offset`` adds to ``H``."""
 
-    def __init__(self, beta: float):
+    def __init__(self, beta: float, offset: float = 0.0):
         super().__init__()
         self.beta = beta
+        self.offset = offset
 
     def __call__(self, x, alpha, m, t=0.0):
-        return 0.5 * float(np.sum((np.atleast_1d(alpha) - self.beta) ** 2))
+        return 0.5 * float(np.sum((np.atleast_1d(alpha) - self.beta) ** 2)) - self.offset
 
 
 def _problem(hamiltonian, dimension: int):
@@ -56,6 +57,9 @@ def _quadratic():
     ("label", "make", "violation"),
     [
         ("dual_shifted_lagrangian", lambda: DualHamiltonian(_ShiftedQuadraticL(0.7)), "not even"),
+        # The asymmetry is 2 * 0.7 * |p| <= 5.6 at the probed momenta; a tolerance relative to |H| would let
+        # the constant swallow it.
+        ("dual_shifted_under_a_large_constant", lambda: DualHamiltonian(_ShiftedQuadraticL(0.7, 1e7)), "not even"),
         (
             "congestion_negative_factor",
             lambda: CongestionHamiltonian(
@@ -75,7 +79,19 @@ def test_a_hamiltonian_outside_the_godunov_condition_is_refused(label, make, vio
 @pytest.mark.parametrize("dimension", [1, 2])
 @pytest.mark.parametrize(
     ("label", "make"),
-    [("separable_quadratic", _quadratic), ("dual_even_lagrangian", lambda: DualHamiltonian(_ShiftedQuadraticL(0.0)))],
+    [
+        ("separable_quadratic", _quadratic),
+        ("dual_even_lagrangian", lambda: DualHamiltonian(_ShiftedQuadraticL(0.0))),
+        # Even and increasing wherever it is finite; the probe must not evaluate it at vacuum.
+        (
+            "coupling_singular_at_vacuum",
+            lambda: SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=1.0),
+                coupling=lambda m: -1.0 / m,
+                coupling_dm=lambda m: 1.0 / m**2,
+            ),
+        ),
+    ],
 )
 def test_a_hamiltonian_inside_it_is_accepted(label, make, dimension):
     HJBFDMSolver(_problem(make(), dimension))

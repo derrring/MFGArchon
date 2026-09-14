@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+from mfgarchon.operators.differential.advection import velocity_boundary_conditions
 from mfgarchon.operators.stencils.finite_difference import (
     divergence_upwind_by_velocity,
     fix_boundaries_one_sided,
@@ -665,7 +666,9 @@ def advection(
             m_work = _apply_ghost_cells_nd(m, bc, time) if bc is not None else m
             result = xp.zeros_like(m_work)
             for d in range(dimension):
-                v_d = _apply_ghost_cells_nd(v[d], bc, time) if bc is not None else v[d]
+                if spacings[d] < 1e-14:
+                    continue
+                v_d = _apply_ghost_cells_nd(v[d], velocity_boundary_conditions(bc), time) if bc is not None else v[d]
                 result += v_d * gradient_upwind_by_velocity(m_work, v_d, d, spacings[d], xp)
             return _extract_interior(result, dimension) if bc is not None else result
 
@@ -732,7 +735,7 @@ def _divergence_upwind(
         # Apply ghost cells if BC provided
         if bc is not None:
             F_d = _apply_ghost_cells_nd(F_d, bc, time)
-            v_d_work = _apply_ghost_cells_nd(v_d, bc, time)
+            v_d_work = _apply_ghost_cells_nd(v_d, velocity_boundary_conditions(bc), time)
         else:
             v_d_work = v_d
 
