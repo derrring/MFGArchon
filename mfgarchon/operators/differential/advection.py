@@ -173,9 +173,9 @@ class AdvectionOperator(LinearOperator):
                 wall rows divide by it. ~~``1ᵀA = 0``~~ is the uniform-weight statement, which
                 says ``sum(m)`` is conserved -- a different functional. Measured at a no-flux
                 wall: ``max|1ᵀA| = 4.39`` (1-D) and ``17.06`` (2-D) against ``max|wᵀA| = 0``.
-                Default ``False`` keeps the node-based ``gradient_upwind`` divergence
-                (byte-identical), which is conservative in the interior but leaks
-                ``±(v·m)`` at no-flux walls. Mirrors ``LaplacianOperator.mass_conservative``
+                Default ``False`` takes the node-based divergence upwinded by the sign of the
+                velocity (#2309), which is conservative in the interior but leaks ``±(v·m)``
+                at no-flux walls. Mirrors ``LaplacianOperator.mass_conservative``
                 (Issue #1184 diffusion half / #1202).
 
         Raises:
@@ -245,12 +245,10 @@ class AdvectionOperator(LinearOperator):
             Issue #625: Migrated from tensor_calculus to stencils module.
         """
         from mfgarchon.operators.stencils.finite_difference import (
+            divergence_upwind_by_velocity,
             gradient_central,
-            gradient_upwind,
+            gradient_upwind_by_velocity,
         )
-
-        # Select gradient function based on scheme
-        grad_fn = gradient_upwind if self.scheme == "upwind" else gradient_central
 
         # Reshape to field
         m = m_flat.reshape(self.field_shape)
@@ -276,12 +274,18 @@ class AdvectionOperator(LinearOperator):
             m_work = m
             v_work = self.velocity_field
 
+        # Upwind by the sign of the VELOCITY (#2309). This path used `gradient_upwind`, which selects on
+        # the sign of the differentiated field -- the HJB momentum rule -- and was non-monotone for
+        # transport: at constant velocity, a minimum update coefficient of -CFL, and blow-up.
         if self.form == "gradient":
             # Gradient form: v·∇m = ∑ vᵢ * ∂m/∂xᵢ
             adv_m = np.zeros_like(m_work)
             for d in range(self.dimension):
                 h = self.spacings[d]
-                dm_dxi = grad_fn(m_work, axis=d, h=h)
+                if self.scheme == "upwind":
+                    dm_dxi = gradient_upwind_by_velocity(m_work, v_work[d], axis=d, h=h)
+                else:
+                    dm_dxi = gradient_central(m_work, axis=d, h=h)
                 adv_m += v_work[d] * dm_dxi
 
         elif self.form == "divergence":
@@ -290,7 +294,10 @@ class AdvectionOperator(LinearOperator):
             for d in range(self.dimension):
                 h = self.spacings[d]
                 flux = v_work[d] * m_work  # flux component
-                adv_m += grad_fn(flux, axis=d, h=h)
+                if self.scheme == "upwind":
+                    adv_m += divergence_upwind_by_velocity(flux, v_work[d], axis=d, h=h)
+                else:
+                    adv_m += gradient_central(flux, axis=d, h=h)
         else:
             raise ValueError(f"Unknown form: {self.form}")
 

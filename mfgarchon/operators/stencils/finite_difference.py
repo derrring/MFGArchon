@@ -40,7 +40,7 @@ Extracted from: mfgarchon/utils/numerical/tensor_calculus.py
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -191,6 +191,54 @@ def gradient_upwind(u: NDArray, axis: int, h: float, xp: type = np) -> NDArray:
     backward_part = grad_backward * (grad_backward > 0)
     forward_part = grad_forward * (grad_forward < 0)
     return xp.where(backward_part >= -forward_part, backward_part, forward_part)
+
+
+def gradient_upwind_by_velocity(u: NDArray, v: NDArray, axis: int, h: float, xp: Any = np) -> NDArray:
+    """
+    First derivative for the transport term ``v . grad u``, upwinded by the sign of the velocity.
+
+    The backward difference where ``v >= 0``, the forward difference where ``v < 0``. The explicit
+    update ``u - dt * v * D u`` is then monotone for ``|v| dt / h <= 1``: every coefficient is a
+    nonnegative weight of ``u`` at the node and its upwind neighbour. Selecting on the sign of a
+    gradient instead, as ``gradient_upwind`` does for the HJB momentum, is non-monotone for transport
+    and blows up at constant velocity (#2309).
+
+    Args:
+        u: Transported field
+        v: Velocity component along ``axis``, same shape as ``u``
+        axis: Axis along which to differentiate
+        h: Grid spacing
+        xp: Array module (numpy, cupy or torch)
+
+    Returns:
+        Upwinded derivative with the same shape as ``u``
+    """
+    return xp.where(v >= 0, gradient_backward(u, axis, h, xp), gradient_forward(u, axis, h, xp))
+
+
+def divergence_upwind_by_velocity(flux: NDArray, v: NDArray, axis: int, h: float, xp: Any = np) -> NDArray:
+    """
+    Derivative of a transport flux ``v * m`` along ``axis``, each face taking the flux from upwind.
+
+    The face velocity is ``v_{i+1/2} = (v_i + v_{i+1}) / 2``; the face flux is ``flux_i`` where
+    ``v_{i+1/2} >= 0`` and ``flux_{i+1}`` where it is negative; the result is
+    ``(F_{i+1/2} - F_{i-1/2}) / h``. Periodic through ``np.roll``, so pad with ghost cells first for
+    any other boundary. The one statement of this rule: `AdvectionOperator`'s non-conservative
+    divergence and `tensor_calculus.advection` both call it (#2309).
+
+    Args:
+        flux: Node flux ``v * m`` along ``axis``
+        v: Velocity component along ``axis``, same shape as ``flux``
+        axis: Axis along which to differentiate
+        h: Grid spacing
+        xp: Array module (numpy, cupy or torch)
+
+    Returns:
+        Upwinded divergence contribution with the same shape as ``flux``
+    """
+    v_face = 0.5 * (v + _roll(xp, v, -1, axis))
+    face_flux = xp.where(v_face >= 0, flux, _roll(xp, flux, -1, axis))
+    return (face_flux - _roll(xp, face_flux, 1, axis)) / h
 
 
 # =============================================================================
@@ -523,6 +571,8 @@ __all__ = [
     "gradient_forward",
     "gradient_backward",
     "gradient_upwind",
+    "gradient_upwind_by_velocity",
+    "divergence_upwind_by_velocity",
     "gradient_nd",
     # Boundary handling
     "fix_boundaries_one_sided",
