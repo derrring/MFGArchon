@@ -123,7 +123,9 @@ def _switching_nodes(u, bc, upwind: bool):
 # States with no switching node under any BC above; `test_no_switching_states_are_actually_smooth`
 # is the control that keeps that claim honest as the fixture changes.
 SMOOTH_STATES = {
-    "monotone": 2.0 * X**2,
+    # +0.1 since #2308: at u[0] = 0 a Dirichlet-0 wall gives backward == 0 exactly, the edge of the
+    # rule's zero branch, where the FD oracle leaves an O(eps) tail (4.0e-04 at eps = 1e-6).
+    "monotone": 2.0 * X**2 + 0.1,
     "bump_off_node": -3.0 * np.exp(-8 * (X - 0.53) ** 2),
     "rough": 0.4 * np.sin(4 * np.pi * X) + 0.1 * np.random.default_rng(1896).standard_normal(NX),
     "piecewise_linear": np.abs(X - 0.53),
@@ -178,20 +180,21 @@ def test_every_row_linearises_the_residual(bc_name: str, upwind: bool, state: st
 def test_the_two_branch_selection_rules_actually_disagree_on_this_fixture():
     """Positive control for item 3: without a state where they part, the test above proves nothing.
 
-    The residual selects on sign(central); the superseded Jacobian selected on sign(grad_upwind).
-    On a monotone state they agree at every node, which is why this was invisible.
+    The superseded Jacobian selected its band on sign(grad_upwind). The residual's branch is
+    backward, forward, or -- at a strict discrete minimum since #2308 -- no band at all. The rows
+    where the superseded choice differs from that are what `rough` must contain.
     """
     _, bc, _ = _fixture("no_flux")
     rough = SMOOTH_STATES["rough"]
     central = _compute_gradient_array_1d(rough, DX, bc=bc, upwind=False, time=0.0)
+    lap = _compute_laplacian_1d(rough, DX, bc=bc, time=0.0)
+    forward, backward = central + DX / 2 * lap, central - DX / 2 * lap
     upwind_grad = _compute_gradient_array_1d(rough, DX, bc=bc, upwind=True, time=0.0)
-    parted = (central >= 0) != (upwind_grad >= 0)
-    assert parted.sum() >= 2, f"the rules agree everywhere on `rough` ({parted.sum()} nodes differ)"
-
-    monotone = SMOOTH_STATES["monotone"]
-    c_mono = _compute_gradient_array_1d(monotone, DX, bc=bc, upwind=False, time=0.0)
-    u_mono = _compute_gradient_array_1d(monotone, DX, bc=bc, upwind=True, time=0.0)
-    assert not ((c_mono >= 0) != (u_mono >= 0)).any(), "monotone was supposed to be the blind case"
+    at_minimum = (backward < 0) & (forward > 0)
+    superseded_takes_backward = upwind_grad >= 0
+    residual_takes_backward = np.abs(upwind_grad - backward) <= np.abs(upwind_grad - forward)
+    parted = at_minimum | (superseded_takes_backward != residual_takes_backward)
+    assert parted[1:-1].sum() >= 2, f"the rules agree everywhere inside `rough` ({parted[1:-1].sum()} rows differ)"
 
 
 def test_a_switching_node_gets_a_clarke_element_not_an_average():
@@ -205,7 +208,10 @@ def test_a_switching_node_gets_a_clarke_element_not_an_average():
     """
     problem, bc, m = _fixture("no_flux")
     row = NX // 2
-    u = np.abs(X - 0.5)  # kink exactly on `row`: central gradient there is 0
+    # A MAXIMUM since #2308. At the minimum `abs(X - 0.5)` the momentum is 0 on both sides, the row
+    # is differentiable, and the two tilted rows below coincide; the branch switches only where
+    # backward > 0 > forward tie.
+    u = -np.abs(X - 0.5)
     assert _switching_nodes(u, bc, True)[row], "fixture no longer switches at this row"
 
     jac = _jacobian(problem, bc, m, u, True)
@@ -230,6 +236,27 @@ def test_a_switching_node_gets_a_clarke_element_not_an_average():
         float(np.abs(jac[row] - branch_row(+1.0, 1e-4)).max()),
     )
     assert nearest < 0.2 * coarse, f"gap does not shrink with the tilt: {coarse:.3e} -> {nearest:.3e}"
+
+
+def test_a_strict_discrete_minimum_is_differentiable_and_its_row_matches_the_residual():
+    """#2308: the upwind momentum is 0 on a whole neighbourhood of a strict discrete minimum, so the
+    residual is differentiable there and the two-sided FD IS a valid oracle -- unlike the maximum in
+    the test above. Under the superseded rule this row was a switching node (10.0 against FD).
+
+    What it cannot see: with `H = |p|^2/2` the advection contribution is `dH/dp(0) = 0` times the
+    band, so a band at this row would be multiplied away. The zero band is exercised by the guard in
+    `_advection_bands`, which raises on every such row if the rule stops returning 0 there.
+    """
+    problem, bc, m = _fixture("no_flux")
+    row = NX // 2
+    u = np.abs(X - 0.5)
+    central = _compute_gradient_array_1d(u, DX, bc=bc, upwind=False, time=0.0)
+    lap = _compute_laplacian_1d(u, DX, bc=bc, time=0.0)
+    assert central[row] - DX / 2 * lap[row] < 0 < central[row] + DX / 2 * lap[row], "row is not a strict minimum"
+    assert _compute_gradient_array_1d(u, DX, bc=bc, upwind=True, time=0.0)[row] == 0.0
+
+    err = np.abs(_jacobian(problem, bc, m, u, True) - _fd_columns(_residual(problem, bc, m, True), u))
+    assert err[row].max() < 1e-6, f"row {row}: {err[row].max():.3e}"
 
 
 def test_the_flat_state_leaves_an_eps_tail_not_a_defect():
@@ -327,8 +354,12 @@ def test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owner
     lap = _compute_laplacian_1d(u, DX, bc=bc, time=0.0)
     upwind = _compute_gradient_array_1d(u, DX, bc=bc, upwind=True, time=0.0)
     forward, backward = central + DX / 2 * lap, central - DX / 2 * lap
-    residual = float(np.minimum(np.abs(upwind - forward), np.abs(upwind - backward)).max())
-    assert residual < 1e-12, f"{bc_name}/{state}: grad_upwind is neither one-sided form ({residual:.3e})"
+    # Or 0 at a strict discrete minimum (#2308), the one row that is not a one-sided form.
+    at_minimum = (backward < 0) & (forward > 0)
+    one_sided = np.minimum(np.abs(upwind - forward), np.abs(upwind - backward))
+    residual = float(np.where(at_minimum, np.abs(upwind), one_sided).max())
+    assert residual < 1e-12, f"{bc_name}/{state}: grad_upwind is neither one-sided form nor 0 ({residual:.3e})"
+    assert (~at_minimum).sum() >= NX // 2, "too few one-sided rows for the identity to be tested"
     assert float(np.abs(forward - backward).max()) > 1e-9, "the two forms coincide; nothing is discriminated"
 
 
@@ -468,13 +499,16 @@ def test_the_jacobian_follows_a_changed_selection_rule_without_being_told(monkey
 
     So change it. `gradient_upwind` is inverted here — forward where it took backward — and both the
     residual and the Jacobian go through it. A Jacobian that measures follows; one that restates
-    `sign(central)` is now wrong on every non-tied row and cannot pass.
+    `sign(central)` is now wrong on every non-tied row and cannot pass. The inversion keeps the 0 at
+    a strict minimum (#2308), which the guard requires; `test_a_rule_that_is_not_zero_at_a_minimum_
+    raises` is the other half.
     """
     from mfgarchon.operators.stencils.finite_difference import gradient_backward, gradient_forward
 
     def inverted(u, axis, h, xp=np):
         fwd, bwd = gradient_forward(u, axis, h, xp), gradient_backward(u, axis, h, xp)
-        return xp.where((fwd + bwd) / 2.0 >= 0, fwd, bwd)  # the OPPOSITE of Godunov
+        swapped = xp.where((fwd + bwd) / 2.0 >= 0, fwd, bwd)  # the OPPOSITE of Godunov
+        return xp.where((bwd < 0) & (fwd > 0), 0 * swapped, swapped)
 
     monkeypatch.setattr(base_hjb, "gradient_upwind", inverted)
 
@@ -488,6 +522,26 @@ def test_the_jacobian_follows_a_changed_selection_rule_without_being_told(monkey
 
     err = np.abs(_jacobian(problem, bc, m, u, True) - _fd_columns(_residual(problem, bc, m, True), u))
     assert err.max() < 1e-5, f"the Jacobian did not follow the rule change: {err.max():.3e}"
+
+
+def test_a_rule_that_is_not_zero_at_a_minimum_raises(monkeypatch):
+    """The #2308 defect reinstated must not be linearised quietly.
+
+    The sign(central) rule returns a one-sided difference at a strict discrete minimum. The Jacobian
+    reads that row as a zero band, so the reconstruction disagrees with the rule there, and the
+    guard raises instead of assembling a Jacobian of a residual that no longer exists.
+    """
+    from mfgarchon.operators.stencils.finite_difference import gradient_backward, gradient_forward
+
+    def sign_of_central(u, axis, h, xp=np):
+        fwd, bwd = gradient_forward(u, axis, h, xp), gradient_backward(u, axis, h, xp)
+        return xp.where((fwd + bwd) / 2.0 >= 0, bwd, fwd)
+
+    monkeypatch.setattr(base_hjb, "gradient_upwind", sign_of_central)
+    bc = no_flux_bc(dimension=1)
+    u = SMOOTH_STATES["rough"]
+    with pytest.raises(ValueError, match="#2308"):
+        _advection_bands(u, DX, bc, 0.0, True, _bc_laplacian_bands(NX, DX, bc, 0.0))
 
 
 @pytest.mark.parametrize("upwind", [False, True])

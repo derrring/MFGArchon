@@ -273,10 +273,18 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         name="godunov_branch_swap",
         path="mfgarchon/operators/stencils/finite_difference.py",
-        old="    return xp.where(grad_central >= 0, grad_backward, grad_forward)",
-        new="    return xp.where(grad_central >= 0, grad_forward, grad_backward)  # MUTATED: Godunov branches swapped",
-        owner="Godunov upwind takes the BACKWARD difference where the central gradient is >= 0 -- the library's one statement of the upwind selection rule, consumed by the HJB residual, the HJB Jacobian, GradientOperator and AdvectionOperator (#1896 items 3-4 turn on it)",
-        verify="float(gradient_upwind(np.array([0.0, 1.0, 3.0]), axis=0, h=1.0)[1]) == 2.0",
+        old="    return xp.where(backward_part >= -forward_part, backward_part, forward_part)",
+        new="    return xp.where(backward_part >= -forward_part, forward_part, backward_part)  # MUTATED: Godunov branches swapped",
+        owner="Rouy-Tourin upwind takes the clamped BACKWARD part max(backward, 0) where it dominates the clamped forward part min(forward, 0) in magnitude -- the library's one statement of the upwind selection rule (#2308), consumed by the HJB residual, the HJB Jacobian, GradientOperator and AdvectionOperator (#1896 items 3-4 turn on it)",
+        verify="float(gradient_upwind(np.array([0.0, 1.0, 3.0]), axis=0, h=1.0)[1]) == 0.0",
+    ),
+    Mutation(
+        name="upwind_minimum_takes_a_one_sided_difference",
+        path="mfgarchon/operators/stencils/finite_difference.py",
+        old="    return xp.where(backward_part >= -forward_part, backward_part, forward_part)",
+        new="    return xp.where((grad_forward + grad_backward) / 2.0 >= 0, grad_backward, grad_forward)  # MUTATED: the #2308 sign-of-central rule",
+        owner="at a discrete local minimum (backward < 0 < forward) the upwind momentum is 0, the Godunov value for an H even in each momentum component and nondecreasing in its magnitude; selecting on sign(central) returned the one-sided difference of smaller magnitude there, a non-monotone numerical Hamiltonian that Newton still converges on (#2308)",
+        verify="float(gradient_upwind(np.array([0.0, -1.0, 1.0]), axis=0, h=1.0)[1]) == -1.0",
     ),
     Mutation(
         name="upwind_jacobian_tiebreak_inverted",

@@ -145,39 +145,50 @@ def gradient_backward(u: NDArray, axis: int, h: float, xp: type = np) -> NDArray
 
 def gradient_upwind(u: NDArray, axis: int, h: float, xp: type = np) -> NDArray:
     """
-    Godunov upwind scheme for first derivative.
+    Godunov (Rouy-Tourin) upwind momentum for a Hamilton-Jacobi Hamiltonian.
 
-    Selects forward or backward difference based on local flow direction
-    (sign of central gradient). This provides numerical stability for
-    advection-dominated problems.
+    With backward difference ``a`` and forward difference ``b``::
 
-    Selection rule:
-        If ∂u/∂x >= 0: use backward difference (information flows right)
-        If ∂u/∂x < 0:  use forward difference (information flows left)
+        a+ = max(a, 0),  b- = min(b, 0),  p = a+ if a+ >= -b- else b-
+
+    Applied per axis, ``H(p)`` is then the Godunov numerical Hamiltonian -- per axis the minimum of
+    ``H`` over ``[a, b]`` when ``a <= b`` and the maximum over ``[b, a]`` when ``a > b``, nested
+    across axes -- exactly when, at fixed ``(x, m, t)``, ``H`` is even in each momentum component
+    and nondecreasing in its magnitude. Every control cost ``SeparableHamiltonian`` and
+    ``CongestionHamiltonian`` ship satisfies that (#2308). Being even with its minimum at ``p = 0``
+    is not enough: a double well ``(p^2 - 1)^2`` is both, and fails.
+
+    Where it departs from selecting on ``sign((a + b) / 2)`` (#2308): only at a discrete local
+    minimum, ``a < 0 < b``. There the minimum of ``H`` over ``[a, b]`` is ``H(0)``, and this returns
+    ``p = 0``; the sign rule returned the one-sided difference of smaller magnitude, a
+    non-monotone numerical Hamiltonian that stayed silent because Newton still converges to its
+    root. Everywhere else the two agree.
+
+    Scope: this is a statement about the HJB momentum. Outside the condition above -- a
+    ``DualHamiltonian`` whose Lagrangian is minimised away from ``0`` or bounded asymmetrically, or
+    a ``CongestionHamiltonian`` with ``c(m) <= 0`` -- it is not Godunov, and neither was the rule
+    it replaced; the two are wrong on different pairs there, so neither is the better one.
+    Transport (``v . grad m``) upwinds by the sign of the velocity, not of any gradient, so this is
+    not the upwind rule for advection either.
 
     Properties:
         - 1st-order accurate: O(h)
-        - Automatically selects stable direction
-        - Introduces numerical diffusion (stabilizing)
-        - Essential for hyperbolic PDEs (HJB, transport)
+        - Returns ``0`` at a discrete local minimum, a one-sided difference elsewhere
 
     Args:
         u: Input array
         axis: Axis along which to differentiate
         h: Grid spacing
-        xp: Array module (numpy or cupy for GPU)
+        xp: Array module (numpy, cupy or torch)
 
     Returns:
-        Approximation of ∂u/∂x with same shape as u
-
-    Note:
-        This is the Godunov flux for scalar conservation laws.
-        For WENO/ENO reconstruction, see operators/reconstruction/.
+        Upwind momentum with the same shape as u
     """
     grad_forward = gradient_forward(u, axis, h, xp)
     grad_backward = gradient_backward(u, axis, h, xp)
-    grad_central = (grad_forward + grad_backward) / 2.0
-    return xp.where(grad_central >= 0, grad_backward, grad_forward)
+    backward_part = xp.where(grad_backward > 0, grad_backward, 0 * grad_backward)
+    forward_part = xp.where(grad_forward < 0, grad_forward, 0 * grad_forward)
+    return xp.where(backward_part >= -forward_part, backward_part, forward_part)
 
 
 # =============================================================================

@@ -579,14 +579,9 @@ def _calculate_derivatives(
     if np.isnan(p_forward) or np.isnan(p_backward):
         p_value = np.nan
     elif upwind:
-        # Godunov upwind: choose based on characteristic direction
-        # For typical MFG Hamiltonian H = |p|²/(2σ²) + V(x,m), characteristic velocity = p/σ²
-        # Use backward difference if p ≥ 0 (info from left), forward if p < 0 (info from right)
-        p_central_for_sign = (p_forward + p_backward) / 2.0
-        if p_central_for_sign >= 0:
-            p_value = p_backward  # Characteristic from left
-        else:
-            p_value = p_forward  # Characteristic from right
+        # The same rule as the array path, from its one owner (#2308): this branch restated it as an
+        # `if` on sign(central), which a search for the array form could not see.
+        p_value = float(gradient_upwind(np.array([u_im1, u_i, u_ip1]), axis=0, h=Dx)[1])
     else:
         # Central difference (default, second-order accurate)
         p_value = (p_forward + p_backward) / 2.0
@@ -1018,7 +1013,8 @@ def _advection_bands(U: np.ndarray, dx: float, bc, time: float, upwind: bool, la
     1. Where forward and backward differ in VALUE, ``grad_upwind(U)`` equals exactly one of them and
        the branch is read off it. This is what closes item 3, and it covers every row where the two
        rules could have parted: a rule disagreement that does not change the value cannot change
-       which one-sided stencil produced it either.
+       which one-sided stencil produced it either. The exception is a strict discrete minimum,
+       ``backward < 0 < forward``, where the momentum is 0 and its row is zero (#2308).
     2. Where they agree in value -- any locally linear stretch, so not a rare coincidence -- the
        ROWS still differ and nothing observable separates them, so ``sign(central)`` decides.
        Picking wrong here puts the Jacobian one column across: 4.000e+01 against a column-wise
@@ -1080,26 +1076,34 @@ def _advection_bands(U: np.ndarray, dx: float, bc, time: float, upwind: bool, la
     # alpha == beta, where its separation |a - 3|/dx is identically zero.
     value_decides = np.abs(forward - backward) > 1e-12 * scale
     took_backward = np.where(value_decides, np.abs(g_up - backward) <= np.abs(g_up - forward), g_c >= 0)
+    # The third branch (#2308): at a strict discrete local minimum the upwind momentum is 0, not a
+    # one-sided difference, and it stays 0 under any perturbation small enough to keep
+    # backward < 0 < forward. So its row of d(p)/d(U) is exactly zero -- not a Clarke element to
+    # choose, a derivative that exists.
+    at_minimum = (backward < 0) & (forward > 0)
     # Fail loudly if the identity above does not hold: the mask is then recovered by picking the
     # closer of two wrong reconstructions, which is silent and produces a plausible Jacobian. A BC
-    # whose Laplacian pads differently from its gradient would land exactly here.
-    picked = np.where(took_backward, backward, forward)
+    # whose Laplacian pads differently from its gradient would land exactly here, and so would a
+    # rule that stops returning 0 at a minimum.
+    picked = np.where(at_minimum, 0.0, np.where(took_backward, backward, forward))
     if not np.allclose(picked, g_up, rtol=1e-9, atol=1e-9 * scale):
         raise ValueError(
-            "the upwind gradient is not one of central +/- (dx/2)*laplacian, so its branch cannot "
-            f"be read off (max mismatch {float(np.abs(picked - g_up).max()):.3e}). #1896."
+            "the upwind gradient is not one of central +/- (dx/2)*laplacian, or 0 at a discrete "
+            f"minimum, so its branch cannot be read off (max mismatch {float(np.abs(picked - g_up).max()):.3e}). "
+            "#1896, #2308."
         )
 
     sign = np.where(took_backward, -1.0, 1.0)
-    sub = c_sub + sign * half * l_sub
-    diag = c_diag + sign * half * l_diag
-    sup = c_sup + sign * half * l_sup
+    live = np.where(at_minimum, 0.0, 1.0)
+    sub = live * (c_sub + sign * half * l_sub)
+    diag = live * (c_diag + sign * half * l_diag)
+    sup = live * (c_sup + sign * half * l_sup)
 
     merged: dict[tuple[int, int], float] = {}
     for i, j, value in c_extras:
-        merged[(i, j)] = merged.get((i, j), 0.0) + value
+        merged[(i, j)] = merged.get((i, j), 0.0) + float(live[i]) * value
     for i, j, value in l_extras:
-        merged[(i, j)] = merged.get((i, j), 0.0) + float(sign[i]) * half * value
+        merged[(i, j)] = merged.get((i, j), 0.0) + float(live[i]) * float(sign[i]) * half * value
     # The wrap entry cancels exactly on the branch that does not reach across it -- row 0's forward
     # difference reads U[1], not the wrap column -- so drop what cancelled rather than carry a
     # rounding-scale entry that changes nnz without changing the operator.

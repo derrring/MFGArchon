@@ -191,11 +191,15 @@ class TestHJBFDMSolverSolveHJBSystem:
 
         # Closed form: M == 1 everywhere, zero terminal cost, coupling f(m) = m and no-flux walls
         # leave no spatial gradient, so U(t, x) = -(T - t) * m = -(T - t). This pins the sign of the
-        # coupling term and the time integration together. Measured max error 2.25e-12 (spatial
-        # spread 1.41e-12); atol=1e-9 leaves ~440x margin.
+        # coupling term and the time integration together. Measured max error 2.25e-12 before #2308
+        # and 7.18e-07 since: the default Jacobian is a finite difference, and on a flat state every
+        # node sits on the upwind rule's zero-branch edge, so it carries O(eps/dx^2) entries there and
+        # Newton stops inside its 1e-6 tolerance (analytic_jacobian=True stays at 1.1e-16). A flipped
+        # coupling sign or a time-integration error is O(dt) = 0.033; atol=1e-5 keeps 14x margin over
+        # the measurement and 3300x under that.
         t_grid = np.linspace(0.0, problem.T, Nt_points)
         expected = np.tile((-(problem.T - t_grid))[:, None], (1, Nx_points))
-        np.testing.assert_allclose(U_solution, expected, atol=1e-9)
+        np.testing.assert_allclose(U_solution, expected, atol=1e-5)
 
     def test_solve_hjb_system_final_condition(self):
         """Test that final condition is preserved."""
@@ -502,11 +506,13 @@ class TestHJBFDMSolverDiagonalTensor:
 
         # Closed form: M == 0.5 everywhere, zero terminal cost, f(m) = m and 2D no-flux walls leave
         # no gradient to advect, so U(t, x, y) = -(T - t) * 0.5 uniformly -- whatever the anisotropy
-        # of the tensor. Measured max error 4.75e-15 (spatial spread 3.57e-15); atol=1e-12 leaves
-        # ~200x margin.
+        # of the tensor. Measured max error 4.75e-15 before #2308 and 6.28e-10 since, for the reason the
+        # 1-D closed form above records (a finite-difference Jacobian on a flat state, where every node
+        # is on the upwind rule's zero-branch edge). atol=1e-8 keeps 16x margin; the quantity pinned is
+        # -(T - t) * 0.5 against an O(dt) error of 0.01.
         t_grid = np.linspace(0.0, problem.T, Nt_points)
         expected = np.tile((-(problem.T - t_grid) * 0.5)[:, None], (1, Nx * Ny))
-        np.testing.assert_allclose(U_solution.reshape(Nt_points, -1), expected, atol=1e-12)
+        np.testing.assert_allclose(U_solution.reshape(Nt_points, -1), expected, atol=1e-8)
 
     def test_non_diagonal_tensor_warning(self):
         """Test that HJB solver warns for non-diagonal tensor."""
