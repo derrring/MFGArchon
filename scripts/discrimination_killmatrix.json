@@ -1,7 +1,7 @@
 {
   "_measured_at": {
-    "collected": 3846,
-    "commit": "d3a6ab17",
+    "collected": 3857,
+    "commit": "240c39dc",
     "excluded": "tests/unit/test_discrimination_ratchet.py",
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment and not manual",
     "paths": [
@@ -9,7 +9,7 @@
     ]
   },
   "_selection_regex_for_agreement_shaped": "::[^:]*?(_agree|_agrees|_matches|_equals|_single_source|_identical|_consistent)",
-  "baseline_seconds": 131.5,
+  "baseline_seconds": 147.6,
   "killed_by": {
     "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_gauss_seidel_runs_and_produces_finite_M": [
       "quadrature_wall_node_counting_measure",
@@ -111,9 +111,6 @@
     "tests/integration/test_fem_solver_path.py::TestFEMBoundaryConditionResolution::test_coupled_fem_no_flux_runs_and_conserves_mass": [
       "optimal_control_sign"
     ],
-    "tests/integration/test_hjb_fdm_2d_validation.py::TestHJBFDM2DSolving::test_2d_solve_fixed_point": [
-      "godunov_branch_swap"
-    ],
     "tests/integration/test_hjb_with_obstacle.py::TestObstacleConvergenceProperties::test_tolerance_scaling": [
       "godunov_branch_swap"
     ],
@@ -130,9 +127,6 @@
       "diffusion_field_2x",
       "hjb_marches_forward_in_time",
       "fp_initial_condition_written_at_final_index"
-    ],
-    "tests/integration/test_mfg_callable_coefficients.py::TestMFGCallableCoefficients::test_mfg_with_callable_diffusion": [
-      "godunov_branch_swap"
     ],
     "tests/integration/test_mms_validation.py::TestCoupledHJBFPValidation::test_coupled_mass_conservation": [
       "fp_initial_condition_written_at_final_index"
@@ -175,13 +169,15 @@
     "tests/integration/test_mms_validation.py::TestMassConservationStress::test_long_time_conservation": [
       "fp_initial_condition_written_at_final_index"
     ],
+    "tests/integration/test_multi_population_cross_coupling.py::test_hjb_sees_cross_density_bug_1157": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
     "tests/integration/test_multi_population_cross_coupling.py::test_k1_matches_single_population_fp_convention": [
       "quadrature_wall_node_counting_measure",
       "fp_initial_condition_written_at_final_index"
     ],
     "tests/integration/test_newton_mfg_solver.py::TestMFGResidualComputation::test_residual_computation": [
-      "diffusion_scalar_2x",
-      "godunov_branch_swap",
       "terminal_condition_pinned_at_initial_index",
       "fp_initial_condition_written_at_final_index"
     ],
@@ -252,6 +248,7 @@
       "grid_spacing_uses_point_count",
       "quadrature_wall_node_counting_measure",
       "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference",
       "terminal_condition_pinned_at_initial_index",
       "hjb_marches_forward_in_time",
       "fp_initial_condition_written_at_final_index"
@@ -495,6 +492,7 @@
     ],
     "tests/unit/test_alg/test_fp_matrix_conservation.py::TestConservativeAdvection::test_default_leaks_but_conservative_holds_at_wall": [
       "quadrature_wall_node_counting_measure",
+      "godunov_branch_swap",
       "fv_upwind_donor_cell_swapped"
     ],
     "tests/unit/test_alg/test_fp_matrix_conservation.py::TestConservativeAdvection::test_default_path_byte_identical_golden": [
@@ -655,13 +653,50 @@
     "tests/unit/test_alg/test_gfdm_mms_source_1991.py::test_mms_reaches_gfdm_and_it_converges": [
       "diffusion_scalar_2x"
     ],
+    "tests/unit/test_alg/test_hamiltonian_single_source_1071.py::test_full_solve_invocation_split": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hamiltonian_single_source_1071.py::test_jacobian_byte_identical_to_inline_assembly": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hamiltonian_single_source_1071.py::test_jacobian_path_triggers_zero_extra_H_evals": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
     "tests/unit/test_alg/test_hjb_analytic_jacobian_1607.py::test_analytic_jacobian_matches_fd_solution": [
       "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference",
       "terminal_condition_pinned_at_initial_index",
       "fp_initial_condition_written_at_final_index"
     ],
+    "tests/unit/test_alg/test_hjb_analytic_jacobian_1607.py::test_analytic_jacobian_routes_backend_none": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_a_solve_that_reports_converged_returns_a_root[neumann_zero]": [
+      "godunov_branch_swap"
+    ],
+    "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_a_solve_that_reports_converged_returns_a_root[no_flux]": [
+      "godunov_branch_swap"
+    ],
+    "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_removing_the_enforcement_still_leaves_the_no_flux_condition_satisfied[21]": [
+      "godunov_branch_swap"
+    ],
+    "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_removing_the_enforcement_still_leaves_the_no_flux_condition_satisfied[41]": [
+      "godunov_branch_swap"
+    ],
+    "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_removing_the_enforcement_still_leaves_the_no_flux_condition_satisfied[81]": [
+      "godunov_branch_swap"
+    ],
+    "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_the_no_flux_case_actually_converges_here_so_the_law_is_not_vacuous": [
+      "godunov_branch_swap"
+    ],
     "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_the_surviving_enforcement_uses_the_grids_own_spacing": [
-      "grid_spacing_uses_point_count"
+      "grid_spacing_uses_point_count",
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
     ],
     "tests/unit/test_alg/test_hjb_fdm_1d_nd_cross_path_agreement.py::TestHJBFDMCouplingIndexCrossPath::test_1d_and_nd_couple_un_to_mn[5]": [
       "hjb_marches_forward_in_time"
@@ -669,20 +704,8 @@
     "tests/unit/test_alg/test_hjb_fdm_1d_nd_cross_path_agreement.py::TestHJBFDMCouplingIndexCrossPath::test_1d_and_nd_couple_un_to_mn[7]": [
       "hjb_marches_forward_in_time"
     ],
-    "tests/unit/test_alg/test_hjb_fdm_solver.py::TestBoundaryGradientBCAware1384::test_dirichlet_steep_terminal_converges": [
-      "godunov_branch_swap"
-    ],
     "tests/unit/test_alg/test_hjb_fdm_solver.py::TestBoundaryGradientBCAware1384::test_periodic_gradient_matches_the_analytic_derivative_at_the_seam": [
       "periodic_wrap_endpoint_inverted"
-    ],
-    "tests/unit/test_alg/test_hjb_fdm_solver.py::TestHJBFDMSolverGhostValueBC::test_hjb_solver_time_varying_bc": [
-      "godunov_branch_swap"
-    ],
-    "tests/unit/test_alg/test_hjb_fdm_solver.py::TestHJBFDMSolverIntegration::test_solver_with_gaussian_density": [
-      "godunov_branch_swap"
-    ],
-    "tests/unit/test_alg/test_hjb_fdm_solver.py::TestHJBFDMSolverIntegration::test_solver_with_uniform_density": [
-      "godunov_branch_swap"
     ],
     "tests/unit/test_alg/test_hjb_fdm_solver.py::TestHJBFDMSolverNumericalProperties::test_solution_finiteness": [
       "godunov_branch_swap",
@@ -695,6 +718,21 @@
       "hjb_marches_forward_in_time"
     ],
     "tests/unit/test_alg/test_hjb_fdm_solver.py::TestHJBFDMSolverSolveHJBSystem::test_solve_hjb_system_shape": [
+      "hjb_marches_forward_in_time"
+    ],
+    "tests/unit/test_alg/test_hjb_fdm_upwind_minimum_2308.py::test_a_coarse_grid_solve_is_not_wrecked_at_the_minimum[11-0.2-0.5]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference",
+      "hjb_marches_forward_in_time"
+    ],
+    "tests/unit/test_alg/test_hjb_fdm_upwind_minimum_2308.py::test_a_coarse_grid_solve_is_not_wrecked_at_the_minimum[21-0.1-0.25]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference",
+      "hjb_marches_forward_in_time"
+    ],
+    "tests/unit/test_alg/test_hjb_fdm_upwind_minimum_2308.py::test_a_coarse_grid_solve_is_not_wrecked_at_the_minimum[41-0.05-0.12]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference",
       "hjb_marches_forward_in_time"
     ],
     "tests/unit/test_alg/test_hjb_gfdm_llf_augmentation.py::TestLLFAugmentationPinning::test_llf_at_least_one_node_augmented": [
@@ -728,50 +766,237 @@
       "diffusion_scalar_2x"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_cancelled_wrap_entry_is_dropped_rather_than_kept_at_rounding_scale": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_minimum_band_is_zero_where_dH_dp_is_not[dirichlet]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_minimum_band_is_zero_where_dH_dp_is_not[no_flux]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_minimum_band_is_zero_where_dH_dp_is_not[periodic]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_minimum_band_is_zero_where_dH_dp_is_not[robin_alpha_eq_beta]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_strict_discrete_minimum_is_differentiable_and_its_row_matches_the_residual": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_switching_node_gets_a_clarke_element_not_an_average": [
       "godunov_branch_swap"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_tied_wall_row_that_is_not_a_switching_node_still_gets_the_right_branch": [
       "ghost_spacing_ignored",
       "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference",
       "upwind_jacobian_tiebreak_inverted",
       "neumann_low_wall_flux_sign"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_time_dependent_boundary_reaches_the_advection_block[True]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[dirichlet]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[no_flux]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[periodic]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[robin_alpha_eq_beta]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[bump_off_node-True-dirichlet]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[bump_off_node-True-no_flux]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[bump_off_node-True-periodic]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[bump_off_node-True-robin_alpha_eq_beta]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[monotone-True-dirichlet]": [
+      "godunov_branch_swap"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[monotone-True-no_flux]": [
+      "godunov_branch_swap"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[monotone-True-periodic]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[monotone-True-robin_alpha_eq_beta]": [
       "godunov_branch_swap"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[piecewise_linear-True-dirichlet]": [
       "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference",
       "upwind_jacobian_tiebreak_inverted"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[piecewise_linear-True-no_flux]": [
       "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference",
       "upwind_jacobian_tiebreak_inverted"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[piecewise_linear-True-periodic]": [
       "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference",
       "upwind_jacobian_tiebreak_inverted"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[piecewise_linear-True-robin_alpha_eq_beta]": [
       "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference",
       "upwind_jacobian_tiebreak_inverted"
     ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rough-True-dirichlet]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rough-True-no_flux]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rough-True-periodic]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rough-True-robin_alpha_eq_beta]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_legacy_no_bc_path_linearises_its_own_residual_too[True]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[linear-dirichlet]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[linear-neumann]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[linear-no_flux]": [
+      "godunov_branch_swap"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[linear-periodic]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[linear-robin_mixed]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[linear-robin_neumann_like]": [
       "godunov_branch_swap"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[linear-robin_sign_flipped]": [
-      "ghost_spacing_ignored"
+      "ghost_spacing_ignored",
+      "godunov_branch_swap"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[random-dirichlet]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[random-neumann]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[random-no_flux]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[random-periodic]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[random-robin_mixed]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[random-robin_neumann_like]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[random-robin_sign_flipped]": [
-      "ghost_spacing_ignored"
+      "ghost_spacing_ignored",
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[smooth-dirichlet]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[smooth-neumann]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[smooth-no_flux]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[smooth-periodic]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[smooth-robin_mixed]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[smooth-robin_neumann_like]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[smooth-robin_sign_flipped]": [
-      "ghost_spacing_ignored"
+      "ghost_spacing_ignored",
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_superseded_branch_rule_is_moot_on_every_live_row": [
+      "godunov_branch_swap"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-dirichlet]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-no_flux]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-periodic]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-robin_alpha_eq_beta]": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_matches_residual_1894.py::test_periodic_wrap_with_a_volatility_field_does_not_collapse_the_jacobian": [
       "diffusion_field_2x",
       "grid_spacing_uses_point_count"
     ],
     "tests/unit/test_alg/test_hjb_newton_reports_returned_iterate.py::test_the_configuration_still_exercises_the_non_converged_path": [
+      "godunov_branch_swap",
       "fp_initial_condition_written_at_final_index"
     ],
     "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestADIDiffusionMagnitude::test_adi_2d_diffusion_matches_analytic": [
@@ -781,9 +1006,11 @@
       "diffusion_scalar_2x"
     ],
     "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestSLHJBConsistency::test_matches_fdm_with_potential[1.0]": [
+      "godunov_branch_swap",
       "hjb_marches_forward_in_time"
     ],
     "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestSLHJBConsistency::test_matches_fdm_with_potential[2.0]": [
+      "godunov_branch_swap",
       "hjb_marches_forward_in_time"
     ],
     "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestStochasticCharacteristicSL::test_consistency_with_default_adi": [
@@ -1069,15 +1296,6 @@
     "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPSLSolver-NO_FLUX]": [
       "quadrature_wall_node_counting_measure"
     ],
-    "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[HJBFDMSolver-NEUMANN]": [
-      "godunov_branch_swap"
-    ],
-    "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[HJBFDMSolver-NO_FLUX]": [
-      "godunov_branch_swap"
-    ],
-    "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[HJBFDMSolver-PERIODIC]": [
-      "godunov_branch_swap"
-    ],
     "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_periodic_fp_solve_conserves_mass_in_the_limit[FPFDMSolver]": [
       "fp_initial_condition_written_at_final_index"
     ],
@@ -1092,6 +1310,9 @@
     "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_periodic_solve_returns_a_periodic_field[FPFVMSolver]": [
       "periodic_endpoint_convention_inverted",
       "periodic_wrap_endpoint_inverted"
+    ],
+    "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_periodic_solve_returns_a_periodic_field[HJBFDMSolver]": [
+      "godunov_branch_swap"
     ],
     "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_periodic_solve_returns_a_periodic_field[HJBWENOSolver]": [
       "periodic_endpoint_convention_inverted",
@@ -1173,9 +1394,6 @@
     "tests/unit/test_alg/test_regime_switching_iterator.py::TestDiagonalOutflowIsNotALaggedSource::test_regime_masses_track_the_markov_chain_closed_form": [
       "fp_initial_condition_written_at_final_index"
     ],
-    "tests/unit/test_alg/test_regime_switching_iterator.py::TestRegimeSwitchingSolve::test_solutions_are_finite": [
-      "fp_initial_condition_written_at_final_index"
-    ],
     "tests/unit/test_alg/test_regime_switching_iterator.py::TestRegimeSwitchingUpdateSchemes::test_jacobi_scheme": [
       "fp_initial_condition_written_at_final_index"
     ],
@@ -1234,9 +1452,11 @@
       "hjb_marches_forward_in_time"
     ],
     "tests/unit/test_alg/test_sl_foot_velocity_single_source_1547.py::test_congestion_error_actually_decreases_under_refinement": [
+      "godunov_branch_swap",
       "hjb_marches_forward_in_time"
     ],
     "tests/unit/test_alg/test_sl_foot_velocity_single_source_1547.py::test_congestion_solve_tracks_an_independent_fdm_reference": [
+      "godunov_branch_swap",
       "hjb_marches_forward_in_time"
     ],
     "tests/unit/test_alg/test_sl_one_solve_one_interpolant.py::TestTheOverrideIsDisclosedRatherThanApplied::test_a_monotone_method_does_not_warn": [
@@ -1256,6 +1476,9 @@
     ],
     "tests/unit/test_alg/test_solver_bc_support_census_1975.py::test_the_conservative_schemes_conserve_mass_at_a_drifted_wall[divergence_upwind]": [
       "quadrature_wall_node_counting_measure"
+    ],
+    "tests/unit/test_alg/test_true_adjoint.py::TestJacobianTransposeEqualsAdvection::test_jacobian_and_advection_use_different_upwind": [
+      "godunov_branch_swap"
     ],
     "tests/unit/test_alg/test_true_adjoint.py::TestJacobianTransposeEqualsAdvection::test_jacobian_coefficients_match_analytical_dh_dp": [
       "grid_spacing_uses_point_count",
@@ -1522,12 +1745,8 @@
     "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_scalar_is_converted": [
       "diffusion_scalar_2x"
     ],
-    "tests/unit/test_core/test_state_penalty_is_a_potential_2002.py::test_a_wall_is_a_cost_not_a_reward": [
-      "godunov_branch_swap"
-    ],
     "tests/unit/test_core/test_state_penalty_is_a_potential_2002.py::test_the_wall_is_local": [
-      "diffusion_scalar_2x",
-      "godunov_branch_swap"
+      "diffusion_scalar_2x"
     ],
     "tests/unit/test_core/test_unified_mfg_problem.py::TestNDGridMode::test_diffusion_converts_to_sigma": [
       "diffusion_scalar_2x"
@@ -2096,6 +2315,9 @@
     "tests/unit/test_operators/test_diffusion.py::TestIsotropicDiffusion::test_periodic_sin": [
       "periodic_wrap_endpoint_inverted"
     ],
+    "tests/unit/test_operators/test_divergence.py::TestAdvectionGradientForm::test_1d_upwind": [
+      "godunov_branch_swap"
+    ],
     "tests/unit/test_operators/test_divergence.py::TestAdvectionPeriodicGridConvention::test_bc_none_still_means_the_exclusive_layout": [
       "periodic_wrap_endpoint_inverted"
     ],
@@ -2108,6 +2330,9 @@
     "tests/unit/test_operators/test_divergence.py::TestAdvectionPeriodicGridConvention::test_the_wrap_face_velocity_comes_from_the_last_real_cell_not_the_repeat": [
       "fv_upwind_donor_cell_swapped",
       "periodic_wrap_endpoint_inverted"
+    ],
+    "tests/unit/test_operators/test_gradient.py::TestPartialDerivOperator::test_upwind_scheme": [
+      "godunov_branch_swap"
     ],
     "tests/unit/test_operators/test_interface_jump.py::TestInterfaceJumpOperator1D::test_1d_gradient_jump": [
       "grid_interval_count_reads_as_points"
@@ -2133,14 +2358,23 @@
     "tests/unit/test_operators/test_laplacian.py::TestLaplacianVariableCoefficient::test_varying_field_is_column_conservative": [
       "quadrature_wall_node_counting_measure"
     ],
-    "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_result_shape": [
+    "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_monotone_increasing": [
       "godunov_branch_swap"
+    ],
+    "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_result_shape": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
     ],
     "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_selection_rule_is_the_godunov_one_not_merely_accurate": [
       "godunov_branch_swap"
     ],
+    "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_the_numerical_hamiltonian_is_monotone_and_godunov": [
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
     "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_the_selection_predicate_is_pinned_not_only_the_branch_bodies": [
-      "godunov_branch_swap"
+      "godunov_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
     ],
     "tests/unit/test_utils/test_diffusion_from_volatility.py::TestField::test_1d_field_is_elementwise": [
       "diffusion_field_2x"
@@ -2222,7 +2456,7 @@
         "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_absent_bc_defaults_to_clamp_not_reflect"
       ],
       "owner": "absent BC defaults to clamp/absorbing (#1698)",
-      "seconds": 145.4,
+      "seconds": 147.2,
       "status": "ok",
       "verify": "bc_type_to_geometric_operation(None) == 'reflect'"
     },
@@ -2242,7 +2476,7 @@
         "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_the_guard_and_the_lookup_are_separable_2284"
       ],
       "owner": "no_flux/neumann/robin -> reflect (#1698)",
-      "seconds": 137.4,
+      "seconds": 145.7,
       "status": "ok",
       "verify": "bc_type_to_geometric_operation('no_flux') == 'clamp'"
     },
@@ -2263,7 +2497,7 @@
         "tests/unit/test_geometry/test_poly_extrapolation.py::test_order_5_nonzero_neumann_flux"
       ],
       "owner": "PreallocatedGhostBuffer.update_ghosts routes a uniform BC to the single-segment path and a mixed BC to the per-face path (#577 Phase 3 for the mixed rewrite, #1255 (C) for the alpha/beta forwarding the uniform branch carries). The two paths are NOT equivalent: the uniform branch applies the inhomoge",
-      "seconds": 137.5,
+      "seconds": 137.9,
       "status": "ok",
       "verify": "abs(_ghost0(neumann_bc(dimension=1, value=2.0), 3) - 1.1) < 1e-12"
     },
@@ -2279,12 +2513,12 @@
         "tests/unit/test_utils/test_diffusion_from_volatility.py::TestField::test_2d_field_is_elementwise"
       ],
       "owner": "D = sigma^2/2 elementwise for a volatility field (#811)",
-      "seconds": 151.7,
+      "seconds": 149.6,
       "status": "ok",
       "verify": "float(diffusion_from_volatility(np.array([2.0]), kind='field')[0]) == 4.0"
     },
     "diffusion_scalar_2x": {
-      "kill_count": 188,
+      "kill_count": 187,
       "killed": [
         "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[1]",
         "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[2]",
@@ -2301,7 +2535,6 @@
         "tests/integration/test_mms_validation.py::TestMMSFokkerPlanck1D::test_sinusoidal_periodic_convergence",
         "tests/integration/test_mms_validation.py::TestMMSFokkerPlanck1D::test_source_term_steady_state_convergence",
         "tests/integration/test_mms_validation.py::TestMMSHJB1D::test_backward_heat_periodic_convergence",
-        "tests/integration/test_newton_mfg_solver.py::TestMFGResidualComputation::test_residual_computation",
         "tests/integration/test_particle_collocation_mfg.py::TestFPGFDMSolver::test_fp_gfdm_mass_conservation",
         "tests/integration/test_sl_mms_anisotropic_2198.py::test_sl_is_first_order_with_an_off_diagonal_sigma",
         "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline",
@@ -2476,7 +2709,7 @@
         "tests/unit/test_utils/test_neumann_cn_wall_2237.py::test_order_at_the_wall[mirror-2.0]"
       ],
       "owner": "D = sigma^2/2 for scalar sigma (#811)",
-      "seconds": 137.1,
+      "seconds": 165.8,
       "status": "ok",
       "verify": "diffusion_from_volatility(2.0) == 4.0"
     },
@@ -2514,12 +2747,12 @@
         "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[2.0]"
       ],
       "owner": "FP drift c = 1/control_cost (#1420 / G-017)",
-      "seconds": 170.1,
+      "seconds": 149.2,
       "status": "ok",
       "verify": "fp_drift_coefficient(_stub_problem(control_cost=2.0)) == 1.0"
     },
     "fp_initial_condition_written_at_final_index": {
-      "kill_count": 129,
+      "kill_count": 128,
       "killed": [
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_gauss_seidel_runs_and_produces_finite_M",
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestFictitiousPlayFPDriftConvention::test_fictitious_play_density_is_non_negative",
@@ -2645,14 +2878,13 @@
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_fdm_and_fvm_converge_to_the_same_field_under_a_varying_periodic_drift",
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_zero_diffusion_and_zero_drift_do_not_move_the_density[FPFDMSolver]",
         "tests/unit/test_alg/test_regime_switching_iterator.py::TestDiagonalOutflowIsNotALaggedSource::test_regime_masses_track_the_markov_chain_closed_form",
-        "tests/unit/test_alg/test_regime_switching_iterator.py::TestRegimeSwitchingSolve::test_solutions_are_finite",
         "tests/unit/test_alg/test_regime_switching_iterator.py::TestRegimeSwitchingUpdateSchemes::test_jacobi_scheme",
         "tests/unit/test_alg/test_s1_drift_convention_routing.py::test_u_as_drift_field_solves_a_different_problem_than_u_as_potential_field",
         "tests/unit/test_fp_fvm.py::test_gate4_fvm_fdm_agreement_shrinks",
         "tests/unit/test_geometry/test_bc_fail_loud_1558_1559.py::test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmless"
       ],
       "owner": "The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, fp_fdm_time_stepping.py:797, whose own docstring states the convention at :681: \"- Forward time evolution: k=0 -> Nt-1\". No issue n",
-      "seconds": 174.3,
+      "seconds": 190.8,
       "status": "ok",
       "verify": "float(np.sum(solve_fp_nd_full_system(np.ones(6), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), sigma=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x, m_initial=lambda x: 1.0 + 0.0 * x, T=0.1), Nt=2))[0])) == 0.0"
     },
@@ -2669,7 +2901,7 @@
         "tests/unit/test_operators/test_divergence.py::TestAdvectionPeriodicGridConvention::test_the_wrap_face_velocity_comes_from_the_last_real_cell_not_the_repeat"
       ],
       "owner": "the conservative FV upwind flux takes the UPSTREAM cell: F_{i+1/2} = v_{i+1/2} m_i when v_{i+1/2} >= 0, else v_{i+1/2} m_{i+1} (#1184 / #1428)",
-      "seconds": 133.4,
+      "seconds": 145.9,
       "status": "ok",
       "verify": "float(AdvectionOperator(velocity_field=np.ones((1, 3)), spacings=[1.0], field_shape=(3,), scheme='upwind', form='divergence', bc=no_flux_bc(dimension=1), mass_conservative=True)(np.array([1.0, 2.0, 3.0]))[0]) == 4.0"
     },
@@ -2736,48 +2968,111 @@
         "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_solver_gradient_path_now_carries_the_spacing[2.0-81]"
       ],
       "owner": "the ghost buffer uses the caller's spacing, not dx = 1.0 (#1904)",
-      "seconds": 143.7,
+      "seconds": 145.2,
       "status": "ok",
       "verify": "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0), ghost_depth=1, spacing=0.05)[0] == 3.0"
     },
     "godunov_branch_swap": {
-      "kill_count": 30,
+      "kill_count": 93,
       "killed": [
-        "tests/integration/test_hjb_fdm_2d_validation.py::TestHJBFDM2DSolving::test_2d_solve_fixed_point",
         "tests/integration/test_hjb_with_obstacle.py::TestObstacleConvergenceProperties::test_tolerance_scaling",
-        "tests/integration/test_mfg_callable_coefficients.py::TestMFGCallableCoefficients::test_mfg_with_callable_diffusion",
         "tests/integration/test_mms_validation.py::TestMMSHJB1D::test_backward_heat_periodic_convergence",
-        "tests/integration/test_newton_mfg_solver.py::TestMFGResidualComputation::test_residual_computation",
+        "tests/integration/test_multi_population_cross_coupling.py::test_hjb_sees_cross_density_bug_1157",
         "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline",
+        "tests/unit/test_alg/test_fp_matrix_conservation.py::TestConservativeAdvection::test_default_leaks_but_conservative_holds_at_wall",
         "tests/unit/test_alg/test_fp_matrix_conservation.py::TestConservativeAdvection::test_default_path_byte_identical_golden",
+        "tests/unit/test_alg/test_hamiltonian_single_source_1071.py::test_full_solve_invocation_split",
+        "tests/unit/test_alg/test_hamiltonian_single_source_1071.py::test_jacobian_byte_identical_to_inline_assembly",
+        "tests/unit/test_alg/test_hamiltonian_single_source_1071.py::test_jacobian_path_triggers_zero_extra_H_evals",
         "tests/unit/test_alg/test_hjb_analytic_jacobian_1607.py::test_analytic_jacobian_matches_fd_solution",
-        "tests/unit/test_alg/test_hjb_fdm_solver.py::TestBoundaryGradientBCAware1384::test_dirichlet_steep_terminal_converges",
-        "tests/unit/test_alg/test_hjb_fdm_solver.py::TestHJBFDMSolverGhostValueBC::test_hjb_solver_time_varying_bc",
-        "tests/unit/test_alg/test_hjb_fdm_solver.py::TestHJBFDMSolverIntegration::test_solver_with_gaussian_density",
-        "tests/unit/test_alg/test_hjb_fdm_solver.py::TestHJBFDMSolverIntegration::test_solver_with_uniform_density",
+        "tests/unit/test_alg/test_hjb_analytic_jacobian_1607.py::test_analytic_jacobian_routes_backend_none",
+        "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_a_solve_that_reports_converged_returns_a_root[neumann_zero]",
+        "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_a_solve_that_reports_converged_returns_a_root[no_flux]",
+        "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_removing_the_enforcement_still_leaves_the_no_flux_condition_satisfied[21]",
+        "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_removing_the_enforcement_still_leaves_the_no_flux_condition_satisfied[41]",
+        "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_removing_the_enforcement_still_leaves_the_no_flux_condition_satisfied[81]",
+        "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_the_no_flux_case_actually_converges_here_so_the_law_is_not_vacuous",
+        "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_the_surviving_enforcement_uses_the_grids_own_spacing",
         "tests/unit/test_alg/test_hjb_fdm_solver.py::TestHJBFDMSolverNumericalProperties::test_solution_finiteness",
+        "tests/unit/test_alg/test_hjb_fdm_upwind_minimum_2308.py::test_a_coarse_grid_solve_is_not_wrecked_at_the_minimum[11-0.2-0.5]",
+        "tests/unit/test_alg/test_hjb_fdm_upwind_minimum_2308.py::test_a_coarse_grid_solve_is_not_wrecked_at_the_minimum[21-0.1-0.25]",
+        "tests/unit/test_alg/test_hjb_fdm_upwind_minimum_2308.py::test_a_coarse_grid_solve_is_not_wrecked_at_the_minimum[41-0.05-0.12]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_cancelled_wrap_entry_is_dropped_rather_than_kept_at_rounding_scale",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_minimum_band_is_zero_where_dH_dp_is_not[dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_minimum_band_is_zero_where_dH_dp_is_not[no_flux]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_minimum_band_is_zero_where_dH_dp_is_not[periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_minimum_band_is_zero_where_dH_dp_is_not[robin_alpha_eq_beta]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_strict_discrete_minimum_is_differentiable_and_its_row_matches_the_residual",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_switching_node_gets_a_clarke_element_not_an_average",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_tied_wall_row_that_is_not_a_switching_node_still_gets_the_right_branch",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_time_dependent_boundary_reaches_the_advection_block[True]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[no_flux]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[robin_alpha_eq_beta]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[bump_off_node-True-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[bump_off_node-True-no_flux]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[bump_off_node-True-periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[bump_off_node-True-robin_alpha_eq_beta]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[monotone-True-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[monotone-True-no_flux]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[monotone-True-periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[monotone-True-robin_alpha_eq_beta]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[piecewise_linear-True-dirichlet]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[piecewise_linear-True-no_flux]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[piecewise_linear-True-periodic]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[piecewise_linear-True-robin_alpha_eq_beta]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rough-True-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rough-True-no_flux]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rough-True-periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rough-True-robin_alpha_eq_beta]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_legacy_no_bc_path_linearises_its_own_residual_too[True]",
-        "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[HJBFDMSolver-NEUMANN]",
-        "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[HJBFDMSolver-NO_FLUX]",
-        "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[HJBFDMSolver-PERIODIC]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[linear-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[linear-neumann]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[linear-no_flux]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[linear-periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[linear-robin_mixed]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[linear-robin_neumann_like]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[linear-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[random-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[random-neumann]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[random-no_flux]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[random-periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[random-robin_mixed]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[random-robin_neumann_like]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[random-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[smooth-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[smooth-neumann]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[smooth-no_flux]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[smooth-periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[smooth-robin_mixed]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[smooth-robin_neumann_like]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[smooth-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_superseded_branch_rule_is_moot_on_every_live_row",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-no_flux]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-robin_alpha_eq_beta]",
+        "tests/unit/test_alg/test_hjb_newton_reports_returned_iterate.py::test_the_configuration_still_exercises_the_non_converged_path",
+        "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestSLHJBConsistency::test_matches_fdm_with_potential[1.0]",
+        "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestSLHJBConsistency::test_matches_fdm_with_potential[2.0]",
+        "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_periodic_solve_returns_a_periodic_field[HJBFDMSolver]",
+        "tests/unit/test_alg/test_sl_foot_velocity_single_source_1547.py::test_congestion_error_actually_decreases_under_refinement",
+        "tests/unit/test_alg/test_sl_foot_velocity_single_source_1547.py::test_congestion_solve_tracks_an_independent_fdm_reference",
+        "tests/unit/test_alg/test_true_adjoint.py::TestJacobianTransposeEqualsAdvection::test_jacobian_and_advection_use_different_upwind",
         "tests/unit/test_alg/test_true_adjoint.py::TestJacobianTransposeEqualsAdvection::test_jacobian_coefficients_match_analytical_dh_dp",
-        "tests/unit/test_core/test_state_penalty_is_a_potential_2002.py::test_a_wall_is_a_cost_not_a_reward",
-        "tests/unit/test_core/test_state_penalty_is_a_potential_2002.py::test_the_wall_is_local",
+        "tests/unit/test_operators/test_divergence.py::TestAdvectionGradientForm::test_1d_upwind",
+        "tests/unit/test_operators/test_gradient.py::TestPartialDerivOperator::test_upwind_scheme",
+        "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_monotone_increasing",
         "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_result_shape",
         "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_selection_rule_is_the_godunov_one_not_merely_accurate",
+        "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_the_numerical_hamiltonian_is_monotone_and_godunov",
         "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_the_selection_predicate_is_pinned_not_only_the_branch_bodies"
       ],
-      "owner": "Godunov upwind takes the BACKWARD difference where the central gradient is >= 0 -- the library's one statement of the upwind selection rule, consumed by the HJB residual, the HJB Jacobian, GradientOperator and AdvectionOperator (#1896 items 3-4 turn on it)",
-      "seconds": 127.8,
+      "owner": "Rouy-Tourin upwind takes the clamped BACKWARD part max(backward, 0) where it dominates the clamped forward part min(forward, 0) in magnitude -- the library's one statement of the upwind selection rule (#2308), consumed by the HJB residual, the HJB Jacobian, GradientOperator and AdvectionOperator (#1896 items 3-4 turn on it)",
+      "seconds": 101.3,
       "status": "ok",
-      "verify": "float(gradient_upwind(np.array([0.0, 1.0, 3.0]), axis=0, h=1.0)[1]) == 2.0"
+      "verify": "float(gradient_upwind(np.array([0.0, 1.0, 3.0]), axis=0, h=1.0)[1]) == 0.0"
     },
     "grid_interval_count_reads_as_points": {
       "kill_count": 35,
@@ -2819,7 +3114,7 @@
         "tests/validation/test_stefan_analytical.py::TestStefanEnergyConservation::test_total_energy_preservation"
       ],
       "owner": "`Nx` names the INTERVAL count, so node count = Nx + 1 -- the #1889 interval-vs-node ambiguity at the grid's own entry point. Stated in the constructor docstring at tensor_grid.py:181-182: \"- Nx (intervals): Nx_points = Nx + 1\" / \"- Nx_points (points): Nx = Nx_points - 1\". Line 220-221 normalises a s",
-      "seconds": 129.0,
+      "seconds": 145.3,
       "status": "ok",
       "verify": "TensorProductGrid(bounds=[(0.0, 1.0)], Nx=[10], boundary_conditions=no_flux_bc(dimension=1)).Nx_points == [10]"
     },
@@ -2880,12 +3175,12 @@
         "tests/validation/test_stefan_analytical.py::TestNeumannSolution::test_convergence_with_grid_refinement"
       ],
       "owner": "uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim, get_spacing() indexes it, legacy_1d_attrs[\"Dx\"] reads it, cell volume ",
-      "seconds": 144.8,
+      "seconds": 154.7,
       "status": "ok",
       "verify": "TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)).get_grid_spacing()[0] == 1.0 / 11"
     },
     "hjb_marches_forward_in_time": {
-      "kill_count": 21,
+      "kill_count": 24,
       "killed": [
         "tests/integration/test_mfg_callable_coefficients.py::TestMFGCallableCoefficients::test_mfg_callable_diffusion_with_array",
         "tests/integration/test_mms_validation.py::TestMMSHJB1D::test_backward_heat_periodic_convergence",
@@ -2896,6 +3191,9 @@
         "tests/unit/test_alg/test_hjb_fdm_solver.py::TestHJBFDMSolverParameterSensitivity::test_different_newton_iterations",
         "tests/unit/test_alg/test_hjb_fdm_solver.py::TestHJBFDMSolverParameterSensitivity::test_different_tolerances",
         "tests/unit/test_alg/test_hjb_fdm_solver.py::TestHJBFDMSolverSolveHJBSystem::test_solve_hjb_system_shape",
+        "tests/unit/test_alg/test_hjb_fdm_upwind_minimum_2308.py::test_a_coarse_grid_solve_is_not_wrecked_at_the_minimum[11-0.2-0.5]",
+        "tests/unit/test_alg/test_hjb_fdm_upwind_minimum_2308.py::test_a_coarse_grid_solve_is_not_wrecked_at_the_minimum[21-0.1-0.25]",
+        "tests/unit/test_alg/test_hjb_fdm_upwind_minimum_2308.py::test_a_coarse_grid_solve_is_not_wrecked_at_the_minimum[41-0.05-0.12]",
         "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestSLHJBConsistency::test_matches_fdm_with_potential[1.0]",
         "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestSLHJBConsistency::test_matches_fdm_with_potential[2.0]",
         "tests/unit/test_alg/test_sl_dpp_potential_sign_1645.py::test_dpp_error_converges_under_refinement",
@@ -2910,7 +3208,7 @@
         "tests/unit/test_alg/test_weak_form_hjb_picard_sign_2023.py::test_the_weak_form_family_agrees_with_the_reference_fdm_solver[2.0]"
       ],
       "owner": "The HJB marches BACKWARD in time, from the terminal row down to t=0, while the FP marches forward -- the adjoint pairing. Single site: base_hjb.py:1780, the only time loop in solve_hjb_system_backward. The M-indexing that rides on it is documented in the same loop body at base_hjb.py:1790: \"# BUG #7",
-      "seconds": 102.4,
+      "seconds": 123.8,
       "status": "ok",
       "verify": "float(solve_hjb_system_backward(np.ones((3, 6)), np.full(6, 3.0), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), sigma=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x, m_initial=lambda x: 1.0 + 0.0 * x, T=0.1), Nt=2))[0, 0]) < 1.0"
     },
@@ -2921,7 +3219,7 @@
         "tests/unit/test_utils/test_mass_conservation_error_1672.py::test_the_coupled_solve_reports_the_quantity_it_documents[fdm_upwind]"
       ],
       "owner": "`SolverResult.mass_conservation_error` is DRIFT from the initial mass, `|mass(t)/mass(0) - 1|`, not deviation from 1 (#1672). Sole owner: the coupling loop, which is the only site that writes the field. The convention is not decorative: #1887 stopped the constructor rescaling `m_initial`, so `mass(0)` is whatever the caller handed in and the two expressions are different numbers. A target of 1 is not a property of the Fokker-Planck equation -- it conserves whatever it started with -- so measuring against 1 reports a caller's modelling decision as a solver defect. REINSTATED HERE from the hand-off note on `fix/2145-the-mass-is-the-trapezoid`, where this mutation is INEFFECTIVE by construction: that branch normalises `m_initial`, so `mass(0) == 1` on every path reaching the iterator and no test can separate the two expressions. The hand-off named a merge conflict as its forcing function; splitting #1887 onto its own branch removed the conflict and the re-add dropped silently, which is the outcome that note predicted by name. Independent review of PR #2174 caught it.",
-      "seconds": 132.2,
+      "seconds": 147.1,
       "status": "ok",
       "verify": "MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, sigma=0.5, components=MFGComponents(m_initial=lambda x: np.exp(-50.0 * (np.asarray(x) - 0.5) ** 2), u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0))).solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False).mass_conservation_error > 0.1"
     },
@@ -2969,7 +3267,7 @@
         "tests/unit/test_geometry/test_neumann_low_wall_sign.py::TestNeumannLowWallSign::test_order2_low_ghost_plus_dx_v"
       ],
       "owner": "inhomogeneous Neumann is prescribed on the OUTWARD normal, so at the low wall (outward normal -x) du/dx = -v and the offset is ADDED, the same sign as the high wall (#1262). Since #1967 the magnitude is (2k-1)*dx*v rather than dx*v -- ghost layer k sits that far from its mirror -- so the k=1 case is the historical dx*v and the deeper layers scale.",
-      "seconds": 129.3,
+      "seconds": 145.7,
       "status": "ok",
       "verify": "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0), ghost_depth=1, spacing=0.05)[0] == 0.9"
     },
@@ -2983,7 +3281,7 @@
         "tests/unit/test_convention_agreement.py::TestHJBResidualNormGridScaling::test_the_scaling_is_what_makes_two_resolutions_comparable"
       ],
       "owner": "The HJB Newton residual is the grid-scaled discrete L2 norm ||F||_2 * sqrt(dx). Owner: hjb_residual_norm, base_hjb.py:1362, whose docstring says verbatim 'The one owner of \"how large is this HJB residual\".' and 'It is a function rather than an inline expression because the ``sqrt(dx)`` is load-beari",
-      "seconds": 136.6,
+      "seconds": 156.7,
       "status": "ok",
       "verify": "hjb_residual_norm(np.array([1.0, 0.0]), 0.25) == 1.0"
     },
@@ -3033,7 +3331,7 @@
         "tests/unit/test_utils/test_manufactured.py::TestAgreesWithTheHandAssembly::test_fp_source_reproduces_it"
       ],
       "owner": "QuadraticControlCost alpha* = -sign*p/lambda (#1649)",
-      "seconds": 142.6,
+      "seconds": 146.7,
       "status": "ok",
       "verify": "float(QuadraticControlCost(control_cost=1.0).optimal_control(np.array([1.0]))[0]) > 0"
     },
@@ -3056,7 +3354,7 @@
         "tests/unit/test_alg/test_particle_mass_is_the_callers_2181.py::test_two_populations_keep_their_shares"
       ],
       "owner": "The particle FP step measures a slice's mass on the GEOMETRY'S OWN measure, not the counting measure and not `sum(m) * dx` -- the rectangle rule is not the mass on an endpoint-inclusive grid (#2145). Sole owner: `FPParticleSolver._measure`, reached by `_to_caller_mass`, which is the only thing that decides what a reconstructed slice's mass is. RETARGETED from `_compute_total_mass`, which #2181 deleted: that helper measured `sum(density) * dV` and the KDE normalisation divided by it so the density integrated to 1. Both halves of that sentence stopped being true -- the measure is now the geometry's, and the target is the caller's mass rather than 1 -- but the convention it defended survived and moved here, so the mutation follows it.",
-      "seconds": 132.3,
+      "seconds": 122.3,
       "status": "ok",
       "verify": "abs(_measure_probe() - 21.0) < 1e-9"
     },
@@ -3087,7 +3385,7 @@
         "tests/unit/test_geometry/test_bc_fail_loud_1558_1559.py::test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmless"
       ],
       "owner": "where the last node sits, MEASURED from the coordinates the grid built (#1822). `_axis_convention` is the single owner: `periodic_convention` calls it (tensor_grid.py:415) and `_first_axis_with_convention` calls it (:385). The property docstring states why it is derived rather than asserted: \"Derive",
-      "seconds": 132.7,
+      "seconds": 145.7,
       "status": "ok",
       "verify": "TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)).periodic_convention is PeriodicGridConvention.ENDPOINT_EXCLUSIVE"
     },
@@ -3142,7 +3440,7 @@
         "tests/unit/test_operators/test_laplacian.py::TestLaplacianBCFailLoud1071::test_bc_none_still_periodic"
       ],
       "owner": "how many trailing nodes of a periodic axis repeat a node the array already holds -- the ONE number both the ghost skip and the modular span derive from (#1822). types.py:126-130 states the ownership verbatim: \"Every periodic wrap in the package is one of two expressions of this single number, which ",
-      "seconds": 148.4,
+      "seconds": 145.5,
       "status": "ok",
       "verify": "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), periodic_bc(dimension=1), ghost_depth=1)[0] == 2.0"
     },
@@ -3153,7 +3451,7 @@
         "tests/unit/test_convention_agreement.py::TestPicardCriterionIsAConjunction::test_a_small_relative_error_alone_is_not_convergence"
       ],
       "owner": "Picard convergence requires BOTH the relative AND the absolute L2 error below tolerance. Owner: check_convergence_criteria, fixed_point_utils.py:192-229, whose docstring states 'Convergence criteria (both must be satisfied)'. Single-sourced by three call sites routing to it: fixed_point_iterator.py:",
-      "seconds": 125.4,
+      "seconds": 145.2,
       "status": "ok",
       "verify": "check_convergence_criteria(1e-9, 1e-9, 1.0, 1.0, 1e-6)[0]"
     },
@@ -3258,7 +3556,7 @@
         "tests/unit/test_utils/test_mass_conservation_error_1672.py::test_the_coupled_solve_reports_the_quantity_it_documents[fdm_upwind]"
       ],
       "owner": "The measure on a node-centred grid is the TRAPEZOID: `TensorProductGrid` is endpoint-inclusive, so the wall lies ON the end node and that node owns half a cell. Those weights are also the control volumes the conservative FP schemes telescope against, which is why this is one convention and not two (#2145). Sole owner: `mfgarchon/utils/numerical/quadrature.py`, reached by `TensorProductGrid.integrate`, `mass_drift`, the FV advection kernel and the FDM wall rows. SUPERSEDES `m_initial_1d_counting_measure`, which mutated the constructor's normalisation dispatch -- #1887 removed that rescale (the library validates the initial mass and does not change it), so that anchor no longer exists. The convention it defended survived and moved here; the mutation follows it.",
-      "seconds": 131.4,
+      "seconds": 145.5,
       "status": "ok",
       "verify": "abs(quadrature_weights_1d(np.linspace(0.0, 1.0, 5))[0] - 0.25) < 1e-12"
     },
@@ -3282,7 +3580,7 @@
         "tests/unit/test_utils/test_runtime_validation.py::test_terminal_condition_survives_an_hjb_divergence"
       ],
       "owner": "u is boundary-data at the TERMINAL time and m at the INITIAL one: preserve_terminal_condition re-imposes u(T)=g on the LAST time row after damping/Anderson. Single owner, three caller families -- fixed_point_iterator.py:644 and :724 (Picard), fictitious_play.py:432, block_iterators.py:583. No issue ",
-      "seconds": 336.1,
+      "seconds": 353.3,
       "status": "ok",
       "verify": "preserve_terminal_condition(np.zeros((3, 4)), np.full(4, 7.0))[0, 0] == 7.0"
     },
@@ -3296,9 +3594,80 @@
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[piecewise_linear-True-robin_alpha_eq_beta]"
       ],
       "owner": "on rows where forward and backward agree in VALUE, the upwind Jacobian's row is decided by sign(central), matching the residual's own selector -- the one place #1896 left the rule restated rather than measured (#1896 item 3)",
-      "seconds": 134.6,
+      "seconds": 145.3,
       "status": "ok",
       "verify": "float(_advection_bands(np.zeros(5), 0.25, None, 0.0, True, _bc_laplacian_bands(5, 0.25, None, 0.0))[1][2]) == -4.0"
+    },
+    "upwind_minimum_takes_a_one_sided_difference": {
+      "kill_count": 62,
+      "killed": [
+        "tests/integration/test_multi_population_cross_coupling.py::test_hjb_sees_cross_density_bug_1157",
+        "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline",
+        "tests/unit/test_alg/test_hamiltonian_single_source_1071.py::test_full_solve_invocation_split",
+        "tests/unit/test_alg/test_hamiltonian_single_source_1071.py::test_jacobian_byte_identical_to_inline_assembly",
+        "tests/unit/test_alg/test_hamiltonian_single_source_1071.py::test_jacobian_path_triggers_zero_extra_H_evals",
+        "tests/unit/test_alg/test_hjb_analytic_jacobian_1607.py::test_analytic_jacobian_matches_fd_solution",
+        "tests/unit/test_alg/test_hjb_analytic_jacobian_1607.py::test_analytic_jacobian_routes_backend_none",
+        "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_the_surviving_enforcement_uses_the_grids_own_spacing",
+        "tests/unit/test_alg/test_hjb_fdm_upwind_minimum_2308.py::test_a_coarse_grid_solve_is_not_wrecked_at_the_minimum[11-0.2-0.5]",
+        "tests/unit/test_alg/test_hjb_fdm_upwind_minimum_2308.py::test_a_coarse_grid_solve_is_not_wrecked_at_the_minimum[21-0.1-0.25]",
+        "tests/unit/test_alg/test_hjb_fdm_upwind_minimum_2308.py::test_a_coarse_grid_solve_is_not_wrecked_at_the_minimum[41-0.05-0.12]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_cancelled_wrap_entry_is_dropped_rather_than_kept_at_rounding_scale",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_minimum_band_is_zero_where_dH_dp_is_not[dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_minimum_band_is_zero_where_dH_dp_is_not[no_flux]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_minimum_band_is_zero_where_dH_dp_is_not[periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_minimum_band_is_zero_where_dH_dp_is_not[robin_alpha_eq_beta]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_strict_discrete_minimum_is_differentiable_and_its_row_matches_the_residual",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_tied_wall_row_that_is_not_a_switching_node_still_gets_the_right_branch",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_time_dependent_boundary_reaches_the_advection_block[True]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[no_flux]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[robin_alpha_eq_beta]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[bump_off_node-True-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[bump_off_node-True-no_flux]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[bump_off_node-True-periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[bump_off_node-True-robin_alpha_eq_beta]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[monotone-True-periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[piecewise_linear-True-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[piecewise_linear-True-no_flux]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[piecewise_linear-True-periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[piecewise_linear-True-robin_alpha_eq_beta]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rough-True-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rough-True-no_flux]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rough-True-periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rough-True-robin_alpha_eq_beta]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_legacy_no_bc_path_linearises_its_own_residual_too[True]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[linear-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[linear-neumann]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[linear-periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[linear-robin_mixed]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[random-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[random-neumann]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[random-no_flux]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[random-periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[random-robin_mixed]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[random-robin_neumann_like]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[random-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[smooth-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[smooth-neumann]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[smooth-no_flux]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[smooth-periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[smooth-robin_mixed]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[smooth-robin_neumann_like]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners[smooth-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-no_flux]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-robin_alpha_eq_beta]",
+        "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_result_shape",
+        "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_the_numerical_hamiltonian_is_monotone_and_godunov",
+        "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_the_selection_predicate_is_pinned_not_only_the_branch_bodies"
+      ],
+      "owner": "at a discrete local minimum (backward < 0 < forward) the upwind momentum is 0, the Godunov value for an H even in each momentum component and nondecreasing in its magnitude; selecting on sign(central) returned the one-sided difference of smaller magnitude there, a non-monotone numerical Hamiltonian that Newton still converges on (#2308)",
+      "seconds": 148.1,
+      "status": "ok",
+      "verify": "float(gradient_upwind(np.array([0.0, -1.0, 1.0]), axis=0, h=1.0)[1]) == -1.0"
     }
   },
   "paths": [
