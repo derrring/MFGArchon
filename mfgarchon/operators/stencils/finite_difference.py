@@ -223,9 +223,11 @@ def divergence_upwind_by_velocity(m: NDArray, v: NDArray, axis: int, h: float, x
     With ``v_{i+1/2} = (v_i + v_{i+1}) / 2`` the face flux is
     ``F_{i+1/2} = max(v_{i+1/2}, 0) m_i + min(v_{i+1/2}, 0) m_{i+1}``, and the result is
     ``(F_{i+1/2} - F_{i-1/2}) / h``. The explicit update ``m - dt * D F`` has nonnegative coefficients
-    for ``2 max|v| dt / h <= 1`` whatever the sign pattern of ``v`` (a node where the flow diverges
-    empties across both faces), and ``F`` is first-order consistent with ``v m`` across a sign change of
-    ``v``, because the donor switches where the face velocity is itself ``O(h)``.
+    for ``max|v| dt / h <= 1`` whatever the sign pattern of ``v``: node ``i`` empties at the rate
+    ``max(v_{i+1/2}, 0) - min(v_{i-1/2}, 0)``, which is at most ``max|v|`` because both terms are nonzero
+    only where it equals ``(v_{i+1} - v_{i-1}) / 2``. Summed over axes the condition is
+    ``dt * sum_d max|v_d| / h_d <= 1``. ``F`` is first-order consistent with ``v m`` across a sign change
+    of ``v``, because the donor switches where the face velocity is itself ``O(h)``.
 
     Two rules that look equivalent are not. Selecting a whole node flux ``v_i m_i`` by the sign of the
     face velocity sends it downwind where ``v_i < 0 <= v_{i+1/2}``: a coefficient of ``-CFL`` at a

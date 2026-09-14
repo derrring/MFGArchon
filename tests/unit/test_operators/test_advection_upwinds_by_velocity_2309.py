@@ -8,10 +8,13 @@ coefficient of ``-CFL`` in every case #2309 measured, and blew up at constant ve
 Every oracle here is a property of transport, not of an implementation, and both consumers of the rule --
 `AdvectionOperator` and `tensor_calculus.advection` -- answer to each:
 
-- monotone: for ``2 max|v| dt / h <= 1`` the explicit update is a nonnegative combination of neighbours;
+- monotone: for ``dt * sum_d max|v_d| / h_d <= 1`` the explicit update is a nonnegative combination of neighbours;
 - consistent: the truncation error against the exact derivative falls at first order;
 - conservative: on a torus the divergence form's columns sum to zero;
-- characteristic: a wall the flow leaves through takes no boundary value.
+- characteristic: a wall the flow leaves through takes no boundary value, and one it enters through does.
+
+The per-axis pairing -- which velocity component, which roll axis, which face difference -- needs ``d >= 2`` to
+fail at all, so the first two properties are also checked on a 2-D field that differs between its axes.
 
 The velocities must be able to express a divergence-form defect, which lives where the velocity changes
 sign. Monotonicity alone does not separate the candidates there. Selecting a whole node flux by the sign of
@@ -74,10 +77,10 @@ def _matrix(apply, v: np.ndarray, form: str, bc=None) -> np.ndarray:
 @pytest.mark.parametrize("velocity", list(_VELOCITIES))
 def test_every_explicit_update_coefficient_is_nonnegative(apply, form: str, velocity: str):
     v = _VELOCITIES[velocity]
-    dt = 0.4 * _H / np.abs(v).max()
+    dt = 0.9 * _H / np.abs(v).max()
     update = np.eye(_N) - dt * _matrix(apply, v, form)
     assert update.min() > -1e-12, (
-        f"{apply.__name__}, form={form}, v={velocity}: an update coefficient is {update.min():.3e} at CFL 0.4 "
+        f"{apply.__name__}, form={form}, v={velocity}: an update coefficient is {update.min():.3e} at CFL 0.9 "
         f"-- the transport is not upwinding by the velocity (#2309)"
     )
 
@@ -160,7 +163,8 @@ def test_an_outflow_wall_takes_no_boundary_value(apply):
 
     The same walls are also stated a second way, the high one through ``default_bc``, and must give the same
     operator: a velocity condition that rewrites the segments and keeps the density's default turns that wall
-    into a zero-flux one, whatever ``g`` is.
+    into a zero-flux one, whatever ``g`` is. The presence half: under ``v = 0.5 - x`` both walls are inflow,
+    and there ``g`` must reach the operator, or padding the density with the velocity's condition would pass.
     """
     x = np.linspace(0.0, 1.0, 11)
     m = np.exp(-10.0 * (x - 0.3) ** 2) + 0.1
@@ -177,3 +181,70 @@ def test_an_outflow_wall_takes_no_boundary_value(apply):
                     f"{apply.__name__}, form={form}, {walls.__name__}({value}): the outflow walls moved the operator "
                     f"by {gap:.3e} against uniform dirichlet(0.0) (#2309)"
                 )
+        inflow = [
+            apply(
+                0.5 - x,
+                x[1] - x[0],
+                form,
+                m,
+                TensorProductGrid(
+                    bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=_uniform_dirichlet(value)
+                ).get_boundary_conditions(),
+            )
+            for value in (0.0, 1.0)
+        ]
+        moved = np.abs(inflow[1] - inflow[0])
+        assert min(moved[0], moved[-1]) > 1.0, (
+            f"{apply.__name__}, form={form}: an inflow wall's Dirichlet value moved its wall row by only "
+            f"{moved[0]:.3e} / {moved[-1]:.3e} -- the density's boundary data is not reaching the operator"
+        )
+
+
+def _axis_asymmetric_2d(n: int):
+    """``v`` and ``m`` on the unit torus, non-separable, differing between the axes, ``v`` changing sign along both."""
+    h = 1.0 / n
+    x = np.arange(n) * h
+    X, Y = np.meshgrid(x, x, indexing="ij")
+    vx = np.sin(2 * np.pi * X + 0.3) * (1.2 + np.cos(2 * np.pi * Y))
+    vy = np.cos(2 * np.pi * X + 0.5) * np.sin(2 * np.pi * Y + 0.1) + 0.3
+    dvx = 2 * np.pi * np.cos(2 * np.pi * X + 0.3) * (1.2 + np.cos(2 * np.pi * Y))
+    dvy = 2 * np.pi * np.cos(2 * np.pi * X + 0.5) * np.cos(2 * np.pi * Y + 0.1)
+    m = 1.0 + 0.5 * np.cos(2 * np.pi * X) * np.sin(2 * np.pi * Y + 0.7)
+    mx = -np.pi * np.sin(2 * np.pi * X) * np.sin(2 * np.pi * Y + 0.7)
+    my = np.pi * np.cos(2 * np.pi * X) * np.cos(2 * np.pi * Y + 0.7)
+    return (
+        h,
+        np.stack([vx, vy]),
+        m,
+        {"gradient": vx * mx + vy * my, "divergence": dvx * m + vx * mx + dvy * m + vy * my},
+    )
+
+
+def _apply_2d(consumer: str, v: np.ndarray, h: float, form: str, m: np.ndarray) -> np.ndarray:
+    if consumer == "operator":
+        return AdvectionOperator(v, [h, h], m.shape, scheme="upwind", form=form)(m)
+    return advection(m, [v[0], v[1]], [h, h], form=form, method="upwind")
+
+
+@pytest.mark.parametrize("consumer", ["operator", "tensor_calculus"])
+@pytest.mark.parametrize("form", ["gradient", "divergence"])
+def test_an_axis_asymmetric_2d_field_is_monotone_and_first_order(consumer: str, form: str):
+    """Both properties above in 2-D, where pairing a velocity component or a roll with the wrong axis can fail.
+
+    Coefficients at ``dt * sum_d max|v_d| / h = 0.9`` on 16x16; truncation error from 40x40 to 160x160, which
+    first order quarters. Taking velocity component 0 on every axis, or the downwind density or the face
+    difference along axis 0, passes every 1-D check and fails one of these.
+    """
+    h, v, m, _ = _axis_asymmetric_2d(16)
+    dt = 0.9 / (np.abs(v[0]).max() / h + np.abs(v[1]).max() / h)
+    columns = np.column_stack([_apply_2d(consumer, v, h, form, e.reshape(m.shape)).ravel() for e in np.eye(m.size).T])
+    lowest = float((np.eye(m.size) - dt * columns).min())
+    assert lowest > -1e-12, f"{consumer}, form={form}: a 2-D update coefficient is {lowest:.3e} (#2309)"
+    errors = []
+    for n in (40, 160):
+        h, v, m, exact = _axis_asymmetric_2d(n)
+        errors.append(float(np.abs(_apply_2d(consumer, v, h, form, m) - exact[form]).max()))
+    assert errors[1] < errors[0] / 3.0, (
+        f"{consumer}, form={form}: 2-D truncation error {errors[0]:.3e} at 40x40 and {errors[1]:.3e} at 160x160 -- "
+        f"not first order (#2309)"
+    )

@@ -6,8 +6,8 @@
   - The divergence form calls `divergence_upwind_by_velocity`, a face-velocity donor cell:
     `F_{i+1/2} = max(v_{i+1/2}, 0) m_i + min(v_{i+1/2}, 0) m_{i+1}`. It is first-order consistent
     where the velocity changes sign. It is conservative on a torus. Its explicit update has
-    nonnegative coefficients for `2 max|v| dt / h <= 1` in the interior, on a torus and at no-flux
-    walls.
+    nonnegative coefficients for `dt * sum_d max|v_d| / h_d <= 1` in the interior, on a torus and at
+    no-flux walls.
   - `tensor_calculus.advection` calls the same two functions. Its divergence form used to select a
     whole node flux by the sign of the face velocity, which sends mass downwind where the flow
     diverges: a coefficient of -CFL at a velocity step.
