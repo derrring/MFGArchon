@@ -40,7 +40,7 @@ Extracted from: mfgarchon/utils/numerical/tensor_calculus.py
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -167,7 +167,7 @@ def gradient_upwind(u: NDArray, axis: int, h: float, xp: type = np) -> NDArray:
 
     Scope: this is a statement about the HJB momentum. Outside the condition above -- a
     ``DualHamiltonian`` whose Lagrangian is minimised away from ``0`` or bounded asymmetrically, or
-    a ``CongestionHamiltonian`` with ``c(m) <= 0`` -- it is not Godunov, and neither was the rule
+    a ``CongestionHamiltonian`` with ``c(m) < 0`` -- it is not Godunov, and neither was the rule
     it replaced; the two are wrong on different pairs there, so neither is the better one (#2311).
     Transport (``v . grad m``) upwinds by the sign of the velocity, not of any gradient, so this is
     not the upwind rule for advection either (#2309), nor for reinitialisation, which upwinds by the
@@ -191,6 +191,67 @@ def gradient_upwind(u: NDArray, axis: int, h: float, xp: type = np) -> NDArray:
     backward_part = grad_backward * (grad_backward > 0)
     forward_part = grad_forward * (grad_forward < 0)
     return xp.where(backward_part >= -forward_part, backward_part, forward_part)
+
+
+def gradient_upwind_by_velocity(u: NDArray, v: NDArray, axis: int, h: float, xp: Any = np) -> NDArray:
+    """
+    First derivative for the transport term ``v . grad u``, upwinded by the sign of the velocity.
+
+    The backward difference where ``v >= 0``, the forward difference where ``v < 0``. The explicit
+    update ``u - dt * v * D u`` is then monotone for ``|v| dt / h <= 1``: every coefficient is a
+    nonnegative weight of ``u`` at the node and its upwind neighbour. Selecting on the sign of a
+    gradient instead, as ``gradient_upwind`` does for the HJB momentum, is non-monotone for transport
+    and blows up at constant velocity (#2309).
+
+    Args:
+        u: Transported field
+        v: Velocity component along ``axis``, same shape as ``u``
+        axis: Axis along which to differentiate
+        h: Grid spacing
+        xp: Array module (numpy, cupy or torch)
+
+    Returns:
+        Upwinded derivative with the same shape as ``u``
+    """
+    return xp.where(v >= 0, gradient_backward(u, axis, h, xp), gradient_forward(u, axis, h, xp))
+
+
+def divergence_upwind_by_velocity(m: NDArray, v: NDArray, axis: int, h: float, xp: Any = np) -> NDArray:
+    """
+    Upwind divergence ``d(v m)/dx`` along ``axis``: each face carries its own velocity times the upwind density.
+
+    With ``v_{i+1/2} = (v_i + v_{i+1}) / 2`` the face flux is
+    ``F_{i+1/2} = max(v_{i+1/2}, 0) m_i + min(v_{i+1/2}, 0) m_{i+1}``, and the result is
+    ``(F_{i+1/2} - F_{i-1/2}) / h``. The explicit update ``m - dt * D F`` has nonnegative coefficients
+    for ``max|v| dt / h <= 1`` whatever the sign pattern of ``v``: node ``i`` empties at the rate
+    ``max(v_{i+1/2}, 0) - min(v_{i-1/2}, 0)``, which is at most ``max|v|`` because both terms are nonzero
+    only where it equals ``(v_{i+1} - v_{i-1}) / 2``. Summed over axes the condition is
+    ``dt * sum_d max|v_d| / h_d <= 1``. ``F`` is first-order consistent with ``v m`` across a sign change
+    of ``v``, because the donor switches where the face velocity is itself ``O(h)``.
+
+    Two rules that look equivalent are not. Selecting a whole node flux ``v_i m_i`` by the sign of the
+    face velocity sends it downwind where ``v_i < 0 <= v_{i+1/2}``: a coefficient of ``-CFL`` at a
+    velocity step. Splitting each node flux by the sign of that node's velocity is monotone but, where
+    ``v`` changes sign, its face flux is off by ``O(h)`` on one side and ``-O(h)`` on the other, so the
+    divergence is off by ``O(1)`` at the two neighbouring nodes at every resolution (#2309).
+
+    Periodic through ``np.roll``, so pad with ghost cells first for any other boundary.
+    `AdvectionOperator`'s non-conservative divergence and `tensor_calculus.advection` both call it.
+
+    Args:
+        m: Transported density
+        v: Velocity component along ``axis``, same shape as ``m``
+        axis: Axis along which to differentiate
+        h: Grid spacing
+        xp: Array module (numpy, cupy or torch)
+
+    Returns:
+        Upwinded divergence contribution with the same shape as ``m``
+    """
+    v_face = 0.5 * (v + _roll(xp, v, -1, axis))
+    zero = xp.zeros_like(v_face)
+    face_flux = xp.where(v_face > 0, v_face, zero) * m + xp.where(v_face < 0, v_face, zero) * _roll(xp, m, -1, axis)
+    return (face_flux - _roll(xp, face_flux, 1, axis)) / h
 
 
 # =============================================================================
@@ -523,6 +584,8 @@ __all__ = [
     "gradient_forward",
     "gradient_backward",
     "gradient_upwind",
+    "gradient_upwind_by_velocity",
+    "divergence_upwind_by_velocity",
     "gradient_nd",
     # Boundary handling
     "fix_boundaries_one_sided",

@@ -155,6 +155,37 @@ def _reinitialize_fsm(
     return fsm.compute_signed_distance(phi_initial, subcell_accuracy=subcell_accuracy)
 
 
+def _godunov_gradient_magnitude(
+    phi: NDArray[np.float64], sign_phi0: NDArray[np.float64], geometry: TensorProductGrid
+) -> NDArray[np.float64]:
+    """``|grad phi|`` for ``phi_tau + S (|grad phi| - 1) = 0``, upwinded per axis by the sign of ``S`` (#2310).
+
+    Where ``S > 0`` the Godunov magnitude is the HJB upwind momentum of ``phi`` per axis,
+    ``gradient_upwind``, for ``H = |p|``, which is even and nondecreasing in each component. Where
+    ``S < 0`` the equation is the same one for ``-phi``, so it is ``gradient_upwind`` of ``-phi``.
+    The padded array is negated, not ``phi``, so an inhomogeneous boundary value stays where the
+    ghost cells put it. The padding is the grid's own boundary condition at ``time=0``, as
+    ``get_gradient_operator(scheme="upwind")`` applied it.
+
+    Measured at 6c0610d2, before this: the ``S > 0`` form was used everywhere, which is downwind where
+    ``phi0 < 0``, so the exact signed distance ``x - 0.5`` drifted by 2.99e+01 after 100 iterations
+    and a ``phi0 < 0`` minimum moved by 3.73e-02 on the default call.
+    """
+    from mfgarchon.geometry.boundary import pad_array_with_ghosts
+    from mfgarchon.operators.stencils.finite_difference import gradient_upwind
+
+    bc = geometry.get_boundary_conditions()
+    padded = pad_array_with_ghosts(phi, bc, ghost_depth=1, time=0.0) if bc is not None else phi
+    interior = tuple(slice(1, -1) if bc is not None else slice(None) for _ in range(phi.ndim))
+    positive = sign_phi0 > 0
+    squared = np.zeros(phi.shape, dtype=np.float64)
+    for d, h in enumerate(geometry.spacing):
+        along_positive = gradient_upwind(padded, axis=d, h=h)[interior]
+        along_negative = gradient_upwind(-padded, axis=d, h=h)[interior]
+        squared += np.where(positive, along_positive**2, along_negative**2)
+    return np.sqrt(squared)
+
+
 def _reinitialize_pde(
     phi_initial: NDArray[np.float64],
     geometry: TensorProductGrid,
@@ -210,18 +241,13 @@ def _reinitialize_pde(
         narrow_band_mask = None
         logger.debug("Global reinitialization (entire domain)")
 
-    # Get gradient operator (upwind for stability)
-    grad_ops = geometry.get_gradient_operator(scheme="upwind")
-
     # Track previous deviation for divergence detection
     prev_max_deviation = float("inf")
     iteration = 0
 
     # Pseudo-time evolution
     for iteration in range(max_iterations):
-        # Compute |grad phi|
-        grad_components = [grad_op(phi) for grad_op in grad_ops]
-        grad_mag = np.linalg.norm(grad_components, axis=0)
+        grad_mag = _godunov_gradient_magnitude(phi, sign_phi0, geometry)
 
         # Check convergence: max(||grad phi| - 1|)
         # Only check within narrow band if applicable
@@ -271,8 +297,7 @@ def _reinitialize_pde(
             phi = phi - dtau * rhs
 
     # Final diagnostic
-    grad_components_final = [grad_op(phi) for grad_op in grad_ops]
-    grad_mag_final = np.linalg.norm(grad_components_final, axis=0)
+    grad_mag_final = _godunov_gradient_magnitude(phi, sign_phi0, geometry)
 
     if narrow_band_mask is not None:
         final_deviation = np.max(np.abs(grad_mag_final[narrow_band_mask] - 1.0)) if np.any(narrow_band_mask) else 0.0

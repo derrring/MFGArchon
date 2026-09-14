@@ -19,10 +19,13 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+from mfgarchon.operators.differential.advection import velocity_boundary_conditions
 from mfgarchon.operators.stencils.finite_difference import (
+    divergence_upwind_by_velocity,
     fix_boundaries_one_sided,
     gradient_central,
     gradient_upwind,
+    gradient_upwind_by_velocity,
 )
 
 # =============================================================================
@@ -658,10 +661,18 @@ def advection(
     if form == "gradient":
         # v·∇m
         if method == "upwind":
-            grad_m = gradient(m, spacings, scheme="upwind", bc=bc, backend=backend, time=time)
-        else:
-            grad_m = gradient(m, spacings, scheme="central", bc=bc, backend=backend, time=time)
+            # By the sign of the velocity (#2309): `gradient(scheme="upwind")` is the HJB momentum rule,
+            # which selects on the sign of the field and is non-monotone for transport.
+            m_work = _apply_ghost_cells_nd(m, bc, time) if bc is not None else m
+            result = xp.zeros_like(m_work)
+            for d in range(dimension):
+                if spacings[d] < 1e-14:
+                    continue
+                v_d = _apply_ghost_cells_nd(v[d], velocity_boundary_conditions(bc), time) if bc is not None else v[d]
+                result += v_d * gradient_upwind_by_velocity(m_work, v_d, d, spacings[d], xp)
+            return _extract_interior(result, dimension) if bc is not None else result
 
+        grad_m = gradient(m, spacings, scheme="central", bc=bc, backend=backend, time=time)
         result = xp.zeros_like(m)
         for d in range(dimension):
             result += v[d] * grad_m[d]
@@ -669,13 +680,9 @@ def advection(
 
     elif form == "divergence":
         # ∇·(vm)
-        flux = [v[d] * m for d in range(dimension)]
-
         if method == "upwind":
-            # Upwind flux: use donor cell
-            return _divergence_upwind(flux, v, spacings, bc, backend, time)
-        else:
-            return divergence(flux, spacings, bc=bc, backend=backend, time=time)
+            return _divergence_upwind(m, v, spacings, bc, backend, time)
+        return divergence([v[d] * m for d in range(dimension)], spacings, bc=bc, backend=backend, time=time)
 
     else:
         raise ValueError(f"Unknown advection form: {form}")
@@ -700,50 +707,27 @@ def _extract_interior(u_padded: NDArray, dimension: int) -> NDArray:
 
 
 def _divergence_upwind(
-    flux: list[NDArray],
+    m: NDArray,
     v: list[NDArray],
     spacings: list[float] | tuple[float, ...],
     bc: BoundaryConditions | None,
     backend: ArrayBackend | None,
     time: float,
 ) -> NDArray:
-    """Upwind divergence for advection."""
+    """Upwind divergence ``div(v m)``, padding the density with ``bc`` and the velocity with its edge value."""
     xp = backend.array_module if backend is not None else np
-    dimension = len(flux)
+    dimension = len(v)
 
-    div = xp.zeros_like(flux[0])
+    div = xp.zeros_like(m)
+    m_work = _apply_ghost_cells_nd(m, bc, time) if bc is not None else m
 
     for d in range(dimension):
         h = spacings[d]
         if h < 1e-14:
             continue
 
-        F_d = flux[d]
-        v_d = v[d]
-
-        # Apply ghost cells if BC provided
-        if bc is not None:
-            F_d = _apply_ghost_cells_nd(F_d, bc, time)
-            v_d_work = _apply_ghost_cells_nd(v_d, bc, time)
-        else:
-            v_d_work = v_d
-
-        # Upwind flux at faces
-        F_forward = _roll(xp, F_d, -1, d)
-        F_backward = F_d
-
-        # Face velocity (average)
-        v_face = 0.5 * (v_d_work + _roll(xp, v_d_work, -1, d))
-
-        # Select upwind flux
-        F_face_right = xp.where(v_face >= 0, F_backward, F_forward)
-
-        F_backward_left = _roll(xp, F_d, 1, d)
-        v_face_left = 0.5 * (_roll(xp, v_d_work, 1, d) + v_d_work)
-        F_face_left = xp.where(v_face_left >= 0, F_backward_left, F_d)
-
-        # Divergence
-        dF_d = (F_face_right - F_face_left) / h
+        v_d_work = _apply_ghost_cells_nd(v[d], velocity_boundary_conditions(bc), time) if bc is not None else v[d]
+        dF_d = divergence_upwind_by_velocity(m_work, v_d_work, d, h, xp)
 
         # Extract interior if ghost cells were added
         if bc is not None:

@@ -148,8 +148,8 @@ def compute_advection_term_nd(
     mass_conservative : bool, optional
         If True (upwind only), use the discretely-conservative finite-volume divergence that
         zeroes the advective flux through no-flux walls (Issue #1184/#1428), so density driven
-        against a wall by strong drift does not leak mass. Default False keeps the byte-identical
-        node-based divergence.
+        against a wall by strong drift does not leak mass. Default False takes the node-based
+        divergence upwinded by the sign of the velocity (#2309).
 
     Returns
     -------
@@ -227,8 +227,8 @@ def compute_advection_from_drift_nd(
     mass_conservative : bool, optional
         If True (upwind only), use the discretely-conservative finite-volume divergence
         that zeroes the advective flux through no-flux walls, so a density driven against
-        a wall by strong drift does not leak mass (Issue #1184). Default False keeps the
-        byte-identical node-based divergence.
+        a wall by strong drift does not leak mass (Issue #1184). Default False takes the
+        node-based divergence upwinded by the sign of the velocity (#2309).
 
     Returns
     -------

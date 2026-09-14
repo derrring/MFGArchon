@@ -318,18 +318,27 @@ class TestConservativeAdvection:
                 m, drift, (0.1,), 1, bc=dirichlet_bc(value=0.0, dimension=1), mass_conservative=True
             )
 
-    def test_default_path_byte_identical_golden(self):
-        """Pin the DEFAULT (mass_conservative=False) divergence to frozen values, so a future
-        change to the node-based path is caught. The opt-in EOC-safety story depends on the
-        default staying byte-identical for HJB/geometry/non-opted-in consumers (Issue #1184)."""
+    def test_default_path_is_the_donor_cell_difference_under_a_positive_drift(self):
+        """The DEFAULT (mass_conservative=False) divergence upwinds by the sign of the velocity (#2309).
+
+        With a uniform drift ``v = 0.4 > 0`` every face takes its flux from the left, so the result is
+        the donor-cell (backward) difference of ``v * m`` at every node, walls included: the no-flux ghost
+        equals the boundary value, so the low wall reads 0 and the high wall reads ``v (m_10 - m_9) / h``.
+        Computed here from ``m`` by that formula, not by the scheme, and not frozen.
+
+        This pinned frozen values until #2309, and they were ``[0, .819, .938, -.938, -.819, 0]`` at every
+        second node -- symmetric about the peak under a drift that is not, which is the signature of
+        selecting on the sign of the differentiated field: downwind on the falling half.
+        """
         from mfgarchon.alg.numerical.fp_solvers.fp_fdm_advection import compute_advection_from_drift_nd
 
         x = np.linspace(0.0, 1.0, 11)
+        h = x[1] - x[0]
         m = np.exp(-10.0 * (x - 0.5) ** 2)
         drift = np.full(11, 0.4)
-        r = compute_advection_from_drift_nd(m, drift, (x[1] - x[0],), 1, bc=no_flux_bc(dimension=1))
-        expected = np.array([0.0, 0.818693, 0.938069, -0.938069, -0.818693, 0.0])
-        np.testing.assert_allclose(r[::2], expected, atol=1e-6)
+        r = compute_advection_from_drift_nd(m, drift, (h,), 1, bc=no_flux_bc(dimension=1))
+        expected = 0.4 * (m - np.concatenate([m[:1], m[:-1]])) / h
+        np.testing.assert_allclose(r, expected, rtol=1e-12, atol=1e-12)
 
     def test_tensor_explicit_path_records_its_wall_drift(self):
         """This path does NOT conserve mass, and the body below records how much (#2145 / #1904).
