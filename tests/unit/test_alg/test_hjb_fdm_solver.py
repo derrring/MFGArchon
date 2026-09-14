@@ -193,7 +193,7 @@ class TestHJBFDMSolverSolveHJBSystem:
         # leave no spatial gradient, so U(t, x) = -(T - t) * m = -(T - t). This pins the sign of the
         # coupling term and the time integration together. Measured max error 5.97e-13 with
         # newton_tolerance=1e-8; atol=1e-9 leaves ~1700x margin. The tolerance is explicit since #2308:
-        # at the default 1e-6 the Newton residual after the second iteration lands at 7.4e-07, just under
+        # at the default 1e-6 the Newton residual after the first update lands at 7.4e-07, just under
         # tolerance, and the solve stops 7.2e-07 from the closed form. Before #2308 the same residual sat
         # at 1.5e-06, just over, so a third iteration ran and reached 2.2e-12 -- the old pin held by that
         # margin alone.

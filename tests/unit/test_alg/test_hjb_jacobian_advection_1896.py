@@ -199,8 +199,10 @@ def test_the_superseded_branch_rule_is_moot_on_every_live_row():
     momentum has the sign of its branch everywhere except two kinds of row: a strict minimum, where the
     band is zero, and a one-sided difference exactly 0 at the zero branch's edge, where the momentum is 0
     and ``dH/dp(0) = 0`` for every shipped H. So the superseded rule cannot write a wrong LIVE band, and
-    this pins that; a rule change that reopens it trips here and in
-    `test_the_jacobian_follows_a_changed_selection_rule_without_being_told`.
+    this pins that for the current rule. It is not a guard against every rule change: the branch swap
+    trips it, but reverting to sign(central) does not -- under that rule the parting rows ARE the minima,
+    which this excludes -- and the revert is caught instead by the rest of this file and by
+    `tests/unit/test_alg/test_hjb_fdm_upwind_minimum_2308.py`.
 
     `rough` must still contain strict minima, or `test_a_minimum_band_is_zero_where_dH_dp_is_not`
     would be reading a fixture without the rows it exists for.
@@ -286,8 +288,12 @@ def test_a_minimum_band_is_zero_where_dH_dp_is_not(bc_name: str):
     """The zero band of #2308, where it is visible: ``dH/dp(0) = 0.7``, so a band at a strict minimum
     would add ``0.7`` times a one-sided stencil to the row. The residual's momentum is 0 on a
     neighbourhood of such a row, so its true derivative has no advection part and the two-sided FD is a
-    valid oracle there. Review of #2307's successor measured a band kept at those rows (`live` set to
-    all ones) at 1.40e+01 = 0.7/dx against FD, and the shipped zero band at 5.3e-09, walls included.
+    valid oracle there. Measured at 240c39dc, where this test was added: a band kept at those rows (`live` set to
+    all ones) differs from FD by 1.40e+01 = 0.7/dx, the shipped zero band by 1.04e-09.
+
+    Under all four BCs `rough`'s strict minima are the same interior rows, 8 and 18, so the
+    parametrisation checks that the BC-aware assembly does not disturb the zero band; it does not put a
+    minimum on a wall.
     """
     problem, bc, m = _fixture(bc_name, hamiltonian=_TiltedQuadratic())
     u = SMOOTH_STATES["rough"]
