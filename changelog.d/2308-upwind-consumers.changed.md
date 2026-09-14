@@ -4,4 +4,4 @@
   the wrong concept for each: transport upwinds by velocity, reinitialisation by the sign of the
   initial level set. The rule change moves both at minima, making reinitialisation worse where the
   initial level set is negative. Neither is a default path, and neither has a production caller.
-  Tracked separately.
+  Tracked in #2309 and #2310.

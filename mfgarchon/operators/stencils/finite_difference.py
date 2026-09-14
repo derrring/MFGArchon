@@ -167,9 +167,10 @@ def gradient_upwind(u: NDArray, axis: int, h: float, xp: type = np) -> NDArray:
     Scope: this is a statement about the HJB momentum. Outside the condition above -- a
     ``DualHamiltonian`` whose Lagrangian is minimised away from ``0`` or bounded asymmetrically, or
     a ``CongestionHamiltonian`` with ``c(m) <= 0`` -- it is not Godunov, and neither was the rule
-    it replaced; the two are wrong on different pairs there, so neither is the better one.
+    it replaced; the two are wrong on different pairs there, so neither is the better one (#2311).
     Transport (``v . grad m``) upwinds by the sign of the velocity, not of any gradient, so this is
-    not the upwind rule for advection either.
+    not the upwind rule for advection either (#2309), nor for reinitialisation, which upwinds by the
+    sign of the initial level set (#2310).
 
     Properties:
         - 1st-order accurate: O(h)
