@@ -112,8 +112,9 @@ def _refuse_a_hamiltonian_the_upwind_momentum_cannot_serve(problem: MFGProblem, 
     ``_UPWIND_PROBE_DENSITIES`` and the momenta in ``_UPWIND_PROBE_MAGNITUDES`` along each axis with the
     other components at 0 and 1, and a violation at any of those raises. An ``H`` that violates the
     hypothesis only elsewhere is not caught. The tolerance scales with the variation of ``H`` along
-    the probed line, not with its value, so an additive constant in ``H`` cannot hide a violation. A
-    problem with no class-based Hamiltonian (``hamiltonian_class is None``) has nothing to probe.
+    the probed line plus 64 ulps of ``H(0)``, not with ``|H|``: an additive constant hides only a
+    violation smaller than that rounding allowance. A problem with no class-based Hamiltonian
+    (``hamiltonian_class is None``) has nothing to probe.
     """
     H = problem.hamiltonian_class
     if H is None:
@@ -139,12 +140,13 @@ def _refuse_a_hamiltonian_the_upwind_momentum_cannot_serve(problem: MFGProblem, 
                         tolerance = 1e-6 * (1.0 + spread) + rounding * abs(h_zero)
                         if abs(h_pos - h_neg) > tolerance:
                             violation = (
-                                f"not even: H(p={p_pos.tolist()}) = {h_pos:.6g}, H(p={p_neg.tolist()}) = {h_neg:.6g}"
+                                f"not even: H(p={p_pos.tolist()}) - H(p={p_neg.tolist()}) = {h_pos - h_neg:.6g} "
+                                f"against a tolerance of {tolerance:.3g}"
                             )
                         elif previous is not None and h_pos < previous[1] - tolerance:
                             violation = (
-                                f"decreasing in |p_{axis}|: H(p={previous[0]}) = {previous[1]:.6g} > "
-                                f"H(p={p_pos.tolist()}) = {h_pos:.6g}"
+                                f"decreasing in |p_{axis}|: H(p={p_pos.tolist()}) - H(p={previous[0]}) = "
+                                f"{h_pos - previous[1]:.6g} against a tolerance of {tolerance:.3g}"
                             )
                         else:
                             previous = (p_pos.tolist(), h_pos)

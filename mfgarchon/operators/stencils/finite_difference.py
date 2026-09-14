@@ -216,31 +216,39 @@ def gradient_upwind_by_velocity(u: NDArray, v: NDArray, axis: int, h: float, xp:
     return xp.where(v >= 0, gradient_backward(u, axis, h, xp), gradient_forward(u, axis, h, xp))
 
 
-def divergence_upwind_by_velocity(flux: NDArray, v: NDArray, axis: int, h: float, xp: Any = np) -> NDArray:
+def divergence_upwind_by_velocity(m: NDArray, v: NDArray, axis: int, h: float, xp: Any = np) -> NDArray:
     """
-    Derivative of a transport flux ``v * m`` along ``axis``, split by the sign of each node's velocity.
+    Upwind divergence ``d(v m)/dx`` along ``axis``: each face carries its own velocity times the upwind density.
 
-    The face flux is ``F_{i+1/2} = [v_i >= 0] flux_i + [v_{i+1} < 0] flux_{i+1}``: a node sends its
-    flux only across the face its own velocity points at. The result is ``(F_{i+1/2} - F_{i-1/2}) / h``,
-    and the explicit update ``m - dt * D F`` has nonnegative coefficients for ``max|v| dt / h <= 1``
-    whatever the sign pattern of ``v``. Selecting a whole node flux by the sign of the face-averaged
-    velocity is not: where the flow diverges, ``v_i < 0 <= v_{i+1/2}`` sends ``v_i m_i`` downwind, a
-    coefficient of ``-CFL`` at a velocity step. Periodic through ``np.roll``, so pad with ghost cells
-    first for any other boundary. `AdvectionOperator`'s non-conservative divergence and
-    `tensor_calculus.advection` both call it (#2309).
+    With ``v_{i+1/2} = (v_i + v_{i+1}) / 2`` the face flux is
+    ``F_{i+1/2} = max(v_{i+1/2}, 0) m_i + min(v_{i+1/2}, 0) m_{i+1}``, and the result is
+    ``(F_{i+1/2} - F_{i-1/2}) / h``. The explicit update ``m - dt * D F`` has nonnegative coefficients
+    for ``2 max|v| dt / h <= 1`` whatever the sign pattern of ``v`` (a node where the flow diverges
+    empties across both faces), and ``F`` is first-order consistent with ``v m`` across a sign change of
+    ``v``, because the donor switches where the face velocity is itself ``O(h)``.
+
+    Two rules that look equivalent are not. Selecting a whole node flux ``v_i m_i`` by the sign of the
+    face velocity sends it downwind where ``v_i < 0 <= v_{i+1/2}``: a coefficient of ``-CFL`` at a
+    velocity step. Splitting each node flux by the sign of that node's velocity is monotone but, where
+    ``v`` changes sign, its face flux is off by ``O(h)`` on one side and ``-O(h)`` on the other, so the
+    divergence is off by ``O(1)`` at the two neighbouring nodes at every resolution (#2309).
+
+    Periodic through ``np.roll``, so pad with ghost cells first for any other boundary.
+    `AdvectionOperator`'s non-conservative divergence and `tensor_calculus.advection` both call it.
 
     Args:
-        flux: Node flux ``v * m`` along ``axis``
-        v: Velocity component along ``axis``, same shape as ``flux``
+        m: Transported density
+        v: Velocity component along ``axis``, same shape as ``m``
         axis: Axis along which to differentiate
         h: Grid spacing
         xp: Array module (numpy, cupy or torch)
 
     Returns:
-        Upwinded divergence contribution with the same shape as ``flux``
+        Upwinded divergence contribution with the same shape as ``m``
     """
-    zero = xp.zeros_like(flux)
-    face_flux = xp.where(v >= 0, flux, zero) + _roll(xp, xp.where(v < 0, flux, zero), -1, axis)
+    v_face = 0.5 * (v + _roll(xp, v, -1, axis))
+    zero = xp.zeros_like(v_face)
+    face_flux = xp.where(v_face > 0, v_face, zero) * m + xp.where(v_face < 0, v_face, zero) * _roll(xp, m, -1, axis)
     return (face_flux - _roll(xp, face_flux, 1, axis)) / h
 
 

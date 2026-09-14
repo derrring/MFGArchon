@@ -60,8 +60,11 @@ def velocity_boundary_conditions(bc: BoundaryConditions) -> BoundaryConditions:
     """
     from dataclasses import replace
 
-    from mfgarchon.geometry.boundary import BCType
+    from mfgarchon.geometry.boundary import BCType, BoundaryConditions
 
+    if not isinstance(bc, BoundaryConditions):
+        # The deprecated `fdm_bc_1d` class carries no segments to rewrite; it keeps the padding it had.
+        return bc
     segments = [
         seg if seg.bc_type == BCType.PERIODIC else replace(seg, bc_type=BCType.NEUMANN, value=0.0)
         for seg in bc.segments
@@ -282,7 +285,8 @@ class AdvectionOperator(LinearOperator):
             from mfgarchon.geometry.boundary import pad_array_with_ghosts
 
             m_work = pad_array_with_ghosts(m, self.bc, ghost_depth=1, time=self.time)
-            v_bc = velocity_boundary_conditions(self.bc)
+            # Only the upwind selection reads the ghost velocity's sign; centered keeps the padding it had.
+            v_bc = velocity_boundary_conditions(self.bc) if self.scheme == "upwind" else self.bc
             v_work = np.stack(
                 [
                     pad_array_with_ghosts(self.velocity_field[d], v_bc, ghost_depth=1, time=self.time)
@@ -313,11 +317,10 @@ class AdvectionOperator(LinearOperator):
             adv_m = np.zeros_like(m_work)
             for d in range(self.dimension):
                 h = self.spacings[d]
-                flux = v_work[d] * m_work  # flux component
                 if self.scheme == "upwind":
-                    adv_m += divergence_upwind_by_velocity(flux, v_work[d], axis=d, h=h)
+                    adv_m += divergence_upwind_by_velocity(m_work, v_work[d], axis=d, h=h)
                 else:
-                    adv_m += gradient_central(flux, axis=d, h=h)
+                    adv_m += gradient_central(v_work[d] * m_work, axis=d, h=h)
         else:
             raise ValueError(f"Unknown form: {self.form}")
 
@@ -450,11 +453,12 @@ class AdvectionOperator(LinearOperator):
 
         Each column is the operator applied to a unit vector, so the matrix is the operator exactly
         when the operator is linear in the field. Both schemes are, under homogeneous boundary
-        conditions: upwinding selects by the sign of the fixed velocity (#2309). An inhomogeneous
-        Dirichlet value makes the operator affine, and the matrix is then not the operator for either
-        scheme -- probing adds the boundary offset to every column (``dirichlet(1.0)`` on a 9-point
-        grid: off by 408 centered, 272 upwind). Before #2309 the upwind selection read the sign of
-        the field, the operator was nonlinear, and this method refused ``scheme="upwind"`` (#1981).
+        conditions: upwinding selects by the sign of the fixed velocity (#2309). A nonzero boundary
+        value -- Dirichlet, Neumann or Robin -- makes the operator affine, ``op(0) != 0``, and the
+        matrix is then not the operator for either scheme. With ``v = 1 + 2x``, ``m = sin(2 pi x) + 2``
+        on 9 points, divergence form, ``max|A @ m - op(m)|`` is 136 centered and 272 upwind under
+        ``dirichlet(1.0)``. Before #2309 the upwind selection read the sign of the field, the operator
+        was nonlinear, and this method refused ``scheme="upwind"`` (#1981).
 
         Args:
             max_grid_size: Maximum allowed grid size (default 100,000).

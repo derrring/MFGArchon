@@ -16,5 +16,5 @@ Upwinding chose its difference direction from the sign of the field, so the oper
 and probing it with unit vectors linearised it around impulses. #2031 made the method refuse
 `scheme="upwind"`. #2309 makes the upwind operator select by the sign of the velocity, so it is
 linear in the field and the refusal is gone: every upwind row above is 0.000000, for both forms, with
-`bc=None` and with no-flux. The matrix is still not the operator under an inhomogeneous Dirichlet value, for
-either scheme, because the operator is then affine.
+`bc=None` and with no-flux. The matrix is still not the operator under a nonzero boundary value (Dirichlet,
+Neumann or Robin), for either scheme, because the operator is then affine.

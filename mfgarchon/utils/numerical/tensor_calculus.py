@@ -680,13 +680,9 @@ def advection(
 
     elif form == "divergence":
         # ∇·(vm)
-        flux = [v[d] * m for d in range(dimension)]
-
         if method == "upwind":
-            # Upwind flux: use donor cell
-            return _divergence_upwind(flux, v, spacings, bc, backend, time)
-        else:
-            return divergence(flux, spacings, bc=bc, backend=backend, time=time)
+            return _divergence_upwind(m, v, spacings, bc, backend, time)
+        return divergence([v[d] * m for d in range(dimension)], spacings, bc=bc, backend=backend, time=time)
 
     else:
         raise ValueError(f"Unknown advection form: {form}")
@@ -711,35 +707,27 @@ def _extract_interior(u_padded: NDArray, dimension: int) -> NDArray:
 
 
 def _divergence_upwind(
-    flux: list[NDArray],
+    m: NDArray,
     v: list[NDArray],
     spacings: list[float] | tuple[float, ...],
     bc: BoundaryConditions | None,
     backend: ArrayBackend | None,
     time: float,
 ) -> NDArray:
-    """Upwind divergence for advection."""
+    """Upwind divergence ``div(v m)``, padding the density with ``bc`` and the velocity with its edge value."""
     xp = backend.array_module if backend is not None else np
-    dimension = len(flux)
+    dimension = len(v)
 
-    div = xp.zeros_like(flux[0])
+    div = xp.zeros_like(m)
+    m_work = _apply_ghost_cells_nd(m, bc, time) if bc is not None else m
 
     for d in range(dimension):
         h = spacings[d]
         if h < 1e-14:
             continue
 
-        F_d = flux[d]
-        v_d = v[d]
-
-        # Apply ghost cells if BC provided
-        if bc is not None:
-            F_d = _apply_ghost_cells_nd(F_d, bc, time)
-            v_d_work = _apply_ghost_cells_nd(v_d, velocity_boundary_conditions(bc), time)
-        else:
-            v_d_work = v_d
-
-        dF_d = divergence_upwind_by_velocity(F_d, v_d_work, d, h, xp)
+        v_d_work = _apply_ghost_cells_nd(v[d], velocity_boundary_conditions(bc), time) if bc is not None else v[d]
+        dF_d = divergence_upwind_by_velocity(m_work, v_d_work, d, h, xp)
 
         # Extract interior if ghost cells were added
         if bc is not None:

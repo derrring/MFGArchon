@@ -17,6 +17,7 @@ from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import (
     CongestionHamiltonian,
     DualHamiltonian,
+    HamiltonianBase,
     LagrangianBase,
     QuadraticControlCost,
     SeparableHamiltonian,
@@ -34,6 +35,25 @@ class _ShiftedQuadraticL(LagrangianBase):
 
     def __call__(self, x, alpha, m, t=0.0):
         return 0.5 * float(np.sum((np.atleast_1d(alpha) - self.beta) ** 2)) - self.offset
+
+
+class _QuadraticPlusTilt(HamiltonianBase):
+    """``H = |p|^2 / 2 + tilt(x, m, p)`` in 2-D, with the tilt's own momentum and density derivatives."""
+
+    def __init__(self, tilt, tilt_dp, tilt_dm):
+        super().__init__()
+        self.tilt, self.tilt_dp, self.tilt_dm = tilt, tilt_dp, tilt_dm
+
+    def __call__(self, x, m, p, t=0.0):
+        p = np.atleast_1d(p)
+        return float(0.5 * np.sum(p**2) + self.tilt(np.atleast_1d(x), m, p))
+
+    def dp(self, x, m, p, t=0.0):
+        p = np.atleast_1d(p)
+        return p + np.asarray(self.tilt_dp(np.atleast_1d(x), m, p))
+
+    def dm(self, x, m, p, t=0.0):
+        return self.tilt_dm(np.atleast_1d(x), m, np.atleast_1d(p))
 
 
 def _problem(hamiltonian, dimension: int):
@@ -74,6 +94,41 @@ def _quadratic():
 def test_a_hamiltonian_outside_the_godunov_condition_is_refused(label, make, violation, dimension):
     with pytest.raises(NotImplementedError, match=rf"#2311.*{violation}"):
         HJBFDMSolver(_problem(make(), dimension))
+
+
+@pytest.mark.parametrize(
+    ("label", "tilt", "tilt_dp", "tilt_dm"),
+    [
+        ("only_along_axis_1", lambda x, m, p: 0.7 * p[1], lambda x, m, p: [0.0, 0.7], lambda x, m, p: 0.0),
+        (
+            "only_off_the_axis",
+            lambda x, m, p: 0.7 * p[0] * p[1] ** 2,
+            lambda x, m, p: [0.7 * p[1] ** 2, 1.4 * p[0] * p[1]],
+            lambda x, m, p: 0.0,
+        ),
+        (
+            "only_away_from_the_first_grid_point",
+            lambda x, m, p: 0.7 * x[0] * p[0],
+            lambda x, m, p: [0.7 * x[0], 0.0],
+            lambda x, m, p: 0.0,
+        ),
+        (
+            "only_at_the_second_density",
+            lambda x, m, p: 0.7 * (m - 0.5) * p[0],
+            lambda x, m, p: [0.7 * (m - 0.5), 0.0],
+            lambda x, m, p: 0.7 * p[0],
+        ),
+    ],
+)
+def test_a_violation_only_some_probe_points_can_see_is_refused(label, tilt, tilt_dp, tilt_dm):
+    """Each ``H`` is even everywhere the probe would look if it dropped one of its loops.
+
+    Along axis 0 only; with the other momentum component at 0 only; at the first grid point ``x = 0``
+    only; at the first density ``m = 0.5`` only. Symmetric 2-D fixtures cannot tell those loops from the
+    full probe.
+    """
+    with pytest.raises(NotImplementedError, match=r"#2311.*not even"):
+        HJBFDMSolver(_problem(_QuadraticPlusTilt(tilt, tilt_dp, tilt_dm), 2))
 
 
 @pytest.mark.parametrize("dimension", [1, 2])
