@@ -275,7 +275,7 @@ MUTATIONS: list[Mutation] = [
         path="mfgarchon/operators/stencils/finite_difference.py",
         old="    return xp.where(backward_part >= -forward_part, backward_part, forward_part)",
         new="    return xp.where(backward_part >= -forward_part, forward_part, backward_part)  # MUTATED: Godunov branches swapped",
-        owner="Rouy-Tourin upwind takes the clamped BACKWARD part max(backward, 0) where it dominates the clamped forward part min(forward, 0) in magnitude -- the library's one statement of the upwind selection rule (#2308), consumed by the HJB residual, the HJB Jacobian, GradientOperator and AdvectionOperator (#1896 items 3-4 turn on it)",
+        owner="Rouy-Tourin upwind takes the clamped BACKWARD part max(backward, 0) where it dominates the clamped forward part min(forward, 0) in magnitude -- the library's one statement of the upwind selection rule (#2308), consumed by the HJB residual, the HJB Jacobian, GradientOperator and PDE reinitialisation (of phi or -phi by sign(phi0), #2310); transport upwinds by the velocity instead since #2309 (#1896 items 3-4 turn on it)",
         verify="float(gradient_upwind(np.array([0.0, 1.0, 3.0]), axis=0, h=1.0)[1]) == 0.0",
     ),
     Mutation(
