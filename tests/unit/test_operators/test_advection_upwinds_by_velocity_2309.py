@@ -151,25 +151,29 @@ def _dirichlet_by_segment_and_default(value: float) -> BoundaryConditions:
 
 
 @_CONSUMERS
-@pytest.mark.parametrize(
-    "walls", [_uniform_dirichlet, _dirichlet_by_segment_and_default], ids=["uniform", "segment_and_default"]
-)
-def test_an_outflow_wall_takes_no_boundary_value(apply, walls):
+def test_an_outflow_wall_takes_no_boundary_value(apply):
     """Where every characteristic leaves the domain, transport takes no data from the wall.
 
     ``v = x - 0.5`` flows out through both walls, so a Dirichlet value on the density must not change the
     operator anywhere. Padding the velocity with the density's condition breaks that: the ghost velocity
-    ``2g - v_0`` points inward for ``g = 1``, and the wall node draws mass from the ghost. The second
-    construction states the high wall through ``default_bc``, which the velocity's condition must rewrite too.
+    ``2g - v_0`` points inward for ``g = 1``, and the wall node draws mass from the ghost.
+
+    The same walls are also stated a second way, the high one through ``default_bc``, and must give the same
+    operator: a velocity condition that rewrites the segments and keeps the density's default turns that wall
+    into a zero-flux one, whatever ``g`` is.
     """
     x = np.linspace(0.0, 1.0, 11)
     m = np.exp(-10.0 * (x - 0.3) ** 2) + 0.1
     for form in ("gradient", "divergence"):
-        results = []
-        for value in (0.0, 1.0):
-            grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=walls(value))
-            results.append(apply(x - 0.5, x[1] - x[0], form, m, grid.get_boundary_conditions()))
-        gap = float(np.abs(results[1] - results[0]).max())
-        assert gap == 0.0, (
-            f"{apply.__name__}, form={form}: the outflow walls' Dirichlet value moved the operator by {gap:.3e} (#2309)"
-        )
+        reference = None
+        for walls in (_uniform_dirichlet, _dirichlet_by_segment_and_default):
+            for value in (0.0, 1.0):
+                grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=walls(value))
+                result = apply(x - 0.5, x[1] - x[0], form, m, grid.get_boundary_conditions())
+                if reference is None:
+                    reference = result
+                gap = float(np.abs(result - reference).max())
+                assert gap == 0.0, (
+                    f"{apply.__name__}, form={form}, {walls.__name__}({value}): the outflow walls moved the operator "
+                    f"by {gap:.3e} against uniform dirichlet(0.0) (#2309)"
+                )
