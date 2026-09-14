@@ -155,8 +155,9 @@ def gradient_upwind(u: NDArray, axis: int, h: float, xp: type = np) -> NDArray:
     ``H`` over ``[a, b]`` when ``a <= b`` and the maximum over ``[b, a]`` when ``a > b``, nested
     across axes -- exactly when, at fixed ``(x, m, t)``, ``H`` is even in each momentum component
     and nondecreasing in its magnitude. Every control cost ``SeparableHamiltonian`` and
-    ``CongestionHamiltonian`` ship satisfies that (#2308). Being even with its minimum at ``p = 0``
-    is not enough: a double well ``(p^2 - 1)^2`` is both, and fails.
+    ``CongestionHamiltonian`` ship satisfies that (#2308). Neither half is enough alone: the double
+    well ``(p^2 - 1)^2`` is even and fails, and so does an ``H`` minimised at ``p = 0`` over an
+    asymmetric control bound (#2311).
 
     Where it departs from selecting on ``sign((a + b) / 2)`` (#2308): only at a discrete local
     minimum, ``a < 0 < b``. There the minimum of ``H`` over ``[a, b]`` is ``H(0)``, and this returns

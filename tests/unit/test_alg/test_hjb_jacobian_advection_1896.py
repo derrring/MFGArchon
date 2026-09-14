@@ -36,7 +36,7 @@ from mfgarchon.alg.numerical.hjb_solvers.base_hjb import (
     compute_hjb_jacobian,
     compute_hjb_residual,
 )
-from mfgarchon.core.hamiltonian import HEvalState, QuadraticControlCost, SeparableHamiltonian
+from mfgarchon.core.hamiltonian import HamiltonianBase, HEvalState, QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import dirichlet_bc, neumann_bc, no_flux_bc, periodic_bc, robin_bc
@@ -58,7 +58,19 @@ BC_FACTORIES = {
 }
 
 
-def _fixture(bc_name: str, sigma: float = 0.3):
+class _TiltedQuadratic(HamiltonianBase):
+    """``H = |p|^2/2 + 0.7 p``. Outside #2308's Godunov condition on purpose: ``dH/dp(0) = 0.7``, so a
+    band written at a strict minimum is not multiplied away the way it is for every shipped H."""
+
+    def __call__(self, x, m, p, t=0.0):
+        p = np.asarray(p, dtype=float)
+        return 0.5 * np.sum(p**2, axis=-1) + 0.7 * np.sum(p, axis=-1)
+
+    def dp(self, x, m, p, t=0.0):
+        return np.asarray(p, dtype=float) + 0.7
+
+
+def _fixture(bc_name: str, sigma: float = 0.3, hamiltonian=None):
     bc = BC_FACTORIES[bc_name]()
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[NX], boundary_conditions=bc)
     problem = MFGProblem(
@@ -69,7 +81,8 @@ def _fixture(bc_name: str, sigma: float = 0.3):
         components=MFGComponents(
             m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
             u_terminal=lambda x: 0.0,
-            hamiltonian=SeparableHamiltonian(
+            hamiltonian=hamiltonian
+            or SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
                 coupling=lambda m: m,
                 coupling_dm=lambda m: 1.0,
@@ -108,11 +121,14 @@ def _fd_columns(residual, u, eps: float = 1e-6):
 
 
 def _switching_nodes(u, bc, upwind: bool):
-    """Rows where the upwind branch is switching -- the residual is not differentiable there.
+    """Rows where ``central == 0``: a tie between the two one-sided differences.
 
-    A two-sided FD across such a row averages two different one-sided operators and equals neither,
-    so it is not a valid oracle at those rows. Central differencing has no branch, hence no
-    switching nodes. Returned so every test can say out loud which rows it is not asserting on.
+    At a MAXIMUM tie the branch switches and the residual is not differentiable, so a two-sided FD
+    averages two one-sided operators and equals neither. Since #2308 a MINIMUM tie is differentiable
+    (the momentum is 0 on a neighbourhood), so this over-excludes those rows. It also does not see
+    the rule's other kink, a one-sided difference exactly 0 at the edge of the zero branch, which is
+    C1 and not C2 and leaves an O(eps) FD tail rather than an O(1) one. Central differencing has no
+    branch, hence no switching nodes.
     """
     if not upwind:
         return np.zeros(NX, dtype=bool)
@@ -177,12 +193,17 @@ def test_every_row_linearises_the_residual(bc_name: str, upwind: bool, state: st
     assert err.max() < 1e-5, f"worst row {worst}: {err.max():.3e}"
 
 
-def test_the_two_branch_selection_rules_actually_disagree_on_this_fixture():
-    """Positive control for item 3: without a state where they part, the test above proves nothing.
+def test_the_superseded_branch_rule_is_moot_on_every_live_row():
+    """#1896 item 3 was a Jacobian choosing its band on sign(grad_upwind) while the residual chose on
+    sign(central); they parted at a median 10 of 41 nodes of a noisy field. Since #2308 the residual's
+    momentum has the sign of its branch everywhere except two kinds of row: a strict minimum, where the
+    band is zero, and a one-sided difference exactly 0 at the zero branch's edge, where the momentum is 0
+    and ``dH/dp(0) = 0`` for every shipped H. So the superseded rule cannot write a wrong LIVE band, and
+    this pins that; a rule change that reopens it trips here and in
+    `test_the_jacobian_follows_a_changed_selection_rule_without_being_told`.
 
-    The superseded Jacobian selected its band on sign(grad_upwind). The residual's branch is
-    backward, forward, or -- at a strict discrete minimum since #2308 -- no band at all. The rows
-    where the superseded choice differs from that are what `rough` must contain.
+    `rough` must still contain strict minima, or `test_a_minimum_band_is_zero_where_dH_dp_is_not`
+    would be reading a fixture without the rows it exists for.
     """
     _, bc, _ = _fixture("no_flux")
     rough = SMOOTH_STATES["rough"]
@@ -193,8 +214,9 @@ def test_the_two_branch_selection_rules_actually_disagree_on_this_fixture():
     at_minimum = (backward < 0) & (forward > 0)
     superseded_takes_backward = upwind_grad >= 0
     residual_takes_backward = np.abs(upwind_grad - backward) <= np.abs(upwind_grad - forward)
-    parted = at_minimum | (superseded_takes_backward != residual_takes_backward)
-    assert parted[1:-1].sum() >= 2, f"the rules agree everywhere inside `rough` ({parted[1:-1].sum()} rows differ)"
+    parted_live = ~at_minimum & (superseded_takes_backward != residual_takes_backward)
+    assert not parted_live.any(), f"the superseded rule parts on live rows {np.nonzero(parted_live)[0].tolist()}"
+    assert at_minimum[1:-1].sum() >= 2, f"`rough` has {at_minimum[1:-1].sum()} interior strict minima"
 
 
 def test_a_switching_node_gets_a_clarke_element_not_an_average():
@@ -244,8 +266,8 @@ def test_a_strict_discrete_minimum_is_differentiable_and_its_row_matches_the_res
     the test above. Under the superseded rule this row was a switching node (10.0 against FD).
 
     What it cannot see: with `H = |p|^2/2` the advection contribution is `dH/dp(0) = 0` times the
-    band, so a band at this row would be multiplied away. The zero band is exercised by the guard in
-    `_advection_bands`, which raises on every such row if the rule stops returning 0 there.
+    band, so a band at this row would be multiplied away. The guard in `_advection_bands` checks the
+    zero VALUE; the zero BAND is `test_a_minimum_band_is_zero_where_dH_dp_is_not`.
     """
     problem, bc, m = _fixture("no_flux")
     row = NX // 2
@@ -257,6 +279,26 @@ def test_a_strict_discrete_minimum_is_differentiable_and_its_row_matches_the_res
 
     err = np.abs(_jacobian(problem, bc, m, u, True) - _fd_columns(_residual(problem, bc, m, True), u))
     assert err[row].max() < 1e-6, f"row {row}: {err[row].max():.3e}"
+
+
+@pytest.mark.parametrize("bc_name", list(BC_FACTORIES))
+def test_a_minimum_band_is_zero_where_dH_dp_is_not(bc_name: str):
+    """The zero band of #2308, where it is visible: ``dH/dp(0) = 0.7``, so a band at a strict minimum
+    would add ``0.7`` times a one-sided stencil to the row. The residual's momentum is 0 on a
+    neighbourhood of such a row, so its true derivative has no advection part and the two-sided FD is a
+    valid oracle there. Review of #2307's successor measured a band kept at those rows (`live` set to
+    all ones) at 1.40e+01 = 0.7/dx against FD, and the shipped zero band at 5.3e-09, walls included.
+    """
+    problem, bc, m = _fixture(bc_name, hamiltonian=_TiltedQuadratic())
+    u = SMOOTH_STATES["rough"]
+    central = _compute_gradient_array_1d(u, DX, bc=bc, upwind=False, time=0.0)
+    lap = _compute_laplacian_1d(u, DX, bc=bc, time=0.0)
+    rows = np.nonzero((central - DX / 2 * lap < 0) & (central + DX / 2 * lap > 0))[0]
+    assert rows.size >= 2, f"{bc_name}: only {rows.size} strict minima -- nothing discriminates the band"
+
+    err = np.abs(_jacobian(problem, bc, m, u, True) - _fd_columns(_residual(problem, bc, m, True), u))
+    worst = int(rows[np.argmax(err[rows].max(axis=1))])
+    assert err[rows].max() < 1e-6, f"{bc_name}: strict-minimum row {worst} differs from FD by {err[rows].max():.3e}"
 
 
 def test_the_flat_state_leaves_an_eps_tail_not_a_defect():

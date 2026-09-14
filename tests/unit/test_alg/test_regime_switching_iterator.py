@@ -156,7 +156,11 @@ class TestRegimeSwitchingSolve:
         stencil or a spurious drift all break it, while finiteness alone is nearly unfalsifiable
         here. NaN or inf fails the comparison too, so the old check is not lost.
         """
-        problems, config, hjbs, fps = _make_2regime_system()
+        problems, config, _, fps = _make_2regime_system()
+        # The default Newton tolerance 1e-6 leaves the flat solve 1e-7 off uniform since #2308: the residual
+        # lands just under tolerance where it used to sit just over. Explicit here, so the bounds below measure
+        # the scheme rather than where Newton happened to stop.
+        hjbs = [HJBFDMSolver(problem, newton_tolerance=1e-8) for problem in problems]
         iterator = RegimeSwitchingIterator(
             problems=problems,
             regime_config=config,
@@ -165,17 +169,14 @@ class TestRegimeSwitchingSolve:
             max_iterations=5,
         )
         result = iterator.solve()
-        # Measured spreads (regime 0 / regime 1): U 3.02e-12 / 6.62e-13, M 3.47e-11 / 6.97e-12 before
-        # #2308; U 8.86e-09 / 1.38e-07, M 1.33e-07 / 1.63e-06 since. The FDM HJB's default
-        # finite-difference Jacobian is inexact on a flat state, where every node is on the upwind
-        # rule's zero-branch edge, so Newton stops inside its 1e-6 tolerance, and the density inherits
-        # that through the drift. Any real asymmetry is O(1e-3) or larger; 2e-6 and 2e-5 keep 14x and
-        # 12x margin over the worse regime.
+        # Measured spreads (regime 0 / regime 1) with newton_tolerance=1e-8: U 1.20e-12 / 2.50e-13,
+        # M 1.54e-11 / 2.98e-12 -- roughly 800x and 650x below the thresholds, and any real asymmetry is
+        # O(1e-3) or larger.
         for k in range(2):
             V = np.asarray(result.values[k], dtype=float)
             M = np.asarray(result.densities[k], dtype=float)
-            assert np.abs(V - V.mean(axis=1, keepdims=True)).max() < 2e-6, f"values not uniform in regime {k}"
-            assert np.abs(M - M.mean(axis=1, keepdims=True)).max() < 2e-5, f"densities not uniform in regime {k}"
+            assert np.abs(V - V.mean(axis=1, keepdims=True)).max() < 1e-9, f"values not uniform in regime {k}"
+            assert np.abs(M - M.mean(axis=1, keepdims=True)).max() < 1e-8, f"densities not uniform in regime {k}"
 
     def test_error_history_recorded(self):
         problems, config, hjbs, fps = _make_2regime_system()

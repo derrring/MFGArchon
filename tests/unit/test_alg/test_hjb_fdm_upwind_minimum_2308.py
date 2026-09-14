@@ -8,17 +8,19 @@ converges to it and nothing warns.
 
 The oracle is external: ``u(t, x) = cos(kx) exp(-D k^2 (T - t))`` with ``k = 2 pi`` and ``D = sigma^2/2``
 solves the backward heat equation, so the source ``S = u_x^2 / 2`` makes it exact for
-``-u_t - D u_xx + |u_x|^2/2 = S``. The cells are the ones where ``r = (kh / sigma)^2 >= 9.87``, the
-regime in which the implicit upwind row stops being monotone under the old rule. Measured at Nt = 100
-on this branch, with the rule swapped in process for the second row:
+``-u_t - D u_xx + |u_x|^2/2 = S``. The cells are the ones where ``r = (kh / sigma)^2 >= 9.87``, where
+the old rule's error exceeded Rouy-Tourin's by 5.5x or more in #2308's table; the implicit row stops
+being monotone already at r > 1 (derived there). Measured at Nt = 100 on this branch, with the rule
+swapped in process for the second row:
 
     (Nx, sigma)        (11, 0.2)   (21, 0.1)   (41, 0.05)
     Rouy-Tourin        0.2422      0.1257      0.0599
     sign of central    6.4504      2.3446      0.5682
 
-The bounds are twice the first row, so the second row sits 12.9x, 9.4x and 4.7x above them. On
-resolved grids the two rules differ by a few percent at most, which is why the MMS convergence
-test in ``tests/integration/test_mms_validation.py`` cannot see this.
+The bounds are twice the first row, so the second row sits 12.9x, 9.4x and 4.7x above them; a
+regression smaller than 2x passes. For r <= 3.86 the ratio of the two rules' errors is 0.44 to 1.66 in
+#2308's table, which is why the MMS convergence test in ``tests/integration/test_mms_validation.py``,
+at r <= 0.154, cannot see this.
 """
 
 from __future__ import annotations
