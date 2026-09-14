@@ -29,10 +29,9 @@ import pytest
 
 import numpy as np
 
-from mfgarchon import MFGProblem
+from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
-from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid, periodic_bc
 
 _T = 0.3
@@ -49,13 +48,13 @@ def _error(nx: int, sigma: float) -> float:
     def source(t, x):
         return 0.5 * (_K * np.sin(_K * np.ravel(x)) * np.exp(-diffusion * _K**2 * (_T - t))) ** 2
 
-    components = MFGComponents(
-        m_initial=lambda x: np.ones_like(x),
-        u_terminal=lambda x: 0.0,
-        hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
-    )
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=periodic_bc(dimension=1))
-    problem = MFGProblem(geometry=grid, T=_T, Nt=_NT, sigma=sigma, components=components)
+    problem = MFGProblem(
+        model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), sigma=sigma),
+        domain=grid,
+        conditions=Conditions(m_initial=lambda p: 1.0, u_terminal=lambda p: 0.0, T=_T),
+        Nt=_NT,
+    )
     x = grid.coordinates[0]
     U = HJBFDMSolver(problem).solve_hjb_system(
         M_density=np.ones((_NT + 1, nx)),

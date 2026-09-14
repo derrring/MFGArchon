@@ -188,8 +188,8 @@ def gradient_upwind(u: NDArray, axis: int, h: float, xp: type = np) -> NDArray:
     """
     grad_forward = gradient_forward(u, axis, h, xp)
     grad_backward = gradient_backward(u, axis, h, xp)
-    backward_part = xp.where(grad_backward > 0, grad_backward, 0 * grad_backward)
-    forward_part = xp.where(grad_forward < 0, grad_forward, 0 * grad_forward)
+    backward_part = grad_backward * (grad_backward > 0)
+    forward_part = grad_forward * (grad_forward < 0)
     return xp.where(backward_part >= -forward_part, backward_part, forward_part)
 
 
