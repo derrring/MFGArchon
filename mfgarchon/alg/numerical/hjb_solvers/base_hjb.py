@@ -51,8 +51,10 @@ DEFAULT_NEWTON_TOLERANCE: float = 1e-6
 class InnerSolveFailure:
     """A backward time step whose nonlinear solve returned something that is not a root (#1878).
 
-    ``residual`` is the residual of the iterate actually returned, ``steps`` how many solver steps that
-    iterate is from the start, ``reason`` why the solve stopped there.
+    ``residual`` is the solver's own measure for the iterate actually returned: the grid-scaled residual
+    norm on the 1-D Newton path, and what the nD nonlinear solver reports otherwise (for value iteration,
+    its relative change). ``steps`` is how many solver steps that iterate is from the start on the 1-D path
+    and the nD solver's iteration count otherwise; ``reason`` says why the solve stopped.
     """
 
     t_idx: int
@@ -1613,7 +1615,7 @@ def solve_hjb_timestep_newton(
         if t_idx_n is None:
             t_idx_n = 0  # Default time index
 
-        U_n_next_newton_iterate, _step_norm, residual_norm = newton_hjb_step(
+        U_n_next_newton_iterate, step_norm, residual_norm = newton_hjb_step(
             U_n_current_newton_iterate,
             U_n_plus_1_from_hjb_step,
             U_k_n_from_prev_picard,  # Pass U from prev Picard for Jacobian
@@ -1650,11 +1652,18 @@ def solve_hjb_timestep_newton(
             stop_reason = "the Newton step produced a non-finite iterate"
             break
 
+        # `newton_hjb_step` returns an infinite step norm when it could not compute a step -- a non-finite
+        # residual or Jacobian, or a failed linear solve -- and hands the iterate back unchanged. Going on
+        # would spend the whole budget re-measuring one point and count each pass as a step.
+        if not np.isfinite(step_norm):
+            stop_reason = "the Newton step could not be computed"
+            break
+
         # No non-decrease guard (#1878). One stopped the loop as soon as a step failed to reduce the
         # residual. On this monotone system Newton's first step routinely RAISES the residual and the
         # iterates converge after it: on the 1-D smoke fixture at 6c0610d2, |r| went 1.1e+01, 2.4e+02,
-        # 5.7e+01, ... 1.1e-11 in 12 steps at t_idx 9, with an assembled Jacobian equal to the finite
-        # difference of the residual to 7.5e-09. The guard read the overshoot as failure and returned the
+        # 5.7e+01, ... 1.1e-11 in 12 steps at t_idx 9, with an assembled Jacobian equal to the central
+        # difference of the residual (step 1e-7) to 7.5e-09. The guard read the overshoot as failure and returned the
         # iterate after it -- worse than the start -- at three of ten steps, and Picard certified a fixed
         # point 2.57 away in U from the one the same scheme reaches without it. Returning the best-seen
         # iterate instead was also tried and reverted (#1745): on the multi-population fixture it handed
@@ -1670,7 +1679,7 @@ def solve_hjb_timestep_newton(
     # Issue #1745: this branch was a literal `pass`. The inner Newton could fail to converge and
     # nothing said so -- `converged` is local and never returned, so no caller could see it, and
     # the outer Picard loop treated a failed HJB solve exactly like a successful one.
-    if not converged and max_newton_iterations > 0:
+    if not converged:
         # The step count is the steps the returned iterate actually took. This printed
         # `max_newton_iterations`, so a solve the guard stopped one step from its start read "after 30
         # iterations" (#1878).

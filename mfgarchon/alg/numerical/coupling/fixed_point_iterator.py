@@ -28,6 +28,7 @@ from .fixed_point_utils import (
     initialize_cold_start,
     preserve_initial_condition,
     preserve_terminal_condition,
+    read_inner_solve_failures,
     refuse_convergence_over_failed_inner_solves,
     resolve_fp_drift_kwargs,
 )
@@ -611,7 +612,7 @@ class FixedPointIterator(BaseCouplingIterator):
                         volatility_field=self.volatility_field,
                     )
                     U_new = self.hjb_solver.solve_hjb_system(M_old, U_terminal, U_old, **kwargs)
-                inner_failures = self.hjb_solver.inner_solve_failures()
+                inner_failures = read_inner_solve_failures(self.hjb_solver)
 
                 # Issue #1717: attribute a diverged HJB to HJB, before FP consumes it. The FP source and
                 # drift below are composed from U_new, so a non-finite U_new makes the FP solver fail

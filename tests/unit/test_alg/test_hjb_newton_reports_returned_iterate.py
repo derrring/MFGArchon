@@ -20,6 +20,8 @@ from __future__ import annotations
 import re
 import warnings
 
+import pytest
+
 import numpy as np
 
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
@@ -101,6 +103,9 @@ def test_the_returned_value_function_is_finite_and_does_not_diverge():
     function is legitimately larger on this stiff fixture -- and it still settles
     (``1.625e+04 -> 1.622e+04 -> 1.624e+04`` at Nx=81 over 5/10/15 sweeps), while the outer
     iteration converges better than before (``err_U`` 4.5e-03 -> 2.15e-04 at 15 sweeps).
+
+    Those figures were taken at the default Newton budget, before #1878 removed the non-decrease guard;
+    this file now solves with a budget of 2 steps so that the non-converged path stays exercised.
     """
     result, residuals = _solve_capturing_warnings()
     U = np.asarray(result.U, dtype=float)
@@ -121,28 +126,19 @@ def test_the_returned_value_function_is_finite_and_does_not_diverge():
     )
 
 
-def test_a_stopped_solve_reports_the_iterate_it_is_returning():
-    """Drive the loop with a controlled residual sequence and read what the warning says.
-
-    Integration-level thresholds do NOT pin this -- tried twice. A magnitude threshold passes
-    either way (both iterates are large on the stiff fixture), and comparing populations of
-    warned-vs-all residuals compares different sets. The difference is visible only inside the
-    loop, so this drives the loop directly.
-
-    Sequence 10, 1, 5, 7 with a budget of 3 steps: three steps are taken, and the fourth call only
-    measures the iterate they reached. That iterate is returned, so the warning must say 7 after 3
-    steps. Reporting the previous residual says 5, an iterate the caller never receives; returning an
-    iterate without measuring it reports a residual nobody computed.
-    """
+def _drive(steps_and_residuals, budget):
+    """Run the inner Newton over scripted ``newton_hjb_step`` results; return the iterate, warnings, failures."""
     import mfgarchon.alg.numerical.hjb_solvers.base_hjb as bh
 
-    sequence = iter([10.0, 1.0, 5.0, 7.0])
+    script = iter(steps_and_residuals)
     original = bh.newton_hjb_step
 
     def fake(U_current, *args, **kwargs):
-        return np.asarray(U_current, dtype=float) + 1.0, 0.0, next(sequence)
+        make_next, step_norm, residual = next(script)
+        return make_next(np.asarray(U_current, dtype=float)), step_norm, residual
 
     problem = _stiff_problem()
+    failures = []
     bh.newton_hjb_step = fake
     try:
         with warnings.catch_warnings(record=True) as caught:
@@ -153,57 +149,68 @@ def test_a_stopped_solve_reports_the_iterate_it_is_returning():
                 M_density_at_n_plus_1=np.ones(21),
                 problem=problem,
                 t_idx_n=0,
-                max_newton_iterations=3,
+                max_newton_iterations=budget,
                 newton_tolerance=1e-12,
+                failures=failures,
             )
     finally:
         bh.newton_hjb_step = original
-
     messages = [str(w.message) for w in caught if "did not converge" in str(w.message)]
+    return returned, messages, failures
+
+
+def _advance(U):
+    return U + 1.0
+
+
+@pytest.mark.parametrize(
+    ("residuals", "budget"), [((10.0, 1.0, 5.0, 7.0), 3), ((10.0, 7.0), 1)], ids=["budget_3", "budget_1"]
+)
+def test_a_stopped_solve_reports_the_iterate_it_is_returning(residuals, budget):
+    """Drive the loop with a controlled residual sequence and read what the warning says.
+
+    Integration-level thresholds do NOT pin this -- tried twice. A magnitude threshold passes
+    either way (both iterates are large on the stiff fixture), and comparing populations of
+    warned-vs-all residuals compares different sets. The difference is visible only inside the
+    loop, so this drives the loop directly.
+
+    With a budget of ``b`` steps the loop takes ``b`` steps and one more pass only measures the iterate
+    they reached. That iterate is returned, so the warning must carry its residual, the last in the
+    sequence, after ``b`` steps. Reporting the previous residual describes an iterate the caller never
+    receives; returning an iterate without measuring it reports a residual nobody computed. Budget 1 is
+    the case where skipping the measuring pass would hand back an unmeasured iterate one step out.
+    """
+    returned, messages, failures = _drive([(_advance, 0.1, r) for r in residuals], budget)
     assert messages, "a solve that spent its budget above tolerance did not report it"
     reported = float(re.findall(r"residual ([0-9.e+-]+) against", messages[0])[0])
-    assert reported == 7.0, (
-        f"warning reported {reported}, not the returned iterate's residual. The iterate being "
-        f"returned has residual 7.0 -- the report must describe what the caller receives"
+    assert reported == residuals[-1], (
+        f"warning reported {reported}, not the returned iterate's residual {residuals[-1]} -- the report must "
+        f"describe what the caller receives"
     )
-    assert "after 3 Newton steps" in messages[0], messages[0]
-    np.testing.assert_array_equal(returned, np.full(21, 3.0))
+    assert f"after {budget} Newton steps" in messages[0], messages[0]
+    np.testing.assert_array_equal(returned, np.full(21, float(budget)))
+    assert [(f.residual, f.steps) for f in failures] == [(residuals[-1], budget)], failures
 
 
-def test_a_solve_stopped_by_a_non_finite_step_counts_the_steps_it_took():
-    """The warning counts the steps the returned iterate took, not the budget (#1878).
-
-    The second step comes back non-finite with a budget of 5, so the returned iterate is one step from
-    the start. The warning used to print the budget whatever stopped the solve.
-    """
-    import mfgarchon.alg.numerical.hjb_solvers.base_hjb as bh
-
-    calls = {"n": 0}
-    original = bh.newton_hjb_step
-
-    def fake(U_current, *args, **kwargs):
-        calls["n"] += 1
-        step = np.full(21, np.nan) if calls["n"] == 2 else np.asarray(U_current, dtype=float) + 1.0
-        return step, 0.0, 10.0
-
-    problem = _stiff_problem()
-    bh.newton_hjb_step = fake
-    try:
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            bh.solve_hjb_timestep_newton(
-                U_n_plus_1_from_hjb_step=np.zeros(21),
-                U_k_n_from_prev_picard=np.zeros(21),
-                M_density_at_n_plus_1=np.ones(21),
-                problem=problem,
-                t_idx_n=0,
-                max_newton_iterations=5,
-                newton_tolerance=1e-12,
-            )
-    finally:
-        bh.newton_hjb_step = original
-
-    messages = [str(w.message) for w in caught if "did not converge" in str(w.message)]
+def test_a_solve_stopped_by_a_non_finite_step_counts_and_records_the_steps_it_took():
+    """The second step comes back non-finite with a budget of 5: one step taken, recorded, not the budget (#1878)."""
+    returned, messages, failures = _drive(
+        [(_advance, 0.1, 10.0), (lambda U: np.full_like(U, np.nan), 0.1, 9.0)], budget=5
+    )
     assert messages, "a solve stopped by a non-finite step did not report it"
-    assert "non-finite" in messages[0], messages[0]
     assert "after 1 Newton steps" in messages[0], messages[0]
+    assert [(f.steps, f.residual) for f in failures] == [(1, 9.0)], failures
+    assert "non-finite" in failures[0].reason, failures[0].reason
+    np.testing.assert_array_equal(returned, np.full(21, 1.0))
+
+
+def test_a_step_that_could_not_be_computed_stops_the_solve():
+    """``newton_hjb_step`` signals an uncomputable step with an infinite step norm and hands the iterate back.
+
+    Continuing spent the whole budget re-measuring one point and counted every pass as a step.
+    """
+    script = [(_advance, 0.1, 10.0)] + [(lambda U: U, np.inf, 8.0)] * 30
+    returned, _messages, failures = _drive(script, budget=30)
+    assert [(f.steps, f.residual) for f in failures] == [(1, 8.0)], failures
+    assert "could not be computed" in failures[0].reason, failures[0].reason
+    np.testing.assert_array_equal(returned, np.full(21, 1.0))

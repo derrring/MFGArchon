@@ -233,6 +233,17 @@ def check_convergence_criteria(
         return False, ""
 
 
+def read_inner_solve_failures(hjb_solver: object) -> object:
+    """What an HJB solver says about its latest solve's inner solves, or ``None`` if it cannot say (#1878).
+
+    The coupling layer duck-types its solvers: a plain object with a ``solve_hjb_system`` is a supported
+    HJB solver, and it has no ``inner_solve_failures``. Such a solver does not track its inner solves, which
+    is what ``None`` already means.
+    """
+    method = getattr(hjb_solver, "inner_solve_failures", None)
+    return method() if callable(method) else None
+
+
 def refuse_convergence_over_failed_inner_solves(
     converged: bool,
     reason: str,

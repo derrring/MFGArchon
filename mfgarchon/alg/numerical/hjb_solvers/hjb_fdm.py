@@ -743,6 +743,7 @@ class HJBFDMSolver(BaseHJBSolver):
                 - BilateralConstraint: ψ_lower ≤ u ≤ ψ_upper
                 - None: No constraints
         """
+        used_fallback = False
         if self.solver_type == "fixed_point":
             # Define fixed-point map G: u → u
             # HJB uses H which includes viscosity term (σ²/2)|∇u|²
@@ -812,6 +813,7 @@ class HJBFDMSolver(BaseHJBSolver):
                     )
 
                     U_solution, info = fallback_solver.solve(G_fallback, U_guess)
+                    used_fallback = True
                 else:  # "raise"
                     if newton_error:
                         raise ConvergenceError(
@@ -836,7 +838,9 @@ class HJBFDMSolver(BaseHJBSolver):
                         residual=float(info.residual),
                         tolerance=float(self.newton_tolerance),
                         steps=int(info.iterations),
-                        reason=f"{self.solver_type} did not converge",
+                        reason="value-iteration fallback after a failed Newton did not converge"
+                        if used_fallback
+                        else f"{self.solver_type} did not converge",
                     )
                 )
 
