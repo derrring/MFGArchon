@@ -535,8 +535,8 @@ def compute_fp_velocity_field(
         cross_density: Optional stacked multi-population density trajectory
             ``(Nt+1, K*Nx)`` (Issue #1071, lock-faithful). When given, ``optimal_control``
             receives ``cross_density[n]`` (the stacked density at integer timestep ``n``,
-            sliced per-population via ``population_index``) instead of the own-population
-            density — replacing the ``BoundHamiltonian`` wrapper's ``m_all[round(t/dt)]``
+            which the Hamiltonian must slice itself by ``population_index``; no library grid Hamiltonian
+            does, #2335) instead of the own-population density — replacing the ``BoundHamiltonian`` wrapper's ``m_all[round(t/dt)]``
             (``n*dt/dt == n``, so byte-identical). ``None`` => single-population own density.
             In nD only a stack with one value per node (K = 1) is accepted (#2330).
 
@@ -611,8 +611,8 @@ def compute_fp_velocity_field(
                 stacked = np.asarray(cross_density[n])
                 if stacked.size != n_points:
                     # A stack of another size cannot be paired with the (N, d) batch node by node, and no grid
-                    # Hamiltonian slices one by `population_index` (#2335). This also refuses a Hamiltonian that would
-                    # ignore m, which is the price of not guessing (#2330 review).
+                    # Hamiltonian in the library slices one by `population_index` (#2335). This also refuses a
+                    # Hamiltonian that would ignore m, which is the price of not guessing (#2330 review).
                     raise NotImplementedError(
                         f"compute_fp_velocity_field: a cross density of {stacked.size} values for {n_points} nodes "
                         f"has no per-node form for an nD optimal_control batch; only one value per node is "
