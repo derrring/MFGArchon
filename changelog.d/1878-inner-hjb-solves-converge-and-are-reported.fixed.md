@@ -19,6 +19,6 @@
     - A solve that cannot converge now spends its whole budget: the review measured up to 9x the guarded
       time on non-convex Hamiltonians.
     - A result that used to say `converged=True` over non-roots can now say `converged=False`. The smoke
-      fixture refined to 81 nodes needs 32 Newton steps at t_idx 9 against the default budget of 30, so it
+      fixture refined to 81 nodes needs more than the default 30 Newton steps at t_idx 9, so it
       reports `converged=False` at sweep 33. With `max_newton_iterations=60` it converges.
   - **Not covered.** Other coupling loops do not read `inner_solve_failures()` yet.
