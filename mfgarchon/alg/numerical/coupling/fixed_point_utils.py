@@ -519,7 +519,7 @@ def compute_fp_velocity_field(
     H_class: object,
     cross_density: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Compute the face-centered FP advection velocity $\\alpha^*$ from the value function.
+    """Compute the FP advection velocity $\\alpha^*$ from the value function: face-centered in 1D, node-centered in nD.
 
     Single-source for the velocity convention shared by the Picard
     ``FixedPointIterator`` and the Newton ``MFGResidual`` (Issue #1233). Evaluates
@@ -542,13 +542,13 @@ def compute_fp_velocity_field(
 
     Returns:
         Velocity $\\alpha^*$.
-        1D: shape ``(Nt, Nx-1)`` — face-centered, at each face $(i+1/2)$.
-        nD: shape ``(Nt, ndim, *spatial_shape)`` — node-centered (nD fallback). ``optimal_control`` is called
+        1D: shape ``(U.shape[0], Nx-1)`` — face-centered, at each face $(i+1/2)$.
+        nD: shape ``(U.shape[0], ndim, *spatial_shape)`` — node-centered (nD fallback). ``optimal_control`` is called
         once per time step on the ``(N, d)`` batch of nodes, with ``m`` of shape ``(N,)`` (#2330).
 
     Raises:
         ValueError: in nD, when ``optimal_control`` does not return shape ``(N, d)``.
-        NotImplementedError: in nD, when ``cross_density`` holds more than one value per node.
+        NotImplementedError: in nD, when ``cross_density[n]`` does not hold exactly one value per node.
     """
     geometry = problem.geometry
     grid_spacing = geometry.get_grid_spacing()
@@ -597,8 +597,8 @@ def compute_fp_velocity_field(
 
         # Issue #2330: `HamiltonianBase` documents a point ``(d,)`` or a batch ``(N, d)``, with ``m`` one value per
         # point. This called it on grid-shaped ``(nx, ny, d)`` arrays: `CongestionHamiltonian` and a user subclass
-        # written to the documented shapes raised, and a return that was not ``(nx, ny, d)`` was broadcast into
-        # every velocity component. So call on the flattened batch, and refuse a return of any other shape.
+        # written to the documented shapes raised, and a return that broadcast against the grid was spread into every
+        # velocity component. So call on the flattened batch, and refuse a return of any other shape.
         coords = [np.linspace(bounds[0][d], bounds[1][d], spatial_shape[d]) for d in range(ndim)]
         x_points = np.stack(np.meshgrid(*coords, indexing="ij"), axis=-1).reshape(-1, ndim)
         n_points = x_points.shape[0]
@@ -610,11 +610,13 @@ def compute_fp_velocity_field(
             if cross_density is not None:
                 stacked = np.asarray(cross_density[n])
                 if stacked.size != n_points:
-                    # No grid Hamiltonian slices a stack by `population_index`, so a K >= 2 stack handed to a
-                    # per-point batch is read as if it were the own density, silently (#2330 review).
+                    # A stack of another size cannot be paired with the (N, d) batch node by node, and no grid
+                    # Hamiltonian slices one by `population_index` (#2335). This also refuses a Hamiltonian that would
+                    # ignore m, which is the price of not guessing (#2330 review).
                     raise NotImplementedError(
                         f"compute_fp_velocity_field: a cross density of {stacked.size} values for {n_points} nodes "
-                        f"(K >= 2 populations) has no per-node form for an nD optimal_control batch (#2330)."
+                        f"has no per-node form for an nD optimal_control batch; only one value per node is "
+                        f"accepted (#2330)."
                     )
                 m_points = stacked.reshape(n_points)
             else:

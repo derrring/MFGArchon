@@ -7,10 +7,13 @@ into every velocity component: a ``dp`` returning one speed per point gave a vel
 silently.
 
 Oracle: for ``H = |p - s x|^2 / (2 (1 + lam m))`` the optimal control is ``-(p - s x) / (1 + lam m)`` at each point's
-own position and density. ``U = a x + b y + c x y`` is linear along each axis, so `np.gradient` recovers ``p``
-exactly while ``p`` still varies from node to node; ``p``, ``x`` and ``m`` each depend on the two axes differently,
-so a mis-paired position, momentum or density, or a transposed axis, cannot pass (review of #2334: with ``U``
-linear and no ``x`` term, seven such mutants survived).
+own position and density at that time step. ``U = a x + b y + c x y + 0.1 n x`` is linear along each axis, so
+`np.gradient` recovers ``p`` exactly while ``p`` varies from node to node and from step to step; ``p``, ``x`` and ``m``
+each depend on the two axes differently, so a position, momentum or density mis-paired in space or in time, or a
+transposed axis, cannot pass. (Review of #2334: with ``U`` linear, no ``x`` term and ``p`` constant in time, six
+pairing and layout mutants survived, and so did reading the momentum at another step.)
+
+A multi-population cross density must be one value per node to be paired with the batch; any other size is refused.
 """
 
 from __future__ import annotations
@@ -56,13 +59,14 @@ class _ComponentsFirst(_PointOrBatch):
         return (np.asarray(p) / (1.0 + LAM * np.asarray(m))[:, None]).T
 
 
-def _velocity(hamiltonian):
+def _velocity(hamiltonian, cross_density=None):
     grid = TensorProductGrid(
         bounds=[(0.0, 1.0), (0.0, 2.0)], Nx_points=[11, 9], boundary_conditions=no_flux_bc(dimension=2)
     )
     x, y = np.meshgrid(*grid.coordinates, indexing="ij")
-    U = np.stack([SLOPES[0] * x + SLOPES[1] * y + TWIST * x * y + 0.1 * n for n in range(4)])
-    M = np.stack([0.2 + x**2 + 0.3 * y + 0.05 * n for n in range(4)])
+    steps = np.arange(4)[:, None, None]
+    U = SLOPES[0] * x + SLOPES[1] * y + TWIST * x * y + 0.1 * steps * x
+    M = 0.2 + x**2 + 0.3 * y + 0.05 * steps
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         problem = MFGProblem(
@@ -72,11 +76,12 @@ def _velocity(hamiltonian):
             sigma=0.3,
             components=MFGComponents(m_initial=lambda z: 1.0, u_terminal=lambda z: 0.0, hamiltonian=hamiltonian),
         )
-    p = np.stack([SLOPES[0] + TWIST * y, SLOPES[1] + TWIST * x])
+    p = np.stack([SLOPES[0] + TWIST * y + 0.1 * steps, np.broadcast_to(SLOPES[1] + TWIST * x, U.shape)], axis=1)
     shift = np.zeros(2) if isinstance(hamiltonian, CongestionHamiltonian) else SHIFT
-    q = p - shift[:, None, None] * np.stack([x, y])
-    closed_form = -q[None] / (1 + LAM * M)[:, None]
-    return compute_fp_velocity_field(problem, U, M, hamiltonian), closed_form
+    q = p - shift[None, :, None, None] * np.stack([x, y])[None]
+    velocity = compute_fp_velocity_field(problem, U, M, hamiltonian, cross_density=cross_density)
+    density = M if cross_density is None else cross_density
+    return velocity, -q / (1 + LAM * density)[:, None]
 
 
 @pytest.mark.parametrize(
@@ -99,3 +104,17 @@ def test_the_velocity_is_the_optimal_control_at_each_points_own_density(hamilton
 def test_a_control_of_the_wrong_shape_is_refused(hamiltonian):
     with pytest.raises(ValueError, match=r"must return one control vector per point, shape \(99, 2\)"):
         _velocity(hamiltonian)
+
+
+def test_a_one_population_cross_density_is_read_per_node():
+    x, y = np.meshgrid(np.linspace(0.0, 1.0, 11), np.linspace(0.0, 2.0, 9), indexing="ij")
+    stack = 1.5 - 0.4 * x + 0.1 * y**2 + 0.02 * np.arange(4)[:, None, None]
+    velocity, closed_form = _velocity(_PointOrBatch(), cross_density=stack)
+    np.testing.assert_allclose(velocity, closed_form, rtol=0, atol=1e-8)
+
+
+def test_a_cross_density_of_several_populations_is_refused():
+    x, y = np.meshgrid(np.linspace(0.0, 1.0, 11), np.linspace(0.0, 2.0, 9), indexing="ij")
+    one = 0.2 + x**2 + 0.3 * y + 0.05 * np.arange(4)[:, None, None]
+    with pytest.raises(NotImplementedError, match=r"198 values for 99 nodes"):
+        _velocity(_PointOrBatch(), cross_density=np.concatenate([one, one + 0.1], axis=-1))
