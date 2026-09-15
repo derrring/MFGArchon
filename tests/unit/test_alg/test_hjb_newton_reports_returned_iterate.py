@@ -168,3 +168,42 @@ def test_a_stopped_solve_reports_the_iterate_it_is_returning():
     )
     assert "after 3 Newton steps" in messages[0], messages[0]
     np.testing.assert_array_equal(returned, np.full(21, 3.0))
+
+
+def test_a_solve_stopped_by_a_non_finite_step_counts_the_steps_it_took():
+    """The warning counts the steps the returned iterate took, not the budget (#1878).
+
+    The second step comes back non-finite with a budget of 5, so the returned iterate is one step from
+    the start. The warning used to print the budget whatever stopped the solve.
+    """
+    import mfgarchon.alg.numerical.hjb_solvers.base_hjb as bh
+
+    calls = {"n": 0}
+    original = bh.newton_hjb_step
+
+    def fake(U_current, *args, **kwargs):
+        calls["n"] += 1
+        step = np.full(21, np.nan) if calls["n"] == 2 else np.asarray(U_current, dtype=float) + 1.0
+        return step, 0.0, 10.0
+
+    problem = _stiff_problem()
+    bh.newton_hjb_step = fake
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            bh.solve_hjb_timestep_newton(
+                U_n_plus_1_from_hjb_step=np.zeros(21),
+                U_k_n_from_prev_picard=np.zeros(21),
+                M_density_at_n_plus_1=np.ones(21),
+                problem=problem,
+                t_idx_n=0,
+                max_newton_iterations=5,
+                newton_tolerance=1e-12,
+            )
+    finally:
+        bh.newton_hjb_step = original
+
+    messages = [str(w.message) for w in caught if "did not converge" in str(w.message)]
+    assert messages, "a solve stopped by a non-finite step did not report it"
+    assert "non-finite" in messages[0], messages[0]
+    assert "after 1 Newton steps" in messages[0], messages[0]

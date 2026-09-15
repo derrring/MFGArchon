@@ -97,6 +97,8 @@ def test_a_fixed_point_over_inner_solves_that_cannot_converge_is_not_reported_co
         "convergence_reason"
     ]
     assert sorted(failure.t_idx for failure in failures) == list(range(problem.Nt)), failures
+    # The criteria were met, so the loop stops there: more sweeps of the same map only re-certify its fixed point.
+    assert result.iterations < 150, f"Picard ran its whole budget ({result.iterations}) after its criteria were met"
 
 
 def test_a_converged_result_satisfies_the_discrete_hjb_at_every_step():
