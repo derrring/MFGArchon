@@ -32,18 +32,17 @@
       "artifact": {
         "all_finite": true,
         "library_said": {
-          "RuntimeWarning: HJB inner Newton did not converge at t_idx=N: residual stopped decreasing after N iterations, residual N again": 12,
           "UserWarning: initial density mass N on the grid measure, not N The library no longer rescales it (#N), so the solve runs wi": 1
         },
-        "mass_max": 0.5459505243936867,
+        "mass_max": 0.5459505243936869,
         "mass_t0": 0.5459505243936865,
-        "max_drift": 2.220446049250313e-16,
-        "min_density": 0.0025651583868754406,
+        "max_drift": 3.3306690738754696e-16,
+        "min_density": 0.002565158467612185,
         "picard_converged": false,
         "picard_iterations": 5,
         "tolerance": 1e-09
       },
-      "intended": "DEFECT - #1873/#1878. Mass is conserved to machine precision, but the coupled iteration does not reach a fixed point: `picard_converged: false` after 5 sweeps, and it does not converge at 100, 200 or 400 either (final errors 2.3e-04, 4.1e-03, 4.0e-03, not descending). Red from 2026-08-11, when `picard_converged` entered the verdict (#1891). It was PASS before that on the mass oracle alone, which holds on whatever drift field the FP step is handed. The inner Newton's half is #1878; the residual there has more than one root and a line search converges to a non-viscosity branch. [RE-ADJUDICATED 2026-08-29 for #1887] Status, mechanism and issue attribution all unchanged: picard_converged false at 5 sweeps, max_drift 2.220e-16, mass_t0 0.5459505243936865 (the fixture's own mass, no longer rescaled). The inner-Newton non-convergence warning count is 12. #1878 has NOT moved - the fixture got easier, because the coupling f(m) = c*m is now evaluated at 0.546x. Do not read 12 as progress on #1878.",
+      "intended": "DEFECT - #1873/#1878. Mass is conserved to machine precision, but the coupled iteration does not reach a fixed point: `picard_converged: false` after 5 sweeps, ~~and it does not converge at 100, 200 or 400 either (final errors 2.3e-04, 4.1e-03, 4.0e-03, not descending)~~ [SUPERSEDED 2026-09-15 by the #1878 addendum below: at 150 it converges at sweep 31]. Red from 2026-08-11, when `picard_converged` entered the verdict (#1891). It was PASS before that on the mass oracle alone, which holds on whatever drift field the FP step is handed. ~~The inner Newton's half is #1878; the residual there has more than one root and a line search converges to a non-viscosity branch.~~ [SUPERSEDED 2026-09-15 by the #1878 addendum below] [RE-ADJUDICATED 2026-08-29 for #1887] Status, mechanism and issue attribution all unchanged: picard_converged false at 5 sweeps, max_drift 2.220e-16, mass_t0 0.5459505243936865 (the fixture's own mass, no longer rescaled). The inner-Newton non-convergence warning count is 12. ~~#1878 has NOT moved - the fixture got easier, because the coupling f(m) = c*m is now evaluated at 0.546x. Do not read 12 as progress on #1878.~~ [SUPERSEDED 2026-09-15 by the #1878 addendum below: the 12 are gone because the guard is] [RE-ADJUDICATED 2026-09-15 for #1878] The inner-Newton half moved: the 12 non-convergence warnings are gone, because the non-decrease guard that stopped Newton after its first, overshooting step is removed and every inner solve of this cell now converges. The mechanism above (\"more than one root, a line search converges to a non-viscosity branch\") was measured under the pre-#2308 non-monotone rule; at 6c0610d2 the three failing steps had a Jacobian equal to the finite difference of the residual, and every converging start reached a single root (4 of 4 at t_idx 9, 2 of 4 at 8, 1 of 4 at 7). Still red on the other axis: picard_converged false at the cell's 5-sweep budget, which is #1873. At a 150-sweep budget the same fixture converges at sweep 31 with every backward step a root of the discrete HJB (tests/unit/test_alg/test_picard_reports_failed_inner_solves_1878.py).",
       "status": "FAIL"
     },
     "fdm_upwind_2d/mass_conservation": {
@@ -128,32 +127,31 @@
       "artifact": {
         "all_finite": true,
         "library_said": {
-          "RuntimeWarning: HJB inner Newton did not converge at t_idx=N: residual stopped decreasing after N iterations, residual N again": 10,
           "UserWarning: initial density mass N on the grid measure, not N The library no longer rescales it (#N), so the solve runs wi": 2
         },
-        "max_rel_total_mass_drift": 0.001395293239336046,
-        "max_rel_transfer": 0.08882009893326642,
-        "max_rel_vs_expm_oracle": 0.0024261724938389483,
-        "min_density": 0.0001086693884882064,
+        "max_rel_total_mass_drift": 0.0013952932393358425,
+        "max_rel_transfer": 0.08882009893326581,
+        "max_rel_vs_expm_oracle": 0.002426172493838338,
+        "min_density": 0.00010933371233239597,
         "oracle_tolerance": 0.01,
         "picard_converged": false,
         "picard_iterations": 3,
         "regimes": [
           {
             "all_finite": true,
-            "max_rel_transfer": 0.08882009893326642,
-            "min_density": 0.0001086693884882064,
+            "max_rel_transfer": 0.08882009893326581,
+            "min_density": 0.00010933371233239597,
             "regime": 0
           },
           {
             "all_finite": true,
-            "max_rel_transfer": 0.08602951245459413,
-            "min_density": 0.00017890687096579514,
+            "max_rel_transfer": 0.08602951245459423,
+            "min_density": 0.0001807512633480155,
             "regime": 1
           }
         ]
       },
-      "intended": "DEFECT - #1873/#1878, and the cell's own oracle was REPLACED here, not relaxed. Until this change the verdict required each regime's mass to stay CONSTANT to 1e-6. That is false of a correct solver: the generator Q transfers mass between regimes by construction, so per-regime mass follows M(t) = M(0) expm(Q t) and only the SUM is conserved. The clause was not merely inert but ANTI-CORRELATED with correctness on the axis it named - the only way to satisfy it is to not transfer mass, so a transposed or sign-flipped transfer would have PASSED it and fails the oracle at 8.9e-02. The 8.88e-02 the previous note called drift is the physical transfer: at t=1 the measured masses are 0.594648/0.499156 against the oracle's 0.593323/0.498957. WHAT IS GATED NOW: max_rel_vs_expm_oracle, an external oracle computed without reference to the scheme, at 1e-2, bracketed on both sides by measurement rather than fitted to one - it admits this fixture's 2.43e-03 and refuses the harness's 10% density mutation at 1.11e-01. That 2.43e-03 is a PICARD-LAG FLOOR, not a dt term: at the shipped 3-sweep budget an 8x refinement removes 14% of it (2.43e-03 at Nt=10, 2.10e-03 at Nt=80), and tests/unit/test_alg/test_regime_switching_iterator.py already recorded that beside its own expm assertion. A mass term had to stay in the gate because this cell is in MASS_ORACLE_CELLS and that listing claims its verdict reads mass; measured, the same mutation moves min_density only 1.087e-04 -> 1.141e-04, and upward, away from the threshold. Total-mass drift is recorded not gated, because zero row sums in Q make the oracle provably subsume it. WHY IT IS STILL RED: picard_converged false at its 3-sweep budget, the same axis as its FDM and SL siblings, and the cell's own library_said records 10 inner-Newton non-convergence warnings, which is #1878. The mass oracle now PASSES (2.43e-03 against 1e-2) and min_density is 1.087e-04, so #1681 stays fixed. Measured during review of PR #2222 and NOT re-derived here: at a 50-sweep budget the fixture does not converge at Nt=10 and does at Nt=40 (39 sweeps), with the oracle error falling to 3.4e-04 - so fixing #1873/#1878 will not turn the gate above into the next blocker.",
+      "intended": "DEFECT - #1873/#1878, and the cell's own oracle was REPLACED here, not relaxed. Until this change the verdict required each regime's mass to stay CONSTANT to 1e-6. That is false of a correct solver: the generator Q transfers mass between regimes by construction, so per-regime mass follows M(t) = M(0) expm(Q t) and only the SUM is conserved. The clause was not merely inert but ANTI-CORRELATED with correctness on the axis it named - the only way to satisfy it is to not transfer mass, so a transposed or sign-flipped transfer would have PASSED it and fails the oracle at 8.9e-02. The 8.88e-02 the previous note called drift is the physical transfer: at t=1 the measured masses are 0.594648/0.499156 against the oracle's 0.593323/0.498957. WHAT IS GATED NOW: max_rel_vs_expm_oracle, an external oracle computed without reference to the scheme, at 1e-2, bracketed on both sides by measurement rather than fitted to one - it admits this fixture's 2.43e-03 and refuses the harness's 10% density mutation at 1.11e-01. That 2.43e-03 is a PICARD-LAG FLOOR, not a dt term: at the shipped 3-sweep budget an 8x refinement removes 14% of it (2.43e-03 at Nt=10, 2.10e-03 at Nt=80), and tests/unit/test_alg/test_regime_switching_iterator.py already recorded that beside its own expm assertion. A mass term had to stay in the gate because this cell is in MASS_ORACLE_CELLS and that listing claims its verdict reads mass; measured, the same mutation moves min_density only 1.087e-04 -> 1.141e-04, and upward, away from the threshold. Total-mass drift is recorded not gated, because zero row sums in Q make the oracle provably subsume it. WHY IT IS STILL RED: picard_converged false at its 3-sweep budget, the same axis as its FDM and SL siblings, and the cell's own library_said records 10 inner-Newton non-convergence warnings, which is #1878. The mass oracle now PASSES (2.43e-03 against 1e-2) and min_density is 1.087e-04, so #1681 stays fixed. Measured during review of PR #2222 and NOT re-derived here: at a 50-sweep budget the fixture does not converge at Nt=10 and does at Nt=40 (39 sweeps), with the oracle error falling to 3.4e-04 - so fixing #1873/#1878 will not turn the gate above into the next blocker. [RE-ADJUDICATED 2026-09-15 for #1878] The 10 inner-Newton warnings in library_said are gone with the non-decrease guard (#1878); status, oracle and the 3-sweep picard_converged false are unchanged, so what keeps this red is #1873 alone.",
       "status": "FAIL"
     },
     "sl_linear/mass_conservation": {

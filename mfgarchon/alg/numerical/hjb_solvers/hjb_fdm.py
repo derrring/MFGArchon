@@ -25,7 +25,7 @@ from mfgarchon.utils.numerical import FixedPointSolver, NewtonSolver
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, fp_drift_coefficient
 
 from . import base_hjb
-from .base_hjb import BaseHJBSolver
+from .base_hjb import BaseHJBSolver, InnerSolveFailure
 
 logger = get_logger(__name__)
 
@@ -344,6 +344,9 @@ class HJBFDMSolver(BaseHJBSolver):
         if self.use_upwind:
             _refuse_a_hamiltonian_the_upwind_momentum_cannot_serve(problem, self.dimension)
 
+        # The latest solve_hjb_system's non-converged time steps; None until one has run (#1878).
+        self._inner_solve_failures: list[InnerSolveFailure] | None = None
+
         # For nD, extract grid info and create nonlinear solver
         if self.dimension > 1:
             # nD FDM requires a structured grid with get_grid_shape/get_grid_spacing.
@@ -446,6 +449,14 @@ class HJBFDMSolver(BaseHJBSolver):
         except (AttributeError, IndexError, TypeError):
             pass  # Not enough info to compute CFL — skip silently
 
+    def inner_solve_failures(self) -> tuple[InnerSolveFailure, ...] | None:
+        """The time steps of the latest ``solve_hjb_system`` whose nonlinear solve did not converge (#1878).
+
+        ``None`` before the first solve. Recorded on both paths: the 1-D Newton and the nD
+        centralized solver, including a value-iteration fallback that still did not converge.
+        """
+        return None if self._inner_solve_failures is None else tuple(self._inner_solve_failures)
+
     @deprecated_parameter(
         param_name="tensor_volatility_field",
         since="v0.18.7",
@@ -490,6 +501,7 @@ class HJBFDMSolver(BaseHJBSolver):
             raise ValueError("U_terminal is required")
         if U_coupling_prev is None:
             raise ValueError("U_coupling_prev is required")
+        self._inner_solve_failures = []
         # Issue #1071: the multi-population cross-density trajectory is consumed only by the batch
         # Hamiltonian path (compute_hjb_residual at backend=None); the nD path's per-timestep
         # evaluation is not yet validated for it, so restrict to 1D.
@@ -561,6 +573,7 @@ class HJBFDMSolver(BaseHJBSolver):
                 domain_bounds=domain_bounds,
                 source_term=source_term,
                 cross_density=cross_density,  # Issue #1071
+                failures=self._inner_solve_failures,
             )
 
             # Apply variational inequality constraint via projection (Issue #591)
@@ -689,6 +702,7 @@ class HJBFDMSolver(BaseHJBSolver):
                 time=t_current,
                 constraint=self.constraint,
                 source_term=source_at_n,
+                t_idx=n,
             )
 
             # Issue #640: Update external progress if callback provided
@@ -707,6 +721,7 @@ class HJBFDMSolver(BaseHJBSolver):
         time: float = 0.0,
         constraint: ConstraintProtocol | None = None,
         source_term: NDArray | None = None,
+        t_idx: int = -1,
     ) -> NDArray:
         """
         Solve single HJB timestep using centralized nonlinear solver.
@@ -728,6 +743,7 @@ class HJBFDMSolver(BaseHJBSolver):
                 - BilateralConstraint: ψ_lower ≤ u ≤ ψ_upper
                 - None: No constraints
         """
+        used_fallback = False
         if self.solver_type == "fixed_point":
             # Define fixed-point map G: u → u
             # HJB uses H which includes viscosity term (σ²/2)|∇u|²
@@ -797,6 +813,7 @@ class HJBFDMSolver(BaseHJBSolver):
                     )
 
                     U_solution, info = fallback_solver.solve(G_fallback, U_guess)
+                    used_fallback = True
                 else:  # "raise"
                     if newton_error:
                         raise ConvergenceError(
@@ -814,6 +831,18 @@ class HJBFDMSolver(BaseHJBSolver):
                 UserWarning,
                 stacklevel=2,
             )
+            if self._inner_solve_failures is not None:
+                self._inner_solve_failures.append(
+                    InnerSolveFailure(
+                        t_idx=t_idx,
+                        residual=float(info.residual),
+                        tolerance=float(self.newton_tolerance),
+                        steps=int(info.iterations),
+                        reason="value-iteration fallback after a failed Newton did not converge"
+                        if used_fallback
+                        else f"{self.solver_type} did not converge",
+                    )
+                )
 
         # Enforce BC on solution (Issue #542 - nD extension, Issue #527 - centralized BC access)
         # BC-aware gradients use ghost cells for derivatives, but boundary values must be explicitly set

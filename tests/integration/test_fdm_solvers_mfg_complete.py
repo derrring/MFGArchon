@@ -205,11 +205,14 @@ class TestFDMSolversCoupling:
         assert result is not None
 
         # This test does NOT get to assert `result.converged`, and that is a finding, not an
-        # omission. Measured on this exact configuration: converged=False after all 15 iterations,
+        # omission. ~~Measured on this exact configuration: converged=False after all 15 iterations,
         # with error_history_U RISING 4.573e-01 -> 8.944e+01 while error_history_M falls
         # 1.238e+00 -> 4.138e-03 -- the value function is diverging while the density looks
-        # settled, and the inner HJB Newton reports its residual stopped decreasing (Issue #1745).
-        # Asserting convergence here would just paint the suite red over a known defect.
+        # settled, and the inner HJB Newton reports its residual stopped decreasing (Issue #1745).~~
+        # [SUPERSEDED 2026-09-15 by #1878, which removed that Newton's non-decrease guard] Re-measured:
+        # still converged=False after 15 iterations, but error_history_U now FALLS 4.74e-01 -> 8.3e-02
+        # (error_history_M 1.198e+00 -> 8e-03) and no inner solve fails -- slow, not diverging. It still
+        # does not converge within this budget, so asserting convergence would still paint the suite red.
         #
         # What the solve does still owe, divergence or not, is conservation: the no-flux walls let
         # no mass out whatever the Picard loop does with u. Measured drift 9.992e-16, so 1e-12 is

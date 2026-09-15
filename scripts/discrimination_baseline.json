@@ -1,8 +1,8 @@
 {
   "_comment": "Kill counts per mutated convention. --check-baseline fails when a count DROPS (discrimination lost) and when one RISES (record the gain in the same change). Counts, not test names: this population cannot be selected by name -- the agreement-shaped patterns give 51, 114 or 156 depending on the regex.",
   "_measured_at": {
-    "collected": 3902,
-    "commit": "a5c6f126",
+    "collected": 3914,
+    "commit": "6c5a22cd",
     "excluded": "tests/unit/test_discrimination_ratchet.py",
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment and not manual",
     "paths": [
@@ -41,7 +41,7 @@
       "status": "ok"
     },
     "fp_initial_condition_written_at_final_index": {
-      "kill_count": 128,
+      "kill_count": 129,
       "owner": "The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, fp_fdm_time_stepping.py:797, whose own docstring states the convention at :681: \"- Forward time evolution: k=0 -> Nt-1\". No issue n",
       "status": "ok"
     },
@@ -71,7 +71,7 @@
       "status": "ok"
     },
     "hjb_marches_forward_in_time": {
-      "kill_count": 24,
+      "kill_count": 25,
       "owner": "The HJB marches BACKWARD in time, from the terminal row down to t=0, while the FP marches forward -- the adjoint pairing. Single site: base_hjb.py:1780, the only time loop in solve_hjb_system_backward. The M-indexing that rides on it is documented in the same loop body at base_hjb.py:1790: \"# BUG #7",
       "status": "ok"
     },
@@ -106,7 +106,7 @@
       "status": "ok"
     },
     "periodic_wrap_endpoint_inverted": {
-      "kill_count": 46,
+      "kill_count": 48,
       "owner": "how many trailing nodes of a periodic axis repeat a node the array already holds -- the ONE number both the ghost skip and the modular span derive from (#1822). types.py:126-130 states the ownership verbatim: \"Every periodic wrap in the package is one of two expressions of this single number, which ",
       "status": "ok"
     },
@@ -121,7 +121,7 @@
       "status": "ok"
     },
     "terminal_condition_pinned_at_initial_index": {
-      "kill_count": 15,
+      "kill_count": 17,
       "owner": "u is boundary-data at the TERMINAL time and m at the INITIAL one: preserve_terminal_condition re-imposes u(T)=g on the LAST time row after damping/Anderson. Single owner, three caller families -- fixed_point_iterator.py:644 and :724 (Picard), fictitious_play.py:432, block_iterators.py:583. No issue ",
       "status": "ok"
     },
@@ -131,7 +131,7 @@
       "status": "ok"
     },
     "upwind_minimum_takes_a_one_sided_difference": {
-      "kill_count": 62,
+      "kill_count": 64,
       "owner": "at a discrete local minimum (backward < 0 < forward) the upwind momentum is 0, the Godunov value for an H even in each momentum component and nondecreasing in its magnitude; selecting on sign(central) returned the one-sided difference of smaller magnitude there, a non-monotone numerical Hamiltonian that Newton still converges on (#2308)",
       "status": "ok"
     }

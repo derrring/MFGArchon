@@ -233,6 +233,46 @@ def check_convergence_criteria(
         return False, ""
 
 
+def read_inner_solve_failures(hjb_solver: object) -> object:
+    """What an HJB solver says about its latest solve's inner solves, or ``None`` if it cannot say (#1878).
+
+    The coupling layer duck-types its solvers: a plain object with a ``solve_hjb_system`` is a supported
+    HJB solver, and it has no ``inner_solve_failures``. Such a solver does not track its inner solves, which
+    is what ``None`` already means.
+    """
+    method = getattr(hjb_solver, "inner_solve_failures", None)
+    return method() if callable(method) else None
+
+
+def refuse_convergence_over_failed_inner_solves(
+    converged: bool,
+    reason: str,
+    inner_failures: object,
+) -> tuple[bool, str]:
+    """A fixed point is not a converged MFG solution if its HJB half returned non-roots (#1878).
+
+    The Picard criteria test whether the map stopped moving. When the HJB solves of the sweep that
+    stopped it did not converge, the map being iterated is not the discrete MFG map, and its fixed
+    point is not a solution of the discrete system -- measured on the 1-D smoke fixture at 6c0610d2,
+    ``converged=True`` at sweep 38 with three of ten backward steps at residuals 7.5e+01 to 2.8e+02
+    against 1e-06. So ``converged`` stays False and the reason names the steps.
+
+    ``inner_failures`` is what ``BaseHJBSolver.inner_solve_failures()`` returned for that sweep. Only a
+    non-empty tuple refuses: ``None`` means the solver does not track its inner solves, and anything
+    that is not a tuple is treated the same way rather than read as truthy.
+    """
+    if not converged or not isinstance(inner_failures, tuple) or not inner_failures:
+        return converged, reason
+    worst = max(inner_failures, key=lambda failure: failure.residual)
+    steps = ", ".join(str(failure.t_idx) for failure in inner_failures)
+    return False, (
+        f"inner_hjb_not_converged: the Picard criteria were met ({reason}), but {len(inner_failures)} "
+        f"HJB time step(s) of that sweep did not converge (t_idx {steps}; worst residual {worst.residual:.3e} "
+        f"against {worst.tolerance:.3e}: {worst.reason}). The fixed point is not a solution of the "
+        f"discrete MFG system (#1878)."
+    )
+
+
 def preserve_initial_condition(
     M: np.ndarray,
     M_initial: np.ndarray,

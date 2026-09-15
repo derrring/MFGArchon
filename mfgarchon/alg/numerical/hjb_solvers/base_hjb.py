@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import warnings
 from abc import abstractmethod
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -44,6 +45,23 @@ P_VALUE_CLIP_LIMIT_FD_JAC = 1e6
 # Default Newton solver parameters shared across HJB solvers (Issue #966)
 DEFAULT_NEWTON_MAX_ITERATIONS: int = 30
 DEFAULT_NEWTON_TOLERANCE: float = 1e-6
+
+
+@dataclass(frozen=True)
+class InnerSolveFailure:
+    """A backward time step whose nonlinear solve returned something that is not a root (#1878).
+
+    ``residual`` is the solver's own measure for the iterate actually returned: the grid-scaled residual
+    norm on the 1-D Newton path, and what the nD nonlinear solver reports otherwise (for value iteration,
+    its relative change). ``steps`` is how many solver steps that iterate is from the start on the 1-D path
+    and the nD solver's iteration count otherwise; ``reason`` says why the solve stopped.
+    """
+
+    t_idx: int
+    residual: float
+    tolerance: float
+    steps: int
+    reason: str
 
 
 def _compute_gradient_array_1d(
@@ -244,6 +262,16 @@ class BaseHJBSolver(BaseNumericalSolver):
                 f"(#2020). Name the parameter and either honour it or raise NotImplementedError "
                 f"inside; refusing is a behaviour, an absent signature is not."
             )
+
+    def inner_solve_failures(self) -> tuple[InnerSolveFailure, ...] | None:
+        """The time steps of the latest ``solve_hjb_system`` whose nonlinear solve did not converge (#1878).
+
+        ``None`` (the default) means this solver does not track its inner solves, so a coupling loop
+        can certify nothing from it either way. An empty tuple means every step it solved converged. A
+        solver that iterates per time step overrides this, so that a coupled result built on steps that
+        are not roots of the discrete HJB is not reported as converged.
+        """
+        return None
 
     def __init__(self, problem: MFGProblem, config: BaseConfig | None = None) -> None:
         # Maintain backward compatibility - if no config provided, create a minimal one
@@ -1520,6 +1548,10 @@ def newton_hjb_step(
 
     max_delta_u_norm = 1e2
     current_delta_u_norm = np.linalg.norm(delta_U) * np.sqrt(dx_norm)
+    if not np.isfinite(current_delta_u_norm):
+        # A finite step whose norm overflows: clipping would scale it by 1e2/inf = 0 and report a zero step
+        # norm, so the caller would re-measure the same point until its budget ran out (#1878).
+        return U_n_current_newton_iterate, np.inf, residual_norm
     if current_delta_u_norm > max_delta_u_norm and current_delta_u_norm > 1e-9:
         delta_U = delta_U * (max_delta_u_norm / current_delta_u_norm)
         l2_error_of_step = np.linalg.norm(delta_U) * np.sqrt(dx_norm)
@@ -1546,6 +1578,7 @@ def solve_hjb_timestep_newton(
     bc_values: dict[str, float] | None = None,  # Issue #574: Per-boundary BC values
     source_term: np.ndarray | None = None,  # MMS verification
     cross_density_at_n: np.ndarray | None = None,  # Issue #1071: stacked (K*Nx,) cross-density at this timestep
+    failures: list[InnerSolveFailure] | None = None,  # Issue #1878: collects this step if it does not converge
 ) -> np.ndarray:
     """
     Solve HJB timestep using Newton's method.
@@ -1576,13 +1609,17 @@ def solve_hjb_timestep_newton(
     final_residual_norm = np.inf
     converged = False
     stop_reason = "iteration budget exhausted"
+    steps = 0
 
-    for iiter in range(max_newton_iterations):
+    # One pass more than the step budget: the last pass only measures the iterate being returned, so a solve
+    # that spends its budget reports that iterate's residual rather than its predecessor's. It assembles a
+    # Jacobian nobody uses, and only on a solve that did not converge.
+    for iiter in range(max_newton_iterations + 1):
         # Ensure t_idx_n is not None
         if t_idx_n is None:
             t_idx_n = 0  # Default time index
 
-        U_n_next_newton_iterate, _step_norm, residual_norm = newton_hjb_step(
+        U_n_next_newton_iterate, step_norm, residual_norm = newton_hjb_step(
             U_n_current_newton_iterate,
             U_n_plus_1_from_hjb_step,
             U_k_n_from_prev_picard,  # Pass U from prev Picard for Jacobian
@@ -1600,61 +1637,77 @@ def solve_hjb_timestep_newton(
             cross_density_at_n=cross_density_at_n,  # Issue #1071
         )
 
-        if has_nan_or_inf(U_n_next_newton_iterate, backend):
-            break
+        # `residual_norm` is measured at the iterate ENTERING this step, which is the standard Newton
+        # structure (test F(x_k), then step) and costs nothing -- the residual was already assembled for
+        # the linear solve. That iterate is the one returned whenever the loop stops here, so recording
+        # its residual now keeps the report about what the caller receives (#1745: reporting the previous
+        # iterate's residual described a point nobody received, up to 8.5x better than the truth).
+        final_residual_norm = residual_norm
 
-        # Issue #1745: convergence is tested on the RESIDUAL, not on the step.
-        #
-        # This loop used to declare `converged` when the step norm fell below tolerance. A small
-        # step does not imply a root -- a stalled iteration produces one, and so does a large
-        # Jacobian. Measured before the change, on 1-D FDM_UPWIND solves, the step criterion
-        # accepted iterates whose HJB residual was 59-77x the requested tolerance at N=21 and
-        # 267-402x at N=41. It got WORSE under refinement, so the error did not vanish in the
-        # limit and could contaminate a convergence-rate study.
-        #
-        # `residual_norm` is measured at the iterate ENTERING this step, which is the standard
-        # Newton structure (test F(x_k), then step) and costs nothing -- the residual was
-        # already assembled for the linear solve.
+        # Issue #1745: convergence is tested on the RESIDUAL, not on the step. A small step does not
+        # imply a root -- a stalled iteration produces one, and so does a large Jacobian. Measured before
+        # that change, on 1-D FDM_UPWIND solves, the step criterion accepted iterates whose HJB residual
+        # was 59-77x the requested tolerance at N=21 and 267-402x at N=41, worse under refinement.
         if residual_norm < newton_tolerance:
             converged = True
             break
 
-        # Non-decrease guard, also moved from the step norm to the residual. A step that does
-        # not reduce the residual is not progress, whatever it does to the iterate.
-        #
-        # `final_residual_norm` is overwritten here so the warning below describes the iterate
-        # actually returned. At this point `U_n_current_newton_iterate` has NOT been advanced --
-        # line below -- so `residual_norm`, measured at it, is its residual. Reporting the
-        # previous (better) iterate's residual instead described a point the caller never
-        # receives: measured, up to 8.5x better than the truth.
-        #
-        # Returning the best-seen iterate instead was tried and reverted. It made 90 of 96 inner
-        # solves on the multi-population fixture return their INPUT unchanged -- an identity map
-        # dressed as a solve, which erased the cross-coupling that
-        # test_hjb_sees_cross_density_bug_1157 exists to detect. On a configuration where Newton
-        # never improves on its starting point, "the best iterate" is the starting point, and
-        # handing that back silently is a worse failure than handing back a moved one.
-        if iiter > 0 and residual_norm > final_residual_norm * 0.9999:
-            stop_reason = "residual stopped decreasing"
-            final_residual_norm = residual_norm
+        # The budget is spent: this pass only measured the iterate being returned, so what the step computed
+        # from it -- finite or not -- is not why the solve stops.
+        if iiter == max_newton_iterations:
             break
 
+        if has_nan_or_inf(U_n_next_newton_iterate, backend):
+            stop_reason = "the Newton step produced a non-finite iterate"
+            break
+
+        # `newton_hjb_step` returns an infinite step norm when it could not compute a step -- a non-finite
+        # residual or Jacobian, or a failed linear solve -- and hands the iterate back unchanged. Going on
+        # would spend the whole budget re-measuring one point and count each pass as a step.
+        if not np.isfinite(step_norm):
+            stop_reason = "the Newton step could not be computed"
+            break
+
+        # No non-decrease guard (#1878). One stopped the loop as soon as a step failed to reduce the
+        # residual. On this monotone system Newton's first step routinely RAISES the residual and the
+        # iterates converge after it: on the 1-D smoke fixture at 6c0610d2, |r| went 1.1e+01, 2.4e+02,
+        # 5.7e+01, ... 1.1e-11 in 12 steps at t_idx 9, with an assembled Jacobian equal to the central
+        # difference of the residual (step 1e-7) to 7.5e-09. The guard read the overshoot as failure and
+        # returned the iterate after it -- worse than the start -- at three of ten steps, and Picard
+        # certified a fixed point 2.57 away in U from the one the same scheme reaches without it. Returning the best-seen
+        # iterate instead was also tried and reverted (#1745): on the multi-population fixture it handed
+        # back the input unchanged, an identity map that erased the coupling
+        # test_hjb_sees_cross_density_bug_1157 detects. A solve that does not converge within its budget
+        # now says so, and the coupled result does not report convergence over it.
         U_n_current_newton_iterate = U_n_next_newton_iterate
-        final_residual_norm = residual_norm
+        steps += 1
 
     # Issue #1745: this branch was a literal `pass`. The inner Newton could fail to converge and
     # nothing said so -- `converged` is local and never returned, so no caller could see it, and
     # the outer Picard loop treated a failed HJB solve exactly like a successful one.
-    if not converged and max_newton_iterations > 0:
+    if not converged:
+        # The step count is the steps the returned iterate actually took. This printed
+        # `max_newton_iterations`, so a solve the guard stopped one step from its start read "after 30
+        # iterations" (#1878).
         warnings.warn(
             f"HJB inner Newton did not converge at t_idx={t_idx_n}: {stop_reason} after "
-            f"{max_newton_iterations} iterations, residual {final_residual_norm:.3e} against a "
+            f"{steps} Newton steps, residual {final_residual_norm:.3e} against a "
             f"tolerance of {newton_tolerance:.3e}. The value function returned for this timestep "
-            f"is not a root of the discrete HJB, and the outer iteration will consume it as if "
-            f"it were (Issue #1745).",
+            f"is not a root of the discrete HJB (Issue #1745); a coupling loop that reads "
+            f"`inner_solve_failures()` will not report the coupled result as converged (Issue #1878).",
             RuntimeWarning,
             stacklevel=2,
         )
+        if failures is not None:
+            failures.append(
+                InnerSolveFailure(
+                    t_idx=int(t_idx_n) if t_idx_n is not None else -1,
+                    residual=float(final_residual_norm),
+                    tolerance=float(newton_tolerance),
+                    steps=steps,
+                    reason=stop_reason,
+                )
+            )
 
     # Enforce BC on solution (Issue #542)
     # BC-aware Laplacian uses ghost cells for derivatives, but boundary values must be explicitly set
@@ -1785,6 +1838,7 @@ def solve_hjb_system_backward(
     bc_values: dict[str, float] | None = None,  # Issue #574: Per-boundary BC values
     source_term: Callable | None = None,  # MMS verification: S(t, x_grid) -> values
     cross_density=None,  # Issue #1071: stacked (Nt+1, K*Nx) cross-density trajectory (lock-faithful)
+    failures: list[InnerSolveFailure] | None = None,  # Issue #1878: collects every step that does not converge
 ) -> np.ndarray:
     """
     Solve HJB system backward in time using Newton's method.
@@ -1894,6 +1948,7 @@ def solve_hjb_system_backward(
             bc_values=bc_values,  # Issue #574: Per-boundary BC values
             source_term=source_at_n,
             cross_density_at_n=cross_density_at_n,  # Issue #1071
+            failures=failures,
         )
         backend_aware_assign(U_solution_this_picard_iter, (n_idx_hjb, slice(None)), U_new_n, backend)
 
