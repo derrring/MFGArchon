@@ -25,9 +25,14 @@ if TYPE_CHECKING:
 # Issue #625: Migrated from tensor_calculus to operators/stencils (tensor_calculus deprecated v0.18.0)
 from mfgarchon.geometry.boundary import no_flux_bc, pad_array_with_ghosts
 from mfgarchon.operators.stencils.finite_difference import (
+    DEFAULT_NUMERICAL_HAMILTONIAN,
+    NumericalHamiltonian,
+    gradient_backward,
     gradient_central,
-    gradient_upwind,
+    gradient_forward,
     laplacian_with_bc,
+    upwind_momentum,
+    upwind_momentum_derivatives,
 )
 from mfgarchon.utils.pde_coefficients import get_spatial_grid
 
@@ -64,12 +69,30 @@ class InnerSolveFailure:
     reason: str
 
 
+def _one_sided_differences_1d(
+    U_array: np.ndarray,
+    Dx: float,
+    bc: BoundaryConditions | None = None,
+    time: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """``(backward, forward)`` differences of a 1D array, with the same ghost padding the gradient uses (#2313).
+
+    Both are affine in ``U_array``, so the analytic Jacobian can extract their bands; the upwind momentum and its
+    derivatives are then functions of these two arrays alone.
+    """
+    if bc is not None:
+        u_work = pad_array_with_ghosts(U_array, bc, ghost_depth=1, time=time, spacing=Dx)
+        return gradient_backward(u_work, axis=0, h=Dx)[1:-1], gradient_forward(u_work, axis=0, h=Dx)[1:-1]
+    return gradient_backward(U_array, axis=0, h=Dx), gradient_forward(U_array, axis=0, h=Dx)
+
+
 def _compute_gradient_array_1d(
     U_array: np.ndarray,
     Dx: float,
     bc: BoundaryConditions | None = None,
     upwind: bool = False,
     time: float = 0.0,
+    numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,
 ) -> np.ndarray:
     """
     Compute gradient for entire 1D array using BC-aware computation.
@@ -81,8 +104,9 @@ def _compute_gradient_array_1d(
         U_array: Solution array of shape (Nx,)
         Dx: Spatial grid spacing
         bc: Boundary conditions. If None, uses periodic BC.
-        upwind: If True, use upwind scheme for HJB stability
+        upwind: If True, the upwind momentum of ``numerical_hamiltonian`` (#2313); otherwise the central gradient
         time: Current time for time-dependent BCs
+        numerical_hamiltonian: ``"engquist_osher"`` (default) or ``"rouy_tourin"``; read only when ``upwind``
 
     Returns:
         Gradient array of shape (Nx,) with du/dx at each point
@@ -108,7 +132,9 @@ def _compute_gradient_array_1d(
 
     # Compute gradient with selected scheme
     if upwind:
-        grad = gradient_upwind(u_work, axis=0, h=Dx)
+        grad = upwind_momentum(
+            gradient_backward(u_work, axis=0, h=Dx), gradient_forward(u_work, axis=0, h=Dx), numerical_hamiltonian
+        )
     else:
         grad = gradient_central(u_work, axis=0, h=Dx)
 
@@ -521,6 +547,7 @@ def _calculate_derivatives(
     clip_limit: float = P_VALUE_CLIP_LIMIT_FD_JAC,
     upwind: bool = False,
     precomputed_gradient: np.ndarray | None = None,
+    numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,
 ) -> dict[tuple[int], float]:
     """
     Calculate derivatives using standard tuple multi-index notation.
@@ -607,9 +634,9 @@ def _calculate_derivatives(
     if np.isnan(p_forward) or np.isnan(p_backward):
         p_value = np.nan
     elif upwind:
-        # The same rule as the array path, from its one owner (#2308): this branch restated it as an
+        # The same rule as the array path, from its one owner (#2308, #2313): this branch restated it as an
         # `if` on sign(central), which a search for the array form could not see.
-        p_value = float(gradient_upwind(np.array([u_im1, u_i, u_ip1]), axis=0, h=Dx)[1])
+        p_value = float(upwind_momentum(np.array([p_backward]), np.array([p_forward]), numerical_hamiltonian)[0])
     else:
         # Central difference (default, second-order accurate)
         p_value = (p_forward + p_backward) / 2.0
@@ -677,6 +704,7 @@ def compute_hjb_residual(
     bc_values: dict[str, float] | None = None,  # Issue #574: Per-boundary BC values
     source_term: np.ndarray | None = None,  # MMS verification: pre-evaluated S(t, x)
     cross_density_at_n: np.ndarray | None = None,  # Issue #1071: stacked (K*Nx,) cross-density at this timestep
+    numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,  # Issue #2313
 ) -> np.ndarray:
     Nx = problem.geometry.get_grid_shape()[0]
     dx = problem.geometry.get_grid_spacing()[0]
@@ -762,7 +790,12 @@ def compute_hjb_residual(
     _grad_uses_torch_roll = backend is not None and hasattr(U_n_current_newton_iterate, "roll")
     if bc is not None and not _grad_uses_torch_roll:
         precomputed_grad = _compute_gradient_array_1d(
-            U_n_current_newton_iterate, dx, bc=bc, upwind=use_upwind, time=current_time
+            U_n_current_newton_iterate,
+            dx,
+            bc=bc,
+            upwind=use_upwind,
+            time=current_time,
+            numerical_hamiltonian=numerical_hamiltonian,
         )
 
     # For m-coupling term, original notebook passed gradUkn, gradUknim1 (from prev Picard iter)
@@ -820,7 +853,14 @@ def compute_hjb_residual(
             continue
 
         derivs = _calculate_derivatives(
-            U_n_current_newton_iterate, i, dx, Nx, clip=False, upwind=use_upwind, precomputed_gradient=precomputed_grad
+            U_n_current_newton_iterate,
+            i,
+            dx,
+            Nx,
+            clip=False,
+            upwind=use_upwind,
+            precomputed_gradient=precomputed_grad,
+            numerical_hamiltonian=numerical_hamiltonian,
         )
 
         if np.any(np.isnan(list(derivs.values()))):
@@ -995,146 +1035,64 @@ def _bc_laplacian_bands(Nx: int, dx: float, bc, time: float):
     return _extract_bands(Nx, apply, "BC-aware Laplacian")
 
 
-def _advection_bands(U: np.ndarray, dx: float, bc, time: float, upwind: bool, laplacian_bands):
-    """Bands of ``d(grad U)/dU``, linearised at ``U`` by probing the residual's own gradient.
+def _advection_bands(
+    U: np.ndarray,
+    dx: float,
+    bc,
+    time: float,
+    upwind: bool,
+    numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,
+):
+    """Bands of ``d(p)/dU``, the momentum the residual evaluates ``H`` at, linearised at ``U``.
 
-    The advection block used to restate the stencil by hand -- central as ``[-1/2dx, 0, +1/2dx]``,
-    upwind as a one-sided pair chosen by ``sign(precomputed_grad)``. Measured against the residual's
-    actual operator at Nx=9, both wall rows are wrong for every BC and both schemes (#1896 item 4):
+    The advection block used to restate the stencil by hand -- central as ``[-1/2dx, 0, +1/2dx]``, upwind as a
+    one-sided pair chosen by ``sign(precomputed_grad)``. Both wall rows were wrong for every BC (#1896 item 4): at Nx=9
+    the true no-flux central row 0 is ``{0: -4, 1: +4}`` and the Dirichlet one ``{0: +4, 1: +4}``, against a hardcoded
+    ``{1: +4}``. So every operator here is extracted from the residual's own ghost-padded differences, never restated.
 
-        no_flux   central  true {0: -4, 1: +4}      hardcoded {1: +4}
-        dirichlet central  true {0: +4, 1: +4}      hardcoded {1: +4}     <- opposite sign
-        periodic  central  true {1: +4, 8: -4}      hardcoded {1: +4}     <- wrap omitted
-        no_flux   upwind   true {}                  hardcoded {0: +8}     <- spurious diagonal
-        dirichlet upwind   true {0: +16}            hardcoded {0: +8}
-        periodic  upwind   true {0: -8, 1: +8}      hardcoded {0: +8}
+    Central is affine in ``U`` and is extracted directly. The upwind momentum is not, but it is a function of two affine
+    operators, the backward and forward differences (`_one_sided_differences_1d`), through the numerical-Hamiltonian
+    owner (#2313)::
 
-    The no-flux upwind row is why this survived: its true row is empty AND the BC forces ``p=0``
-    there, so ``dH/dp`` is zero and the spurious diagonal is multiplied away. Under Dirichlet or
-    periodic nothing masks it.
+        d(p_i)/dU = (dp/da)_i * row_i(backward) + (dp/db)_i * row_i(forward)
 
-    Central is linear in U, so it is probed directly. Upwind is not, and probing it does not merely
-    lose accuracy -- at a node where the branch is switching the two-sided directional difference
-    disagrees with itself, so `_extract_bands` raises instead of returning a Jacobian (9 of 15
-    measured wall cells at Nx=9, for one-sided differences as well as two-sided). That is not an
-    implementation fault: the upwind gradient is nondifferentiable there and no Jacobian exists,
-    only a Clarke generalised Jacobian.
-
-    So the upwind bands are assembled from the two operators that ARE linear::
-
-        forward  = central + (dx / 2) * laplacian
-        backward = central - (dx / 2) * laplacian
-
-    exact identities of the ghost-padded stencils, boundaries included -- measured at 1.4e-14 or
-    better over seven BCs (no-flux, Dirichlet, Neumann, periodic, three Robin parameter sets) and
-    three states, and pinned there, since it is the premise the whole construction rests on. Robin
-    is the case that would break it, by padding the Laplacian differently from the gradient.
-
-    Which branch holds at row ``i`` is then **measured wherever a measurement exists**. Restating it
-    instead is #1896 item 3: the residual selects on ``sign(central)`` while the Jacobian selected on
-    ``sign(grad_upwind)``. How far they part is a random variable -- at Nx=41 on ``0.4 sin(4pi x)``
-    plus noise, median 10 nodes over 200 seeds, range 6 to 16 -- but it is exactly 0 of 41 on the
-    monotone ``x^2`` that every test used, and that is the half that matters.
-
-    Value and row do not carry the same information, so recovery is in two parts:
-
-    1. Where forward and backward differ in VALUE, ``grad_upwind(U)`` equals exactly one of them and
-       the branch is read off it. This is what closes item 3, and it covers every row where the two
-       rules could have parted: a rule disagreement that does not change the value cannot change
-       which one-sided stencil produced it either. The exception is a strict discrete minimum,
-       ``backward < 0 < forward``, where the momentum is 0 and its row is zero (#2308).
-    2. Where they agree in value -- any locally linear stretch, so not a rare coincidence -- the
-       ROWS still differ and nothing observable separates them, so ``sign(central)`` decides.
-       Picking wrong here puts the Jacobian one column across: 4.000e+01 against a column-wise
-       finite difference at Nx=21, eps-independent, before the case was handled at all.
-
-    ``laplacian_bands`` is passed in rather than extracted here because the caller already holds it
-    for the diffusion block, and extracting it twice per Jacobian build is the same quantity
-    computed on two paths -- cheap to avoid, and measured at roughly half the added cost of the
-    upwind branch.
+    with ``(dp/da, dp/db)`` from `upwind_momentum_derivatives` at this ``U``. The residual's momentum comes from the
+    same owner and the same two arrays, so the branch the Jacobian takes is the one the residual took. That replaces a
+    measured-branch reconstruction whose tie-break restated the Rouy-Tourin rule (#1896 item 3), and it gives the exact
+    Jacobian of ``engquist_osher``, whose rows at a local maximum use both differences. Where ``rouy_tourin`` is not
+    differentiable (``a+ = -b- > 0``) the derivatives pick one branch, an element of the Clarke Jacobian.
     """
     U = np.asarray(U, dtype=float)
     Nx = len(U)
 
-    zero = _compute_gradient_array_1d(np.zeros(Nx), dx, bc=bc, upwind=False, time=time)
+    def extract(op, label):
+        zero = op(np.zeros(Nx))
+        return _extract_bands(Nx, lambda vec: op(vec) - zero, label)
 
-    def apply(vec):
-        return _compute_gradient_array_1d(vec, dx, bc=bc, upwind=False, time=time) - zero
-
-    central = _extract_bands(Nx, apply, "central gradient operator")
     if not upwind:
-        return central
-
-    half = dx / 2.0
-    c_sub, c_diag, c_sup, c_extras = central
-    l_sub, l_diag, l_sup, l_extras = laplacian_bands
-
-    g_up = _compute_gradient_array_1d(U, dx, bc=bc, upwind=True, time=time)
-    g_c = _compute_gradient_array_1d(U, dx, bc=bc, upwind=False, time=time)
-    lap = _compute_laplacian_1d(U, dx, bc=bc, time=time)
-    forward, backward = g_c + half * lap, g_c - half * lap
-
-    # Scale the tolerance by the CANCELLED magnitudes, not only by the survivor. `forward` and
-    # `backward` recover a small number by cancelling `g_c` against `(dx/2)*lap`, so the
-    # reconstruction's rounding floor is set by those terms, while `g_up` can be orders of
-    # magnitude smaller -- an inhomogeneous wall points both end rows' gradient inward, so a large
-    # ghost never reaches `g_up` at all. Scaling by `g_up` alone made the guard raise on bands it
-    # was about to build exactly right: at Nx=51 with a Dirichlet value of 1e6, mismatch 4.172e-09
-    # against an atol of 1.98e-09, where the cancelled terms are 5e+07 and eps*5e+07 is 1.1e-08.
-    # Found by review. It is a false alarm rather than a missed detection in that regime: where it
-    # tripped, |forward - backward| is 2x the cancelled magnitude while the reconstruction error is
-    # eps times it, so the branch measurement is immune by a factor 1/eps to the very error flagged.
-    scale = max(float(np.abs(g_up).max()), float(np.abs(g_c).max()), float(np.abs(half * lap).max()), 1.0)
-    # Where the two candidates differ in VALUE, the branch is MEASURED: grad_upwind equals exactly
-    # one of them. That is the part that closes #1896 item 3, and it covers every row where the two
-    # rules could have parted -- a rule disagreement that changes nothing about the value changes
-    # nothing about the row either.
-    #
-    # Where they agree in value -- every locally linear stretch, so not a rare coincidence -- the
-    # two ROWS still differ and nothing observable separates them, so `sign(central)` decides. That
-    # is a second statement of `gradient_upwind`'s rule, which is the defect this function exists to
-    # close, and it is tolerable only because of where it sits: it never runs on a row any
-    # measurement could decide, and if the rule ever changes to something that is not one of these
-    # two stencils, the check below raises rather than letting it quietly disagree.
-    #
-    # An earlier version resolved these rows by probing how grad_upwind MOVES under an alternating
-    # direction, on the principle that observing beats restating. Deleted after measurement: over
-    # 27345 such rows (9 grid sizes x 4 spacings x 13 BCs x 36 states) the probe never once decided
-    # a row differently from `sign(central)`, and it was structurally blind at a Robin wall with
-    # alpha == beta, where its separation |a - 3|/dx is identically zero.
-    value_decides = np.abs(forward - backward) > 1e-12 * scale
-    took_backward = np.where(value_decides, np.abs(g_up - backward) <= np.abs(g_up - forward), g_c >= 0)
-    # The third branch (#2308): at a strict discrete local minimum the upwind momentum is 0, not a
-    # one-sided difference, and it stays 0 under any perturbation small enough to keep
-    # backward < 0 < forward. So its row of d(p)/d(U) is exactly zero -- not a Clarke element to
-    # choose, a derivative that exists.
-    at_minimum = (backward < 0) & (forward > 0)
-    # Fail loudly if the identity above does not hold: the mask is then recovered by picking the
-    # closer of two wrong reconstructions, which is silent and produces a plausible Jacobian. A BC
-    # whose Laplacian pads differently from its gradient would land exactly here, and so would a
-    # rule that stops returning 0 at a minimum.
-    picked = np.where(at_minimum, 0.0, np.where(took_backward, backward, forward))
-    if not np.allclose(picked, g_up, rtol=1e-9, atol=1e-9 * scale):
-        raise ValueError(
-            "the upwind gradient is not one of central +/- (dx/2)*laplacian, or 0 at a discrete "
-            f"minimum, so its branch cannot be read off (max mismatch {float(np.abs(picked - g_up).max()):.3e}). "
-            "#1896, #2308."
+        return extract(
+            lambda vec: _compute_gradient_array_1d(vec, dx, bc=bc, upwind=False, time=time), "central gradient operator"
         )
 
-    sign = np.where(took_backward, -1.0, 1.0)
-    live = np.where(at_minimum, 0.0, 1.0)
-    sub = live * (c_sub + sign * half * l_sub)
-    diag = live * (c_diag + sign * half * l_diag)
-    sup = live * (c_sup + sign * half * l_sup)
+    b_sub, b_diag, b_sup, b_extras = extract(
+        lambda vec: _one_sided_differences_1d(vec, dx, bc=bc, time=time)[0], "backward difference operator"
+    )
+    f_sub, f_diag, f_sup, f_extras = extract(
+        lambda vec: _one_sided_differences_1d(vec, dx, bc=bc, time=time)[1], "forward difference operator"
+    )
+    backward, forward = _one_sided_differences_1d(U, dx, bc=bc, time=time)
+    d_backward, d_forward = upwind_momentum_derivatives(backward, forward, numerical_hamiltonian)
+
+    sub = d_backward * b_sub + d_forward * f_sub
+    diag = d_backward * b_diag + d_forward * f_diag
+    sup = d_backward * b_sup + d_forward * f_sup
 
     merged: dict[tuple[int, int], float] = {}
-    for i, j, value in c_extras:
-        merged[(i, j)] = merged.get((i, j), 0.0) + float(live[i]) * value
-    for i, j, value in l_extras:
-        merged[(i, j)] = merged.get((i, j), 0.0) + float(live[i]) * float(sign[i]) * half * value
-    # The wrap entry cancels exactly on the branch that does not reach across it -- row 0's forward
-    # difference reads U[1], not the wrap column -- so drop what cancelled rather than carry a
-    # rounding-scale entry that changes nnz without changing the operator.
+    for weights, extras in ((d_backward, b_extras), (d_forward, f_extras)):
+        for i, j, value in extras:
+            merged[(i, j)] = merged.get((i, j), 0.0) + float(weights[i]) * value
+    # A wrap entry is zero on the branch that does not reach across it -- row 0's forward difference reads U[1], not
+    # the wrap column -- so drop what vanished rather than carry an entry that changes nnz but not the operator.
     band_scale = max(float(np.abs(np.concatenate([sub, diag, sup])).max()), 1.0)
     extras = [(i, j, v) for (i, j), v in sorted(merged.items()) if abs(v) > 1e-12 * band_scale]
 
@@ -1154,6 +1112,7 @@ def compute_hjb_jacobian(
     domain_bounds: np.ndarray | None = None,  # Domain bounds for BC
     current_time: float = 0.0,  # Current time for time-dependent BCs
     cross_density_at_n: np.ndarray | None = None,  # Issue #1071: stacked (K*Nx,) cross-density at this timestep
+    numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,  # Issue #2313
 ) -> sparse.csr_matrix:
     Nx = problem.geometry.get_grid_shape()[0]
     dx = problem.geometry.get_grid_spacing()[0]
@@ -1196,7 +1155,9 @@ def compute_hjb_jacobian(
     def _bc_grad(u_arr: np.ndarray) -> np.ndarray | None:
         """BC-aware gradient of a perturbed state for the FD Jacobian (None => legacy %Nx)."""
         if _jac_bc_aware:
-            return _compute_gradient_array_1d(u_arr, dx, bc=bc, upwind=use_upwind, time=current_time)
+            return _compute_gradient_array_1d(
+                u_arr, dx, bc=bc, upwind=use_upwind, time=current_time, numerical_hamiltonian=numerical_hamiltonian
+            )
         return None
 
     J_D = np.zeros(Nx)
@@ -1207,9 +1168,7 @@ def compute_hjb_jacobian(
     if has_nan_or_inf(U_n_current_newton_iterate, backend):
         return sparse.diags([np.full(Nx, np.nan)], [0], shape=(Nx, Nx)).tocsr()
 
-    # Extracted once. Both blocks below need this operator -- diffusion applies it, advection builds
-    # the one-sided gradients out of it -- and extracting it twice is the same quantity on two paths
-    # for no reason, at roughly half the cost of the whole advection extraction.
+    # Extracted once: the diffusion block applies it, and the FD fallback reads the periodic wrap columns from it.
     _lap_bands = _bc_laplacian_bands(Nx, dx, bc, current_time) if abs(dx) > 1e-14 and Nx > 1 else None
 
     # Time derivative part: d/dU_n_current[j] of (U_n_current[i] - U_{n+1}[i])/dt
@@ -1255,7 +1214,9 @@ def compute_hjb_jacobian(
         )
     if backend is None and H_class is not None and abs(dx) > 1e-14 and Nx > 1:
         # Compute BC-aware gradient for stencil direction
-        precomputed_grad = _compute_gradient_array_1d(U_n_np, dx, bc=bc, upwind=use_upwind, time=current_time)
+        precomputed_grad = _compute_gradient_array_1d(
+            U_n_np, dx, bc=bc, upwind=use_upwind, time=current_time, numerical_hamiltonian=numerical_hamiltonian
+        )
 
         # Build batch arrays for H_class.dp()
         x_grid = problem.geometry.get_spatial_grid()  # (Nx, 1)
@@ -1282,7 +1243,9 @@ def compute_hjb_jacobian(
         # selects on sign(central); they part at a median 10 of 41 nodes on a noisy field (200
         # seeds, range 6 to 16) and at none at all on a monotone one, which is what every test
         # used (#1896 items 3 and 4).
-        _g_sub, _g_diag, _g_sup, _g_extras = _advection_bands(U_n_np, dx, bc, current_time, use_upwind, _lap_bands)
+        _g_sub, _g_diag, _g_sup, _g_extras = _advection_bands(
+            U_n_np, dx, bc, current_time, use_upwind, numerical_hamiltonian
+        )
         J_D += dH_dp * _g_diag
         J_L += dH_dp * _g_sub
         J_U += dH_dp * _g_sup
@@ -1321,6 +1284,7 @@ def compute_hjb_jacobian(
                     clip_limit=P_VALUE_CLIP_LIMIT_FD_JAC,
                     upwind=use_upwind,
                     precomputed_gradient=_bc_grad(U_perturbed),
+                    numerical_hamiltonian=numerical_hamiltonian,
                 )
                 if np.any(np.isnan(list(derivs.values()))):
                     return 0.0
@@ -1409,6 +1373,7 @@ def newton_hjb_step(
     bc_values: dict[str, float] | None = None,  # Issue #574
     source_term: np.ndarray | None = None,  # MMS verification
     cross_density_at_n: np.ndarray | None = None,  # Issue #1071: stacked (K*Nx,) cross-density at this timestep
+    numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,  # Issue #2313
 ) -> tuple[np.ndarray, float, float]:
     dx = problem.geometry.get_grid_spacing()[0]
     dx_norm = dx if abs(dx) > 1e-12 else 1.0
@@ -1431,6 +1396,7 @@ def newton_hjb_step(
         bc_values=bc_values,  # Issue #574
         source_term=source_term,
         cross_density_at_n=cross_density_at_n,  # Issue #1071
+        numerical_hamiltonian=numerical_hamiltonian,
     )
     # Issue #1745: the residual at the CURRENT iterate is already in hand for the linear
     # solve. Returning it costs nothing and gives the caller the quantity that actually says
@@ -1454,6 +1420,7 @@ def newton_hjb_step(
         domain_bounds=domain_bounds,
         current_time=current_time,
         cross_density_at_n=cross_density_at_n,  # Issue #1071
+        numerical_hamiltonian=numerical_hamiltonian,
     )
     if np.any(np.isnan(jacobian_J_U.data)) or np.any(np.isinf(jacobian_J_U.data)):
         return U_n_current_newton_iterate, np.inf, np.inf
@@ -1521,6 +1488,7 @@ def solve_hjb_timestep_newton(
     source_term: np.ndarray | None = None,  # MMS verification
     cross_density_at_n: np.ndarray | None = None,  # Issue #1071: stacked (K*Nx,) cross-density at this timestep
     failures: list[InnerSolveFailure] | None = None,  # Issue #1878: collects this step if it does not converge
+    numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,  # Issue #2313
 ) -> np.ndarray:
     """
     Solve HJB timestep using Newton's method.
@@ -1577,6 +1545,7 @@ def solve_hjb_timestep_newton(
             bc_values=bc_values,  # Issue #574
             source_term=source_term,
             cross_density_at_n=cross_density_at_n,  # Issue #1071
+            numerical_hamiltonian=numerical_hamiltonian,
         )
 
         # `residual_norm` is measured at the iterate ENTERING this step, which is the standard Newton
@@ -1781,6 +1750,7 @@ def solve_hjb_system_backward(
     source_term: Callable | None = None,  # MMS verification: S(t, x_grid) -> values
     cross_density=None,  # Issue #1071: stacked (Nt+1, K*Nx) cross-density trajectory (lock-faithful)
     failures: list[InnerSolveFailure] | None = None,  # Issue #1878: collects every step that does not converge
+    numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,  # Issue #2313
 ) -> np.ndarray:
     """
     Solve HJB system backward in time using Newton's method.
@@ -1891,6 +1861,7 @@ def solve_hjb_system_backward(
             source_term=source_at_n,
             cross_density_at_n=cross_density_at_n,  # Issue #1071
             failures=failures,
+            numerical_hamiltonian=numerical_hamiltonian,
         )
         backend_aware_assign(U_solution_this_picard_iter, (n_idx_hjb, slice(None)), U_new_n, backend)
 
