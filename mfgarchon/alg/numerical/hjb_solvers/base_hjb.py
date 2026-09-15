@@ -1548,6 +1548,10 @@ def newton_hjb_step(
 
     max_delta_u_norm = 1e2
     current_delta_u_norm = np.linalg.norm(delta_U) * np.sqrt(dx_norm)
+    if not np.isfinite(current_delta_u_norm):
+        # A finite step whose norm overflows: clipping would scale it by 1e2/inf = 0 and report a zero step
+        # norm, so the caller would re-measure the same point until its budget ran out (#1878).
+        return U_n_current_newton_iterate, np.inf, residual_norm
     if current_delta_u_norm > max_delta_u_norm and current_delta_u_norm > 1e-9:
         delta_U = delta_U * (max_delta_u_norm / current_delta_u_norm)
         l2_error_of_step = np.linalg.norm(delta_U) * np.sqrt(dx_norm)
@@ -1648,6 +1652,11 @@ def solve_hjb_timestep_newton(
             converged = True
             break
 
+        # The budget is spent: this pass only measured the iterate being returned, so what the step computed
+        # from it -- finite or not -- is not why the solve stops.
+        if iiter == max_newton_iterations:
+            break
+
         if has_nan_or_inf(U_n_next_newton_iterate, backend):
             stop_reason = "the Newton step produced a non-finite iterate"
             break
@@ -1663,16 +1672,13 @@ def solve_hjb_timestep_newton(
         # residual. On this monotone system Newton's first step routinely RAISES the residual and the
         # iterates converge after it: on the 1-D smoke fixture at 6c0610d2, |r| went 1.1e+01, 2.4e+02,
         # 5.7e+01, ... 1.1e-11 in 12 steps at t_idx 9, with an assembled Jacobian equal to the central
-        # difference of the residual (step 1e-7) to 7.5e-09. The guard read the overshoot as failure and returned the
-        # iterate after it -- worse than the start -- at three of ten steps, and Picard certified a fixed
-        # point 2.57 away in U from the one the same scheme reaches without it. Returning the best-seen
+        # difference of the residual (step 1e-7) to 7.5e-09. The guard read the overshoot as failure and
+        # returned the iterate after it -- worse than the start -- at three of ten steps, and Picard
+        # certified a fixed point 2.57 away in U from the one the same scheme reaches without it. Returning the best-seen
         # iterate instead was also tried and reverted (#1745): on the multi-population fixture it handed
         # back the input unchanged, an identity map that erased the coupling
         # test_hjb_sees_cross_density_bug_1157 detects. A solve that does not converge within its budget
         # now says so, and the coupled result does not report convergence over it.
-        if iiter == max_newton_iterations:
-            break
-
         U_n_current_newton_iterate = U_n_next_newton_iterate
         steps += 1
 

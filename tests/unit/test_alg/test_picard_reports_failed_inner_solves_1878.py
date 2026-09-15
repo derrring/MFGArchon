@@ -184,10 +184,19 @@ class _ReportsOnSomeSolves(HJBFDMSolver):
 
 
 @pytest.mark.parametrize(
-    ("label", "rule"), [("first_solve_only", lambda call: call == 0), ("odd_solves", lambda call: call % 2 == 1)]
+    ("label", "rule"),
+    [
+        ("first_solve_only", lambda call: call == 0),
+        ("odd_solves", lambda call: call % 2 == 1),
+        ("every_solve", lambda call: True),
+    ],
 )
 def test_the_verdict_reads_the_sweep_that_met_the_criteria(label, rule):
-    """Not the first sweep's report, and not the previous sweep's: the report of the sweep that stopped the loop."""
+    """The report of the sweep that stopped the loop decides: not the first sweep's, not the previous sweep's.
+
+    ``first_solve_only`` and ``odd_solves`` flag an earlier sweep and must not refuse (at this tolerance the
+    stopping solve has an even index); ``every_solve`` flags the stopping sweep too and must refuse.
+    """
     problem = _smoke_problem()
     hjb = _ReportsOnSomeSolves(problem, rule)
     with warnings.catch_warnings():

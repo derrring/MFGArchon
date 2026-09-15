@@ -214,3 +214,41 @@ def test_a_step_that_could_not_be_computed_stops_the_solve():
     assert [(f.steps, f.residual) for f in failures] == [(1, 8.0)], failures
     assert "could not be computed" in failures[0].reason, failures[0].reason
     np.testing.assert_array_equal(returned, np.full(21, 1.0))
+
+
+def test_the_budget_decides_the_stop_on_its_measuring_pass():
+    """Budget 1 whose measuring pass cannot compute a step: the solve stopped on its budget, not on that step."""
+    _returned, _messages, failures = _drive([(_advance, 0.1, 10.0), (lambda U: U, np.inf, 7.0)], budget=1)
+    assert [(f.steps, f.residual, f.reason) for f in failures] == [(1, 7.0, "iteration budget exhausted")], failures
+
+
+def test_a_clipped_step_is_a_step_and_a_zero_budget_is_still_reported():
+    """A step clipped to norm 1e2 is finite and the solve goes on; a budget of 0 measures and reports its start."""
+    clipped, _messages, clipped_failures = _drive([(_advance, 1e2, r) for r in (10.0, 9.0, 8.0, 7.0)], budget=3)
+    assert [(f.steps, f.residual) for f in clipped_failures] == [(3, 7.0)], clipped_failures
+    np.testing.assert_array_equal(clipped, np.full(21, 3.0))
+    start, _messages, zero_failures = _drive([(_advance, 0.1, 8.0)], budget=0)
+    assert [(f.steps, f.residual) for f in zero_failures] == [(0, 8.0)], zero_failures
+    np.testing.assert_array_equal(start, np.zeros(21))
+
+
+def test_a_step_whose_norm_overflows_is_not_computed(monkeypatch):
+    """A finite step too large for its norm used to be clipped by 1e2/inf = 0 and reported as a zero step."""
+    import mfgarchon.alg.numerical.hjb_solvers.base_hjb as bh
+
+    monkeypatch.setattr(bh.sparse.linalg, "spsolve", lambda J, b: np.full(np.shape(b), 1e200))
+    failures = []
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        returned = bh.solve_hjb_timestep_newton(
+            U_n_plus_1_from_hjb_step=np.zeros(21),
+            U_k_n_from_prev_picard=np.zeros(21),
+            M_density_at_n_plus_1=np.ones(21),
+            problem=_stiff_problem(),
+            t_idx_n=0,
+            max_newton_iterations=30,
+            newton_tolerance=1e-12,
+            failures=failures,
+        )
+    assert [(f.steps, f.reason) for f in failures] == [(0, "the Newton step could not be computed")], failures
+    np.testing.assert_array_equal(returned, np.zeros(21))
