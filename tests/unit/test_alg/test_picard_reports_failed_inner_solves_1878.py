@@ -113,3 +113,26 @@ def test_a_converged_result_satisfies_the_discrete_hjb_at_every_step():
     assert residuals.max() < 1e-4, (
         f"the returned arrays leave discrete HJB residuals {np.array2string(residuals, precision=2)}"
     )
+
+
+def test_the_nd_path_records_its_non_converged_steps_too():
+    """A 2-D value-iteration solve with a one-iteration budget records every time step; a converging one records none."""
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[9, 7], boundary_conditions=no_flux_bc(dimension=2))
+    hamiltonian = SeparableHamiltonian(
+        control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        problem = MFGProblem(
+            model=Model(hamiltonian=hamiltonian, sigma=0.3),
+            domain=grid,
+            conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.1),
+            Nt=4,
+        )
+        recorded = {}
+        for label, options in (("starved", {"max_newton_iterations": 1, "newton_tolerance": 1e-300}), ("default", {})):
+            solver = HJBFDMSolver(problem, solver_type="fixed_point", **options)
+            solver.solve_hjb_system(np.ones((5, 9, 7)), np.zeros((9, 7)), np.zeros((5, 9, 7)))
+            recorded[label] = solver.inner_solve_failures()
+    assert sorted(failure.t_idx for failure in recorded["starved"]) == [0, 1, 2, 3], recorded["starved"]
+    assert recorded["default"] == (), recorded["default"]
