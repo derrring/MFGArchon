@@ -93,7 +93,7 @@ class PartialDerivOperator(LinearOperator):
         direction: int,
         spacings: Sequence[float],
         field_shape: tuple[int, ...],
-        scheme: Literal["central", "upwind", "one_sided", "weno5"] = "central",
+        scheme: Literal["central", "upwind", "backward", "forward", "one_sided", "weno5"] = "central",
         bc: BoundaryConditions | None = None,
         time: float = 0.0,
     ):
@@ -167,7 +167,9 @@ class PartialDerivOperator(LinearOperator):
         # Standard schemes: use stencils module directly (Issue #625)
         from mfgarchon.operators.stencils.finite_difference import (
             fix_boundaries_one_sided,
+            gradient_backward,
             gradient_central,
+            gradient_forward,
             gradient_upwind,
         )
 
@@ -187,6 +189,10 @@ class PartialDerivOperator(LinearOperator):
             du_dxi = gradient_central(u_work, axis=axis, h=h)
         elif self.scheme == "upwind":
             du_dxi = gradient_upwind(u_work, axis=axis, h=h)
+        elif self.scheme == "backward":
+            du_dxi = gradient_backward(u_work, axis=axis, h=h)
+        elif self.scheme == "forward":
+            du_dxi = gradient_forward(u_work, axis=axis, h=h)
         elif self.scheme == "one_sided":
             # Central interior, one-sided at boundaries
             du_dxi = gradient_central(u_work, axis=axis, h=h)
@@ -281,7 +287,7 @@ class GradientOperator:
         self,
         spacings: Sequence[float],
         field_shape: tuple[int, ...],
-        scheme: Literal["central", "upwind", "one_sided", "weno5"] = "central",
+        scheme: Literal["central", "upwind", "backward", "forward", "one_sided", "weno5"] = "central",
         bc: BoundaryConditions | None = None,
         time: float = 0.0,
     ):

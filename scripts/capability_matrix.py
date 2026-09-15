@@ -579,7 +579,9 @@ def _mass_conservation_2d_cell(scheme_name: str):
       FVM_MUSCL's r_fp is 0.495, just under its 0.5 gate.
     - `drift_coefficient_2x` passes all four. It moves the density by up to 0.18 in the FDM and SL cells
       and does not reach FVM_MUSCL.
-    - The pre-#2308 upwind rule passes all four, moving the density by at most 7.1e-3 (FVM_MUSCL).
+    - The pre-#2308 upwind rule passed all four, moving the density by at most 7.1e-3 (FVM_MUSCL), measured while
+      Rouy-Tourin was the HJB default. The Engquist-Osher default (#2313) does not read that rule; on these cells the
+      two presets give densities within 3.3e-15 of each other.
 
     **Independence, per axis.**
     - The HJB residual shares no code with any scheme. The HJB-FDM cells pair the coupling at M^n, and
