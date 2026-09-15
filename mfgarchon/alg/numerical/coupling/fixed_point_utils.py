@@ -274,7 +274,9 @@ def refuse_convergence_over_failed_inner_solves(
     )
 
 
-def refuse_convergence_over_invalid_output(converged: bool, reason: str, validation: ValidationResult) -> tuple[bool, str]:
+def refuse_convergence_over_invalid_output(
+    converged: bool, reason: str, validation: ValidationResult
+) -> tuple[bool, str]:
     """A fixed point whose returned solution fails the library's own output validation is not converged (#2323).
 
     `validate_solver_output` already judges a non-finite array or a density below its tolerance as
