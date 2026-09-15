@@ -10,8 +10,9 @@ no step reaches the gate with a negative value. On a periodic grid that repeats 
 node to equal node 0, which the solver does not enforce (#2336); every fixture here is periodic at the seam.
 
 The fixtures cover the rule's branches: no-flux walls with half control volumes in 1-D and 2-D, the sum over axes, a
-periodic wrap and its repeated cell, MUSCL's halved target, the rounding up of the sub-step count, and outflow rather
-than inflow (review of #2332: each of those branches had a mutant that no test failed).
+periodic wrap and its repeated cell, outflow rather than inflow, and, through a sweep of constant speeds, MUSCL's
+halved target and the rounding up of the sub-step count. The review of #2332 found mutants of the last five branches
+that no test failed.
 
 **The gate.** The solver warned at an absolute ``min < -1e-12`` and returned the negative density, so whether a
 coupled result read as valid depended on the density's units. It now goes through `clip_nonnegative_or_raise`
@@ -57,20 +58,14 @@ def _problem(dimension: int, n: int, periodic: bool = False) -> MFGProblem:
         )
 
 
-_UNIFORM = "uniform"
-_SIN_CUBED = "max(sin 2 pi x, 0)^3"
-
-
 @pytest.mark.parametrize(
-    ("dimension", "n", "periodic", "reconstruction", "initial", "field"),
+    ("dimension", "n", "periodic", "reconstruction", "field"),
     [
-        (2, 17, False, "upwind", _UNIFORM, ("potential", lambda x, y: np.sin(2 * np.pi * x) + np.sin(2 * np.pi * y))),
-        (2, 17, False, "muscl", _UNIFORM, ("potential", lambda x, y: x + y)),
-        (1, 41, False, "upwind", _UNIFORM, ("potential", lambda x: x)),
-        (1, 41, False, "upwind", _UNIFORM, ("potential", lambda x: 2 * (x - 0.5) ** 2)),
-        (1, 41, True, "upwind", _UNIFORM, ("potential", lambda x: -np.abs(np.sin(np.pi * x)))),
-        (1, 41, True, "muscl", _SIN_CUBED, ("drift", lambda x: np.full_like(x, 0.79))),
-        (1, 41, True, "upwind", _SIN_CUBED, ("drift", lambda x: np.full_like(x, 0.608))),
+        (2, 17, False, "upwind", ("potential", lambda x, y: np.sin(2 * np.pi * x) + np.sin(2 * np.pi * y))),
+        (2, 17, False, "muscl", ("potential", lambda x, y: x + y)),
+        (1, 41, False, "upwind", ("potential", lambda x: x)),
+        (1, 41, False, "upwind", ("potential", lambda x: 2 * (x - 0.5) ** 2)),
+        (1, 41, True, "upwind", ("potential", lambda x: -np.abs(np.sin(np.pi * x)))),
     ],
     ids=[
         "2d_upwind_equal_axis_speeds",
@@ -78,18 +73,13 @@ _SIN_CUBED = "max(sin 2 pi x, 0)^3"
         "1d_upwind_wall",
         "1d_upwind_outflow_not_inflow",
         "1d_periodic_wrap",
-        "1d_muscl_halved_target",
-        "1d_substep_count_rounds_up",
     ],
 )
-def test_advection_does_not_drive_the_density_negative(
-    monkeypatch, dimension, n, periodic, reconstruction, initial, field
-):
+def test_advection_does_not_drive_the_density_negative(monkeypatch, dimension, n, periodic, reconstruction, field):
     """The first three went to min -6.10e+01, -2.80e-01 and -3.70e-02 at their first step at b17a2881.
 
-    The last four each go negative under one mutant of the rule (measured at e63ec5d8, minimum over the solve before the
-    gate): inflow summed instead of outflow -5.5e-02; wrap faces ignored or `spans` dropped -1.1e-02; MUSCL at the
-    upwind target 0.8 -1.0e-01; the sub-step count rounded down -1.5e-02.
+    The last two each go negative under one mutant of the rule (measured at 8a618465): the rate summing inflow instead
+    of outflow, and the rate ignoring the periodic wrap faces or dropping `spans`.
     """
     reached_the_gate = []
     gate = fp_fvm.clip_nonnegative_or_raise
@@ -102,10 +92,7 @@ def test_advection_does_not_drive_the_density_negative(
     problem = _problem(dimension, n, periodic)
     grid = problem.geometry
     coordinates = np.meshgrid(*grid.coordinates, indexing="ij")
-    if initial == _UNIFORM:
-        m0 = np.ones_like(coordinates[0])
-    else:
-        m0 = np.maximum(np.sin(2 * np.pi * coordinates[0]), 0.0) ** 3
+    m0 = np.ones_like(coordinates[0])
     m0 = m0 / float(grid.integrate(m0))
     kind, values = field
     stacked = np.stack([values(*coordinates)] * 11)
@@ -113,6 +100,35 @@ def test_advection_does_not_drive_the_density_negative(
         m0, **({"potential_field": stacked} if kind == "potential" else {"drift_field": stacked})
     )
     assert len(reached_the_gate) == 10
+    assert min(reached_the_gate) >= 0.0, f"a step reached the gate at min {min(reached_the_gate):.3e} (#2323)"
+
+
+@pytest.mark.parametrize("reconstruction", ["muscl", "upwind"])
+def test_no_constant_speed_drives_a_periodic_density_negative(monkeypatch, reconstruction):
+    """Speeds from 0.3 to 3.2 times h/dt, so the sweep does not depend on how the solver splits a time step.
+
+    Measured at 8a618465 for n in 39, 41, 43 and Nt in 9, 10, 11: with MUSCL's target raised to upwind's 0.8, the MUSCL
+    sweep goes negative in all nine settings; with the sub-step count rounded down, both sweeps do.
+    """
+    reached_the_gate = []
+    gate = fp_fvm.clip_nonnegative_or_raise
+
+    def recording_gate(density, **kwargs):
+        reached_the_gate.append(float(np.min(density)))
+        return gate(density, **kwargs)
+
+    monkeypatch.setattr(fp_fvm, "clip_nonnegative_or_raise", recording_gate)
+    problem = _problem(1, 41, periodic=True)
+    x = problem.geometry.coordinates[0]
+    m0 = np.maximum(np.sin(2 * np.pi * x), 0.0) ** 3
+    m0 = m0 / float(problem.geometry.integrate(m0))
+    h = float(problem.geometry.get_grid_spacing()[0])
+    for fraction in (0.3, 0.5, 0.7, 0.79, 0.9, 1.2, 1.58, 2.4, 3.2):
+        speed = fraction * h / problem.dt
+        FPFVMSolver(problem, reconstruction=reconstruction).solve_fp_system(
+            m0, drift_field=np.full((11, x.size), speed)
+        )
+    assert len(reached_the_gate) == 90
     assert min(reached_the_gate) >= 0.0, f"a step reached the gate at min {min(reached_the_gate):.3e} (#2323)"
 
 

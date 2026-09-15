@@ -2,7 +2,7 @@
   - **Scheme:** each explicit advection sub-step was sized from the largest single-axis speed over the smallest spacing. That missed the sum over axes and the half control volume a no-flux wall node owns. It is now a fraction of the finite-volume positivity bound (`advective_outflow_rate`): 0.8 of it for upwind, 0.4 for MUSCL.
     - **Before this change:** the first step reached min density -6.10e+01 for upwind on a 2-D no-flux flow with equal axis speeds, and -2.80e-01 for MUSCL on a diagonal potential.
     - **Now:** 22 FP-only fixtures stay non-negative before any clip, against 11 of 22 before. Those solves take up to about 4x longer.
-    - **Exception:** on a periodic grid that repeats its endpoint, an initial density whose repeated node differs from node 0 still goes negative, and the gate stops it (#2336).
+    - **Exception:** on a periodic grid that repeats its endpoint, an input whose repeated node differs from node 0 can still drive the density negative. That input can be the initial density, the velocity field or a source term. The gate stops it above 1e-8 of the mass and clips it below (#2336).
     - **Coupled:** #2323's 2-D FVM_MUSCL fixture now has no negative step, and a wider initial density that used to abort converges.
   - **Gate:** each time step goes through `clip_nonnegative_or_raise` (#1671), weighted by the grid's control volumes. It used to warn at an absolute min < -1e-12, so whether a result passed output validation depended on the density's units. Below 1e-8 of the mass present it clips; above that it raises. A sink `source_term` that empties cells now raises.
   - **Gate message:** it now prints the exact fraction and the threshold beside the percentage, which read "0.000%" for any fraction below 5e-6.
