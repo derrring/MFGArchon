@@ -1289,112 +1289,54 @@ def compute_hjb_jacobian(
         # Row-index dH_dp for the same reason the diffusion block row-indexes sigma (#1894 B1).
         J_extras += [(i, j, float(dH_dp[i]) * v) for i, j, v in _g_extras]
     else:
-        # Fallback: per-point numerical FD Jacobian for backend or no H_class
+        # Fallback: per-point numerical FD Jacobian for backend or no H_class.
+        #
+        # Which columns row i depends on is read from the Laplacian the residual applies -- its bands,
+        # plus its `extras` for a periodic wrap -- not restated as `(i - 1) % Nx` and `(i + 1) % Nx`. On
+        # the endpoint-inclusive periodic grid a TensorProductGrid builds, node Nx-1 is node 0, so row 0's
+        # ghost is U[Nx-2] and row Nx-1's is U[1]. The `% Nx` neighbours name columns Nx-1 and 0 instead,
+        # whose entries the band assembly below drops, so the Hamiltonian half of both wrap entries was
+        # never computed: J[0, Nx-2] = -18 against a derivative of the residual of -155.7 on the #1822
+        # fixture at 6c0610d2, and Newton stalled at t_idx 9 (#1834). On the NumPy path the gradient operator
+        # the residual applies has the same neighbour structure as this Laplacian, which is what makes
+        # reading one off the other valid. Under torch with a BC the residual still uses the legacy `% Nx`
+        # roll while this reads the BC-aware bands -- a mismatch that predates #1834 and is not closed here.
+        wrap_columns: dict[int, list[int]] = {}
+        if _lap_bands is not None:
+            for _row, _col, _ in _lap_bands[3]:
+                wrap_columns.setdefault(_row, []).append(_col)
+
+        def _hamiltonian_derivative(i: int, j: int) -> float:
+            """Central FD of row i's Hamiltonian in U[j]; 0.0 where either side is not finite."""
+            values = []
+            for sign in (1.0, -1.0):
+                U_perturbed = U_n_np.copy()
+                U_perturbed[j] += sign * eps
+                derivs = _calculate_derivatives(
+                    U_perturbed,
+                    i,
+                    dx,
+                    Nx,
+                    clip=True,
+                    clip_limit=P_VALUE_CLIP_LIMIT_FD_JAC,
+                    upwind=use_upwind,
+                    precomputed_gradient=_bc_grad(U_perturbed),
+                )
+                if np.any(np.isnan(list(derivs.values()))):
+                    return 0.0
+                values.append(problem.H(i, M_density_at_n_plus_1[i], derivs=derivs, t_idx=t_idx_n))
+            if np.any(~np.isfinite(values)):
+                return 0.0
+            return float((values[0] - values[1]) / (2 * eps))
+
         for i in range(Nx):
-            U_perturbed_p_i = U_n_np.copy()
-            U_perturbed_p_i[i] += eps
-            U_perturbed_m_i = U_n_np.copy()
-            U_perturbed_m_i[i] -= eps
-
-            derivs_p_i = _calculate_derivatives(
-                U_perturbed_p_i,
-                i,
-                dx,
-                Nx,
-                clip=True,
-                clip_limit=P_VALUE_CLIP_LIMIT_FD_JAC,
-                upwind=use_upwind,
-                precomputed_gradient=_bc_grad(U_perturbed_p_i),
-            )
-            derivs_m_i = _calculate_derivatives(
-                U_perturbed_m_i,
-                i,
-                dx,
-                Nx,
-                clip=True,
-                clip_limit=P_VALUE_CLIP_LIMIT_FD_JAC,
-                upwind=use_upwind,
-                precomputed_gradient=_bc_grad(U_perturbed_m_i),
-            )
-
-            H_p_i = np.nan
-            H_m_i = np.nan
-            if not (np.any(np.isnan(list(derivs_p_i.values())))):
-                H_p_i = problem.H(i, M_density_at_n_plus_1[i], derivs=derivs_p_i, t_idx=t_idx_n)
-            if not (np.any(np.isnan(list(derivs_m_i.values())))):
-                H_m_i = problem.H(i, M_density_at_n_plus_1[i], derivs=derivs_m_i, t_idx=t_idx_n)
-
-            if not (np.isnan(H_p_i) or np.isnan(H_m_i) or np.isinf(H_p_i) or np.isinf(H_m_i)):
-                J_D[i] += (H_p_i - H_m_i) / (2 * eps)
-
+            J_D[i] += _hamiltonian_derivative(i, i)
             if Nx > 1:
-                im1 = (i - 1 + Nx) % Nx
-                U_perturbed_p_im1 = U_n_np.copy()
-                U_perturbed_p_im1[im1] += eps
-                U_perturbed_m_im1 = U_n_np.copy()
-                U_perturbed_m_im1[im1] -= eps
-                derivs_p_im1 = _calculate_derivatives(
-                    U_perturbed_p_im1,
-                    i,
-                    dx,
-                    Nx,
-                    clip=True,
-                    clip_limit=P_VALUE_CLIP_LIMIT_FD_JAC,
-                    upwind=use_upwind,
-                    precomputed_gradient=_bc_grad(U_perturbed_p_im1),
-                )
-                derivs_m_im1 = _calculate_derivatives(
-                    U_perturbed_m_im1,
-                    i,
-                    dx,
-                    Nx,
-                    clip=True,
-                    clip_limit=P_VALUE_CLIP_LIMIT_FD_JAC,
-                    upwind=use_upwind,
-                    precomputed_gradient=_bc_grad(U_perturbed_m_im1),
-                )
-                H_p_im1 = np.nan
-                H_m_im1 = np.nan
-                if not (np.any(np.isnan(list(derivs_p_im1.values())))):
-                    H_p_im1 = problem.H(i, M_density_at_n_plus_1[i], derivs=derivs_p_im1, t_idx=t_idx_n)
-                if not (np.any(np.isnan(list(derivs_m_im1.values())))):
-                    H_m_im1 = problem.H(i, M_density_at_n_plus_1[i], derivs=derivs_m_im1, t_idx=t_idx_n)
-                if not (np.isnan(H_p_im1) or np.isnan(H_m_im1) or np.isinf(H_p_im1) or np.isinf(H_m_im1)):
-                    J_L[i] += (H_p_im1 - H_m_im1) / (2 * eps)
-
-                ip1 = (i + 1) % Nx
-                U_perturbed_p_ip1 = U_n_np.copy()
-                U_perturbed_p_ip1[ip1] += eps
-                U_perturbed_m_ip1 = U_n_np.copy()
-                U_perturbed_m_ip1[ip1] -= eps
-                derivs_p_ip1 = _calculate_derivatives(
-                    U_perturbed_p_ip1,
-                    i,
-                    dx,
-                    Nx,
-                    clip=True,
-                    clip_limit=P_VALUE_CLIP_LIMIT_FD_JAC,
-                    upwind=use_upwind,
-                    precomputed_gradient=_bc_grad(U_perturbed_p_ip1),
-                )
-                derivs_m_ip1 = _calculate_derivatives(
-                    U_perturbed_m_ip1,
-                    i,
-                    dx,
-                    Nx,
-                    clip=True,
-                    clip_limit=P_VALUE_CLIP_LIMIT_FD_JAC,
-                    upwind=use_upwind,
-                    precomputed_gradient=_bc_grad(U_perturbed_m_ip1),
-                )
-                H_p_ip1 = np.nan
-                H_m_ip1 = np.nan
-                if not (np.any(np.isnan(list(derivs_p_ip1.values())))):
-                    H_p_ip1 = problem.H(i, M_density_at_n_plus_1[i], derivs=derivs_p_ip1, t_idx=t_idx_n)
-                if not (np.any(np.isnan(list(derivs_m_ip1.values())))):
-                    H_m_ip1 = problem.H(i, M_density_at_n_plus_1[i], derivs=derivs_m_ip1, t_idx=t_idx_n)
-                if not (np.isnan(H_p_ip1) or np.isnan(H_m_ip1) or np.isinf(H_p_ip1) or np.isinf(H_m_ip1)):
-                    J_U[i] += (H_p_ip1 - H_m_ip1) / (2 * eps)
+                if i > 0:
+                    J_L[i] += _hamiltonian_derivative(i, i - 1)
+                if i < Nx - 1:
+                    J_U[i] += _hamiltonian_derivative(i, i + 1)
+                J_extras += [(i, j, _hamiltonian_derivative(i, j)) for j in wrap_columns.get(i, ())]
 
     # Assemble sparse Jacobian
     # The original notebook used rolled J_L and J_U for its spdiags call:
