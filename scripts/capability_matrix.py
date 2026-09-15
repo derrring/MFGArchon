@@ -189,7 +189,7 @@ def _smoke_problem_2d():
     steps keep it near a second.~~ [CORRECTED 2026-09-15, #1745] It is not the 1-D fixture in 2-D.
     Five things differ: the Gaussian is ``exp(-30 |x - 1/2|^2)`` against ``exp(-10 (x - 1/2)^2)``, T is 0.2 against
     1.0, Nt is 6 against 10, sigma is 0.4 against 0.0, and the grid is 11x11 against 21. Both
-    initial peaks are 1.0. A 40-sweep solve takes seconds, not one.
+    initial peaks are 1.0. Each 2-D cell converges in 18 sweeps.
     """
     from mfgarchon import MFGProblem
     from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
