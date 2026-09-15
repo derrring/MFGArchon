@@ -19,6 +19,7 @@ logger = get_logger(__name__)
 if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
     from mfgarchon.utils.solver_result import SolverResult
+    from mfgarchon.utils.validation.runtime import ValidationResult
 
 
 def fp_solver_sig_params(fp_solver: object) -> set[str] | None:
@@ -270,6 +271,25 @@ def refuse_convergence_over_failed_inner_solves(
         f"HJB time step(s) of that sweep did not converge (t_idx {steps}; worst residual {worst.residual:.3e} "
         f"against {worst.tolerance:.3e}: {worst.reason}). The fixed point is not a solution of the "
         f"discrete MFG system (#1878)."
+    )
+
+
+def refuse_convergence_over_invalid_output(converged: bool, reason: str, validation: ValidationResult) -> tuple[bool, str]:
+    """A fixed point whose returned solution fails the library's own output validation is not converged (#2323).
+
+    `validate_solver_output` already judges a non-finite array or a density below its tolerance as
+    invalid, and the iterator logged that at WARNING while still reporting convergence: at 5b97f465 a
+    2-D FVM_MUSCL solve returned ``converged=True`` with density -3.603e-10 at 20 nodes. Under the
+    ruling recorded on #1878 -- a coupled result reports what its parts failed -- the verdict stays False
+    and the reason carries the issues. ``validation`` is that function's result; only one that says
+    ``is_valid is False`` refuses.
+    """
+    if not converged or validation.is_valid:
+        return converged, reason
+    issues = "; ".join(str(issue) for issue in validation.issues)
+    return False, (
+        f"output_invalid: the Picard criteria were met ({reason}), but the returned solution fails output "
+        f"validation: {issues} (#2323)."
     )
 
 

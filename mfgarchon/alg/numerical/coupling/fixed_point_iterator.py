@@ -30,6 +30,7 @@ from .fixed_point_utils import (
     preserve_terminal_condition,
     read_inner_solve_failures,
     refuse_convergence_over_failed_inner_solves,
+    refuse_convergence_over_invalid_output,
     resolve_fp_drift_kwargs,
 )
 
@@ -913,6 +914,10 @@ class FixedPointIterator(BaseCouplingIterator):
                 "Solver output validation failed: %s",
                 "; ".join(str(i) for i in output_validation.issues),
             )
+        converged, convergence_reason = refuse_convergence_over_invalid_output(
+            converged, convergence_reason, output_validation
+        )
+        metadata["convergence_reason"] = convergence_reason
 
         # Issue #1672: the field defaulted to 0.0 and nothing on this path wrote it, so every
         # coupled solve reported perfect mass conservation -- including the FDM_CENTERED case whose
