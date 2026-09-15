@@ -589,24 +589,31 @@ def compute_fp_velocity_field(
             grad_d = np.gradient(U, grid_spacing[d], axis=d + 1)
             grad_components.append(grad_d)
 
+        # Issue #2330: `HamiltonianBase` documents a point ``(d,)`` or a batch ``(N, d)``, with ``m`` one value per
+        # point. This called it on grid-shaped ``(nx, ny, d)`` arrays: `CongestionHamiltonian` and a user subclass
+        # written to the documented shapes raised, and a return that was not ``(nx, ny, d)`` was broadcast into
+        # every velocity component. So call on the flattened batch, and refuse a return of any other shape. A
+        # multi-population cross density is passed through unchanged, as on the 1-D path: the Hamiltonian slices it.
         coords = [np.linspace(bounds[0][d], bounds[1][d], spatial_shape[d]) for d in range(ndim)]
-        mesh = np.meshgrid(*coords, indexing="ij")
-        x_grid = np.stack(mesh, axis=-1)
+        x_points = np.stack(np.meshgrid(*coords, indexing="ij"), axis=-1).reshape(-1, ndim)
+        n_points = x_points.shape[0]
 
         alpha_field = np.zeros((Nt, ndim, *spatial_shape))
         for n in range(Nt):
-            p_n = np.stack([grad_components[d][n] for d in range(ndim)], axis=-1)
+            p_points = np.stack([grad_components[d][n] for d in range(ndim)], axis=-1).reshape(n_points, ndim)
             # Issue #1071: stacked cross-density at this integer timestep for multi-pop (see 1D path).
             if cross_density is not None:
-                m_n = cross_density[n]
+                m_points = cross_density[n]
             else:
-                m_n = M[n] if n < M.shape[0] else M[-1]
-            alpha_n = H_class.optimal_control(x_grid, m_n, p_n, t=n * dt)
-            if alpha_n.ndim == ndim + 1:
-                alpha_field[n] = np.moveaxis(alpha_n, -1, 0)
-            else:
-                for d in range(ndim):
-                    alpha_field[n, d] = alpha_n
+                m_points = (M[n] if n < M.shape[0] else M[-1]).reshape(n_points)
+            alpha_n = np.asarray(H_class.optimal_control(x_points, m_points, p_points, t=n * dt))
+            if alpha_n.shape != (n_points, ndim):
+                raise ValueError(
+                    f"{type(H_class).__name__}.optimal_control returned shape {alpha_n.shape} for a batch of "
+                    f"{n_points} points in {ndim}-D; it must return one control vector per point, shape "
+                    f"({n_points}, {ndim}) (#2330)."
+                )
+            alpha_field[n] = np.moveaxis(alpha_n.reshape(*spatial_shape, ndim), -1, 0)
 
         return alpha_field
 
