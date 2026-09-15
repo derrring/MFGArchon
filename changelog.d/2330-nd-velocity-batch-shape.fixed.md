@@ -1,4 +1,4 @@
 - **The nD FP velocity calls `optimal_control` on `(N, d)` batches and refuses a wrong-shaped return** (Issue #2330).
-  - **Before:** `compute_fp_velocity_field` passed grid-shaped `(nx, ny, d)` arrays, outside the `(d,)` / `(N, d)` contract `HamiltonianBase` documents. `CongestionHamiltonian` and user subclasses written to that contract raised. A return of any other shape was broadcast into every velocity component, giving a wrong drift with no error.
+  - **Before:** `compute_fp_velocity_field` passed grid-shaped `(nx, ny, d)` arrays, outside the `(d,)` / `(N, d)` contract `HamiltonianBase` documents. `CongestionHamiltonian` and user subclasses written to that contract raised. A return that broadcast against the grid was spread into every velocity component, giving a wrong drift with no error.
   - **After:** positions, momenta and the own density are flattened to one batch and the result reshaped back. A return that is not `(N, d)` raises, naming the Hamiltonian and the shape.
-  - **Unchanged:** a multi-population cross density is still passed through for the Hamiltonian to slice, as on the 1-D path.
+  - **Refused in nD:** a multi-population cross density with more than one value per node. No grid Hamiltonian slices the stack, so it would be read silently as the own density. No coupling loop reaches this in nD today.
