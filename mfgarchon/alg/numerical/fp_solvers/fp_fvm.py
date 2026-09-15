@@ -34,7 +34,7 @@ Reconstruction (``reconstruction`` ctor arg):
 
 - ``"upwind"`` -- 1st-order upwind face value ``m_{i+1/2}`` (robust, ``O(dx)``).
 - ``"muscl"`` [default] -- 2nd-order MUSCL with a ``minmod`` slope limiter
-  (TVD -> positivity, ``O(dx^2)`` in smooth regions).
+  (``O(dx^2)`` in smooth regions). The limiter alone does not make it positive: the sub-step bound below does.
 
 Interface velocity source (one of, mirroring the divergence-upwind FDM options):
 
@@ -43,9 +43,14 @@ Interface velocity source (one of, mirroring the divergence-upwind FDM options):
 - ``drift_field`` ``alpha`` (the SDE/optimal-control velocity) -> averaged to the face,
   ``alpha_{i+1/2} = 1/2 (alpha_i + alpha_{i+1})``.
 
-Time stepping: IMEX by Strang operator splitting -- explicit (CFL-bounded, sub-cycled)
-MUSCL/upwind advection on each half step, implicit (backward-Euler) central diffusion in the
-middle. Both sub-operators are individually mass-conserving (advection telescopes; the implicit
+Time stepping: IMEX by Strang operator splitting -- explicit (sub-cycled) MUSCL/upwind advection on
+each half step, implicit (backward-Euler) central diffusion in the middle. Each advection sub-step is a
+fraction of the forward-Euler positivity bound ``dt * rate_i <= 1``, where ``rate_i`` is cell ``i``'s total
+outflow speed over its own control volume, summed over axes (`advective_outflow_rate`, #2323). After each
+time step the shared positivity gate clips negative density below 1e-8 of the mass present and stops the
+solve above it; a clip adds the clipped mass.
+
+Both sub-operators are individually mass-conserving (advection telescopes; the implicit
 diffusion uses the conservative finite-volume Laplacian, whose weighted column sums vanish,
 ``w^T L = 0`` -- ``1^T L = 0`` is the uniform-weight statement and is not the one that holds on
 this grid, #2145), so the composite step conserves mass exactly. The diffusion solve is an M-matrix, so positivity is preserved.
@@ -74,7 +79,7 @@ from scipy.sparse.linalg import splu
 
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
-from mfgarchon.alg.numerical.fp_solvers.fp_fvm_flux import advective_divergence
+from mfgarchon.alg.numerical.fp_solvers.fp_fvm_flux import advective_divergence, advective_outflow_rate
 from mfgarchon.geometry.boundary.conditions import periodic_axis_span
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.operators.differential.laplacian import LaplacianOperator
@@ -93,8 +98,8 @@ logger = get_logger(__name__)
 
 Reconstruction = Literal["upwind", "muscl"]
 
-# CFL targets for the explicit advection sub-steps (forward Euler). MUSCL needs the tighter
-# bound for TVD/positivity; pure upwind tolerates a looser bound.
+# Fractions of the forward-Euler positivity bound `dt * advective_outflow_rate <= 1` for the explicit advection
+# sub-steps. A minmod MUSCL face value is at most 1.5 times its cell's density, so MUSCL's bound is 2/3 (#2323).
 _CFL_TARGET = {"upwind": 0.8, "muscl": 0.4}
 
 
@@ -415,15 +420,14 @@ class FPFVMSolver(BaseFPSolver):
     # ------------------------------------------------------------------
     def _advect(self, m, alpha_faces, alpha_wrap, dt_adv, spacing):
         """Explicit (CFL-bounded, sub-cycled forward Euler) advection over ``dt_adv``."""
-        amax = max((float(np.max(np.abs(a))) for a in alpha_faces), default=0.0)
-        for aw in alpha_wrap:
-            if aw is not None and aw.size:
-                amax = max(amax, float(np.max(np.abs(aw))))
-        if amax == 0.0:
+        spans = [periodic_axis_span(self.boundary_conditions, n) for n in m.shape]
+        # Issue #2323: sized from the largest single-axis speed over the smallest spacing, the sub-step missed the
+        # sum over axes and the half cell a no-flux wall node owns, and FVM upwind at this target returned
+        # densities down to -1.6e10 on a 2-D flow with equal speeds on both axes.
+        rate = float(np.max(advective_outflow_rate(alpha_faces, alpha_wrap, spacing, self._bc_types, m.shape, spans)))
+        if rate == 0.0:
             return m
-        cfl = _CFL_TARGET[self.reconstruction]
-        dx_min = min(spacing)
-        n_sub = max(1, math.ceil(dt_adv * amax / (cfl * dx_min)))
+        n_sub = max(1, math.ceil(dt_adv * rate / _CFL_TARGET[self.reconstruction]))
         dt_sub = dt_adv / n_sub
         for _ in range(n_sub):
             div = advective_divergence(
@@ -433,7 +437,7 @@ class FPFVMSolver(BaseFPSolver):
                 spacing,
                 self.reconstruction,
                 self._bc_types,
-                spans=[periodic_axis_span(self.boundary_conditions, n) for n in m.shape],
+                spans=spans,
             )
             m = m - dt_sub * div
         return m
@@ -602,10 +606,9 @@ class FPFVMSolver(BaseFPSolver):
                 m,
                 context=f"FP FVM solver ({self.reconstruction}): at timestep {k + 1}/{n_steps}",
                 remedy=(
-                    "The explicit advection sub-step is sized from the largest single-axis speed, not the sum over "
-                    "axes, so in 2-D a flow with comparable speeds on both axes can exceed the positivity bound "
-                    "(Issue #2323). reconstruction='muscl' sub-steps at half the CFL target of 'upwind'. A "
-                    "source_term that removes more mass than is present stops here too."
+                    "The advection sub-steps are sized to keep the density non-negative and the implicit diffusion "
+                    "is an M-matrix (Issue #2323), so check source_term first: a sink that removes more mass than a "
+                    "cell holds in one step drives it negative."
                 ),
                 weights=control_volumes,
             )

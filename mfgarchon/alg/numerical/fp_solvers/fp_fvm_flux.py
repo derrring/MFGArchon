@@ -83,6 +83,95 @@ def _interior_face_states(mm: np.ndarray, alpha_int: np.ndarray, scheme: str, pe
     raise ValueError(f"Unknown FVM reconstruction scheme: {scheme!r}. Use 'upwind' or 'muscl'.")
 
 
+class _AxisLayout:
+    """The cells, face velocities and control volumes one axis's fluxes telescope over.
+
+    The single owner of that layout for both the flux divergence and the sub-step bound (#2323): a bound
+    computed over a different set of faces or volumes than the fluxes it bounds is not a bound.
+    """
+
+    def __init__(self, cells, faces, volumes, periodic, axis, n_full):
+        self.cells = cells  # (..., n): the distinct cells, along the last axis
+        self.faces = faces  # (..., n + 1): the velocity at every face, walls and wrap included
+        self.volumes = volumes  # (n,) or a scalar: each cell's control volume
+        self.periodic = periodic
+        self._axis = axis
+        self._n_full = n_full
+
+    def restore(self, per_cell: np.ndarray) -> np.ndarray:
+        """Back to the caller's shape and axis order."""
+        n = per_cell.shape[-1]
+        if n < self._n_full:
+            # Restore the caller's shape: the repeated cell carries cell 0's value, because it
+            # IS cell 0. Written back rather than left stale so the field stays periodic by
+            # construction instead of by a later copy nobody can see from here.
+            per_cell = np.concatenate([per_cell, per_cell[..., : self._n_full - n]], axis=-1)
+        return np.moveaxis(per_cell, -1, self._axis)
+
+
+def _axis_layout(
+    m: np.ndarray,
+    alpha_int: np.ndarray,
+    axis: int,
+    dx: float,
+    bc_type: str,
+    alpha_wrap: np.ndarray | None,
+    span: int | None,
+) -> _AxisLayout:
+    mm = np.moveaxis(m, axis, -1)
+    ai = np.moveaxis(alpha_int, axis, -1)
+    periodic = bc_type == "periodic"
+    n_full = mm.shape[-1]
+    if periodic and span is not None and span < n_full:
+        # Drop the repeated cell and take the wrap velocity from the face that already spans it.
+        alpha_wrap = ai[..., span - 1]
+        mm = mm[..., :span]
+        ai = ai[..., : span - 1]
+    n = mm.shape[-1]
+
+    faces = np.zeros((*mm.shape[:-1], n + 1), dtype=float)
+    faces[..., 1:n] = ai
+    if periodic:
+        if alpha_wrap is None:
+            raise ValueError("alpha_wrap is required for a periodic axis.")
+        aw = np.moveaxis(alpha_wrap, axis, -1) if alpha_wrap.ndim == m.ndim else alpha_wrap
+        # alpha_wrap has the axis removed; broadcast onto the leading dims of mm[..., 0].
+        aw = np.asarray(aw, dtype=float)
+        faces[..., 0] = aw
+        faces[..., n] = aw
+    elif bc_type in ZERO_FLUX_BC:
+        # Zero wall flux: the two wall faces stay 0.
+        pass
+    else:
+        raise NotImplementedError(
+            f"FVM advection boundary closure not implemented for bc_type={bc_type!r}. "
+            "Supported: no_flux/neumann/reflecting (zero-flux) and periodic. "
+            "Dirichlet advection is deferred (Issue #422 scope note)."
+        )
+
+    if periodic:
+        # Every cell on the torus is dx wide. #1822 already removed the repeated cell above, which
+        # is the same "one cell too long" error the zero-flux branch carries -- fixed on this side
+        # in 2026-07 and not on the other.
+        volumes = dx
+    else:
+        # ZERO FLUX: the wall lies ON the end nodes, because `TensorProductGrid` is
+        # endpoint-inclusive. So nodes 0 and n-1 own HALF a cell each and the control volumes are
+        # the trapezoid weights (#2145) -- which is what `quadrature_weights_1d` returns, and the
+        # reason `grid.integrate` is the measure these fluxes telescope against.
+        #
+        # Dividing all n by dx tiles a domain of length n*dx = L + dx instead of L. Measured before
+        # this change, on pure diffusion to equilibrium at no-flux, the uniform steady value read
+        # back an effective domain of exactly 1 + h at every resolution (1.050000 / 1.025000 /
+        # 1.012500 / 1.006250 for h = 0.05 / 0.025 / 0.0125 / 0.00625), and the L-inf error against
+        # `1 + 0.5 cos(pi x) exp(-D pi^2 t)` converged at order 0.91/0.96 -- first order, in a
+        # scheme documented second order -- with the error maximal at the wall (8.85e-03 against
+        # the FDM's 8.67e-05, 102x) and decaying inward, the signature of a wall control volume
+        # rather than an interior truncation error.
+        volumes = quadrature_weights_1d(np.arange(n, dtype=float) * dx)
+    return _AxisLayout(mm, faces, volumes, periodic, axis, n_full)
+
+
 def axis_flux_divergence(
     m: np.ndarray,
     alpha_int: np.ndarray,
@@ -134,80 +223,29 @@ def axis_flux_divergence(
     np.ndarray
         Flux-divergence contribution of this axis, shape ``(*spatial_shape)``.
     """
-    mm = np.moveaxis(m, axis, -1)
-    ai = np.moveaxis(alpha_int, axis, -1)
-    periodic = bc_type == "periodic"
-    n_full = mm.shape[-1]
-    repeats = periodic and span is not None and span < n_full
-    if repeats:
-        # Drop the repeated cell and take the wrap velocity from the face that already spans it.
-        alpha_wrap = ai[..., span - 1]
-        mm = mm[..., :span]
-        ai = ai[..., : span - 1]
-    n = mm.shape[-1]
+    layout = _axis_layout(m, alpha_int, axis, dx, bc_type, alpha_wrap, span)
+    mm, ai = layout.cells, layout.faces[..., 1:-1]
 
     if scheme == "muscl":
-        m_face, delta = _interior_face_states(mm, ai, scheme, periodic)
+        m_face, delta = _interior_face_states(mm, ai, scheme, layout.periodic)
     else:
-        m_face = _interior_face_states(mm, ai, scheme, periodic)
+        m_face = _interior_face_states(mm, ai, scheme, layout.periodic)
         delta = None
-    f_int = ai * m_face
 
-    f_full = np.zeros((*mm.shape[:-1], n + 1), dtype=float)
-    f_full[..., 1:n] = f_int
-
-    if periodic:
-        if alpha_wrap is None:
-            raise ValueError("alpha_wrap is required for a periodic axis.")
-        aw = np.moveaxis(alpha_wrap, axis, -1) if alpha_wrap.ndim == m.ndim else alpha_wrap
-        # alpha_wrap has the axis removed; broadcast onto the leading dims of mm[..., 0].
-        aw = np.asarray(aw, dtype=float)
+    f_full = np.zeros_like(layout.faces)
+    f_full[..., 1:-1] = ai * m_face
+    if layout.periodic:
+        aw = layout.faces[..., 0]
         if scheme == "muscl":
             m_left_wrap = mm[..., -1] + 0.5 * delta[..., -1]
             m_right_wrap = mm[..., 0] - 0.5 * delta[..., 0]
             m_wrap = np.where(aw >= 0.0, m_left_wrap, m_right_wrap)
         else:
             m_wrap = np.where(aw >= 0.0, mm[..., -1], mm[..., 0])
-        f_wrap = aw * m_wrap
-        f_full[..., 0] = f_wrap
-        f_full[..., n] = f_wrap
-    elif bc_type in ZERO_FLUX_BC:
-        # Zero wall flux: f_full[..., 0] and f_full[..., n] stay 0.
-        pass
-    else:
-        raise NotImplementedError(
-            f"FVM advection boundary closure not implemented for bc_type={bc_type!r}. "
-            "Supported: no_flux/neumann/reflecting (zero-flux) and periodic. "
-            "Dirichlet advection is deferred (Issue #422 scope note)."
-        )
+        f_full[..., 0] = aw * m_wrap
+        f_full[..., -1] = aw * m_wrap
 
-    if periodic:
-        # Every cell on the torus is dx wide. #1822 already removed the repeated cell above, which
-        # is the same "one cell too long" error the zero-flux branch carries -- fixed on this side
-        # in 2026-07 and not on the other.
-        div = (f_full[..., 1:] - f_full[..., :-1]) / dx
-    else:
-        # ZERO FLUX: the wall lies ON the end nodes, because `TensorProductGrid` is
-        # endpoint-inclusive. So nodes 0 and n-1 own HALF a cell each and the control volumes are
-        # the trapezoid weights (#2145) -- which is what `quadrature_weights_1d` returns, and the
-        # reason `grid.integrate` is the measure these fluxes telescope against.
-        #
-        # Dividing all n by dx tiles a domain of length n*dx = L + dx instead of L. Measured before
-        # this change, on pure diffusion to equilibrium at no-flux, the uniform steady value read
-        # back an effective domain of exactly 1 + h at every resolution (1.050000 / 1.025000 /
-        # 1.012500 / 1.006250 for h = 0.05 / 0.025 / 0.0125 / 0.00625), and the L-inf error against
-        # `1 + 0.5 cos(pi x) exp(-D pi^2 t)` converged at order 0.91/0.96 -- first order, in a
-        # scheme documented second order -- with the error maximal at the wall (8.85e-03 against
-        # the FDM's 8.67e-05, 102x) and decaying inward, the signature of a wall control volume
-        # rather than an interior truncation error.
-        volumes = quadrature_weights_1d(np.arange(n, dtype=float) * dx)
-        div = (f_full[..., 1:] - f_full[..., :-1]) / volumes
-    if repeats:
-        # Restore the caller's shape: the repeated cell carries cell 0's divergence, because it
-        # IS cell 0. Written back rather than left stale so the field stays periodic by
-        # construction instead of by a later copy nobody can see from here.
-        div = np.concatenate([div, div[..., : n_full - n]], axis=-1)
-    return np.moveaxis(div, -1, axis)
+    return layout.restore((f_full[..., 1:] - f_full[..., :-1]) / layout.volumes)
 
 
 def advective_divergence(
@@ -239,3 +277,33 @@ def advective_divergence(
             span=None if spans is None else spans[d],
         )
     return div
+
+
+def advective_outflow_rate(
+    alpha_faces: list[np.ndarray],
+    alpha_wrap: list[np.ndarray | None],
+    spacing: list[float],
+    bc_types: list[str],
+    shape: tuple[int, ...],
+    spans: list[int | None] | None = None,
+) -> np.ndarray:
+    r"""Each cell's total outflow speed over its own control volume, summed over axes (#2323).
+
+    ``sum_d (max(alpha_{i+1/2}, 0) + max(-alpha_{i-1/2}, 0)) / V_{i,d}``. A forward-Euler upwind step of
+    length ``dt`` keeps every cell non-negative when ``dt`` times this is at most 1 in every cell: the cell
+    keeps ``(1 - dt * rate)`` of its own mass and receives non-negative inflow. A minmod MUSCL face value is at
+    most ``1.5 m_i``, so the same holds for MUSCL at ``dt * rate <= 2/3``.
+
+    The sub-step used to be sized from the largest single-axis speed over the smallest spacing, which misses
+    both the sum over axes (an unsplit 2-D step runs up to twice that CFL) and the half control volume a
+    no-flux wall node owns.
+    """
+    m_dummy = np.zeros(shape, dtype=float)
+    rate = np.zeros(shape, dtype=float)
+    for d in range(len(shape)):
+        layout = _axis_layout(
+            m_dummy, alpha_faces[d], d, spacing[d], bc_types[d], alpha_wrap[d], None if spans is None else spans[d]
+        )
+        outflow = np.maximum(layout.faces[..., 1:], 0.0) + np.maximum(-layout.faces[..., :-1], 0.0)
+        rate += layout.restore(outflow / layout.volumes)
+    return rate
