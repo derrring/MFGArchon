@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import warnings
 from abc import abstractmethod
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -44,6 +45,21 @@ P_VALUE_CLIP_LIMIT_FD_JAC = 1e6
 # Default Newton solver parameters shared across HJB solvers (Issue #966)
 DEFAULT_NEWTON_MAX_ITERATIONS: int = 30
 DEFAULT_NEWTON_TOLERANCE: float = 1e-6
+
+
+@dataclass(frozen=True)
+class InnerSolveFailure:
+    """A backward time step whose nonlinear solve returned something that is not a root (#1878).
+
+    ``residual`` is the residual of the iterate actually returned, ``steps`` how many solver steps that
+    iterate is from the start, ``reason`` why the solve stopped there.
+    """
+
+    t_idx: int
+    residual: float
+    tolerance: float
+    steps: int
+    reason: str
 
 
 def _compute_gradient_array_1d(
@@ -244,6 +260,16 @@ class BaseHJBSolver(BaseNumericalSolver):
                 f"(#2020). Name the parameter and either honour it or raise NotImplementedError "
                 f"inside; refusing is a behaviour, an absent signature is not."
             )
+
+    def inner_solve_failures(self) -> tuple[InnerSolveFailure, ...] | None:
+        """The time steps of the latest ``solve_hjb_system`` whose nonlinear solve did not converge (#1878).
+
+        ``None`` (the default) means this solver does not track its inner solves, so a coupling loop
+        can certify nothing from it either way. An empty tuple means every step it solved converged. A
+        solver that iterates per time step overrides this, so that a coupled result built on steps that
+        are not roots of the discrete HJB is not reported as converged.
+        """
+        return None
 
     def __init__(self, problem: MFGProblem, config: BaseConfig | None = None) -> None:
         # Maintain backward compatibility - if no config provided, create a minimal one
@@ -1546,6 +1572,7 @@ def solve_hjb_timestep_newton(
     bc_values: dict[str, float] | None = None,  # Issue #574: Per-boundary BC values
     source_term: np.ndarray | None = None,  # MMS verification
     cross_density_at_n: np.ndarray | None = None,  # Issue #1071: stacked (K*Nx,) cross-density at this timestep
+    failures: list[InnerSolveFailure] | None = None,  # Issue #1878: collects this step if it does not converge
 ) -> np.ndarray:
     """
     Solve HJB timestep using Newton's method.
@@ -1576,6 +1603,7 @@ def solve_hjb_timestep_newton(
     final_residual_norm = np.inf
     converged = False
     stop_reason = "iteration budget exhausted"
+    steps = 0
 
     for iiter in range(max_newton_iterations):
         # Ensure t_idx_n is not None
@@ -1601,6 +1629,7 @@ def solve_hjb_timestep_newton(
         )
 
         if has_nan_or_inf(U_n_next_newton_iterate, backend):
+            stop_reason = "the Newton step produced a non-finite iterate"
             break
 
         # Issue #1745: convergence is tested on the RESIDUAL, not on the step.
@@ -1641,20 +1670,34 @@ def solve_hjb_timestep_newton(
 
         U_n_current_newton_iterate = U_n_next_newton_iterate
         final_residual_norm = residual_norm
+        steps += 1
 
     # Issue #1745: this branch was a literal `pass`. The inner Newton could fail to converge and
     # nothing said so -- `converged` is local and never returned, so no caller could see it, and
     # the outer Picard loop treated a failed HJB solve exactly like a successful one.
     if not converged and max_newton_iterations > 0:
+        # The step count is the steps the returned iterate actually took. This printed
+        # `max_newton_iterations`, so a solve the guard stopped one step from its start read "after 30
+        # iterations" (#1878).
         warnings.warn(
             f"HJB inner Newton did not converge at t_idx={t_idx_n}: {stop_reason} after "
-            f"{max_newton_iterations} iterations, residual {final_residual_norm:.3e} against a "
+            f"{steps} Newton steps, residual {final_residual_norm:.3e} against a "
             f"tolerance of {newton_tolerance:.3e}. The value function returned for this timestep "
-            f"is not a root of the discrete HJB, and the outer iteration will consume it as if "
-            f"it were (Issue #1745).",
+            f"is not a root of the discrete HJB (Issue #1745); a coupling loop that reads "
+            f"`inner_solve_failures()` will not report the coupled result as converged (Issue #1878).",
             RuntimeWarning,
             stacklevel=2,
         )
+        if failures is not None:
+            failures.append(
+                InnerSolveFailure(
+                    t_idx=int(t_idx_n) if t_idx_n is not None else -1,
+                    residual=float(final_residual_norm),
+                    tolerance=float(newton_tolerance),
+                    steps=steps,
+                    reason=stop_reason,
+                )
+            )
 
     # Enforce BC on solution (Issue #542)
     # BC-aware Laplacian uses ghost cells for derivatives, but boundary values must be explicitly set
@@ -1785,6 +1828,7 @@ def solve_hjb_system_backward(
     bc_values: dict[str, float] | None = None,  # Issue #574: Per-boundary BC values
     source_term: Callable | None = None,  # MMS verification: S(t, x_grid) -> values
     cross_density=None,  # Issue #1071: stacked (Nt+1, K*Nx) cross-density trajectory (lock-faithful)
+    failures: list[InnerSolveFailure] | None = None,  # Issue #1878: collects every step that does not converge
 ) -> np.ndarray:
     """
     Solve HJB system backward in time using Newton's method.
@@ -1894,6 +1938,7 @@ def solve_hjb_system_backward(
             bc_values=bc_values,  # Issue #574: Per-boundary BC values
             source_term=source_at_n,
             cross_density_at_n=cross_density_at_n,  # Issue #1071
+            failures=failures,
         )
         backend_aware_assign(U_solution_this_picard_iter, (n_idx_hjb, slice(None)), U_new_n, backend)
 

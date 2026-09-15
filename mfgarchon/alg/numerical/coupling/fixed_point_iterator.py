@@ -28,6 +28,7 @@ from .fixed_point_utils import (
     initialize_cold_start,
     preserve_initial_condition,
     preserve_terminal_condition,
+    refuse_convergence_over_failed_inner_solves,
     resolve_fp_drift_kwargs,
 )
 
@@ -559,6 +560,8 @@ class FixedPointIterator(BaseCouplingIterator):
         # (some other solve's output). Set where self.M is assigned, not at the exits, so
         # that a break after a completed FP step still reports its real number (Issue #1717).
         fp_output_available = False
+        # What the HJB solver said about its inner solves in the latest sweep (#1878).
+        inner_failures = None
         # Hierarchical progress for Picard iterations (Issue #614)
         from mfgarchon.utils.progress import HierarchicalProgress
 
@@ -608,6 +611,7 @@ class FixedPointIterator(BaseCouplingIterator):
                         volatility_field=self.volatility_field,
                     )
                     U_new = self.hjb_solver.solve_hjb_system(M_old, U_terminal, U_old, **kwargs)
+                inner_failures = self.hjb_solver.inner_solve_failures()
 
                 # Issue #1717: attribute a diverged HJB to HJB, before FP consumes it. The FP source and
                 # drift below are composed from U_new, so a non-finite U_new makes the FP solver fail
@@ -828,33 +832,43 @@ class FixedPointIterator(BaseCouplingIterator):
                         # while the same problem run to 3 iterations reported FAILURE at
                         # 3.259e-01: the aborted run claimed convergence at three times the error
                         # of the run that admitted it had not converged.
-                        converged, _criteria_reason = check_convergence_criteria(
-                            self.l2distu_rel[iiter],
-                            self.l2distm_rel[iiter],
-                            self.l2distu_abs[iiter],
-                            self.l2distm_abs[iiter],
-                            final_tolerance,
+                        converged, _criteria_reason = refuse_convergence_over_failed_inner_solves(
+                            *check_convergence_criteria(
+                                self.l2distu_rel[iiter],
+                                self.l2distm_rel[iiter],
+                                self.l2distu_abs[iiter],
+                                self.l2distm_abs[iiter],
+                                final_tolerance,
+                            ),
+                            inner_failures,
                         )
                         convergence_reason = (
-                            f"callback_stopped ({_criteria_reason})" if converged else "callback_stopped"
+                            f"callback_stopped ({_criteria_reason})" if _criteria_reason else "callback_stopped"
                         )
                         break
 
                 # Check convergence
-                converged, convergence_reason = check_convergence_criteria(
+                criteria_met, convergence_reason = check_convergence_criteria(
                     self.l2distu_rel[iiter],
                     self.l2distm_rel[iiter],
                     self.l2distu_abs[iiter],
                     self.l2distm_abs[iiter],
                     final_tolerance,
                 )
+                converged, convergence_reason = refuse_convergence_over_failed_inner_solves(
+                    criteria_met, convergence_reason, inner_failures
+                )
 
-                if converged:
+                # A met criterion stops the loop either way: the map has stopped moving, and further
+                # sweeps of a map whose HJB half returns non-roots only re-certify the same point (#1878).
+                if criteria_met:
                     break
 
         # Build metadata
         metadata: dict[str, Any] = {
             "convergence_reason": convergence_reason,
+            # The final sweep's non-converged HJB time steps (#1878); None when the solver does not track them.
+            "inner_hjb_failures": list(inner_failures) if isinstance(inner_failures, tuple) else None,
             "l2distu_rel": self.l2distu_rel[: self.iterations_run],
             "l2distm_rel": self.l2distm_rel[: self.iterations_run],
             "anderson_used": self.use_anderson,
