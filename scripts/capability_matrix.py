@@ -529,7 +529,7 @@ def _pde_residuals_2d(U: np.ndarray, M: np.ndarray) -> dict:
         for U_star in (U_now, U_next)
     )
     # NumPy division: a vanishing normaliser gives inf (nan for 0/0) and a FAIL, with a NumPy warning, rather than
-    # a ZeroDivisionError and an ERROR. It cannot vanish for this fixture's Gaussian.
+    # a ZeroDivisionError and an ERROR.
     return {
         "r_hjb": float(np.linalg.norm(hjb) / np.linalg.norm(M_now)),
         "r_fp": float(np.float64(fp) / np.linalg.norm(diffusion)),
@@ -556,18 +556,30 @@ def _mass_conservation_2d_cell(scheme_name: str):
 
     **What the residuals catch.**
     - f(m) deleted fails all four (r_hjb 0.954-0.956), and so does its sign flipped (1.84-1.94).
-    - Doubled diffusion (`diffusion_scalar_2x`) fails all four, on r_fp (0.86-1.69).
 
-    **What they miss. Read this before relying on the cells.**
-    - Halved diffusion, in both halves, passes FDM_UPWIND, FDM_CENTERED and SL_LINEAR while moving the
-      density by up to 0.53 against a peak of 1. The gate is one-sided in diffusion.
+    **Diffusion: a band of errors passes.** D = sigma^2/2 scaled in the scalar branch of
+    `diffusion_from_volatility`, cells in the order FDM_UPWIND / FDM_CENTERED / FVM_MUSCL / SL_LINEAR:
+
+    ========  =============================  =========================================
+    D factor  result                         notes
+    ========  =============================  =========================================
+    x0.25     FAIL / FAIL / FAIL / FAIL      r_hjb 0.97 / 0.59 / 1.11 / 1.14
+    x0.5      PASS / PASS / FAIL / PASS      passing cells move the density up to 0.53
+    x0.75     PASS / PASS / PASS / PASS      the density moves by up to 0.28
+    x1.5      FAIL / FAIL / PASS / FAIL      r_fp 0.515 / 0.503 / 0.391 / 0.868
+    x2        FAIL / FAIL / FAIL / FAIL      r_fp 0.997 / 0.987 / 0.856 / 1.688
+    ========  =============================  =========================================
+
+    So x0.5 and x0.75 pass every FDM and SL cell, and x1.5 passes FVM_MUSCL, with the two FDM
+    cells failing it by 0.015 and 0.003.
+
+    **What else they miss. Read this before relying on the cells.**
     - Doubled diffusion in the nD HJB-FDM path alone passes the three HJB-FDM cells (r_hjb 0.18).
-    - A control cost of 0.5 or 2 passes all four. At 0.5, FVM_MUSCL's r_fp is 0.495, just under its 0.5
-      gate.
+    - A control cost of 0.5 or 2 in the solvers, with the oracle kept at 1, passes all four. At 0.5,
+      FVM_MUSCL's r_fp is 0.495, just under its 0.5 gate.
     - `drift_coefficient_2x` passes all four. It moves the density by up to 0.18 in the FDM and SL cells
       and does not reach FVM_MUSCL.
     - The pre-#2308 upwind rule passes all four, moving the density by at most 7.1e-3 (FVM_MUSCL).
-    The n=17, sigma=0.2 point that does discriminate #2308 in 2-D is minutes-scale, so it is not a cell.
 
     **Independence, per axis.**
     - The HJB residual shares no code with any scheme. The HJB-FDM cells pair the coupling at M^n, and
