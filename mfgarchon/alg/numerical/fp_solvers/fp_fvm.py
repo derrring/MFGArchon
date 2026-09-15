@@ -14,8 +14,9 @@ update is the flux-difference form over the control volume ``V_i``
 
 The interface velocity ``alpha_{i+1/2}`` is *shared* by the two cells that touch the face, so the
 divergence telescopes and the total mass ``grid.integrate(m)`` is conserved to machine precision
-for no-flux / periodic boundaries. This is the higher-order extension of the conservative
-divergence-upwind FDM stencil (:mod:`fp_fdm_alg_divergence_upwind`); see Issue #422.
+for no-flux / periodic boundaries, unless the positivity gate below clips. This is the higher-order
+extension of the conservative divergence-upwind FDM stencil (:mod:`fp_fdm_alg_divergence_upwind`); see
+Issue #422.
 
 **What this paragraph used to say, and what it cost.** It read "whose nodes are interpreted as cell
 centers with uniform spacing ``dx``" and "the total mass ``sum_i m_bar_i dx`` is conserved". The
@@ -34,7 +35,7 @@ Reconstruction (``reconstruction`` ctor arg):
 
 - ``"upwind"`` -- 1st-order upwind face value ``m_{i+1/2}`` (robust, ``O(dx)``).
 - ``"muscl"`` [default] -- 2nd-order MUSCL with a ``minmod`` slope limiter
-  (TVD -> positivity, ``O(dx^2)`` in smooth regions).
+  (``O(dx^2)`` in smooth regions). The limiter alone does not make it positive: the sub-step bound below does.
 
 Interface velocity source (one of, mirroring the divergence-upwind FDM options):
 
@@ -43,9 +44,15 @@ Interface velocity source (one of, mirroring the divergence-upwind FDM options):
 - ``drift_field`` ``alpha`` (the SDE/optimal-control velocity) -> averaged to the face,
   ``alpha_{i+1/2} = 1/2 (alpha_i + alpha_{i+1})``.
 
-Time stepping: IMEX by Strang operator splitting -- explicit (CFL-bounded, sub-cycled)
-MUSCL/upwind advection on each half step, implicit (backward-Euler) central diffusion in the
-middle. Both sub-operators are individually mass-conserving (advection telescopes; the implicit
+Time stepping: IMEX by Strang operator splitting -- explicit (sub-cycled) MUSCL/upwind advection on
+each half step, implicit (backward-Euler) central diffusion in the middle. Each advection sub-step is a
+fraction of the forward-Euler positivity bound ``dt * rate_i <= 1``, where ``rate_i`` is cell ``i``'s total
+outflow speed over its own control volume, summed over axes (`advective_outflow_rate`, #2323). On a
+periodic axis that repeats its endpoint the bound also needs the repeated node to equal node 0, which is
+not enforced (#2336). After each time step the shared positivity gate clips negative density below 1e-8
+of the mass present and stops the solve above it; a clip adds the clipped mass.
+
+Both sub-operators are individually mass-conserving (advection telescopes; the implicit
 diffusion uses the conservative finite-volume Laplacian, whose weighted column sums vanish,
 ``w^T L = 0`` -- ``1^T L = 0`` is the uniform-weight statement and is not the one that holds on
 this grid, #2145), so the composite step conserves mass exactly. The diffusion solve is an M-matrix, so positivity is preserved.
@@ -66,8 +73,7 @@ and the HASL/FVCN adjoint-SL research framework.
 from __future__ import annotations
 
 import math
-import warnings
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 from scipy import sparse
@@ -75,24 +81,27 @@ from scipy.sparse.linalg import splu
 
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
-from mfgarchon.alg.numerical.fp_solvers.fp_fvm_flux import advective_divergence
+from mfgarchon.alg.numerical.fp_solvers.fp_fvm_flux import advective_divergence, advective_outflow_rate
 from mfgarchon.geometry.boundary.conditions import periodic_axis_span
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.operators.differential.laplacian import LaplacianOperator
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.numerical import clip_nonnegative_or_raise
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_nd
 from mfgarchon.utils.pde_coefficients import assert_quadratic_minimize_drift, diffusion_from_volatility
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from mfgarchon.geometry import TensorProductGrid
     from mfgarchon.geometry.boundary import BoundaryConditions
 
 logger = get_logger(__name__)
 
 Reconstruction = Literal["upwind", "muscl"]
 
-# CFL targets for the explicit advection sub-steps (forward Euler). MUSCL needs the tighter
-# bound for TVD/positivity; pure upwind tolerates a looser bound.
+# Fractions of the forward-Euler positivity bound `dt * advective_outflow_rate <= 1` for the explicit advection
+# sub-steps. A minmod MUSCL face value is at most 1.5 times its cell's density, so MUSCL's bound is 2/3 (#2323).
 _CFL_TARGET = {"upwind": 0.8, "muscl": 0.4}
 
 
@@ -413,15 +422,14 @@ class FPFVMSolver(BaseFPSolver):
     # ------------------------------------------------------------------
     def _advect(self, m, alpha_faces, alpha_wrap, dt_adv, spacing):
         """Explicit (CFL-bounded, sub-cycled forward Euler) advection over ``dt_adv``."""
-        amax = max((float(np.max(np.abs(a))) for a in alpha_faces), default=0.0)
-        for aw in alpha_wrap:
-            if aw is not None and aw.size:
-                amax = max(amax, float(np.max(np.abs(aw))))
-        if amax == 0.0:
+        spans = [periodic_axis_span(self.boundary_conditions, n) for n in m.shape]
+        # Issue #2323: sized from the largest single-axis speed over the smallest spacing, the sub-step missed the
+        # sum over axes and the half cell a no-flux wall node owns, and FVM upwind at this target returned
+        # densities down to -1.6e10 on a 2-D flow with equal speeds on both axes.
+        rate = float(np.max(advective_outflow_rate(alpha_faces, alpha_wrap, spacing, self._bc_types, m.shape, spans)))
+        if rate == 0.0:
             return m
-        cfl = _CFL_TARGET[self.reconstruction]
-        dx_min = min(spacing)
-        n_sub = max(1, math.ceil(dt_adv * amax / (cfl * dx_min)))
+        n_sub = max(1, math.ceil(dt_adv * rate / _CFL_TARGET[self.reconstruction]))
         dt_sub = dt_adv / n_sub
         for _ in range(n_sub):
             div = advective_divergence(
@@ -431,7 +439,7 @@ class FPFVMSolver(BaseFPSolver):
                 spacing,
                 self.reconstruction,
                 self._bc_types,
-                spans=[periodic_axis_span(self.boundary_conditions, n) for n in m.shape],
+                spans=spans,
             )
             m = m - dt_sub * div
         return m
@@ -544,6 +552,10 @@ class FPFVMSolver(BaseFPSolver):
         # and `get_spatial_grid()` gives (21, 1), and a callback that ravels its input accepts
         # both. The fork was only ever visible in 2D.
         source_grid = self.problem.geometry.get_spatial_grid() if source_term is not None else None
+        # The measure this scheme conserves (#2145), so the positivity gate below weighs negative mass the same way.
+        # TensorProductGrid only (module docstring), which the problem's GeometryProtocol does not say.
+        grid = cast("TensorProductGrid", self.problem.geometry)
+        control_volumes = quadrature_weights_nd(tuple(grid.coordinates[: len(shape)]))
 
         for k in range(n_steps):
             idx = min(k, field.shape[0] - 1) if field is not None else 0
@@ -588,18 +600,25 @@ class FPFVMSolver(BaseFPSolver):
                     "Check the CFL/velocity magnitude."
                 )
 
+            # Issue #2323: the positivity gate the other FP solvers share (#1671, #1683). This solver warned at an
+            # absolute min < -1e-12 and returned the negative density, so whether a coupled result read as valid
+            # depended on the density's units. The gate measures negative mass as a fraction of the mass present:
+            # below MAX_CLIP_MASS_FABRICATION it clips, above it the solve stops.
+            m = clip_nonnegative_or_raise(
+                m,
+                context=f"FP FVM solver ({self.reconstruction}): at timestep {k + 1}/{n_steps}",
+                remedy=(
+                    "The advection sub-steps are sized to keep a non-negative density non-negative and the implicit "
+                    "diffusion is an M-matrix (Issue #2323). Known causes: a source_term sink that removes more mass "
+                    "than a cell holds in one step; and, on a periodic grid that repeats its endpoint, any input whose "
+                    "repeated node differs from node 0 -- the initial density, source_term, or in 2-D and up "
+                    "potential_field or drift_field (Issue #2336)."
+                ),
+                weights=control_volumes,
+            )
             m_solution[k + 1] = m
             if progress_callback is not None:
                 progress_callback(1)
-
-        min_density = float(np.min(m_solution))
-        if min_density < -1e-12:
-            warnings.warn(
-                f"FP FVM solver: min density {min_density:.2e} < 0. The MUSCL limiter should "
-                "prevent this; check the CFL/limiter for the advection regime.",
-                UserWarning,
-                stacklevel=2,
-            )
 
         return m_solution
 

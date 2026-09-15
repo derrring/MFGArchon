@@ -177,7 +177,7 @@ def clip_nonnegative_or_raise(
     if fabricated > threshold:
         raise ValueError(
             f"{context}: density went to {float(np.min(density)):.3e}. Clipping it to zero "
-            f"would fabricate {fabricated:.3%} of the total mass, so the solve is stopped "
-            f"rather than reporting a conserved density it did not compute. {remedy}"
+            f"would fabricate {fabricated:.3%} (fraction {fabricated:.3e}, threshold {threshold:.0e}) of the total "
+            f"mass, so the solve is stopped rather than reporting a conserved density it did not compute. {remedy}"
         )
     return np.maximum(density, 0.0)
