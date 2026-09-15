@@ -216,19 +216,21 @@ def test_a_quiet_cell_carries_no_field_at_all():
     assert "library_said" not in out["stub/quiet"]["artifact"]
 
 
-def test_the_shipped_baseline_records_the_non_convergence_it_was_hiding():
-    """The point of #1879, pinned against the artifact it produced.
+def test_the_shipped_baseline_records_that_the_inner_newton_now_converges():
+    """The point of #1879, pinned against the artifact it produced, after #1878 moved.
 
-    `fdm_upwind/mass_conservation` emits non-convergence warnings, and the harness silenced every
-    one of them until #1879. The count is what this file exists to keep visible.
+    `fdm_upwind/mass_conservation` emitted inner-Newton non-convergence warnings, and the harness
+    silenced every one of them until #1879. It recorded 12 of them at the fixture's own mass (#1887),
+    every one "residual stopped decreasing": a non-decrease guard stopped Newton after its first step,
+    which on this monotone system raises the residual before the iterates converge. #1878 removed the
+    guard, and the cell now records none. That absence is the event this test used to wait for, so it
+    is now what is pinned: warnings of that kind coming back is #1878 regressing.
 
-    The cell is now **FAIL**, and not because the solve improved: `picard_converged` entered the
-    verdict on 2026-08-11 (#1891), so a cell that does not reach a fixed point stops being PASS. It
-    was PASS on the mass oracle alone, which holds on whatever drift field the FP step is handed --
-    the same fact these warnings state in words. An earlier version of this test asserted
-    `status == "PASS"` and said "if that changed, #1878 moved"; #1878 has not moved, the verdict did,
-    and the two are worth keeping apart. The pin below is written so the interesting event -- the
-    warnings going away, which IS #1878 moving -- still fails it.
+    The presence half keeps the absence honest. The harness still records this cell's other warning,
+    the fixture's sub-unit initial mass, so an empty `library_said` cannot pass by capturing nothing.
+
+    The cell is still **FAIL**: `picard_converged` entered the verdict on 2026-08-11 (#1891), and at
+    its 5-sweep budget the coupled iteration does not reach a fixed point. That is #1873, not #1878.
     """
     import json
 
@@ -236,43 +238,17 @@ def test_the_shipped_baseline_records_the_non_convergence_it_was_hiding():
     cell = cells["fdm_upwind/mass_conservation"]
     said = cell["artifact"]["library_said"]
 
+    assert any("initial density mass" in k for k in said), f"the harness no longer records this cell's warnings: {said}"
     newton = {k: v for k, v in said.items() if "inner Newton did not converge" in k}
-    assert newton, f"the recorded warnings no longer mention the inner Newton: {said}"
-    # 19 before #1887, 12 now, and the drop is the point rather than a number to bump. The
-    # constructor used to rescale every initial density to mass 1; THIS fixture's density integrates
-    # to 0.5459505243936865, so the coupling f(m) = c*m was being evaluated at 1.83x the values the
-    # fixture specifies. Weaken it and the inner Newton converges more often.
-    #
-    # The count is the weaker half of the measurement. What actually changed is the KIND: at mass 1
-    # the cell emitted two categories, 10 "iteration budget exhausted" and 9 "residual stopped
-    # decreasing"; at the fixture's own mass the budget-exhausted category is gone entirely and all
-    # 12 are "residual stopped decreasing". A category disappearing says more than 19 -> 12 does.
-    #
-    # Both numbers measured on this tree rather than read off a baseline, via a shim restoring the
-    # old rescale. Two earlier claims in this comment were wrong and are corrected here, both found
-    # by independent review of PR #2174:
-    #   - it said "39 until #1887". The committed 39 entered at 77a62036 (2026-08-10, #1879) and the
-    #     cell's artifact block is byte-identical from there to the #2145 branch head -- traced
-    #     across the three commits that touched capability_baseline.json since (#1888, #1893, #2040),
-    #     same mass_t0 1.0000000000000002, same 39, INCLUDING across the PASS -> FAIL status flip at
-    #     733597d1. --check-baseline compares status only, so nothing ever forced a re-measure. The
-    #     live pre-#1887 count is 19. A stale figure imported as a measured "before" is the same
-    #     defect this file exists to catch, committed while describing it.
-    #   - it said "mass 0.1047 ... ten times". 0.1047 is the three 2-D cells' mass. THIS cell's
-    #     mass_t0 is 0.5459505243936865 and the factor is 1.83.
-    #
-    # So #1878 has not been fixed; its fixture got easier. The `assert newton` above is what keeps
-    # the interesting event failing this test: if the count reaches zero, either #1878 moved or the
-    # fixture stopped exercising it, and both want reading.
-    assert sum(newton.values()) == 12, f"expected 12 non-convergence warnings (#1878 under #1887), got {newton}"
+    assert not newton, f"inner-Newton non-convergence is back on the smoke fixture (#1878): {newton}"
 
     assert cell["artifact"]["picard_converged"] is False, (
-        "the coupled solve now converges; that is #1878/#1873 moving and this file must be updated "
+        "the coupled solve now converges at 5 sweeps; that is #1873 moving and this file must be updated "
         "deliberately rather than adjusted to match"
     )
     assert cell["status"] != "PASS", (
-        "the cell is PASS while recording inner-Newton failures and picard_converged=False -- "
-        "the verdict has stopped requiring convergence (#1891)"
+        "the cell is PASS while recording picard_converged=False -- the verdict has stopped requiring "
+        "convergence (#1891)"
     )
 
 

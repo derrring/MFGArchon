@@ -1605,7 +1605,10 @@ def solve_hjb_timestep_newton(
     stop_reason = "iteration budget exhausted"
     steps = 0
 
-    for iiter in range(max_newton_iterations):
+    # One pass more than the step budget: the last pass only measures the iterate being returned, so a solve
+    # that spends its budget reports that iterate's residual rather than its predecessor's. It assembles a
+    # Jacobian nobody uses, and only on a solve that did not converge.
+    for iiter in range(max_newton_iterations + 1):
         # Ensure t_idx_n is not None
         if t_idx_n is None:
             t_idx_n = 0  # Default time index
@@ -1628,48 +1631,40 @@ def solve_hjb_timestep_newton(
             cross_density_at_n=cross_density_at_n,  # Issue #1071
         )
 
-        if has_nan_or_inf(U_n_next_newton_iterate, backend):
-            stop_reason = "the Newton step produced a non-finite iterate"
-            break
+        # `residual_norm` is measured at the iterate ENTERING this step, which is the standard Newton
+        # structure (test F(x_k), then step) and costs nothing -- the residual was already assembled for
+        # the linear solve. That iterate is the one returned whenever the loop stops here, so recording
+        # its residual now keeps the report about what the caller receives (#1745: reporting the previous
+        # iterate's residual described a point nobody received, up to 8.5x better than the truth).
+        final_residual_norm = residual_norm
 
-        # Issue #1745: convergence is tested on the RESIDUAL, not on the step.
-        #
-        # This loop used to declare `converged` when the step norm fell below tolerance. A small
-        # step does not imply a root -- a stalled iteration produces one, and so does a large
-        # Jacobian. Measured before the change, on 1-D FDM_UPWIND solves, the step criterion
-        # accepted iterates whose HJB residual was 59-77x the requested tolerance at N=21 and
-        # 267-402x at N=41. It got WORSE under refinement, so the error did not vanish in the
-        # limit and could contaminate a convergence-rate study.
-        #
-        # `residual_norm` is measured at the iterate ENTERING this step, which is the standard
-        # Newton structure (test F(x_k), then step) and costs nothing -- the residual was
-        # already assembled for the linear solve.
+        # Issue #1745: convergence is tested on the RESIDUAL, not on the step. A small step does not
+        # imply a root -- a stalled iteration produces one, and so does a large Jacobian. Measured before
+        # that change, on 1-D FDM_UPWIND solves, the step criterion accepted iterates whose HJB residual
+        # was 59-77x the requested tolerance at N=21 and 267-402x at N=41, worse under refinement.
         if residual_norm < newton_tolerance:
             converged = True
             break
 
-        # Non-decrease guard, also moved from the step norm to the residual. A step that does
-        # not reduce the residual is not progress, whatever it does to the iterate.
-        #
-        # `final_residual_norm` is overwritten here so the warning below describes the iterate
-        # actually returned. At this point `U_n_current_newton_iterate` has NOT been advanced --
-        # line below -- so `residual_norm`, measured at it, is its residual. Reporting the
-        # previous (better) iterate's residual instead described a point the caller never
-        # receives: measured, up to 8.5x better than the truth.
-        #
-        # Returning the best-seen iterate instead was tried and reverted. It made 90 of 96 inner
-        # solves on the multi-population fixture return their INPUT unchanged -- an identity map
-        # dressed as a solve, which erased the cross-coupling that
-        # test_hjb_sees_cross_density_bug_1157 exists to detect. On a configuration where Newton
-        # never improves on its starting point, "the best iterate" is the starting point, and
-        # handing that back silently is a worse failure than handing back a moved one.
-        if iiter > 0 and residual_norm > final_residual_norm * 0.9999:
-            stop_reason = "residual stopped decreasing"
-            final_residual_norm = residual_norm
+        if has_nan_or_inf(U_n_next_newton_iterate, backend):
+            stop_reason = "the Newton step produced a non-finite iterate"
+            break
+
+        # No non-decrease guard (#1878). One stopped the loop as soon as a step failed to reduce the
+        # residual. On this monotone system Newton's first step routinely RAISES the residual and the
+        # iterates converge after it: on the 1-D smoke fixture at 6c0610d2, |r| went 1.1e+01, 2.4e+02,
+        # 5.7e+01, ... 1.1e-11 in 12 steps at t_idx 9, with an assembled Jacobian equal to the finite
+        # difference of the residual to 7.5e-09. The guard read the overshoot as failure and returned the
+        # iterate after it -- worse than the start -- at three of ten steps, and Picard certified a fixed
+        # point 2.57 away in U from the one the same scheme reaches without it. Returning the best-seen
+        # iterate instead was also tried and reverted (#1745): on the multi-population fixture it handed
+        # back the input unchanged, an identity map that erased the coupling
+        # test_hjb_sees_cross_density_bug_1157 detects. A solve that does not converge within its budget
+        # now says so, and the coupled result does not report convergence over it.
+        if iiter == max_newton_iterations:
             break
 
         U_n_current_newton_iterate = U_n_next_newton_iterate
-        final_residual_norm = residual_norm
         steps += 1
 
     # Issue #1745: this branch was a literal `pass`. The inner Newton could fail to converge and

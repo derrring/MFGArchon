@@ -104,6 +104,6 @@ def test_a_converged_result_satisfies_the_discrete_hjb_at_every_step():
     assert result.converged is True, result.metadata["convergence_reason"]
     assert result.metadata["inner_hjb_failures"] == []
     residuals = _hjb_residual_per_step(problem, np.asarray(result.U, dtype=float), np.asarray(result.M, dtype=float))
-    assert residuals.max() < 1e-3, (
+    assert residuals.max() < 1e-4, (
         f"the returned arrays leave discrete HJB residuals {np.array2string(residuals, precision=2)}"
     )

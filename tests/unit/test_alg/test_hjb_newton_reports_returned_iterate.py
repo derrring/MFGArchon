@@ -22,18 +22,20 @@ import warnings
 
 import numpy as np
 
+from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_problem import MFGComponents, MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
-from mfgarchon.types import NumericalScheme
 
 
 def _stiff_problem():
-    """sigma=0.05 on 21 points: the inner Newton does not converge here, which is the point.
+    """sigma=0.05 on 21 points, solved below with a Newton budget of 2: the inner solve cannot converge.
 
     A configuration where every inner solve converges cannot exercise the non-converged return
-    path at all, and that path is what this file covers.
+    path at all, and that path is what this file covers. The default budget converged here once the
+    non-decrease guard went (#1878), so the budget is what keeps the path exercised now.
     """
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
     return MFGProblem(
@@ -53,10 +55,19 @@ def _stiff_problem():
     )
 
 
+def _solve(problem, max_iterations):
+    return problem.solve(
+        hjb_solver=HJBFDMSolver(problem, max_newton_iterations=2),
+        fp_solver=FPFDMSolver(problem),
+        max_iterations=max_iterations,
+        verbose=False,
+    )
+
+
 def _solve_capturing_warnings():
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        result = _stiff_problem().solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=3, verbose=False)
+        result = _solve(_stiff_problem(), max_iterations=3)
     messages = [str(w.message) for w in caught if "did not converge" in str(w.message)]
     residuals = [float(m) for msg in messages for m in re.findall(r"residual ([0-9.e+-]+) against", msg)]
     return result, residuals
@@ -75,8 +86,8 @@ def test_the_configuration_still_exercises_the_non_converged_path():
 def test_the_returned_value_function_is_finite_and_does_not_diverge():
     """The returned U is not required to be a root -- the warning says it is not.
 
-    It is required not to be a blow-up, which is what a non-decrease guard that never fires would
-    eventually produce. A blow-up keeps growing with the sweep count; a large-but-settled answer
+    It is required not to be a blow-up, which is what a Newton loop handing back iterates that never
+    converge could eventually produce. A blow-up keeps growing with the sweep count; a large-but-settled answer
     stops. That is what is asserted, because it is what "diverged" means.
 
     ~~``abs(U).max() < 1e3``~~ [CHANGED 2026-08-12] was a magnitude threshold, and it was calibrated
@@ -99,7 +110,7 @@ def test_the_returned_value_function_is_finite_and_does_not_diverge():
     # settle rather than grow with the iteration count.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        longer = _stiff_problem().solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=12, verbose=False)
+        longer = _solve(_stiff_problem(), max_iterations=12)
     short_norm = float(np.abs(U).max())
     long_norm = float(np.abs(np.asarray(longer.U, dtype=float)).max())
     assert np.isfinite(long_norm), "the value function is non-finite after 12 sweeps"
@@ -110,7 +121,7 @@ def test_the_returned_value_function_is_finite_and_does_not_diverge():
     )
 
 
-def test_the_guard_reports_the_iterate_it_is_returning():
+def test_a_stopped_solve_reports_the_iterate_it_is_returning():
     """Drive the loop with a controlled residual sequence and read what the warning says.
 
     Integration-level thresholds do NOT pin this -- tried twice. A magnitude threshold passes
@@ -118,14 +129,14 @@ def test_the_guard_reports_the_iterate_it_is_returning():
     warned-vs-all residuals compares different sets. The difference is visible only inside the
     loop, so this drives the loop directly.
 
-    Sequence 10, 1, 5: the guard fires on the third call because 5 > 1. The returned iterate is
-    the one whose residual is 5 -- it has not been advanced when the guard breaks -- so the
-    warning must say 5. Reporting `final_residual_norm` says 1, which is the previous iterate the
-    caller never receives.
+    Sequence 10, 1, 5, 7 with a budget of 3 steps: three steps are taken, and the fourth call only
+    measures the iterate they reached. That iterate is returned, so the warning must say 7 after 3
+    steps. Reporting the previous residual says 5, an iterate the caller never receives; returning an
+    iterate without measuring it reports a residual nobody computed.
     """
     import mfgarchon.alg.numerical.hjb_solvers.base_hjb as bh
 
-    sequence = iter([10.0, 1.0, 5.0])
+    sequence = iter([10.0, 1.0, 5.0, 7.0])
     original = bh.newton_hjb_step
 
     def fake(U_current, *args, **kwargs):
@@ -136,22 +147,24 @@ def test_the_guard_reports_the_iterate_it_is_returning():
     try:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            bh.solve_hjb_timestep_newton(
+            returned = bh.solve_hjb_timestep_newton(
                 U_n_plus_1_from_hjb_step=np.zeros(21),
                 U_k_n_from_prev_picard=np.zeros(21),
                 M_density_at_n_plus_1=np.ones(21),
                 problem=problem,
                 t_idx_n=0,
-                max_newton_iterations=5,
+                max_newton_iterations=3,
                 newton_tolerance=1e-12,
             )
     finally:
         bh.newton_hjb_step = original
 
     messages = [str(w.message) for w in caught if "did not converge" in str(w.message)]
-    assert messages, "the guard did not fire on a sequence built to trigger it"
+    assert messages, "a solve that spent its budget above tolerance did not report it"
     reported = float(re.findall(r"residual ([0-9.e+-]+) against", messages[0])[0])
-    assert reported == 5.0, (
-        f"warning reported {reported}, the previous iterate's residual. The iterate being "
-        f"returned has residual 5.0 -- the report must describe what the caller receives"
+    assert reported == 7.0, (
+        f"warning reported {reported}, not the returned iterate's residual. The iterate being "
+        f"returned has residual 7.0 -- the report must describe what the caller receives"
     )
+    assert "after 3 Newton steps" in messages[0], messages[0]
+    np.testing.assert_array_equal(returned, np.full(21, 3.0))
