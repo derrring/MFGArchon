@@ -528,7 +528,8 @@ def _pde_residuals_2d(U: np.ndarray, M: np.ndarray) -> dict:
         )
         for U_star in (U_now, U_next)
     )
-    # NumPy division, so a vanishing normaliser gives inf and a FAIL rather than a ZeroDivisionError and an ERROR.
+    # NumPy division: a vanishing normaliser gives inf (nan for 0/0) and a FAIL, with a NumPy warning, rather than
+    # a ZeroDivisionError and an ERROR. It cannot vanish for this fixture's Gaussian.
     return {
         "r_hjb": float(np.linalg.norm(hjb) / np.linalg.norm(M_now)),
         "r_fp": float(np.float64(fp) / np.linalg.norm(diffusion)),
@@ -545,40 +546,41 @@ def _mass_conservation_2d_cell(scheme_name: str):
     sweeps all four cells were red on `picard_converged` alone; at this budget all four converge in 18.
 
     **Why a budget is not enough.** Raised alone, it leaves all four cells PASS with f(m) deleted and
-    with its sign flipped. #1745's investigation adds `diffusion_scalar_2x` and a `--self-test` that
-    reports fdm_upwind_2d and sl_linear_2d newly inert to the coupling, which is #1891's condition. The
-    mass oracle cannot see f(m): drift is a property of the FP time-stepping, and min_density is the
-    t=0 value. So the verdict also requires `_pde_residuals_2d`: ``r_hjb <= 0.3`` and ``r_fp <= 0.5``.
+    with its sign flipped, and `--self-test` then fails, naming fdm_upwind_2d and sl_linear_2d as
+    newly inert to the coupling (#1891's condition). The mass oracle cannot see f(m): drift is a
+    property of the FP time-stepping, and min_density is the t=0 value. So the verdict also requires
+    `_pde_residuals_2d`: ``r_hjb <= 0.3`` and ``r_fp <= 0.5``.
 
-    **What the residuals see.**
-    - The coupling. With f(m) deleted the HJB residual reads 0.956 for FDM/FVM and 0.954 for SL_LINEAR;
-      with its sign flipped, 1.84-1.94.
-    - The FP diffusion. Under `diffusion_scalar_2x` all four cells fail, on the FP residual (0.86-1.69)
-      and not the HJB one (0.11 for FDM/FVM, 0.26 for SL_LINEAR).
+    Every number below was measured on these four cells with every gate in place. Nothing here claims
+    how the residuals scale under refinement.
 
-    **What they do not see.** Say this before relying on the cells.
-    - A factor-2 error in the HJB diffusion alone passes: doubling it in the nD HJB-FDM path leaves
-      ``r_hjb`` at 0.18.
-    - A factor-2 error in the control cost passes, in either direction. The |grad U|^2/2 term is about
-      4% of |M^n| on this fixture, too small for a 0.3 gate. The fixture's lambda = 1 is its own
-      inverse, so a lambda-versus-1/lambda mix-up is invisible by construction.
-    - `drift_coefficient_2x` passes. It gives ``r_fp`` 0.17-0.20 for the FDM and SL cells and never
-      reaches FVM_MUSCL, per #1745's investigation. So does the pre-#2308 upwind rule, which moves the
-      converged density by at most 2.9e-3. The residual floors do not shrink with the grid: ``r_hjb``
-      falls with the time step (0.076 / 0.041 / 0.021 at Nt = 3 / 6 / 12), and ``r_fp`` does not fall
-      with h. A finer grid would not bring these into reach. The point that discriminates #2308 in 2-D
-      (n=17, sigma=0.2) is minutes-scale, so it is not a cell.
+    **What the residuals catch.**
+    - f(m) deleted fails all four (r_hjb 0.954-0.956), and so does its sign flipped (1.84-1.94).
+    - Doubled diffusion (`diffusion_scalar_2x`) fails all four, on r_fp (0.86-1.69).
+
+    **What they miss. Read this before relying on the cells.**
+    - Halved diffusion, in both halves, passes FDM_UPWIND, FDM_CENTERED and SL_LINEAR while moving the
+      density by up to 0.53 against a peak of 1. The gate is one-sided in diffusion.
+    - Doubled diffusion in the nD HJB-FDM path alone passes the three HJB-FDM cells (r_hjb 0.18).
+    - A control cost of 0.5 or 2 passes all four. At 0.5, FVM_MUSCL's r_fp is 0.495, just under its 0.5
+      gate.
+    - `drift_coefficient_2x` passes all four. It moves the density by up to 0.18 in the FDM and SL cells
+      and does not reach FVM_MUSCL.
+    - The pre-#2308 upwind rule passes all four, moving the density by at most 7.1e-3 (FVM_MUSCL).
+    The n=17, sigma=0.2 point that does discriminate #2308 in 2-D is minutes-scale, so it is not a cell.
 
     **Independence, per axis.**
-    - The HJB residual shares no code with any scheme. But the HJB-FDM cells pair the coupling at M^n,
-      and paired that way the residual reads 0.016-0.017 for them. So for those three it is a
-      consistency check on the same equation, like the FP bullet below, not an independent reading.
+    - The HJB residual shares no code with any scheme. The HJB-FDM cells pair the coupling at M^n, and
+      paired that way the residual reads 0.016-0.017 for them. So for those three it is a consistency
+      check on the same equation, not an independent reading.
     - The FP residual reproduces the implicit 5-point diffusion step of FDM_UPWIND, FDM_CENTERED and
       FVM_MUSCL: with f(m) deleted it reads 1.28e-4 for those three and 0.194 for SL_LINEAR.
 
-    **Calibrated at sigma = 0.4.** ``r_fp`` is relative to |D lap M|, which shrinks with sigma. At sigma
-    = 0.3 the FDM/FVM ``r_fp`` is already 0.32-0.36, and at 0.25 all four cells fail on it. So a change
-    to ``_SMOKE_2D["sigma"]`` owes a re-calibration of the 0.5 gate.
+    **Calibrated at sigma = 0.4.**
+    - At 0.6, SL_LINEAR's r_fp is 0.458.
+    - At 0.3, the FDM/FVM r_fp are 0.32-0.36.
+    - At 0.25, all four fail on r_fp (0.86-3.58).
+    A change to ``_SMOKE_2D["sigma"]`` owes a re-calibration of the 0.5 gate.
     """
 
     def run():

@@ -5,3 +5,4 @@
   - **New gate:** the verdict also requires two relative residuals of the returned `(U, M)` against the stated PDE, `r_hjb <= 0.3` and `r_fp <= 0.5`, computed on interior nodes with the fixture's own parameters and nothing asked of the library.
   - **Result:** all four are PASS, and go red under every member of the coupling family and under 10% injected mass drift.
   - **Stale records corrected:** `_smoke_problem_2d`'s docstring (it is not the 1-D fixture in 2-D), the "mass_t0 is 1 by normalisation" comment, and the four cells' notes, which cited #1865 and the #2174 rescale shim.
+  - **Not seen:** halved diffusion (3 of 4 cells pass), a control cost of 0.5 or 2, `drift_coefficient_2x`, and the pre-#2308 upwind rule all pass. `_mass_conservation_2d_cell`'s docstring lists each with its measurement.
