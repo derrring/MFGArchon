@@ -534,10 +534,10 @@ def compute_fp_velocity_field(
         H_class: Hamiltonian exposing ``optimal_control(x, m, p, t)``.
         cross_density: Optional stacked multi-population density trajectory
             ``(Nt+1, K*Nx)`` (Issue #1071, lock-faithful). When given, ``optimal_control``
-            receives ``cross_density[n]`` (the stacked density at integer timestep ``n``,
-            which the Hamiltonian must slice itself by ``population_index``; no library grid Hamiltonian
-            does, #2335) instead of the own-population density — replacing the ``BoundHamiltonian`` wrapper's ``m_all[round(t/dt)]``
-            (``n*dt/dt == n``, so byte-identical). ``None`` => single-population own density.
+            receives ``cross_density[n]`` (the stacked density at integer timestep ``n``, which the
+            Hamiltonian must slice itself by ``population_index``; no library grid Hamiltonian does, #2335)
+            instead of the own-population density — replacing the ``BoundHamiltonian`` wrapper's
+            ``m_all[round(t/dt)]`` (``n*dt/dt == n``, so byte-identical). ``None`` => single-population own density.
             In nD only a stack with one value per node (K = 1) is accepted (#2330).
 
     Returns:
