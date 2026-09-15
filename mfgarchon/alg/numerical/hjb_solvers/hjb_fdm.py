@@ -449,11 +449,6 @@ class HJBFDMSolver(BaseHJBSolver):
         except (AttributeError, IndexError, TypeError):
             pass  # Not enough info to compute CFL — skip silently
 
-    @deprecated_parameter(
-        param_name="tensor_volatility_field",
-        since="v0.18.7",
-        replacement="volatility_field (pass (d,d) array or callable returning (d,d))",
-    )
     def inner_solve_failures(self) -> tuple[InnerSolveFailure, ...] | None:
         """The time steps of the latest ``solve_hjb_system`` whose nonlinear solve did not converge (#1878).
 
@@ -462,6 +457,11 @@ class HJBFDMSolver(BaseHJBSolver):
         """
         return None if self._inner_solve_failures is None else tuple(self._inner_solve_failures)
 
+    @deprecated_parameter(
+        param_name="tensor_volatility_field",
+        since="v0.18.7",
+        replacement="volatility_field (pass (d,d) array or callable returning (d,d))",
+    )
     def solve_hjb_system(
         self,
         M_density: NDArray | None = None,

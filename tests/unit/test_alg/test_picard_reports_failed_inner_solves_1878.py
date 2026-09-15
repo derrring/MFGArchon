@@ -29,19 +29,25 @@ from mfgarchon.utils.pde_coefficients import get_spatial_grid
 
 
 def _smoke_problem() -> MFGProblem:
-    """`scripts/capability_matrix.py::_smoke_problem`, through the Model/Conditions API."""
+    """`scripts/capability_matrix.py::_smoke_problem`, through the Model/Conditions API.
+
+    Its initial density integrates to 0.546 on purpose, as the capability fixture's does, so the constructor's
+    sub-unit-mass warning is expected and silenced here.
+    """
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
     hamiltonian = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
     )
-    return MFGProblem(
-        model=Model(hamiltonian=hamiltonian, sigma=0.0),
-        domain=grid,
-        conditions=Conditions(
-            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2), u_terminal=lambda x: 0.0, T=1.0
-        ),
-        Nt=10,
-    )
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="initial density mass", category=UserWarning)
+        return MFGProblem(
+            model=Model(hamiltonian=hamiltonian, sigma=0.0),
+            domain=grid,
+            conditions=Conditions(
+                m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2), u_terminal=lambda x: 0.0, T=1.0
+            ),
+            Nt=10,
+        )
 
 
 def _solve(problem: MFGProblem, **hjb_options):
