@@ -66,7 +66,6 @@ and the HASL/FVCN adjoint-SL research framework.
 from __future__ import annotations
 
 import math
-import warnings
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -80,6 +79,8 @@ from mfgarchon.geometry.boundary.conditions import periodic_axis_span
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.operators.differential.laplacian import LaplacianOperator
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.numerical import clip_nonnegative_or_raise
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_nd
 from mfgarchon.utils.pde_coefficients import assert_quadratic_minimize_drift, diffusion_from_volatility
 
 if TYPE_CHECKING:
@@ -544,6 +545,8 @@ class FPFVMSolver(BaseFPSolver):
         # and `get_spatial_grid()` gives (21, 1), and a callback that ravels its input accepts
         # both. The fork was only ever visible in 2D.
         source_grid = self.problem.geometry.get_spatial_grid() if source_term is not None else None
+        # The measure this scheme conserves (#2145), so the positivity gate below weighs negative mass the same way.
+        control_volumes = quadrature_weights_nd(tuple(self.problem.geometry.coordinates[: len(shape)]))
 
         for k in range(n_steps):
             idx = min(k, field.shape[0] - 1) if field is not None else 0
@@ -588,18 +591,24 @@ class FPFVMSolver(BaseFPSolver):
                     "Check the CFL/velocity magnitude."
                 )
 
+            # Issue #2323: the positivity gate the other FP solvers share (#1671, #1683). This solver warned at an
+            # absolute min < -1e-12 and returned the negative density, so whether a coupled result read as valid
+            # depended on the density's units. The gate measures negative mass as a fraction of the mass present:
+            # below MAX_CLIP_MASS_FABRICATION it clips, above it the solve stops.
+            m = clip_nonnegative_or_raise(
+                m,
+                context=f"FP FVM solver ({self.reconstruction}): at timestep {k + 1}/{n_steps}",
+                remedy=(
+                    "The explicit advection sub-step is sized from the largest single-axis speed, not the sum over "
+                    "axes, so in 2-D a flow with comparable speeds on both axes can exceed the positivity bound "
+                    "(Issue #2323). reconstruction='muscl' sub-steps at half the CFL target of 'upwind'. A "
+                    "source_term that removes more mass than is present stops here too."
+                ),
+                weights=control_volumes,
+            )
             m_solution[k + 1] = m
             if progress_callback is not None:
                 progress_callback(1)
-
-        min_density = float(np.min(m_solution))
-        if min_density < -1e-12:
-            warnings.warn(
-                f"FP FVM solver: min density {min_density:.2e} < 0. The MUSCL limiter should "
-                "prevent this; check the CFL/limiter for the advection regime.",
-                UserWarning,
-                stacklevel=2,
-            )
 
         return m_solution
 

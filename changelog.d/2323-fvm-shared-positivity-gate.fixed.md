@@ -1,0 +1,4 @@
+- **The FVM Fokker-Planck solver stops at the positivity gate the other FP solvers share** (Issue #2323, the reporting half).
+  - **Before:** it warned when min density < -1e-12, an absolute threshold, and returned the negative density. Whether a coupled result passed output validation therefore depended on the density's units.
+  - **After:** each time step goes through `clip_nonnegative_or_raise` (#1671), weighted by the grid's control volumes. Negative mass below 1e-8 of the mass present is clipped; above it the solve raises with a remedy.
+  - **Newly raising:** 2-D `reconstruction="upwind"` with comparable speeds on both axes. It exceeded its positivity bound and returned densities down to -1.6e10. It now raises, until #2323's scheme half sizes the sub-step from the sum over axes.
