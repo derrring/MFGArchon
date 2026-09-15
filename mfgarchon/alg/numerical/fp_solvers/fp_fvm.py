@@ -611,8 +611,8 @@ class FPFVMSolver(BaseFPSolver):
                     "The advection sub-steps are sized to keep a non-negative density non-negative and the implicit "
                     "diffusion is an M-matrix (Issue #2323). Known causes: a source_term sink that removes more mass "
                     "than a cell holds in one step; and, on a periodic grid that repeats its endpoint, any input whose "
-                    "repeated node differs from node 0 -- the initial density, potential_field or drift_field, or "
-                    "source_term (Issue #2336)."
+                    "repeated node differs from node 0 -- the initial density, source_term, or in 2-D and up "
+                    "potential_field or drift_field (Issue #2336)."
                 ),
                 weights=control_volumes,
             )

@@ -105,7 +105,10 @@ def test_advection_does_not_drive_the_density_negative(monkeypatch, dimension, n
 
 @pytest.mark.parametrize("reconstruction", ["muscl", "upwind"])
 def test_no_constant_speed_drives_a_periodic_density_negative(monkeypatch, reconstruction):
-    """Speeds from 0.3 to 3.2 times h/dt, so the sweep does not depend on how the solver splits a time step.
+    """Speeds from 0.3 to 3.2 times h/dt, so what the sweep kills does not depend on how the solver splits a step.
+
+    At sigma = 0, as here, the control stays exactly non-negative; with diffusion on, LU round-off on exact zeros
+    reaches -1e-23 and a ``>= 0.0`` assertion would sit on a knife edge (review of #2332, round 4).
 
     Measured at 8a618465 for n in 39, 41, 43 and Nt in 9, 10, 11: with MUSCL's target raised to upwind's 0.8, the MUSCL
     sweep goes negative in all nine settings; with the sub-step count rounded down, both sweeps do.
