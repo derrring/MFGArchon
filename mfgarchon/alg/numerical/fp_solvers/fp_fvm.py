@@ -66,7 +66,7 @@ and the HASL/FVCN adjoint-SL research framework.
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 from scipy import sparse
@@ -86,6 +86,7 @@ from mfgarchon.utils.pde_coefficients import assert_quadratic_minimize_drift, di
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from mfgarchon.geometry import TensorProductGrid
     from mfgarchon.geometry.boundary import BoundaryConditions
 
 logger = get_logger(__name__)
@@ -546,7 +547,9 @@ class FPFVMSolver(BaseFPSolver):
         # both. The fork was only ever visible in 2D.
         source_grid = self.problem.geometry.get_spatial_grid() if source_term is not None else None
         # The measure this scheme conserves (#2145), so the positivity gate below weighs negative mass the same way.
-        control_volumes = quadrature_weights_nd(tuple(self.problem.geometry.coordinates[: len(shape)]))
+        # TensorProductGrid only (module docstring), which the problem's GeometryProtocol does not say.
+        grid = cast("TensorProductGrid", self.problem.geometry)
+        control_volumes = quadrature_weights_nd(tuple(grid.coordinates[: len(shape)]))
 
         for k in range(n_steps):
             idx = min(k, field.shape[0] - 1) if field is not None else 0
