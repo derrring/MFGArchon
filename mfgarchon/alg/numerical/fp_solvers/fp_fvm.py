@@ -14,8 +14,9 @@ update is the flux-difference form over the control volume ``V_i``
 
 The interface velocity ``alpha_{i+1/2}`` is *shared* by the two cells that touch the face, so the
 divergence telescopes and the total mass ``grid.integrate(m)`` is conserved to machine precision
-for no-flux / periodic boundaries. This is the higher-order extension of the conservative
-divergence-upwind FDM stencil (:mod:`fp_fdm_alg_divergence_upwind`); see Issue #422.
+for no-flux / periodic boundaries, unless the positivity gate below clips. This is the higher-order
+extension of the conservative divergence-upwind FDM stencil (:mod:`fp_fdm_alg_divergence_upwind`); see
+Issue #422.
 
 **What this paragraph used to say, and what it cost.** It read "whose nodes are interpreted as cell
 centers with uniform spacing ``dx``" and "the total mass ``sum_i m_bar_i dx`` is conserved". The
@@ -46,9 +47,10 @@ Interface velocity source (one of, mirroring the divergence-upwind FDM options):
 Time stepping: IMEX by Strang operator splitting -- explicit (sub-cycled) MUSCL/upwind advection on
 each half step, implicit (backward-Euler) central diffusion in the middle. Each advection sub-step is a
 fraction of the forward-Euler positivity bound ``dt * rate_i <= 1``, where ``rate_i`` is cell ``i``'s total
-outflow speed over its own control volume, summed over axes (`advective_outflow_rate`, #2323). After each
-time step the shared positivity gate clips negative density below 1e-8 of the mass present and stops the
-solve above it; a clip adds the clipped mass.
+outflow speed over its own control volume, summed over axes (`advective_outflow_rate`, #2323). On a
+periodic axis that repeats its endpoint the bound also needs the repeated node to equal node 0, which is
+not enforced (#2336). After each time step the shared positivity gate clips negative density below 1e-8
+of the mass present and stops the solve above it; a clip adds the clipped mass.
 
 Both sub-operators are individually mass-conserving (advection telescopes; the implicit
 diffusion uses the conservative finite-volume Laplacian, whose weighted column sums vanish,
@@ -606,9 +608,10 @@ class FPFVMSolver(BaseFPSolver):
                 m,
                 context=f"FP FVM solver ({self.reconstruction}): at timestep {k + 1}/{n_steps}",
                 remedy=(
-                    "The advection sub-steps are sized to keep the density non-negative and the implicit diffusion "
-                    "is an M-matrix (Issue #2323), so check source_term first: a sink that removes more mass than a "
-                    "cell holds in one step drives it negative."
+                    "The advection sub-steps are sized to keep a non-negative density non-negative and the implicit "
+                    "diffusion is an M-matrix (Issue #2323). Two known causes remain: a source_term sink that removes "
+                    "more mass than a cell holds in one step, and, on a periodic grid that repeats its endpoint, an "
+                    "initial density whose repeated node differs from node 0 (Issue #2336)."
                 ),
                 weights=control_volumes,
             )
