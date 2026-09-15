@@ -126,12 +126,14 @@ KNOWN_NOT_HONOURED = {
     # through it) plus the repeated-endpoint constraint row in fp_fdm_time_stepping. Pinned
     # against the heat kernel and a rigid translation, not against the seam, in
     # tests/unit/test_alg/test_periodic_torus_oracle_1822.py.
-    # HJBFDMSolver is GONE from this roster (#1834). Its seam was a Newton that did not converge at
-    # t_idx 9: the FD-fallback Jacobian took row 0's and row Nx-1's neighbours as `(i -/+ 1) % Nx`, which
-    # on this endpoint-inclusive grid names the duplicate node, so the Hamiltonian half of both wrap
-    # entries was never computed (J[0, 19] = -18 against -155.7 on this datum). The Jacobian now reads
-    # its neighbours from the residual's own Laplacian bands, and the seam is 4.6e-15. Pinned against the
-    # residual's derivative, not against the seam, in tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py.
+    # HJBFDMSolver is GONE from this roster (#1834). The FD-fallback Jacobian took row 0's and row
+    # Nx-1's neighbours as `(i -/+ 1) % Nx`, which on this endpoint-inclusive grid names the duplicate
+    # node, so the Hamiltonian half of both wrap entries was never computed (J[0, 19] = -18 against
+    # -155.7 on this datum). While the inner Newton's non-decrease guard stood, that stalled it at
+    # t_idx 9 with a seam of 5.3e-01; once #1878 removed the guard, Newton converged on the wrong
+    # Jacobian to a seam of 3.7e-08, still above SEAM_TOL. The Jacobian now reads its neighbours from
+    # the residual's own Laplacian bands, and the seam is 7.6e-16 at Nx=21. Pinned against the residual's
+    # derivative, not against the seam, in tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py.
     # HJBGFDMSolver is GONE from this roster (#1841). It always honoured PERIODIC -- seam 2.2e-15,
     # 3.3e-11, 6.7e-16, 6.7e-16 at Nx=11/21/41/81 via the Issue #711 wrap -- but only on a cloud
     # with no DETECTED boundary points, which callers could reach only by hand-passing an empty
@@ -495,8 +497,8 @@ BC_FACTORIES = {
 # without identifying the coincident nodes, and that is a weaker claim than the seam test above
 # makes, not a violated one.
 #
-#   converge:   ~~HJBFDMSolver 7.42e-01 6.51e-01 4.72e-01~~ [SUPERSEDED 2026-09-15 by #1834: that was a
-#               Newton whose FD-fallback Jacobian dropped the wrap entries; now exact, 7.6e-16 at Nx=21]
+#   converge:   ~~HJBFDMSolver 7.42e-01 6.51e-01 4.72e-01~~ [SUPERSEDED 2026-09-15 by #1878 and #1834:
+#               a guarded Newton on an FD-fallback Jacobian missing its wrap entries; now exact at Nx=21]
 #   exact:      HJBFDMSolver (#1834), HJBSemiLagrangianSolver 0, FPSLSolver / FPSLAdjointSolver 4.4e-16,
 #               HJBWENOSolver (was 2.63e-01 2.08e-01 1.34e-01 before its ghost fill was fixed),
 #               FPFVMSolver and FPFDMSolver (were 1.79e-01 9.00e-02 4.25e-02 and the same shape,
@@ -588,8 +590,9 @@ def test_a_declared_bc_type_is_honoured(name, cls, bc_type):
     # 1.58e+00 -> 7.64e-03 and then gets WORSE at 81 (1.16e-02), and a two-point check certifies
     # it. ~~HJBFDMSolver is the opposite case -- 7.42e-01, 6.51e-01, 4.72e-01 is genuine, slow
     # convergence that a ratio threshold tuned for the fast cases would have failed.~~ [SUPERSEDED
-    # 2026-09-15 by #1834: that trend was a stalled Newton, and the solver is now exact at Nx=21. The
-    # three-point rule still stands on FPSLJacobianSolver's non-monotone case.]
+    # 2026-09-15 by #1878 and #1834: that trend was a stalled Newton on a Jacobian missing its wrap
+    # entries, and the solver is now exact at Nx=21. The three-point rule still stands on
+    # FPSLJacobianSolver's non-monotone case.]
     trend = f"{residuals[0]:.3e}, {residuals[1]:.3e}, {residuals[2]:.3e} at Nx=21/41/81"
     # `or < EXACT`: a residual that has REACHED round-off has converged, and cannot keep halving
     # below machine epsilon -- demanding it would fail a solver for being exact. The early return

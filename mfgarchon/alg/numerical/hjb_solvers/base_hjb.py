@@ -1297,9 +1297,10 @@ def compute_hjb_jacobian(
         # ghost is U[Nx-2] and row Nx-1's is U[1]. The `% Nx` neighbours name columns Nx-1 and 0 instead,
         # whose entries the band assembly below drops, so the Hamiltonian half of both wrap entries was
         # never computed: J[0, Nx-2] = -18 against a derivative of the residual of -155.7 on the #1822
-        # fixture at 6c0610d2, and Newton stalled at t_idx 9 (#1834). The gradient operator the residual
-        # applies has the same neighbour structure as this Laplacian, which is what makes reading one
-        # off the other valid.
+        # fixture at 6c0610d2, and Newton stalled at t_idx 9 (#1834). On the NumPy path the gradient operator
+        # the residual applies has the same neighbour structure as this Laplacian, which is what makes
+        # reading one off the other valid. Under torch with a BC the residual still uses the legacy `% Nx`
+        # roll while this reads the BC-aware bands -- a mismatch that predates #1834 and is not closed here.
         wrap_columns: dict[int, list[int]] = {}
         if _lap_bands is not None:
             for _row, _col, _ in _lap_bands[3]:

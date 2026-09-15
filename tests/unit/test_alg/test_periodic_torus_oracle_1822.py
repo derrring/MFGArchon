@@ -233,7 +233,9 @@ def test_a_drift_that_disagrees_with_itself_at_the_seam_still_gives_one_density_
     and the pair splits: measured 2.36e-01.
 
     Not a synthetic input. During Picard the drift comes from an HJB solve, and HJBFDMSolver's own
-    periodic seam is 7.4e-01 (#1834) -- so an FP solver is routinely handed exactly this.
+    periodic seam ~~is 7.4e-01 (#1834)~~ was 7.4e-01 until #1878 and #1834 closed it [CORRECTED
+    2026-09-15; it is 7.6e-16 now] -- so an FP solver was routinely handed exactly this, and any other
+    HJB solver that does not close its seam still hands it one.
     """
     nx, nt = 21, 20
     x = np.linspace(0.0, 1.0, nx)

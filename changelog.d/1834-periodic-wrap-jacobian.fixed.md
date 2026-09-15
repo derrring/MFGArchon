@@ -10,6 +10,9 @@
     relative, for both assembly paths and both schemes, on periodic, `bc=None` and no-flux grids.
   - **Result:** the periodic seam is 7.6e-16 at Nx=21. `HJBFDMSolver` leaves #1822's list of solvers that
     do not honour PERIODIC.
-  - **Also fixed:** under `bc=None`, whose residual is the legacy exclusive-periodic one, the wrap entries
-    were dropped too, off by 34% relative on the central scheme.
-  - **Unchanged:** non-periodic boundary conditions give byte-identical Jacobians.
+  - **Also fixed:**
+    - Under `bc=None`, whose residual is the legacy exclusive-periodic one, the wrap entries were dropped
+      too: off by 85% relative on a random state, on both schemes.
+    - Under `EXTRAPOLATION_QUADRATIC`, whose ghost reaches two nodes in, the fallback dropped those entries:
+      33% relative. `HJBFDMSolver` refuses that BC, so only direct `compute_hjb_jacobian` callers saw it.
+  - **Unchanged:** no-flux, Neumann, Dirichlet and Robin give byte-identical Jacobians.

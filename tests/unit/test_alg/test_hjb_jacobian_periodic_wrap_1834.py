@@ -6,7 +6,7 @@ row i's neighbours as ``(i - 1) % Nx`` and ``(i + 1) % Nx``. On the endpoint-inc
 Nx-1 is ``U[1]``. The `% Nx` columns were never those, and the Hamiltonian half of both wrap entries was
 missing: ``J[0, 19] = -18`` against a residual derivative of ``-155.7`` on #1822's fixture at 6c0610d2, and
 Newton stalled. Under ``bc=None``, the legacy exclusive-periodic residual, the band assembly dropped the wrap
-entries too: 34% relative on the central scheme at 1fcd15b4.
+entries too: 85% relative on a random state, on both schemes, at 1fcd15b4.
 
 Oracle: the definition of a Jacobian. Each column of the central finite difference of `compute_hjb_residual`
 must match the assembled column, for both assembly paths (the FD fallback and the analytic chain rule), both
@@ -47,13 +47,20 @@ def _problem(bc):
         )
 
 
-def _states(periodic: bool):
-    """Four states: two phases, each with both signs, so each wrap row sees the forward and the backward branch."""
+def _states(identify_endpoints: bool):
+    """Four states: two phases, each with both signs, so each wrap row sees the forward and the backward branch.
+
+    ``identify_endpoints`` makes ``U[-1] == U[0]``, which the grid-periodic convention requires. The legacy
+    ``bc=None`` residual wraps between those two columns, so on such a state its wrap difference is zero and
+    its wrap entries carry no Hamiltonian part to get wrong: that case gets states whose ends differ.
+    """
     for phase in (0.7, 2.4):
         for sign in (1.0, -1.0):
             state = sign * (np.sin(2 * np.pi * _X + phase) + 0.3 * np.cos(6 * np.pi * _X + 0.5 + phase))
-            if periodic:
+            if identify_endpoints:
                 state[-1] = state[0]
+            else:
+                state = state + sign * 0.8 * _X
             yield state
 
 
@@ -67,7 +74,7 @@ def test_the_jacobian_is_the_derivative_of_the_residual(boundary: str, upwind: b
     domain_bounds = np.array([[bounds[0][0], bounds[1][0]]])
     backend = create_backend("numpy") if assembly == "fd_fallback" else None
     worst = 0.0
-    for state in _states(periodic=boundary != "no_flux"):
+    for state in _states(identify_endpoints=boundary == "periodic"):
 
         def residual(u, state=state):
             return np.asarray(

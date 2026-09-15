@@ -10,8 +10,9 @@
   a periodic seam) and **monotone convergence over three refinements otherwise** (mass, a normal
   derivative). Three points rather than two, because two are not a trend: `FPSLJacobianSolver`
   improves `1.58e+00 -> 7.64e-03` from Nx=21 to 41 and then gets *worse* at 81, and a two-point
-  check certifies it. `HJBFDMSolver` is the opposite case -- `7.42e-01, 6.51e-01, 4.72e-01` is
-  genuine slow convergence that a ratio threshold tuned for the fast cases rejects.
+  check certifies it. ~~`HJBFDMSolver` is the opposite case -- `7.42e-01, 6.51e-01, 4.72e-01` is
+  genuine slow convergence that a ratio threshold tuned for the fast cases rejects.~~ That trend was a
+  stalled Newton on a Jacobian missing its periodic wrap entries, and #1878 and #1834 close it.
 - `FPParticleSolver` is **skipped and named** rather than classified: it takes no seed, and over
   three trials of the identical configuration its periodic seam was non-monotone, non-monotone,
   monotone. Marking it xfail asserts a failure it does not reliably have; marking it pass asserts
