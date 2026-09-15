@@ -149,6 +149,7 @@ def _axis_layout(
             "Dirichlet advection is deferred (Issue #422 scope note)."
         )
 
+    volumes: float | np.ndarray
     if periodic:
         # Every cell on the torus is dx wide. #1822 already removed the repeated cell above, which
         # is the same "one cell too long" error the zero-flux branch carries -- fixed on this side
