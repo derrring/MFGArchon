@@ -177,12 +177,19 @@ def _smoke_problem():
     )
 
 
-def _smoke_problem_2d():
-    """The 1-D smoke fixture lifted to 2-D, unchanged in everything but dimension.
+# The 2-D fixture's stated parameters, read by the fixture and by `_pde_residuals_2d`, which writes out the
+# PDE they state without asking the library how it discretises it.
+_SMOKE_2D = {"n": 11, "T": 0.2, "Nt": 6, "sigma": 0.4}
 
-    Deliberately the same Gaussian, the same no-flux boundaries, the same coupling: a
-    cell that differs from its 1-D sibling only in dimension is what makes "works in
-    1-D, not in 2-D" readable off the matrix. 11x11 and 6 steps keep it near a second.
+
+def _smoke_problem_2d():
+    """A 2-D coupled smoke fixture: no-flux walls, quadratic control cost, f(m) = m (#1745).
+
+    ~~The 1-D smoke fixture lifted to 2-D, unchanged in everything but dimension ... 11x11 and 6
+    steps keep it near a second.~~ [CORRECTED 2026-09-15, #1745] It is not the 1-D fixture in 2-D.
+    Five things differ: the Gaussian is ``exp(-30 r^2)`` against ``exp(-10 x^2)``, T is 0.2 against
+    1.0, Nt is 6 against 10, sigma is 0.4 against 0.0, and the grid is 11x11 against 21. Both
+    initial peaks are 1.0. A 40-sweep solve takes seconds, not one.
     """
     from mfgarchon import MFGProblem
     from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
@@ -191,13 +198,14 @@ def _smoke_problem_2d():
     from mfgarchon.geometry.boundary import no_flux_bc
 
     _f, _df = _coupling_pair(lambda m: m, lambda m: 1.0)
+    n = _SMOKE_2D["n"]
     return MFGProblem(
         geometry=TensorProductGrid(
-            bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[11, 11], boundary_conditions=no_flux_bc(dimension=2)
+            bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[n, n], boundary_conditions=no_flux_bc(dimension=2)
         ),
-        Nt=6,
-        T=0.2,
-        sigma=0.4,
+        Nt=_SMOKE_2D["Nt"],
+        T=_SMOKE_2D["T"],
+        sigma=_SMOKE_2D["sigma"],
         components=MFGComponents(
             m_initial=lambda x: np.exp(-30 * np.sum((np.asarray(x) - 0.5) ** 2, axis=-1)),
             u_terminal=lambda x: 0.0,
@@ -475,25 +483,101 @@ def _mass_conservation_cell(scheme_name: str):
     return run
 
 
-def _mass_conservation_2d_cell(scheme_name: str):
-    """Same oracle as the 1-D cell, in 2-D (#1745).
+def _pde_residuals_2d(U: np.ndarray, M: np.ndarray) -> dict:
+    """Relative residuals of a returned ``(U, M)`` against the PDE `_smoke_problem_2d` states (#1745).
 
-    Every cell in this file was 1-D until now, so a scheme could conserve mass to
-    2.2e-16 in one dimension and not run at all in two with the matrix reporting
-    nothing. Measured when these were added: SL_LINEAR passes at 3.67e-16 while
-    FDM_UPWIND, FDM_CENTERED and FVM_MUSCL all raise the same ConvergenceError from
-    the same Newton solve -- they share `HJBFDMSolver`, and SL_LINEAR does not. One
-    defect, three dead schemes.
+    Interior nodes, 5-point stencils, and the fixture's own parameters, with nothing asked of the
+    library: ``f(m) = m``, ``H = |p|^2 / 2``, ``D = sigma^2 / 2``.
+
+    - HJB: ``(U^n - U^{n+1})/dt + |grad U^n|^2 / 2 + (M^n + M^{n+1})/2 - D lap U^n``, relative to ``|M^n|``.
+    - FP: ``(M^{n+1} - M^n)/dt - D lap M^{n+1} - div(M^{n+1} grad U*)``, relative to ``|D lap M^{n+1}|``,
+      with ``U*`` the better of ``U^n`` and ``U^{n+1}``.
+
+    The time average of the coupling and the choice of ``U*`` leave room for schemes that pair the time
+    levels differently, which is also why the gate is loose: this reads whether the answer solves the
+    stated problem at all, not the discretisation error of any one scheme.
+    """
+    n, T, Nt, sigma = _SMOKE_2D["n"], _SMOKE_2D["T"], _SMOKE_2D["Nt"], _SMOKE_2D["sigma"]
+    dt, h, D = T / Nt, 1.0 / (n - 1), sigma**2 / 2
+
+    def lap(A):
+        return (A[:, 2:, 1:-1] + A[:, :-2, 1:-1] + A[:, 1:-1, 2:] + A[:, 1:-1, :-2] - 4 * A[:, 1:-1, 1:-1]) / h**2
+
+    def ddx(A):
+        return (A[:, 2:, 1:-1] - A[:, :-2, 1:-1]) / (2 * h)
+
+    def ddy(A):
+        return (A[:, 1:-1, 2:] - A[:, 1:-1, :-2]) / (2 * h)
+
+    U_now, U_next = U[:-1], U[1:]
+    M_now, M_next = M[:-1, 1:-1, 1:-1], M[1:, 1:-1, 1:-1]
+    hjb = (
+        (U_now[:, 1:-1, 1:-1] - U_next[:, 1:-1, 1:-1]) / dt
+        + 0.5 * (ddx(U_now) ** 2 + ddy(U_now) ** 2)
+        - D * lap(U_now)
+        + 0.5 * (M_now + M_next)
+    )
+    diffusion = D * lap(M[1:])
+    fp = min(
+        float(
+            np.linalg.norm(
+                (M_next - M_now) / dt
+                - diffusion
+                - (ddx(M[1:]) * ddx(U_star) + ddy(M[1:]) * ddy(U_star) + M_next * lap(U_star))
+            )
+        )
+        for U_star in (U_now, U_next)
+    )
+    return {
+        "r_hjb": float(np.linalg.norm(hjb) / np.linalg.norm(M_now)),
+        "r_fp": fp / float(np.linalg.norm(diffusion)),
+    }
+
+
+def _mass_conservation_2d_cell(scheme_name: str):
+    """The 1-D cell's mass oracle in 2-D, plus residuals against the PDE the fixture states (#1745).
+
+    Every cell in this file was 1-D until these were added, so a scheme could conserve mass to
+    2.2e-16 in one dimension and not run at all in two with the matrix reporting nothing.
+
+    **Budget.** 40 sweeps at tolerance 1e-4, the budget this file's other converging cells use. At 3
+    sweeps all four cells were red on `picard_converged` alone; the same solves converge in 26-27
+    sweeps at 6c0610d2 (#1745).
+
+    **Why a budget is not enough.** Raised alone, it leaves all four cells PASS with f(m) deleted and
+    with its sign flipped (measured when these residuals were added). #1745's investigation adds
+    `diffusion_scalar_2x` and a `--self-test` that reports fdm_upwind_2d and sl_linear_2d newly inert
+    to the coupling, which is #1891's condition. The mass oracle cannot see f(m): drift is a
+    property of the FP time-stepping, and min_density is the t=0 value. So the verdict also requires
+    `_pde_residuals_2d`: ``r_hjb <= 0.3`` and ``r_fp <= 0.5``.
+
+    **Independence, per axis.**
+    - The HJB residual is independent of all four schemes. It writes the PDE out, and no scheme's
+      residual is reused.
+    - The FP residual reproduces the implicit 5-point diffusion step of FDM_UPWIND, FDM_CENTERED and
+      FVM_MUSCL: with f(m) deleted it reads 1.28e-4 for those three and 0.194 for SL_LINEAR. For those
+      three it is a consistency check, not an independent reading.
+    - With f(m) deleted the HJB residual reads 0.956 for FDM/FVM and 0.954 for SL_LINEAR; with its sign
+      flipped, 1.84-1.94. Under `diffusion_scalar_2x`, #1745's investigation measured SL_LINEAR's HJB
+      residual at 0.260, so its verdict there rests on the FP residual alone.
+
+    **Out of reach at this fixture** (#1745's investigation, not re-run here). The pre-#2308 upwind rule
+    moves the converged density by at most 2.9e-3, and `drift_coefficient_2x` gives ``r_fp`` 0.17-0.20. Both are under the ``O(h)`` floor of an
+    11x11 grid. The body-style point that does discriminate #2308 in 2-D (n=17, sigma=0.2) is
+    minutes-scale, so it is not a cell.
     """
 
     def run():
         from mfgarchon.types import NumericalScheme
 
         problem = _construct("2-D smoke problem", _smoke_problem_2d)
-        result = problem.solve(scheme=getattr(NumericalScheme, scheme_name), max_iterations=3, verbose=False)
+        result = problem.solve(
+            scheme=getattr(NumericalScheme, scheme_name), max_iterations=40, tolerance=1e-4, verbose=False
+        )
 
         def verdict():
             M = _apply_mutation(np.asarray(result.M, dtype=float))
+            U = np.asarray(result.U, dtype=float)
             # The grid's own measure (#2145) -- and in 2-D the corner owns a QUARTER cell, which a
             # single `dv` cannot express however it is chosen.
             mass = np.asarray(problem.geometry.integrate(M), dtype=float)
@@ -505,7 +589,17 @@ def _mass_conservation_2d_cell(scheme_name: str):
                 "tolerance": 1e-9,
             }
             art |= _picard_verdict(result)
-            ok = art["all_finite"] and art["min_density"] >= -1e-12 and art["max_rel_drift"] <= 1e-9 and _solved(art)
+            art["all_finite"] = bool(art["all_finite"] and np.isfinite(U).all())
+            if art["all_finite"]:
+                art |= _pde_residuals_2d(U, M)
+            ok = (
+                art["all_finite"]
+                and art["min_density"] >= -1e-12
+                and art["max_rel_drift"] <= 1e-9
+                and _solved(art)
+                and art["r_hjb"] <= 0.3
+                and art["r_fp"] <= 0.5
+            )
             return ("PASS" if ok else "FAIL"), art
 
         return _measure("2-D mass drift", verdict)
@@ -1036,7 +1130,8 @@ def print_report(results: dict) -> None:
 # coupling, and leaving it listed would let it arrive as `inert (known)` instead -- the mirror of
 # why `MASS_ORACLE_CELLS` does keep its non-PASS members, where listing is what makes the proof
 # happen rather than what waives it. The mass oracles cannot see f(m) by construction:
-# `mass_t0` is 1 by normalisation, `max_rel_drift` is a property of the FP time-stepping which holds
+# ~~`mass_t0` is 1 by normalisation~~ [CORRECTED 2026-09-15: nothing normalises it since #1887; the
+# 1-D fixture's mass_t0 is 0.546 and the 2-D fixture's 0.1047], `max_rel_drift` is a property of the FP time-stepping which holds
 # on whatever drift field it is handed, and `min_density` is the t=0 value of the initial condition.
 # `fvm_vs_fdm/agreement` is NOT on this list, and finding that out is what the family bought: it
 # survives deletion and a sign flip and fails under a 10x scale, so deletion alone would have

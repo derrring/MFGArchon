@@ -1,0 +1,7 @@
+- **The four 2-D capability cells solve to a fixed point and read the PDE the fixture states** (Issue #1745).
+  - **Before:** `fdm_upwind_2d`, `fdm_centered_2d`, `fvm_muscl_2d` and `sl_linear_2d` were red only on their 3-sweep Picard budget.
+  - **Budget:** they now solve with 40 sweeps at tolerance 1e-4, the budget the file's other converging cells use.
+  - **Why the residuals:** a budget alone turned them PASS with f(m) deleted or its sign flipped, because the mass oracle cannot see the coupling.
+  - **New gate:** the verdict also requires two relative residuals of the returned `(U, M)` against the stated PDE, `r_hjb <= 0.3` and `r_fp <= 0.5`, computed on interior nodes with the fixture's own parameters and nothing asked of the library.
+  - **Result:** all four are PASS, and go red under every member of the coupling family and under 10% injected mass drift.
+  - **Stale records corrected:** `_smoke_problem_2d`'s docstring (it is not the 1-D fixture in 2-D), the "mass_t0 is 1 by normalisation" comment, and the four cells' notes, which cited #1865 and the #2174 rescale shim.
