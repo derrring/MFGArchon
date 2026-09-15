@@ -519,7 +519,7 @@ def compute_fp_velocity_field(
     H_class: object,
     cross_density: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Compute the face-centered FP advection velocity $\\alpha^*$ from the value function.
+    """Compute the FP advection velocity $\\alpha^*$ from the value function: face-centered in 1D, node-centered in nD.
 
     Single-source for the velocity convention shared by the Picard
     ``FixedPointIterator`` and the Newton ``MFGResidual`` (Issue #1233). Evaluates
@@ -534,15 +534,21 @@ def compute_fp_velocity_field(
         H_class: Hamiltonian exposing ``optimal_control(x, m, p, t)``.
         cross_density: Optional stacked multi-population density trajectory
             ``(Nt+1, K*Nx)`` (Issue #1071, lock-faithful). When given, ``optimal_control``
-            receives ``cross_density[n]`` (the stacked density at integer timestep ``n``,
-            sliced per-population via ``population_index``) instead of the own-population
-            density — replacing the ``BoundHamiltonian`` wrapper's ``m_all[round(t/dt)]``
-            (``n*dt/dt == n``, so byte-identical). ``None`` => single-population own density.
+            receives ``cross_density[n]`` (the stacked density at integer timestep ``n``, which the
+            Hamiltonian must slice itself by ``population_index``; no library grid Hamiltonian does, #2335)
+            instead of the own-population density — replacing the ``BoundHamiltonian`` wrapper's
+            ``m_all[round(t/dt)]`` (``n*dt/dt == n``, so byte-identical). ``None`` => single-population own density.
+            In nD only a stack with one value per node (K = 1) is accepted (#2330).
 
     Returns:
-        Face-centered velocity $\\alpha^*$.
-        1D: shape ``(Nt, Nx-1)`` — velocity at each face $(i+1/2)$.
-        nD: shape ``(Nt, ndim, *spatial_shape)`` — node-centered (nD fallback).
+        Velocity $\\alpha^*$.
+        1D: shape ``(U.shape[0], Nx-1)`` — face-centered, at each face $(i+1/2)$.
+        nD: shape ``(U.shape[0], ndim, *spatial_shape)`` — node-centered (nD fallback). ``optimal_control`` is called
+        once per time step on the ``(N, d)`` batch of nodes, with ``m`` of shape ``(N,)`` (#2330).
+
+    Raises:
+        ValueError: in nD, when ``optimal_control`` does not return shape ``(N, d)``.
+        NotImplementedError: in nD, when ``cross_density[n]`` does not hold exactly one value per node.
     """
     geometry = problem.geometry
     grid_spacing = geometry.get_grid_spacing()
@@ -589,24 +595,40 @@ def compute_fp_velocity_field(
             grad_d = np.gradient(U, grid_spacing[d], axis=d + 1)
             grad_components.append(grad_d)
 
+        # Issue #2330: `HamiltonianBase` documents a point ``(d,)`` or a batch ``(N, d)``, with ``m`` one value per
+        # point. This called it on grid-shaped ``(nx, ny, d)`` arrays: `CongestionHamiltonian` and a user subclass
+        # written to the documented shapes raised, and a return that broadcast against the grid was spread into every
+        # velocity component. So call on the flattened batch, and refuse a return of any other shape.
         coords = [np.linspace(bounds[0][d], bounds[1][d], spatial_shape[d]) for d in range(ndim)]
-        mesh = np.meshgrid(*coords, indexing="ij")
-        x_grid = np.stack(mesh, axis=-1)
+        x_points = np.stack(np.meshgrid(*coords, indexing="ij"), axis=-1).reshape(-1, ndim)
+        n_points = x_points.shape[0]
 
         alpha_field = np.zeros((Nt, ndim, *spatial_shape))
         for n in range(Nt):
-            p_n = np.stack([grad_components[d][n] for d in range(ndim)], axis=-1)
+            p_points = np.stack([grad_components[d][n] for d in range(ndim)], axis=-1).reshape(n_points, ndim)
             # Issue #1071: stacked cross-density at this integer timestep for multi-pop (see 1D path).
             if cross_density is not None:
-                m_n = cross_density[n]
+                stacked = np.asarray(cross_density[n])
+                if stacked.size != n_points:
+                    # A stack of another size cannot be paired with the (N, d) batch node by node, and no grid
+                    # Hamiltonian in the library slices one by `population_index` (#2335). This also refuses a
+                    # Hamiltonian that would ignore m, which is the price of not guessing (#2330 review).
+                    raise NotImplementedError(
+                        f"compute_fp_velocity_field: a cross density of {stacked.size} values for {n_points} nodes "
+                        f"has no per-node form for an nD optimal_control batch; only one value per node is "
+                        f"accepted (#2330)."
+                    )
+                m_points = stacked.reshape(n_points)
             else:
-                m_n = M[n] if n < M.shape[0] else M[-1]
-            alpha_n = H_class.optimal_control(x_grid, m_n, p_n, t=n * dt)
-            if alpha_n.ndim == ndim + 1:
-                alpha_field[n] = np.moveaxis(alpha_n, -1, 0)
-            else:
-                for d in range(ndim):
-                    alpha_field[n, d] = alpha_n
+                m_points = (M[n] if n < M.shape[0] else M[-1]).reshape(n_points)
+            alpha_n = np.asarray(H_class.optimal_control(x_points, m_points, p_points, t=n * dt))
+            if alpha_n.shape != (n_points, ndim):
+                raise ValueError(
+                    f"{type(H_class).__name__}.optimal_control returned shape {alpha_n.shape} for a batch of "
+                    f"{n_points} points in {ndim}-D; it must return one control vector per point, shape "
+                    f"({n_points}, {ndim}) (#2330)."
+                )
+            alpha_field[n] = np.moveaxis(alpha_n.reshape(*spatial_shape, ndim), -1, 0)
 
         return alpha_field
 
