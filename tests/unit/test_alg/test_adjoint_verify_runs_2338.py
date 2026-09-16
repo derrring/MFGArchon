@@ -32,7 +32,7 @@ from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.geometry.boundary import no_flux_bc, periodic_bc
 
 _N = 41
 
@@ -278,3 +278,31 @@ def test_it_refuses_an_hjb_solver_that_builds_no_linearised_operator():
         )
         with pytest.raises(NotImplementedError, match=r"LinearizedOperatorCapable|linearised HJB operator"):
             iterator.solve(max_iterations=1, tolerance=1e-6)
+
+
+def test_the_operator_follows_the_solvers_resolved_boundary_conditions():
+    """The BC the operator assembles under must be the one the solve uses, and those had two owners (#2338).
+
+    `build_advection_operator` read `geometry.get_boundary_conditions()` while every real assembly call passes
+    `self.boundary_conditions`, which the constructor resolves through components, geometry and the periodic
+    convention (#527). The two disagree whenever a caller passes a BC to the solver over a differently-configured
+    geometry, and the disagreement is silent: a periodic solver would have had its wall rows assembled as if no-flux,
+    so the check would compare the right HJB operator against the wrong FP one and report a defect that is its own.
+    This is the one fix in the review of #2344 that fails silently rather than loudly, which is why it has a pin.
+    """
+    problem = _problem(n=11)
+    x = np.asarray(problem.geometry.coordinates[0])
+    u = np.cos(4 * np.pi * x) + 0.1 * x
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        as_configured = FPFDMSolver(problem, boundary_conditions=periodic_bc(dimension=1))
+        as_default = FPFDMSolver(problem)
+        periodic_rows = as_configured.build_advection_operator(u).toarray()
+        no_flux_rows = as_default.build_advection_operator(u).toarray()
+
+    filled = lambda matrix: int(np.count_nonzero(np.abs(matrix).sum(axis=1)))  # noqa: E731
+    assert filled(periodic_rows) == 11, (
+        f"the periodic solver filled {filled(periodic_rows)} of 11 rows; a periodic wall dispatches through the "
+        f"interior stencil, so reading the geometry's no-flux BC instead leaves it empty"
+    )
+    assert filled(no_flux_rows) == 9, "the no-flux default should leave its two wall rows to the boundary handlers"

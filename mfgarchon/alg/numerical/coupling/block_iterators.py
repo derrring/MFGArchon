@@ -498,11 +498,11 @@ class BlockIterator(BaseCouplingIterator):
         try:
             return build(U_k)
         except NotImplementedError as exc:
-            # `fp_drift_coefficient` refuses any H whose scalar drift is not `-c grad(U)` (#1542). That is exactly
-            # the class `jacobian_transpose` exists to serve (#707), so say which of the two raised.
-            raise NotImplementedError(
-                f"adjoint_verify=True cannot build the FP operator for this Hamiltonian (#2338): {exc}"
-            ) from exc
+            # `build_advection_operator` refuses from three sites -- the coefficient (#1542, the class
+            # `jacobian_transpose` exists to serve, #707), the scheme, and the geometry -- so this says which LAYER
+            # refused and lets the original say why, rather than attributing every refusal to the Hamiltonian
+            # (review of #2344).
+            raise NotImplementedError(f"adjoint_verify=True could not build the FP operator (#2338): {exc}") from exc
 
     def _verify_adjoint_at_step(self, U_k: NDArray, M_current: NDArray, step: int) -> None:
         """Check that the FP solver's own operator is the transpose of the HJB linearisation (#704, #707, #2338).
@@ -513,14 +513,21 @@ class BlockIterator(BaseCouplingIterator):
         compares: relative error 1.085e-16 under `engquist_osher` against 3.021e-02 under `rouy_tourin`
         (absolute max|A_fp - J^T| 2.8e-14 against 18.5), so the existing 1e-10 tolerance separates them by orders.
 
-        **Window.** Strictly interior rows AND columns, and the COLUMN half is what does the work. Measured at
-        33668bc5 on the 41-point fixture: of the full residual, the wall ROWS contribute 0 and the (interior row,
-        wall column) entries contribute all of it. `build_linearized_operator` zeroes its wall rows by design
-        (#1564), so J^T has a zero COLUMN there while the FP operator has real outflow entries -- up to 78.3 on
-        that state. So those entries are not "no claim on either side": the HJB side claims zero and the FP side
-        disagrees, and this check EXCLUDES rather than verifies them. That gap is #2338's sibling (#1564 / RFC
-        #1574), and a check that included them would report the design as a defect on every correct run: the
-        report beside this one did exactly that before the review of #2344 windowed it too.
+        **Window.** Strictly interior rows AND columns. Outside it lie two blocks, and in each one exactly one
+        side has anything to say, which is why neither is a comparison:
+
+        - the WALL ROWS, where this FP operator assembles nothing (a no-flux or Dirichlet wall is the boundary
+          handlers' business, #1564), so the difference is J's wall COLUMNS transposed against nothing. Measured at
+          64cb4d03: 18.5 under `engquist_osher` and 0.0 under `rouy_tourin` in 1-D, 40.0 and 19.2 on 11x11 -- it
+          moves with the preset, because which one-sided difference an interior node takes decides whether it
+          depends on the wall node at all;
+        - the (INTERIOR ROW, WALL COLUMN) entries, where `build_linearized_operator` zeroes by design (#1564) so
+          J^T contributes nothing, and the difference is the FP's real outflow: 94.6 in 1-D and 78.3 on 11x11,
+          identical under both presets.
+
+        So these entries are EXCLUDED, not verified, and the check makes no claim about them; that gap is #1564 /
+        RFC #1574's subject. A check that included them would report the design as a defect on every correct run,
+        which is exactly what the report beside this one did before the review of #2344 windowed it too.
 
         Selecting the window by which rows happen to be nonzero is worse than the geometric rule and was measured
         to be: it also drops the interior rows where the Jacobian's row vanishes -- 2 of 39 at every step of the
