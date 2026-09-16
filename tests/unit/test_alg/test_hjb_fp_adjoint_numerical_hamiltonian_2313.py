@@ -27,7 +27,7 @@ import numpy as np
 from mfgarchon import MFGProblem
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm_alg_divergence_upwind import add_interior_entries_divergence_upwind
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
-from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _compute_gradient_array_1d
+from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _compute_gradient_array_1d, compute_hjb_residual
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
@@ -122,3 +122,97 @@ def test_the_default_momentum_is_engquist_osher_at_a_local_maximum():
     default = _compute_gradient_array_1d(np.array([-1.0, 0.0, -1.0]), 1.0, bc=None, upwind=True)[1]
     assert default == pytest.approx(float(upwind_momentum(backward, forward, "engquist_osher")[0]))
     assert default != pytest.approx(float(upwind_momentum(backward, forward, "rouy_tourin")[0]))
+
+
+def _hamiltonian_columns(solver, problem, u, m, preset: str, eps: float = 1e-6) -> np.ndarray:
+    """Column-wise derivative of the Hamiltonian term the residual evaluates, with no Jacobian code involved.
+
+    ``sigma = 0`` on these fixtures, so in nD `_evaluate_hamiltonian_nd` is the Hamiltonian alone, and in 1-D the
+    residual is the Hamiltonian plus ``U/dt``, whose derivative is the identity over ``dt``.
+    """
+    flat = u.ravel()
+    total = flat.size
+
+    def hamiltonian(state: np.ndarray) -> np.ndarray:
+        if u.ndim == 1:
+            residual = compute_hjb_residual(
+                state, np.zeros(total), m.ravel(), problem, 5, None, 0.0, True,
+                bc=problem.geometry.get_boundary_conditions(), numerical_hamiltonian=preset,
+            )  # fmt: skip
+            return np.asarray(residual, dtype=float) - state / problem.dt
+        gradients = solver._compute_gradients_nd(state.reshape(u.shape), time=0.0)
+        return np.asarray(solver._evaluate_hamiltonian_nd(state.reshape(u.shape), m, gradients), dtype=float).ravel()
+
+    columns = np.zeros((total, total))
+    for j in range(total):
+        step = np.zeros(total)
+        step[j] = eps
+        columns[:, j] = (hamiltonian(flat + step) - hamiltonian(flat - step)) / (2 * eps)
+    return columns
+
+
+def _rows_without_a_tie(u: np.ndarray, spacings, shape) -> list[int]:
+    """Interior rows where no axis has ``a+ = -b-``: at a tie the momentum is not differentiable and both presets
+    return a Clarke element, which a two-sided finite difference averages instead."""
+    tie = np.zeros(shape, dtype=bool)
+    for d, h in enumerate(spacings):
+        backward = (u - np.roll(u, 1, axis=d)) / h
+        forward = (np.roll(u, -1, axis=d) - u) / h
+        scale = max(float(np.abs(backward).max()), 1.0)
+        tie |= np.abs(np.maximum(backward, 0.0) + np.minimum(forward, 0.0)) < 1e-6 * scale
+    return [
+        k
+        for k in range(u.size)
+        if all(1 <= i < n - 1 for i, n in zip(np.unravel_index(k, shape), shape, strict=True))
+        and not tie[np.unravel_index(k, shape)]
+    ]
+
+
+@pytest.mark.parametrize("numerical_hamiltonian", ["engquist_osher", "rouy_tourin"])
+@pytest.mark.parametrize("shape", [(21,), (9, 8)], ids=["1d", "2d"])
+def test_the_linearised_operator_is_the_derivative_of_the_hamiltonian_it_linearises(shape, numerical_hamiltonian):
+    """`build_linearized_operator` must be the derivative of the residual's Hamiltonian term, preset by preset.
+
+    The adjointness test above cannot see a preset dropped inside this operator: it would still differ from the FP
+    transpose, only differently (review of #2340, blocker 2). This compares it against a finite difference of the
+    Hamiltonian the solver itself evaluates. Wall rows are zeroed by design (#1564) and tie rows are excluded, since
+    there the derivative does not exist and the operator returns a Clarke element.
+    """
+    dimension = len(shape)
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0)] * dimension, Nx_points=list(shape), boundary_conditions=no_flux_bc(dimension=dimension)
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        problem = MFGProblem(
+            geometry=grid,
+            Nt=10,
+            T=1.0,
+            sigma=0.0,
+            components=MFGComponents(
+                m_initial=lambda x: 1.0,
+                u_terminal=lambda x: 0.0,
+                hamiltonian=SeparableHamiltonian(
+                    control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
+                ),
+            ),
+        )
+    x = np.meshgrid(*grid.coordinates, indexing="ij")
+    u = (
+        0.3 * np.cos(4 * np.pi * x[0]) + 0.1 * x[0]
+        if dimension == 1
+        else 0.3 * np.cos(4 * np.pi * x[0]) * np.cos(2 * np.pi * x[1] + 0.3) + 0.11 * x[1] + 0.07 * x[0]
+    )
+    m = np.ones(shape)
+    solver = HJBFDMSolver(problem, numerical_hamiltonian=numerical_hamiltonian)
+    assembled = solver.build_linearized_operator(u, m).toarray()
+    measured = _hamiltonian_columns(solver, problem, u, m, numerical_hamiltonian)
+    rows = _rows_without_a_tie(u, grid.get_grid_spacing(), shape)
+    assert len(rows) >= u.size // 3, f"only {len(rows)} of {u.size} rows are tie-free; the fixture is degenerate"
+    other = "rouy_tourin" if numerical_hamiltonian == "engquist_osher" else "engquist_osher"
+    separation = np.abs(
+        assembled - HJBFDMSolver(problem, numerical_hamiltonian=other).build_linearized_operator(u, m).toarray()
+    )[rows].max()
+    assert separation > 1.0, f"the presets build the same operator ({separation:.3e}); nothing is discriminated"
+    gap = np.abs(assembled - measured)[rows]
+    assert gap.max() < 1e-4, f"{numerical_hamiltonian}: worst gap {gap.max():.3e}"
