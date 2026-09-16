@@ -37,9 +37,16 @@ from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.operators.stencils.finite_difference import upwind_momentum
+from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+_FD_EPSILON = 1e-6
+"""Step of the finite-difference oracle in `_hamiltonian_columns`, in state units.
+
+`_kinked_rows` scales its tolerance to it.
+"""
 
 
 def _transpose_gap(shape: tuple[int, ...], numerical_hamiltonian: str | None) -> float:
@@ -131,7 +138,7 @@ def test_the_default_momentum_is_engquist_osher_at_a_local_maximum():
     assert default != pytest.approx(float(upwind_momentum(backward, forward, "rouy_tourin")[0]))
 
 
-def _hamiltonian_columns(solver, problem, u, m, preset: str, eps: float = 1e-6) -> np.ndarray:
+def _hamiltonian_columns(solver, problem, u, m, preset: str, eps: float = _FD_EPSILON) -> np.ndarray:
     """Column-wise derivative of the Hamiltonian term the residual evaluates, with no Jacobian code involved.
 
     ``sigma = 0`` on these fixtures, so in nD `_evaluate_hamiltonian_nd` is the Hamiltonian alone, and in 1-D the
@@ -172,11 +179,16 @@ def _kinked_rows(u: np.ndarray, spacings: Sequence[float], shape: tuple[int, ...
     either preset, so the tests assert that and then compare every interior row.
     """
     kinked = np.zeros(shape, dtype=bool)
+    # The oracle perturbs one node by `_FD_EPSILON`, which is `_FD_EPSILON / h` in difference units, so a row within
+    # a few of those of a tie is one the perturbation can carry ACROSS the tie -- the oracle is then invalid there
+    # even though the row itself is not tied. A tolerance in state units would be ~4x too narrow to cover that band
+    # (review of #2340, round 3: with a planted tie, rows at |a+ + b-| between 6e-06 and 1.6e-05 hard-failed the
+    # comparison instead of being caught here). Both fixtures clear this by ~1e4 oracle steps.
     for axis, spacing in enumerate(spacings):
         backward = (u - np.roll(u, 1, axis=axis)) / spacing
         forward = (np.roll(u, -1, axis=axis) - u) / spacing
         a_plus, b_minus = np.maximum(backward, 0.0), np.minimum(forward, 0.0)
-        tolerance = 1e-6 * max(float(np.abs(backward).max()), 1.0)
+        tolerance = 4.0 * _FD_EPSILON / min(spacings)
         kinked |= (np.abs(a_plus + b_minus) < tolerance) & (a_plus > tolerance)
     return [k for k in _interior_rows(shape) if kinked[np.unravel_index(k, shape)]]
 
@@ -265,3 +277,92 @@ def test_the_solver_refuses_a_preset_it_does_not_have():
         )
     with pytest.raises(ValueError, match=r"numerical_hamiltonian.*godunov.*2313"):
         HJBFDMSolver(problem, numerical_hamiltonian="godunov")  # the name #2313 ruled out
+
+
+def _public_entry_problem(n: int = 41, Nt: int = 4):
+    """1-D no-flux fixture whose terminal condition has interior local maxima, where the presets separate."""
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
+    x = np.asarray(grid.coordinates[0])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        problem = MFGProblem(
+            geometry=grid,
+            Nt=Nt,
+            T=0.4,
+            sigma=0.05,
+            components=MFGComponents(
+                m_initial=lambda _x: 1.0,
+                u_terminal=lambda _x: np.cos(4 * np.pi * np.asarray(_x)),
+                hamiltonian=SeparableHamiltonian(
+                    control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
+                ),
+            ),
+        )
+    return problem, x
+
+
+@pytest.mark.parametrize("numerical_hamiltonian", ["engquist_osher", "rouy_tourin"])
+def test_the_backward_solve_returns_a_root_of_its_own_presets_residual(numerical_hamiltonian):
+    """`solve_hjb_system` is the solver's public entry point, and nothing pinned the preset through it (#2313).
+
+    Hardcoding the preset at the `solve_hjb_system_backward` call site left the whole suite green (review of #2340,
+    round 3), so a user's choice could have been dropped at the outermost hop while every inner pin stayed green.
+
+    Oracle: the definition of the scheme rather than any Jacobian. A backward solve returns U such that each step's
+    residual VANISHES, so the returned U must be a root of the residual of the preset the solver was constructed with
+    and not of the other one. Measured at 54c1d9dc: 6.3e-08 under its own preset against 5.6 (engquist_osher) and 10.8
+    (rouy_tourin) under the other -- eight orders, so the two cannot be confused.
+    """
+    problem, x = _public_entry_problem()
+    m = np.ones((problem.Nt + 1, x.size))
+    solver = HJBFDMSolver(problem, numerical_hamiltonian=numerical_hamiltonian)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        u = np.asarray(
+            solver.solve_hjb_system(
+                M_density=m, U_terminal=np.cos(4 * np.pi * x), U_coupling_prev=np.zeros((problem.Nt + 1, x.size))
+            )
+        )
+    bc = no_flux_bc(dimension=1)
+
+    def worst_residual(preset: str) -> float:
+        return max(
+            float(
+                np.abs(
+                    compute_hjb_residual(u[k], u[k + 1], m[k + 1], problem, k, bc=bc, numerical_hamiltonian=preset)
+                ).max()
+            )
+            for k in range(problem.Nt)
+        )
+
+    other = "rouy_tourin" if numerical_hamiltonian == "engquist_osher" else "engquist_osher"
+    assert worst_residual(numerical_hamiltonian) < 1e-6
+    assert worst_residual(other) > 1.0, "the presets agree on this state; the fixture reaches no local maximum"
+
+
+@pytest.mark.parametrize("numerical_hamiltonian", ["engquist_osher", "rouy_tourin"])
+def test_the_advection_matrix_carries_the_solvers_own_momentum(numerical_hamiltonian):
+    """`build_advection_matrix` is the other public surface that reads the preset, and it was unpinned too (#2313).
+
+    `BlockIterator`'s velocity modes and `FPFDMSolver.solve_fp_step_adjoint_mode` consume this matrix, so a preset
+    dropped here moves an FP solve, not just an HJB one.
+
+    Oracle: the operator's own documented form. It upwinds by ``v = -coupling * p``, so its diagonal is ``|v| / dx``
+    with ``p`` the owner's momentum for that preset -- computed here from one-sided differences, with no solver code
+    in the oracle. Interior nodes only: the wall nodes' differences come from the BC padding, which is #1564's
+    subject rather than the preset's. Measured at 54c1d9dc: exact agreement, against 28.58 for the other preset.
+    """
+    problem, x = _public_entry_problem()
+    dx = float(problem.geometry.get_grid_spacing()[0])
+    u = np.cos(4 * np.pi * x) + 0.1 * x
+    solver = HJBFDMSolver(problem, numerical_hamiltonian=numerical_hamiltonian)
+    diagonal = np.diag(solver.build_advection_matrix(u).toarray())[1:-1]
+    backward, forward = (u[1:-1] - u[:-2]) / dx, (u[2:] - u[1:-1]) / dx
+
+    def expected(preset: str) -> np.ndarray:
+        return np.abs(-fp_drift_coefficient(problem) * upwind_momentum(backward, forward, preset)) / dx
+
+    other = "rouy_tourin" if numerical_hamiltonian == "engquist_osher" else "engquist_osher"
+    np.testing.assert_allclose(diagonal, expected(numerical_hamiltonian), rtol=0, atol=1e-12)
+    separation = float(np.abs(diagonal - expected(other)).max())
+    assert separation > 1.0, f"the presets build the same diagonal ({separation:.3e}); nothing is discriminated"
