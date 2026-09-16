@@ -1,8 +1,8 @@
 {
   "_comment": "Kill counts per mutated convention. --check-baseline fails when a count DROPS (discrimination lost) and when one RISES (record the gain in the same change). Counts, not test names: this population cannot be selected by name -- the agreement-shaped patterns give 51, 114 or 156 depending on the regex.",
   "_measured_at": {
-    "collected": 3914,
-    "commit": "6c5a22cd",
+    "collected": 4057,
+    "commit": "a70d9a06",
     "excluded": "tests/unit/test_discrimination_ratchet.py",
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment and not manual",
     "paths": [
@@ -40,8 +40,18 @@
       "owner": "FP drift c = 1/control_cost (#1420 / G-017)",
       "status": "ok"
     },
+    "engquist_osher_derivative_drops_the_forward_branch": {
+      "kill_count": 54,
+      "owner": "`upwind_momentum_derivatives` is the one owner of d(p)/d(backward) and d(p)/d(forward); for `engquist_osher` both are nonzero at a local maximum, and the analytic HJB Jacobian, the nD linearised operator and the strict-adjoint operator all read them, so the Jacobian is the residual's own derivative (#2313)",
+      "status": "ok"
+    },
+    "engquist_osher_magnitude_is_the_larger_branch": {
+      "kill_count": 33,
+      "owner": "the default `engquist_osher` preset of `upwind_momentum` evaluates H at sqrt(a+^2 + b-^2) per axis (ACD's Example 1), which at a discrete local maximum sums both one-sided differences; that sum is what makes its linearisation the transpose of the FDM FP divergence_upwind operator (#2313). Taking the larger branch instead is Rouy-Tourin, which leaves the transpose defect at maxima",
+      "status": "ok"
+    },
     "fp_initial_condition_written_at_final_index": {
-      "kill_count": 129,
+      "kill_count": 130,
       "owner": "The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, fp_fdm_time_stepping.py:797, whose own docstring states the convention at :681: \"- Forward time evolution: k=0 -> Nt-1\". No issue n",
       "status": "ok"
     },
@@ -51,13 +61,8 @@
       "status": "ok"
     },
     "ghost_spacing_ignored": {
-      "kill_count": 58,
+      "kill_count": 79,
       "owner": "the ghost buffer uses the caller's spacing, not dx = 1.0 (#1904)",
-      "status": "ok"
-    },
-    "godunov_branch_swap": {
-      "kill_count": 95,
-      "owner": "Rouy-Tourin upwind takes the clamped BACKWARD part max(backward, 0) where it dominates the clamped forward part min(forward, 0) in magnitude -- the library's one statement of the upwind selection rule (#2308), consumed by the HJB residual, the HJB Jacobian, GradientOperator and PDE reinitialisation (of phi or -phi by sign(phi0), #2310); transport upwinds by the velocity instead since #2309 (#1896 items 3-4 turn on it)",
       "status": "ok"
     },
     "grid_interval_count_reads_as_points": {
@@ -66,7 +71,7 @@
       "status": "ok"
     },
     "grid_spacing_uses_point_count": {
-      "kill_count": 57,
+      "kill_count": 60,
       "owner": "uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim, get_spacing() indexes it, legacy_1d_attrs[\"Dx\"] reads it, cell volume ",
       "status": "ok"
     },
@@ -101,12 +106,12 @@
       "status": "ok"
     },
     "periodic_endpoint_convention_inverted": {
-      "kill_count": 22,
+      "kill_count": 23,
       "owner": "where the last node sits, MEASURED from the coordinates the grid built (#1822). `_axis_convention` is the single owner: `periodic_convention` calls it (tensor_grid.py:415) and `_first_axis_with_convention` calls it (:385). The property docstring states why it is derived rather than asserted: \"Derive",
       "status": "ok"
     },
     "periodic_wrap_endpoint_inverted": {
-      "kill_count": 48,
+      "kill_count": 49,
       "owner": "how many trailing nodes of a periodic axis repeat a node the array already holds -- the ONE number both the ghost skip and the modular span derive from (#1822). types.py:126-130 states the ownership verbatim: \"Every periodic wrap in the package is one of two expressions of this single number, which ",
       "status": "ok"
     },
@@ -120,19 +125,19 @@
       "owner": "The measure on a node-centred grid is the TRAPEZOID: `TensorProductGrid` is endpoint-inclusive, so the wall lies ON the end node and that node owns half a cell. Those weights are also the control volumes the conservative FP schemes telescope against, which is why this is one convention and not two (#2145). Sole owner: `mfgarchon/utils/numerical/quadrature.py`, reached by `TensorProductGrid.integrate`, `mass_drift`, the FV advection kernel and the FDM wall rows. SUPERSEDES `m_initial_1d_counting_measure`, which mutated the constructor's normalisation dispatch -- #1887 removed that rescale (the library validates the initial mass and does not change it), so that anchor no longer exists. The convention it defended survived and moved here; the mutation follows it.",
       "status": "ok"
     },
+    "rouy_tourin_branch_swap": {
+      "kill_count": 33,
+      "owner": "Rouy-Tourin upwind takes the clamped BACKWARD part max(backward, 0) where it dominates the clamped forward part min(forward, 0) in magnitude -- the `rouy_tourin` preset of `upwind_momentum`, the one owner of the HJB upwind momentum (#2308, #2313), consumed by the HJB residual and Jacobian when that preset is selected, by GradientOperator(scheme='upwind') and by PDE reinitialisation (of phi or -phi by sign(phi0), #2310); transport upwinds by the velocity instead since #2309",
+      "status": "ok"
+    },
     "terminal_condition_pinned_at_initial_index": {
-      "kill_count": 17,
+      "kill_count": 18,
       "owner": "u is boundary-data at the TERMINAL time and m at the INITIAL one: preserve_terminal_condition re-imposes u(T)=g on the LAST time row after damping/Anderson. Single owner, three caller families -- fixed_point_iterator.py:644 and :724 (Picard), fictitious_play.py:432, block_iterators.py:583. No issue ",
       "status": "ok"
     },
-    "upwind_jacobian_tiebreak_inverted": {
-      "kill_count": 5,
-      "owner": "on rows where forward and backward agree in VALUE, the upwind Jacobian's row is decided by sign(central), matching the residual's own selector -- the one place #1896 left the rule restated rather than measured (#1896 item 3)",
-      "status": "ok"
-    },
     "upwind_minimum_takes_a_one_sided_difference": {
-      "kill_count": 64,
-      "owner": "at a discrete local minimum (backward < 0 < forward) the upwind momentum is 0, the Godunov value for an H even in each momentum component and nondecreasing in its magnitude; selecting on sign(central) returned the one-sided difference of smaller magnitude there, a non-monotone numerical Hamiltonian that Newton still converges on (#2308)",
+      "kill_count": 29,
+      "owner": "at a discrete local minimum (backward < 0 < forward) the upwind momentum is 0, the value of the min/max numerical Hamiltonian for an H even in each momentum component and nondecreasing in its magnitude; selecting on sign(central) returned the one-sided difference of smaller magnitude there, a non-monotone numerical Hamiltonian that Newton still converges on (#2308)",
       "status": "ok"
     }
   }

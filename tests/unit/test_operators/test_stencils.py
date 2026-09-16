@@ -24,6 +24,8 @@ from mfgarchon.operators.stencils.finite_difference import (
     laplacian_stencil_1d,
     laplacian_stencil_nd,
     laplacian_with_bc,
+    upwind_momentum,
+    upwind_momentum_derivatives,
 )
 
 # =============================================================================
@@ -315,6 +317,30 @@ class TestGradientUpwind:
         dense = 0.5 * interval**2
         godunov = np.where(a <= b, dense.min(axis=-1), dense.max(axis=-1))
         assert np.abs(hamiltonian - godunov).max() < 1e-12 + 0.5 * (6.0 / 2000) ** 2
+
+    @pytest.mark.unit
+    def test_engquist_osher_is_monotone_and_the_integral_flux(self):
+        """#2313's default preset against its definition, independent of the implementation's closed form.
+
+        Engquist-Osher for ``H`` is ``H(0) + int_0^a max(H', 0) ds + int_0^b min(H', 0) ds``, evaluated here by the
+        trapezoid rule for ``H = p^2/2``, while `upwind_momentum` returns ``+-sqrt(a+^2 + b-^2)``. The two agree only if
+        the momentum is right on every quadrant, maxima (``a > 0 > b``) included, where it differs from Rouy-Tourin.
+        """
+        values = np.linspace(-3.0, 3.0, 41)
+        a, b = np.meshgrid(values, values, indexing="ij")
+        hamiltonian = 0.5 * upwind_momentum(a, b, "engquist_osher") ** 2
+
+        assert np.all(np.diff(hamiltonian, axis=0) >= -1e-12), "not nondecreasing in the backward difference"
+        assert np.all(np.diff(hamiltonian, axis=1) <= 1e-12), "not nonincreasing in the forward difference"
+
+        samples = np.linspace(0.0, 1.0, 4001)
+        up = np.trapezoid(np.maximum(a[..., None] * samples, 0.0), samples, axis=-1) * a
+        down = np.trapezoid(np.minimum(b[..., None] * samples, 0.0), samples, axis=-1) * b
+        assert np.abs(hamiltonian - (up + down)).max() < 1e-6
+
+        maxima = (a > 0) & (b < 0)
+        rouy_tourin = 0.5 * upwind_momentum(a, b, "rouy_tourin") ** 2
+        assert np.abs(hamiltonian - rouy_tourin)[maxima].max() > 1.0, "the presets coincide; nothing is discriminated"
 
 
 # =============================================================================
@@ -631,3 +657,15 @@ class TestBackendRollEquivalence:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+@pytest.mark.parametrize("owner", [upwind_momentum, upwind_momentum_derivatives])
+def test_the_momentum_owner_refuses_a_preset_it_does_not_have(owner):
+    """Both owner functions end in a `raise`, untested until the review of #2340 asked for it (#2313).
+
+    Falling through to a default instead would make a caller that passes an unknown name silently get Engquist-Osher,
+    and since the presets differ only at a discrete local maximum, no smooth fixture would show it.
+    """
+    backward, forward = np.array([1.0, -1.0]), np.array([-1.0, 1.0])
+    with pytest.raises(ValueError, match=r"numerical_hamiltonian must be .*got 'godunov'.*2313"):
+        owner(backward, forward, "godunov")  # type: ignore[arg-type]

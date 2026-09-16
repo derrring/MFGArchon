@@ -271,28 +271,36 @@ MUTATIONS: list[Mutation] = [
         verify="hjb_residual_norm(np.array([1.0, 0.0]), 0.25) == 1.0",
     ),
     Mutation(
-        name="godunov_branch_swap",
+        name="rouy_tourin_branch_swap",
         path="mfgarchon/operators/stencils/finite_difference.py",
-        old="    return xp.where(backward_part >= -forward_part, backward_part, forward_part)",
-        new="    return xp.where(backward_part >= -forward_part, forward_part, backward_part)  # MUTATED: Godunov branches swapped",
-        owner="Rouy-Tourin upwind takes the clamped BACKWARD part max(backward, 0) where it dominates the clamped forward part min(forward, 0) in magnitude -- the library's one statement of the upwind selection rule (#2308), consumed by the HJB residual, the HJB Jacobian, GradientOperator and PDE reinitialisation (of phi or -phi by sign(phi0), #2310); transport upwinds by the velocity instead since #2309 (#1896 items 3-4 turn on it)",
+        old="        return xp.where(backward_branch, backward_part, forward_part)",
+        new="        return xp.where(backward_branch, forward_part, backward_part)  # MUTATED: Rouy-Tourin branches swapped",
+        owner="Rouy-Tourin upwind takes the clamped BACKWARD part max(backward, 0) where it dominates the clamped forward part min(forward, 0) in magnitude -- the `rouy_tourin` preset of `upwind_momentum`, the one owner of the HJB upwind momentum (#2308, #2313), consumed by the HJB residual and Jacobian when that preset is selected, by GradientOperator(scheme='upwind') and by PDE reinitialisation (of phi or -phi by sign(phi0), #2310); transport upwinds by the velocity instead since #2309",
         verify="float(gradient_upwind(np.array([0.0, 1.0, 3.0]), axis=0, h=1.0)[1]) == 0.0",
     ),
     Mutation(
         name="upwind_minimum_takes_a_one_sided_difference",
         path="mfgarchon/operators/stencils/finite_difference.py",
-        old="    return xp.where(backward_part >= -forward_part, backward_part, forward_part)",
-        new="    return xp.where((grad_forward + grad_backward) / 2.0 >= 0, grad_backward, grad_forward)  # MUTATED: the #2308 sign-of-central rule",
-        owner="at a discrete local minimum (backward < 0 < forward) the upwind momentum is 0, the Godunov value for an H even in each momentum component and nondecreasing in its magnitude; selecting on sign(central) returned the one-sided difference of smaller magnitude there, a non-monotone numerical Hamiltonian that Newton still converges on (#2308)",
+        old="        return xp.where(backward_branch, backward_part, forward_part)",
+        new="        return xp.where((forward + backward) / 2.0 >= 0, backward, forward)  # MUTATED: the #2308 sign-of-central rule",
+        owner="at a discrete local minimum (backward < 0 < forward) the upwind momentum is 0, the value of the min/max numerical Hamiltonian for an H even in each momentum component and nondecreasing in its magnitude; selecting on sign(central) returned the one-sided difference of smaller magnitude there, a non-monotone numerical Hamiltonian that Newton still converges on (#2308)",
         verify="float(gradient_upwind(np.array([0.0, -1.0, 1.0]), axis=0, h=1.0)[1]) == -1.0",
     ),
     Mutation(
-        name="upwind_jacobian_tiebreak_inverted",
-        path="mfgarchon/alg/numerical/hjb_solvers/base_hjb.py",
-        old="    took_backward = np.where(value_decides, np.abs(g_up - backward) <= np.abs(g_up - forward), g_c >= 0)",
-        new="    took_backward = np.where(value_decides, np.abs(g_up - backward) <= np.abs(g_up - forward), g_c < 0)  # MUTATED: locally-linear tie-break inverted",
-        owner="on rows where forward and backward agree in VALUE, the upwind Jacobian's row is decided by sign(central), matching the residual's own selector -- the one place #1896 left the rule restated rather than measured (#1896 item 3)",
-        verify="float(_advection_bands(np.zeros(5), 0.25, None, 0.0, True, _bc_laplacian_bands(5, 0.25, None, 0.0))[1][2]) == -4.0",
+        name="engquist_osher_magnitude_is_the_larger_branch",
+        path="mfgarchon/operators/stencils/finite_difference.py",
+        old="        magnitude = xp.sqrt(backward_part * backward_part + forward_part * forward_part)\n        return xp.where(backward_branch, magnitude, -magnitude)",
+        new="        magnitude = xp.maximum(backward_part, -forward_part)  # MUTATED: Engquist-Osher reads as Rouy-Tourin\n        return xp.where(backward_branch, magnitude, -magnitude)",
+        owner="the default `engquist_osher` preset of `upwind_momentum` evaluates H at sqrt(a+^2 + b-^2) per axis (ACD's Example 1), which at a discrete local maximum sums both one-sided differences; that sum is what makes its linearisation the transpose of the FDM FP divergence_upwind operator (#2313). Taking the larger branch instead is Rouy-Tourin, which leaves the transpose defect at maxima",
+        verify='float(upwind_momentum(np.array([1.0]), np.array([-1.0]), "engquist_osher")[0]) == 1.0',
+    ),
+    Mutation(
+        name="engquist_osher_derivative_drops_the_forward_branch",
+        path="mfgarchon/operators/stencils/finite_difference.py",
+        old="        d_forward = xp.where(magnitude > 0, sign * forward_part / safe, zero)",
+        new="        d_forward = zero  # MUTATED: Engquist-Osher Jacobian drops the forward branch",
+        owner="`upwind_momentum_derivatives` is the one owner of d(p)/d(backward) and d(p)/d(forward); for `engquist_osher` both are nonzero at a local maximum, and the analytic HJB Jacobian, the nD linearised operator and the strict-adjoint operator all read them, so the Jacobian is the residual's own derivative (#2313)",
+        verify='float(upwind_momentum_derivatives(np.array([1.0]), np.array([-1.0]), "engquist_osher")[1][0]) == 0.0',
     ),
     Mutation(
         name="fv_upwind_donor_cell_swapped",
@@ -552,7 +560,6 @@ from mfgarchon.alg.numerical.coupling.fixed_point_utils import check_convergence
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import preserve_terminal_condition
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import solve_fp_nd_full_system
 from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
-from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _advection_bands, _bc_laplacian_bands
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import hjb_residual_norm
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import solve_hjb_system_backward
 from mfgarchon.core.mfg_components import MFGComponents
@@ -563,7 +570,7 @@ from mfgarchon.geometry.boundary import periodic_bc   # _VERIFY_PRELUDE line 301
 from mfgarchon.geometry.boundary.types import PeriodicGridConvention
 from mfgarchon.operators.differential.advection import AdvectionOperator
 from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
-from mfgarchon.operators.stencils.finite_difference import gradient_upwind
+from mfgarchon.operators.stencils.finite_difference import gradient_upwind, upwind_momentum, upwind_momentum_derivatives
 from mfgarchon.types import NumericalScheme
 
 def _measure_probe():

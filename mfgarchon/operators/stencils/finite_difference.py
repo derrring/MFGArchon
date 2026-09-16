@@ -18,7 +18,7 @@ Stencil Types:
     - CENTRAL: 2nd-order accurate, symmetric, no directional bias
     - FORWARD: 1st-order accurate, uses u[i+1] - u[i]
     - BACKWARD: 1st-order accurate, uses u[i] - u[i-1]
-    - UPWIND: Godunov selection based on flow direction (stable for advection)
+    - UPWIND: the HJB upwind momentum of a numerical Hamiltonian (``upwind_momentum``, #2313)
     - ONE_SIDED: 2nd-order one-sided boundary handling (3-point stencils at edges)
 
 Mathematical Background:
@@ -40,7 +40,7 @@ Extracted from: mfgarchon/utils/numerical/tensor_calculus.py
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
@@ -143,15 +143,107 @@ def gradient_backward(u: NDArray, axis: int, h: float, xp: type = np) -> NDArray
     return (u - _roll(xp, u, 1, axis)) / h
 
 
+NumericalHamiltonian = Literal["engquist_osher", "rouy_tourin"]
+"""The monotone numerical Hamiltonians the FDM HJB offers (#2313). Neither is called "Godunov": ACD's Example 1 uses the
+word for the Engquist-Osher form, and the Hamilton-Jacobi literature uses it for the Rouy-Tourin one."""
+
+DEFAULT_NUMERICAL_HAMILTONIAN: NumericalHamiltonian = "engquist_osher"
+"""User ruling on #2313 (2026-09-15): Engquist-Osher is the default, Rouy-Tourin a selectable preset."""
+
+
+def upwind_momentum(
+    backward: NDArray, forward: NDArray, numerical_hamiltonian: NumericalHamiltonian, xp: Any = np
+) -> NDArray:
+    """The signed per-axis momentum ``p`` at which a monotone numerical Hamiltonian evaluates ``H`` (#2313).
+
+    With backward difference ``a``, forward difference ``b``, ``a+ = max(a, 0)`` and ``b- = min(b, 0)``, both presets
+    are ``H`` evaluated at a magnitude built from ``(a+, b-)``, with the sign of the larger branch::
+
+        rouy_tourin     p = a+ if a+ >= -b- else b-                       (infinity-norm)
+        engquist_osher  p = +-sqrt(a+^2 + b-^2), + when a+ >= -b-         (2-norm; ACD's Example 1)
+
+    They agree except where both branches are nonzero, which is a discrete local maximum along the axis.
+
+    ``H(p(p, p)) = H(p)`` holds for any ``H``, so consistency needs no hypothesis. Monotonicity is the conditional half:
+    it holds for ``H`` even in each momentum component and nondecreasing in its magnitude, the class the FDM HJB accepts
+    (#2311), and for such an ``H`` the sign of ``p`` does not change ``H(p)``. ``H(p(a, b))`` is C^1 exactly where ``H``
+    itself is: evenness gives ``H'(0) = 0``, so the kink of the magnitude at ``a+ = b- = 0`` is smoothed away, while a
+    kink of ``H`` survives. Measured at e7aad397 with ``L1ControlCost``, whose ``H = max(|p| - lambda, 0)`` #2311
+    admits: ``d/da H(p(a, 1))`` jumps by 1.000 across ``a = 0`` at ``lambda = 1e-12``, and by 1.000 across
+    ``a = lambda`` at ``lambda = 0.5``. For ``p^2/2``, a bounded cost and ``|p|^4/4`` the jump is 0.
+
+    The reason to default to ``engquist_osher`` (#2313) is its linearisation: on the interior it is the transpose of the
+    FDM FP ``divergence_upwind`` operator at local maxima as well as elsewhere, measured over interior rows and columns
+    at 2.8e-14 in 1-D and 4.4e-14 in 2-D, against 18.5 and 32.4 for ``rouy_tourin``.
+
+    Args:
+        backward: ``(u_i - u_{i-1}) / h`` along one axis.
+        forward: ``(u_{i+1} - u_i) / h`` along the same axis.
+        numerical_hamiltonian: ``"engquist_osher"`` or ``"rouy_tourin"``.
+        xp: Array module (numpy, cupy or torch).
+
+    Returns:
+        The momentum, same shape as the inputs.
+    """
+    backward_part = backward * (backward > 0)
+    forward_part = forward * (forward < 0)
+    backward_branch = backward_part >= -forward_part
+    if numerical_hamiltonian == "rouy_tourin":
+        return xp.where(backward_branch, backward_part, forward_part)
+    if numerical_hamiltonian == "engquist_osher":
+        magnitude = xp.sqrt(backward_part * backward_part + forward_part * forward_part)
+        return xp.where(backward_branch, magnitude, -magnitude)
+    raise ValueError(
+        f"numerical_hamiltonian must be 'engquist_osher' or 'rouy_tourin', got {numerical_hamiltonian!r} (#2313)."
+    )
+
+
+def upwind_momentum_derivatives(
+    backward: NDArray, forward: NDArray, numerical_hamiltonian: NumericalHamiltonian, xp: Any = np
+) -> tuple[NDArray, NDArray]:
+    """``(dp/da, dp/db)`` for `upwind_momentum`, so ``dH/da = H_p(p) dp/da`` and likewise for ``b`` (#2313).
+
+    ``rouy_tourin``: 1 on the branch taken where that difference is strictly signed, else 0. ``engquist_osher``:
+    ``s a+ / |p|`` and ``s b- / |p|`` with ``s`` the sign of ``p``, and 0 where ``p = 0``.
+
+    What these are exact derivatives of is the COMPOSITION ``H(p(a, b))`` for an ``H`` even in each component, which is
+    what the HJB residual evaluates: ``dH/da = H_p(p) dp/da`` holds because the sign of ``p`` cancels against the odd
+    ``H_p``. The momentum itself is discontinuous at a tie ``a+ = -b- > 0``, where the sign flips (measured: ``p`` moves
+    by 2.828 for a 1e-6 step in ``a``), so a consumer that uses these for anything but multiplying by an odd ``H_p``
+    gets a wrong answer there (review of #2340). At the tie ``rouy_tourin`` returns an extreme point of the Clarke
+    Jacobian, and at ``p = 0`` reached with ``a = 0`` or ``b = 0`` exactly, ``engquist_osher`` returns 0 where the
+    one-sided derivative is 1 -- immaterial for every ``H`` with ``H_p(0) = 0``, which evenness gives.
+    """
+    backward_part = backward * (backward > 0)
+    forward_part = forward * (forward < 0)
+    backward_branch = backward_part >= -forward_part
+    zero = xp.zeros_like(backward_part)
+    one = xp.ones_like(backward_part)
+    if numerical_hamiltonian == "rouy_tourin":
+        d_backward = xp.where(backward_branch & (backward > 0), one, zero)
+        d_forward = xp.where(~backward_branch & (forward < 0), one, zero)
+        return d_backward, d_forward
+    if numerical_hamiltonian == "engquist_osher":
+        magnitude = xp.sqrt(backward_part * backward_part + forward_part * forward_part)
+        safe = xp.where(magnitude > 0, magnitude, one)
+        sign = xp.where(backward_branch, one, -one)
+        d_backward = xp.where(magnitude > 0, sign * backward_part / safe, zero)
+        d_forward = xp.where(magnitude > 0, sign * forward_part / safe, zero)
+        return d_backward, d_forward
+    raise ValueError(
+        f"numerical_hamiltonian must be 'engquist_osher' or 'rouy_tourin', got {numerical_hamiltonian!r} (#2313)."
+    )
+
+
 def gradient_upwind(u: NDArray, axis: int, h: float, xp: type = np) -> NDArray:
     """
-    Godunov (Rouy-Tourin) upwind momentum for a Hamilton-Jacobi Hamiltonian.
+    Rouy-Tourin upwind momentum for a Hamilton-Jacobi Hamiltonian: `upwind_momentum` with ``"rouy_tourin"``.
 
     With backward difference ``a`` and forward difference ``b``::
 
         a+ = max(a, 0),  b- = min(b, 0),  p = a+ if a+ >= -b- else b-
 
-    Applied per axis, ``H(p)`` is then the Godunov numerical Hamiltonian -- per axis the minimum of
+    Applied per axis, ``H(p)`` is then the min/max numerical Hamiltonian -- per axis the minimum of
     ``H`` over ``[a, b]`` when ``a <= b`` and the maximum over ``[b, a]`` when ``a > b``, nested
     across axes -- exactly when, at fixed ``(x, m, t)``, ``H`` is even in each momentum component
     and nondecreasing in its magnitude. Every control cost ``SeparableHamiltonian`` and
@@ -167,7 +259,7 @@ def gradient_upwind(u: NDArray, axis: int, h: float, xp: type = np) -> NDArray:
 
     Scope: this is a statement about the HJB momentum. Outside the condition above -- a
     ``DualHamiltonian`` whose Lagrangian is minimised away from ``0`` or bounded asymmetrically, or
-    a ``CongestionHamiltonian`` with ``c(m) < 0`` -- it is not Godunov, and neither was the rule
+    a ``CongestionHamiltonian`` with ``c(m) < 0`` -- it is not that min/max form, and neither was the rule
     it replaced; the two are wrong on different pairs there, so neither is the better one (#2311).
     Transport (``v . grad m``) upwinds by the sign of the velocity, not of any gradient, so this is
     not the upwind rule for advection either (#2309), nor for reinitialisation, which upwinds by the
@@ -186,11 +278,7 @@ def gradient_upwind(u: NDArray, axis: int, h: float, xp: type = np) -> NDArray:
     Returns:
         Upwind momentum with the same shape as u
     """
-    grad_forward = gradient_forward(u, axis, h, xp)
-    grad_backward = gradient_backward(u, axis, h, xp)
-    backward_part = grad_backward * (grad_backward > 0)
-    forward_part = grad_forward * (grad_forward < 0)
-    return xp.where(backward_part >= -forward_part, backward_part, forward_part)
+    return upwind_momentum(gradient_backward(u, axis, h, xp), gradient_forward(u, axis, h, xp), "rouy_tourin", xp)
 
 
 def gradient_upwind_by_velocity(u: NDArray, v: NDArray, axis: int, h: float, xp: Any = np) -> NDArray:
@@ -584,6 +672,10 @@ __all__ = [
     "gradient_forward",
     "gradient_backward",
     "gradient_upwind",
+    "upwind_momentum",
+    "upwind_momentum_derivatives",
+    "NumericalHamiltonian",
+    "DEFAULT_NUMERICAL_HAMILTONIAN",
     "gradient_upwind_by_velocity",
     "divergence_upwind_by_velocity",
     "gradient_nd",

@@ -248,7 +248,7 @@ def test_jacobian_byte_identical_to_inline_assembly():
     # tautological here and are pinned externally by
     # tests/unit/test_alg/test_hjb_jacobian_advection_1896.py against a finite difference of the
     # residual.
-    _g_sub, _g_diag, _g_sup, _g_extras = _advection_bands(u_cur, dx, bc, t, True, lap_bands)
+    _g_sub, _g_diag, _g_sup, _g_extras = _advection_bands(u_cur, dx, bc, t, True)
     assert not _g_extras, "this fixture is not periodic; the reference has no place for wrap entries"
     J_D += dH_dp * _g_diag
     J_L += dH_dp * _g_sub

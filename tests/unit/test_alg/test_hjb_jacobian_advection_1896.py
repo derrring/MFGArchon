@@ -27,12 +27,11 @@ import pytest
 import numpy as np
 
 from mfgarchon import MFGProblem
-from mfgarchon.alg.numerical.hjb_solvers import base_hjb
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import (
     _advection_bands,
-    _bc_laplacian_bands,
     _compute_gradient_array_1d,
     _compute_laplacian_1d,
+    _one_sided_differences_1d,
     compute_hjb_jacobian,
     compute_hjb_residual,
 )
@@ -40,6 +39,7 @@ from mfgarchon.core.hamiltonian import HamiltonianBase, HEvalState, QuadraticCon
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import dirichlet_bc, neumann_bc, no_flux_bc, periodic_bc, robin_bc
+from mfgarchon.operators.stencils.finite_difference import DEFAULT_NUMERICAL_HAMILTONIAN
 
 NX = 21
 DX = 1.0 / (NX - 1)
@@ -55,6 +55,12 @@ BC_FACTORIES = {
     # with a = (2 + alpha/beta)/(2 - alpha/beta), so a == 3 there, and that is the wall where review
     # found the wrong branch being chosen -- 2.0000e+01 at row 0.
     "robin_alpha_eq_beta": lambda: robin_bc(dimension=1, alpha=1.0, beta=1.0, value=0.0),
+    # The three BCs the deleted identity test carried (review of #2340, blocker 3): its
+    # `robin_sign_flipped` cases were the only ones in the suite whose ghost spacing reached
+    # `ghost_spacing_ignored`, and its count fell 58 -> 55 when they went.
+    "neumann": lambda: neumann_bc(dimension=1, value=0.3),
+    "robin_neumann_like": lambda: robin_bc(dimension=1, alpha=0.0, beta=1.0, value=0.0),
+    "robin_sign_flipped": lambda: robin_bc(dimension=1, alpha=2.0, beta=-1.0, value=1.0),
 }
 
 
@@ -94,20 +100,44 @@ def _fixture(bc_name: str, sigma: float = 0.3, hamiltonian=None):
     return problem, bc, m
 
 
-def _residual(problem, bc, m, upwind: bool):
+def _residual(problem, bc, m, upwind: bool, numerical_hamiltonian: str = DEFAULT_NUMERICAL_HAMILTONIAN):
     u_next = np.zeros(NX)
 
     def call(state):
         return np.asarray(
-            compute_hjb_residual(state, u_next, m, problem, 5, None, None, upwind, bc=bc, domain_bounds=BOUNDS),
+            compute_hjb_residual(
+                state,
+                u_next,
+                m,
+                problem,
+                5,
+                None,
+                None,
+                upwind,
+                bc=bc,
+                domain_bounds=BOUNDS,
+                numerical_hamiltonian=numerical_hamiltonian,
+            ),
             dtype=float,
         )
 
     return call
 
 
-def _jacobian(problem, bc, m, u, upwind: bool):
-    return compute_hjb_jacobian(u, u, m, problem, 5, None, None, upwind, bc=bc, domain_bounds=BOUNDS).toarray()
+def _jacobian(problem, bc, m, u, upwind: bool, numerical_hamiltonian: str = DEFAULT_NUMERICAL_HAMILTONIAN):
+    return compute_hjb_jacobian(
+        u,
+        u,
+        m,
+        problem,
+        5,
+        None,
+        None,
+        upwind,
+        bc=bc,
+        domain_bounds=BOUNDS,
+        numerical_hamiltonian=numerical_hamiltonian,
+    ).toarray()
 
 
 def _fd_columns(residual, u, eps: float = 1e-6):
@@ -179,8 +209,9 @@ def test_the_wall_rows_are_the_residuals_own_stencil(bc_name: str, upwind: bool)
 @pytest.mark.parametrize("bc_name", list(BC_FACTORIES))
 @pytest.mark.parametrize("upwind", [False, True])
 @pytest.mark.parametrize("state", list(SMOOTH_STATES))
-def test_every_row_linearises_the_residual(bc_name: str, upwind: bool, state: str):
-    """The whole matrix, not just the ends -- item 3's divergence is interior.
+@pytest.mark.parametrize("numerical_hamiltonian", ["engquist_osher", "rouy_tourin"])
+def test_every_row_linearises_the_residual(bc_name: str, upwind: bool, state: str, numerical_hamiltonian: str):
+    """The whole matrix, not just the ends -- item 3's divergence is interior. Both presets of #2313.
 
     `piecewise_linear` is the discriminating case for how the branch is recovered: forward and
     backward agree in VALUE on every linear stretch, so reading the branch off values alone is
@@ -188,14 +219,20 @@ def test_every_row_linearises_the_residual(bc_name: str, upwind: bool, state: st
     """
     problem, bc, m = _fixture(bc_name)
     u = SMOOTH_STATES[state]
-    err = np.abs(_jacobian(problem, bc, m, u, upwind) - _fd_columns(_residual(problem, bc, m, upwind), u))
+    err = np.abs(
+        _jacobian(problem, bc, m, u, upwind, numerical_hamiltonian)
+        - _fd_columns(_residual(problem, bc, m, upwind, numerical_hamiltonian), u)
+    )
     worst = int(np.argmax(err.max(axis=1)))
     assert err.max() < 1e-5, f"worst row {worst}: {err.max():.3e}"
 
 
 def test_the_superseded_branch_rule_is_moot_on_every_live_row():
     """#1896 item 3 was a Jacobian choosing its band on sign(grad_upwind) while the residual chose on
-    sign(central); they parted at a median 10 of 41 nodes of a noisy field. Since #2308 the residual's
+    sign(central); they parted at a median 10 of 41 nodes of a noisy field. Since #2313 neither rule is
+    in the code -- the Jacobian reads the numerical-Hamiltonian owner's derivatives of the same two
+    differences the residual's momentum comes from -- so this is a property of the `rouy_tourin` momentum
+    and of what a restatement would have cost, not a pin on live machinery. Since #2308 the residual's
     momentum has the sign of its branch everywhere except two kinds of row: a strict minimum, where the
     band is zero, and a one-sided difference exactly 0 at the zero branch's edge, where the momentum is 0
     and ``dH/dp(0) = 0`` for every shipped H. So the superseded rule cannot write a wrong LIVE band, and
@@ -209,9 +246,7 @@ def test_the_superseded_branch_rule_is_moot_on_every_live_row():
     """
     _, bc, _ = _fixture("no_flux")
     rough = SMOOTH_STATES["rough"]
-    central = _compute_gradient_array_1d(rough, DX, bc=bc, upwind=False, time=0.0)
-    lap = _compute_laplacian_1d(rough, DX, bc=bc, time=0.0)
-    forward, backward = central + DX / 2 * lap, central - DX / 2 * lap
+    backward, forward = _one_sided_differences_1d(rough, DX, bc=bc, time=0.0)
     upwind_grad = _compute_gradient_array_1d(rough, DX, bc=bc, upwind=True, time=0.0)
     at_minimum = (backward < 0) & (forward > 0)
     superseded_takes_backward = upwind_grad >= 0
@@ -223,6 +258,9 @@ def test_the_superseded_branch_rule_is_moot_on_every_live_row():
 
 def test_a_switching_node_gets_a_clarke_element_not_an_average():
     """Where the residual is not differentiable, the row must still be one of the admissible ones.
+
+    Rouy-Tourin only: at a local maximum ``engquist_osher`` is differentiable and its row is the plain derivative
+    (#2313), so there is no branch to choose.
 
     The two-sided FD is not the oracle here -- it averages the two one-sided operators and equals
     neither. So each branch is isolated instead: tilt the two neighbours antisymmetrically to pin
@@ -238,8 +276,8 @@ def test_a_switching_node_gets_a_clarke_element_not_an_average():
     u = -np.abs(X - 0.5)
     assert _switching_nodes(u, bc, True)[row], "fixture no longer switches at this row"
 
-    jac = _jacobian(problem, bc, m, u, True)
-    residual = _residual(problem, bc, m, True)
+    jac = _jacobian(problem, bc, m, u, True, "rouy_tourin")
+    residual = _residual(problem, bc, m, True, "rouy_tourin")
 
     def branch_row(direction: float, tilt: float) -> np.ndarray:
         shifted = u.copy()
@@ -367,68 +405,6 @@ def test_a_volatility_field_does_not_disturb_the_advection_block(bc_name: str):
     assert float(np.abs(jac - _fd_columns(residual, u)).max()) < 1e-5
 
 
-# The premise the whole upwind construction rests on. Every BC this repo can build must satisfy it,
-# because the bands are assembled from `central` and `laplacian` and never from a one-sided stencil.
-IDENTITY_BCS = {
-    "no_flux": lambda: no_flux_bc(dimension=1),
-    "dirichlet": lambda: dirichlet_bc(dimension=1, value=0.7),
-    "neumann": lambda: neumann_bc(dimension=1, value=0.3),
-    "periodic": lambda: periodic_bc(dimension=1),
-    "robin_mixed": lambda: robin_bc(dimension=1, alpha=1.0, beta=1.0, value=0.5),
-    "robin_neumann_like": lambda: robin_bc(dimension=1, alpha=0.0, beta=1.0, value=0.0),
-    "robin_sign_flipped": lambda: robin_bc(dimension=1, alpha=2.0, beta=-1.0, value=1.0),
-}
-
-
-@pytest.mark.parametrize("bc_name", list(IDENTITY_BCS))
-@pytest.mark.parametrize(
-    "state",
-    ["smooth", "random", "linear"],
-)
-def test_the_one_sided_stencils_are_algebra_on_the_two_operators_that_have_owners(bc_name: str, state: str):
-    """forward = central + (dx/2)*laplacian, backward = central - (dx/2)*laplacian, walls included.
-
-    This is why the upwind Jacobian needs no third stencil of its own: both one-sided operators are
-    combinations of two the residual already owns. Robin is in the list because it is the BC most
-    likely to pad the Laplacian differently from the gradient, which is the one way this breaks.
-    """
-    bc = IDENTITY_BCS[bc_name]()
-    u = {
-        "smooth": -3.0 * np.exp(-8 * (X - 0.53) ** 2),
-        "random": np.random.default_rng(1896).standard_normal(NX),
-        "linear": 2.0 * X + 0.3,
-    }[state]
-    central = _compute_gradient_array_1d(u, DX, bc=bc, upwind=False, time=0.0)
-    lap = _compute_laplacian_1d(u, DX, bc=bc, time=0.0)
-    upwind = _compute_gradient_array_1d(u, DX, bc=bc, upwind=True, time=0.0)
-    forward, backward = central + DX / 2 * lap, central - DX / 2 * lap
-    # Or 0 at a strict discrete minimum (#2308), the one row that is not a one-sided form.
-    at_minimum = (backward < 0) & (forward > 0)
-    one_sided = np.minimum(np.abs(upwind - forward), np.abs(upwind - backward))
-    residual = float(np.where(at_minimum, np.abs(upwind), one_sided).max())
-    assert residual < 1e-12, f"{bc_name}/{state}: grad_upwind is neither one-sided form nor 0 ({residual:.3e})"
-    assert (~at_minimum).sum() >= NX // 2, "too few one-sided rows for the identity to be tested"
-    assert float(np.abs(forward - backward).max()) > 1e-9, "the two forms coincide; nothing is discriminated"
-
-
-def test_a_broken_identity_raises_instead_of_picking_the_closer_wrong_answer(monkeypatch):
-    """The failure mode this guards is silent, so the guard is part of the contract.
-
-    If some future BC padded the Laplacian differently from the gradient, the branch would be
-    recovered by taking the nearer of two wrong reconstructions -- a plausible Jacobian, no error,
-    and Newton merely converging badly. No BC in the repo breaks the identity today (all seven
-    above hold to 1e-14), so it is broken here deliberately.
-    """
-    bc = no_flux_bc(dimension=1)
-    u = -3.0 * np.exp(-8 * (X - 0.53) ** 2)
-    bands = _bc_laplacian_bands(NX, DX, bc, 0.0)
-    real = base_hjb._compute_laplacian_1d
-    monkeypatch.setattr(base_hjb, "_compute_laplacian_1d", lambda *a, **k: real(*a, **k) * 3.0 + 1.0)
-
-    with pytest.raises(ValueError, match="#1896"):
-        _advection_bands(u, DX, bc, 0.0, True, bands)
-
-
 @pytest.mark.parametrize("upwind", [False, True])
 def test_the_legacy_no_bc_path_linearises_its_own_residual_too(upwind: bool):
     """`bc=None` is a separate dispatch branch: both operators fall back to the periodic %Nx roll.
@@ -449,7 +425,12 @@ def test_the_legacy_no_bc_path_linearises_its_own_residual_too(upwind: bool):
 
 
 def test_a_tied_wall_row_that_is_not_a_switching_node_still_gets_the_right_branch():
-    """The fallback's hardest customer: the branch is well defined, and unmeasurable.
+    """A wall row where the two one-sided differences agree in value and their ROWS do not.
+
+    Since #2313 there is no tie-break to get wrong: the owner's derivatives decide the row from the same
+    differences the residual used. What this still measures is that the wall row of the assembled Jacobian is
+    the residual's own derivative there, which is worth `4.0000e+01` if the row is taken from the other
+    difference. The narration below is the history that made it a hard case.
 
     Forward and backward agree in VALUE wherever the Laplacian vanishes. At a WALL that depends on
     the ghost rule, and the cleanest witness is a BC CONSISTENT WITH THE STATE: a linear state of
@@ -503,20 +484,22 @@ def test_a_tied_wall_row_that_is_not_a_switching_node_still_gets_the_right_branc
     assert abs(central[0]) > 0.1, f"row 0 is a switching node ({central[0]:.3e}); the test proves nothing"
     assert central[0] < 0, f"central[0] = {central[0]:.3e} > 0; both branch rules agree there"
 
-    err = np.abs(_jacobian(problem, bc, m, u, True) - _fd_columns(_residual(problem, bc, m, True), u))
-    assert err[0].max() < 1e-5, f"row 0: {err[0].max():.3e}"
+    for preset in ("engquist_osher", "rouy_tourin"):
+        err = np.abs(
+            _jacobian(problem, bc, m, u, True, preset) - _fd_columns(_residual(problem, bc, m, True, preset), u)
+        )
+        assert err[0].max() < 1e-5, f"{preset} row 0: {err[0].max():.3e}"
 
 
 def test_a_cancelled_wrap_entry_is_dropped_rather_than_kept_at_rounding_scale():
     """Pins the sparsity, which the agreement tests cannot see: they compare dense arrays.
 
-    Under periodic upwind, row 0's forward difference reads `U[1]`, not the wrap column, so the
-    central and Laplacian contributions to that entry cancel exactly. Keeping the residue would
+    Under periodic Rouy-Tourin upwind, row 0's forward difference reads `U[1]`, not the wrap column, so the
+    backward operator's wrap entry is weighted by zero. Keeping the residue would
     leave a `~1e-16` entry in the matrix — numerically invisible, but it changes `nnz` and so
     changes what every downstream sparse solve is handed.
     """
     _, bc, _ = _fixture("periodic")
-    lap_bands = _bc_laplacian_bands(NX, DX, bc, 0.0)
     # A strictly monotone state cannot be periodic, so the branch is pinned at row 0 only: the wrap
     # ghost makes `central[0]` follow the sign of `u[1] - u[-1]`. These two differ there and agree
     # nowhere else that matters, which is exactly the discriminating pair.
@@ -524,8 +507,8 @@ def test_a_cancelled_wrap_entry_is_dropped_rather_than_kept_at_rounding_scale():
     assert _compute_gradient_array_1d(takes_forward, DX, bc=bc, upwind=False, time=0.0)[0] < 0
     assert _compute_gradient_array_1d(takes_backward, DX, bc=bc, upwind=False, time=0.0)[0] > 0
 
-    _, _, _, fwd_extras = _advection_bands(takes_forward, DX, bc, 0.0, True, lap_bands)
-    _, _, _, back_extras = _advection_bands(takes_backward, DX, bc, 0.0, True, lap_bands)
+    _, _, _, fwd_extras = _advection_bands(takes_forward, DX, bc, 0.0, True, "rouy_tourin")
+    _, _, _, back_extras = _advection_bands(takes_backward, DX, bc, 0.0, True, "rouy_tourin")
     scale = 1.0 / DX
     assert all(abs(v) > 1e-6 * scale for _, _, v in fwd_extras), f"a cancelled entry survived: {fwd_extras}"
     assert all(abs(v) > 1e-6 * scale for _, _, v in back_extras), f"a cancelled entry survived: {back_extras}"
@@ -534,62 +517,6 @@ def test_a_cancelled_wrap_entry_is_dropped_rather_than_kept_at_rounding_scale():
     back_cells = {(i, j) for i, j, _ in back_extras}
     assert fwd_cells != back_cells, "both branches reach the same wrap columns; the drop is invisible here"
     assert 0 not in {i for i, _ in fwd_cells}, f"row 0 took forward, so it must not reach a wrap column: {fwd_extras}"
-
-
-def test_the_jacobian_follows_a_changed_selection_rule_without_being_told(monkeypatch):
-    """The reason the branch is measured rather than restated, made testable.
-
-    On every configuration this repo can build, measuring which one-sided form `grad_upwind`
-    returned and restating `sign(central) >= 0` give the same answer — so no ordinary test can tell
-    a measurement from a second copy of the rule, and the mutation "let the fallback decide
-    everything" kills nothing. The difference only appears when the rule CHANGES, which is exactly
-    the failure #1896 item 3 is: a second copy that silently stopped agreeing.
-
-    So change it. `gradient_upwind` is inverted here — forward where it took backward — and both the
-    residual and the Jacobian go through it. A Jacobian that measures follows; one that restates
-    `sign(central)` is now wrong on every non-tied row and cannot pass. The inversion keeps the 0 at
-    a strict minimum (#2308), which the guard requires; `test_a_rule_that_is_not_zero_at_a_minimum_
-    raises` is the other half.
-    """
-    from mfgarchon.operators.stencils.finite_difference import gradient_backward, gradient_forward
-
-    def inverted(u, axis, h, xp=np):
-        fwd, bwd = gradient_forward(u, axis, h, xp), gradient_backward(u, axis, h, xp)
-        swapped = xp.where((fwd + bwd) / 2.0 >= 0, fwd, bwd)  # the OPPOSITE of Godunov
-        return xp.where((bwd < 0) & (fwd > 0), 0 * swapped, swapped)
-
-    monkeypatch.setattr(base_hjb, "gradient_upwind", inverted)
-
-    problem, bc, m = _fixture("no_flux")
-    u = SMOOTH_STATES["rough"]
-    # Control: the inverted rule must actually differ from the real one on this state, or the
-    # monkeypatch proves nothing.
-    central = _compute_gradient_array_1d(u, DX, bc=bc, upwind=False, time=0.0)
-    assert (central > 0).any(), "state does not exercise the backward branch"
-    assert (central < 0).any(), "state does not exercise the forward branch"
-
-    err = np.abs(_jacobian(problem, bc, m, u, True) - _fd_columns(_residual(problem, bc, m, True), u))
-    assert err.max() < 1e-5, f"the Jacobian did not follow the rule change: {err.max():.3e}"
-
-
-def test_a_rule_that_is_not_zero_at_a_minimum_raises(monkeypatch):
-    """The #2308 defect reinstated must not be linearised quietly.
-
-    The sign(central) rule returns a one-sided difference at a strict discrete minimum. The Jacobian
-    reads that row as a zero band, so the reconstruction disagrees with the rule there, and the
-    guard raises instead of assembling a Jacobian of a residual that no longer exists.
-    """
-    from mfgarchon.operators.stencils.finite_difference import gradient_backward, gradient_forward
-
-    def sign_of_central(u, axis, h, xp=np):
-        fwd, bwd = gradient_forward(u, axis, h, xp), gradient_backward(u, axis, h, xp)
-        return xp.where((fwd + bwd) / 2.0 >= 0, bwd, fwd)
-
-    monkeypatch.setattr(base_hjb, "gradient_upwind", sign_of_central)
-    bc = no_flux_bc(dimension=1)
-    u = SMOOTH_STATES["rough"]
-    with pytest.raises(ValueError, match="#2308"):
-        _advection_bands(u, DX, bc, 0.0, True, _bc_laplacian_bands(NX, DX, bc, 0.0))
 
 
 @pytest.mark.parametrize("upwind", [False, True])
@@ -645,32 +572,3 @@ def test_a_time_dependent_boundary_reaches_the_advection_block(upwind: bool):
         u, u, m, problem, 5, None, None, upwind, bc=bc, domain_bounds=BOUNDS, current_time=t
     ).toarray()
     assert float(np.abs(jac - _fd_columns(residual, u)).max()) < 1e-5
-
-
-@pytest.mark.parametrize("nx", [21, 51, 201])
-def test_a_large_wall_value_does_not_trip_the_identity_guard(nx: int):
-    """The guard must not raise on bands it is about to build exactly right.
-
-    `forward`/`backward` recover a small number by cancelling `g_c` against `(dx/2)*lap`, so the
-    reconstruction's rounding floor is set by those CANCELLED terms. Scaling the tolerance by
-    `g_up` alone made the guard fire whenever a wall value was large enough that the cancelled
-    magnitude exceeded it by ~1/eps: at Nx=51 with a Dirichlet value of 1e6, mismatch 4.172e-09
-    against an atol of 1.98e-09 while the cancelled terms were 5e+07. Found by review (#1899).
-
-    It escapes to the user: `compute_hjb_jacobian` is called OUTSIDE the `try` in
-    `newton_hjb_step`, so the ValueError propagates out of the solve.
-    """
-    dx = 1.0 / (nx - 1)
-    x = np.linspace(0.0, 1.0, nx)
-    u = x**2
-    for value in (7.0, 1.0e4, 1.0e6):
-        bc = dirichlet_bc(dimension=1, value=value)
-        lap_bands = _bc_laplacian_bands(nx, dx, bc, 0.0)
-        cancelled = float(np.abs(dx / 2 * _compute_laplacian_1d(u, dx, bc=bc, time=0.0)).max())
-        survivor = float(np.abs(_compute_gradient_array_1d(u, dx, bc=bc, upwind=True, time=0.0)).max())
-        # Control: this fixture must actually exercise the regime, or it asserts nothing.
-        if value == 1.0e6:
-            assert cancelled > 1e6 * max(survivor, 1.0), (
-                f"nx={nx}: cancelled {cancelled:.3e} vs survivor {survivor:.3e} -- no longer the trip regime"
-            )
-        _advection_bands(u, dx, bc, 0.0, True, lap_bands)  # must not raise

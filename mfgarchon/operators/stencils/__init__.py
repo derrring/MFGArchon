@@ -15,7 +15,8 @@ Available Stencils:
         - gradient_central: 2nd-order, symmetric
         - gradient_forward: 1st-order, positive bias
         - gradient_backward: 1st-order, negative bias
-        - gradient_upwind: Godunov selection for stability
+        - gradient_upwind: the Rouy-Tourin upwind momentum (`upwind_momentum`'s preset)
+        - upwind_momentum / upwind_momentum_derivatives: the HJB numerical Hamiltonian's momentum (#2313)
 
     Second-order derivatives:
         - laplacian_stencil_1d: Standard 3-point stencil
@@ -38,6 +39,8 @@ Created: 2026-01-24 (Operator module reorganization)
 """
 
 from mfgarchon.operators.stencils.finite_difference import (
+    DEFAULT_NUMERICAL_HAMILTONIAN,
+    NumericalHamiltonian,
     fix_boundaries_one_sided,
     get_gradient_stencil_coefficients,
     get_laplacian_stencil_coefficients,
@@ -47,6 +50,8 @@ from mfgarchon.operators.stencils.finite_difference import (
     gradient_upwind,
     laplacian_stencil_1d,
     laplacian_stencil_nd,
+    upwind_momentum,
+    upwind_momentum_derivatives,
 )
 
 __all__ = [
@@ -55,6 +60,10 @@ __all__ = [
     "gradient_forward",
     "gradient_backward",
     "gradient_upwind",
+    "upwind_momentum",
+    "upwind_momentum_derivatives",
+    "NumericalHamiltonian",
+    "DEFAULT_NUMERICAL_HAMILTONIAN",
     # Boundary handling
     "fix_boundaries_one_sided",
     # Second-order derivatives

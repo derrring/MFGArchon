@@ -70,6 +70,8 @@ from mfgarchon.operators.stencils import (
     gradient_upwind,
     laplacian_stencil_1d,
     laplacian_stencil_nd,
+    upwind_momentum,
+    upwind_momentum_derivatives,
 )
 
 __all__ = [
@@ -92,6 +94,8 @@ __all__ = [
     "gradient_forward",
     "gradient_backward",
     "gradient_upwind",
+    "upwind_momentum",
+    "upwind_momentum_derivatives",
     "laplacian_stencil_1d",
     "laplacian_stencil_nd",
 ]
