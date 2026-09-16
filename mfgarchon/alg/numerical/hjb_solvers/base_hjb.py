@@ -558,7 +558,7 @@ def _calculate_derivatives(
 
     Supports both central difference (default) and upwind discretization:
     - Central: p = (p_forward + p_backward) / 2 (second-order accurate)
-    - Upwind: Godunov scheme based on characteristic direction (monotone)
+    - Upwind: the numerical Hamiltonian's momentum, from `upwind_momentum` (#2313)
 
     Args:
         U_array: Solution array
@@ -567,10 +567,12 @@ def _calculate_derivatives(
         Nx: Number of spatial points
         clip: Whether to clip derivative values
         clip_limit: Maximum absolute value for clipping
-        upwind: If True, use Godunov upwind discretization for HJB stability
+        upwind: If True, the upwind momentum of ``numerical_hamiltonian`` (#2313)
         precomputed_gradient: Optional precomputed gradient array from _compute_gradient_array_1d.
                               If provided, uses this instead of local computation.
                               This enables BC-aware gradients (Issue #542 fix).
+        numerical_hamiltonian: Which preset's upwind momentum to take when ``upwind`` and no precomputed gradient
+                              is given: ``"engquist_osher"`` (default) or ``"rouy_tourin"`` (#2313).
 
     Returns:
         Dictionary with tuple keys: {(0,): u, (1,): p}
@@ -697,7 +699,7 @@ def compute_hjb_residual(
     t_idx_n: int,  # Time index for U_n
     backend=None,  # Backend for MPS/CUDA support
     sigma_at_n: float | np.ndarray | None = None,  # Diffusion at time t_n
-    use_upwind: bool = True,  # Use Godunov upwind (True) or central (False)
+    use_upwind: bool = True,  # Use the upwind momentum (True) or central (False)
     bc: BoundaryConditions | None = None,  # Boundary conditions (Issue #542 fix)
     domain_bounds: np.ndarray | None = None,  # Domain bounds for BC
     current_time: float = 0.0,  # Current time for time-dependent BCs
@@ -1107,7 +1109,7 @@ def compute_hjb_jacobian(
     t_idx_n: int,
     backend=None,  # Backend for MPS/CUDA support
     sigma_at_n: float | np.ndarray | None = None,  # Diffusion at time t_n
-    use_upwind: bool = True,  # Use Godunov upwind (True) or central (False)
+    use_upwind: bool = True,  # Use the upwind momentum (True) or central (False)
     bc: BoundaryConditions | None = None,  # Boundary conditions (Issue #542 fix)
     domain_bounds: np.ndarray | None = None,  # Domain bounds for BC
     current_time: float = 0.0,  # Current time for time-dependent BCs
@@ -1366,7 +1368,7 @@ def newton_hjb_step(
     t_idx_n: int,
     backend=None,  # Add backend parameter for MPS/CUDA support
     sigma_at_n: float | np.ndarray | None = None,  # Diffusion at time t_n
-    use_upwind: bool = True,  # Use Godunov upwind (True) or central (False)
+    use_upwind: bool = True,  # Use the upwind momentum (True) or central (False)
     bc: BoundaryConditions | None = None,  # Boundary conditions (Issue #542 fix)
     domain_bounds: np.ndarray | None = None,  # Domain bounds for BC
     current_time: float = 0.0,  # Current time for time-dependent BCs
@@ -1480,7 +1482,7 @@ def solve_hjb_timestep_newton(
     t_idx_n: int | None = None,  # time index for U_n being solved
     backend: BaseBackend | None = None,
     sigma_at_n: float | np.ndarray | None = None,  # Diffusion at time t_n
-    use_upwind: bool = True,  # Use Godunov upwind (True) or central (False)
+    use_upwind: bool = True,  # Use the upwind momentum (True) or central (False)
     bc: BoundaryConditions | None = None,  # Boundary conditions (Issue #542 fix)
     domain_bounds: np.ndarray | None = None,  # Domain bounds for BC
     current_time: float = 0.0,  # Current time for time-dependent BCs
@@ -1743,7 +1745,7 @@ def solve_hjb_system_backward(
     newton_tolerance: float | None = None,
     backend: BaseBackend | None = None,
     volatility_field: float | np.ndarray | None = None,  # Diffusion field
-    use_upwind: bool = True,  # Use Godunov upwind (True) or central (False)
+    use_upwind: bool = True,  # Use the upwind momentum (True) or central (False)
     bc: BoundaryConditions | None = None,  # Boundary conditions (Issue #542 fix)
     domain_bounds: np.ndarray | None = None,  # Domain bounds for BC
     bc_values: dict[str, float] | None = None,  # Issue #574: Per-boundary BC values

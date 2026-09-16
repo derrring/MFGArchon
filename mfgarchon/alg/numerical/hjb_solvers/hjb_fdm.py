@@ -12,7 +12,7 @@ References:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, get_args
 
 import numpy as np
 
@@ -163,8 +163,8 @@ def _refuse_a_hamiltonian_the_upwind_momentum_cannot_serve(
                         raise NotImplementedError(
                             f"HJBFDMSolver(advection_scheme='gradient_upwind', "
                             f"numerical_hamiltonian={numerical_hamiltonian!r}) evaluates H at an upwind momentum "
-                            f"that is consistent and monotone only for an H even in each momentum component and "
-                            f"nondecreasing in its magnitude (#2311, #2313). "
+                            f"that is MONOTONE only for an H even in each momentum component and nondecreasing in "
+                            f"its magnitude (consistency needs no hypothesis) (#2311, #2313). "
                             f"{type(H).__name__} is not, at x={x.tolist()}, m={m}: {violation}. "
                             f"advection_scheme='gradient_centered' selects no upwind momentum and is not monotone; "
                             f"it cannot solve a DualHamiltonian in d >= 2 either (#2315). A monotone upwind momentum "
@@ -250,9 +250,11 @@ class HJBFDMSolver(BaseHJBSolver):
                 - 'gradient_centered': Central differences (second-order, may oscillate)
                 For MFG coupling, use 'gradient_upwind' with FP 'divergence_upwind'.
             numerical_hamiltonian: Which monotone numerical Hamiltonian 'gradient_upwind' evaluates (#2313):
-                - 'engquist_osher' (default): H at sqrt(a+^2 + b-^2) per axis. C^1, and its linearisation is the
-                  transpose of the FDM FP 'divergence_upwind' operator, local maxima included.
-                - 'rouy_tourin': H at max(a+, -b-) per axis, the min/max form. Not C^1 where both branches tie.
+                - 'engquist_osher' (default): H at sqrt(a+^2 + b-^2) per axis. On the interior its linearisation is
+                  the transpose of the FDM FP 'divergence_upwind' operator, local maxima included; the wall rows are
+                  not, because `build_linearized_operator` zeroes them. C^1 wherever H is.
+                - 'rouy_tourin': H at max(a+, -b-) per axis, the min/max form. Not C^1 where the branches tie, so
+                  its Jacobian there is a Clarke element.
                 The two differ only at a discrete local maximum along an axis.
             relaxation: Under-relaxation factor ω ∈ (0,1] for fixed-point iteration.
                 Legacy `damping_factor` kwarg still accepted with DeprecationWarning.
@@ -309,10 +311,11 @@ class HJBFDMSolver(BaseHJBSolver):
             raise ValueError(f"Invalid advection_scheme: '{advection_scheme}'. Valid options: {sorted(valid_schemes)}")
         self.advection_scheme = advection_scheme
         self.use_upwind = advection_scheme == "gradient_upwind"
-        if numerical_hamiltonian not in ("engquist_osher", "rouy_tourin"):
+        # The names come from the owner's Literal, not a second list of them (#2313).
+        if numerical_hamiltonian not in get_args(NumericalHamiltonian):
             raise ValueError(
                 f"Invalid numerical_hamiltonian: {numerical_hamiltonian!r}. Valid options: "
-                f"['engquist_osher', 'rouy_tourin'] (#2313)."
+                f"{sorted(get_args(NumericalHamiltonian))} (#2313)."
             )
         self.numerical_hamiltonian: NumericalHamiltonian = numerical_hamiltonian
 
@@ -1351,8 +1354,9 @@ class HJBFDMSolver(BaseHJBSolver):
         Returns the Hamiltonian advection part of the HJB Jacobian:
             A_adv[i,j] = (dH/dp)_i * (dp_i/dU_j)
 
-        where dH/dp comes from the Hamiltonian class and dp/dU comes from the
-        upwind gradient stencil. The transpose A_adv^T is the correct FP
+        where dH/dp comes from the Hamiltonian class and dp/dU from the
+        numerical-Hamiltonian owner's derivatives (#2313), which weight both
+        one-sided differences. The transpose A_adv^T is the correct FP
         advection operator (Achdou's structure-preserving discretization).
 
         This is mathematically different from build_advection_matrix() which uses
@@ -1415,7 +1419,9 @@ class HJBFDMSolver(BaseHJBSolver):
             J_L[i] += dH_dp[i] * dp_i/dU_{i-1} (lower)
             J_U[i] += dH_dp[i] * dp_i/dU_{i+1} (upper)
 
-        where dp/dU depends on the Godunov upwind stencil direction.
+        ``dp/dU`` comes from the numerical-Hamiltonian owner (#2313): both one-sided differences carry a weight, and
+        under ``engquist_osher`` both are nonzero at a discrete local maximum. Boundary rows are zeroed (no-flux), so
+        this operator is the FP's transpose on the interior only.
         """
         import scipy.sparse as sparse
 
@@ -1437,10 +1443,10 @@ class HJBFDMSolver(BaseHJBSolver):
                 "Set problem.hamiltonian_class or use build_advection_matrix() for quadratic H."
             )
 
-        # Compute BC-aware upwind gradient
-        precomputed_grad = base_hjb._compute_gradient_array_1d(
-            U_flat, dx, bc=bc, upwind=True, time=time, numerical_hamiltonian=self.numerical_hamiltonian
-        )
+        # One padding pass, then the owner: the momentum the residual evaluates and its derivatives come from the same
+        # two one-sided differences (#2313; the review of #2340 measured the second pad).
+        backward, forward = base_hjb._one_sided_differences_1d(U_flat, dx, bc=bc, time=time)
+        precomputed_grad = upwind_momentum(backward, forward, self.numerical_hamiltonian)
 
         # Evaluate dH/dp at all grid points
         x_grid = self.problem.geometry.get_spatial_grid()  # (Nx, 1)
@@ -1451,7 +1457,6 @@ class HJBFDMSolver(BaseHJBSolver):
         # (U_i - U_{i-1})/dx with weight dp/da and on the forward difference (U_{i+1} - U_i)/dx with weight dp/db.
         # Engquist-Osher weights both at a local maximum; selecting one stencil by sign(p) linearised Rouy-Tourin only.
         inv_dx = 1.0 / dx
-        backward, forward = base_hjb._one_sided_differences_1d(U_flat, dx, bc=bc, time=time)
         d_backward, d_forward = upwind_momentum_derivatives(backward, forward, self.numerical_hamiltonian)
 
         J_D = dH_dp * (d_backward - d_forward) * inv_dx
@@ -1481,8 +1486,8 @@ class HJBFDMSolver(BaseHJBSolver):
         """Build nD linearized HJB advection operator.
 
         Generalizes the 1D approach: for each dimension d, computes
-        dH/dp_d * dp_d/dU_j using the upwind stencil in that dimension,
-        then sums contributions across all dimensions.
+        dH/dp_d * dp_d/dU_j with dp_d/dU from the numerical-Hamiltonian owner's
+        derivatives in that dimension (#2313), then sums over dimensions.
         """
         import scipy.sparse as sparse
 
@@ -1493,11 +1498,11 @@ class HJBFDMSolver(BaseHJBSolver):
         N_total = int(np.prod(self.shape))
         M_flat = np.asarray(M).ravel()
 
-        # Compute upwind gradients in each dimension, and the owner's derivatives of them (#2313)
-        gradients = self._compute_gradients_nd(U, time=time)
+        # One padding pass per axis: the momentum and its derivatives come from the same differences (#2313).
+        one_sided = self._one_sided_differences_nd(U, time=time)
+        gradients = {d: upwind_momentum(b, f, self.numerical_hamiltonian) for d, (b, f) in one_sided.items()}
         derivatives = {
-            d: upwind_momentum_derivatives(backward, forward, self.numerical_hamiltonian)
-            for d, (backward, forward) in self._one_sided_differences_nd(U, time=time).items()
+            d: upwind_momentum_derivatives(b, f, self.numerical_hamiltonian) for d, (b, f) in one_sided.items()
         }
 
         # Stack gradients as (Nx, dim) for H_class.dp()

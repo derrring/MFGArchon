@@ -8,6 +8,9 @@ missing: ``J[0, 19] = -18`` against a residual derivative of ``-155.7`` on #1822
 Newton stalled. Under ``bc=None``, the legacy exclusive-periodic residual, the band assembly dropped the wrap
 entries too: 85% relative on a random state, on both schemes, at 1fcd15b4.
 
+Both presets of #2313's numerical Hamiltonian are covered: the FD-fallback arm is the default production path, and it
+reads the preset through its own gradient of the perturbed state.
+
 Oracle: the definition of a Jacobian. Each column of the central finite difference of `compute_hjb_residual`
 must match the assembled column, for both assembly paths (the FD fallback and the analytic chain rule), both
 schemes, and states whose wrap rows take both upwind branches. No-flux is the control that has no wrap.
@@ -64,10 +67,13 @@ def _states(identify_endpoints: bool):
             yield state
 
 
+@pytest.mark.parametrize("numerical_hamiltonian", ["engquist_osher", "rouy_tourin"])
 @pytest.mark.parametrize("assembly", ["fd_fallback", "analytic"])
 @pytest.mark.parametrize("upwind", [True, False], ids=["upwind", "central"])
 @pytest.mark.parametrize("boundary", ["periodic", "periodic_bc_none", "no_flux"])
-def test_the_jacobian_is_the_derivative_of_the_residual(boundary: str, upwind: bool, assembly: str):
+def test_the_jacobian_is_the_derivative_of_the_residual(
+    boundary: str, upwind: bool, assembly: str, numerical_hamiltonian: str
+):
     problem = _problem(no_flux_bc(dimension=1) if boundary == "no_flux" else periodic_bc(dimension=1))
     bc = None if boundary == "periodic_bc_none" else problem.geometry.get_boundary_conditions()
     bounds = problem.geometry.get_bounds()
@@ -90,18 +96,30 @@ def test_the_jacobian_is_the_derivative_of_the_residual(boundary: str, upwind: b
                     bc=bc,
                     domain_bounds=domain_bounds,
                     current_time=0.25,
+                    numerical_hamiltonian=numerical_hamiltonian,
                 ),
                 dtype=float,
             )
 
         derivative = np.column_stack([(residual(state + e) - residual(state - e)) / 2e-7 for e in 1e-7 * np.eye(_N)])
         assembled = bh.compute_hjb_jacobian(
-            state, state, _M, problem, 5, backend, 0.3, upwind, bc=bc, domain_bounds=domain_bounds, current_time=0.25
+            state,
+            state,
+            _M,
+            problem,
+            5,
+            backend,
+            0.3,
+            upwind,
+            bc=bc,
+            domain_bounds=domain_bounds,
+            current_time=0.25,
+            numerical_hamiltonian=numerical_hamiltonian,
         ).toarray()
         gap = np.abs(assembled - derivative)
         worst = max(worst, float(gap.max()) / float(np.abs(derivative).max()))
         i, j = np.unravel_index(gap.argmax(), gap.shape)
         assert worst < 1e-6, (
-            f"{boundary}/{'upwind' if upwind else 'central'}/{assembly}: J[{i},{j}] = {assembled[i, j]:.4g} against "
-            f"d(residual)/dU = {derivative[i, j]:.4g} (#1834)"
+            f"{boundary}/{'upwind' if upwind else 'central'}/{assembly}/{numerical_hamiltonian}: "
+            f"J[{i},{j}] = {assembled[i, j]:.4g} against d(residual)/dU = {derivative[i, j]:.4g} (#1834, #2313)"
         )

@@ -162,11 +162,19 @@ def upwind_momentum(
         rouy_tourin     p = a+ if a+ >= -b- else b-                       (infinity-norm)
         engquist_osher  p = +-sqrt(a+^2 + b-^2), + when a+ >= -b-         (2-norm; ACD's Example 1)
 
-    They agree except where both branches are nonzero, which is a discrete local maximum along the axis. For ``H`` even
-    in each momentum component and nondecreasing in its magnitude, the class the FDM HJB accepts (#2311), both are
-    consistent and monotone, and ``H(p)`` does not depend on the sign. ``engquist_osher`` is C^1 in ``(a, b)`` for such
-    an ``H`` built from ``p^2`` or ``|p_d|``, and its linearisation is the transpose of the FDM FP ``divergence_upwind``
-    operator at maxima as well as elsewhere (#2313: 2.8e-14 against 37.9 for ``rouy_tourin`` on a 2-D fixture).
+    They agree except where both branches are nonzero, which is a discrete local maximum along the axis.
+
+    ``H(p(p, p)) = H(p)`` holds for any ``H``, so consistency needs no hypothesis. Monotonicity is the conditional half:
+    it holds for ``H`` even in each momentum component and nondecreasing in its magnitude, the class the FDM HJB accepts
+    (#2311), and for such an ``H`` the sign of ``p`` does not change ``H(p)``. ``H(p(a, b))`` is C^1 exactly where ``H``
+    itself is: evenness gives ``H'(0) = 0``, so the kink of the magnitude at ``a+ = b- = 0`` is smoothed away, while a
+    kink of ``H`` survives. Measured at e7aad397 with ``L1ControlCost``, whose ``H = max(|p| - lambda, 0)`` #2311
+    admits: ``d/da H(p(a, 1))`` jumps by 1.000 across ``a = 0`` at ``lambda = 1e-12``, and by 1.000 across
+    ``a = lambda`` at ``lambda = 0.5``. For ``p^2/2``, a bounded cost and ``|p|^4/4`` the jump is 0.
+
+    The reason to default to ``engquist_osher`` (#2313) is its linearisation: on the interior it is the transpose of the
+    FDM FP ``divergence_upwind`` operator at local maxima as well as elsewhere, measured 2.8e-14 in 1-D and 4.4e-14 in
+    2-D against 17.0 and 27.0 for ``rouy_tourin``.
 
     Args:
         backward: ``(u_i - u_{i-1}) / h`` along one axis.
@@ -196,8 +204,15 @@ def upwind_momentum_derivatives(
     """``(dp/da, dp/db)`` for `upwind_momentum`, so ``dH/da = H_p(p) dp/da`` and likewise for ``b`` (#2313).
 
     ``rouy_tourin``: 1 on the branch taken where that difference is strictly signed, else 0. ``engquist_osher``:
-    ``s a+ / |p|`` and ``s b- / |p|`` with ``s`` the sign of ``p``, and 0 where ``p = 0``. These are the exact
-    derivatives of the momentum the residual evaluates, so a Jacobian built from them is the residual's own.
+    ``s a+ / |p|`` and ``s b- / |p|`` with ``s`` the sign of ``p``, and 0 where ``p = 0``.
+
+    What these are exact derivatives of is the COMPOSITION ``H(p(a, b))`` for an ``H`` even in each component, which is
+    what the HJB residual evaluates: ``dH/da = H_p(p) dp/da`` holds because the sign of ``p`` cancels against the odd
+    ``H_p``. The momentum itself is discontinuous at a tie ``a+ = -b- > 0``, where the sign flips (measured: ``p`` moves
+    by 2.828 for a 1e-6 step in ``a``), so a consumer that uses these for anything but multiplying by an odd ``H_p``
+    gets a wrong answer there (review of #2340). At the tie ``rouy_tourin`` returns an extreme point of the Clarke
+    Jacobian, and at ``p = 0`` reached with ``a = 0`` or ``b = 0`` exactly, ``engquist_osher`` returns 0 where the
+    one-sided derivative is 1 -- immaterial for every ``H`` with ``H_p(0) = 0``, which evenness gives.
     """
     backward_part = backward * (backward > 0)
     forward_part = forward * (forward < 0)

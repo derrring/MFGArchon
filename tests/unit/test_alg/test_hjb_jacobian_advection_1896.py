@@ -31,6 +31,7 @@ from mfgarchon.alg.numerical.hjb_solvers.base_hjb import (
     _advection_bands,
     _compute_gradient_array_1d,
     _compute_laplacian_1d,
+    _one_sided_differences_1d,
     compute_hjb_jacobian,
     compute_hjb_residual,
 )
@@ -54,6 +55,12 @@ BC_FACTORIES = {
     # with a = (2 + alpha/beta)/(2 - alpha/beta), so a == 3 there, and that is the wall where review
     # found the wrong branch being chosen -- 2.0000e+01 at row 0.
     "robin_alpha_eq_beta": lambda: robin_bc(dimension=1, alpha=1.0, beta=1.0, value=0.0),
+    # The three BCs the deleted identity test carried (review of #2340, blocker 3): its
+    # `robin_sign_flipped` cases were the only ones in the suite whose ghost spacing reached
+    # `ghost_spacing_ignored`, and its count fell 58 -> 55 when they went.
+    "neumann": lambda: neumann_bc(dimension=1, value=0.3),
+    "robin_neumann_like": lambda: robin_bc(dimension=1, alpha=0.0, beta=1.0, value=0.0),
+    "robin_sign_flipped": lambda: robin_bc(dimension=1, alpha=2.0, beta=-1.0, value=1.0),
 }
 
 
@@ -222,7 +229,10 @@ def test_every_row_linearises_the_residual(bc_name: str, upwind: bool, state: st
 
 def test_the_superseded_branch_rule_is_moot_on_every_live_row():
     """#1896 item 3 was a Jacobian choosing its band on sign(grad_upwind) while the residual chose on
-    sign(central); they parted at a median 10 of 41 nodes of a noisy field. Since #2308 the residual's
+    sign(central); they parted at a median 10 of 41 nodes of a noisy field. Since #2313 neither rule is
+    in the code -- the Jacobian reads the numerical-Hamiltonian owner's derivatives of the same two
+    differences the residual's momentum comes from -- so this is a property of the `rouy_tourin` momentum
+    and of what a restatement would have cost, not a pin on live machinery. Since #2308 the residual's
     momentum has the sign of its branch everywhere except two kinds of row: a strict minimum, where the
     band is zero, and a one-sided difference exactly 0 at the zero branch's edge, where the momentum is 0
     and ``dH/dp(0) = 0`` for every shipped H. So the superseded rule cannot write a wrong LIVE band, and
@@ -236,9 +246,7 @@ def test_the_superseded_branch_rule_is_moot_on_every_live_row():
     """
     _, bc, _ = _fixture("no_flux")
     rough = SMOOTH_STATES["rough"]
-    central = _compute_gradient_array_1d(rough, DX, bc=bc, upwind=False, time=0.0)
-    lap = _compute_laplacian_1d(rough, DX, bc=bc, time=0.0)
-    forward, backward = central + DX / 2 * lap, central - DX / 2 * lap
+    backward, forward = _one_sided_differences_1d(rough, DX, bc=bc, time=0.0)
     upwind_grad = _compute_gradient_array_1d(rough, DX, bc=bc, upwind=True, time=0.0)
     at_minimum = (backward < 0) & (forward > 0)
     superseded_takes_backward = upwind_grad >= 0
@@ -417,7 +425,12 @@ def test_the_legacy_no_bc_path_linearises_its_own_residual_too(upwind: bool):
 
 
 def test_a_tied_wall_row_that_is_not_a_switching_node_still_gets_the_right_branch():
-    """The fallback's hardest customer: the branch is well defined, and unmeasurable.
+    """A wall row where the two one-sided differences agree in value and their ROWS do not.
+
+    Since #2313 there is no tie-break to get wrong: the owner's derivatives decide the row from the same
+    differences the residual used. What this still measures is that the wall row of the assembled Jacobian is
+    the residual's own derivative there, which is worth `4.0000e+01` if the row is taken from the other
+    difference. The narration below is the history that made it a hard case.
 
     Forward and backward agree in VALUE wherever the Laplacian vanishes. At a WALL that depends on
     the ghost rule, and the cleanest witness is a BC CONSISTENT WITH THE STATE: a linear state of
@@ -471,8 +484,11 @@ def test_a_tied_wall_row_that_is_not_a_switching_node_still_gets_the_right_branc
     assert abs(central[0]) > 0.1, f"row 0 is a switching node ({central[0]:.3e}); the test proves nothing"
     assert central[0] < 0, f"central[0] = {central[0]:.3e} > 0; both branch rules agree there"
 
-    err = np.abs(_jacobian(problem, bc, m, u, True) - _fd_columns(_residual(problem, bc, m, True), u))
-    assert err[0].max() < 1e-5, f"row 0: {err[0].max():.3e}"
+    for preset in ("engquist_osher", "rouy_tourin"):
+        err = np.abs(
+            _jacobian(problem, bc, m, u, True, preset) - _fd_columns(_residual(problem, bc, m, True, preset), u)
+        )
+        assert err[0].max() < 1e-5, f"{preset} row 0: {err[0].max():.3e}"
 
 
 def test_a_cancelled_wrap_entry_is_dropped_rather_than_kept_at_rounding_scale():
