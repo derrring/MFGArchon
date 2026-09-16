@@ -45,7 +45,9 @@ if TYPE_CHECKING:
 _FD_EPSILON = 1e-6
 """Step of the finite-difference oracle in `_hamiltonian_columns`, in state units.
 
-`_kinked_rows` scales its tolerance to it.
+`_kinked_rows` scales its tolerance to it, so the two must move together, and this is a constant both read rather
+than a default either could override: at ``eps = 1e-5`` the band where the oracle is invalid reaches 1.6e-04 while a
+tolerance built from 1e-6 stays at 8e-05, leaving rows that hard-fail uncovered (review of #2340, round 4).
 """
 
 
@@ -138,7 +140,7 @@ def test_the_default_momentum_is_engquist_osher_at_a_local_maximum():
     assert default != pytest.approx(float(upwind_momentum(backward, forward, "rouy_tourin")[0]))
 
 
-def _hamiltonian_columns(solver, problem, u, m, preset: str, eps: float = _FD_EPSILON) -> np.ndarray:
+def _hamiltonian_columns(solver, problem, u, m, preset: str) -> np.ndarray:
     """Column-wise derivative of the Hamiltonian term the residual evaluates, with no Jacobian code involved.
 
     ``sigma = 0`` on these fixtures, so in nD `_evaluate_hamiltonian_nd` is the Hamiltonian alone, and in 1-D the
@@ -160,8 +162,8 @@ def _hamiltonian_columns(solver, problem, u, m, preset: str, eps: float = _FD_EP
     columns = np.zeros((total, total))
     for j in range(total):
         step = np.zeros(total)
-        step[j] = eps
-        columns[:, j] = (hamiltonian(flat + step) - hamiltonian(flat - step)) / (2 * eps)
+        step[j] = _FD_EPSILON
+        columns[:, j] = (hamiltonian(flat + step) - hamiltonian(flat - step)) / (2 * _FD_EPSILON)
     return columns
 
 
@@ -310,12 +312,16 @@ def test_the_backward_solve_returns_a_root_of_its_own_presets_residual(numerical
 
     Oracle: the definition of the scheme rather than any Jacobian. A backward solve returns U such that each step's
     residual VANISHES, so the returned U must be a root of the residual of the preset the solver was constructed with
-    and not of the other one. Measured at 54c1d9dc: 6.3e-08 under its own preset against 5.6 (engquist_osher) and 10.8
-    (rouy_tourin) under the other -- eight orders, so the two cannot be confused.
+    and not of the other one. Measured at 546a40fc with `newton_tolerance=1e-10`: 1.8e-12 (engquist_osher) and 1.6e-11
+    (rouy_tourin) under its own preset, against 5.601 and 10.75 under the other -- eleven orders, so the two cannot be
+    confused, and the margin no longer rests on the default Newton tolerance.
     """
     problem, x = _public_entry_problem()
     m = np.ones((problem.Nt + 1, x.size))
-    solver = HJBFDMSolver(problem, numerical_hamiltonian=numerical_hamiltonian)
+    # Explicit, so the pin owns its convergence: the default `newton_tolerance` is 1e-6, numerically the same
+    # constant as this test's root threshold, so loosening that default would turn this red with a message about a
+    # residual rather than about a preset (review of #2340, round 4).
+    solver = HJBFDMSolver(problem, numerical_hamiltonian=numerical_hamiltonian, newton_tolerance=1e-10)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         u = np.asarray(
