@@ -516,14 +516,17 @@ class BlockIterator(BaseCouplingIterator):
         **Window.** Strictly interior rows AND columns. Outside it lie two blocks, and in each one exactly one
         side has anything to say, which is why neither is a comparison:
 
-        - the WALL ROWS, where this FP operator assembles nothing (a no-flux or Dirichlet wall is the boundary
-          handlers' business, #1564), so the difference is J's wall COLUMNS transposed against nothing. Measured at
-          64cb4d03: 18.5 under `engquist_osher` and 0.0 under `rouy_tourin` in 1-D, 40.0 and 19.2 on 11x11 -- it
-          moves with the preset, because which one-sided difference an interior node takes decides whether it
-          depends on the wall node at all;
+        - the WALL ROWS, where the FP side is silent because THIS METHOD leaves them to the boundary handlers, not
+          because of #1564 -- the real assembly does fill them, 136.2 in wall row 0 where `build_advection_operator`
+          has 0 -- while the HJB side is not silent: the difference is J's wall COLUMNS transposed against nothing.
+          Measured at 64cb4d03: 18.5 under `engquist_osher` and 0.0 under `rouy_tourin` in 1-D, 40.0 and 19.2 on
+          11x11 -- it moves with the preset, because which one-sided difference an interior node takes decides
+          whether it depends on the wall node at all. So this gap could be closed later by assembling through
+          `_BOUNDARY_HANDLERS`;
         - the (INTERIOR ROW, WALL COLUMN) entries, where `build_linearized_operator` zeroes by design (#1564) so
-          J^T contributes nothing, and the difference is the FP's real outflow: 94.6 in 1-D and 78.3 on 11x11,
-          identical under both presets.
+          J^T contributes nothing for any state, preset or scheme, and the difference is exactly the FP's real
+          outflow: 94.6 in 1-D and 78.3 on 11x11, identical under both presets because the block does not depend on
+          the HJB side at all. This one cannot be closed without changing `build_linearized_operator`.
 
         So these entries are EXCLUDED, not verified, and the check makes no claim about them; that gap is #1564 /
         RFC #1574's subject. A check that included them would report the design as a defect on every correct run,

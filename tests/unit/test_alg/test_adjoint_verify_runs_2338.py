@@ -306,3 +306,14 @@ def test_the_operator_follows_the_solvers_resolved_boundary_conditions():
         f"interior stencil, so reading the geometry's no-flux BC instead leaves it empty"
     )
     assert filled(no_flux_rows) == 9, "the no-flux default should leave its two wall rows to the boundary handlers"
+    # The row COUNT alone is a proxy: the review of #2344 kept it at 11/11 while changing the operator's contents by
+    # 70.1, by stripping the constructor's #1822 periodic convention. So also require the wall row to WRAP. It takes
+    # a state whose faces all flow the same way: under the cosine above, node 0 is a discrete maximum, both faces
+    # flow outward, the upwind cell for each is node 0 itself, and the row is correctly diagonal. A ramp makes every
+    # face flow one way, so row 0 must reach the far side -- column 9, since #1822's convention makes node 10 the
+    # seam's duplicate of node 0.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ramp = as_configured.build_advection_operator(x.copy()).toarray()
+    wrapped = list(np.flatnonzero(ramp[0]))
+    assert 9 in wrapped, f"wall row 0 touches columns {wrapped} on a ramp; a periodic wall must cross the seam"
