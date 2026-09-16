@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import time
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import scipy.sparse as sparse
@@ -463,7 +463,7 @@ class BlockIterator(BaseCouplingIterator):
         boundary = {idx for face in _get_boundary_indices(grid_shape, dimension).values() for idx in face}
         return np.array([k for k in range(int(np.prod(grid_shape))) if k not in boundary], dtype=int)
 
-    def _windowed_to_interior(self, matrix) -> NDArray:
+    def _windowed_to_interior(self, matrix: sparse.spmatrix | NDArray) -> NDArray:
         """Dense copy with every entry outside the interior x interior window zeroed (#1564, #2338).
 
         The per-step check takes that window as a submatrix. `diagnose_adjoint_error` cannot: it indexes boundary
@@ -478,7 +478,8 @@ class BlockIterator(BaseCouplingIterator):
         zeroes its wall rows by design, so J^T has a zero COLUMN there while the FP operator has real outflow entries.
         Those entries are excluded here, not verified, and this check makes no claim about them (#2338's sibling).
         """
-        dense = matrix.toarray() if sparse.issparse(matrix) else np.asarray(matrix, dtype=float)
+        sparse_matrix = cast("sparse.spmatrix", matrix) if sparse.issparse(matrix) else None
+        dense = np.asarray(sparse_matrix.toarray() if sparse_matrix is not None else matrix, dtype=float)
         interior = self._interior_flat_indices()
         windowed = np.zeros_like(dense)
         window = np.ix_(interior, interior)

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import scipy.sparse as sparse
 
 from mfgarchon.backends.compat import has_nan_or_inf
 from mfgarchon.geometry import BoundaryConditions
+from mfgarchon.geometry.base import CartesianGrid
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.aux_func import npart, ppart
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
@@ -391,17 +392,17 @@ class FPFDMSolver(BaseFPSolver):
                 f"advection_scheme={self.advection_scheme!r} has no interior stencil to build an operator from "
                 f"(#2338). Known: {sorted(_INTERIOR_HANDLERS)}."
             )
-        # `GeometryProtocol` declares neither accessor. The constructor does NOT narrow this for us: it refuses
-        # only a geometry without `laplacian`, and names `ImplicitDomain` as compatible -- which has
-        # `get_grid_shape` but no `get_grid_spacing` (review of #2344 corrected an earlier comment here that
-        # claimed otherwise). So ask, rather than assert.
+        # `CartesianGrid` is the class that GUARANTEES both accessors -- `GeometryProtocol` declares neither, and
+        # the constructor does not narrow it for us: it refuses only a geometry without `laplacian` and names
+        # `ImplicitDomain` as compatible, which has `get_grid_shape` and no `get_grid_spacing` (review of #2344
+        # corrected an earlier comment here that claimed the constructor had already refused such a geometry).
+        # `base.py:852` states this isinstance as the way to ask.
         geometry = self.problem.geometry
-        if not hasattr(geometry, "get_grid_spacing"):
+        if not isinstance(geometry, CartesianGrid):
             raise NotImplementedError(
-                f"build_advection_operator needs a tensor grid: {type(geometry).__name__} has no `get_grid_spacing`, "
-                f"so the per-axis stencil this delegates to cannot be assembled (#2338)."
+                f"build_advection_operator needs a structured grid: {type(geometry).__name__} is not a "
+                f"`CartesianGrid`, so it guarantees no per-axis spacing for the stencil this delegates to (#2338)."
             )
-        geometry = cast("TensorProductGrid", geometry)
         shape = tuple(geometry.get_grid_shape())
         spacing = tuple(geometry.get_grid_spacing())
         ndim = len(shape)
