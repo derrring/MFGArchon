@@ -29,7 +29,7 @@ import pytest
 import numpy as np
 
 from mfgarchon import MFGProblem
-from mfgarchon.alg.numerical.fp_solvers.fp_fdm_alg_divergence_upwind import add_interior_entries_divergence_upwind
+from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _compute_gradient_array_1d, compute_hjb_residual
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
@@ -82,7 +82,6 @@ def _transpose_gap(shape: tuple[int, ...], numerical_hamiltonian: str | None) ->
             + 0.15 * np.cos(4 * np.pi * x[1])
         )
     total = int(np.prod(shape))
-    spacing = tuple(grid.get_grid_spacing())
 
     def indices(margin: int) -> list[int]:
         return [
@@ -92,17 +91,12 @@ def _transpose_gap(shape: tuple[int, ...], numerical_hamiltonian: str | None) ->
         ]
 
     interior = indices(1)
-    rows: list[int] = []
-    cols: list[int] = []
-    vals: list[float] = []
-    for k in interior:
-        multi = tuple(int(i) for i in np.unravel_index(k, shape))
-        add_interior_entries_divergence_upwind(
-            rows, cols, vals, k, multi, shape, dimension, 1e300, 0.0, 1.0, spacing, u.ravel(), grid,
-            no_flux_bc(dimension=dimension),
-        )  # fmt: skip
-    fp = np.zeros((total, total))
-    np.add.at(fp, (rows, cols), vals)
+    # The FP side comes from the solver's own operator (#2338), not from a second copy of this assembly here. That
+    # method is this call's owner -- same `_INTERIOR_HANDLERS` stencil, same dt -> infinity and sigma = 0 -- and the
+    # runtime `adjoint_verify` check compares against the same object, so the oracle this test uses and the one a
+    # user's solve uses cannot drift apart. It resolves the coupling coefficient from the problem rather than the
+    # 1.0 hardcoded here before; on these fixtures the two agree, which is why the figures below did not move.
+    fp = FPFDMSolver(problem).build_advection_operator(u).toarray()
     solver = (
         HJBFDMSolver(problem)
         if numerical_hamiltonian is None

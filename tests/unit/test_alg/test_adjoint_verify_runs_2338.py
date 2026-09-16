@@ -37,9 +37,27 @@ from mfgarchon.geometry.boundary import no_flux_bc
 _N = 41
 
 
-def _problem(n: int = _N) -> MFGProblem:
-    """No-flux 1-D fixture whose terminal condition has interior local maxima, where the presets separate."""
-    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
+def _bump(dimension: int):
+    """Centred Gaussian, written per dimension because the IC signature is resolved by arity."""
+    if dimension == 1:
+        return lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2)
+    return lambda x, y: np.exp(-10 * ((np.asarray(x) - 0.5) ** 2 + (np.asarray(y) - 0.5) ** 2))
+
+
+def _ripple(dimension: int):
+    """Terminal condition with interior local maxima along every axis, where the two presets separate."""
+    if dimension == 1:
+        return lambda x: np.cos(4 * np.pi * np.asarray(x))
+    return lambda x, y: np.cos(4 * np.pi * np.asarray(x)) * np.cos(4 * np.pi * np.asarray(y))
+
+
+def _problem(n: int = _N, shape: tuple[int, ...] | None = None) -> MFGProblem:
+    """No-flux fixture whose terminal condition has interior local maxima, where the presets separate."""
+    points = list(shape) if shape is not None else [n]
+    dimension = len(points)
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0)] * dimension, Nx_points=points, boundary_conditions=no_flux_bc(dimension=dimension)
+    )
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         return MFGProblem(
@@ -48,8 +66,8 @@ def _problem(n: int = _N) -> MFGProblem:
             T=0.4,
             sigma=0.05,
             components=MFGComponents(
-                m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
-                u_terminal=lambda x: np.cos(4 * np.pi * np.asarray(x)),
+                m_initial=_bump(dimension),
+                u_terminal=_ripple(dimension),
                 hamiltonian=SeparableHamiltonian(
                     control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
                 ),
@@ -145,3 +163,118 @@ def test_the_operator_is_the_scheme_the_solver_is_configured_with():
         gradient = FPFDMSolver(problem, advection_scheme="gradient_upwind").build_advection_operator(u)
     separation = float(np.abs((divergence - gradient).toarray()).max())
     assert separation > 1.0, f"the two schemes build the same operator ({separation:.3e}); the scheme is not read"
+
+
+def _verified_run(problem: MFGProblem, numerical_hamiltonian: str, adjoint_mode: str = "jacobian_transpose", sweeps=2):
+    """Solve with the check armed and hand back the metadata it filled."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        iterator = BlockIterator(
+            problem,
+            HJBFDMSolver(problem, numerical_hamiltonian=numerical_hamiltonian),
+            FPFDMSolver(problem),
+            adjoint_verify=True,
+            adjoint_mode=adjoint_mode,
+        )
+        return iterator.solve(max_iterations=sweeps, tolerance=1e-6).metadata
+
+
+def test_the_report_agrees_with_the_check_it_ships_beside():
+    """The report was the check's false alarm (review of #2344, blocker 1).
+
+    `_generate_adjoint_report` had never run before #2338 -- it skipped on the same missing method -- and wiring it
+    live without the interior window made its FIRST output on a correct pair `severity=HIGH, source=BOUNDARY,
+    total=1.866e-01`, recommending the user go and fix their boundary conditions, while the per-step check beside it
+    reported 0 mismatches at 1.28e-16. The whole residual sat at (interior row, wall column), where
+    `build_linearized_operator` zeroes by design (#1564) and the FP operator has real outflow.
+
+    Two things are pinned here: that the report exists at all, and that it agrees with the check. Returning None, and
+    restoring the transpose that `diagnose_adjoint_error` already applies, each survived the whole suite before this.
+    """
+    metadata = _verified_run(_problem(), "engquist_osher")
+    report = metadata["adjoint_report"]
+    assert report is not None, "the report skipped; before #2338 that was its only behaviour"
+    assert metadata["adjoint_mismatch_count"] == 0, "fixture no longer adjoint; the rest of this test says nothing"
+    assert report.total_error < 1e-10, (
+        f"the report says {report.total_error:.3e} on a pair the check calls adjoint to 1e-16 "
+        f"(severity {report.severity}, source {report.error_source})"
+    )
+
+
+def test_the_report_still_sees_a_pair_that_is_not_adjoint():
+    """The other side of the pin above: a windowed report must not be a silent one."""
+    metadata = _verified_run(_problem(), "rouy_tourin")
+    report = metadata["adjoint_report"]
+    assert report is not None
+    assert metadata["adjoint_mismatch_count"] > 0
+    assert report.total_error > 1e-3, f"the report is blind to a pair the check rejects ({report.total_error:.3e})"
+
+
+def test_the_check_runs_in_every_adjoint_mode():
+    """The call sits outside the mode branch, and nothing pinned that (review of #2344: the mutation moving it
+    inside `jacobian_transpose` survived the suite).
+
+    `transpose` is deprecated, so the warning is consumed here rather than left to widen the warning census.
+    """
+    problem = _problem()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.warns(DeprecationWarning, match=r"adjoint_mode='transpose' is deprecated"):
+            iterator = BlockIterator(
+                problem,
+                HJBFDMSolver(problem),
+                FPFDMSolver(problem),
+                adjoint_verify=True,
+                adjoint_mode="transpose",
+            )
+        metadata = iterator.solve(max_iterations=1, tolerance=1e-6).metadata
+    assert metadata["adjoint_rows_compared"] == _N - 2
+    assert metadata["adjoint_mismatch_count"] == 0
+
+
+def test_the_window_is_the_grid_it_is_given():
+    """`adjoint_rows_compared` pinned on one 1-D fixture leaves a hardcoded 39 indistinguishable from the real count."""
+    metadata = _verified_run(_problem(shape=(11, 11)), "engquist_osher", sweeps=1)
+    assert metadata["adjoint_rows_compared"] == 9 * 9
+    assert metadata["adjoint_mismatch_count"] == 0
+
+
+def test_it_refuses_a_grid_with_no_interior():
+    """An empty window would compare nothing and pass, which is the shape of #2338 itself."""
+    problem = _problem(n=2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        iterator = BlockIterator(
+            problem,
+            HJBFDMSolver(problem),
+            FPFDMSolver(problem),
+            adjoint_verify=True,
+            adjoint_mode="jacobian_transpose",
+        )
+        with pytest.raises(ValueError, match=r"no\s+interior node|interior node"):
+            iterator.solve(max_iterations=1, tolerance=1e-6)
+
+
+def test_it_refuses_an_hjb_solver_that_builds_no_linearised_operator():
+    """`BaseHJBSolver` declares no `build_linearized_operator` and only `HJBFDMSolver` defines one, so every call
+    site reached through the base class would have raised `AttributeError` mid-solve (review of #2344 found this
+    through the mypy scope ratchet). The refusal that replaced it was itself unexercised.
+    """
+    problem = _problem(n=11)
+
+    class OperatorlessHJBSolver(HJBFDMSolver):
+        """Satisfies nothing that `LinearizedOperatorCapable` asks for."""
+
+        build_linearized_operator = None  # type: ignore[assignment]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        iterator = BlockIterator(
+            problem,
+            OperatorlessHJBSolver(problem),
+            FPFDMSolver(problem),
+            adjoint_verify=True,
+            adjoint_mode="jacobian_transpose",
+        )
+        with pytest.raises(NotImplementedError, match=r"LinearizedOperatorCapable|linearised HJB operator"):
+            iterator.solve(max_iterations=1, tolerance=1e-6)

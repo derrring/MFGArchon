@@ -348,9 +348,7 @@ class FPFDMSolver(BaseFPSolver):
         except (AttributeError, IndexError, TypeError):
             pass  # Not enough info to compute CFL — skip silently
 
-    def build_advection_operator(
-        self, U: np.ndarray, time: float = 0.0, coupling_coefficient: float | None = None
-    ) -> sparse.csr_matrix:
+    def build_advection_operator(self, U: np.ndarray, coupling_coefficient: float | None = None) -> sparse.csr_matrix:
         """This solver's own advection operator at ``U``, for checking it against the HJB linearisation (#2338).
 
         The FDM pair is advertised as discretely adjoint (#580, #622, #707): the FP operator should be the transpose
@@ -368,11 +366,16 @@ class FPFDMSolver(BaseFPSolver):
         business and is left empty here, which costs the comparison nothing -- `build_linearized_operator` zeroes its
         wall rows by design (#1564), so those rows carry no claim on either side and the caller drops them.
 
+        There is no ``time`` parameter, and that is a real asymmetry rather than an oversight: the interior
+        handlers take none, so nothing in this assembly is time-dependent, while `build_linearized_operator` on the
+        HJB side does take one. A caller comparing the two at a time-dependent boundary is comparing one operator
+        that moved with time against one that did not (review of #2344).
+
         Args:
             U: Value function at one time level, grid-shaped or flat.
-            time: Time for time-dependent boundary conditions.
             coupling_coefficient: Drift coefficient ``c`` in ``alpha* = -c grad(U)``. Defaults to the problem's own,
-                the same `fp_drift_coefficient` the time-stepping resolves.
+                the same `fp_drift_coefficient` the time-stepping resolves. Raises for a Hamiltonian whose scalar
+                drift is not ``-c grad(U)`` (#1542), which is a refusal to guess rather than a silent default.
 
         Returns:
             Sparse operator, ``(N, N)`` over the flattened grid, with unassembled rows empty.
@@ -388,9 +391,17 @@ class FPFDMSolver(BaseFPSolver):
                 f"advection_scheme={self.advection_scheme!r} has no interior stencil to build an operator from "
                 f"(#2338). Known: {sorted(_INTERIOR_HANDLERS)}."
             )
-        # `GeometryProtocol` declares neither accessor; the FDM assembly this delegates to requires a tensor grid
-        # and the constructor has already refused anything else (Issue #2338).
-        geometry = cast("TensorProductGrid", self.problem.geometry)
+        # `GeometryProtocol` declares neither accessor. The constructor does NOT narrow this for us: it refuses
+        # only a geometry without `laplacian`, and names `ImplicitDomain` as compatible -- which has
+        # `get_grid_shape` but no `get_grid_spacing` (review of #2344 corrected an earlier comment here that
+        # claimed otherwise). So ask, rather than assert.
+        geometry = self.problem.geometry
+        if not hasattr(geometry, "get_grid_spacing"):
+            raise NotImplementedError(
+                f"build_advection_operator needs a tensor grid: {type(geometry).__name__} has no `get_grid_spacing`, "
+                f"so the per-axis stencil this delegates to cannot be assembled (#2338)."
+            )
+        geometry = cast("TensorProductGrid", geometry)
         shape = tuple(geometry.get_grid_shape())
         spacing = tuple(geometry.get_grid_spacing())
         ndim = len(shape)
@@ -398,7 +409,11 @@ class FPFDMSolver(BaseFPSolver):
         u_flat = np.asarray(U, dtype=float).ravel()
         if coupling_coefficient is None:
             coupling_coefficient = fp_drift_coefficient(self.problem)
-        boundary_conditions = geometry.get_boundary_conditions()
+        # `self.boundary_conditions` and not `geometry.get_boundary_conditions()`: the constructor resolves the BC
+        # through components, geometry and the periodic convention (#527), and every real assembly call passes the
+        # resolved one. Reading the geometry here gave a second owner -- measured with a periodic BC passed to the
+        # constructor over a no-flux geometry, the two disagree (review of #2344).
+        boundary_conditions = self.boundary_conditions
         periodic = _get_bc_type(boundary_conditions) == "periodic"
 
         rows: list[int] = []

@@ -195,8 +195,10 @@ class BlockIterator(BaseCouplingIterator):
         if adjoint_verify and adjoint_mode == "off":
             raise ValueError(
                 "adjoint_verify=True requires adjoint_mode != 'off' (#2338): in 'off' mode the FP step is the FP "
-                "solver's own solve, no adjoint operator is built, and the check would verify nothing. Pass "
-                "adjoint_mode='jacobian_transpose' to verify the coupling this iterator actually uses."
+                "solver's own solve and no adjoint operator is built, so the comparison would say nothing about "
+                "THIS run -- the two discretisations are what they are either way, and that static question is "
+                "pinned by the suite's own adjointness test. Pass adjoint_mode='jacobian_transpose' to check the "
+                "coupling this iterator actually uses."
             )
         self.adjoint_mode = adjoint_mode
         self.adjoint_verify = adjoint_verify
@@ -461,7 +463,29 @@ class BlockIterator(BaseCouplingIterator):
         boundary = {idx for face in _get_boundary_indices(grid_shape, dimension).values() for idx in face}
         return np.array([k for k in range(int(np.prod(grid_shape))) if k not in boundary], dtype=int)
 
-    def _fp_advection_operator(self, U_k: NDArray, time: float) -> sparse.spmatrix:
+    def _windowed_to_interior(self, matrix) -> NDArray:
+        """Dense copy with every entry outside the interior x interior window zeroed (#1564, #2338).
+
+        The per-step check takes that window as a submatrix. `diagnose_adjoint_error` cannot: it indexes boundary
+        faces from the geometry, so it needs the full shape. Zeroing instead of slicing gives it both -- the window's
+        content, at the grid's own dimensions -- and zeroing BOTH operands means the excluded entries agree rather
+        than disappear.
+
+        Without this the report was the false alarm the per-step check exists to avoid. Measured at 33668bc5 on the
+        41-point no-flux fixture, `engquist_osher`, whose per-step check reports 0 mismatches at 1.28e-16: the report
+        returned severity HIGH, source BOUNDARY, total error 1.866e-01, with the recommendation to go and fix the
+        boundary conditions. The whole of that residual sits at (interior row, WALL column): `build_linearized_operator`
+        zeroes its wall rows by design, so J^T has a zero COLUMN there while the FP operator has real outflow entries.
+        Those entries are excluded here, not verified, and this check makes no claim about them (#2338's sibling).
+        """
+        dense = matrix.toarray() if sparse.issparse(matrix) else np.asarray(matrix, dtype=float)
+        interior = self._interior_flat_indices()
+        windowed = np.zeros_like(dense)
+        window = np.ix_(interior, interior)
+        windowed[window] = dense[window]
+        return windowed
+
+    def _fp_advection_operator(self, U_k: NDArray) -> sparse.spmatrix:
         """The FP solver's own advection operator, or a refusal naming the solver that cannot supply one (#2338)."""
         build = getattr(self.fp_solver, "build_advection_operator", None)
         if not callable(build):
@@ -470,7 +494,14 @@ class BlockIterator(BaseCouplingIterator):
                 f"to compare the HJB linearisation against (#2338), so nothing would be verified. Pass "
                 f"adjoint_verify=False, or use a solver that assembles a matrix operator (FPFDMSolver)."
             )
-        return build(U_k, time=time)
+        try:
+            return build(U_k)
+        except NotImplementedError as exc:
+            # `fp_drift_coefficient` refuses any H whose scalar drift is not `-c grad(U)` (#1542). That is exactly
+            # the class `jacobian_transpose` exists to serve (#707), so say which of the two raised.
+            raise NotImplementedError(
+                f"adjoint_verify=True cannot build the FP operator for this Hamiltonian (#2338): {exc}"
+            ) from exc
 
     def _verify_adjoint_at_step(self, U_k: NDArray, M_current: NDArray, step: int) -> None:
         """Check that the FP solver's own operator is the transpose of the HJB linearisation (#704, #707, #2338).
@@ -481,21 +512,33 @@ class BlockIterator(BaseCouplingIterator):
         compares: relative error 1.085e-16 under `engquist_osher` against 3.021e-02 under `rouy_tourin`
         (absolute max|A_fp - J^T| 2.8e-14 against 18.5), so the existing 1e-10 tolerance separates them by orders.
 
-        **Window.** Strictly interior rows AND columns. `build_linearized_operator` zeroes its wall rows by design
-        (#1564), so a wall row carries no claim on the HJB side and comparing it would report that design as a
-        defect -- 94.6 in 1-D and 60.4 in 2-D, for every preset, which is #2338's sibling and not this check's
-        subject. Selecting the window by which rows happen to be nonzero would be worse than the geometric rule and
-        was measured to be: it also drops the interior rows where the Jacobian's row vanishes (3 of 39 on that
-        fixture) while the FP has entries up to 62.7 there, which is exactly where a disagreement would hide.
+        **Window.** Strictly interior rows AND columns, and the COLUMN half is what does the work. Measured at
+        33668bc5 on the 41-point fixture: of the full residual, the wall ROWS contribute 0 and the (interior row,
+        wall column) entries contribute all of it. `build_linearized_operator` zeroes its wall rows by design
+        (#1564), so J^T has a zero COLUMN there while the FP operator has real outflow entries -- up to 78.3 on
+        that state. So those entries are not "no claim on either side": the HJB side claims zero and the FP side
+        disagrees, and this check EXCLUDES rather than verifies them. That gap is #2338's sibling (#1564 / RFC
+        #1574), and a check that included them would report the design as a defect on every correct run: the
+        report beside this one did exactly that before the review of #2344 windowed it too.
+
+        Selecting the window by which rows happen to be nonzero is worse than the geometric rule and was measured
+        to be: it also drops the interior rows where the Jacobian's row vanishes -- 2 of 39 at every step of the
+        fixture's own solve -- while the FP operator has entries up to 109.3 there, which is exactly where a
+        disagreement would hide.
+
+        **Cost.** `check_operator_adjoint` densifies, so an armed run allocates O(N^2) per step, not one assembly:
+        measured peak 2.7 MB at 17x17, 13.1 MB at 25x25 and 41.4 MB at 33x33, which extrapolates to ~0.6 GB at
+        64x64. It is a debugging flag and priced like one.
         """
         from mfgarchon.alg.numerical.adjoint import check_operator_adjoint
 
         time = step * self.problem.dt
-        A_fp_own = self._fp_advection_operator(U_k, time)
+        A_fp_own = self._fp_advection_operator(U_k)
         # Built here rather than taken from the caller even in `jacobian_transpose` mode, where one is already in
         # hand: a parameter that is only ever None in the velocity modes is a branch the verified modes never run,
         # and a mutation swapping this call for `build_advection_matrix` survived the whole suite while it existed
-        # (#2338, mutation check). One assembly per step is what a debug flag costs.
+        # (#2338, mutation check). `audits/mathematical.md` states the same rule for this identity -- an operator
+        # accepted from the side under test makes the check tautological.
         A_jac = self._hjb_linearised_operator(U_k, M_current, time)
         interior = self._interior_flat_indices()
         if interior.size == 0:
@@ -542,14 +585,16 @@ class BlockIterator(BaseCouplingIterator):
 
         try:
             time = step * self.problem.dt
-            A_fp_own = self._fp_advection_operator(U_for_diagnosis, time)
+            A_fp_own = self._fp_advection_operator(U_for_diagnosis)
             A_jac = self._hjb_linearised_operator(U_for_diagnosis, M_for_diagnosis, time)
             geometry = getattr(self.problem, "geometry", None)
             # Same orientation as the per-step check: the report's A_fp argument is compared against A_hjb^T, so
             # the Jacobian goes in as A_hjb and the FP operator as itself. Before #2338 this passed `A_fp_ind.T`
             # into that slot while `diagnose_adjoint_error` transposes the other argument, so the two transposes
             # cancelled and it diagnosed A_fp == A_hjb -- not the adjoint relation it reports on.
-            return diagnose_adjoint_error(A_jac, A_fp_own, geometry=geometry)
+            return diagnose_adjoint_error(
+                self._windowed_to_interior(A_jac), self._windowed_to_interior(A_fp_own), geometry=geometry
+            )
 
         except NotImplementedError:
             raise
