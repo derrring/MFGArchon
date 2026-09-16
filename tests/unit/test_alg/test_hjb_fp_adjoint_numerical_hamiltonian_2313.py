@@ -3,8 +3,11 @@
 The default FDM pair, `HJBFDMSolver` with `FPFDMSolver(advection_scheme="divergence_upwind")`, is advertised as
 discretely adjoint (#580, #622), and `build_linearized_operator` is what the strict-adjoint coupling hands the FP side
 as ``A_fp = J^T`` (#707). At 6c0610d2 the HJB took the Rouy-Tourin momentum, whose linearisation at a local maximum
-uses one one-sided difference while the FP face upwinding pairs with their sum: max|A_fp - J^T| was 17.0 there in 1-D
-and 0 elsewhere. Engquist-Osher, the default since #2313, is ACD's Example 1 form, whose linearisation is that sum.
+uses one one-sided difference while the FP face upwinding pairs with their sum. The discrepancy is confined to the
+entries a maximum touches: at 8debbbbc, over the entries whose row or column is a discrete local maximum (3 of the 39
+interior rows in 1-D, 54 of 195 in 2-D) max|A_fp - J^T| is 18.5 and 32.4, while over the entries that touch none it is
+2.8e-14 and 4.4e-14 -- the round-off Engquist-Osher reaches everywhere. EO, the default since #2313, is ACD's Example 1
+form, whose linearisation is that sum.
 
 Oracle: ``A_fp`` is the library's own FP assembly (`add_interior_entries_divergence_upwind`, dt -> infinity,
 sigma = 0) and ``J`` the HJB solver's own `build_linearized_operator`; neither is written here. The states have local
@@ -19,6 +22,7 @@ That gap is the zeroed wall rows, not the numerical Hamiltonian; it is #2338's t
 from __future__ import annotations
 
 import warnings
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -33,6 +37,9 @@ from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.operators.stencils.finite_difference import upwind_momentum
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def _transpose_gap(shape: tuple[int, ...], numerical_hamiltonian: str | None) -> float:
@@ -151,20 +158,35 @@ def _hamiltonian_columns(solver, problem, u, m, preset: str, eps: float = 1e-6) 
     return columns
 
 
-def _rows_without_a_tie(u: np.ndarray, spacings, shape) -> list[int]:
-    """Interior rows where no axis has ``a+ = -b-``: at a tie the momentum is not differentiable and both presets
-    return a Clarke element, which a two-sided finite difference averages instead."""
-    tie = np.zeros(shape, dtype=bool)
-    for d, h in enumerate(spacings):
-        backward = (u - np.roll(u, 1, axis=d)) / h
-        forward = (np.roll(u, -1, axis=d) - u) / h
-        scale = max(float(np.abs(backward).max()), 1.0)
-        tie |= np.abs(np.maximum(backward, 0.0) + np.minimum(forward, 0.0)) < 1e-6 * scale
+def _kinked_rows(u: np.ndarray, spacings: Sequence[float], shape: tuple[int, ...]) -> list[int]:
+    """Interior rows where some axis has ``a+ = -b- > 0``: a discrete local maximum whose two one-sided differences
+    are equal in magnitude, where ``rouy_tourin``'s ``max`` has no derivative and returns a Clarke element instead,
+    which a two-sided finite difference of H cannot match.
+
+    The positivity is the whole predicate. ``a+ = -b- = 0`` says only that the row is a local MINIMUM: both parts are
+    clipped to zero, the momentum is zero on a neighbourhood, and the derivative exists and is zero -- both presets
+    agree with the oracle there to 0.0 in 1-D and 1.747e-10 in 2-D. An earlier version of this filter tested the
+    equality without the positivity and so excluded the minima, which is 2 of the 19 interior rows in 1-D and 9 of the
+    42 in 2-D, while excluding no kink (review of #2340, round 2). ``engquist_osher`` is differentiable even at a real
+    kink, since ``sqrt((a+)^2 + (b-)^2)`` is smooth wherever the pair is nonzero; the fixtures below carry no kink for
+    either preset, so the tests assert that and then compare every interior row.
+    """
+    kinked = np.zeros(shape, dtype=bool)
+    for axis, spacing in enumerate(spacings):
+        backward = (u - np.roll(u, 1, axis=axis)) / spacing
+        forward = (np.roll(u, -1, axis=axis) - u) / spacing
+        a_plus, b_minus = np.maximum(backward, 0.0), np.minimum(forward, 0.0)
+        tolerance = 1e-6 * max(float(np.abs(backward).max()), 1.0)
+        kinked |= (np.abs(a_plus + b_minus) < tolerance) & (a_plus > tolerance)
+    return [k for k in _interior_rows(shape) if kinked[np.unravel_index(k, shape)]]
+
+
+def _interior_rows(shape: tuple[int, ...]) -> list[int]:
+    """Flat indices of the rows `build_linearized_operator` fills; wall rows are zeroed by design (#1564)."""
     return [
         k
-        for k in range(u.size)
+        for k in range(int(np.prod(shape)))
         if all(1 <= i < n - 1 for i, n in zip(np.unravel_index(k, shape), shape, strict=True))
-        and not tie[np.unravel_index(k, shape)]
     ]
 
 
@@ -175,8 +197,7 @@ def test_the_linearised_operator_is_the_derivative_of_the_hamiltonian_it_lineari
 
     The adjointness test above cannot see a preset dropped inside this operator: it would still differ from the FP
     transpose, only differently (review of #2340, blocker 2). This compares it against a finite difference of the
-    Hamiltonian the solver itself evaluates. Wall rows are zeroed by design (#1564) and tie rows are excluded, since
-    there the derivative does not exist and the operator returns a Clarke element.
+    Hamiltonian the solver itself evaluates, over every interior row. Wall rows are zeroed by design (#1564).
     """
     dimension = len(shape)
     grid = TensorProductGrid(
@@ -207,8 +228,9 @@ def test_the_linearised_operator_is_the_derivative_of_the_hamiltonian_it_lineari
     solver = HJBFDMSolver(problem, numerical_hamiltonian=numerical_hamiltonian)
     assembled = solver.build_linearized_operator(u, m).toarray()
     measured = _hamiltonian_columns(solver, problem, u, m, numerical_hamiltonian)
-    rows = _rows_without_a_tie(u, grid.get_grid_spacing(), shape)
-    assert len(rows) >= u.size // 3, f"only {len(rows)} of {u.size} rows are tie-free; the fixture is degenerate"
+    kinked = _kinked_rows(u, grid.get_grid_spacing(), shape)
+    assert not kinked, f"rows {kinked} sit on a kink, where rouy_tourin has no derivative; retilt the fixture"
+    rows = _interior_rows(shape)
     other = "rouy_tourin" if numerical_hamiltonian == "engquist_osher" else "engquist_osher"
     separation = np.abs(
         assembled - HJBFDMSolver(problem, numerical_hamiltonian=other).build_linearized_operator(u, m).toarray()
@@ -216,3 +238,30 @@ def test_the_linearised_operator_is_the_derivative_of_the_hamiltonian_it_lineari
     assert separation > 1.0, f"the presets build the same operator ({separation:.3e}); nothing is discriminated"
     gap = np.abs(assembled - measured)[rows]
     assert gap.max() < 1e-4, f"{numerical_hamiltonian}: worst gap {gap.max():.3e}"
+
+
+def test_the_solver_refuses_a_preset_it_does_not_have():
+    """The validation branch added with the parameter (#2313), untested until the review of #2340 asked for it.
+
+    A silent fallback to the default here would make a typo look like a working choice of preset -- the failure this
+    whole file is about, since the two presets differ only at a local maximum and a fallback would be invisible on any
+    fixture without one.
+    """
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[9], boundary_conditions=no_flux_bc(dimension=1))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        problem = MFGProblem(
+            geometry=grid,
+            Nt=4,
+            T=1.0,
+            sigma=0.0,
+            components=MFGComponents(
+                m_initial=lambda x: 1.0,
+                u_terminal=lambda x: 0.0,
+                hamiltonian=SeparableHamiltonian(
+                    control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
+                ),
+            ),
+        )
+    with pytest.raises(ValueError, match=r"numerical_hamiltonian.*godunov.*2313"):
+        HJBFDMSolver(problem, numerical_hamiltonian="godunov")  # the name #2313 ruled out

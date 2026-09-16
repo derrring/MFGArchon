@@ -25,6 +25,7 @@ from mfgarchon.operators.stencils.finite_difference import (
     laplacian_stencil_nd,
     laplacian_with_bc,
     upwind_momentum,
+    upwind_momentum_derivatives,
 )
 
 # =============================================================================
@@ -656,3 +657,15 @@ class TestBackendRollEquivalence:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+@pytest.mark.parametrize("owner", [upwind_momentum, upwind_momentum_derivatives])
+def test_the_momentum_owner_refuses_a_preset_it_does_not_have(owner):
+    """Both owner functions end in a `raise`, untested until the review of #2340 asked for it (#2313).
+
+    Falling through to a default instead would make a caller that passes an unknown name silently get Engquist-Osher,
+    and since the presets differ only at a discrete local maximum, no smooth fixture would show it.
+    """
+    backward, forward = np.array([1.0, -1.0]), np.array([-1.0, 1.0])
+    with pytest.raises(ValueError, match=r"numerical_hamiltonian must be .*got 'godunov'.*2313"):
+        owner(backward, forward, "godunov")  # type: ignore[arg-type]

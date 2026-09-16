@@ -173,8 +173,8 @@ def upwind_momentum(
     ``a = lambda`` at ``lambda = 0.5``. For ``p^2/2``, a bounded cost and ``|p|^4/4`` the jump is 0.
 
     The reason to default to ``engquist_osher`` (#2313) is its linearisation: on the interior it is the transpose of the
-    FDM FP ``divergence_upwind`` operator at local maxima as well as elsewhere, measured 2.8e-14 in 1-D and 4.4e-14 in
-    2-D against 17.0 and 27.0 for ``rouy_tourin``.
+    FDM FP ``divergence_upwind`` operator at local maxima as well as elsewhere, measured over interior rows and columns
+    at 2.8e-14 in 1-D and 4.4e-14 in 2-D, against 18.5 and 32.4 for ``rouy_tourin``.
 
     Args:
         backward: ``(u_i - u_{i-1}) / h`` along one axis.

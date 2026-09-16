@@ -8,6 +8,14 @@ blocker 2).
 
 Oracle: the definition of a Newton step. ``U_next`` must equal ``U + spsolve(J, -F)`` with ``F`` and ``J`` assembled
 from the same preset, and the two presets' predictions must differ on this state -- otherwise the pin is vacuous.
+
+What this oracle does and does not check. It calls the same `compute_hjb_residual`, `compute_hjb_jacobian` and
+`spsolve` the implementation calls, so it cannot see an error inside any of them; it sees only which preset each call
+was handed, which is what #2340 threads. The discriminating half is `separation`, the distance to the step the other
+preset predicts: 1.186e-02 here, so a Jacobian built with the wrong preset moves the step by eight orders of
+magnitude more than the 1e-10 tolerance admits (measured at 8debbbbc). The presets' arithmetic is checked against
+outside oracles elsewhere -- the integral definition of H in `test_stencils.py`, and the FP transpose in
+`test_hjb_fp_adjoint_numerical_hamiltonian_2313.py`.
 """
 
 from __future__ import annotations

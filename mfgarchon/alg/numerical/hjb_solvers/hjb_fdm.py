@@ -1160,6 +1160,14 @@ class HJBFDMSolver(BaseHJBSolver):
             divergence_upwind mode). This ensures the transpose relationship
             holds for mass conservation.
 
+            The velocity is ``-coupling * p`` with ``p`` the momentum of the solver's
+            ``numerical_hamiltonian`` (#2313), and that is the optimal control only where the
+            momentum is a single one-sided difference. At a discrete local maximum
+            ``engquist_osher`` takes ``sqrt((a+)^2 + (b-)^2)``, up to ``sqrt(2)`` times either
+            difference, so this operator moves with the preset and its velocity is not
+            ``alpha*`` there. The strict-adjoint path uses `build_linearized_operator`, which is
+            the exact derivative; this one is the velocity-mode operator (#707, #2338).
+
         See Also:
             - Issue #622: Strict Achdou adjoint mode implementation
             - solve_hjb_step_with_matrix(): Uses externally provided matrix
