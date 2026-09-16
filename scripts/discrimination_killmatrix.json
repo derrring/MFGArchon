@@ -1,7 +1,7 @@
 {
   "_measured_at": {
-    "collected": 3964,
-    "commit": "5ac1b83a",
+    "collected": 4057,
+    "commit": "a70d9a06",
     "excluded": "tests/unit/test_discrimination_ratchet.py",
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment and not manual",
     "paths": [
@@ -9,7 +9,7 @@
     ]
   },
   "_selection_regex_for_agreement_shaped": "::[^:]*?(_agree|_agrees|_matches|_equals|_single_source|_identical|_consistent)",
-  "baseline_seconds": 175.1,
+  "baseline_seconds": 204.1,
   "killed_by": {
     "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_gauss_seidel_runs_and_produces_finite_M": [
       "quadrature_wall_node_counting_measure",
@@ -696,6 +696,31 @@
       "engquist_osher_magnitude_is_the_larger_branch",
       "engquist_osher_derivative_drops_the_forward_branch"
     ],
+    "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_default_momentum_is_engquist_osher_at_a_local_maximum": [
+      "engquist_osher_magnitude_is_the_larger_branch"
+    ],
+    "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_linearised_operator_is_the_derivative_of_the_hamiltonian_it_linearises[1d-engquist_osher]": [
+      "engquist_osher_magnitude_is_the_larger_branch",
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_linearised_operator_is_the_derivative_of_the_hamiltonian_it_linearises[1d-rouy_tourin]": [
+      "rouy_tourin_branch_swap"
+    ],
+    "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_linearised_operator_is_the_derivative_of_the_hamiltonian_it_linearises[2d-engquist_osher]": [
+      "engquist_osher_magnitude_is_the_larger_branch",
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_linearised_operator_is_the_derivative_of_the_hamiltonian_it_linearises[2d-rouy_tourin]": [
+      "rouy_tourin_branch_swap"
+    ],
+    "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_solver_default_is_the_preset_whose_linearisation_transposes[1d]": [
+      "engquist_osher_magnitude_is_the_larger_branch",
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_solver_default_is_the_preset_whose_linearisation_transposes[2d]": [
+      "engquist_osher_magnitude_is_the_larger_branch",
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
     "tests/unit/test_alg/test_hjb_gfdm_llf_augmentation.py::TestLLFAugmentationPinning::test_llf_at_least_one_node_augmented": [
       "diffusion_scalar_2x"
     ],
@@ -726,6 +751,9 @@
     "tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_matches_newton_nonlq[_v_quadratic-None-1.0-V-only]": [
       "diffusion_scalar_2x"
     ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_minimum_band_is_zero_where_dH_dp_is_not[robin_sign_flipped]": [
+      "ghost_spacing_ignored"
+    ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_switching_node_gets_a_clarke_element_not_an_average": [
       "rouy_tourin_branch_swap"
     ],
@@ -741,6 +769,9 @@
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[dirichlet]": [
       "engquist_osher_derivative_drops_the_forward_branch"
     ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[neumann]": [
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[no_flux]": [
       "engquist_osher_derivative_drops_the_forward_branch"
     ],
@@ -751,7 +782,21 @@
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[robin_alpha_eq_beta]": [
       "engquist_osher_derivative_drops_the_forward_branch"
     ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[robin_neumann_like]": [
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[robin_sign_flipped]": [
+      "ghost_spacing_ignored",
+      "engquist_osher_magnitude_is_the_larger_branch",
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-bump_off_node-False-robin_sign_flipped]": [
+      "ghost_spacing_ignored"
+    ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-bump_off_node-True-dirichlet]": [
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-bump_off_node-True-neumann]": [
       "engquist_osher_derivative_drops_the_forward_branch"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-bump_off_node-True-no_flux]": [
@@ -763,6 +808,17 @@
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-bump_off_node-True-robin_alpha_eq_beta]": [
       "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-bump_off_node-True-robin_neumann_like]": [
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-bump_off_node-True-robin_sign_flipped]": [
+      "ghost_spacing_ignored",
+      "engquist_osher_magnitude_is_the_larger_branch",
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-monotone-False-robin_sign_flipped]": [
+      "ghost_spacing_ignored"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-monotone-True-dirichlet]": [
       "engquist_osher_magnitude_is_the_larger_branch",
@@ -776,8 +832,17 @@
       "engquist_osher_magnitude_is_the_larger_branch",
       "engquist_osher_derivative_drops_the_forward_branch"
     ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-monotone-True-robin_sign_flipped]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-piecewise_linear-False-robin_sign_flipped]": [
+      "ghost_spacing_ignored"
+    ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-piecewise_linear-True-dirichlet]": [
       "engquist_osher_magnitude_is_the_larger_branch",
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-piecewise_linear-True-neumann]": [
       "engquist_osher_derivative_drops_the_forward_branch"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-piecewise_linear-True-no_flux]": [
@@ -791,7 +856,22 @@
       "engquist_osher_magnitude_is_the_larger_branch",
       "engquist_osher_derivative_drops_the_forward_branch"
     ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-piecewise_linear-True-robin_neumann_like]": [
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-piecewise_linear-True-robin_sign_flipped]": [
+      "ghost_spacing_ignored",
+      "engquist_osher_magnitude_is_the_larger_branch",
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-False-robin_sign_flipped]": [
+      "ghost_spacing_ignored"
+    ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-True-dirichlet]": [
+      "engquist_osher_magnitude_is_the_larger_branch",
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-True-neumann]": [
       "engquist_osher_magnitude_is_the_larger_branch",
       "engquist_osher_derivative_drops_the_forward_branch"
     ],
@@ -807,7 +887,22 @@
       "engquist_osher_magnitude_is_the_larger_branch",
       "engquist_osher_derivative_drops_the_forward_branch"
     ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-True-robin_neumann_like]": [
+      "engquist_osher_magnitude_is_the_larger_branch",
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-True-robin_sign_flipped]": [
+      "ghost_spacing_ignored",
+      "engquist_osher_magnitude_is_the_larger_branch",
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-bump_off_node-False-robin_sign_flipped]": [
+      "ghost_spacing_ignored"
+    ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-bump_off_node-True-dirichlet]": [
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-bump_off_node-True-neumann]": [
       "upwind_minimum_takes_a_one_sided_difference"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-bump_off_node-True-no_flux]": [
@@ -820,8 +915,22 @@
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-bump_off_node-True-robin_alpha_eq_beta]": [
       "upwind_minimum_takes_a_one_sided_difference"
     ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-bump_off_node-True-robin_neumann_like]": [
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-bump_off_node-True-robin_sign_flipped]": [
+      "ghost_spacing_ignored",
+      "rouy_tourin_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-monotone-False-robin_sign_flipped]": [
+      "ghost_spacing_ignored"
+    ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-monotone-True-dirichlet]": [
       "rouy_tourin_branch_swap"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-monotone-True-neumann]": [
+      "upwind_minimum_takes_a_one_sided_difference"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-monotone-True-periodic]": [
       "rouy_tourin_branch_swap",
@@ -830,8 +939,17 @@
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-monotone-True-robin_alpha_eq_beta]": [
       "rouy_tourin_branch_swap"
     ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-monotone-True-robin_sign_flipped]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-piecewise_linear-False-robin_sign_flipped]": [
+      "ghost_spacing_ignored"
+    ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-piecewise_linear-True-dirichlet]": [
       "rouy_tourin_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-piecewise_linear-True-neumann]": [
       "upwind_minimum_takes_a_one_sided_difference"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-piecewise_linear-True-no_flux]": [
@@ -845,7 +963,22 @@
       "rouy_tourin_branch_swap",
       "upwind_minimum_takes_a_one_sided_difference"
     ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-piecewise_linear-True-robin_neumann_like]": [
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-piecewise_linear-True-robin_sign_flipped]": [
+      "ghost_spacing_ignored",
+      "rouy_tourin_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-rough-False-robin_sign_flipped]": [
+      "ghost_spacing_ignored"
+    ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-rough-True-dirichlet]": [
+      "rouy_tourin_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-rough-True-neumann]": [
       "rouy_tourin_branch_swap",
       "upwind_minimum_takes_a_one_sided_difference"
     ],
@@ -861,11 +994,38 @@
       "rouy_tourin_branch_swap",
       "upwind_minimum_takes_a_one_sided_difference"
     ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-rough-True-robin_neumann_like]": [
+      "rouy_tourin_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-rough-True-robin_sign_flipped]": [
+      "ghost_spacing_ignored",
+      "rouy_tourin_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_no_switching_states_are_actually_smooth[bump_off_node-robin_sign_flipped]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_no_switching_states_are_actually_smooth[monotone-robin_sign_flipped]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_no_switching_states_are_actually_smooth[piecewise_linear-robin_sign_flipped]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_no_switching_states_are_actually_smooth[rough-robin_sign_flipped]": [
+      "ghost_spacing_ignored"
+    ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_legacy_no_bc_path_linearises_its_own_residual_too[True]": [
       "engquist_osher_magnitude_is_the_larger_branch",
       "engquist_osher_derivative_drops_the_forward_branch"
     ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[False-robin_sign_flipped]": [
+      "ghost_spacing_ignored"
+    ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-dirichlet]": [
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-neumann]": [
       "engquist_osher_derivative_drops_the_forward_branch"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-no_flux]": [
@@ -878,21 +1038,41 @@
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-robin_alpha_eq_beta]": [
       "engquist_osher_derivative_drops_the_forward_branch"
     ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-robin_neumann_like]": [
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-robin_sign_flipped]": [
+      "ghost_spacing_ignored",
+      "engquist_osher_magnitude_is_the_larger_branch",
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
     "tests/unit/test_alg/test_hjb_jacobian_matches_residual_1894.py::test_periodic_wrap_with_a_volatility_field_does_not_collapse_the_jacobian": [
       "diffusion_field_2x",
       "grid_spacing_uses_point_count"
     ],
-    "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[no_flux-upwind-analytic]": [
+    "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[no_flux-upwind-analytic-engquist_osher]": [
       "engquist_osher_magnitude_is_the_larger_branch",
       "engquist_osher_derivative_drops_the_forward_branch"
     ],
-    "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic-upwind-analytic]": [
+    "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[no_flux-upwind-analytic-rouy_tourin]": [
+      "rouy_tourin_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic-upwind-analytic-engquist_osher]": [
       "engquist_osher_magnitude_is_the_larger_branch",
       "engquist_osher_derivative_drops_the_forward_branch"
     ],
-    "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic_bc_none-upwind-analytic]": [
+    "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic-upwind-analytic-rouy_tourin]": [
+      "rouy_tourin_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic_bc_none-upwind-analytic-engquist_osher]": [
       "engquist_osher_magnitude_is_the_larger_branch",
       "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic_bc_none-upwind-analytic-rouy_tourin]": [
+      "rouy_tourin_branch_swap",
+      "upwind_minimum_takes_a_one_sided_difference"
     ],
     "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestADIDiffusionMagnitude::test_adi_2d_diffusion_matches_analytic": [
       "diffusion_scalar_2x"
@@ -2392,7 +2572,7 @@
         "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_absent_bc_defaults_to_clamp_not_reflect"
       ],
       "owner": "absent BC defaults to clamp/absorbing (#1698)",
-      "seconds": 157.1,
+      "seconds": 209.6,
       "status": "ok",
       "verify": "bc_type_to_geometric_operation(None) == 'reflect'"
     },
@@ -2412,7 +2592,7 @@
         "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_the_guard_and_the_lookup_are_separable_2284"
       ],
       "owner": "no_flux/neumann/robin -> reflect (#1698)",
-      "seconds": 155.9,
+      "seconds": 208.9,
       "status": "ok",
       "verify": "bc_type_to_geometric_operation('no_flux') == 'clamp'"
     },
@@ -2433,7 +2613,7 @@
         "tests/unit/test_geometry/test_poly_extrapolation.py::test_order_5_nonzero_neumann_flux"
       ],
       "owner": "PreallocatedGhostBuffer.update_ghosts routes a uniform BC to the single-segment path and a mixed BC to the per-face path (#577 Phase 3 for the mixed rewrite, #1255 (C) for the alpha/beta forwarding the uniform branch carries). The two paths are NOT equivalent: the uniform branch applies the inhomoge",
-      "seconds": 134.9,
+      "seconds": 197.0,
       "status": "ok",
       "verify": "abs(_ghost0(neumann_bc(dimension=1, value=2.0), 3) - 1.1) < 1e-12"
     },
@@ -2449,7 +2629,7 @@
         "tests/unit/test_utils/test_diffusion_from_volatility.py::TestField::test_2d_field_is_elementwise"
       ],
       "owner": "D = sigma^2/2 elementwise for a volatility field (#811)",
-      "seconds": 159.7,
+      "seconds": 207.5,
       "status": "ok",
       "verify": "float(diffusion_from_volatility(np.array([2.0]), kind='field')[0]) == 4.0"
     },
@@ -2645,7 +2825,7 @@
         "tests/unit/test_utils/test_neumann_cn_wall_2237.py::test_order_at_the_wall[mirror-2.0]"
       ],
       "owner": "D = sigma^2/2 for scalar sigma (#811)",
-      "seconds": 160.9,
+      "seconds": 200.0,
       "status": "ok",
       "verify": "diffusion_from_volatility(2.0) == 4.0"
     },
@@ -2683,12 +2863,12 @@
         "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[2.0]"
       ],
       "owner": "FP drift c = 1/control_cost (#1420 / G-017)",
-      "seconds": 181.4,
+      "seconds": 228.2,
       "status": "ok",
       "verify": "fp_drift_coefficient(_stub_problem(control_cost=2.0)) == 1.0"
     },
     "engquist_osher_derivative_drops_the_forward_branch": {
-      "kill_count": 35,
+      "kill_count": 54,
       "killed": [
         "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_removing_the_enforcement_still_leaves_the_no_flux_condition_satisfied[21]",
         "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_removing_the_enforcement_still_leaves_the_no_flux_condition_satisfied[41]",
@@ -2696,68 +2876,99 @@
         "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_the_no_flux_case_actually_converges_here_so_the_law_is_not_vacuous",
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_engquist_osher_linearises_to_the_transpose_of_the_fp_operator[1d]",
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_engquist_osher_linearises_to_the_transpose_of_the_fp_operator[2d]",
+        "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_linearised_operator_is_the_derivative_of_the_hamiltonian_it_linearises[1d-engquist_osher]",
+        "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_linearised_operator_is_the_derivative_of_the_hamiltonian_it_linearises[2d-engquist_osher]",
+        "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_solver_default_is_the_preset_whose_linearisation_transposes[1d]",
+        "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_solver_default_is_the_preset_whose_linearisation_transposes[2d]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_tied_wall_row_that_is_not_a_switching_node_still_gets_the_right_branch",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_time_dependent_boundary_reaches_the_advection_block[True]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[neumann]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[no_flux]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[periodic]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[robin_alpha_eq_beta]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[robin_neumann_like]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[robin_sign_flipped]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-bump_off_node-True-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-bump_off_node-True-neumann]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-bump_off_node-True-no_flux]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-bump_off_node-True-periodic]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-bump_off_node-True-robin_alpha_eq_beta]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-bump_off_node-True-robin_neumann_like]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-bump_off_node-True-robin_sign_flipped]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-monotone-True-dirichlet]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-monotone-True-periodic]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-monotone-True-robin_alpha_eq_beta]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-piecewise_linear-True-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-piecewise_linear-True-neumann]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-piecewise_linear-True-no_flux]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-piecewise_linear-True-periodic]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-piecewise_linear-True-robin_alpha_eq_beta]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-piecewise_linear-True-robin_neumann_like]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-piecewise_linear-True-robin_sign_flipped]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-True-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-True-neumann]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-True-no_flux]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-True-periodic]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-True-robin_alpha_eq_beta]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-True-robin_neumann_like]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-True-robin_sign_flipped]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_legacy_no_bc_path_linearises_its_own_residual_too[True]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-neumann]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-no_flux]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-periodic]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-robin_alpha_eq_beta]",
-        "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[no_flux-upwind-analytic]",
-        "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic-upwind-analytic]",
-        "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic_bc_none-upwind-analytic]"
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-robin_neumann_like]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[no_flux-upwind-analytic-engquist_osher]",
+        "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic-upwind-analytic-engquist_osher]",
+        "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic_bc_none-upwind-analytic-engquist_osher]"
       ],
       "owner": "`upwind_momentum_derivatives` is the one owner of d(p)/d(backward) and d(p)/d(forward); for `engquist_osher` both are nonzero at a local maximum, and the analytic HJB Jacobian, the nD linearised operator and the strict-adjoint operator all read them, so the Jacobian is the residual's own derivative (#2313)",
-      "seconds": 137.8,
+      "seconds": 185.0,
       "status": "ok",
       "verify": "float(upwind_momentum_derivatives(np.array([1.0]), np.array([-1.0]), \"engquist_osher\")[1][0]) == 0.0"
     },
     "engquist_osher_magnitude_is_the_larger_branch": {
-      "kill_count": 21,
+      "kill_count": 33,
       "killed": [
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_engquist_osher_linearises_to_the_transpose_of_the_fp_operator[1d]",
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_engquist_osher_linearises_to_the_transpose_of_the_fp_operator[2d]",
+        "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_default_momentum_is_engquist_osher_at_a_local_maximum",
+        "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_linearised_operator_is_the_derivative_of_the_hamiltonian_it_linearises[1d-engquist_osher]",
+        "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_linearised_operator_is_the_derivative_of_the_hamiltonian_it_linearises[2d-engquist_osher]",
+        "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_solver_default_is_the_preset_whose_linearisation_transposes[1d]",
+        "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_solver_default_is_the_preset_whose_linearisation_transposes[2d]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_time_dependent_boundary_reaches_the_advection_block[True]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[robin_sign_flipped]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-bump_off_node-True-periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-bump_off_node-True-robin_sign_flipped]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-monotone-True-dirichlet]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-monotone-True-periodic]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-monotone-True-robin_alpha_eq_beta]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-piecewise_linear-True-dirichlet]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-piecewise_linear-True-periodic]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-piecewise_linear-True-robin_alpha_eq_beta]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-piecewise_linear-True-robin_sign_flipped]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-True-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-True-neumann]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-True-no_flux]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-True-periodic]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-True-robin_alpha_eq_beta]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-True-robin_neumann_like]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-True-robin_sign_flipped]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_legacy_no_bc_path_linearises_its_own_residual_too[True]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-periodic]",
-        "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[no_flux-upwind-analytic]",
-        "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic-upwind-analytic]",
-        "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic_bc_none-upwind-analytic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[no_flux-upwind-analytic-engquist_osher]",
+        "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic-upwind-analytic-engquist_osher]",
+        "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic_bc_none-upwind-analytic-engquist_osher]",
         "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_engquist_osher_is_monotone_and_the_integral_flux"
       ],
       "owner": "the default `engquist_osher` preset of `upwind_momentum` evaluates H at sqrt(a+^2 + b-^2) per axis (ACD's Example 1), which at a discrete local maximum sums both one-sided differences; that sum is what makes its linearisation the transpose of the FDM FP divergence_upwind operator (#2313). Taking the larger branch instead is Rouy-Tourin, which leaves the transpose defect at maxima",
-      "seconds": 137.4,
+      "seconds": 183.0,
       "status": "ok",
       "verify": "float(upwind_momentum(np.array([1.0]), np.array([-1.0]), \"engquist_osher\")[0]) == 1.0"
     },
@@ -2896,7 +3107,7 @@
         "tests/unit/test_geometry/test_bc_fail_loud_1558_1559.py::test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmless"
       ],
       "owner": "The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, fp_fdm_time_stepping.py:797, whose own docstring states the convention at :681: \"- Forward time evolution: k=0 -> Nt-1\". No issue n",
-      "seconds": 206.8,
+      "seconds": 275.9,
       "status": "ok",
       "verify": "float(np.sum(solve_fp_nd_full_system(np.ones(6), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), sigma=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x, m_initial=lambda x: 1.0 + 0.0 * x, T=0.1), Nt=2))[0])) == 0.0"
     },
@@ -2913,14 +3124,38 @@
         "tests/unit/test_operators/test_divergence.py::TestAdvectionPeriodicGridConvention::test_the_wrap_face_velocity_comes_from_the_last_real_cell_not_the_repeat"
       ],
       "owner": "the conservative FV upwind flux takes the UPSTREAM cell: F_{i+1/2} = v_{i+1/2} m_i when v_{i+1/2} >= 0, else v_{i+1/2} m_{i+1} (#1184 / #1428)",
-      "seconds": 128.7,
+      "seconds": 184.4,
       "status": "ok",
       "verify": "float(AdvectionOperator(velocity_field=np.ones((1, 3)), spacings=[1.0], field_shape=(3,), scheme='upwind', form='divergence', bc=no_flux_bc(dimension=1), mass_conservative=True)(np.array([1.0, 2.0, 3.0]))[0]) == 4.0"
     },
     "ghost_spacing_ignored": {
-      "kill_count": 55,
+      "kill_count": 79,
       "killed": [
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_minimum_band_is_zero_where_dH_dp_is_not[robin_sign_flipped]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_tied_wall_row_that_is_not_a_switching_node_still_gets_the_right_branch",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-bump_off_node-False-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-bump_off_node-True-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-monotone-False-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-monotone-True-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-piecewise_linear-False-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-piecewise_linear-True-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-False-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-True-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-bump_off_node-False-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-bump_off_node-True-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-monotone-False-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-monotone-True-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-piecewise_linear-False-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-piecewise_linear-True-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-rough-False-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-rough-True-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_no_switching_states_are_actually_smooth[bump_off_node-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_no_switching_states_are_actually_smooth[monotone-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_no_switching_states_are_actually_smooth[piecewise_linear-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_no_switching_states_are_actually_smooth[rough-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[False-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-robin_sign_flipped]",
         "tests/unit/test_geometry/boundary/test_ghost_layer_order_and_flux_1967.py::test_an_inhomogeneous_flux_is_exact_at_every_layer[high-1]",
         "tests/unit/test_geometry/boundary/test_ghost_layer_order_and_flux_1967.py::test_an_inhomogeneous_flux_is_exact_at_every_layer[high-2]",
         "tests/unit/test_geometry/boundary/test_ghost_layer_order_and_flux_1967.py::test_an_inhomogeneous_flux_is_exact_at_every_layer[high-3]",
@@ -2977,7 +3212,7 @@
         "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_solver_gradient_path_now_carries_the_spacing[2.0-81]"
       ],
       "owner": "the ghost buffer uses the caller's spacing, not dx = 1.0 (#1904)",
-      "seconds": 154.4,
+      "seconds": 212.2,
       "status": "ok",
       "verify": "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0), ghost_depth=1, spacing=0.05)[0] == 3.0"
     },
@@ -3021,7 +3256,7 @@
         "tests/validation/test_stefan_analytical.py::TestStefanEnergyConservation::test_total_energy_preservation"
       ],
       "owner": "`Nx` names the INTERVAL count, so node count = Nx + 1 -- the #1889 interval-vs-node ambiguity at the grid's own entry point. Stated in the constructor docstring at tensor_grid.py:181-182: \"- Nx (intervals): Nx_points = Nx + 1\" / \"- Nx_points (points): Nx = Nx_points - 1\". Line 220-221 normalises a s",
-      "seconds": 161.8,
+      "seconds": 194.6,
       "status": "ok",
       "verify": "TensorProductGrid(bounds=[(0.0, 1.0)], Nx=[10], boundary_conditions=no_flux_bc(dimension=1)).Nx_points == [10]"
     },
@@ -3090,7 +3325,7 @@
         "tests/validation/test_stefan_analytical.py::TestNeumannSolution::test_convergence_with_grid_refinement"
       ],
       "owner": "uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim, get_spacing() indexes it, legacy_1d_attrs[\"Dx\"] reads it, cell volume ",
-      "seconds": 153.6,
+      "seconds": 208.6,
       "status": "ok",
       "verify": "TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)).get_grid_spacing()[0] == 1.0 / 11"
     },
@@ -3124,7 +3359,7 @@
         "tests/unit/test_alg/test_weak_form_hjb_picard_sign_2023.py::test_the_weak_form_family_agrees_with_the_reference_fdm_solver[2.0]"
       ],
       "owner": "The HJB marches BACKWARD in time, from the terminal row down to t=0, while the FP marches forward -- the adjoint pairing. Single site: base_hjb.py:1780, the only time loop in solve_hjb_system_backward. The M-indexing that rides on it is documented in the same loop body at base_hjb.py:1790: \"# BUG #7",
-      "seconds": 120.4,
+      "seconds": 174.2,
       "status": "ok",
       "verify": "float(solve_hjb_system_backward(np.ones((3, 6)), np.full(6, 3.0), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), sigma=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x, m_initial=lambda x: 1.0 + 0.0 * x, T=0.1), Nt=2))[0, 0]) < 1.0"
     },
@@ -3135,7 +3370,7 @@
         "tests/unit/test_utils/test_mass_conservation_error_1672.py::test_the_coupled_solve_reports_the_quantity_it_documents[fdm_upwind]"
       ],
       "owner": "`SolverResult.mass_conservation_error` is DRIFT from the initial mass, `|mass(t)/mass(0) - 1|`, not deviation from 1 (#1672). Sole owner: the coupling loop, which is the only site that writes the field. The convention is not decorative: #1887 stopped the constructor rescaling `m_initial`, so `mass(0)` is whatever the caller handed in and the two expressions are different numbers. A target of 1 is not a property of the Fokker-Planck equation -- it conserves whatever it started with -- so measuring against 1 reports a caller's modelling decision as a solver defect. REINSTATED HERE from the hand-off note on `fix/2145-the-mass-is-the-trapezoid`, where this mutation is INEFFECTIVE by construction: that branch normalises `m_initial`, so `mass(0) == 1` on every path reaching the iterator and no test can separate the two expressions. The hand-off named a merge conflict as its forcing function; splitting #1887 onto its own branch removed the conflict and the re-add dropped silently, which is the outcome that note predicted by name. Independent review of PR #2174 caught it.",
-      "seconds": 152.1,
+      "seconds": 187.6,
       "status": "ok",
       "verify": "MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, sigma=0.5, components=MFGComponents(m_initial=lambda x: np.exp(-50.0 * (np.asarray(x) - 0.5) ** 2), u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0))).solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False).mass_conservation_error > 0.1"
     },
@@ -3183,7 +3418,7 @@
         "tests/unit/test_geometry/test_neumann_low_wall_sign.py::TestNeumannLowWallSign::test_order2_low_ghost_plus_dx_v"
       ],
       "owner": "inhomogeneous Neumann is prescribed on the OUTWARD normal, so at the low wall (outward normal -x) du/dx = -v and the offset is ADDED, the same sign as the high wall (#1262). Since #1967 the magnitude is (2k-1)*dx*v rather than dx*v -- ghost layer k sits that far from its mirror -- so the k=1 case is the historical dx*v and the deeper layers scale.",
-      "seconds": 129.0,
+      "seconds": 185.1,
       "status": "ok",
       "verify": "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0), ghost_depth=1, spacing=0.05)[0] == 0.9"
     },
@@ -3197,7 +3432,7 @@
         "tests/unit/test_convention_agreement.py::TestHJBResidualNormGridScaling::test_the_scaling_is_what_makes_two_resolutions_comparable"
       ],
       "owner": "The HJB Newton residual is the grid-scaled discrete L2 norm ||F||_2 * sqrt(dx). Owner: hjb_residual_norm, base_hjb.py:1362, whose docstring says verbatim 'The one owner of \"how large is this HJB residual\".' and 'It is a function rather than an inline expression because the ``sqrt(dx)`` is load-beari",
-      "seconds": 156.0,
+      "seconds": 189.8,
       "status": "ok",
       "verify": "hjb_residual_norm(np.array([1.0, 0.0]), 0.25) == 1.0"
     },
@@ -3247,7 +3482,7 @@
         "tests/unit/test_utils/test_manufactured.py::TestAgreesWithTheHandAssembly::test_fp_source_reproduces_it"
       ],
       "owner": "QuadraticControlCost alpha* = -sign*p/lambda (#1649)",
-      "seconds": 163.4,
+      "seconds": 220.1,
       "status": "ok",
       "verify": "float(QuadraticControlCost(control_cost=1.0).optimal_control(np.array([1.0]))[0]) > 0"
     },
@@ -3270,7 +3505,7 @@
         "tests/unit/test_alg/test_particle_mass_is_the_callers_2181.py::test_two_populations_keep_their_shares"
       ],
       "owner": "The particle FP step measures a slice's mass on the GEOMETRY'S OWN measure, not the counting measure and not `sum(m) * dx` -- the rectangle rule is not the mass on an endpoint-inclusive grid (#2145). Sole owner: `FPParticleSolver._measure`, reached by `_to_caller_mass`, which is the only thing that decides what a reconstructed slice's mass is. RETARGETED from `_compute_total_mass`, which #2181 deleted: that helper measured `sum(density) * dV` and the KDE normalisation divided by it so the density integrated to 1. Both halves of that sentence stopped being true -- the measure is now the geometry's, and the target is the caller's mass rather than 1 -- but the convention it defended survived and moved here, so the mutation follows it.",
-      "seconds": 152.7,
+      "seconds": 186.4,
       "status": "ok",
       "verify": "abs(_measure_probe() - 21.0) < 1e-9"
     },
@@ -3302,7 +3537,7 @@
         "tests/unit/test_geometry/test_bc_fail_loud_1558_1559.py::test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmless"
       ],
       "owner": "where the last node sits, MEASURED from the coordinates the grid built (#1822). `_axis_convention` is the single owner: `periodic_convention` calls it (tensor_grid.py:415) and `_first_axis_with_convention` calls it (:385). The property docstring states why it is derived rather than asserted: \"Derive",
-      "seconds": 156.5,
+      "seconds": 191.6,
       "status": "ok",
       "verify": "TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)).periodic_convention is PeriodicGridConvention.ENDPOINT_EXCLUSIVE"
     },
@@ -3360,7 +3595,7 @@
         "tests/unit/test_operators/test_laplacian.py::TestLaplacianBCFailLoud1071::test_bc_none_still_periodic"
       ],
       "owner": "how many trailing nodes of a periodic axis repeat a node the array already holds -- the ONE number both the ghost skip and the modular span derive from (#1822). types.py:126-130 states the ownership verbatim: \"Every periodic wrap in the package is one of two expressions of this single number, which ",
-      "seconds": 138.1,
+      "seconds": 188.2,
       "status": "ok",
       "verify": "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), periodic_bc(dimension=1), ghost_depth=1)[0] == 2.0"
     },
@@ -3371,7 +3606,7 @@
         "tests/unit/test_convention_agreement.py::TestPicardCriterionIsAConjunction::test_a_small_relative_error_alone_is_not_convergence"
       ],
       "owner": "Picard convergence requires BOTH the relative AND the absolute L2 error below tolerance. Owner: check_convergence_criteria, fixed_point_utils.py:192-229, whose docstring states 'Convergence criteria (both must be satisfied)'. Single-sourced by three call sites routing to it: fixed_point_iterator.py:",
-      "seconds": 148.5,
+      "seconds": 179.7,
       "status": "ok",
       "verify": "check_convergence_criteria(1e-9, 1e-9, 1.0, 1.0, 1e-6)[0]"
     },
@@ -3476,25 +3711,35 @@
         "tests/unit/test_utils/test_mass_conservation_error_1672.py::test_the_coupled_solve_reports_the_quantity_it_documents[fdm_upwind]"
       ],
       "owner": "The measure on a node-centred grid is the TRAPEZOID: `TensorProductGrid` is endpoint-inclusive, so the wall lies ON the end node and that node owns half a cell. Those weights are also the control volumes the conservative FP schemes telescope against, which is why this is one convention and not two (#2145). Sole owner: `mfgarchon/utils/numerical/quadrature.py`, reached by `TensorProductGrid.integrate`, `mass_drift`, the FV advection kernel and the FDM wall rows. SUPERSEDES `m_initial_1d_counting_measure`, which mutated the constructor's normalisation dispatch -- #1887 removed that rescale (the library validates the initial mass and does not change it), so that anchor no longer exists. The convention it defended survived and moved here; the mutation follows it.",
-      "seconds": 151.1,
+      "seconds": 187.3,
       "status": "ok",
       "verify": "abs(quadrature_weights_1d(np.linspace(0.0, 1.0, 5))[0] - 0.25) < 1e-12"
     },
     "rouy_tourin_branch_swap": {
-      "kill_count": 23,
+      "kill_count": 33,
       "killed": [
+        "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_linearised_operator_is_the_derivative_of_the_hamiltonian_it_linearises[1d-rouy_tourin]",
+        "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_linearised_operator_is_the_derivative_of_the_hamiltonian_it_linearises[2d-rouy_tourin]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_switching_node_gets_a_clarke_element_not_an_average",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-bump_off_node-True-periodic]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-bump_off_node-True-robin_sign_flipped]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-monotone-True-dirichlet]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-monotone-True-periodic]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-monotone-True-robin_alpha_eq_beta]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-piecewise_linear-True-dirichlet]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-piecewise_linear-True-periodic]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-piecewise_linear-True-robin_alpha_eq_beta]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-piecewise_linear-True-robin_sign_flipped]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-rough-True-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-rough-True-neumann]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-rough-True-no_flux]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-rough-True-periodic]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-rough-True-robin_alpha_eq_beta]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-rough-True-robin_neumann_like]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-rough-True-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[no_flux-upwind-analytic-rouy_tourin]",
+        "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic-upwind-analytic-rouy_tourin]",
+        "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic_bc_none-upwind-analytic-rouy_tourin]",
         "tests/unit/test_geometry/test_reinitialization_upwinds_by_sign_2310.py::test_a_signed_distance_function_is_a_fixed_point[linear_distance_long_run-grid0-phi0-kwargs0]",
         "tests/unit/test_geometry/test_reinitialization_upwinds_by_sign_2310.py::test_a_signed_distance_function_is_a_fixed_point[negative_minimum_default_call-grid1-phi1-kwargs1]",
         "tests/unit/test_geometry/test_reinitialization_upwinds_by_sign_2310.py::test_a_signed_distance_function_is_a_fixed_point[negative_walls_under_dirichlet-grid4-phi4-kwargs4]",
@@ -3508,7 +3753,7 @@
         "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_the_selection_predicate_is_pinned_not_only_the_branch_bodies"
       ],
       "owner": "Rouy-Tourin upwind takes the clamped BACKWARD part max(backward, 0) where it dominates the clamped forward part min(forward, 0) in magnitude -- the `rouy_tourin` preset of `upwind_momentum`, the one owner of the HJB upwind momentum (#2308, #2313), consumed by the HJB residual and Jacobian when that preset is selected, by GradientOperator(scheme='upwind') and by PDE reinitialisation (of phi or -phi by sign(phi0), #2310); transport upwinds by the velocity instead since #2309",
-      "seconds": 139.9,
+      "seconds": 186.6,
       "status": "ok",
       "verify": "float(gradient_upwind(np.array([0.0, 1.0, 3.0]), axis=0, h=1.0)[1]) == 0.0"
     },
@@ -3535,32 +3780,45 @@
         "tests/unit/test_utils/test_runtime_validation.py::test_terminal_condition_survives_an_hjb_divergence"
       ],
       "owner": "u is boundary-data at the TERMINAL time and m at the INITIAL one: preserve_terminal_condition re-imposes u(T)=g on the LAST time row after damping/Anderson. Single owner, three caller families -- fixed_point_iterator.py:644 and :724 (Picard), fictitious_play.py:432, block_iterators.py:583. No issue ",
-      "seconds": 358.2,
+      "seconds": 421.0,
       "status": "ok",
       "verify": "preserve_terminal_condition(np.zeros((3, 4)), np.full(4, 7.0))[0, 0] == 7.0"
     },
     "upwind_minimum_takes_a_one_sided_difference": {
-      "kill_count": 16,
+      "kill_count": 29,
       "killed": [
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-bump_off_node-True-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-bump_off_node-True-neumann]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-bump_off_node-True-no_flux]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-bump_off_node-True-periodic]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-bump_off_node-True-robin_alpha_eq_beta]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-bump_off_node-True-robin_neumann_like]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-bump_off_node-True-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-monotone-True-neumann]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-monotone-True-periodic]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-piecewise_linear-True-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-piecewise_linear-True-neumann]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-piecewise_linear-True-no_flux]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-piecewise_linear-True-periodic]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-piecewise_linear-True-robin_alpha_eq_beta]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-piecewise_linear-True-robin_neumann_like]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-piecewise_linear-True-robin_sign_flipped]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-rough-True-dirichlet]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-rough-True-neumann]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-rough-True-no_flux]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-rough-True-periodic]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-rough-True-robin_alpha_eq_beta]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-rough-True-robin_neumann_like]",
+        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[rouy_tourin-rough-True-robin_sign_flipped]",
+        "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[no_flux-upwind-analytic-rouy_tourin]",
+        "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic-upwind-analytic-rouy_tourin]",
+        "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic_bc_none-upwind-analytic-rouy_tourin]",
         "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_result_shape",
         "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_the_numerical_hamiltonian_is_monotone_and_godunov",
         "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_the_selection_predicate_is_pinned_not_only_the_branch_bodies"
       ],
       "owner": "at a discrete local minimum (backward < 0 < forward) the upwind momentum is 0, the value of the min/max numerical Hamiltonian for an H even in each momentum component and nondecreasing in its magnitude; selecting on sign(central) returned the one-sided difference of smaller magnitude there, a non-monotone numerical Hamiltonian that Newton still converges on (#2308)",
-      "seconds": 126.6,
+      "seconds": 187.0,
       "status": "ok",
       "verify": "float(gradient_upwind(np.array([0.0, -1.0, 1.0]), axis=0, h=1.0)[1]) == -1.0"
     }
