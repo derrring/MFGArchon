@@ -7,11 +7,13 @@ import scipy.sparse as sparse
 
 from mfgarchon.backends.compat import has_nan_or_inf
 from mfgarchon.geometry import BoundaryConditions
+from mfgarchon.geometry.base import CartesianGrid
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.aux_func import npart, ppart
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
+from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
 
 from .base_fp import BaseFPSolver
 from .fp_fdm_time_stepping import (
@@ -24,8 +26,19 @@ from .fp_fdm_time_stepping import (
 
 logger = get_logger(__name__)
 
+_NO_TIME_DERIVATIVE = 1e300
+"""``dt`` for an assembly that wants the operator without the ``1/dt`` diagonal (#2338).
+
+The scheme handlers write ``1/dt`` onto the diagonal because they assemble ``(I/dt + L)`` for one implicit step. A
+value this large makes that term vanish to round-off rather than requiring a second assembly path, which is what the
+adjoint claim needs: the claim is about ``L``, and ``I/dt`` is symmetric so it would cancel in the comparison anyway --
+but only exactly, and only if both sides used the same ``dt``, which the HJB linearisation does not take.
+"""
+
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from mfgarchon.geometry import TensorProductGrid
 
 # Advection scheme options for FDM (2x2 naming convention)
 # Format: {pde_form}_{spatial_scheme}
@@ -335,6 +348,88 @@ class FPFDMSolver(BaseFPSolver):
                 self._cfl_logged = True
         except (AttributeError, IndexError, TypeError):
             pass  # Not enough info to compute CFL — skip silently
+
+    def build_advection_operator(self, U: np.ndarray, coupling_coefficient: float | None = None) -> sparse.csr_matrix:
+        """This solver's own advection operator at ``U``, for checking it against the HJB linearisation (#2338).
+
+        The FDM pair is advertised as discretely adjoint (#580, #622, #707): the FP operator should be the transpose
+        of `HJBFDMSolver.build_linearized_operator`. `BlockIterator(adjoint_verify=True)` checks that at runtime and
+        needs this side of the comparison; before #2338 it asked every FP solver for a `_build_advection_matrix` that
+        no FP solver has ever defined, so the check skipped silently for every configuration.
+
+        The operator is the advection block alone: the same per-node stencil this solver's `advection_scheme` uses in
+        `solve_timestep_full_nd` -- `_INTERIOR_HANDLERS[scheme]`, one owner, no arithmetic restated here -- evaluated
+        with ``dt -> infinity`` so the ``1/dt`` diagonal drops out and ``sigma = 0`` so the diffusion block does. What
+        remains is what the adjoint claim is about.
+
+        **Rows.** Only the nodes this scheme assembles through its INTERIOR stencil: strictly interior nodes always,
+        and a periodic wall, which dispatches the same way. A no-flux or Dirichlet wall is the boundary handlers'
+        business and is left empty here, which costs the comparison nothing -- `build_linearized_operator` zeroes its
+        wall rows by design (#1564), so those rows carry no claim on either side and the caller drops them.
+
+        There is no ``time`` parameter, and that is a real asymmetry rather than an oversight: the interior
+        handlers take none, so nothing in this assembly is time-dependent, while `build_linearized_operator` on the
+        HJB side does take one. A caller comparing the two at a time-dependent boundary is comparing one operator
+        that moved with time against one that did not (review of #2344).
+
+        Args:
+            U: Value function at one time level, grid-shaped or flat.
+            coupling_coefficient: Drift coefficient ``c`` in ``alpha* = -c grad(U)``. Defaults to the problem's own,
+                the same `fp_drift_coefficient` the time-stepping resolves. Raises for a Hamiltonian whose scalar
+                drift is not ``-c grad(U)`` (#1542), which is a refusal to guess rather than a silent default.
+
+        Returns:
+            Sparse operator, ``(N, N)`` over the flattened grid, with unassembled rows empty.
+
+        Raises:
+            NotImplementedError: If this solver's `advection_scheme` has no interior handler.
+        """
+        from .fp_fdm_time_stepping import _INTERIOR_HANDLERS
+
+        handler = _INTERIOR_HANDLERS.get(self.advection_scheme)
+        if handler is None:
+            raise NotImplementedError(
+                f"advection_scheme={self.advection_scheme!r} has no interior stencil to build an operator from "
+                f"(#2338). Known: {sorted(_INTERIOR_HANDLERS)}."
+            )
+        # `CartesianGrid` is the class that GUARANTEES both accessors -- `GeometryProtocol` declares neither, and
+        # the constructor does not narrow it for us: it refuses only a geometry without `laplacian` and names
+        # `ImplicitDomain` as compatible, which has `get_grid_shape` and no `get_grid_spacing` (review of #2344
+        # corrected an earlier comment here that claimed the constructor had already refused such a geometry).
+        # `base.py:852` states this isinstance as the way to ask.
+        geometry = self.problem.geometry
+        if not isinstance(geometry, CartesianGrid):
+            raise NotImplementedError(
+                f"build_advection_operator needs a structured grid: {type(geometry).__name__} is not a "
+                f"`CartesianGrid`, so it guarantees no per-axis spacing for the stencil this delegates to (#2338)."
+            )
+        shape = tuple(geometry.get_grid_shape())
+        spacing = tuple(geometry.get_grid_spacing())
+        ndim = len(shape)
+        total = int(np.prod(shape))
+        u_flat = np.asarray(U, dtype=float).ravel()
+        if coupling_coefficient is None:
+            coupling_coefficient = fp_drift_coefficient(self.problem)
+        # `self.boundary_conditions` and not `geometry.get_boundary_conditions()`: the constructor resolves the BC
+        # through components, geometry and the periodic convention (#527), and every real assembly call passes the
+        # resolved one. Reading the geometry here gave a second owner -- measured with a periodic BC passed to the
+        # constructor over a no-flux geometry, the two disagree (review of #2344).
+        boundary_conditions = self.boundary_conditions
+        periodic = _get_bc_type(boundary_conditions) == "periodic"
+
+        rows: list[int] = []
+        cols: list[int] = []
+        values: list[float] = []
+        for flat_idx in range(total):
+            multi_idx = tuple(int(i) for i in np.unravel_index(flat_idx, shape))
+            interior = all(0 < i < n - 1 for i, n in zip(multi_idx, shape, strict=True))
+            if not (interior or periodic):
+                continue
+            handler(
+                rows, cols, values, flat_idx, multi_idx, shape, ndim,
+                _NO_TIME_DERIVATIVE, 0.0, coupling_coefficient, spacing, u_flat, geometry, boundary_conditions,
+            )  # fmt: skip
+        return sparse.coo_matrix((values, (rows, cols)), shape=(total, total)).tocsr()
 
     @deprecated_parameter(param_name="tensor_diffusion_field", since="v0.17.0", replacement="volatility_field")
     @deprecated_parameter(param_name="volatility_matrix", since="v0.17.0", replacement="volatility_field")
