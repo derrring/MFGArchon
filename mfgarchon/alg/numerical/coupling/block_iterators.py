@@ -381,7 +381,7 @@ class BlockIterator(BaseCouplingIterator):
             if self.adjoint_mode == "jacobian_transpose":
                 # Issue #707: True adjoint via linearized HJB Jacobian
                 # A_fp = A_Jac^T where A_Jac = dH/dp * dp/dU (correct for any Hamiltonian)
-                A_jac = self.hjb_solver.build_linearized_operator(U_k, M_current, time=k * self.problem.dt)
+                A_jac = self._hjb_linearised_operator(U_k, M_current, k * self.problem.dt)
                 A_fp = A_jac.T.tocsr()
             else:
                 # Velocity-based modes use build_advection_matrix
@@ -433,6 +433,25 @@ class BlockIterator(BaseCouplingIterator):
 
         return bc_types
 
+    def _hjb_linearised_operator(self, U_k: NDArray, M_current: NDArray, time: float) -> sparse.spmatrix:
+        """The exact HJB Jacobian, or a refusal naming the solver that builds none (#707, #2338).
+
+        `BaseHJBSolver` declares no such method and only `HJBFDMSolver` defines one, so this is the same question the
+        FP side asks and it was previously asked nowhere: every call site reached through the base class and would
+        have raised `AttributeError` mid-solve for any other HJB solver. `LinearizedOperatorCapable` is the protocol
+        that states the capability, so asking it is both the check and the narrowing.
+        """
+        from mfgarchon.alg.numerical.adjoint.protocols import LinearizedOperatorCapable
+
+        hjb_solver = self.hjb_solver
+        if not isinstance(hjb_solver, LinearizedOperatorCapable):
+            raise NotImplementedError(
+                f"adjoint_mode={self.adjoint_mode!r} needs the linearised HJB operator, and "
+                f"{type(hjb_solver).__name__} builds none (#707, #2338): it does not satisfy "
+                f"`LinearizedOperatorCapable`. Use HJBFDMSolver, or adjoint_mode='off'."
+            )
+        return hjb_solver.build_linearized_operator(U_k, M_current, time=time)
+
     def _interior_flat_indices(self) -> NDArray:
         """Flat indices of the nodes that are on no boundary face, from the adjoint module's own face enumeration."""
         from mfgarchon.alg.numerical.adjoint.diagnostics import _get_boundary_indices
@@ -442,7 +461,7 @@ class BlockIterator(BaseCouplingIterator):
         boundary = {idx for face in _get_boundary_indices(grid_shape, dimension).values() for idx in face}
         return np.array([k for k in range(int(np.prod(grid_shape))) if k not in boundary], dtype=int)
 
-    def _fp_advection_operator(self, U_k: NDArray, time: float):
+    def _fp_advection_operator(self, U_k: NDArray, time: float) -> sparse.spmatrix:
         """The FP solver's own advection operator, or a refusal naming the solver that cannot supply one (#2338)."""
         build = getattr(self.fp_solver, "build_advection_operator", None)
         if not callable(build):
@@ -477,7 +496,7 @@ class BlockIterator(BaseCouplingIterator):
         # hand: a parameter that is only ever None in the velocity modes is a branch the verified modes never run,
         # and a mutation swapping this call for `build_advection_matrix` survived the whole suite while it existed
         # (#2338, mutation check). One assembly per step is what a debug flag costs.
-        A_jac = self.hjb_solver.build_linearized_operator(U_k, M_current, time=time)
+        A_jac = self._hjb_linearised_operator(U_k, M_current, time)
         interior = self._interior_flat_indices()
         if interior.size == 0:
             raise ValueError(
@@ -524,7 +543,7 @@ class BlockIterator(BaseCouplingIterator):
         try:
             time = step * self.problem.dt
             A_fp_own = self._fp_advection_operator(U_for_diagnosis, time)
-            A_jac = self.hjb_solver.build_linearized_operator(U_for_diagnosis, M_for_diagnosis, time=time)
+            A_jac = self._hjb_linearised_operator(U_for_diagnosis, M_for_diagnosis, time)
             geometry = getattr(self.problem, "geometry", None)
             # Same orientation as the per-step check: the report's A_fp argument is compared against A_hjb^T, so
             # the Jacobian goes in as A_hjb and the FP operator as itself. Before #2338 this passed `A_fp_ind.T`

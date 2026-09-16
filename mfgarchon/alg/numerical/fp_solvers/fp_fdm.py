@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 import scipy.sparse as sparse
@@ -36,6 +36,8 @@ but only exactly, and only if both sides used the same ``dt``, which the HJB lin
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from mfgarchon.geometry import TensorProductGrid
 
 # Advection scheme options for FDM (2x2 naming convention)
 # Format: {pde_form}_{spatial_scheme}
@@ -386,7 +388,9 @@ class FPFDMSolver(BaseFPSolver):
                 f"advection_scheme={self.advection_scheme!r} has no interior stencil to build an operator from "
                 f"(#2338). Known: {sorted(_INTERIOR_HANDLERS)}."
             )
-        geometry = self.problem.geometry
+        # `GeometryProtocol` declares neither accessor; the FDM assembly this delegates to requires a tensor grid
+        # and the constructor has already refused anything else (Issue #2338).
+        geometry = cast("TensorProductGrid", self.problem.geometry)
         shape = tuple(geometry.get_grid_shape())
         spacing = tuple(geometry.get_grid_spacing())
         ndim = len(shape)
