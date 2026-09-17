@@ -15,7 +15,7 @@ stale in the commit that wrote them.)
 Oracle: the enum. There are exactly two valid senses and the sign is a function of which one, so a `sense` outside the
 enum has no defined sign -- the old code did not fail to compute it, it computed the MAXIMIZE one.
 
-Both constructors that derive the sign now route through `sign_for_sense`, which is the highest owning
+Both constructors that derive the sign now route through `_sign_for_sense`, which is the highest owning
 abstraction for this (AGENTS.md's rule for a cross-cutting defect): `MFGOperatorBase.__init__` carried the identical
 expression with `sense` first positional and `finite_diff_eps`, another number, next -- so
 `SeparableHamiltonian(cost, None, None, None, 0.5)` set the sense to 0.5. The review of #2345 found that sibling.
@@ -27,7 +27,7 @@ ControlCost constructor calls in the `*.py` tree (AST, not grep) exactly one pas
 that population -- 18 occurrences across 657 non-`*.py` files, covering 5 notebooks, the quickstart, two CI workflows
 and two JSON baselines, with 0 positional -- so the narrower fix costs nothing and the wider one would remove
 something that works. What validation does NOT close is the arity hole: a third enum member would still need a sign,
-which is why `sign_for_sense` raises on one instead of defaulting.
+which is why `_sign_for_sense` raises on one instead of defaulting.
 """
 
 from __future__ import annotations
@@ -106,8 +106,10 @@ def test_the_refusal_names_the_keyword_the_value_belonged_to(value, expected_key
 
     An earlier version suggested `{type(self).__name__}(lambda_=...)`, which is false for
     `_MoreauYosidaControlCost` -- its signature is `(base, epsilon)` and it takes no `lambda_`, so the refusal
-    recommended a call that raises (review of #2345). `np.float32` is here because `isinstance(sense, (int, float))`
-    sent every non-builtin number to the generic message, which is the wrong advice for a computed weight.
+    recommended a call that raises (review of #2345). `np.float32` is here because the earlier
+    `isinstance(sense, (int, float))` predicate sent it, `np.int64`, `Decimal` and `Fraction` to the generic message.
+    NOT `np.float64`, which is a `float` subclass and always took the helpful branch -- the set that moved is narrower
+    than "every non-builtin number", which is what an earlier version of this docstring claimed.
     """
     with pytest.raises(TypeError, match=rf"sense must be an OptimizationSense.*number.*{expected_keyword}=.*2341"):
         L1ControlCost(value)
