@@ -1,8 +1,8 @@
 {
   "_comment": "Kill counts per mutated convention. --check-baseline fails when a count DROPS (discrimination lost) and when one RISES (record the gain in the same change). Counts, not test names: this population cannot be selected by name -- the agreement-shaped patterns give 51, 114 or 156 depending on the regex.",
   "_measured_at": {
-    "collected": 4057,
-    "commit": "a70d9a06",
+    "collected": 4090,
+    "commit": "76f2d9e8",
     "excluded": "tests/unit/test_discrimination_ratchet.py",
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment and not manual",
     "paths": [
@@ -25,6 +25,11 @@
       "owner": "PreallocatedGhostBuffer.update_ghosts routes a uniform BC to the single-segment path and a mixed BC to the per-face path (#577 Phase 3 for the mixed rewrite, #1255 (C) for the alpha/beta forwarding the uniform branch carries). The two paths are NOT equivalent: the uniform branch applies the inhomoge",
       "status": "ok"
     },
+    "constructed_preset_is_accepted_and_ignored": {
+      "kill_count": 10,
+      "owner": "the numerical Hamiltonian a solver is CONSTRUCTED with is the one every one of its paths evaluates -- `numerical_hamiltonian` is validated and stored in `HJBFDMSolver.__init__` and read at eight sites, including both 1-D Jacobian assemblies, the nD gradients and `build_advection_matrix` (#2313, user ruling of 2026-09-16); the presets differ only at a discrete local maximum along an axis, so an argument accepted and dropped is invisible on any smooth fixture, and the strict-adjoint FP coupling consumes the linearisation as A_fp = J^T (#707, #2338). This is the matrix's only mutation that drops a threaded ARGUMENT rather than altering arithmetic: the validation still raises on a bad preset, so the constructor looks like it honoured the request",
+      "status": "ok"
+    },
     "diffusion_field_2x": {
       "kill_count": 7,
       "owner": "D = sigma^2/2 elementwise for a volatility field (#811)",
@@ -36,17 +41,17 @@
       "status": "ok"
     },
     "drift_coefficient_2x": {
-      "kill_count": 29,
+      "kill_count": 37,
       "owner": "FP drift c = 1/control_cost (#1420 / G-017)",
       "status": "ok"
     },
     "engquist_osher_derivative_drops_the_forward_branch": {
-      "kill_count": 54,
+      "kill_count": 58,
       "owner": "`upwind_momentum_derivatives` is the one owner of d(p)/d(backward) and d(p)/d(forward); for `engquist_osher` both are nonzero at a local maximum, and the analytic HJB Jacobian, the nD linearised operator and the strict-adjoint operator all read them, so the Jacobian is the residual's own derivative (#2313)",
       "status": "ok"
     },
     "engquist_osher_magnitude_is_the_larger_branch": {
-      "kill_count": 33,
+      "kill_count": 41,
       "owner": "the default `engquist_osher` preset of `upwind_momentum` evaluates H at sqrt(a+^2 + b-^2) per axis (ACD's Example 1), which at a discrete local maximum sums both one-sided differences; that sum is what makes its linearisation the transpose of the FDM FP divergence_upwind operator (#2313). Taking the larger branch instead is Rouy-Tourin, which leaves the transpose defect at maxima",
       "status": "ok"
     },
@@ -76,7 +81,7 @@
       "status": "ok"
     },
     "hjb_marches_forward_in_time": {
-      "kill_count": 25,
+      "kill_count": 27,
       "owner": "The HJB marches BACKWARD in time, from the terminal row down to t=0, while the FP marches forward -- the adjoint pairing. Single site: base_hjb.py:1780, the only time loop in solve_hjb_system_backward. The M-indexing that rides on it is documented in the same loop body at base_hjb.py:1790: \"# BUG #7",
       "status": "ok"
     },
@@ -96,7 +101,7 @@
       "status": "ok"
     },
     "optimal_control_sign": {
-      "kill_count": 41,
+      "kill_count": 42,
       "owner": "QuadraticControlCost alpha* = -sign*p/lambda (#1649)",
       "status": "ok"
     },
@@ -106,12 +111,12 @@
       "status": "ok"
     },
     "periodic_endpoint_convention_inverted": {
-      "kill_count": 23,
+      "kill_count": 24,
       "owner": "where the last node sits, MEASURED from the coordinates the grid built (#1822). `_axis_convention` is the single owner: `periodic_convention` calls it (tensor_grid.py:415) and `_first_axis_with_convention` calls it (:385). The property docstring states why it is derived rather than asserted: \"Derive",
       "status": "ok"
     },
     "periodic_wrap_endpoint_inverted": {
-      "kill_count": 49,
+      "kill_count": 50,
       "owner": "how many trailing nodes of a periodic axis repeat a node the array already holds -- the ONE number both the ghost skip and the modular span derive from (#1822). types.py:126-130 states the ownership verbatim: \"Every periodic wrap in the package is one of two expressions of this single number, which ",
       "status": "ok"
     },
@@ -126,7 +131,7 @@
       "status": "ok"
     },
     "rouy_tourin_branch_swap": {
-      "kill_count": 33,
+      "kill_count": 35,
       "owner": "Rouy-Tourin upwind takes the clamped BACKWARD part max(backward, 0) where it dominates the clamped forward part min(forward, 0) in magnitude -- the `rouy_tourin` preset of `upwind_momentum`, the one owner of the HJB upwind momentum (#2308, #2313), consumed by the HJB residual and Jacobian when that preset is selected, by GradientOperator(scheme='upwind') and by PDE reinitialisation (of phi or -phi by sign(phi0), #2310); transport upwinds by the velocity instead since #2309",
       "status": "ok"
     },
@@ -136,7 +141,7 @@
       "status": "ok"
     },
     "upwind_minimum_takes_a_one_sided_difference": {
-      "kill_count": 29,
+      "kill_count": 31,
       "owner": "at a discrete local minimum (backward < 0 < forward) the upwind momentum is 0, the value of the min/max numerical Hamiltonian for an H even in each momentum component and nondecreasing in its magnitude; selecting on sign(central) returned the one-sided difference of smaller magnitude there, a non-monotone numerical Hamiltonian that Newton still converges on (#2308)",
       "status": "ok"
     }
