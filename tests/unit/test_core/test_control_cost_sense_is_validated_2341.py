@@ -107,9 +107,11 @@ def test_the_refusal_names_the_keyword_the_value_belonged_to(value, expected_key
     An earlier version suggested `{type(self).__name__}(lambda_=...)`, which is false for
     `_MoreauYosidaControlCost` -- its signature is `(base, epsilon)` and it takes no `lambda_`, so the refusal
     recommended a call that raises (review of #2345). `np.float32` is here because the earlier
-    `isinstance(sense, (int, float))` predicate sent it, `np.int64`, `Decimal` and `Fraction` to the generic message.
-    NOT `np.float64`, which is a `float` subclass and always took the helpful branch -- the set that moved is narrower
-    than "every non-builtin number", which is what an earlier version of this docstring claimed.
+    `isinstance(sense, (int, float))` predicate sent it to the generic message, along with `Fraction` and every numpy
+    integer width and non-`float64` float width. NOT `np.float64`, which is a `float` subclass and took the helpful
+    branch under both predicates; and NOT `Decimal`, which was generic before and is generic now, so it is the one
+    thing in reach of this sentence that the fix did not move. Stated as a shape rather than a list because the count
+    is a function of how many numpy widths one enumerates -- mine gave 8, the reviewer's wider sweep 12.
     """
     with pytest.raises(TypeError, match=rf"sense must be an OptimizationSense.*number.*{expected_keyword}=.*2341"):
         L1ControlCost(value)
