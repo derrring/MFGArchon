@@ -7,25 +7,41 @@ derivation reads anything that is not MINIMIZE as MAXIMIZE:
 
 At `65bcf659` that made `L1ControlCost(1e-12)` a cost with `sense=1e-12`, `sign=-1` and `lambda` left at its 1.0
 default. Nothing raised, `evaluate` returned finite values, and `optimal_control` returned the opposite sign, so the
-caller got a plausible Hamiltonian with an inverted control. The library's own docstring taught the shape
-(`SeparableHamiltonian(control_cost=QuadraticControlCost(1.0))` at `hamiltonian.py:1386`), and doctests do not run in
-the gate, so nothing had ever executed it.
+caller got a plausible Hamiltonian with an inverted control. The library's own docstring taught the shape -- `SeparableHamiltonian(control_cost=QuadraticControlCost(1.0))`, in
+`MFGProblem`'s Hamiltonian example -- and doctests do not run in the gate, so nothing had ever executed it. (No line
+number here on purpose: the fix's own diff moved that docstring, and the review of #2345 found both citations already
+stale in the commit that wrote them.)
 
 Oracle: the enum. There are exactly two valid senses and the sign is a function of which one, so a `sense` outside the
 enum has no defined sign -- the old code did not fail to compute it, it computed the MAXIMIZE one.
 
+Both constructors that derive the sign now route through `sign_for_sense`, which is the highest owning
+abstraction for this (AGENTS.md's rule for a cross-cutting defect): `MFGOperatorBase.__init__` carried the identical
+expression with `sense` first positional and `finite_diff_eps`, another number, next -- so
+`SeparableHamiltonian(cost, None, None, None, 0.5)` set the sense to 0.5. The review of #2345 found that sibling.
+
 Scope: validation, not a signature change. Making `sense` keyword-only would also close this, and would additionally
 refuse `L1ControlCost(OptimizationSense.MAXIMIZE, 0.5)`, which is a legal call that means what it says. Of 370
-ControlCost constructor calls in the tree (AST, not grep) exactly one passes a positional argument, and it is
-`_MoreauYosidaControlCost(base, epsilon)`, whose signature is its own -- so the narrower fix costs nothing and the
-wider one would remove something that works.
+ControlCost constructor calls in the `*.py` tree (AST, not grep) exactly one passes a positional argument, and it is
+`_MoreauYosidaControlCost(base, epsilon)`, whose signature is its own. The review of #2345 extended the census past
+that population -- 18 occurrences across 657 non-`*.py` files, covering 5 notebooks, the quickstart, two CI workflows
+and two JSON baselines, with 0 positional -- so the narrower fix costs nothing and the wider one would remove
+something that works. What validation does NOT close is the arity hole: a third enum member would still need a sign,
+which is why `sign_for_sense` raises on one instead of defaulting.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from mfgarchon.core.hamiltonian import L1ControlCost, OptimizationSense, QuadraticControlCost
+import numpy as np
+
+from mfgarchon.core.hamiltonian import (
+    L1ControlCost,
+    OptimizationSense,
+    QuadraticControlCost,
+    SeparableHamiltonian,
+)
 
 
 @pytest.mark.parametrize("cost_class", [QuadraticControlCost, L1ControlCost])
@@ -71,3 +87,56 @@ def test_regularize_carries_the_base_sense_through():
         regularized = L1ControlCost(sense=sense, lambda_=0.5).regularize(0.1)
         assert regularized.sense is sense
         assert regularized.sign == expected_sign
+
+
+@pytest.mark.parametrize(
+    ("value", "expected_keyword"),
+    [(1e-12, "lambda_"), (np.float32(0.5), "lambda_")],
+)
+def test_the_refusal_names_the_keyword_the_value_belonged_to(value, expected_keyword):
+    """The hint has to be the keyword of the class that refused, and it must not be built as a callable suggestion.
+
+    An earlier version suggested `{type(self).__name__}(lambda_=...)`, which is false for
+    `_MoreauYosidaControlCost` -- its signature is `(base, epsilon)` and it takes no `lambda_`, so the refusal
+    recommended a call that raises (review of #2345). `np.float32` is here because `isinstance(sense, (int, float))`
+    sent every non-builtin number to the generic message, which is the wrong advice for a computed weight.
+    """
+    with pytest.raises(TypeError, match=rf"sense must be an OptimizationSense.*number.*{expected_keyword}=.*2341"):
+        L1ControlCost(value)
+
+
+def test_the_operator_hierarchy_refuses_the_same_way_and_names_its_own_keyword():
+    """`MFGOperatorBase` held the identical derivation, and `sense` is first positional there too (#2341).
+
+    Its next parameter is `finite_diff_eps`, so the same slip lands the same way: at 09eaaa28
+    `SeparableHamiltonian(cost, None, None, None, 0.5)` gave `sense=0.5` and `sense_sign=-1.0` with nothing raised.
+    The keyword in the message is that class's own, not the cost hierarchy's.
+    """
+    cost = QuadraticControlCost(lambda_=1.0)
+    with pytest.raises(TypeError, match=r"SeparableHamiltonian.*sense must be an OptimizationSense.*finite_diff_eps="):
+        SeparableHamiltonian(cost, None, None, None, 0.5)
+
+
+def test_a_bool_is_refused_by_the_generic_branch_and_not_offered_as_a_weight():
+    """`True` is an `int` subclass, and the number branch is deliberately closed to it.
+
+    If it were open, the refusal would advise `lambda_=True` -- and that call SUCCEEDS, storing `True` as a numeric
+    weight, because the `lambda_ <= 0` guard accepts a bool. So the helpful message would hand the caller a second
+    silent type confusion. The generic message is the right one here, and this pins the routing rather than the
+    wording (review of #2345 found the exclusion unpinned).
+    """
+    with pytest.raises(TypeError, match=r"got True of type bool.*Valid values"):
+        L1ControlCost(True)
+
+
+def test_both_senses_keep_their_own_optimal_control():
+    """The consequence the refusal exists to prevent, stated as the invariant it protects.
+
+    At 09eaaa28 the broken construction returned MAXIMIZE's control bit-identically: on p = [-1, 2],
+    `QuadraticControlCost(1.0)` gave [-1, 2] where the intended MINIMIZE call gives [1, -2] (#1642's convention).
+    """
+    p = np.array([-1.0, 2.0])
+    minimise = QuadraticControlCost(lambda_=1.0).optimal_control(p)
+    maximise = QuadraticControlCost(sense=OptimizationSense.MAXIMIZE, lambda_=1.0).optimal_control(p)
+    np.testing.assert_allclose(minimise, [1.0, -2.0])
+    np.testing.assert_allclose(maximise, -np.asarray(minimise))
