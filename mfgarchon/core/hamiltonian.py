@@ -59,6 +59,7 @@ For general cases, numerical Legendre transform is available.
 
 from __future__ import annotations
 
+import numbers
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
@@ -111,6 +112,64 @@ def _central_difference(f_plus: NDArray | float, f_minus: NDArray | float, eps: 
     return (f_plus - f_minus) / (2 * eps)
 
 
+def _sign_for_sense(sense: OptimizationSense, owner: str, weight_keyword: str) -> int:
+    """The orientation of the MINIMIZE<->MAXIMIZE mirror, and the only place a `sense` is admitted (#2341).
+
+    ``+1`` for MINIMIZE (cost-to-go, agents move downhill on U), ``-1`` for MAXIMIZE (reward-to-go, uphill). The
+    convention is to write a sense-dependent piece as ``sign * (MINIMIZE form)``; `MFGOperatorBase.sense_sign` is the
+    public reading of it.
+
+    Two copies of ``1 if sense == OptimizationSense.MINIMIZE else -1`` stood here, in `ControlCostBase.__init__` and
+    `MFGOperatorBase.__init__`, and both read anything that is not MINIMIZE as MAXIMIZE. In both classes ``sense`` is
+    the FIRST positional parameter and the next one is a number -- ``lambda_``'s alias in one, ``finite_diff_eps`` in
+    the other -- so a weight passed positionally became the sense and flipped the convention in silence. Measured at
+    65bcf659: `L1ControlCost(1e-12)` gave ``sense=1e-12``, ``sign=-1`` and ``lambda_`` left at its 1.0 default, and
+    `optimal_control` returned MAXIMIZE's values bit-identically. AGENTS.md asks for the highest owning abstraction,
+    which is this function rather than either constructor.
+
+    Args:
+        sense: The claimed optimisation sense.
+        owner: Class name, for the message; never used to build a suggested call, since not every owner takes the
+            same keywords (`_MoreauYosidaControlCost` accepts no ``lambda_``).
+        weight_keyword: The keyword the positional value most likely belonged to, named in the refusal.
+
+    Returns:
+        ``+1`` or ``-1``.
+
+    Raises:
+        TypeError: If ``sense`` is not an `OptimizationSense`.
+        NotImplementedError: If it is an `OptimizationSense` with no sign convention. Reachable today, not merely
+            a guard against a future member: `object.__new__(OptimizationSense)` satisfies isinstance and is neither
+            member, and the test suite uses exactly that to pin this branch. The old expression handed such a value
+            MAXIMIZE's sign in silence, at both sites.
+    """
+    if not isinstance(sense, OptimizationSense):
+        if isinstance(sense, numbers.Real) and not isinstance(sense, bool):
+            raise TypeError(
+                f"{owner}: sense must be an OptimizationSense, got the number {sense!r}. If you meant "
+                f"{weight_keyword}, pass it by name: {weight_keyword}={sense!r}. Positionally it set the "
+                f"optimisation sense instead, which flips the control's sign (#2341)."
+            )
+        raise TypeError(
+            f"{owner}: sense must be an OptimizationSense, got {sense!r} of type {type(sense).__name__}. Valid "
+            f"values: OptimizationSense.MINIMIZE, OptimizationSense.MAXIMIZE (#2341)."
+        )
+    if sense is OptimizationSense.MINIMIZE:
+        return 1
+    if sense is OptimizationSense.MAXIMIZE:
+        return -1
+    # Neither `.name` nor `repr(sense)`: an instance produced by `object.__new__(OptimizationSense)` satisfies
+    # isinstance and carries no `_name_`, and BOTH the `name` property and `Enum.__repr__` read it -- so the first
+    # attempt at this message raised AttributeError from inside its own diagnostic, and the second raised it from
+    # the eagerly-evaluated `getattr` default. That construction is also what proves this branch is reachable at
+    # all (review of #2345, round 2).
+    described = getattr(sense, "_name_", None) or f"an unnamed {type(sense).__name__} instance"
+    raise NotImplementedError(
+        f"{owner}: no sign convention is defined for {described} (#2341). Give it one here, in the one place the "
+        f"mirror is decided."
+    )
+
+
 class ControlCostBase(ABC):
     """
     Kinetic/control cost component for MFG Hamiltonians.
@@ -157,10 +216,11 @@ class ControlCostBase(ABC):
         if lam <= 0:
             raise ValueError(f"lambda_ must be positive, got {lam}")
 
+        # Issue #2341: one owner validates the sense and derives the sign; `lambda_` is the keyword a positional
+        # number most likely belonged to here.
+        self.sign = _sign_for_sense(sense, type(self).__name__, "lambda_")
         self.sense = sense
         self._lambda = lam
-        # Sign convention: MINIMIZE -> alpha = -dH/dp, MAXIMIZE -> alpha = +dH/dp
-        self.sign = 1 if sense == OptimizationSense.MINIMIZE else -1
         # Issue #1068: explicit None-init avoids hasattr() in regularize().
         # Subclasses (_MoreauYosidaControlCost) override this with the original base.
         self.base: ControlCostBase | None = None
@@ -844,11 +904,12 @@ class MFGOperatorBase(ABC):
         finite_diff_eps: float = 1e-6,
         population_index: int = 0,
     ):
+        # Issue #2341: the same owner as `ControlCostBase`. `sense` is first positional here too, and the next
+        # parameter is `finite_diff_eps`, another number -- so the same positional slip lands the same way.
+        self._sign = _sign_for_sense(sense, type(self).__name__, "finite_diff_eps")
         self.sense = sense
         self.finite_diff_eps = finite_diff_eps
         self.population_index = population_index
-        # Sign convention: MINIMIZE -> α = -∂H/∂p, MAXIMIZE -> α = +∂H/∂p
-        self._sign = 1 if sense == OptimizationSense.MINIMIZE else -1
 
     @property
     def sense_sign(self) -> float:
@@ -1383,7 +1444,7 @@ class HamiltonianBase(MFGOperatorBase):
 
         Example
         -------
-        >>> H = SeparableHamiltonian(control_cost=QuadraticControlCost(1.0))
+        >>> H = SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0))
         >>> jac = H.jacobian_fd(x, m, p, dx=0.01, scheme="central")
         >>> # Use in Newton iteration:
         >>> A_diag = diffusion_diag + jac.diagonal

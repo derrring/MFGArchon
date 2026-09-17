@@ -671,7 +671,7 @@ def test_integrated_howard_rejects_congestion_hamiltonian():
     unit-quadratic (1/2)|alpha|^2 Lagrangian -> fail loud.
 
     The congestion factor lives in `_congestion_factor`, OUTSIDE control_cost: here the control
-    cost is a plain unit-quadratic QuadraticControlCost(1.0) (lambda=1, MINIMIZE) and the
+    cost is a plain unit-quadratic QuadraticControlCost(lambda_=1.0) (lambda=1, MINIMIZE) and the
     additive V/f(m) slots are None, so this Hamiltonian passes EVERY prior gate
     (control-cost/sense and the V/f(m) wiring). Without the dedicated congestion gate, Howard
     would hardcode H = |p|^2/(2*lambda*c(m)) as (1/2)|alpha|^2 and silently solve the wrong
