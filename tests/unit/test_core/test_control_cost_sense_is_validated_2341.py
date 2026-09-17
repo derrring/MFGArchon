@@ -46,8 +46,16 @@ from mfgarchon.core.hamiltonian import (
 
 @pytest.mark.parametrize("cost_class", [QuadraticControlCost, L1ControlCost])
 def test_a_number_as_sense_is_refused_and_the_message_names_the_keyword(cost_class):
-    """The failure this issue is about, and the message has to carry the fix: the caller wanted `lambda_`."""
-    with pytest.raises(TypeError, match=r"sense must be an OptimizationSense.*number 1e-12.*lambda_=1e-12.*2341"):
+    """The failure this issue is about, and the message has to carry the fix: the caller wanted `lambda_`.
+
+    The class name is in the pattern because without it the parametrization bought nothing: hardcoding the owner to
+    `"ControlCostBase"` at the call site passed every test in this file, so every cost class could have named the
+    wrong class in its own refusal (review of #2345, round 2).
+    """
+    with pytest.raises(
+        TypeError,
+        match=rf"{cost_class.__name__}: sense must be an OptimizationSense.*number 1e-12.*lambda_=1e-12.*2341",
+    ):
         cost_class(1e-12)
 
 
@@ -140,3 +148,43 @@ def test_both_senses_keep_their_own_optimal_control():
     maximise = QuadraticControlCost(sense=OptimizationSense.MAXIMIZE, lambda_=1.0).optimal_control(p)
     np.testing.assert_allclose(minimise, [1.0, -2.0])
     np.testing.assert_allclose(maximise, -np.asarray(minimise))
+
+
+def _sense_with_no_convention() -> OptimizationSense:
+    """An `OptimizationSense` that is neither member, which is how the third-member branch is reachable today.
+
+    `object.__new__` bypasses `EnumMeta.__call__`, so this satisfies `isinstance(x, OptimizationSense)` while
+    `x not in list(OptimizationSense)`. Subclassing is not an alternative -- Python refuses to extend an enum that
+    has members. `_name_` is set here because the branch's own message reads it; the case where it is absent is the
+    second assertion below, and it was a real defect: `.name` raised AttributeError and the refusal died on its own
+    edge case (review of #2345, round 2).
+    """
+    sense = object.__new__(OptimizationSense)
+    sense._name_ = "SADDLE"
+    sense._value_ = "saddle"
+    return sense
+
+
+def test_a_sense_with_no_sign_convention_is_refused_rather_than_given_maximize_s():
+    """The arity hole, which validation alone does not close (#2341).
+
+    At `13cc92ee` both sites returned -1 for such a value -- MAXIMIZE's sign, silently, because the derivation was
+    `1 if sense == MINIMIZE else -1`. I had declared this branch unreachable and therefore unpinnable; the review of
+    #2345 showed the construction above reaches it through both constructors, so it is pinned rather than disclosed.
+    """
+    saddle = _sense_with_no_convention()
+    with pytest.raises(NotImplementedError, match=r"L1ControlCost: no sign convention is defined for SADDLE.*2341"):
+        L1ControlCost(saddle)
+    with pytest.raises(NotImplementedError, match=r"SeparableHamiltonian: no sign convention is defined for SADDLE"):
+        SeparableHamiltonian(QuadraticControlCost(lambda_=1.0), sense=saddle)
+
+
+def test_the_refusal_survives_a_sense_that_cannot_even_be_named():
+    """The message interpolated `sense.name`, which does not exist on an instance built by `object.__new__`.
+
+    So the branch raised `AttributeError` from inside its own diagnostic instead of the refusal it exists to deliver
+    -- the verdict was red either way, which is exactly why it needs its own assertion rather than a count.
+    """
+    nameless = object.__new__(OptimizationSense)
+    with pytest.raises(NotImplementedError, match=r"no sign convention is defined for.*2341"):
+        L1ControlCost(nameless)

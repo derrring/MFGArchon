@@ -112,7 +112,7 @@ def _central_difference(f_plus: NDArray | float, f_minus: NDArray | float, eps: 
     return (f_plus - f_minus) / (2 * eps)
 
 
-def sign_for_sense(sense: OptimizationSense, owner: str, weight_keyword: str) -> int:
+def _sign_for_sense(sense: OptimizationSense, owner: str, weight_keyword: str) -> int:
     """The orientation of the MINIMIZE<->MAXIMIZE mirror, and the only place a `sense` is admitted (#2341).
 
     ``+1`` for MINIMIZE (cost-to-go, agents move downhill on U), ``-1`` for MAXIMIZE (reward-to-go, uphill). Every
@@ -137,9 +137,10 @@ def sign_for_sense(sense: OptimizationSense, owner: str, weight_keyword: str) ->
 
     Raises:
         TypeError: If ``sense`` is not an `OptimizationSense`.
-        NotImplementedError: If it is a member with no sign convention, which is unreachable while the enum has two
-            members and is the point: the old expression handed a third member MAXIMIZE's sign silently, and a
-            third member is a decision rather than a default.
+        NotImplementedError: If it is an `OptimizationSense` with no sign convention. Reachable today, not merely
+            a guard against a future member: `object.__new__(OptimizationSense)` satisfies isinstance and is neither
+            member, and the test suite uses exactly that to pin this branch. The old expression handed such a value
+            MAXIMIZE's sign in silence, at both sites.
     """
     if not isinstance(sense, OptimizationSense):
         if isinstance(sense, numbers.Real) and not isinstance(sense, bool):
@@ -156,9 +157,15 @@ def sign_for_sense(sense: OptimizationSense, owner: str, weight_keyword: str) ->
         return 1
     if sense is OptimizationSense.MAXIMIZE:
         return -1
+    # Neither `.name` nor `repr(sense)`: an instance produced by `object.__new__(OptimizationSense)` satisfies
+    # isinstance and carries no `_name_`, and BOTH the `name` property and `Enum.__repr__` read it -- so the first
+    # attempt at this message raised AttributeError from inside its own diagnostic, and the second raised it from
+    # the eagerly-evaluated `getattr` default. That construction is also what proves this branch is reachable at
+    # all (review of #2345, round 2).
+    described = getattr(sense, "_name_", None) or f"an unnamed {type(sense).__name__} instance"
     raise NotImplementedError(
-        f"{owner}: no sign convention is defined for OptimizationSense.{sense.name} (#2341). Give it one here, in "
-        f"the one place the mirror is decided."
+        f"{owner}: no sign convention is defined for {described} (#2341). Give it one here, in the one place the "
+        f"mirror is decided."
     )
 
 
@@ -210,7 +217,7 @@ class ControlCostBase(ABC):
 
         # Issue #2341: one owner validates the sense and derives the sign; `lambda_` is the keyword a positional
         # number most likely belonged to here.
-        self.sign = sign_for_sense(sense, type(self).__name__, "lambda_")
+        self.sign = _sign_for_sense(sense, type(self).__name__, "lambda_")
         self.sense = sense
         self._lambda = lam
         # Issue #1068: explicit None-init avoids hasattr() in regularize().
@@ -898,7 +905,7 @@ class MFGOperatorBase(ABC):
     ):
         # Issue #2341: the same owner as `ControlCostBase`. `sense` is first positional here too, and the next
         # parameter is `finite_diff_eps`, another number -- so the same positional slip lands the same way.
-        self._sign = sign_for_sense(sense, type(self).__name__, "finite_diff_eps")
+        self._sign = _sign_for_sense(sense, type(self).__name__, "finite_diff_eps")
         self.sense = sense
         self.finite_diff_eps = finite_diff_eps
         self.population_index = population_index
