@@ -279,11 +279,11 @@ MUTATIONS: list[Mutation] = [
         verify="float(gradient_upwind(np.array([0.0, 1.0, 3.0]), axis=0, h=1.0)[1]) == 0.0",
     ),
     Mutation(
-        name="linearised_operator_ignores_its_preset",
+        name="constructed_preset_is_accepted_and_ignored",
         path="mfgarchon/alg/numerical/hjb_solvers/hjb_fdm.py",
-        old="        precomputed_grad = upwind_momentum(backward, forward, self.numerical_hamiltonian)",
-        new='        precomputed_grad = upwind_momentum(backward, forward, "engquist_osher")  # MUTATED: preset dropped',
-        owner="the numerical Hamiltonian a solver was CONSTRUCTED with is the one its linearisation evaluates -- `numerical_hamiltonian` threaded from `HJBFDMSolver.__init__` through `_build_linearized_operator_1d` to the one owner, `upwind_momentum` (#2313, user ruling of 2026-09-16); the presets differ only at a discrete local maximum along an axis, so a dropped argument is invisible on a smooth fixture, and the strict-adjoint FP coupling consumes this operator as A_fp = J^T (#707, #2338)",
+        old="        self.numerical_hamiltonian: NumericalHamiltonian = numerical_hamiltonian",
+        new='        self.numerical_hamiltonian: NumericalHamiltonian = "engquist_osher"  # MUTATED: argument ignored',
+        owner="the numerical Hamiltonian a solver is CONSTRUCTED with is the one every one of its paths evaluates -- `numerical_hamiltonian` is validated and stored in `HJBFDMSolver.__init__` and read at eight sites, including both 1-D Jacobian assemblies, the nD gradients and `build_advection_matrix` (#2313, user ruling of 2026-09-16); the presets differ only at a discrete local maximum along an axis, so an argument accepted and dropped is invisible on any smooth fixture, and the strict-adjoint FP coupling consumes the linearisation as A_fp = J^T (#707, #2338). This is the matrix's only mutation that drops a threaded ARGUMENT rather than altering arithmetic: the validation still raises on a bad preset, so the constructor looks like it honoured the request",
         verify='float(np.abs(_linearised_1d("rouy_tourin") - _linearised_1d("engquist_osher")).max()) == 0.0',
     ),
     Mutation(
