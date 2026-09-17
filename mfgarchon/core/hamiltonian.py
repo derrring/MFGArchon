@@ -157,6 +157,22 @@ class ControlCostBase(ABC):
         if lam <= 0:
             raise ValueError(f"lambda_ must be positive, got {lam}")
 
+        # Issue #2341: `sense` is the FIRST positional parameter, so a value meant for the control-cost weight
+        # lands here, and the sign derivation below reads anything that is not MINIMIZE as MAXIMIZE. That made
+        # `L1ControlCost(1e-12)` a silently sign-flipped cost with lambda left at its 1.0 default: nothing raised,
+        # `evaluate` still returned finite values, and `optimal_control` returned the opposite sign.
+        if not isinstance(sense, OptimizationSense):
+            if isinstance(sense, (int, float)) and not isinstance(sense, bool):
+                raise TypeError(
+                    f"sense must be an OptimizationSense, got the number {sense!r}. If you meant the control-cost "
+                    f"weight, it is a keyword: {type(self).__name__}(lambda_={sense!r}). Passing it positionally "
+                    f"set the optimisation sense instead and flipped the control's sign (#2341)."
+                )
+            raise TypeError(
+                f"sense must be an OptimizationSense, got {sense!r} of type {type(sense).__name__}. Valid values: "
+                f"OptimizationSense.MINIMIZE, OptimizationSense.MAXIMIZE (#2341)."
+            )
+
         self.sense = sense
         self._lambda = lam
         # Sign convention: MINIMIZE -> alpha = -dH/dp, MAXIMIZE -> alpha = +dH/dp
@@ -1383,7 +1399,7 @@ class HamiltonianBase(MFGOperatorBase):
 
         Example
         -------
-        >>> H = SeparableHamiltonian(control_cost=QuadraticControlCost(1.0))
+        >>> H = SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0))
         >>> jac = H.jacobian_fd(x, m, p, dx=0.01, scheme="central")
         >>> # Use in Newton iteration:
         >>> A_diag = diffusion_diag + jac.diagonal

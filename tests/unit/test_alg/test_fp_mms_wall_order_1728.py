@@ -137,7 +137,7 @@ def _zero_flux_pair(grid: TensorProductGrid, phi: np.ndarray, diffusion: float):
     """Return (m*, U) for the zero-flux pair of a potential phi given on the flat point list.
 
     m* = Z^-1 exp(-phi/D) and U = phi, since the solver forms alpha = -c grad(U) with c = 1 for
-    QuadraticControlCost(1.0) and the pair needs b* = -grad(phi). The potential channel is used
+    QuadraticControlCost(lambda_=1.0) and the pair needs b* = -grad(phi). The potential channel is used
     rather than the velocity channel because only the interface-velocity schemes read the latter
     (#1632).
     """
