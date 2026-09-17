@@ -279,6 +279,14 @@ MUTATIONS: list[Mutation] = [
         verify="float(gradient_upwind(np.array([0.0, 1.0, 3.0]), axis=0, h=1.0)[1]) == 0.0",
     ),
     Mutation(
+        name="constructed_preset_is_accepted_and_ignored",
+        path="mfgarchon/alg/numerical/hjb_solvers/hjb_fdm.py",
+        old="        self.numerical_hamiltonian: NumericalHamiltonian = numerical_hamiltonian",
+        new='        self.numerical_hamiltonian: NumericalHamiltonian = "engquist_osher"  # MUTATED: argument ignored',
+        owner="the numerical Hamiltonian a solver is CONSTRUCTED with is the one every one of its paths evaluates -- `numerical_hamiltonian` is validated and stored in `HJBFDMSolver.__init__` and read at eight further sites: the refusal check, `solve_hjb_system`, `_compute_gradients_nd`, `_build_advection_matrix_1d`, and twice each in `_build_linearized_operator_1d` and `_build_linearized_operator_nd`, which read the momentum and its derivatives separately (#2313, user ruling of 2026-09-16); the presets differ only at a discrete local maximum along an axis, so an argument accepted and dropped is invisible on any smooth fixture, and the strict-adjoint FP coupling consumes the linearisation as A_fp = J^T (#707, #2338). It drops a threaded ARGUMENT rather than altering arithmetic, and the validation still raises on a bad preset, so the constructor looks like it honoured the request. Not the first of that shape in this matrix: `ghost_spacing_ignored` (#1904) has a constructor accept `spacing`, validate its length, and store `None` -- the precedent is the reason the class is worth a row. What is new here is that the replacement is another VALID value rather than a sentinel: an `engquist_osher` solver works, it is simply not the one asked for. It drops the preset at all eight sites at once -- the union over single-site mutations is 4 distinct tests, so six of the ten killers fire only on a total drop",
+        verify='float(np.abs(_linearised_1d("rouy_tourin") - _linearised_1d("engquist_osher")).max()) == 0.0',
+    ),
+    Mutation(
         name="upwind_minimum_takes_a_one_sided_difference",
         path="mfgarchon/operators/stencils/finite_difference.py",
         old="        return xp.where(backward_branch, backward_part, forward_part)",
@@ -570,6 +578,25 @@ from mfgarchon.geometry.boundary import periodic_bc   # _VERIFY_PRELUDE line 301
 from mfgarchon.geometry.boundary.types import PeriodicGridConvention
 from mfgarchon.operators.differential.advection import AdvectionOperator
 from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
+from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+
+
+def _linearised_1d(preset):
+    # The 1-D linearised HJB operator at a state with an interior local maximum, under one preset (#2342).
+    # A maximum is the only place the two presets differ, so a fixture without one cannot witness the threading.
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[9], boundary_conditions=neumann_bc(dimension=1))
+    problem = MFGProblem(
+        geometry=grid, Nt=4, T=1.0, sigma=0.0,
+        components=MFGComponents(
+            m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0,
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(lambda_=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
+            ),
+        ),
+    )
+    u = np.cos(4 * np.pi * np.asarray(grid.coordinates[0]))
+    operator = HJBFDMSolver(problem, numerical_hamiltonian=preset).build_linearized_operator(u, np.ones(9))
+    return np.asarray(operator.todense())
 from mfgarchon.operators.stencils.finite_difference import gradient_upwind, upwind_momentum, upwind_momentum_derivatives
 from mfgarchon.types import NumericalScheme
 
