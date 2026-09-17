@@ -115,8 +115,9 @@ def _central_difference(f_plus: NDArray | float, f_minus: NDArray | float, eps: 
 def _sign_for_sense(sense: OptimizationSense, owner: str, weight_keyword: str) -> int:
     """The orientation of the MINIMIZE<->MAXIMIZE mirror, and the only place a `sense` is admitted (#2341).
 
-    ``+1`` for MINIMIZE (cost-to-go, agents move downhill on U), ``-1`` for MAXIMIZE (reward-to-go, uphill). Every
-    sense-dependent piece in this module is ``sign * (MINIMIZE form)``.
+    ``+1`` for MINIMIZE (cost-to-go, agents move downhill on U), ``-1`` for MAXIMIZE (reward-to-go, uphill). The
+    convention is to write a sense-dependent piece as ``sign * (MINIMIZE form)``; `MFGOperatorBase.sense_sign` is the
+    public reading of it.
 
     Two copies of ``1 if sense == OptimizationSense.MINIMIZE else -1`` stood here, in `ControlCostBase.__init__` and
     `MFGOperatorBase.__init__`, and both read anything that is not MINIMIZE as MAXIMIZE. In both classes ``sense`` is
