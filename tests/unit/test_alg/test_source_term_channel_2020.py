@@ -449,7 +449,7 @@ def test_every_concrete_solver_is_covered_or_named():
     population = set(_solver_classes())
     covered = {c[0] for c in _CASES}
 
-    # The informative assertion FIRST. `len(population) == 22` fires on the commonest real event --
+    # The informative assertion FIRST. The population assertion below fires on the commonest real event --
     # someone adds a solver -- and its message is a bare count, which blames the wrong thing.
     unaccounted = population - covered - set(_UNCOVERED)
     assert unaccounted == set(), (

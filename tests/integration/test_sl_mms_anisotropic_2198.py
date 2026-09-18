@@ -30,7 +30,7 @@ WHAT IT CANNOT SEE
 - **The three other SL variants.** ``canonical_cs``, the L-based DPP path and
   ``stochastic`` replace the splitting path rather than adding to it, so they refuse
   ``source_term`` and are unmeasured. Their order on ANY manufactured problem is still unknown.
-- **The FP side.** ``FPSLAdjointSolver`` also carries the ADI cross-derivative and also does not
+- **The FP side.** ``FPSLSolver`` also carries the ADI cross-derivative and also does not
   thread ``source_term``; #2198 asks for both and this fixture delivers the HJB half only.
 - **A coupled system.** ``m`` is constant here, so this measures the HJB scheme, not the coupling.
 

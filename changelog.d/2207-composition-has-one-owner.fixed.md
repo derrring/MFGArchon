@@ -9,8 +9,8 @@ parameters — the omission is no longer expressible — and `FixedPointIterator
 delegates are deleted rather than left beside the new owner. (#2207)
 
 Consequence, and it is a behaviour change beyond the two loops: pairing either of those loops with
-an FP or HJB solver that does not accept `source_term` — six of the eleven concrete `BaseFPSolver`
-subclasses (`FPGFDMSolver`, `FPNetworkSolver`, `FPParticleSolver`, `FPSLSolver`, `FPSLAdjointSolver`,
+an FP or HJB solver that does not accept `source_term` — five of the ten concrete `BaseFPSolver`
+subclasses (`FPGFDMSolver`, `FPNetworkSolver`, `FPParticleSolver`, `FPSLSolver`,
 `FPSLJacobianSolver`), plus two of the ten concrete `BaseHJBSolver` subclasses (`NetworkHJBSolver`,
 `NetworkPolicyIterationHJBSolver`) and `HJBHowardSolver`, which is not a `BaseHJBSolver` subclass at
 all and so is missed by a subclass sweep — all measured by signature introspection — and a problem

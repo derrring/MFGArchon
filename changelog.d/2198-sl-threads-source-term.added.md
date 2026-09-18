@@ -1,6 +1,6 @@
 `HJBSemiLagrangianSolver` now threads `source_term` through its operator-splitting path, making the
 HJB half of the Semi-Lagrangian family reachable by the method of manufactured solutions for the
-first time. The FP half is NOT: `FPSLAdjointSolver` still does not thread a source, so "the SL
+first time. The FP half is NOT: `FPSLSolver` still does not thread a source, so "the SL
 family is MMS-reachable" would be false as an unqualified claim. The
 forcing enters as a rate, multiplied by the sub-step and evaluated at that sub-step's own physical
 time with the same sign as `k = -u_t` — the convention `HJBWENOSolver` already documents, so one

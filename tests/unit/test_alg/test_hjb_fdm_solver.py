@@ -158,6 +158,9 @@ class TestRemovedSolveHJBSystemKwargs:
             "U_final_condition",
             "U_from_prev_picard",
             "bc_values",
+            # Removed in #2343 batch 1. Deleting `test_diagonal_tensor_mutual_exclusivity` left
+            # this parameter with no pin at all, and this class is the file's own idiom for one.
+            "tensor_volatility_field",
         ],
     )
     def test_removed_kwarg_raises_type_error(self, solver, kwarg):

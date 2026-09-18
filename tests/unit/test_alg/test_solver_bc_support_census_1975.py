@@ -193,6 +193,33 @@ def test_the_permissive_default_is_claimed_by_inheritance():
     assert all(getattr(cls, field) is True for cls, n in _population().items() if n[0] in inherited["BaseMFGSolver"])
 
 
+def test_no_solver_inherits_its_bc_declaration_from_a_sibling():
+    """The other half of what `FPSLAdjointSolver` was the only instance of.
+
+    That alias inherited TWO declarations from `FPSLSolver`: `honors_inhomogeneous_neumann`, which
+    the test above covers, and `_SUPPORTED_BC_TYPES`, which nothing covered. #2343 recorded the loss
+    for one field and not the other, so this closes it rather than leaving the pair half-pinned.
+
+    Inheriting a BC-TYPE declaration from a sibling is the sharper case of the two: the value is a
+    set of `BCType` members the parent chose for its own discretisation, and a subclass on a
+    different wall treatment silently claims that set. `BaseMFGSolver` is the only legitimate owner
+    a solver can inherit it from, and a non-base owner is a decision someone has to make on purpose.
+    """
+    field = "_SUPPORTED_BC_TYPES"
+    own, inherited = set(), {}
+    for cls, names in _population().items():
+        owner = next((k.__name__ for k in cls.__mro__ if field in k.__dict__), None)
+        if owner is None:
+            continue
+        (own.add(names[0]) if owner == names[0] else inherited.setdefault(owner, set()).add(names[0]))
+    assert own, "no solver declares its own supported BC types; the population walk is broken"
+    assert set(inherited) <= {"BaseMFGSolver"}, (
+        f"a solver inherits {field} from a non-base parent: "
+        f"{ {k: sorted(v) for k, v in inherited.items() if k != 'BaseMFGSolver'} }. Decide whether "
+        f"that parent's BC set is the claim this solver means to make, then pin it here"
+    )
+
+
 # The external oracle -- which wall is actually imposed
 # =============================================================================
 
