@@ -27,17 +27,28 @@ GATE = REPO / "scripts" / "local_ci.sh"
 
 
 def test_the_gate_greps_for_the_marker_at_the_point_of_consumption():
-    """The guard must exit through `cannot_run`, located by the grep INVOCATION rather than by text.
+    """Locate the guard by its grep INVOCATION and require it to reach `cannot_run` within 8 lines.
 
-    This used to split the file on the first occurrence of the marker's literal text and look 400 characters past
-    it. That had a false positive and a false negative, and #2349 hit the first: rewrapping the COMMENT above the
-    guard put the literal at the start of a continuation line, so the split landed on prose and the gate went red on
-    an edit that changed no logic. The false negative is the mirror -- the `MYPY_PROBE` heredoc later in the same
-    file prints the same literal, so reordering the two, or landing `cannot_run` within 400 characters of that one,
-    would let the guard be deleted with this test still green. (Named rather than cited by line: the first draft of
-    this docstring said `local_ci.sh:436` and the rewrap two paragraphs above moved it to 435 before it shipped.)
+    A LOCATOR, NOT THE ORACLE. `test_the_guard_actually_refuses` below plants a marker, runs the gate and
+    requires exit 2; that is what actually holds the property. This one reads the script's text, so it fails in
+    a second with a line number instead of after a full gate run -- and it is strictly weaker. Measured, three
+    ways to delete the guard while this test stays GREEN: put the invocation in a trailing comment on a code
+    line (`MUTATED_LEFTOVER=""  # was: grep -rn '# MUTATED' mfgarchon/`, then `if false`), point the grep at a
+    path that does not exist, or flip `[[ -n ]]` to `[[ -z ]]`. The behavioural test catches all three. An
+    earlier version of this docstring claimed "a comment cannot look like a grep invocation"; the filter only
+    rejects a comment that BEGINS a line, and the first counterexample above is what disproved it.
 
-    Locating the grep invocation instead is immune to both: a comment cannot look like `grep -rn '# MUTATED'`.
+    What it replaced, and why the replacement is not merely better: the old form split the file on the first
+    occurrence of the marker's literal text and looked 400 characters on. It had a false positive and a false
+    negative. #2349 hit the first -- rewrapping the COMMENT above the guard put the literal at the start of a
+    continuation line, so the split landed on prose and the gate went red on an edit that changed no logic. The
+    second is the mirror: the `MYPY_PROBE` heredoc later in the same file prints the same literal, so reordering
+    the two would let the guard be deleted with this test green.
+
+    The false positive is NARROWED, not removed. Moving the marker into a shell variable
+    (`MUT_MARKER='# MUTATED'; grep -rn "$MUT_MARKER" ...`) preserves the gate's behaviour and turns this test
+    red -- the same shape as the rewrap that started this. If that refactor is ever wanted, delete this test
+    rather than weaken it: the behavioural one is the property, and this is a fast locator for it.
     """
     lines = GATE.read_text().splitlines()
     guards = [

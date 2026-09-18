@@ -16,7 +16,9 @@ name: Weekly Test-Discrimination Sweep
 # The ratchet is per-mutation kill COUNTS, not test names. That is deliberate: this
 # population cannot be selected by name at all. `*_agree` / `*_matches` / `*_equals`
 # gives 51, 114 or 156 depending on the pattern, and 60% of the tests whose names
-# claim cross-path agreement notice none of the six.
+# claim cross-path agreement notice none of the conventions at all. ("none of the six"
+# until #2349: the alphabet had six entries in the 2026-07-27 read this file strikes as
+# superseded nine lines above, and the count is owned by `MUTATIONS`.)
 
 on:
   schedule:

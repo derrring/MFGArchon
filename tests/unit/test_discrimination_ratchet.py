@@ -212,6 +212,30 @@ def test_shipped_baseline_records_the_scope_it_was_measured_at(td):
     assert at["excluded"] == td.SELF_TESTS
 
 
+def test_each_artifact_reproduce_names_its_own_history(td):
+    """`reproduce` tells the reader which file's history recovers the shipped tree. It must name
+    the file it is IN.
+
+    The kill matrix shipped an instruction to follow `discrimination_baseline.json`, because the
+    string was duplicated at the two writer sites and only the baseline's copy was ever read. That
+    is worse than the dangling sha beside it: a dangling sha fails loudly, while this SUCCEEDS and
+    hands back the wrong commit. The two histories genuinely differ -- `b67d86cd` (#1903) touched
+    the kill matrix and not the baseline.
+
+    Asserted against `_provenance`, so the shipped strings and the writer cannot drift apart
+    either; both artifacts are hand-editable and have been hand-edited (#2347).
+    """
+    for path in (_BASELINE, _SCRIPT.parent / "discrimination_killmatrix.json"):
+        rel = f"scripts/{path.name}"
+        shipped = json.loads(path.read_text())["_measured_at"]["reproduce"]
+        assert shipped == td._provenance(rel)["reproduce"], (
+            f"{rel}: the shipped `reproduce` differs from what the writer would emit for it. "
+            f"Re-derive it with `_provenance({rel!r})` rather than editing the prose by hand"
+        )
+        named = {token.strip("`,.") for token in shipped.split() if token.strip("`,.").endswith(".json")}
+        assert named == {rel}, f"{rel}: `reproduce` sends the reader to {sorted(named)}, not to itself"
+
+
 def test_the_sweep_passes_its_self_exclusion_to_pytest(td, monkeypatch):
     """M1: the constant alone was pinned, the WIRING was not.
 
@@ -381,7 +405,8 @@ def test_main_uses_the_scoped_guard_at_the_end(td):
 
     Swapping the end-of-run call back to `_assert_clean_tree()` killed zero tests,
     because the test above exercises `_assert_mutations_restored` directly. Source
-    inspection is the honest pin here -- driving `main()` means a full sweep, tens of minutes --
+    inspection is the honest pin here -- driving `main()` means a full sweep, hours at the current
+    matrix size --
     and it is the same technique the mutation-anchor tests already use.
     """
     body = inspect.getsource(td.main)
@@ -405,8 +430,21 @@ def test_the_kill_matrix_is_committed_beside_the_baseline(td):
     # Owned by the module, not hand-added to the JSON: a hand-added key does not
     # survive the next --json, and this test caught exactly that regression once.
     assert matrix["_selection_regex_for_agreement_shaped"] == td.AGREEMENT_SHAPED
-    assert matrix["_measured_at"] == json.loads(_BASELINE.read_text())["_measured_at"], (
+    # Compare the keys that identify the RUN, and not `reproduce`, which identifies the ARTIFACT.
+    # This assertion used to require the two blocks to be byte-identical, and that is how the kill
+    # matrix came to ship an instruction to follow `discrimination_baseline.json`'s history: the
+    # string was duplicated at the two writer sites, and making them differ would have failed here.
+    # A test that demands two files agree about something they should disagree about does not
+    # merely miss the defect -- it holds it in place (#2349).
+    run_keys = ("commit", "paths", "markers", "collected", "excluded")
+    base_at = json.loads(_BASELINE.read_text())["_measured_at"]
+    matrix_at = matrix["_measured_at"]
+    assert {k: matrix_at.get(k) for k in run_keys} == {k: base_at.get(k) for k in run_keys}, (
         "matrix and baseline record different runs"
+    )
+    assert matrix_at["reproduce"] != base_at["reproduce"], (
+        "each artifact's `reproduce` must name its OWN history; identical strings mean one of them "
+        "sends the reader to the other file -- see test_each_artifact_reproduce_names_its_own_history"
     )
     baseline = json.loads(_BASELINE.read_text())["mutations"]
     for name, res in baseline.items():
@@ -713,8 +751,9 @@ def test_the_owner_prose_in_the_artifacts_matches_the_code(td):
     It is not decoration: it prints on every sweep and is the only place a reader learns what convention a
     mutation tests. The review of #2347 corrected two substantive errors in one such string -- a miscounted set of
     call sites, and an overstatement of what the row records -- both of which had already shipped into the
-    artifacts. And because the fix was a hand-edit of the JSON (a re-record costs a 90-minute sweep for a
-    documentation change), it was correct and unverified until this.
+    artifacts. And because the fix was a hand-edit of the JSON (re-recording costs a full sweep -- derive it from
+    the matrix, and note that 90 minutes, written here by an earlier commit ON THIS BRANCH, matches no
+    total the matrix has ever recorded), it was correct and unverified until this.
 
     Every `owner` fixture in this file is a bare `"x"` placeholder, which is exactly where the check was missing.
     """
@@ -726,7 +765,9 @@ def test_the_owner_prose_in_the_artifacts_matches_the_code(td):
 
     for label, recorded in (("baseline", baseline), ("kill matrix", matrix)):
         drifted = {
-            name: entry["owner"]
+            # the VALUE uses `.get` too: subscripting here made the delete-key case raise a bare
+            # `KeyError` before the assertion could print the diagnostic it exists for (re-review)
+            name: entry.get("owner", "<missing>")
             for name, entry in recorded.items()
             # `.get(..., _MISSING)`, not `"owner" in entry`: a row whose key was hand-edited away
             # skipped the comparison and the whole file stayed green (review of #2354, planted)

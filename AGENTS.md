@@ -163,7 +163,7 @@ unauditable; adding to it casually is how it got there.
    that could be widened. Re-running the sweep is not the price of admission — so re-measure only when adding a
    mutation. It leaves mutations in the tree when killed (#1849, #2229), and it is **expensive** —
    **derive the current cost, do not read it here.** ~~about 26 min~~ ~~67 min~~ [CORRECTED 2026-09-18,
-   #2349]: the derivation below returned **136 min** (`baseline_seconds` 237.1 plus 7927.2s over 27
+   #2349]: the derivation below returned **136.07 min** (`baseline_seconds` 237.1 plus 7927.2s over 27
    mutations, matrix measured at `76f2d9e8`), against the 67 min this line stated from `2c923694`. The
    figure is a property of the file beside it and the re-derivability clause was already written here —
    it was tested by two re-records and failed both, because a present-tense headline is what a reader

@@ -706,7 +706,35 @@ def _head_sha() -> str:
     return out.stdout.strip() or "unknown"
 
 
+def _provenance(artifact: str) -> dict[str, str]:
+    """The `_measured_at` provenance keys, for the artifact that is about to be written.
+
+    `commit` is the PRE-MERGE branch sha and this repo squash-merges, so it is unreachable the moment
+    the PR lands. Measured 2026-09-18: main's baseline cites `76f2d9e8` and `git branch -a --contains
+    76f2d9e8` is empty; the stamp before it, `a70d9a06`, is equally orphaned. It is kept for
+    provenance with the recovery procedure beside it, because a broken anchor is worse than none --
+    a reader tries the sha, fails, and has nothing else (#2349).
+
+    `artifact` is threaded rather than hardcoded because the two call sites write DIFFERENT files
+    with different histories, and the string was duplicated: the kill matrix shipped an instruction
+    to follow `discrimination_baseline.json`. That is worse than a dangling sha, because the reader
+    who follows it SUCCEEDS and lands on the wrong commit -- `b67d86cd` (#1903) touched the kill
+    matrix and not the baseline, so the two are genuinely different histories.
+    """
+    return {
+        "commit": _head_sha(),
+        "reproduce": (
+            f"the `commit` key above is a pre-merge branch sha and does not survive the squash merge "
+            f"that ships this file. `git log --oneline --follow {artifact}` and check out its FIRST "
+            f"entry -- squash merges here are single-parent, so there is no merge commit to find. "
+            f"That yields the tree this artifact SHIPPED in, which is not necessarily the tree the "
+            f"sweep ran on; compare with `git diff --stat` against `commit` if the difference matters"
+        ),
+    }
+
+
 def _write_baseline(path: Path, results: dict, *, paths: list[str], collected: int) -> None:
+    artifact = path.as_posix()
     payload = {
         "_comment": (
             "Kill counts per mutated convention. --check-baseline fails when a count DROPS "
@@ -715,20 +743,7 @@ def _write_baseline(path: Path, results: dict, *, paths: list[str], collected: i
             "agreement-shaped patterns give 51, 114 or 156 depending on the regex."
         ),
         "_measured_at": {
-            "commit": _head_sha(),
-            # `commit` is the PRE-MERGE branch sha and this repo squash-merges, so it is unreachable
-            # the moment the PR lands. Measured 2026-09-18: main's baseline cites `76f2d9e8` and
-            # `git branch -a --contains 76f2d9e8` is empty; the stamp before it, `a70d9a06`, is equally
-            # orphaned. Kept for provenance with the procedure beside it, because a broken anchor is
-            # worse than none -- a reader tries the sha, fails, and has nothing else (#2349).
-            "reproduce": (
-                "the `commit` key above is a pre-merge branch sha and does not survive the squash merge "
-                "that ships this file. `git log --oneline --follow scripts/discrimination_baseline.json` "
-                "and check out its FIRST entry -- squash merges here are single-parent, so there is no "
-                "merge commit to find. That yields the tree this artifact SHIPPED in, which is not "
-                "necessarily the tree the sweep ran on; compare with `git diff --stat` against `commit` "
-                "if the difference matters"
-            ),
+            **_provenance(artifact),
             "paths": paths,
             "markers": MARKERS,
             "collected": collected,
@@ -950,22 +965,10 @@ def main() -> None:
     for name, res in sorted(effective.items()):
         print(f"  {name:<30} {res['kill_count']:>4} killed")
 
+    artifact = Path(args.json).as_posix() if args.json else "scripts/discrimination_killmatrix.json"
     payload = {
         "_measured_at": {
-            "commit": _head_sha(),
-            # `commit` is the PRE-MERGE branch sha and this repo squash-merges, so it is unreachable
-            # the moment the PR lands. Measured 2026-09-18: main's baseline cites `76f2d9e8` and
-            # `git branch -a --contains 76f2d9e8` is empty; the stamp before it, `a70d9a06`, is equally
-            # orphaned. Kept for provenance with the procedure beside it, because a broken anchor is
-            # worse than none -- a reader tries the sha, fails, and has nothing else (#2349).
-            "reproduce": (
-                "the `commit` key above is a pre-merge branch sha and does not survive the squash merge "
-                "that ships this file. `git log --oneline --follow scripts/discrimination_baseline.json` "
-                "and check out its FIRST entry -- squash merges here are single-parent, so there is no "
-                "merge commit to find. That yields the tree this artifact SHIPPED in, which is not "
-                "necessarily the tree the sweep ran on; compare with `git diff --stat` against `commit` "
-                "if the difference matters"
-            ),
+            **_provenance(artifact),
             "paths": paths,
             "markers": MARKERS,
             "collected": base.collected,
