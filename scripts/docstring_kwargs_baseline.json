@@ -1,5 +1,7 @@
 {
   "_comment": "Every keyword argument in a docstring example must be a real parameter of the callee it names.",
+  "checked": 1027,
+  "blocks": 624,
   "findings": [
     "mfgarchon.core.mfg_components_nested.MFGComponents: MFGComponents(hamiltonian_func=...)",
     "mfgarchon.core.mfg_components_nested.MFGComponents: MFGComponents(neural_architecture=...)",
@@ -19,7 +21,6 @@
     "mfgarchon.operators.interpolation.projection._grid_to_mesh_interpolation: TensorProductGrid(resolution=...)",
     "mfgarchon.operators.interpolation.projection._mesh_to_grid_delaunay: TensorProductGrid(resolution=...)",
     "mfgarchon.operators.reconstruction: compute_weno5_derivative_1d(direction=...)",
-    "mfgarchon.utils.drift_helpers.density_dependent_drift: gradient(axis=...)",
     "mfgarchon.utils.numerical.nonlinear_solvers.FixedPointSolver: FixedPointSolver(tol=...)",
     "mfgarchon.utils.numerical.nonlinear_solvers.NewtonSolver: NewtonSolver(tol=...)",
     "mfgarchon.utils.sparse_operations.SparseMatrixBuilder: SparseMatrixBuilder(format=...)"

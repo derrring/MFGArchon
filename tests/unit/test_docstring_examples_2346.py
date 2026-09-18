@@ -4,6 +4,10 @@
 form, invisible because nothing executed them. #2341 repeated it at one line: `MFGProblem`'s Hamiltonian example taught
 `QuadraticControlCost(1.0)`, which #2345 made raise, and nothing had ever run it.
 
+Not the first executable coverage in the repo: `tests/unit/test_geometry/test_tensor_grid_docstring_examples.py`
+(#1638) already runs `TensorProductGrid`'s examples, and the review of #2351 measured 48 of its collected tests going
+red under a simulated `Nx` removal. That file is one class; this one is a list.
+
 **Why this is an allowlist and not `--doctest-modules`.** Measured at 408415d4: 2439 examples across 182 modules,
 **1348 of them fail**, and **1153 of those failures are `NameError`** — examples written as narrative fragments that
 use names defined in a neighbouring docstring. `doctest`'s unit of isolation is the docstring, so those can never pass
@@ -14,8 +18,15 @@ below are the ones whose examples already pass, all 178 of them.
 so that it cannot quietly be read as "the package's examples are checked". The complement is covered differently and
 statically, by `scripts/check_docstring_kwargs.py`, which needs no executability and sees all 643 docstring blocks.
 
-What reddens this file: any change that breaks an example in a listed module — a renamed parameter, a moved import, a
-changed repr. That is the event #2343's removal batches will generate, which is why this landed before them.
+What reddens this file: any change that breaks an example in a listed module — a renamed parameter, a moved import,
+a changed repr.
+
+What it does NOT redden on, measured rather than assumed: the removal batches. Across the at-risk families of #2343
+and #2331, the listed modules' examples touch two (`Nx` in `types.pde_coefficients`, `num_points` in
+`geometry.graph.maze_hybrid`), and under a simulated `Nx` removal this file stayed GREEN while
+`scripts/check_docstring_kwargs.py` produced 30 findings (review of #2351). The static checker is what protects the
+removal programme; this file's value is that 178 examples in 24 modules now break loudly on a repr, import or
+signature change, where before nothing ran them at all.
 
 Growing the list is deliberate: make a module's examples self-contained, confirm they pass, add it here.
 """
@@ -110,8 +121,12 @@ def test_the_allowlist_states_its_own_coverage():
             if any(t.examples for t in doctest.DocTestFinder().find(module)):
                 with_examples += 1
 
-    assert len(EXECUTABLE) <= with_examples, "the list names modules that carry no examples"
-    assert with_examples <= 210, (
-        f"modules with examples grew to {with_examples}; the docstring above says 182 and the list covers "
-        f"{len(EXECUTABLE)}. Update the stated ratio, or the claim silently overstates its own coverage."
+    # `len(EXECUTABLE) <= with_examples` was the first version of this and is vacuous -- 24 <= 182 holds
+    # however few of the listed modules carry examples, and the property it names is actually tested above by
+    # `assert tests` per module (review of #2351). The ratio is what this test is for, and it is asserted
+    # EXACTLY: a docstring that says "24 of 182" stops being true at 183, so 183 is where this fires.
+    assert with_examples == 182, (
+        f"modules carrying examples moved {182} -> {with_examples}. This file's docstring states the ratio "
+        f"24 of 182 and `scripts/check_docstring_kwargs.py`'s docstring states 624 analysed blocks; both are "
+        f"now wrong. Update them and this number together, or the coverage claim overstates itself silently."
     )

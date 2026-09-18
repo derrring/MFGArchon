@@ -549,12 +549,14 @@ step "Fail-fast ratchet"
 "${PYS[@]}" scripts/check_fail_fast.py --path mfgarchon --check-baseline scripts/fail_fast_baseline.json
 check $? "no new silent fallbacks vs baseline"
 
-# Docs are the one artefact almost nothing runs: as of #2346 the suite executes the examples of 24
-# of the 182 modules that carry any (tests/unit/test_docstring_examples_2346.py), and 1348 of the
-# package's 2439 examples cannot run at all -- 1153 of those are NameError from fragments that use a
-# neighbouring docstring's names. So a rename still leaves tutorials teaching a NameError (#1759),
-# and the two ratchets below are what sees it: this one for missing API in docs, and
-# check_docstring_kwargs for a keyword an example passes that its callee does not accept.
+# Docs are the one artefact almost nothing runs. Two test files execute any docstring example:
+# test_tensor_grid_docstring_examples.py (#1638, one class) and test_docstring_examples_2346.py
+# (#2346, 24 of the 182 modules that carry examples). Of the package's 2439 examples, 1348 FAIL when
+# run -- they execute, they do not pass -- and 1153 of those raise NameError because they use a
+# neighbouring docstring's names, which stock per-docstring isolation cannot supply. So a rename
+# still leaves tutorials teaching a NameError (#1759). The Doc-API ratchet immediately below sees
+# missing API in docs; the docstring-keyword ratchet further down (past the Manifest step) sees a
+# keyword an example passes that its callee does not accept.
 # Pure AST, no imports -- importing would make the count depend on which optional
 # dependencies are installed, and would drift with the environment rather than with the docs.
 step "Doc-API ratchet"
