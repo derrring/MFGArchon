@@ -212,7 +212,24 @@ def test_no_solver_inherits_its_bc_declaration_from_a_sibling():
         if owner is None:
             continue
         (own.add(names[0]) if owner == names[0] else inherited.setdefault(owner, set()).add(names[0]))
-    assert own, "no solver declares its own supported BC types; the population walk is broken"
+    # Pinned to the exact set, not to truthiness, matching the idiom above. `<=` below is the right
+    # assertion for the sibling property and is therefore NOT self-guarding the way the `==` two
+    # functions up is: a `_population()` silently narrowed to only these owners leaves `inherited`
+    # empty and the check green. This closes that path.
+    assert own == {
+        "FPFDMSolver",
+        "FPFEMSolver",
+        "FPFVMSolver",
+        "FPGFDMSolver",
+        "FPParticleSolver",
+        "FPSLJacobianSolver",
+        "FPSLSolver",
+        "HJBFDMSolver",
+        "HJBFEMSolver",
+        "HJBGFDMSolver",
+        "HJBSemiLagrangianSolver",
+        "HJBWENOSolver",
+    }, f"the set of solvers declaring their own supported BC types moved: {sorted(own)}"
     assert set(inherited) <= {"BaseMFGSolver"}, (
         f"a solver inherits {field} from a non-base parent: "
         f"{ {k: sorted(v) for k, v in inherited.items() if k != 'BaseMFGSolver'} }. Decide whether "
