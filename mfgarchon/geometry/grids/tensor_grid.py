@@ -1671,9 +1671,9 @@ class TensorProductGrid(
 
         Returns:
             If direction is None:
-                tuple of GradientComponentOperator for all dimensions
+                tuple of PartialDerivOperator for all dimensions
             If direction specified:
-                Single GradientComponentOperator for that direction
+                Single PartialDerivOperator for that direction
 
         Example:
             >>> grid = TensorProductGrid(bounds=[(0,1), (0,1)], Nx=[50, 50], boundary_conditions=no_flux_bc(dimension=2))

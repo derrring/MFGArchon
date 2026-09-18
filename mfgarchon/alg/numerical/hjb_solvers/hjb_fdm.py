@@ -482,18 +482,12 @@ class HJBFDMSolver(BaseHJBSolver):
         """
         return None if self._inner_solve_failures is None else tuple(self._inner_solve_failures)
 
-    @deprecated_parameter(
-        param_name="tensor_volatility_field",
-        since="v0.18.7",
-        replacement="volatility_field (pass (d,d) array or callable returning (d,d))",
-    )
     def solve_hjb_system(
         self,
         M_density: NDArray | None = None,
         U_terminal: NDArray | None = None,
         U_coupling_prev: NDArray | None = None,
         volatility_field: float | NDArray | None = None,
-        tensor_volatility_field: NDArray | None = None,
         progress_callback: Callable[[int], None] | None = None,  # Issue #640
         show_progress: bool | None = None,  # Issue #934
         # MMS verification support
@@ -511,7 +505,6 @@ class HJBFDMSolver(BaseHJBSolver):
             U_terminal: Terminal condition u(T,x)
             U_coupling_prev: Previous coupling iteration estimate
             volatility_field: Diffusion coefficient (None uses problem.sigma)
-            tensor_volatility_field: Tensor diffusion (Phase 3.0, not yet fully implemented)
 
         Note:
             For adjoint-consistent BC, use AdjointConsistentProvider in BCSegment.value
@@ -536,16 +529,6 @@ class HJBFDMSolver(BaseHJBSolver):
                 f"only for the 1D FDM path; got dimension={self.dimension}. Run multi-population "
                 "MFG in 1D, or extend and validate the nD batch Hamiltonian path first."
             )
-        # Issue #889: merge tensor_volatility_field into volatility_field
-        # Deprecation warning issued by @deprecated_parameter decorator
-        if tensor_volatility_field is not None:
-            if volatility_field is not None:
-                raise ValueError(
-                    "Cannot specify both volatility_field and tensor_volatility_field. "
-                    "Use volatility_field (tensor_volatility_field is deprecated)."
-                )
-            volatility_field = tensor_volatility_field
-
         # CFL diagnostic (Issue #882): implicit scheme is unconditionally stable,
         # but large CFL numbers indicate potential accuracy/convergence issues
         self._log_cfl_diagnostic(volatility_field)

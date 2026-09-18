@@ -40,8 +40,6 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 from scipy.sparse.linalg import LinearOperator
 
-from mfgarchon.utils.deprecation import deprecated_alias
-
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -386,18 +384,6 @@ class GradientOperator:
             f"  {bc_str}\n"
             f")"
         )
-
-
-# =============================================================================
-# Deprecated Alias (Issue #658)
-# =============================================================================
-
-# Keep old name for backward compatibility
-GradientComponentOperator = deprecated_alias(
-    "GradientComponentOperator",
-    PartialDerivOperator,
-    "v0.18.0",
-)
 
 
 if __name__ == "__main__":

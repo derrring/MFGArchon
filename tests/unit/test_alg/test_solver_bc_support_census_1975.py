@@ -60,7 +60,6 @@ _GATED = {
     "FPFVMSolver": {"NEUMANN", "NO_FLUX", "PERIODIC"},
     "FPGFDMSolver": {"NEUMANN", "NO_FLUX"},
     "FPParticleSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "PERIODIC", "REFLECTING"},
-    "FPSLAdjointSolver": {"NEUMANN", "NO_FLUX", "PERIODIC"},
     "FPSLJacobianSolver": {"NEUMANN", "NO_FLUX", "PERIODIC"},
     "FPSLSolver": {"NEUMANN", "NO_FLUX", "PERIODIC"},
     "HJBFDMSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "PERIODIC"},
@@ -186,7 +185,11 @@ def test_the_permissive_default_is_claimed_by_inheritance():
         "FPSLJacobianSolver",
         "FPSLSolver",
     }
-    assert set(inherited) == {"BaseMFGSolver", "FPSLSolver"}
+    # `FPSLSolver` was here as the parent of `FPSLAdjointSolver`, the one solver that inherited
+    # this from a sibling rather than the base. #2343 removed that alias, so every remaining
+    # inheritance is from `BaseMFGSolver` -- i.e. from the permissive default, which is exactly
+    # the claim-by-nobody this test exists to keep visible.
+    assert set(inherited) == {"BaseMFGSolver"}
     assert all(getattr(cls, field) is True for cls, n in _population().items() if n[0] in inherited["BaseMFGSolver"])
 
 

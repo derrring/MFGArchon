@@ -487,13 +487,13 @@ class TestHJBFDMSolverDiagonalTensor:
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
 
-            U_solution = solver.solve_hjb_system(M_density, U_final, U_prev, tensor_volatility_field=Sigma)
+            U_solution = solver.solve_hjb_system(M_density, U_final, U_prev, volatility_field=Sigma)
 
-            # Filter on the texts the solver actually emits (hjb_fdm.py:889, 904, 919).
-            # Selecting on "tensor_volatility_field" instead matches the empty set for every input:
-            # that substring appears in no UserWarning the solver raises, only in the
-            # DeprecationWarning for the parameter name, so the check passed over both warnings
-            # firing. Measured on this constant diagonal tensor: both lists empty.
+            # Filter on the texts the solver actually emits. Selecting on the PARAMETER name
+            # instead matched the empty set for every input, so the check passed over both
+            # warnings firing -- that was the `tensor_volatility_field` spelling, whose only
+            # occurrence in any warning was the DeprecationWarning removed with it in #2343.
+            # Measured on this constant diagonal tensor: both lists empty.
             assert not [x for x in w if "non-diagonal" in str(x.message).lower()], "Should not warn for diagonal tensor"
             assert not [x for x in w if "averaged to constant" in str(x.message)], (
                 "Constant tensor must not be averaged"
@@ -540,7 +540,7 @@ class TestHJBFDMSolverDiagonalTensor:
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
 
-            U_solution = solver.solve_hjb_system(M_density, U_final, U_prev, tensor_volatility_field=Sigma)
+            U_solution = solver.solve_hjb_system(M_density, U_final, U_prev, volatility_field=Sigma)
 
             # Check that warning was raised
             tensor_warnings = [warning for warning in w if "non-diagonal" in str(warning.message).lower()]
@@ -580,7 +580,7 @@ class TestHJBFDMSolverDiagonalTensor:
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            solver.solve_hjb_system(M_density, U_final, U_prev, tensor_volatility_field=field)
+            solver.solve_hjb_system(M_density, U_final, U_prev, volatility_field=field)
 
             averaging = [x for x in w if "averaged to constant" in str(x.message)]
             assert len(averaging) > 0, "Should warn that a spatially-varying tensor is averaged to constant"
@@ -638,49 +638,29 @@ class TestHJBFDMSolverDiagonalTensor:
             sigma_y = 0.05 * (1.0 + 0.5 * m)  # Increases with density
             return np.diag([sigma_x**2, sigma_y**2])
 
-        # Should warn for callable (can't check if diagonal without evaluation)
+        # A callable tensor is evaluated on the grid and then averaged to constant per-axis
+        # weights, which is what the solver warns about. It does NOT emit any warning naming
+        # "callable": this assertion used to select on that word and passed on the
+        # DeprecationWarning for `tensor_volatility_field`, whose replacement text read
+        # "volatility_field (pass (d,d) array or callable returning (d,d))". Removing the
+        # parameter in #2343 left the check selecting the empty set, which is how it surfaced.
         import warnings
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
 
-            U_solution = solver.solve_hjb_system(M_density, U_final, U_prev, tensor_volatility_field=tensor_func)
+            U_solution = solver.solve_hjb_system(M_density, U_final, U_prev, volatility_field=tensor_func)
 
-            # Callable tensors should produce a warning
-            tensor_warnings = [warning for warning in w if "callable" in str(warning.message).lower()]
-            assert len(tensor_warnings) > 0, "Should warn for callable tensor"
+            tensor_warnings = [warning for warning in w if "averaged to constant" in str(warning.message)]
+            assert len(tensor_warnings) > 0, "A callable tensor must warn that it is averaged to constant"
+            assert not [x for x in w if "callable" in str(x.message).lower()], (
+                "no warning names the callable itself -- if one is added, assert its text here rather "
+                "than reinstating a substring that only a deprecation message carried"
+            )
 
         # Verify solution
         assert U_solution.shape == (Nt_points, Nx, Ny)
         assert not np.any(np.isnan(U_solution))
-
-    def test_diagonal_tensor_mutual_exclusivity(self):
-        """Test that tensor_volatility_field and volatility_field are mutually exclusive."""
-        domain = TensorProductGrid(
-            bounds=[(0.0, 1.0), (0.0, 0.6)], Nx_points=[11, 9], boundary_conditions=no_flux_bc(dimension=2)
-        )
-        problem = MFGProblem(geometry=domain, T=0.05, Nt=3, sigma=0.1, components=_default_components_2d())
-
-        solver = HJBFDMSolver(problem, solver_type="newton")
-
-        # Get grid shape
-        Nx, Ny = domain.get_grid_shape()
-        Nt_points = problem.Nt_points
-
-        # Create dummy density and initial conditions
-        M_density = np.ones((Nt_points, Nx, Ny)) * 0.5
-        U_final = np.zeros((Nx, Ny))
-        U_prev = np.zeros((Nt_points, Nx, Ny))
-
-        # Both tensor and scalar diffusion
-        Sigma = np.diag([0.15, 0.05])
-        sigma_scalar = 0.2
-
-        # Should raise ValueError
-        with pytest.raises(ValueError, match="Cannot specify both"):
-            solver.solve_hjb_system(
-                M_density, U_final, U_prev, volatility_field=sigma_scalar, tensor_volatility_field=Sigma
-            )
 
 
 class TestHJBFDMSolverGhostValueBC:

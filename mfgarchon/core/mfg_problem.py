@@ -2480,7 +2480,7 @@ See: docs/migration/HAMILTONIAN_API.md"""
 
             >>> # Expert Mode: Full control
             >>> hjb = HJBSemiLagrangianSolver(problem, interpolation_method="cubic")
-            >>> fp = FPSLAdjointSolver(problem)
+            >>> fp = FPSLSolver(problem)
             >>> result = problem.solve(hjb_solver=hjb, fp_solver=fp)
 
         Note:

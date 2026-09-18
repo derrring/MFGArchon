@@ -36,7 +36,6 @@ from .hjb_solvers import (
     HJBGFDMSolver,
     HJBSemiLagrangianSolver,
     HJBWENOSolver,
-    HJBWenoSolver,
 )
 
 # Import Network solvers (graph-based MFG problems)
@@ -60,7 +59,6 @@ __all__ = [
     "HJBGFDMSolver",
     "HJBSemiLagrangianSolver",
     "HJBWENOSolver",
-    "HJBWenoSolver",
     # Network Solvers (graph-based)
     "FPNetworkSolver",  # Also in fp_solvers for backward compat
     "HJBNetworkSolver",  # Alias for NetworkHJBSolver

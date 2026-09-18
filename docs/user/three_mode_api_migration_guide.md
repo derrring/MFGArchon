@@ -166,7 +166,7 @@ result_fdm = solver_fdm.solve()
 
 # Semi-Lagrangian test
 hjb_sl = HJBSemiLagrangianSolver(problem)
-fp_sl = FPSLAdjointSolver(problem)  # Must use Adjoint, not regular SL!
+fp_sl = FPSLSolver(problem)
 solver_sl = create_solver(problem, hjb_solver=hjb_sl, fp_solver=fp_sl)
 result_sl = solver_sl.solve()
 ```
@@ -448,7 +448,7 @@ For most problems, start with FDM_UPWIND.
 
 ### What about Semi-Lagrangian?
 
-Use `SL_LINEAR` or `SL_CUBIC` in Safe Mode. The factory automatically pairs with `FPSLAdjointSolver` (forward splatting), not `FPSLSolver` (backward interpolation), to maintain duality.
+Use `SL_LINEAR` or `SL_CUBIC` in Safe Mode. The factory automatically pairs with `FPSLSolver` (forward SL, splatting), not `FPSLJacobianSolver` (backward SL with Jacobian correction), to maintain duality — see `scheme_factory.py`'s `_create_semi_lagrangian_pair`. This sentence named `FPSLAdjointSolver` for the forward solver and `FPSLSolver` for the backward one; the first was renamed to the second in v0.17.6, so the contrast had been between one class and itself since then. Corrected when #2343 removed the alias.
 
 ---
 

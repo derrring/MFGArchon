@@ -1,8 +1,8 @@
 # Deprecation Modernization Guide
 
 **Auto-generated** by `scripts/generate_deprecation_guide.py`
-**Total deprecated items**: 59
-**Versions covered**: v0.21.0, v0.20.5, v0.20.0, v0.19.2, v0.19.0, v0.18.7, v0.18.6, v0.18.0, v0.17.6, v0.17.1, v0.17.0, v0.16.11, v0.12.0
+**Total deprecated items**: 51
+**Versions covered**: v0.21.0, v0.20.5, v0.20.0, v0.19.2, v0.19.0, v0.18.6, v0.18.0, v0.17.6, v0.17.1, v0.17.0, v0.16.11, v0.12.0
 
 ---
 
@@ -32,7 +32,6 @@ It does mean a migration you read on one row **does not transfer** to another so
 | `FPFDMSolver.solve_fp_system()` | the destination | `velocity_field` -> `drift_field` |
 | `FPFEMSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
 | `FPNetworkSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
-| `FPSLAdjointSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
 | `FPSLJacobianSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
 | `FPSLSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
 | `MeshlessGalerkinFPSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
@@ -54,15 +53,11 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 ## Deprecated since v0.20.5
 
-*2 items*
+*1 items*
 
 ### Parameters
 
 - **`diffusion`** in `AdjointConsistentProvider.__init__()` — use `sigma` instead (remove by v0.25.0)
-
-### Functions / Classes
-
-- **`HJBWenoSolver()`** — use `HJBWENOSolver` instead (remove by v1.0.0)
 
 ---
 
@@ -106,24 +101,13 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 ---
 
-## Deprecated since v0.18.7
-
-*1 items*
-
-### Parameters
-
-- **`tensor_volatility_field`** in `HJBFDMSolver.solve_hjb_system()` — use `volatility_field (pass (d,d) array or callable returning (d,d))` instead (remove by v0.25.0)
-
----
-
 ## Deprecated since v0.18.6
 
-*4 items*
+*3 items*
 
 ### Parameters
 
 - **`velocity_field`** in `FPFDMSolver.solve_fp_system()` — use `drift_field` instead (remove by v0.25.0) [see *Do not migrate these across solvers*: `drift_field`]
-- **`drift_field`** in `FPSLAdjointSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0) [see *Do not migrate these across solvers*: `drift_field`]
 - **`drift_field`** in `FPSLJacobianSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0) [see *Do not migrate these across solvers*: `drift_field`]
 - **`drift_field`** in `FPSLSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0) [see *Do not migrate these across solvers*: `drift_field`]
 
@@ -131,35 +115,31 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 ## Deprecated since v0.18.0
 
-*4 items*
+*2 items*
 
 ### Functions / Classes
 
-- **`GradientComponentOperator()`** — use `PartialDerivOperator` instead (remove by v1.0.0)
 - **`_compute_sdf_gradient()`** — use `use mfgarchon.operators.differential.function_gradient() instead` instead (remove by v0.25.0)
-- **`_compute_upwind_advection()`** — use `AdvectionOperator` instead (remove by v0.25.0)
 - **`mixed_bc()`** — use `Use BoundaryConditions(segments=[...]) directly` instead (remove by v0.25.0)
 
 ---
 
 ## Deprecated since v0.17.6
 
-*2 items*
+*1 items*
 
 ### Functions / Classes
 
-- **`FPSLAdjointSolver()`** — use `FPSLSolver` instead (remove by v1.0.0)
 - **`__init__()`** — use `FPSLSolver` instead (remove by v0.25.0)
 
 ---
 
 ## Deprecated since v0.17.1
 
-*3 items*
+*2 items*
 
 ### Functions / Classes
 
-- **`MFGDriftField()`** — use `DriftField` instead (remove by v1.0.0)
 - **`_solve_fp_1d()`** — use `solve_fp_system` instead (remove by v0.25.0)
 - **`_solve_fp_1d_with_callable()`** — use `solve_fp_system` instead (remove by v0.25.0)
 
@@ -167,7 +147,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 ## Deprecated since v0.17.0
 
-*26 items*
+*25 items*
 
 ### Parameters
 
@@ -191,7 +171,6 @@ It does mean a migration you read on one row **does not transfer** to another so
 ### Functions / Classes
 
 - **`__init__()`** — use `Use TaylorOperator from gfdm_strategies instead: from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import TaylorOperator` instead (remove by v0.25.0)
-- **`_deprecated_xp_zeros()`** — use `Use backend.zeros() instead for device consistency.` instead (remove by v0.25.0)
 - **`compute_adjoint_consistent_bc_values()`** — use `Use mfgarchon.alg.numerical.adjoint.compute_adjoint_consistent_bc_values instead.` instead (remove by v0.25.0)
 - **`compute_boundary_log_density_gradient_1d()`** — use `Use mfgarchon.alg.numerical.adjoint.compute_boundary_log_density_gradient_1d instead.` instead (remove by v0.25.0)
 - **`create_adjoint_consistent_bc_1d()`** — use `Use mfgarchon.alg.numerical.adjoint.create_adjoint_consistent_bc_1d instead.` instead (remove by v0.25.0)

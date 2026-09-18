@@ -13,8 +13,6 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mfgarchon.utils.deprecation import deprecated_alias
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -1399,7 +1397,3 @@ class DriftField:
     def is_zero(self) -> bool:
         """Check if all U values are zero."""
         return np.allclose(self.U_solution, 0)
-
-
-# Backward compatibility alias (deprecated in v0.17.1)
-MFGDriftField = deprecated_alias("MFGDriftField", DriftField, "v0.17.1")

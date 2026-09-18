@@ -458,15 +458,15 @@ def deprecated_alias(
 
     Example:
         >>> # In module where class was renamed:
-        >>> class DriftField:  # New name
-        ...     def __init__(self, U, cost, geometry):
-        ...         ...
+        >>> class NewName:
+        ...     def __init__(self, value):
+        ...         self.value = value
         ...
         >>> # Create deprecated alias
-        >>> MFGDriftField = deprecated_alias("MFGDriftField", DriftField, "v0.17.1")
+        >>> OldName = deprecated_alias("OldName", NewName, "v0.17.1")
         >>>
         >>> # Usage (will warn):
-        >>> drift = MFGDriftField(U, cost, grid)  # DeprecationWarning emitted
+        >>> obj = OldName(1)  # DeprecationWarning emitted
 
     Note:
         For simple renames, this creates a factory function that:

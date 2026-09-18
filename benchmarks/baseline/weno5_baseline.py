@@ -23,7 +23,7 @@ from mfgarchon.geometry.boundary import no_flux_bc
 def benchmark_smoothness_indicators():
     """Benchmark WENO5 smoothness indicators."""
     from mfgarchon import MFGProblem
-    from mfgarchon.alg.numerical.hjb_solvers.hjb_weno import HJBWenoSolver
+    from mfgarchon.alg.numerical.hjb_solvers.hjb_weno import HJBWENOSolver
 
     # Create solver
     problem = MFGProblem(
@@ -33,7 +33,7 @@ def benchmark_smoothness_indicators():
         Nt=50,
         T=1.0,
     )
-    solver = HJBWenoSolver(problem, weno_variant="weno5")
+    solver = HJBWENOSolver(problem, weno_variant="weno5")
 
     # Test data (typical 5-point stencil)
     u = np.random.randn(5)

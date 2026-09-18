@@ -445,9 +445,10 @@ def test_the_matrix_covers_every_declaring_solver():
         f"{sorted(uncovered)}. Add them, or the ratchet measures whatever it happens to list."
     )
     # The reverse direction is deliberately NOT asserted. A subclass inherits the declaration
-    # without restating it -- `FPSLAdjointSolver` is the deprecated alias of `FPSLSolver` (#710)
-    # and reaches a user as a PERIODIC-declaring solver while defining no `_SUPPORTED_BC_TYPES` of
-    # its own. It belongs in the matrix and will never appear in an AST walk of declaration sites.
+    # without restating it, so it reaches a user as a PERIODIC-declaring solver while defining no
+    # `_SUPPORTED_BC_TYPES` of its own -- it belongs in the matrix and will never appear in an AST
+    # walk of declaration sites. The worked example was `FPSLAdjointSolver <- FPSLSolver` (#710),
+    # removed by #2343; the asymmetry is a property of the AST walk, not of that one class.
 
 
 def test_the_known_broken_list_names_only_solvers_that_exist():

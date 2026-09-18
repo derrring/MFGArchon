@@ -45,7 +45,6 @@ from mfgarchon.core.derivatives import DerivativeTensors, to_multi_index_dict
 from mfgarchon.geometry.boundary.applicator_fdm import PreallocatedGhostBuffer
 from mfgarchon.geometry.boundary.conditions import neumann_bc
 from mfgarchon.geometry.boundary.types import BCType
-from mfgarchon.utils.deprecation import deprecated_alias
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 from .base_hjb import BaseHJBSolver
@@ -1213,12 +1212,6 @@ class HJBWENOSolver(BaseHJBSolver):
         }
 
         return variant_info[self.weno_variant]
-
-
-# Issue #1426: renamed HJBWenoSolver -> HJBWENOSolver (WENO is an acronym; matches the
-# all-caps HJBGFDMSolver / HJBFDMSolver siblings and PEP 8 acronym capitalization).
-# Deprecated alias kept for backward compatibility (removal per deprecation policy).
-HJBWenoSolver = deprecated_alias("HJBWenoSolver", HJBWENOSolver, "v0.20.5")
 
 
 if __name__ == "__main__":

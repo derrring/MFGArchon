@@ -61,8 +61,9 @@ source" and "every solver in my list honours a source" are different claims, and
 smaller half of the population.
 
 `test_every_concrete_solver_is_covered_or_named` now holds the parametrisation against discovery,
-so the gap between the two cannot reopen quietly. Seven solvers still have no row and are named in
-`_UNCOVERED` with the reason.
+so the gap between the two cannot reopen quietly. The solvers that still have no row are named in
+`_UNCOVERED` with the reason; that dict is the count, and no number is restated here because it
+moves whenever a solver is added or removed — as it did when #2343 removed `FPSLAdjointSolver`.
 
 What the file does that the class-definition gate cannot is check BEHAVIOUR: the gate reads a
 signature, and this repository has twice now had a solver whose signature and behaviour disagreed -- `HJBWENOSolver` names
@@ -392,8 +393,6 @@ _CASES = [
 #: construct-and-drive machinery for exactly the solvers this fixture cannot construct or drive.
 #: Re-verify a reason before relying on it; each was measured on 2026-08-21.
 _UNCOVERED: dict[str, str] = {
-    "FPSLAdjointSolver": "alias -- overrides only __init__ and shares FPSLSolver.solve_fp_system, "
-    "so a row here would measure the same method object twice",
     "NetworkHJBSolver": "needs a network problem; raises NotImplementedError about node BCs on a grid",
     "NetworkPolicyIterationHJBSolver": "needs a network problem; reads problem.num_nodes unguarded "
     "and raises AttributeError on a grid",
@@ -458,7 +457,10 @@ def test_every_concrete_solver_is_covered_or_named():
         f"Add a row if the fixture can drive it, or name the reason it cannot."
     )
 
-    assert len(population) == 22, sorted(population)
+    # 21 since #2343 removed the `FPSLAdjointSolver` alias, which was a concrete subclass and so
+    # counted here. The number is a function of the package, not of this file: it moves whenever a
+    # concrete solver is added or removed, and the assertion above says which.
+    assert len(population) == 21, sorted(population)
     assert covered - population == set(), f"rows for classes that are not in the population: {covered - population}"
 
     stale = set(_UNCOVERED) - population
