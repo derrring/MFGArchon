@@ -46,7 +46,6 @@ def declarations(census):
 _DECLARES_NOTHING = {
     "solver": {
         "FPNetworkSolver",
-        "FPSLAdjointSolver",
         "MeshlessGalerkinFPSolver",
         "MeshlessGalerkinHJBSolver",
         "NetworkHJBSolver",
@@ -183,8 +182,12 @@ def test_the_permissive_default_is_still_claimed_by_inheritance(declarations):
     mentions it claims to honour an inhomogeneous Neumann flux — a claim made by a default, not by
     anyone, and invisible at every call site.
 
-    Two inheritance chains meaning opposite things: from `BaseMFGSolver` it is that default; from
-    a sibling (`FPSLAdjointSolver` <- `FPSLSolver`) it is a deliberate `False`.
+    Two inheritance chains would mean opposite things: from `BaseMFGSolver` it is that default;
+    from a sibling it would be a deliberate value that solver chose. The second chain currently has
+    no instance. `FPSLAdjointSolver <- FPSLSolver` was its only one and #2343 removed the alias, so
+    `from_sibling` is asserted empty rather than deleted: the distinction is still real, and a
+    solver that starts inheriting a capability from a non-base parent must come back through here
+    and decide whether the inherited value is what it means to claim.
     """
     rows = declarations["rows"]
     field = "honors_inhomogeneous_neumann"
@@ -207,4 +210,8 @@ def test_the_permissive_default_is_still_claimed_by_inheritance(declarations):
     # change that added it to the owned one (#2294). These two counts must move together.
     assert len(from_base) == 17, f"solvers claiming True by the permissive default: {sorted(from_base)}"
     assert set(from_base.values()) == {"True"}
-    assert from_sibling == {"FPSLAdjointSolver": ("FPSLSolver", "False")}
+    assert from_sibling == {}, (
+        f"a solver now inherits {field} from a non-base parent: {from_sibling}. That is the second "
+        f"chain this test describes -- decide whether the inherited value is the claim it means to "
+        f"make, then pin it here"
+    )

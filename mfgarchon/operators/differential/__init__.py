@@ -50,7 +50,6 @@ from mfgarchon.operators.differential.function_gradient import (
     outward_normal_from_sdf,
 )
 from mfgarchon.operators.differential.gradient import (
-    GradientComponentOperator,  # Deprecated alias (v0.18.0)
     GradientOperator,
     PartialDerivOperator,
 )
@@ -64,7 +63,6 @@ __all__ = [
     # First-order operators (grid-based)
     "PartialDerivOperator",
     "GradientOperator",  # Full gradient ∇u (Issue #658 Phase 3)
-    "GradientComponentOperator",  # Deprecated alias for PartialDerivOperator
     "DirectDerivOperator",
     "NormalDerivOperator",
     "DivergenceOperator",

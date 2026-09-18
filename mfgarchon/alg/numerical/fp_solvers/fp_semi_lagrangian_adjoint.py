@@ -25,7 +25,7 @@ Issue #578: Adjoint SL implementation for proper SL-SL MFG coupling
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -42,7 +42,7 @@ from mfgarchon.geometry.boundary.bc_utils import (
 )
 from mfgarchon.geometry.boundary.enforcement import enforce_periodic_value_nd
 from mfgarchon.geometry.boundary.types import BCType
-from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
+from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.numerical.implicit_diffusion import neumann_cn_step
@@ -94,8 +94,8 @@ class FPSLSolver(BaseFPSolver):
         - nD: Full support with linear splatting + ADI diffusion
 
     .. versionchanged:: 0.17.6
-        Renamed from ``FPSLAdjointSolver`` to ``FPSLSolver`` (Issue #710).
-        The old name is still available as a deprecated alias.
+        Renamed from ``FPSLAdjointSolver`` to ``FPSLSolver`` (Issue #710). The old name was
+        kept as a deprecated subclass until #2343 removed it in v0.22.0.
     """
 
     # Scheme family trait for duality validation (Issue #580)
@@ -623,7 +623,7 @@ class FPSLSolver(BaseFPSolver):
 
 if __name__ == "__main__":
     """Quick smoke test for development."""
-    print("Testing FPSLAdjointSolver...")
+    print("Testing FPSLSolver...")
     print("=" * 60)
 
     from mfgarchon import MFGProblem
@@ -846,38 +846,3 @@ if __name__ == "__main__":
 
     print("\n" + "=" * 60)
     print("All smoke tests passed!")
-
-
-# =============================================================================
-# BACKWARD COMPATIBILITY ALIASES
-# =============================================================================
-
-
-# Backward compatibility: FPSLAdjointSolver -> FPSLSolver
-# Uses subclass pattern (not deprecated_alias) to preserve isinstance checks
-# and class attribute inheritance (_scheme_family trait for duality validation).
-class FPSLAdjointSolver(FPSLSolver):
-    """
-    DEPRECATED: Use :class:`FPSLSolver` instead.
-
-    .. deprecated:: 0.17.6
-        Renamed to FPSLSolver. Will be removed in v1.0.0.
-    """
-
-    _deprecation_meta: ClassVar[dict[str, Any]] = {
-        "since": "v0.17.6",
-        "replacement": "FPSLSolver",
-        "reason": "Renamed to FPSLSolver",
-        "removal": "v1.0.0",
-        "removal_blockers": ["internal_usage", "equivalence_test"],
-        "symbol": "FPSLAdjointSolver",
-        "alias_for": "FPSLSolver",
-    }
-
-    @deprecated(
-        since="v0.17.6",
-        replacement="FPSLSolver",
-        reason="FPSLAdjointSolver was renamed to FPSLSolver",
-    )
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)

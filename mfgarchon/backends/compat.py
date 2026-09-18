@@ -20,8 +20,6 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mfgarchon.utils.deprecation import deprecated
-
 if TYPE_CHECKING:
     from mfgarchon.backends.base_backend import BaseBackend
 
@@ -314,27 +312,6 @@ def ensure_same_device(target, source, backend: BaseBackend | None = None):
         return from_numpy(target_np, backend)
 
     return target
-
-
-# ==================================================================
-# Migration Helpers - Deprecated Patterns
-# ==================================================================
-
-
-@deprecated(
-    since="v0.17.0",
-    replacement="Use backend.zeros() instead for device consistency.",
-)
-def _deprecated_xp_zeros(backend, shape, dtype=None):
-    """
-    DEPRECATED: Use backend.zeros() instead.
-
-    This function shows the OLD problematic pattern.
-    """
-    if backend is not None:
-        return backend.zeros(shape, dtype)
-    else:
-        return np.zeros(shape, dtype=dtype)
 
 
 # ==================================================================

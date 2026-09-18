@@ -26,7 +26,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from mfgarchon import MFGProblem
-from mfgarchon.alg.numerical.hjb_solvers import HJBWenoSolver
+from mfgarchon.alg.numerical.hjb_solvers import HJBWENOSolver
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.utils.mfg_logging import configure_research_logging, get_logger
@@ -94,7 +94,7 @@ def run_weno_variant_comparison() -> dict[str, dict]:
         logger.info(f"Running WENO variant: {variant.upper()}")
 
         # Create solver for this variant
-        solver = HJBWenoSolver(
+        solver = HJBWENOSolver(
             problem=problem, weno_variant=variant, cfl_number=0.3, weno_epsilon=1e-6, time_integration="tvd_rk3"
         )
 

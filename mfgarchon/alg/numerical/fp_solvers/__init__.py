@@ -12,7 +12,6 @@ Semi-Lagrangian Variants (Issue #710):
 - FPSLSolver: Forward SL (scatter/splat) - adjoint of HJB SL, RECOMMENDED
 - FPSLJacobianSolver: Backward SL with Jacobian correction - DEPRECATED
 
-Note: FPSLAdjointSolver is a deprecated alias for FPSLSolver (renamed in v0.17.6).
 
 Internal modules (Issue #635 refactoring):
 - fp_particle_density: Dimension-agnostic density estimation utilities
@@ -36,7 +35,6 @@ from .fp_semi_lagrangian import FPSLJacobianSolver
 
 # FPSLSolver (Forward SL) is the recommended solver - exported from adjoint file
 from .fp_semi_lagrangian_adjoint import (
-    FPSLAdjointSolver,  # Deprecated alias
     FPSLSolver,
 )
 from .particle_density_query import ParticleDensityQuery
@@ -51,7 +49,6 @@ __all__ = [
     "FPParticleSolver",
     "FPSLSolver",  # Forward SL (adjoint of HJB SL) - RECOMMENDED
     "FPSLJacobianSolver",  # Backward SL with Jacobian - DEPRECATED
-    "FPSLAdjointSolver",  # Deprecated alias for FPSLSolver
     "KDEMethod",  # Issue #709 - KDE boundary correction methods
     "KDENormalization",
     "ParticleDensityQuery",  # Issue #489 - Direct particle query

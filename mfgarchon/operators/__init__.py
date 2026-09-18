@@ -43,7 +43,6 @@ Created: 2026-01-24 (Operator module separation from geometry)
 from mfgarchon.operators.differential import (
     AdvectionOperator,
     DivergenceOperator,
-    GradientComponentOperator,  # Deprecated alias for PartialDerivOperator
     InterfaceJumpOperator,
     LaplacianOperator,
     PartialDerivOperator,
@@ -78,7 +77,6 @@ __all__ = [
     # Differential operators
     "LaplacianOperator",
     "PartialDerivOperator",
-    "GradientComponentOperator",  # Deprecated alias
     "DivergenceOperator",
     "AdvectionOperator",
     "InterfaceJumpOperator",

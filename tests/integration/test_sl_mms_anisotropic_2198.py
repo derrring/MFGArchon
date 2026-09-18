@@ -30,8 +30,12 @@ WHAT IT CANNOT SEE
 - **The three other SL variants.** ``canonical_cs``, the L-based DPP path and
   ``stochastic`` replace the splitting path rather than adding to it, so they refuse
   ``source_term`` and are unmeasured. Their order on ANY manufactured problem is still unknown.
-- **The FP side.** ``FPSLAdjointSolver`` also carries the ADI cross-derivative and also does not
-  thread ``source_term``; #2198 asks for both and this fixture delivers the HJB half only.
+- **The FP side.** ``FPSLSolver`` also carries the ADI cross-derivative, and it DOES thread
+  ``source_term`` (#2020) -- this fixture simply does not drive it. #2198 asks for both halves and
+  this one delivers the HJB half. ~~also does not thread source_term~~ [CORRECTED 2026-09-19,
+  #2343]: that read ``FPSLAdjointSolver`` until the alias was removed, and renaming it to the live
+  class turned a dangling name into a false claim. An overstated limit in this section is worse
+  than none -- it teaches the reader the fixture cannot reach something it can.
 - **A coupled system.** ``m`` is constant here, so this measures the HJB scheme, not the coupling.
 
 THE SIGMA ROUTE IS A KNOWN HOLE, AND THIS FIXTURE DOCUMENTS IT RATHER THAN HIDING IT

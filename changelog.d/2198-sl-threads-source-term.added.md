@@ -1,7 +1,11 @@
 `HJBSemiLagrangianSolver` now threads `source_term` through its operator-splitting path, making the
 HJB half of the Semi-Lagrangian family reachable by the method of manufactured solutions for the
-first time. The FP half is NOT: `FPSLAdjointSolver` still does not thread a source, so "the SL
-family is MMS-reachable" would be false as an unqualified claim. The
+first time. "The SL family is MMS-reachable" is still false as an unqualified claim, but not because of the FP
+half: `FPSLSolver` threads a source as a Lie-splitting substep (#2020,
+`fp_semi_lagrangian_adjoint.py`), measured at a 25x error reduction by
+`test_source_term_channel_2020.py`. What remains unreachable is the HJB family's three other
+variants -- `canonical_cs`, the L-based DPP path and `stochastic` -- which replace the splitting
+path rather than adding to it and refuse `source_term`. The
 forcing enters as a rate, multiplied by the sub-step and evaluated at that sub-step's own physical
 time with the same sign as `k = -u_t` — the convention `HJBWENOSolver` already documents, so one
 manufactured source runs against both time-stepping solvers.

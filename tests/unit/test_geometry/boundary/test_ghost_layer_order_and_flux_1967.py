@@ -18,7 +18,7 @@ was green with both present.
 ~~The one production consumer at depth 3 is `hjb_weno.py`, whose `_SUPPORTED_BC_TYPES` is
 `{NEUMANN, NO_FLUX, PERIODIC}` — exactly the family defect 1 hits.~~ [CORRECTED] The supported set
 is right and the depth is right, but the routing is not: at depth 3 a *uniform* BC does not enter
-the repaired loop at all. Instrumented call counts through a real `HJBWenoSolver`, depth 3,
+the repaired loop at all. Instrumented call counts through a real `HJBWENOSolver`, depth 3,
 order 5:
 
 | BC handed to WENO             | poly | linear_reflect | per_face |
