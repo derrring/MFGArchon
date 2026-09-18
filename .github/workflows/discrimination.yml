@@ -76,16 +76,21 @@ jobs:
         OMP_NUM_THREADS: 1
         OPENBLAS_NUM_THREADS: 1
       run: |
+        # The path is the COMMITTED one, matching AGENTS.md's local command, because the sweep
+        # embeds it in the artifact's `reproduce` field: `git log --follow <path>`. A bare
+        # `killmatrix.json` is not a committed path, so that instruction fatals with "ambiguous
+        # argument" in the artifact a maintainer downloads to diagnose a failing sweep (#2349).
+        # The checkout is ephemeral, so writing over the committed file costs nothing here.
         python scripts/test_discrimination.py \
           --check-baseline scripts/discrimination_baseline.json \
-          --json killmatrix.json
+          --json scripts/discrimination_killmatrix.json
 
     - name: Upload the kill matrix
       if: ${{ !cancelled() }}
       uses: actions/upload-artifact@v7
       with:
         name: kill-matrix
-        path: killmatrix.json
+        path: scripts/discrimination_killmatrix.json
         retention-days: 90
 
   # Same reasoning as nightly.yml's notifier: a job nobody watches is a job that

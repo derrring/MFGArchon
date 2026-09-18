@@ -31,7 +31,10 @@ def test_the_gate_greps_for_the_marker_at_the_point_of_consumption():
 
     A LOCATOR, NOT THE ORACLE. `test_the_guard_actually_refuses` below plants a marker, runs the gate and
     requires exit 2; that is what actually holds the property. This one reads the script's text, so it fails in
-    a second with a line number instead of after a full gate run -- and it is strictly weaker. Measured, three
+    a second with a line number instead of after a full gate run, and it is weaker on a machine that can run
+    the gate at all. It is NOT weaker everywhere: `test_the_guard_actually_refuses` SKIPS when the gate cannot
+    resolve an interpreter (see its own comment -- that is why the weekly sweep was red on four dates in
+    2026-08/09), and on such a runner this is the only check that fails on a deleted guard. Measured, three
     ways to delete the guard while this test stays GREEN: put the invocation in a trailing comment on a code
     line (`MUTATED_LEFTOVER=""  # was: grep -rn '# MUTATED' mfgarchon/`, then `if false`), point the grep at a
     path that does not exist, or flip `[[ -n ]]` to `[[ -z ]]`. The behavioural test catches all three. An
@@ -47,8 +50,9 @@ def test_the_gate_greps_for_the_marker_at_the_point_of_consumption():
 
     The false positive is NARROWED, not removed. Moving the marker into a shell variable
     (`MUT_MARKER='# MUTATED'; grep -rn "$MUT_MARKER" ...`) preserves the gate's behaviour and turns this test
-    red -- the same shape as the rewrap that started this. If that refactor is ever wanted, delete this test
-    rather than weaken it: the behavioural one is the property, and this is a fast locator for it.
+    red -- the same shape as the rewrap that started this. If that refactor is ever wanted, rewrite this test
+    around the new spelling rather than deleting it: the behavioural test is the property where it runs, and
+    the paragraph above is why "just delete it" is wrong -- it does not run everywhere.
     """
     lines = GATE.read_text().splitlines()
     guards = [

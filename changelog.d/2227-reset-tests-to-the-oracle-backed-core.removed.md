@@ -17,14 +17,15 @@ each with an `owner` field — the current count is `len(MUTATIONS)`, and restat
 #2349 is about. That makes the reviewable unit **tens, not thousands** — 5,643 / 35 is a factor of about 161,
 not the "three orders of magnitude" an earlier draft claimed.
 
-**The two sets are nearly disjoint, which an earlier draft got badly wrong.** It said the 24 were a
+**The two sets are nearly disjoint, which an earlier draft got badly wrong.** It said the mutations then
+recorded were a
 falsifiable form *of* the 35 and that ~11 conventions were uncovered. Of the 19 issue numbers the
 mutation owners cite, **2** appear in the index; roughly 6–9 of the 24 land on index rows. So the
 uncovered figure is closer to **29 of 35**, and the mutations defend a dozen conventions the index
 does not name. Note also that the index is a **private Joplin note**: no reader of this changelog can
 resolve it.
 
-Measured before the deletion, **every one of the 24 mutations is defended**: `kill_count` 2 … 168,
+Measured before the deletion, **every mutation the baseline then held was defended**: `kill_count` 2 … 168,
 median **21.5**, no zeros, no ones. The three at the floor of 2:
 
 | convention | killers |

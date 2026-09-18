@@ -436,12 +436,16 @@ def test_the_kill_matrix_is_committed_beside_the_baseline(td):
     # string was duplicated at the two writer sites, and making them differ would have failed here.
     # A test that demands two files agree about something they should disagree about does not
     # merely miss the defect -- it holds it in place (#2349).
-    run_keys = ("commit", "paths", "markers", "collected", "excluded")
+    # Everything EXCEPT `reproduce`, rather than a list of the keys that exist today. A hand-written
+    # allow-list is closed under nothing: a provenance key added later falls outside both this
+    # assertion and the one below, so the two artifacts could disagree about it silently. Re-review
+    # of #2354 planted exactly that -- an extra `_measured_at` key differing across the two files
+    # passed a key-listed comparison and failed this one.
     base_at = json.loads(_BASELINE.read_text())["_measured_at"]
     matrix_at = matrix["_measured_at"]
-    assert {k: matrix_at.get(k) for k in run_keys} == {k: base_at.get(k) for k in run_keys}, (
-        "matrix and baseline record different runs"
-    )
+    assert {k: v for k, v in matrix_at.items() if k != "reproduce"} == {
+        k: v for k, v in base_at.items() if k != "reproduce"
+    }, "matrix and baseline record different runs"
     assert matrix_at["reproduce"] != base_at["reproduce"], (
         "each artifact's `reproduce` must name its OWN history; identical strings mean one of them "
         "sends the reader to the other file -- see test_each_artifact_reproduce_names_its_own_history"
