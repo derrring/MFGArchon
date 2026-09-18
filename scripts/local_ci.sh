@@ -299,9 +299,11 @@ fi
 # The script's own `_assert_clean_tree()` runs at ITS startup, so it protects the next SWEEP and
 # nothing else. This is the guard at the point of CONSUMPTION: whatever killed the sweep, the gate
 # refuses to report on a mutated tree. Verified complete rather than assumed -- EVERY mutation in
-# scripts/test_discrimination.py carries the marker, which the ratchet asserts as `0 without a
-# MUTATED marker`, so grepping for it cannot miss one. No count here on purpose: the list grows,
-# and a number in this comment would be evidence that goes stale without anything noticing (#2349).
+# scripts/test_discrimination.py carries the marker, which the ratchet asserts by requiring zero
+# mutations without one, so grepping for it cannot miss any. No count in this comment on purpose:
+# the list grows, and a number here would be evidence that goes stale with nothing to notice
+# (#2349). Mind the wrap when editing: the marker's literal text must not begin a line in this
+# file before the grep below, because the test that pins this guard splits on its first occurrence.
 #
 # GATE CANNOT RUN, not FAIL: nothing was measured about the code you meant to test, and a red
 # gate here would read as a defect in the working tree's content rather than in its state.

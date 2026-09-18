@@ -38,8 +38,10 @@ def test_the_gate_greps_for_the_marker_at_the_point_of_consumption():
 def test_every_mutation_carries_the_marker_the_guard_greps_for():
     """The guard is complete only if no mutation can land without the marker.
 
-    Measured rather than assumed: 24 of 24 carry it. If a future axis is added without one, the
-    guard silently stops covering it and this is the only thing that says so.
+    Measured rather than assumed, over whatever `MUTATIONS` currently declares -- no count here, since
+    the list grows and a number in this docstring would be a claim nothing checks (#2349). If a future
+    axis is added without a marker, the guard silently stops covering it and this is the only thing
+    that says so.
     """
     sys.path.insert(0, str(REPO / "scripts"))
     import test_discrimination as td
