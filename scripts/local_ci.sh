@@ -540,7 +540,7 @@ check $? "workflows parse, declare jobs, and have no dangling needs"
 # purpose: this is the ONE visible place asserting that every instrument is controlled, and if that
 # internal call is ever dropped the coverage would vanish with nothing here to say so.
 step "Ratchet self-tests (the instruments, before their numbers)"
-for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation check_citations check_warnings check_manifests check_mypy_scope; do
+for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation check_citations check_warnings check_manifests check_mypy_scope check_docstring_kwargs; do
   "${PYS[@]}" "scripts/${_selftest}.py" --self-test || { check 1 "ratchet self-tests: ${_selftest} cannot see what it counts"; }
 done
 check 0 "every fast ratchet still detects what it claims to detect"
@@ -549,8 +549,12 @@ step "Fail-fast ratchet"
 "${PYS[@]}" scripts/check_fail_fast.py --path mfgarchon --check-baseline scripts/fail_fast_baseline.json
 check $? "no new silent fallbacks vs baseline"
 
-# Docs are the one artefact nothing else runs: this suite never imports a doc example, so a
-# rename leaves every tutorial that used the old name teaching a NameError (Issue #1759).
+# Docs are the one artefact almost nothing runs: as of #2346 the suite executes the examples of 24
+# of the 182 modules that carry any (tests/unit/test_docstring_examples_2346.py), and 1348 of the
+# package's 2439 examples cannot run at all -- 1153 of those are NameError from fragments that use a
+# neighbouring docstring's names. So a rename still leaves tutorials teaching a NameError (#1759),
+# and the two ratchets below are what sees it: this one for missing API in docs, and
+# check_docstring_kwargs for a keyword an example passes that its callee does not accept.
 # Pure AST, no imports -- importing would make the count depend on which optional
 # dependencies are installed, and would drift with the environment rather than with the docs.
 step "Doc-API ratchet"
@@ -571,6 +575,13 @@ check $? "docs teach no more missing API than the baseline records"
 step "Manifest ratchet"
 "${PYS[@]}" scripts/check_manifests.py
 check $? "every unguarded import is declared in pyproject.toml"
+
+# #2346: the static half of the docstring-example problem. It needs no executability, so it covers
+# all 643 docstring blocks rather than the 24 modules the suite can run -- and it fires on exactly the
+# event #2343's removal batches generate: an example still passing a keyword that has been removed.
+step "Docstring keyword ratchet"
+"${PYS[@]}" scripts/check_docstring_kwargs.py --check-baseline scripts/docstring_kwargs_baseline.json
+check $? "no docstring example newly passes a keyword its callee does not have"
 
 step "Single-source ratchet"
 "${PYS[@]}" scripts/check_single_source.py --baseline scripts/single_source_baseline.json

@@ -1,0 +1,117 @@
+"""The docstring examples that can run, run — and the list says how little of the package that is (#2346).
+
+#674 removed a positional constructor and left 36 of 37 docstring examples dead, 7 raising `TypeError` on the removed
+form, invisible because nothing executed them. #2341 repeated it at one line: `MFGProblem`'s Hamiltonian example taught
+`QuadraticControlCost(1.0)`, which #2345 made raise, and nothing had ever run it.
+
+**Why this is an allowlist and not `--doctest-modules`.** Measured at 408415d4: 2439 examples across 182 modules,
+**1348 of them fail**, and **1153 of those failures are `NameError`** — examples written as narrative fragments that
+use names defined in a neighbouring docstring. `doctest`'s unit of isolation is the docstring, so those can never pass
+under any runner, and turning execution on package-wide is a documentation rewrite rather than a check. The 24 modules
+below are the ones whose examples already pass, all 178 of them.
+
+**So this covers 24 of 182 modules with examples, and nothing else.** The number is in `test_the_allowlist_states_its_own_coverage`
+so that it cannot quietly be read as "the package's examples are checked". The complement is covered differently and
+statically, by `scripts/check_docstring_kwargs.py`, which needs no executability and sees all 643 docstring blocks.
+
+What reddens this file: any change that breaks an example in a listed module — a renamed parameter, a moved import, a
+changed repr. That is the event #2343's removal batches will generate, which is why this landed before them.
+
+Growing the list is deliberate: make a module's examples self-contained, confirm they pass, add it here.
+"""
+
+from __future__ import annotations
+
+import doctest
+import importlib
+import warnings
+
+import pytest
+
+# Measured clean at 408415d4 — every example in each of these runs and passes. The trailing count is that module's
+# example count at the time of listing; it is a description, not an assertion, since examples get added.
+EXECUTABLE = [
+    "mfgarchon.alg.numerical.coupling.graph_coupling",  # 2
+    "mfgarchon.alg.numerical.gfdm_components.grid_collocation_mapper",  # 7
+    "mfgarchon.backends",  # 2
+    "mfgarchon.core.regime_switching",  # 4
+    "mfgarchon.core.stochastic.noise_processes",  # 8
+    "mfgarchon.geometry.boundary.bc_utils",  # 6
+    "mfgarchon.geometry.boundary.corner.position",  # 3
+    "mfgarchon.geometry.boundary.corner.velocity",  # 10
+    "mfgarchon.geometry.boundary.periodic",  # 13
+    "mfgarchon.geometry.graph.maze_cellular_automata",  # 3
+    "mfgarchon.geometry.graph.maze_config",  # 5
+    "mfgarchon.geometry.graph.maze_hybrid",  # 4
+    "mfgarchon.geometry.level_set.eikonal.godunov_update",  # 4
+    "mfgarchon.operators.integro_diff.graphon_coupling",  # 5
+    "mfgarchon.operators.integro_diff.levy_integro_diff",  # 5
+    "mfgarchon.operators.interaction.convolution",  # 6
+    "mfgarchon.types.callable_protocols",  # 16
+    "mfgarchon.types.pde_coefficients",  # 10
+    "mfgarchon.utils.adjoint_validation",  # 15
+    "mfgarchon.utils.callable_adapter",  # 3
+    "mfgarchon.utils.numerical._compat.gfdm_operators",  # 11
+    "mfgarchon.utils.numerical.autodiff",  # 3
+    "mfgarchon.utils.numerical.monotonicity_stats",  # 14
+    "mfgarchon.utils.numerical.particle.sampling",  # 19
+]
+
+_OPTIONS = doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE
+
+
+@pytest.mark.parametrize("module_name", EXECUTABLE)
+def test_every_example_in_this_module_still_runs(module_name):
+    """The pin: a listed module's examples execute and produce what they claim.
+
+    Deprecation warnings are silenced rather than asserted -- several listed modules document a deprecated alias on
+    purpose, and the warning census (`scripts/check_warnings.py`) owns whether that set changes.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        module = importlib.import_module(module_name)
+        tests = [t for t in doctest.DocTestFinder().find(module) if t.examples]
+        assert tests, (
+            f"{module_name} carries no docstring examples; drop it from the list rather than passing vacuously"
+        )
+        failures = []
+        for test in tests:
+            runner = doctest.DocTestRunner(optionflags=_OPTIONS)
+            report: list[str] = []
+            runner.run(test, out=report.append, clear_globs=True)
+            result = runner.summarize(verbose=False)
+            if result.failed:
+                failures.append(f"{test.name}: {result.failed} of {result.attempted}\n{''.join(report)}")
+    assert not failures, "\n".join(failures)[:4000]
+
+
+def test_the_allowlist_states_its_own_coverage():
+    """A list of 24 modules must not read as a claim about the package's 182.
+
+    This is the positive control on the file's honesty rather than on the code: it fails if the package grows modules
+    with examples and the list stays put without the docstring above being updated to say so. The ratio is the thing a
+    reader needs; `scripts/check_docstring_kwargs.py` is what covers the rest, statically.
+    """
+    import io
+    import pkgutil
+    from contextlib import redirect_stderr, redirect_stdout
+
+    import mfgarchon
+
+    with_examples = 0
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for info in pkgutil.walk_packages(mfgarchon.__path__, prefix="mfgarchon."):
+            try:
+                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    module = importlib.import_module(info.name)
+            except BaseException:  # an unimportable module is not this test's subject
+                continue
+            if any(t.examples for t in doctest.DocTestFinder().find(module)):
+                with_examples += 1
+
+    assert len(EXECUTABLE) <= with_examples, "the list names modules that carry no examples"
+    assert with_examples <= 210, (
+        f"modules with examples grew to {with_examples}; the docstring above says 182 and the list covers "
+        f"{len(EXECUTABLE)}. Update the stated ratio, or the claim silently overstates its own coverage."
+    )

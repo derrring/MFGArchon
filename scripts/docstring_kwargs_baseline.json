@@ -1,0 +1,27 @@
+{
+  "_comment": "Every keyword argument in a docstring example must be a real parameter of the callee it names.",
+  "findings": [
+    "mfgarchon.core.mfg_components_nested.MFGComponents: MFGComponents(hamiltonian_func=...)",
+    "mfgarchon.core.mfg_components_nested.MFGComponents: MFGComponents(neural_architecture=...)",
+    "mfgarchon.core.mfg_components_nested.MFGComponents: MFGComponents(potential_func=...)",
+    "mfgarchon.core.mfg_components_nested.MFGComponents: NeuralMFGConfig(architecture=...)",
+    "mfgarchon.geometry.boundary.applicator_graph.create_maze_applicator: MazeGeometry(height=...)",
+    "mfgarchon.geometry.boundary.applicator_graph.create_maze_applicator: MazeGeometry(width=...)",
+    "mfgarchon.geometry.protocol.detect_geometry_type: NetworkGeometry(n_nodes=...)",
+    "mfgarchon.geometry.protocol.detect_geometry_type: NetworkGeometry(topology=...)",
+    "mfgarchon.geometry.protocols.graph.SupportsGraphLaplacian: NetworkGeometry(adjacency_matrix=...)",
+    "mfgarchon.geometry.protocols.graph.SupportsSpatialEmbedding: MazeGeometry(grid=...)",
+    "mfgarchon.geometry.protocols.topology.SupportsPeriodic.compute_periodic_distance: TensorProductGrid(periodic_dims=...)",
+    "mfgarchon.geometry.protocols.topology.SupportsPeriodic.get_periods: TensorProductGrid(periodic_dims=...)",
+    "mfgarchon.geometry.protocols.topology.SupportsPeriodic.periodic_dimensions: TensorProductGrid(periodic_dims=...)",
+    "mfgarchon.geometry.protocols.topology.SupportsPeriodic.wrap_coordinates: TensorProductGrid(periodic_dims=...)",
+    "mfgarchon.operators.differential.diffusion.apply_diffusion: apply_diffusion(sigma=...)",
+    "mfgarchon.operators.interpolation.projection._grid_to_mesh_interpolation: TensorProductGrid(resolution=...)",
+    "mfgarchon.operators.interpolation.projection._mesh_to_grid_delaunay: TensorProductGrid(resolution=...)",
+    "mfgarchon.operators.reconstruction: compute_weno5_derivative_1d(direction=...)",
+    "mfgarchon.utils.drift_helpers.density_dependent_drift: gradient(axis=...)",
+    "mfgarchon.utils.numerical.nonlinear_solvers.FixedPointSolver: FixedPointSolver(tol=...)",
+    "mfgarchon.utils.numerical.nonlinear_solvers.NewtonSolver: NewtonSolver(tol=...)",
+    "mfgarchon.utils.sparse_operations.SparseMatrixBuilder: SparseMatrixBuilder(format=...)"
+  ]
+}
