@@ -32,9 +32,10 @@ def test_the_gate_greps_for_the_marker_at_the_point_of_consumption():
     This used to split the file on the first occurrence of the marker's literal text and look 400 characters past
     it. That had a false positive and a false negative, and #2349 hit the first: rewrapping the COMMENT above the
     guard put the literal at the start of a continuation line, so the split landed on prose and the gate went red on
-    an edit that changed no logic. The false negative is the mirror -- `local_ci.sh:436` prints the same literal for
-    the mypy probe, so reordering the two, or landing `cannot_run` within 400 characters of that one, would let the
-    guard be deleted with this test still green.
+    an edit that changed no logic. The false negative is the mirror -- the `MYPY_PROBE` heredoc later in the same
+    file prints the same literal, so reordering the two, or landing `cannot_run` within 400 characters of that one,
+    would let the guard be deleted with this test still green. (Named rather than cited by line: the first draft of
+    this docstring said `local_ci.sh:436` and the rewrap two paragraphs above moved it to 435 before it shipped.)
 
     Locating the grep invocation instead is immune to both: a comment cannot look like `grep -rn '# MUTATED'`.
     """
