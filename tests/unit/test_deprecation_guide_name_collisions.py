@@ -2,9 +2,11 @@
 
 `drift_field` is the destination on `FPFDMSolver.solve_fp_system` (replacing `velocity_field`,
 where it means the optimal control a*) and is simultaneously deprecated in favour of
-`potential_field` on eight other FP solvers (where it means the value function U). The generated
-guide listed all nine rows with nothing marking them as different quantities, so the reader's
-reasonable conclusion -- that the name is on its way out everywhere -- is the wrong one.
+`potential_field` on the other FP solvers (where it means the value function U). The generated
+guide listed every one of those rows with nothing marking them as different quantities, so the
+reader's reasonable conclusion -- that the name is on its way out everywhere -- is the wrong one.
+(The two sides were "eight other solvers" and "nine rows" until #2343 removed `FPSLAdjointSolver`;
+the counts are derived from the registry in the test below rather than restated here.)
 
 Both parameters exist on both solver families, so the wrong migration is accepted silently.
 Measured on a 21-point 1D problem, sigma = 0.3, T = 0.2, with a constant optimal control
@@ -102,7 +104,7 @@ def registry(gen):
 def test_the_live_collision_is_detected(gen, registry):
     collisions = gen.find_name_collisions(registry)
     assert "drift_field" in collisions, (
-        "drift_field is the destination on FPFDMSolver and deprecated on eight other FP solvers; "
+        "drift_field is the destination on FPFDMSolver and deprecated on every other FP solver; "
         "if this is empty the detector stopped seeing the case it was written for"
     )
 
@@ -245,7 +247,17 @@ def test_the_guide_carries_the_warning_and_flags_every_affected_row(gen, registr
     assert section_at < first_listing, "the warning must precede the rows it qualifies, not follow them"
 
     rows = [ln for ln in guide.splitlines() if ln.startswith("- **`") and "drift_field" in ln]
-    assert len(rows) >= 9, f"expected the FDM destination row plus eight deprecations, found {len(rows)}"
+    # Derived from the registry, not stated. A literal floor here said ">= 9, the FDM destination row
+    # plus eight deprecations" and went red when #2343 removed `FPSLAdjointSolver`, whose inherited
+    # `drift_field` row was one of the eight -- a correct removal failing on a restated count, which is
+    # the shape #2349 is about. The floor exists only so the row filter cannot pass vacuously, so it
+    # asks the registry how many rows there should be.
+    expected = sum(1 for item in registry if "drift_field" in {gen._short_name(item), item.get("replacement")})
+    assert expected, "no registry entry mentions drift_field; the fixture, not the guide, is wrong"
+    assert len(rows) == expected, (
+        f"the guide lists {len(rows)} drift_field rows and the registry has {expected}. A row that "
+        f"does not reach the guide carries the ambiguity with no marker anywhere the reader looks"
+    )
     unflagged = [ln for ln in rows if "Do not migrate these across solvers" not in ln]
     assert not unflagged, "these rows carry the ambiguity with no marker:\n" + "\n".join(unflagged)
 
