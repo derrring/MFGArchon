@@ -579,7 +579,7 @@ step "Manifest ratchet"
 check $? "every unguarded import is declared in pyproject.toml"
 
 # #2346: the static half of the docstring-example problem. It needs no executability, so it covers
-# all 643 docstring blocks rather than the 24 modules the suite can run -- and it fires on exactly the
+# 624 of the 643 docstring blocks (19 do not parse) rather than the 24 modules the suite can run -- and it fires on exactly the
 # event #2343's removal batches generate: an example still passing a keyword that has been removed.
 step "Docstring keyword ratchet"
 "${PYS[@]}" scripts/check_docstring_kwargs.py --check-baseline scripts/docstring_kwargs_baseline.json

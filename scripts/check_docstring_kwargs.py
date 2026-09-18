@@ -123,7 +123,8 @@ def scan(package_name: str = "mfgarchon") -> tuple[list[str], int, int]:
                     # module this package owns; anything else is skipped rather than guessed.
                     receiver = ast.unparse(node.func.value)
                     owner = vars(mod).get(receiver) or test.globs.get(receiver)
-                    if owner is None or not getattr(owner, "__name__", "").startswith(package_name):
+                    owner_name = getattr(owner, "__name__", "")
+                    if owner is None or not (owner_name == package_name or owner_name.startswith(package_name + ".")):
                         continue
                     name = node.func.attr
                     target = getattr(owner, name, None)
@@ -158,10 +159,23 @@ def self_test() -> int:
         package = root / "docstring_kwargs_probe"
         package.mkdir()
         (package / "__init__.py").write_text("")
+        (package / "neighbour.py").write_text(
+            textwrap.dedent(
+                '''
+                """A module this package owns, so an attribute call on it is followed."""
+
+
+                def target(alpha=1):
+                    """Same name as carrier's, different signature."""
+                '''
+            )
+        )
         (package / "carrier.py").write_text(
             textwrap.dedent(
                 '''
                 """Probe module."""
+
+                from docstring_kwargs_probe import neighbour
 
 
                 def target(alpha=1, beta=2):
@@ -177,6 +191,19 @@ def self_test() -> int:
 
                     >>> flexible(whatever=1)
                     """
+
+
+                def attribute_path():
+                    """An ATTRIBUTE call on a module this package owns must be followed (#2351, R4).
+
+                    Without this the attribute branch contributed zero checks against the real package, so
+                    deleting it left the output bit-identical and nothing would have noticed. The receiver is
+                    imported at MODULE level, not inside the example: this check is static, so a name bound by
+                    an example's own `>>> from ... import` is not in the namespace it resolves against -- which
+                    is why the real case (`np` in `drift_helpers`) resolves at all.
+
+                    >>> neighbour.target(delta=1)
+                    """
                 '''
             )
         )
@@ -188,15 +215,19 @@ def self_test() -> int:
             for name in [n for n in sys.modules if n.startswith("docstring_kwargs_probe")]:
                 del sys.modules[name]
 
-    bad = [f for f in findings if "gamma" in f]
-    good = [f for f in findings if "alpha" in f or "whatever" in f]
-    if len(bad) != 1 or good or checked < 2 or blocks < 1:
+    named = [f for f in findings if "gamma" in f]
+    attribute = [f for f in findings if "delta" in f]
+    wrong = [f for f in findings if "alpha" in f or "whatever" in f]
+    if len(named) != 1 or len(attribute) != 1 or wrong or checked < 3 or blocks < 1:
         print(
-            f"self-test FAILED: findings={findings}, checked={checked}, blocks={blocks}; "
-            f"want exactly one finding naming `gamma`, none for `alpha` or the **kwargs callee"
+            f"self-test FAILED: findings={findings}, checked={checked}, blocks={blocks}; want exactly one "
+            f"finding for the bare-name call, one for the attribute call, none for a real parameter or **kwargs"
         )
         return 1
-    print(f"self-test OK: scan() flagged {bad[0].split(': ')[-1]} and left the real parameter and **kwargs alone")
+    print(
+        f"self-test OK: scan() flagged {named[0].split(': ')[-1]} and {attribute[0].split(': ')[-1]}, "
+        f"and left the real parameter and **kwargs alone"
+    )
     return 0
 
 
@@ -247,8 +278,20 @@ def main() -> int:
         record = json.loads(path.read_text())
         recorded = set(record["findings"])
         current = set(findings)
-        floor_checked, floor_blocks = record.get("checked", 0), record.get("blocks", 0)
-        if checked < floor_checked * 0.9 or blocks < floor_blocks * 0.9:
+        if "checked" not in record or "blocks" not in record:
+            # `.get(..., 0)` here disarmed the floor silently against an older or hand-edited baseline,
+            # restoring exactly the hole the floor closes (review of #2351, R2). Refuse instead.
+            print(
+                f"CANNOT RUN: {path} records no population (`checked`, `blocks`), so a scan that went blind "
+                f"would read as a pass. Re-record it with --write-baseline."
+            )
+            return 2
+        floor_checked, floor_blocks = record["checked"], record["blocks"]
+        # Asymmetric on purpose: it may rise freely, and a fall of more than 2% is a finding. A 10% floor
+        # admitted a measured 9.9% loss -- four modules hidden, 62 of 624 blocks -- which is the exact
+        # scenario the message below describes (review of #2351, R3). This population only moves when
+        # someone edits docstrings, so a tight floor costs no false alarms.
+        if checked < floor_checked * 0.98 or blocks < floor_blocks * 0.98:
             print(
                 f"FAIL: the scan shrank -- {checked} keyword arguments over {blocks} blocks, against a recorded "
                 f"{floor_checked} over {floor_blocks}. A smaller population is not a smaller problem: an "

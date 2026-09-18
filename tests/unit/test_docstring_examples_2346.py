@@ -16,7 +16,8 @@ below are the ones whose examples already pass, all 178 of them.
 
 **So this covers 24 of 182 modules with examples, and nothing else.** The number is in `test_the_allowlist_states_its_own_coverage`
 so that it cannot quietly be read as "the package's examples are checked". The complement is covered differently and
-statically, by `scripts/check_docstring_kwargs.py`, which needs no executability and sees all 643 docstring blocks.
+statically, by `scripts/check_docstring_kwargs.py`, which needs no executability and analyses 624 of the 643
+docstring blocks — the other 19 do not parse as Python.
 
 What reddens this file: any change that breaks an example in a listed module — a renamed parameter, a moved import,
 a changed repr.
