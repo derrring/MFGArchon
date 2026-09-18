@@ -1,9 +1,9 @@
 name: Weekly Test-Discrimination Sweep
 
 # Measures which tests notice a change to a convention the library single-sources,
-# by mutating each one and running the suite. Weekly, not nightly: it is 25 full suite
-# runs -- one baseline plus one per mutation -- and the quantity it tracks moves on the
-# timescale of a campaign, not a commit.
+# by mutating each one and running the suite. Weekly, not nightly: it is one full suite run per
+# mutation plus a baseline -- `1 + len(MUTATIONS)` runs, not a fixed number (#2349) -- and the
+# quantity it tracks moves on the timescale of a campaign, not a commit.
 #
 # It answers what #1715 asked and #1701 generalises. Measured 2026-09-10 at 2c923694 over
 # 3,822 collected tests (#2285): 665 (17.4%) notice at least one of the 24 conventions and

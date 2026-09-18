@@ -12,7 +12,7 @@
   through `cannot_run` (**exit 2**, `GATE CANNOT RUN`) rather than as a red gate, because nothing was
   measured about the code under test. The refusal names the file, the line and the recovery command.
 
-  Complete rather than partial, and measured: all 24 mutations carry the marker, asserted by
+  Complete rather than partial, and measured: every mutation carries the marker, asserted by
   `test_every_mutation_carries_the_marker_the_guard_greps_for` so a future axis added without one
   cannot silently fall outside the guard. `test_the_guard_actually_refuses` plants a marker, runs the
   gate and requires exit 2 — behavioural, not a grep over the script's own text.

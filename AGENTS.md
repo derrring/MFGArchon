@@ -152,19 +152,22 @@ unauditable; adding to it casually is how it got there.
    correlates with runtime, runtime with `slow`, and `slow` with exclusion.
 
    Measured 2026-09-11: one run over 28 of those 42 files did not finish in 3600 s, against 160.5 s
-   per run for the whole filtered suite — **>= 22x, so a 24-mutation sweep over them is >= 25
-   hours.** That ratio is per RUN and is a lower bound twice over: the run was truncated, and it
+   per run for the whole filtered suite — **>= 22x, so a sweep over them costs >= 22x the filtered
+   suite per mutation, which at the matrix's current size is tens of hours.** That ratio is per RUN
+   and is a lower bound twice over: the run was truncated, and it
    covered two thirds of the excluded files. A per-TEST figure is NOT derivable from it — the 3600 s
    covers 28 files while 208 is the count over all 42, which is the two-denominators error this very
    paragraph exists to prevent.
 
    So `kill_count: 2` means two defenders *in that selection*, and the marker filter is not a knob
    that could be widened. Re-running the sweep is not the price of admission — so re-measure only when adding a
-   mutation. It leaves mutations in the tree when killed (#1849, #2229), and it is **expensive**:
-   ~~about 26 min~~ **67 min**, derived from the run's own record rather than estimated —
-   `baseline_seconds` 198.2 plus 3814.6s over 24 mutations (min 105, median 141, max 344) in the
-   matrix measured at `2c923694`. That figure is a property of the file beside it, so when the file
-   is re-recorded the cost is re-derivable from it and nobody has to trust this line:
+   mutation. It leaves mutations in the tree when killed (#1849, #2229), and it is **expensive** —
+   **derive the current cost, do not read it here.** ~~about 26 min~~ ~~67 min~~ [CORRECTED 2026-09-18,
+   #2349]: the derivation below returned **136 min** (`baseline_seconds` 237.1 plus 7927.2s over 27
+   mutations, matrix measured at `76f2d9e8`), against the 67 min this line stated from `2c923694`. The
+   figure is a property of the file beside it and the re-derivability clause was already written here —
+   it was tested by two re-records and failed both, because a present-tense headline is what a reader
+   takes away. So the number now lives only in the command:
 
    ```bash
    "$MFG_PYTHON" -c "import json; d = json.load(open('scripts/discrimination_killmatrix.json')); print((d['baseline_seconds'] + sum(m['seconds'] for m in d['mutations'].values())) / 60)"

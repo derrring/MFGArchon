@@ -1,11 +1,13 @@
 """Pinning tests for the discrimination ratchet (scripts/test_discrimination.py).
 
-The sweep costs ~67 minutes -- 25 full-suite runs, one baseline plus one per mutation -- so it is a
-weekly job, not a gate. Derive it rather than trust this line; `scripts/discrimination_killmatrix.json`
-records `baseline_seconds` and a per-mutation `seconds`, and AGENTS.md carries the one-liner.
-(~~26 minutes, seven runs~~: both were wrong. 26 was 2.6x low against the file it shipped beside, and
-`MUTATIONS` has held 24 entries, not six, for as long as the matrix has recorded them.) These tests pin the parts that decide what the sweep MEANS, which is where it
-can silently stop working:
+The sweep costs one full-suite run per mutation plus a baseline, which makes it a weekly job rather
+than a gate. The duration is deliberately not stated here: `scripts/discrimination_killmatrix.json`
+records `baseline_seconds` and a per-mutation `seconds`, and AGENTS.md carries the one-liner that
+adds them up. (~~26 minutes, seven runs~~: both were wrong. 26 was 2.6x low against the file it
+shipped beside, and `MUTATIONS` has held far more than six entries for as long as the matrix has
+recorded them; the count is `len(td.MUTATIONS)`, owned by
+`test_the_mutation_list_matches_the_parametrisation`.) These tests pin the parts that decide what
+the sweep MEANS, which is where it can silently stop working:
 
 - the three-way verdict, which separates "no test covers this convention" (a finding)
   from "the mutation never ran" (a harness fault). An earlier design had only two
@@ -204,7 +206,7 @@ def test_shipped_baseline_records_the_scope_it_was_measured_at(td):
     """
     at = json.loads(_BASELINE.read_text()).get("_measured_at")
     assert isinstance(at, dict), "provenance must be structured, not a bare sha"
-    for key in ("commit", "paths", "markers", "collected", "excluded"):
+    for key in ("commit", "paths", "markers", "collected", "excluded", "reproduce"):
         assert at.get(key), f"_measured_at is missing {key!r}"
     assert at["markers"] == td.MARKERS, "baseline marker set has drifted from the script's"
     assert at["excluded"] == td.SELF_TESTS
@@ -379,7 +381,7 @@ def test_main_uses_the_scoped_guard_at_the_end(td):
 
     Swapping the end-of-run call back to `_assert_clean_tree()` killed zero tests,
     because the test above exercises `_assert_mutations_restored` directly. Source
-    inspection is the honest pin here -- driving `main()` means a 26-minute sweep --
+    inspection is the honest pin here -- driving `main()` means a full sweep, tens of minutes --
     and it is the same technique the mutation-anchor tests already use.
     """
     body = inspect.getsource(td.main)
@@ -716,6 +718,7 @@ def test_the_owner_prose_in_the_artifacts_matches_the_code(td):
 
     Every `owner` fixture in this file is a bare `"x"` placeholder, which is exactly where the check was missing.
     """
+    _MISSING = object()
     baseline = json.loads((_SCRIPT.parent / "discrimination_baseline.json").read_text())["mutations"]
     matrix = json.loads((_SCRIPT.parent / "discrimination_killmatrix.json").read_text())
     matrix = matrix.get("mutations", matrix)
@@ -725,7 +728,9 @@ def test_the_owner_prose_in_the_artifacts_matches_the_code(td):
         drifted = {
             name: entry["owner"]
             for name, entry in recorded.items()
-            if isinstance(entry, dict) and "owner" in entry and entry["owner"] != declared.get(name)
+            # `.get(..., _MISSING)`, not `"owner" in entry`: a row whose key was hand-edited away
+            # skipped the comparison and the whole file stayed green (review of #2354, planted)
+            if isinstance(entry, dict) and entry.get("owner", _MISSING) != declared.get(name)
         }
         assert not drifted, (
             f"{label}: the recorded `owner` prose differs from `MUTATIONS` for {sorted(drifted)}. A sweep writes "

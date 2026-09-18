@@ -716,15 +716,18 @@ def _write_baseline(path: Path, results: dict, *, paths: list[str], collected: i
         ),
         "_measured_at": {
             "commit": _head_sha(),
-            # The sha above is the PRE-MERGE branch commit and this repo squash-merges, so it is
-            # unreachable the moment the PR lands -- main's baseline has cited a dangling `a70d9a06`
-            # for weeks (#2349). Kept for provenance, with the procedure that actually works beside
-            # it, because a broken anchor is worse than none: a later reader tries the sha, fails,
-            # and has nothing else.
+            # `commit` is the PRE-MERGE branch sha and this repo squash-merges, so it is unreachable
+            # the moment the PR lands. Measured 2026-09-18: main's baseline cites `76f2d9e8` and
+            # `git branch -a --contains 76f2d9e8` is empty; the stamp before it, `a70d9a06`, is equally
+            # orphaned. Kept for provenance with the procedure beside it, because a broken anchor is
+            # worse than none -- a reader tries the sha, fails, and has nothing else (#2349).
             "reproduce": (
-                "the sha above does not survive the squash merge that ships this file; to get the tree "
-                "it was measured on, use `git log --oneline --follow scripts/discrimination_baseline.json` "
-                "and check out the merge commit that last touched it"
+                "the `commit` key above is a pre-merge branch sha and does not survive the squash merge "
+                "that ships this file. `git log --oneline --follow scripts/discrimination_baseline.json` "
+                "and check out its FIRST entry -- squash merges here are single-parent, so there is no "
+                "merge commit to find. That yields the tree this artifact SHIPPED in, which is not "
+                "necessarily the tree the sweep ran on; compare with `git diff --stat` against `commit` "
+                "if the difference matters"
             ),
             "paths": paths,
             "markers": MARKERS,
@@ -950,15 +953,18 @@ def main() -> None:
     payload = {
         "_measured_at": {
             "commit": _head_sha(),
-            # The sha above is the PRE-MERGE branch commit and this repo squash-merges, so it is
-            # unreachable the moment the PR lands -- main's baseline has cited a dangling `a70d9a06`
-            # for weeks (#2349). Kept for provenance, with the procedure that actually works beside
-            # it, because a broken anchor is worse than none: a later reader tries the sha, fails,
-            # and has nothing else.
+            # `commit` is the PRE-MERGE branch sha and this repo squash-merges, so it is unreachable
+            # the moment the PR lands. Measured 2026-09-18: main's baseline cites `76f2d9e8` and
+            # `git branch -a --contains 76f2d9e8` is empty; the stamp before it, `a70d9a06`, is equally
+            # orphaned. Kept for provenance with the procedure beside it, because a broken anchor is
+            # worse than none -- a reader tries the sha, fails, and has nothing else (#2349).
             "reproduce": (
-                "the sha above does not survive the squash merge that ships this file; to get the tree "
-                "it was measured on, use `git log --oneline --follow scripts/discrimination_baseline.json` "
-                "and check out the merge commit that last touched it"
+                "the `commit` key above is a pre-merge branch sha and does not survive the squash merge "
+                "that ships this file. `git log --oneline --follow scripts/discrimination_baseline.json` "
+                "and check out its FIRST entry -- squash merges here are single-parent, so there is no "
+                "merge commit to find. That yields the tree this artifact SHIPPED in, which is not "
+                "necessarily the tree the sweep ran on; compare with `git diff --stat` against `commit` "
+                "if the difference matters"
             ),
             "paths": paths,
             "markers": MARKERS,

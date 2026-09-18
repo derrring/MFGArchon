@@ -27,12 +27,30 @@ GATE = REPO / "scripts" / "local_ci.sh"
 
 
 def test_the_gate_greps_for_the_marker_at_the_point_of_consumption():
-    body = GATE.read_text()
-    assert "# MUTATED" in body, "the gate must look for the marker a killed sweep leaves behind"
-    assert "cannot_run" in body.split("# MUTATED")[1][:400], (
-        "a mutated tree is an ENVIRONMENT failure -- nothing was measured -- so it must exit "
-        "through cannot_run (exit 2), not as a normal red gate (exit 1)"
-    )
+    """The guard must exit through `cannot_run`, located by the grep INVOCATION rather than by text.
+
+    This used to split the file on the first occurrence of the marker's literal text and look 400 characters past
+    it. That had a false positive and a false negative, and #2349 hit the first: rewrapping the COMMENT above the
+    guard put the literal at the start of a continuation line, so the split landed on prose and the gate went red on
+    an edit that changed no logic. The false negative is the mirror -- `local_ci.sh:436` prints the same literal for
+    the mypy probe, so reordering the two, or landing `cannot_run` within 400 characters of that one, would let the
+    guard be deleted with this test still green.
+
+    Locating the grep invocation instead is immune to both: a comment cannot look like `grep -rn '# MUTATED'`.
+    """
+    lines = GATE.read_text().splitlines()
+    guards = [
+        i
+        for i, line in enumerate(lines)
+        if "grep" in line and "# MUTATED" in line and not line.lstrip().startswith("#")
+    ]
+    assert guards, "the gate must GREP for the marker a killed sweep leaves behind, not merely mention it"
+    for index in guards:
+        window = "\n".join(lines[index : index + 8])
+        assert "cannot_run" in window, (
+            f"the guard at line {index + 1} does not reach `cannot_run` within 8 lines. A mutated tree is an "
+            f"ENVIRONMENT failure -- nothing was measured -- so it must exit 2, not as a normal red gate (exit 1)"
+        )
 
 
 def test_every_mutation_carries_the_marker_the_guard_greps_for():
