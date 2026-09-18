@@ -2,7 +2,7 @@
 
 The cell count is **derived from the enums**, not listed. Adding a `BCType` member makes this file
 fail until someone decides what each applicator does with it — which is the property a hand-written
-list of known cases cannot have, and the reason the discrimination ratchet's 24 mutations name only
+list of known cases cannot have, and the reason the discrimination ratchet's mutations name only
 2 of `BCType`'s 8 members. #1948
 
 `GraphApplicator` is indexed by its own alphabet and over TWO axes, (`GraphBCType` × `field_type`),

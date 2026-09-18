@@ -703,3 +703,32 @@ def test_no_committed_killer_id_is_truncated(td):
         f"{sorted(set(matrix['killed_by']) - named)} only in killed_by, "
         f"{sorted(named - set(matrix['killed_by']))} only in mutations"
     )
+
+
+def test_the_owner_prose_in_the_artifacts_matches_the_code(td):
+    """`owner` is recorded in both JSONs and compared by nothing, so the two can drift silently (#2349).
+
+    It is not decoration: it prints on every sweep and is the only place a reader learns what convention a
+    mutation tests. The review of #2347 corrected two substantive errors in one such string -- a miscounted set of
+    call sites, and an overstatement of what the row records -- both of which had already shipped into the
+    artifacts. And because the fix was a hand-edit of the JSON (a re-record costs a 90-minute sweep for a
+    documentation change), it was correct and unverified until this.
+
+    Every `owner` fixture in this file is a bare `"x"` placeholder, which is exactly where the check was missing.
+    """
+    baseline = json.loads((_SCRIPT.parent / "discrimination_baseline.json").read_text())["mutations"]
+    matrix = json.loads((_SCRIPT.parent / "discrimination_killmatrix.json").read_text())
+    matrix = matrix.get("mutations", matrix)
+    declared = {m.name: m.owner for m in td.MUTATIONS}
+
+    for label, recorded in (("baseline", baseline), ("kill matrix", matrix)):
+        drifted = {
+            name: entry["owner"]
+            for name, entry in recorded.items()
+            if isinstance(entry, dict) and "owner" in entry and entry["owner"] != declared.get(name)
+        }
+        assert not drifted, (
+            f"{label}: the recorded `owner` prose differs from `MUTATIONS` for {sorted(drifted)}. A sweep writes "
+            f"the code's bytes, so either the script changed without a re-record or the artifact was hand-edited "
+            f"into disagreement. Re-record, or correct the script."
+        )

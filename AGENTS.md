@@ -137,7 +137,8 @@ unauditable; adding to it casually is how it got there.
    a scheme can conserve to 1e-12 with a decaying wall-gradient ratio, and `FPSLJacobianSolver` is
    non-conservative by construction and correct). Not sufficient: a test can kill `optimal_control_sign`
    incidentally while pinning nothing it claims. Not necessary, and this is the direction that is
-   invisible: the 24 mutations are a **fixed, small alphabet**, so a test pinning a 25th convention
+   invisible: the mutations are a **fixed, small alphabet** — `MUTATIONS` declares them and
+   `test_the_mutation_list_matches_the_parametrisation` owns the count — so a test pinning a convention outside it
    reads zero however sharp it is. Measured 2026-09-11 —
    `test_fem_inhomogeneous_neumann_2294.py` and `test_resolver_no_image_contract_2293.py` are both
    zero-killers here while together killing seven mutations written against their own targets
