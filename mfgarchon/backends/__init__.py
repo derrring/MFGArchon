@@ -81,8 +81,11 @@ def create_backend(backend_name: str | None = None, **kwargs):
         >>> # Auto-select (returns NumPy; ask for torch/jax by name)
         >>> backend = create_backend()
 
-        >>> # Explicit choice
-        >>> backend = create_backend("jax")
+        >>> # Explicit choice -- "numpy" here because this example EXECUTES in the suite
+        >>> # (tests/unit/test_docstring_examples_2346.py) and the nightly unit job installs no
+        >>> # optional extras. `create_backend("torch")` and `create_backend("jax")` take the same
+        >>> # form and raise ImportError with an install hint when the extra is absent (#2367).
+        >>> backend = create_backend("numpy")
     """
     if backend_name is None or backend_name == "auto":
         # numpy, unconditionally. ~~torch > jax > numpy~~ [CORRECTED 2026-08-17] -- the tiered

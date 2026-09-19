@@ -42,6 +42,18 @@ import pytest
 
 # Measured clean at 408415d4 — every example in each of these runs and passes. The trailing count is that module's
 # example count at the time of listing; it is a description, not an assertion, since examples get added.
+#: THE POPULATION WAS CHOSEN ON A MACHINE WITH THE OPTIONAL EXTRAS INSTALLED, AND THE NIGHTLY UNIT
+#: JOB HAS NONE. A module enters this list because its examples "already all pass" -- measured here,
+#: where jax, torch and numba are present. An example that needs one passes locally and fails there,
+#: silently to the author. That happened: `mfgarchon.backends`'s `create_backend("jax")` was green on
+#: every local gate and red on the first nightly to run this list, 1 failure in 3935 (#2367).
+#:
+#: So before adding a module: run its examples with the extra absent. Faithfully -- two simulations
+#: give false results. `sys.modules["jax"] = None` breaks scipy's array-API layer, and a meta-path
+#: finder that RAISES propagates through `variational_mfg_solver.py`'s
+#: `find_spec("jax") is not None`, which expects None and gets an exception. What works is a
+#: site-packages symlink farm omitting the extra: find_spec returns None, the import raises
+#: ModuleNotFoundError, and numpy survives. Measured that way, all 24 modules pass with jax absent.
 EXECUTABLE = [
     "mfgarchon.alg.numerical.coupling.graph_coupling",  # 2
     "mfgarchon.alg.numerical.gfdm_components.grid_collocation_mapper",  # 7
