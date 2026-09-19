@@ -1427,12 +1427,6 @@
     "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPParticleSolver-PERIODIC]": [
       "optimal_control_sign"
     ],
-    "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPSLAdjointSolver-NEUMANN]": [
-      "quadrature_wall_node_counting_measure"
-    ],
-    "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPSLAdjointSolver-NO_FLUX]": [
-      "quadrature_wall_node_counting_measure"
-    ],
     "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPSLSolver-NEUMANN]": [
       "quadrature_wall_node_counting_measure"
     ],
@@ -3719,7 +3713,7 @@
       "verify": "check_convergence_criteria(1e-9, 1e-9, 1.0, 1.0, 1e-6)[0]"
     },
     "quadrature_wall_node_counting_measure": {
-      "kill_count": 96,
+      "kill_count": 94,
       "killed": [
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_gauss_seidel_runs_and_produces_finite_M",
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestFictitiousPlayFPDriftConvention::test_fictitious_play_density_is_non_negative",
@@ -3768,8 +3762,6 @@
         "tests/unit/test_alg/test_particle_mass_is_the_callers_2181.py::test_ALL_pins_and_NONE_carries_so_the_modes_are_not_the_same_solve",
         "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPFVMSolver-NEUMANN]",
         "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPFVMSolver-NO_FLUX]",
-        "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPSLAdjointSolver-NEUMANN]",
-        "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPSLAdjointSolver-NO_FLUX]",
         "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPSLSolver-NEUMANN]",
         "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPSLSolver-NO_FLUX]",
         "tests/unit/test_alg/test_sl_cn_wall_2243.py::test_the_diffusion_matrix_is_self_adjoint_in_the_grid_measure",
