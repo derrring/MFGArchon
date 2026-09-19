@@ -589,6 +589,25 @@ step "Docstring keyword ratchet"
 "${PYS[@]}" scripts/check_docstring_kwargs.py --check-baseline scripts/docstring_kwargs_baseline.json
 check $? "no docstring example newly passes a keyword its callee does not have"
 
+# The OTHER half of removal-batch coverage, and it was running only in CI. This gate ran
+# check_internal_deprecation.py in the --self-test loop below and never as the ratchet, so a PR that
+# RETIRES a deprecation passed here by construction and failed on the runner: #2355 removed seven
+# symbols, this gate went GREEN twice, and `deprecation-check.yml` was red with
+# `total: 59 -> 51, type:function: 22 -> 16, type:parameter: 36 -> 34` (#2356).
+#
+# No `--check-baseline` argument: this checker does not have one. It hardcodes the path at
+# check_internal_deprecation.py's `BASELINE = Path(__file__).resolve().parent / "deprecation_baseline.json"`,
+# so the bare invocation IS the ratchet -- the same line deprecation-check.yml runs. The four
+# baseline ratchets above all take a path and this one does not; copying their idiom produces an
+# argparse error, which is why the style neighbour here is the Manifest ratchet.
+#
+# Unguarded by --fast, like every other ratchet in this file: the only two `$FAST -eq 0` blocks are
+# the test suite and the discrimination report. It also needs the package, which is why probe_modules
+# above names this script by name as the reason --fast cannot run on a package-less interpreter.
+step "Deprecation ratchet"
+"${PYS[@]}" scripts/check_internal_deprecation.py
+check $? "no deprecation added or retired without recording it"
+
 step "Single-source ratchet"
 "${PYS[@]}" scripts/check_single_source.py --baseline scripts/single_source_baseline.json
 check $? "no new site restating a single-owner quantity"
