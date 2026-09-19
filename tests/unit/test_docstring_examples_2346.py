@@ -42,6 +42,64 @@ import pytest
 
 # Measured clean at 408415d4 — every example in each of these runs and passes. The trailing count is that module's
 # example count at the time of listing; it is a description, not an assertion, since examples get added.
+#: THE POPULATION WAS CHOSEN ON A MACHINE WITH THE OPTIONAL EXTRAS, AND CI HAS FEWER. A module
+#: enters this list because its examples "already all pass" -- measured here, where jax, torch and
+#: numba are installed. An example needing one passes locally and fails in CI, silently to the
+#: author. That happened: `mfgarchon.backends`'s `create_backend("jax")` was green on every local
+#: gate and red on the first nightly to run this list, 1 failure in 3935 (#2367).
+#:
+#: WHICH extras CI lacks is per-workflow and is NOT "none" -- `nightly.yml` runs
+#: `pip install -e ".[numerical]" --group dev numba`, so numba IS present and jax and torch are not.
+#: `test_optional_backends_are_not_imported_eagerly.py` holds the authoritative per-workflow table
+#: and already struck the phrase "CI installs no extras" as false; this comment said it anyway in
+#: its first draft. Testing with numba absent instead would make 20 modules unimportable and produce
+#: breakage unrelated to the candidate.
+#:
+#: SO BEFORE ADDING A MODULE, run its examples with jax and torch absent -- faithfully. Three
+#: simulations do not work, and each looks like it does:
+#:   - `sys.modules["jax"] = None` breaks scipy's array-API layer. It also passes all three of the
+#:     obvious acceptance checks below, which is why the fourth one is here.
+#:   - a meta-path finder that RETURNS None does not block at all: returning None means "I cannot
+#:     handle this, try the next finder", and the next one resolves jax.
+#:   - a finder that RAISES propagates through `variational_mfg_solver.py`'s
+#:     `find_spec("jax") is not None`, which expects None and gets an exception.
+#: Accept a simulation only when all FOUR hold. No single check rejects all three traps, so do not
+#: go looking for the one that does. Measured, one fresh process per cell -- REJECT means the check
+#: catches that trap:
+#:
+#:     trap                        check 1   check 2   check 3   check 4
+#:     sys.modules["jax"]=None     pass      pass      pass*     REJECT
+#:     finder that RAISES          REJECT    pass      pass      pass
+#:     finder that returns None    REJECT    REJECT    pass      pass
+#:
+#: So checks 1 and 4 carry these three between them; check 2 rejects only what check 1 already
+#: does. Check 3 rejects none of them and is not redundant either -- it is here for a FOURTH trap,
+#: removing site-packages from `sys.path`, which takes numpy and pytest with it so that nothing
+#: imports at all. Run all four: the list is four long because the traps are four, not three.
+#: (*) check 3's verdict on the None-injection depends on which function you reach for:
+#: `scipy.linalg.norm`, `scipy.stats.entropy` and `scipy.integrate.quad` all work, while
+#: `scipy.special.logsumexp` raises `AttributeError: 'NoneType' object has no attribute 'Array'`
+#: through the array-API layer. Treat check 3 as a smoke test, not as the discriminator.
+#:   1. `importlib.util.find_spec("jax") is None`
+#:   2. `import jax` raises ModuleNotFoundError
+#:   3. numpy and scipy still work
+#:   4. `"jax" not in sys.modules` -- true absence leaves it out entirely; the None-injection trap
+#:      leaves it present-and-None, and passes checks 1-3.
+#:
+#: A venv running the nightly's own install line satisfies all four. Copy the pip upgrade with it:
+#:   python -m venv /tmp/nojax
+#:   /tmp/nojax/bin/python -m pip install --upgrade pip
+#:   /tmp/nojax/bin/pip install -e ".[numerical]" --group dev numba
+#: The upgrade is not decoration -- it is `nightly.yml:75`, the line immediately above the install,
+#: and `--group` is newer than the pip a fresh venv ships. Measured here: a 3.12 venv brings pip
+#: 25.0.1, which answers `no such option: --group` (control: the same pip accepts `--dry-run`).
+#:
+#: HOW THE LIST WAS CLEARED, since the number is not in this file and a reader should not have to
+#: guess which instrument produced it: every module named here was run with jax absent, and all 24
+#: passed. That came from a symlink farm of site-packages minus jax, so torch was PRESENT and it is
+#: evidence about jax only. For jax AND torch absent together the evidence is the nightly job
+#: itself, which installs neither: run 35430554819 reports every allowlisted module passing except
+#: `backends`.
 EXECUTABLE = [
     "mfgarchon.alg.numerical.coupling.graph_coupling",  # 2
     "mfgarchon.alg.numerical.gfdm_components.grid_collocation_mapper",  # 7
