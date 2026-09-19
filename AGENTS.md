@@ -245,8 +245,7 @@ moment to file the "no oracle yet" issue instead.
 Conventions Index` names 35 conventions and `scripts/discrimination_baseline.json` carries one
 mutation per entry in `MUTATIONS`, and **the two sets are nearly disjoint** (measured in #2227).
 ~~24 mutations~~ [CORRECTED 2026-09-18, #2349] — the parenthetical anchors the DISJOINTNESS, not
-the count, and this site survived that PR's first pass while being in its grep's own result set. Neither is the list. A test
-defending something on neither is admissible
+the count. Neither is the list. A test defending something on neither is admissible
 under class 1 or 2 on its own merits. The index is a private Joplin note that a reader outside this
 machine cannot open, so state the convention in the test rather than cite the index.
 
