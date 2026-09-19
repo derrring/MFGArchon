@@ -60,8 +60,7 @@ def get_available_backends() -> dict[str, bool]:
 # The docstring example BELOW names "numpy" deliberately: it EXECUTES in the suite
 # (tests/unit/test_docstring_examples_2346.py), and the nightly unit job installs neither jax
 # nor torch. `create_backend("jax")` there put main's nightly red at 07:53Z on 2026-09-19, one
-# failure in 3935 (#2367). Keep any
-# executed example on a backend that is always available.
+# failure in 3935 (#2367). Keep any executed example on a backend that is always available.
 def create_backend(backend_name: str | None = None, **kwargs):
     """
     Create a computational backend instance.

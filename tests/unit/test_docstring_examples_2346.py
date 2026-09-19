@@ -63,16 +63,28 @@ import pytest
 #:     handle this, try the next finder", and the next one resolves jax.
 #:   - a finder that RAISES propagates through `variational_mfg_solver.py`'s
 #:     `find_spec("jax") is not None`, which expects None and gets an exception.
-#: Accept a simulation only when all four hold, and the last is the one that rejects the traps:
+#: Accept a simulation only when all FOUR hold. No single check rejects all three traps, so do not
+#: go looking for the one that does: the raising finder dies on check 1, which raises instead of
+#: returning; the returning-None finder is caught by check 2, where `import jax` succeeds; and the
+#: None-injection passes 1-3 and is caught only by check 4. That is why the list is four long.
 #:   1. `importlib.util.find_spec("jax") is None`
 #:   2. `import jax` raises ModuleNotFoundError
 #:   3. numpy and scipy still work
 #:   4. `"jax" not in sys.modules` -- true absence leaves it out entirely; the None-injection trap
 #:      leaves it present-and-None, and passes checks 1-3.
 #:
-#: The cheapest thing that satisfies all four is a venv running the nightly's own install line:
-#:   python -m venv /tmp/nojax && /tmp/nojax/bin/pip install -e ".[numerical]" --group dev numba
-#: Measured that way, every module then on this list passes with jax and torch absent.
+#: A venv running the nightly's own install line satisfies all four. Copy the pip upgrade with it:
+#:   python -m venv /tmp/nojax
+#:   /tmp/nojax/bin/python -m pip install --upgrade pip
+#:   /tmp/nojax/bin/pip install -e ".[numerical]" --group dev numba
+#: The upgrade is not decoration -- it is `nightly.yml:75`, the line immediately above the install,
+#: and `--group` is newer than the pip a fresh venv ships. Measured here: a 3.12 venv brings pip
+#: 25.0.1, which answers `no such option: --group` (control: the same pip accepts `--dry-run`).
+#:
+#: The 24-module measurement quoted below was NOT taken that way. It came from a symlink farm of
+#: site-packages minus jax, so it had torch present and is evidence about jax only. For jax AND
+#: torch absent together the evidence is the nightly job itself, which installs neither: run
+#: 35430554819 reports every allowlisted module passing except `backends`.
 EXECUTABLE = [
     "mfgarchon.alg.numerical.coupling.graph_coupling",  # 2
     "mfgarchon.alg.numerical.gfdm_components.grid_collocation_mapper",  # 7
