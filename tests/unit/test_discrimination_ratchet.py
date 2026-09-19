@@ -23,7 +23,7 @@ import ast
 import importlib.util
 import inspect
 import json
-import re
+import subprocess
 import sys
 import textwrap
 from pathlib import Path
@@ -157,28 +157,85 @@ def test_every_killer_node_id_still_resolves(td):
     this count, and that is the control, not the mutant.
     """
     matrix = json.loads((_BASELINE.parent / "discrimination_killmatrix.json").read_text())["killed_by"]
-    tests_root = _BASELINE.parent.parent / "tests"
-    stale = []
-    for nid in matrix:
-        rel, _, tail = nid.partition("::")
-        path = _BASELINE.parent.parent / rel
-        if not path.is_file():
-            stale.append((nid, "file gone"))
-            continue
-        src = path.read_text(encoding="utf-8", errors="ignore")
-        parts = [p.split("[")[0] for p in tail.split("::")]
-        missing = [q for q in parts if not re.search(rf"^\s*(?:class|def) {re.escape(q)}\b", src, re.M)]
-        if missing:
-            stale.append((nid, f"missing {missing}"))
+    repo_root = _BASELINE.parent.parent
+    tests_root = repo_root / "tests"
+
+    #: REAL COLLECTION, not a text search for `def`. The old form stripped the parametrisation
+    #: (`p.split("[")[0]`) and grepped the file for the function, so a node ID naming a CASE that can
+    #: no longer be collected still "resolved" as long as its function survived. 444 of the 775 killer
+    #: IDs were parametrised at `f25d3c6c` -- 57.3% -- so that was the size of the blind spot, and
+    #: #2343's removal of `FPSLAdjointSolver` put two IDs into it while the test stayed green (#2358).
+    #: Anchored to that commit on purpose: the figure is a property of one recorded matrix, and this
+    #: very change makes it 442.
+    #:
+    #: Static parsing cannot substitute. `_surface_params()` builds ids as f"{name}-{bc_type.name}"
+    #: from a LIVE class-introspection walk over `_SUPPORTED_BC_TYPES`, so `FPSLAdjointSolver-NEUMANN`
+    #: is only producible by collection -- an AST fix misses exactly the case this exists for.
+    #:
+    #: `-q -q`, not `-q`: pytest.ini's addopts carries `--verbose`, so a single `-q` nets to
+    #: verbosity 0 and prints the INDENTED TREE instead of flat node IDs. That yields zero parsed
+    #: lines, which without the guards below would read as every ID dead.
+    files = sorted({nid.split("::")[0] for nid in matrix})
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "--collect-only", "-q", "-q", "-rs", *files],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    collected = {line.strip() for line in proc.stdout.splitlines() if line.startswith("tests/") and "::" in line}
+
+    #: A SKIPPED file is "not measured"; a file that merely collected nothing is DEAD. Those are
+    #: different sets, and the difference is a regression the first version of this shipped: keying the
+    #: carve-out on "collected zero" silenced every killer ID in any file one edit could empty.
+    #: Measured -- renaming the only test in `test_particle_multi_exit.py` (1 test, 1 killer) left this
+    #: GREEN, while the `def`-grep this replaced went RED and named it. At `c79c8c29`, where that
+    #: predicate shipped, 31 killer IDs SAT in files a single ordinary edit could zero and 424 of 773
+    #: could be hidden adversarially under the count floor -- properties of the superseded predicate,
+    #: measured against that matrix, not of the check below.
+    #:
+    #: So the carve-out reads the SKIP REPORT (`-rs`), not the count. Four matrix files carry a
+    #: module-level `pytest.importorskip` at column 0 -- skfem, igraph and cvxpy, covering 8 killer IDs.
+    #: Those extras are installed here so all 8 collect; on a box without them pytest names the file in
+    #: a `SKIPPED [1] path:line: ...` line and it is excused. A file that collects nothing and is NOT
+    #: named there has simply lost its tests, and is reported.
+    #: `-rs` does not disturb the parse: SKIPPED lines do not start with `tests/`, so `collected` is
+    #: byte-identical with and without it (measured, set equality over 2657 IDs).
+    skipped_files = {
+        line.split()[2].split("::")[0].rsplit(":", 2)[0]
+        for line in proc.stdout.splitlines()
+        if line.startswith("SKIPPED [") and len(line.split()) > 2
+    }
+    stale = [
+        (nid, "case not collected")
+        for nid in matrix
+        if nid.split("::")[0] not in skipped_files and nid not in collected
+    ]
 
     #: CONTROL, and only the first of these two is one. Collapse the matrix to 5 entries and the
     #: bound `<= 3` PASSES while `len(matrix) > 100` fires -- that assertion is the whole thing
-    #: standing between a collapsed keep-list and a silent green. The `is_dir` line below has NO
-    #: detection power: the loop resolves every path from the same root, so a wrong root makes all
-    #: 614 read "file gone" and the main assertion fires anyway. It improves the message and nothing
-    #: else, and calling it a control overstated it.
+    #: standing between a collapsed keep-list and a silent green. ~~The `is_dir` line below has NO
+    #: detection power ... a wrong root fails the whole pass and `returncode` fires first.~~
+    #: [CORRECTED 2026-09-19, #2358] Inverted, and measured: point the root at `docs/` and `is_dir`
+    #: fires FIRST, in 0.5 s, because it is asserted before the returncode line. The line called
+    #: powerless is the one that reports. (~~all 614 read "file gone"~~ -- that was the entry count when
+    #: this was written and it tracked the tip; the argument never depended on the figure, so it no
+    #: longer states one. #2358.)
     assert len(matrix) > 100, f"killmatrix collapsed to {len(matrix)} entries; the check is inert"
     assert tests_root.is_dir(), "tests/ not found from the baseline's location; the walk is wrong"
+    #: Both of these are load-bearing and neither existed before. A collection that fails, or that
+    #: silently produces nothing, leaves `stale` empty and the check reads GREEN -- the same shape as
+    #: the collapsed-matrix control above, one layer down.
+    #: stderr, not only stdout: a deleted matrix file exits 4 with `ERROR: file or directory not
+    #: found` on STDERR, and a stdout-only message reported it by accident, through pytest's repr of
+    #: the whole CompletedProcess.
+    assert proc.returncode == 0, (
+        f"collection failed ({proc.returncode}), so nothing was measured:\n{proc.stderr[-1000:]}\n{proc.stdout[-1000:]}"
+    )
+    assert len(collected) > 2000, (
+        f"collection yielded only {len(collected)} node IDs; the parse is wrong, not the matrix. "
+        f"Check whether addopts changed the output format (see the `-q -q` note above)"
+    )
 
     #: 0, and there is no tolerance to tune. #2285 re-recorded the matrix at `2c923694`, so the three
     #: #2176 entries are gone and the measured count is 0 -- main's matrix has exactly those three

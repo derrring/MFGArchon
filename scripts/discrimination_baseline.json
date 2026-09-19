@@ -127,7 +127,7 @@
       "status": "ok"
     },
     "quadrature_wall_node_counting_measure": {
-      "kill_count": 96,
+      "kill_count": 94,
       "owner": "The measure on a node-centred grid is the TRAPEZOID: `TensorProductGrid` is endpoint-inclusive, so the wall lies ON the end node and that node owns half a cell. Those weights are also the control volumes the conservative FP schemes telescope against, which is why this is one convention and not two (#2145). Sole owner: `mfgarchon/utils/numerical/quadrature.py`, reached by `TensorProductGrid.integrate`, `mass_drift`, the FV advection kernel and the FDM wall rows. SUPERSEDES `m_initial_1d_counting_measure`, which mutated the constructor's normalisation dispatch -- #1887 removed that rescale (the library validates the initial mass and does not change it), so that anchor no longer exists. The convention it defended survived and moved here; the mutation follows it.",
       "status": "ok"
     },
