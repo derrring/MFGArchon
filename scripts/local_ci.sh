@@ -597,16 +597,25 @@ check $? "no docstring example newly passes a keyword its callee does not have"
 #
 # No `--check-baseline` argument: this checker does not have one. It hardcodes the path at
 # check_internal_deprecation.py's `BASELINE = Path(__file__).resolve().parent / "deprecation_baseline.json"`,
-# so the bare invocation IS the ratchet -- the same line deprecation-check.yml runs. The four
-# baseline ratchets above all take a path and this one does not; copying their idiom produces an
-# argparse error, which is why the style neighbour here is the Manifest ratchet.
+# so the bare invocation IS the ratchet -- the same line deprecation-check.yml runs. check_fail_fast,
+# check_doc_api and check_docstring_kwargs each take a path and this one does not; copying their
+# idiom produces an argparse error, which is why the style neighbour here is the Manifest ratchet --
+# which takes no argument either, so this is now the second of that shape rather than an exception.
 #
-# Unguarded by --fast, like every other ratchet in this file: the only two `$FAST -eq 0` blocks are
-# the test suite and the discrimination report. It also needs the package, which is why probe_modules
-# above names this script by name as the reason --fast cannot run on a package-less interpreter.
+# Unguarded by --fast, like every ratchet outside the two `$FAST -eq 0` blocks -- and note those
+# blocks are not ratchet-free: the first holds the capability matrix's own --check-baseline before
+# the test suite, the second the discrimination report. It also needs the package, which is why the
+# comment above probe_modules names this script as the reason --fast cannot run on a package-less
+# interpreter.
+#
+# The verdict says NET COUNT on purpose. The checker compares the counts dict key by key and not
+# identities, so retiring one deprecated symbol and adding another in the same change leaves every
+# key equal and PASSES. That is the instrument's design, not this step's: #2363 tracks the identity
+# upgrade, the same shape #58bb2c59 already fixed for citation drift. A verdict claiming more than
+# its check measures is how a green reads as more than it is.
 step "Deprecation ratchet"
 "${PYS[@]}" scripts/check_internal_deprecation.py
-check $? "no deprecation added or retired without recording it"
+check $? "no net count of deprecations moved without recording it"
 
 step "Single-source ratchet"
 "${PYS[@]}" scripts/check_single_source.py --baseline scripts/single_source_baseline.json
