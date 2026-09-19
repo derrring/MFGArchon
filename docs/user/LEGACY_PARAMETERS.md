@@ -182,10 +182,10 @@ geometry = TensorProductGrid(dimension=1, bounds=[(0.0, 1.0)], Nx_points=[101])
 | Version | Status | Details |
 |:--------|:-------|:--------|
 | v0.17.1 | ✅ **Current** | DeprecationWarning active, all internal code migrated |
-| v0.18.0-v0.99.0 | ⏳ **User migration period** | 6-12 months deprecation window |
+| v0.18.0-v0.99.0 | ⏳ **User migration period** | 3 minor versions or 6 months, whichever comes first |
 | v1.0.0  | 🎯 **Target** | Legacy parameters removed, clean Geometry-first API |
 
-**Deprecation Strategy**: Conservative - 6-12 month warning period before v1.0.0 removal
+**Deprecation Strategy**: a deprecated parameter may be removed once **3 minor versions or 6 months** have elapsed, **whichever comes first** (user ruling, #2366). ~~6-12 month warning period~~ — that window was stated only here and matched neither `AGENTS.md` nor the code that decides removal.
 
 ## See Also
 

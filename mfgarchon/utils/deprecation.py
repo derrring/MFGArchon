@@ -42,7 +42,9 @@ def deprecated(
     3. Can be discovered by AST-based enforcement tools
 
     Removal happens when ALL conditions are met:
-    - Deprecated for ≥3 versions OR ≥6 months (whichever is longer)
+    - Deprecated for ≥3 minor versions OR ≥6 months, whichever comes FIRST (user ruling, #2366).
+      This docstring said "whichever is longer" while `_removable_by_policy` -- the function that
+      decides it -- implements "either suffices". The code was right and this was the drift.
     - All removal blockers resolved
     - No internal production usage
     - Equivalence test exists
