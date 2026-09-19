@@ -26,7 +26,6 @@ import json
 import subprocess
 import sys
 import textwrap
-from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -205,7 +204,6 @@ def test_every_killer_node_id_still_resolves(td):
         for line in proc.stdout.splitlines()
         if line.startswith("SKIPPED [") and len(line.split()) > 2
     }
-    collected_per_file = Counter(nid.split("::")[0] for nid in collected)
     stale = [
         (nid, "case not collected")
         for nid in matrix
