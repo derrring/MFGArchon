@@ -189,8 +189,10 @@ def test_every_killer_node_id_still_resolves(td):
     #: different sets, and the difference is a regression the first version of this shipped: keying the
     #: carve-out on "collected zero" silenced every killer ID in any file one edit could empty.
     #: Measured -- renaming the only test in `test_particle_multi_exit.py` (1 test, 1 killer) left this
-    #: GREEN, while the `def`-grep this replaced went RED and named it. 31 killer IDs sit in files a
-    #: single ordinary edit could zero; adversarially, 424 of 773 can be hidden under the count floor.
+    #: GREEN, while the `def`-grep this replaced went RED and named it. At `c79c8c29`, where that
+    #: predicate shipped, 31 killer IDs SAT in files a single ordinary edit could zero and 424 of 773
+    #: could be hidden adversarially under the count floor -- properties of the superseded predicate,
+    #: measured against that matrix, not of the check below.
     #:
     #: So the carve-out reads the SKIP REPORT (`-rs`), not the count. Four matrix files carry a
     #: module-level `pytest.importorskip` at column 0 -- skfem, igraph and cvxpy, covering 8 killer IDs.
