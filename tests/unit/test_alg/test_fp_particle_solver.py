@@ -709,7 +709,13 @@ class TestFPParticleSolverCallableDrift:
         """Test callable drift combined with array diffusion."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
         problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, sigma=0.1, components=_default_components())
-        solver = FPParticleSolver(problem, num_particles=1000)
+        # Seeded because this test is otherwise UNSEEDABLE, which is not obvious: the ensemble is
+        # drawn by `RandomState(None)` at sampling.py's initial-position draw, and conftest's autouse
+        # `cleanup_numpy_state` calls `np.random.seed(None)` after every test -- so a global
+        # `np.random.seed(123)` here does NOT reproduce the run (measured: five runs at one global
+        # seed gave 0.0263, 0.0289, 0.0221, 0.0251, 0.0235). The solver's own `seed=` is the only
+        # channel that reaches it, and it is bit-identical across repeats (#2352).
+        solver = FPParticleSolver(problem, num_particles=1000, seed=7)
 
         Nx_points = problem.geometry.get_grid_shape()[0]
         bounds = problem.geometry.get_bounds()
@@ -735,10 +741,16 @@ class TestFPParticleSolverCallableDrift:
         # used. Free diffusion gives var(t) = var(0) + sigma^2 t, so the slope of var against t is
         # the volatility that was actually applied. Fitted over the whole trajectory rather than
         # differenced at one step, because at 1000 particles a two-point estimate is too noisy to
-        # separate the two conventions. Measured over 30 seeds: slope 0.02274..0.02718 with the
-        # override (law 0.15^2 = 0.0225), against 0.00806..0.01372 when the override is dropped
-        # and problem.sigma=0.1 is used (law 0.0100) -- the populations do not overlap, and the
-        # band below excludes the sigma=0.1 one by 31%.
+        # separate the two conventions. ~~Measured over 30 seeds: slope 0.02274..0.02718~~
+        # [CORRECTED 2026-09-19, #2352] 30 seeds understated the spread by a factor of four. Over
+        # 3300 runs (3000 unseeded repeats and 300 distinct solver seeds, statistically identical --
+        # means agree to six digits): 0.018189..0.031243, mean 0.024802, sd 0.001938. The band below
+        # is (0.018000, 0.032625), so the observed minimum clears its lower bound by 1.0%, not by the
+        # comfortable margin the 30-seed figure implied. Zero failures in 3300, but the headroom is
+        # thin, which is the real argument for pinning the seed rather than widening.
+        # Against 0.00806..0.01372 when the override is dropped and problem.sigma=0.1 is used
+        # (law 0.0100) -- the populations do not overlap, and the band excludes the sigma=0.1 one
+        # by 31%.
         dx = problem.geometry.get_grid_spacing()[0]
         dt = problem.T / problem.Nt
         t_grid = np.arange(M.shape[0]) * dt
