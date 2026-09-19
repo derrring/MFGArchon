@@ -182,10 +182,10 @@ geometry = TensorProductGrid(dimension=1, bounds=[(0.0, 1.0)], Nx_points=[101])
 | Version | Status | Details |
 |:--------|:-------|:--------|
 | v0.17.1 | ✅ **Current** | DeprecationWarning active, all internal code migrated |
-| v0.18.0-v0.99.0 | ⏳ **User migration period** | 3 minor versions or 6 months, whichever comes first |
+| v0.18.0-v0.99.0 | ⏳ **User migration period** | window decided by `_removable_by_policy`, below |
 | v1.0.0  | 🎯 **Target** | Legacy parameters removed, clean Geometry-first API |
 
-**Deprecation Strategy**: a deprecated parameter may be removed once **3 minor versions or 6 months** have elapsed, **whichever comes first** (user ruling, #2366). ~~6-12 month warning period~~ — that window was stated only here and matched neither `AGENTS.md` nor the code that decides removal.
+**Deprecation Strategy**: a deprecated parameter may be removed once **3 minor versions or 6 months** have elapsed, **whichever comes first** (user ruling, #2366). The rule is executed by `_removable_by_policy` in `mfgarchon/utils/deprecation.py`, which is its owner; this page restates it because users read this page and not that module, and the table above points here rather than carrying a second copy. ~~6-12 month warning period~~ — that window matched neither `AGENTS.md` nor the code that decides removal. It survives in `CHANGELOG.md` as a released entry, which is a historical record and is left alone.
 
 ## See Also
 
