@@ -64,9 +64,22 @@ import pytest
 #:   - a finder that RAISES propagates through `variational_mfg_solver.py`'s
 #:     `find_spec("jax") is not None`, which expects None and gets an exception.
 #: Accept a simulation only when all FOUR hold. No single check rejects all three traps, so do not
-#: go looking for the one that does: the raising finder dies on check 1, which raises instead of
-#: returning; the returning-None finder is caught by check 2, where `import jax` succeeds; and the
-#: None-injection passes 1-3 and is caught only by check 4. That is why the list is four long.
+#: go looking for the one that does. Measured, one fresh process per cell -- REJECT means the check
+#: catches that trap:
+#:
+#:     trap                        check 1   check 2   check 3   check 4
+#:     sys.modules["jax"]=None     pass      pass      pass*     REJECT
+#:     finder that RAISES          REJECT    pass      pass      pass
+#:     finder that returns None    REJECT    REJECT    pass      pass
+#:
+#: So checks 1 and 4 carry these three between them; check 2 rejects only what check 1 already
+#: does. Check 3 rejects none of them and is not redundant either -- it is here for a FOURTH trap,
+#: removing site-packages from `sys.path`, which takes numpy and pytest with it so that nothing
+#: imports at all. Run all four: the list is four long because the traps are four, not three.
+#: (*) check 3's verdict on the None-injection depends on which function you reach for:
+#: `scipy.linalg.norm`, `scipy.stats.entropy` and `scipy.integrate.quad` all work, while
+#: `scipy.special.logsumexp` raises `AttributeError: 'NoneType' object has no attribute 'Array'`
+#: through the array-API layer. Treat check 3 as a smoke test, not as the discriminator.
 #:   1. `importlib.util.find_spec("jax") is None`
 #:   2. `import jax` raises ModuleNotFoundError
 #:   3. numpy and scipy still work
@@ -81,10 +94,12 @@ import pytest
 #: and `--group` is newer than the pip a fresh venv ships. Measured here: a 3.12 venv brings pip
 #: 25.0.1, which answers `no such option: --group` (control: the same pip accepts `--dry-run`).
 #:
-#: The 24-module measurement quoted below was NOT taken that way. It came from a symlink farm of
-#: site-packages minus jax, so it had torch present and is evidence about jax only. For jax AND
-#: torch absent together the evidence is the nightly job itself, which installs neither: run
-#: 35430554819 reports every allowlisted module passing except `backends`.
+#: HOW THE LIST WAS CLEARED, since the number is not in this file and a reader should not have to
+#: guess which instrument produced it: every module named here was run with jax absent, and all 24
+#: passed. That came from a symlink farm of site-packages minus jax, so torch was PRESENT and it is
+#: evidence about jax only. For jax AND torch absent together the evidence is the nightly job
+#: itself, which installs neither: run 35430554819 reports every allowlisted module passing except
+#: `backends`.
 EXECUTABLE = [
     "mfgarchon.alg.numerical.coupling.graph_coupling",  # 2
     "mfgarchon.alg.numerical.gfdm_components.grid_collocation_mapper",  # 7
