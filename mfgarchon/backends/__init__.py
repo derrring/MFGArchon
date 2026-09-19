@@ -57,6 +57,10 @@ def get_available_backends() -> dict[str, bool]:
     return backends
 
 
+# The docstring example above names "numpy" deliberately: it EXECUTES in the suite
+# (tests/unit/test_docstring_examples_2346.py), and the nightly unit job installs neither jax
+# nor torch. `create_backend("jax")` there put main's nightly red for a day (#2367). Keep any
+# executed example on a backend that is always available.
 def create_backend(backend_name: str | None = None, **kwargs):
     """
     Create a computational backend instance.
@@ -81,10 +85,8 @@ def create_backend(backend_name: str | None = None, **kwargs):
         >>> # Auto-select (returns NumPy; ask for torch/jax by name)
         >>> backend = create_backend()
 
-        >>> # Explicit choice -- "numpy" here because this example EXECUTES in the suite
-        >>> # (tests/unit/test_docstring_examples_2346.py) and the nightly unit job installs no
-        >>> # optional extras. `create_backend("torch")` and `create_backend("jax")` take the same
-        >>> # form and raise ImportError with an install hint when the extra is absent (#2367).
+        >>> # Explicit choice. "torch" and "jax" take the same form and raise ImportError with an
+        >>> # install hint when that extra is absent.
         >>> backend = create_backend("numpy")
     """
     if backend_name is None or backend_name == "auto":

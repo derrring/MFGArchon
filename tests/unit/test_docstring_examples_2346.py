@@ -42,18 +42,37 @@ import pytest
 
 # Measured clean at 408415d4 — every example in each of these runs and passes. The trailing count is that module's
 # example count at the time of listing; it is a description, not an assertion, since examples get added.
-#: THE POPULATION WAS CHOSEN ON A MACHINE WITH THE OPTIONAL EXTRAS INSTALLED, AND THE NIGHTLY UNIT
-#: JOB HAS NONE. A module enters this list because its examples "already all pass" -- measured here,
-#: where jax, torch and numba are present. An example that needs one passes locally and fails there,
-#: silently to the author. That happened: `mfgarchon.backends`'s `create_backend("jax")` was green on
-#: every local gate and red on the first nightly to run this list, 1 failure in 3935 (#2367).
+#: THE POPULATION WAS CHOSEN ON A MACHINE WITH THE OPTIONAL EXTRAS, AND CI HAS FEWER. A module
+#: enters this list because its examples "already all pass" -- measured here, where jax, torch and
+#: numba are installed. An example needing one passes locally and fails in CI, silently to the
+#: author. That happened: `mfgarchon.backends`'s `create_backend("jax")` was green on every local
+#: gate and red on the first nightly to run this list, 1 failure in 3935 (#2367).
 #:
-#: So before adding a module: run its examples with the extra absent. Faithfully -- two simulations
-#: give false results. `sys.modules["jax"] = None` breaks scipy's array-API layer, and a meta-path
-#: finder that RAISES propagates through `variational_mfg_solver.py`'s
-#: `find_spec("jax") is not None`, which expects None and gets an exception. What works is a
-#: site-packages symlink farm omitting the extra: find_spec returns None, the import raises
-#: ModuleNotFoundError, and numpy survives. Measured that way, all 24 modules pass with jax absent.
+#: WHICH extras CI lacks is per-workflow and is NOT "none" -- `nightly.yml` runs
+#: `pip install -e ".[numerical]" --group dev numba`, so numba IS present and jax and torch are not.
+#: `test_optional_backends_are_not_imported_eagerly.py` holds the authoritative per-workflow table
+#: and already struck the phrase "CI installs no extras" as false; this comment said it anyway in
+#: its first draft. Testing with numba absent instead would make 20 modules unimportable and produce
+#: breakage unrelated to the candidate.
+#:
+#: SO BEFORE ADDING A MODULE, run its examples with jax and torch absent -- faithfully. Three
+#: simulations do not work, and each looks like it does:
+#:   - `sys.modules["jax"] = None` breaks scipy's array-API layer. It also passes all three of the
+#:     obvious acceptance checks below, which is why the fourth one is here.
+#:   - a meta-path finder that RETURNS None does not block at all: returning None means "I cannot
+#:     handle this, try the next finder", and the next one resolves jax.
+#:   - a finder that RAISES propagates through `variational_mfg_solver.py`'s
+#:     `find_spec("jax") is not None`, which expects None and gets an exception.
+#: Accept a simulation only when all four hold, and the last is the one that rejects the traps:
+#:   1. `importlib.util.find_spec("jax") is None`
+#:   2. `import jax` raises ModuleNotFoundError
+#:   3. numpy and scipy still work
+#:   4. `"jax" not in sys.modules` -- true absence leaves it out entirely; the None-injection trap
+#:      leaves it present-and-None, and passes checks 1-3.
+#:
+#: The cheapest thing that satisfies all four is a venv running the nightly's own install line:
+#:   python -m venv /tmp/nojax && /tmp/nojax/bin/pip install -e ".[numerical]" --group dev numba
+#: Measured that way, every module then on this list passes with jax and torch absent.
 EXECUTABLE = [
     "mfgarchon.alg.numerical.coupling.graph_coupling",  # 2
     "mfgarchon.alg.numerical.gfdm_components.grid_collocation_mapper",  # 7
