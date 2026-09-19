@@ -27,19 +27,55 @@ GATE = REPO / "scripts" / "local_ci.sh"
 
 
 def test_the_gate_greps_for_the_marker_at_the_point_of_consumption():
-    body = GATE.read_text()
-    assert "# MUTATED" in body, "the gate must look for the marker a killed sweep leaves behind"
-    assert "cannot_run" in body.split("# MUTATED")[1][:400], (
-        "a mutated tree is an ENVIRONMENT failure -- nothing was measured -- so it must exit "
-        "through cannot_run (exit 2), not as a normal red gate (exit 1)"
-    )
+    """Locate the guard by its grep INVOCATION and require it to reach `cannot_run` within 8 lines.
+
+    A LOCATOR, NOT THE ORACLE. `test_the_guard_actually_refuses` below plants a marker, runs the gate and
+    requires exit 2; that is what actually holds the property. This one reads the script's text, so it fails in
+    a second with a line number instead of after a full gate run, and it is weaker on a machine that can run
+    the gate at all. It is NOT weaker everywhere: `test_the_guard_actually_refuses` SKIPS when the gate cannot
+    resolve an interpreter (see its own comment -- that is why the weekly sweep was red on four dates in
+    2026-08/09), and on such a runner this is the only check that fails on a deleted guard. Measured, three
+    ways to delete the guard while this test stays GREEN: put the invocation in a trailing comment on a code
+    line (`MUTATED_LEFTOVER=""  # was: grep -rn '# MUTATED' mfgarchon/`, then `if false`), point the grep at a
+    path that does not exist, or flip `[[ -n ]]` to `[[ -z ]]`. The behavioural test catches all three. An
+    earlier version of this docstring claimed "a comment cannot look like a grep invocation"; the filter only
+    rejects a comment that BEGINS a line, and the first counterexample above is what disproved it.
+
+    What it replaced, and why the replacement is not merely better: the old form split the file on the first
+    occurrence of the marker's literal text and looked 400 characters on. It had a false positive and a false
+    negative. #2349 hit the first -- rewrapping the COMMENT above the guard put the literal at the start of a
+    continuation line, so the split landed on prose and the gate went red on an edit that changed no logic. The
+    second is the mirror: the `MYPY_PROBE` heredoc later in the same file prints the same literal, so reordering
+    the two would let the guard be deleted with this test green.
+
+    The false positive is NARROWED, not removed. Moving the marker into a shell variable
+    (`MUT_MARKER='# MUTATED'; grep -rn "$MUT_MARKER" ...`) preserves the gate's behaviour and turns this test
+    red -- the same shape as the rewrap that started this. If that refactor is ever wanted, rewrite this test
+    around the new spelling rather than deleting it: the behavioural test is the property where it runs, and
+    the paragraph above is why "just delete it" is wrong -- it does not run everywhere.
+    """
+    lines = GATE.read_text().splitlines()
+    guards = [
+        i
+        for i, line in enumerate(lines)
+        if "grep" in line and "# MUTATED" in line and not line.lstrip().startswith("#")
+    ]
+    assert guards, "the gate must GREP for the marker a killed sweep leaves behind, not merely mention it"
+    for index in guards:
+        window = "\n".join(lines[index : index + 8])
+        assert "cannot_run" in window, (
+            f"the guard at line {index + 1} does not reach `cannot_run` within 8 lines. A mutated tree is an "
+            f"ENVIRONMENT failure -- nothing was measured -- so it must exit 2, not as a normal red gate (exit 1)"
+        )
 
 
 def test_every_mutation_carries_the_marker_the_guard_greps_for():
     """The guard is complete only if no mutation can land without the marker.
 
-    Measured rather than assumed: 24 of 24 carry it. If a future axis is added without one, the
-    guard silently stops covering it and this is the only thing that says so.
+    Measured rather than assumed, over whatever `MUTATIONS` currently declares -- no count here, since
+    the list grows and a number in this docstring would be a claim nothing checks (#2349). If a future
+    axis is added without a marker, the guard silently stops covering it and this is the only thing
+    that says so.
     """
     sys.path.insert(0, str(REPO / "scripts"))
     import test_discrimination as td

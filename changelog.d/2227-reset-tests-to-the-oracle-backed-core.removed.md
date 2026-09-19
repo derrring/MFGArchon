@@ -12,18 +12,20 @@ file was estimated at roughly six days of full-time review — an estimate, with
 ## What replaced "audit the tests" as the question
 
 The Joplin `[Principle] Conventions Index` names **35** load-bearing conventions;
-`scripts/discrimination_baseline.json` carries **24** falsifiable mutations, each with an `owner`
-field. That makes the reviewable unit **tens, not thousands** — 5,643 / 35 is a factor of about 161,
+`scripts/discrimination_baseline.json` carried **24** falsifiable mutations when this was measured,
+each with an `owner` field — the current count is `len(MUTATIONS)`, and restating it here is what
+#2349 is about. That makes the reviewable unit **tens, not thousands** — 5,643 / 35 is a factor of about 161,
 not the "three orders of magnitude" an earlier draft claimed.
 
-**The two sets are nearly disjoint, which an earlier draft got badly wrong.** It said the 24 were a
+**The two sets are nearly disjoint, which an earlier draft got badly wrong.** It said the mutations then
+recorded were a
 falsifiable form *of* the 35 and that ~11 conventions were uncovered. Of the 19 issue numbers the
 mutation owners cite, **2** appear in the index; roughly 6–9 of the 24 land on index rows. So the
 uncovered figure is closer to **29 of 35**, and the mutations defend a dozen conventions the index
 does not name. Note also that the index is a **private Joplin note**: no reader of this changelog can
 resolve it.
 
-Measured before the deletion, **every one of the 24 mutations is defended**: `kill_count` 2 … 168,
+Measured before the deletion, **every mutation the baseline then held was defended**: `kill_count` 2 … 168,
 median **21.5**, no zeros, no ones. The three at the floor of 2:
 
 | convention | killers |
@@ -96,7 +98,9 @@ satisfies while the node ID does not resolve.
   once review restored six files). The checker refused to write without
   a census — *"Nothing was measured, so this says nothing about whether warnings changed"* — which is
   the correct refusal.
-- The full discrimination sweep was **not** re-run: ~26 minutes measured (seven full-suite runs), and a run killed by a timeout leaves
+- The full discrimination sweep was **not** re-run: ~26 minutes over seven full-suite runs as measured
+  at the time of this change — the alphabet and the cost have both grown since, and the current pair is
+  `len(MUTATIONS)` and the kill matrix's own `seconds` — and a run killed by a timeout leaves
   a mutant in the production tree (#1849, #2229 — it happened twice during this work). The node-ID
   check answers the same question in seconds and mutates nothing.
 - The CI smoke tier named `tests/unit/test_config`, which this change emptied; pytest given a

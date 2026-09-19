@@ -1,9 +1,9 @@
 name: Weekly Test-Discrimination Sweep
 
 # Measures which tests notice a change to a convention the library single-sources,
-# by mutating each one and running the suite. Weekly, not nightly: it is 25 full suite
-# runs -- one baseline plus one per mutation -- and the quantity it tracks moves on the
-# timescale of a campaign, not a commit.
+# by mutating each one and running the suite. Weekly, not nightly: it is one full suite run per
+# mutation plus a baseline -- `1 + len(MUTATIONS)` runs, not a fixed number (#2349) -- and the
+# quantity it tracks moves on the timescale of a campaign, not a commit.
 #
 # It answers what #1715 asked and #1701 generalises. Measured 2026-09-10 at 2c923694 over
 # 3,822 collected tests (#2285): 665 (17.4%) notice at least one of the 24 conventions and
@@ -16,7 +16,9 @@ name: Weekly Test-Discrimination Sweep
 # The ratchet is per-mutation kill COUNTS, not test names. That is deliberate: this
 # population cannot be selected by name at all. `*_agree` / `*_matches` / `*_equals`
 # gives 51, 114 or 156 depending on the pattern, and 60% of the tests whose names
-# claim cross-path agreement notice none of the six.
+# claim cross-path agreement notice none of the conventions at all. ("none of the six"
+# until #2349: the alphabet had six entries in the 2026-07-27 read this file strikes as
+# superseded nine lines above, and the count is owned by `MUTATIONS`.)
 
 on:
   schedule:
@@ -74,16 +76,21 @@ jobs:
         OMP_NUM_THREADS: 1
         OPENBLAS_NUM_THREADS: 1
       run: |
+        # The path is the COMMITTED one, matching AGENTS.md's local command, because the sweep
+        # embeds it in the artifact's `reproduce` field: `git log --follow <path>`. A bare
+        # `killmatrix.json` is not a committed path, so that instruction fatals with "ambiguous
+        # argument" in the artifact a maintainer downloads to diagnose a failing sweep (#2349).
+        # The checkout is ephemeral, so writing over the committed file costs nothing here.
         python scripts/test_discrimination.py \
           --check-baseline scripts/discrimination_baseline.json \
-          --json killmatrix.json
+          --json scripts/discrimination_killmatrix.json
 
     - name: Upload the kill matrix
       if: ${{ !cancelled() }}
       uses: actions/upload-artifact@v7
       with:
         name: kill-matrix
-        path: killmatrix.json
+        path: scripts/discrimination_killmatrix.json
         retention-days: 90
 
   # Same reasoning as nightly.yml's notifier: a job nobody watches is a job that

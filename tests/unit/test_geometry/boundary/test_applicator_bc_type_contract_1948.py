@@ -2,8 +2,14 @@
 
 The cell count is **derived from the enums**, not listed. Adding a `BCType` member makes this file
 fail until someone decides what each applicator does with it — which is the property a hand-written
-list of known cases cannot have, and the reason the discrimination ratchet's 24 mutations name only
-2 of `BCType`'s 8 members. #1948
+list of known cases cannot have, and the reason the discrimination ratchet's mutations (declared in
+`scripts/test_discrimination.py`'s `MUTATIONS`) reach only some of `BCType`'s 8 members. How many is
+deliberately NOT stated, because no predicate for it is written down anywhere and the answer moves
+with the one you pick: `BCType.X` matched literally over `repr(MUTATIONS)` returns 0, the lowercase
+spellings the mutations actually use return 5 (`neumann`, `no_flux`, `periodic`, `robin`, and
+`reflect` for REFLECTING), and a reviewer counting by hand returned 4. `absorbing` appears there too
+and is not a `BCType` member. A figure with three answers and no owner is what #2349 is about; the 8
+has an owner -- it is derived from the enum by this file's own parametrisation. #1948
 
 `GraphApplicator` is indexed by its own alphabet and over TWO axes, (`GraphBCType` × `field_type`),
 because THREE of its five arms branch on the field type inside themselves — DIRICHLET pins only the

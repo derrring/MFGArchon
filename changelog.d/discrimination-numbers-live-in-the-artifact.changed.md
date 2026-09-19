@@ -2,8 +2,10 @@ Stop writing discrimination percentages into `AGENTS.md`, and say what to read i
 the two ways of reading it that give different answers.
 
 The section quoted "212 distinct tests out of 5,872 -- 3.6%" over the six conventions the ratchet
-then tracked. The baseline now holds twenty-four and has been re-recorded six times in the month to
-2026-08-22, so a fraction copied into prose is stale on that clock.
+then tracked. By 2026-08-22 the baseline held twenty-four, re-recorded six times in that month, so a
+fraction copied into prose is stale on that clock. (The count is `len(MUTATIONS)` and this line no
+longer claims the current one: "now holds twenty-four" was itself stale by #2349, spelled as a word
+and so invisible to every digit-keyed query.)
 
 More to the point, the fraction mostly measures the mutation list rather than the suite. Holding the
 list at the original six and recomputing against the current tree barely moves it; extending the
