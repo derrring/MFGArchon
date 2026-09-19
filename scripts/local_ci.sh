@@ -608,14 +608,18 @@ check $? "no docstring example newly passes a keyword its callee does not have"
 # comment above probe_modules names this script as the reason --fast cannot run on a package-less
 # interpreter.
 #
-# The verdict says NET COUNT on purpose. The checker compares the counts dict key by key and not
-# identities, so retiring one deprecated symbol and adding another in the same change leaves every
-# key equal and PASSES. That is the instrument's design, not this step's: #2363 tracks the identity
-# upgrade, the same shape #58bb2c59 already fixed for citation drift. A verdict claiming more than
-# its check measures is how a green reads as more than it is.
+# The verdict names BOTH things this checker can fail on, because it has two branches and an earlier
+# wording named one. Counts: compared PER KIND over the key union, so a cross-kind swap (retire a
+# function, add a parameter) IS caught -- only a SAME-KIND swap leaves every key equal and passes,
+# which is narrower than "a swap" and is what #2363 records. Identities: `production_uses()` walks
+# the AST for calls to symbols whose `internal_usage` is cleared and returns 1 on any hit -- nothing
+# to do with counts. The checker's own green line says both ("Matches baseline. 0 symbol(s) have
+# internal_usage cleared; no production call sites"), and that branch goes live exactly as #2343's
+# removal batches land. A verdict that names one branch prints a false description when the other
+# fires. Commit `58bb2c59` is the same identities-not-counts fix for citation drift.
 step "Deprecation ratchet"
 "${PYS[@]}" scripts/check_internal_deprecation.py
-check $? "no net count of deprecations moved without recording it"
+check $? "no deprecation count moved, and no cleared symbol is still called in production"
 
 step "Single-source ratchet"
 "${PYS[@]}" scripts/check_single_source.py --baseline scripts/single_source_baseline.json
