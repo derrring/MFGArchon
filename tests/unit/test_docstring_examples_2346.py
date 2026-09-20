@@ -63,19 +63,21 @@ import pytest
 #:     handle this, try the next finder", and the next one resolves jax.
 #:   - a finder that RAISES propagates through `variational_mfg_solver.py`'s
 #:     `find_spec("jax") is not None`, which expects None and gets an exception.
-#: Accept a simulation only when all FOUR hold. No single check rejects all three traps, so do not
-#: go looking for the one that does. Measured, one fresh process per cell -- REJECT means the check
+#: Accept a simulation only when all FOUR hold. No single check rejects every trap, so do not go
+#: looking for the one that does. Measured, one fresh process per cell -- REJECT means the check
 #: catches that trap:
 #:
-#:     trap                        check 1   check 2   check 3   check 4
-#:     sys.modules["jax"]=None     pass      pass      pass*     REJECT
-#:     finder that RAISES          REJECT    pass      pass      pass
-#:     finder that returns None    REJECT    REJECT    pass      pass
+#:     trap                          check 1   check 2   check 3   check 4
+#:     sys.modules["jax"]=None       pass      pass      pass*     REJECT
+#:     finder that RAISES            REJECT    pass      pass      pass
+#:     finder that returns None      REJECT    REJECT    pass      pass
+#:     site-packages off sys.path    pass      pass      REJECT    pass
 #:
-#: So checks 1 and 4 carry these three between them; check 2 rejects only what check 1 already
-#: does. Check 3 rejects none of them and is not redundant either -- it is here for a FOURTH trap,
-#: removing site-packages from `sys.path`, which takes numpy and pytest with it so that nothing
-#: imports at all. Run all four: the list is four long because the traps are four, not three.
+#: Run all four. No claim is made here that four is the minimum -- read the table: checks 1, 3 and
+#: 4 already cover these four traps and check 2 rejects only what check 1 does. Two drafts of this
+#: comment tried to explain the number and both were refuted by the table directly above them, so
+#: the table is the statement and there is no story about it. Four is what is cheap and known to
+#: work; a fifth trap would not be the first.
 #: (*) check 3's verdict on the None-injection depends on which function you reach for:
 #: `scipy.linalg.norm`, `scipy.stats.entropy` and `scipy.integrate.quad` all work, while
 #: `scipy.special.logsumexp` raises `AttributeError: 'NoneType' object has no attribute 'Array'`
