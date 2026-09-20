@@ -34,7 +34,6 @@ from .hamiltonian import (
     LagrangianBase,
     # Common base (Issue #651)
     MFGOperatorBase,
-    OptimizationSense,
     QuadraticControlCost,
     QuadraticHamiltonian,
     QuadraticMFGHamiltonian,
@@ -71,7 +70,6 @@ __all__ = [
     "HamiltonianMixin",
     "ConditionsMixin",
     # Hamiltonian/Lagrangian (Issues #623, #651, #667, #673)
-    "OptimizationSense",
     # Common base for H and L (Issue #651)
     "MFGOperatorBase",
     # Control cost classes (original, H(p) only)

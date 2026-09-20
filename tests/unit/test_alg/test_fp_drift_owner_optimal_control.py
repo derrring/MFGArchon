@@ -39,7 +39,6 @@ import pytest
 import numpy as np
 
 from mfgarchon.core.hamiltonian import (
-    OptimizationSense,
     QuadraticControlCost,
     SeparableHamiltonian,
 )
@@ -63,7 +62,7 @@ _T = 0.0
 
 def _owner(lam: float) -> SeparableHamiltonian:
     """The single owner: problem.hamiltonian_class with a MINIMIZE quadratic control cost."""
-    return SeparableHamiltonian(control_cost=QuadraticControlCost(sense=OptimizationSense.MINIMIZE, lambda_=lam))
+    return SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=lam))
 
 
 @pytest.mark.parametrize("lam", DYADIC_LAMBDAS)

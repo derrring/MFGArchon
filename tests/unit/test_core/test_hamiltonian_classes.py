@@ -22,7 +22,6 @@ from mfgarchon.core.hamiltonian import (
     HamiltonianBase,
     L1ControlCost,
     LagrangianBase,
-    OptimizationSense,
     QuadraticControlCost,
     QuadraticMFGHamiltonian,
     SeparableHamiltonian,
@@ -34,25 +33,15 @@ class TestControlCostBase:
     """Tests for original ControlCostBase hierarchy."""
 
     def test_quadratic_control_cost_minimize(self):
-        """Test quadratic control cost with MINIMIZE sense."""
-        cost = QuadraticControlCost(sense=OptimizationSense.MINIMIZE, control_cost=2.0)
+        """Quadratic control cost: alpha* = -p/lambda. Name kept at `_minimize` deliberately --
+        it is a discrimination-killmatrix node ID, and renaming it detaches the entry (#2373)."""
+        cost = QuadraticControlCost(control_cost=2.0)
         p = np.array([1.0, 2.0, -3.0])
 
         alpha = cost.optimal_control(p)
 
         # α* = -p/λ for MINIMIZE
         expected = np.array([-0.5, -1.0, 1.5])
-        np.testing.assert_allclose(alpha, expected)
-
-    def test_quadratic_control_cost_maximize(self):
-        """Test quadratic control cost with MAXIMIZE sense (RL convention)."""
-        cost = QuadraticControlCost(sense=OptimizationSense.MAXIMIZE, control_cost=2.0)
-        p = np.array([1.0, 2.0, -3.0])
-
-        alpha = cost.optimal_control(p)
-
-        # α* = +p/λ for MAXIMIZE
-        expected = np.array([0.5, 1.0, -1.5])
         np.testing.assert_allclose(alpha, expected)
 
     def test_l1_control_cost_bang_bang(self):
@@ -274,45 +263,45 @@ class TestLegendreDuality:
         # Should recover original within numerical tolerance
         assert abs(L_recovered_val - L_orig_val) < 0.2
 
-    def test_dual_hamiltonian_maximize_returns_sup_not_inf(self):
-        """Issue #1185: the Legendre conjugate H = L*(p) = sup_a {p.a - L(a)} is a
-        supremum by definition, independent of OptimizationSense. Pre-fix the 1D
-        ``DualHamiltonian.__call__`` returned the *infimum* under MAXIMIZE (the value at
-        a control bound), disagreeing with its own ``dp`` argmax and the d>1 scipy branch.
+    def test_dual_hamiltonian_returns_sup_not_inf(self):
+        """Issue #1185: the Legendre conjugate H = L*(p) = sup_a {p.a - L(a)} is a supremum by
+        definition. Pre-fix the 1D ``DualHamiltonian.__call__`` returned the *infimum* -- the value
+        at a control bound -- disagreeing with its own ``dp`` argmax and with the d>1 scipy branch.
+
+        The original discriminator was MINIMIZE versus MAXIMIZE giving the same conjugate; #2373
+        removed the direction, so what remains is the value itself. That is the stronger half: the
+        pre-fix bug returned the bound infimum of about -110 against a true sup of 0.25, so the
+        analytic value separates fixed from broken on its own, without needing a second sense to
+        compare against.
         """
 
         class _QuadL(LagrangianBase):
-            def __init__(self, lam, sense):
-                super().__init__(sense=sense)
+            def __init__(self, lam):
+                super().__init__()
                 self.lam = lam
 
             def __call__(self, x, alpha, m, t=0.0):
                 return 0.5 * self.lam * np.sum(np.atleast_1d(alpha) ** 2)
 
         x, m, p, t = np.array([0.5]), 0.3, np.array([1.0]), 0.0
-        H_min = _QuadL(2.0, OptimizationSense.MINIMIZE).legendre_transform()
-        H_max = _QuadL(2.0, OptimizationSense.MAXIMIZE).legendre_transform()
+        H = _QuadL(2.0).legendre_transform()
 
         # H = sup_a {p a - 0.5 lam a^2} = p^2/(2 lam) = 0.25 (lam=2, p=1); NOT the
-        # bound infimum -110 the pre-fix MAXIMIZE branch returned.
-        assert abs(H_max(x, m, p, t) - 0.25) < 0.05
-        # sense must not change the conjugate value
-        assert abs(H_max(x, m, p, t) - H_min(x, m, p, t)) < 1e-9
-        # 1D must agree with the d>1 branch under MAXIMIZE: H([1,1]) = |p|^2/(2 lam) = 0.5
-        assert abs(H_max(x, m, np.array([1.0, 1.0]), t) - 0.5) < 0.05
+        # bound infimum -110 the pre-fix branch returned.
+        assert abs(H(x, m, p, t) - 0.25) < 0.05
+        # the 1D branch must agree with the d>1 scipy branch: H([1,1]) = |p|^2/(2 lam) = 0.5
+        assert abs(H(x, m, np.array([1.0, 1.0]), t) - 0.5) < 0.05
         # envelope consistency: H(p) == p.alpha* - L(alpha*), alpha* = dp
-        a = float(H_max.dp(x, m, p, t)[0])
-        assert abs(H_max(x, m, p, t) - (1.0 * a - 0.5 * 2.0 * a**2)) < 1e-2
+        a = float(H.dp(x, m, p, t)[0])
+        assert abs(H(x, m, p, t) - (1.0 * a - 0.5 * 2.0 * a**2)) < 1e-2
 
-    def test_dual_lagrangian_maximize_returns_sup_not_inf(self):
-        """Issue #1185: the symmetric DualLagrangian L = H*(a) = sup_p {p.a - H(p)} must
-        also be the supremum under MAXIMIZE (not the infimum)."""
+    def test_dual_lagrangian_returns_sup_not_inf(self):
+        """Issue #1185: the symmetric DualLagrangian L = H*(a) = sup_p {p.a - H(p)} must be the
+        supremum, not the infimum. Written against MAXIMIZE until #2373 removed the direction; the
+        analytic value below is what separates fixed from broken and needs no second sense."""
         x, alpha, m, t = np.array([0.5]), np.array([1.0]), 0.3, 0.0
-        H = SeparableHamiltonian(
-            control_cost=QuadraticControlCost(control_cost=2.0),
-            sense=OptimizationSense.MAXIMIZE,
-        )
-        L = H.legendre_transform()  # DualLagrangian(sense=MAXIMIZE)
+        H = SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=2.0))
+        L = H.legendre_transform()
         # L = H*(alpha) = 0.5 lam alpha^2 = 1.0 at lam=2, alpha=1
         assert abs(L(x, alpha, m, t) - 1.0) < 0.1
 
@@ -968,7 +957,7 @@ class TestControlCostLambda:
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
-            cost = QuadraticControlCost(sense=OptimizationSense.MINIMIZE, control_cost=3.0)
+            cost = QuadraticControlCost(control_cost=3.0)
             assert cost.lambda_ == 3.0
 
     def test_control_cost_property_deprecated(self):
@@ -1164,36 +1153,32 @@ class TestLagrangianBaseNumerical:
         This test previously asserted the conjugate maximizer and called it alpha*:
         its stationarity condition ``p = dL/dalpha = alpha^3 -> alpha = p^(1/3) = 1``
         solves ``argmax_alpha {p.alpha - L}``, which is ``dH/dp``, not the control.
-        Under MINIMIZE the optimal control is ``alpha* = -dH/dp`` -- the convention
+        The optimal control is ``alpha* = -dH/dp`` -- the convention
         ``HamiltonianBase.optimal_control`` and ``SeparableLagrangian.optimal_control``
         have always used, and which the base class now matches.
         """
-        from mfgarchon.core.hamiltonian import LagrangianBase, OptimizationSense
+        from mfgarchon.core.hamiltonian import LagrangianBase
 
         class QuarticLagrangian(LagrangianBase):
             def __call__(self, x, alpha, m, t=0.0):
                 return 0.25 * np.sum(alpha**4)
 
-        L = QuarticLagrangian(sense=OptimizationSense.MINIMIZE)
+        L = QuarticLagrangian()
         x, m, p = np.array([0.0]), 0.0, np.array([1.0])
         # dH/dp solves p = alpha^3 -> alpha = p^(1/3) = 1; alpha* = -dH/dp = -1.
         np.testing.assert_allclose(L.optimal_control(x, m, p, 0.0), [-1.0], atol=0.05)
-        # MAXIMIZE takes the other branch: alpha* = +dH/dp = +1.
-        L_max = QuarticLagrangian(sense=OptimizationSense.MAXIMIZE)
-        np.testing.assert_allclose(L_max.optimal_control(x, m, p, 0.0), [1.0], atol=0.05)
-        # The Hamiltonian value is sense-independent: H = p.(dH/dp) - L(dH/dp) = 0.75.
+        # The Hamiltonian value: H = p.(dH/dp) - L(dH/dp) = 0.75.
         np.testing.assert_allclose(L.evaluate_hamiltonian(x, m, p, 0.0), 0.75, atol=0.05)
-        np.testing.assert_allclose(L_max.evaluate_hamiltonian(x, m, p, 0.0), 0.75, atol=0.05)
 
     def test_numerical_proximal(self):
         """Custom Lagrangian uses scipy fallback for proximal."""
-        from mfgarchon.core.hamiltonian import LagrangianBase, OptimizationSense
+        from mfgarchon.core.hamiltonian import LagrangianBase
 
         class QuadLagrangian(LagrangianBase):
             def __call__(self, x, alpha, m, t=0.0):
                 return 0.5 * np.sum(alpha**2)
 
-        L = QuadLagrangian(sense=OptimizationSense.MINIMIZE)
+        L = QuadLagrangian()
         # prox_{tau*L}(z) = z/(1+tau) for L=|a|^2/2
         result = L.proximal(1.0, np.array([3.0]))
         np.testing.assert_allclose(result, [1.5], atol=0.05)

@@ -36,7 +36,6 @@ from mfgarchon.core.hamiltonian import (
     CongestionHamiltonian,
     HamiltonianBase,
     L1ControlCost,
-    OptimizationSense,
     QuadraticControlCost,
     SeparableHamiltonian,
 )
@@ -653,16 +652,6 @@ def test_integrated_howard_rejects_nonquadratic_control_cost():
     H = SeparableHamiltonian(control_cost=L1ControlCost(lambda_=1.0))
     gfdm, U_T = _howard_gfdm_with_hamiltonian(H)
     with pytest.raises(NotImplementedError, match="quadratic"):
-        gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
-
-
-def test_integrated_howard_rejects_maximize_sense():
-    """MAXIMIZE needs alpha* = +dH/dp; the wrapper hardcodes -dH/dp -> fail loud."""
-    H = SeparableHamiltonian(
-        control_cost=QuadraticControlCost(lambda_=1.0, sense=OptimizationSense.MAXIMIZE),
-    )
-    gfdm, U_T = _howard_gfdm_with_hamiltonian(H)
-    with pytest.raises(NotImplementedError, match="MAXIMIZE"):
         gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
 
 

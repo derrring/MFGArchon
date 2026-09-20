@@ -50,7 +50,7 @@ need the **Hamiltonian** and **optimal control formula**. This module:
 
 1. Accepts either Lagrangian or Hamiltonian specification
 2. Provides `optimal_control(p)` - the single source of truth for drift
-3. Handles sign conventions via `OptimizationSense`
+3. Minimisation only: the Hamiltonian is a cost-to-go and agents move downhill on u
 4. Auto-computes derivatives when not provided (Issue #667)
 
 For common cases (quadratic, L1), closed-form formulas are provided.
@@ -62,7 +62,6 @@ from __future__ import annotations
 import numbers
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum
 from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
@@ -72,31 +71,6 @@ from mfgarchon.types import HamiltonianJacobians
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
-
-
-class OptimizationSense(Enum):
-    """
-    Optimization direction for MFG problems.
-
-    This enum captures the fundamental difference between:
-    - Control theory: Agents MINIMIZE cost (α moves downhill on U)
-    - Economics: Agents MAXIMIZE utility (α moves uphill on U)
-
-    The sign convention in `optimal_control(p)` depends on this choice.
-
-    Examples
-    --------
-    Cost minimization (standard MFG):
-    >>> hamiltonian = QuadraticHamiltonian(sense=OptimizationSense.MINIMIZE)
-    >>> alpha = hamiltonian.optimal_control(grad_U)  # Returns -grad_U/lambda
-
-    Utility maximization (economics):
-    >>> hamiltonian = QuadraticHamiltonian(sense=OptimizationSense.MAXIMIZE)
-    >>> alpha = hamiltonian.optimal_control(grad_U)  # Returns +grad_U/lambda
-    """
-
-    MINIMIZE = "minimize"  # Control theory / HJB-FP: min ∫L dt, α = -∂H/∂p
-    MAXIMIZE = "maximize"  # RL / Economics: max ∫R dt, α = +∂H/∂p
 
 
 def _central_difference(f_plus: NDArray | float, f_minus: NDArray | float, eps: float) -> NDArray | float:
@@ -110,64 +84,6 @@ def _central_difference(f_plus: NDArray | float, f_minus: NDArray | float, eps: 
     self-consistent wrong answer.
     """
     return (f_plus - f_minus) / (2 * eps)
-
-
-def _sign_for_sense(sense: OptimizationSense, owner: str, weight_keyword: str) -> int:
-    """The orientation of the MINIMIZE<->MAXIMIZE mirror, and the only place a `sense` is admitted (#2341).
-
-    ``+1`` for MINIMIZE (cost-to-go, agents move downhill on U), ``-1`` for MAXIMIZE (reward-to-go, uphill). The
-    convention is to write a sense-dependent piece as ``sign * (MINIMIZE form)``; `MFGOperatorBase.sense_sign` is the
-    public reading of it.
-
-    Two copies of ``1 if sense == OptimizationSense.MINIMIZE else -1`` stood here, in `ControlCostBase.__init__` and
-    `MFGOperatorBase.__init__`, and both read anything that is not MINIMIZE as MAXIMIZE. In both classes ``sense`` is
-    the FIRST positional parameter and the next one is a number -- ``lambda_``'s alias in one, ``finite_diff_eps`` in
-    the other -- so a weight passed positionally became the sense and flipped the convention in silence. Measured at
-    65bcf659: `L1ControlCost(1e-12)` gave ``sense=1e-12``, ``sign=-1`` and ``lambda_`` left at its 1.0 default, and
-    `optimal_control` returned MAXIMIZE's values bit-identically. AGENTS.md asks for the highest owning abstraction,
-    which is this function rather than either constructor.
-
-    Args:
-        sense: The claimed optimisation sense.
-        owner: Class name, for the message; never used to build a suggested call, since not every owner takes the
-            same keywords (`_MoreauYosidaControlCost` accepts no ``lambda_``).
-        weight_keyword: The keyword the positional value most likely belonged to, named in the refusal.
-
-    Returns:
-        ``+1`` or ``-1``.
-
-    Raises:
-        TypeError: If ``sense`` is not an `OptimizationSense`.
-        NotImplementedError: If it is an `OptimizationSense` with no sign convention. Reachable today, not merely
-            a guard against a future member: `object.__new__(OptimizationSense)` satisfies isinstance and is neither
-            member, and the test suite uses exactly that to pin this branch. The old expression handed such a value
-            MAXIMIZE's sign in silence, at both sites.
-    """
-    if not isinstance(sense, OptimizationSense):
-        if isinstance(sense, numbers.Real) and not isinstance(sense, bool):
-            raise TypeError(
-                f"{owner}: sense must be an OptimizationSense, got the number {sense!r}. If you meant "
-                f"{weight_keyword}, pass it by name: {weight_keyword}={sense!r}. Positionally it set the "
-                f"optimisation sense instead, which flips the control's sign (#2341)."
-            )
-        raise TypeError(
-            f"{owner}: sense must be an OptimizationSense, got {sense!r} of type {type(sense).__name__}. Valid "
-            f"values: OptimizationSense.MINIMIZE, OptimizationSense.MAXIMIZE (#2341)."
-        )
-    if sense is OptimizationSense.MINIMIZE:
-        return 1
-    if sense is OptimizationSense.MAXIMIZE:
-        return -1
-    # Neither `.name` nor `repr(sense)`: an instance produced by `object.__new__(OptimizationSense)` satisfies
-    # isinstance and carries no `_name_`, and BOTH the `name` property and `Enum.__repr__` read it -- so the first
-    # attempt at this message raised AttributeError from inside its own diagnostic, and the second raised it from
-    # the eagerly-evaluated `getattr` default. That construction is also what proves this branch is reachable at
-    # all (review of #2345, round 2).
-    described = getattr(sense, "_name_", None) or f"an unnamed {type(sense).__name__} instance"
-    raise NotImplementedError(
-        f"{owner}: no sign convention is defined for {described} (#2341). Give it one here, in the one place the "
-        f"mirror is decided."
-    )
 
 
 class ControlCostBase(ABC):
@@ -188,8 +104,6 @@ class ControlCostBase(ABC):
 
     Parameters
     ----------
-    sense : OptimizationSense
-        Whether agents minimize cost or maximize utility
     control_cost : float
         Control cost weight lambda. Deprecated: use ``lambda_`` instead.
     lambda_ : float or None
@@ -198,7 +112,6 @@ class ControlCostBase(ABC):
 
     def __init__(
         self,
-        sense: OptimizationSense = OptimizationSense.MINIMIZE,
         control_cost: float | None = None,
         *,
         lambda_: float | None = None,
@@ -213,13 +126,24 @@ class ControlCostBase(ABC):
         else:
             lam = 1.0  # default
 
+        # The weight is validated here because REMOVING `sense` un-blocked a defect rather than
+        # leaving one behind. `sense` used to occupy this first positional slot, so
+        # `L1ControlCost(True)` hit the sense validator and was refused (#2341). With the parameter
+        # gone, `True` lands on `control_cost` instead, and `lam <= 0` accepts it: bool is a
+        # subclass of int, so `True <= 0` is False and the weight silently becomes `True`.
+        # Measured before this guard: `L1ControlCost(True).lambda_` was `True`, of type bool.
+        # A non-number was no better -- `L1ControlCost("abc")` raised from the comparison itself,
+        # `'<=' not supported between instances of 'str' and 'int'`, which names neither the
+        # parameter nor the class.
+        if isinstance(lam, bool) or not isinstance(lam, numbers.Real):
+            raise TypeError(
+                f"{type(self).__name__}: the control cost weight must be a real number, got "
+                f"{lam!r} of type {type(lam).__name__}. It is the first positional parameter, so "
+                f"a value meant for something else lands here."
+            )
         if lam <= 0:
             raise ValueError(f"lambda_ must be positive, got {lam}")
 
-        # Issue #2341: one owner validates the sense and derives the sign; `lambda_` is the keyword a positional
-        # number most likely belonged to here.
-        self.sign = _sign_for_sense(sense, type(self).__name__, "lambda_")
-        self.sense = sense
         self._lambda = lam
         # Issue #1068: explicit None-init avoids hasattr() in regularize().
         # Subclasses (_MoreauYosidaControlCost) override this with the original base.
@@ -453,12 +377,10 @@ class QuadraticControlCost(ControlCostBase):
     The most common choice in MFG:
     - Lagrangian: L(alpha) = lambda/2 * |alpha|^2
     - Hamiltonian: H(p) = |p|^2 / (2*lambda)
-    - Optimal control: alpha* = -p/lambda (MINIMIZE), +p/lambda (MAXIMIZE)
+    - Optimal control: alpha* = -p/lambda
 
     Parameters
     ----------
-    sense : OptimizationSense
-        Whether agents minimize cost or maximize utility
     control_cost : float
         Deprecated, use ``lambda_`` instead.
     lambda_ : float
@@ -472,8 +394,8 @@ class QuadraticControlCost(ControlCostBase):
     """
 
     def optimal_control(self, p: np.ndarray) -> np.ndarray:
-        """alpha* = -p/lambda (MINIMIZE) or +p/lambda (MAXIMIZE)."""
-        return -self.sign * p / self._lambda
+        """alpha* = -p/lambda."""
+        return -p / self._lambda
 
     def evaluate(self, p: np.ndarray) -> np.ndarray:
         """H(p) = |p|^2 / (2*lambda)."""
@@ -510,8 +432,6 @@ class L1ControlCost(ControlCostBase):
 
     Parameters
     ----------
-    sense : OptimizationSense
-        Whether agents minimize cost or maximize utility
     control_cost : float
         Deprecated, use ``lambda_`` instead.
     lambda_ : float
@@ -530,7 +450,7 @@ class L1ControlCost(ControlCostBase):
         """Bang-bang: alpha* = -sign(p) where |p| > lambda, else 0."""
         alpha = np.zeros_like(p)
         active = np.abs(p) > self._lambda
-        alpha[active] = -self.sign * np.sign(p[active])
+        alpha[active] = -np.sign(p[active])
         return alpha
 
     def evaluate(self, p: np.ndarray) -> np.ndarray:
@@ -587,8 +507,6 @@ class BoundedControlCost(ControlCostBase):
 
     Parameters
     ----------
-    sense : OptimizationSense
-        Whether agents minimize cost or maximize utility
     control_cost : float
         Deprecated, use ``lambda_`` instead.
     lambda_ : float
@@ -605,27 +523,26 @@ class BoundedControlCost(ControlCostBase):
 
     def __init__(
         self,
-        sense: OptimizationSense = OptimizationSense.MINIMIZE,
         control_cost: float | None = None,
         max_control: float = 1.0,
         *,
         lambda_: float | None = None,
     ):
-        super().__init__(sense, control_cost, lambda_=lambda_)
+        super().__init__(control_cost, lambda_=lambda_)
         if max_control <= 0:
             raise ValueError(f"max_control must be positive, got {max_control}")
         self.max_control = max_control
 
     def optimal_control(self, p: np.ndarray) -> np.ndarray:
         """alpha* = clip(-p/lambda, -alpha_max, alpha_max)."""
-        alpha_unconstrained = -self.sign * p / self._lambda
+        alpha_unconstrained = -p / self._lambda
         return np.clip(alpha_unconstrained, -self.max_control, self.max_control)
 
     def evaluate(self, p: np.ndarray) -> np.ndarray:
         """H(p) = sup_alpha { p . alpha - L(alpha) }. Always finite.
 
-        Uses the unsigned optimizer (before MINIMIZE/MAXIMIZE sign convention)
-        to compute the Hamiltonian value.
+        Uses the conjugate maximizer directly, without the negation `optimal_control`
+        applies, since the Hamiltonian VALUE does not carry that sign.
         """
         p_arr = np.atleast_1d(p)
         threshold = self._lambda * self.max_control
@@ -691,7 +608,7 @@ class _MoreauYosidaControlCost(ControlCostBase):
     def __init__(self, base: ControlCostBase, epsilon: float):
         if epsilon <= 0:
             raise ValueError(f"epsilon must be positive, got {epsilon}")
-        super().__init__(sense=base.sense, lambda_=base._lambda)
+        super().__init__(lambda_=base._lambda)
         self.base = base
         self.epsilon = epsilon
 
@@ -746,7 +663,7 @@ class _MoreauYosidaControlCost(ControlCostBase):
 
     def optimal_control(self, p: np.ndarray) -> np.ndarray:
         """Smooth optimal control from Moreau-Yosida gradient."""
-        return -self.sign * self.dp(p)
+        return -self.dp(p)
 
     def evaluate(self, p: np.ndarray) -> np.ndarray:
         """H_eps(p) = H(prox(p)) + |p - prox(p)|^2 / (2*eps).
@@ -892,36 +809,17 @@ class MFGOperatorBase(ABC):
 
     Parameters
     ----------
-    sense : OptimizationSense
-        Whether agents minimize cost (MINIMIZE) or maximize utility (MAXIMIZE)
     finite_diff_eps : float
         Step size for finite difference derivatives (default: 1e-6)
     """
 
     def __init__(
         self,
-        sense: OptimizationSense = OptimizationSense.MINIMIZE,
         finite_diff_eps: float = 1e-6,
         population_index: int = 0,
     ):
-        # Issue #2341: the same owner as `ControlCostBase`. `sense` is first positional here too, and the next
-        # parameter is `finite_diff_eps`, another number -- so the same positional slip lands the same way.
-        self._sign = _sign_for_sense(sense, type(self).__name__, "finite_diff_eps")
-        self.sense = sense
         self.finite_diff_eps = finite_diff_eps
         self.population_index = population_index
-
-    @property
-    def sense_sign(self) -> float:
-        """Orientation of the MINIMIZE<->MAXIMIZE mirror: ``+1`` for MINIMIZE (cost-to-go, agents
-        move DOWNHILL toward lower value), ``-1`` for MAXIMIZE (reward-to-go, agents move UPHILL).
-        Every sense-dependent piece is ``s * (MINIMIZE form)``.
-
-        This is the public reading of ``_sign``, set once above. `NetworkHamiltonian` computed the
-        same expression a second time from the same `self.sense` while inheriting `_sign` from here
-        (#1986); that copy is gone, and this is the one owner.
-        """
-        return float(self._sign)
 
     @property
     @abstractmethod
@@ -1067,9 +965,6 @@ class HamiltonianBase(MFGOperatorBase):
 
     Parameters
     ----------
-    sense : OptimizationSense
-        Whether agents minimize cost or maximize utility.
-        Affects sign of optimal control: α* = ∓∂H/∂p
     finite_diff_eps : float
         Step size for finite difference derivatives (default: 1e-6)
 
@@ -1379,7 +1274,6 @@ class HamiltonianBase(MFGOperatorBase):
 
         The optimal control satisfies the first-order condition:
         - MINIMIZE: α* = -∂H/∂p (gradient descent on value)
-        - MAXIMIZE: α* = +∂H/∂p (gradient ascent on utility)
 
         Parameters
         ----------
@@ -1398,7 +1292,7 @@ class HamiltonianBase(MFGOperatorBase):
             Optimal control α*, same shape as p
         """
         dH_dp = self.dp(x, m, p, t)
-        return -self._sign * dH_dp
+        return -dH_dp
 
     def jacobian_fd(
         self,
@@ -1629,7 +1523,6 @@ class HamiltonianBase(MFGOperatorBase):
         """
         return DualLagrangian(
             hamiltonian=self,
-            sense=self.sense,
             p_bounds=p_bounds or (-10.0, 10.0),
             n_search=n_search,
         )
@@ -1663,8 +1556,6 @@ class LagrangianBase(MFGOperatorBase):
 
     Parameters
     ----------
-    sense : OptimizationSense
-        Whether agents minimize cost or maximize utility
     """
 
     @property
@@ -1801,7 +1692,6 @@ class LagrangianBase(MFGOperatorBase):
 
         Same convention as HamiltonianBase.optimal_control() (Issue #1642):
         - MINIMIZE: alpha* = -dH/dp
-        - MAXIMIZE: alpha* = +dH/dp
 
         with dH/dp = argmax_alpha { p . alpha - L(x, alpha, m, t) }. Computed
         directly from L without constructing DualHamiltonian.
@@ -1815,7 +1705,7 @@ class LagrangianBase(MFGOperatorBase):
         analytic subclass. evaluate_hamiltonian() reads conjugate_argmax()
         directly, so an override placed here alone would not reach it.
         """
-        return -self._sign * self.conjugate_argmax(x, m, p, t)
+        return -self.conjugate_argmax(x, m, p, t)
 
     # === On-the-fly H evaluation ===
 
@@ -1830,7 +1720,7 @@ class LagrangianBase(MFGOperatorBase):
 
         The convex conjugate, evaluated at its own maximizer. Matches
         DualHamiltonian.__call__ and the always-sup ControlCostBase.evaluate:
-        the value does not depend on OptimizationSense (Issue #1185).
+        the value is direction-free (Issue #1185).
 
         Evaluated at ``conjugate_argmax``, NOT at ``optimal_control`` -- those
         differ by the sense sign, so substituting one for the other flips the
@@ -1924,7 +1814,6 @@ class LagrangianBase(MFGOperatorBase):
         """
         return DualHamiltonian(
             lagrangian=self,
-            sense=self.sense,
             alpha_bounds=alpha_bounds or (-10.0, 10.0),
             n_search=n_search,
         )
@@ -1948,8 +1837,6 @@ class SeparableLagrangian(LagrangianBase):
         V(x, t). If None, V = 0.
     coupling : callable or None
         f(m). If None, f = 0.
-    sense : OptimizationSense
-        Optimization direction.
     """
 
     def __init__(
@@ -1957,9 +1844,8 @@ class SeparableLagrangian(LagrangianBase):
         control_cost: ControlCostBase,
         potential: callable | None = None,
         coupling: callable | None = None,
-        sense: OptimizationSense = OptimizationSense.MINIMIZE,
     ):
-        super().__init__(sense=sense)
+        super().__init__()
         self.control_cost = control_cost
         self._potential = potential
         self._coupling = coupling
@@ -2013,7 +1899,6 @@ class SeparableLagrangian(LagrangianBase):
             control_cost=self.control_cost,
             potential=self._potential,
             coupling=self._coupling,
-            sense=self.sense,
         )
 
 
@@ -2032,8 +1917,6 @@ class DualHamiltonian(HamiltonianBase):
     ----------
     lagrangian : LagrangianBase
         The Lagrangian to transform
-    sense : OptimizationSense
-        Optimization direction
     alpha_bounds : tuple[float, float]
         Bounds on control for optimization
     n_search : int
@@ -2054,11 +1937,10 @@ class DualHamiltonian(HamiltonianBase):
     def __init__(
         self,
         lagrangian: LagrangianBase,
-        sense: OptimizationSense = OptimizationSense.MINIMIZE,
         alpha_bounds: tuple[float, float] = (-10.0, 10.0),
         n_search: int = 100,
     ):
-        super().__init__(sense=sense)
+        super().__init__()
         self.lagrangian = lagrangian
         self.alpha_bounds = alpha_bounds
         self.n_search = n_search
@@ -2086,7 +1968,7 @@ class DualHamiltonian(HamiltonianBase):
             )
 
             # H is the convex conjugate L*(p) = sup_alpha { p.alpha - L(alpha) },
-            # independent of OptimizationSense (matches the d>1 branch below, the
+            # direction-free (matches the d>1 branch below, the
             # always-sup ControlCostBase.evaluate, and dp's argmax). Issue #1185.
             return float(np.max(values))
 
@@ -2196,8 +2078,6 @@ class DualLagrangian(LagrangianBase):
     ----------
     hamiltonian : HamiltonianBase
         The Hamiltonian to inverse-transform
-    sense : OptimizationSense
-        Optimization direction
     p_bounds : tuple[float, float]
         Bounds on momentum for optimization
     n_search : int
@@ -2212,11 +2092,10 @@ class DualLagrangian(LagrangianBase):
     def __init__(
         self,
         hamiltonian: HamiltonianBase,
-        sense: OptimizationSense = OptimizationSense.MINIMIZE,
         p_bounds: tuple[float, float] = (-10.0, 10.0),
         n_search: int = 100,
     ):
-        super().__init__(sense=sense)
+        super().__init__()
         self.hamiltonian = hamiltonian
         self.p_bounds = p_bounds
         self.n_search = n_search
@@ -2244,7 +2123,7 @@ class DualLagrangian(LagrangianBase):
             )
 
             # L is the convex conjugate H*(alpha) = sup_p { p.alpha - H(p) },
-            # independent of OptimizationSense (matches the d>1 branch below and
+            # direction-free (matches the d>1 branch below and
             # d_alpha's argmax). Issue #1185.
             return float(np.max(values))
 
@@ -2370,16 +2249,16 @@ class SeparableHamiltonian(HamiltonianBase):
     Sign convention (Issue #1057, gotcha G-001)
     -------------------------------------------
     `potential` enters the Hamiltonian as ``H = H_control(p) + V(x, t) + f(m)``.
-    The class also accepts ``sense=OptimizationSense.MINIMIZE`` (default) which
-    flips the sign on ``H_control``'s Legendre-transform direction — but ``V`` is
-    currently added to ``H`` **without** a corresponding sense-flip. Empirically,
+    There is no optimisation-direction parameter: the library is minimisation-only
+    (#2373). ``V`` is added to ``H`` unflipped, so a positive ``V`` currently lowers
+    ``u`` -- it acts as a reward rather than a cost. Empirically,
     research code attracts density to ``x_c`` by writing ``V(x, t) = -C * (x - x_c)**2``
     (inverted parabola, peak at ``x_c``), not the bowl shape that standard MFG
     literature would suggest. This is the de-facto "potential as reward"
     convention.
 
-    The API gap (V not interacting with ``sense``) is tracked as Issue #1060;
-    until that lands, the practical guidance is:
+    That ``V`` is reward-signed while ``u_T`` and ``source_term_hjb`` are cost-signed
+    is the defect ruling 3 of #2375 corrects; until that lands, the practical guidance is:
 
     - **Attractive** potential at ``x_c``: ``V(x, t) = -0.5 * C * (x - x_c)**2``
       (inverted parabola, peak at ``x_c``).
@@ -2434,10 +2313,9 @@ class SeparableHamiltonian(HamiltonianBase):
         potential: callable | None = None,
         coupling: callable | None = None,
         coupling_dm: callable | None = None,
-        sense: OptimizationSense = OptimizationSense.MINIMIZE,
         population_index: int = 0,
     ):
-        super().__init__(sense=sense, population_index=population_index)
+        super().__init__(population_index=population_index)
         self.control_cost = control_cost
         self._potential = potential
         self._coupling = coupling
@@ -2635,7 +2513,6 @@ class SeparableHamiltonian(HamiltonianBase):
             potential=self._potential,
             coupling=self._coupling,
             coupling_dm=self._coupling_dm,
-            sense=self.sense,
         )
 
 
@@ -2666,8 +2543,6 @@ class CongestionHamiltonian(HamiltonianBase):
         f(m) -> float or ndarray. Additive density coupling term.
     coupling_dm : callable or None
         f'(m) -> float or ndarray. Derivative of coupling.
-    sense : OptimizationSense
-        MINIMIZE (default) or MAXIMIZE.
 
     Examples
     --------
@@ -2689,10 +2564,9 @@ class CongestionHamiltonian(HamiltonianBase):
         potential: callable | None = None,
         coupling: callable | None = None,
         coupling_dm: callable | None = None,
-        sense: OptimizationSense = OptimizationSense.MINIMIZE,
         population_index: int = 0,
     ):
-        super().__init__(sense=sense, population_index=population_index)
+        super().__init__(population_index=population_index)
         self.control_cost = control_cost
         self._congestion_factor = congestion_factor
         self._congestion_factor_dm = congestion_factor_dm
@@ -2884,7 +2758,7 @@ class CongestionHamiltonian(HamiltonianBase):
         For congestion Hamiltonian, the optimal control depends on density m
         (unlike separable case where it only depends on p).
         """
-        return -self._sign * self.dp(x, m, p, t)
+        return -self.dp(x, m, p, t)
 
     def is_smooth(self) -> bool:
         """Delegates to control cost component."""
@@ -2901,7 +2775,6 @@ class CongestionHamiltonian(HamiltonianBase):
             potential=self._potential,
             coupling=self._coupling,
             coupling_dm=self._coupling_dm,
-            sense=self.sense,
         )
 
 
@@ -2922,31 +2795,26 @@ class QuadraticMFGHamiltonian(SeparableHamiltonian):
         Coefficient c in ½c|p|² (default: 1.0)
     potential : Callable | None
         Potential V(x, t) (default: None, meaning V=0)
-    sense : OptimizationSense
-        Optimization direction
 
     Notes
     -----
     The default coupling f(m) = -m² gives ∂H/∂m = -2m.
     This Hamiltonian leads to the classical optimal control:
-    α* = -c·p (for MINIMIZE sense).
+    α* = -c·p.
     """
 
     def __init__(
         self,
         coupling_coefficient: float = 1.0,
         potential: callable | None = None,
-        sense: OptimizationSense = OptimizationSense.MINIMIZE,
     ):
         super().__init__(
             control_cost=QuadraticControlCost(
-                sense=sense,
                 control_cost=1.0 / coupling_coefficient if coupling_coefficient > 0 else 1.0,
             ),
             potential=potential,
             coupling=lambda m: -(m**2),
             coupling_dm=lambda m: -2 * m,
-            sense=sense,
         )
         self.coupling_coefficient = coupling_coefficient
 
@@ -2980,28 +2848,23 @@ def create_hamiltonian(
     >>> H = create_hamiltonian("quadratic", control_cost=2.0)
     >>> H = create_hamiltonian("default", coupling_coefficient=0.5)
     """
-    sense = kwargs.pop("sense", OptimizationSense.MINIMIZE)
-
     if hamiltonian_type == "quadratic":
         control_cost = kwargs.get("control_cost", 1.0)
         return SeparableHamiltonian(
-            control_cost=QuadraticControlCost(sense=sense, control_cost=control_cost),
-            sense=sense,
+            control_cost=QuadraticControlCost(control_cost=control_cost),
         )
 
     elif hamiltonian_type == "l1":
         control_cost = kwargs.get("control_cost", 1.0)
         return SeparableHamiltonian(
-            control_cost=L1ControlCost(sense=sense, control_cost=control_cost),
-            sense=sense,
+            control_cost=L1ControlCost(control_cost=control_cost),
         )
 
     elif hamiltonian_type == "bounded":
         control_cost = kwargs.get("control_cost", 1.0)
         max_control = kwargs.get("max_control", 1.0)
         return SeparableHamiltonian(
-            control_cost=BoundedControlCost(sense=sense, control_cost=control_cost, max_control=max_control),
-            sense=sense,
+            control_cost=BoundedControlCost(control_cost=control_cost, max_control=max_control),
         )
 
     elif hamiltonian_type == "default":
@@ -3010,13 +2873,12 @@ def create_hamiltonian(
         return QuadraticMFGHamiltonian(
             coupling_coefficient=coupling_coefficient,
             potential=potential,
-            sense=sense,
         )
 
     elif hamiltonian_type == "separable":
         control_cost = kwargs.get(
             "control_cost",
-            QuadraticControlCost(sense=sense),
+            QuadraticControlCost(),
         )
         potential = kwargs.get("potential")
         coupling = kwargs.get("coupling")
@@ -3026,7 +2888,6 @@ def create_hamiltonian(
             potential=potential,
             coupling=coupling,
             coupling_dm=coupling_dm,
-            sense=sense,
         )
 
     else:
@@ -3041,19 +2902,13 @@ if __name__ == "__main__":
     print("=" * 60)
 
     # Test QuadraticControlCost
-    print("\n1. QuadraticControlCost (MINIMIZE):")
-    cost = QuadraticControlCost(sense=OptimizationSense.MINIMIZE, control_cost=2.0)
+    print("\n1. QuadraticControlCost:")
+    cost = QuadraticControlCost(control_cost=2.0)
     p = np.array([1.0, 2.0, -3.0])
     alpha = cost.optimal_control(p)
     print(f"   p = {p}")
     print(f"   α* = {alpha}  (expected: [-0.5, -1.0, 1.5])")
-    assert np.allclose(alpha, [-0.5, -1.0, 1.5]), "QuadraticControlCost MINIMIZE failed"
-
-    print("\n2. QuadraticControlCost (MAXIMIZE):")
-    cost_max = QuadraticControlCost(sense=OptimizationSense.MAXIMIZE, control_cost=2.0)
-    alpha_max = cost_max.optimal_control(p)
-    print(f"   α* = {alpha_max}  (expected: [0.5, 1.0, -1.5])")
-    assert np.allclose(alpha_max, [0.5, 1.0, -1.5]), "QuadraticControlCost MAXIMIZE failed"
+    assert np.allclose(alpha, [-0.5, -1.0, 1.5]), "QuadraticControlCost failed"
 
     # Test L1ControlCost
     print("\n3. L1ControlCost (bang-bang):")

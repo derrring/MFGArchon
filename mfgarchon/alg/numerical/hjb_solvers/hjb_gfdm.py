@@ -3233,8 +3233,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         coupling f(m), plus any caller-supplied running cost, are wired into Howard's
         running_cost slot (see `running_cost` closure below), so Howard solves the full non-LQ
         HJB ``-d_t u + (1/2)|grad u|^2 + V(x) + f(m) - (sigma^2/2) Lap u = 0``. Still deferred
-        (fail-loud below): non-unit control cost lambda, non-quadratic control cost, and the
-        MAXIMIZE sense (the Lagrangian-scaling work tracked alongside #1071).
+        (fail-loud below): non-unit control cost lambda and non-quadratic control cost (the
+        Lagrangian-scaling work tracked alongside #1071).
         """
         from mfgarchon.alg.numerical.hjb_solvers.hjb_howard import HJBHowardSolver
 
@@ -3256,7 +3256,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # below), so any QUADRATIC control cost (unit or lambda != 1) MINIMIZE is faithful. The
         # potential V(x, t), the density coupling f(m), and the MMS source are wired
         # (Issue #1247, below); the user running-cost channel is gone (#1999). What remains unmodelled — NON-quadratic control cost and the
-        # MAXIMIZE sense — is failed loud below (validated by
+        # cost — is failed loud below (validated by
         # tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_rejects_*).
         control_cost = getattr(H_class, "control_cost", None)
         if control_cost is not None:
@@ -3274,11 +3274,6 @@ class HJBGFDMSolver(BaseHJBSolver):
                     f"lambda), but the Hamiltonian's control cost is {type(control_cost).__name__}. "
                     "Non-quadratic control costs have a non-smooth Lagrangian whose Howard "
                     "convergence is unvalidated; use inner_solver='newton' (Issue #1071)."
-                )
-            if getattr(control_cost, "sign", 1) != 1:
-                raise NotImplementedError(
-                    "inner_solver='howard' derives alpha* = -dH/dp (MINIMIZE sense); the Hamiltonian "
-                    "uses MAXIMIZE, which needs alpha* = +dH/dp. Use inner_solver='newton' (deferred)."
                 )
         # Ordered BEFORE the probe deliberately: the widened probe DOES detect congestion
         # (measured, it departs from the declared quadratic by 1.000e+02), but it would report

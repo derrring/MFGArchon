@@ -168,7 +168,6 @@ class MFGComponents:
                     control_cost=self.hamiltonian.control_cost,
                     potential=getattr(self.hamiltonian, "_potential", None),
                     coupling=getattr(self.hamiltonian, "_coupling", None),
-                    sense=self.hamiltonian.sense,
                 )
 
         # Validate: at least one of H or L must be provided

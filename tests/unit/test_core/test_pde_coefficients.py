@@ -467,25 +467,28 @@ class TestFpDriftCoefficient:
         with pytest.raises(ValueError, match="Cannot determine the FP drift coefficient"):
             fp_drift_coefficient(_Bare())
 
-    def test_maximize_quadratic_separable_h_fails_loud_not_coupling_fallback(self):
-        # Issue #1542 / RFC #1574 Phase 0: a MAXIMIZE-quadratic SeparableHamiltonian reaches this
-        # function (the router gates on is_smooth() alone) but `-c*grad(U)` is the wrong drift for it.
-        # It must fail loud, NOT silently fall back to coupling_coefficient (default 0.5 => wrong-sign
-        # downhill drift). The discriminating check: coupling_coefficient IS set, so a revert to the
-        # old fallback would return 0.5 and this test would catch it.
-        from mfgarchon.core.hamiltonian import OptimizationSense
+    def test_non_quadratic_separable_h_fails_loud_not_coupling_fallback(self):
+        # Issue #1542 / RFC #1574 Phase 0: a non-quadratic SeparableHamiltonian reaches this
+        # function (the router gates on is_smooth() alone) but `-c*grad(U)` is the wrong FORM of
+        # drift for it. It must fail loud, NOT silently fall back to coupling_coefficient (default
+        # 0.5 => a drift with no relation to the actual optimal control). The discriminating check:
+        # coupling_coefficient IS set, so a revert to the old fallback would return 0.5 and this
+        # test would catch it.
+        #
+        # This was written against a MAXIMIZE-quadratic cost until #2373 removed the direction. The
+        # guard's remaining arm is the non-quadratic one, which is the arm that was always about
+        # FORM rather than sign, so the L1 cost exercises what survives.
+        from mfgarchon.core.hamiltonian import L1ControlCost
 
         grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
         comp = MFGComponents(
             m_initial=lambda x: 1.0,
             u_terminal=lambda x: 0.0,
-            hamiltonian=SeparableHamiltonian(
-                control_cost=QuadraticControlCost(lambda_=2.0, sense=OptimizationSense.MAXIMIZE)
-            ),
+            hamiltonian=SeparableHamiltonian(control_cost=L1ControlCost(lambda_=2.0)),
         )
         prob = MFGProblem(geometry=grid, components=comp, T=0.2, Nt=2, sigma=0.1)
         assert getattr(prob, "coupling_coefficient", None) is not None  # the trap the old code fell into
-        with pytest.raises(NotImplementedError, match="quadratic-MINIMIZE"):
+        with pytest.raises(NotImplementedError, match="quadratic"):
             fp_drift_coefficient(prob)
 
 

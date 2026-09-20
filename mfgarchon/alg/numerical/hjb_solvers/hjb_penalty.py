@@ -48,7 +48,7 @@ if TYPE_CHECKING:
 class PenaltyHJBSolver(BaseHJBSolver):
     """Wrapper that adds variational inequality constraint to any HJB solver.
 
-    Enforces v >= Psi(x) (for MINIMIZE) or v <= Psi(x) (for MAXIMIZE)
+    Enforces v >= Psi(x)
     via a penalty term added to the source_term of the inner solver.
 
     Parameters

@@ -791,7 +791,7 @@ def solve_fp_nd_full_system(
     # (the single source α* = -∇U/control_cost), not the independent coupling_coefficient field.
     #
     # Issue #1528 phase 2: resolve it lazily, at the point of use. fp_drift_coefficient
-    # raises for any Hamiltonian whose optimal control is not -∇U/control_cost (MAXIMIZE,
+    # raises for any Hamiltonian whose optimal control is not -∇U/control_cost (
     # non-quadratic, regularized). Resolving it eagerly here made that raise fire before
     # the drift channel was even consulted, so a MAXIMIZE problem could not run through
     # the nD FDM solver *even when supplying velocity_field* -- the channel that exists

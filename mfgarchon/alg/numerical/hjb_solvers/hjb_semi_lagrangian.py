@@ -265,22 +265,12 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 f"stability proof only covers monotone interpolation; cubic/quintic break it."
             )
 
-        # Issue #1547 / RFC #1574 Phase 0: the characteristic-foot velocity dH/dp = p/lambda traces
-        # departures x - (grad_u/lambda)*dt, i.e. alpha* = -grad_u/lambda (MINIMIZE). A MAXIMIZE
-        # control cost has alpha* = +grad_u/lambda, so the feet would be traced in the wrong
-        # direction; the MAXIMIZE-quadratic H is smooth so the non-smooth DPP reroute never fires and
-        # the wrong-signed foot path is taken silently. Fail loud (mirrors the HJBGFDMSolver Howard
-        # gate) rather than run the wrong scheme. MAXIMIZE support on the SL path is deferred.
-        _sl_h_class = getattr(self.problem, "hamiltonian_class", None)
-        _sl_control_cost = getattr(_sl_h_class, "control_cost", None)
-        if _sl_control_cost is not None and getattr(_sl_control_cost, "sign", 1) != 1:
-            raise NotImplementedError(
-                "HJBSemiLagrangianSolver traces characteristic feet with the MINIMIZE-signed velocity "
-                "alpha* = -grad(u)/lambda, but the Hamiltonian's control cost is MAXIMIZE "
-                "(alpha* = +grad(u)/lambda). The feet would move in the wrong direction and the solve "
-                "would converge to a different equilibrium. MAXIMIZE is not yet supported on the "
-                "semi-Lagrangian path (Issue #1547 / RFC #1574); use HJB-FDM/GFDM, or MINIMIZE."
-            )
+        # Issue #1547 / RFC #1574 Phase 0 carried a refusal here for a MAXIMIZE control cost, whose
+        # alpha* = +grad_u/lambda would have traced the characteristic feet in the wrong direction.
+        # #2373 removed the concept, so the condition it tested can no longer be true -- and it had
+        # gone SILENTLY dead rather than loudly: keyed on `getattr(cost, "sign", 1) != 1`, the
+        # default made it `1 != 1` once the attribute was deleted. The foot velocity is now
+        # alpha* = -grad_u/lambda unconditionally.
 
         # Gradient clipping statistics tracking
         self._reset_gradient_stats()
@@ -3288,11 +3278,11 @@ if __name__ == "__main__":
         print("   9c: _apply_diffusion raises under stochastic: OK")
 
     # 9d: constant terminal -> constant solution (no-drift, no-curvature sanity)
-    from mfgarchon.core.hamiltonian import HamiltonianBase, OptimizationSense
+    from mfgarchon.core.hamiltonian import HamiltonianBase
 
     class _ZeroH(HamiltonianBase):
         def __init__(self):
-            super().__init__(sense=OptimizationSense.MINIMIZE)
+            super().__init__()
 
         def __call__(self, x, m, p, t=0.0):
             p_arr = np.atleast_1d(np.asarray(p, dtype=float))

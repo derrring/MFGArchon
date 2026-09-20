@@ -10,8 +10,8 @@ Advection is single-sourced from the Hamiltonian's optimal-control primitive
 the nodes via the mass-lumped gradient projection and assembled with the protocol's
 advection. This is the same primitive the paired HJB Newton advection reads, so
 A_FP = A_HJB^T is preserved. It supersedes the former weak-form-family convention
-(option b, the hand-coded scalar v = -coupling * grad(U)), which could not represent
-alpha* for MAXIMIZE or regularized control costs. (Routing them end-to-end is #1528
+(option b, the hand-coded scalar v = -coupling * grad(U)), which cannot represent
+alpha* for a regularized control cost. (Routing them end-to-end is #1528
 Phase 1; `_build_advection` still gates those cases behind `assert_quadratic_minimize_drift`.)
 
 Boundary conditions: Neumann / no-flux (mass-conserving reflecting wall) and
@@ -139,7 +139,7 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         # alpha* = H.optimal_control(x, m, p, t) -- not a hand-coded -fp_drift_coefficient(problem)*grad(U).
         # For a quadratic-MINIMIZE SeparableHamiltonian the owner returns -p/control_cost, which is
         # byte-identical to the old -c*grad(U) for dyadic control_cost (incl. the paper's control_cost=1.0,
-        # where alpha* = -grad(U) exactly) and within 1 ULP for non-dyadic control_cost; for MAXIMIZE /
+        # where alpha* = -grad(U) exactly) and within 1 ULP for non-dyadic control_cost; for
         # regularized costs it is the correct alpha* (+p/lambda, soft-threshold) that the scalar -c*grad(U)
         # could not represent. This is the SAME primitive the paired HJB Newton advection reads, so
         # A_FP = A_HJB^T is preserved.
@@ -156,7 +156,7 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         # CongestionHamiltonian) has a density/state-dependent optimal control, so calling optimal_control
         # here raised a cryptic TypeError; fail loud with a clear message instead. The gate lives at this
         # velocity-channel call site, NOT in the shared assert_quadratic_minimize_drift guard, which must
-        # keep no-op'ing for non-separable H. Ordered before the #1542 assert so a MAXIMIZE Separable still
+        # keep no-op'ing for non-separable H. Ordered before the #1542 assert so a non-quadratic Separable still
         # hits the #1542 guard below.
         from mfgarchon.core.hamiltonian import SeparableHamiltonian
 
@@ -169,7 +169,7 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
                 f"(Issue #1528 / RFC #1574 Phase 1)."
             )
         # Issue #1528 PR-1 (behavior-neutral): preserve the #1542 fail-loud the removed
-        # `fp_drift_coefficient` read carried -- a MAXIMIZE / non-quadratic SeparableHamiltonian has no
+        # `fp_drift_coefficient` read carried -- a non-quadratic SeparableHamiltonian has no
         # scalar `-c*grad(U)` form, so raise rather than silently advect H.optimal_control's
         # wrong-sign / wrong-form drift (that capability is Phase 1, not this byte-safe PR).
         assert_quadratic_minimize_drift(self.problem, context="FP meshless-Galerkin advection")

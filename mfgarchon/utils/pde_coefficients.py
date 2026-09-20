@@ -26,7 +26,7 @@ def assert_quadratic_minimize_drift(problem: Any, *, context: str) -> None:
 
     The scalar ``c = 1/control_cost`` closure (and the byte-identical ``-p/control_cost`` the
     Hamiltonian owner returns for it) is the true optimal control ``alpha*`` only for a
-    quadratic-MINIMIZE ``SeparableHamiltonian``. A MAXIMIZE-quadratic cost has ``alpha* = +p/lambda``
+    quadratic ``SeparableHamiltonian``. A regularized cost has a soft-thresholded ``alpha*``
     (opposite sign) and a regularized (e.g. Moreau--Yosida) cost is soft-thresholded, so advecting
     with ``-c*grad(U)`` would silently transport mass with the wrong physics.
 
@@ -34,7 +34,7 @@ def assert_quadratic_minimize_drift(problem: Any, *, context: str) -> None:
     :func:`fp_drift_coefficient`. Extracting it keeps that fail-loud after those families route the
     drift through ``H.optimal_control`` directly (Issue #1528 PR-1) instead of reading the scalar --
     a routing change that is byte-neutral for the quadratic-MINIMIZE case but would otherwise let a
-    MAXIMIZE / non-quadratic ``SeparableHamiltonian`` run silently (a capability change deferred to
+    non-quadratic ``SeparableHamiltonian`` run silently (a capability change deferred to
     Phase 1, not this byte-safe refactor).
 
     No-op (returns ``None``) for a quadratic-MINIMIZE ``SeparableHamiltonian`` (its scalar
@@ -58,8 +58,7 @@ def assert_quadratic_minimize_drift(problem: Any, *, context: str) -> None:
     Raises
     ------
     NotImplementedError
-        If ``hamiltonian_class`` is a ``SeparableHamiltonian`` with a MAXIMIZE-quadratic or
-        non-quadratic control cost.
+        If ``hamiltonian_class`` is a ``SeparableHamiltonian`` with a non-quadratic control cost.
     """
     from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 
@@ -67,14 +66,14 @@ def assert_quadratic_minimize_drift(problem: Any, *, context: str) -> None:
     if not isinstance(h_class, SeparableHamiltonian):
         return
     control_cost = h_class.control_cost
-    if isinstance(control_cost, QuadraticControlCost) and control_cost.sign == 1:  # OptimizationSense.MINIMIZE
+    if isinstance(control_cost, QuadraticControlCost):
         return
-    detail = "MAXIMIZE quadratic" if isinstance(control_cost, QuadraticControlCost) else type(control_cost).__name__
+    detail = type(control_cost).__name__
     raise NotImplementedError(
         f"{context}: the scalar FP drift `-c*grad(U)` is defined only for a "
-        f"quadratic-MINIMIZE SeparableHamiltonian, but got a {detail} control cost. Its optimal "
-        f"control is alpha* = H.optimal_control(...), not -c*grad(U) (wrong sign for MAXIMIZE, "
-        f"wrong form for a regularized cost). Route the FP drift through the velocity channel "
+        f"quadratic SeparableHamiltonian, but got a {detail} control cost. Its optimal "
+        f"control is alpha* = H.optimal_control(...), not -c*grad(U) -- the wrong FORM for a "
+        f"regularized cost, not merely a wrong sign. Route the FP drift through the velocity channel "
         f"(precomputed alpha*) instead (Issue #1542 / RFC #1574 Phase 1)."
     )
 
@@ -96,12 +95,12 @@ def fp_drift_coefficient(problem: Any) -> float:
     its own ``coupling_coefficient``) or a non-Hamiltonian direct solve.
 
     Fail-loud on a *smooth-but-not-quadratic-MINIMIZE* ``SeparableHamiltonian`` (Issue #1542 / RFC #1574
-    Phase 0): a ``SeparableHamiltonian`` whose control cost is MAXIMIZE-quadratic or non-quadratic
+    Phase 0): a ``SeparableHamiltonian`` whose control cost is non-quadratic
     (e.g. Moreau--Yosida-regularized) can reach this function because ``resolve_fp_drift_kwargs`` gates
     the routing on ``is_smooth()`` alone (sense-blind), so it steers such a Hamiltonian to the
     ``potential_field=U`` channel where the FP solver forms ``-c·∇U``. But the scalar ``-c·∇U`` form is
     the optimal control *only* for the quadratic-MINIMIZE case; the true drift is
-    ``α* = H.optimal_control(...)`` (``+p/λ`` for MAXIMIZE, soft-thresholded for a regularized cost).
+    ``α* = H.optimal_control(...)`` (soft-thresholded for a regularized cost).
     Returning ``coupling_coefficient`` here would advect with the wrong sign / wrong form silently, so
     this raises ``NotImplementedError`` instead — the caller must route the drift through the velocity
     channel (Phase 1). This enforces the invariant the docstring previously only asserted.
@@ -114,14 +113,10 @@ def fp_drift_coefficient(problem: Any) -> float:
     from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 
     h_class = getattr(problem, "hamiltonian_class", None)
-    if (
-        isinstance(h_class, SeparableHamiltonian)
-        and isinstance(h_class.control_cost, QuadraticControlCost)
-        and h_class.control_cost.sign == 1  # OptimizationSense.MINIMIZE
-    ):
+    if isinstance(h_class, SeparableHamiltonian) and isinstance(h_class.control_cost, QuadraticControlCost):
         return 1.0 / h_class.control_cost.lambda_
-    # A SeparableHamiltonian that fell past the quadratic-MINIMIZE branch is MAXIMIZE-quadratic or a
-    # non-quadratic (e.g. regularized) control cost. The scalar drift `-c·∇U` does not represent its
+    # A SeparableHamiltonian that fell past the quadratic branch has a non-quadratic (e.g.
+    # regularized) control cost. The scalar drift `-c·∇U` does not represent its
     # optimal control, so fail loud (single-sourced guard) rather than return `coupling_coefficient`
     # and advect with the wrong physics (Issue #1542 / RFC #1574 Phase 0). The guard is a no-op for a
     # non-separable / absent Hamiltonian, which falls through to the `coupling_coefficient` lookup.
@@ -129,7 +124,7 @@ def fp_drift_coefficient(problem: Any) -> float:
     cc = getattr(problem, "coupling_coefficient", None)
     if cc is None:
         raise ValueError(
-            "Cannot determine the FP drift coefficient: the problem has no quadratic-MINIMIZE "
+            "Cannot determine the FP drift coefficient: the problem has no quadratic "
             "SeparableHamiltonian (to source 1/control_cost) and no `coupling_coefficient` attribute. "
             "Set a quadratic control cost on the Hamiltonian, or set problem.coupling_coefficient. "
             "(Issue #1420 V1: the prior silent fallback to 1.0 masked a malformed problem.)"
@@ -1297,8 +1292,8 @@ class DriftField:
     Examples
     --------
     Standard MFG coupling:
-    >>> from mfgarchon.core import QuadraticControlCost, OptimizationSense
-    >>> cost = QuadraticControlCost(sense=OptimizationSense.MINIMIZE, control_cost=1.0)
+    >>> from mfgarchon.core import QuadraticControlCost
+    >>> cost = QuadraticControlCost(control_cost=1.0)
     >>> drift = DriftField(U_solution, cost, problem.geometry)
     >>> velocity = drift.get_velocity_at(k, density)
 
