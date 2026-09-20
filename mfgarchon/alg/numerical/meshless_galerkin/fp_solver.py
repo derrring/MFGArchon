@@ -10,9 +10,9 @@ Advection is single-sourced from the Hamiltonian's optimal-control primitive
 the nodes via the mass-lumped gradient projection and assembled with the protocol's
 advection. This is the same primitive the paired HJB Newton advection reads, so
 A_FP = A_HJB^T is preserved. It supersedes the former weak-form-family convention
-(option b, the hand-coded scalar v = -coupling * grad(U)), which could not represent
-alpha* for MAXIMIZE or regularized control costs. (Routing them end-to-end is #1528
-Phase 1; `_build_advection` still gates those cases behind `assert_quadratic_minimize_drift`.)
+(option b, the hand-coded scalar v = -coupling * grad(U)), which cannot represent
+alpha* for a regularized control cost. (Routing them end-to-end is #1528
+Phase 1; `_build_advection` still gates those cases behind `assert_quadratic_drift`.)
 
 Boundary conditions: Neumann / no-flux (mass-conserving reflecting wall) and
 absorbing ``m = 0`` on Dirichlet faces via symmetric Nitsche (#1138). The Nitsche
@@ -36,7 +36,7 @@ from scipy import sparse
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
 from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
-from mfgarchon.utils.pde_coefficients import assert_quadratic_minimize_drift
+from mfgarchon.utils.pde_coefficients import assert_quadratic_drift
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -139,8 +139,8 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         # alpha* = H.optimal_control(x, m, p, t) -- not a hand-coded -fp_drift_coefficient(problem)*grad(U).
         # For a quadratic-MINIMIZE SeparableHamiltonian the owner returns -p/control_cost, which is
         # byte-identical to the old -c*grad(U) for dyadic control_cost (incl. the paper's control_cost=1.0,
-        # where alpha* = -grad(U) exactly) and within 1 ULP for non-dyadic control_cost; for MAXIMIZE /
-        # regularized costs it is the correct alpha* (+p/lambda, soft-threshold) that the scalar -c*grad(U)
+        # where alpha* = -grad(U) exactly) and within 1 ULP for non-dyadic control_cost; for
+        # regularized costs it is the correct soft-thresholded alpha* that the scalar -c*grad(U)
         # could not represent. This is the SAME primitive the paired HJB Newton advection reads, so
         # A_FP = A_HJB^T is preserved.
         H = getattr(self.problem, "hamiltonian_class", None)
@@ -155,8 +155,8 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         # single-valued in p ONLY for a SeparableHamiltonian. A non-separable Hamiltonian (e.g.
         # CongestionHamiltonian) has a density/state-dependent optimal control, so calling optimal_control
         # here raised a cryptic TypeError; fail loud with a clear message instead. The gate lives at this
-        # velocity-channel call site, NOT in the shared assert_quadratic_minimize_drift guard, which must
-        # keep no-op'ing for non-separable H. Ordered before the #1542 assert so a MAXIMIZE Separable still
+        # velocity-channel call site, NOT in the shared assert_quadratic_drift guard, which must
+        # keep no-op'ing for non-separable H. Ordered before the #1542 assert so a non-quadratic Separable still
         # hits the #1542 guard below.
         from mfgarchon.core.hamiltonian import SeparableHamiltonian
 
@@ -169,10 +169,10 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
                 f"(Issue #1528 / RFC #1574 Phase 1)."
             )
         # Issue #1528 PR-1 (behavior-neutral): preserve the #1542 fail-loud the removed
-        # `fp_drift_coefficient` read carried -- a MAXIMIZE / non-quadratic SeparableHamiltonian has no
+        # `fp_drift_coefficient` read carried -- a non-quadratic SeparableHamiltonian has no
         # scalar `-c*grad(U)` form, so raise rather than silently advect H.optimal_control's
         # wrong-sign / wrong-form drift (that capability is Phase 1, not this byte-safe PR).
-        assert_quadratic_minimize_drift(self.problem, context="FP meshless-Galerkin advection")
+        assert_quadratic_drift(self.problem, context="FP meshless-Galerkin advection")
         G = self._gradient_operators()
         grad_U = np.column_stack([G_d @ U_n for G_d in G])  # (N, dim) = p at the collocation nodes
         # x, m, t at the collocation nodes. The parent hook threads only U_n (neither the density nor the

@@ -27,7 +27,6 @@ import numpy as np
 
 from mfgarchon.core.hamiltonian import (
     L1ControlCost,
-    OptimizationSense,
     QuadraticControlCost,
     SeparableHamiltonian,
 )
@@ -111,12 +110,11 @@ def pair():
     )
 
 
-def _hamiltonian(lam=1.0, sense=OptimizationSense.MINIMIZE):
+def _hamiltonian(lam=1.0):
     return SeparableHamiltonian(
-        control_cost=QuadraticControlCost(lambda_=lam, sense=sense),
+        control_cost=QuadraticControlCost(lambda_=lam),
         coupling=lambda m: ZETA * m,
         coupling_dm=lambda _m: ZETA,
-        sense=sense,
     )
 
 
@@ -163,20 +161,25 @@ class TestAgreesWithTheHandAssembly:
 
 
 class TestConventionsComeFromTheirOwners:
-    def test_the_drift_sign_follows_the_optimization_sense(self, pair, points):
-        """#1542 class: the FP transport is ``div(m alpha*)`` and ``alpha*`` is ``-grad u / lambda``
-        for MINIMIZE but ``+grad u / lambda`` for MAXIMIZE. Deriving it here instead of reading
-        ``H.optimal_control`` made the two senses byte-identical and the MAXIMIZE source 195% wrong.
-        """
-        minimize = fp_source(pair, _hamiltonian(lam=2.0), SIGMA)(1.3, points)
-        maximize = fp_source(pair, _hamiltonian(lam=2.0, sense=OptimizationSense.MAXIMIZE), SIGMA)(1.3, points)
-        assert np.max(np.abs(minimize - maximize)) > 1e-6, "fp_source is sense-blind"
+    def test_the_drift_reads_the_owner_and_not_a_local_derivation(self, pair, points):
+        """#1542 class: the FP transport is ``div(m alpha*)``, and ``alpha*`` must come from
+        ``H.optimal_control`` rather than be re-derived here.
 
-    @pytest.mark.parametrize("sense", [OptimizationSense.MINIMIZE, OptimizationSense.MAXIMIZE])
-    def test_matches_an_assembly_built_through_optimal_control(self, pair, points, sense):
+        The original discriminator was MINIMIZE versus MAXIMIZE -- a local derivation made the two
+        byte-identical and the MAXIMIZE source 195% wrong. #2373 removed the direction, so the
+        surviving discriminator is the WEIGHT: a local ``-grad u`` that ignores ``lambda`` is
+        identical across costs that differ only in ``lambda``, while a source that reads the owner
+        scales with it. lambda = 1 versus 4 gives a factor of 4 in the transport term.
+        """
+        one = fp_source(pair, _hamiltonian(lam=1.0), SIGMA)(1.3, points)
+        four = fp_source(pair, _hamiltonian(lam=4.0), SIGMA)(1.3, points)
+        assert np.max(np.abs(one - four)) > 1e-6, "fp_source does not read the control cost weight"
+
+    @pytest.mark.parametrize("lam", [1.0, 2.0])
+    def test_matches_an_assembly_built_through_optimal_control(self, pair, points, lam):
         """Independent assembly: take the drift from the owner, expand the divergence by hand."""
         t = 1.3
-        hamiltonian = _hamiltonian(lam=2.0, sense=sense)
+        hamiltonian = _hamiltonian(lam=lam)
         m, grad_u, grad_m = pair.m(t, points), pair.grad_u(t, points), pair.grad_m(t, points)
         alpha = np.asarray(hamiltonian.optimal_control(points, m, grad_u, t), dtype=float)
         coefficient = float(alpha.flat[0] / grad_u.flat[0])

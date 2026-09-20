@@ -19,7 +19,7 @@ from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
 from mfgarchon.geometry.boundary import BCType
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import assert_quadratic_minimize_drift
+from mfgarchon.utils.pde_coefficients import assert_quadratic_drift
 
 from .discretization import FEMDiscretization
 from .mesh_adapter import meshdata_to_skfem
@@ -160,8 +160,8 @@ class FPFEMSolver(WeakFormFPSolver):
         # SeparableHamiltonian optimal_control(p) = -p/lambda, so feeding the SAME quadrature-point
         # gradient du.grad reproduces the old -c*grad(U) bit-for-bit for dyadic lambda (the paper's
         # control_cost=1.0 => byte-identical) and within <= 1 ULP for non-dyadic lambda (#1487/#1420
-        # G-017 single-source, superseded here by the owner). MAXIMIZE/regularized costs now get the
-        # correct alpha* (+p/lambda, soft-threshold) instead of the wrong-sign scalar form.
+        # G-017 single-source, superseded here by the owner). Regularized costs now get the
+        # correct soft-thresholded alpha* instead of the scalar form, whose FORM is wrong for it.
         H = getattr(self.problem, "hamiltonian_class", None)
         if H is None:
             raise ValueError(
@@ -173,8 +173,8 @@ class FPFEMSolver(WeakFormFPSolver):
         # single-valued in p ONLY for a SeparableHamiltonian. A non-separable Hamiltonian (e.g.
         # CongestionHamiltonian) has a density/state-dependent optimal control, so calling optimal_control
         # here raised a cryptic TypeError; fail loud with a clear message instead. The gate lives at this
-        # velocity-channel call site, NOT in the shared assert_quadratic_minimize_drift guard, which must
-        # keep no-op'ing for non-separable H. Ordered before the #1542 assert so a MAXIMIZE Separable still
+        # velocity-channel call site, NOT in the shared assert_quadratic_drift guard, which must
+        # keep no-op'ing for non-separable H. Ordered before the #1542 assert so a non-quadratic Separable still
         # hits the #1542 guard below.
         from mfgarchon.core.hamiltonian import SeparableHamiltonian
 
@@ -187,10 +187,10 @@ class FPFEMSolver(WeakFormFPSolver):
                 f"(Issue #1528 / RFC #1574 Phase 1)."
             )
         # Issue #1528 PR-1 (behavior-neutral): preserve the #1542 fail-loud the removed
-        # `fp_drift_coefficient` read carried -- a MAXIMIZE / non-quadratic SeparableHamiltonian has no
+        # `fp_drift_coefficient` read carried -- a non-quadratic SeparableHamiltonian has no
         # scalar `-c*grad(U)` form, so raise rather than silently advect H.optimal_control's
         # wrong-sign / wrong-form drift (that capability is Phase 1, not this byte-safe PR).
-        assert_quadratic_minimize_drift(self.problem, context="FP FEM advection")
+        assert_quadratic_drift(self.problem, context="FP FEM advection")
         du = self._basis.interpolate(U_n)
         # x at quadrature points, same (dim, nelems, nqp) layout as du.grad (= p). The density m and
         # timestep t are inert for the SeparableHamiltonian owner (optimal_control depends only on p);

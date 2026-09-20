@@ -836,11 +836,11 @@ class TestStochasticCharacteristicSL:
 
     def test_constant_terminal_preserved(self):
         """H=0 with constant U_T must give constant U[0] (no spurious drift)."""
-        from mfgarchon.core.hamiltonian import HamiltonianBase, OptimizationSense
+        from mfgarchon.core.hamiltonian import HamiltonianBase
 
         class ZeroH(HamiltonianBase):
             def __init__(self):
-                super().__init__(sense=OptimizationSense.MINIMIZE)
+                super().__init__()
 
             def __call__(self, x, m, p, t=0.0):
                 p_arr = np.atleast_1d(np.asarray(p, dtype=float))
@@ -900,11 +900,11 @@ class TestStochasticCharacteristicSL:
         smooth Gaussian terminal with H=0, the difference should be
         within a few units of the local truncation error of either scheme.
         """
-        from mfgarchon.core.hamiltonian import HamiltonianBase, OptimizationSense
+        from mfgarchon.core.hamiltonian import HamiltonianBase
 
         class ZeroH(HamiltonianBase):
             def __init__(self):
-                super().__init__(sense=OptimizationSense.MINIMIZE)
+                super().__init__()
 
             def __call__(self, x, m, p, t=0.0):
                 p_arr = np.atleast_1d(np.asarray(p, dtype=float))
@@ -1079,11 +1079,11 @@ class TestStochasticCharacteristicSL_nD:  # noqa: N801 — SL_nD = semi-Lagrangi
     """Issue #1054: nD stochastic SL companion fixes (analogous to 1D #1033/#1048/#1049)."""
 
     def _make_2d_problem(self, sigma=0.3, T=0.1, Nt=4, N=15):
-        from mfgarchon.core.hamiltonian import HamiltonianBase, OptimizationSense
+        from mfgarchon.core.hamiltonian import HamiltonianBase
 
         class ZeroH(HamiltonianBase):
             def __init__(self):
-                super().__init__(sense=OptimizationSense.MINIMIZE)
+                super().__init__()
 
             def __call__(self, x, m, p, t=0.0):
                 p_arr = np.atleast_1d(np.asarray(p, dtype=float))

@@ -35,8 +35,8 @@ different equation than the solver integrates, and re-deriving a convention is e
 happens:
 
 - ``H``            -> the problem's own :meth:`HamiltonianBase.evaluate_H`.
-- ``alpha*``       -> the problem's own :meth:`optimal_control`, which is sense-aware. Deriving
-  ``alpha* = -grad u / lambda`` here instead would be silently sign-flipped for a MAXIMIZE cost.
+- ``alpha*``       -> the problem's own :meth:`optimal_control`, which owns the convention. Deriving
+  ``alpha* = -grad u / lambda`` here instead would be silently wrong for any non-quadratic cost.
 - ``sigma -> D``   -> :func:`mfgarchon.utils.pde_coefficients.diffusion_from_volatility`, including
   its ``kind`` argument and its refusal to guess. A ``(d, d)`` volatility is the symmetric
   standard-deviation matrix ``S`` with ``D = (1/2) S S^T`` (RFC #1596), NOT a covariance -- reading
@@ -209,7 +209,7 @@ def _drift_coefficient(hamiltonian: HamiltonianBase, dim: int) -> float:
     ``div(alpha*)`` is the one quantity the assembly needs that no owner exposes directly. For a
     drift linear in ``p`` it is ``c * tr(Hess u)``, and ``c`` is read out of the drift owner here
     rather than re-derived from ``lambda`` and the optimization sense -- re-deriving it is what
-    silently flips the transport term for a MAXIMIZE cost.
+    silently uses the wrong transport term for a non-quadratic cost.
 
     :class:`SeparableHamiltonian` is required because its ``optimal_control`` depends on ``p``
     alone; for a Hamiltonian whose drift also depends on ``x``, ``m`` or ``t`` a single constant
@@ -286,7 +286,7 @@ def fp_source(
 
     The transport expands as ``div(m alpha*) = grad m . alpha* + m div(alpha*)``. ``alpha*`` is the
     optimal control taken from the Hamiltonian itself -- note that it is ``-grad u / lambda`` for a
-    quadratic MINIMIZE cost and ``+grad u / lambda`` for MAXIMIZE, which is why it is read from the
+    quadratic cost and something else entirely for a regularized one, which is why it is read from the
     owner and not written out here. ``div(alpha*) = c tr(Hess u)`` with ``c`` measured by
     :func:`_drift_coefficient`; that Laplacian is the divergence of the DRIFT, not a diffusion term,
     and is unaffected by ``Sigma``.

@@ -27,7 +27,6 @@ from .core.hamiltonian import (  # noqa: E402
     HamiltonianBase,
     # Lagrangian classes (Issue #651, #904)
     LagrangianBase,
-    OptimizationSense,
     QuadraticControlCost,
     QuadraticMFGHamiltonian,
     SeparableHamiltonian,
@@ -139,7 +138,6 @@ __all__ = [
     "ErgodicConditions",
     # Hamiltonian/Lagrangian classes (Issues #651, #667, #673)
     "ControlCostBase",
-    "OptimizationSense",
     "QuadraticControlCost",
     "HamiltonianBase",
     "SeparableHamiltonian",

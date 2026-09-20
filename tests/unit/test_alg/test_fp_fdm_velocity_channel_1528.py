@@ -34,7 +34,7 @@ import numpy as np
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import solve_fp_nd_full_system
 from mfgarchon.core.hamiltonian import (
-    OptimizationSense,
+    L1ControlCost,
     QuadraticControlCost,
     SeparableHamiltonian,
 )
@@ -45,10 +45,9 @@ N = 8
 NT = 4
 
 
-def _problem(sense: OptimizationSense = OptimizationSense.MINIMIZE) -> MFGProblem:
+def _problem(control_cost=None) -> MFGProblem:
     hamiltonian = SeparableHamiltonian(
-        control_cost=QuadraticControlCost(lambda_=1.0, sense=sense),
-        sense=sense,
+        control_cost=control_cost if control_cost is not None else QuadraticControlCost(lambda_=1.0),
     )
     return MFGProblem(
         model=Model(hamiltonian=hamiltonian, sigma=0.2),
@@ -93,16 +92,27 @@ def _velocity(vx: float = 0.0, vy: float = 0.0) -> np.ndarray:
 # --- defect 1: the coefficient must not be resolved where it is not consumed ---
 
 
-@pytest.mark.parametrize("sense", [OptimizationSense.MINIMIZE, OptimizationSense.MAXIMIZE])
+@pytest.mark.parametrize(
+    "cost",
+    [None, "l1"],
+    ids=["quadratic", "l1"],
+)
 @pytest.mark.parametrize("scheme", ["divergence_upwind", "flux"])
-def test_velocity_channel_runs_for_both_senses(sense, scheme):
-    """MAXIMIZE previously raised NotImplementedError from the eager coefficient read.
+def test_velocity_channel_runs_for_costs_the_u_channel_refuses(cost, scheme):
+    """DEFECT 1 of #1528: the coefficient must not be resolved where it is not consumed.
+
+    The original discriminator was a MAXIMIZE cost, which previously raised NotImplementedError
+    from the eager coefficient read. #2373 removed that direction, so the surviving discriminator
+    is the OTHER arm of the same guard: a non-quadratic (L1) cost, which `fp_drift_coefficient`
+    still refuses. It must nonetheless run here, because the velocity channel is handed alpha*
+    directly and never consults the coefficient. If the read goes eager again, the l1 row raises
+    while the quadratic row stays green -- which is exactly the asymmetry this test exists for.
 
     Parametrized over the legacy alias too: the skip resolves `flux` -> `divergence_upwind`
     before testing membership, so keying it on the raw scheme name would silently un-do the
     widening for anyone spelling the scheme the old way.
     """
-    problem = _problem(sense)
+    problem = _problem(L1ControlCost(lambda_=1.0) if cost == "l1" else None)
     result = solve_fp_nd_full_system(
         _uniform_density(), None, problem, velocity_field=_velocity(vx=0.3), advection_scheme=scheme
     )
@@ -112,11 +122,13 @@ def test_velocity_channel_runs_for_both_senses(sense, scheme):
     assert _mass_drift(result, problem) == pytest.approx(0.0, abs=1e-9), "no-flux walls must conserve mass"
 
 
-def test_maximize_still_rejected_on_the_u_channel():
-    """The guard is not weakened: deriving the drift from U for MAXIMIZE is still wrong physics."""
+def test_a_refused_cost_is_still_rejected_on_the_u_channel():
+    """The guard is not weakened: deriving the scalar drift from U is still wrong for a cost whose
+    optimal control is not `-c*grad(U)`. Written against MAXIMIZE until #2373; the L1 cost is the
+    surviving member of the same refusal, and it is the FORM arm rather than the sign arm."""
     u_solution = np.zeros((NT + 1, N, N))
     with pytest.raises((NotImplementedError, ValueError)):
-        solve_fp_nd_full_system(_uniform_density(), u_solution, _problem(OptimizationSense.MAXIMIZE))
+        solve_fp_nd_full_system(_uniform_density(), u_solution, _problem(L1ControlCost(lambda_=1.0)))
 
 
 def test_u_channel_unchanged_for_minimize():
@@ -283,17 +295,18 @@ def test_the_raise_names_the_scheme_and_the_way_out(scheme):
     assert "potential_field" in message, "the PUBLIC parameter a caller can actually type must be named"
 
 
-def test_callable_drift_channel_also_runs_for_maximize():
+def test_callable_drift_channel_also_runs_for_a_refused_cost():
     """The callable-drift channel never consumes the coefficient either, so it widens too.
 
     `solve_timestep_explicit_with_drift` takes no coupling coefficient, so lazy
     resolution legitimately skips it here as well -- a second (correct) widening
-    beyond the velocity_field case the issue was filed for.
+    beyond the velocity_field case the issue was filed for. Written against a MAXIMIZE
+    cost until #2373; the L1 cost is the surviving member of the same refusal.
     """
     result = solve_fp_nd_full_system(
         _uniform_density(),
         None,
-        _problem(OptimizationSense.MAXIMIZE),
+        _problem(L1ControlCost(lambda_=1.0)),
         drift_field=lambda t, x, m: np.zeros((2, N, N)),
     )
     assert np.isfinite(result).all()

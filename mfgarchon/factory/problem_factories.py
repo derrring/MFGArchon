@@ -18,8 +18,6 @@ and today none of them is enforced anywhere:
 
 - the caller's `BoundaryConditions` must reach the geometry, which is what solvers read, and not
   only the components (the defect above);
-- the control cost's `OptimizationSense` must agree with the Hamiltonian's -- measured, all four
-  pairs construct silently and on a mismatch the control cost decides (#1986);
 - the drift convention must match the solver family (`_drift_convention`, VELOCITY vs
   VALUE_FUNCTION);
 - an unsupported `BCType` must be refused at construction, which needs the solver's declaration,

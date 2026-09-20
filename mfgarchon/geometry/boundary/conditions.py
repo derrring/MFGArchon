@@ -1190,18 +1190,14 @@ def robin_bc(
 
     Column 2 converges to 71.111 at first order; ``(-v_n, D)`` goes to zero and ``(+v_n, D)`` to 2.
 
-    The ``v = -D_pH`` antecedent is a MINIMIZE fact decided in two places.
-    ``HamiltonianBase.optimal_control`` (``core/hamiltonian.py:1284``) returns ``-self._sign *
-    dH_dp`` with ``_sign`` set at ``:838``. ``SeparableHamiltonian`` overrides it (``:2524``) and
-    delegates to ``control_cost.optimal_control(p)``, since in the separable case the control
-    enters only through the control cost -- its sign comes from ``QuadraticControlCost.sign``
-    (``:403``), an independent sense field. The two routes agree on every consistent
-    configuration: MINIMIZE/MINIMIZE gives ``-D_pH``, MAXIMIZE/MAXIMIZE gives ``+D_pH``. They can
-    be set to disagree and nothing checks; that gap is filed separately. Paths that form the drift
-    themselves are gated to quadratic-MINIMIZE by ``assert_quadratic_minimize_drift``
-    (``utils/pde_coefficients.py:24``, which reads ``control_cost.sign``); the caller-supplied
-    velocity channel is not, but no solver reachable through it declares ROBIN and ``FPFEMSolver``
-    rejects MAXIMIZE.
+    The ``v = -D_pH`` antecedent now holds unconditionally: the library is minimisation-only
+    (#2373). ``HamiltonianBase.optimal_control`` returns ``-dH_dp``, and ``SeparableHamiltonian``
+    overrides it to delegate to ``control_cost.optimal_control(p)``, since in the separable case
+    the control enters only through the control cost. Before #2373 each route carried its own
+    ``sense`` field and they could be set to disagree with nothing checking; removing the concept
+    removed that gap rather than guarding it. Paths that form the drift themselves are still gated
+    to a QUADRATIC control cost by ``assert_quadratic_drift`` -- the remaining refusal is
+    about the wrong FORM (a regularised cost), not a wrong direction.
 
     For contrast, the ``gradient_*`` family imposes ``d_n m = 0`` by hard-coding the mirrored ghost
     ``m_{N+1} = m_{N-1}`` (``add_boundary_no_flux_entries_gradient_upwind``,

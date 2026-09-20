@@ -28,7 +28,6 @@ from mfgarchon.core.hamiltonian import (
     BoundedControlCost,
     L1ControlCost,
     LagrangianBase,
-    OptimizationSense,
     QuadraticControlCost,
     SeparableHamiltonian,
     SeparableLagrangian,
@@ -48,8 +47,8 @@ class PlainQuadraticL(LagrangianBase):
     Exercises the base-class numerical path that SeparableLagrangian bypasses.
     """
 
-    def __init__(self, lam: float, sense: OptimizationSense = OptimizationSense.MINIMIZE):
-        super().__init__(sense=sense)
+    def __init__(self, lam: float):
+        super().__init__()
         self.lam = lam
 
     def __call__(self, x, alpha, m, t=0.0):
@@ -91,40 +90,28 @@ class TestOptimalControlSign:
     @pytest.mark.parametrize("p", P_VALUES)
     def test_minimize_alpha_star_is_negative_p_over_lambda(self, p):
         """MINIMIZE: alpha* = -p/lambda. The pre-#1642 base returned +p/lambda."""
-        L = PlainQuadraticL(2.0, sense=OptimizationSense.MINIMIZE)
+        L = PlainQuadraticL(2.0)
         np.testing.assert_allclose(L.optimal_control(X, M, p, T), [-p[0] / 2.0], atol=1e-6)
 
     @pytest.mark.parametrize("p", P_VALUES)
-    def test_maximize_alpha_star_is_positive_p_over_lambda(self, p):
-        """MAXIMIZE: alpha* = +p/lambda -- unchanged by #1642.
-
-        Pins that the fix is sense-aware rather than an unconditional negation:
-        a ``return -self.conjugate_argmax(...)`` would break this row.
-        """
-        L = PlainQuadraticL(2.0, sense=OptimizationSense.MAXIMIZE)
-        np.testing.assert_allclose(L.optimal_control(X, M, p, T), [p[0] / 2.0], atol=1e-6)
-
-    @pytest.mark.parametrize("sense", [OptimizationSense.MINIMIZE, OptimizationSense.MAXIMIZE])
-    @pytest.mark.parametrize("p", P_VALUES)
-    def test_base_agrees_with_analytic_separable_override(self, sense, p):
+    def test_base_agrees_with_analytic_separable_override(self, p):
         """Single source of truth: the numerical base path and the analytic
         SeparableLagrangian override must produce the same alpha* for the same L.
 
         These are two parallel implementations of one quantity; before #1642 they
         held opposite conventions with nothing asserting agreement.
         """
-        cost = QuadraticControlCost(lambda_=2.0, sense=sense)
-        analytic = SeparableLagrangian(control_cost=cost, sense=sense)
-        numerical = PlainQuadraticL(2.0, sense=sense)
+        cost = QuadraticControlCost(lambda_=2.0)
+        analytic = SeparableLagrangian(control_cost=cost)
+        numerical = PlainQuadraticL(2.0)
         np.testing.assert_allclose(
             numerical.optimal_control(X, M, p, T),
             analytic.optimal_control(X, M, p, T),
             atol=1e-6,
         )
 
-    @pytest.mark.parametrize("sense", [OptimizationSense.MINIMIZE, OptimizationSense.MAXIMIZE])
     @pytest.mark.parametrize("p", [np.array([2.0]), np.array([1.0]), np.array([-1.5])])
-    def test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian(self, sense, p):
+    def test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian(self, p):
         """The composed path: H -> DualLagrangian -> optimal_control must return
         the same alpha* as H.optimal_control. This is the docstring's promise.
 
@@ -137,8 +124,8 @@ class TestOptimalControlSign:
         p=0 is excluded deliberately: alpha*=0 there, so the row cannot
         discriminate a sign revert at any tolerance.
         """
-        cost = QuadraticControlCost(lambda_=2.0, sense=sense)
-        H = SeparableHamiltonian(control_cost=cost, sense=sense)
+        cost = QuadraticControlCost(lambda_=2.0)
+        H = SeparableHamiltonian(control_cost=cost)
         dual_L = H.legendre_transform(p_bounds=(-50.0, 50.0), n_search=8001)
 
         from_dual = dual_L.optimal_control(X, M, p, T)
@@ -151,17 +138,23 @@ class TestOptimalControlSign:
 
         Pins that the sign is applied to the maximizer rather than to p.
 
-        CONVENTION-PINNING, NOT PHYSICS (Issue #1652). The library pairs
-        H = sup{p.a - L} with alpha* = -sign*dH/dp, which are jointly correct
-        only when L is even in alpha. This L is not, so the value asserted here
-        is what the library's convention produces, not the agent's true optimal
-        control: at p=2 the true minimizer of {p.a + L(a)} is -2.3 = -(p + 0.3)
-        -- the very expression this docstring excludes -- attaining -2.645
-        against -2.465. Every shipped control cost is even, so no in-repo result
-        depends on the difference. When #1652 resolves the convention, this
+        CONVENTION-PINNING, NOT PHYSICS (Issue #1652, and ruling 5 of #2375). The
+        library pairs H = sup{p.a - L} with alpha* = -dH/dp, which are jointly
+        correct only when L is even in alpha. This L is not, so the value asserted
+        here is what the library's convention produces, not the agent's true
+        optimal control: at p=2 the true minimizer of {p.a + L(a)} is -2.3 =
+        -(p + 0.3) -- the very expression this docstring excludes -- attaining
+        -2.645 against -2.465. Every shipped control cost is even, so no in-repo
+        result depends on the difference.
+
+        THIS CLASS IS WHY THE FILE SURVIVED #2373. `AsymmetricL` is the only
+        non-even Lagrangian in the suite, and evenness is exactly what makes a
+        conjugate test unable to tell H at +p from H at -p. Ruling 5 of #2375
+        moves the library to H = sup{-p.a - L}; the test for that change needs a
+        non-even L to discriminate at all, and this is it. When that lands, this
         assertion inverts.
         """
-        L = AsymmetricL(sense=OptimizationSense.MINIMIZE)
+        L = AsymmetricL()
         for p_val in (2.0, -1.5, 0.0):
             np.testing.assert_allclose(
                 L.optimal_control(X, M, np.array([p_val]), T),
@@ -171,7 +164,7 @@ class TestOptimalControlSign:
 
     def test_nd_branch_carries_the_same_sign(self):
         """The d>1 L-BFGS-B branch is a separate code path from the 1D scalar one."""
-        L = PlainQuadraticL(2.0, sense=OptimizationSense.MINIMIZE)
+        L = PlainQuadraticL(2.0)
         x2 = np.array([0.5, 0.5])
         p2 = np.array([2.0, -1.0])
         np.testing.assert_allclose(L.optimal_control(x2, M, p2, T), [-1.0, 0.5], atol=1e-5)
@@ -198,18 +191,17 @@ class TestOptimalControlSign:
 
 
 class TestEvaluateHamiltonianValue:
-    """H = sup_alpha {p.alpha - L} = L*(p), independent of OptimizationSense (#1185).
+    """H = sup_alpha {p.alpha - L} = L*(p) (#1185).
 
     Reverting ``evaluate_hamiltonian`` to evaluate at ``self.optimal_control(...)``
     instead of ``self.conjugate_argmax(...)`` flips every MINIMIZE row here (and
     produces a value that is neither L*(p) nor L*(-p) for asymmetric L).
     """
 
-    @pytest.mark.parametrize("sense", [OptimizationSense.MINIMIZE, OptimizationSense.MAXIMIZE])
     @pytest.mark.parametrize("p", P_VALUES)
-    def test_quadratic_hamiltonian_is_the_positive_conjugate(self, sense, p):
-        """H(p) = |p|^2/(2 lambda) >= 0, both senses. A sign revert makes it <= 0."""
-        L = PlainQuadraticL(2.0, sense=sense)
+    def test_quadratic_hamiltonian_is_the_positive_conjugate(self, p):
+        """H(p) = |p|^2/(2 lambda) >= 0. A sign revert makes it <= 0."""
+        L = PlainQuadraticL(2.0)
         expected = p[0] ** 2 / (2 * 2.0)
         np.testing.assert_allclose(L.evaluate_hamiltonian(X, M, p, T), expected, atol=1e-9)
 
@@ -219,7 +211,7 @@ class TestEvaluateHamiltonianValue:
         At p=2 these are 1.445 and 2.645; evaluating at the sign-flipped control
         instead gives yet a third value. Only the conjugate at +p passes.
         """
-        L = AsymmetricL(sense=OptimizationSense.MINIMIZE)
+        L = AsymmetricL()
         for p_val in (2.0, -1.5, 1.0):
             got = L.evaluate_hamiltonian(X, M, np.array([p_val]), T)
             np.testing.assert_allclose(got, AsymmetricL.conjugate(p_val), atol=1e-9)
@@ -227,19 +219,17 @@ class TestEvaluateHamiltonianValue:
             if p_val != 0.0:
                 assert abs(got - AsymmetricL.conjugate(-p_val)) > 1e-3
 
-    @pytest.mark.parametrize("sense", [OptimizationSense.MINIMIZE, OptimizationSense.MAXIMIZE])
     @pytest.mark.parametrize("p", P_VALUES)
-    def test_dual_lagrangian_round_trips_to_its_source_hamiltonian(self, sense, p):
+    def test_dual_lagrangian_round_trips_to_its_source_hamiltonian(self, p):
         """THE composed path the #1642 map flags: H -> DualLagrangian ->
         evaluate_hamiltonian must recover H. This value was already correct
         before the fix (by cancellation) and must stay correct after it.
         """
-        cost = QuadraticControlCost(lambda_=2.0, sense=sense)
+        cost = QuadraticControlCost(lambda_=2.0)
         H = SeparableHamiltonian(
             control_cost=cost,
             potential=lambda x_, t_: 0.7,
             coupling=lambda m_: -(m_**2),
-            sense=sense,
         )
         dual_L = H.legendre_transform(p_bounds=(-50.0, 50.0), n_search=2001)
         np.testing.assert_allclose(
@@ -250,7 +240,7 @@ class TestEvaluateHamiltonianValue:
 
     def test_nd_branch_hamiltonian_value(self):
         """d>1 branch: H([2,-1]) = (4+1)/(2*2) = 1.25."""
-        L = PlainQuadraticL(2.0, sense=OptimizationSense.MINIMIZE)
+        L = PlainQuadraticL(2.0)
         got = L.evaluate_hamiltonian(np.array([0.5, 0.5]), M, np.array([2.0, -1.0]), T)
         np.testing.assert_allclose(got, 1.25, atol=1e-8)
 
@@ -262,20 +252,21 @@ class TestSitesAreIndependentlyPinned:
     optimal_control wrong, so this holds only when both are fixed.
     """
 
-    @pytest.mark.parametrize("sense", [OptimizationSense.MINIMIZE, OptimizationSense.MAXIMIZE])
-    def test_envelope_relation_between_the_two_methods(self, sense):
-        """H(p) == p . (-sign * alpha*) - L(-sign * alpha*).
+    def test_envelope_relation_between_the_two_methods(self):
+        """H(p) == p . (-alpha*) - L(-alpha*).
 
         Recovers dH/dp from the published alpha* and checks it reproduces the
         published H. Fails if either method drifts from the shared convention.
+        The factor was `-L._sign * alpha*` until #2373 removed the direction;
+        with one direction it is a plain negation, and reading a deleted
+        attribute here would have been a silent `AttributeError` in a test that
+        exists to catch silent drift.
         """
-        L = PlainQuadraticL(2.0, sense=sense)
-        expected_sign = 1 if sense == OptimizationSense.MINIMIZE else -1
-        assert L._sign == expected_sign
+        L = PlainQuadraticL(2.0)
 
         for p in P_VALUES:
             alpha_star = L.optimal_control(X, M, p, T)
-            dH_dp = -L._sign * alpha_star
+            dH_dp = -alpha_star
             reconstructed = float(np.sum(np.atleast_1d(p) * dH_dp)) - float(L(X, dH_dp, M, T))
             np.testing.assert_allclose(reconstructed, L.evaluate_hamiltonian(X, M, p, T), atol=1e-9)
 
@@ -318,23 +309,23 @@ class TestAnalyticOverrideReachesBothConsumers:
     @pytest.mark.parametrize("p_val", [5.0, 25.0, 100.0])
     def test_evaluate_hamiltonian_uses_the_analytic_maximizer(self, p_val):
         """H(p) = 0.5 p^2 exactly, not the fallback-truncated value."""
-        L = AnalyticUnboundedL(sense=OptimizationSense.MINIMIZE)
+        L = AnalyticUnboundedL()
         got = L.evaluate_hamiltonian(X, M, np.array([p_val]), T)
         np.testing.assert_allclose(got, 0.5 * p_val**2, rtol=1e-12)
 
     @pytest.mark.parametrize("p_val", [5.0, 25.0, 100.0])
     def test_optimal_control_uses_the_analytic_maximizer(self, p_val):
         """alpha* = -sign * argmax = -p under MINIMIZE, exact at every magnitude."""
-        L = AnalyticUnboundedL(sense=OptimizationSense.MINIMIZE)
+        L = AnalyticUnboundedL()
         np.testing.assert_allclose(L.optimal_control(X, M, np.array([p_val]), T), [-p_val], rtol=1e-12)
 
     def test_both_consumers_read_one_source(self):
         """Byte-identical agreement, so the two cannot re-fork onto private copies."""
-        L = AnalyticUnboundedL(sense=OptimizationSense.MINIMIZE)
+        L = AnalyticUnboundedL()
         for p_val in (5.0, 25.0, 100.0):
             p = np.array([p_val])
             dH_dp = L.conjugate_argmax(X, M, p, T)
-            from_control = -L._sign * L.optimal_control(X, M, p, T)
+            from_control = -L.optimal_control(X, M, p, T)
             assert from_control.tobytes() == dH_dp.tobytes()
             expected = float(np.sum(p * dH_dp)) - float(L(X, dH_dp, M, T))
             assert L.evaluate_hamiltonian(X, M, p, T) == expected
@@ -349,24 +340,24 @@ class TestFallbackBoxTruncationIsLoud:
     """
 
     def test_conjugate_argmax_raises_when_the_fallback_box_binds(self):
-        L = PlainQuadraticL(0.01, sense=OptimizationSense.MINIMIZE)
+        L = PlainQuadraticL(0.01)
         with pytest.raises(ValueError, match=r"control_bounds\(\)"):
             L.conjugate_argmax(X, M, np.array([100.0]), T)
 
     def test_evaluate_hamiltonian_propagates_the_raise(self):
         """The consumer must not swallow it -- this is the silent-81% path."""
-        L = PlainQuadraticL(0.01, sense=OptimizationSense.MINIMIZE)
+        L = PlainQuadraticL(0.01)
         with pytest.raises(ValueError, match=r"fallback box"):
             L.evaluate_hamiltonian(X, M, np.array([100.0]), T)
 
     def test_optimal_control_propagates_the_raise(self):
-        L = PlainQuadraticL(0.01, sense=OptimizationSense.MINIMIZE)
+        L = PlainQuadraticL(0.01)
         with pytest.raises(ValueError, match=r"fallback box"):
             L.optimal_control(X, M, np.array([100.0]), T)
 
     def test_nd_branch_also_raises(self):
         """The L-BFGS-B branch is a separate code path from the 1D scalar one."""
-        L = PlainQuadraticL(0.01, sense=OptimizationSense.MINIMIZE)
+        L = PlainQuadraticL(0.01)
         with pytest.raises(ValueError, match=r"fallback box"):
             L.conjugate_argmax(np.array([0.5, 0.5]), M, np.array([100.0, -100.0]), T)
 
@@ -380,13 +371,13 @@ class TestFallbackBoxTruncationIsLoud:
         is (10000.0, 1.0) -- component 0 is pinned to the fallback edge while component 1 sits
         interior at 1.0.
         """
-        L = PlainQuadraticL(0.01, sense=OptimizationSense.MINIMIZE)
+        L = PlainQuadraticL(0.01)
         with pytest.raises(ValueError, match=r"fallback box"):
             L.conjugate_argmax(np.array([0.5, 0.5]), M, np.array([100.0, 0.01]), T)
 
     def test_proximal_raises_on_the_same_hazard(self):
         """Same fallback box, same truncation, same owner (_resolve_search_bounds)."""
-        L = PlainQuadraticL(2.0, sense=OptimizationSense.MINIMIZE)
+        L = PlainQuadraticL(2.0)
         with pytest.raises(ValueError, match=r"control_bounds\(\)"):
             L.proximal(1.0, np.array([50.0]))
 
@@ -398,7 +389,7 @@ class TestFallbackBoxTruncationIsLoud:
             def control_bounds(self):
                 return (-1.0, 1.0)
 
-        L = BoundedL(2.0, sense=OptimizationSense.MINIMIZE)
+        L = BoundedL(2.0)
         argmax = L.conjugate_argmax(X, M, np.array([100.0]), T)
         np.testing.assert_allclose(argmax, [1.0], atol=1e-5)
         np.testing.assert_allclose(L.proximal(1.0, np.array([50.0])), [1.0], atol=1e-5)
@@ -418,16 +409,16 @@ class TestFallbackBoxTruncationIsLoud:
             def control_bounds(self):
                 return (-10.0, 10.0)
 
-        L = DeclaredWideL(0.01, sense=OptimizationSense.MINIMIZE)
+        L = DeclaredWideL(0.01)
         np.testing.assert_allclose(L.conjugate_argmax(X, M, np.array([100.0]), T), [10.0], atol=1e-4)
         np.testing.assert_allclose(L.proximal(1.0, np.array([50.0])), [10.0], atol=1e-4)
 
         # Same numbers, no declaration -> the box is a stand-in -> must raise.
-        undeclared = PlainQuadraticL(0.01, sense=OptimizationSense.MINIMIZE)
+        undeclared = PlainQuadraticL(0.01)
         with pytest.raises(ValueError, match=r"control_bounds\(\)"):
             undeclared.conjugate_argmax(X, M, np.array([100.0]), T)
 
     def test_interior_maximizer_is_unaffected(self):
         """The guard must not fire on the ordinary in-box case."""
-        L = PlainQuadraticL(2.0, sense=OptimizationSense.MINIMIZE)
+        L = PlainQuadraticL(2.0)
         np.testing.assert_allclose(L.conjugate_argmax(X, M, np.array([2.0]), T), [1.0], atol=1e-6)
