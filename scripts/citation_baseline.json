@@ -1,20 +1,19 @@
 {
   "_comment": "Ratchet for `path.py:NNN` citations whose named symbol is no longer near the cited line (#2102). `drifted` lists WHICH claims are drifted, keyed on the resolved target file, the cited line, and the symbols the prose names beside it; `counts` pins how many, because neither catches what the other does. Both are bidirectional: a new drifted citation is a regression and a fixed one is progress that must be recorded here. `adjudicable` may not SHRINK -- deleting the symbol name from beside a citation would otherwise lower `drifted` and read as an improvement. Regenerate with --write-baseline.",
   "_measured_at": {
-    "head_when_written": "50118ef1",
+    "head_when_written": "bd124952-dirty",
     "window": 12
   },
   "counts": {
     "adjudicable": 29,
     "ambiguous": 7,
-    "anchored": 17,
-    "drifted": 12,
+    "anchored": 18,
+    "drifted": 11,
     "missing": 47,
     "unadjudicable": 102
   },
   "drifted": [
     "AGENTS.md -> mfgarchon/utils/mfg_logging/logger.py:211 [caplog]",
-    "AGENTS.md -> scripts/test_discrimination.py:518 [_assert_import_is_the_mutated_tree]",
     "changelog.d/1663-backend-unavailable-tests.fixed.md -> mfgarchon/__init__.py:149 [create_backend]",
     "changelog.d/1686-bc-convention-docs.fixed.md -> mfgarchon/alg/numerical/fp_solvers/fp_fdm_alg_divergence_centered.py:273 [NO_FLUX,NoFluxCalculator,ZeroFluxCalculator,ZeroGradientCalculator]",
     "changelog.d/1918-critical-invisible-to-log-analyser.fixed.md -> mfgarchon/hooks/visualization.py:328 [setup_workflow_logging]",

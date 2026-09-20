@@ -106,7 +106,7 @@ class NetworkHJBSolver(BaseHJBSolver):
         # Issue #1476: orientation sign for the backward-HJB integration, single-sourced from the wired
         # Hamiltonian object so the solver and the object never disagree on the sense. +1 for MINIMIZE
         # (du/ds = -H_control + source). ONLY the control carries
-        # with the sense; the source (V + congestion) enters UNFLIPPED for both (see the rhs).
+        # unflipped; the source (V + congestion) enters unflipped too (see the rhs).
         # A genuine blow-up on the explicit RK45 path surfaces via the solve_ivp non-convergence
         # warning below (sol.success is False).
         #
@@ -394,10 +394,10 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
         The "policy" is the full transition-rate vector ``alpha*(u) = H.optimal_control`` (not a single
         dominant action). Each iteration solves the linear
         policy-evaluation ``(I/dt + L^pi) u = u_next/dt + s*c(alpha) + source`` (``s = +1``; only
-        the control cost flips with the sense — the source does not) then recomputes the rates, until
+        the control cost and the source both enter unflipped) then recomputes the rates, until
         they stabilize. At the fixed point this is the backward-Euler discretization of the same HJB the
         RK45 path integrates: the envelope identity (generator action ``= 2*s*H_control``, ``c =
-        H_control``) reduces the row to ``-du/dt = -s*H_control + source`` for both senses (Issue #1476).
+        H_control``) reduces the row to ``-du/dt = -s*H_control + source``, s = +1 (Issue #1476).
         """
         self._initialize_policy(u_next, m, t)
         u_current = u_next.copy()
@@ -449,11 +449,11 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
                     A[i, j] -= a
                     w = self.network_problem.network_data.get_edge_weight(i, j)
                     control_cost += 0.5 * a * a / w
-            # Issue #1476: only the control COST flips with sense; the source is sense-INDEPENDENT (same
+            # Issue #1476: the source enters with the same sign as in the RK45 rhs (same
             # as the RK45 rhs). b: u_next/dt + c + source.
             # At the optimal-policy fixed point (generator action = 2*s*H_control, c = H_control) this
             # reduces to (u_i-u_next)/dt = -s*H_control + source, matching the RK45 integration. The A
-            # matrix is unchanged (an M-matrix for any alpha >= 0, which holds for both senses).
+            # matrix is unchanged (an M-matrix for any alpha >= 0).
             b[i] = u_next[i] / self.dt + self._control_orientation * control_cost + source[i]
         return np.asarray(spsolve(A.tocsr(), b))
 

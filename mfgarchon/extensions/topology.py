@@ -180,9 +180,10 @@ class NetworkHamiltonian(HamiltonianBase):
         """Optimal transition rates from node x (Issue #1474/#1476).
 
         Finite-state MFG: ``alpha*_ij = w_ij * max(s*(u_i - u_j), 0)`` with orientation ``s = +1`` (minimisation-only)
-        — the argmax of the one-sided control Hamiltonian. MINIMIZE (s=+1) sends agents DOWNHILL toward
-        lower cost-to-go (``max(u_i - u_j, 0)``). There is no uphill variant: the library is
-        reward-to-go (``max(u_j - u_i, 0)``). Rates are non-negative by construction (a valid
+        — the argmax of the one-sided control Hamiltonian. Agents move DOWNHILL toward lower
+        cost-to-go: ``max(u_i - u_j, 0)``. There is no uphill variant — the library is
+        minimisation-only (#2373), so ``u`` is a cost-to-go and never a reward-to-go, and the
+        mirrored form ``max(u_j - u_i, 0)`` is not reachable. Rates are non-negative by construction (a valid
         conservative CTMC generator). Returns an array of rates to neighbors (zero for non-neighbors).
         """
         node = int(np.asarray(x).flat[0])

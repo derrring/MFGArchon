@@ -140,7 +140,7 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         # For a quadratic-MINIMIZE SeparableHamiltonian the owner returns -p/control_cost, which is
         # byte-identical to the old -c*grad(U) for dyadic control_cost (incl. the paper's control_cost=1.0,
         # where alpha* = -grad(U) exactly) and within 1 ULP for non-dyadic control_cost; for
-        # regularized costs it is the correct alpha* (+p/lambda, soft-threshold) that the scalar -c*grad(U)
+        # regularized costs it is the correct soft-thresholded alpha* that the scalar -c*grad(U)
         # could not represent. This is the SAME primitive the paired HJB Newton advection reads, so
         # A_FP = A_HJB^T is preserved.
         H = getattr(self.problem, "hamiltonian_class", None)

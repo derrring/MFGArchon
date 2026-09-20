@@ -176,13 +176,25 @@ def test_network_policy_iteration_converges_to_rk45():
     base-solver integration sign + source separation, and rewriting policy evaluation to the full-rate
     M-matrix ``A = I/dt + L^pi``, the remaining difference is pure time discretization (backward-Euler
     vs RK45): it roughly halves with each dt refinement, i.e. first-order convergence to zero.
+
+    THE NODE POTENTIAL IS NON-UNIFORM ON PURPOSE (#2373). A constant source is symmetric under a
+    permutation of the nodes, so it pins the sign and cannot see a source applied to the WRONG
+    nodes. This file's only non-uniform case retired with the MAXIMIZE tests, and three
+    discriminations went with it -- measured, all three are invisible to a uniform source and all
+    three are restored by this one: the RK45 right-hand side indexing its source in reverse, the
+    policy-evaluation vector doing the same, and the policy-evaluation source flipping sign.
+
+    None of the three is an assertion about what a positive V does to u, so none is affected by
+    ruling 3/4 of #2375 -- this test asserts only that PI and RK45 agree and that the gap shrinks
+    with dt, which survives a global sign convention change untouched.
     """
     net = GridNetwork(width=5, height=1)
     net.create_network()
     g = np.array([0.0, 0.0, 0.0, 0.0, 10.0])
+    comps = NetworkMFGComponents(node_potential_func=lambda i, t: 2.0 * i - 0.4 * i * i)
     errs = []
     for nt in (20, 40, 80):
-        prob = NetworkMFGProblem(geometry=net, T=0.5, Nt=nt)
+        prob = NetworkMFGProblem(geometry=net, T=0.5, Nt=nt, components=comps)
         n = prob.num_nodes
         m = np.ones((nt + 1, n)) / n
         u_rk = NetworkHJBSolver(prob, scheme="RK45").solve_hjb_system(M_density=m, U_terminal=g)

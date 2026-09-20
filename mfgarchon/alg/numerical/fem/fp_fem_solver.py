@@ -161,7 +161,7 @@ class FPFEMSolver(WeakFormFPSolver):
         # gradient du.grad reproduces the old -c*grad(U) bit-for-bit for dyadic lambda (the paper's
         # control_cost=1.0 => byte-identical) and within <= 1 ULP for non-dyadic lambda (#1487/#1420
         # G-017 single-source, superseded here by the owner). Regularized costs now get the
-        # correct alpha* (+p/lambda, soft-threshold) instead of the wrong-sign scalar form.
+        # correct soft-thresholded alpha* instead of the scalar form, whose FORM is wrong for it.
         H = getattr(self.problem, "hamiltonian_class", None)
         if H is None:
             raise ValueError(

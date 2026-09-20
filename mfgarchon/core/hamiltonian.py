@@ -59,6 +59,7 @@ For general cases, numerical Legendre transform is available.
 
 from __future__ import annotations
 
+import math
 import numbers
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -141,6 +142,13 @@ class ControlCostBase(ABC):
                 f"{lam!r} of type {type(lam).__name__}. It is the first positional parameter, so "
                 f"a value meant for something else lands here."
             )
+        # `math.isfinite` BEFORE the sign test, because `nan <= 0` and `inf <= 0` are both False:
+        # a non-finite weight passes `numbers.Real` and the positivity guard and then produces a
+        # silent no-control solve. Measured: `L1ControlCost(inf)` and `L1ControlCost(nan)` both gave
+        # `alpha* = [0, 0, 0]` with no nan anywhere to notice -- the same shape as the bool defect
+        # this guard was written for, one type down.
+        if not math.isfinite(lam):
+            raise ValueError(f"lambda_ must be finite, got {lam}")
         if lam <= 0:
             raise ValueError(f"lambda_ must be positive, got {lam}")
 
@@ -824,6 +832,18 @@ class MFGOperatorBase(ABC):
         finite_diff_eps: float = 1e-6,
         population_index: int = 0,
     ):
+        # `sense` used to be first-positional here too, so the same slip that put a weight into it
+        # now reaches `finite_diff_eps` and `population_index` instead (#2373). The deleted #2341
+        # test pinned the refusal for the old parameter; this is its successor for the two that
+        # inherited the positions. Measured before this guard:
+        # `SeparableHamiltonian(cost, None, None, None, 0.5)` silently set population_index = 0.5.
+        if isinstance(population_index, bool) or not isinstance(population_index, int):
+            raise TypeError(
+                f"{type(self).__name__}: population_index must be an int, got "
+                f"{population_index!r} of type {type(population_index).__name__}."
+            )
+        if population_index < 0:
+            raise ValueError(f"population_index must be non-negative, got {population_index}")
         self.finite_diff_eps = finite_diff_eps
         self.population_index = population_index
 

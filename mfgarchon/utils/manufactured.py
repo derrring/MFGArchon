@@ -35,7 +35,7 @@ different equation than the solver integrates, and re-deriving a convention is e
 happens:
 
 - ``H``            -> the problem's own :meth:`HamiltonianBase.evaluate_H`.
-- ``alpha*``       -> the problem's own :meth:`optimal_control`, which is sense-aware. Deriving
+- ``alpha*``       -> the problem's own :meth:`optimal_control`, which owns the convention. Deriving
   ``alpha* = -grad u / lambda`` here instead would be silently wrong for any non-quadratic cost.
 - ``sigma -> D``   -> :func:`mfgarchon.utils.pde_coefficients.diffusion_from_volatility`, including
   its ``kind`` argument and its refusal to guess. A ``(d, d)`` volatility is the symmetric

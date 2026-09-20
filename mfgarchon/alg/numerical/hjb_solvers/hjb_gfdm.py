@@ -3253,10 +3253,10 @@ class HJBGFDMSolver(BaseHJBSolver):
             )
         # Howard derives alpha* = -dH/dp and now consumes the control-cost Lagrangian
         # L(alpha) = lambda/2 |alpha|^2 from the single source (control_cost.lagrangian, wired
-        # below), so any QUADRATIC control cost (unit or lambda != 1) MINIMIZE is faithful. The
+        # below), so any QUADRATIC control cost (unit or lambda != 1) is faithful. The
         # potential V(x, t), the density coupling f(m), and the MMS source are wired
-        # (Issue #1247, below); the user running-cost channel is gone (#1999). What remains unmodelled — NON-quadratic control cost and the
-        # cost — is failed loud below (validated by
+        # (Issue #1247, below); the user running-cost channel is gone (#1999). What remains
+        # unmodelled -- a NON-quadratic control cost -- is failed loud below (validated by
         # tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_rejects_*).
         control_cost = getattr(H_class, "control_cost", None)
         if control_cost is not None:

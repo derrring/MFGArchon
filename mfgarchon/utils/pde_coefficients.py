@@ -30,9 +30,9 @@ def assert_quadratic_drift(problem: Any, *, context: str) -> None:
 
     The scalar ``c = 1/control_cost`` closure (and the byte-identical ``-p/control_cost`` the
     Hamiltonian owner returns for it) is the true optimal control ``alpha*`` only for a
-    quadratic ``SeparableHamiltonian``. A regularized cost has a soft-thresholded ``alpha*``
-    (opposite sign) and a regularized (e.g. Moreau--Yosida) cost is soft-thresholded, so advecting
-    with ``-c*grad(U)`` would silently transport mass with the wrong physics.
+    quadratic ``SeparableHamiltonian``. A regularized (e.g. Moreau--Yosida) cost has a
+    soft-thresholded ``alpha*`` -- a different FORM, not a different sign -- so advecting with
+    ``-c*grad(U)`` would silently transport mass with the wrong physics.
 
     This is the guard the FVM / FEM / meshless-Galerkin FP families inherited implicitly through
     :func:`fp_drift_coefficient`. Extracting it keeps that fail-loud after those families route the
