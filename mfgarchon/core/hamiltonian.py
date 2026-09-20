@@ -144,7 +144,13 @@ class ControlCostBase(ABC):
         if lam <= 0:
             raise ValueError(f"lambda_ must be positive, got {lam}")
 
-        self._lambda = lam
+        # `float(...)` and not a bare assignment. The guard above narrows `lam` to `numbers.Real`,
+        # an abstract base with no concrete type, and mypy then cannot infer `_lambda` -- measured,
+        # that produced 25 `Cannot determine type of "_lambda"` errors cascading to every reader of
+        # it, `core` 136 -> 161. The coercion also makes the stored value match what the `lambda_`
+        # property has always declared it to be, and it keeps numpy scalars working, which a guard
+        # narrowed to `(int, float)` would not: `np.float32` is neither.
+        self._lambda: float = float(lam)
         # Issue #1068: explicit None-init avoids hasattr() in regularize().
         # Subclasses (_MoreauYosidaControlCost) override this with the original base.
         self.base: ControlCostBase | None = None
