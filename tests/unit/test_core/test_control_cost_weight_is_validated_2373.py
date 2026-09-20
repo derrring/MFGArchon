@@ -27,16 +27,30 @@ SCOPE IS BOTH INHERITING SLOTS, not just the weight the filename names. `sense` 
 first-positional on `MFGOperatorBase` too, so `population_index` inherited a slot the same way and
 its guard is pinned here rather than in a second file.
 
-EVERY GUARD IN THIS FILE IS MUTATION-VERIFIED, and that is not decoration -- three of them were
-pinned by NOTHING until the mutations were run, and all three had passed review. The matrix, each
-mutation killing exactly one test and the unmutated file at 10 passed:
+EVERY GUARD ARM IN THIS FILE IS MUTATION-VERIFIED, and that is not decoration -- four arms and
+both casts were pinned by NOTHING until the mutations were run, and every one had passed
+adversarial review and a green gate. Each guard has three arms plus a cast, and each of the nine
+reddens this file when disabled:
 
-    population_index: numbers.Integral -> int        1 failed
-    population_index: `bool` arm deleted             1 failed
-    weight:           numbers.Real -> (int, float)   1 failed
-    weight:           `bool` arm deleted             1 failed
-    weight:           math.isfinite disabled         1 failed
-    weight:           positivity check disabled      1 failed
+    population_index    type   numbers.Integral -> int
+    population_index    bool   `bool` arm deleted
+    population_index    value  `< 0` check disabled
+    population_index    cast   `int(...)` deleted
+    weight              type   numbers.Real -> (int, float)
+    weight              bool   `bool` arm deleted
+    weight              value  `math.isfinite` disabled
+    weight              value  `<= 0` check disabled
+    weight              cast   `float(...)` deleted
+
+NO PASS COUNT IS RECORDED HERE, deliberately. The first version of this block said "each mutation
+killing exactly one test, the unmutated file at 10 passed" -- and that sentence was false two
+commits later: the file went to 11 tests and the `Integral -> int` mutation began killing two,
+since a bare `int` check raises TypeError where the negative-index test asserts ValueError. Over-
+determination is fine; the recorded claim going stale on its own author's next commit is the exact
+failure this file is about, arriving in the sentence that records the enforcement. A figure
+quantified over the current tree rots; the ARMS above are a property of the guards, so they move
+only when the guards do, which is when this list should move too. Re-run the mutations rather than
+trusting any number: a survivor means an arm is free.
 
 Why reading could not substitute: every in-tree caller passes a literal, so each guard's whole
 population is inputs nobody in this repository produces. A guard like that is green under its own
@@ -137,8 +151,8 @@ def test_a_numpy_float_is_accepted_as_a_weight():
 
     `bd124952`'s commit message argues that narrowing to `(int, float)` "would have satisfied mypy
     too and silently rejected `np.float32`". Measured before this test existed: making exactly that
-    narrowing left this file at **8 passed**, green. The argument was recorded in prose, and the
-    edit it argues against cost nothing that reddened.
+    narrowing left this file **entirely green** -- nothing reddened. The argument was recorded in
+    prose, and the edit it argues against cost nothing.
 
     `np.float32`, `np.int64` and `Fraction` are all `numbers.Real` and none is an `(int, float)`.
     They reach `lambda_` as 2.0, 2.0 and 0.5 today, so the narrowing would be a silent refusal of
@@ -156,9 +170,10 @@ def test_a_numpy_float_is_accepted_as_a_weight():
 
 def test_a_numpy_integer_is_accepted_as_a_population_index():
     """PINS THE ABC. Measured: with `isinstance(population_index, int)` instead of
-    `numbers.Integral`, the whole suite stays green -- 489 passed, byte-identical to unmutated --
-    because every caller in the tree passes a literal `0`, `1`, `2` or `k`. So the guard's entire
-    population is inputs nobody in-tree produces, and reverting it costs nothing that reddens.
+    `numbers.Integral`, the affected-file run was **byte-identical to unmutated** -- not one test
+    moved -- because every caller in the tree passes a literal `0`, `1`, `2` or `k`. So the guard's
+    entire population is inputs nobody in-tree produces, and reverting it cost nothing that
+    reddened.
 
     `isinstance(np.int64(1), int)` is False. Before the guard existed this slot took anything; a
     bare `int` check would newly REFUSE what the library used to accept, which is a narrowing
@@ -178,8 +193,8 @@ def test_a_bool_is_refused_as_a_population_index():
 
     `isinstance(True, numbers.Integral)` is True -- every ABC in the numeric tower admits bools --
     so the ABC beside it does NOT refuse `True` and this arm is the only thing that does. Measured:
-    deleting the arm leaves the suite at 489 passed, unchanged. It is the exact edit a reader makes
-    on seeing two isinstance checks that appear to cover the same types.
+    deleting the arm left the affected-file run **unchanged**, not one test moving. It is the exact
+    edit a reader makes on seeing two isinstance checks that appear to cover the same types.
 
     The mirror case is why both arms stay: `np.bool_(True)` is neither a `bool` nor an `Integral`,
     so the ARM ABOVE cannot see it and only the ABC refuses it. Each arm covers what the other
@@ -198,7 +213,7 @@ def test_a_negative_population_index_is_refused():
 
     Each guard has three arms -- type, bool, value. The weight's value arm (positivity) was
     already pinned; this one was not: `if population_index < 0` -> `if False` left the file at
-    10 passed while the sibling's `lam <= 0` reddened. The asymmetry between siblings is the
+    this file **fully green** while the sibling's `lam <= 0` reddened. The asymmetry between them is the
     tell, and it is the same shape as the `int`-vs-`Integral` asymmetry two rounds earlier.
 
     It is not cosmetic: `_extract_own_density` slices `m[k*N:(k+1)*N]`, so `k = -1` gives

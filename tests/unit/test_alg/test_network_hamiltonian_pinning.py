@@ -199,9 +199,9 @@ def test_network_policy_iteration_converges_to_rk45():
         m = np.ones((nt + 1, n)) / n
         # ENFORCES THE PARAGRAPH ABOVE, which was prose and nothing else. Measured: deleting
         # `components=comps` from the line above -- one token, and it reads as a simplification --
-        # left this file at 13 passed while ALL THREE discriminations went green (RK45 source
-        # reversed, PI source reversed, PI source sign-flipped: 1 failed each with the potential,
-        # 13 passed each without it).
+        # left this file FULLY GREEN while ALL THREE discriminations disappeared -- RK45 source
+        # reversed, PI source reversed and PI source sign-flipped each reddened it with the
+        # potential wired, and each passed without it.
         #
         # ASSERTED ON WHAT THE SOLVER READS, not on `comps`. The obvious form --
         # `comps.node_potential_func(i, 0.0)` varying over i -- is one indirection short: the
