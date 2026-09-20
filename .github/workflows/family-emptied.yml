@@ -16,6 +16,18 @@ name: A backlog family emptied
 on:
   issues:
     types: [closed]
+  # `issues:` events always read the workflow definition from the DEFAULT branch, unlike
+  # `pull_request`. So this file cannot run at all until it is merged -- there is no branch on which
+  # to verify it, and the merge is the act that makes it live. Measured: `gh run list` returns
+  # `404 ... not found on the default branch`. This dispatch is the only route to exercising it with
+  # a chosen issue after the merge, and it exists because otherwise the first real firing would be
+  # the first execution.
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: "Issue number to evaluate as if it had just been closed"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -40,7 +52,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          out="$(python3 scripts/family_queue.py --emptied ${{ github.event.issue.number }})"
+          out="$(python3 scripts/family_queue.py --emptied ${{ github.event.inputs.issue || github.event.issue.number }})"
           printf '%s\n' "$out"
           {
             echo "report<<EOF"
@@ -58,7 +70,7 @@ jobs:
         run: |
           fam="$(printf '%s' "$REPORT" | sed -n 's/^FAMILY_EMPTIED=//p')"
           body="$(cat <<EOF
-          Closing #${{ github.event.issue.number }} took the last open member of a backlog family.
+          Closing #${{ github.event.inputs.issue || github.event.issue.number }} took the last open member of a backlog family.
 
           \`\`\`
           $REPORT
