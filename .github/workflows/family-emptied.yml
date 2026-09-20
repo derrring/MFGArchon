@@ -1,0 +1,84 @@
+# A close that takes the LAST open member of a backlog family opens a notice.
+#
+# Not a notice on every close. Measured over the 30 days to 2026-09-21: 203 issues opened, 138
+# closed, 11.4 events/day, peaking at 45 in one day. A line on every close is scenery -- a signal
+# that fires identically every time carries no information. A close that EMPTIES a family fired
+# ONCE in the same window, on 2026-09-13, when the MMS-reachability family closed; nothing noticed
+# for eight days, while the family it unblocks sat with eleven open members averaging six weeks old.
+# 138 against 1 is the whole argument for putting the trigger on the sub-event.
+#
+# No loop guard is needed and none is written: the notice this opens carries no `family:` label, so
+# closing it makes `--emptied` return silently. That is a property of the design rather than a
+# check, which is why it is stated here instead of coded.
+
+name: A backlog family emptied
+
+on:
+  issues:
+    types: [closed]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The instrument before its answer. This is the ONLINE half of the self-test: it asserts that
+      # the order file's family names are labels that exist. The local gate runs the offline half
+      # and deliberately not this one, because that gate makes no network call.
+      - name: Self-test the instrument
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/family_queue.py --self-test --online
+
+      - name: Did this close empty a family?
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          out="$(python3 scripts/family_queue.py --emptied ${{ github.event.issue.number }})"
+          printf '%s\n' "$out"
+          {
+            echo "report<<EOF"
+            printf '%s\n' "$out"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          # Silence is the normal outcome; only a non-empty report continues.
+          if [ -n "$out" ]; then echo "fired=yes" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Open the notice
+        if: steps.check.outputs.fired == 'yes'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPORT: ${{ steps.check.outputs.report }}
+        run: |
+          fam="$(printf '%s' "$REPORT" | sed -n 's/^FAMILY_EMPTIED=//p')"
+          body="$(cat <<EOF
+          Closing #${{ github.event.issue.number }} took the last open member of a backlog family.
+
+          \`\`\`
+          $REPORT
+          \`\`\`
+
+          **What this is for.** The families are ordered by *evidence dependency* -- a family whose
+          fix needs another family's oracle to be accepted sorts after it -- so a family emptying is
+          the only event that can change the head of the queue. It last happened on 2026-09-13 and
+          was not noticed for eight days, during which the work went to issues filed a day or two
+          earlier while the unblocked family sat with eleven open members averaging six weeks old.
+
+          **What to do with it.** Read the family's members in the private ledger, not here: this
+          notice carries issue numbers because they are public, and the reasoning is internal
+          analysis. Then decide whether the unblocked family is now the head, against whatever else
+          is in flight. The trigger's job is to make someone look; it does not decide.
+
+          Opened by \`.github/workflows/family-emptied.yml\`.
+          EOF
+          )"
+          gh issue create \
+            --title "A backlog family emptied: $fam" \
+            --body "$body" \
+            --label "priority: medium,area: testing,size: small,type: chore"

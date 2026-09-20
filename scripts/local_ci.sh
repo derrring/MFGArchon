@@ -544,7 +544,12 @@ check $? "workflows parse, declare jobs, and have no dangling needs"
 # purpose: this is the ONE visible place asserting that every instrument is controlled, and if that
 # internal call is ever dropped the coverage would vanish with nothing here to say so.
 step "Ratchet self-tests (the instruments, before their numbers)"
-for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation check_citations check_warnings check_manifests check_mypy_scope check_docstring_kwargs; do
+# family_queue's self-test is the OFFLINE half on purpose: its `--online` arm asks GitHub whether
+# the order file's family names are real labels, and this gate makes no network call at all. That
+# arm runs in `.github/workflows/family-emptied.yml`, which has a token anyway. Proven rather than
+# assumed: with a `gh` on PATH that exits 127 and says so, `--self-test` passes and
+# `--self-test --online` fails, so the offline pass is not an artefact of the stub being missed.
+for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation check_citations check_warnings check_manifests check_mypy_scope check_docstring_kwargs family_queue; do
   "${PYS[@]}" "scripts/${_selftest}.py" --self-test || { check 1 "ratchet self-tests: ${_selftest} cannot see what it counts"; }
 done
 check 0 "every fast ratchet still detects what it claims to detect"
