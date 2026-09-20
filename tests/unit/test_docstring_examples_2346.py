@@ -55,14 +55,29 @@ import pytest
 #: its first draft. Testing with numba absent instead would make 20 modules unimportable and produce
 #: breakage unrelated to the candidate.
 #:
-#: SO BEFORE ADDING A MODULE, run its examples with jax and torch absent -- faithfully. Three
-#: simulations do not work, and each looks like it does:
+#: SO BEFORE ADDING A MODULE, run its examples with jax and torch absent -- faithfully. Four
+#: simulations do not work, and they do not fail the same way. Measured on THIS file against the
+#: pre-#2367 tree, where the jax example still exists, each trap installed through a
+#: `sitecustomize.py` so that it is live before collection (control, no trap and jax genuinely
+#: present: 25 passed):
+#:
+#:     finder that returns None    25 passed          <- FALSE GREEN, the dangerous one
+#:     sys.modules["jax"]=None     1 failed, 24 passed   right verdict, wrong mechanism
+#:     finder that RAISES          run aborts at collection
+#:     site-packages off sys.path  numpy and pytest both unimportable
+#:
+#: Only the returning-None finder is silent about being wrong, and it is the one that would wave
+#: a bad module through. Do not read "four traps" as "four ways of getting a false green". Named
+#: rather than called "the first": the three lists in this block are in three different orders,
+#: and an ordinal here has already gone wrong twice. Why each fails:
 #:   - `sys.modules["jax"] = None` breaks scipy's array-API layer. It also passes all three of the
 #:     obvious acceptance checks below, which is why the fourth one is here.
 #:   - a meta-path finder that RETURNS None does not block at all: returning None means "I cannot
 #:     handle this, try the next finder", and the next one resolves jax.
 #:   - a finder that RAISES propagates through `variational_mfg_solver.py`'s
 #:     `find_spec("jax") is not None`, which expects None and gets an exception.
+#:   - removing site-packages from `sys.path` takes numpy and pytest with it, so nothing imports
+#:     at all. This is the one check 3 exists for.
 #: Accept a simulation only when all FOUR hold. No single check rejects every trap, so do not go
 #: looking for the one that does. Measured, one fresh process per cell -- REJECT means the check
 #: catches that trap:
