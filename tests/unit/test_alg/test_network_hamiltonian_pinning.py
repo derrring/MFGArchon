@@ -197,6 +197,22 @@ def test_network_policy_iteration_converges_to_rk45():
         prob = NetworkMFGProblem(geometry=net, T=0.5, Nt=nt, components=comps)
         n = prob.num_nodes
         m = np.ones((nt + 1, n)) / n
+        # ENFORCES THE PARAGRAPH ABOVE, which was prose and nothing else. Measured: deleting
+        # `components=comps` from the line above -- one token, and it reads as a simplification --
+        # left this file at 13 passed while ALL THREE discriminations went green (RK45 source
+        # reversed, PI source reversed, PI source sign-flipped: 1 failed each with the potential,
+        # 13 passed each without it).
+        #
+        # ASSERTED ON WHAT THE SOLVER READS, not on `comps`. The obvious form --
+        # `comps.node_potential_func(i, 0.0)` varying over i -- is one indirection short: the
+        # local stays non-uniform whether or not it is wired into `prob`, so it passes on the
+        # flattened fixture too. Measured: it did. This reads the source vector the rhs actually
+        # consumes, which is the object the claim is about.
+        src = NetworkHJBSolver(prob)._source_terms(m[0], 0.0)
+        assert np.ptp(src) > 0, (
+            "the node source must be spatially NON-UNIFORM: a constant source is symmetric under "
+            "a permutation of the nodes, so it cannot see a source applied to the wrong ones"
+        )
         u_rk = NetworkHJBSolver(prob, scheme="RK45").solve_hjb_system(M_density=m, U_terminal=g)
         u_pi = NetworkPolicyIterationHJBSolver(prob).solve_hjb_system(M_density=m, U_terminal=g)
         assert np.isfinite(u_pi).all(), "policy-iteration value must be finite"

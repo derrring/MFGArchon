@@ -855,10 +855,13 @@ class MFGOperatorBase(ABC):
             )
         if population_index < 0:
             raise ValueError(f"population_index must be non-negative, got {population_index}")
-        # Both annotations are load-bearing, and `int(...)` is the same move as `float(lam)` above:
-        # `numbers.Integral` is an ABC, so mypy narrows to it and cannot type the attribute. Measured
-        # -- the bare swap costs `core: 136 -> 142`, and all six are `Cannot determine type of
-        # "finite_diff_eps"`, the SIBLING assignment, not this one. Annotating only one leaves +6.
+        # TWO SEPARATE REASONS, and conflating them loses one. The ANNOTATIONS are for mypy:
+        # `numbers.Integral` is an ABC, so mypy narrows to it and cannot type the attribute --
+        # measured, the bare swap costs `core: 136 -> 142`, all six being `Cannot determine type
+        # of "finite_diff_eps"`, the SIBLING assignment, and annotating only one leaves +6.
+        # The `int(...)` CAST is for runtime: it normalises `np.int64` to `int` so the stored
+        # attribute has the type the signature promises. mypy is satisfied without the cast, so
+        # the ratchet does not protect it -- a test does, and only one.
         self.finite_diff_eps: float = finite_diff_eps
         self.population_index: int = int(population_index)
 

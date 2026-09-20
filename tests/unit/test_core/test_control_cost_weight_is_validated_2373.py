@@ -148,6 +148,9 @@ def test_a_numpy_float_is_accepted_as_a_weight():
     assert L1ControlCost(np.float32(2.0)).lambda_ == 2.0
     assert L1ControlCost(np.int64(2)).lambda_ == 2.0
     assert QuadraticControlCost(lambda_=Fraction(1, 2)).lambda_ == 0.5
+    # NOT TYPE-TIDINESS: this assert is the ONLY pin on `float(lam)`. Measured before it existed,
+    # deleting the coercion left both the suite AND the mypy ratchet green (1300, no package
+    # moved), so nothing anywhere objected. Simplifying it away unpins the coercion silently.
     assert type(L1ControlCost(np.float32(2.0)).lambda_) is float, "stored unnormalised"
 
 
@@ -165,6 +168,8 @@ def test_a_numpy_integer_is_accepted_as_a_population_index():
     for v in (np.int64(0), np.int32(2), np.uint8(1), np.int8(3)):
         h = SeparableHamiltonian(control_cost=c, population_index=v)
         assert h.population_index == int(v)
+        # As with `float(lam)`: this assert is the ONLY pin on `int(population_index)`, and
+        # deleting that coercion was green on both the suite and the mypy ratchet before it.
         assert type(h.population_index) is int, f"{type(v).__name__} was stored unnormalised"
 
 
@@ -187,6 +192,25 @@ def test_a_bool_is_refused_as_a_population_index():
         SeparableHamiltonian(control_cost=c, population_index=np.bool_(True))
 
 
+def test_a_negative_population_index_is_refused():
+    """PINS THE VALUE ARM, which my own six-mutation matrix missed by enumerating the type
+    lattice and not the guard's statements.
+
+    Each guard has three arms -- type, bool, value. The weight's value arm (positivity) was
+    already pinned; this one was not: `if population_index < 0` -> `if False` left the file at
+    10 passed while the sibling's `lam <= 0` reddened. The asymmetry between siblings is the
+    tell, and it is the same shape as the `int`-vs-`Integral` asymmetry two rounds earlier.
+
+    It is not cosmetic: `_extract_own_density` slices `m[k*N:(k+1)*N]`, so `k = -1` gives
+    `m[-N:0]` -- an empty array, not an error.
+    """
+    c = QuadraticControlCost(control_cost=1.0)
+    with pytest.raises(ValueError, match=r"population_index must be non-negative"):
+        SeparableHamiltonian(control_cost=c, population_index=-1)
+    with pytest.raises(ValueError, match=r"population_index must be non-negative"):
+        SeparableHamiltonian(control_cost=c, population_index=np.int64(-2))
+
+
 def test_sense_is_no_longer_accepted_by_either_owner():
     """#2373's own artifact, as a test: there is no replacement keyword and no migration target,
     so the refusal is Python's own `TypeError` on an unexpected keyword rather than a deprecation."""
@@ -194,3 +218,8 @@ def test_sense_is_no_longer_accepted_by_either_owner():
         QuadraticControlCost(sense="minimize", control_cost=1.0)
     with pytest.raises(TypeError, match=r"unexpected keyword argument 'sense'"):
         L1ControlCost(sense="minimize", lambda_=1.0)
+    # "EITHER OWNER" MEANS BOTH BASE CLASSES. The two above are `ControlCostBase` subclasses;
+    # in #2341's vocabulary the second owner is `MFGOperatorBase`, and nothing in the suite
+    # passed `sense=` to one. The name claimed a universal the assertions did not reach.
+    with pytest.raises(TypeError, match=r"unexpected keyword argument 'sense'"):
+        SeparableHamiltonian(QuadraticControlCost(lambda_=1.0), sense="minimize")
