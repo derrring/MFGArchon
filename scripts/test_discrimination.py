@@ -124,9 +124,14 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         name="optimal_control_sign",
         path="mfgarchon/core/hamiltonian.py",
-        old="        return -self.sign * p / self._lambda",
-        new="        return self.sign * p / self._lambda  # MUTATED: sign flipped",
-        owner="QuadraticControlCost alpha* = -sign*p/lambda (#1649)",
+        # The anchor lost its `self.sign` factor when #2373 removed OptimizationSense: the
+        # library is minimisation-only, the factor was the constant +1, and `-sign * p` became
+        # `-p`. The mutation is the same one -- flip the sign of alpha* -- and its 42 killers are
+        # unaffected, because what they detect is the returned control's direction, not the
+        # expression that produces it.
+        old="        return -p / self._lambda",
+        new="        return p / self._lambda  # MUTATED: sign flipped",
+        owner="QuadraticControlCost alpha* = -p/lambda (#1649, #2373)",
         verify="float(QuadraticControlCost(control_cost=1.0).optimal_control(np.array([1.0]))[0]) > 0",
     ),
     Mutation(
