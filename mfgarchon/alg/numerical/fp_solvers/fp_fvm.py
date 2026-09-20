@@ -88,7 +88,7 @@ from mfgarchon.operators.differential.laplacian import LaplacianOperator
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.numerical.quadrature import quadrature_weights_nd
-from mfgarchon.utils.pde_coefficients import assert_quadratic_minimize_drift, diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import assert_quadratic_drift, diffusion_from_volatility
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -306,7 +306,7 @@ class FPFVMSolver(BaseFPSolver):
         # which is single-valued in p ONLY for a SeparableHamiltonian. A non-separable Hamiltonian (e.g.
         # CongestionHamiltonian) has a density/state-dependent optimal control, so calling optimal_control
         # here raised a cryptic TypeError; fail loud with a clear message instead. The gate lives at this
-        # velocity-channel call site, NOT in the shared assert_quadratic_minimize_drift guard, which must
+        # velocity-channel call site, NOT in the shared assert_quadratic_drift guard, which must
         # keep no-op'ing for non-separable H so fp_drift_coefficient's coupling_coefficient fallback stays
         # intact. Ordered before the #1542 assert so a non-quadratic Separable still hits it below.
         from mfgarchon.core.hamiltonian import SeparableHamiltonian
@@ -323,7 +323,7 @@ class FPFVMSolver(BaseFPSolver):
         # `fp_drift_coefficient` read carried. A non-quadratic SeparableHamiltonian has no
         # scalar `-c*grad(U)` form, so raise here rather than silently advect H.optimal_control's
         # wrong-sign / wrong-form drift (that capability is Phase 1, not this byte-safe PR).
-        assert_quadratic_minimize_drift(self.problem, context="FP FVM potential_field")
+        assert_quadratic_drift(self.problem, context="FP FVM potential_field")
         spacing = list(self.problem.geometry.get_grid_spacing())
         bounds = self.problem.geometry.get_bounds()
         ndim = u_slice.ndim

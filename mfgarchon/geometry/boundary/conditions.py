@@ -1196,7 +1196,7 @@ def robin_bc(
     the control enters only through the control cost. Before #2373 each route carried its own
     ``sense`` field and they could be set to disagree with nothing checking; removing the concept
     removed that gap rather than guarding it. Paths that form the drift themselves are still gated
-    to a QUADRATIC control cost by ``assert_quadratic_minimize_drift`` -- the remaining refusal is
+    to a QUADRATIC control cost by ``assert_quadratic_drift`` -- the remaining refusal is
     about the wrong FORM (a regularised cost), not a wrong direction.
 
     For contrast, the ``gradient_*`` family imposes ``d_n m = 0`` by hard-coding the mirrored ghost

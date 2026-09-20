@@ -12,7 +12,7 @@ advection. This is the same primitive the paired HJB Newton advection reads, so
 A_FP = A_HJB^T is preserved. It supersedes the former weak-form-family convention
 (option b, the hand-coded scalar v = -coupling * grad(U)), which cannot represent
 alpha* for a regularized control cost. (Routing them end-to-end is #1528
-Phase 1; `_build_advection` still gates those cases behind `assert_quadratic_minimize_drift`.)
+Phase 1; `_build_advection` still gates those cases behind `assert_quadratic_drift`.)
 
 Boundary conditions: Neumann / no-flux (mass-conserving reflecting wall) and
 absorbing ``m = 0`` on Dirichlet faces via symmetric Nitsche (#1138). The Nitsche
@@ -36,7 +36,7 @@ from scipy import sparse
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
 from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
-from mfgarchon.utils.pde_coefficients import assert_quadratic_minimize_drift
+from mfgarchon.utils.pde_coefficients import assert_quadratic_drift
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -155,7 +155,7 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         # single-valued in p ONLY for a SeparableHamiltonian. A non-separable Hamiltonian (e.g.
         # CongestionHamiltonian) has a density/state-dependent optimal control, so calling optimal_control
         # here raised a cryptic TypeError; fail loud with a clear message instead. The gate lives at this
-        # velocity-channel call site, NOT in the shared assert_quadratic_minimize_drift guard, which must
+        # velocity-channel call site, NOT in the shared assert_quadratic_drift guard, which must
         # keep no-op'ing for non-separable H. Ordered before the #1542 assert so a non-quadratic Separable still
         # hits the #1542 guard below.
         from mfgarchon.core.hamiltonian import SeparableHamiltonian
@@ -172,7 +172,7 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         # `fp_drift_coefficient` read carried -- a non-quadratic SeparableHamiltonian has no
         # scalar `-c*grad(U)` form, so raise rather than silently advect H.optimal_control's
         # wrong-sign / wrong-form drift (that capability is Phase 1, not this byte-safe PR).
-        assert_quadratic_minimize_drift(self.problem, context="FP meshless-Galerkin advection")
+        assert_quadratic_drift(self.problem, context="FP meshless-Galerkin advection")
         G = self._gradient_operators()
         grad_U = np.column_stack([G_d @ U_n for G_d in G])  # (N, dim) = p at the collocation nodes
         # x, m, t at the collocation nodes. The parent hook threads only U_n (neither the density nor the

@@ -19,10 +19,14 @@ if TYPE_CHECKING:
     from mfgarchon.core.mfg_problem import MFGProblem
 
 
-def assert_quadratic_minimize_drift(problem: Any, *, context: str) -> None:
+def assert_quadratic_drift(problem: Any, *, context: str) -> None:
     """Fail loud if ``problem.hamiltonian_class`` is a ``SeparableHamiltonian`` whose control cost is
-    NOT quadratic-MINIMIZE -- the one case where the scalar FP drift ``-c*grad(U)`` misrepresents the
-    optimal control (Issue #1542 / RFC #1574 Phase 0).
+    NOT quadratic -- the case where the scalar FP drift ``-c*grad(U)`` misrepresents the optimal
+    control (Issue #1542 / RFC #1574 Phase 0).
+
+    Named ``assert_quadratic_minimize_drift`` until #2373. The direction half of that name asserted
+    a distinction the library no longer has, and what survives is the quadratic test alone -- which
+    is about the wrong FORM of drift, not a wrong sign.
 
     The scalar ``c = 1/control_cost`` closure (and the byte-identical ``-p/control_cost`` the
     Hamiltonian owner returns for it) is the true optimal control ``alpha*`` only for a
@@ -120,7 +124,7 @@ def fp_drift_coefficient(problem: Any) -> float:
     # optimal control, so fail loud (single-sourced guard) rather than return `coupling_coefficient`
     # and advect with the wrong physics (Issue #1542 / RFC #1574 Phase 0). The guard is a no-op for a
     # non-separable / absent Hamiltonian, which falls through to the `coupling_coefficient` lookup.
-    assert_quadratic_minimize_drift(problem, context="fp_drift_coefficient")
+    assert_quadratic_drift(problem, context="fp_drift_coefficient")
     cc = getattr(problem, "coupling_coefficient", None)
     if cc is None:
         raise ValueError(
