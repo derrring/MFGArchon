@@ -22,15 +22,36 @@ is reachable, so the prediction became live and the guard is the compensation.
 
 The other direction moved too, and the right way: `L1ControlCost(1e-12)` was REFUSED before, as a
 malformed sense. A tiny positive weight is legitimate and is now accepted.
+
+SCOPE IS BOTH INHERITING SLOTS, not just the weight the filename names. `sense` was
+first-positional on `MFGOperatorBase` too, so `population_index` inherited a slot the same way and
+its guard is pinned here rather than in a second file.
+
+EVERY GUARD IN THIS FILE IS MUTATION-VERIFIED, and that is not decoration -- three of them were
+pinned by NOTHING until the mutations were run, and all three had passed review. The matrix, each
+mutation killing exactly one test and the unmutated file at 10 passed:
+
+    population_index: numbers.Integral -> int        1 failed
+    population_index: `bool` arm deleted             1 failed
+    weight:           numbers.Real -> (int, float)   1 failed
+    weight:           `bool` arm deleted             1 failed
+    weight:           math.isfinite disabled         1 failed
+    weight:           positivity check disabled      1 failed
+
+Why reading could not substitute: every in-tree caller passes a literal, so each guard's whole
+population is inputs nobody in this repository produces. A guard like that is green under its own
+deletion, and the suite reports it as covered.
 """
 
 from __future__ import annotations
+
+from fractions import Fraction
 
 import pytest
 
 import numpy as np
 
-from mfgarchon.core.hamiltonian import L1ControlCost, QuadraticControlCost
+from mfgarchon.core.hamiltonian import L1ControlCost, QuadraticControlCost, SeparableHamiltonian
 
 
 def test_a_bool_is_refused_as_a_weight():
@@ -86,6 +107,84 @@ def test_the_optimal_control_convention_is_minus_dh_dp():
     p = np.array([-1.0, 2.0])
     np.testing.assert_allclose(QuadraticControlCost(lambda_=1.0).optimal_control(p), [1.0, -2.0])
     np.testing.assert_allclose(QuadraticControlCost(lambda_=2.0).optimal_control(p), [0.5, -1.0])
+
+
+def test_a_non_finite_weight_is_refused():
+    """PINS `math.isfinite`, which nothing pinned -- the third unpinned guard in this file, all
+    three found by mutating rather than reading.
+
+    `inf` and `nan` are both `numbers.Real`, and `inf <= 0` and `nan <= 0` are both False, so a
+    non-finite weight passes the type arm AND the positivity arm. Measured: `L1ControlCost(inf)`
+    and `L1ControlCost(nan)` each gave `alpha* = [0, 0, 0]` -- a silent no-control solve with no
+    nan anywhere downstream to notice it.
+
+    The check must run BEFORE the sign test, so `ValueError` is asserted with a message distinct
+    from the positivity one: replacing this guard with a pass-through left the file green.
+    """
+    for bad in (float("inf"), float("-inf"), float("nan")):
+        with pytest.raises(ValueError, match=r"must be finite"):
+            L1ControlCost(bad)
+        with pytest.raises(ValueError, match=r"must be finite"):
+            QuadraticControlCost(lambda_=bad)
+    # numpy's non-finites take the same path -- they are `numbers.Real` too
+    with pytest.raises(ValueError, match=r"must be finite"):
+        L1ControlCost(np.float64("inf"))
+
+
+def test_a_numpy_float_is_accepted_as_a_weight():
+    """PINS THE WEIGHT GUARD'S ABC, which nothing pinned -- found by mutating the guard rather
+    than reading it.
+
+    `bd124952`'s commit message argues that narrowing to `(int, float)` "would have satisfied mypy
+    too and silently rejected `np.float32`". Measured before this test existed: making exactly that
+    narrowing left this file at **8 passed**, green. The argument was recorded in prose, and the
+    edit it argues against cost nothing that reddened.
+
+    `np.float32`, `np.int64` and `Fraction` are all `numbers.Real` and none is an `(int, float)`.
+    They reach `lambda_` as 2.0, 2.0 and 0.5 today, so the narrowing would be a silent refusal of
+    input the library accepts -- and `np.float32` is what a caller gets from a single-precision
+    array without asking for it.
+    """
+    assert L1ControlCost(np.float32(2.0)).lambda_ == 2.0
+    assert L1ControlCost(np.int64(2)).lambda_ == 2.0
+    assert QuadraticControlCost(lambda_=Fraction(1, 2)).lambda_ == 0.5
+    assert type(L1ControlCost(np.float32(2.0)).lambda_) is float, "stored unnormalised"
+
+
+def test_a_numpy_integer_is_accepted_as_a_population_index():
+    """PINS THE ABC. Measured: with `isinstance(population_index, int)` instead of
+    `numbers.Integral`, the whole suite stays green -- 489 passed, byte-identical to unmutated --
+    because every caller in the tree passes a literal `0`, `1`, `2` or `k`. So the guard's entire
+    population is inputs nobody in-tree produces, and reverting it costs nothing that reddens.
+
+    `isinstance(np.int64(1), int)` is False. Before the guard existed this slot took anything; a
+    bare `int` check would newly REFUSE what the library used to accept, which is a narrowing
+    dressed as a validation.
+    """
+    c = QuadraticControlCost(control_cost=1.0)
+    for v in (np.int64(0), np.int32(2), np.uint8(1), np.int8(3)):
+        h = SeparableHamiltonian(control_cost=c, population_index=v)
+        assert h.population_index == int(v)
+        assert type(h.population_index) is int, f"{type(v).__name__} was stored unnormalised"
+
+
+def test_a_bool_is_refused_as_a_population_index():
+    """PINS THE `bool` ARM, which is the one that looks redundant and is not.
+
+    `isinstance(True, numbers.Integral)` is True -- every ABC in the numeric tower admits bools --
+    so the ABC beside it does NOT refuse `True` and this arm is the only thing that does. Measured:
+    deleting the arm leaves the suite at 489 passed, unchanged. It is the exact edit a reader makes
+    on seeing two isinstance checks that appear to cover the same types.
+
+    The mirror case is why both arms stay: `np.bool_(True)` is neither a `bool` nor an `Integral`,
+    so the ARM ABOVE cannot see it and only the ABC refuses it. Each arm covers what the other
+    misses; neither alone closes the parameter.
+    """
+    c = QuadraticControlCost(control_cost=1.0)
+    with pytest.raises(TypeError, match=r"population_index must be an integer"):
+        SeparableHamiltonian(control_cost=c, population_index=True)
+    with pytest.raises(TypeError, match=r"population_index must be an integer"):
+        SeparableHamiltonian(control_cost=c, population_index=np.bool_(True))
 
 
 def test_sense_is_no_longer_accepted_by_either_owner():
