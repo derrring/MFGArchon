@@ -66,9 +66,13 @@ def enforce_neumann_value_nd(
             - order=1: u[boundary] = u[neighbor]
             - order=2: u[boundary] = (4*u[neighbor] - u[next])/3
 
-        For grad_value != 0:
-            - min side: u[0] = u[1] - g*h
-            - max side: u[-1] = u[-2] + g*h
+        For grad_value != 0, with g the OUTWARD normal derivative du/dn:
+            - min side: u[0] = u[1] + g*h     (outward normal -x, so du/dx = -g)
+            - max side: u[-1] = u[-2] + g*h   (outward normal +x, so du/dx = +g)
+
+        Both walls are `neighbour + g*h`; the asymmetry is in du/dx, not in this formula.
+        Writing the min side as `u[1] - g*h` implements du/dx = +g, which is du/dn = -g --
+        the defect #2141 recorded and #1265 had already fixed on the ghost path (a0f40fe1).
 
     Example:
         >>> field = np.array([0.9, 1.0, 1.1, 1.2, 1.3])
@@ -106,11 +110,13 @@ def enforce_neumann_value_nd(
             # 1st-order: u[0] = u[1]
             field[boundary_slicer] = field[neighbor_slicer]
     else:
-        # Non-zero gradient: u[0] = u[1] - g*h (min) or u[-1] = u[-2] + g*h (max)
-        if side == "min":
-            field[boundary_slicer] = field[neighbor_slicer] - grad_value * spacing
-        else:
-            field[boundary_slicer] = field[neighbor_slicer] + grad_value * spacing
+        # Non-zero gradient, g = du/dn (OUTWARD normal): both walls are neighbour + g*h.
+        # The min arm read `- grad_value` until #2141; that implements du/dx = +g, which against
+        # the outward normal -x is du/dn = -g. Measured before the change, 2-D via
+        # HJBFDMSolver.solve_hjb_system with neumann_bc(value=0.7): low wall -0.700000, high wall
+        # +0.700000. The high arm was already correct -- flipping both is the wrong fix, and the
+        # high-wall reading is what catches it.
+        field[boundary_slicer] = field[neighbor_slicer] + grad_value * spacing
 
 
 def enforce_dirichlet_value_nd(
