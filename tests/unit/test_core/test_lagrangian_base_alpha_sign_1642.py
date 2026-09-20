@@ -77,11 +77,26 @@ class AsymmetricL(LagrangianBase):
 
     @classmethod
     def analytic_argmax(cls, p: float) -> float:
+        """argmax {+p.a - L} = p - OFFSET. The OLD pairing's maximizer; kept because the
+        pre-#2375 relation is still what `conjugate_argmax`'s negation is measured against."""
         return p - cls.OFFSET
+
+    @classmethod
+    def true_minimiser(cls, p: float) -> float:
+        """argmin {p.a + L(a)} = -(p + OFFSET) -- the control that actually minimises cost-to-go.
+
+        Under ruling 5 of #2375 this is what `optimal_control` returns. Note it is NOT
+        `-analytic_argmax(p)`: those differ by 2*OFFSET and coincide only for even L, which is
+        the whole content of the ruling.
+        """
+        return -(p + cls.OFFSET)
 
 
 class TestOptimalControlSign:
-    """alpha* = -sign * dH/dp, matching HamiltonianBase and SeparableLagrangian.
+    """alpha* = -dH/dp, matching HamiltonianBase and SeparableLagrangian.
+
+    The ``sign`` factor this line used to carry went with `OptimizationSense` in #2373; under
+    ruling 5 of #2375 the relation holds for every L rather than only for even ones.
 
     Reverting ``optimal_control`` to ``return self.conjugate_argmax(...)`` flips
     every MINIMIZE row here.
@@ -134,31 +149,30 @@ class TestOptimalControlSign:
         assert np.sign(from_dual[0]) == np.sign(from_hamiltonian[0])
 
     def test_asymmetric_lagrangian_alpha_star_is_negated_argmax(self):
-        """Asymmetric L: alpha* = -(p - 0.3), not -(p + 0.3) and not +(p - 0.3).
+        """Asymmetric L: alpha* = -(p + 0.3) -- the control that actually minimises cost-to-go.
 
-        Pins that the sign is applied to the maximizer rather than to p.
+        [INVERTED 2026-09-21 by ruling 5 of #2375.] This assertion previously read
+        ``-analytic_argmax(p) = -(p - 0.3)``, and the docstring it replaced ended:
 
-        CONVENTION-PINNING, NOT PHYSICS (Issue #1652, and ruling 5 of #2375). The
-        library pairs H = sup{p.a - L} with alpha* = -dH/dp, which are jointly
-        correct only when L is even in alpha. This L is not, so the value asserted
-        here is what the library's convention produces, not the agent's true
-        optimal control: at p=2 the true minimizer of {p.a + L(a)} is -2.3 =
-        -(p + 0.3) -- the very expression this docstring excludes -- attaining
-        -2.645 against -2.465. Every shipped control cost is even, so no in-repo
-        result depends on the difference.
+            Ruling 5 of #2375 moves the library to H = sup{-p.a - L}; the test for that
+            change needs a non-even L to discriminate at all, and this is it. When that
+            lands, this assertion inverts.
 
-        THIS CLASS IS WHY THE FILE SURVIVED #2373. `AsymmetricL` is the only
-        non-even Lagrangian in the suite, and evenness is exactly what makes a
-        conjugate test unable to tell H at +p from H at -p. Ruling 5 of #2375
-        moves the library to H = sup{-p.a - L}; the test for that change needs a
-        non-even L to discriminate at all, and this is it. When that lands, this
-        assertion inverts.
+        It has landed and it has inverted. The prediction was exact, including that this
+        class is the discriminator: the ruling's own work order said the discriminating L
+        "must be constructed" because every shipped cost is even, and it was already here.
+        This test is what went red when the convention flipped.
+
+        The two candidates differ by 2*OFFSET and coincide for every even L, so nothing
+        else in the suite could tell them apart. p=0.0 is retained deliberately: it is the
+        one p where -(p - 0.3) and -(p + 0.3) still differ (+0.3 against -0.3), so it
+        discriminates rather than passing vacuously.
         """
         L = AsymmetricL()
         for p_val in (2.0, -1.5, 0.0):
             np.testing.assert_allclose(
                 L.optimal_control(X, M, np.array([p_val]), T),
-                [-AsymmetricL.analytic_argmax(p_val)],
+                [AsymmetricL.true_minimiser(p_val)],
                 atol=1e-6,
             )
 
@@ -191,7 +205,7 @@ class TestOptimalControlSign:
 
 
 class TestEvaluateHamiltonianValue:
-    """H = sup_alpha {p.alpha - L} = L*(p) (#1185).
+    """H = sup_alpha {-p.alpha - L} = L*(-p) (#1185; the sign is ruling 5 of #2375).
 
     Reverting ``evaluate_hamiltonian`` to evaluate at ``self.optimal_control(...)``
     instead of ``self.conjugate_argmax(...)`` flips every MINIMIZE row here (and
@@ -205,19 +219,24 @@ class TestEvaluateHamiltonianValue:
         expected = p[0] ** 2 / (2 * 2.0)
         np.testing.assert_allclose(L.evaluate_hamiltonian(X, M, p, T), expected, atol=1e-9)
 
-    def test_asymmetric_hamiltonian_is_conjugate_at_plus_p(self):
-        """The discriminating case: L*(p) vs L*(-p).
+    def test_asymmetric_hamiltonian_is_conjugate_at_minus_p(self):
+        """The discriminating case: L*(-p), not L*(p). [RENAMED AND INVERTED 2026-09-21, #2375 ruling 5.]
 
-        At p=2 these are 1.445 and 2.645; evaluating at the sign-flipped control
-        instead gives yet a third value. Only the conjugate at +p passes.
+        Was ``test_asymmetric_hamiltonian_is_conjugate_at_plus_p`` asserting ``conjugate(p)``.
+        Ruling 5 makes H = sup{-p.a - L} = L*(-p), so the assertion and the name both move; a
+        name left saying ``plus_p`` would be a test whose title contradicts its body, which is
+        worse than either convention.
+
+        At p=2 the two candidates are 1.445 and 2.645 -- still 1.2 apart, so the guard below
+        still guards. Evaluating at the sign-flipped control gives a third value again.
         """
         L = AsymmetricL()
         for p_val in (2.0, -1.5, 1.0):
             got = L.evaluate_hamiltonian(X, M, np.array([p_val]), T)
-            np.testing.assert_allclose(got, AsymmetricL.conjugate(p_val), atol=1e-9)
-            # and is NOT the conjugate at -p (guards a p -> -p slip)
+            np.testing.assert_allclose(got, AsymmetricL.conjugate(-p_val), atol=1e-9)
+            # and is NOT the conjugate at +p (guards a p -> -p slip, now in the other direction)
             if p_val != 0.0:
-                assert abs(got - AsymmetricL.conjugate(-p_val)) > 1e-3
+                assert abs(got - AsymmetricL.conjugate(p_val)) > 1e-3
 
     @pytest.mark.parametrize("p", P_VALUES)
     def test_dual_lagrangian_round_trips_to_its_source_hamiltonian(self, p):
