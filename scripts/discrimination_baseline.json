@@ -1,8 +1,8 @@
 {
   "_comment": "Kill counts per mutated convention. --check-baseline fails when a count DROPS (discrimination lost) and when one RISES (record the gain in the same change). Counts, not test names: this population cannot be selected by name -- the agreement-shaped patterns give 51, 114 or 156 depending on the regex.",
   "_measured_at": {
-    "collected": 4090,
-    "commit": "76f2d9e8",
+    "collected": 4075,
+    "commit": "27d45c19",
     "excluded": "tests/unit/test_discrimination_ratchet.py",
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment and not manual",
     "paths": [
@@ -17,7 +17,7 @@
       "status": "ok"
     },
     "bc_noflux_reads_as_clamp": {
-      "kill_count": 11,
+      "kill_count": 12,
       "owner": "no_flux/neumann/robin -> reflect (#1698)",
       "status": "ok"
     },
@@ -102,8 +102,8 @@
       "status": "ok"
     },
     "optimal_control_sign": {
-      "kill_count": 42,
-      "owner": "QuadraticControlCost alpha* = -sign*p/lambda (#1649)",
+      "kill_count": 35,
+      "owner": "QuadraticControlCost alpha* = -p/lambda (#1649, #2373)",
       "status": "ok"
     },
     "particle_mass_counting_measure": {
