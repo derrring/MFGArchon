@@ -171,15 +171,18 @@ def test_the_two_applicators_still_disagree_and_that_is_the_remaining_defect():
     Retires when the interpolation half lands: the first assertion then fails.
     """
     fdm = _normal_derivative(_enforced("FDMApplicator", "quadratic", _G), "left")
+    interp_zero = _enforced("InterpolationApplicator", "quadratic", 0.0)
     interp_g = _enforced("InterpolationApplicator", "quadratic", _G)
-    interp = _normal_derivative(interp_g, "left")
 
-    assert fdm == pytest.approx(_G, abs=1e-9), (
+    assert fdm == pytest.approx(_G, abs=1e-12), (
         f"FDMApplicator's left wall imposes du/dn = {fdm:+.6f}, not the requested {_G:+.6f}. The "
         f"#2141 sign fix has regressed; see enforcement.py's non-zero-gradient branch."
     )
-    assert interp != pytest.approx(_G, abs=1e-9), (
-        f"InterpolationApplicator now imposes du/dn = {interp:+.6f} at the left wall. The second "
-        f"half of #2141 is fixed: delete this test and remove InterpolationApplicator from "
-        f"_STILL_WRONG_AT_THE_LEFT_WALL."
+    # Bit-identity, NOT `!= g`. The docstring above says why: what is true of every field is that
+    # the result does not depend on `g` at all, and `!= g` also passes while the value is applied
+    # wrongly. Keeping the weaker form here would contradict this file's own stated target.
+    assert np.array_equal(interp_zero, interp_g), (
+        f"InterpolationApplicator now responds to the Neumann value: max|diff| = "
+        f"{np.max(np.abs(interp_zero - interp_g)):.6e}. The second half of #2141 is fixed: delete "
+        f"this test and remove InterpolationApplicator from _STILL_WRONG_AT_THE_LEFT_WALL."
     )
