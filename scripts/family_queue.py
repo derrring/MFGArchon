@@ -64,9 +64,24 @@ def families_of(issue: int) -> list[str]:
     return sorted(lb["name"] for lb in labels if lb["name"].startswith(PREFIX))
 
 
-def open_in(family: str) -> list[int]:
-    rows = gh_json(["issue", "list", "--label", family, "--state", "open", "--limit", "300", "--json", "number"])
+LIMIT = 400
+
+
+def issues_with(label: str, state: str = "open") -> list[int]:
+    """Issue numbers carrying `label`. Raises if the page size was reached rather than truncating.
+
+    `gh --limit N` returns N and says nothing about there being more -- a limit is a page size
+    wearing a number. A truncated list here would under-report a family's open members and, at the
+    limit, could report a populated family as empty.
+    """
+    rows = gh_json(["issue", "list", "--label", label, "--state", state, "--limit", str(LIMIT), "--json", "number"])
+    if len(rows) >= LIMIT:
+        raise RuntimeError(f"'{label}' returned {len(rows)} at the page size; raise LIMIT rather than trusting this")
     return sorted(r["number"] for r in rows)
+
+
+def open_in(family: str) -> list[int]:
+    return issues_with(family, "open")
 
 
 def load_order() -> dict:
@@ -81,7 +96,18 @@ def unblocked() -> list[dict]:
         # member whose mechanism matches but whose oracle certifies something else -- a performance
         # benchmark among correctness oracles -- holds the queue head shut forever. Grouping and
         # order do not share a grain.
-        if not open_in(dep["blocker_label"]) and (still := open_in(PREFIX + dep["unblocks"])):
+        blocker = dep["blocker_label"]
+        # "Nothing open carries it" is NOT enough, and a stress test is what showed it: a blocker
+        # label that exists and was never applied to anything reads exactly like one whose issues
+        # have all closed. The order file declaring that a dependency EXISTS does not separate them
+        # either -- it says the relation is real, not that anyone ever identified what blocks it.
+        # So the evidence for "unblocked" is that something CLOSED carries the label: the blockers
+        # were identified, and they are done.
+        ever = issues_with(blocker, "all")
+        if not ever:
+            out.append({**dep, "open": [], "unverified": "no issue has ever carried this label, so the blocker was never identified"})
+            continue
+        if not open_in(blocker) and (still := open_in(PREFIX + dep["unblocks"])):
             out.append({**dep, "open": still})
     return out
 
@@ -99,7 +125,20 @@ def report_branch(issue: int) -> int:
             print(f"    {' '.join('#' + str(n) for n in siblings)}")
             print("    Fixing this one alone has a yield of 1:1; the family is the unit that")
             print("    makes the count fall.")
+            # A label good enough to diagnose from is good enough to stop you reading the source,
+            # and this one is not good enough to diagnose from. Membership was established from what
+            # each ISSUE says, not from the instrument it describes. Measured cost of skipping this,
+            # 2026-09-21: an incident matched 'ratchet-counts-not-sets' so exactly that it was
+            # written into a PR body as the diagnosis, and the source said the opposite -- that
+            # checker pins identities as well as counts, and a comment above the function describes
+            # the failure that was being attributed to it. The defect was elsewhere.
+            print("    Membership is a HYPOTHESIS about a mechanism, taken from what the issue says")
+            print("    and not from the code it describes. Read the source before you diagnose from it.")
     for u in unblocked():
+        if u.get("unverified"):
+            print(f"  DEPENDENCY UNVERIFIED: '{u['blocker_label']}' -- {u['unverified']}.")
+            print("    This is not 'unblocked'. Label the issues that block it, or drop the dependency.")
+            continue
         print(f"  QUEUE HEAD: nothing open carries '{u['blocker_label']}', which unblocks")
         print(f"    '{u['unblocks']}' -- {len(u['open'])} open: {' '.join('#' + str(n) for n in u['open'])}")
         print(f"    {u['why']}")
@@ -114,7 +153,7 @@ def report_emptied(issue: int) -> int:
         print(f"FAMILY_EMPTIED={fam}")
         print(f"CLOSED_BY=#{issue}")
         for u in unblocked():
-            if True:
+            if not u.get("unverified"):
                 print(f"UNBLOCKS={u['unblocks']}")
                 print(f"UNBLOCKS_OPEN={' '.join('#' + str(n) for n in u['open'])}")
                 print(f"WHY={u['why']}")
