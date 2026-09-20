@@ -136,6 +136,13 @@ class ControlCostBase(ABC):
         # A non-number was no better -- `L1ControlCost("abc")` raised from the comparison itself,
         # `'<=' not supported between instances of 'str' and 'int'`, which names neither the
         # parameter nor the class.
+        # BOTH ARMS ARE LOAD-BEARING, and neither is redundant with the other -- they catch
+        # DIFFERENT inputs, which is why this looks like belt-and-braces and is not:
+        #   isinstance(True,            bool)         True   <- only the first arm refuses `True`,
+        #   isinstance(True,            numbers.Real) True      because the ABC admits it
+        #   isinstance(np.bool_(True),  bool)         False  <- only the second arm refuses this,
+        #   isinstance(np.bool_(True),  numbers.Real) False     because `np.bool_` is not a `bool`
+        # Delete either one and a boolean weight is accepted again by the path the other misses.
         if isinstance(lam, bool) or not isinstance(lam, numbers.Real):
             raise TypeError(
                 f"{type(self).__name__}: the control cost weight must be a real number, got "
@@ -837,6 +844,10 @@ class MFGOperatorBase(ABC):
         # test pinned the refusal for the old parameter; this is its successor for the two that
         # inherited the positions. Measured before this guard:
         # `SeparableHamiltonian(cost, None, None, None, 0.5)` silently set population_index = 0.5.
+        # Both arms load-bearing for different inputs, as on the weight guard above:
+        # `isinstance(True, numbers.Integral)` is True, so the ABC does NOT refuse `True` and the
+        # explicit `bool` arm is the only thing that does; `np.bool_(True)` is neither a `bool` nor
+        # an `Integral`, so only the ABC arm refuses that one. Removing either reopens one of them.
         if isinstance(population_index, bool) or not isinstance(population_index, numbers.Integral):
             raise TypeError(
                 f"{type(self).__name__}: population_index must be an integer, got "
