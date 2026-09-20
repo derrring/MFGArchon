@@ -2,8 +2,8 @@
 """Measure `path.py:NNN` citations in durable prose that no longer point at what they name.
 
 A line number in a document is a claim with an expiry date, and nothing marks it when it stops
-being true. At `WINDOW = 12`: 12 of the 28 adjudicable citations in this repository's live prose
--- 43% -- name a symbol that is not near the cited line (Issue #2102).
+being true. At `WINDOW = 12`: 11 of the 29 adjudicable citations in this repository's live prose
+-- 38% -- name a symbol that is not near the cited line (Issue #2102).
 
 THIS IS A REVIEW QUEUE, NOT A DEFECT LIST, and the distinction is measured rather than modest.
 All 11 rows were read by hand, and they contain both kinds -- **genuinely wrong citations, and the

@@ -103,10 +103,13 @@ class NetworkHJBSolver(BaseHJBSolver):
 
         self.network_problem = problem
 
-        # Issue #1476: orientation sign for the backward-HJB integration, single-sourced from the wired
-        # Hamiltonian object so the solver and the object never disagree on the sense. +1 for MINIMIZE
-        # (du/ds = -H_control + source). ONLY the control carries
-        # unflipped; the source (V + congestion) enters unflipped too (see the rhs).
+        # Issue #1476: orientation sign for the backward-HJB integration. It is the constant +1
+        # (du/ds = -H_control + source) and is NO LONGER read from the wired Hamiltonian object --
+        # #2373 deleted the parameter it used to come from, so nothing single-sources it any more.
+        # ONLY the control term carries this factor; the source (V + congestion) enters WITHOUT it
+        # (see the rhs). That asymmetry is the thing phase 2 must preserve: it is what makes the
+        # isolation step `h_control = h_total - source` correct, and flipping the factor without it
+        # would flip the source too.
         # A genuine blow-up on the explicit RK45 path surfaces via the solve_ivp non-convergence
         # warning below (sol.success is False).
         #

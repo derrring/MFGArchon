@@ -837,15 +837,19 @@ class MFGOperatorBase(ABC):
         # test pinned the refusal for the old parameter; this is its successor for the two that
         # inherited the positions. Measured before this guard:
         # `SeparableHamiltonian(cost, None, None, None, 0.5)` silently set population_index = 0.5.
-        if isinstance(population_index, bool) or not isinstance(population_index, int):
+        if isinstance(population_index, bool) or not isinstance(population_index, numbers.Integral):
             raise TypeError(
-                f"{type(self).__name__}: population_index must be an int, got "
+                f"{type(self).__name__}: population_index must be an integer, got "
                 f"{population_index!r} of type {type(population_index).__name__}."
             )
         if population_index < 0:
             raise ValueError(f"population_index must be non-negative, got {population_index}")
-        self.finite_diff_eps = finite_diff_eps
-        self.population_index = population_index
+        # Both annotations are load-bearing, and `int(...)` is the same move as `float(lam)` above:
+        # `numbers.Integral` is an ABC, so mypy narrows to it and cannot type the attribute. Measured
+        # -- the bare swap costs `core: 136 -> 142`, and all six are `Cannot determine type of
+        # "finite_diff_eps"`, the SIBLING assignment, not this one. Annotating only one leaves +6.
+        self.finite_diff_eps: float = finite_diff_eps
+        self.population_index: int = int(population_index)
 
     @property
     @abstractmethod
