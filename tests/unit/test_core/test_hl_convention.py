@@ -42,11 +42,16 @@ pins that evenness rather than leaving it implicit.
 
 from __future__ import annotations
 
+import ast
+import inspect
+import pathlib
+
 import pytest
 
 import numpy as np
 from scipy.optimize import minimize_scalar
 
+import mfgarchon
 from mfgarchon.core.hamiltonian import (
     BoundedControlCost,
     CongestionHamiltonian,
@@ -54,6 +59,7 @@ from mfgarchon.core.hamiltonian import (
     L1ControlCost,
     QuadraticControlCost,
     SeparableLagrangian,
+    _MoreauYosidaControlCost,
 )
 
 # Sweep points chosen to straddle every kink the shipped costs have, so the pin
@@ -107,6 +113,112 @@ CONTROL_COSTS = {
     "bounded": lambda: BoundedControlCost(lambda_=1.0, max_control=2.0),
     "l1": lambda: L1ControlCost(lambda_=0.5),
 }
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# WHY THE DICT ABOVE IS NOT THE POPULATION (#2386).
+#
+# `test_conjugate_is_alpha_sign_blind` below used to promise: "If a non-even control cost is ever
+# added, this test fails and B5 stops being optional." It could not. Its population was the dict
+# above -- three hand-written entries -- so a fourth cost was covered only if whoever added it
+# remembered. A hand-written list cannot notice a subclass it does not contain, and the dict was
+# already missing `_MoreauYosidaControlCost`, which has been a `ControlCostBase` subclass all along.
+#
+# The dict stays, because `CONGESTION_L_CTRL` pairs each entry with a conjugate transcribed BY HAND
+# and that independence is what gives the congestion round trip teeth. What it gains is a
+# completeness gate: `test_the_hand_written_cost_dict_covers_every_subclass` fails and NAMES the
+# missing class, so a new cost cannot arrive without its conjugate.
+#
+# The evenness claim needs no transcription, so it runs over the enumeration directly and covers a
+# new cost the moment it is defined.
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+# Required constructor arguments we know how to supply. A cost whose required argument is NOT here
+# raises rather than being skipped: a silently skipped subclass is the defect this section exists to
+# remove, and it would look exactly like coverage.
+_REQUIRED_ARG_STRATEGY = {
+    "base": lambda: QuadraticControlCost(lambda_=2.0),
+    "epsilon": lambda: 0.1,
+}
+
+
+def _concrete_control_cost_classes():
+    """Every concrete `ControlCostBase` subclass DEFINED IN THE LIBRARY.
+
+    Recursive, because a future cost may subclass a concrete one rather than the base.
+
+    THE `mfgarchon.` FILTER IS LOAD-BEARING AND WAS ADDED BY A RED GATE. `__subclasses__()` is
+    interpreter-global, so under full collection it also returns subclasses defined inside OTHER TEST
+    FILES -- `_NarrowL1` and `_NarrowBounded` in `test_sl_control_set_single_source_1642.py`. Without
+    the filter this file passed standalone at 42 and failed in the gate, which is precisely the
+    "coverage depends on collection order" failure that
+    `test_s1_drift_convention_routing.py:236` warns about, arriving in the fix written from its
+    lesson. The enumeration was right; the expectation was not.
+
+    Test fixtures are also not the population: a test may legitimately define a non-even cost to
+    probe something, and the library's guarantee says nothing about it.
+    """
+
+    def walk(cls):
+        for sub in cls.__subclasses__():
+            yield sub
+            yield from walk(sub)
+
+    return sorted(
+        {
+            c
+            for c in walk(ControlCostBase)
+            if not getattr(c, "__abstractmethods__", ())
+            and (c.__module__ == "mfgarchon" or c.__module__.startswith("mfgarchon."))
+        },
+        key=lambda c: c.__name__,
+    )
+
+
+def _construct(cls):
+    """Build `cls` with defaults, filling required arguments from the strategy table."""
+    signature = inspect.signature(cls.__init__)
+    kwargs = {}
+    for name, param in signature.parameters.items():
+        if name == "self" or param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
+            continue
+        if param.default is not inspect.Parameter.empty:
+            continue
+        assert name in _REQUIRED_ARG_STRATEGY, (
+            f"{cls.__name__}.__init__ requires {name!r}, which this file does not know how to "
+            f"supply. Add it to _REQUIRED_ARG_STRATEGY -- do NOT skip the class, because a skipped "
+            f"subclass is indistinguishable from a covered one and that is exactly the gap #2386 "
+            f"was filed about."
+        )
+        kwargs[name] = _REQUIRED_ARG_STRATEGY[name]()
+    return cls(**kwargs)
+
+
+def _control_cost_classes_in_source():
+    """The same population read from the SOURCE, independent of what has been imported.
+
+    `__subclasses__()` only sees classes that some module has already imported, so a cost defined in
+    a module nobody imports is invisible to it while looking like an empty result. This is the second
+    instrument: an AST scan over the package. The two must agree, and
+    `test_the_runtime_enumeration_sees_every_cost_in_the_source` is where they are compared.
+
+    The hazard is not hypothetical -- `test_s1_drift_convention_routing.py:236` records the same
+    enumeration reaching 7 classes standalone and 10 under full collection, and its comment is the
+    rule this follows: a pin whose coverage depends on collection order is not a pin.
+    """
+    root = pathlib.Path(mfgarchon.__file__).parent
+    found: set[str] = set()
+    for path in root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            base_names = {b.id for b in node.bases if isinstance(b, ast.Name)} | {
+                b.attr for b in node.bases if isinstance(b, ast.Attribute)
+            }
+            if base_names & ({"ControlCostBase"} | found):
+                found.add(node.name)
+    return found
+
 
 CONGESTION_SLOPE = 3.0
 
@@ -194,21 +306,33 @@ class TestSeparableRoundTrip:
                 f"{cost_name} p={p}: conjugate of L gave {got}, H gave {expected}"
             )
 
-    @pytest.mark.parametrize("cost_name", list(CONTROL_COSTS))
-    def test_conjugate_is_alpha_sign_blind(self, cost_name):
+    @pytest.mark.parametrize("cost_cls", _concrete_control_cost_classes(), ids=lambda c: c.__name__)
+    def test_conjugate_is_alpha_sign_blind(self, cost_cls):
         """Every shipped L_ctrl is even in alpha, so sup{+p.a - L} == sup{-p.a - L}.
 
         This is why the (V, f) pin above is independent of the Issue #1642 B5
-        alpha-sign question. If a non-even control cost is ever added, this test
-        fails and B5 stops being optional.
+        alpha-sign question, and it is what #2375 ruling 5's "nothing in this library changes
+        value" rests on: the pairing flip is a no-op exactly while every L is even.
+
+        PARAMETRISED OVER THE ENUMERATION, NOT `CONTROL_COSTS` (#2386). The old version promised
+        "if a non-even control cost is ever added, this test fails and B5 stops being optional"
+        while iterating a three-entry hand-written dict, so it could not keep that promise -- and
+        it was already missing `_MoreauYosidaControlCost`. Adding a class to the library is now
+        sufficient; nobody has to remember this file.
         """
-        cost = CONTROL_COSTS[cost_name]()
+        cost = _construct(cost_cls)
         L = SeparableLagrangian(control_cost=cost)
         box = _search_box(cost)
         for p in P_SWEEP:
             plus = _conjugate(L, p, bounds=box, alpha_sign=+1.0)
             minus = _conjugate(L, p, bounds=box, alpha_sign=-1.0)
-            assert plus == pytest.approx(minus, abs=1e-6), f"{cost_name} p={p}: L_ctrl is not even in alpha"
+            assert plus == pytest.approx(minus, abs=1e-6), (
+                f"{cost_cls.__name__} p={p}: L_ctrl is NOT even in alpha. This is legitimate -- "
+                f"#2375 ruling 5 exists so the library is correct for a non-even cost -- but it "
+                f"means the four analytic closed forms on ControlCostBase subclasses "
+                f"(evaluate / optimal_control / dp) must be RE-DERIVED: each is hand-written and "
+                f"correct only while L(-a) == L(a). Do not make the new cost even to silence this."
+            )
 
 
 class TestCongestionRoundTrip:
@@ -329,3 +453,95 @@ class TestEffectiveDomain:
 
         assert on_domain == pytest.approx(true_h, abs=1e-6)
         assert off_domain > 40.0 * true_h
+
+
+class TestTheEnumerationIsThePopulation:
+    """#2386. Two instruments over the same population, which must agree.
+
+    `test_conjugate_is_alpha_sign_blind` is only as good as the set it iterates, and this class is
+    what makes that set trustworthy. One check guards the hand-written dict the congestion round
+    trip needs; the other guards the runtime enumeration itself, which can under-report silently.
+    """
+
+    def test_the_runtime_enumeration_sees_every_cost_in_the_source(self):
+        """`__subclasses__()` sees only what has been IMPORTED, and reports the rest as absent.
+
+        A cost defined in a module nobody imports is invisible to the runtime enumeration while
+        the result looks like a complete population -- an empty difference and a missing class are
+        the same observation. So the source is read independently, by AST, and the two compared.
+
+        `test_s1_drift_convention_routing.py:236` records this exact failure on a sibling
+        enumeration: 7 classes standalone against 10 under full collection, because one module was
+        imported only by a neighbouring test. Its comment is the rule followed here.
+        """
+        runtime = {c.__name__ for c in _concrete_control_cost_classes()}
+        in_source = _control_cost_classes_in_source()
+        assert in_source, "the AST scan found no ControlCostBase subclass at all -- it is broken"
+        missing = in_source - runtime
+        assert not missing, (
+            f"{sorted(missing)} subclass ControlCostBase in the source but are not reachable from "
+            f"`__subclasses__()`, so the evenness pin never sees them. Import the defining module "
+            f"at the top of this file -- that is what makes the enumeration independent of "
+            f"collection order."
+        )
+
+    def test_the_hand_written_cost_dict_covers_every_subclass(self):
+        """`CONTROL_COSTS` is deliberately hand-written; this is what stops it going stale.
+
+        The congestion round trip pairs each entry with a conjugate transcribed BY HAND in
+        `CONGESTION_L_CTRL`, and that independence is what gives it teeth -- so the dict cannot be
+        derived. What it can have is a gate that fails and NAMES the gap, so a new cost cannot
+        arrive without someone writing its conjugate.
+
+        Note what this does NOT require: the evenness pin covers a new class immediately, with no
+        conjugate. Only the congestion round trip needs the transcription.
+        """
+        covered = {type(factory()) for factory in CONTROL_COSTS.values()}
+        enumerated = set(_concrete_control_cost_classes())
+        uncovered = enumerated - covered
+        assert uncovered == {_MoreauYosidaControlCost}, (
+            f"{sorted(c.__name__ for c in uncovered)} are ControlCostBase subclasses with no "
+            f"CONTROL_COSTS entry, so the congestion round trip does not exercise them. Add an "
+            f"instance to CONTROL_COSTS and its hand-transcribed conjugate to CONGESTION_L_CTRL, "
+            f"or extend the expected set here with the reason."
+        )
+        assert set(CONGESTION_L_CTRL) == set(CONTROL_COSTS), (
+            "every CONTROL_COSTS entry needs a CONGESTION_L_CTRL conjugate and vice versa; "
+            f"dict keys {sorted(CONTROL_COSTS)} against conjugates {sorted(CONGESTION_L_CTRL)}"
+        )
+
+    def test_the_enumeration_excludes_subclasses_defined_in_tests(self):
+        """NEGATIVE CONTROL for the `mfgarchon.` filter, which a red gate added.
+
+        Two test files define `ControlCostBase` subclasses (`_NarrowL1`, `_NarrowBounded` in
+        `test_sl_control_set_single_source_1642.py`). `__subclasses__()` is interpreter-global, so
+        they appear here under full collection and not standalone -- and without the filter this
+        file's completeness gate failed in the gate while passing alone.
+
+        Asserts both directions: a locally-defined subclass is excluded, and a real library class
+        is still included, so the filter cannot pass by excluding everything.
+        """
+
+        class _LocalProbeCost(QuadraticControlCost):
+            pass
+
+        enumerated = _concrete_control_cost_classes()
+        assert _LocalProbeCost not in enumerated, (
+            "a subclass defined in a test file is in the library population; the mfgarchon. filter "
+            "is not working and this file's coverage depends on collection order"
+        )
+        assert QuadraticControlCost in enumerated, "the filter excluded a real library cost"
+
+    def test_the_construction_strategy_refuses_rather_than_skips(self):
+        """CONTROL: a cost with an unknown required argument must RAISE, not be skipped.
+
+        A skipped subclass is indistinguishable from a covered one, which is the whole defect
+        #2386 records one layer up. Probed with a class the strategy table cannot build.
+        """
+
+        class _NeedsSomethingUnknown(QuadraticControlCost):
+            def __init__(self, mystery_parameter):
+                raise AssertionError("must not be reached")
+
+        with pytest.raises(AssertionError, match=r"mystery_parameter.*does not know how to supply"):
+            _construct(_NeedsSomethingUnknown)
