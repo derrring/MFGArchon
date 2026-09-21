@@ -220,7 +220,8 @@ class ControlCostBase(ABC):
 
         This is the numerical evaluation used in the HJB equation.
         For non-smooth costs, returns the value obtained by substituting
-        the optimal control: H(p) = p * alpha*(p) - L(alpha*(p)).
+        the optimal control: H(p) = -p * alpha*(p) - L(alpha*(p)) (#2375 ruling 5; identical to
+        the old +p form for every cost in this module, all of which are even in alpha).
 
         Parameters
         ----------
@@ -300,7 +301,7 @@ class ControlCostBase(ABC):
         smooth branch everywhere and returns a FINITE value for infeasible
         alpha. ``BoundedControlCost(max_control=2).lagrangian(5.0)`` returns
         12.5 where the true L is +inf. Consumers that maximize
-        ``p*alpha - L(alpha)`` must therefore restrict the search to this
+        ``-p*alpha - L(alpha)`` must therefore restrict the search to this
         domain, or they silently overshoot -- for ``L1ControlCost(lambda_=0.5)``
         at p=5 the unrestricted sup returns 225.0 against a true H of 4.5.
         Making ``lagrangian()`` itself fail loud outside A is deferred to
@@ -1729,7 +1730,7 @@ class LagrangianBase(MFGOperatorBase):
         def neg_objective_nd(alpha):
             return -(-np.dot(p_arr.ravel(), alpha) - float(self(x, alpha, m, t)))
 
-        x0 = np.clip(p_arr.ravel(), bounds[0], bounds[1])
+        x0 = np.clip(-p_arr.ravel(), bounds[0], bounds[1])
         res = scipy_minimize(neg_objective_nd, x0, bounds=[bounds] * d, method="L-BFGS-B")
         self._reject_fallback_truncation(res.x, used_fallback, "conjugate_argmax")
         return -res.x
@@ -1748,7 +1749,7 @@ class LagrangianBase(MFGOperatorBase):
         Same convention as HamiltonianBase.optimal_control() (Issue #1642):
         - MINIMIZE: alpha* = -dH/dp
 
-        with dH/dp = argmax_alpha { p . alpha - L(x, alpha, m, t) }. Computed
+        with dH/dp = -argmax_alpha { -p . alpha - L(x, alpha, m, t) } (#2375 ruling 5). Computed
         directly from L without constructing DualHamiltonian.
 
         Before #1642 this returned the bare argmax -- i.e. +p/lambda under
@@ -1968,7 +1969,7 @@ class DualHamiltonian(HamiltonianBase):
     """
     Hamiltonian defined via Legendre transform of a Lagrangian.
 
-    This class computes H(x, p, m, t) = sup_α { p·α - L(x, α, m, t) }
+    This class computes H(x, p, m, t) = sup_α { -p·α - L(x, α, m, t) }   (#2375 ruling 5)
     numerically for general Lagrangians. It is the "dual" of a given
     Lagrangian in the sense of Legendre/convex duality.
 
@@ -2039,11 +2040,16 @@ class DualHamiltonian(HamiltonianBase):
             from scipy.optimize import minimize as scipy_minimize
 
             def neg_objective(alpha):
-                # Minimize negative of (p·α - L)
+                # Minimize negative of (-p·α - L)
                 return -(-np.dot(p_flat, alpha) - float(self.lagrangian(x, alpha, m, t)))
 
-            # Initial guess: project p onto bounds
-            x0 = np.clip(p_flat, self.alpha_bounds[0], self.alpha_bounds[1])
+            # Initial guess: -p, because the maximiser of {-p.a - L} sits near -p/lambda, not
+            # +p/lambda (#2375 ruling 5). Under the old pairing `clip(p)` started ON the optimum;
+            # leaving it after the flip starts the LOCAL scipy search a full 2p/lambda away and it
+            # settles in the wrong basin on a non-convex L -- measured, 5 of 6 probes missed the
+            # global sup by up to 13.0. The 1-D and fallback branches grid-search globally and are
+            # unaffected; only this branch is seeded.
+            x0 = np.clip(-p_flat, self.alpha_bounds[0], self.alpha_bounds[1])
             bounds = [self.alpha_bounds] * d
 
             result = scipy_minimize(neg_objective, x0, bounds=bounds, method="L-BFGS-B")
@@ -2114,7 +2120,7 @@ class DualHamiltonian(HamiltonianBase):
             def neg_objective(alpha):
                 return -(-np.dot(p_flat, alpha) - float(self.lagrangian(x, alpha, m, t)))
 
-            x0 = np.clip(p_flat, self.alpha_bounds[0], self.alpha_bounds[1])
+            x0 = np.clip(-p_flat, self.alpha_bounds[0], self.alpha_bounds[1])
             bounds = [self.alpha_bounds] * d
             result = scipy_minimize(neg_objective, x0, bounds=bounds, method="L-BFGS-B")
             return -result.x
@@ -2140,7 +2146,7 @@ class DualLagrangian(LagrangianBase):
     """
     Lagrangian defined via inverse Legendre transform of a Hamiltonian.
 
-    This class computes L(x, α, m, t) = sup_p { p·α - H(x, p, m, t) }
+    This class computes L(x, α, m, t) = sup_p { -p·α - H(x, p, m, t) }   (#2375 ruling 5)
     numerically for general Hamiltonians. It is the "dual" of a given
     Hamiltonian in the sense of Legendre/convex duality.
 
@@ -2207,7 +2213,7 @@ class DualLagrangian(LagrangianBase):
             def neg_objective(p):
                 return -(-np.dot(p, alpha_flat) - float(self.hamiltonian(x, m, p, t)))
 
-            x0 = np.clip(alpha_flat, self.p_bounds[0], self.p_bounds[1])
+            x0 = np.clip(-alpha_flat, self.p_bounds[0], self.p_bounds[1])
             bounds = [self.p_bounds] * d
             result = scipy_minimize(neg_objective, x0, bounds=bounds, method="L-BFGS-B")
             return float(-result.fun)
@@ -2282,7 +2288,7 @@ class DualLagrangian(LagrangianBase):
             def neg_objective(p):
                 return -(-np.dot(p, alpha_flat) - float(self.hamiltonian(x, m, p, t)))
 
-            x0 = np.clip(alpha_flat, self.p_bounds[0], self.p_bounds[1])
+            x0 = np.clip(-alpha_flat, self.p_bounds[0], self.p_bounds[1])
             bounds = [self.p_bounds] * d
             result = scipy_minimize(neg_objective, x0, bounds=bounds, method="L-BFGS-B")
             return -result.x
