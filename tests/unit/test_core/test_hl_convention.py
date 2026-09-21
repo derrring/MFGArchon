@@ -42,9 +42,10 @@ pins that evenness rather than leaving it implicit.
 
 from __future__ import annotations
 
-import ast
+import importlib
 import inspect
-import pathlib
+import pkgutil
+import warnings
 
 import pytest
 
@@ -136,7 +137,12 @@ CONTROL_COSTS = {
 # raises rather than being skipped: a silently skipped subclass is the defect this section exists to
 # remove, and it would look exactly like coverage.
 _REQUIRED_ARG_STRATEGY = {
-    "base": lambda: QuadraticControlCost(lambda_=2.0),
+    # `base` MUST be non-smooth. `regularize()` returns `self` for a smooth cost
+    # (`QuadraticControlCost.is_smooth()` is True), so `_MoreauYosidaControlCost(base=Quadratic)`
+    # is a specimen the library CANNOT produce -- and its `effective_domain()` is None, so the
+    # search box widens to (-50, 50) and neither an l1 kink nor a saturated boundary is probed.
+    # Measured: `L1ControlCost(0.5).regularize(0.1)` gives base=L1, domain=(-1.0, 1.0).
+    "base": lambda: L1ControlCost(lambda_=0.5),
     "epsilon": lambda: 0.1,
 }
 
@@ -151,8 +157,12 @@ def _concrete_control_cost_classes():
     FILES -- `_NarrowL1` and `_NarrowBounded` in `test_sl_control_set_single_source_1642.py`. Without
     the filter this file passed standalone at 42 and failed in the gate, which is precisely the
     "coverage depends on collection order" failure that
-    `test_s1_drift_convention_routing.py:236` warns about, arriving in the fix written from its
+    `test_s1_drift_convention_routing.py`'s `test_potential_field_is_never_deprecated_on_any_fp_solver` warns about, arriving in the fix written from its
     lesson. The enumeration was right; the expectation was not.
+
+    Removing the filter today gives 42 passed AND 1 failed standalone, because
+    `test_the_enumeration_excludes_subclasses_defined_in_tests` catches it alone -- better than when
+    this was written, where it only failed under full collection.
 
     Test fixtures are also not the population: a test may legitimately define a non-even cost to
     probe something, and the library's guarantee says nothing about it.
@@ -193,31 +203,45 @@ def _construct(cls):
     return cls(**kwargs)
 
 
-def _control_cost_classes_in_source():
-    """The same population read from the SOURCE, independent of what has been imported.
+def _import_every_library_module():
+    """Import every module in the package, so `__subclasses__()` is complete BY CONSTRUCTION.
 
-    `__subclasses__()` only sees classes that some module has already imported, so a cost defined in
-    a module nobody imports is invisible to it while looking like an empty result. This is the second
-    instrument: an AST scan over the package. The two must agree, and
-    `test_the_runtime_enumeration_sees_every_cost_in_the_source` is where they are compared.
+    REPLACES AN AST WALKER THAT CAUGHT ONE SHAPE OF FOUR. The first version of this file read the
+    population a second way -- an `ast` scan for classes whose bases NAME `ControlCostBase` -- to
+    cover what `__subclasses__()` cannot see: a cost in a module nobody imports. Review measured it
+    against four ways of writing that cost, each in an unimported module:
 
-    The hazard is not hypothetical -- `test_s1_drift_convention_routing.py:236` records the same
-    enumeration reaching 7 classes standalone and 10 under full collection, and its comment is the
-    rule this follows: a pin whose coverage depends on collection order is not a pin.
+        class P(ControlCostBase)                     caught
+        class P(CCB)       # aliased import           BLIND
+        class P(QuadraticControlCost)                 BLIND
+        class P(_QCC)      # aliased concrete base    BLIND
+
+    Two independent mechanisms. An aliased import defeats a name match in ANY file. And the walker
+    accumulated known bases in one `rglob` pass, so a subclass of a CONCRETE cost in a file walked
+    before `hamiltonian.py` was missed -- the same snippet was caught under `backends/` and blind
+    under `core/`, decided by directory order.
+
+    Fixing the resolver was the wrong move: it is a hand-rolled subclass resolver, review found
+    three holes, and star imports, dynamic base tuples and `__init_subclass__` are three more it
+    would still miss. This removes the blind spot instead of detecting it -- import everything, and
+    the runtime enumeration has nothing left to be blind to.
     """
-    root = pathlib.Path(mfgarchon.__file__).parent
-    found: set[str] = set()
-    for path in root.rglob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.ClassDef):
-                continue
-            base_names = {b.id for b in node.bases if isinstance(b, ast.Name)} | {
-                b.attr for b in node.bases if isinstance(b, ast.Attribute)
-            }
-            if base_names & ({"ControlCostBase"} | found):
-                found.add(node.name)
-    return found
+    imported, failures = 0, []
+    # Warnings are SUPPRESSED because this sweep is instrumentation, not subject. Importing all 372
+    # modules emits whatever the optional-dependency guards emit -- here an `ImportWarning` from
+    # `geometry/__init__.py` naming gmsh and pyvista -- and that depends on what is installed. Left
+    # unsuppressed it enters the warning census, which would make the committed baseline
+    # machine-dependent: green where gmsh is absent, red where it is present. `capability_matrix.py`
+    # excludes environment warnings for exactly this reason and says why.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for module in pkgutil.walk_packages(mfgarchon.__path__, prefix="mfgarchon."):
+            try:
+                importlib.import_module(module.name)
+                imported += 1
+            except Exception as exc:
+                failures.append(f"{module.name}: {type(exc).__name__}")
+    return imported, failures
 
 
 CONGESTION_SLOPE = 3.0
@@ -321,6 +345,23 @@ class TestSeparableRoundTrip:
         sufficient; nobody has to remember this file.
         """
         cost = _construct(cost_cls)
+        # BIT-EXACT FIRST, because that is what #2375's changelog claims. The conjugate comparison
+        # below runs through `minimize_scalar` at abs=1e-6, and review measured what that tolerates:
+        # for L = lambda/2 a^2 + eps*a at lambda=2 the conjugate gap is 8*eps, so the loop below is
+        # SILENT at eps=1e-7 while |L(a) - L(-a)| is already 1.6e-6. The direct check has no
+        # tolerance to be wrong about and costs nothing.
+        for probe_a in (0.0, 1e-12, 0.25, 0.5, 0.999, 1.0, 1.5, 3.0, 8.0, 120.0):
+            assert float(cost.lagrangian(np.array([probe_a]))) == float(cost.lagrangian(np.array([-probe_a]))), (
+                f"{cost_cls.__name__}: L({probe_a}) != L({-probe_a}) -- not even, and not merely "
+                f"outside a tolerance. Probed across the l1 kink at 0, the interior, and deep "
+                f"saturation."
+            )
+        # `_construct` is a factory, so its output must be pinned to its input. Measured: mutating
+        # it to always return `QuadraticControlCost` left this file at 43 passed, with three of the
+        # four parametrised ids advertising a class they did not exercise -- a silently
+        # MISconstructed subclass is indistinguishable from a correctly constructed one, which is
+        # this file's own thesis one level down.
+        assert type(cost) is cost_cls, f"_construct({cost_cls.__name__}) returned {type(cost).__name__}"
         L = SeparableLagrangian(control_cost=cost)
         box = _search_box(cost)
         for p in P_SWEEP:
@@ -330,8 +371,15 @@ class TestSeparableRoundTrip:
                 f"{cost_cls.__name__} p={p}: L_ctrl is NOT even in alpha. This is legitimate -- "
                 f"#2375 ruling 5 exists so the library is correct for a non-even cost -- but it "
                 f"means the four analytic closed forms on ControlCostBase subclasses "
-                f"(evaluate / optimal_control / dp) must be RE-DERIVED: each is hand-written and "
-                f"correct only while L(-a) == L(a). Do not make the new cost even to silence this."
+                f"(optimal_control / evaluate / dp / lagrangian / proximal -- FIVE per class, and "
+                f"`proximal` is the one most often forgotten: QuadraticControlCost's is "
+                f"z / (1 + tau*lambda), the prox of an EVEN quadratic) must be RE-DERIVED, each "
+                f"being hand-written and "
+                f"correct only while L(-a) == L(a). Do not make the new cost even to silence this.\n"
+                f"SECOND POSSIBLE CAUSE, which this conjugate comparison cannot distinguish: an even "
+                f"L with an ASYMMETRIC admissible set also breaks the equality, because "
+                f"sup{{-p.a - L}} and sup{{+p.a - L}} then range over different sets. Check "
+                f"effective_domain() -- the bit-exact assertion above separates the two cases."
             )
 
 
@@ -463,26 +511,37 @@ class TestTheEnumerationIsThePopulation:
     trip needs; the other guards the runtime enumeration itself, which can under-report silently.
     """
 
-    def test_the_runtime_enumeration_sees_every_cost_in_the_source(self):
-        """`__subclasses__()` sees only what has been IMPORTED, and reports the rest as absent.
+    def test_the_enumeration_is_complete_because_every_module_is_imported(self):
+        """`__subclasses__()` sees only what has been imported, so this imports everything.
 
-        A cost defined in a module nobody imports is invisible to the runtime enumeration while
-        the result looks like a complete population -- an empty difference and a missing class are
-        the same observation. So the source is read independently, by AST, and the two compared.
+        A cost in a module nobody imports is invisible to the runtime enumeration while the result
+        looks like a complete population -- an empty difference and a missing class are the same
+        observation. See `_import_every_library_module` for the AST instrument this replaced and the
+        four shapes it was measured against.
 
-        `test_s1_drift_convention_routing.py:236` records this exact failure on a sibling
-        enumeration: 7 classes standalone against 10 under full collection, because one module was
-        imported only by a neighbouring test. Its comment is the rule followed here.
+        THE FLOOR IS ABOVE THE DEGRADED COUNT, not below.
+        `test_s1_drift_convention_routing.py`'s `test_potential_field_is_never_deprecated_on_any_fp_solver`
+        records why: it calibrated at `>= 8` because the degraded enumeration reached 7, so a `>= 6`
+        guard could never have fired on the gap it was written for. 372 modules import here, so the
+        floor is 300 and a broad import failure that silently empties the population still fires.
         """
-        runtime = {c.__name__ for c in _concrete_control_cost_classes()}
-        in_source = _control_cost_classes_in_source()
-        assert in_source, "the AST scan found no ControlCostBase subclass at all -- it is broken"
-        missing = in_source - runtime
-        assert not missing, (
-            f"{sorted(missing)} subclass ControlCostBase in the source but are not reachable from "
-            f"`__subclasses__()`, so the evenness pin never sees them. Import the defining module "
-            f"at the top of this file -- that is what makes the enumeration independent of "
-            f"collection order."
+        imported, failures = _import_every_library_module()
+        assert imported >= 300, (
+            f"only {imported} of the package's modules imported ({len(failures)} failed), so "
+            f"`__subclasses__()` may not see every cost and this population is incomplete. "
+            f"First failures: {failures[:5]}"
+        )
+        enumerated = _concrete_control_cost_classes()
+        assert {c.__name__ for c in enumerated} == {
+            "BoundedControlCost",
+            "L1ControlCost",
+            "QuadraticControlCost",
+            "_MoreauYosidaControlCost",
+        }, (
+            f"the library's ControlCostBase subclasses are now "
+            f"{sorted(c.__name__ for c in enumerated)}. If one was ADDED, confirm it is even in "
+            f"alpha -- the parametrised pin below already covers it -- then update this set. If one "
+            f"VANISHED, the enumeration is broken and the evenness pin is passing vacuously."
         )
 
     def test_the_hand_written_cost_dict_covers_every_subclass(self):
