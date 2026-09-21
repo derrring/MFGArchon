@@ -19,11 +19,11 @@ where:
 
 The HJB equation uses the Hamiltonian H, related to L via Legendre transform:
 
-    H(x, p, m) = sup_α { p·α - L(x, α, m) }
+    H(x, p, m) = sup_α { -p·α - L(x, α, m) }
 
 The optimal control satisfies:
 
-    α* = argmax_α { p·α - L(x, α, m) } = -∂H/∂p
+    α* = argmax_α { -p·α - L(x, α, m) } = -∂H/∂p
 
 Architecture (v0.17.2+)
 -----------------------
@@ -220,7 +220,8 @@ class ControlCostBase(ABC):
 
         This is the numerical evaluation used in the HJB equation.
         For non-smooth costs, returns the value obtained by substituting
-        the optimal control: H(p) = p * alpha*(p) - L(alpha*(p)).
+        the optimal control: H(p) = -p * alpha*(p) - L(alpha*(p)) (#2375 ruling 5; identical to
+        the old +p form for every cost in this module, all of which are even in alpha).
 
         Parameters
         ----------
@@ -300,7 +301,7 @@ class ControlCostBase(ABC):
         smooth branch everywhere and returns a FINITE value for infeasible
         alpha. ``BoundedControlCost(max_control=2).lagrangian(5.0)`` returns
         12.5 where the true L is +inf. Consumers that maximize
-        ``p*alpha - L(alpha)`` must therefore restrict the search to this
+        ``-p*alpha - L(alpha)`` must therefore restrict the search to this
         domain, or they silently overshoot -- for ``L1ControlCost(lambda_=0.5)``
         at p=5 the unrestricted sup returns 225.0 against a true H of 4.5.
         Making ``lagrangian()`` itself fail loud outside A is deferred to
@@ -560,10 +561,14 @@ class BoundedControlCost(ControlCostBase):
         return np.clip(alpha_unconstrained, -self.max_control, self.max_control)
 
     def evaluate(self, p: np.ndarray) -> np.ndarray:
-        """H(p) = sup_alpha { p . alpha - L(alpha) }. Always finite.
+        """H(p) = sup_alpha { -p . alpha - L(alpha) }. Always finite.
 
         Uses the conjugate maximizer directly, without the negation `optimal_control`
         applies, since the Hamiltonian VALUE does not carry that sign.
+
+        The closed form below is UNCHANGED by #2375 ruling 5's sign flip, and only
+        because this L is even in alpha: sup{-p.a - L} = sup{+p.a - L} exactly when
+        L(-a) = L(a). A non-even control cost subclass must re-derive it.
         """
         p_arr = np.atleast_1d(p)
         threshold = self._lambda * self.max_control
@@ -764,8 +769,12 @@ class MFGOperatorBase(ABC):
     -------------------------------------
     In optimal control, Hamiltonian and Lagrangian are Legendre duals:
 
-        H(x, p, m, t) = sup_α { p·α - L(x, α, m, t) }   (Legendre transform)
-        L(x, α, m, t) = sup_p { p·α - H(x, p, m, t) }   (Inverse transform)
+        H(x, p, m, t) = sup_α { -p·α - L(x, α, m, t) }   (Legendre transform)
+        L(x, α, m, t) = sup_p { -p·α - H(x, p, m, t) }   (Inverse transform)
+
+    Both carry the SAME sign on the pairing (#2375, ruling 5). Flipping one and not the
+    other returns L(-α) from the round trip -- equal to L for every even L, and wrong for
+    exactly the non-even ones the convention was changed for.
 
     This duality means:
     - Users can specify either H or L (whichever is more natural)
@@ -793,7 +802,7 @@ class MFGOperatorBase(ABC):
     Equivalently, and this is the form the round-trip test asserts: since V and
     f do not depend on alpha,
 
-        sup_alpha { p . alpha - L(x, alpha, m, t) } = H_ctrl(p) - W = H(x, m, p, t)
+        sup_alpha { -p . alpha - L(x, alpha, m, t) } = H_ctrl(p) - W = H(x, m, p, t)
 
     holds if and only if W = -(V + f). Adding V and f to BOTH H and L breaks
     conjugacy by exactly 2(V + f), constant in p.
@@ -822,11 +831,12 @@ class MFGOperatorBase(ABC):
       against HJB-FDM was V + O(h), mesh-independent and linear in the potential
       amplitude.
 
-    Note on the alpha sign. This class documents H = sup_alpha { p . alpha - L },
-    while ``optimal_control`` returns the drift alpha* = -dH/dp (MINIMIZE). The
-    two coincide for every control cost shipped here because each L_ctrl is even
-    in alpha; the (V, f) conclusion above is independent of that choice, since V
-    and f are alpha-independent either way.
+    Note on the alpha sign. This class documents H = sup_alpha { -p . alpha - L },
+    while ``optimal_control`` returns the drift alpha* = -dH/dp (MINIMIZE). Under
+    this pairing the two hold for EVERY L, which is what #2375 ruling 5 bought; the
+    old ``+p . alpha`` form made them coincide only because each L_ctrl shipped here
+    is even in alpha. The (V, f) conclusion above is independent of the choice, since
+    V and f are alpha-independent either way.
 
     Parameters
     ----------
@@ -1539,7 +1549,7 @@ class HamiltonianBase(MFGOperatorBase):
         """
         Convert Hamiltonian to Lagrangian via Legendre transform.
 
-        Computes L(x, α, m, t) = sup_p { p·α - H(x, p, m, t) }
+        Computes L(x, α, m, t) = sup_p { -p·α - H(x, p, m, t) }
 
         The Legendre transform is involutive: applying it twice recovers
         the original (up to convexification). This provides symmetric
@@ -1596,7 +1606,7 @@ class LagrangianBase(MFGOperatorBase):
     - ``proximal(tau, z)`` -- for ADMM/variational solvers
     - ``control_bounds()`` -- for semi-Lagrangian solver
 
-    Duality: H(x, p, m, t) = sup_alpha { p . alpha - L(x, alpha, m, t) }
+    Duality: H(x, p, m, t) = sup_alpha { -p . alpha - L(x, alpha, m, t) }
 
     Parameters
     ----------
@@ -1675,7 +1685,7 @@ class LagrangianBase(MFGOperatorBase):
         p: NDArray,
         t: float = 0.0,
     ) -> NDArray:
-        """argmax_alpha { p . alpha - L(x, alpha, m, t) } -- the maximizer of L*(p).
+        """∂H/∂p for H = sup_alpha { -p . alpha - L(x, alpha, m, t) } = L*(-p) -- MINUS its maximizer.
 
         **This is THE extension point for analytic subclasses.** Both
         optimal_control() and evaluate_hamiltonian() derive from it, so
@@ -1684,7 +1694,9 @@ class LagrangianBase(MFGOperatorBase):
         evaluate_hamiltonian() on the numerical fallback.
 
         By the envelope theorem this equals dH/dp, which is NOT alpha*: the optimal
-        control is alpha* = -sign * dH/dp (Issue #1642, capability B5). Keeping the
+        control is alpha* = -dH/dp (Issue #1642, capability B5; #2375 ruling 5 dropped the
+        direction factor, so the relation now holds for every L and not only even ones).
+        Keeping the
         maximization in one place is what stops optimal_control() and
         evaluate_hamiltonian() from re-forking into private sign conventions --
         before #1642 they held opposite ones, and only the two errors cancelling
@@ -1705,23 +1717,23 @@ class LagrangianBase(MFGOperatorBase):
 
             def neg_objective(a):
                 alpha = np.array([a])
-                return -(p_val * a - float(self(x, alpha, m, t)))
+                return -(-p_val * a - float(self(x, alpha, m, t)))
 
             res = minimize_scalar(neg_objective, bounds=bounds, method="bounded")
             argmax = np.array([res.x])
             self._reject_fallback_truncation(argmax, used_fallback, "conjugate_argmax")
-            return argmax
+            return -argmax
 
         # nD: scipy.optimize.minimize
         from scipy.optimize import minimize as scipy_minimize
 
         def neg_objective_nd(alpha):
-            return -(np.dot(p_arr.ravel(), alpha) - float(self(x, alpha, m, t)))
+            return -(-np.dot(p_arr.ravel(), alpha) - float(self(x, alpha, m, t)))
 
-        x0 = np.clip(p_arr.ravel(), bounds[0], bounds[1])
+        x0 = np.clip(-p_arr.ravel(), bounds[0], bounds[1])
         res = scipy_minimize(neg_objective_nd, x0, bounds=[bounds] * d, method="L-BFGS-B")
         self._reject_fallback_truncation(res.x, used_fallback, "conjugate_argmax")
-        return res.x
+        return -res.x
 
     # === Optimal control (same signature AND same convention as HamiltonianBase) ===
 
@@ -1737,7 +1749,7 @@ class LagrangianBase(MFGOperatorBase):
         Same convention as HamiltonianBase.optimal_control() (Issue #1642):
         - MINIMIZE: alpha* = -dH/dp
 
-        with dH/dp = argmax_alpha { p . alpha - L(x, alpha, m, t) }. Computed
+        with dH/dp = -argmax_alpha { -p . alpha - L(x, alpha, m, t) } (#2375 ruling 5). Computed
         directly from L without constructing DualHamiltonian.
 
         Before #1642 this returned the bare argmax -- i.e. +p/lambda under
@@ -1760,7 +1772,7 @@ class LagrangianBase(MFGOperatorBase):
         p: NDArray,
         t: float = 0.0,
     ) -> float | NDArray:
-        """H(x, m, p, t) = sup_alpha { p . alpha - L(x, alpha, m, t) } = L*(p).
+        """H(x, m, p, t) = sup_alpha { -p . alpha - L(x, alpha, m, t) } = L*(-p).
 
         The convex conjugate, evaluated at its own maximizer. Matches
         DualHamiltonian.__call__ and the always-sup ControlCostBase.evaluate:
@@ -1774,8 +1786,15 @@ class LagrangianBase(MFGOperatorBase):
         Computes the Hamiltonian value on-the-fly without DualHamiltonian.
         """
         dH_dp = self.conjugate_argmax(x, m, p, t)
+        # THE MAXIMISER IS -dH_dp, NOT dH_dp (#2375 ruling 5). H = sup{-p.a - L} is attained at
+        # alpha* = -dH/dp, so L must be evaluated THERE. The pairing term is unaffected --
+        # -p.alpha* = -p.(-dH_dp) = +p.dH_dp -- which is why only the second term moves and why a
+        # careless port of this line stays green: for an even L, L(-dH_dp) == L(dH_dp) and the whole
+        # expression is unchanged. `test_asymmetric_hamiltonian_is_conjugate_at_minus_p` is what
+        # caught the half-done version, returning 1.265 where L*(-p) is 2.645.
+        alpha_star = -dH_dp
         p_dot_alpha = float(np.sum(np.atleast_1d(p) * dH_dp))
-        return p_dot_alpha - float(self(x, dH_dp, m, t))
+        return p_dot_alpha - float(self(x, alpha_star, m, t))
 
     # === ADMM / variational interface ===
 
@@ -1898,7 +1917,7 @@ class SeparableLagrangian(LagrangianBase):
         """L = L_control(alpha) - V(x, t) - f(m).
 
         The non-kinetic terms carry the OPPOSITE sign to the Hamiltonian's (Issue #1645).
-        H = sup_alpha { p . alpha - L } (the form on ``MFGOperatorBase``; the two coincide here
+        H = sup_alpha { -p . alpha - L } (the form on ``MFGOperatorBase``; the two coincide here
         because every shipped L_ctrl is even in alpha -- Issue #1652), so if L = L_ctrl + W then
         H = H_ctrl - W; the repo's HJB is
         -d_t u + H_ctrl + V + f = 0 (base_hjb.py assembles Phi_U[i] += hamiltonian_val with H
@@ -1950,7 +1969,7 @@ class DualHamiltonian(HamiltonianBase):
     """
     Hamiltonian defined via Legendre transform of a Lagrangian.
 
-    This class computes H(x, p, m, t) = sup_α { p·α - L(x, α, m, t) }
+    This class computes H(x, p, m, t) = sup_α { -p·α - L(x, α, m, t) }   (#2375 ruling 5)
     numerically for general Lagrangians. It is the "dual" of a given
     Lagrangian in the sense of Legendre/convex duality.
 
@@ -1999,7 +2018,7 @@ class DualHamiltonian(HamiltonianBase):
         """
         Compute H via numerical Legendre transform.
 
-        H(x, p, m, t) = sup_α { p·α - L(x, α, m, t) }
+        H(x, p, m, t) = sup_α { -p·α - L(x, α, m, t) }   (#2375 ruling 5)
         """
         d = p.shape[0] if p.ndim > 0 else 1
         p_flat = np.atleast_1d(p)
@@ -2008,10 +2027,10 @@ class DualHamiltonian(HamiltonianBase):
         if d == 1:
             alpha_grid = np.linspace(self.alpha_bounds[0], self.alpha_bounds[1], self.n_search)
             values = np.array(
-                [float(p_flat[0]) * a - float(self.lagrangian(x, np.array([a]), m, t)) for a in alpha_grid]
+                [-float(p_flat[0]) * a - float(self.lagrangian(x, np.array([a]), m, t)) for a in alpha_grid]
             )
 
-            # H is the convex conjugate L*(p) = sup_alpha { p.alpha - L(alpha) },
+            # H is the convex conjugate evaluated at -p: L*(-p) = sup_alpha { -p.alpha - L(alpha) },
             # direction-free (matches the d>1 branch below, the
             # always-sup ControlCostBase.evaluate, and dp's argmax). Issue #1185.
             return float(np.max(values))
@@ -2021,11 +2040,16 @@ class DualHamiltonian(HamiltonianBase):
             from scipy.optimize import minimize as scipy_minimize
 
             def neg_objective(alpha):
-                # Minimize negative of (p·α - L)
-                return -(np.dot(p_flat, alpha) - float(self.lagrangian(x, alpha, m, t)))
+                # Minimize negative of (-p·α - L)
+                return -(-np.dot(p_flat, alpha) - float(self.lagrangian(x, alpha, m, t)))
 
-            # Initial guess: project p onto bounds
-            x0 = np.clip(p_flat, self.alpha_bounds[0], self.alpha_bounds[1])
+            # Initial guess: -p, because the maximiser of {-p.a - L} sits near -p/lambda, not
+            # +p/lambda (#2375 ruling 5). Under the old pairing `clip(p)` started ON the optimum;
+            # leaving it after the flip starts the LOCAL scipy search a full 2p/lambda away and it
+            # settles in the wrong basin on a non-convex L -- measured, 5 of 6 probes missed the
+            # global sup by up to 13.0. The 1-D and fallback branches grid-search globally and are
+            # unaffected; only this branch is seeded.
+            x0 = np.clip(-p_flat, self.alpha_bounds[0], self.alpha_bounds[1])
             bounds = [self.alpha_bounds] * d
 
             result = scipy_minimize(neg_objective, x0, bounds=bounds, method="L-BFGS-B")
@@ -2040,7 +2064,7 @@ class DualHamiltonian(HamiltonianBase):
 
             for alpha_tuple in product(alpha_1d, repeat=d):
                 alpha = np.array(alpha_tuple)
-                val = np.dot(p_flat, alpha) - float(self.lagrangian(x, alpha, m, t))
+                val = -np.dot(p_flat, alpha) - float(self.lagrangian(x, alpha, m, t))
                 best_val = max(best_val, val)
 
             return float(best_val)
@@ -2053,9 +2077,14 @@ class DualHamiltonian(HamiltonianBase):
         t: float = 0.0,
     ) -> NDArray:
         """
-        Compute ∂H/∂p = α* (optimal control).
+        Compute ∂H/∂p = -α*.
 
-        By envelope theorem, ∂H/∂p equals the optimal control α*.
+        By the envelope theorem applied to H = sup_α { -p·α - L }, ∂H/∂p is the NEGATIVE
+        of the maximiser, so ``optimal_control`` (= -dp on ``HamiltonianBase``) returns α*.
+
+        The previous docstring said ∂H/∂p == α*, which could not hold alongside
+        ``optimal_control`` returning ``-dp``; under the old ``+p·α`` pairing the maximiser
+        was ∂H/∂p and the two statements had opposite signs. Corrected with the convention.
         """
         return self._find_optimal_alpha(x, m, p, t)
 
@@ -2066,29 +2095,35 @@ class DualHamiltonian(HamiltonianBase):
         p: NDArray,
         t: float,
     ) -> NDArray:
-        """Find α* = argmax_α { p·α - L(x, α, m, t) }."""
+        """Return ∂H/∂p for H = sup_α { -p·α - L }, i.e. MINUS the maximising α (#2375 ruling 5).
+
+        Named for what it locates, not for what it returns: the grid/scipy search finds the
+        maximiser α*, and the sign is applied before returning so that this and
+        ``LagrangianBase.conjugate_argmax`` hand their callers the same quantity. ``dp``
+        returns this unchanged and ``optimal_control`` negates it back to α*.
+        """
         d = p.shape[0] if p.ndim > 0 else 1
         p_flat = np.atleast_1d(p)
 
         if d == 1:
             alpha_grid = np.linspace(self.alpha_bounds[0], self.alpha_bounds[1], self.n_search)
             values = np.array(
-                [float(p_flat[0]) * a - float(self.lagrangian(x, np.array([a]), m, t)) for a in alpha_grid]
+                [-float(p_flat[0]) * a - float(self.lagrangian(x, np.array([a]), m, t)) for a in alpha_grid]
             )
             best_idx = np.argmax(values)
-            return np.array([alpha_grid[best_idx]])
+            return -np.array([alpha_grid[best_idx]])
 
         # Higher dimensions: scipy or grid
         try:
             from scipy.optimize import minimize as scipy_minimize
 
             def neg_objective(alpha):
-                return -(np.dot(p_flat, alpha) - float(self.lagrangian(x, alpha, m, t)))
+                return -(-np.dot(p_flat, alpha) - float(self.lagrangian(x, alpha, m, t)))
 
-            x0 = np.clip(p_flat, self.alpha_bounds[0], self.alpha_bounds[1])
+            x0 = np.clip(-p_flat, self.alpha_bounds[0], self.alpha_bounds[1])
             bounds = [self.alpha_bounds] * d
             result = scipy_minimize(neg_objective, x0, bounds=bounds, method="L-BFGS-B")
-            return result.x
+            return -result.x
 
         except ImportError:
             from itertools import product
@@ -2099,19 +2134,19 @@ class DualHamiltonian(HamiltonianBase):
 
             for alpha_tuple in product(alpha_1d, repeat=d):
                 alpha = np.array(alpha_tuple)
-                val = np.dot(p_flat, alpha) - float(self.lagrangian(x, alpha, m, t))
+                val = -np.dot(p_flat, alpha) - float(self.lagrangian(x, alpha, m, t))
                 if val > best_val:
                     best_val = val
                     best_alpha = alpha
 
-            return best_alpha
+            return -best_alpha
 
 
 class DualLagrangian(LagrangianBase):
     """
     Lagrangian defined via inverse Legendre transform of a Hamiltonian.
 
-    This class computes L(x, α, m, t) = sup_p { p·α - H(x, p, m, t) }
+    This class computes L(x, α, m, t) = sup_p { -p·α - H(x, p, m, t) }   (#2375 ruling 5)
     numerically for general Hamiltonians. It is the "dual" of a given
     Hamiltonian in the sense of Legendre/convex duality.
 
@@ -2154,7 +2189,7 @@ class DualLagrangian(LagrangianBase):
         """
         Compute L via inverse Legendre transform.
 
-        L(x, α, m, t) = sup_p { p·α - H(x, p, m, t) }
+        L(x, α, m, t) = sup_p { -p·α - H(x, p, m, t) }   (#2375 ruling 5)
         """
         d = alpha.shape[0] if alpha.ndim > 0 else 1
         alpha_flat = np.atleast_1d(alpha)
@@ -2163,10 +2198,10 @@ class DualLagrangian(LagrangianBase):
         if d == 1:
             p_grid = np.linspace(self.p_bounds[0], self.p_bounds[1], self.n_search)
             values = np.array(
-                [float(p) * float(alpha_flat[0]) - float(self.hamiltonian(x, m, np.array([p]), t)) for p in p_grid]
+                [-float(p) * float(alpha_flat[0]) - float(self.hamiltonian(x, m, np.array([p]), t)) for p in p_grid]
             )
 
-            # L is the convex conjugate H*(alpha) = sup_p { p.alpha - H(p) },
+            # L is the convex conjugate evaluated at -alpha: H*(-alpha) = sup_p { -p.alpha - H(p) },
             # direction-free (matches the d>1 branch below and
             # d_alpha's argmax). Issue #1185.
             return float(np.max(values))
@@ -2176,9 +2211,9 @@ class DualLagrangian(LagrangianBase):
             from scipy.optimize import minimize as scipy_minimize
 
             def neg_objective(p):
-                return -(np.dot(p, alpha_flat) - float(self.hamiltonian(x, m, p, t)))
+                return -(-np.dot(p, alpha_flat) - float(self.hamiltonian(x, m, p, t)))
 
-            x0 = np.clip(alpha_flat, self.p_bounds[0], self.p_bounds[1])
+            x0 = np.clip(-alpha_flat, self.p_bounds[0], self.p_bounds[1])
             bounds = [self.p_bounds] * d
             result = scipy_minimize(neg_objective, x0, bounds=bounds, method="L-BFGS-B")
             return float(-result.fun)
@@ -2191,7 +2226,7 @@ class DualLagrangian(LagrangianBase):
 
             for p_tuple in product(p_1d, repeat=d):
                 p = np.array(p_tuple)
-                val = np.dot(p, alpha_flat) - float(self.hamiltonian(x, m, p, t))
+                val = -np.dot(p, alpha_flat) - float(self.hamiltonian(x, m, p, t))
                 best_val = max(best_val, val)
 
             return float(best_val)
@@ -2204,9 +2239,10 @@ class DualLagrangian(LagrangianBase):
         t: float = 0.0,
     ) -> NDArray:
         """
-        Compute ∂L/∂α = p* (optimal momentum).
+        Compute ∂L/∂α = -p*.
 
-        By envelope theorem, ∂L/∂α equals the optimal momentum p*.
+        The mirror of ``DualHamiltonian.dp``: under L = sup_p { -p·α - H }, ∂L/∂α is the
+        negative of the maximising momentum.
         """
         return self._find_optimal_p(x, alpha, m, t)
 
@@ -2233,29 +2269,29 @@ class DualLagrangian(LagrangianBase):
         m: float | NDArray,
         t: float,
     ) -> NDArray:
-        """Find p* = argmax_p { p·α - H(x, p, m, t) }."""
+        """Return ∂L/∂α for L = sup_p { -p·α - H }, i.e. MINUS the maximising p (#2375 ruling 5)."""
         d = alpha.shape[0] if alpha.ndim > 0 else 1
         alpha_flat = np.atleast_1d(alpha)
 
         if d == 1:
             p_grid = np.linspace(self.p_bounds[0], self.p_bounds[1], self.n_search)
             values = np.array(
-                [float(p) * float(alpha_flat[0]) - float(self.hamiltonian(x, m, np.array([p]), t)) for p in p_grid]
+                [-float(p) * float(alpha_flat[0]) - float(self.hamiltonian(x, m, np.array([p]), t)) for p in p_grid]
             )
             best_idx = np.argmax(values)
-            return np.array([p_grid[best_idx]])
+            return -np.array([p_grid[best_idx]])
 
         # Higher dimensions: scipy or grid
         try:
             from scipy.optimize import minimize as scipy_minimize
 
             def neg_objective(p):
-                return -(np.dot(p, alpha_flat) - float(self.hamiltonian(x, m, p, t)))
+                return -(-np.dot(p, alpha_flat) - float(self.hamiltonian(x, m, p, t)))
 
-            x0 = np.clip(alpha_flat, self.p_bounds[0], self.p_bounds[1])
+            x0 = np.clip(-alpha_flat, self.p_bounds[0], self.p_bounds[1])
             bounds = [self.p_bounds] * d
             result = scipy_minimize(neg_objective, x0, bounds=bounds, method="L-BFGS-B")
-            return result.x
+            return -result.x
 
         except ImportError:
             from itertools import product
@@ -2266,12 +2302,12 @@ class DualLagrangian(LagrangianBase):
 
             for p_tuple in product(p_1d, repeat=d):
                 p = np.array(p_tuple)
-                val = np.dot(p, alpha_flat) - float(self.hamiltonian(x, m, p, t))
+                val = -np.dot(p, alpha_flat) - float(self.hamiltonian(x, m, p, t))
                 if val > best_val:
                     best_val = val
                     best_p = p
 
-            return best_p
+            return -best_p
 
 
 # ============================================================================
