@@ -40,6 +40,7 @@ import sys
 import pytest
 
 import numpy as np
+import scipy.optimize
 
 from mfgarchon.core.hamiltonian import DualHamiltonian, DualLagrangian, HamiltonianBase, LagrangianBase
 
@@ -57,7 +58,6 @@ try:
     from test_lagrangian_base_alpha_sign_1642 import AsymmetricL
 except ModuleNotFoundError:  # pragma: no cover - runner-dependent
     import os
-    import sys
 
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from test_lagrangian_base_alpha_sign_1642 import AsymmetricL
@@ -306,6 +306,17 @@ class _NonConvexL(LagrangianBase):
         a = np.atleast_1d(np.asarray(alpha, dtype=float))
         return float(0.5 * np.sum(a**2) + 2.0 * np.sum(np.cos(3.0 * a)) + ODD_COEFF * np.sum(a))
 
+    def control_bounds(self):
+        """Declared so ALL paths search the same box the reference grid uses.
+
+        Without it `LagrangianBase.optimal_control` falls back to `_FALLBACK_CONTROL_BOUNDS`
+        (-10, 10) while the reference is computed on (-6, 6). The two argmaxes agree to <1e-3 at
+        the momenta asserted here, but they diverge above |p| ~ 5.4 — so the test would one day
+        fail for a reason that is neither the convention nor the seed. Declaring it also
+        early-returns `_reject_fallback_truncation`, whose guard is not what this test is about.
+        """
+        return (-6.0, 6.0)
+
 
 @pytest.mark.parametrize("p", [(1.5, -2.5), (-1.0, -1.0), (0.6, -0.4)])
 def test_the_nd_initial_guess_points_at_the_new_maximiser(p):
@@ -390,3 +401,96 @@ def test_the_inverse_nd_initial_guess_points_at_the_new_maximiser(alpha):
     per_axis_argmax = np.array([grid[int(np.argmax(o))] for o in obj])
     assert float(dl(X2, av, M)) == pytest.approx(global_sup, abs=1e-3)
     np.testing.assert_allclose(np.ravel(dl.d_alpha(X2, av, M)), -per_axis_argmax, atol=3e-3)
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# MECHANISM PIN for the five `x0` sites. The tests above assert a CONSEQUENCE — "H equals the global
+# sup on a non-convex L at these momenta" — and review measured what that costs: over 400 random
+# momenta the predicate has a 26% FALSE RED rate (correct code misses the global sup) and a 21%
+# FALSE GREEN rate (the broken `clip(+p)` still finds it). The three momenta asserted above sit in
+# the ~62% that discriminate, and nothing pins that they will keep doing so — which basin L-BFGS-B
+# settles in is a scipy implementation detail, not a library contract. The excluded `p = (2.0, 1.0)`
+# is a disclosed member of that 26%, and needing an exclusion list is the tell.
+#
+# AND THE CONSEQUENCE PIN DOES NOT PIN THE IDENTITY. Measured: `clip(-p) -> clip(+p)`, `-> -p/2` and
+# `-> -2p` are all killed above, but `clip(-p) -> np.zeros(d)` SURVIVES the whole file. So that pin
+# catches the sign and the magnitude and not the value. The limiting factor stopped being which
+# lines get mutated and became WHICH WRONG VALUE they get mutated to: `-> revert` is a narrow
+# mutation operator, and an operator is a population predicate like any other.
+#
+# The contract itself is exact and cheap to observe: `x0 == clip(-p, *box)`, and the library imports
+# `minimize` from `scipy.optimize` INSIDE each function at call time, so recording the argument is a
+# two-line intercept. No tolerance, no excluded momentum, no basin dependence, 0.04s against 10.8s —
+# and it reaches |p| > 6, where the clip itself binds and no consequence test goes.
+#
+# Both are kept on purpose. The consequence tests are the only thing saying WHY the seed matters and
+# that it lands in the right basin rather than merely being negated; this is the load-bearing pin.
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+class _Convex2D(LagrangianBase):
+    """Any L works: `x0` is chosen before L is ever evaluated. Convex on purpose — the mechanism is
+    observable exactly where the consequence is not."""
+
+    def __call__(self, x, alpha, m, t=0.0):
+        a = np.atleast_1d(np.asarray(alpha, dtype=float))
+        return float(0.5 * np.sum(a**2) + ODD_COEFF * np.sum(a))
+
+    def control_bounds(self):
+        return SEED_BOX
+
+
+SEED_BOX = (-6.0, 6.0)
+# (9.0, -7.5) straddles the box so the clip itself binds; (0.0, 0.0) is the fixed point of negation,
+# where a sign error is invisible and only an identity assertion can fail.
+SEED_CASES = [(2.0, -1.0), (0.6, 0.6), (-2.0, 3.0), (9.0, -7.5), (0.0, 0.0)]
+
+
+@pytest.fixture
+def seeds(monkeypatch):
+    """Record every `x0` handed to `scipy.optimize.minimize`, then delegate to the real one."""
+    captured: list[np.ndarray] = []
+    real = scipy.optimize.minimize
+
+    def spy(fun, x0, *args, **kwargs):
+        captured.append(np.array(x0, dtype=float, copy=True))
+        return real(fun, x0, *args, **kwargs)
+
+    monkeypatch.setattr(scipy.optimize, "minimize", spy)
+    return captured
+
+
+@pytest.mark.parametrize("p", SEED_CASES)
+def test_every_nd_search_is_seeded_at_minus_p(seeds, p):
+    """All five seeded searches, exactly, with no tolerance. Kills the `zeros` edit the
+    consequence pin lets through."""
+    pv = np.array(p, dtype=float)
+    expected = np.clip(-pv, *SEED_BOX)
+
+    _Convex2D().conjugate_argmax(X2, M, pv)
+    DualHamiltonian(_Convex2D(), alpha_bounds=SEED_BOX, n_search=101)(X2, M, pv)
+    DualHamiltonian(_Convex2D(), alpha_bounds=SEED_BOX, n_search=101).dp(X2, M, pv)
+    assert len(seeds) == 3, f"expected one seed per search, got {len(seeds)}"
+    for got in seeds:
+        np.testing.assert_array_equal(got, expected)
+
+    seeds.clear()
+    DualLagrangian(_AnalyticH2D(), p_bounds=SEED_BOX, n_search=101)(X2, pv, M)
+    DualLagrangian(_AnalyticH2D(), p_bounds=SEED_BOX, n_search=101).d_alpha(X2, pv, M)
+    assert len(seeds) == 2
+    for got in seeds:
+        np.testing.assert_array_equal(got, expected)
+
+
+def test_the_seed_intercept_can_fail(seeds):
+    """CONTROL. An intercept that never fires asserts nothing, and one that cannot fail is scenery.
+
+    Asserts the intercept fired, that it is NOT the pre-fix `+p`, and — at a momentum where the
+    clip binds — that the recorded value is the clipped one rather than raw `-p`.
+    """
+    pv = np.array([9.0, -7.5])
+    _Convex2D().conjugate_argmax(X2, M, pv)
+    assert seeds, "the intercept never fired -- it is not on the import path the library uses"
+    assert not np.allclose(seeds[0], np.clip(pv, *SEED_BOX)), "seeded at +p, the pre-fix value"
+    np.testing.assert_array_equal(seeds[0], np.clip(-pv, *SEED_BOX))
+    assert not np.allclose(seeds[0], -pv), "the clip must bind at this momentum, or it is untested"
