@@ -151,7 +151,7 @@ class MFGProblemProtocol(Protocol):
             the section cited. Above, ``m`` appears in a term with no ``p`` in it at all.
 
             For congestion see :class:`~mfgarchon.core.hamiltonian.CongestionHamiltonian`, which is
-            the FAMILY containing that form -- ``H = |p|**2 / (2*lam*c(m)) + V + f(m)`` with a
+            the FAMILY containing that form -- ``H = |p|**2 / (2*lam*c(m)) - V - f(m)`` with a
             user-supplied ``c(m)``. Pass ``congestion_factor=lambda m: m**alpha`` to obtain the
             form above, and ``congestion_factor_dm`` if you want ``dH/dm`` analytic rather than by
             finite difference.

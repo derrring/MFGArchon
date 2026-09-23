@@ -5,7 +5,7 @@ This module implements Hamilton-Jacobi-Bellman equation solvers
 for Mean Field Games on network structures.
 
 Mathematical formulation:
-∂u/∂t + H_i(m, ∇_G u, t) = 0  at node i
+-∂u/∂t + H_i(m, ∇_G u, t) = 0 at node i
 u(T, i) = g(i)                  terminal condition
 
 where:
@@ -59,7 +59,7 @@ class NetworkHJBSolver(BaseHJBSolver):
     HJB solver for Mean Field Games on networks.
 
     Solves the discrete HJB equation:
-    ∂u/∂t + H_i(m, ∇_G u, t) = 0
+    -∂u/∂t + H_i(m, ∇_G u, t) = 0
 
     with network-specific Hamiltonians and discrete operators.
 
@@ -102,22 +102,6 @@ class NetworkHJBSolver(BaseHJBSolver):
         super().__init__(problem)
 
         self.network_problem = problem
-
-        # Issue #1476: orientation sign for the backward-HJB integration. It is the constant +1
-        # (du/ds = -H_control + source) and is NO LONGER read from the wired Hamiltonian object --
-        # #2373 deleted the parameter it used to come from, so nothing single-sources it any more.
-        # ONLY the control term carries this factor; the source (V + congestion) enters WITHOUT it
-        # (see the rhs). That asymmetry is the thing phase 2 must preserve: it is what makes the
-        # isolation step `h_control = h_total - source` correct, and flipping the factor without it
-        # would flip the source too.
-        # A genuine blow-up on the explicit RK45 path surfaces via the solve_ivp non-convergence
-        # warning below (sol.success is False).
-        #
-        # The library is minimisation-only (#2373), so this is the constant +1 rather than a read of a
-        # deleted direction parameter. It is kept as a named factor, and the two multiplications below
-        # are left exactly as written, because ruling 3/4 of #2375 rewrites those same lines and doing
-        # it twice is how a double sign flip survives with every test green.
-        self._control_orientation = 1.0
 
         # Issue #1468/#1471: fail loud on a node BC this solver cannot honor. Node-BC now lives on the
         # geometry (GraphGeometry.has_explicit_boundary_conditions); the base ODE path applies only
@@ -217,8 +201,7 @@ class NetworkHJBSolver(BaseHJBSolver):
         """Per-node RHS source terms V(i, t) + f(i, m, t) — node potential + congestion coupling
         (Issue #1474). In mfgarchon's convention ``-u_t + H_control = source`` these sit on the RHS,
         so in reversed time they enter ``du/ds`` with the OPPOSITE sign to the control Hamiltonian.
-        The network Hamiltonian method returns ``control + source``; subtracting this isolates the
-        control Hamiltonian.
+        Read only by policy evaluation, whose running cost is the Lagrangian ``c(alpha) + V + f``.
         """
         # Issue #1470: single-source the source (V + f_m) through the WIRED Hamiltonian object — the
         # SAME computation inside `_evaluate_hamiltonian_batch` (which routes through
@@ -237,7 +220,7 @@ class NetworkHJBSolver(BaseHJBSolver):
         """Solve HJB backward via scipy.integrate.solve_ivp (Issue #960).
 
         Reformulates the backward HJB system as an ODE:
-            du/ds = H(u, m(T-s), T-s),  s in [0, T],  u(0) = U_terminal
+            du/ds = -H(u, m(T-s), T-s),  s in [0, T],  u(0) = U_terminal
 
         where s = T - t is the reversed time variable.
 
@@ -256,19 +239,9 @@ class NetworkHJBSolver(BaseHJBSolver):
             # Interpolate density at physical time t
             t_idx = min(int(t_physical / self.dt), n_time_points - 1)
             m = M_density[t_idx, :]
-            # mfgarchon convention -u_t + H_control = source (source = V + coupling on the RHS). In
-            # reversed time s = T - t this is du/ds = -H_control + source (Issue #1474). The network
-            # method returns control + source, so isolate the control Hamiltonian by subtracting the
-            # source. (The old du/ds = +H integrated u_t + H = 0 and self-amplified the one-sided
-            # control term (u_i - u_j)_+^2, blowing the value up for any non-trivial terminal data.)
-            h_total = self._evaluate_hamiltonian_batch(u_flat, m, t_physical)
-            source = self._source_terms(m, t_physical)
-            h_control = h_total - source
-            # Issue #1476: du/ds = -H_control + source. The source (V + congestion) enters unflipped,
-            # matching the continuum SeparableHamiltonian, which adds it to H without a flip. That the
-            # source is reward-signed on both sides is the defect ruling 3 of #2375 corrects; this line
-            # is that ruling's, not phase 1's.
-            return -self._control_orientation * h_control + source
+            # -u_t + H = 0 with H = control - V - f (#2375 rulings 3-4: the sign lives in H, and H is
+            # added whole). In reversed time s = T - t this is du/ds = -H.
+            return -self._evaluate_hamiltonian_batch(u_flat, m, t_physical)
 
         sol = solve_ivp(
             rhs,
@@ -335,6 +308,15 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
             **kwargs: Additional arguments for base solver
         """
         super().__init__(problem, scheme="BDF", **kwargs)  # Scheme unused — policy iteration overrides solve
+        H = problem.hamiltonian_class
+        if H is not None and H.has_custom_hamiltonian:
+            raise NotImplementedError(
+                "NetworkPolicyIterationHJBSolver cannot honour a custom hamiltonian_func: policy "
+                "evaluation assembles the built-in control's running cost plus the built-in node "
+                "congestion m^2/2, and never reads your H (#1545). Use NetworkHJBSolver, which adds a "
+                "custom H whole with any solve_ivp scheme but does not support node BCs, or drop "
+                "hamiltonian_func."
+            )
 
         self.max_policy_iterations = max_policy_iterations
         self.policy_tolerance = policy_tolerance
@@ -452,12 +434,11 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
                     A[i, j] -= a
                     w = self.network_problem.network_data.get_edge_weight(i, j)
                     control_cost += 0.5 * a * a / w
-            # Issue #1476: the source enters with the same sign as in the RK45 rhs (same
-            # as the RK45 rhs). b: u_next/dt + c + source.
-            # At the optimal-policy fixed point (generator action = 2*s*H_control, c = H_control) this
-            # reduces to (u_i-u_next)/dt = -s*H_control + source, matching the RK45 integration. The A
+            # b: u_next/dt + L(alpha), with L = c(alpha) + V + f the cost-signed running cost. At the
+            # optimal-policy fixed point (generator action = 2*H_control, c = H_control) this reduces
+            # to (u_i - u_next)/dt = -H_control + V + f = -H, matching the RK45 integration. The A
             # matrix is unchanged (an M-matrix for any alpha >= 0).
-            b[i] = u_next[i] / self.dt + self._control_orientation * control_cost + source[i]
+            b[i] = u_next[i] / self.dt + control_cost + source[i]
         return np.asarray(spsolve(A.tocsr(), b))
 
     def _policies_equal(self, rates1: dict[int, np.ndarray], rates2: dict[int, np.ndarray]) -> bool:

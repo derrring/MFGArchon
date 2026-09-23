@@ -40,7 +40,10 @@ def _smoke_problem() -> MFGProblem:
     """
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
     hamiltonian = SeparableHamiltonian(
-        control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
+        # An aggregating coupling (a negative cost, #2375 ruling 3): this file's measurements were taken on it.
+        control_cost=QuadraticControlCost(control_cost=1.0),
+        coupling=lambda m: -m,
+        coupling_dm=lambda m: -1.0,
     )
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="initial density mass", category=UserWarning)
@@ -141,7 +144,10 @@ def test_the_nd_path_records_its_non_converged_steps_too():
     """A 2-D value-iteration solve with a one-iteration budget records every time step; a converging one records none."""
     grid = TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[9, 7], boundary_conditions=no_flux_bc(dimension=2))
     hamiltonian = SeparableHamiltonian(
-        control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
+        # An aggregating coupling (a negative cost, #2375 ruling 3): this file's measurements were taken on it.
+        control_cost=QuadraticControlCost(control_cost=1.0),
+        coupling=lambda m: -m,
+        coupling_dm=lambda m: -1.0,
     )
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")

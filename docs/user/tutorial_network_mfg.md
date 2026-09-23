@@ -22,12 +22,12 @@ This guide provides comprehensive documentation for the Network MFG implementati
 
 **Continuous MFG:**
 - State space: $\Omega \subset \mathbb{R}^d$ (continuous domain)
-- HJB equation: $\frac{\partial u}{\partial t} + H(x, m, \nabla u, t) = 0$
+- HJB equation: $-\frac{\partial u}{\partial t} + H(x, m, \nabla u, t) - \frac{\sigma^2}{2}\Delta u = 0$
 - FP equation: $\frac{\partial m}{\partial t} - \text{div}(m \nabla H_p) - \frac{\sigma^2}{2}\Delta m = 0$
 
 **Network MFG:**
 - State space: $G = (V, E)$ (discrete graph with $N$ nodes)
-- HJB equation: $\frac{\partial u_i}{\partial t} + H_i(m, \nabla_G u, t) = 0$ for node $i$
+- HJB equation: $-\frac{\partial u_i}{\partial t} + H_i(m, \nabla_G u, t) = 0$ for node $i$
 - FP equation: $\frac{\partial m_i}{\partial t} - \text{div}_G(m \nabla_G H_p) - \frac{\sigma^2}{2}\Delta_G m = 0$
 
 ### Network Operators
@@ -44,12 +44,14 @@ $$\Delta_G = D - A$$
 ### Network Hamiltonian
 
 The network Hamiltonian at node $i$ typically takes the form:
-$$H_i(m, p, t) = \sum_{j \sim i} c_{ij}(t) + V_i(t) + F_i(m_i, t)$$
+$$H_i(m, p, t) = \sum_{j \sim i} c_{ij}(t) - V_i(t) - F_i(m_i, t)$$
 
 where:
 - $c_{ij}(t)$: cost of moving from node $i$ to $j$
-- $V_i(t)$: potential at node $i$  
-- $F_i(m_i, t)$: congestion/coupling function
+- $V_i(t)$: potential at node $i$, a cost
+- $F_i(m_i, t)$: congestion/coupling function, a cost
+
+Both are costs (#2375 ruling 3), so they enter $H$ with a minus sign.
 
 ## Architecture Overview
 
@@ -491,11 +493,15 @@ def custom_hamiltonian(node, neighbors, m, p, t):
         control_cost = 0.5 * distance * (p[neighbor] - p[node])**2
         total_cost += control_cost
     
-    # Add congestion and potential terms
-    total_cost += node_potential(node, t) + congestion_function(node, m, t)
+    # Potential and congestion are costs, so they enter H with a minus sign
+    total_cost -= node_potential(node, t) + congestion_function(node, m, t)
     return total_cost
 
-# Use in problem definition
+# Use in problem definition. A custom hamiltonian_func is the whole H: do not also pass
+# node_potential_func or node_interaction_func, which raises. Only NetworkHJBSolver honours it
+# (any solve_ivp scheme, on a geometry without node BCs): policy iteration and the network FP
+# solver refuse a custom H, so a coupled MFG solve needs the built-in control until #1545 routes
+# the transition rates through your H.
 components = NetworkMFGComponents(hamiltonian_func=custom_hamiltonian)
 ```
 

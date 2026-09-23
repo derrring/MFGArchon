@@ -58,8 +58,8 @@ class MFGComponents:
 
     H = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0),
-        coupling=lambda m: -m**2,
-        coupling_dm=lambda m: -2*m,
+        coupling=lambda m: m**2,
+        coupling_dm=lambda m: 2*m,
     )
     components = MFGComponents(hamiltonian=H, m_initial=..., u_terminal=...)
     ```
@@ -178,7 +178,7 @@ class MFGComponents:
                 "  from mfgarchon.core.hamiltonian import SeparableHamiltonian, QuadraticControlCost\n\n"
                 "  H = SeparableHamiltonian(\n"
                 "      control_cost=QuadraticControlCost(control_cost=1.0),\n"
-                "      coupling=lambda m: -m**2,\n"
+                "      coupling=lambda m: m**2,\n"
                 "  )\n"
                 "  components = MFGComponents(hamiltonian=H, m_initial=..., u_terminal=...)"
             )
@@ -247,8 +247,8 @@ class HamiltonianMixin:
                 "  from mfgarchon.core.hamiltonian import SeparableHamiltonian, QuadraticControlCost\n\n"
                 "  H = SeparableHamiltonian(\n"
                 "      control_cost=QuadraticControlCost(control_cost=1.0),\n"
-                "      coupling=lambda m: -m**2,\n"
-                "      coupling_dm=lambda m: -2*m,\n"
+                "      coupling=lambda m: m**2,\n"
+                "      coupling_dm=lambda m: 2*m,\n"
                 "  )\n"
                 "  components = MFGComponents(hamiltonian=H, m_initial=..., u_terminal=...)\n"
                 "  problem = MFGProblem(geometry=grid, components=components, ...)"
@@ -264,8 +264,8 @@ class HamiltonianMixin:
                 "  from mfgarchon.core.hamiltonian import SeparableHamiltonian, QuadraticControlCost\n\n"
                 "  H = SeparableHamiltonian(\n"
                 "      control_cost=QuadraticControlCost(control_cost=1.0),\n"
-                "      coupling=lambda m: -m**2,\n"
-                "      coupling_dm=lambda m: -2*m,\n"
+                "      coupling=lambda m: m**2,\n"
+                "      coupling_dm=lambda m: 2*m,\n"
                 "  )\n"
                 "  components = MFGComponents(hamiltonian=H, m_initial=..., u_terminal=...)"
             )
@@ -414,8 +414,8 @@ class HamiltonianMixin:
                 "  from mfgarchon.core.hamiltonian import SeparableHamiltonian, QuadraticControlCost\n\n"
                 "  H = SeparableHamiltonian(\n"
                 "      control_cost=QuadraticControlCost(control_cost=1.0),\n"
-                "      coupling=lambda m: -m**2,\n"
-                "      coupling_dm=lambda m: -2*m,\n"
+                "      coupling=lambda m: m**2,\n"
+                "      coupling_dm=lambda m: 2*m,\n"
                 "  )\n"
                 "  components = MFGComponents(hamiltonian=H, m_initial=..., u_terminal=...)"
             )
@@ -508,8 +508,8 @@ class HamiltonianMixin:
                 "  from mfgarchon.core.hamiltonian import SeparableHamiltonian, QuadraticControlCost\n\n"
                 "  H = SeparableHamiltonian(\n"
                 "      control_cost=QuadraticControlCost(control_cost=1.0),\n"
-                "      coupling=lambda m: -m**2,\n"
-                "      coupling_dm=lambda m: -2*m,\n"
+                "      coupling=lambda m: m**2,\n"
+                "      coupling_dm=lambda m: 2*m,\n"
                 "  )\n"
                 "  components = MFGComponents(hamiltonian=H, m_initial=..., u_terminal=...)"
             )

@@ -82,7 +82,7 @@ FALSE-SAFETY GUARDS encoded here
   mandatory: FixedPointIterator hardcodes v = zeros for the HJB source
   (fixed_point_iterator.py:263), so a v-dependent S_HJB would silently be wrong.
 * The coupling is ACTIVE: c_f > 0 so the HJB residual genuinely contains f(m_current)
-  (cancelled by the +c_f*m* term in S_HJB at the fixed point), and the FP drift
+  (cancelled by the -c_f*m* term in S_HJB at the fixed point), and the FP drift
   genuinely contains grad U (cross term in S_FP). With c_f = 0 the test would
   degenerate into two decoupled MMS and could not catch a cross-coupling bug.
 * periodic BC keeps boundaries exact (sin/cos manufactured pair), avoiding the
@@ -133,7 +133,7 @@ class CoupledSinusoid1D(ManufacturedSolution):
 
     u*(t,x) = b e^{-t} sin(k x)
     m*(t,x) = 1 + a e^{-t} cos(k x)
-    f(m)    = c_f m,    H(x,m,p) = |p|^2/(2 lambda) + f(m)
+    f(m)    = c_f m,    H(x,m,p) = |p|^2/(2 lambda) - f(m)   (f is a cost, #2375 ruling 3)
 
     Drift used by the FP solver: alpha* = optimal_control(grad u*) = -grad u*/lambda.
     It is read from the Hamiltonian, not from `coupling_coefficient`, which is inert
@@ -143,7 +143,7 @@ class CoupledSinusoid1D(ManufacturedSolution):
 
     Source terms (continuous LHS of each equation evaluated on the exact pair):
 
-      S_HJB = -d_t u* + |d_x u*|^2/(2 lambda) + c_f m* - (sigma^2/2) d_xx u*
+      S_HJB = -d_t u* + |d_x u*|^2/(2 lambda) - c_f m* - (sigma^2/2) d_xx u*
       S_FP  =  d_t m* + d_x(alpha* m*)        - (sigma^2/2) d_xx m*
 
     with alpha* = -d_x u*/lambda. Both depend only on (t, x). The assembly itself lives in
@@ -391,7 +391,7 @@ class TestCoupledMMSConvergence:
         mfg0 = CoupledSinusoid1D(c_f=0.0)
         x = np.linspace(0.0, 1.0, 41)
         diff = mfg.hjb_source(x, None, None, 0.1) - mfg0.hjb_source(x, None, None, 0.1)
-        expected = mfg.c_f * mfg.m_star(0.1, x)
+        expected = -mfg.c_f * mfg.m_star(0.1, x)
         assert np.allclose(diff, expected), "Coupling term missing from S_HJB"
         # `assert mfg.c > 0.0` stood here and became vacuous at #2201, which removed its only
         # reader: the drift now comes from the Hamiltonian, so `c` constrains nothing this test is

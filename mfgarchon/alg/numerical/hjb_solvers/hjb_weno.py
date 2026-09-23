@@ -93,7 +93,7 @@ class HJBWENOSolver(BaseHJBSolver):
         is approximately isotropic (no strong directional preference).
 
         ✅ Works excellently for:
-        - Standard MFG: H = (1/2)|∇u|² + V(x) + F(m) (isotropic, default)
+        - Standard MFG: H = (1/2)|∇u|² - V(x) - F(m) (isotropic, default)
         - Isotropic control costs: H = (1/p)|∇u|^p + ...
         - Smooth solutions with moderate CFL numbers
 

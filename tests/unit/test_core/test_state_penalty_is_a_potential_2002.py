@@ -1,20 +1,19 @@
-"""A soft wall is a POTENTIAL, and its sign is not the one you would write (#2002).
+"""A soft wall is a POTENTIAL (#2002).
 
 `problem.state_penalty(x)` is COST-signed: positive where the region is expensive. The
-Hamiltonian's `potential` is REWARD-signed (gotcha G-001, and the sign block above
-`source_term_hjb` in `mfg_problem.py`). So the composition SUBTRACTS, and this file exists
-because that sign is invisible at every call site that does not do the subtraction.
+Hamiltonian's `potential` is cost-signed too (#2375 ruling 3), so the composition ADDS the wall
+to V, and this file pins that direction.
 
 Measured on a Gaussian wall at x = 0.5, no coupling, `u_terminal = 0`:
 
     potential amplitude   u(0, mid)
     ------------------- -----------
                     0     +0.000000
-                   +5     -1.419462     <- a POSITIVE potential makes the wall CHEAPER
-                   -5     +0.555313     <- a cost needs a NEGATIVE potential
+                   +5     +0.524034     <- a positive potential is a cost: it raises the value
+                   -5     -1.318884
 
-That is what `L = L_ctrl - V - f` means operationally, and the repo has been wrong about this
-sign twice (#1642 B1, #1645 B2). The composition is in ONE place so the subtraction is written
+The same wall passed as `state_penalty` gives +0.524034. That is what `L = L_ctrl + V + f`
+means operationally, and the repo has been wrong about this sign twice (#1642 B1, #1645 B2). The composition is in ONE place so the sign is written
 once; these tests pin the direction rather than the arithmetic, because a future refactor that
 "simplifies" the sign will keep every unit passing and silently turn walls into wells.
 
@@ -90,7 +89,7 @@ def test_a_wall_is_a_cost_not_a_reward(measured):
     """THE SIGN PIN. Delete this and a wall becomes a well, with every other test still green."""
     assert measured["wall"][_MID] > measured["none"][_MID], (
         f"the wall made the middle CHEAPER ({measured['wall'][_MID]:.6f} vs "
-        f"{measured['none'][_MID]:.6f}) -- the composition's subtraction has been inverted"
+        f"{measured['none'][_MID]:.6f}) -- the composition's sign has been inverted"
     )
 
 

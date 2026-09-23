@@ -96,8 +96,8 @@ class TestHamiltonianBase:
         """Create a simple separable Hamiltonian for testing."""
         return SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=2.0),
-            coupling=lambda m: -(m**2),
-            coupling_dm=lambda m: -2 * m,
+            coupling=lambda m: m**2,
+            coupling_dm=lambda m: 2 * m,
         )
 
     def test_hamiltonian_evaluation(self, simple_hamiltonian):
@@ -109,7 +109,7 @@ class TestHamiltonianBase:
 
         H_val = simple_hamiltonian(x, m, p, t)
 
-        # H = ½|p|²/λ + f(m) = 0.5 * 1.0 / 2.0 + (-0.09) = 0.16
+        # H = ½|p|²/λ - f(m) = 0.5 * 1.0 / 2.0 - 0.09 = 0.16
         expected = 0.5 * 1.0 / 2.0 - 0.3**2
         assert abs(H_val - expected) < 1e-10
 
@@ -135,7 +135,7 @@ class TestHamiltonianBase:
 
         dm = simple_hamiltonian.dm(x, m, p, t)
 
-        # df/dm = -2m = -0.6
+        # dH/dm = -f'(m) = -2m = -0.6
         assert abs(dm - (-0.6)) < 1e-10
 
     def test_hamiltonian_optimal_control(self, simple_hamiltonian):
@@ -155,7 +155,7 @@ class TestHamiltonianBase:
         """Test finite difference fallback for dm when coupling_dm not provided."""
         H = SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=1.0),
-            coupling=lambda m: -(m**2),
+            coupling=lambda m: m**2,
             # No coupling_dm provided - should use finite diff
         )
         x = np.array([0.5])
@@ -165,7 +165,7 @@ class TestHamiltonianBase:
 
         dm = H.dm(x, m, p, t)
 
-        # Should approximate -2m = -0.6
+        # Should approximate dH/dm = -f'(m) = -2m = -0.6
         assert abs(dm - (-0.6)) < 0.01  # Allow some FD error
 
 
@@ -577,9 +577,9 @@ class TestCongestionHamiltonian:
         p = np.array([3.0])
         result = congestion_1d(x, m, p)
         assert isinstance(result, float)
-        # Manual: |p|^2/(2*lambda*c(m)) + V(x)
-        # = 9/(2*2*(1+1)) + 0.25 = 9/8 + 0.25 = 1.375
-        expected = 9.0 / (2 * 2.0 * 2.0) + 0.25
+        # Manual: |p|^2/(2*lambda*c(m)) - V(x)
+        # = 9/(2*2*(1+1)) - 0.25 = 9/8 - 0.25 = 0.875
+        expected = 9.0 / (2 * 2.0 * 2.0) - 0.25
         assert result == pytest.approx(expected)
 
     def test_single_point_dp(self, congestion_1d):

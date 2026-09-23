@@ -685,9 +685,9 @@ def test_integrated_howard_rejects_congestion_hamiltonian():
 # 7c. Correctness gate (Issue #1247 / #1118 PR2): Howard MUST agree with Newton
 #     on a non-LQ separable Hamiltonian (potential V(x) and/or density coupling
 #     f(m)). Newton is the ground truth — its per-point residual evaluates the
-#     full H = (1/2)|p|^2 + V + f(m) (problem.H), so a wrong rc_t sign in Howard
+#     full H = (1/2)|p|^2 - V - f(m) (problem.H, #2375 ruling 3), so a wrong rc_t sign in Howard
 #     makes it converge to a different value function. This is the gate that
-#     RESOLVED the rc_t sign: with s=-1 (rc_t = -(V+f(m))) the max-rel-error is
+#     RESOLVED the rc_t sign: with s=-1 (rc_t = -H(x, m, 0)) the max-rel-error is
 #     ~1e-5..5e-4 across all three cases; with the flipped s=+1 it is ~2.0. The
 #     zero terminal cost keeps the pure-LQ baseline exact (Newton==Howard for
 #     V=f=0), so the residual error isolates the V/f wiring, not |grad u|^2
@@ -698,7 +698,7 @@ def test_integrated_howard_rejects_congestion_hamiltonian():
 class _SeparableMockProblem(_MockProblem):
     """Mock whose per-point ``H`` delegates to the SeparableHamiltonian, so the Newton
     per-point path (``problem.H``) and the Howard path (``hamiltonian_class``) evaluate the
-    IDENTICAL H = (1/2)|p|^2 + V(x) + f(m). Without this, the base ``_MockProblem.H`` drops
+    IDENTICAL H = (1/2)|p|^2 - V(x) - f(m). Without this, the base ``_MockProblem.H`` drops
     V and f(m) and could not serve as a non-LQ ground truth."""
 
     def __init__(self, geometry, hamiltonian, **kw):
@@ -740,7 +740,7 @@ def _make_nonlq_solver(hamiltonian, inner_solver, *, LX=1.0, n_int=15, sigma=0.4
 
 
 def _v_quadratic(x, t):
-    """Repulsive bowl V(x) = 2(x-0.5)^2 (time-independent: Newton's per-point H call passes no t)."""
+    """Bowl V(x) = 2(x-0.5)^2, a cost lowest at x = 0.5 (time-independent: Newton's per-point H call passes no t)."""
     x = np.asarray(x, dtype=float)
     return 2.0 * (x[..., 0] - 0.5) ** 2
 

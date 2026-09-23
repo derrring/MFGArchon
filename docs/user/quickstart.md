@@ -32,7 +32,7 @@ from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonia
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import neumann_bc
 
-# 1. Define Hamiltonian: H(x, p, m) = |p|^2/2 + coupling(m)
+# 1. Define Hamiltonian: H(x, p, m) = |p|^2/2 - coupling(m); the coupling is a cost
 H = SeparableHamiltonian(
     control_cost=QuadraticControlCost(control_cost=1.0),
     coupling=lambda m: 0.1 * m,

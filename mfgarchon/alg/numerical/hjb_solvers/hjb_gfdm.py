@@ -3232,7 +3232,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         Issue #1247 (#1118 PR2): the separable Hamiltonian's potential V(x, t) and density
         coupling f(m), plus any caller-supplied running cost, are wired into Howard's
         running_cost slot (see `running_cost` closure below), so Howard solves the full non-LQ
-        HJB ``-d_t u + (1/2)|grad u|^2 + V(x) + f(m) - (sigma^2/2) Lap u = 0``. Still deferred
+        HJB ``-d_t u + (1/2)|grad u|^2 - V(x) - f(m) - (sigma^2/2) Lap u = 0`` (#2375 ruling 3). Still deferred
         (fail-loud below): non-unit control cost lambda and non-quadratic control cost (the
         Lagrangian-scaling work tracked alongside #1071).
         """
@@ -3280,7 +3280,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # the generic "assumptions do not hold" message. The specific one names the mechanism
         # and the attribute, which is what a caller can act on.
         # CongestionHamiltonian (Issue #782) carries a MULTIPLICATIVE kinetic factor c(m):
-        # H = |p|^2/(2*lambda*c(m)) + V(x, t) + f(m). The control-cost gate above does NOT catch
+        # H = |p|^2/(2*lambda*c(m)) - V(x, t) - f(m). The control-cost gate above does NOT catch
         # it — c(m) lives in `_congestion_factor`, outside control_cost (a plain unit-quadratic
         # QuadraticControlCost here) — and V(x)/f(m) are wired below, but the congestion factor
         # is not: Howard's policy evaluation hardcodes the unit-quadratic Lagrangian (1/2)|alpha|^2
@@ -3603,10 +3603,10 @@ class HJBGFDMSolver(BaseHJBSolver):
         #   (substitute alpha* = -grad u^n into b = u^{n+1}/dt + (1/2)|alpha|^2 + rc_t and the
         #   advection operator A_adv u = alpha . grad u; see hjb_howard.py:_howard_step). The
         #   Newton ground truth (h_eval.assemble_hjb_residual, -u_t + H + S_slot - D Lap u = 0
-        #   with H = (1/2)|grad u|^2 + V + f(m), and S_slot = -S the MMS source already converted
-        #   into h_eval's additive_source convention by _source_at) is
-        #       (u^n - u^{n+1})/dt + (1/2)|grad u^n|^2 + V + f(m) + S_slot - (sigma^2/2) Lap u^n = 0.
-        #   Matching the two forces rc_t = -(V + f(m) + S_slot): Howard's slot is the Legendre
+        #   with H = (1/2)|grad u|^2 - V - f(m) (#2375 ruling 3), and S_slot = -S the MMS source
+        #   already converted into h_eval's additive_source convention by _source_at) is
+        #       (u^n - u^{n+1})/dt + (1/2)|grad u^n|^2 - V - f(m) + S_slot - (sigma^2/2) Lap u^n = 0.
+        #   Matching the two forces rc_t = V + f(m) - S_slot = -(H(x, m, 0) + S_slot): Howard's slot is the Legendre
         #   dual side, which carries the H-additive terms with a FLIPPED sign. Resolved
         #   EMPIRICALLY (not by reasoning alone) by the Howard-vs-Newton agreement gate
         #   test_integrated_howard_matches_newton_nonlq: with Newton as ground truth, s=-1 gives
@@ -3658,7 +3658,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                     # `-rc` below applies Howard's own flip, so it enters here un-negated exactly
                     # in the slot the retired user running cost used.
                     rc = rc + np.asarray(mms_src(t_idx), dtype=float).ravel()
-                return -rc  # rc_t = -(V + f(m) + S_mms); see SIGN note above.
+                return -rc  # rc_t = -(H(x, m, 0) + S_mms) = V + f(m) - S_mms; see SIGN note above.
 
         # Issue #1071: the control-cost Lagrangian L(alpha) for the policy-evaluation RHS comes
         # from the single source (control_cost.lagrangian), not a hardcoded (1/2)|alpha|^2. The

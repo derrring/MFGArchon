@@ -1395,7 +1395,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 p_optimal = np.array([grad_components[d][multi_idx] for d in range(self.dimension)])
 
                 # Issue #1413: trace along the characteristic velocity ∂H/∂p, then apply the
-                # Lax-Oleinik value update (the foot carries advection; cost = dt·H_control -
+                # Lax-Oleinik value update (the foot carries advection; cost = dt·H_control +
                 # dt·(V+f)). Replaces the inconsistent `u_departure - dt·H` with a non-λ-scaled
                 # foot (Issue #575/#1413). Issue #1547: ∂H/∂p is the Hamiltonian's, not p/λ.
                 vel = vel_grid[multi_idx]
@@ -1597,12 +1597,12 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         The diffusion enters directly through 2*d stochastic departure points
         (one pair per spatial dimension), eliminating the operator-splitting
-        diffusion solve. For a separable Hamiltonian H = H_control(p) + V(x) + f(m)
+        diffusion solve. For a separable Hamiltonian H = H_control(p) - V(x) - f(m)
         the characteristic velocity is dH/dp (= p/lambda for the quadratic control
         cost) and the Lax-Oleinik update is (Issue #1413)
 
             U^n_i = (1/(2d)) * sum_{k=1..d} [I[U^{n+1}](y_k^+) + I[U^{n+1}](y_k^-)]
-                    + dt * H_control(p_i) - dt * (V + f)
+                    + dt * H_control(p_i) + dt * (V + f)
                   = u_avg + dt * (H(x_i, p_i, m) - 2 * H(x_i, 0, m))
 
         with y_k^pm = x_i - (dH/dp)_i * dt +/- sqrt(d) * sigma * sqrt(dt) * e_k (the
@@ -2584,14 +2584,14 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         """Consistent semi-Lagrangian value update (Issue #1413).
 
         For the backward HJB ``-∂_t u + H(x, ∇u, m) = 0`` with a separable
-        ``H = H_control(p) + V(x) + f(m)``, the Lax-Oleinik / DPP step is
+        ``H = H_control(p) - V(x) - f(m)`` (#2375 ruling 3), the Lax-Oleinik / DPP step is
 
-            u^n(x) = u^{n+1}(x - dt·∂_pH) + dt·H_control(p) - dt·(V + f),
+            u^n(x) = u^{n+1}(x - dt·∂_pH) + dt·H_control(p) + dt·(V + f),
 
         where the departure foot ``x - dt·∂_pH`` carries the advection (``∂_pH`` is the
         characteristic velocity, ``= p/λ`` for the quadratic control cost). With the
         departure value ``u_at_foot = u^{n+1}(foot)`` already interpolated and
-        ``V + f = H(x, m, p=0)``:
+        ``-(V + f) = H(x, m, p=0)``:
 
             u^n = u_at_foot + dt·(H(p) - H(0)) - dt·H(0) = u_at_foot + dt·(H(p) - 2·H(0)).
 

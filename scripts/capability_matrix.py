@@ -120,6 +120,10 @@ def _coupling_pair(f, df):
     One owner, so `--self-test` can transform f(m) across the whole matrix without each fixture
     knowing. Returns the originals untouched unless `_COUPLING_MUTATION` names a member of
     `_COUPLING_MUTATIONS`.
+
+    Every fixture passes an AGGREGATING coupling, f(m) = -m (a negative cost, #2375 ruling 3), so
+    H = |p|^2/2 + m. The baseline, the self-test's sensitivities and `_pde_residuals_2d` were all
+    measured on that problem.
     """
     if _COUPLING_MUTATION is None:
         return (f, df)
@@ -160,7 +164,7 @@ def _smoke_problem():
     from mfgarchon.geometry import TensorProductGrid
     from mfgarchon.geometry.boundary import no_flux_bc
 
-    _f, _df = _coupling_pair(lambda m: m, lambda m: 1.0)
+    _f, _df = _coupling_pair(lambda m: -m, lambda m: -1.0)
     return MFGProblem(
         geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)),
         Nt=10,
@@ -183,7 +187,7 @@ _SMOKE_2D = {"n": 11, "T": 0.2, "Nt": 6, "sigma": 0.4}
 
 
 def _smoke_problem_2d():
-    """A 2-D coupled smoke fixture: no-flux walls, quadratic control cost, f(m) = m (#1745).
+    """A 2-D coupled smoke fixture: no-flux walls, quadratic control cost, f(m) = -m (#1745).
 
     ~~The 1-D smoke fixture lifted to 2-D, unchanged in everything but dimension ... 11x11 and 6
     steps keep it near a second.~~ [CORRECTED 2026-09-15, #1745] It is not the 1-D fixture in 2-D.
@@ -197,7 +201,7 @@ def _smoke_problem_2d():
     from mfgarchon.geometry import TensorProductGrid
     from mfgarchon.geometry.boundary import no_flux_bc
 
-    _f, _df = _coupling_pair(lambda m: m, lambda m: 1.0)
+    _f, _df = _coupling_pair(lambda m: -m, lambda m: -1.0)
     n = _SMOKE_2D["n"]
     return MFGProblem(
         geometry=TensorProductGrid(
@@ -227,7 +231,7 @@ def _lq_problem_1d():
     from mfgarchon.geometry.boundary import no_flux_bc
 
     coupling = 0.3
-    _f, _df = _coupling_pair(lambda m: m, lambda m: 1.0)
+    _f, _df = _coupling_pair(lambda m: -m, lambda m: -1.0)
     return MFGProblem(
         geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[25], boundary_conditions=no_flux_bc(dimension=1)),
         T=0.3,
@@ -487,7 +491,7 @@ def _pde_residuals_2d(U: np.ndarray, M: np.ndarray) -> dict:
     """Relative residuals of a returned ``(U, M)`` against the PDE `_smoke_problem_2d` states (#1745).
 
     Interior nodes, 5-point stencils, and the fixture's own parameters, with nothing asked of the
-    library: ``f(m) = m``, ``H = |p|^2 / 2``, ``D = sigma^2 / 2``.
+    library: ``f(m) = -m``, so ``H = |p|^2 / 2 + m`` (#2375 ruling 3), and ``D = sigma^2 / 2``.
 
     - HJB: ``(U^n - U^{n+1})/dt + |grad U^n|^2 / 2 + (M^n + M^{n+1})/2 - D lap U^n``, relative to ``|M^n|``.
     - FP: ``(M^{n+1} - M^n)/dt - D lap M^{n+1} - div(M^{n+1} grad U*)``, relative to ``|D lap M^{n+1}|``,
@@ -806,8 +810,8 @@ def _regime_switching_cell():
                     u_terminal=lambda x: 0.0,
                     hamiltonian=SeparableHamiltonian(
                         control_cost=QuadraticControlCost(control_cost=1.0),
-                        coupling=_coupling_pair(lambda m: coupling_coeff * m, lambda m: coupling_coeff)[0],
-                        coupling_dm=_coupling_pair(lambda m: coupling_coeff * m, lambda m: coupling_coeff)[1],
+                        coupling=_coupling_pair(lambda m: -coupling_coeff * m, lambda m: -coupling_coeff)[0],
+                        coupling_dm=_coupling_pair(lambda m: -coupling_coeff * m, lambda m: -coupling_coeff)[1],
                     ),
                 ),
             )

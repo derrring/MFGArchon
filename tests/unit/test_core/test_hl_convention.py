@@ -2,9 +2,10 @@
 
 Issue #1642, capabilities B1 (hl-convention-pin) and B3 (controlcost-effective-domain).
 
-B1 pins the (V, f) sign convention documented on ``MFGOperatorBase``:
+B1 pins the (V, f) sign convention documented on ``MFGOperatorBase``. Both are
+cost-signed (#2375 ruling 3), so they enter the running cost with a plus sign:
 
-    L(x, alpha, m, t) = L_ctrl(alpha) - V(x, t) - f(m)
+    L(x, alpha, m, t) = L_ctrl(alpha) + V(x, t) + f(m)
 
 asserted in its conjugate form under the library's pairing (#2375 ruling 5),
 ``sup_alpha { -p.alpha - L } == H``.
@@ -282,7 +283,7 @@ CONGESTION_L_CTRL = {
 
 
 def _congestion_lagrangian(cost_name, potential, coupling):
-    """Analytic L(x, alpha, m, t) = L_ctrl^{c(m)}(alpha) - V(x, t) - f(m).
+    """Analytic L(x, alpha, m, t) = L_ctrl^{c(m)}(alpha) + V(x, t) + f(m).
 
     Independently sourced from ``CongestionHamiltonian`` -- see the note on
     ``TestCongestionRoundTrip`` for why that independence is what makes the
@@ -293,7 +294,7 @@ def _congestion_lagrangian(cost_name, potential, coupling):
     def L(x, alpha, m, t=0.0):
         v = potential(x, t) if potential is not None else 0.0
         f = coupling(m) if coupling is not None else 0.0
-        return l_ctrl(float(np.atleast_1d(alpha)[0]), _congestion_factor(m)) - v - f
+        return l_ctrl(float(np.atleast_1d(alpha)[0]), _congestion_factor(m)) + v + f
 
     return L
 

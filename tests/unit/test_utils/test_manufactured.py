@@ -124,14 +124,15 @@ def points():
 
 
 class TestAgreesWithTheHandAssembly:
-    """The pre-consolidation output, at t = 1.3, on 200 interior points."""
+    """The pre-consolidation assembly, at t = 1.3, on 200 interior points, with the coupling
+    cost-signed (#2375 ruling 3): H = |p|^2/2 - ZETA*m."""
 
     def _hand_hjb(self, t, x):
         x1, x2 = x[:, 0], x[:, 1]
         du_dt = _a1p(t) * (np.cos(C * x1) + BETA * np.cos(C * x2))
         grad_sq = (_a1(t) * C) ** 2 * (np.sin(C * x1) ** 2 + BETA**2 * np.sin(C * x2) ** 2)
         lap_u = -_a1(t) * C**2 * (np.cos(C * x1) + BETA * np.cos(C * x2))
-        return -du_dt + 0.5 * grad_sq + ZETA * _m(t, x) - 0.5 * SIGMA**2 * lap_u
+        return -du_dt + 0.5 * grad_sq - ZETA * _m(t, x) - 0.5 * SIGMA**2 * lap_u
 
     def _hand_fp(self, t, x):
         x1, x2 = x[:, 0], x[:, 1]

@@ -183,25 +183,20 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
     - _setup_custom_initial_density(): Initial density setup
     - _setup_custom_final_value(): Final value setup
 
-    Sign conventions (Issue #1057, gotcha G-003)
-    --------------------------------------------
-    Two channels add a scalar field to the HJB equation, and they carry
-    OPPOSITE signs -- a recurring source of confusion:
+    Sign conventions (#2375 ruling 3)
+    ---------------------------------
+    Every scalar field that enters the HJB equation is **cost-signed**: a positive value raises
+    the value function ``u`` and repels agents. Written with all of them on the right-hand side,
 
-    - ``SeparableHamiltonian(potential=V)`` adds ``V(x, t)`` *inside* the
-      Hamiltonian ``H`` on the left-hand side. It is **reward-signed**: agents
-      are attracted to where ``V`` is largest (gotcha G-001; see the
-      ``SeparableHamiltonian`` docstring). Write an attractive well at ``x_c``
-      as an inverted parabola ``V = -0.5 * C * (x - x_c)**2``.
-    - ``MFGProblem(source_term_hjb=S)`` adds ``S`` on the *right-hand side* of
-      the canonical HJB ``-u_t + H - (sigma^2/2) Lap u = S``. The residual
-      subtracts it (``Phi_U -= source_term`` in base_hjb.py), so it is
-      **cost-signed**: a positive ``S`` repels agents (gotcha G-002; see the
-      ``source_term_hjb`` note in ``__init__``).
+        -u_t + H_control(Du) - (sigma^2/2) Lap u = V + f(m) + S
 
-    Shared root: the project's "potential as reward" convention. Because the
-    potential lives inside ``H`` while the source lives on the RHS, achieving
-    the same effect through the two channels requires inputs of OPPOSITE sign.
+    - ``SeparableHamiltonian(potential=V, coupling=f)``: ``V`` and ``f`` live inside ``H``, which
+      carries them as ``H = H_control - V - f``. An attractive well at ``x_c`` is a bowl,
+      ``V = +0.5 * C * (x - x_c)**2``.
+    - ``MFGProblem(source_term_hjb=S)``: ``S`` stays on the right-hand side, because it may depend
+      on ``u``. The residual subtracts it (``Phi_U -= source_term`` in base_hjb.py).
+
+    So the same effect through either channel takes an input of the SAME sign.
     """
 
     # Type annotations for geometry attributes (Phase 6 of Issue #435)
@@ -571,8 +566,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # obstacle: RETIRED (#2002). It named a variational inequality and delivered a
         #   position penalty; setting it now raises and names both successors.
         #
-        # Sign convention (Issue #1057, gotcha G-002)
-        # -------------------------------------------
+        # Sign convention (#2375 ruling 3)
+        # --------------------------------
         # source_term_hjb enters the canonical HJB on the RIGHT-hand side:
         #     -u_t + H(x, m, Du) - (sigma^2/2) Lap u = S_hjb
         # The residual assembly SUBTRACTS it from H -- `base_hjb.py`'s
@@ -582,14 +577,14 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         #   - A POSITIVE source_term_hjb raises the value / cost-to-go u, so it
         #     acts as a COST: agents are repelled from regions of large S_hjb.
         #   - A NEGATIVE source_term_hjb acts as a reward (attractive).
-        # This is the OPPOSITE sign to `potential` in SeparableHamiltonian,
-        # which sits inside H on the LHS and is reward-signed (gotcha G-001).
+        # This is the SAME sign as `potential` and `coupling` in SeparableHamiltonian, which H
+        # carries as -V - f (#2375 ruling 3).
         # For a repulsive congestion coupling F[m] (penalize crowding), write
         #     source_term_hjb = +gamma * dF/dm   (positive where crowded).
         # The callback receives the density SLICE m(t, .) at time t (Issue
         # #1285; see coupling/source_composition.compose_hjb_source), not the full
         # (Nt+1, Nx) trajectory. See the MFGProblem class docstring
-        # "Sign conventions" note (G-003) for the unified picture.
+        # "Sign conventions" note for the unified picture.
         self.source_term_hjb: Callable | None = kwargs.pop("source_term_hjb", None)
         self.source_term_fp: Callable | None = kwargs.pop("source_term_fp", None)
         self.nonlocal_operator: Any | None = kwargs.pop("nonlocal_operator", None)
@@ -613,9 +608,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 "It has two successors, because it was conflating two different things:\n"
                 "  * A SOFT WALL -- a cost for being somewhere, `alpha`-free and `u`-free. That is "
                 "a potential, not a constraint. Pass `state_penalty=Psi_cost` (positive where "
-                "expensive); it is composed into the Hamiltonian's V with the sign that layer "
-                "requires, which is not the sign you would write by hand (`potential` is "
-                "REWARD-signed, gotcha G-001).\n"
+                "expensive); it is composed into the Hamiltonian's potential V, which is cost-signed "
+                "too (#2375 ruling 3).\n"
                 "  * A REAL CONSTRAINT -- the variational inequality. Pass "
                 "`constraint=ObstacleConstraint(psi, 'lower')` to `HJBFDMSolver` (#591). That slot "
                 "is reserved and deliberately unfinished: it projects rather than solving the VI, "
@@ -1864,16 +1858,14 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
     def _compose_state_penalty_into_potential(self) -> None:
         """Fold ``state_penalty`` into the Hamiltonian's potential, with the layer's sign.
 
-        ``state_penalty`` is COST-signed: positive where the region is expensive. The
-        Hamiltonian's ``potential`` is REWARD-signed (gotcha G-001, and the sign block above
-        ``source_term_hjb``), so the composition **subtracts**::
+        ``state_penalty`` is COST-signed: positive where the region is expensive. So is the
+        Hamiltonian's ``potential`` (#2375 ruling 3), so the composition **adds**::
 
-            V_new(x, t) = V_old(x, t) - scale * state_penalty(x)
+            V_new(x, t) = V_old(x, t) + scale * state_penalty(x)
 
-        Measured rather than asserted, on a Gaussian wall at x = 0.5 with no coupling: a
-        potential amplitude of ``-5`` raises ``u(0, mid)`` to ``+0.555`` while ``+5`` lowers it
-        to ``-1.419``. So a cost needs a NEGATIVE ``V``, which is not the sign anyone writes by
-        hand -- which is why this composition exists in one place instead of at every call site.
+        Measured on a Gaussian wall at x = 0.5 with no coupling: a potential amplitude of ``+5``
+        raises ``u(0, mid)`` to ``+0.524`` while ``-5`` lowers it to ``-1.319``. The composition
+        exists in one place so the sign is written once.
 
         COPIES rather than rebuilds. An earlier version constructed a fresh
         ``SeparableHamiltonian`` from five of its six constructor parameters, which silently
@@ -1908,8 +1900,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 f"{type(hamiltonian).__name__}. A soft wall is a potential term V(x), so it can "
                 f"only be composed where V lives. Either build the problem with a "
                 f"SeparableHamiltonian, or fold the penalty into your own Hamiltonian's potential "
-                f"directly -- remembering that `potential` is REWARD-signed, so a cost enters "
-                f"NEGATIVE (#2002)."
+                f"directly: `potential` is cost-signed, so the penalty is added to it (#2002, "
+                f"#2375 ruling 3)."
             )
 
         previous = getattr(hamiltonian, "_potential", None)
@@ -1922,12 +1914,12 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             wall = scale * _np.asarray(penalty(x), dtype=float)
             if previous is None:
                 squeezed = wall.squeeze()
-                return float(-squeezed) if squeezed.ndim == 0 else -squeezed
+                return float(squeezed) if squeezed.ndim == 0 else squeezed
             base = previous(x, t)
             # Match the base's own contract exactly -- it decides the shape, not this wrapper.
             if _np.size(wall) == _np.size(base):
                 wall = _np.reshape(wall, _np.shape(base))
-            return base - wall
+            return base + wall
 
         composed = _copy.copy(hamiltonian)
         composed._potential = composed_potential
