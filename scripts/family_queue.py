@@ -105,7 +105,13 @@ def unblocked() -> list[dict]:
         # were identified, and they are done.
         ever = issues_with(blocker, "all")
         if not ever:
-            out.append({**dep, "open": [], "unverified": "no issue has ever carried this label, so the blocker was never identified"})
+            out.append(
+                {
+                    **dep,
+                    "open": [],
+                    "unverified": "no issue has ever carried this label, so the blocker was never identified",
+                }
+            )
             continue
         if not open_in(blocker) and (still := open_in(PREFIX + dep["unblocks"])):
             out.append({**dep, "open": still})
@@ -198,7 +204,7 @@ def self_test(online: bool = False) -> int:
                     f"dependency on {dep.get('blocker_label')} states no reason, "
                     "so the notice it fires cannot explain itself"
                 )
-    except Exception as exc:  # noqa: BLE001 - the self-test reports; it does not handle
+    except Exception as exc:  # the self-test reports; it does not handle
         failures.append(f"the order file does not load: {exc}")
 
     if online:
@@ -207,10 +213,12 @@ def self_test(online: bool = False) -> int:
             for dep in load_order().get("dependencies", []):
                 for name in (dep["blocker_label"], PREFIX + dep["unblocks"]):
                     if name not in live:
-                        failures.append(f"order names '{name}', which is not a label in this repository -- the dependency is inert")
+                        failures.append(
+                            f"order names '{name}', which is not a label in this repository -- the dependency is inert"
+                        )
             if not any(n.startswith(PREFIX) for n in live):
                 failures.append("no family labels exist at all, so both modes are inert")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # reported as a self-test failure, not handled
             failures.append(f"online label check failed: {exc}")
 
     for f in failures:
@@ -226,7 +234,9 @@ def main() -> int:
     g.add_argument("--branch", type=int, metavar="ISSUE")
     g.add_argument("--emptied", type=int, metavar="ISSUE")
     g.add_argument("--self-test", action="store_true")
-    ap.add_argument("--online", action="store_true", help="add the checks that need the network; the local gate does not use this")
+    ap.add_argument(
+        "--online", action="store_true", help="add the checks that need the network; the local gate does not use this"
+    )
     a = ap.parse_args()
     if a.self_test:
         return self_test(online=a.online)
