@@ -221,6 +221,9 @@ for cls in classes:
         if plus != minus:
             uneven.append(f"{cls.__module__}.{cls.__qualname__}: L({a}) = {plus!r}, L({-a}) = {minus!r}")
             break
+    domain = cost.effective_domain()
+    if domain is not None and domain[0] != -domain[1]:
+        uneven.append(f"{cls.__module__}.{cls.__qualname__}: effective_domain() = {domain!r} is not symmetric")
     checked.append(cls.__name__)
 
 print(json.dumps({
@@ -485,17 +488,28 @@ class TestEveryLibraryCost:
     """#2386. The evenness claim over the WHOLE library, not only what collection imported."""
 
     def test_every_library_control_cost_is_even(self):
-        """L(a) == L(-a) bit-exactly for every concrete `ControlCostBase` subclass in the package.
+        """Every concrete `ControlCostBase` subclass in the package is sign-symmetric in alpha.
 
-        #2375 ruling 5's "nothing in this library changes value" holds exactly while this does.
+        That is the premise of #2375 ruling 5's "nothing in this library changes value":
+        sup{-p.a - L} equals sup{+p.a - L} when L is even AND the admissible set is symmetric.
         `test_conjugate_is_alpha_sign_blind` cannot establish it for the whole library: it is
         parametrised at collection, and `__subclasses__()` misses a cost in a module nothing has
-        imported yet. So a child interpreter imports every module, enumerates, builds each cost with
-        `_construct` and probes it. The child reads the tree this process reads (`-P` plus a
-        PYTHONPATH pinned to this package), and that is asserted rather than assumed, because
+        imported yet. So a child interpreter imports every module, enumerates, builds each class with
+        `_construct` and checks L(a) == L(-a) bit-exactly at `_EVENNESS_PROBES` and that
+        `effective_domain()` is symmetric. The child reads the tree this process reads (`-P` plus
+        this package prepended to PYTHONPATH), and that is asserted rather than assumed, because
         mfgarchon is also editable-installed from the main checkout.
+
+        What it does NOT check: instances built with non-default arguments. A class that is even
+        only at its defaults passes.
+
+        Retire this test, with the pin above, if #2375's "nothing changes value" paragraph is
+        withdrawn: it pins that sentence's premise, which ruling 5 does not require to stay true.
         """
-        env = {**os.environ, "PYTHONPATH": str(_PACKAGE_ROOT)}
+        env = {
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join(filter(None, [str(_PACKAGE_ROOT), os.environ.get("PYTHONPATH")])),
+        }
         proc = subprocess.run(
             [sys.executable, "-P", "-c", _CHILD_SWEEP, str(Path(__file__).resolve())],
             env=env,
@@ -523,8 +537,9 @@ class TestEveryLibraryCost:
             f"the wrong class for the rest"
         )
         assert report["uneven"] == [], (
-            f"not even in alpha: {report['uneven']}. That is legitimate -- #2375 ruling 5 exists so the "
-            f"library is correct for a non-even cost -- but such a class's hand-written closed forms "
+            f"not sign-symmetric in alpha: {report['uneven']}. That is legitimate -- #2375 ruling 5 exists "
+            f"so the library is correct for such a cost -- but the class's hand-written closed forms "
             f"for H (`evaluate`, `optimal_control`, `dp`) must be derived under H = sup{{-p.a - L}}, and "
-            f"#2375's 'nothing changes value' no longer holds. Do not make the cost even to silence this."
+            f"#2375's 'nothing changes value' no longer holds. Do not make the cost symmetric to silence "
+            f"this; withdraw or amend that changelog paragraph."
         )
