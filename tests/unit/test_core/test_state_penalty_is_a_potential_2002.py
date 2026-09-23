@@ -89,7 +89,7 @@ def test_a_wall_is_a_cost_not_a_reward(measured):
     """THE SIGN PIN. Delete this and a wall becomes a well, with every other test still green."""
     assert measured["wall"][_MID] > measured["none"][_MID], (
         f"the wall made the middle CHEAPER ({measured['wall'][_MID]:.6f} vs "
-        f"{measured['none'][_MID]:.6f}) -- the composition's subtraction has been inverted"
+        f"{measured['none'][_MID]:.6f}) -- the composition's sign has been inverted"
     )
 
 

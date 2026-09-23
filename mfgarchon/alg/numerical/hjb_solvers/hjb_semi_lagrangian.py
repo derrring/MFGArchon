@@ -1395,7 +1395,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 p_optimal = np.array([grad_components[d][multi_idx] for d in range(self.dimension)])
 
                 # Issue #1413: trace along the characteristic velocity ∂H/∂p, then apply the
-                # Lax-Oleinik value update (the foot carries advection; cost = dt·H_control -
+                # Lax-Oleinik value update (the foot carries advection; cost = dt·H_control +
                 # dt·(V+f)). Replaces the inconsistent `u_departure - dt·H` with a non-λ-scaled
                 # foot (Issue #575/#1413). Issue #1547: ∂H/∂p is the Hamiltonian's, not p/λ.
                 vel = vel_grid[multi_idx]

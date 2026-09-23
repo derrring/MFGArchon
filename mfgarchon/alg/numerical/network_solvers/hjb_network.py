@@ -220,7 +220,7 @@ class NetworkHJBSolver(BaseHJBSolver):
         """Solve HJB backward via scipy.integrate.solve_ivp (Issue #960).
 
         Reformulates the backward HJB system as an ODE:
-            du/ds = H(u, m(T-s), T-s),  s in [0, T],  u(0) = U_terminal
+            du/ds = -H(u, m(T-s), T-s),  s in [0, T],  u(0) = U_terminal
 
         where s = T - t is the reversed time variable.
 

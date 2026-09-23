@@ -3010,7 +3010,7 @@ if __name__ == "__main__":
     t_val = 0.0
 
     H_val = H(x, m_val, p_val, t_val)
-    # H = ½|p|²/λ + f(m) = 0.5 * 1.0 / 2.0 + (-0.09) = 0.25 - 0.09 = 0.16
+    # H = ½|p|²/λ - f(m) = 0.5 * 1.0 / 2.0 - 0.09 = 0.25 - 0.09 = 0.16
     print(f"   H(x={x}, m={m_val}, p={p_val}) = {H_val:.4f}")
     print("   Expected: 0.5 * 1.0² / 2.0 - 0.3² = 0.25 - 0.09 = 0.16")
     assert abs(H_val - 0.16) < 1e-10, f"SeparableHamiltonian value failed: {H_val}"

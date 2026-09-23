@@ -77,10 +77,12 @@ class NetworkHamiltonian(HamiltonianBase):
         # cost-signed convention (#2375 rulings 3-4) changed only how the source enters H, not this.
         if hamiltonian_func is not None and (node_potential_func is not None or node_interaction_func is not None):
             raise ValueError(
-                "A custom hamiltonian_func is the whole Hamiltonian, H = control - V - f, and the solver "
-                "adds it whole (#2375 rulings 3-4), so node_potential_func / node_interaction_func "
-                "given alongside it would never be read. Put V and f inside hamiltonian_func, with the "
-                "cost sign, or drop hamiltonian_func and use the built-in control."
+                "A custom hamiltonian_func is the whole Hamiltonian, H = control - V - f, and the RK45 "
+                "solver adds it whole (#2375 rulings 3-4) without reading node_potential_func / "
+                "node_interaction_func, while policy iteration and the problem's node_potential / "
+                "density_coupling do read them -- so the two solvers would solve different problems. "
+                "Put V and f inside hamiltonian_func, with the cost sign, or drop hamiltonian_func and "
+                "use the built-in control."
             )
         self.network_data = network_data
         self._hamiltonian_func = hamiltonian_func
@@ -224,10 +226,11 @@ class NetworkHamiltonian(HamiltonianBase):
         return grad
 
     def dm(self, x, m, p, t=0.0):
-        """dH/dm at node x. Issue #1470 Strand A: the default node congestion has the EXACT analytic
-        derivative ``d/dm (0.5 * m_own[node]^2) = m_own[node]`` (own-population slice, matching
-        ``coupling_value``); a custom ``node_interaction_func`` has no analytic form here, so uses a
-        node-wise central finite difference of the coupling. This is the single source for
+        """dH/dm at node x. The coupling enters H as -f (#2375 ruling 3), so this is -df/dm. Issue #1470
+        Strand A: the default node congestion has the EXACT analytic derivative ``d/dm (0.5 * m_own[node]^2)
+        = m_own[node]`` (own-population slice, matching ``coupling_value``); a custom
+        ``node_interaction_func`` has no analytic form here, so uses a node-wise central finite difference
+        of the coupling. This is the single source for
         ``NetworkMFGProblem.hamiltonian_dm``.
         """
         node = int(np.asarray(x).flat[0])
@@ -261,8 +264,8 @@ class NetworkMFGComponents(MFGComponents):
     -------------
     When ``hamiltonian_func`` / ``node_interaction_func`` are omitted, the network Hamiltonian defaults
     to the finite-state quadratic-congestion form
-    ``H = 0.5*sum_j w_ij*max(u_i - u_j, 0)^2 + V(node) + 0.5*m[node]^2`` (control cost + node potential +
-    quadratic node congestion). A ``None`` field means "use this default", **not** "omit the term".
+    ``H = 0.5*sum_j w_ij*max(u_i - u_j, 0)^2 - V(node) - 0.5*m[node]^2``: the control cost minus the node
+    potential and the quadratic node congestion, both of which are costs (#2375 ruling 3). A ``None`` field means "use this default", **not** "omit the term".
     Provide the callables to override (see ``NetworkHamiltonian``).
     """
 

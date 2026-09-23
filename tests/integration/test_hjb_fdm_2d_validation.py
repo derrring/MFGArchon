@@ -321,7 +321,11 @@ class TestHJBFDM2DPhysicalProperties:
 
     @pytest.mark.slow
     def test_monotonicity_in_time(self):
-        """Test that value function is decreasing backward in time."""
+        """At the symmetric centre the value function decreases forward in time.
+
+        grad u = 0 there, so the HJB reads u_t = -D Lap u - f(m) with f(m) = m > 0 a cost (#2375 ruling
+        3): the running cost accumulates backward, and the convex terminal adds to it through diffusion.
+        """
         # N=12 gives 13 grid points
         problem = QuadraticHamiltonian2D(N=12, T=0.5, Nt=10)
         solver = HJBFDMSolver(problem, solver_type="newton")
@@ -334,15 +338,10 @@ class TestHJBFDM2DPhysicalProperties:
 
         U_solution = solver.solve_hjb_system(M_test, U_terminal, U_guess)
 
-        # Value function should generally decrease going backward in time
-        # (earlier times have lower cost-to-go)
-        # Check at center point
         center_values = U_solution[:, 6, 6]
-
-        # Should be monotone increasing forward in time (decreasing backward)
         diffs = np.diff(center_values)
-        # Most diffs should be positive (some may be zero or slightly negative due to numerics)
-        assert np.sum(diffs >= -1e-6) > 0.7 * len(diffs)
+        # Measured: all 10 steps are about -3.0e-4, which is -f(m) * dt with f = 1/169 and dt = 0.05.
+        assert np.all(diffs < 0), f"the centre value must fall forward in time; steps {diffs}"
 
     @pytest.mark.slow
     def test_symmetry(self):

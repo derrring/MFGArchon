@@ -3232,7 +3232,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         Issue #1247 (#1118 PR2): the separable Hamiltonian's potential V(x, t) and density
         coupling f(m), plus any caller-supplied running cost, are wired into Howard's
         running_cost slot (see `running_cost` closure below), so Howard solves the full non-LQ
-        HJB ``-d_t u + (1/2)|grad u|^2 + V(x) + f(m) - (sigma^2/2) Lap u = 0``. Still deferred
+        HJB ``-d_t u + (1/2)|grad u|^2 - V(x) - f(m) - (sigma^2/2) Lap u = 0`` (#2375 ruling 3). Still deferred
         (fail-loud below): non-unit control cost lambda and non-quadratic control cost (the
         Lagrangian-scaling work tracked alongside #1071).
         """

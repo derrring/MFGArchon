@@ -82,7 +82,7 @@ FALSE-SAFETY GUARDS encoded here
   mandatory: FixedPointIterator hardcodes v = zeros for the HJB source
   (fixed_point_iterator.py:263), so a v-dependent S_HJB would silently be wrong.
 * The coupling is ACTIVE: c_f > 0 so the HJB residual genuinely contains f(m_current)
-  (cancelled by the +c_f*m* term in S_HJB at the fixed point), and the FP drift
+  (cancelled by the -c_f*m* term in S_HJB at the fixed point), and the FP drift
   genuinely contains grad U (cross term in S_FP). With c_f = 0 the test would
   degenerate into two decoupled MMS and could not catch a cross-coupling bug.
 * periodic BC keeps boundaries exact (sin/cos manufactured pair), avoiding the

@@ -58,10 +58,8 @@ def _build_H(prob: NetworkMFGProblem) -> NetworkHamiltonian:
 # matters: the bug it caught scaled the source by the direction sign, and every V=0 test passed
 # anyway -- policy iteration even agreed with RK45, because both carried the same error.
 #
-# It is not rebuilt under MINIMIZE here on purpose. Ruling 3/4 of #2375 changes what a positive V
-# does to u -- today it lowers it, acting as a reward -- so any assertion written now about the
-# sign of a non-uniform source is one that phase 2 inverts. The diagnostic belongs to that phase,
-# and it needs a non-uniform source to exist at all.
+# #2378 phase 2 rebuilt it under the cost-signed convention: see
+# `test_a_non_uniform_running_cost_reaches_the_right_nodes_with_the_cost_sign` at the end of this file.
 
 
 def test_network_hamiltonian_object_equals_method_node_by_node(case):

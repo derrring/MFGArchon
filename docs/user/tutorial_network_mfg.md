@@ -44,12 +44,14 @@ $$\Delta_G = D - A$$
 ### Network Hamiltonian
 
 The network Hamiltonian at node $i$ typically takes the form:
-$$H_i(m, p, t) = \sum_{j \sim i} c_{ij}(t) + V_i(t) + F_i(m_i, t)$$
+$$H_i(m, p, t) = \sum_{j \sim i} c_{ij}(t) - V_i(t) - F_i(m_i, t)$$
 
 where:
 - $c_{ij}(t)$: cost of moving from node $i$ to $j$
-- $V_i(t)$: potential at node $i$  
-- $F_i(m_i, t)$: congestion/coupling function
+- $V_i(t)$: potential at node $i$, a cost
+- $F_i(m_i, t)$: congestion/coupling function, a cost
+
+Both are costs (#2375 ruling 3), so they enter $H$ with a minus sign.
 
 ## Architecture Overview
 
@@ -491,11 +493,12 @@ def custom_hamiltonian(node, neighbors, m, p, t):
         control_cost = 0.5 * distance * (p[neighbor] - p[node])**2
         total_cost += control_cost
     
-    # Add congestion and potential terms
-    total_cost += node_potential(node, t) + congestion_function(node, m, t)
+    # Potential and congestion are costs, so they enter H with a minus sign
+    total_cost -= node_potential(node, t) + congestion_function(node, m, t)
     return total_cost
 
-# Use in problem definition
+# Use in problem definition. A custom hamiltonian_func is the whole H: do not also pass
+# node_potential_func or node_interaction_func, which raises.
 components = NetworkMFGComponents(hamiltonian_func=custom_hamiltonian)
 ```
 
