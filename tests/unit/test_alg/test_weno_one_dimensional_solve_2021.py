@@ -50,7 +50,9 @@ def _solve(dim, n, nt):
             u_terminal=lambda q: 0.0,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
-                potential=lambda x, t: float(np.sum(np.cos(np.pi * np.atleast_1d(x)))),
+                # Negative on purpose: the sums pinned below were captured under the pre-#2375
+                # convention, where V entered H with a plus sign; negating V here is that problem.
+                potential=lambda x, t: -float(np.sum(np.cos(np.pi * np.atleast_1d(x)))),
             ),
         ),
     )

@@ -122,11 +122,12 @@ class TestHJBSemiLagrangianSolveHJBSystem:
         assert np.all(np.isfinite(U_solution))
 
         # Closed form: with M == 1 everywhere, U_T == 0 and coupling f(m) = m, the HJB reduces to
-        # -du/dt = -1 with zero terminal data, so u(t, x) = -(T - t), spatially constant.  This
-        # pins the coupling sign, its time weighting and the spatial uniformity of the SL update
-        # at once.  Measured max deviation 7.77e-16 and per-row spatial spread 1.22e-15.
+        # -du/dt = 1 with zero terminal data (f is a cost, #2375 ruling 3), so u(t, x) = T - t,
+        # spatially constant.  This pins the coupling sign, its time weighting and the spatial
+        # uniformity of the SL update at once.  Measured max deviation 7.77e-16 and per-row spatial
+        # spread 7.77e-16.
         t_grid = np.linspace(0.0, problem.T, problem.Nt + 1)
-        U_exact = np.tile((-(problem.T - t_grid))[:, None], (1, Nx_points))
+        U_exact = np.tile((problem.T - t_grid)[:, None], (1, Nx_points))
         np.testing.assert_allclose(U_solution, U_exact, atol=1e-12)
 
     def test_solve_hjb_system_final_condition(self):
@@ -194,12 +195,12 @@ class TestHJBSemiLagrangianNumericalProperties:
 
         # External oracle: the coupling is f(m) = m, so raising the density by a constant c raises
         # the source by c uniformly and in time.  Integrating backward from the SAME terminal data,
-        # the value function must shift by exactly -c*(T - t) -- independent of the oscillatory
+        # the value function must shift by exactly +c*(T - t) -- independent of the oscillatory
         # terminal condition, which cancels in the difference.  This pins the coupling's sign, its
-        # additivity and its time weighting.  Measured 3.33e-15, per-row spatial spread 4.44e-15.
+        # additivity and its time weighting.  Measured 1.44e-15, per-row spatial spread 1.67e-15.
         U_shifted = solver.solve_hjb_system(M_density + 1.0, U_final, U_prev)
         t_grid = np.linspace(0.0, problem.T, problem.Nt + 1)
-        assert np.max(np.abs((U_shifted - U_solution) - (-(problem.T - t_grid))[:, None])) < 1e-10
+        assert np.max(np.abs((U_shifted - U_solution) - (problem.T - t_grid)[:, None])) < 1e-10
 
     def test_solution_smoothness(self):
         """Test that solution has reasonable smoothness."""
@@ -292,11 +293,11 @@ class TestHJBSemiLagrangianIntegration:
         assert U_solution.shape == (problem.Nt + 1, Nx_points)
 
         # The Gaussian density is symmetric about x = 0.5 to 3.47e-17, and so are the terminal
-        # data and the domain, so U must be symmetric too.  Measured 8.33e-17.
+        # data and the domain, so U must be symmetric too.  Measured 7.63e-17.
         assert np.max(np.abs(U_solution - U_solution[:, ::-1])) < 1e-12
         # Positive control: an all-zero return would satisfy the symmetry vacuously.
-        # Measured minimum -0.1330, driven entirely by the density coupling.
-        assert U_solution.min() < -1e-3
+        # Measured maximum 0.1330, driven entirely by the density coupling, which is a cost.
+        assert U_solution.max() > 1e-3
 
 
 class TestCharacteristicTracingMethods:
@@ -1442,7 +1443,7 @@ class TestSLValueUpdateND:
     The 1D update is covered by TestSLHJBConsistency (analytic Hopf-Lax). nD previously had
     only finiteness checks, so the corrected λ-aware kinetic term was invisible in every nD
     test (audit finding S0-28). This pins ``_sl_value_update`` directly on a 2D batch against
-    the analytic LQ closed form ``u_foot + dt*(|p|²/(2λ) - V - f)`` for λ≠1 with V,f≠0, and
+    the analytic LQ closed form ``u_foot + dt*(|p|²/(2λ) + V + f)`` for λ≠1 with V,f≠0, and
     asserts it stays distinct from the pre-#575/#1413 scheme (kinetic 3x / λ=1-only foot).
     """
 
@@ -1488,12 +1489,12 @@ class TestSLValueUpdateND:
 
         out = np.asarray(solver._sl_value_update(u_foot, pts, m, p, t, dt))
 
-        # Independent analytic LQ form: H = |p|^2/(2λ) + V(x) + f(m), so
-        # H(p) - 2*H(0) = |p|^2/(2λ) - (V + f).
+        # Independent analytic LQ form: H = |p|^2/(2λ) - V(x) - f(m) (#2375 ruling 3), so
+        # H(p) - 2*H(0) = |p|^2/(2λ) + (V + f), the running cost L(α*) paid over the step.
         h_control = np.sum(p**2, axis=1) / (2.0 * lam)
         h_state = V(pts, t) + 0.7 * m
-        expected = u_foot + dt * (h_control - h_state)
-        old_scheme = u_foot - dt * (h_control + h_state)  # pre-#575/#1413
+        expected = u_foot + dt * (h_control + h_state)
+        old_scheme = u_foot - dt * (h_control - h_state)  # pre-#575/#1413: u_foot - dt*H(p)
 
         assert out.shape == (n,)
         np.testing.assert_allclose(

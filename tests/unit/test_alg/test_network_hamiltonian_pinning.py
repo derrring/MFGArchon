@@ -158,7 +158,7 @@ def test_network_hamiltonian_minimize_consistency():
         assert (ai >= -1e-12).all(), f"rates must be >= 0 at node {i}: {ai}"
 
     coupling2 = 0.5 * m[2] ** 2  # default node congestion at node 2
-    control2 = float(H(np.array([2]), m, u, t)) - coupling2
+    control2 = float(H(np.array([2]), m, u, t)) + coupling2  # H = control - (V + f), V = 0 here
     envelope2 = 0.5 * float(np.sum(alpha2**2))
     assert abs(control2 - 0.5) < 1e-9, f"one-sided control at node2 should be 0.5, got {control2}"
     assert abs(control2 - envelope2) < 1e-9, f"H control != envelope 0.5*sum(alpha^2): {control2} vs {envelope2}"
@@ -288,7 +288,7 @@ def test_network_geometry_both_or_neither_fail_loud():
 
 def test_source_term_single_source_and_multipop_slice():
     """Issue #1470 Strand A: ``NetworkHamiltonian.source_term`` (V + f_m) is the SINGLE source consumed
-    by both ``__call__`` (control + source) and ``hjb_network._source_terms``. Single-population it is
+    by both ``__call__`` (as control - source, #2375 ruling 3) and ``hjb_network._source_terms``. Single-population it is
     ``V + 0.5*m[node]^2``; for stacked multi-population ``m`` it reads the OWN slice
     (``_extract_own_density``), matching ``__call__`` — the fork the HJB used to carry when it
     re-derived ``density_coupling`` on the raw stacked ``m``.
@@ -305,9 +305,9 @@ def test_source_term_single_source_and_multipop_slice():
     for node in range(N):
         src = H.source_term(node, m, 0.0)
         assert src == pytest.approx(0.2 * node + 0.5 * m[node] ** 2)
-        # Decomposition: control = __call__ - source is p-dependent but m-INDEPENDENT (all m-dependence
-        # is in the source), so scaling m does not change (__call__ - source).
-        assert H(node, m, p, 0.0) - src == pytest.approx(H(node, 2 * m, p, 0.0) - H.source_term(node, 2 * m, 0.0))
+        # Decomposition: control = __call__ + source is p-dependent but m-INDEPENDENT (all m-dependence
+        # is in the source), so scaling m does not change (__call__ + source).
+        assert H(node, m, p, 0.0) + src == pytest.approx(H(node, 2 * m, p, 0.0) + H.source_term(node, 2 * m, 0.0))
 
     # Multi-population: population 1's source reads its OWN slice (0.9), not the raw stacked m[node] (0.1).
     H1 = NetworkHamiltonian(network_data=prob.network_data, population_index=1)
@@ -349,8 +349,8 @@ def test_problem_methods_delegate_to_object():
 
 def test_hamiltonian_dm_single_sourced_analytic():
     """Issue #1470 Strand A: ``NetworkMFGProblem.hamiltonian_dm`` delegates to the object's ``dm``,
-    which owns the EXACT analytic default-congestion derivative ``d/dm(0.5*m_own^2) = m_own[node]``
-    (own-population slice) — replacing the finite-difference default and the removed
+    which owns the EXACT analytic default-congestion derivative. H = control - f with
+    f = 0.5*m_own^2, so ``dH/dm = -m_own[node]`` (own-population slice) — replacing the finite-difference default and the removed
     ``_default_density_coupling_derivative``.
     """
     net = GridNetwork(width=3, height=3)
@@ -361,24 +361,24 @@ def test_hamiltonian_dm_single_sourced_analytic():
     m = np.linspace(0.1, 0.9, N)
     p = np.zeros(N)
     for node in range(N):
-        # analytic default derivative == m[node]; problem method delegates to the object
-        assert H.dm(node, m, p, 0.0) == pytest.approx(m[node])
+        # analytic default derivative == -m[node]; problem method delegates to the object
+        assert H.dm(node, m, p, 0.0) == pytest.approx(-m[node])
         dm_method = prob.hamiltonian_dm(node, prob.get_node_neighbors(node), m, p, 0.0)
-        assert dm_method == pytest.approx(m[node])
+        assert dm_method == pytest.approx(-m[node])
         assert dm_method == H.dm(node, m, p, 0.0)
 
     # Multi-population: population 1's dm reads its OWN slice (0.9), not the raw stacked m[node] (0.1).
     H1 = NetworkHamiltonian(network_data=prob.network_data, population_index=1)
     m_stacked = np.concatenate([np.full(N, 0.1), np.full(N, 0.9)])
     for node in range(N):
-        assert H1.dm(node, m_stacked, p, 0.0) == pytest.approx(0.9)
+        assert H1.dm(node, m_stacked, p, 0.0) == pytest.approx(-0.9)
 
 
 def test_hamiltonian_dm_custom_interaction_finite_difference():
     """Issue #1470 Strand A (#1537 review regression): for a custom ``node_interaction_func``, ``dm``
     uses a node-wise central finite difference of the coupling — NOT the base ``_finite_diff_dm``, which
     collapses ``m`` to a scalar (``np.mean``) and raised ``IndexError`` on node-indexed interaction funcs
-    (``m[node]`` on a length-1 array). ``d/dm[node] (0.3*m[node]^2) = 0.6*m[node]``.
+    (``m[node]`` on a length-1 array). ``dH/dm[node] = -d/dm[node] (0.3*m[node]^2) = -0.6*m[node]``.
     """
     net = GridNetwork(width=5, height=1)
     net.create_network()
@@ -388,7 +388,45 @@ def test_hamiltonian_dm_custom_interaction_finite_difference():
     m = np.array([0.1, 0.3, 0.5, 0.7, 0.9])
     p = np.zeros(5)
     for node in range(5):
-        # no crash for any node, and matches the analytic derivative 0.6*m[node]
-        assert H.dm(node, m, p, 0.0) == pytest.approx(0.6 * m[node], abs=1e-4)
+        # no crash for any node, and matches the analytic derivative -0.6*m[node]
+        assert H.dm(node, m, p, 0.0) == pytest.approx(-0.6 * m[node], abs=1e-4)
         dm_method = prob.hamiltonian_dm(node, prob.get_node_neighbors(node), m, p, 0.0)
-        assert dm_method == pytest.approx(0.6 * m[node], abs=1e-4)
+        assert dm_method == pytest.approx(-0.6 * m[node], abs=1e-4)
+
+
+def test_a_non_uniform_running_cost_reaches_the_right_nodes_with_the_cost_sign():
+    """#2378 phase 2 (#2375 rulings 3-4): the network source is cost-signed and lands node by node.
+
+    A uniform V pins only the sign. It is symmetric under every permutation of the nodes, so a source
+    applied to the wrong nodes, averaged across them, or dropped at a boundary leaves it unchanged, and
+    solver-against-solver agreement cannot see an error both solvers share. So the oracle here is the
+    ODE ``du/ds = -H(u) = -control(u) + V + f`` integrated independently, with the source written out
+    by hand rather than read from ``source_term``, compared node by node.
+    """
+    from scipy.integrate import solve_ivp
+
+    net = GridNetwork(width=5, height=1)
+    net.create_network()
+    comps = NetworkMFGComponents(node_potential_func=lambda n, t: 2.0 * n)  # a running COST, rising with n
+    prob = NetworkMFGProblem(geometry=net, T=0.5, Nt=40, components=comps)
+    n = prob.num_nodes
+    m = np.ones((41, n)) / n
+    u_rk = NetworkHJBSolver(prob, scheme="RK45").solve_hjb_system(M_density=m, U_terminal=np.zeros(n))
+    u_pi = NetworkPolicyIterationHJBSolver(prob).solve_hjb_system(M_density=m, U_terminal=np.zeros(n))
+
+    data = prob.network_data
+
+    def rhs(_s, u):
+        out = np.empty(n)
+        for i in range(n):
+            control = sum(0.5 * data.get_edge_weight(i, j) * max(u[i] - u[j], 0.0) ** 2 for j in data.get_neighbors(i))
+            out[i] = -control + 2.0 * i + 0.5 * (1.0 / n) ** 2  # V(i) + default congestion f = m_i^2 / 2
+        return out
+
+    u_hand = solve_ivp(rhs, [0.0, 0.5], np.zeros(n), rtol=1e-10, atol=1e-12).y[:, -1]
+    u0 = np.asarray(u_rk)[0]
+
+    # Measured 4.05e-08 against the hand ODE; u(0) = [0.01, 0.93, 1.93, 2.93, 3.93]; PI vs RK45 3.2e-03.
+    assert np.max(np.abs(u0 - u_hand)) < 1e-6, f"library {u0} against the hand-assembled ODE {u_hand}"
+    assert np.all(np.diff(u0) > 0), f"the cost-to-go must rise toward the expensive nodes; got {u0}"
+    assert np.max(np.abs(np.asarray(u_pi)[0] - u0)) < 2e-2, "policy iteration must agree with RK45"

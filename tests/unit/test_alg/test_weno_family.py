@@ -152,8 +152,9 @@ class TestWenoFamilySolver:
         ``isfinite`` alone could not tell that ``time_integration=`` was ignored and both loop
         passes ran the default tvd_rk3. Two observables fix that:
         (a) the two integrators must disagree on oscillatory data (they are different schemes);
-        (b) on a CONSTANT field ``grad u = 0``, so ``H(0) = 0`` and only the running cost ``-m``
-            survives: one step of size ``dt`` must give exactly ``u - dt*m`` for either integrator.
+        (b) on a CONSTANT field ``grad u = 0``, so only the coupling survives, ``H = -f(m) = -m``
+            (#2375 ruling 3): one step of size ``dt`` must give exactly ``u + dt*m`` for either
+            integrator.
         """
         methods = ["tvd_rk3", "explicit_euler"]
 
@@ -172,9 +173,9 @@ class TestWenoFamilySolver:
             assert np.isfinite(u_new).all()
             results[method] = u_new
 
-            # Flat-field closed form: u - dt*m at every node, both integrators (measured 5e-16).
+            # Flat-field closed form: u + dt*m at every node, both integrators.
             u_flat = solver.solve_hjb_step(np.full(Nx, 2.0), m_current, dt)
-            np.testing.assert_allclose(u_flat - 2.0, -dt / Nx, atol=1e-12)
+            np.testing.assert_allclose(u_flat - 2.0, dt / Nx, atol=1e-12)
 
         # Dispatch is real: RK3 and forward Euler differ by 3.30e-03 here, 12% of the step
         # itself (max|u_new - u_current| = 2.72e-02), so this is scheme difference, not noise.
@@ -345,10 +346,10 @@ class TestWenoSolverIntegration:
         assert np.all(np.isfinite(U_solution))
         assert U_solution.shape == (Nt, Nx)
 
-        # x -> 1-x symmetry (measured 7.8e-16 against an amplitude of 0.955, margin ~1300x).
+        # x -> 1-x symmetry (measured 8.3e-17 against an amplitude of 0.246, margin ~12000x).
         assert np.max(np.abs(U_solution[0] - U_solution[0][::-1])) < 1e-12
-        # The running cost is -m, so the value function bottoms out where the density peaks.
-        assert int(np.argmin(U_solution[0])) == Nx // 2
+        # The coupling f(m) = m is a cost, so the value function peaks where the density peaks.
+        assert int(np.argmax(U_solution[0])) == Nx // 2
 
     @pytest.mark.parametrize("variant", ["weno5", "weno-z", "weno-m", "weno-js"])
     def test_solve_hjb_system_all_variants(self, integration_problem, variant):
@@ -376,7 +377,7 @@ class TestWenoSolverIntegration:
 
         # Measured max deviation 2.44e-15 for all four variants; margin ~400x to the tolerance.
         t = np.linspace(0.0, integration_problem.T, Nt)
-        exact = np.tile(-(integration_problem.T - t)[:, None], (1, Nx))
+        exact = np.tile((integration_problem.T - t)[:, None], (1, Nx))
         np.testing.assert_allclose(U_solution, exact, atol=1e-12)
 
     def test_solve_with_uniform_density(self, integration_problem):
@@ -466,7 +467,7 @@ class TestWenoSolverIntegration:
             assert np.all(np.isfinite(U_solution))
             # Measured max deviation 2.44e-15 at each of the three CFL values; margin ~400x.
             t = np.linspace(0.0, integration_problem.T, Nt)
-            exact = np.tile(-(integration_problem.T - t)[:, None], (1, Nx))
+            exact = np.tile((integration_problem.T - t)[:, None], (1, Nx))
             np.testing.assert_allclose(U_solution, exact, atol=1e-12)
 
 

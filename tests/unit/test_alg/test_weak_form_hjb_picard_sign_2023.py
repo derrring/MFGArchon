@@ -14,7 +14,8 @@ method silently solving different equations is invisible to any test that exerci
 
 THE FIXTURE
 -----------
-`H = c` constant: a quadratic control cost whose coupling returns a constant, with `m == 1`. With
+`H = c` constant: a quadratic control cost whose coupling returns `-c`, so that `H = -f = c`
+(#2375 ruling 3), with `m == 1`. With
 `u_T = 0` and no-flux walls the solution stays spatially constant, so `p == 0` (killing the kinetic
 half, leaving `H == c` exactly) and `Lap u == 0`. The equation collapses to `u'(t) = c`, giving
 
@@ -43,7 +44,7 @@ _CONSTANTS = (1.0, 2.0, -3.0)
 def _hamiltonian(c: float):
     return SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0),
-        coupling=lambda m, _c=c: np.full_like(np.asarray(m, dtype=float), _c),
+        coupling=lambda m, _c=c: np.full_like(np.asarray(m, dtype=float), -_c),
         coupling_dm=lambda m: np.zeros_like(np.asarray(m, dtype=float)),
     )
 

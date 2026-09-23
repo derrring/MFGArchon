@@ -1,6 +1,6 @@
 {
   "_comment": "Warning identities the suite emits (#2119). Keyed (file, kind, digits-normalised text[:40]) -- NOT line numbers, which move under any edit, and NOT occurrence counts, which jitter run to run. Bidirectional: a new identity is a regression, a removed one is progress that must be recorded here. `occurrences` is reported, never gated. `toolchain_when_written` is attribution for a later diff (#2158), also never gated; a value of `ambiguous:a|b` or `unreadable` cannot be written here, because it would name a broken environment rather than a version. Regenerate with --write-baseline.",
-  "occurrences_when_written": 3519,
+  "occurrences_when_written": 3718,
   "toolchain_when_written": {
     "python": "3.12.13",
     "pytest": "9.1.1",
@@ -18,7 +18,6 @@
     "mfgarchon/alg/numerical/gfdm_components/gfdm_strategies.py\tUserWarning\tHybrid neighborhood: N/N points (N.N%) h",
     "mfgarchon/alg/numerical/gfdm_components/gfdm_strategies.py\tUserWarning\tUpwind stencil: N/N points (N.N%) had in",
     "mfgarchon/alg/numerical/gfdm_components/precomputed_stencils.py\tRuntimeWarning\tOSQP failed: solved inaccurate. Using un",
-    "mfgarchon/alg/numerical/hjb_solvers/hjb_fdm.py\tUserWarning\tfixed_point did not converge (residual: ",
     "mfgarchon/alg/numerical/hjb_solvers/hjb_gfdm.py\tMatrixRankWarning\tMatrix is exactly singular",
     "mfgarchon/alg/numerical/hjb_solvers/hjb_gfdm.py\tUserWarning\tHJBHowardSolver: running on non-SOCP ste",
     "mfgarchon/alg/numerical/weak_form_fp_solver.py\tUserWarning\tWeak-form/FEM solver uses a single scala",

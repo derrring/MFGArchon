@@ -238,7 +238,7 @@ if __name__ == "__main__":
     # Simple 1D problem with Hamiltonian and terminal condition
     H = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0),
-        coupling=lambda m: -(m**2),
+        coupling=lambda m: m**2,
     )
     components = MFGComponents(
         hamiltonian=H,

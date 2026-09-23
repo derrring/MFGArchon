@@ -34,6 +34,13 @@ from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
+# NOTE: solver_golden_lq_fdm.npz was regenerated 2026-09-23 for #2378 phase 2 (#2375 ruling 3): the
+# coupling f(m) = 0.1 m is now a cost, entering H with a minus sign, where it used to be a reward.
+# max|dU| 8.231e-02 (rel 1.94) at (t=0, col 10), max|dM| 4.003e-01 (rel 1.30e-01) at (t=7, col 10),
+# the domain centre where the coupling acts. Two controls: the GFDM fixture, which has no V or f,
+# solves byte-identical to its committed file; and this problem with the coupling negated reproduces
+# the PREVIOUS golden to 1.4e-15 in U and 2.0e-14 in M, so the change is the sign and nothing else.
+#
 # NOTE: solver_golden_lq_fdm.npz was regenerated 2026-09-14 for #2308. `gradient_upwind` returned
 # the one-sided difference of smaller magnitude at a discrete local minimum, where the Godunov
 # momentum for |p|^2/2 is 0. This fixture's U has its minimum at column 10 at t = 0, T/2 and the row

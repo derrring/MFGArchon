@@ -24,8 +24,9 @@ def _default_hamiltonian():
     """Default Hamiltonian for testing."""
     return SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0),
-        coupling=lambda m: m,
-        coupling_dm=lambda m: 1.0,
+        # An aggregating coupling (a negative cost, #2375 ruling 3): this file's measurements were taken on it.
+        coupling=lambda m: -m,
+        coupling_dm=lambda m: -1.0,
     )
 
 

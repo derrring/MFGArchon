@@ -73,10 +73,15 @@ class NetworkHamiltonian(HamiltonianBase):
     ):
         super().__init__(population_index=population_index)
         # Issue #1474/#1476: the finite-state MFG is minimisation-only (#2373). Cost-to-go sends agents
-        # DOWNHILL toward lower value. The orientation factor `s` below is the constant +1 rather than a
-        # read of a deleted direction parameter, and the formulas that multiply by it are left as
-        # written -- ruling 3/4 of #2375 rewrites the network's sign handling, and doing it twice is how
-        # a double flip survives with every test green.
+        # DOWNHILL toward lower value, so the control orientation `s` below is the constant +1. The
+        # cost-signed convention (#2375 rulings 3-4) changed only how the source enters H, not this.
+        if hamiltonian_func is not None and (node_potential_func is not None or node_interaction_func is not None):
+            raise ValueError(
+                "A custom hamiltonian_func is the whole Hamiltonian, H = control - V - f, and the solver "
+                "adds it whole (#2375 rulings 3-4), so node_potential_func / node_interaction_func "
+                "given alongside it would never be read. Put V and f inside hamiltonian_func, with the "
+                "cost sign, or drop hamiltonian_func and use the built-in control."
+            )
         self.network_data = network_data
         self._hamiltonian_func = hamiltonian_func
         self._hamiltonian_dm_func = hamiltonian_dm_func
@@ -131,25 +136,25 @@ class NetworkHamiltonian(HamiltonianBase):
         # of the constrained optimum over rates alpha >= 0 (a valid CTMC generator). Only the ACTIVE side
         # contributes: downhill edges u_i>u_j give 0.5*sum w*max(u_i-u_j,0)^2. Consistent with
         # optimal_control (both use max(s*(u_i-u_j),0), s = +1).
-        s = 1.0  # minimisation-only (#2373); the formulas below are left as written for #2375
+        s = 1.0  # minimisation-only (#2373): the control is oriented downhill
         control_cost = 0.0
         for neighbor in neighbors:
             w = self.network_data.get_edge_weight(node, neighbor)
             du = s * (p[node] - p[neighbor])  # oriented: u_i - u_j (MIN) / u_j - u_i (MAX)
             control_cost += 0.5 * w * max(du, 0.0) ** 2
 
-        # Issue #1470: the p-independent source (V + coupling) is single-sourced in `source_term` and
-        # consumed both here (control + source) and by the HJB solver's control isolation.
-        return control_cost + self.source_term(node, m, t)
+        # H = control - (V + f): the source is cost-signed and enters H with a minus sign (#2375
+        # rulings 3-4). `source_term` is also the running cost that policy evaluation reads.
+        return control_cost - self.source_term(node, m, t)
 
     def source_term(self, x, m, t=0.0):
         """The p-independent source ``V(node) + f(node, m)`` — the RHS in ``-u_t + H_control = source``.
 
-        Single source consumed by ``_default_hamiltonian`` (as ``control + source``) AND by
-        ``hjb_network._source_terms`` (Issue #1470): computing it once here removes the multi-population
-        fork where the HJB used to re-derive ``V + density_coupling`` on the raw stacked ``m`` while the
-        Hamiltonian used ``_extract_own_density`` — so ``h_control = h_total - source`` now isolates the
-        control exactly. Coupling ``f(node, m, t)`` reads ``node_interaction_func`` on the FULL density
+        Cost-signed (#2375 ruling 3). Single source consumed by ``_default_hamiltonian`` (as
+        ``control - source``) AND by ``hjb_network._source_terms``, the running cost policy evaluation
+        pays (Issue #1470): computing it once here removes the multi-population fork where the HJB used
+        to re-derive ``V + density_coupling`` on the raw stacked ``m`` while the Hamiltonian used
+        ``_extract_own_density``. Coupling ``f(node, m, t)`` reads ``node_interaction_func`` on the FULL density
         (cross-coupling), else defaults to quadratic node congestion ``0.5 * m_own[node]^2``.
         ``_extract_own_density`` is the identity for single-population ``m`` (byte-identical) and slices
         the own population for stacked ``K*N`` ``m``.
@@ -190,7 +195,7 @@ class NetworkHamiltonian(HamiltonianBase):
         p_arr = np.atleast_1d(p)
         neighbors = self.network_data.get_neighbors(node)
 
-        s = 1.0  # minimisation-only (#2373); the formulas below are left as written for #2375
+        s = 1.0  # minimisation-only (#2373): the control is oriented downhill
         alpha = np.zeros_like(p_arr)
         for neighbor in neighbors:
             w = self.network_data.get_edge_weight(node, neighbor)
@@ -209,7 +214,7 @@ class NetworkHamiltonian(HamiltonianBase):
         p_arr = np.atleast_1d(p)
         neighbors = self.network_data.get_neighbors(node)
 
-        s = 1.0  # minimisation-only (#2373); the formulas below are left as written for #2375
+        s = 1.0  # minimisation-only (#2373): the control is oriented downhill
         grad = np.zeros_like(p_arr)
         for neighbor in neighbors:
             w = self.network_data.get_edge_weight(node, neighbor)
@@ -230,7 +235,7 @@ class NetworkHamiltonian(HamiltonianBase):
             neighbors = self.network_data.get_neighbors(node)
             return float(self._hamiltonian_dm_func(node, neighbors, np.atleast_1d(m), np.atleast_1d(p), t))
         if self._node_interaction is None:
-            return float(self._extract_own_density(np.atleast_1d(m))[node])
+            return -float(self._extract_own_density(np.atleast_1d(m))[node])
         # Custom node_interaction_func: central finite difference of the coupling in the OWN node
         # component of the full density. The base HamiltonianBase._finite_diff_dm collapses m to a
         # scalar (np.mean), which breaks node-indexed interaction funcs (m[node] on a length-1 array
@@ -241,7 +246,7 @@ class NetworkHamiltonian(HamiltonianBase):
         m_minus = m_arr.copy()
         m_plus[node] += eps
         m_minus[node] -= eps
-        return (self.coupling_value(node, m_plus, t) - self.coupling_value(node, m_minus, t)) / (2.0 * eps)
+        return -(self.coupling_value(node, m_plus, t) - self.coupling_value(node, m_minus, t)) / (2.0 * eps)
 
 
 @dataclass

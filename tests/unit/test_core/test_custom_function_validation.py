@@ -57,8 +57,8 @@ def _hamiltonian():
     """Create a standard test Hamiltonian."""
     return SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0),
-        coupling=lambda m: -(m**2),
-        coupling_dm=lambda m: -2 * m,
+        coupling=lambda m: m**2,
+        coupling_dm=lambda m: 2 * m,
     )
 
 
@@ -262,8 +262,8 @@ def test_regularized_hamiltonian_constructs_in_every_dimension(dimension):
     """
     base = SeparableHamiltonian(
         control_cost=BoundedControlCost(control_cost=1.0, max_control=1.0),
-        coupling=lambda m: -(m**2),
-        coupling_dm=lambda m: -2 * m,
+        coupling=lambda m: m**2,
+        coupling_dm=lambda m: 2 * m,
     )
     H = base.regularize(0.1)
     geom = _geometry(dimension=dimension)
@@ -341,8 +341,8 @@ def test_large_magnitude_hamiltonian_is_silent(potential_magnitude):
     """
     H = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0),
-        coupling=lambda m: -(m**2),
-        coupling_dm=lambda m: -2 * m,
+        coupling=lambda m: m**2,
+        coupling_dm=lambda m: 2 * m,
         potential=lambda x, t=0.0, magnitude=potential_magnitude: magnitude,
     )
     result = validate_hamiltonian_consistency(H, H.dm, _geometry(), dH_dp=H.dp)
@@ -581,8 +581,8 @@ def test_mfg_problem_rejects_hamiltonian_with_wrong_dm():
             u_terminal=lambda x: x**2,
             hamiltonian=WrongDmHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
-                coupling=lambda m: -(m**2),
-                coupling_dm=lambda m: -2 * m,
+                coupling=lambda m: m**2,
+                coupling_dm=lambda m: 2 * m,
             ),
         )
 
@@ -608,8 +608,8 @@ def test_mfg_problem_accepts_every_shipped_control_cost(control_cost):
         u_terminal=lambda x: x**2,
         hamiltonian=SeparableHamiltonian(
             control_cost=control_cost,
-            coupling=lambda m: -(m**2),
-            coupling_dm=lambda m: -2 * m,
+            coupling=lambda m: m**2,
+            coupling_dm=lambda m: 2 * m,
         ),
     )
     assert problem is not None

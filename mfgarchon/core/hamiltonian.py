@@ -785,10 +785,10 @@ class MFGOperatorBase(ABC):
     ------------------------------------------------------------------------
     Write the control part as L_ctrl(alpha) and H_ctrl(p), which are Legendre
     conjugates of each other, and let W(x, m, t) collect every alpha-independent
-    term of L. Then the convention is fixed by the shipped HJB residual, not by
-    preference:
+    term of L. V and f are cost-signed (#2375 ruling 3): they are part of the running cost the
+    agent pays, so
 
-        L(x, alpha, m, t) = L_ctrl(alpha) - V(x, t) - f(m)
+        L(x, alpha, m, t) = L_ctrl(alpha) + V(x, t) + f(m)
 
     Derivation. The dynamic programming principle gives
 
@@ -796,21 +796,21 @@ class MFGOperatorBase(ABC):
 
     so with L = L_ctrl + W the PDE reads  -d_t u + H_ctrl(p) - W = 0.  The
     residual assembled in ``alg/numerical/hjb_solvers/base_hjb.py`` is
-    ``Phi_U += (u^n - u^{n+1})/dt`` then ``Phi_U += H`` with H = H_ctrl + V + f,
-    i.e.  -d_t u + H_ctrl + V + f = 0.  Matching the two gives W = -(V + f).
+    ``Phi_U += (u^n - u^{n+1})/dt`` then ``Phi_U += H`` with H = H_ctrl - V - f,
+    i.e.  -d_t u + H_ctrl - V - f = 0.  Matching the two gives W = V + f.
 
     Equivalently, and this is the form the round-trip test asserts: since V and
     f do not depend on alpha,
 
         sup_alpha { -p . alpha - L(x, alpha, m, t) } = H_ctrl(p) - W = H(x, m, p, t)
 
-    holds if and only if W = -(V + f). Adding V and f to BOTH H and L breaks
+    holds if and only if W = V + f. Giving V and f the same sign in H and in L breaks
     conjugacy by exactly 2(V + f), constant in p.
 
     ``canonical_cs`` (``hjb_semi_lagrangian.py``), the ``Dual*`` pair, and
     ``SeparableLagrangian.__call__`` all follow this convention. The last of
-    those did not until Issue #1645 (B2): it returned L_ctrl + V + f and was not
-    self-conjugate against its own ``evaluate_hamiltonian``, by exactly 2(V+f).
+    those did not until Issue #1645 (B2): it gave V and f the same sign as its own
+    ``evaluate_hamiltonian`` and was not self-conjugate against it, by exactly 2(V+f).
 
     Where this convention is actually pinned, named precisely, because a
     conjugate round trip only discriminates when the two sides source V and f
@@ -1010,11 +1010,11 @@ class HamiltonianBase(MFGOperatorBase):
 
     Where H typically has the form:
 
-        H(x, m, p, t) = H_control(p) + V(x, t) + f(m)
+        H(x, m, p, t) = H_control(p) - V(x, t) - f(m)
 
     With:
     - H_control(p): Control cost term (e.g., ½|p|²/λ for quadratic)
-    - V(x, t): Potential/running cost
+    - V(x, t): Potential/running cost, cost-signed (#2375 ruling 3)
     - f(m): Density coupling (e.g., congestion)
 
     Parameters
@@ -1914,34 +1914,32 @@ class SeparableLagrangian(LagrangianBase):
         self._coupling = coupling
 
     def __call__(self, x, alpha, m, t=0.0):
-        """L = L_control(alpha) - V(x, t) - f(m).
+        """L = L_control(alpha) + V(x, t) + f(m): V and f are costs (#2375 ruling 3).
 
-        The non-kinetic terms carry the OPPOSITE sign to the Hamiltonian's (Issue #1645).
-        H = sup_alpha { -p . alpha - L } (the form on ``MFGOperatorBase``; the two coincide here
-        because every shipped L_ctrl is even in alpha -- Issue #1652), so if L = L_ctrl + W then
-        H = H_ctrl - W; the repo's HJB is
-        -d_t u + H_ctrl + V + f = 0 (base_hjb.py assembles Phi_U[i] += hamiltonian_val with H
-        carrying +f), which forces W = -(V + f). Carrying +V+f on both sides made this class
-        non-self-conjugate against its own evaluate_hamiltonian by exactly 2(V+f).
+        The non-kinetic terms carry the OPPOSITE sign to the Hamiltonian's (Issue #1645):
+        H = sup_alpha { -p . alpha - L } (the form on ``MFGOperatorBase``), so if L = L_ctrl + W
+        then H = H_ctrl - W, and the repo's HJB -d_t u + H_ctrl - V - f = 0 forces W = V + f.
+        Giving V and f the same sign on both sides made this class non-self-conjugate against
+        its own evaluate_hamiltonian by exactly 2(V+f).
         """
         L_ctrl = self.control_cost.lagrangian(np.atleast_1d(alpha))
         V = float(self._potential(x, t)) if self._potential is not None else 0.0
         f_m = float(self._coupling(m)) if self._coupling is not None else 0.0
-        return L_ctrl - V - f_m
+        return L_ctrl + V + f_m
 
     def optimal_control(self, x, m, p, t=0.0):
         """Delegates to control_cost.optimal_control(p). Analytic."""
         return self.control_cost.optimal_control(np.atleast_1d(p))
 
     def evaluate_hamiltonian(self, x, m, p, t=0.0):
-        """H = H_control(p) + V(x,t) + f(m). Uses control_cost.evaluate()."""
+        """H = H_control(p) - V(x,t) - f(m). Uses control_cost.evaluate()."""
         p_arr = np.atleast_1d(p)
         H_ctrl = self.control_cost.evaluate(p_arr)
         if not isinstance(H_ctrl, (int, float)):
             H_ctrl = float(H_ctrl.sum()) if p_arr.ndim < 2 else H_ctrl
         V = float(self._potential(x, t)) if self._potential is not None else 0.0
         f_m = float(self._coupling(m)) if self._coupling is not None else 0.0
-        return H_ctrl + V + f_m
+        return H_ctrl - V - f_m
 
     def proximal(self, tau, z, x=None, m=None, t=0.0):
         """Delegates to control_cost.proximal(). V and f don't depend on alpha."""
@@ -2317,7 +2315,7 @@ class DualLagrangian(LagrangianBase):
 
 class SeparableHamiltonian(HamiltonianBase):
     """
-    Separable Hamiltonian: H(x, m, p, t) = H_control(p) + V(x, t) + f(m).
+    Separable Hamiltonian: H(x, m, p, t) = H_control(p) - V(x, t) - f(m).
 
     This is the most common form in MFG, where:
     - H_control(p): Control cost (from ControlCostBase)
@@ -2326,53 +2324,40 @@ class SeparableHamiltonian(HamiltonianBase):
 
     The separability allows efficient computation and analytic derivatives.
 
-    Sign convention (Issue #1057, gotcha G-001)
-    -------------------------------------------
-    `potential` enters the Hamiltonian as ``H = H_control(p) + V(x, t) + f(m)``.
-    There is no optimisation-direction parameter: the library is minimisation-only
-    (#2373). ``V`` is added to ``H`` unflipped, so a positive ``V`` currently lowers
-    ``u`` -- it acts as a reward rather than a cost. Empirically,
-    research code attracts density to ``x_c`` by writing ``V(x, t) = -C * (x - x_c)**2``
-    (inverted parabola, peak at ``x_c``), not the bowl shape that standard MFG
-    literature would suggest. This is the de-facto "potential as reward"
-    convention.
+    Sign convention (#2375 ruling 3)
+    --------------------------------
+    Every term is cost-signed: ``V`` and ``f`` are what the agent pays, so they enter ``H`` with a
+    minus sign and the HJB reads ``-d_t u + H_control(p) = V + f + S``. A positive ``V`` raises
+    ``u`` and repels. The library is minimisation-only (#2373).
 
-    That ``V`` is reward-signed while ``u_T`` and ``source_term_hjb`` are cost-signed
-    is the defect ruling 3 of #2375 corrects; until that lands, the practical guidance is:
-
-    - **Attractive** potential at ``x_c``: ``V(x, t) = -0.5 * C * (x - x_c)**2``
-      (inverted parabola, peak at ``x_c``).
-    - **Repulsive** potential at ``x_c``: ``V(x, t) = +0.5 * C * (x - x_c)**2``
+    - **Attractive** potential at ``x_c``: ``V(x, t) = +0.5 * C * (x - x_c)**2``
       (bowl, minimum at ``x_c``).
+    - **Repulsive** potential at ``x_c``: ``V(x, t) = -0.5 * C * (x - x_c)**2``.
+    - **Congestion**: an ``f`` increasing in ``m``, e.g. ``f(m) = m``.
 
-    Verified by exp08/09 Stage A/B/C runners — they attract density to ``x_c``
-    using ``-C₁ * (x - x_c)**2``.
-
-    Related: the dual ``MFGProblem(source_term_hjb=...)`` channel carries the
-    OPPOSITE sign — it enters the HJB right-hand side and is cost-signed (a
-    positive source repels). See Issue #1057 gotchas G-002/G-003 and the
-    ``MFGProblem`` "Sign conventions" docstring note.
+    ``MFGProblem(source_term_hjb=...)`` has the same sign: it enters the right-hand side as a
+    cost, so a positive source repels too.
 
     Parameters
     ----------
     control_cost : ControlCostBase
         Control cost specification (quadratic, L1, bounded, etc.)
     potential : Callable[[NDArray, float], float] | None
-        Potential V(x, t) added to H. If None, V = 0. See "Sign convention" above —
-        write inverted parabola (peak at x_c) for attractive.
+        Potential V(x, t), a cost; it enters H as -V. If None, V = 0. See "Sign convention"
+        above: a bowl with its minimum at x_c attracts.
     coupling : Callable[[float | NDArray], float | NDArray] | None
-        Density coupling f(m). If None, f = 0. Same "added to H" convention.
+        Density coupling f(m), a cost; it enters H as -f. If None, f = 0.
     coupling_dm : Callable[[float | NDArray], float | NDArray] | None
         Derivative df/dm. If None, computed via finite differences.
 
     Examples
     --------
-    Standard MFG with quadratic control, no potential, m² coupling:
+    Standard MFG with quadratic control, no potential, m² congestion:
 
     >>> H = SeparableHamiltonian(
     ...     control_cost=QuadraticControlCost(control_cost=1.0),
-    ...     coupling=lambda m: -m**2,
-    ...     coupling_dm=lambda m: -2*m,  # Analytic derivative
+    ...     coupling=lambda m: m**2,
+    ...     coupling_dm=lambda m: 2*m,  # Analytic df/dm
     ... )
     >>> H(x=np.array([0.5]), m=0.3, p=np.array([1.0]), t=0.0)
 
@@ -2437,7 +2422,7 @@ class SeparableHamiltonian(HamiltonianBase):
         t: float = 0.0,
     ) -> float | NDArray:
         """
-        Evaluate H = H_control(p) + V(x, t) + f(m).
+        Evaluate H = H_control(p) - V(x, t) - f(m).
 
         Supports both single-point and batch inputs (Issue #775).
         For batch: p.shape = (N, d), returns shape (N,).
@@ -2475,7 +2460,7 @@ class SeparableHamiltonian(HamiltonianBase):
         else:
             f_m = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
-        return H_control + V + f_m
+        return H_control - V - f_m
 
     def dp(
         self,
@@ -2500,7 +2485,7 @@ class SeparableHamiltonian(HamiltonianBase):
         t: float = 0.0,
     ) -> float | NDArray:
         """
-        Compute ∂H/∂m = df/dm (only coupling term depends on m).
+        Compute ∂H/∂m = -df/dm (only the coupling term depends on m, and it enters H as -f).
 
         Supports both single-point and batch inputs (Issue #775).
         For batch: p.shape = (N, d), returns shape (N,).
@@ -2518,8 +2503,8 @@ class SeparableHamiltonian(HamiltonianBase):
                         raise ValueError
                 except (TypeError, ValueError):
                     result = np.array([float(self._coupling_dm(float(m_arr.flat[i]))) for i in range(p_arr.shape[0])])
-                return result
-            return float(self._coupling_dm(m))
+                return -result
+            return -float(self._coupling_dm(m))
 
         if self._coupling is None:
             if is_batch:
@@ -2541,9 +2526,9 @@ class SeparableHamiltonian(HamiltonianBase):
         p: NDArray,
         t: float = 0.0,
     ) -> NDArray:
-        """dH/dx = grad_V(x, t) for separable H.
+        """dH/dx = -grad_V(x, t) for separable H.
 
-        Only the potential V(x,t) depends on x. The control cost H_kin(p)
+        Only the potential V(x,t) depends on x, and it enters H as -V. The control cost H_kin(p)
         and coupling f(m) are independent of x.
 
         Uses FD on the potential callable. Returns zero if no potential.
@@ -2563,7 +2548,7 @@ class SeparableHamiltonian(HamiltonianBase):
             x_plus[i] += eps
             x_minus[i] -= eps
             grad[i] = _central_difference(float(self._potential(x_plus, t)), float(self._potential(x_minus, t)), eps)
-        return grad
+        return -grad
 
     def optimal_control(
         self,
@@ -2600,7 +2585,7 @@ class CongestionHamiltonian(HamiltonianBase):
     """
     Non-separable Hamiltonian with density-dependent kinetic cost (Issue #782).
 
-    H(x, m, p, t) = |p|^2 / (2*lambda*c(m)) + V(x, t) + f(m)
+    H(x, m, p, t) = |p|^2 / (2*lambda*c(m)) - V(x, t) - f(m)
 
     The congestion factor c(m) modifies the kinetic term, making movement
     costlier in high-density regions (multiplicative congestion). Unlike
@@ -2662,7 +2647,7 @@ class CongestionHamiltonian(HamiltonianBase):
         t: float = 0.0,
     ) -> float | NDArray:
         """
-        Evaluate H = |p|^2 / (2*lambda*c(m)) + V(x, t) + f(m).
+        Evaluate H = |p|^2 / (2*lambda*c(m)) - V(x, t) - f(m).
 
         Supports both single-point and batch inputs (Issue #775).
         For batch: p.shape = (N, d), returns shape (N,).
@@ -2714,7 +2699,7 @@ class CongestionHamiltonian(HamiltonianBase):
         else:
             f_m = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
-        return H_kinetic + V + f_m
+        return H_kinetic - V - f_m
 
     def dp(
         self,
@@ -2760,7 +2745,7 @@ class CongestionHamiltonian(HamiltonianBase):
         t: float = 0.0,
     ) -> float | NDArray:
         """
-        Compute dH/dm = -c'(m) * H_control(p) / c(m)^2 + f'(m).
+        Compute dH/dm = -c'(m) * H_control(p) / c(m)^2 - f'(m).
 
         Uses control_cost.evaluate(p) instead of hardcoded |p|^2/(2*lambda).
         No isinstance dispatch (Issue #898).
@@ -2812,7 +2797,7 @@ class CongestionHamiltonian(HamiltonianBase):
             else:
                 coupling_dm_val = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
-            result = kinetic_dm + coupling_dm_val
+            result = kinetic_dm - coupling_dm_val
             if not is_batch:
                 return float(result)
             return result
@@ -2867,7 +2852,7 @@ class QuadraticMFGHamiltonian(SeparableHamiltonian):
 
     - Quadratic control cost: H_control = ½c|p|²
     - Optional potential: V(x, t)
-    - Quadratic density coupling: f(m) = -m²
+    - Quadratic density coupling (congestion, a cost): f(m) = m²
 
     Parameters
     ----------
@@ -2878,7 +2863,7 @@ class QuadraticMFGHamiltonian(SeparableHamiltonian):
 
     Notes
     -----
-    The default coupling f(m) = -m² gives ∂H/∂m = -2m.
+    The default coupling f(m) = m² gives ∂H/∂m = -f'(m) = -2m.
     This Hamiltonian leads to the classical optimal control:
     α* = -c·p.
     """
@@ -2893,8 +2878,8 @@ class QuadraticMFGHamiltonian(SeparableHamiltonian):
                 control_cost=1.0 / coupling_coefficient if coupling_coefficient > 0 else 1.0,
             ),
             potential=potential,
-            coupling=lambda m: -(m**2),
-            coupling_dm=lambda m: -2 * m,
+            coupling=lambda m: m**2,
+            coupling_dm=lambda m: 2 * m,
         )
         self.coupling_coefficient = coupling_coefficient
 
@@ -3016,8 +3001,8 @@ if __name__ == "__main__":
     print("\n5. SeparableHamiltonian (quadratic control):")
     H = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=2.0),
-        coupling=lambda m: -(m**2),
-        coupling_dm=lambda m: -2 * m,
+        coupling=lambda m: m**2,
+        coupling_dm=lambda m: 2 * m,
     )
     x = np.array([0.5])
     m_val = 0.3
@@ -3067,8 +3052,8 @@ if __name__ == "__main__":
     print("\n8. Class-based Hamiltonian direct calls:")
     H_class = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0),
-        coupling=lambda m: -(m**2),
-        coupling_dm=lambda m: -2 * m,
+        coupling=lambda m: m**2,
+        coupling_dm=lambda m: 2 * m,
     )
 
     # Call class-based API directly: H(x, m, p, t)

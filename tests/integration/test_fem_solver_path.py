@@ -45,12 +45,11 @@ def _fem_problem(refine: int = 2):
         u_terminal=lambda x: 0.0,
         hamiltonian=SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=1.0),
-            coupling=lambda m: -m,  # -m for #2023: `+m` is crowd-SEEKING under this repo's reward-signed
-            # convention (mfg_problem.py:191-195), i.e. an aggregating, anti-monotone MFG whose
-            # coupled fixed point diverges. It passed only because the negated Picard assembly
-            # turned an aggregating specification into a dispersing computation. This test wants
-            # a congestion (monotone) MFG.
-            coupling_dm=lambda m: -1.0,
+            # f(m) = m is a congestion cost (#2375 ruling 3), so the MFG is monotone, which is what
+            # this test wants: with the sign reversed the coupling aggregates and the coupled fixed
+            # point diverges.
+            coupling=lambda m: m,
+            coupling_dm=lambda m: 1.0,
         ),
     )
     problem = MFGProblem(

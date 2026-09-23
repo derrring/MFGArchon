@@ -193,15 +193,12 @@ class TestHJBFDMSolverSolveHJBSystem:
         assert np.all(np.isfinite(U_solution))
 
         # Closed form: M == 1 everywhere, zero terminal cost, coupling f(m) = m and no-flux walls
-        # leave no spatial gradient, so U(t, x) = -(T - t) * m = -(T - t). This pins the sign of the
-        # coupling term and the time integration together. Measured max error 5.97e-13 with
-        # newton_tolerance=1e-8; atol=1e-9 leaves ~1700x margin. The tolerance is explicit since #2308:
-        # at the default 1e-6 the Newton residual after the first update lands at 7.4e-07, just under
-        # tolerance, and the solve stops 7.2e-07 from the closed form. Before #2308 the same residual sat
-        # at 1.5e-06, just over, so a third iteration ran and reached 2.2e-12 -- the old pin held by that
-        # margin alone.
+        # leave no spatial gradient, so U(t, x) = (T - t) * m = T - t: f is a cost and raises the value
+        # (#2375 ruling 3). This pins the sign of the coupling term and the time integration together.
+        # Measured max error 9.25e-12 with newton_tolerance=1e-8; atol=1e-9 leaves ~100x margin. The
+        # tolerance is explicit since #2308, which records why the default is not tight enough here.
         t_grid = np.linspace(0.0, problem.T, Nt_points)
-        expected = np.tile((-(problem.T - t_grid))[:, None], (1, Nx_points))
+        expected = np.tile((problem.T - t_grid)[:, None], (1, Nx_points))
         np.testing.assert_allclose(U_solution, expected, atol=1e-9)
 
     def test_solve_hjb_system_final_condition(self):
@@ -274,13 +271,12 @@ class TestHJBFDMSolverNumericalProperties:
         assert np.all(np.isfinite(U_solution))
 
         # Density-shift invariance. With f(m) = m and M constant in space, the coupling enters as a
-        # spatially constant source, so raising M by 1.0 everywhere must shift U by exactly -(T - t)
-        # at every x -- exact, and independent of the oscillatory terminal, which cancels in the
-        # difference. (The naive comparison bound is not available here: measured min U = -1.621,
-        # outside max|U_T| + T*max(f) = 1.5.) Measured residual 1.16e-13; 1e-10 leaves ~860x margin.
+        # spatially constant cost, so raising M by 1.0 everywhere must shift U by exactly +(T - t) at
+        # every x -- exact, and independent of the oscillatory terminal, which cancels in the
+        # difference. Measured residual 2.59e-14; 1e-10 leaves ~3900x margin.
         U_shifted = solver.solve_hjb_system(M_density + 1.0, U_final, U_prev)
         t_grid = np.linspace(0.0, problem.T, Nt_points)
-        expected_shift = np.tile((-(problem.T - t_grid))[:, None], (1, Nx_points))
+        expected_shift = np.tile((problem.T - t_grid)[:, None], (1, Nx_points))
         assert np.max(np.abs((U_shifted - U_solution) - expected_shift)) < 1e-10
 
     def test_solution_smoothness(self):
@@ -339,10 +335,10 @@ class TestHJBFDMSolverParameterSensitivity:
             )
 
         # Closed form: uniform M == 1, zero terminal cost, f(m) = m and no-flux walls give the
-        # spatially constant U(t) = -(T - t) * m. Measured max error 2.50e-07 at the default Newton
-        # tolerance; 1e-5 leaves 40x margin.
+        # spatially constant U(t) = (T - t) * m. Measured max error 6.94e-12 at the default Newton
+        # tolerance; 1e-5 leaves a wide margin.
         t_grid = np.linspace(0.0, problem.T, Nt_points)
-        expected = np.tile((-(problem.T - t_grid))[:, None], (1, Nx_points))
+        expected = np.tile((problem.T - t_grid)[:, None], (1, Nx_points))
         assert np.max(np.abs(solutions[50] - expected)) < 1e-5
 
     def test_different_tolerances(self):
@@ -353,9 +349,9 @@ class TestHJBFDMSolverParameterSensitivity:
         Nx_points = problem.geometry.get_grid_shape()[0]
 
         # Same closed form as the Newton-iteration sweep: uniform M == 1 and a zero terminal on a
-        # symmetric no-flux domain admit no spatial variation, and U(t) = -(T - t) * m.
+        # symmetric no-flux domain admit no spatial variation, and U(t) = (T - t) * m.
         t_grid = np.linspace(0.0, problem.T, Nt_points)
-        expected = np.tile((-(problem.T - t_grid))[:, None], (1, Nx_points))
+        expected = np.tile((problem.T - t_grid)[:, None], (1, Nx_points))
 
         for tol in [1e-4, 1e-6, 1e-8]:
             solver = HJBFDMSolver(problem, newton_tolerance=tol)
@@ -369,8 +365,8 @@ class TestHJBFDMSolverParameterSensitivity:
             assert np.all(np.isfinite(U_solution))
 
             # Every tolerance in the sweep must land on the analytic solution well inside the
-            # loosest one. Measured max error 2.50e-07 at 1e-4 and 1e-6, 1.25e-13 at 1e-8;
-            # 1e-5 leaves 40x margin over the worst.
+            # loosest one. Measured max error 6.94e-12 at each of 1e-4, 1e-6 and 1e-8; 1e-5 leaves a
+            # wide margin over the worst.
             assert np.max(np.abs(U_solution - expected)) < 1e-5, f"newton_tolerance={tol}"
 
             # Any boundary-stencil asymmetry shows up as spatial variation -- but so does an
@@ -456,8 +452,9 @@ class TestHJBFDMSolverIntegration:
         assert np.max(np.abs(U_solution - U_solution[:, ::-1])) < 1e-12
 
         # The spatially varying coupling must actually reach the solution: an all-zero return
-        # satisfies both the symmetry and the finiteness checks. Measured min U = -0.1411.
-        assert U_solution.min() < -1e-3
+        # satisfies both the symmetry and the finiteness checks. f is a cost, so it raises U: measured
+        # max U = 0.0825.
+        assert U_solution.max() > 1e-3
 
 
 class TestHJBFDMSolverDiagonalTensor:
@@ -508,13 +505,12 @@ class TestHJBFDMSolverDiagonalTensor:
         assert not np.any(np.isinf(U_solution))
 
         # Closed form: M == 0.5 everywhere, zero terminal cost, f(m) = m and 2D no-flux walls leave
-        # no gradient to advect, so U(t, x, y) = -(T - t) * 0.5 uniformly -- whatever the anisotropy
-        # of the tensor. Measured max error 1.19e-15 with newton_tolerance=1e-8; atol=1e-12 leaves ~800x
-        # margin. At the default 1e-6 it is 6.3e-10 since #2308, for the reason the 1-D closed form above
-        # records: the Newton residual now lands just under the tolerance, where it used to sit just over.
+        # no gradient to advect, so U(t, x, y) = (T - t) * 0.5 uniformly -- whatever the anisotropy
+        # of the tensor. Measured max error 1.78e-12 with newton_tolerance=1e-8; atol=1e-10 with rtol=0
+        # leaves ~56x margin (the default rtol would otherwise be the operative bound).
         t_grid = np.linspace(0.0, problem.T, Nt_points)
-        expected = np.tile((-(problem.T - t_grid) * 0.5)[:, None], (1, Nx * Ny))
-        np.testing.assert_allclose(U_solution.reshape(Nt_points, -1), expected, atol=1e-12)
+        expected = np.tile(((problem.T - t_grid) * 0.5)[:, None], (1, Nx * Ny))
+        np.testing.assert_allclose(U_solution.reshape(Nt_points, -1), expected, atol=1e-10, rtol=0)
 
     def test_non_diagonal_tensor_warning(self):
         """Test that HJB solver warns for non-diagonal tensor."""
@@ -756,12 +752,12 @@ class TestHJBFDMSolverGhostValueBC:
         assert np.all(np.isfinite(U_solution))
 
         # Closed form: M == 0.5 everywhere, zero terminal cost, f(m) = m and 2D no-flux walls give
-        # U(t, x, y) = -(T - t) * 0.5 uniformly. A ghost value that is not BC-aware breaks the
+        # U(t, x, y) = (T - t) * 0.5 uniformly. A ghost value that is not BC-aware breaks the
         # constancy in the boundary rows first, which is the #1384 failure mode; shape and
         # finiteness cannot see it. Measured max error 3.47e-18 (spatial spread exactly 0.0);
         # atol=1e-12 is far above the noise floor without pinning it.
         t_grid = np.linspace(0.0, problem.T, Nt_points)
-        expected = np.tile((-(problem.T - t_grid) * 0.5)[:, None], (1, Nx * Ny))
+        expected = np.tile(((problem.T - t_grid) * 0.5)[:, None], (1, Nx * Ny))
         np.testing.assert_allclose(U_solution.reshape(Nt_points, -1), expected, atol=1e-12)
 
     def test_hjb_gradient_computation_with_ghost_values(self):
@@ -822,10 +818,10 @@ class TestHJBFDMSolverGhostValueBC:
         assert U_solution.shape == (Nt_points, Nx, Ny)
         assert np.all(np.isfinite(U_solution))
 
-        # Same closed form as the upwind twin, on the centered branch: U(t, x, y) = -(T - t) * 0.5
+        # Same closed form as the upwind twin, on the centered branch: U(t, x, y) = (T - t) * 0.5
         # uniformly. Measured max error 6.94e-18 (spatial spread exactly 0.0); atol=1e-12.
         t_grid = np.linspace(0.0, problem.T, Nt_points)
-        expected = np.tile((-(problem.T - t_grid) * 0.5)[:, None], (1, Nx * Ny))
+        expected = np.tile(((problem.T - t_grid) * 0.5)[:, None], (1, Nx * Ny))
         np.testing.assert_allclose(U_solution.reshape(Nt_points, -1), expected, atol=1e-12)
 
     def test_time_varying_dirichlet_bc(self):
@@ -876,7 +872,10 @@ class TestHJBFDMSolverGhostValueBC:
         )
 
         T = 0.4
-        Nt = 4
+        # dt = T/16. The fixed-point inner iteration is a contraction only for a small enough step: at
+        # Nt = 4 it diverges on this problem (max|U| 68.8, then NaN, returned rather than raised: #2390),
+        # while Newton returns 0.199 at every Nt and fixed-point agrees from Nt = 16 on.
+        Nt = 16
         problem = MFGProblem(geometry=domain, T=T, Nt=Nt, sigma=0.1, components=_default_components_2d())
         solver = HJBFDMSolver(problem, solver_type="fixed_point", advection_scheme="gradient_upwind")
 

@@ -255,8 +255,10 @@ def _periodic_problem(nx: int = NX, nt: int = NT) -> MFGProblem:
             u_terminal=_U,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
-                coupling=lambda m: m,
-                coupling_dm=lambda m: 1.0,
+                # An aggregating coupling (a negative cost, #2375 ruling 3): the GFDM-vs-SL agreement
+                # figures in this file were measured on it.
+                coupling=lambda m: -m,
+                coupling_dm=lambda m: -1.0,
             ),
         ),
     )
