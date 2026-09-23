@@ -123,9 +123,19 @@ CONTROL_COSTS = {
 # already missing `_MoreauYosidaControlCost`. The evenness pins below enumerate `ControlCostBase`
 # subclasses instead, so adding a cost to the library is enough to put it under them.
 
-# Probed across the l1 kink at 0, the interior and deep saturation (|a| = 120 against the bounded
-# costs' max_control).
+# Probed across the l1 kink at 0, the interior and the boundary of a bounded admissible set. Only
+# values with both a and -a admissible are used: `lagrangian()` omits the domain's indicator, and
+# neither conjugate looks outside the domain, so L there says nothing about the pairing.
 _EVENNESS_PROBES = (0.0, 1e-12, 0.25, 0.5, 0.999, 1.0, 1.5, 3.0, 8.0, 120.0)
+
+
+def _evenness_probes(cost):
+    """The probes a for which both a and -a lie in `cost.effective_domain()`."""
+    domain = cost.effective_domain()
+    if domain is None:
+        return _EVENNESS_PROBES
+    return tuple(a for a in _EVENNESS_PROBES if domain[0] <= -a and a <= domain[1])
+
 
 # Required constructor arguments we know how to supply. A cost whose required argument is NOT here
 # raises rather than being skipped: a silently skipped subclass is the defect this section exists to
@@ -194,7 +204,7 @@ def _construct(cls):
 # would pre-import the renamed shim modules for every later test on the same xdist worker, and the
 # warning census would then lose their DeprecationWarnings depending on scheduling.
 _CHILD_SWEEP = r"""
-import importlib, importlib.util, json, pkgutil, sys
+import importlib, importlib.util, json, pathlib, pkgutil, sys
 import numpy as np
 import mfgarchon
 
@@ -202,12 +212,22 @@ spec = importlib.util.spec_from_file_location("_hl_convention_child", sys.argv[1
 hl = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hl)
 
-failures = []
+failures, walked = [], {"mfgarchon"}
 for info in pkgutil.walk_packages(mfgarchon.__path__, prefix="mfgarchon.", onerror=failures.append):
+    walked.add(info.name)
     try:
         importlib.import_module(info.name)
     except Exception as exc:
         failures.append(f"{info.name}: {type(exc).__name__}: {exc}")
+
+# walk_packages only descends into directories with an __init__.py, so its population is checked
+# against the files on disk rather than trusted.
+root = pathlib.Path(mfgarchon.__file__).parent
+on_disk = set()
+for path in root.rglob("*.py"):
+    parts = ("mfgarchon",) + path.relative_to(root).with_suffix("").parts
+    on_disk.add(".".join(parts[:-1] if parts[-1] == "__init__" else parts))
+unwalked = sorted(on_disk - walked)
 
 classes = hl._concrete_control_cost_classes()
 checked, uneven = [], []
@@ -215,7 +235,7 @@ for cls in classes:
     cost = hl._construct(cls)
     if type(cost) is not cls:
         continue
-    for a in hl._EVENNESS_PROBES:
+    for a in hl._evenness_probes(cost):
         plus = float(cost.lagrangian(np.array([a])))
         minus = float(cost.lagrangian(np.array([-a])))
         if plus != minus:
@@ -229,6 +249,7 @@ for cls in classes:
 print(json.dumps({
     "tree": mfgarchon.__file__,
     "import_failures": failures,
+    "unwalked": unwalked,
     "classes": [c.__name__ for c in classes],
     "checked": checked,
     "uneven": uneven,
@@ -324,18 +345,19 @@ class TestSeparableRoundTrip:
 
     @pytest.mark.parametrize("cost_cls", _concrete_control_cost_classes(), ids=lambda c: c.__name__)
     def test_conjugate_is_alpha_sign_blind(self, cost_cls):
-        """Every imported library L_ctrl is even in alpha, so sup{+p.a - L} == sup{-p.a - L}.
+        """Every imported library L_ctrl is even on a symmetric admissible set, so the pairing
+        sign cannot change the conjugate: sup{+p.a - L} == sup{-p.a - L}.
 
-        This is what #2375 ruling 5's "nothing in this library changes value" rests on: the
-        pairing flip is a no-op exactly while every L is even. Parametrised over the enumeration
-        rather than `CONTROL_COSTS` (#2386); a cost in a module collection did not import is covered
-        by `test_every_library_control_cost_is_even` instead.
+        This pins the premise of #2375 ruling 5's "nothing in this library changes value", and
+        retires with that paragraph, as `test_every_library_control_cost_is_even` does.
+        Parametrised over the enumeration rather than `CONTROL_COSTS` (#2386); a cost in a module
+        collection did not import is covered by that test instead.
         """
         cost = _construct(cost_cls)
         # Bit-exact first. The conjugate comparison below goes through `minimize_scalar` at
         # abs=1e-6, and an odd term eps*a on a quadratic cost moves it by 2*p*eps/lambda, so over
         # P_SWEEP it cannot see eps below lambda * 6.25e-8. The direct check has no tolerance.
-        for probe_a in _EVENNESS_PROBES:
+        for probe_a in _evenness_probes(cost):
             assert float(cost.lagrangian(np.array([probe_a]))) == float(cost.lagrangian(np.array([-probe_a]))), (
                 f"{cost_cls.__name__}: L({probe_a}) != L({-probe_a}), so the cost is not even in alpha. "
                 f"See the conjugate assertion's message below for what that means."
@@ -494,17 +516,22 @@ class TestEveryLibraryCost:
         sup{-p.a - L} equals sup{+p.a - L} when L is even AND the admissible set is symmetric.
         `test_conjugate_is_alpha_sign_blind` cannot establish it for the whole library: it is
         parametrised at collection, and `__subclasses__()` misses a cost in a module nothing has
-        imported yet. So a child interpreter imports every module, enumerates, builds each class with
-        `_construct` and checks L(a) == L(-a) bit-exactly at `_EVENNESS_PROBES` and that
+        imported yet. So a child interpreter imports every module `pkgutil.walk_packages` reaches,
+        fails if any `.py` file under the package was not reached, builds each concrete class with
+        `_construct`, and checks L(a) == L(-a) bit-exactly at `_evenness_probes(cost)` and that
         `effective_domain()` is symmetric. The child reads the tree this process reads (`-P` plus
         this package prepended to PYTHONPATH), and that is asserted rather than assumed, because
         mfgarchon is also editable-installed from the main checkout.
 
-        What it does NOT check: instances built with non-default arguments. A class that is even
-        only at its defaults passes.
+        What it does NOT check: an instance built with other arguments than `_construct` supplies
+        (a class even only at its defaults passes); alpha with more than one component (the probes
+        are one-component); a class defined inside a function or behind an import guard that did
+        not fire.
 
-        Retire this test, with the pin above, if #2375's "nothing changes value" paragraph is
-        withdrawn: it pins that sentence's premise, which ruling 5 does not require to stay true.
+        Retire this test, with `test_conjugate_is_alpha_sign_blind`, if #2375's "nothing changes
+        value" paragraph is withdrawn: both pin that sentence's premise, which ruling 5 does not
+        require to stay true. The module docstring's last paragraph and the comment above
+        `_EVENNESS_PROBES` go with them.
         """
         env = {
             **os.environ,
@@ -526,6 +553,11 @@ class TestEveryLibraryCost:
         assert report["import_failures"] == [], (
             f"{len(report['import_failures'])} module(s) failed to import, so a cost defined there is "
             f"invisible to this check: {report['import_failures'][:5]}"
+        )
+        assert report["unwalked"] == [], (
+            f"{len(report['unwalked'])} module(s) under the package were never imported, because "
+            f"pkgutil.walk_packages does not enter a directory without __init__.py, so a cost defined "
+            f"there is invisible to this check: {report['unwalked'][:5]}"
         )
         in_process = {c.__name__ for c in _concrete_control_cost_classes()}
         assert in_process <= set(report["classes"]), (
