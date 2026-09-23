@@ -51,8 +51,9 @@ class NetworkHamiltonian(HamiltonianBase):
     network_data : NetworkData
         Graph structure (adjacency, edge weights).
     hamiltonian_func : callable or None
-        Custom whole H(node, neighbors, m, p, t) -> float, cost-signed (control - V - f). Only the
-        RK45 HJB solver honours it; policy iteration and the network FP solver refuse it (#1545).
+        Custom whole H(node, neighbors, m, p, t) -> float, cost-signed (control - V - f). Only
+        NetworkHJBSolver honours it (any solve_ivp scheme, on a geometry without node BCs); policy
+        iteration and the network FP solver refuse it (#1545).
         If None, the built-in one-sided control ``0.5*sum_j w_ij*max(u_i - u_j, 0)^2`` minus the node
         potential and the node congestion.
     hamiltonian_dm_func : callable or None
@@ -80,11 +81,12 @@ class NetworkHamiltonian(HamiltonianBase):
         if hamiltonian_func is not None and (node_potential_func is not None or node_interaction_func is not None):
             raise ValueError(
                 "A custom hamiltonian_func is the whole Hamiltonian, H = control - V - f (#2375 rulings "
-                "3-4), and only the RK45 HJB solver honours it: policy iteration and the network FP "
+                "3-4), and only NetworkHJBSolver honours it: policy iteration and the network FP "
                 "solver use the built-in control and refuse a custom H (#1545). node_potential_func / "
                 "node_interaction_func passed alongside it would feed the problem's node_potential / "
-                "density_coupling but not the RK45 solve. Put V and f inside hamiltonian_func, with the "
-                "cost sign, or drop hamiltonian_func and pass them with the built-in control."
+                "density_coupling but not the NetworkHJBSolver solve. Put V and f inside "
+                "hamiltonian_func, with the cost sign, or drop hamiltonian_func and pass them with the "
+                "built-in control."
             )
         self.network_data = network_data
         self._hamiltonian_func = hamiltonian_func
@@ -97,9 +99,9 @@ class NetworkHamiltonian(HamiltonianBase):
     def has_custom_hamiltonian(self) -> bool:
         """True when a user-supplied ``hamiltonian_func`` replaces the built-in H.
 
-        Only the RK45 HJB solver honours it. ``optimal_control`` and ``dp`` still use the built-in
-        control (#1545), so policy iteration and the network FP solver refuse such a problem rather
-        than silently solving a different one.
+        Only ``NetworkHJBSolver`` honours it, with any ``solve_ivp`` scheme. ``optimal_control`` and
+        ``dp`` still use the built-in control (#1545), so policy iteration and the network FP solver
+        refuse such a problem rather than silently solving a different one.
         """
         return self._hamiltonian_func is not None
 
@@ -336,7 +338,7 @@ class NetworkMFGProblem(MFGProblem):
     Mathematical formulation:
 
     HJB equation (discrete):
-    ∂u/∂t + H_i(m, ∇_G u, t) = 0  at node i
+    -∂u/∂t + H_i(m, ∇_G u, t) = 0 at node i
     u(T, i) = g(i)                  terminal condition
 
     Fokker-Planck equation (discrete):

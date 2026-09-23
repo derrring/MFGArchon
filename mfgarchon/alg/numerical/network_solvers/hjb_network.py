@@ -5,7 +5,7 @@ This module implements Hamilton-Jacobi-Bellman equation solvers
 for Mean Field Games on network structures.
 
 Mathematical formulation:
-∂u/∂t + H_i(m, ∇_G u, t) = 0  at node i
+-∂u/∂t + H_i(m, ∇_G u, t) = 0 at node i
 u(T, i) = g(i)                  terminal condition
 
 where:
@@ -59,7 +59,7 @@ class NetworkHJBSolver(BaseHJBSolver):
     HJB solver for Mean Field Games on networks.
 
     Solves the discrete HJB equation:
-    ∂u/∂t + H_i(m, ∇_G u, t) = 0
+    -∂u/∂t + H_i(m, ∇_G u, t) = 0
 
     with network-specific Hamiltonians and discrete operators.
 
@@ -310,11 +310,12 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
         super().__init__(problem, scheme="BDF", **kwargs)  # Scheme unused — policy iteration overrides solve
         H = problem.hamiltonian_class
         if H is not None and H.has_custom_hamiltonian:
-            raise ValueError(
+            raise NotImplementedError(
                 "NetworkPolicyIterationHJBSolver cannot honour a custom hamiltonian_func: policy "
-                "evaluation assembles the built-in control's running cost plus the declared node "
-                "source, and never reads your H (#1545). Use NetworkHJBSolver (RK45), which adds a "
-                "custom H whole, or drop hamiltonian_func."
+                "evaluation assembles the built-in control's running cost plus the built-in node "
+                "congestion m^2/2, and never reads your H (#1545). Use NetworkHJBSolver, which adds a "
+                "custom H whole with any solve_ivp scheme but does not support node BCs, or drop "
+                "hamiltonian_func."
             )
 
         self.max_policy_iterations = max_policy_iterations

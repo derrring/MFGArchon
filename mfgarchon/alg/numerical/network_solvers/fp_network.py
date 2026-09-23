@@ -140,11 +140,12 @@ class FPNetworkSolver(BaseFPSolver):
         self.network_problem = problem
         H = problem.hamiltonian_class
         if H is not None and H.has_custom_hamiltonian:
-            raise ValueError(
+            raise NotImplementedError(
                 "FPNetworkSolver cannot honour a custom hamiltonian_func: its transition rates come "
                 "from NetworkHamiltonian.optimal_control, which uses the built-in control whatever H "
                 "you supplied (#1545), so the density would move by a different control than the HJB "
-                "solved. A custom network H is usable for a standalone RK45 HJB solve until #1545 lands."
+                "solved. Until #1545 lands, a custom network H is usable only for a standalone "
+                "NetworkHJBSolver solve on a geometry without node BCs."
             )
 
         # Issue #1478 (Stage 2b): the FP HONORS the geometry-owned node-BC via the single-source

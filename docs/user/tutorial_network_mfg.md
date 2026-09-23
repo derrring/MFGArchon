@@ -22,7 +22,7 @@ This guide provides comprehensive documentation for the Network MFG implementati
 
 **Continuous MFG:**
 - State space: $\Omega \subset \mathbb{R}^d$ (continuous domain)
-- HJB equation: $\frac{\partial u}{\partial t} + H(x, m, \nabla u, t) = 0$
+- HJB equation: $-\frac{\partial u}{\partial t} + H(x, m, \nabla u, t) - \frac{\sigma^2}{2}\Delta u = 0$
 - FP equation: $\frac{\partial m}{\partial t} - \text{div}(m \nabla H_p) - \frac{\sigma^2}{2}\Delta m = 0$
 
 **Network MFG:**
@@ -498,9 +498,10 @@ def custom_hamiltonian(node, neighbors, m, p, t):
     return total_cost
 
 # Use in problem definition. A custom hamiltonian_func is the whole H: do not also pass
-# node_potential_func or node_interaction_func, which raises. Only the RK45 HJB solver honours it:
-# policy iteration and the network FP solver refuse a custom H, so a coupled MFG solve needs the
-# built-in control until #1545 routes the transition rates through your H.
+# node_potential_func or node_interaction_func, which raises. Only NetworkHJBSolver honours it
+# (any solve_ivp scheme, on a geometry without node BCs): policy iteration and the network FP
+# solver refuse a custom H, so a coupled MFG solve needs the built-in control until #1545 routes
+# the transition rates through your H.
 components = NetworkMFGComponents(hamiltonian_func=custom_hamiltonian)
 ```
 
