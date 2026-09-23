@@ -35,13 +35,21 @@ env:
 
 jobs:
   discrimination:
-    name: mutation sweep
+    name: mutation sweep (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    # ~67 min locally at 2c923694 (198.2 s baseline + 3814.6 s over 24 mutations; largest
-    # 344.4 s, median 141.1 s). A GH runner is ~7x slower on this suite, so ~200 min -- 180 would
-    # have timed out, and the artifact upload is `if: !cancelled()`, so the failure issue
-    # would have arrived with no kill matrix to diagnose from. Matches nightly.yml.
-    timeout-minutes: 300
+    # Sharded because one job no longer fits (#2389). Run 34828814112 (2026-09-14) took 294 min
+    # against a 300 cap, and run 35584381059 a week later was cancelled at it. That 294 against the
+    # 136.1 min the matrix derivation gave locally at 76f2d9e8 four days later is ~2.2x, a rough
+    # ratio across two trees. `--shard K/N` takes every N-th mutation starting at K, which
+    # partitions the list for any N, so a mutation added later needs no assignment. The matrix now
+    # records 165.2 min locally (measured at 27d45c19): at N = 5 its largest slice is 2225 s, and
+    # each shard also pays the 332 s baseline, so ~94 min on a runner at 2.2x against 180. Change N
+    # by editing the list; `strategy.job-total` carries it to `--shard`.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+    timeout-minutes: 180
     steps:
     - uses: actions/checkout@v7
 
@@ -81,7 +89,10 @@ jobs:
         # `killmatrix.json` is not a committed path, so that instruction fatals with "ambiguous
         # argument" in the artifact a maintainer downloads to diagnose a failing sweep (#2349).
         # The checkout is ephemeral, so writing over the committed file costs nothing here.
+        # `--check-baseline` reads its killer-set reference before the sweep, so writing `--json` over
+        # the committed matrix no longer turns that comparison into the run against itself (#2389).
         python scripts/test_discrimination.py \
+          --shard ${{ matrix.shard }}/${{ strategy.job-total }} \
           --check-baseline scripts/discrimination_baseline.json \
           --json scripts/discrimination_killmatrix.json
 
@@ -89,7 +100,7 @@ jobs:
       if: ${{ !cancelled() }}
       uses: actions/upload-artifact@v7
       with:
-        name: kill-matrix
+        name: kill-matrix-shard-${{ matrix.shard }}
         path: scripts/discrimination_killmatrix.json
         retention-days: 90
 
@@ -102,11 +113,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/github-script@v9
+      env:
+        # A job that hits its time limit reports `cancelled`, not `failure` (run 35584381059), and the
+        # two need different text: #2389 was a timeout reported as "discrimination dropped, a
+        # mutation stopped applying, or the baseline is stale".
+        RESULT: ${{ needs.discrimination.result }}
       with:
         script: |
           const date = new Date().toISOString().split('T')[0];
           const title = 'Weekly test-discrimination sweep is failing';
           const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+          const cancelled = process.env.RESULT === 'cancelled';
+          const what = cancelled
+            ? 'did not finish: at least one shard was cancelled, by its 180-minute limit or by hand'
+            : 'failed';
           // Paginated, like nightly.yml. The unpaginated default is 30, so past that
           // this would stop finding its own issue and open a fresh duplicate weekly.
           const issues = await github.paginate(github.rest.issues.listForRepo, {
@@ -114,17 +134,25 @@ jobs:
             labels: 'automated', per_page: 100,
           });
           const open = issues.find(i => i.title === title);
+          const cause = cancelled
+            ? [
+                'A cancelled shard produced no verdict for its mutations, so this is not a',
+                'discrimination result. The run lists which shard; its log shows how far it got.',
+              ]
+            : [
+                'Either discrimination dropped (a convention fewer tests now notice), a mutation',
+                'stopped applying because the source moved, or it improved and the baseline has',
+                'not recorded it yet. The failing shard\'s output names which.',
+              ];
           const body = [
-            `The weekly mutation sweep failed on ${date}. Run: ${url}`,
+            `The weekly mutation sweep ${what} on ${date}. Run: ${url}`,
             '',
-            'Either discrimination dropped (a convention fewer tests now notice), a mutation',
-            'stopped applying because the source moved, or it improved and the baseline has',
-            'not recorded it yet. The run output names which.',
+            ...cause,
             '',
-            'Reproduce locally (~67 min at 2c923694; derive the current cost from',
-            '`baseline_seconds` + the per-mutation `seconds` in the kill matrix):',
+            'Reproduce one shard locally with `--shard K/5`, or all of it without; derive the cost',
+            'from `baseline_seconds` + the per-mutation `seconds` in the kill matrix:',
             '```bash',
-            'python scripts/test_discrimination.py --check-baseline scripts/discrimination_baseline.json',
+            'python scripts/test_discrimination.py --shard 1/5 --check-baseline scripts/discrimination_baseline.json',
             '```',
             '',
             'De-duplicated on title: subsequent failures comment here rather than opening new issues.',
@@ -132,7 +160,7 @@ jobs:
           if (open) {
             await github.rest.issues.createComment({
               owner: context.repo.owner, repo: context.repo.repo,
-              issue_number: open.number, body: `Still failing on ${date}. Run: ${url}`,
+              issue_number: open.number, body: `The sweep ${what} again on ${date}. Run: ${url}`,
             });
           } else {
             await github.rest.issues.create({
@@ -149,9 +177,8 @@ jobs:
   # it was still open four days later because nothing closes it and the sweep is weekly.
   resolve-on-success:
     needs: discrimination
-    # Literally 'success', not `success()` and not "did not fail": this job's whole timeout is 300
-    # minutes and a sweep that blows it reports `cancelled`, which is exactly the run that most
-    # needs the issue left open.
+    # Literally 'success', not `success()` and not "did not fail": a shard that hits its 180-minute
+    # limit reports `cancelled`, which is exactly the run that most needs the issue left open.
     if: ${{ needs.discrimination.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
