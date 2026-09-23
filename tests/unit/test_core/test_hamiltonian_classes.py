@@ -264,8 +264,8 @@ class TestLegendreDuality:
         assert abs(L_recovered_val - L_orig_val) < 0.2
 
     def test_dual_hamiltonian_returns_sup_not_inf(self):
-        """Issue #1185: the Legendre conjugate H = L*(p) = sup_a {p.a - L(a)} is a supremum by
-        definition. Pre-fix the 1D ``DualHamiltonian.__call__`` returned the *infimum* -- the value
+        """Issue #1185: the Legendre pairing H(p) = sup_a {-p.a - L(a)} = L*(-p) (#2375 ruling 5) is a
+        supremum by definition. Pre-fix the 1D ``DualHamiltonian.__call__`` returned the *infimum* -- the value
         at a control bound -- disagreeing with its own ``dp`` argmax and with the d>1 scipy branch.
 
         The original discriminator was MINIMIZE versus MAXIMIZE giving the same conjugate; #2373
@@ -286,23 +286,24 @@ class TestLegendreDuality:
         x, m, p, t = np.array([0.5]), 0.3, np.array([1.0]), 0.0
         H = _QuadL(2.0).legendre_transform()
 
-        # H = sup_a {p a - 0.5 lam a^2} = p^2/(2 lam) = 0.25 (lam=2, p=1); NOT the
+        # H = sup_a {-p a - 0.5 lam a^2} = p^2/(2 lam) = 0.25 (lam=2, p=1); NOT the
         # bound infimum -110 the pre-fix branch returned.
         assert abs(H(x, m, p, t) - 0.25) < 0.05
         # the 1D branch must agree with the d>1 scipy branch: H([1,1]) = |p|^2/(2 lam) = 0.5
         assert abs(H(x, m, np.array([1.0, 1.0]), t) - 0.5) < 0.05
-        # envelope consistency: H(p) == p.alpha* - L(alpha*), alpha* = dp
+        # envelope consistency: H(p) == -p.alpha* - L(alpha*) with alpha* = -dp, i.e.
+        # p.dp - L(-dp); L is even here, so L(-dp) is written as L(dp)
         a = float(H.dp(x, m, p, t)[0])
         assert abs(H(x, m, p, t) - (1.0 * a - 0.5 * 2.0 * a**2)) < 1e-2
 
     def test_dual_lagrangian_returns_sup_not_inf(self):
-        """Issue #1185: the symmetric DualLagrangian L = H*(a) = sup_p {p.a - H(p)} must be the
+        """Issue #1185: the DualLagrangian L(a) = sup_p {-p.a - H(p)} (#2375 ruling 5) must be the
         supremum, not the infimum. Written against MAXIMIZE until #2373 removed the direction; the
         analytic value below is what separates fixed from broken and needs no second sense."""
         x, alpha, m, t = np.array([0.5]), np.array([1.0]), 0.3, 0.0
         H = SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=2.0))
         L = H.legendre_transform()
-        # L = H*(alpha) = 0.5 lam alpha^2 = 1.0 at lam=2, alpha=1
+        # L(alpha) = sup_p {-p alpha - H(p)} = 0.5 lam alpha^2 = 1.0 at lam=2, alpha=1
         assert abs(L(x, alpha, m, t) - 1.0) < 0.1
 
 
@@ -1150,12 +1151,11 @@ class TestLagrangianBaseNumerical:
         """Custom Lagrangian uses scipy fallback for optimal_control.
 
         Issue #1642 (capability B5) corrected the expected value here from +1 to -1.
-        This test previously asserted the conjugate maximizer and called it alpha*:
-        its stationarity condition ``p = dL/dalpha = alpha^3 -> alpha = p^(1/3) = 1``
-        solves ``argmax_alpha {p.alpha - L}``, which is ``dH/dp``, not the control.
-        The optimal control is ``alpha* = -dH/dp`` -- the convention
-        ``HamiltonianBase.optimal_control`` and ``SeparableLagrangian.optimal_control``
-        have always used, and which the base class now matches.
+        This test previously asserted the maximiser of ``p.alpha - L`` and called it alpha*:
+        its stationarity condition ``p = dL/dalpha = alpha^3`` gives ``alpha = 1``, which is
+        ``dH/dp`` for this even L, not the control. Under the pairing
+        ``H = sup_alpha {-p.alpha - L}`` (#2375 ruling 5) the control is the maximiser of
+        ``-p.alpha - L``: ``-p = alpha^3``, so ``alpha* = -1 = -dH/dp``.
         """
         from mfgarchon.core.hamiltonian import LagrangianBase
 
@@ -1165,9 +1165,9 @@ class TestLagrangianBaseNumerical:
 
         L = QuarticLagrangian()
         x, m, p = np.array([0.0]), 0.0, np.array([1.0])
-        # dH/dp solves p = alpha^3 -> alpha = p^(1/3) = 1; alpha* = -dH/dp = -1.
+        # alpha* maximises -p.alpha - L: -p = alpha^3 -> alpha* = -1 = -dH/dp.
         np.testing.assert_allclose(L.optimal_control(x, m, p, 0.0), [-1.0], atol=0.05)
-        # The Hamiltonian value: H = p.(dH/dp) - L(dH/dp) = 0.75.
+        # The Hamiltonian value: H = -p.alpha* - L(alpha*) = 1 - 0.25 = 0.75.
         np.testing.assert_allclose(L.evaluate_hamiltonian(x, m, p, 0.0), 0.75, atol=0.05)
 
     def test_numerical_proximal(self):
