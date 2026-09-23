@@ -27,7 +27,7 @@ This guide provides comprehensive documentation for the Network MFG implementati
 
 **Network MFG:**
 - State space: $G = (V, E)$ (discrete graph with $N$ nodes)
-- HJB equation: $\frac{\partial u_i}{\partial t} + H_i(m, \nabla_G u, t) = 0$ for node $i$
+- HJB equation: $-\frac{\partial u_i}{\partial t} + H_i(m, \nabla_G u, t) = 0$ for node $i$
 - FP equation: $\frac{\partial m_i}{\partial t} - \text{div}_G(m \nabla_G H_p) - \frac{\sigma^2}{2}\Delta_G m = 0$
 
 ### Network Operators
@@ -498,7 +498,9 @@ def custom_hamiltonian(node, neighbors, m, p, t):
     return total_cost
 
 # Use in problem definition. A custom hamiltonian_func is the whole H: do not also pass
-# node_potential_func or node_interaction_func, which raises.
+# node_potential_func or node_interaction_func, which raises. Only the RK45 HJB solver honours it:
+# policy iteration and the network FP solver refuse a custom H, so a coupled MFG solve needs the
+# built-in control until #1545 routes the transition rates through your H.
 components = NetworkMFGComponents(hamiltonian_func=custom_hamiltonian)
 ```
 

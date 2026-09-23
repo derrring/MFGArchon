@@ -308,6 +308,14 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
             **kwargs: Additional arguments for base solver
         """
         super().__init__(problem, scheme="BDF", **kwargs)  # Scheme unused — policy iteration overrides solve
+        H = problem.hamiltonian_class
+        if H is not None and H.has_custom_hamiltonian:
+            raise ValueError(
+                "NetworkPolicyIterationHJBSolver cannot honour a custom hamiltonian_func: policy "
+                "evaluation assembles the built-in control's running cost plus the declared node "
+                "source, and never reads your H (#1545). Use NetworkHJBSolver (RK45), which adds a "
+                "custom H whole, or drop hamiltonian_func."
+            )
 
         self.max_policy_iterations = max_policy_iterations
         self.policy_tolerance = policy_tolerance

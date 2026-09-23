@@ -340,7 +340,8 @@ class TestHJBFDM2DPhysicalProperties:
 
         center_values = U_solution[:, 6, 6]
         diffs = np.diff(center_values)
-        # Measured: all 10 steps are about -3.0e-4, which is -f(m) * dt with f = 1/169 and dt = 0.05.
+        # Measured: all 10 steps lie in [-3.008e-4, -3.003e-4], against -(f + D Lap U_T) * dt = -3.009e-4
+        # with f = 1/169, D = 5e-5, Lap U_T = 2 and dt = 0.05.
         assert np.all(diffs < 0), f"the centre value must fall forward in time; steps {diffs}"
 
     @pytest.mark.slow

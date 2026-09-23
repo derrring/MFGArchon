@@ -275,7 +275,7 @@ class TestBlockIteratorConvergence:
         jacobi_final = result_jacobi.error_history_U[-1] if len(result_jacobi.error_history_U) > 0 else float("inf")
 
         # The comparison the test name claims. Both solves are deterministic on this fixture and
-        # measured 3.05e-04 (GS) against 1.12e-02 (Jacobi) at iteration 20 -- a factor of 36.7,
+        # measured 4.95e-04 (GS) against 1.11e-02 (Jacobi) at iteration 20 -- a factor of 22.4,
         # so requiring a factor of 2 leaves an order of magnitude of headroom.
         assert jacobi_final > 2.0 * gs_final, (
             f"Gauss-Seidel did not outperform Jacobi: {gs_final:.2e} vs {jacobi_final:.2e}"
