@@ -159,7 +159,7 @@ def test_the_inverse_transforms_gradient_carries_the_same_sign():
         # 0.02 grid step resolves WHICH sign without resolving the value tightly. Deliberately
         # coarse: a nested double search at 1e-4 cost 42s for no extra discrimination.
         assert abs(2 * expected) > 10 * 5e-2, "the two signs must be far apart relative to tolerance"
-        got = float(np.ravel(inverse.d_alpha(X, np.array([alpha]), M))[0])
+        got = float(np.ravel(inverse.d_alpha(x=X, alpha=np.array([alpha]), m=M, t=0.0))[0])
         assert got == pytest.approx(expected, abs=5e-2)
 
 
@@ -280,7 +280,7 @@ def test_the_inverse_nd_scipy_branch_carries_the_pairing(alpha):
     dl = DualLagrangian(_AnalyticH2D(), p_bounds=BOX_2D, n_search=4001)
     expected = float(0.5 * np.sum(av**2) + ODD_COEFF * np.sum(av))
     assert float(dl(x=X2, alpha=av, m=M, t=0.0)) == pytest.approx(expected, abs=1e-4)
-    np.testing.assert_allclose(np.ravel(dl.d_alpha(X2, av, M)), av + ODD_COEFF, atol=1e-4)
+    np.testing.assert_allclose(np.ravel(dl.d_alpha(x=X2, alpha=av, m=M, t=0.0)), av + ODD_COEFF, atol=1e-4)
 
 
 @pytest.mark.parametrize("alpha", [(1.0, -1.0), (0.5, 0.5)])
@@ -293,7 +293,7 @@ def test_the_inverse_nd_importerror_fallback_carries_the_pairing(alpha):
     expected_l = float(-np.dot(best, av) - 0.5 * np.sum((best + ODD_COEFF) ** 2))
     with _no_scipy_optimize():
         assert float(dl(x=X2, alpha=av, m=M, t=0.0)) == pytest.approx(expected_l, abs=1e-9)
-        np.testing.assert_allclose(np.ravel(dl.d_alpha(X2, av, M)), -best, atol=1e-9)
+        np.testing.assert_allclose(np.ravel(dl.d_alpha(x=X2, alpha=av, m=M, t=0.0)), -best, atol=1e-9)
 
 
 class _NonConvexL(LagrangianBase):
@@ -406,7 +406,7 @@ def test_the_inverse_nd_initial_guess_points_at_the_new_maximiser(alpha):
     global_sup = float(sum(float(np.max(o)) for o in obj))
     per_axis_argmax = np.array([grid[int(np.argmax(o))] for o in obj])
     assert float(dl(x=X2, alpha=av, m=M, t=0.0)) == pytest.approx(global_sup, abs=1e-3)
-    np.testing.assert_allclose(np.ravel(dl.d_alpha(X2, av, M)), -per_axis_argmax, atol=3e-3)
+    np.testing.assert_allclose(np.ravel(dl.d_alpha(x=X2, alpha=av, m=M, t=0.0)), -per_axis_argmax, atol=3e-3)
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -482,7 +482,7 @@ def test_every_nd_search_is_seeded_at_minus_p(seeds, p):
 
     seeds.clear()
     DualLagrangian(_AnalyticH2D(), p_bounds=SEED_BOX, n_search=101)(x=X2, alpha=pv, m=M, t=0.0)
-    DualLagrangian(_AnalyticH2D(), p_bounds=SEED_BOX, n_search=101).d_alpha(X2, pv, M)
+    DualLagrangian(_AnalyticH2D(), p_bounds=SEED_BOX, n_search=101).d_alpha(x=X2, alpha=pv, m=M, t=0.0)
     assert len(seeds) == 2
     for got in seeds:
         np.testing.assert_array_equal(got, expected)

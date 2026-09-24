@@ -5,7 +5,7 @@ Issue #1642, capabilities B1 (hl-convention-pin) and B3 (controlcost-effective-d
 B1 pins the (V, f) sign convention documented on ``MFGOperatorBase``. Both are
 cost-signed (#2375 ruling 3), so they enter the running cost with a plus sign:
 
-    L(x, alpha, m, t) = L_ctrl(alpha) + V(x, t) + f(m)
+    L(t, x, alpha, m) = L_ctrl(alpha) + V(x, t) + f(m)
 
 asserted in its conjugate form under the library's pairing (#2375 ruling 5),
 ``sup_alpha { -p.alpha - L } == H``.
@@ -94,7 +94,7 @@ def _coupling(m):
 
 
 def _conjugate(L, p, *, bounds, alpha_sign=-1.0):
-    """sup_alpha { alpha_sign * p * alpha - L(x, alpha, m, t) } over ``bounds``.
+    """sup_alpha { alpha_sign * p * alpha - L(t, x, alpha, m) } over ``bounds``.
 
     ``bounds`` must be the admissible control set: the shipped ``lagrangian()``
     implementations omit the indicator of their effective domain, so an
@@ -283,7 +283,7 @@ CONGESTION_L_CTRL = {
 
 
 def _congestion_lagrangian(cost_name, potential, coupling):
-    """Analytic L(x, alpha, m, t) = L_ctrl^{c(m)}(alpha) + V(x, t) + f(m).
+    """Analytic L(t, x, alpha, m) = L_ctrl^{c(m)}(alpha) + V(x, t) + f(m).
 
     Independently sourced from ``CongestionHamiltonian`` -- see the note on
     ``TestCongestionRoundTrip`` for why that independence is what makes the

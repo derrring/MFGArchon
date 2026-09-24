@@ -10,7 +10,7 @@ Mathematical Formulation:
     State: x in [0, L]
 
     Custom Hamiltonian:
-        H(x, m, p, t) = (1/2 lambda)|p|^2 + |x - x_target| + gamma * m
+        H(t, x, p, m) = (1/2 lambda)|p|^2 + |x - x_target| + gamma * m
 
     where:
     - (1/2 lambda)|p|^2 is the control cost (quadratic)
@@ -105,7 +105,7 @@ def create_custom_problem(
         return congestion_cost
 
     # Create class-based Hamiltonian: H = H_control(p) + V(x, t) + f(m)
-    # H(x, m, p, t) = (1/2 lambda)|p|^2 + |x - target| + gamma * m
+    # H(t, x, p, m) = (1/2 lambda)|p|^2 + |x - target| + gamma * m
     hamiltonian = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=control_cost),
         potential=potential,
@@ -144,9 +144,9 @@ def demonstrate_hamiltonian_methods():
     Demonstrate the methods available on class-based Hamiltonians.
 
     Shows:
-    - H(x, m, p, t): Hamiltonian evaluation
-    - dp(x, m, p, t): Optimal control (dH/dp)
-    - dm(x, m, p, t): Coupling derivative (dH/dm)
+    - H(t, x, p, m): Hamiltonian evaluation
+    - dp(t, x, p, m): Optimal control (dH/dp)
+    - dm(t, x, p, m): Coupling derivative (dH/dm)
     - legendre_transform(): Convert to Lagrangian
     """
     logger.info("\n" + "=" * 70)
@@ -176,7 +176,7 @@ def demonstrate_hamiltonian_methods():
 
     # Evaluate Hamiltonian
     H_val = hamiltonian(x=x, m=m, p=p, t=t)
-    logger.info(f"\nH(x, m, p, t) = {H_val:.4f}")
+    logger.info(f"\nH(t, x, p, m) = {H_val:.4f}")
     logger.info(f"  Expected: (1/2*{control_cost})*{p[0]}^2 + |{x[0]}-{target_x}| + {congestion_cost}*{m}")
     expected = (p[0] ** 2) / (2 * control_cost) + abs(x[0] - target_x) + congestion_cost * m
     logger.info(f"  Computed: {expected:.4f}")

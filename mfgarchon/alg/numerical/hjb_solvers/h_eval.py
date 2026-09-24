@@ -56,7 +56,7 @@ def eval_H_batch(H_class: HamiltonianBase, x: NDArray, m: NDArray, p: NDArray, t
 
 
 def eval_dH_dp_batch(H_class: HamiltonianBase, x: NDArray, m: NDArray, p: NDArray, t: float) -> NDArray:
-    """Evaluate the Hamiltonian gradient ``∂H/∂p(x, m, p, t)`` over a batch of points.
+    """Evaluate the Hamiltonian gradient ``∂H/∂p(t, x, p, m)`` over a batch of points.
 
     Thin shim over the single-source primitive ``H_class.evaluate_dp`` (Issue #1071);
     delegates to the method on the Hamiltonian rather than re-implementing the batch

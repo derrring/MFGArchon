@@ -3288,10 +3288,10 @@ if __name__ == "__main__":
             p_arr = np.atleast_1d(np.asarray(p, dtype=float))
             return np.zeros(p_arr.shape[:-1]) if p_arr.ndim > 0 else 0.0
 
-        def gradient_p(self, x, m, p, t=0.0):
+        def gradient_p(self, t, x, p, m):
             return np.zeros_like(np.asarray(p, dtype=float))
 
-        def density_derivative(self, x, m, p, t=0.0):
+        def density_derivative(self, t, x, p, m):
             return 0.0
 
     grid_const = TensorProductGrid(

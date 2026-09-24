@@ -30,7 +30,7 @@ Architecture (v0.17.2+)
 Two complementary class hierarchies:
 
 1. **Hamiltonian** (Issue #673): Full MFG Hamiltonian H(t, x, p, m)
-   - Clean callable API: `H(t, x, p, m)` or `H(x, m, derivs, t)`
+   - Clean callable API: `H(t, x, p, m)` or `H(t, x, derivs, m)`
    - Auto-computed derivatives via `dp()` and `dm()` (Issue #667)
    - Supports state-dependent terms (congestion, potential)
 
@@ -759,7 +759,8 @@ BoundedHamiltonian = BoundedControlCost
 # ============================================================================
 
 
-_FAMILY_METHODS = ("__call__", "dp", "dm", "dx", "optimal_control", "conjugate_argmax", "evaluate_hamiltonian")
+# #2375 ruling 8: time, then space, then the u-derivative slot (p, or its conjugate alpha), then the measure.
+_ARGUMENT_RANK = {"t": 0, "x": 1, "p": 2, "alpha": 2, "m": 3}
 
 
 class MFGOperatorBase(ABC):
@@ -849,26 +850,35 @@ class MFGOperatorBase(ABC):
     """
 
     def __init_subclass__(cls, **kwargs):
-        """Refuse a subclass that declares a family method in the pre-ruling-8 order.
+        """Refuse a subclass whose methods take ``t, x, p|alpha, m`` out of ruling 8's order.
 
         The order is ``(t, x, p, m)`` for a Hamiltonian and ``(t, x, alpha, m)`` for a
-        Lagrangian (#2375 ruling 8, #2378 phase 5). The library calls these methods by
-        keyword, so a subclass written as ``(x, m, p, t)`` would still compute correctly when
-        the library calls it, and silently wrongly when anyone calls it positionally in the
-        new order. So it is refused here, at class creation, where the traceback points at
-        the definition.
+        Lagrangian (#2375 ruling 8, #2378 phase 5); a method that uses only some of them keeps
+        their relative order, and further parameters follow. The library calls these methods by
+        keyword, so an out-of-order subclass would still compute correctly when the library
+        calls it, and silently wrongly when anyone calls it positionally. So it is refused here,
+        at class creation, where the traceback points at the definition.
+
+        Every public method and ``__call__`` is checked, not a list of names: a list would miss
+        whatever public method it does not name. Non-callable attributes are skipped.
         """
         super().__init_subclass__(**kwargs)
-        for name in _FAMILY_METHODS:
-            fn = cls.__dict__.get(name)
-            if fn is None:
+        for name, member in cls.__dict__.items():
+            if name.startswith("_") and name != "__call__":
                 continue
-            params = list(inspect.signature(fn).parameters)[1:]
-            if "x" in params and "t" in params and params.index("x") < params.index("t"):
+            fn = member.__func__ if isinstance(member, (staticmethod, classmethod)) else member
+            if not callable(fn):
+                continue
+            try:
+                named = [p for p in inspect.signature(fn).parameters if p in _ARGUMENT_RANK]
+            except (TypeError, ValueError):
+                continue
+            ranks = [_ARGUMENT_RANK[p] for p in named]
+            if ranks != sorted(ranks) or len(set(ranks)) != len(ranks):
                 raise TypeError(
-                    f"{cls.__qualname__}.{name}({', '.join(params)}) declares x before t. Since #2378 phase 5 "
+                    f"{cls.__qualname__}.{name} takes ({', '.join(named)}) out of order. Since #2378 phase 5 "
                     f"(#2375 ruling 8) the order is (t, x, p, m) for a Hamiltonian and (t, x, alpha, m) for a "
-                    f"Lagrangian, with t required: reorder the parameters."
+                    f"Lagrangian, with any further parameters after them: reorder the parameters."
                 )
 
     def __init__(
@@ -1178,14 +1188,14 @@ class HamiltonianBase(MFGOperatorBase):
 
         Parameters
         ----------
+        t : float
+            Time
         x : NDArray
             Position, shape (d,) for d-dimensional problem
-        m : float | NDArray
-            Density at x
         p : NDArray
             Momentum ∇u at x, shape (d,)
-        t : float
-            Time (default: 0.0)
+        m : float | NDArray
+            Density at x
 
         Returns
         -------
@@ -1214,14 +1224,14 @@ class HamiltonianBase(MFGOperatorBase):
 
         Parameters
         ----------
-        x : NDArray
-            Position, shape (d,)
-        m : float | NDArray
-            Density at x
-        p : NDArray
-            Momentum ∇u at x, shape (d,)
         t : float
             Time
+        x : NDArray
+            Position, shape (d,)
+        p : NDArray
+            Momentum ∇u at x, shape (d,)
+        m : float | NDArray
+            Density at x
 
         Returns
         -------
@@ -1273,14 +1283,14 @@ class HamiltonianBase(MFGOperatorBase):
 
         Parameters
         ----------
-        x : NDArray
-            Position, shape (d,) or (N, d)
-        m : float | NDArray
-            Density at x, scalar or shape (N,)
-        p : NDArray
-            Momentum ∇u at x, shape (d,) or (N, d)
         t : float
             Time
+        x : NDArray
+            Position, shape (d,) or (N, d)
+        p : NDArray
+            Momentum ∇u at x, shape (d,) or (N, d)
+        m : float | NDArray
+            Density at x, scalar or shape (N,)
 
         Returns
         -------
@@ -1320,14 +1330,14 @@ class HamiltonianBase(MFGOperatorBase):
 
         Parameters
         ----------
-        x : NDArray
-            Position, shape (d,) or (N, d) for batch
-        m : float | NDArray
-            Density at x
-        p : NDArray
-            Momentum at x, shape (d,) or (N, d) for batch
         t : float
             Time
+        x : NDArray
+            Position, shape (d,) or (N, d) for batch
+        p : NDArray
+            Momentum at x, shape (d,) or (N, d) for batch
+        m : float | NDArray
+            Density at x
 
         Returns
         -------
@@ -1358,14 +1368,14 @@ class HamiltonianBase(MFGOperatorBase):
 
         Parameters
         ----------
-        x : NDArray
-            Position
-        m : float | NDArray
-            Density at x
-        p : NDArray
-            Momentum ∇u at x
         t : float
             Time
+        x : NDArray
+            Position
+        p : NDArray
+            Momentum ∇u at x
+        m : float | NDArray
+            Density at x
 
         Returns
         -------
@@ -1377,11 +1387,11 @@ class HamiltonianBase(MFGOperatorBase):
 
     def jacobian_fd(
         self,
+        t: float,
         x: NDArray,
-        m: float | NDArray,
         p: NDArray,
+        m: float | NDArray,
         dx: float,
-        t: float = 0.0,
         scheme: str = "central",
     ) -> HamiltonianJacobians:
         """
@@ -1396,16 +1406,14 @@ class HamiltonianBase(MFGOperatorBase):
 
         Parameters
         ----------
+        t : float
+            Time
         x : NDArray
             Position
-        m : float | NDArray
-            Density at x
         p : NDArray
             Momentum ∇u at x (current gradient estimate)
-        dx : float
-            Grid spacing
-        t : float
-            Time (default: 0.0)
+        m : float | NDArray
+            Density at x
         scheme : str
             FD scheme: "central", "upwind_forward", "upwind_backward"
             - "central": p ≈ (U[i+1] - U[i-1])/(2dx)
@@ -1628,8 +1636,8 @@ class LagrangianBase(MFGOperatorBase):
     Users can specify either H or L; both provide optimal_control().
 
     Issue #904: Redesigned interface. Key additions:
-    - ``optimal_control(x, m, p, t)`` -- same signature as HamiltonianBase
-    - ``evaluate_hamiltonian(x, m, p, t)`` -- H value on-the-fly, no DualHamiltonian
+    - ``optimal_control(t, x, p, m)`` -- same signature as HamiltonianBase
+    - ``evaluate_hamiltonian(t, x, p, m)`` -- H value on-the-fly, no DualHamiltonian
     - ``proximal(tau, z)`` -- for ADMM/variational solvers
     - ``control_bounds()`` -- for semi-Lagrangian solver
 
@@ -1829,9 +1837,9 @@ class LagrangianBase(MFGOperatorBase):
         self,
         tau: float,
         z: np.ndarray,
+        t: float = 0.0,
         x: NDArray | None = None,
         m: float | NDArray | None = None,
-        t: float = 0.0,
     ) -> np.ndarray:
         """Proximal of L: prox_{tau*L}(z) = argmin_alpha { L(alpha) + |alpha-z|^2/(2*tau) }.
 
@@ -1968,7 +1976,7 @@ class SeparableLagrangian(LagrangianBase):
         f_m = float(self._coupling(m)) if self._coupling is not None else 0.0
         return H_ctrl - V - f_m
 
-    def proximal(self, tau, z, x=None, m=None, t=0.0):
+    def proximal(self, tau, z, t=0.0, x=None, m=None):
         """Delegates to control_cost.proximal(). V and f don't depend on alpha."""
         return self.control_cost.proximal(tau, np.atleast_1d(z))
 
@@ -2261,10 +2269,10 @@ class DualLagrangian(LagrangianBase):
 
     def d_alpha(
         self,
+        t: float,
         x: NDArray,
         alpha: NDArray,
         m: float | NDArray,
-        t: float = 0.0,
     ) -> NDArray:
         """
         Compute ∂L/∂α = -p*.

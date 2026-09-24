@@ -70,7 +70,7 @@ class MFGComponents:
     from mfgarchon.core.hamiltonian import LagrangianBase
 
     class MyLagrangian(LagrangianBase):
-        def __call__(self, x, alpha, m, t=0.0):
+        def __call__(self, t, x, alpha, m):
             return 0.5 * np.sum(alpha**2)
 
     components = MFGComponents(lagrangian=MyLagrangian(), m_initial=..., u_terminal=...)
@@ -485,7 +485,7 @@ class HamiltonianMixin:
             current_time: Actual time value (computed from t_idx if not provided)
 
         Returns:
-            Derivative dH/dm at (x, m, p, t)
+            Derivative dH/dm at (t, x, p, m)
         """
         # Issue #673: Error on legacy p_values parameter
         if p_values is not None:
@@ -551,7 +551,7 @@ class HamiltonianMixin:
         # Convert x_position to numpy array
         x = np.atleast_1d(x_position if x_position is not None else 0.0)
 
-        # Call class-based Hamiltonian.dm() directly: dm(x, m, p, t)
+        # Call class-based Hamiltonian.dm() directly: dm(t, x, p, m)
         return float(H_class.dm(x=x, m=m_at_x, p=p, t=current_time))
 
     def dH_dp(
@@ -615,7 +615,7 @@ class HamiltonianMixin:
         # Convert x_position to numpy array
         x = np.atleast_1d(x_position if x_position is not None else 0.0)
 
-        # Call class-based Hamiltonian.dp() directly: dp(x, m, p, t)
+        # Call class-based Hamiltonian.dp() directly: dp(t, x, p, m)
         return H_class.dp(x=x, m=m_at_x, p=p, t=current_time)
 
     def get_hjb_hamiltonian_jacobian_contrib(

@@ -231,7 +231,7 @@ class TestCapabilityDispatchBehavior:
         m = 0.3
         p = np.array([1.0])
         # Should not raise regardless of whether dp returns array or scalar
-        jac = H.jacobian_fd(x, m, p, dx=0.01, scheme="central")
+        jac = H.jacobian_fd(t=0.0, x=x, m=m, p=p, dx=0.01, scheme="central")
         assert jac is not None
 
     def test_temp_resolved_bc_initialized_to_none(self):

@@ -77,7 +77,7 @@ class TowelBeachHamiltonian(HamiltonianBase):
         self.crowd_aversion = crowd_aversion
 
     def __call__(self, t: float, x: np.ndarray, p: np.ndarray, m: float) -> float:
-        """Evaluate Hamiltonian H(x, m, p, t)."""
+        """Evaluate Hamiltonian H(t, x, p, m)."""
         # Extract scalar position
         x_scalar = float(x[0]) if hasattr(x, "__len__") else float(x)
 

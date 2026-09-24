@@ -209,7 +209,7 @@ class NetworkHJBSolver(BaseHJBSolver):
         # density_coupling` re-derived the coupling on the raw stacked `m`, diverging from the object's
         # `_extract_own_density` for multi-population `m` and corrupting `h_control = h_total - source`.
         H = self.network_problem.hamiltonian_class
-        return np.array([H.source_term(i, m, t) for i in range(self.num_nodes)])
+        return np.array([H.source_term(x=i, m=m, t=t) for i in range(self.num_nodes)])
 
     def _solve_ode(
         self,

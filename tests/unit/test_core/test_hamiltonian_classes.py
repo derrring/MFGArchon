@@ -3,7 +3,7 @@ Unit tests for class-based Hamiltonian and Lagrangian (Issues #651, #667, #673).
 
 Tests the new class hierarchy:
 - MFGOperatorBase: Common base for H and L
-- HamiltonianBase: Full MFG Hamiltonian H(x, m, p, t)
+- HamiltonianBase: Full MFG Hamiltonian H(t, x, p, m)
 - LagrangianBase: Full MFG Lagrangian L(x, α, m, t)
 - Legendre transform duality between H and L
 """
@@ -1198,19 +1198,38 @@ def test_a_family_method_declared_x_before_t_is_refused_at_class_creation():
     """
     from mfgarchon.core.hamiltonian import HamiltonianBase, LagrangianBase
 
-    with pytest.raises(TypeError, match=r"declares x before t"):
+    with pytest.raises(TypeError, match=r"out of order"):
 
         class _OldH(HamiltonianBase):
             def __call__(self, x, m, p, t):
                 return 0.0
 
-    with pytest.raises(TypeError, match=r"declares x before t"):
+    with pytest.raises(TypeError, match=r"out of order"):
 
         class _OldL(LagrangianBase):
             def __call__(self, x, alpha, m, t):
                 return 0.0
 
+    # The half-migration: t moved to the front and the rest left as it was.
+    with pytest.raises(TypeError, match=r"out of order"):
+
+        class _HalfH(HamiltonianBase):
+            def __call__(self, t, x, m, p):
+                return 0.0
+
+    # Any public method, not a list of names: a helper taking (x, t) is out of order too.
+    with pytest.raises(TypeError, match=r"out of order"):
+
+        class _HelperH(HamiltonianBase):
+            def __call__(self, t, x, p, m):
+                return 0.0
+
+            def potential_at(self, x, t):
+                return 0.0
+
     class _NewH(HamiltonianBase):
+        dx_step = 0.01  # a non-callable attribute is not a method and is not checked
+
         def __call__(self, t, x, p, m):
             return float(np.sum(np.asarray(p) ** 2)) / 2
 

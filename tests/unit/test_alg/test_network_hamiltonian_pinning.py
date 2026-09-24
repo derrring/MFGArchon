@@ -301,19 +301,21 @@ def test_source_term_single_source_and_multipop_slice():
     p = 0.1 * np.arange(N, dtype=float)
 
     for node in range(N):
-        src = H.source_term(node, m, 0.0)
+        src = H.source_term(x=node, m=m, t=0.0)
         assert src == pytest.approx(0.2 * node + 0.5 * m[node] ** 2)
         # Decomposition: control = __call__ + source is p-dependent but m-INDEPENDENT (all m-dependence
         # is in the source), so scaling m does not change (__call__ + source).
         assert H(x=node, m=m, p=p, t=0.0) + src == pytest.approx(
-            H(x=node, m=2 * m, p=p, t=0.0) + H.source_term(node, 2 * m, 0.0)
+            H(x=node, m=2 * m, p=p, t=0.0) + H.source_term(x=node, m=2 * m, t=0.0)
         )
 
     # Multi-population: population 1's source reads its OWN slice (0.9), not the raw stacked m[node] (0.1).
     H1 = NetworkHamiltonian(network_data=prob.network_data, population_index=1)
     m_stacked = np.concatenate([np.full(N, 0.1), np.full(N, 0.9)])
     for node in range(N):
-        assert H1.source_term(node, m_stacked, 0.0) == pytest.approx(0.5 * 0.9**2)  # own slice; V=0 (no potential)
+        assert H1.source_term(x=node, m=m_stacked, t=0.0) == pytest.approx(
+            0.5 * 0.9**2
+        )  # own slice; V=0 (no potential)
 
 
 def test_problem_methods_delegate_to_object():
@@ -334,8 +336,8 @@ def test_problem_methods_delegate_to_object():
     t = 0.4
     for node in range(N):
         # delegation identity (method == the wired object's accessor)
-        assert prob.node_potential(node, t) == H.node_potential_value(node, t)
-        assert prob.density_coupling(node, m, t) == H.coupling_value(node, m, t)
+        assert prob.node_potential(node, t) == H.node_potential_value(x=node, t=t)
+        assert prob.density_coupling(node, m, t) == H.coupling_value(x=node, m=m, t=t)
         # byte-identical to the legacy computation
         assert prob.node_potential(node, t) == pytest.approx(0.2 * node + t)
         assert prob.density_coupling(node, m, t) == pytest.approx(0.3 * m[node] ** 2)

@@ -1,7 +1,7 @@
 """Issue #1528 PR-1 -- owner byte-identity pinning test for the FP advective drift.
 
 Single-owner refactor: the FP advective drift alpha* must flow through ONE owner primitive,
-``H.optimal_control(x, m, p, t)`` on the problem's ``hamiltonian_class`` -- NOT the hand-coded
+``H.optimal_control(t, x, p, m)`` on the problem's ``hamiltonian_class`` -- NOT the hand-coded
 ``-fp_drift_coefficient(problem) * grad(U)`` fork (the ``c = 1/lambda`` scalar the PR eliminates).
 
 The owner DIVIDES: ``QuadraticControlCost.optimal_control`` returns ``-sign * p / lambda``

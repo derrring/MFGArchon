@@ -50,6 +50,21 @@ _WITNESS_NOISE_SAFETY = 1e4
 _SMOOTHNESS_RTOL = 1e-3
 
 
+def _call_h(fn: Any, x: Any, m: Any, p: Any, t: float = 0.0) -> Any:
+    """Evaluate a Hamiltonian, or one of its derivatives, the way its kind expects.
+
+    A family object (a ``HamiltonianBase``/``LagrangianBase`` instance, or a bound method of
+    one) takes ``(t, x, p, m)`` since #2378 phase 5 and is called by keyword. A raw user callable
+    keeps the positional ``(x, m, p, t)`` convention it had before, with whatever parameter names
+    it declares, until phase 5 part 2 settles user callables.
+    """
+    from mfgarchon.core.hamiltonian import MFGOperatorBase
+
+    if isinstance(getattr(fn, "__self__", fn), MFGOperatorBase):
+        return fn(t=t, x=x, p=p, m=m)
+    return fn(x, m, p, t)
+
+
 def _get_sample_inputs(
     geometry: GeometryProtocol,
     location: str,
@@ -106,9 +121,10 @@ def validate_custom_functions(
     Supports HamiltonianBase instances (preferred) and raw callables.
 
     Args:
-        hamiltonian: HamiltonianBase instance or callable H(t, x, p, m)
-        dH_dm: Derivative dH/dm (bound method or callable(x, m, p, t))
-        dH_dp: Derivative dH/dp (bound method or callable(x, m, p, t))
+        hamiltonian: HamiltonianBase instance (called as H(t, x, p, m) by keyword) or a raw
+            callable H(x, m, p, t), called positionally
+        dH_dm: Derivative dH/dm: a family bound method (called by keyword) or a raw callable(x, m, p, t)
+        dH_dp: Derivative dH/dp: a family bound method (called by keyword) or a raw callable(x, m, p, t)
         geometry: Geometry for sample point generation
         check_consistency: If True (default), verify dH_dm/dH_dp are the
             derivatives of H by finite differences. Costs O(dimension) extra
@@ -146,9 +162,9 @@ def validate_hamiltonian(
     geometry: GeometryProtocol,
 ) -> ValidationResult:
     """
-    Validate Hamiltonian function H(t, x, p, m).
+    Validate a Hamiltonian: a HamiltonianBase instance, or a raw callable H(x, m, p, t).
 
-    Supports HamiltonianBase instances (called as H(t, x, p, m))
+    Supports HamiltonianBase instances (called as H(t, x, p, m) by keyword)
     and raw callables (tried with same signature).
 
     Checks:
@@ -171,12 +187,12 @@ def validate_hamiltonian(
 
     # Evaluate: HamiltonianBase.__call__ signature is (x, m, p, t=0.0)
     try:
-        value = hamiltonian(x=x_sample, m=m_sample, p=p_sample, t=0.0)
+        value = _call_h(hamiltonian, x_sample, m_sample, p_sample)
     except TypeError as e:
         result.add_error(
             f"Hamiltonian has wrong signature: {e}",
             location="hamiltonian",
-            suggestion="Hamiltonian should have signature H(t, x, p, m)",
+            suggestion="A HamiltonianBase takes (t, x, p, m); a raw callable is called as H(x, m, p, t)",
         )
         return result
     except Exception as e:
@@ -237,7 +253,7 @@ def validate_hamiltonian_derivative(
 
     # Evaluate: derivative signature is (x, m, p, t=0.0)
     try:
-        value = derivative_func(x=x_sample, m=m_sample, p=p_sample, t=0.0)
+        value = _call_h(derivative_func, x_sample, m_sample, p_sample)
     except TypeError as e:
         result.add_error(
             f"{name} has wrong signature: {e}",
@@ -442,11 +458,12 @@ def validate_hamiltonian_consistency(
     problem at construction time.
 
     Args:
-        hamiltonian: HamiltonianBase instance or callable H(t, x, p, m)
-        dH_dm: Claimed derivative dH/dm with signature (x, m, p, t)
+        hamiltonian: HamiltonianBase instance (called as H(t, x, p, m) by keyword) or a raw
+            callable H(x, m, p, t), called positionally
+        dH_dm: Claimed derivative dH/dm: a family bound method (called by keyword) or a raw callable(x, m, p, t)
         geometry: Geometry for sample point
         tolerance: Relative tolerance for the warning tier
-        dH_dp: Claimed gradient dH/dp with signature (x, m, p, t). Optional.
+        dH_dp: Claimed gradient dH/dp, the same kinds as dH_dm. Optional.
 
     Returns:
         ValidationResult; is_valid is False when a witness was exhibited.
@@ -465,17 +482,17 @@ def validate_hamiltonian_consistency(
 
     try:
         for m, p in _consistency_probes(dimension):
-            h_center = float(hamiltonian(x=x_sample, m=m, p=p, t=0.0))
+            h_center = float(_call_h(hamiltonian, x_sample, m, p))
 
             # --- dH_dm ---
-            h_m_plus = float(hamiltonian(x=x_sample, m=m + step, p=p, t=0.0))
-            h_m_minus = float(hamiltonian(x=x_sample, m=m - step, p=p, t=0.0))
+            h_m_plus = float(_call_h(hamiltonian, x_sample, m + step, p))
+            h_m_minus = float(_call_h(hamiltonian, x_sample, m - step, p))
             comparison = _compare_derivative(
                 h_m_minus,
                 h_center,
                 h_m_plus,
                 step,
-                float(dH_dm(x=x_sample, m=m, p=p, t=0.0)),
+                float(_call_h(dH_dm, x_sample, m, p)),
                 m,
                 p,
                 tolerance,
@@ -488,16 +505,16 @@ def validate_hamiltonian_consistency(
             # --- dH_dp, per component ---
             if dH_dp is None:
                 continue
-            dp_analytical = np.atleast_1d(dH_dp(x=x_sample, m=m, p=p, t=0.0)).astype(float)
+            dp_analytical = np.atleast_1d(_call_h(dH_dp, x_sample, m, p)).astype(float)
             for i in range(dimension):
                 p_plus = p.copy()
                 p_minus = p.copy()
                 p_plus[i] += step
                 p_minus[i] -= step
                 comparison = _compare_derivative(
-                    float(hamiltonian(x=x_sample, m=m, p=p_minus, t=0.0)),
+                    float(_call_h(hamiltonian, x_sample, m, p_minus)),
                     h_center,
-                    float(hamiltonian(x=x_sample, m=m, p=p_plus, t=0.0)),
+                    float(_call_h(hamiltonian, x_sample, m, p_plus)),
                     step,
                     float(dp_analytical[i]),
                     m,

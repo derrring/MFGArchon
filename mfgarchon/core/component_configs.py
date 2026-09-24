@@ -32,7 +32,7 @@ class StandardMFGConfig:
     Parameters
     ----------
     hamiltonian_func : Callable, optional
-        H(t, x, p, m) -> float. Agent Hamiltonian defining dynamics.
+        H(x, m, p, t) -> float. Agent Hamiltonian defining dynamics.
     hamiltonian_dm_func : Callable, optional
         dH/dm(x, m, p, t) -> float. Derivative w.r.t. density.
     hamiltonian_dp_func : Callable, optional

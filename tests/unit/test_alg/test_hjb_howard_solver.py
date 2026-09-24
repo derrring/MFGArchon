@@ -140,7 +140,7 @@ def _make_gfdm_solver(pts, bdry, geom, problem, scheme="joint_socp", k_neighbors
 
 
 class _LQHam(HamiltonianBase):
-    """Minimal LQ Hamiltonian H = |p|²/2 exposing dp(x, m, p, t) = p (so α* = -dp = -p).
+    """Minimal LQ Hamiltonian H = |p|²/2 exposing dp(t, x, p, m) = p (so α* = -dp = -p).
 
     Used to validate the integrated `inner_solver='howard'` path, which derives α* from
     `problem.hamiltonian_class.dp` (Issue #1118). Matches the explicit `lambda x,p,m,t: -p`

@@ -161,9 +161,9 @@ class NetworkHamiltonian(HamiltonianBase):
 
         # H = control - (V + f): the source is cost-signed and enters H with a minus sign (#2375
         # rulings 3-4). `source_term` is also the running cost that policy evaluation reads.
-        return control_cost - self.source_term(node, m, t)
+        return control_cost - self.source_term(x=node, m=m, t=t)
 
-    def source_term(self, x, m, t=0.0):
+    def source_term(self, t, x, m):
         """The p-independent source ``V(node) + f(node, m)`` — the RHS in ``-u_t + H_control = source``.
 
         Cost-signed (#2375 ruling 3). Single source consumed by ``_default_hamiltonian`` (as
@@ -175,16 +175,16 @@ class NetworkHamiltonian(HamiltonianBase):
         ``_extract_own_density`` is the identity for single-population ``m`` (byte-identical) and slices
         the own population for stacked ``K*N`` ``m``.
         """
-        return self.node_potential_value(x, t) + self.coupling_value(x, m, t)
+        return self.node_potential_value(x=x, t=t) + self.coupling_value(x=x, m=m, t=t)
 
-    def node_potential_value(self, x, t=0.0):
+    def node_potential_value(self, t, x):
         """Node potential ``V(node, t)`` — the single source for ``NetworkMFGProblem.node_potential``
         (Issue #1470 Strand A). ``0.0`` when no ``node_potential_func`` is set.
         """
         node = int(np.asarray(x).flat[0])
         return float(self._node_potential(node, t)) if self._node_potential else 0.0
 
-    def coupling_value(self, x, m, t=0.0):
+    def coupling_value(self, t, x, m):
         """Density coupling ``f(node, m, t)`` — the single source for
         ``NetworkMFGProblem.density_coupling`` (Issue #1470 Strand A). Reads ``node_interaction_func``
         on the FULL density (cross-coupling), else the default quadratic node congestion
@@ -264,7 +264,7 @@ class NetworkHamiltonian(HamiltonianBase):
         m_minus = m_arr.copy()
         m_plus[node] += eps
         m_minus[node] -= eps
-        return -(self.coupling_value(node, m_plus, t) - self.coupling_value(node, m_minus, t)) / (2.0 * eps)
+        return -(self.coupling_value(x=node, m=m_plus, t=t) - self.coupling_value(x=node, m=m_minus, t=t)) / (2.0 * eps)
 
 
 @dataclass
@@ -529,14 +529,14 @@ class NetworkMFGProblem(MFGProblem):
     def node_potential(self, node: int, t: float) -> float:
         """Potential function V(node, t) at network nodes. Issue #1470 Strand A: delegates to the wired
         single-source Hamiltonian object so every consumer reads ONE computation."""
-        return float(self.hamiltonian_class.node_potential_value(node, t))
+        return float(self.hamiltonian_class.node_potential_value(x=node, t=t))
 
     def density_coupling(self, node: int, m: np.ndarray, t: float) -> float:
         """Density coupling f(node, m, t) at nodes. Issue #1470 Strand A: delegates to the wired
         single-source Hamiltonian object (``coupling_value``), so the default congestion uses the
         own-population slice (``_extract_own_density``) — matching the Hamiltonian on stacked
         multi-population m instead of re-deriving on the raw ``m[node]``."""
-        return float(self.hamiltonian_class.coupling_value(node, m, t))
+        return float(self.hamiltonian_class.coupling_value(x=node, m=m, t=t))
 
     # Initial and terminal conditions
 

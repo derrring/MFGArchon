@@ -150,7 +150,7 @@ type JAXStateArray = JAXArray | NDArray
 # === Mathematical Function Types ===
 
 type HamiltonianFunction = Callable[[float, float, float, float], float]
-"""Hamiltonian function H(t, x, p, m) -> float"""
+"""Hamiltonian function H(x, m, p, t) -> float"""
 
 type LagrangianFunction = Callable[[float, float, float, float], float]
 """Lagrangian function L(x, v, m, t) -> float"""

@@ -114,7 +114,7 @@ def zero_drift() -> Callable:
 
 @deprecated(
     since="v0.19.0",
-    replacement="use H.optimal_control(x, m, grad_U, t) directly, or let FixedPointIterator handle it automatically",
+    replacement="use H.optimal_control(t=t, x=x, p=grad_U, m=m) directly, or let FixedPointIterator handle it automatically",
     reason="Hardcodes quadratic Hamiltonian assumption (Issue #896)",
 )
 def optimal_control_drift(
@@ -130,7 +130,7 @@ def optimal_control_drift(
         For general Hamiltonians, use the inline pipeline instead::
 
             grad_U = np.gradient(U, dx, axis=-1)
-            alpha = H.optimal_control(x, m, grad_U, t)
+            alpha = H.optimal_control(t=t, x=x, p=grad_U, m=m)
 
         The FixedPointIterator handles this automatically via
         ``fixed_point_utils.resolve_fp_drift_kwargs`` /

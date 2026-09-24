@@ -56,7 +56,7 @@ if __name__ == "__main__":
 
         def __call__(self, t, x, p, m):
             """
-            Evaluate H(x, m, p, t).
+            Evaluate H(t, x, p, m).
 
             Sum over p's momentum-component axis so H is a scalar per grid point
             (the solver evaluates H pointwise). |p|^2 = sum_i p_i^2.
@@ -270,7 +270,7 @@ if __name__ == "__main__":
     print()
     print("What you learned:")
     print("  1. Create a custom Hamiltonian by subclassing HamiltonianBase")
-    print("  2. Implement __call__(x, m, p, t) for H(x, m, p)")
+    print("  2. Implement __call__(t, x, p, m) for H(x, p, m)")
     print("  3. Implement dp() and dm() for derivatives")
     print("  4. Bundle with Model/Conditions and solve")
     print()

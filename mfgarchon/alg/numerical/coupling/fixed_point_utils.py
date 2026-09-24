@@ -531,7 +531,7 @@ def compute_fp_velocity_field(
         problem: MFG problem (provides ``geometry`` and ``dt``).
         U: Value function, shape ``(Nt+1, *spatial_shape)``.
         M: Density, shape ``(Nt+1, *spatial_shape)`` (only the own-population density).
-        H_class: Hamiltonian exposing ``optimal_control(x, m, p, t)``.
+        H_class: Hamiltonian exposing ``optimal_control(t, x, p, m)``.
         cross_density: Optional stacked multi-population density trajectory
             ``(Nt+1, K*Nx)`` (Issue #1071, lock-faithful). When given, ``optimal_control``
             receives ``cross_density[n]`` (the stacked density at integer timestep ``n``, which the

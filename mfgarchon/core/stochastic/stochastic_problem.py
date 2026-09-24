@@ -304,7 +304,7 @@ class StochasticMFGProblem(MFGProblem):
         # noticed: the three test files that mention common noise only CONSTRUCT the solver.
         #
         # The two APIs disagree on shape, which is why this is an adapter and not a cast.
-        # `HamiltonianBase.__call__` takes (x, m, p, t) of VALUES; the old component callables took
+        # `HamiltonianBase.__call__` takes (t, x, p, m) of VALUES; the old component callables took
         # (x_idx, m_at_x, p_values, t_idx) of grid indices, with `p` arriving as a
         # forward/backward dict to be averaged. `theta` is bound from the frozen path here, so the
         # conditional problem is an ordinary deterministic MFG to everything downstream -- which is

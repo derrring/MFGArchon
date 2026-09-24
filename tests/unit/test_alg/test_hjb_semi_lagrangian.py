@@ -849,10 +849,10 @@ class TestStochasticCharacteristicSL:
                     return np.zeros(p_arr.shape[:-1])
                 return 0.0
 
-            def gradient_p(self, x, m, p, t=0.0):
+            def gradient_p(self, t, x, p, m):
                 return np.zeros_like(np.asarray(p, dtype=float))
 
-            def density_derivative(self, x, m, p, t=0.0):
+            def density_derivative(self, t, x, p, m):
                 return 0.0
 
         geometry = TensorProductGrid(
@@ -913,10 +913,10 @@ class TestStochasticCharacteristicSL:
                     return np.zeros(p_arr.shape[:-1])
                 return 0.0
 
-            def gradient_p(self, x, m, p, t=0.0):
+            def gradient_p(self, t, x, p, m):
                 return np.zeros_like(np.asarray(p, dtype=float))
 
-            def density_derivative(self, x, m, p, t=0.0):
+            def density_derivative(self, t, x, p, m):
                 return 0.0
 
         sigma_test = 0.3
@@ -1092,10 +1092,10 @@ class TestStochasticCharacteristicSL_nD:  # noqa: N801 — SL_nD = semi-Lagrangi
                     return np.zeros(p_arr.shape[:-1])
                 return 0.0
 
-            def gradient_p(self, x, m, p, t=0.0):
+            def gradient_p(self, t, x, p, m):
                 return np.zeros_like(np.asarray(p, dtype=float))
 
-            def density_derivative(self, x, m, p, t=0.0):
+            def density_derivative(self, t, x, p, m):
                 return 0.0
 
         bc = no_flux_bc(dimension=2)
