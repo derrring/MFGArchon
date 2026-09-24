@@ -43,8 +43,11 @@ def _problem():
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(
                 control_cost=QuadraticControlCost(control_cost=1.0),
-                coupling=lambda m: m,
-                coupling_dm=lambda m: 1.0,
+                # Negated for #2375 ruling 3 (#2391), so the test keeps the problem its numbers were measured
+                # on. Written as `+m` it turned into the opposite-signed problem at #2391, stayed green,
+                # and stopped killing `fp_initial_condition_written_at_final_index` (#2397).
+                coupling=lambda m: -m,
+                coupling_dm=lambda m: -1.0,
             ),
         ),
     )
