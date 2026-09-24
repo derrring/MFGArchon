@@ -40,7 +40,7 @@ class StandardMFGConfig:
     hamiltonian_jacobian_func : Callable, optional
         Jacobian contribution for coupling terms.
     potential_func : Callable, optional
-        V(x, t) -> float. External potential/forces.
+        V(t, x) -> float. External potential/forces.
     m_initial : Callable, optional
         m_0(x) -> float. Initial agent distribution.
     u_terminal : Callable, optional

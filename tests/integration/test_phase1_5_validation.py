@@ -98,7 +98,7 @@ class TestMultiPopulationIntegration:
         m2_trajectory = r2.M  # (Nt+1, Nx)
 
         # Now solve population 1 with source_term that depends on m2
-        def cross_coupling_source(x, m, v, t):
+        def cross_coupling_source(t, x, v, m):
             # Simple cross-coupling: -0.1 * m2(t,x) adds to HJB
             t_idx = min(int(t / T * NT), NT)
             return -0.1 * m2_trajectory[t_idx]

@@ -210,7 +210,7 @@ def test_recipe_coupled_matches_fdm_on_wellposed_problem(use_newton, sd_scale):
         grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
         H = SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=1.0),
-            potential=lambda x, t: 0.5 * 4.0 * (x[0] - 0.5) ** 2,
+            potential=lambda t, x: 0.5 * 4.0 * (x[0] - 0.5) ** 2,
             coupling=None,
         )
         comp = MFGComponents(

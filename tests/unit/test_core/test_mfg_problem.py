@@ -239,7 +239,7 @@ def test_mfg_problem_temporal_grid():
 def test_mfg_problem_with_custom_potential():
     """Test MFGProblem with custom potential function."""
 
-    def custom_potential(x, t):
+    def custom_potential(t, x):
         return x**2
 
     geometry = default_geometry(bounds=[(0.0, 1.0)], Nx_points=[11])
@@ -259,6 +259,23 @@ def test_mfg_problem_with_custom_potential():
     expected = problem.geometry.get_spatial_grid() ** 2
     # Flatten both arrays for comparison (problem stores as 2D column vector)
     assert np.allclose(np.ravel(problem.f_potential), np.ravel(expected))
+
+
+@pytest.mark.unit
+def test_mfg_problem_accepts_a_time_first_potential_func_whatever_its_body():
+    """#2402 review: validation tried positional (x, m), (0.0, x, m), (x), refusing valid (t, x) bodies.
+
+    It now validates through the potential's binding (#2375 ruling 8), the call the solve makes.
+    """
+    geometry = default_geometry(bounds=[(0.0, 1.0)], Nx_points=[11])
+    components = MFGComponents(
+        hamiltonian=default_hamiltonian(),
+        potential_func=lambda t, x: float(t) + x**2,
+        m_initial=lambda x: 1.0,
+        u_terminal=lambda x: 0.0,
+    )
+    problem = MFGProblem(geometry=geometry, components=components)
+    assert np.allclose(np.ravel(problem.f_potential), np.ravel(problem.geometry.get_spatial_grid()) ** 2)
 
 
 @pytest.mark.unit

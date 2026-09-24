@@ -17,6 +17,12 @@ from mfgarchon.core.mfg_components import (
 from mfgarchon.geometry.protocol import GeometryProtocol  # noqa: TC001
 
 # Deprecation utilities (Issue #616, #666)
+from mfgarchon.types.callable_protocols import (
+    POTENTIAL_SLOTS,
+    SOURCE_TERM_SLOTS,
+    bind_user_callable,
+    bound_attribute,
+)
 from mfgarchon.utils.deprecation import validate_kwargs
 
 # Use unified nD-capable BoundaryConditions from conditions.py
@@ -559,7 +565,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # These enable generalized MFG equations beyond the classical form:
         #   HJB: -du/dt + H(x,m,Du) - S_hjb = 0
         #   FP:  dm/dt - (sigma^2/2)Dm - div(m*alpha*) - S_fp = 0
-        # source_term_hjb/fp: Callable(x, m, v, t) -> array (problem-level signature)
+        # source_term_hjb/fp: Callable(t, x, v, m) -> array (problem-level signature, #2375 ruling 8)
         # nonlocal_operator: LinearOperator for integro-differential terms J[v]
         # state_penalty: Callable(x) -> array, a COST-signed level-set penalty (soft wall).
         #   Composed into the Hamiltonian's potential, NOT into source_term -- see below.
@@ -587,6 +593,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # "Sign conventions" note for the unified picture.
         self.source_term_hjb: Callable | None = kwargs.pop("source_term_hjb", None)
         self.source_term_fp: Callable | None = kwargs.pop("source_term_fp", None)
+        # Bound at acceptance, so a signature that cannot be matched is refused here (#2375 ruling 8)
+        for name in ("source_term_hjb", "source_term_fp"):
+            if getattr(self, name) is not None:
+                bound_attribute(self, name, SOURCE_TERM_SLOTS, role=name)
         self.nonlocal_operator: Any | None = kwargs.pop("nonlocal_operator", None)
         # A soft wall: `state_penalty(x)` is a COST, positive where the region is expensive.
         # It is `alpha`-free and `u`-free, which is what makes it a potential rather than a
@@ -1905,17 +1915,19 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             )
 
         previous = getattr(hamiltonian, "_potential", None)
+        if previous is not None:
+            previous = bind_user_callable(previous, POTENTIAL_SLOTS, role="potential")
         penalty = self.state_penalty
         scale = self.state_penalty_scale
 
-        def composed_potential(x: Any, t: float = 0.0) -> Any:
+        def composed_potential(t: float, x: Any) -> Any:
             import numpy as _np
 
             wall = scale * _np.asarray(penalty(x), dtype=float)
             if previous is None:
                 squeezed = wall.squeeze()
                 return float(squeezed) if squeezed.ndim == 0 else squeezed
-            base = previous(x, t)
+            base = previous(t=t, x=x)
             # Match the base's own contract exactly -- it decides the shape, not this wrapper.
             if _np.size(wall) == _np.size(base):
                 wall = _np.reshape(wall, _np.shape(base))
@@ -2004,13 +2016,11 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 if not drift_result.is_valid:
                     raise ValidationError(drift_result)
 
-            # Validate potential if callable
+            # Validate the potential through its binding (#2375 ruling 8): the check `validate_running_cost`
+            # made here tried positional (x, m), (0.0, x, m) and (x), whose verdict depended on the order
+            # the potential takes and refused valid (t, x) potentials.
             if self.components.potential_func is not None:
-                from mfgarchon.utils.validation import validate_running_cost
-
-                pot_result = validate_running_cost(self.components.potential_func, self.geometry)
-                if not pot_result.is_valid:
-                    raise ValidationError(pot_result)
+                self._bound_potential_func()
 
         # Issue #687: Validate array-type diffusion/drift fields
         if self.geometry is not None and self.spatial_shape is not None:

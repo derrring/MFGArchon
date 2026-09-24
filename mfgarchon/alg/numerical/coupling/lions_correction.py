@@ -94,7 +94,7 @@ def create_lions_source(
     functional_derivative: FunctionalDerivative | None = None,
     *,
     weights: NDArray | float | None = None,
-) -> Callable[[NDArray, NDArray, NDArray, float], NDArray]:
+) -> Callable[[float, NDArray, NDArray, NDArray], NDArray]:
     """Create a source_term_hjb from a measure-dependent energy functional.
 
     Bridges the functional calculus infrastructure to the MFGProblem
@@ -145,7 +145,7 @@ def create_lions_source(
             rejected on the analytic path.
 
     Returns:
-        source_term_hjb(x, m, v, t) -> NDArray compatible with
+        source_term_hjb(t, x, v, m) -> NDArray compatible with
         MFGProblem.source_term_hjb field. The returned array has shape
         matching x (one value per spatial grid point).
 
@@ -161,9 +161,9 @@ def create_lions_source(
         >>> fd = FiniteDifferenceFunctionalDerivative(epsilon=1e-4)
         >>> source = create_lions_source(energy, fd, weights=dx)
         >>>
-        >>> # source(x, m, v, t) returns delta F / delta m = m(x)
+        >>> # source(t, x, v, m) returns delta F / delta m = m(x)
         >>> m = np.ones(50) / 50
-        >>> result = source(np.linspace(0, 1, 50), m, np.zeros(50), 0.0)
+        >>> result = source(t=0.0, x=np.linspace(0, 1, 50), v=np.zeros(50), m=m)
     """
     # Analytic path: EnergyFunctional carries its own exact flat derivative.
     from mfgarchon.operators.interaction.energy_functionals import (
@@ -185,10 +185,10 @@ def create_lions_source(
         analytic = energy_functional
 
         def source_term_hjb_analytic(
-            x: NDArray,
-            m: NDArray,
-            v: NDArray,
             t: float,
+            x: NDArray,
+            v: NDArray,
+            m: NDArray,
         ) -> NDArray:
             """Evaluate the analytic correction delta F / delta m[m](x)."""
             m_flat = _spatial_density(m)
@@ -244,20 +244,20 @@ def create_lions_source(
     )
 
     def source_term_hjb(
-        x: NDArray,
-        m: NDArray,
-        v: NDArray,
         t: float,
+        x: NDArray,
+        v: NDArray,
+        m: NDArray,
     ) -> NDArray:
         """Evaluate the correction delta F / delta m[m](x).
 
         Args:
+            t: Current time (unused for time-independent F[m])
             x: Spatial grid points, shape (Nx,) or (Nx, d)
+            v: Current value function (unused — correction depends on m only)
             m: Current spatial density, shape (Nx,). Must be a single time-t
                 slice; the source pipeline time-slices before calling (a 2-D
                 (Nt+1, Nx) trajectory is rejected — see Issue #1285).
-            v: Current value function (unused — correction depends on m only)
-            t: Current time (unused for time-independent F[m])
 
         Returns:
             Source term values, shape (Nx,)
@@ -285,7 +285,7 @@ def create_lions_source(
 def create_nonlocal_source(
     interaction_kernel: NDArray,
     grid_spacing: float,
-) -> Callable[[NDArray, NDArray, NDArray, float], NDArray]:
+) -> Callable[[float, NDArray, NDArray, NDArray], NDArray]:
     """Create source_term_hjb for nonlocal interaction coupling.
 
     Optimized path for the common case F[m] = (1/2) int int W(x,y) m(x) m(y) dx dy,
@@ -302,7 +302,7 @@ def create_nonlocal_source(
             For nD, pass the cell volume dx*dy*... instead.
 
     Returns:
-        source_term_hjb(x, m, v, t) -> NDArray.
+        source_term_hjb(t, x, v, m) -> NDArray.
 
     Example:
         >>> # Gaussian interaction kernel
@@ -314,10 +314,10 @@ def create_nonlocal_source(
     dx = grid_spacing
 
     def source_term_hjb(
-        x: NDArray,
-        m: NDArray,
-        v: NDArray,
         t: float,
+        x: NDArray,
+        v: NDArray,
+        m: NDArray,
     ) -> NDArray:
         """Evaluate (W * m)(x) = int W(x,y) m(y) dy."""
         m_spatial = _spatial_density(m)

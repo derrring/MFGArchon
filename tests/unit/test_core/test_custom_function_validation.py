@@ -343,7 +343,7 @@ def test_large_magnitude_hamiltonian_is_silent(potential_magnitude):
         control_cost=QuadraticControlCost(control_cost=1.0),
         coupling=lambda m: m**2,
         coupling_dm=lambda m: 2 * m,
-        potential=lambda x, t=0.0, magnitude=potential_magnitude: magnitude,
+        potential=lambda t, x, magnitude=potential_magnitude: magnitude,
     )
     result = validate_hamiltonian_consistency(H, H.dm, _geometry(), dH_dp=H.dp)
     assert result.is_valid

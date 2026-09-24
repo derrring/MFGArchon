@@ -124,7 +124,7 @@ class MFGProblemProtocol(Protocol):
             measure. (``NetworkMFGProblem.hamiltonian`` takes a different, 5-argument form and
             does receive the full nodal array.) A coupling needing the whole density, such as a
             convolution ``(k * m)(x)``, cannot be written here; route it through
-            ``source_term_hjb(x, m_t, v_t, t)``, which receives the full spatial array at the
+            ``source_term_hjb(t, x, v_t, m_t)``, which receives the full spatial array at the
             time slice. Two caveats worth knowing before you do:
 
             - Only the FDM HJB solvers accept a ``source_term``. Setting ``source_term_hjb``

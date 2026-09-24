@@ -359,7 +359,9 @@ def detect_callable_signature(
 
     Attempts to determine if the callable has signature:
     - f(x) - spatial only
-    - f(x, t) or f(t, x) - spatiotemporal
+    - f(t, x) - spatiotemporal, time first (#2375 ruling 8)
+    - f(x, t) - the order before #2378 phase 5: reported as an error, since the library now
+      passes time first and a positional f(x, t) would receive x as time
     - f(x, y, ...) - multi-argument spatial
 
     Args:
@@ -397,9 +399,15 @@ def detect_callable_signature(
         if n_required == 1:
             result.context["signature_type"] = "spatial"
         elif n_required == 2:
-            # Check if one parameter is 't' or 'time'
-            if any(n in ("t", "time") for n in param_names):
+            if param_names[0] in ("t", "time"):
                 result.context["signature_type"] = "spatiotemporal"
+            elif param_names[1] in ("t", "time"):
+                result.context["signature_type"] = "spatiotemporal_old_order"
+                result.add_error(
+                    f"{name} takes ({', '.join(param_names)}): time second is the order before #2378 phase 5",
+                    location=name,
+                    suggestion=f"Since #2375 ruling 8 time comes first: {name}({param_names[1]}, {param_names[0]})",
+                )
             else:
                 result.context["signature_type"] = "multi_spatial"
         else:

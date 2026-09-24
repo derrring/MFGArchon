@@ -8,7 +8,7 @@ function as ``potential_field=U`` (``resolve_fp_drift_kwargs``), and ``FPFDMSolv
 internally as ``-coupling_coefficient·∇U`` (``fp_fdm.py``). But ``coupling_coefficient`` (default 0.5)
 and the Hamiltonian's ``control_cost`` λ are *independent fields* that must satisfy
 ``coupling_coefficient = 1/control_cost`` — and silently diverge when they don't. The correct drift is
-α* = ``H.optimal_control(x, m, ∇u, t)`` = -∇u/control_cost (the single source), independent of
+α* = ``H.optimal_control(t=t, x=x, p=∇u, m=m)`` = -∇u/control_cost (the single source), independent of
 ``coupling_coefficient``. This is gotcha G-017; exp16 Tier-2 hit it (~4–5× too-wide equilibrium until
 ``coupling_coefficient`` was set to 1/control_cost).
 

@@ -51,8 +51,8 @@ Conventions (mirrored verbatim from the prior ``FixedPointIterator`` copy):
   to provide, since a constraint penalty needs ``v`` and ``source_term`` is ``(t, x) -> array``.
 
 - The HJB source passes the **value-function slice** ``v_t`` to
-  ``source_term_hjb(x, m, v, t)`` (Issue #1382), matching the documented
-  ``Callable(x, m, v, t)`` contract (``mfg_problem.py``: "source_term_hjb/fp"),
+  ``source_term_hjb`` (Issue #1382), matching the documented
+  ``Callable(t, x, v, m)`` contract (``mfg_problem.py``: "source_term_hjb/fp"),
   the FP source (which already binds ``v_t``), and ``graph_mfg_solver``. The
   prior copy passed ``v = 0`` here — a latent divergence from the graph coupler
   for any ``v``-dependent HJB source. Both couplers now build these terms through
@@ -66,6 +66,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from mfgarchon.types.callable_protocols import SOURCE_TERM_SLOTS, bound_attribute
+
 from .graph_coupling import _get_time_slice
 
 if TYPE_CHECKING:
@@ -74,6 +76,14 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from mfgarchon.core.mfg_problem import MFGProblem
+
+
+def _call_problem_source(problem: MFGProblem, name: str, *, t: float, x: NDArray, m: NDArray, v: NDArray) -> NDArray:
+    """``problem.<name>`` at one time slice, through its binding (#2375 ruling 8).
+
+    The one place a problem's ``source_term_hjb`` or ``source_term_fp`` is invoked.
+    """
+    return bound_attribute(problem, name, SOURCE_TERM_SLOTS, role=name)(x=x, m=m, v=v, t=t)
 
 
 def _problem_hjb_source_terms(
@@ -87,7 +97,7 @@ def _problem_hjb_source_terms(
     """The convention-bearing HJB source terms shared by every coupler (Issue #1382).
 
     Returns a dict with the present problem-level HJB source contributions evaluated
-    at the time-``t`` slices: ``"source"`` = ``source_term_hjb(x, m_t, v_t, t)`` with
+    at the time-``t`` slices: ``"source"`` = ``source_term_hjb(t, x, v_t, m_t)`` with
     ``v_t`` the value-function slice (NOT zero), and ``"nonlocal"`` =
     ``nonlocal_operator @ v_t``. This is the single source of the ``v_t`` convention
     for both the grid couplers (``compose_hjb_source``) and ``graph_mfg_solver``, so a
@@ -106,7 +116,7 @@ def _problem_hjb_source_terms(
     v_t = _get_time_slice(u_current, t, dt) if needs_v else None
     if problem.source_term_hjb is not None:
         m_t = _get_time_slice(m_current, t, dt)
-        out["source"] = problem.source_term_hjb(x, m_t, v_t, t)
+        out["source"] = _call_problem_source(problem, "source_term_hjb", t=t, x=x, m=m_t, v=v_t)
     if problem.nonlocal_operator is not None:
         out["nonlocal"] = problem.nonlocal_operator @ v_t
     return out
@@ -206,6 +216,6 @@ def compose_fp_source(
     def composed(t: float, x: NDArray) -> NDArray:
         m_t = _get_time_slice(m_current, t, problem.dt)
         v_t = _get_time_slice(v_current, t, problem.dt)
-        return problem.source_term_fp(x, m_t, v_t, t)
+        return _call_problem_source(problem, "source_term_fp", t=t, x=x, m=m_t, v=v_t)
 
     return composed

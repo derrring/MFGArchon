@@ -101,7 +101,7 @@ def create_towel_problem_standard_bc(
     # Class-based Hamiltonian: H = (1/2)|p|^2 + |x - x_stall| + lambda_crowd * ln(m)
     hamiltonian = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0),
-        potential=lambda x, t: abs(x[0] - x_stall),
+        potential=lambda t, x: abs(x[0] - x_stall),
         coupling=lambda m: lambda_crowd * np.log(max(m, 1e-10)),
         coupling_dm=lambda m: lambda_crowd / max(m, 1e-10),
     )
@@ -142,7 +142,7 @@ def create_towel_problem_adjoint_bc(
     # Class-based Hamiltonian: H = (1/2)|p|^2 + |x - x_stall| + lambda_crowd * ln(m)
     hamiltonian = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0),
-        potential=lambda x, t: abs(x[0] - x_stall),
+        potential=lambda t, x: abs(x[0] - x_stall),
         coupling=lambda m: lambda_crowd * np.log(max(m, 1e-10)),
         coupling_dm=lambda m: lambda_crowd / max(m, 1e-10),
     )

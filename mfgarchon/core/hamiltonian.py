@@ -64,12 +64,13 @@ import math
 import numbers
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 
 # Issue #700: Import HamiltonianJacobians for jacobian_fd() method
 from mfgarchon.types import HamiltonianJacobians
+from mfgarchon.types.callable_protocols import POTENTIAL_SLOTS, BoundCallable, bound_attribute
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -790,6 +791,11 @@ def _out_of_ruling8_order(names: Iterable[str]) -> bool:
     return ranks != sorted(ranks) or len(set(ranks)) != len(ranks)
 
 
+def _bound_potential(owner: Any) -> BoundCallable:
+    """``owner._potential`` bound to its slots (#2375 ruling 8), rebound whenever it is replaced."""
+    return bound_attribute(owner, "_potential", POTENTIAL_SLOTS, role="potential")
+
+
 class MFGOperatorBase(ABC):
     """
     Abstract base class for MFG operators (Hamiltonian and Lagrangian).
@@ -820,7 +826,7 @@ class MFGOperatorBase(ABC):
     term of L. V and f are cost-signed (#2375 ruling 3): they are part of the running cost the
     agent pays, so
 
-        L(t, x, alpha, m) = L_ctrl(alpha) + V(x, t) + f(m)
+        L(t, x, alpha, m) = L_ctrl(alpha) + V(t, x) + f(m)
 
     Derivation. The dynamic programming principle gives
 
@@ -911,7 +917,8 @@ class MFGOperatorBase(ABC):
                 raise TypeError(
                     f"{cls.__qualname__}.{name} takes ({', '.join(named)}) out of order. Since #2378 phase 5 "
                     f"(#2375 ruling 8) the order is (t, x, p, m) for a Hamiltonian and (t, x, alpha, m) for a "
-                    f"Lagrangian, with any further parameters after them: reorder the parameters."
+                    f"Lagrangian, with any further parameters after them: reorder the parameters, and call the "
+                    f"method by keyword."
                 )
 
     def __init__(
@@ -980,6 +987,8 @@ class HEvalState:
 
     Attributes
     ----------
+    t : float
+        Time. Required, first (#2375 ruling 8).
     x : NDArray
         Position(s), shape ``(N, d)`` (or ``(d,)`` for a single point).
     p : NDArray
@@ -987,14 +996,12 @@ class HEvalState:
     m : float | NDArray
         Density, shape ``(N,)`` single-population or ``(K, N)`` stacked
         multi-population.
-    t : float
-        Time (default ``0.0``).
     """
 
+    t: float
     x: NDArray
     p: NDArray
     m: float | NDArray
-    t: float = 0.0
 
     @property
     def grad_u(self) -> NDArray:
@@ -1080,11 +1087,11 @@ class HamiltonianBase(MFGOperatorBase):
 
     Where H typically has the form:
 
-        H(t, x, p, m) = H_control(p) - V(x, t) - f(m)
+        H(t, x, p, m) = H_control(p) - V(t, x) - f(m)
 
     With:
     - H_control(p): Control cost term (e.g., ½|p|²/λ for quadratic)
-    - V(x, t): Potential/running cost, cost-signed (#2375 ruling 3)
+    - V(t, x): Potential/running cost, cost-signed (#2375 ruling 3)
     - f(m): Density coupling (e.g., congestion)
 
     Parameters
@@ -1098,7 +1105,7 @@ class HamiltonianBase(MFGOperatorBase):
 
     >>> H = SeparableHamiltonian(
     ...     control_cost=QuadraticControlCost(control_cost=2.0),
-    ...     potential=lambda x, t: np.sin(x),
+    ...     potential=lambda t, x: np.sin(x),
     ...     coupling=lambda m: m**2
     ... )
     >>> x, m, p, t = np.array([0.5]), 0.3, np.array([1.0]), 0.0
@@ -1359,7 +1366,7 @@ class HamiltonianBase(MFGOperatorBase):
 
         Default: central finite differences on __call__.
         Override for analytic (e.g., SeparableHamiltonian differentiates
-        only the potential V(x,t)).
+        only the potential V(t, x)).
 
         Parameters
         ----------
@@ -1954,7 +1961,7 @@ class LagrangianBase(MFGOperatorBase):
 
 
 class SeparableLagrangian(LagrangianBase):
-    """Separable Lagrangian: L(t, x, alpha, m) = L_control(alpha) - V(x, t) - f(m).
+    """Separable Lagrangian: L(t, x, alpha, m) = L_control(alpha) - V(t, x) - f(m).
 
     The non-kinetic terms carry the OPPOSITE sign to the Hamiltonian's, so that this
     class is self-conjugate against its own ``evaluate_hamiltonian`` (Issue #1645).
@@ -1968,7 +1975,7 @@ class SeparableLagrangian(LagrangianBase):
     control_cost : ControlCostBase
         Control cost specification (Quadratic, L1, Bounded, etc.)
     potential : callable or None
-        V(x, t). If None, V = 0.
+        V(t, x). If None, V = 0.
     coupling : callable or None
         f(m). If None, f = 0.
     """
@@ -1983,9 +1990,11 @@ class SeparableLagrangian(LagrangianBase):
         self.control_cost = control_cost
         self._potential = potential
         self._coupling = coupling
+        if potential is not None:
+            _bound_potential(self)
 
     def __call__(self, t, x, alpha, m):
-        """L = L_control(alpha) + V(x, t) + f(m): V and f are costs (#2375 ruling 3).
+        """L = L_control(alpha) + V(t, x) + f(m): V and f are costs (#2375 ruling 3).
 
         The non-kinetic terms carry the OPPOSITE sign to the Hamiltonian's (Issue #1645):
         H = sup_alpha { -p . alpha - L } (the form on ``MFGOperatorBase``), so if L = L_ctrl + W
@@ -1994,7 +2003,7 @@ class SeparableLagrangian(LagrangianBase):
         its own evaluate_hamiltonian by exactly 2(V+f).
         """
         L_ctrl = self.control_cost.lagrangian(np.atleast_1d(alpha))
-        V = float(self._potential(x, t)) if self._potential is not None else 0.0
+        V = float(_bound_potential(self)(x=x, t=t)) if self._potential is not None else 0.0
         f_m = float(self._coupling(m)) if self._coupling is not None else 0.0
         return L_ctrl + V + f_m
 
@@ -2003,12 +2012,12 @@ class SeparableLagrangian(LagrangianBase):
         return self.control_cost.optimal_control(np.atleast_1d(p))
 
     def evaluate_hamiltonian(self, t, x, p, m):
-        """H = H_control(p) - V(x,t) - f(m). Uses control_cost.evaluate()."""
+        """H = H_control(p) - V(t, x) - f(m). Uses control_cost.evaluate()."""
         p_arr = np.atleast_1d(p)
         H_ctrl = self.control_cost.evaluate(p_arr)
         if not isinstance(H_ctrl, (int, float)):
             H_ctrl = float(H_ctrl.sum()) if p_arr.ndim < 2 else H_ctrl
-        V = float(self._potential(x, t)) if self._potential is not None else 0.0
+        V = float(_bound_potential(self)(x=x, t=t)) if self._potential is not None else 0.0
         f_m = float(self._coupling(m)) if self._coupling is not None else 0.0
         return H_ctrl - V - f_m
 
@@ -2392,11 +2401,11 @@ class DualLagrangian(LagrangianBase):
 
 class SeparableHamiltonian(HamiltonianBase):
     """
-    Separable Hamiltonian: H(t, x, p, m) = H_control(p) - V(x, t) - f(m).
+    Separable Hamiltonian: H(t, x, p, m) = H_control(p) - V(t, x) - f(m).
 
     This is the most common form in MFG, where:
     - H_control(p): Control cost (from ControlCostBase)
-    - V(x, t): Potential energy / state cost (see sign-convention note below)
+    - V(t, x): Potential energy / state cost (see sign-convention note below)
     - f(m): Density coupling term
 
     The separability allows efficient computation and analytic derivatives.
@@ -2407,9 +2416,9 @@ class SeparableHamiltonian(HamiltonianBase):
     minus sign and the HJB reads ``-d_t u + H_control(p) = V + f + S``. A positive ``V`` raises
     ``u`` and repels. The library is minimisation-only (#2373).
 
-    - **Attractive** potential at ``x_c``: ``V(x, t) = +0.5 * C * (x - x_c)**2``
+    - **Attractive** potential at ``x_c``: ``V(t, x) = +0.5 * C * (x - x_c)**2``
       (bowl, minimum at ``x_c``).
-    - **Repulsive** potential at ``x_c``: ``V(x, t) = -0.5 * C * (x - x_c)**2``.
+    - **Repulsive** potential at ``x_c``: ``V(t, x) = -0.5 * C * (x - x_c)**2``.
     - **Congestion**: an ``f`` increasing in ``m``, e.g. ``f(m) = m``.
 
     ``MFGProblem(source_term_hjb=...)`` has the same sign: it enters the right-hand side as a
@@ -2420,7 +2429,7 @@ class SeparableHamiltonian(HamiltonianBase):
     control_cost : ControlCostBase
         Control cost specification (quadratic, L1, bounded, etc.)
     potential : Callable[[NDArray, float], float] | None
-        Potential V(x, t), a cost; it enters H as -V. If None, V = 0. See "Sign convention"
+        Potential V(t, x), a cost; it enters H as -V. If None, V = 0. See "Sign convention"
         above: a bowl with its minimum at x_c attracts.
     coupling : Callable[[float | NDArray], float | NDArray] | None
         Density coupling f(m), a cost; it enters H as -f. If None, f = 0.
@@ -2440,7 +2449,7 @@ class SeparableHamiltonian(HamiltonianBase):
 
     With potential field:
 
-    >>> def potential(x, t):
+    >>> def potential(t, x):
     ...     return np.sin(2 * np.pi * x[0])  # Periodic potential
     >>>
     >>> H = SeparableHamiltonian(
@@ -2462,11 +2471,13 @@ class SeparableHamiltonian(HamiltonianBase):
         self._potential = potential
         self._coupling = coupling
         self._coupling_dm = coupling_dm
+        if potential is not None:
+            _bound_potential(self)
         # Issue #929: Cache vectorized-callable detection result
         self._potential_is_vectorized: bool | None = None
 
     def _evaluate_potential_batch(self, x_batch: NDArray, t: float) -> NDArray:
-        """Evaluate V(x, t) at N points with auto-detected vectorization.
+        """Evaluate V(t, x) at N points with auto-detected vectorization.
 
         Issue #929: First call probes whether the potential callable supports
         batch input (N, d) -> (N,). If yes, uses fast path. If no, falls back
@@ -2482,14 +2493,14 @@ class SeparableHamiltonian(HamiltonianBase):
                 self._potential_is_vectorized = False
             else:
                 try:
-                    probe = np.asarray(self._potential(x_batch[:2], t), dtype=float)
+                    probe = np.asarray(_bound_potential(self)(x=x_batch[:2], t=t), dtype=float)
                     self._potential_is_vectorized = probe.shape == (2,)
                 except (TypeError, IndexError, ValueError):
                     self._potential_is_vectorized = False
 
         if self._potential_is_vectorized:
-            return np.asarray(self._potential(x_batch, t), dtype=float)
-        return np.array([float(self._potential(x_batch[i], t)) for i in range(N)])
+            return np.asarray(_bound_potential(self)(x=x_batch, t=t), dtype=float)
+        return np.array([float(_bound_potential(self)(x=x_batch[i], t=t)) for i in range(N)])
 
     def __call__(
         self,
@@ -2499,7 +2510,7 @@ class SeparableHamiltonian(HamiltonianBase):
         m: float | NDArray,
     ) -> float | NDArray:
         """
-        Evaluate H = H_control(p) - V(x, t) - f(m).
+        Evaluate H = H_control(p) - V(t, x) - f(m).
 
         Supports both single-point and batch inputs (Issue #775).
         For batch: p.shape = (N, d), returns shape (N,).
@@ -2518,7 +2529,7 @@ class SeparableHamiltonian(HamiltonianBase):
             if is_batch:
                 V = self._evaluate_potential_batch(x, t)
             else:
-                V = float(self._potential(x, t))
+                V = float(_bound_potential(self)(x=x, t=t))
         else:
             V = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
@@ -2603,9 +2614,9 @@ class SeparableHamiltonian(HamiltonianBase):
         p: NDArray,
         m: float | NDArray,
     ) -> NDArray:
-        """dH/dx = -grad_V(x, t) for separable H.
+        """dH/dx = -grad_V(t, x) for separable H.
 
-        Only the potential V(x,t) depends on x, and it enters H as -V. The control cost H_kin(p)
+        Only the potential V(t, x) depends on x, and it enters H as -V. The control cost H_kin(p)
         and coupling f(m) are independent of x.
 
         Uses FD on the potential callable. Returns zero if no potential.
@@ -2614,7 +2625,7 @@ class SeparableHamiltonian(HamiltonianBase):
             x_arr = np.atleast_1d(x)
             return np.zeros(x_arr.shape[-1] if x_arr.ndim >= 2 else len(x_arr))
 
-        # FD on V(x, t)
+        # FD on V(t, x)
         eps = self.finite_diff_eps
         x_flat = np.atleast_1d(x).astype(float)
         d = len(x_flat)
@@ -2624,7 +2635,9 @@ class SeparableHamiltonian(HamiltonianBase):
             x_minus = x_flat.copy()
             x_plus[i] += eps
             x_minus[i] -= eps
-            grad[i] = _central_difference(float(self._potential(x_plus, t)), float(self._potential(x_minus, t)), eps)
+            grad[i] = _central_difference(
+                float(_bound_potential(self)(x=x_plus, t=t)), float(_bound_potential(self)(x=x_minus, t=t)), eps
+            )
         return -grad
 
     def optimal_control(
@@ -2662,7 +2675,7 @@ class CongestionHamiltonian(HamiltonianBase):
     """
     Non-separable Hamiltonian with density-dependent kinetic cost (Issue #782).
 
-    H(t, x, p, m) = |p|^2 / (2*lambda*c(m)) - V(x, t) - f(m)
+    H(t, x, p, m) = |p|^2 / (2*lambda*c(m)) - V(t, x) - f(m)
 
     The congestion factor c(m) modifies the kinetic term, making movement
     costlier in high-density regions (multiplicative congestion). Unlike
@@ -2680,7 +2693,7 @@ class CongestionHamiltonian(HamiltonianBase):
         c'(m) -> float or ndarray. Derivative of congestion factor.
         If None, finite differences are used for dm().
     potential : callable or None
-        V(x, t) -> float. Spatial potential term.
+        V(t, x) -> float. Spatial potential term.
     coupling : callable or None
         f(m) -> float or ndarray. Additive density coupling term.
     coupling_dm : callable or None
@@ -2715,6 +2728,8 @@ class CongestionHamiltonian(HamiltonianBase):
         self._potential = potential
         self._coupling = coupling
         self._coupling_dm = coupling_dm
+        if potential is not None:
+            _bound_potential(self)
 
     def __call__(
         self,
@@ -2724,7 +2739,7 @@ class CongestionHamiltonian(HamiltonianBase):
         m: float | NDArray,
     ) -> float | NDArray:
         """
-        Evaluate H = |p|^2 / (2*lambda*c(m)) - V(x, t) - f(m).
+        Evaluate H = |p|^2 / (2*lambda*c(m)) - V(t, x) - f(m).
 
         Supports both single-point and batch inputs (Issue #775).
         For batch: p.shape = (N, d), returns shape (N,).
@@ -2752,12 +2767,12 @@ class CongestionHamiltonian(HamiltonianBase):
 
         H_kinetic = H_kinetic / c_m
 
-        # Potential term V(x, t)
+        # Potential term V(t, x)
         if self._potential is not None:
             if is_batch:
-                V = np.array([float(self._potential(x[i], t)) for i in range(x.shape[0])])
+                V = np.array([float(_bound_potential(self)(x=x[i], t=t)) for i in range(x.shape[0])])
             else:
-                V = float(self._potential(x, t))
+                V = float(_bound_potential(self)(x=x, t=t))
         else:
             V = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
@@ -2928,7 +2943,7 @@ class QuadraticMFGHamiltonian(SeparableHamiltonian):
     in MFGComponents. It represents the most common form in MFG literature:
 
     - Quadratic control cost: H_control = ½c|p|²
-    - Optional potential: V(x, t)
+    - Optional potential: V(t, x)
     - Quadratic density coupling (congestion, a cost): f(m) = m²
 
     Parameters
@@ -2936,7 +2951,7 @@ class QuadraticMFGHamiltonian(SeparableHamiltonian):
     coupling_coefficient : float
         Coefficient c in ½c|p|² (default: 1.0)
     potential : Callable | None
-        Potential V(x, t) (default: None, meaning V=0)
+        Potential V(t, x) (default: None, meaning V=0)
 
     Notes
     -----

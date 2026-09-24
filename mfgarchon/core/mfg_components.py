@@ -12,13 +12,13 @@ the logic in separate, focused modules.
 from __future__ import annotations
 
 import contextlib
-import inspect
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from mfgarchon.core.derivatives import DerivativeTensors, to_multi_index_dict
+from mfgarchon.types.callable_protocols import POTENTIAL_SLOTS, BoundCallable, bound_attribute
 
 # Issue #670: npart, ppart imports removed - no default Hamiltonian
 from mfgarchon.utils.mfg_logging import get_logger
@@ -87,7 +87,7 @@ class MFGComponents:
     u_terminal : Callable | NDArray
         Terminal value function u_T(x).
     potential_func : Callable, optional
-        Additional potential V(x, t) (if not in Hamiltonian).
+        Additional potential V(t, x) (if not in Hamiltonian); a time-independent V(x) is accepted.
     boundary_conditions : BoundaryConditions, optional
         Boundary conditions for the domain.
     """
@@ -102,7 +102,7 @@ class MFGComponents:
     u_final: Callable | NDArray | None = None  # DEPRECATED: use u_terminal instead
 
     # Optional potential (if not included in Hamiltonian)
-    potential_func: Callable | None = None  # V(x, t) -> float
+    potential_func: Callable | None = None  # V(t, x) -> float
 
     # Boundary conditions
     boundary_conditions: BoundaryConditions | None = None
@@ -230,10 +230,6 @@ class HamiltonianMixin:
     spatial_shape: tuple
     dimension: int
 
-    # Cached signature parameters (set during validation)
-    # Issue #673: Legacy function signature caching removed - class-based API only
-    _potential_has_time: bool | None = None
-
     def _validate_hamiltonian_components(self) -> None:
         """Validate Hamiltonian-related components.
 
@@ -270,44 +266,35 @@ class HamiltonianMixin:
                 "  components = MFGComponents(hamiltonian=H, m_initial=..., u_terminal=...)"
             )
 
-        # Cache potential signature info (optional component)
+        # Bind the potential at acceptance (optional component), so an unmatched signature is refused here
         if self.components.potential_func is not None:
-            sig = inspect.signature(self.components.potential_func)
-            self._potential_has_time = "t" in sig.parameters or "time" in sig.parameters
+            self._bound_potential_func()
+
+    def _bound_potential_func(self) -> BoundCallable:
+        """``components.potential_func`` bound to its slots (#2375 ruling 8)."""
+        return bound_attribute(
+            self.components, "potential_func", POTENTIAL_SLOTS, role="potential_func", spatial_only=True
+        )
 
     def _setup_custom_potential(self) -> None:
         """Setup custom potential function (part of Hamiltonian)."""
         if self.components is None or self.components.potential_func is None:
             return
 
-        potential_func = self.components.potential_func
+        potential = self._bound_potential_func()
         spatial_grid = self._get_spatial_grid_internal()
         num_intervals = self._get_num_intervals() or 0
-
-        # Use cached signature info (set during validation)
-        has_time = self._potential_has_time
-        if has_time is None:
-            sig = inspect.signature(potential_func)
-            has_time = "t" in sig.parameters or "time" in sig.parameters
 
         for i in range(num_intervals + 1):
             # Extract scalar from grid point (grid has shape (Nx, 1) for 1D)
             x_i = float(spatial_grid[i, 0])
-            if has_time:
-                self.f_potential[i] = potential_func(x_i, 0.0)
-            else:
-                self.f_potential[i] = potential_func(x_i)
+            self.f_potential[i] = potential(x=x_i, t=0.0)
 
     def get_potential_at_time(self, t_idx: int) -> np.ndarray:
         """Get potential function at specific time (for time-dependent potentials)."""
         if self.is_custom and self.components is not None and self.components.potential_func is not None:
-            # Use cached signature info (set during validation) for performance
-            has_time = self._potential_has_time
-            if has_time is None:
-                sig = inspect.signature(self.components.potential_func)
-                has_time = "t" in sig.parameters or "time" in sig.parameters
-
-            if has_time:
+            potential = self._bound_potential_func()
+            if "t" in potential.passes:
                 current_time = self.tSpace[t_idx] if t_idx < len(self.tSpace) else 0.0
                 potential_at_t = np.zeros_like(self.f_potential)
 
@@ -316,7 +303,7 @@ class HamiltonianMixin:
                 for i in range(num_intervals + 1):
                     # Extract scalar from grid point (grid has shape (Nx, 1) for 1D)
                     x_i = float(spatial_grid[i, 0])
-                    potential_at_t[i] = self.components.potential_func(x_i, current_time)
+                    potential_at_t[i] = potential(x=x_i, t=current_time)
 
                 return potential_at_t
 

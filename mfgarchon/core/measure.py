@@ -4,7 +4,7 @@ Measure representations for MFG on measure space (Layer 2).
 Provides the ``MeasureRepresentation`` Protocol and concrete implementations
 for representing probability measures mu in P_2(R^d). These are the building
 blocks for:
-- Master Equation: v(x, mu, t) where mu is a measure argument
+- Master Equation: v(t, x, mu) where mu is a measure argument
 - Common Noise PDE: conditional measures mu^theta evolving in measure space
 - Lions derivative: delta U / delta m computed via measure perturbation
 

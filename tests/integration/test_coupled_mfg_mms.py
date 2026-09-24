@@ -225,11 +225,11 @@ class CoupledSinusoid1D(ManufacturedSolution):
         self._hjb = hjb_source(pair, hamiltonian, self.sigma)
         self._fp = fp_source(pair, hamiltonian, self.sigma)
 
-    def hjb_source(self, x: np.ndarray, m, v, t: float) -> np.ndarray:
+    def hjb_source(self, t: float, x: np.ndarray, v, m) -> np.ndarray:
         """S_HJB(t,x). Ignores m, v (FixedPointIterator passes v=zeros)."""
         return self._hjb(t, np.atleast_1d(x).reshape(-1, 1))
 
-    def fp_source(self, x: np.ndarray, m, v, t: float) -> np.ndarray:
+    def fp_source(self, t: float, x: np.ndarray, v, m) -> np.ndarray:
         """S_FP(t,x). Ignores m, v; the drift comes from the Hamiltonian's own optimal_control."""
         return self._fp(t, np.atleast_1d(x).reshape(-1, 1))
 
@@ -390,7 +390,7 @@ class TestCoupledMMSConvergence:
         mfg = CoupledSinusoid1D(c_f=0.3)
         mfg0 = CoupledSinusoid1D(c_f=0.0)
         x = np.linspace(0.0, 1.0, 41)
-        diff = mfg.hjb_source(x, None, None, 0.1) - mfg0.hjb_source(x, None, None, 0.1)
+        diff = mfg.hjb_source(t=0.1, x=x, v=None, m=None) - mfg0.hjb_source(t=0.1, x=x, v=None, m=None)
         expected = -mfg.c_f * mfg.m_star(0.1, x)
         assert np.allclose(diff, expected), "Coupling term missing from S_HJB"
         # `assert mfg.c > 0.0` stood here and became vacuous at #2201, which removed its only

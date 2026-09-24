@@ -1327,7 +1327,7 @@ class TestSLHamiltonianSingleSource:
 
     def test_evaluate_hamiltonian_byte_identical_to_inline_call(self):
         """Pin: _evaluate_hamiltonian(x, p, m, t_idx) is byte-identical (exact IEEE-754) to
-        the inline ``float(H_class(x_vec, m, p_vec, t))`` it replaced. evaluate_H wraps
+        the inline ``float(H_class(t=t, x=x_vec, p=p_vec, m=m))`` it replaced. evaluate_H wraps
         ``__call__`` (np.asarray(self(...), dtype=float)), so float() of the shim equals the
         direct call; this locks SL against a future divergence of the shim from __call__."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
@@ -1423,7 +1423,7 @@ class TestSLHJBConsistency:
         sign — the corrected scheme is ``+dt*H_control - dt*(V+f)`` (Issue #575/#1413)."""
         from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 
-        def V(x, t):
+        def V(t, x):
             return -0.5 * (np.asarray(x)[..., 0] - 0.5) ** 2
 
         T, nx, Nt = 0.3, 101, 120
@@ -1449,7 +1449,7 @@ class TestSLValueUpdateND:
 
     @staticmethod
     def _build_2d(lam):
-        def V(x, t):
+        def V(t, x):
             return 0.2 * (x[:, 0] ** 2 + x[:, 1] ** 2)
 
         geom = TensorProductGrid(
@@ -1492,7 +1492,7 @@ class TestSLValueUpdateND:
         # Independent analytic LQ form: H = |p|^2/(2λ) - V(x) - f(m) (#2375 ruling 3), so
         # H(p) - 2*H(0) = |p|^2/(2λ) + (V + f), the running cost L(α*) paid over the step.
         h_control = np.sum(p**2, axis=1) / (2.0 * lam)
-        h_state = V(pts, t) + 0.7 * m
+        h_state = V(t=t, x=pts) + 0.7 * m
         expected = u_foot + dt * (h_control + h_state)
         old_scheme = u_foot - dt * (h_control - h_state)  # pre-#575/#1413: u_foot - dt*H(p)
 

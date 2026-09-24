@@ -30,7 +30,7 @@ _NT = 4
 def _problem_with_source(captured: list, *, kind: str) -> MFGProblem:
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[_NX], boundary_conditions=no_flux_bc(dimension=1))
 
-    def spy(x, m, v, t):  # problem-level signature (x, m, v, t)
+    def spy(t, x, v, m):  # problem-level signature (t, x, v, m), #2375 ruling 8
         captured.append((t, np.asarray(m).copy()))
         return np.zeros(np.asarray(x).shape[0])
 

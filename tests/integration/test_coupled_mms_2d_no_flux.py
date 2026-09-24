@@ -267,8 +267,8 @@ def _build_problem(nx: int, nt: int):
         # against a control where sigma=1.1 moves the same solve by 1.672e-02.
         coupling_coefficient=1.0,
         components=components,
-        source_term_hjb=lambda x, m, v, t: s_hjb(t, _points(x)),
-        source_term_fp=lambda x, m, v, t: s_fp(t, _points(x)),
+        source_term_hjb=lambda t, x, v, m: s_hjb(t, _points(x)),
+        source_term_fp=lambda t, x, v, m: s_fp(t, _points(x)),
     )
     return problem
 

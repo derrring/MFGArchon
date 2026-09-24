@@ -73,11 +73,11 @@ def _make_problem_with_nonlocal() -> MFGProblem:
 
 
 def _make_problem_with_source_hjb() -> MFGProblem:
-    return _make(source_term_hjb=lambda x, m, v, t: 0.5 * np.ones(len(x)))
+    return _make(source_term_hjb=lambda t, x, v, m: 0.5 * np.ones(len(x)))
 
 
 def _make_problem_with_source_fp() -> MFGProblem:
-    return _make(source_term_fp=lambda x, m, v, t: 0.02 * np.ones(len(x)))
+    return _make(source_term_fp=lambda t, x, v, m: 0.02 * np.ones(len(x)))
 
 
 def _make_problem_with_state_penalty() -> MFGProblem:
