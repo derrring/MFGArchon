@@ -58,9 +58,12 @@ def _call_h(fn: Any, x: Any, m: Any, p: Any, t: float = 0.0) -> Any:
     keeps the positional ``(x, m, p, t)`` convention it had before, with whatever parameter names
     it declares, until phase 5 part 2 settles user callables.
     """
+    import functools
+
     from mfgarchon.core.hamiltonian import MFGOperatorBase
 
-    if isinstance(getattr(fn, "__self__", fn), MFGOperatorBase):
+    target = fn.func if isinstance(fn, functools.partial) else fn  # partial(H.dm) is still a family method
+    if isinstance(getattr(target, "__self__", target), MFGOperatorBase):
         return fn(t=t, x=x, p=p, m=m)
     return fn(x, m, p, t)
 
@@ -185,7 +188,7 @@ def validate_hamiltonian(
     if err is not None:
         return err
 
-    # Evaluate: HamiltonianBase.__call__ signature is (x, m, p, t=0.0)
+    # Evaluate: a HamiltonianBase by keyword, (t, x, p, m); a raw callable positionally, (x, m, p, t)
     try:
         value = _call_h(hamiltonian, x_sample, m_sample, p_sample)
     except TypeError as e:
@@ -251,14 +254,14 @@ def validate_hamiltonian_derivative(
     if err is not None:
         return err
 
-    # Evaluate: derivative signature is (x, m, p, t=0.0)
+    # Evaluate: a family bound method by keyword, (t, x, p, m); a raw callable positionally, (x, m, p, t)
     try:
         value = _call_h(derivative_func, x_sample, m_sample, p_sample)
     except TypeError as e:
         result.add_error(
             f"{name} has wrong signature: {e}",
             location=name,
-            suggestion=f"{name} should have signature {name}(x, m, p, t)",
+            suggestion=f"{name}: a family method takes (t, x, p, m); a raw callable is called as {name}(x, m, p, t)",
         )
         return result
     except Exception as e:

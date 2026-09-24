@@ -1196,7 +1196,7 @@ def test_a_family_method_declared_x_before_t_is_refused_at_class_creation():
     new order. So it is refused where it is written. The new order is accepted, and so is a method
     that takes no `t` at all; that one fails loudly at its first keyword call instead.
     """
-    from mfgarchon.core.hamiltonian import HamiltonianBase, LagrangianBase
+    from mfgarchon.core.hamiltonian import DualLagrangian, HamiltonianBase, LagrangianBase
 
     with pytest.raises(TypeError, match=r"out of order"):
 
@@ -1217,15 +1217,21 @@ def test_a_family_method_declared_x_before_t_is_refused_at_class_creation():
             def __call__(self, t, x, m, p):
                 return 0.0
 
-    # Any public method, not a list of names: a helper taking (x, t) is out of order too.
+    # An override of any public method a library family class defines, not a list of names.
     with pytest.raises(TypeError, match=r"out of order"):
 
-        class _HelperH(HamiltonianBase):
-            def __call__(self, t, x, p, m):
+        class _OldDAlpha(DualLagrangian):
+            def d_alpha(self, x, alpha, m, t):
                 return 0.0
 
-            def potential_at(self, x, t):
-                return 0.0
+    # A subclass's OWN helper is not checked: the library still calls a `potential` bound method
+    # positionally as (x, t) until phase 5 part 2, so demanding (t, x) here would make the fix wrong.
+    class _WithHelper(HamiltonianBase):
+        def __call__(self, t, x, p, m):
+            return 0.0
+
+        def potential_at(self, x, t):
+            return 0.0
 
     class _NewH(HamiltonianBase):
         dx_step = 0.01  # a non-callable attribute is not a method and is not checked
@@ -1234,3 +1240,45 @@ def test_a_family_method_declared_x_before_t_is_refused_at_class_creation():
             return float(np.sum(np.asarray(p) ** 2)) / 2
 
     assert _NewH()(t=0.0, x=np.zeros(1), p=np.array([2.0]), m=1.0) == 2.0
+
+
+def test_every_library_family_method_takes_ruling_8s_order():
+    """#2375 ruling 8 holds for every public method of every family class the library defines.
+
+    The class-creation check covers overrides of the family API; this covers the library's own
+    classes, including ones nested inside functions, which exist only when that function runs
+    and so are invisible to anything that walks subclasses after import. The population is the
+    package source, read statically, with the family found by inheritance from MFGOperatorBase.
+    """
+    import ast
+    from pathlib import Path
+
+    import mfgarchon
+    from mfgarchon.core.hamiltonian import _out_of_ruling8_order
+
+    package = Path(mfgarchon.__file__).parent
+    classes = []
+    for path in sorted(package.rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        classes += [(path, node) for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
+    family = {"MFGOperatorBase"}
+    grew = True
+    while grew:
+        grew = False
+        for _, node in classes:
+            bases = {getattr(b, "id", getattr(b, "attr", "")) for b in node.bases}
+            if node.name not in family and bases & family:
+                family.add(node.name)
+                grew = True
+    assert {"HamiltonianBase", "LagrangianBase", "DualLagrangian", "NetworkHamiltonian"} <= family, (
+        f"the family was not found by inheritance: {sorted(family)}"
+    )
+    offenders = [
+        f"{path.relative_to(package)}:{fn.lineno} {node.name}.{fn.name}"
+        for path, node in classes
+        if node.name in family
+        for fn in node.body
+        if isinstance(fn, ast.FunctionDef) and (fn.name == "__call__" or not fn.name.startswith("_"))
+        if _out_of_ruling8_order([a.arg for a in fn.args.args + fn.args.kwonlyargs])
+    ]
+    assert not offenders, f"library family methods out of ruling 8's order: {offenders}"

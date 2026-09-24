@@ -3,7 +3,7 @@
 The Hamiltonian *value* and its *gradient* are already single-source (``HamiltonianBase``
 in ``core/hamiltonian.py``, reached via ``problem.hamiltonian_class``). What was duplicated
 is the per-solver *evaluation glue* -- every HJB solver inlined the same
-``np.asarray(H_class(x, m, p, t=t), dtype=float)`` batch call. This module is the one home
+``np.asarray(H_class(t=t, x=x, p=p, m=m), dtype=float)`` batch call. This module is the one home
 for that call, so a future change to the batch contract (dtype, shape handling, NaN policy)
 happens in exactly one place.
 
@@ -49,7 +49,7 @@ def eval_H_batch(H_class: HamiltonianBase, x: NDArray, m: NDArray, p: NDArray, t
     Thin shim over the single-source primitive ``H_class.evaluate_H`` (Issue #1071):
     this is no longer a parallel implementation, it delegates to the method on the
     Hamiltonian so the batch contract has exactly one home. Byte-identical to the
-    inline ``np.asarray(H_class(x, m, p, t=t), dtype=float)`` it replaced; callers
+    inline ``np.asarray(H_class(t=t, x=x, p=p, m=m), dtype=float)`` it replaced; callers
     ``.ravel()`` / reshape as their assembly needs.
     """
     return H_class.evaluate_H(HEvalState(x=x, p=p, m=m, t=t))
@@ -62,7 +62,7 @@ def eval_dH_dp_batch(H_class: HamiltonianBase, x: NDArray, m: NDArray, p: NDArra
     delegates to the method on the Hamiltonian rather than re-implementing the batch
     call. Callers keep their own sign convention (the FP drift is ``alpha* = -∂H/∂p``,
     so several callers negate the result). Byte-identical to the inline
-    ``np.asarray(H_class.dp(x, m, p, t=t), dtype=float)``.
+    ``np.asarray(H_class.dp(t=t, x=x, p=p, m=m), dtype=float)``.
     """
     return H_class.evaluate_dp(HEvalState(x=x, p=p, m=m, t=t))
 

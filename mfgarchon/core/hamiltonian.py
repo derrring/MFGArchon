@@ -30,7 +30,7 @@ Architecture (v0.17.2+)
 Two complementary class hierarchies:
 
 1. **Hamiltonian** (Issue #673): Full MFG Hamiltonian H(t, x, p, m)
-   - Clean callable API: `H(t, x, p, m)` or `H(t, x, derivs, m)`
+   - Clean callable API: `H(t, x, p, m)`
    - Auto-computed derivatives via `dp()` and `dm()` (Issue #667)
    - Supports state-dependent terms (congestion, potential)
 
@@ -72,6 +72,8 @@ import numpy as np
 from mfgarchon.types import HamiltonianJacobians
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from numpy.typing import NDArray
 
 
@@ -763,6 +765,31 @@ BoundedHamiltonian = BoundedControlCost
 _ARGUMENT_RANK = {"t": 0, "x": 1, "p": 2, "alpha": 2, "m": 3}
 
 
+def _ruling8_order_violation(member: object) -> tuple[str, ...] | None:
+    """The ruling-8 arguments ``member`` takes, if they are out of order; ``None`` if it complies.
+
+    Only ``t, x, p|alpha, m`` are ranked; other parameters are ignored. Non-callables and
+    callables without an inspectable signature comply by definition.
+    """
+    fn = member.__func__ if isinstance(member, (staticmethod, classmethod)) else member
+    if not callable(fn):
+        return None
+    try:
+        named = tuple(p for p in inspect.signature(fn).parameters if p in _ARGUMENT_RANK)
+    except (TypeError, ValueError):
+        return None
+    return named if _out_of_ruling8_order(named) else None
+
+
+def _out_of_ruling8_order(names: Iterable[str]) -> bool:
+    """Whether the ranked names among ``names`` break ruling 8's relative order.
+
+    The one statement of the rule: the class-creation check and the library-wide test both use it.
+    """
+    ranks = [_ARGUMENT_RANK[p] for p in names if p in _ARGUMENT_RANK]
+    return ranks != sorted(ranks) or len(set(ranks)) != len(ranks)
+
+
 class MFGOperatorBase(ABC):
     """
     Abstract base class for MFG operators (Hamiltonian and Lagrangian).
@@ -850,31 +877,37 @@ class MFGOperatorBase(ABC):
     """
 
     def __init_subclass__(cls, **kwargs):
-        """Refuse a subclass whose methods take ``t, x, p|alpha, m`` out of ruling 8's order.
+        """Refuse a subclass that overrides a family method out of ruling 8's argument order.
 
         The order is ``(t, x, p, m)`` for a Hamiltonian and ``(t, x, alpha, m)`` for a
         Lagrangian (#2375 ruling 8, #2378 phase 5); a method that uses only some of them keeps
-        their relative order, and further parameters follow. The library calls these methods by
-        keyword, so an out-of-order subclass would still compute correctly when the library
-        calls it, and silently wrongly when anyone calls it positionally. So it is refused here,
-        at class creation, where the traceback points at the definition.
+        their relative order, and further parameters follow. The library calls its family
+        methods by keyword, so an out-of-order override would still compute correctly when the
+        library calls it, and silently wrongly when anyone calls it positionally. So it is
+        refused here, at class creation, where the traceback points at the definition.
 
-        Every public method and ``__call__`` is checked, not a list of names: a list would miss
-        whatever public method it does not name. Non-callable attributes are skipped.
+        Checked: every method the subclass defines under a public name, or ``__call__``, that a
+        library family class already defines -- the family's API, read from the library's own
+        classes rather than from a list, so a method the library adds is covered without an
+        edit here. Not checked: a subclass's own helpers. The library calls some of those
+        positionally in the old order today (a ``potential`` bound method, ``(x, t)``), so
+        demanding the new order of them would make the fix silently wrong (#2400 review).
+        The library's own classes are held to the rule by
+        ``test_every_library_family_method_takes_ruling_8s_order``.
         """
         super().__init_subclass__(**kwargs)
+        api = {
+            name
+            for base in cls.__mro__[1:]
+            if isinstance(base, type) and issubclass(base, MFGOperatorBase) and base.__module__.startswith("mfgarchon.")
+            for name in vars(base)
+            if name == "__call__" or not name.startswith("_")
+        }
         for name, member in cls.__dict__.items():
-            if name.startswith("_") and name != "__call__":
+            if name not in api:
                 continue
-            fn = member.__func__ if isinstance(member, (staticmethod, classmethod)) else member
-            if not callable(fn):
-                continue
-            try:
-                named = [p for p in inspect.signature(fn).parameters if p in _ARGUMENT_RANK]
-            except (TypeError, ValueError):
-                continue
-            ranks = [_ARGUMENT_RANK[p] for p in named]
-            if ranks != sorted(ranks) or len(set(ranks)) != len(ranks):
+            named = _ruling8_order_violation(member)
+            if named is not None:
                 raise TypeError(
                     f"{cls.__qualname__}.{name} takes ({', '.join(named)}) out of order. Since #2378 phase 5 "
                     f"(#2375 ruling 8) the order is (t, x, p, m) for a Hamiltonian and (t, x, alpha, m) for a "
@@ -1104,7 +1137,7 @@ class HamiltonianBase(MFGOperatorBase):
         """Hamiltonian value ``H`` over a batch (Issue #1071 granular primitive).
 
         The single home for the batch ``H`` call that every HJB solver used to
-        inline as ``np.asarray(H_class(x, m, p, t=t), dtype=float)``. This is the
+        inline as ``np.asarray(H_class(t=t, x=x, p=p, m=m), dtype=float)``. This is the
         residual-path primitive: it computes ``H`` only and never touches
         ``∂H/∂p``. Returns a float ``ndarray`` shaped as ``__call__`` returns it
         (callers ``.ravel()`` / reshape as their assembly needs).
@@ -1115,7 +1148,7 @@ class HamiltonianBase(MFGOperatorBase):
         """Momentum gradient ``∂H/∂p`` over a batch (Issue #1071 granular primitive).
 
         The single home for the batch ``∂H/∂p`` call that HJB Jacobians used to
-        inline as ``np.asarray(H_class.dp(x, m, p, t=t), dtype=float)``. This is the
+        inline as ``np.asarray(H_class.dp(t=t, x=x, p=p, m=m), dtype=float)``. This is the
         Jacobian-path primitive: it computes ``∂H/∂p`` only and never recomputes
         ``H``. Callers keep their own sign convention (drift ``α* = -∂H/∂p``).
         """
@@ -1414,6 +1447,8 @@ class HamiltonianBase(MFGOperatorBase):
             Momentum ∇u at x (current gradient estimate)
         m : float | NDArray
             Density at x
+        dx : float
+            Grid spacing
         scheme : str
             FD scheme: "central", "upwind_forward", "upwind_backward"
             - "central": p ≈ (U[i+1] - U[i-1])/(2dx)
@@ -1428,7 +1463,7 @@ class HamiltonianBase(MFGOperatorBase):
         Example
         -------
         >>> H = SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0))
-        >>> jac = H.jacobian_fd(x, m, p, dx=0.01, scheme="central")
+        >>> jac = H.jacobian_fd(t=0.0, x=x, p=p, m=m, dx=0.01, scheme="central")
         >>> # Use in Newton iteration:
         >>> A_diag = diffusion_diag + jac.diagonal
         >>> A_lower = diffusion_lower + jac.lower
@@ -1837,6 +1872,7 @@ class LagrangianBase(MFGOperatorBase):
         self,
         tau: float,
         z: np.ndarray,
+        *,
         t: float = 0.0,
         x: NDArray | None = None,
         m: float | NDArray | None = None,
@@ -1976,7 +2012,7 @@ class SeparableLagrangian(LagrangianBase):
         f_m = float(self._coupling(m)) if self._coupling is not None else 0.0
         return H_ctrl - V - f_m
 
-    def proximal(self, tau, z, t=0.0, x=None, m=None):
+    def proximal(self, tau, z, *, t=0.0, x=None, m=None):
         """Delegates to control_cost.proximal(). V and f don't depend on alpha."""
         return self.control_cost.proximal(tau, np.atleast_1d(z))
 
@@ -3102,12 +3138,12 @@ if __name__ == "__main__":
     m_test = 0.3
     H_direct = H_class(x=x, m=m_test, p=p_test, t=t_val)
     # H = ½|p|²/λ - m² = 0.5 * 4.0 / 1.0 - 0.09 = 2.0 - 0.09 = 1.91
-    print(f"   H(x, m=0.3, p=2.0, t) = {H_direct:.4f}")
+    print(f"   H(t, x, p=2.0, m=0.3) = {H_direct:.4f}")
     print("   Expected: 0.5 * 2² - 0.3² = 2.0 - 0.09 = 1.91")
     assert abs(H_direct - 1.91) < 1e-10, f"Class-based H failed: {H_direct}"
 
     dm_direct = H_class.dm(x=x, m=m_test, p=p_test, t=t_val)
-    print(f"   H.dm(x, m=0.3, p, t) = {dm_direct:.4f}  (expected: -0.6)")
+    print(f"   H.dm(t, x, p, m=0.3) = {dm_direct:.4f}  (expected: -0.6)")
     assert abs(dm_direct - (-0.6)) < 1e-10, "Class-based dm failed"
 
     print("\n" + "=" * 60)
