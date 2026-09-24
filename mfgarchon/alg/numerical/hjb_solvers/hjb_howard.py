@@ -56,6 +56,7 @@ from scipy.sparse import csr_matrix, diags, eye, lil_matrix
 from scipy.sparse.linalg import spsolve
 from scipy.spatial import cKDTree
 
+from mfgarchon.types.callable_protocols import ALPHA_STAR_SLOTS, bind_user_callable
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 if TYPE_CHECKING:
@@ -366,6 +367,8 @@ class HJBHowardSolver:
         self.problem = problem
         self.stencil_provider = stencil_provider
         self.alpha_star = alpha_star
+        # Bound once at acceptance and invoked by keyword (#2375 ruling 8)
+        self._alpha_star = bind_user_callable(alpha_star, ALPHA_STAR_SLOTS, role="alpha_star")
         self.running_cost = running_cost
         self.control_lagrangian = control_lagrangian
         self.discretisation = discretisation
@@ -512,7 +515,7 @@ class HJBHowardSolver:
             p = np.zeros((n, dimension))
             for d in range(dimension):
                 p[:, d] = static["D_grad_central"][d] @ u_next
-            alpha = self.alpha_star(pts, p, m_n, t_idx)
+            alpha = self._alpha_star(t=t_idx, x=pts, p=p, m=m_n)
 
         rc_t = self.running_cost(t_idx) if self.running_cost is not None else None
         u_new = u_next.copy()
@@ -615,7 +618,7 @@ class HJBHowardSolver:
             p_new = np.zeros((n, dimension))
             for d in range(dimension):
                 p_new[:, d] = static["D_grad_central"][d] @ u_new
-            alpha_new = self.alpha_star(pts, p_new, m_n, t_idx)
+            alpha_new = self._alpha_star(t=t_idx, x=pts, p=p_new, m=m_n)
 
             # Convergence on policy.
             denom = max(float(np.linalg.norm(alpha, ord=np.inf)), 1e-10)

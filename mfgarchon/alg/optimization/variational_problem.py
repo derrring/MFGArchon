@@ -504,13 +504,13 @@ class VariationalMFGProblem:
             """Adapter converting modern derivs format to converted Hamiltonian."""
             p = derivs.get((1,), 0.0) if isinstance(derivs, dict) else 0.0
             t = current_time if current_time is not None else self.t[t_idx] if t_idx < len(self.t) else 0.0
-            return hamiltonian_funcs["hamiltonian"](x_position, p, m_at_x, t)
+            return hamiltonian_funcs["hamiltonian"](t=t, x=x_position, p=p, m=m_at_x)
 
         def _hamiltonian_dm_adapter(x_idx, x_position, m_at_x, derivs, t_idx, current_time, problem):
             """Adapter converting modern derivs format to converted Hamiltonian dm."""
             p = derivs.get((1,), 0.0) if isinstance(derivs, dict) else 0.0
             t = current_time if current_time is not None else self.t[t_idx] if t_idx < len(self.t) else 0.0
-            return hamiltonian_funcs["hamiltonian_dm"](x_position, p, m_at_x, t)
+            return hamiltonian_funcs["hamiltonian_dm"](t=t, x=x_position, p=p, m=m_at_x)
 
         mfg_components = MFGComponents(
             hamiltonian_func=_hamiltonian_adapter,

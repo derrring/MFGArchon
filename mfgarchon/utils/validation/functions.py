@@ -55,17 +55,17 @@ def _call_h(fn: Any, x: Any, m: Any, p: Any, t: float = 0.0) -> Any:
 
     A family object (a ``HamiltonianBase``/``LagrangianBase`` instance, or a bound method of
     one) takes ``(t, x, p, m)`` since #2378 phase 5 and is called by keyword. A raw user callable
-    keeps the positional ``(x, m, p, t)`` convention it had before, with whatever parameter names
-    it declares, until phase 5 part 2 settles user callables.
+    goes through its binding (``HAMILTONIAN_SLOTS``), like every user callable the library accepts.
     """
     import functools
 
     from mfgarchon.core.hamiltonian import MFGOperatorBase
+    from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS, bind_user_callable
 
     target = fn.func if isinstance(fn, functools.partial) else fn  # partial(H.dm) is still a family method
     if isinstance(getattr(target, "__self__", target), MFGOperatorBase):
         return fn(t=t, x=x, p=p, m=m)
-    return fn(x, m, p, t)
+    return bind_user_callable(fn, HAMILTONIAN_SLOTS, role="Hamiltonian callable")(t=t, x=x, p=p, m=m)
 
 
 def _get_sample_inputs(

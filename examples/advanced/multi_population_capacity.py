@@ -245,8 +245,8 @@ def main():
 
     # Visualize terminal costs
     plt.subplot(1, 2, 2)
-    g0_plot = np.array([problem.terminal_cost_k(0, x) for x in x_plot])
-    g1_plot = np.array([problem.terminal_cost_k(1, x) for x in x_plot])
+    g0_plot = np.array([problem.terminal_cost_k(x=x, k=0) for x in x_plot])
+    g1_plot = np.array([problem.terminal_cost_k(x=x, k=1) for x in x_plot])
     plt.plot(x_plot, g0_plot, "b-", linewidth=2, label="Residents")
     plt.plot(x_plot, g1_plot, "r-", linewidth=2, label="Tourists")
     plt.xlabel("Position x")
@@ -266,8 +266,8 @@ def main():
     p_test = 0.1
     t_test = 0.5
 
-    H0 = problem.hamiltonian_k(0, x_test, m_test, p_test, t_test)
-    H1 = problem.hamiltonian_k(1, x_test, m_test, p_test, t_test)
+    H0 = problem.hamiltonian_k(t=t_test, x=x_test, p=p_test, m_all=m_test, k=0)
+    H1 = problem.hamiltonian_k(t=t_test, x=x_test, p=p_test, m_all=m_test, k=1)
 
     print(f"  At city center (x={x_test}) with m=[{m_test[0]}, {m_test[1]}]:")
     print(f"  - H_residents = {H0:.6f}")

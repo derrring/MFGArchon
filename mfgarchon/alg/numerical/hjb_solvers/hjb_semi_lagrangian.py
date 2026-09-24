@@ -2656,7 +2656,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             pass
 
         try:
-            return self.problem.hamiltonian(np.atleast_1d(x), m, np.atleast_1d(p), t_value)
+            return self.problem.hamiltonian(t=t_value, x=np.atleast_1d(x), p=np.atleast_1d(p), m=m)
         except (AttributeError, TypeError) as e:
             logger.debug(f"Legacy Hamiltonian signature failed: {e}")
 

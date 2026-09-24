@@ -32,6 +32,7 @@ import numpy as np
 
 from mfgarchon.core.hamiltonian import HamiltonianBase
 from mfgarchon.core.mfg_problem import MFGComponents, MFGProblem
+from mfgarchon.types.callable_protocols import CONDITIONAL_HAMILTONIAN_SLOTS, bound_attribute
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -151,6 +152,10 @@ class StochasticMFGProblem(MFGProblem):
         # Stochastic-specific attributes
         self.noise_process = noise_process
         self.conditional_hamiltonian = conditional_hamiltonian
+        if conditional_hamiltonian is not None:  # bound at acceptance (#2375 ruling 8)
+            bound_attribute(
+                self, "conditional_hamiltonian", CONDITIONAL_HAMILTONIAN_SLOTS, role="conditional_hamiltonian"
+            )
         self.conditional_terminal_cost = conditional_terminal_cost
         self.theta_initial = theta_initial
 
@@ -240,18 +245,11 @@ class StochasticMFGProblem(MFGProblem):
         if self.conditional_hamiltonian is None:
             raise ValueError("Conditional Hamiltonian not defined for this problem")
 
-        # Check if user's function accepts time parameter using inspect
-        import inspect
-
-        sig = inspect.signature(self.conditional_hamiltonian)
-        num_params = len(sig.parameters)
-
-        if num_params >= 5:
-            # Function accepts time parameter
-            return self.conditional_hamiltonian(x, p, m, theta, t)
-        else:
-            # Function does not accept time (standard case)
-            return self.conditional_hamiltonian(x, p, m, theta)
+        # Through its binding: a callable that declares no time is not passed one (#2375 ruling 8)
+        bound = bound_attribute(
+            self, "conditional_hamiltonian", CONDITIONAL_HAMILTONIAN_SLOTS, role="conditional_hamiltonian"
+        )
+        return bound(x=x, p=p, m=m, theta=theta, t=t)
 
     def g_conditional(self, x: float | np.ndarray, theta_T: float | np.ndarray) -> float | np.ndarray:
         """
@@ -325,7 +323,7 @@ class StochasticMFGProblem(MFGProblem):
                 return float(self._path[min(max(idx, 0), len(self._path) - 1)])
 
             def __call__(self, t, x, p, m):
-                value = self._problem.H_conditional(x, p, m, self._theta(t), t)
+                value = self._problem.H_conditional(x=x, p=p, m=m, theta=self._theta(t), t=t)
                 # `HamiltonianBase.__call__` is a POINT evaluation: x and p are shape (d,) and the
                 # result is a scalar. A user's `conditional_hamiltonian` is written pointwise but
                 # numpy-broadcasts, so on a 1-D problem it hands back shape (1,) -- and the base

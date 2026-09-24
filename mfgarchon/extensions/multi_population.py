@@ -574,8 +574,8 @@ if __name__ == "__main__":
     m_all = np.array([1.0, 2.0])
     p = 1.0
     t = 0.5
-    H0 = problem.hamiltonian_k(0, x, m_all, p, t)
-    H1 = problem.hamiltonian_k(1, x, m_all, p, t)
+    H0 = problem.hamiltonian_k(t=t, x=x, p=p, m_all=m_all, k=0)
+    H1 = problem.hamiltonian_k(t=t, x=x, p=p, m_all=m_all, k=1)
     H0_expected = 0.5 * p**2 + 0.1 * m_all[0] + 0.05 * m_all[1]  # ½p² + α₀₀m₀ + α₀₁m₁
     H1_expected = 0.5 * p**2 + 0.03 * m_all[0] + 0.1 * m_all[1]  # ½p² + α₁₀m₀ + α₁₁m₁
     assert np.isclose(H0, H0_expected), f"H0 mismatch: {H0} vs {H0_expected}"
@@ -587,9 +587,9 @@ if __name__ == "__main__":
     print("\nTest 5: Population-Indexed Methods")
     print("-" * 40)
     for k in range(2):
-        g_k = problem.terminal_cost_k(k, x)
-        m0_k = problem.initial_density_k(k, x)
-        f_k = problem.running_cost_k(k, x, m_all, t)
+        g_k = problem.terminal_cost_k(x=x, k=k)
+        m0_k = problem.initial_density_k(x=x, k=k)
+        f_k = problem.running_cost_k(t=t, x=x, m_all=m_all, k=k)
         print(f"  Population {k} ({problem.population_labels[k]}):")
         print(f"    Terminal cost: {g_k:.4f}")
         print(f"    Initial density: {m0_k:.4f}")
