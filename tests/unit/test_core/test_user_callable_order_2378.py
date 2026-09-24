@@ -138,3 +138,33 @@ def test_a_ufunc_is_a_spatial_potential_func_and_its_out_parameter_is_left_alone
     bound = bind_user_callable(np.cos, POTENTIAL_SLOTS, role="potential_func", spatial_only=True)
     np.testing.assert_array_equal(bound(t=np.array([9.0]), x=x), np.cos([0.5]))
     np.testing.assert_array_equal(x, [0.5])
+
+
+def test_time_names_the_t_slot_for_every_role():
+    """#2402 review round 2: `time` counted as a time name in the order check but was not bound as t."""
+    seen = {}
+
+    def source(time, x, v, m):
+        seen.update(time=time, v=v, m=m)
+        return 0.0
+
+    bind_user_callable(source, SOURCE_TERM_SLOTS, role="source_term_hjb")(t=1.0, x=_X, v=3.0, m=4.0)
+    only_time = bind_user_callable(lambda time: time, POTENTIAL_SLOTS, role="potential_func", spatial_only=True)
+    assert (seen, only_time(t=1.0, x=0.75)) == ({"time": 1.0, "v": 3.0, "m": 4.0}, 1.0)
+
+
+@pytest.mark.parametrize(
+    "star_args", [lambda *a: float(a[0]) ** 2, np.vectorize(lambda x: float(x) ** 2)], ids=["lambda", "vectorize"]
+)
+def test_star_args_is_a_spatial_potential_func_and_refused_where_order_matters(star_args):
+    """#2402 review round 2: `*args` said nothing about its order and was bound positionally as (t, x),
+    so a spatial `potential_func` that received x on main received t."""
+    bound = bind_user_callable(star_args, POTENTIAL_SLOTS, role="potential_func", spatial_only=True)
+    assert bound(t=4.0, x=0.1) == pytest.approx(0.01)
+    with pytest.raises(TypeError, match=r"cannot be matched"):
+        bind_user_callable(star_args, POTENTIAL_SLOTS, role="potential")
+
+
+def test_a_defaulted_single_parameter_is_still_a_spatial_potential_func():
+    bound = bind_user_callable(lambda pos=0.0: pos, POTENTIAL_SLOTS, role="potential_func", spatial_only=True)
+    assert bound(t=4.0, x=0.1) == 0.1

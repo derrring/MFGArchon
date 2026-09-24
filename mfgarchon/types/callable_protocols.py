@@ -55,14 +55,17 @@ def bind_user_callable(
     The result is invoked with every slot by keyword, ``bound(x=..., t=...)``, and passes the
     user's function what it declares:
 
-    - **By name**, when every required positional parameter is named after a slot (or a name the
-      library documented for it, ``m_t`` and ``v_t`` for a source term). Slots it does not declare
-      are omitted, so a time-independent ``V(x)`` is accepted where ``t`` is. Its declared order
-      then does not matter to the numbers.
-    - **By position, in slot order**, when it requires exactly one parameter per slot and none of
-      them is named after a different slot. Not for a source term: its reorder swapped ``m`` and
-      ``v``, so unnamed parameters cannot say which order they were written in.
-    - **``x`` alone**, where ``spatial_only`` allows a one-argument spatial callable.
+    - **By name**, when every required positional parameter is named after a slot, or ``time``
+      for ``t``, or a name the library documented for the slot (``m_t`` and ``v_t`` for a source
+      term). Slots it does not declare are omitted, so a time-independent ``V(x)`` is accepted
+      where ``t`` is. Its declared order then does not matter to the numbers.
+    - **By position, in slot order**, when it requires exactly one named parameter per slot and
+      none of them is named after a different slot. Not for a source term: its reorder swapped
+      ``m`` and ``v``, so unnamed parameters cannot say which order they were written in. Not
+      ``*args`` either, for the same reason: it cannot say which order it expects.
+    - **``x`` alone**, where ``spatial_only`` allows a spatial callable: at most one required
+      parameter, or only ``*args``, as ``MFGComponents`` has always called a ``potential_func``
+      that declares no time.
 
     Refused here, rather than failing or computing at the first call:
 
@@ -79,7 +82,7 @@ def bind_user_callable(
     except (TypeError, ValueError):
         return BoundCallable(fn, "positional", slots)
     kinds = inspect.Parameter
-    slot_of = {name: name for name in slots} | _ALIASES.get(slots, {})
+    slot_of = {name: name for name in slots} | ({"time": "t"} if "t" in slots else {}) | _ALIASES.get(slots, {})
     positional = [p for p in params if p.kind in (kinds.POSITIONAL_ONLY, kinds.POSITIONAL_OR_KEYWORD)]
     order = [p.name for p in positional]
     ranked = [slots.index(slot_of[name]) for name in order if name in slot_of]
@@ -95,15 +98,14 @@ def bind_user_callable(
     required = [p for p in positional if p.default is kinds.empty]
     if named and all(p.name in named for p in required):
         return BoundCallable(fn, "keyword", tuple(slot_of[name] for name in named), tuple(named))
-    takes_all = len(required) == len(slots) or (
-        any(p.kind is kinds.VAR_POSITIONAL for p in params) and len(required) <= len(slots)
-    )
+    var_positional = any(p.kind is kinds.VAR_POSITIONAL for p in params)
+    takes_all = len(required) == len(slots) and not var_positional
     misplaced = [
         name for i, name in enumerate(order[: len(slots)]) if name in slot_of and slots.index(slot_of[name]) != i
     ]
     if takes_all and not misplaced and slots not in _NAMES_REQUIRED:
         return BoundCallable(fn, "positional", slots)
-    if spatial_only and len(required) == 1 and order[0] not in ("t", "time"):
+    if spatial_only and len(required) <= 1 and (positional or var_positional):
         return BoundCallable(fn, "spatial", ("x",))
     raise TypeError(
         f"{role} {getattr(fn, '__qualname__', fn)!r} takes ({', '.join(p.name for p in params)}), which cannot be "
