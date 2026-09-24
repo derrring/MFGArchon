@@ -209,7 +209,7 @@ class NetworkHJBSolver(BaseHJBSolver):
         # density_coupling` re-derived the coupling on the raw stacked `m`, diverging from the object's
         # `_extract_own_density` for multi-population `m` and corrupting `h_control = h_total - source`.
         H = self.network_problem.hamiltonian_class
-        return np.array([H.source_term(i, m, t) for i in range(self.num_nodes)])
+        return np.array([H.source_term(x=i, m=m, t=t) for i in range(self.num_nodes)])
 
     def _solve_ode(
         self,
@@ -404,7 +404,7 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
                 "The legacy edge-cost policy evaluation assembled a singular row-sum-zero system "
                 "(returned NaN); a NetworkMFGProblem always wires a NetworkHamiltonian."
             )
-        return {i: np.atleast_1d(H.optimal_control(np.array([i]), m, u, t)) for i in range(self.num_nodes)}
+        return {i: np.atleast_1d(H.optimal_control(x=np.array([i]), m=m, p=u, t=t)) for i in range(self.num_nodes)}
 
     def _initialize_policy(self, u: np.ndarray, m: np.ndarray, t: float) -> None:
         self.current_rates = self._rates_at(u, m, t)

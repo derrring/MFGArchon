@@ -54,9 +54,9 @@ if __name__ == "__main__":
             super().__init__()
             self.congestion_strength = congestion_strength
 
-        def __call__(self, x, m, p, t=0.0):
+        def __call__(self, t, x, p, m):
             """
-            Evaluate H(x, m, p, t).
+            Evaluate H(t, x, p, m).
 
             Sum over p's momentum-component axis so H is a scalar per grid point
             (the solver evaluates H pointwise). |p|^2 = sum_i p_i^2.
@@ -73,7 +73,7 @@ if __name__ == "__main__":
             p_sq = np.sum(np.square(p), axis=-1)
             return p_sq / (2.0 * (1.0 + self.congestion_strength * m))
 
-        def dp(self, x, m, p, t=0.0):
+        def dp(self, t, x, p, m):
             """
             Derivative of H w.r.t. momentum: dH/dp = p / (1 + lambda*m).
 
@@ -84,7 +84,7 @@ if __name__ == "__main__":
             m_b = np.reshape(m, np.shape(p)) if np.size(m) == np.size(p) else m
             return p / (1.0 + self.congestion_strength * m_b)
 
-        def dm(self, x, m, p, t=0.0):
+        def dm(self, t, x, p, m):
             """
             Derivative of H w.r.t. density: dH/dm = -lambda*|p|^2 / (2*(1 + lambda*m)^2).
 
@@ -270,7 +270,7 @@ if __name__ == "__main__":
     print()
     print("What you learned:")
     print("  1. Create a custom Hamiltonian by subclassing HamiltonianBase")
-    print("  2. Implement __call__(x, m, p, t) for H(x, m, p)")
+    print("  2. Implement __call__(t, x, p, m) for H(x, p, m)")
     print("  3. Implement dp() and dm() for derivatives")
     print("  4. Bundle with Model/Conditions and solve")
     print()

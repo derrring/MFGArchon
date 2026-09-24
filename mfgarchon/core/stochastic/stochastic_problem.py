@@ -304,7 +304,7 @@ class StochasticMFGProblem(MFGProblem):
         # noticed: the three test files that mention common noise only CONSTRUCT the solver.
         #
         # The two APIs disagree on shape, which is why this is an adapter and not a cast.
-        # `HamiltonianBase.__call__` takes (x, m, p, t) of VALUES; the old component callables took
+        # `HamiltonianBase.__call__` takes (t, x, p, m) of VALUES; the old component callables took
         # (x_idx, m_at_x, p_values, t_idx) of grid indices, with `p` arriving as a
         # forward/backward dict to be averaged. `theta` is bound from the frozen path here, so the
         # conditional problem is an ordinary deterministic MFG to everything downstream -- which is
@@ -312,7 +312,7 @@ class StochasticMFGProblem(MFGProblem):
         path = np.asarray(noise_path, dtype=float)
 
         class _FrozenNoiseHamiltonian(HamiltonianBase):
-            """H(x, m, p, t) with theta read from one frozen realisation of the noise."""
+            """H(t, x, p, m) with theta read from one frozen realisation of the noise."""
 
             def __init__(self, problem: StochasticMFGProblem, realisation: np.ndarray) -> None:
                 super().__init__()
@@ -324,7 +324,7 @@ class StochasticMFGProblem(MFGProblem):
                 idx = round(t / dt) if dt > 0 else 0
                 return float(self._path[min(max(idx, 0), len(self._path) - 1)])
 
-            def __call__(self, x, m, p, t=0.0):
+            def __call__(self, t, x, p, m):
                 value = self._problem.H_conditional(x, p, m, self._theta(t), t)
                 # `HamiltonianBase.__call__` is a POINT evaluation: x and p are shape (d,) and the
                 # result is a scalar. A user's `conditional_hamiltonian` is written pointwise but

@@ -93,7 +93,7 @@ def test_network_hamiltonian_object_equals_method_node_by_node(case):
     for i in range(N):
         nbrs = prob.get_node_neighbors(i)
         method_val = prob.hamiltonian(i, nbrs, m, u, t)
-        object_val = float(H(np.array([i]), m, u, t))
+        object_val = float(H(x=np.array([i]), m=m, p=u, t=t))
         assert method_val == object_val, f"node {i} ({case}): method={method_val!r} object={object_val!r}"
 
 
@@ -147,22 +147,22 @@ def test_network_hamiltonian_minimize_consistency():
     m = np.ones(N) / N
     t = 0.1
 
-    alpha2 = np.atleast_1d(H.optimal_control(np.array([2]), m, u, t))
+    alpha2 = np.atleast_1d(H.optimal_control(x=np.array([2]), m=m, p=u, t=t))
     assert alpha2[1] > 0, f"control must flow to the lower neighbour (MINIMIZE); got {alpha2}"
     assert alpha2[3] == 0, f"control must not flow to the higher neighbour (MINIMIZE); got {alpha2}"
 
     for i in range(N):
-        ai = np.atleast_1d(H.optimal_control(np.array([i]), m, u, t))
+        ai = np.atleast_1d(H.optimal_control(x=np.array([i]), m=m, p=u, t=t))
         assert (ai >= -1e-12).all(), f"rates must be >= 0 at node {i}: {ai}"
 
     coupling2 = 0.5 * m[2] ** 2  # default node congestion at node 2
-    control2 = float(H(np.array([2]), m, u, t)) + coupling2  # H = control - (V + f), V = 0 here
+    control2 = float(H(x=np.array([2]), m=m, p=u, t=t)) + coupling2  # H = control - (V + f), V = 0 here
     envelope2 = 0.5 * float(np.sum(alpha2**2))
     assert abs(control2 - 0.5) < 1e-9, f"one-sided control at node2 should be 0.5, got {control2}"
     assert abs(control2 - envelope2) < 1e-9, f"H control != envelope 0.5*sum(alpha^2): {control2} vs {envelope2}"
 
     method2 = prob.hamiltonian(2, prob.get_node_neighbors(2), m, u, t)
-    assert abs(method2 - float(H(np.array([2]), m, u, t))) < 1e-9, "RK45 method H must equal object H"
+    assert abs(method2 - float(H(x=np.array([2]), m=m, p=u, t=t))) < 1e-9, "RK45 method H must equal object H"
 
 
 def test_network_policy_iteration_converges_to_rk45():
@@ -245,7 +245,7 @@ def test_network_hamiltonian_method_equals_object():
         for node in range(prob.num_nodes):
             nbrs = prob.get_node_neighbors(node)
             method_val = prob.hamiltonian(node, nbrs, m5, p5, 0.1)
-            object_val = float(obj(node, m5, p5, 0.1))
+            object_val = float(obj(x=node, m=m5, p=p5, t=0.1))
             assert method_val == object_val, f"method != object at node {node} (single-source broken)"
 
 
@@ -301,17 +301,21 @@ def test_source_term_single_source_and_multipop_slice():
     p = 0.1 * np.arange(N, dtype=float)
 
     for node in range(N):
-        src = H.source_term(node, m, 0.0)
+        src = H.source_term(x=node, m=m, t=0.0)
         assert src == pytest.approx(0.2 * node + 0.5 * m[node] ** 2)
         # Decomposition: control = __call__ + source is p-dependent but m-INDEPENDENT (all m-dependence
         # is in the source), so scaling m does not change (__call__ + source).
-        assert H(node, m, p, 0.0) + src == pytest.approx(H(node, 2 * m, p, 0.0) + H.source_term(node, 2 * m, 0.0))
+        assert H(x=node, m=m, p=p, t=0.0) + src == pytest.approx(
+            H(x=node, m=2 * m, p=p, t=0.0) + H.source_term(x=node, m=2 * m, t=0.0)
+        )
 
     # Multi-population: population 1's source reads its OWN slice (0.9), not the raw stacked m[node] (0.1).
     H1 = NetworkHamiltonian(network_data=prob.network_data, population_index=1)
     m_stacked = np.concatenate([np.full(N, 0.1), np.full(N, 0.9)])
     for node in range(N):
-        assert H1.source_term(node, m_stacked, 0.0) == pytest.approx(0.5 * 0.9**2)  # own slice; V=0 (no potential)
+        assert H1.source_term(x=node, m=m_stacked, t=0.0) == pytest.approx(
+            0.5 * 0.9**2
+        )  # own slice; V=0 (no potential)
 
 
 def test_problem_methods_delegate_to_object():
@@ -332,8 +336,8 @@ def test_problem_methods_delegate_to_object():
     t = 0.4
     for node in range(N):
         # delegation identity (method == the wired object's accessor)
-        assert prob.node_potential(node, t) == H.node_potential_value(node, t)
-        assert prob.density_coupling(node, m, t) == H.coupling_value(node, m, t)
+        assert prob.node_potential(node, t) == H.node_potential_value(x=node, t=t)
+        assert prob.density_coupling(node, m, t) == H.coupling_value(x=node, m=m, t=t)
         # byte-identical to the legacy computation
         assert prob.node_potential(node, t) == pytest.approx(0.2 * node + t)
         assert prob.density_coupling(node, m, t) == pytest.approx(0.3 * m[node] ** 2)
@@ -360,16 +364,16 @@ def test_hamiltonian_dm_single_sourced_analytic():
     p = np.zeros(N)
     for node in range(N):
         # analytic default derivative == -m[node]; problem method delegates to the object
-        assert H.dm(node, m, p, 0.0) == pytest.approx(-m[node])
+        assert H.dm(x=node, m=m, p=p, t=0.0) == pytest.approx(-m[node])
         dm_method = prob.hamiltonian_dm(node, prob.get_node_neighbors(node), m, p, 0.0)
         assert dm_method == pytest.approx(-m[node])
-        assert dm_method == H.dm(node, m, p, 0.0)
+        assert dm_method == H.dm(x=node, m=m, p=p, t=0.0)
 
     # Multi-population: population 1's dm reads its OWN slice (0.9), not the raw stacked m[node] (0.1).
     H1 = NetworkHamiltonian(network_data=prob.network_data, population_index=1)
     m_stacked = np.concatenate([np.full(N, 0.1), np.full(N, 0.9)])
     for node in range(N):
-        assert H1.dm(node, m_stacked, p, 0.0) == pytest.approx(-0.9)
+        assert H1.dm(x=node, m=m_stacked, p=p, t=0.0) == pytest.approx(-0.9)
 
 
 def test_hamiltonian_dm_custom_interaction_finite_difference():
@@ -387,7 +391,7 @@ def test_hamiltonian_dm_custom_interaction_finite_difference():
     p = np.zeros(5)
     for node in range(5):
         # no crash for any node, and matches the analytic derivative -0.6*m[node]
-        assert H.dm(node, m, p, 0.0) == pytest.approx(-0.6 * m[node], abs=1e-4)
+        assert H.dm(x=node, m=m, p=p, t=0.0) == pytest.approx(-0.6 * m[node], abs=1e-4)
         dm_method = prob.hamiltonian_dm(node, prob.get_node_neighbors(node), m, p, 0.0)
         assert dm_method == pytest.approx(-0.6 * m[node], abs=1e-4)
 

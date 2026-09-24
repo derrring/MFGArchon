@@ -208,8 +208,8 @@ class WeakFormHJBSolver(BaseHJBSolver):
         for k in range(max_iterations):
             p_nodal = np.column_stack([self._apply_gradient_operator(d, U_current) for d in range(dim)])  # (N, dim)
 
-            H_vals = np.asarray(H_class(x_grid, m_n, p_nodal, t=t), dtype=float).ravel()
-            dH_dp = np.asarray(H_class.dp(x_grid, m_n, p_nodal, t=t), dtype=float)
+            H_vals = np.asarray(H_class(x=x_grid, m=m_n, p=p_nodal, t=t), dtype=float).ravel()
+            dH_dp = np.asarray(H_class.dp(x=x_grid, m=m_n, p=p_nodal, t=t), dtype=float)
             if dH_dp.ndim == 1:
                 dH_dp = dH_dp.reshape(-1, 1)
 
@@ -370,7 +370,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
                 if H_class is not None:
                     p_prev = self._nodal_gradient(U_coupling_prev[n])
                     H_values = np.asarray(
-                        H_class(self._disc.dof_coordinates, M_density[n], p_prev, t=n * dt), dtype=float
+                        H_class(x=self._disc.dof_coordinates, m=M_density[n], p=p_prev, t=n * dt), dtype=float
                     ).ravel()
                     # MINUS. The canonical equation (mfg_problem.py:197) is
                     # -u_t + H - (sigma^2/2) Lap(u) = S, so backward Euler gives

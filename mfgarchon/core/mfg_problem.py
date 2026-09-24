@@ -1321,10 +1321,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         Get the class-based Hamiltonian object if available.
 
         Returns the HamiltonianBase instance for direct access to:
-        - H(x, m, p, t): Hamiltonian value
-        - dp(x, m, p, t): ∂H/∂p (optimal control)
-        - dm(x, m, p, t): ∂H/∂m (density coupling)
-        - optimal_control(x, m, p, t): α* = ±∂H/∂p
+        - H(t, x, p, m): Hamiltonian value
+        - dp(t, x, p, m): ∂H/∂p (optimal control)
+        - dm(t, x, p, m): ∂H/∂m (density coupling)
+        - optimal_control(t, x, p, m): α* = ±∂H/∂p
 
         Returns:
             HamiltonianBase instance, or None if using function-based API
@@ -1333,7 +1333,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             >>> from mfgarchon.core.hamiltonian import SeparableHamiltonian
             >>> H = SeparableHamiltonian(...)
             >>> problem = MFGProblem(hamiltonian=H, ...)
-            >>> problem.hamiltonian_class.dp(x, m, p, t)  # Direct access
+            >>> problem.hamiltonian_class.dp(t, x, p, m)  # Direct access
         """
         if self.components is not None:
             return getattr(self.components, "_hamiltonian_class", None)
@@ -1345,9 +1345,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         Get the class-based Lagrangian object if available.
 
         Returns the LagrangianBase instance for direct access to:
-        - L(x, alpha, m, t): Running cost value
-        - optimal_control(x, m, p, t): alpha* (same as HamiltonianBase)
-        - evaluate_hamiltonian(x, m, p, t): H value on-the-fly
+        - L(t, x, alpha, m): Running cost value
+        - optimal_control(t, x, p, m): alpha* (same as HamiltonianBase)
+        - evaluate_hamiltonian(t, x, p, m): H value on-the-fly
         - proximal(tau, z): For ADMM/variational solvers
 
         Issue #899: LagrangianBase as first-class specification.

@@ -6,7 +6,7 @@ time stepping and mass-conserving structure are inherited; this class supplies t
 discretization, Neumann BC, and the advection matrix.
 
 Advection is single-sourced from the Hamiltonian's optimal-control primitive
-(Issue #1528): the velocity alpha* = H.optimal_control(x, m, p, t) is recovered at
+(Issue #1528): the velocity alpha* = H.optimal_control(t, x, p, m) is recovered at
 the nodes via the mass-lumped gradient projection and assembled with the protocol's
 advection. This is the same primitive the paired HJB Newton advection reads, so
 A_FP = A_HJB^T is preserved. It supersedes the former weak-form-family convention
@@ -136,7 +136,7 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
     def _build_advection(self, U_n: NDArray, D: float) -> sparse.csr_matrix:
         # Issue #1528 (G-017 single-source, supersedes the #1487/#1420 scalar read): the FP advective
         # drift has ONE owner -- the problem's Hamiltonian optimal-control primitive
-        # alpha* = H.optimal_control(x, m, p, t) -- not a hand-coded -fp_drift_coefficient(problem)*grad(U).
+        # alpha* = H.optimal_control(t, x, p, m) -- not a hand-coded -fp_drift_coefficient(problem)*grad(U).
         # For a quadratic-MINIMIZE SeparableHamiltonian the owner returns -p/control_cost, which is
         # byte-identical to the old -c*grad(U) for dyadic control_cost (incl. the paper's control_cost=1.0,
         # where alpha* = -grad(U) exactly) and within 1 ULP for non-dyadic control_cost; for
@@ -151,7 +151,7 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
                 "SeparableHamiltonian (e.g. QuadraticControlCost) on the problem's components (Issue #1528: "
                 "the FP advective drift is single-sourced from the Hamiltonian optimal-control owner)."
             )
-        # Issue #1528 review-nit: this advection routes through H.optimal_control(x, m, p, t), which is
+        # Issue #1528 review-nit: this advection routes through H.optimal_control(t, x, p, m), which is
         # single-valued in p ONLY for a SeparableHamiltonian. A non-separable Hamiltonian (e.g.
         # CongestionHamiltonian) has a density/state-dependent optimal control, so calling optimal_control
         # here raised a cryptic TypeError; fail loud with a clear message instead. The gate lives at this
@@ -162,7 +162,7 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
 
         if not isinstance(H, SeparableHamiltonian):
             raise NotImplementedError(
-                f"FP meshless-Galerkin advection routes the drift through H.optimal_control(x, m, p, t), which "
+                f"FP meshless-Galerkin advection routes the drift through H.optimal_control(t, x, p, m), which "
                 f"is single-valued in p only for a SeparableHamiltonian; got {type(H).__name__} (non-separable), "
                 f"whose optimal control is density/state-dependent. Provide a SeparableHamiltonian, or supply the "
                 f"precomputed optimal-control velocity alpha* through the velocity channel instead "
@@ -180,7 +180,7 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         # control depends on p alone, so alpha* is exact for this family's supported (separable) Hamiltonians.
         # Feed the IDENTICAL grad_U the solver already recovered -- that is what preserves byte-identity.
         velocity = H.optimal_control(
-            self._disc.dof_coordinates, None, grad_U, 0.0
+            x=self._disc.dof_coordinates, m=None, p=grad_U, t=0.0
         ).T  # (dim, N): alpha* = -grad(U)/lambda
         # FP weak form (Neumann, integrate by parts): the advection contributes
         # -C_b^T to the implicit operator (M/dt + D K - C_b^T), where

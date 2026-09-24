@@ -68,11 +68,11 @@ class _TiltedQuadratic(HamiltonianBase):
     """``H = |p|^2/2 + 0.7 p``. Outside #2308's Godunov condition on purpose: ``dH/dp(0) = 0.7``, so a
     band written at a strict minimum is not multiplied away the way it is for every shipped H."""
 
-    def __call__(self, x, m, p, t=0.0):
+    def __call__(self, t, x, p, m):
         p = np.asarray(p, dtype=float)
         return 0.5 * np.sum(p**2, axis=-1) + 0.7 * np.sum(p, axis=-1)
 
-    def dp(self, x, m, p, t=0.0):
+    def dp(self, t, x, p, m):
         return np.asarray(p, dtype=float) + 0.7
 
 

@@ -68,7 +68,7 @@ AlphaStarFn = Callable[[np.ndarray, np.ndarray, np.ndarray, int], np.ndarray]
 
 Given collocation points `x` (shape (n, d)), gradient `p = ∇U` (shape (n, d)),
 density `m` (shape (n,)), and time index `t_idx`, returns the optimal control
-`alpha` (shape (n, d)) that achieves `min_α (α · p + L(x, α, m, t))`.
+`alpha` (shape (n, d)) that achieves `min_α (α · p + L(t, x, α, m))`.
 
 For LQ `H = |p|²/(2c) + g(x, m)`: `alpha_star(x, p, m, t) = -p/c`.
 """

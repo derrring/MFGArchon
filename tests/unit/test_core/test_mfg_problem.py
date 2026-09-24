@@ -490,17 +490,17 @@ def test_mfg_problem_custom_hamiltonian():
     class CustomHamiltonian(HamiltonianBase):
         """Custom Hamiltonian: H = |p|² + m²"""
 
-        def __call__(self, x, m, p, t=0.0):
+        def __call__(self, t, x, p, m):
             p_scalar = float(p[0]) if hasattr(p, "__len__") else float(p)
             return p_scalar**2 + m**2
 
-        def dp(self, x, m, p, t=0.0):
+        def dp(self, t, x, p, m):
             # dH/dp = 2p
             import numpy as np
 
             return 2.0 * np.atleast_1d(p)
 
-        def dm(self, x, m, p, t=0.0):
+        def dm(self, t, x, p, m):
             # dH/dm = 2m
             return 2.0 * m
 

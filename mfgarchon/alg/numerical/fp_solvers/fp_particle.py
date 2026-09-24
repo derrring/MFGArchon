@@ -1834,7 +1834,7 @@ class FPParticleSolver(BaseFPSolver):
     ) -> np.ndarray:
         """FP advective drift alpha* at the particles, from the single owner (Issue #1528).
 
-        The control law alpha* = H.optimal_control(x, m, p, t) on the problem's
+        The control law alpha* = H.optimal_control(t, x, p, m) on the problem's
         ``hamiltonian_class`` is the single source of the FP advective drift, replacing the
         three hand-coded ``-fp_drift_coefficient(problem) * grad(U)`` copies (CPU 1D / CPU nD /
         GPU). ``fp_drift_coefficient``'s #1542 guard (applied at param-build time, ~line 389)
@@ -1855,7 +1855,7 @@ class FPParticleSolver(BaseFPSolver):
 
         H = getattr(self.problem, "hamiltonian_class", None)
         if isinstance(H, SeparableHamiltonian):
-            return H.optimal_control(positions, None, grad_at_particles, t)
+            return H.optimal_control(x=positions, m=None, p=grad_at_particles, t=t)
         return -coupling_coefficient * grad_at_particles
 
     def _solve_fp_system_cpu(self, m_initial_condition: np.ndarray, U_solution_for_drift: np.ndarray) -> np.ndarray:

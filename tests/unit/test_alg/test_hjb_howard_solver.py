@@ -140,7 +140,7 @@ def _make_gfdm_solver(pts, bdry, geom, problem, scheme="joint_socp", k_neighbors
 
 
 class _LQHam(HamiltonianBase):
-    """Minimal LQ Hamiltonian H = |p|²/2 exposing dp(x, m, p, t) = p (so α* = -dp = -p).
+    """Minimal LQ Hamiltonian H = |p|²/2 exposing dp(t, x, p, m) = p (so α* = -dp = -p).
 
     Used to validate the integrated `inner_solver='howard'` path, which derives α* from
     `problem.hamiltonian_class.dp` (Issue #1118). Matches the explicit `lambda x,p,m,t: -p`
@@ -149,11 +149,11 @@ class _LQHam(HamiltonianBase):
     delegate to; ``__call__`` provides the matching H = |p|²/2 value.
     """
 
-    def __call__(self, x, m, p, t=0.0):
+    def __call__(self, t, x, p, m):
         p = np.asarray(p, dtype=float)
         return 0.5 * np.sum(p**2, axis=-1) if p.ndim == 2 else 0.5 * float(np.sum(p**2))
 
-    def dp(self, x, m, p, t=0.0):
+    def dp(self, t, x, p, m):
         return np.asarray(p, dtype=float)
 
 
@@ -708,7 +708,7 @@ class _SeparableMockProblem(_MockProblem):
     def H(self, i, m_at_x, derivs=None, x_position=None, t=0.0):
         p = np.atleast_1d(np.asarray(derivs.grad, dtype=float))
         x = np.atleast_1d(np.asarray(x_position, dtype=float))
-        return float(self.hamiltonian_class(x, m_at_x, p, t))
+        return float(self.hamiltonian_class(x=x, m=m_at_x, p=p, t=t))
 
 
 def _make_nonlq_solver(hamiltonian, inner_solver, *, LX=1.0, n_int=15, sigma=0.4, Nt=12):

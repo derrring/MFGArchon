@@ -531,7 +531,7 @@ def compute_fp_velocity_field(
         problem: MFG problem (provides ``geometry`` and ``dt``).
         U: Value function, shape ``(Nt+1, *spatial_shape)``.
         M: Density, shape ``(Nt+1, *spatial_shape)`` (only the own-population density).
-        H_class: Hamiltonian exposing ``optimal_control(x, m, p, t)``.
+        H_class: Hamiltonian exposing ``optimal_control(t, x, p, m)``.
         cross_density: Optional stacked multi-population density trajectory
             ``(Nt+1, K*Nx)`` (Issue #1071, lock-faithful). When given, ``optimal_control``
             receives ``cross_density[n]`` (the stacked density at integer timestep ``n``, which the
@@ -585,7 +585,7 @@ def compute_fp_velocity_field(
             else:
                 m_n = m_faces[n] if n < m_faces.shape[0] else m_faces[-1]
             p_n = p_faces[n].reshape(-1, 1)
-            alpha_faces[n] = H_class.optimal_control(x_arr, m_n, p_n, t=n * dt).ravel()
+            alpha_faces[n] = H_class.optimal_control(x=x_arr, m=m_n, p=p_n, t=n * dt).ravel()
 
         return alpha_faces
     else:
@@ -621,7 +621,7 @@ def compute_fp_velocity_field(
                 m_points = stacked.reshape(n_points)
             else:
                 m_points = (M[n] if n < M.shape[0] else M[-1]).reshape(n_points)
-            alpha_n = np.asarray(H_class.optimal_control(x_points, m_points, p_points, t=n * dt))
+            alpha_n = np.asarray(H_class.optimal_control(x=x_points, m=m_points, p=p_points, t=n * dt))
             if alpha_n.shape != (n_points, ndim):
                 raise ValueError(
                     f"{type(H_class).__name__}.optimal_control returned shape {alpha_n.shape} for a batch of "

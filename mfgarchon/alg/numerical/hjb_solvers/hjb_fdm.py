@@ -141,8 +141,8 @@ def _refuse_a_hamiltonian_the_upwind_momentum_cannot_serve(
                         p_pos[axis] = magnitude
                         p_neg = p_pos.copy()
                         p_neg[axis] = -magnitude
-                        h_pos = float(np.asarray(H(x, m, p_pos, t=0.0)).ravel()[0])
-                        h_neg = float(np.asarray(H(x, m, p_neg, t=0.0)).ravel()[0])
+                        h_pos = float(np.asarray(H(x=x, m=m, p=p_pos, t=0.0)).ravel()[0])
+                        h_neg = float(np.asarray(H(x=x, m=m, p=p_neg, t=0.0)).ravel()[0])
                         if h_zero is None:
                             h_zero = h_pos
                         spread = abs(h_pos - h_zero) + abs(h_neg - h_zero)

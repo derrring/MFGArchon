@@ -302,7 +302,7 @@ class FPFVMSolver(BaseFPSolver):
                 "advective drift alpha* = H.optimal_control(...); the problem has none. Pass a "
                 "precomputed drift_field, or set a Hamiltonian on the problem (Issue #1528)."
             )
-        # Issue #1528 review-nit: this potential-field path routes through H.optimal_control(x, m, p, t),
+        # Issue #1528 review-nit: this potential-field path routes through H.optimal_control(t, x, p, m),
         # which is single-valued in p ONLY for a SeparableHamiltonian. A non-separable Hamiltonian (e.g.
         # CongestionHamiltonian) has a density/state-dependent optimal control, so calling optimal_control
         # here raised a cryptic TypeError; fail loud with a clear message instead. The gate lives at this
@@ -313,7 +313,7 @@ class FPFVMSolver(BaseFPSolver):
 
         if not isinstance(H, SeparableHamiltonian):
             raise NotImplementedError(
-                f"FP FVM potential_field drift routes through H.optimal_control(x, m, p, t), which is "
+                f"FP FVM potential_field drift routes through H.optimal_control(t, x, p, m), which is "
                 f"single-valued in p only for a SeparableHamiltonian; got {type(H).__name__} (non-separable), "
                 f"whose optimal control is density/state-dependent. Provide a SeparableHamiltonian, or pass the "
                 f"precomputed optimal-control velocity alpha* through the drift_field channel instead "
@@ -348,7 +348,7 @@ class FPFVMSolver(BaseFPSolver):
             lo[d] = slice(0, shape[d] - 1)
             hi[d] = slice(1, shape[d])
             m_faces = 0.5 * (m_slice[tuple(lo)] + m_slice[tuple(hi)])
-            alpha_d = np.asarray(H.optimal_control(x_faces, m_faces, p_d, t)).reshape(p_d.shape)
+            alpha_d = np.asarray(H.optimal_control(x=x_faces, m=m_faces, p=p_d, t=t)).reshape(p_d.shape)
             alpha_faces.append(alpha_d)
             if self._bc_types[d] == "periodic":
                 wrap = np.take(u_slice, 0, axis=d) - np.take(u_slice, -1, axis=d)
@@ -357,7 +357,7 @@ class FPFVMSolver(BaseFPSolver):
                 # face-consistent for a general (x-dependent) control cost.
                 x_wrap = np.broadcast_to(np.asarray(nodes_d[-1] + 0.5 * dx), p_wrap.shape)
                 m_wrap = 0.5 * (np.take(m_slice, 0, axis=d) + np.take(m_slice, -1, axis=d))
-                alpha_w = np.asarray(H.optimal_control(x_wrap, m_wrap, p_wrap, t)).reshape(p_wrap.shape)
+                alpha_w = np.asarray(H.optimal_control(x=x_wrap, m=m_wrap, p=p_wrap, t=t)).reshape(p_wrap.shape)
                 alpha_wrap.append(alpha_w)
             else:
                 alpha_wrap.append(None)

@@ -91,7 +91,7 @@ class LocalCoupling(HamiltonianBase):
         super().__init__()
         self.g = g
 
-    def __call__(self, x, m, p, t=0.0):
+    def __call__(self, t, x, p, m):
         # axis=-1, matching the (n_points, dim) batch convention the solver passes. An earlier
         # draft summed over axis=0, which broadcasts to the wrong shape and makes this a DIFFERENT
         # Hamiltonian -- caught by the mutation check below, not by any assertion.
@@ -99,10 +99,10 @@ class LocalCoupling(HamiltonianBase):
         kinetic = 0.5 * np.sum(pa**2, axis=-1) if pa.ndim > 1 else 0.5 * pa**2
         return kinetic + self.g * _first_coord(x) * np.asarray(m, dtype=float)
 
-    def dp(self, x, m, p, t=0.0):
+    def dp(self, t, x, p, m):
         return np.asarray(p, dtype=float)
 
-    def dm(self, x, m, p, t=0.0):
+    def dm(self, t, x, p, m):
         return self.g * _first_coord(x) * np.ones_like(np.asarray(m, dtype=float))
 
 
@@ -227,11 +227,11 @@ class BareUnitQuadratic(HamiltonianBase):
     BEHAVIOUR.
     """
 
-    def __call__(self, x, m, p, t=0.0):
+    def __call__(self, t, x, p, m):
         pa = np.asarray(p, dtype=float)
         return 0.5 * np.sum(pa**2, axis=-1) if pa.ndim == 2 else 0.5 * float(np.sum(pa**2))
 
-    def dp(self, x, m, p, t=0.0):
+    def dp(self, t, x, p, m):
         return np.asarray(p, dtype=float)
 
 
@@ -244,11 +244,11 @@ class LambdaTwoQuadratic(HamiltonianBase):
     at 31.4% against Newton, against a 5.5% control.
     """
 
-    def __call__(self, x, m, p, t=0.0):
+    def __call__(self, t, x, p, m):
         pa = np.asarray(p, dtype=float)
         return 0.25 * np.sum(pa**2, axis=-1) if pa.ndim == 2 else 0.25 * float(np.sum(pa**2))
 
-    def dp(self, x, m, p, t=0.0):
+    def dp(self, t, x, p, m):
         return 0.5 * np.asarray(p, dtype=float)
 
 
@@ -280,7 +280,7 @@ def _dual(fn):
     construction fails in `dm`'s finite-difference default with a message naming a different method.
     """
 
-    def call(self, x, m, p, t=0.0):
+    def call(self, t, x, p, m):
         pa = np.asarray(p, dtype=float)
         xa = np.asarray(x, dtype=float)
         ma = np.asarray(m, dtype=float)
@@ -294,7 +294,7 @@ def _dual(fn):
 
 
 def _make(name, fn, *, dp=None, extra=None):
-    ns = {"__call__": _dual(fn), "dp": dp or (lambda s, x, m, p, t=0.0: np.asarray(p, dtype=float))}
+    ns = {"__call__": _dual(fn), "dp": dp or (lambda s, t, x, p, m: np.asarray(p, dtype=float))}
     if extra:
         ns.update(extra)
     return type(name, (HamiltonianBase,), ns)()
@@ -308,7 +308,7 @@ def _congestion():
     the two gates disagree about the same object. c(1) = 1 makes it invisible at m = ones.
     """
 
-    def call(self, x, m, p, t=0.0):
+    def call(self, t, x, p, m):
         pa = np.asarray(p, dtype=float)
         ma = np.asarray(m, dtype=float)
         batch = pa.ndim > 1
@@ -316,7 +316,7 @@ def _congestion():
         v = 0.5 * q / np.maximum(ma, 1e-12)
         return v if batch else float(np.asarray(v).ravel()[0])
 
-    def dp(self, x, m, p, t=0.0):
+    def dp(self, t, x, p, m):
         pa = np.asarray(p, dtype=float)
         ma = np.asarray(m, dtype=float)
         return pa / np.maximum(ma, 1e-12)[..., None] if pa.ndim > 1 else pa / float(np.asarray(ma).ravel()[0])
@@ -328,14 +328,14 @@ def _quartic():
     """H = |p|^4/2: agrees with the unit quadratic at |p| = 0 AND |p| = 1, the only two points the
     earlier probe sampled."""
 
-    def call(self, x, m, p, t=0.0):
+    def call(self, t, x, p, m):
         pa = np.asarray(p, dtype=float)
         batch = pa.ndim > 1
         q = np.sum(pa**2, axis=-1) if batch else float(np.sum(pa**2))
         v = 0.5 * q**2
         return v if batch else float(np.asarray(v).ravel()[0])
 
-    def dp(self, x, m, p, t=0.0):
+    def dp(self, t, x, p, m):
         pa = np.asarray(p, dtype=float)
         q = np.sum(pa**2, axis=-1) if pa.ndim > 1 else float(np.sum(pa**2))
         return 2.0 * (q[..., None] if pa.ndim > 1 else q) * pa
@@ -356,14 +356,14 @@ def _relativistic():
     what makes them measurable.
     """
 
-    def call(self, x, m, p, t=0.0):
+    def call(self, t, x, p, m):
         pa = np.asarray(p, dtype=float)
         batch = pa.ndim > 1
         q = np.sum(pa**2, axis=-1) if batch else float(np.sum(pa**2))
         v = np.sqrt(1.0 + q)
         return v if batch else float(np.asarray(v).ravel()[0])
 
-    def dp(self, x, m, p, t=0.0):
+    def dp(self, t, x, p, m):
         pa = np.asarray(p, dtype=float)
         q = np.sum(pa**2, axis=-1, keepdims=True) if pa.ndim > 1 else float(np.sum(pa**2))
         return pa / np.sqrt(1.0 + q)
@@ -382,14 +382,14 @@ def _time_varying_kinetic(amplitude):
     def w(tt):
         return float(tt) * (float(tt) - T / 2.0) * (float(tt) - T)
 
-    def call(self, x, m, p, t=0.0):
+    def call(self, t, x, p, m):
         pa = np.asarray(p, dtype=float)
         batch = pa.ndim > 1
         q = np.sum(pa**2, axis=-1) if batch else float(np.sum(pa**2))
         v = 0.5 * q * (1.0 + amplitude * w(t))
         return v if batch else float(np.asarray(v).ravel()[0])
 
-    def dp(self, x, m, p, t=0.0):
+    def dp(self, t, x, p, m):
         return np.asarray(p, dtype=float) * (1.0 + amplitude * w(t))
 
     return type("TimeVaryingKinetic", (HamiltonianBase,), {"__call__": call, "dp": dp})()
@@ -448,12 +448,12 @@ def _pure_bump():
     would keep passing if the ladder regressed.
     """
 
-    def call(self, x, m, p, t=0.0):
+    def call(self, t, x, p, m):
         pa = np.asarray(p, dtype=float)
         q = np.asarray(np.sum(pa**2, axis=-1) if pa.ndim > 1 else float(np.sum(pa**2)), dtype=float)
         return 0.5 * q + np.maximum(0.0, q - 9.0) ** 2 * np.maximum(0.0, 100.0 - q) ** 2 / 1.0e5
 
-    def dp(self, x, m, p, t=0.0):
+    def dp(self, t, x, p, m):
         pa = np.asarray(p, dtype=float)
         q = np.asarray(np.sum(pa**2, axis=-1) if pa.ndim > 1 else float(np.sum(pa**2)), dtype=float)
         db = (
@@ -475,12 +475,12 @@ def _nan_at_one_probe_point():
     #2072 replaces, and would have gone green-by-vacuity the moment the bound was corrected.
     """
 
-    def call(self, x, m, p, t=0.0):
+    def call(self, t, x, p, m):
         pa = np.asarray(p, dtype=float)
         q = np.asarray(np.sum(pa**2, axis=-1) if pa.ndim > 1 else float(np.sum(pa**2)), dtype=float)
         return np.where(np.abs(q - 1.0) < 1e-9, np.nan, 0.5 * q**2)
 
-    def dp(self, x, m, p, t=0.0):
+    def dp(self, t, x, p, m):
         pa = np.asarray(p, dtype=float)
         q = np.asarray(np.sum(pa**2, axis=-1) if pa.ndim > 1 else float(np.sum(pa**2)), dtype=float)
         return 2.0 * (q[..., None] if pa.ndim > 1 else float(q)) * pa
@@ -491,11 +491,11 @@ def _nan_at_one_probe_point():
 def _pure_unit_quadratic():
     """H = |p|^2/2 exactly. The false-refusal control for a denser probe ladder."""
 
-    def call(self, x, m, p, t=0.0):
+    def call(self, t, x, p, m):
         pa = np.asarray(p, dtype=float)
         return 0.5 * np.asarray(np.sum(pa**2, axis=-1) if pa.ndim > 1 else float(np.sum(pa**2)), dtype=float)
 
-    def dp(self, x, m, p, t=0.0):
+    def dp(self, t, x, p, m):
         return np.asarray(p, dtype=float)
 
     return type("PureUnitQuadratic", (HamiltonianBase,), {"__call__": call, "dp": dp})()
@@ -506,12 +506,12 @@ def _bump_on(lo_q, hi_q, amplitude):
     refusal can only come from `_ke` -- otherwise the fixture would be caught for the wrong reason
     and would keep passing if the probe regressed."""
 
-    def call(self, x, m, p, t=0.0):
+    def call(self, t, x, p, m):
         pa = np.asarray(p, dtype=float)
         q = np.asarray(np.sum(pa**2, axis=-1) if pa.ndim > 1 else float(np.sum(pa**2)), dtype=float)
         return 0.5 * q + amplitude * np.maximum(0.0, q - lo_q) ** 2 * np.maximum(0.0, hi_q - q) ** 2
 
-    def dp(self, x, m, p, t=0.0):
+    def dp(self, t, x, p, m):
         pa = np.asarray(p, dtype=float)
         q = np.asarray(np.sum(pa**2, axis=-1) if pa.ndim > 1 else float(np.sum(pa**2)), dtype=float)
         db = amplitude * (

@@ -565,7 +565,7 @@ class FPNetworkSolver(BaseFPSolver):
                     "must come from the single-source NetworkHamiltonian.optimal_control (Issue #1474). "
                     "Ensure the NetworkMFGProblem wired its Hamiltonian."
                 )
-            alpha = H_class.optimal_control(np.array([i]), m, u, t)
+            alpha = H_class.optimal_control(x=np.array([i]), m=m, p=u, t=t)
             rates[i] = {j: float(alpha[j]) for j in neighbors if alpha[j] > 0}
         return rates
 

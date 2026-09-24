@@ -76,8 +76,8 @@ class TowelBeachHamiltonian(HamiltonianBase):
         self.stall_position = stall_position
         self.crowd_aversion = crowd_aversion
 
-    def __call__(self, x: np.ndarray, m: float, p: np.ndarray, t: float = 0.0) -> float:
-        """Evaluate Hamiltonian H(x, m, p, t)."""
+    def __call__(self, t: float, x: np.ndarray, p: np.ndarray, m: float) -> float:
+        """Evaluate Hamiltonian H(t, x, p, m)."""
         # Extract scalar position
         x_scalar = float(x[0]) if hasattr(x, "__len__") else float(x)
 
@@ -94,12 +94,12 @@ class TowelBeachHamiltonian(HamiltonianBase):
 
         return kinetic + proximity + congestion
 
-    def dm(self, x: np.ndarray, m: float, p: np.ndarray, t: float = 0.0) -> float:
+    def dm(self, t: float, x: np.ndarray, p: np.ndarray, m: float) -> float:
         """Derivative of Hamiltonian with respect to density: dH/dm = -lambda / m."""
         m_reg = max(float(m), 1e-10)
         return -self.crowd_aversion / m_reg
 
-    def dp(self, x: np.ndarray, m: float, p: np.ndarray, t: float = 0.0) -> np.ndarray:
+    def dp(self, t: float, x: np.ndarray, p: np.ndarray, m: float) -> np.ndarray:
         """Derivative of Hamiltonian with respect to momentum: dH/dp = p."""
         return np.atleast_1d(p)
 

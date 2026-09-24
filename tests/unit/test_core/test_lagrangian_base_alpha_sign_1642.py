@@ -51,7 +51,7 @@ class PlainQuadraticL(LagrangianBase):
         super().__init__()
         self.lam = lam
 
-    def __call__(self, x, alpha, m, t=0.0):
+    def __call__(self, t, x, alpha, m):
         return float(0.5 * self.lam * np.sum(np.atleast_1d(alpha) ** 2))
 
 
@@ -67,7 +67,7 @@ class AsymmetricL(LagrangianBase):
 
     OFFSET = 0.3
 
-    def __call__(self, x, alpha, m, t=0.0):
+    def __call__(self, t, x, alpha, m):
         a = np.atleast_1d(alpha)
         return float(0.5 * np.sum(a**2) + self.OFFSET * np.sum(a))
 
@@ -106,7 +106,7 @@ class TestOptimalControlSign:
     def test_minimize_alpha_star_is_negative_p_over_lambda(self, p):
         """MINIMIZE: alpha* = -p/lambda. The pre-#1642 base returned +p/lambda."""
         L = PlainQuadraticL(2.0)
-        np.testing.assert_allclose(L.optimal_control(X, M, p, T), [-p[0] / 2.0], atol=1e-6)
+        np.testing.assert_allclose(L.optimal_control(x=X, m=M, p=p, t=T), [-p[0] / 2.0], atol=1e-6)
 
     @pytest.mark.parametrize("p", P_VALUES)
     def test_base_agrees_with_analytic_separable_override(self, p):
@@ -120,8 +120,8 @@ class TestOptimalControlSign:
         analytic = SeparableLagrangian(control_cost=cost)
         numerical = PlainQuadraticL(2.0)
         np.testing.assert_allclose(
-            numerical.optimal_control(X, M, p, T),
-            analytic.optimal_control(X, M, p, T),
+            numerical.optimal_control(x=X, m=M, p=p, t=T),
+            analytic.optimal_control(x=X, m=M, p=p, t=T),
             atol=1e-6,
         )
 
@@ -143,8 +143,8 @@ class TestOptimalControlSign:
         H = SeparableHamiltonian(control_cost=cost)
         dual_L = H.legendre_transform(p_bounds=(-50.0, 50.0), n_search=8001)
 
-        from_dual = dual_L.optimal_control(X, M, p, T)
-        from_hamiltonian = H.optimal_control(X, M, p, T)
+        from_dual = dual_L.optimal_control(x=X, m=M, p=p, t=T)
+        from_hamiltonian = H.optimal_control(x=X, m=M, p=p, t=T)
         np.testing.assert_allclose(from_dual, from_hamiltonian, atol=5e-3)
         assert np.sign(from_dual[0]) == np.sign(from_hamiltonian[0])
 
@@ -171,7 +171,7 @@ class TestOptimalControlSign:
         L = AsymmetricL()
         for p_val in (2.0, -1.5, 0.0):
             np.testing.assert_allclose(
-                L.optimal_control(X, M, np.array([p_val]), T),
+                L.optimal_control(x=X, m=M, p=np.array([p_val]), t=T),
                 [AsymmetricL.true_minimiser(p_val)],
                 atol=1e-6,
             )
@@ -181,7 +181,7 @@ class TestOptimalControlSign:
         L = PlainQuadraticL(2.0)
         x2 = np.array([0.5, 0.5])
         p2 = np.array([2.0, -1.0])
-        np.testing.assert_allclose(L.optimal_control(x2, M, p2, T), [-1.0, 0.5], atol=1e-5)
+        np.testing.assert_allclose(L.optimal_control(x=x2, m=M, p=p2, t=T), [-1.0, 0.5], atol=1e-5)
 
     @pytest.mark.parametrize(
         ("cost", "p", "expected"),
@@ -198,10 +198,10 @@ class TestOptimalControlSign:
         active bounds, where a sign error is easiest to hide behind a clipped value.
         """
         analytic = SeparableLagrangian(control_cost=cost)
-        np.testing.assert_allclose(analytic.optimal_control(X, M, p, T), [expected], atol=1e-9)
+        np.testing.assert_allclose(analytic.optimal_control(x=X, m=M, p=p, t=T), [expected], atol=1e-9)
 
         dual_L = SeparableHamiltonian(control_cost=cost).legendre_transform(p_bounds=(-50.0, 50.0), n_search=4001)
-        np.testing.assert_allclose(dual_L.optimal_control(X, M, p, T), [expected], atol=1e-3)
+        np.testing.assert_allclose(dual_L.optimal_control(x=X, m=M, p=p, t=T), [expected], atol=1e-3)
 
 
 class TestEvaluateHamiltonianValue:
@@ -217,7 +217,7 @@ class TestEvaluateHamiltonianValue:
         """H(p) = |p|^2/(2 lambda) >= 0. A sign revert makes it <= 0."""
         L = PlainQuadraticL(2.0)
         expected = p[0] ** 2 / (2 * 2.0)
-        np.testing.assert_allclose(L.evaluate_hamiltonian(X, M, p, T), expected, atol=1e-9)
+        np.testing.assert_allclose(L.evaluate_hamiltonian(x=X, m=M, p=p, t=T), expected, atol=1e-9)
 
     def test_asymmetric_hamiltonian_is_conjugate_at_minus_p(self):
         """The discriminating case: L*(-p), not L*(p). [RENAMED AND INVERTED 2026-09-21, #2375 ruling 5.]
@@ -232,7 +232,7 @@ class TestEvaluateHamiltonianValue:
         """
         L = AsymmetricL()
         for p_val in (2.0, -1.5, 1.0):
-            got = L.evaluate_hamiltonian(X, M, np.array([p_val]), T)
+            got = L.evaluate_hamiltonian(x=X, m=M, p=np.array([p_val]), t=T)
             np.testing.assert_allclose(got, AsymmetricL.conjugate(-p_val), atol=1e-9)
             # and is NOT the conjugate at +p (guards a p -> -p slip, now in the other direction)
             if p_val != 0.0:
@@ -252,15 +252,15 @@ class TestEvaluateHamiltonianValue:
         )
         dual_L = H.legendre_transform(p_bounds=(-50.0, 50.0), n_search=2001)
         np.testing.assert_allclose(
-            dual_L.evaluate_hamiltonian(X, M, p, T),
-            H(X, M, p, T),
+            dual_L.evaluate_hamiltonian(x=X, m=M, p=p, t=T),
+            H(x=X, m=M, p=p, t=T),
             atol=1e-6,
         )
 
     def test_nd_branch_hamiltonian_value(self):
         """d>1 branch: H([2,-1]) = (4+1)/(2*2) = 1.25."""
         L = PlainQuadraticL(2.0)
-        got = L.evaluate_hamiltonian(np.array([0.5, 0.5]), M, np.array([2.0, -1.0]), T)
+        got = L.evaluate_hamiltonian(x=np.array([0.5, 0.5]), m=M, p=np.array([2.0, -1.0]), t=T)
         np.testing.assert_allclose(got, 1.25, atol=1e-8)
 
 
@@ -284,10 +284,10 @@ class TestSitesAreIndependentlyPinned:
         L = PlainQuadraticL(2.0)
 
         for p in P_VALUES:
-            alpha_star = L.optimal_control(X, M, p, T)
+            alpha_star = L.optimal_control(x=X, m=M, p=p, t=T)
             dH_dp = -alpha_star
-            reconstructed = float(np.sum(np.atleast_1d(p) * dH_dp)) - float(L(X, dH_dp, M, T))
-            np.testing.assert_allclose(reconstructed, L.evaluate_hamiltonian(X, M, p, T), atol=1e-9)
+            reconstructed = float(np.sum(np.atleast_1d(p) * dH_dp)) - float(L(x=X, alpha=dH_dp, m=M, t=T))
+            np.testing.assert_allclose(reconstructed, L.evaluate_hamiltonian(x=X, m=M, p=p, t=T), atol=1e-9)
 
 
 class AnalyticUnboundedL(LagrangianBase):
@@ -303,10 +303,10 @@ class AnalyticUnboundedL(LagrangianBase):
     fallback box that the numerical default would otherwise silently truncate.
     """
 
-    def __call__(self, x, alpha, m, t=0.0):
+    def __call__(self, t, x, alpha, m):
         return float(0.5 * np.sum(np.atleast_1d(alpha) ** 2))
 
-    def conjugate_argmax(self, x, m, p, t=0.0):
+    def conjugate_argmax(self, t, x, p, m):
         return np.atleast_1d(p).astype(float)
 
     def control_bounds(self):
@@ -329,25 +329,25 @@ class TestAnalyticOverrideReachesBothConsumers:
     def test_evaluate_hamiltonian_uses_the_analytic_maximizer(self, p_val):
         """H(p) = 0.5 p^2 exactly, not the fallback-truncated value."""
         L = AnalyticUnboundedL()
-        got = L.evaluate_hamiltonian(X, M, np.array([p_val]), T)
+        got = L.evaluate_hamiltonian(x=X, m=M, p=np.array([p_val]), t=T)
         np.testing.assert_allclose(got, 0.5 * p_val**2, rtol=1e-12)
 
     @pytest.mark.parametrize("p_val", [5.0, 25.0, 100.0])
     def test_optimal_control_uses_the_analytic_maximizer(self, p_val):
         """alpha* = -sign * argmax = -p under MINIMIZE, exact at every magnitude."""
         L = AnalyticUnboundedL()
-        np.testing.assert_allclose(L.optimal_control(X, M, np.array([p_val]), T), [-p_val], rtol=1e-12)
+        np.testing.assert_allclose(L.optimal_control(x=X, m=M, p=np.array([p_val]), t=T), [-p_val], rtol=1e-12)
 
     def test_both_consumers_read_one_source(self):
         """Byte-identical agreement, so the two cannot re-fork onto private copies."""
         L = AnalyticUnboundedL()
         for p_val in (5.0, 25.0, 100.0):
             p = np.array([p_val])
-            dH_dp = L.conjugate_argmax(X, M, p, T)
-            from_control = -L.optimal_control(X, M, p, T)
+            dH_dp = L.conjugate_argmax(x=X, m=M, p=p, t=T)
+            from_control = -L.optimal_control(x=X, m=M, p=p, t=T)
             assert from_control.tobytes() == dH_dp.tobytes()
-            expected = float(np.sum(p * dH_dp)) - float(L(X, dH_dp, M, T))
-            assert L.evaluate_hamiltonian(X, M, p, T) == expected
+            expected = float(np.sum(p * dH_dp)) - float(L(x=X, alpha=dH_dp, m=M, t=T))
+            assert L.evaluate_hamiltonian(x=X, m=M, p=p, t=T) == expected
 
 
 class TestFallbackBoxTruncationIsLoud:
@@ -361,24 +361,24 @@ class TestFallbackBoxTruncationIsLoud:
     def test_conjugate_argmax_raises_when_the_fallback_box_binds(self):
         L = PlainQuadraticL(0.01)
         with pytest.raises(ValueError, match=r"control_bounds\(\)"):
-            L.conjugate_argmax(X, M, np.array([100.0]), T)
+            L.conjugate_argmax(x=X, m=M, p=np.array([100.0]), t=T)
 
     def test_evaluate_hamiltonian_propagates_the_raise(self):
         """The consumer must not swallow it -- this is the silent-81% path."""
         L = PlainQuadraticL(0.01)
         with pytest.raises(ValueError, match=r"fallback box"):
-            L.evaluate_hamiltonian(X, M, np.array([100.0]), T)
+            L.evaluate_hamiltonian(x=X, m=M, p=np.array([100.0]), t=T)
 
     def test_optimal_control_propagates_the_raise(self):
         L = PlainQuadraticL(0.01)
         with pytest.raises(ValueError, match=r"fallback box"):
-            L.optimal_control(X, M, np.array([100.0]), T)
+            L.optimal_control(x=X, m=M, p=np.array([100.0]), t=T)
 
     def test_nd_branch_also_raises(self):
         """The L-BFGS-B branch is a separate code path from the 1D scalar one."""
         L = PlainQuadraticL(0.01)
         with pytest.raises(ValueError, match=r"fallback box"):
-            L.conjugate_argmax(np.array([0.5, 0.5]), M, np.array([100.0, -100.0]), T)
+            L.conjugate_argmax(x=np.array([0.5, 0.5]), m=M, p=np.array([100.0, -100.0]), t=T)
 
     def test_nd_partial_truncation_raises(self):
         """One component truncated, one interior -- the case that discriminates any from all.
@@ -392,7 +392,7 @@ class TestFallbackBoxTruncationIsLoud:
         """
         L = PlainQuadraticL(0.01)
         with pytest.raises(ValueError, match=r"fallback box"):
-            L.conjugate_argmax(np.array([0.5, 0.5]), M, np.array([100.0, 0.01]), T)
+            L.conjugate_argmax(x=np.array([0.5, 0.5]), m=M, p=np.array([100.0, 0.01]), t=T)
 
     def test_proximal_raises_on_the_same_hazard(self):
         """Same fallback box, same truncation, same owner (_resolve_search_bounds)."""
@@ -409,7 +409,7 @@ class TestFallbackBoxTruncationIsLoud:
                 return (-1.0, 1.0)
 
         L = BoundedL(2.0)
-        argmax = L.conjugate_argmax(X, M, np.array([100.0]), T)
+        argmax = L.conjugate_argmax(x=X, m=M, p=np.array([100.0]), t=T)
         np.testing.assert_allclose(argmax, [1.0], atol=1e-5)
         np.testing.assert_allclose(L.proximal(1.0, np.array([50.0])), [1.0], atol=1e-5)
 
@@ -429,15 +429,15 @@ class TestFallbackBoxTruncationIsLoud:
                 return (-10.0, 10.0)
 
         L = DeclaredWideL(0.01)
-        np.testing.assert_allclose(L.conjugate_argmax(X, M, np.array([100.0]), T), [10.0], atol=1e-4)
+        np.testing.assert_allclose(L.conjugate_argmax(x=X, m=M, p=np.array([100.0]), t=T), [10.0], atol=1e-4)
         np.testing.assert_allclose(L.proximal(1.0, np.array([50.0])), [10.0], atol=1e-4)
 
         # Same numbers, no declaration -> the box is a stand-in -> must raise.
         undeclared = PlainQuadraticL(0.01)
         with pytest.raises(ValueError, match=r"control_bounds\(\)"):
-            undeclared.conjugate_argmax(X, M, np.array([100.0]), T)
+            undeclared.conjugate_argmax(x=X, m=M, p=np.array([100.0]), t=T)
 
     def test_interior_maximizer_is_unaffected(self):
         """The guard must not fire on the ordinary in-box case."""
         L = PlainQuadraticL(2.0)
-        np.testing.assert_allclose(L.conjugate_argmax(X, M, np.array([2.0]), T), [1.0], atol=1e-6)
+        np.testing.assert_allclose(L.conjugate_argmax(x=X, m=M, p=np.array([2.0]), t=T), [1.0], atol=1e-6)

@@ -72,7 +72,7 @@ ODD_COEFF = AsymmetricL.OFFSET  # one owner; see the import note below
 class _EvenLagrangian(LagrangianBase):
     """`L(a) = 0.5a²`. The control: every convention agrees on it, so a disagreement is the grid."""
 
-    def __call__(self, x, alpha, m, t=0.0):
+    def __call__(self, t, x, alpha, m):
         a = np.atleast_1d(np.asarray(alpha, dtype=float))
         return float(0.5 * np.sum(a**2))
 
@@ -96,8 +96,8 @@ def test_the_even_lagrangian_pins_the_grid_before_anything_else_is_believed():
     """
     even = _EvenLagrangian()
     p = np.array([2.0])
-    assert float(np.ravel(_dual(even).optimal_control(X, M, p))[0]) == pytest.approx(-2.0, abs=5e-5)
-    assert float(np.ravel(even.optimal_control(X, M, p))[0]) == pytest.approx(-2.0, abs=5e-5)
+    assert float(np.ravel(_dual(even).optimal_control(x=X, m=M, p=p, t=0.0))[0]) == pytest.approx(-2.0, abs=5e-5)
+    assert float(np.ravel(even.optimal_control(x=X, m=M, p=p, t=0.0))[0]) == pytest.approx(-2.0, abs=5e-5)
 
 
 @pytest.mark.parametrize(
@@ -118,8 +118,12 @@ def test_a_non_even_lagrangian_gives_the_control_that_actually_minimises_cost(p,
     assert expected_alpha_star == pytest.approx(-(p + ODD_COEFF), abs=1e-12), "expectation is analytic"
     non_even = AsymmetricL()
     pv = np.array([p])
-    assert float(np.ravel(_dual(non_even).optimal_control(X, M, pv))[0]) == pytest.approx(expected_alpha_star, abs=5e-4)
-    assert float(np.ravel(non_even.optimal_control(X, M, pv))[0]) == pytest.approx(expected_alpha_star, abs=5e-4)
+    assert float(np.ravel(_dual(non_even).optimal_control(x=X, m=M, p=pv, t=0.0))[0]) == pytest.approx(
+        expected_alpha_star, abs=5e-4
+    )
+    assert float(np.ravel(non_even.optimal_control(x=X, m=M, p=pv, t=0.0))[0]) == pytest.approx(
+        expected_alpha_star, abs=5e-4
+    )
 
 
 def test_the_hamiltonian_value_is_the_conjugate_at_minus_p():
@@ -131,7 +135,7 @@ def test_the_hamiltonian_value_is_the_conjugate_at_minus_p():
     """
     h = _dual(AsymmetricL())
     for p in (2.0, -2.0, 0.6):
-        assert float(h(X, M, np.array([p]))) == pytest.approx(0.5 * (p + ODD_COEFF) ** 2, abs=5e-4)
+        assert float(h(x=X, m=M, p=np.array([p]), t=0.0)) == pytest.approx(0.5 * (p + ODD_COEFF) ** 2, abs=5e-4)
 
 
 def test_the_inverse_transforms_gradient_carries_the_same_sign():
@@ -155,7 +159,7 @@ def test_the_inverse_transforms_gradient_carries_the_same_sign():
         # 0.02 grid step resolves WHICH sign without resolving the value tightly. Deliberately
         # coarse: a nested double search at 1e-4 cost 42s for no extra discrimination.
         assert abs(2 * expected) > 10 * 5e-2, "the two signs must be far apart relative to tolerance"
-        got = float(np.ravel(inverse.d_alpha(X, np.array([alpha]), M))[0])
+        got = float(np.ravel(inverse.d_alpha(x=X, alpha=np.array([alpha]), m=M, t=0.0))[0])
         assert got == pytest.approx(expected, abs=5e-2)
 
 
@@ -175,10 +179,10 @@ def test_the_legendre_round_trip_recovers_L_and_not_its_mirror():
     h = DualHamiltonian(lagrangian, alpha_bounds=(-6.0, 6.0), n_search=1201)
     round_trip = DualLagrangian(h, p_bounds=(-6.0, 6.0), n_search=241)
     for alpha in (1.0, -1.0, 0.5):
-        direct = lagrangian(X, np.array([alpha]), M)
-        mirror = lagrangian(X, np.array([-alpha]), M)
+        direct = lagrangian(x=X, alpha=np.array([alpha]), m=M, t=0.0)
+        mirror = lagrangian(x=X, alpha=np.array([-alpha]), m=M, t=0.0)
         assert abs(direct - mirror) > 0.2, "the probe must separate L(a) from L(-a)"
-        assert float(round_trip(X, np.array([alpha]), M)) == pytest.approx(direct, abs=2e-2)
+        assert float(round_trip(x=X, alpha=np.array([alpha]), m=M, t=0.0)) == pytest.approx(direct, abs=2e-2)
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -205,10 +209,10 @@ class _AnalyticH2D(HamiltonianBase):
     assertion does not have to trust a nested numerical `DualHamiltonian` underneath it.
     """
 
-    def __call__(self, x, m, p, t=0.0):
+    def __call__(self, t, x, p, m):
         return float(0.5 * np.sum((np.atleast_1d(p) + ODD_COEFF) ** 2))
 
-    def dp(self, x, m, p, t=0.0):
+    def dp(self, t, x, p, m):
         return np.atleast_1d(p) + ODD_COEFF
 
 
@@ -242,9 +246,9 @@ def test_the_nd_scipy_branch_carries_the_pairing(p):
     """
     pv = np.array(p, dtype=float)
     dh = DualHamiltonian(AsymmetricL(), alpha_bounds=BOX_2D, n_search=4001)
-    assert float(dh(X2, M, pv)) == pytest.approx(0.5 * np.sum((pv + ODD_COEFF) ** 2), abs=1e-4)
-    np.testing.assert_allclose(np.ravel(dh.dp(X2, M, pv)), pv + ODD_COEFF, atol=1e-4)
-    np.testing.assert_allclose(np.ravel(dh.optimal_control(X2, M, pv)), -(pv + ODD_COEFF), atol=1e-4)
+    assert float(dh(x=X2, m=M, p=pv, t=0.0)) == pytest.approx(0.5 * np.sum((pv + ODD_COEFF) ** 2), abs=1e-4)
+    np.testing.assert_allclose(np.ravel(dh.dp(x=X2, m=M, p=pv, t=0.0)), pv + ODD_COEFF, atol=1e-4)
+    np.testing.assert_allclose(np.ravel(dh.optimal_control(x=X2, m=M, p=pv, t=0.0)), -(pv + ODD_COEFF), atol=1e-4)
 
 
 @pytest.mark.parametrize("p", P_2D)
@@ -261,8 +265,8 @@ def test_the_nd_importerror_fallback_carries_the_pairing(p):
     best = np.array([grid[int(np.argmax(-pi * grid - (0.5 * grid**2 + ODD_COEFF * grid)))] for pi in pv])
     expected_h = float(-np.dot(pv, best) - (0.5 * np.sum(best**2) + ODD_COEFF * np.sum(best)))
     with _no_scipy_optimize():
-        assert float(dh(X2, M, pv)) == pytest.approx(expected_h, abs=1e-9)
-        np.testing.assert_allclose(np.ravel(dh.dp(X2, M, pv)), -best, atol=1e-9)
+        assert float(dh(x=X2, m=M, p=pv, t=0.0)) == pytest.approx(expected_h, abs=1e-9)
+        np.testing.assert_allclose(np.ravel(dh.dp(x=X2, m=M, p=pv, t=0.0)), -best, atol=1e-9)
 
 
 @pytest.mark.parametrize("alpha", [(1.0, -1.0), (0.5, 0.5), (-2.0, 1.5)])
@@ -275,8 +279,8 @@ def test_the_inverse_nd_scipy_branch_carries_the_pairing(alpha):
     av = np.array(alpha, dtype=float)
     dl = DualLagrangian(_AnalyticH2D(), p_bounds=BOX_2D, n_search=4001)
     expected = float(0.5 * np.sum(av**2) + ODD_COEFF * np.sum(av))
-    assert float(dl(X2, av, M)) == pytest.approx(expected, abs=1e-4)
-    np.testing.assert_allclose(np.ravel(dl.d_alpha(X2, av, M)), av + ODD_COEFF, atol=1e-4)
+    assert float(dl(x=X2, alpha=av, m=M, t=0.0)) == pytest.approx(expected, abs=1e-4)
+    np.testing.assert_allclose(np.ravel(dl.d_alpha(x=X2, alpha=av, m=M, t=0.0)), av + ODD_COEFF, atol=1e-4)
 
 
 @pytest.mark.parametrize("alpha", [(1.0, -1.0), (0.5, 0.5)])
@@ -288,8 +292,8 @@ def test_the_inverse_nd_importerror_fallback_carries_the_pairing(alpha):
     best = np.array([grid[int(np.argmax(-grid * ai - 0.5 * (grid + ODD_COEFF) ** 2))] for ai in av])
     expected_l = float(-np.dot(best, av) - 0.5 * np.sum((best + ODD_COEFF) ** 2))
     with _no_scipy_optimize():
-        assert float(dl(X2, av, M)) == pytest.approx(expected_l, abs=1e-9)
-        np.testing.assert_allclose(np.ravel(dl.d_alpha(X2, av, M)), -best, atol=1e-9)
+        assert float(dl(x=X2, alpha=av, m=M, t=0.0)) == pytest.approx(expected_l, abs=1e-9)
+        np.testing.assert_allclose(np.ravel(dl.d_alpha(x=X2, alpha=av, m=M, t=0.0)), -best, atol=1e-9)
 
 
 class _NonConvexL(LagrangianBase):
@@ -302,7 +306,7 @@ class _NonConvexL(LagrangianBase):
     reference a per-axis 1-D scan rather than a product grid.
     """
 
-    def __call__(self, x, alpha, m, t=0.0):
+    def __call__(self, t, x, alpha, m):
         a = np.atleast_1d(np.asarray(alpha, dtype=float))
         return float(0.5 * np.sum(a**2) + 2.0 * np.sum(np.cos(3.0 * a)) + ODD_COEFF * np.sum(a))
 
@@ -349,7 +353,7 @@ def test_the_nd_initial_guess_points_at_the_new_maximiser(p):
     grid = np.linspace(box[0], box[1], 4001)
     per_axis = [np.max(-pi * grid - (0.5 * grid**2 + 2.0 * np.cos(3.0 * grid) + ODD_COEFF * grid)) for pi in pv]
     global_sup = float(np.sum(per_axis))
-    got = float(dh(X2, M, pv))
+    got = float(dh(x=X2, m=M, p=pv, t=0.0))
     # Within 1e-3 of the global sup. The broken start misses by 2.78 to 13.04, so the margin is
     # three to four orders of magnitude -- not a threshold tuned to pass.
     assert got == pytest.approx(global_sup, abs=1e-3), (
@@ -368,19 +372,21 @@ def test_the_nd_initial_guess_points_at_the_new_maximiser(p):
     # An earlier 1e-3 was tighter than the reference's own resolution and failed at 1.1e-3. The
     # broken start lands in a different basin entirely, ~2 away, so this still discriminates 700x.
     argmax_atol = 3e-3
-    np.testing.assert_allclose(np.ravel(dh.dp(X2, M, pv)), -per_axis_argmax, atol=argmax_atol)
-    np.testing.assert_allclose(np.ravel(dh.optimal_control(X2, M, pv)), per_axis_argmax, atol=argmax_atol)
-    np.testing.assert_allclose(np.ravel(_NonConvexL().optimal_control(X2, M, pv)), per_axis_argmax, atol=argmax_atol)
+    np.testing.assert_allclose(np.ravel(dh.dp(x=X2, m=M, p=pv, t=0.0)), -per_axis_argmax, atol=argmax_atol)
+    np.testing.assert_allclose(np.ravel(dh.optimal_control(x=X2, m=M, p=pv, t=0.0)), per_axis_argmax, atol=argmax_atol)
+    np.testing.assert_allclose(
+        np.ravel(_NonConvexL().optimal_control(x=X2, m=M, p=pv, t=0.0)), per_axis_argmax, atol=argmax_atol
+    )
 
 
 class _NonConvexH(HamiltonianBase):
     """`H(p) = 0.5|p|² + 2Σcos(3p_i)` — non-convex and separable, a source for the inverse."""
 
-    def __call__(self, x, m, p, t=0.0):
+    def __call__(self, t, x, p, m):
         q = np.atleast_1d(np.asarray(p, dtype=float))
         return float(0.5 * np.sum(q**2) + 2.0 * np.sum(np.cos(3.0 * q)))
 
-    def dp(self, x, m, p, t=0.0):
+    def dp(self, t, x, p, m):
         q = np.atleast_1d(np.asarray(p, dtype=float))
         return q - 6.0 * np.sin(3.0 * q)
 
@@ -399,8 +405,8 @@ def test_the_inverse_nd_initial_guess_points_at_the_new_maximiser(alpha):
     obj = [-grid * ai - (0.5 * grid**2 + 2.0 * np.cos(3.0 * grid)) for ai in av]
     global_sup = float(sum(float(np.max(o)) for o in obj))
     per_axis_argmax = np.array([grid[int(np.argmax(o))] for o in obj])
-    assert float(dl(X2, av, M)) == pytest.approx(global_sup, abs=1e-3)
-    np.testing.assert_allclose(np.ravel(dl.d_alpha(X2, av, M)), -per_axis_argmax, atol=3e-3)
+    assert float(dl(x=X2, alpha=av, m=M, t=0.0)) == pytest.approx(global_sup, abs=1e-3)
+    np.testing.assert_allclose(np.ravel(dl.d_alpha(x=X2, alpha=av, m=M, t=0.0)), -per_axis_argmax, atol=3e-3)
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -432,7 +438,7 @@ class _Convex2D(LagrangianBase):
     """Any L works: `x0` is chosen before L is ever evaluated. Convex on purpose — the mechanism is
     observable exactly where the consequence is not."""
 
-    def __call__(self, x, alpha, m, t=0.0):
+    def __call__(self, t, x, alpha, m):
         a = np.atleast_1d(np.asarray(alpha, dtype=float))
         return float(0.5 * np.sum(a**2) + ODD_COEFF * np.sum(a))
 
@@ -467,16 +473,16 @@ def test_every_nd_search_is_seeded_at_minus_p(seeds, p):
     pv = np.array(p, dtype=float)
     expected = np.clip(-pv, *SEED_BOX)
 
-    _Convex2D().conjugate_argmax(X2, M, pv)
-    DualHamiltonian(_Convex2D(), alpha_bounds=SEED_BOX, n_search=101)(X2, M, pv)
-    DualHamiltonian(_Convex2D(), alpha_bounds=SEED_BOX, n_search=101).dp(X2, M, pv)
+    _Convex2D().conjugate_argmax(x=X2, m=M, p=pv, t=0.0)
+    DualHamiltonian(_Convex2D(), alpha_bounds=SEED_BOX, n_search=101)(x=X2, m=M, p=pv, t=0.0)
+    DualHamiltonian(_Convex2D(), alpha_bounds=SEED_BOX, n_search=101).dp(x=X2, m=M, p=pv, t=0.0)
     assert len(seeds) == 3, f"expected one seed per search, got {len(seeds)}"
     for got in seeds:
         np.testing.assert_array_equal(got, expected)
 
     seeds.clear()
-    DualLagrangian(_AnalyticH2D(), p_bounds=SEED_BOX, n_search=101)(X2, pv, M)
-    DualLagrangian(_AnalyticH2D(), p_bounds=SEED_BOX, n_search=101).d_alpha(X2, pv, M)
+    DualLagrangian(_AnalyticH2D(), p_bounds=SEED_BOX, n_search=101)(x=X2, alpha=pv, m=M, t=0.0)
+    DualLagrangian(_AnalyticH2D(), p_bounds=SEED_BOX, n_search=101).d_alpha(x=X2, alpha=pv, m=M, t=0.0)
     assert len(seeds) == 2
     for got in seeds:
         np.testing.assert_array_equal(got, expected)
@@ -489,7 +495,7 @@ def test_the_seed_intercept_can_fail(seeds):
     clip binds — that the recorded value is the clipped one rather than raw `-p`.
     """
     pv = np.array([9.0, -7.5])
-    _Convex2D().conjugate_argmax(X2, M, pv)
+    _Convex2D().conjugate_argmax(x=X2, m=M, p=pv, t=0.0)
     assert seeds, "the intercept never fired -- it is not on the import path the library uses"
     assert not np.allclose(seeds[0], np.clip(pv, *SEED_BOX)), "seeded at +p, the pre-fix value"
     np.testing.assert_array_equal(seeds[0], np.clip(-pv, *SEED_BOX))

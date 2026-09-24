@@ -184,10 +184,10 @@ def test_fp_velocity_consumes_cross_density_1071():
             self.population_index = population_index
             self._K = k_pops
 
-        def __call__(self, x, m, p, t=0.0):
+        def __call__(self, t, x, p, m):
             return 0.5 * np.asarray(p, float) ** 2
 
-        def optimal_control(self, x, m, p, t=0.0):
+        def optimal_control(self, t, x, p, m):
             m = np.asarray(m, float)
             p = np.asarray(p, float)
             other = 0.0

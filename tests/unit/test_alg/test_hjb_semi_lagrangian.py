@@ -843,16 +843,16 @@ class TestStochasticCharacteristicSL:
             def __init__(self):
                 super().__init__()
 
-            def __call__(self, x, m, p, t=0.0):
+            def __call__(self, t, x, p, m):
                 p_arr = np.atleast_1d(np.asarray(p, dtype=float))
                 if p_arr.ndim > 0:
                     return np.zeros(p_arr.shape[:-1])
                 return 0.0
 
-            def gradient_p(self, x, m, p, t=0.0):
+            def gradient_p(self, t, x, p, m):
                 return np.zeros_like(np.asarray(p, dtype=float))
 
-            def density_derivative(self, x, m, p, t=0.0):
+            def density_derivative(self, t, x, p, m):
                 return 0.0
 
         geometry = TensorProductGrid(
@@ -907,16 +907,16 @@ class TestStochasticCharacteristicSL:
             def __init__(self):
                 super().__init__()
 
-            def __call__(self, x, m, p, t=0.0):
+            def __call__(self, t, x, p, m):
                 p_arr = np.atleast_1d(np.asarray(p, dtype=float))
                 if p_arr.ndim > 0:
                     return np.zeros(p_arr.shape[:-1])
                 return 0.0
 
-            def gradient_p(self, x, m, p, t=0.0):
+            def gradient_p(self, t, x, p, m):
                 return np.zeros_like(np.asarray(p, dtype=float))
 
-            def density_derivative(self, x, m, p, t=0.0):
+            def density_derivative(self, t, x, p, m):
                 return 0.0
 
         sigma_test = 0.3
@@ -1086,16 +1086,16 @@ class TestStochasticCharacteristicSL_nD:  # noqa: N801 — SL_nD = semi-Lagrangi
             def __init__(self):
                 super().__init__()
 
-            def __call__(self, x, m, p, t=0.0):
+            def __call__(self, t, x, p, m):
                 p_arr = np.atleast_1d(np.asarray(p, dtype=float))
                 if p_arr.ndim > 0:
                     return np.zeros(p_arr.shape[:-1])
                 return 0.0
 
-            def gradient_p(self, x, m, p, t=0.0):
+            def gradient_p(self, t, x, p, m):
                 return np.zeros_like(np.asarray(p, dtype=float))
 
-            def density_derivative(self, x, m, p, t=0.0):
+            def density_derivative(self, t, x, p, m):
                 return 0.0
 
         bc = no_flux_bc(dimension=2)
@@ -1342,7 +1342,7 @@ class TestSLHamiltonianSingleSource:
             m = float(rng.uniform(1e-3, 5.0))
             t_idx = int(rng.integers(0, problem.Nt + 1))
             t_value = t_idx * problem.T / problem.Nt
-            inline = float(H_class(np.atleast_1d(x), m, np.atleast_1d(p), t_value))
+            inline = float(H_class(x=np.atleast_1d(x), m=m, p=np.atleast_1d(p), t=t_value))
             routed = solver._evaluate_hamiltonian(x, p, m, t_idx)
             assert routed.hex() == inline.hex(), (
                 f"x={x} p={p} m={m} t_idx={t_idx}: routed {routed!r} != inline {inline!r}"

@@ -96,7 +96,7 @@ def test_hamiltonian_returning_nan_raises():
         def dimension(self):
             return 1
 
-        def __call__(self, x, m, p, t=0.0):
+        def __call__(self, t, x, p, m):
             return float("nan")
 
     H = NaNHamiltonian()
@@ -188,7 +188,7 @@ def test_hamiltonian_consistency_gates_on_dp_witness(dimension):
     wrong_index = dimension - 1
 
     def wrong_dp(x, m, p, t=0.0):
-        claimed = np.atleast_1d(H.dp(x, m, p, t)).astype(float).copy()
+        claimed = np.atleast_1d(H.dp(x=x, m=m, p=p, t=t)).astype(float).copy()
         claimed[wrong_index] = 99.0
         return claimed
 
@@ -550,7 +550,7 @@ def test_mfg_problem_nan_hamiltonian_rejected():
         def dimension(self):
             return 1
 
-        def __call__(self, x, m, p, t=0.0):
+        def __call__(self, t, x, p, m):
             return float("nan")
 
     with pytest.raises(ValidationError, match="NaN"):
@@ -572,7 +572,7 @@ def test_mfg_problem_rejects_hamiltonian_with_wrong_dm():
     """
 
     class WrongDmHamiltonian(SeparableHamiltonian):
-        def dm(self, x, m, p, t=0.0):
+        def dm(self, t, x, p, m):
             return 42.0
 
     with pytest.raises(ValidationError, match="dH_dm"):

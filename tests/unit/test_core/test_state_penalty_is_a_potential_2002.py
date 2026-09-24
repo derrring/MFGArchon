@@ -122,7 +122,7 @@ def test_a_hamiltonian_that_cannot_carry_a_potential_refuses():
     """Fail loud rather than skip. A soft wall quietly not applied is the whole of #2002."""
 
     class _NoPotential:
-        def __call__(self, x, m, p, t):  # pragma: no cover - never invoked
+        def __call__(self, t, x, p, m):  # pragma: no cover - never invoked
             return 0.0
 
     problem = _problem()

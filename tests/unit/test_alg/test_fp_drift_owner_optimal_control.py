@@ -1,7 +1,7 @@
 """Issue #1528 PR-1 -- owner byte-identity pinning test for the FP advective drift.
 
 Single-owner refactor: the FP advective drift alpha* must flow through ONE owner primitive,
-``H.optimal_control(x, m, p, t)`` on the problem's ``hamiltonian_class`` -- NOT the hand-coded
+``H.optimal_control(t, x, p, m)`` on the problem's ``hamiltonian_class`` -- NOT the hand-coded
 ``-fp_drift_coefficient(problem) * grad(U)`` fork (the ``c = 1/lambda`` scalar the PR eliminates).
 
 The owner DIVIDES: ``QuadraticControlCost.optimal_control`` returns ``-sign * p / lambda``
@@ -73,7 +73,7 @@ def test_owner_byte_identical_to_divide_form_dyadic(lam):
     the owner cannot perturb a single bit of the converged density.
     """
     H = _owner(lam)
-    alpha = H.optimal_control(_X, _M, _P, _T)
+    alpha = H.optimal_control(x=_X, m=_M, p=_P, t=_T)
     expected = -_P / lam
     assert alpha.shape == _P.shape, "owner must return alpha* with the SAME shape as p"
     assert np.array_equal(alpha, expected), (
@@ -91,7 +91,7 @@ def test_owner_within_one_ulp_of_divide_form_nondyadic(lam):
     up to this bound and no further). 1 ULP ~ 4.4e-16 is ~12 orders below any O(h^2) scale.
     """
     H = _owner(lam)
-    alpha = H.optimal_control(_X, _M, _P, _T)
+    alpha = H.optimal_control(x=_X, m=_M, p=_P, t=_T)
     expected = -_P / lam
     diff = np.abs(alpha - expected)
     one_ulp = np.spacing(np.abs(expected))
@@ -110,7 +110,7 @@ def test_legacy_multiply_form_byte_identical_dyadic(lam):
     hand-write and the owner's divide form are the SAME bits when 1/lambda is exact.
     """
     H = _owner(lam)
-    alpha = H.optimal_control(_X, _M, _P, _T)
+    alpha = H.optimal_control(x=_X, m=_M, p=_P, t=_T)
     legacy_multiply = -(1.0 / lam) * _P
     assert np.array_equal(alpha, legacy_multiply), (
         f"legacy multiply form and owner divide form must be byte-identical at dyadic lambda={lam}"
@@ -128,7 +128,7 @@ def test_legacy_multiply_form_separates_at_most_one_ulp_nondyadic(lam):
     safety envelope the PR relies on for non-paper lambda.
     """
     H = _owner(lam)
-    alpha = H.optimal_control(_X, _M, _P, _T)  # divide form, -p/lambda
+    alpha = H.optimal_control(x=_X, m=_M, p=_P, t=_T)  # divide form, -p/lambda
     legacy_multiply = -(1.0 / lam) * _P  # multiply form, -(fl(1/lambda))*p
     diff = np.abs(alpha - legacy_multiply)
     one_ulp = np.spacing(np.abs(alpha))
@@ -156,7 +156,7 @@ def test_g017_wrong_coefficient_is_rejected(lam):
     if np.isclose(1.0 / lam, wrong_coeff):
         pytest.skip(f"at lambda={lam}, 1/lambda == {wrong_coeff}; the wrong coefficient coincides")
     H = _owner(lam)
-    alpha = H.optimal_control(_X, _M, _P, _T)
+    alpha = H.optimal_control(x=_X, m=_M, p=_P, t=_T)
     g017_form = -wrong_coeff * _P
     assert not np.array_equal(alpha, g017_form), (
         f"owner coincided with the G-017 wrong-coefficient form (0.5*p) at lambda={lam}; "

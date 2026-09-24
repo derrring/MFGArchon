@@ -82,8 +82,8 @@ def test_granular_primitives_byte_identical_to_inline():
     H = SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0))
     x, m, p = _batch()
     st = HEvalState(x=x, p=p, m=m, t=0.3)
-    np.testing.assert_array_equal(H.evaluate_H(st), np.asarray(H(x, m, p, t=0.3), dtype=float))
-    np.testing.assert_array_equal(H.evaluate_dp(st), np.asarray(H.dp(x, m, p, t=0.3), dtype=float))
+    np.testing.assert_array_equal(H.evaluate_H(st), np.asarray(H(x=x, m=m, p=p, t=0.3), dtype=float))
+    np.testing.assert_array_equal(H.evaluate_dp(st), np.asarray(H.dp(x=x, m=m, p=p, t=0.3), dtype=float))
     assert H.evaluate_H(st).dtype == np.float64
     assert H.evaluate_dp(st).dtype == np.float64
 
@@ -179,7 +179,7 @@ def test_residual_byte_identical_to_inline_assembly():
     lap = _compute_laplacian_1d(u_cur, dx, bc=bc, domain_bounds=None, time=t)
     grad = _compute_gradient_array_1d(u_cur, dx, bc=bc, upwind=True, time=t)
     x_grid = problem.geometry.get_spatial_grid()
-    h_inline = np.asarray(H(x_grid, np.asarray(m, float), grad.reshape(-1, 1), t=t), dtype=float).ravel()
+    h_inline = np.asarray(H(x=x_grid, m=np.asarray(m, float), p=grad.reshape(-1, 1), t=t), dtype=float).ravel()
     ref = np.zeros(nx)
     ref += (u_cur - u_np1) / dt
     ref += -diffusion_from_volatility(sigma, kind="field") * lap
@@ -218,7 +218,7 @@ def test_jacobian_byte_identical_to_inline_assembly():
     # Reference: reproduce the diagonal-Jacobian assembly with the inline dp form.
     grad = _compute_gradient_array_1d(u_cur, dx, bc=bc, upwind=True, time=t)
     x_grid = problem.geometry.get_spatial_grid()
-    dH_dp = np.asarray(H.dp(x_grid, np.asarray(m, float), grad.reshape(-1, 1), t=t), dtype=float).ravel()
+    dH_dp = np.asarray(H.dp(x=x_grid, m=np.asarray(m, float), p=grad.reshape(-1, 1), t=t), dtype=float).ravel()
 
     J_D = np.zeros(nx)
     J_L = np.zeros(nx)
@@ -272,7 +272,7 @@ class _NonLQFDHamiltonian(HamiltonianBase):
     the cubic + FD-``dp`` form is what makes the invocation gate meaningful.
     """
 
-    def __call__(self, x, m, p, t=0.0):
+    def __call__(self, t, x, p, m):
         p = np.asarray(p, dtype=float)
         x = np.asarray(x, dtype=float)
         m = np.asarray(m, dtype=float)
