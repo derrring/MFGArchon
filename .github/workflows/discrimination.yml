@@ -2,7 +2,8 @@ name: Weekly Test-Discrimination Sweep
 
 # Measures which tests notice a change to a convention the library single-sources,
 # by mutating each one and running the suite. Weekly, not nightly: it is one full suite run per
-# mutation plus a baseline -- `1 + len(MUTATIONS)` runs, not a fixed number (#2349) -- and the
+# mutation plus a baseline per shard -- `N + len(MUTATIONS)` runs over N shards, not a fixed number
+# (#2349, #2389) -- and the
 # quantity it tracks moves on the timescale of a campaign, not a commit.
 #
 # It answers what #1715 asked and #1701 generalises. Measured 2026-09-10 at 2c923694 over
@@ -29,22 +30,23 @@ on:
 permissions:
   contents: read
   issues: write
+  actions: read  # notify-on-failure reads each shard's conclusion from this run's job list
 
 env:
   PYTHON_VERSION: "3.12"
 
 jobs:
   discrimination:
-    name: mutation sweep (shard ${{ matrix.shard }})
+    name: mutation sweep (shard ${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
-    # Sharded because one job no longer fits (#2389). Run 34828814112 (2026-09-14) took 294 min
-    # against a 300 cap, and run 35584381059 a week later was cancelled at it. That 294 against the
-    # 136.1 min the matrix derivation gave locally at 76f2d9e8 four days later is ~2.2x, a rough
-    # ratio across two trees. `--shard K/N` takes every N-th mutation starting at K, which
-    # partitions the list for any N, so a mutation added later needs no assignment. The matrix now
-    # records 165.2 min locally (measured at 27d45c19): at N = 5 its largest slice is 2225 s, and
-    # each shard also pays the 332 s baseline, so ~94 min on a runner at 2.2x against 180. Change N
-    # by editing the list; `strategy.job-total` carries it to `--shard`.
+    # Sharded because one job no longer fits (#2389): run 34828814112 (2026-09-14) took 294 min
+    # against a 300 cap, and run 35584381059 a week later was cancelled at it. That second run's log
+    # times 21 mutations on the tree whose committed matrix was measured at 27d45c19: 2.37x the
+    # matrix's local seconds (2.22-2.44 per mutation), and 2.40x for the baseline. `--shard K/N`
+    # takes every N-th mutation starting at K, which partitions the list for any N, so a mutation
+    # added later needs no assignment. At N = 5 that matrix's largest slice is 2225 s and each shard
+    # also pays the 332 s baseline: ~102 min on a runner against 180. Change N by editing the list;
+    # `strategy.job-total` carries it to `--shard` and to the job name.
     strategy:
       fail-fast: false
       matrix:
@@ -114,19 +116,34 @@ jobs:
     steps:
     - uses: actions/github-script@v9
       env:
-        # A job that hits its time limit reports `cancelled`, not `failure` (run 35584381059), and the
-        # two need different text: #2389 was a timeout reported as "discrimination dropped, a
-        # mutation stopped applying, or the baseline is stale".
+        # Only the fallback. A job that hits its time limit reports `cancelled`, not `failure` (run
+        # 35584381059), and the two need different text: #2389 was a timeout reported as
+        # "discrimination dropped, a mutation stopped applying, or the baseline is stale". How
+        # `needs.<job>.result` aggregates a matrix with both a failed and a cancelled leg is not
+        # documented, so the script reads each shard's own conclusion and uses this only if it cannot.
         RESULT: ${{ needs.discrimination.result }}
       with:
         script: |
           const date = new Date().toISOString().split('T')[0];
           const title = 'Weekly test-discrimination sweep is failing';
           const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-          const cancelled = process.env.RESULT === 'cancelled';
-          const what = cancelled
-            ? 'did not finish: at least one shard was cancelled, by its 180-minute limit or by hand'
-            : 'failed';
+          let shards = [];
+          try {
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              owner: context.repo.owner, repo: context.repo.repo, run_id: context.runId, per_page: 100,
+            });
+            shards = jobs.filter(j => j.name.startsWith('mutation sweep')).map(j => ({ name: j.name, conclusion: j.conclusion }));
+          } catch (e) {
+            core.warning(`Could not list this run's jobs, so the aggregate result decides the text: ${e.message}`);
+          }
+          const failed = shards.filter(s => s.conclusion === 'failure');
+          const unfinished = shards.filter(s => s.conclusion !== 'success' && s.conclusion !== 'failure');
+          const anyFailed = shards.length ? failed.length > 0 : process.env.RESULT === 'failure';
+          const anyUnfinished = shards.length ? unfinished.length > 0 : process.env.RESULT !== 'failure';
+          const what = anyFailed ? 'failed' : 'did not finish';
+          const perShard = shards.length
+            ? shards.map(s => `- ${s.name}: ${s.conclusion}`)
+            : [`- the run's job list was unreadable; aggregate result: ${process.env.RESULT}`];
           // Paginated, like nightly.yml. The unpaginated default is 30, so past that
           // this would stop finding its own issue and open a fresh duplicate weekly.
           const issues = await github.paginate(github.rest.issues.listForRepo, {
@@ -134,25 +151,32 @@ jobs:
             labels: 'automated', per_page: 100,
           });
           const open = issues.find(i => i.title === title);
-          const cause = cancelled
-            ? [
-                'A cancelled shard produced no verdict for its mutations, so this is not a',
-                'discrimination result. The run lists which shard; its log shows how far it got.',
-              ]
-            : [
-                'Either discrimination dropped (a convention fewer tests now notice), a mutation',
-                'stopped applying because the source moved, or it improved and the baseline has',
-                'not recorded it yet. The failing shard\'s output names which.',
-              ];
+          const cause = [];
+          if (anyFailed) {
+            cause.push(
+              'Either discrimination dropped (a convention fewer tests now notice), a mutation',
+              'stopped applying because the source moved, or it improved and the baseline has',
+              'not recorded it yet. The failing shard\'s output names which.',
+            );
+          }
+          if (anyUnfinished) {
+            cause.push(
+              'A shard that did not finish (its time limit, or a manual cancel) has no verdict for its',
+              'mutations. That part is not a discrimination result; its log shows how far it got.',
+            );
+          }
           const body = [
             `The weekly mutation sweep ${what} on ${date}. Run: ${url}`,
             '',
+            ...perShard,
+            '',
             ...cause,
             '',
-            'Reproduce one shard locally with `--shard K/5`, or all of it without; derive the cost',
-            'from `baseline_seconds` + the per-mutation `seconds` in the kill matrix:',
+            'Reproduce one shard locally with `--shard K/N` as in its job name, or the whole sweep',
+            'without it; derive the cost from `baseline_seconds` + the per-mutation `seconds` in the',
+            'kill matrix:',
             '```bash',
-            'python scripts/test_discrimination.py --shard 1/5 --check-baseline scripts/discrimination_baseline.json',
+            'python scripts/test_discrimination.py --shard K/N --check-baseline scripts/discrimination_baseline.json',
             '```',
             '',
             'De-duplicated on title: subsequent failures comment here rather than opening new issues.',
@@ -160,7 +184,7 @@ jobs:
           if (open) {
             await github.rest.issues.createComment({
               owner: context.repo.owner, repo: context.repo.repo,
-              issue_number: open.number, body: `The sweep ${what} again on ${date}. Run: ${url}`,
+              issue_number: open.number, body: [`The sweep ${what} again on ${date}. Run: ${url}`, '', ...perShard].join('\n'),
             });
           } else {
             await github.rest.issues.create({
@@ -177,9 +201,12 @@ jobs:
   # it was still open four days later because nothing closes it and the sweep is weekly.
   resolve-on-success:
     needs: discrimination
-    # Literally 'success', not `success()` and not "did not fail": a shard that hits its 180-minute
-    # limit reports `cancelled`, which is exactly the run that most needs the issue left open.
-    if: ${{ needs.discrimination.result == 'success' }}
+    # Literally 'success', not `success()` and not "did not fail": a shard that hits its time limit
+    # reports `cancelled`, which is exactly the run that most needs the issue left open. And only on
+    # main: a dispatch on a branch measures the branch, and closing the issue from there would say
+    # main is green. `github.ref`, not the event's default branch: a `schedule` payload has no
+    # `repository` object, so that comparison would never close anything on the schedule.
+    if: ${{ needs.discrimination.result == 'success' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     steps:
     - uses: actions/github-script@v9

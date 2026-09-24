@@ -184,7 +184,7 @@ unauditable; adding to it casually is how it got there.
    directory on `sys.path[0]` and never cwd, and the import then falls through to the editable
    install — measured, it resolves to the main checkout. Bind `PYTHONPATH` because of that asymmetry,
    not as a belt-and-braces token, and because the script's own
-   `_assert_import_is_the_mutated_tree` (`test_discrimination.py:531`) then *confirms* the tree
+   `_assert_import_is_the_mutated_tree` (`test_discrimination.py:532`) then *confirms* the tree
    rather than you assuming it. The recipe:
 
    ```bash

@@ -846,18 +846,20 @@ def test_the_owner_prose_in_the_artifacts_matches_the_code(td):
 # ---------------------------------------------------------------------------
 
 
-def _drive_main(td, monkeypatch, argv, runs):
+def _drive_main(td, monkeypatch, argv, runs, applied=None):
     """Run `main()` over fabricated pytest runs, with every step that touches the tree stubbed.
 
     The mutation is never applied and nothing is restored, so this cannot mutate the checkout under
     `-n auto`. What remains real is the part under test: argument handling, where the reference is
-    read, and the verdict.
+    read, and the verdict. `applied`, when given, records which mutations the run selected.
     """
     runs = iter(runs)
     monkeypatch.setattr(td, "_pytest", lambda paths: next(runs))
     monkeypatch.setattr(td, "_assert_clean_tree", lambda: None)
     monkeypatch.setattr(td, "_assert_import_is_the_mutated_tree", lambda: None)
-    monkeypatch.setattr(td, "apply_mutation", lambda mut, backups: None)
+    monkeypatch.setattr(
+        td, "apply_mutation", lambda mut, backups: None if applied is None else applied.append(mut.name)
+    )
     monkeypatch.setattr(td, "restore", lambda backups: None)
     monkeypatch.setattr(td, "_mutation_is_live", lambda mut: True)
     monkeypatch.setattr(td, "_assert_mutations_restored", lambda selected: None)
@@ -934,3 +936,33 @@ def test_a_shard_cannot_write_the_baseline(td, monkeypatch, capsys):
     err = capsys.readouterr().err
     # The refusal's own words: an unknown `--shard` also exits 2, and its usage text names --write-baseline.
     assert "a shard runs 1/N" in err, f"exit 2, but not the shard refusal:\n{err}"
+
+
+def test_a_shard_run_checks_its_slice_through_main_and_still_reports_a_deleted_mutation(
+    td, monkeypatch, tmp_path, capsys
+):
+    """The path the workflow takes, `--shard K/N --check-baseline`, driven through `main()`.
+
+    The function-level test above pins `restrict_to_selection`; this pins the call site. Review of
+    #2396 planted three defects that left every other test green: the restriction skipped for
+    `--shard`, `--shard` ignored so every shard ran every mutation, and the declared set taken from
+    the baseline, which makes a mutation deleted from `MUTATIONS` vanish from every shard.
+    """
+    names = [m.name for m in td.MUTATIONS]
+    mine = [m.name for m in td.select_shard(td.MUTATIONS, 1, 2)]
+    baseline = tmp_path / "discrimination_baseline.json"
+    matrix = tmp_path / "discrimination_killmatrix.json"
+    rows = {n: {"owner": "x", "status": "ok", "kill_count": 1} for n in [*names, "deleted_from_the_code"]}
+    baseline.write_text(json.dumps({"mutations": rows}))
+    matrix.write_text(json.dumps({"mutations": {n: {"status": "ok", "killed": [f"tests/a.py::t_{n}"]} for n in names}}))
+    applied = []
+    runs = [td.Run(collected=10)] + [td.Run(failed={f"tests/a.py::t_{n}"}, returncode=1, collected=10) for n in mine]
+    code = _drive_main(td, monkeypatch, ["--shard", "1/2", "--check-baseline", str(baseline)], runs, applied)
+    out = capsys.readouterr().out
+
+    assert applied == mine, f"shard 1/2 ran {applied}, not its slice {mine}"
+    assert code == 1, f"a mutation deleted from MUTATIONS passed the shard (exit {code})\n{out[-800:]}"
+    reported = out.split("Discrimination baseline mismatch:\n", 1)[-1].split("\n\n", 1)[0].splitlines()
+    assert reported == ["  deleted_from_the_code: mutation DISAPPEARED (baseline killed 1)"], (
+        f"the shard should report the deleted mutation and nothing from the other slice:\n{out[-1500:]}"
+    )

@@ -914,6 +914,10 @@ def main() -> None:
         parser.error("--shard and --only both select mutations; pass one")
     if args.shard and args.write_baseline:
         parser.error("--write-baseline records every mutation, and a shard runs 1/N of them")
+    # An unknown name used to drop silently, and with a subset now checked on its own that made
+    # `--only real --only typo` a green run over one mutation.
+    if unknown := sorted(set(args.only or ()) - {m.name for m in MUTATIONS}):
+        parser.error(f"--only names no mutation called {unknown}")
 
     _assert_clean_tree()
     _assert_import_is_the_mutated_tree()
@@ -922,7 +926,7 @@ def main() -> None:
     # same path read here, so the uploaded artifact's `reproduce` names the committed file (#2349).
     # Read after that write, the reference was this run's own output, and no killer set could ever
     # differ from it (#2389). And a missing matrix is known now, not after hours of mutations.
-    if args.check_baseline:
+    if args.check_baseline and not args.write_baseline:  # --write-baseline exits before the check
         baseline_path = Path(args.check_baseline)
         baseline = json.loads(baseline_path.read_text())
         # The killer sets are the half a count cannot express, and they live beside the
@@ -945,7 +949,9 @@ def main() -> None:
     else:
         selected = [m for m in MUTATIONS if not args.only or m.name in args.only]
     if not selected:
-        sys.exit(f"No mutation matched {args.only or args.shard}. Known: {[m.name for m in MUTATIONS]}")
+        if args.shard:
+            sys.exit(f"--shard {args.shard[0]}/{args.shard[1]} selects nothing: there are {len(MUTATIONS)} mutations")
+        sys.exit(f"No mutation matched {args.only}. Known: {[m.name for m in MUTATIONS]}")
 
     paths = args.paths.split()
     print(f"Baseline: pytest {' '.join(paths)} (excluding {SELF_TESTS}) ...", flush=True)
@@ -1062,7 +1068,7 @@ def main() -> None:
         sys.exit(0)
 
     if args.check_baseline:
-        declared = len(baseline["mutations"])
+        recorded = len(baseline["mutations"])
         if args.shard or args.only:
             baseline = restrict_to_selection(baseline, {m.name for m in selected}, {m.name for m in MUTATIONS})
         problems = compare_to_baseline(results, baseline, matrix)
@@ -1078,7 +1084,7 @@ def main() -> None:
             )
             sys.exit(1)
         print(
-            f"Discrimination matches baseline ({len(baseline['mutations'])} of {declared} mutations, "
+            f"Discrimination matches baseline ({len(baseline['mutations'])} of {recorded} mutations, "
             f"counts and killer sets)."
         )
         sys.exit(0)
