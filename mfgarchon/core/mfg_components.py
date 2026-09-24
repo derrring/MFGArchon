@@ -79,7 +79,7 @@ class MFGComponents:
     Attributes
     ----------
     hamiltonian : HamiltonianBase
-        Class-based Hamiltonian H(x, m, p, t). Required.
+        Class-based Hamiltonian H(t, x, p, m). Required.
     lagrangian : LagrangianBase, optional
         Alternative to hamiltonian - auto-converted via Legendre transform.
     m_initial : Callable | NDArray
@@ -375,7 +375,7 @@ class HamiltonianMixin:
         current_time: float | None = None,
     ) -> float:
         """
-        Hamiltonian function H(x, m, p, t).
+        Hamiltonian function H(t, x, p, m).
 
         Issue #673: Class-based Hamiltonian API only - no legacy function support.
 
@@ -389,7 +389,7 @@ class HamiltonianMixin:
             current_time: Actual time value (computed from t_idx if not provided)
 
         Returns:
-            Hamiltonian value H(x, m, p, t)
+            Hamiltonian value H(t, x, p, m)
         """
         # Issue #673: Error on legacy p_values parameter
         if p_values is not None:
@@ -420,7 +420,7 @@ class HamiltonianMixin:
                 "  components = MFGComponents(hamiltonian=H, m_initial=..., u_terminal=...)"
             )
 
-        # Convert derivs to numpy p array for class-based H(x, m, p, t)
+        # Convert derivs to numpy p array for class-based H(t, x, p, m)
         if isinstance(derivs, DerivativeTensors):
             derivs_dict = to_multi_index_dict(derivs)
         else:
@@ -457,7 +457,7 @@ class HamiltonianMixin:
         # Convert x_position to numpy array
         x = np.atleast_1d(x_position if x_position is not None else 0.0)
 
-        # Call class-based Hamiltonian directly: H(x, m, p, t)
+        # Call class-based Hamiltonian directly: H(t, x, p, m)
         return float(H_class(x=x, m=m_at_x, p=p, t=current_time))
 
     def dH_dm(

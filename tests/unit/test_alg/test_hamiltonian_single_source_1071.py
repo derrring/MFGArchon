@@ -272,7 +272,7 @@ class _NonLQFDHamiltonian(HamiltonianBase):
     the cubic + FD-``dp`` form is what makes the invocation gate meaningful.
     """
 
-    def __call__(self, x, m, p, t=0.0):
+    def __call__(self, t, x, p, m):
         p = np.asarray(p, dtype=float)
         x = np.asarray(x, dtype=float)
         m = np.asarray(m, dtype=float)

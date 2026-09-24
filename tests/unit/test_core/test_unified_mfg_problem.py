@@ -553,13 +553,13 @@ class TestCustomComponentExceptionPropagation:
 
         # Custom Hamiltonian class that raises an exception
         class BrokenHamiltonian(HamiltonianBase):
-            def __call__(self, x, m, p, t=0.0):
+            def __call__(self, t, x, p, m):
                 raise ValueError("Intentional error in custom Hamiltonian")
 
-            def dp(self, x, m, p, t=0.0):
+            def dp(self, t, x, p, m):
                 return 0.0
 
-            def dm(self, x, m, p, t=0.0):
+            def dm(self, t, x, p, m):
                 return 0.0
 
         domain = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
@@ -588,13 +588,13 @@ class TestCustomComponentExceptionPropagation:
 
         # Custom Hamiltonian class with broken dm() method
         class BrokenDmHamiltonian(HamiltonianBase):
-            def __call__(self, x, m, p, t=0.0):
+            def __call__(self, t, x, p, m):
                 return 0.0
 
-            def dp(self, x, m, p, t=0.0):
+            def dp(self, t, x, p, m):
                 return 0.0
 
-            def dm(self, x, m, p, t=0.0):
+            def dm(self, t, x, p, m):
                 raise RuntimeError("Intentional error in dH/dm")
 
         domain = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))

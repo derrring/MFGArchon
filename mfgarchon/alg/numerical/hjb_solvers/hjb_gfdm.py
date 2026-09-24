@@ -2181,7 +2181,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         """
         Compute HJB residual using batch Hamiltonian class (Issue #775).
 
-        Uses H_class(x, m, p, t) for vectorized evaluation over all collocation
+        Uses H_class(t, x, p, m) for vectorized evaluation over all collocation
         points. Works with any HamiltonianBase subclass.
 
         Args:
@@ -2191,7 +2191,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             grad_u: Pre-computed gradient, shape (n_points, dimension)
             lap_u: Pre-computed Laplacian, shape (n_points,)
             H_class: HamiltonianBase instance with batch-polymorphic __call__
-            current_time: Current time value for H(x, m, p, t)
+            current_time: Current time value for H(t, x, p, m)
 
         Returns:
             Residual vector, shape (n_points,)
@@ -2225,14 +2225,14 @@ class HJBGFDMSolver(BaseHJBSolver):
         """
         Compute sparse Jacobian using batch H.dp() (Issue #775).
 
-        Uses H_class.dp(x, m, p, t) for vectorized dH/dp computation.
+        Uses H_class.dp(t, x, p, m) for vectorized dH/dp computation.
         Jacobian structure: J = (1/dt)I + sum_d diag(dH/dp_d) @ D_grad[d] - (sigma^2/2) D_lap
 
         Args:
             grad_u: Pre-computed gradient, shape (n_points, dimension)
             m_n_plus_1: Density at collocation points, shape (n_points,)
             H_class: HamiltonianBase instance with batch-polymorphic dp()
-            current_time: Current time value for H.dp(x, m, p, t)
+            current_time: Current time value for H.dp(t, x, p, m)
 
         Returns:
             Sparse Jacobian matrix in CSR format
@@ -3474,7 +3474,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 raise NotImplementedError(
                     f"inner_solver='howard' could not probe {type(H_class).__name__} to verify its "
                     f"policy-evaluation assumptions ({type(_exc).__name__}: {_exc}). Howard needs a "
-                    f"batch-callable H(x, m, p, t); use inner_solver='newton' (Issue #2011)."
+                    f"batch-callable H(t, x, p, m); use inner_solver='newton' (Issue #2011)."
                 ) from _exc
             # RELATIVE, not absolute: an algebraically exact unit quadratic whose alpha-free part
             # cancels from terms of magnitude K leaves a residue ~K*eps, and an absolute 1e-10 bound
@@ -3705,7 +3705,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         #
         # 1. Hamiltonian batch path (use_hamiltonian_batch=True):
         #    Active when: hamiltonian_class is available AND qp_optimization_level="none"
-        #    Uses batch H(x, m, p, t) and H.dp(x, m, p, t) from HamiltonianBase
+        #    Uses batch H(t, x, p, m) and H.dp(t, x, p, m) from HamiltonianBase
         #    Works with any Hamiltonian subclass (SeparableHamiltonian, etc.)
         #    Fast: numpy vectorized over all collocation points at once
         #
@@ -3770,7 +3770,7 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         for _newton_iter in range(self.max_newton_iterations):
             if use_hamiltonian_batch:
-                # Batch Hamiltonian path: H(x, m, p, t) vectorized (Issue #775)
+                # Batch Hamiltonian path: H(t, x, p, m) vectorized (Issue #775)
                 grad_u, lap_u = self._compute_derivatives_vectorized(u_current)
 
                 residual = self._compute_hjb_residual_hamiltonian(

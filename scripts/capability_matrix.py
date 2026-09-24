@@ -1205,7 +1205,7 @@ def _seam_probes():
             zero_p = np.zeros(1)
 
             def f_of(m: float) -> float:
-                return float(np.asarray(hamiltonian(x, m, zero_p)).ravel()[0])
+                return float(np.asarray(hamiltonian(x=x, m=m, p=zero_p, t=0.0)).ravel()[0])
 
             baseline_f = f_of(0.0)
             mutated = np.array([f_of(float(m)) - baseline_f for m in probe_m])
@@ -1232,7 +1232,7 @@ def _unmutated_f(build, m: float) -> float:
         zero_p = np.zeros(1)
 
         def at(mm: float) -> float:
-            return float(np.asarray(hamiltonian(x, mm, zero_p)).ravel()[0])
+            return float(np.asarray(hamiltonian(x=x, m=mm, p=zero_p, t=0.0)).ravel()[0])
 
         return at(m) - at(0.0)
     finally:

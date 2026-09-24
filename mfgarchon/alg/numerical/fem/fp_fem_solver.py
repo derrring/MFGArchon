@@ -155,7 +155,7 @@ class FPFEMSolver(WeakFormFPSolver):
 
         dim = self._skfem_mesh.p.shape[0]
         # Issue #1528 (PR-1): the FP advective drift has ONE owner -- the problem's Hamiltonian
-        # primitive alpha* = H.optimal_control(x, m, p, t) -- not a hand-coded -c*grad(U) with a
+        # primitive alpha* = H.optimal_control(t, x, p, m) -- not a hand-coded -c*grad(U) with a
         # private scalar c = fp_drift_coefficient = 1/control_cost. For a quadratic-MINIMIZE
         # SeparableHamiltonian optimal_control(p) = -p/lambda, so feeding the SAME quadrature-point
         # gradient du.grad reproduces the old -c*grad(U) bit-for-bit for dyadic lambda (the paper's
@@ -169,7 +169,7 @@ class FPFEMSolver(WeakFormFPSolver):
                 "alpha* = H.optimal_control(...), but problem.hamiltonian_class is None. Set a "
                 "SeparableHamiltonian (e.g. QuadraticControlCost) on the problem's components (Issue #1528)."
             )
-        # Issue #1528 review-nit: this advection routes through H.optimal_control(x, m, p, t), which is
+        # Issue #1528 review-nit: this advection routes through H.optimal_control(t, x, p, m), which is
         # single-valued in p ONLY for a SeparableHamiltonian. A non-separable Hamiltonian (e.g.
         # CongestionHamiltonian) has a density/state-dependent optimal control, so calling optimal_control
         # here raised a cryptic TypeError; fail loud with a clear message instead. The gate lives at this
@@ -180,7 +180,7 @@ class FPFEMSolver(WeakFormFPSolver):
 
         if not isinstance(H, SeparableHamiltonian):
             raise NotImplementedError(
-                f"FP FEM advection routes the drift through H.optimal_control(x, m, p, t), which is "
+                f"FP FEM advection routes the drift through H.optimal_control(t, x, p, m), which is "
                 f"single-valued in p only for a SeparableHamiltonian; got {type(H).__name__} (non-separable), "
                 f"whose optimal control is density/state-dependent. Provide a SeparableHamiltonian, or supply the "
                 f"precomputed optimal-control velocity alpha* through the velocity channel instead "

@@ -843,7 +843,7 @@ class TestStochasticCharacteristicSL:
             def __init__(self):
                 super().__init__()
 
-            def __call__(self, x, m, p, t=0.0):
+            def __call__(self, t, x, p, m):
                 p_arr = np.atleast_1d(np.asarray(p, dtype=float))
                 if p_arr.ndim > 0:
                     return np.zeros(p_arr.shape[:-1])
@@ -907,7 +907,7 @@ class TestStochasticCharacteristicSL:
             def __init__(self):
                 super().__init__()
 
-            def __call__(self, x, m, p, t=0.0):
+            def __call__(self, t, x, p, m):
                 p_arr = np.atleast_1d(np.asarray(p, dtype=float))
                 if p_arr.ndim > 0:
                     return np.zeros(p_arr.shape[:-1])
@@ -1086,7 +1086,7 @@ class TestStochasticCharacteristicSL_nD:  # noqa: N801 — SL_nD = semi-Lagrangi
             def __init__(self):
                 super().__init__()
 
-            def __call__(self, x, m, p, t=0.0):
+            def __call__(self, t, x, p, m):
                 p_arr = np.atleast_1d(np.asarray(p, dtype=float))
                 if p_arr.ndim > 0:
                     return np.zeros(p_arr.shape[:-1])

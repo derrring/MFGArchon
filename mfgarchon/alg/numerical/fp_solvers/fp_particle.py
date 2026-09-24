@@ -1834,7 +1834,7 @@ class FPParticleSolver(BaseFPSolver):
     ) -> np.ndarray:
         """FP advective drift alpha* at the particles, from the single owner (Issue #1528).
 
-        The control law alpha* = H.optimal_control(x, m, p, t) on the problem's
+        The control law alpha* = H.optimal_control(t, x, p, m) on the problem's
         ``hamiltonian_class`` is the single source of the FP advective drift, replacing the
         three hand-coded ``-fp_drift_coefficient(problem) * grad(U)`` copies (CPU 1D / CPU nD /
         GPU). ``fp_drift_coefficient``'s #1542 guard (applied at param-build time, ~line 389)

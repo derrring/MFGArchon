@@ -68,7 +68,7 @@ class SantaFeHamiltonian(HamiltonianBase):
         self.payoff_function = payoff_function
         self.attendance_cache = attendance_cache
 
-    def __call__(self, x: np.ndarray, m: float, p: np.ndarray, t: float = 0.0) -> float:
+    def __call__(self, t: float, x: np.ndarray, p: np.ndarray, m: float) -> float:
         """Evaluate H(theta, m, p, t)."""
         x_arr = np.atleast_1d(x)
         p_arr = np.atleast_1d(p)
@@ -84,11 +84,11 @@ class SantaFeHamiltonian(HamiltonianBase):
 
         return 0.5 * p_val**2 + V
 
-    def dm(self, x: np.ndarray, m: float, p: np.ndarray, t: float = 0.0) -> float:
+    def dm(self, t: float, x: np.ndarray, p: np.ndarray, m: float) -> float:
         """dH/dm: simplified (local changes have negligible effect on aggregate)."""
         return 0.0
 
-    def dp(self, x: np.ndarray, m: float, p: np.ndarray, t: float = 0.0) -> np.ndarray:
+    def dp(self, t: float, x: np.ndarray, p: np.ndarray, m: float) -> np.ndarray:
         """dH/dp = p (quadratic control cost)."""
         return np.atleast_1d(p)
 

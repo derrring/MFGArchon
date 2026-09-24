@@ -302,7 +302,7 @@ class FPFVMSolver(BaseFPSolver):
                 "advective drift alpha* = H.optimal_control(...); the problem has none. Pass a "
                 "precomputed drift_field, or set a Hamiltonian on the problem (Issue #1528)."
             )
-        # Issue #1528 review-nit: this potential-field path routes through H.optimal_control(x, m, p, t),
+        # Issue #1528 review-nit: this potential-field path routes through H.optimal_control(t, x, p, m),
         # which is single-valued in p ONLY for a SeparableHamiltonian. A non-separable Hamiltonian (e.g.
         # CongestionHamiltonian) has a density/state-dependent optimal control, so calling optimal_control
         # here raised a cryptic TypeError; fail loud with a clear message instead. The gate lives at this
@@ -313,7 +313,7 @@ class FPFVMSolver(BaseFPSolver):
 
         if not isinstance(H, SeparableHamiltonian):
             raise NotImplementedError(
-                f"FP FVM potential_field drift routes through H.optimal_control(x, m, p, t), which is "
+                f"FP FVM potential_field drift routes through H.optimal_control(t, x, p, m), which is "
                 f"single-valued in p only for a SeparableHamiltonian; got {type(H).__name__} (non-separable), "
                 f"whose optimal control is density/state-dependent. Provide a SeparableHamiltonian, or pass the "
                 f"precomputed optimal-control velocity alpha* through the drift_field channel instead "

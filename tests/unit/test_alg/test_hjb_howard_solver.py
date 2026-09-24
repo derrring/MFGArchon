@@ -149,11 +149,11 @@ class _LQHam(HamiltonianBase):
     delegate to; ``__call__`` provides the matching H = |p|²/2 value.
     """
 
-    def __call__(self, x, m, p, t=0.0):
+    def __call__(self, t, x, p, m):
         p = np.asarray(p, dtype=float)
         return 0.5 * np.sum(p**2, axis=-1) if p.ndim == 2 else 0.5 * float(np.sum(p**2))
 
-    def dp(self, x, m, p, t=0.0):
+    def dp(self, t, x, p, m):
         return np.asarray(p, dtype=float)
 
 

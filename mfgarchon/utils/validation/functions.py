@@ -106,7 +106,7 @@ def validate_custom_functions(
     Supports HamiltonianBase instances (preferred) and raw callables.
 
     Args:
-        hamiltonian: HamiltonianBase instance or callable H(x, m, p, t)
+        hamiltonian: HamiltonianBase instance or callable H(t, x, p, m)
         dH_dm: Derivative dH/dm (bound method or callable(x, m, p, t))
         dH_dp: Derivative dH/dp (bound method or callable(x, m, p, t))
         geometry: Geometry for sample point generation
@@ -146,9 +146,9 @@ def validate_hamiltonian(
     geometry: GeometryProtocol,
 ) -> ValidationResult:
     """
-    Validate Hamiltonian function H(x, m, p, t).
+    Validate Hamiltonian function H(t, x, p, m).
 
-    Supports HamiltonianBase instances (called as H(x, m, p, t))
+    Supports HamiltonianBase instances (called as H(t, x, p, m))
     and raw callables (tried with same signature).
 
     Checks:
@@ -176,7 +176,7 @@ def validate_hamiltonian(
         result.add_error(
             f"Hamiltonian has wrong signature: {e}",
             location="hamiltonian",
-            suggestion="Hamiltonian should have signature H(x, m, p, t)",
+            suggestion="Hamiltonian should have signature H(t, x, p, m)",
         )
         return result
     except Exception as e:
@@ -442,7 +442,7 @@ def validate_hamiltonian_consistency(
     problem at construction time.
 
     Args:
-        hamiltonian: HamiltonianBase instance or callable H(x, m, p, t)
+        hamiltonian: HamiltonianBase instance or callable H(t, x, p, m)
         dH_dm: Claimed derivative dH/dm with signature (x, m, p, t)
         geometry: Geometry for sample point
         tolerance: Relative tolerance for the warning tier

@@ -96,7 +96,7 @@ def test_hamiltonian_returning_nan_raises():
         def dimension(self):
             return 1
 
-        def __call__(self, x, m, p, t=0.0):
+        def __call__(self, t, x, p, m):
             return float("nan")
 
     H = NaNHamiltonian()
@@ -550,7 +550,7 @@ def test_mfg_problem_nan_hamiltonian_rejected():
         def dimension(self):
             return 1
 
-        def __call__(self, x, m, p, t=0.0):
+        def __call__(self, t, x, p, m):
             return float("nan")
 
     with pytest.raises(ValidationError, match="NaN"):
@@ -572,7 +572,7 @@ def test_mfg_problem_rejects_hamiltonian_with_wrong_dm():
     """
 
     class WrongDmHamiltonian(SeparableHamiltonian):
-        def dm(self, x, m, p, t=0.0):
+        def dm(self, t, x, p, m):
             return 42.0
 
     with pytest.raises(ValidationError, match="dH_dm"):

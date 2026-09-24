@@ -51,7 +51,7 @@ class PlainQuadraticL(LagrangianBase):
         super().__init__()
         self.lam = lam
 
-    def __call__(self, x, alpha, m, t=0.0):
+    def __call__(self, t, x, alpha, m):
         return float(0.5 * self.lam * np.sum(np.atleast_1d(alpha) ** 2))
 
 
@@ -67,7 +67,7 @@ class AsymmetricL(LagrangianBase):
 
     OFFSET = 0.3
 
-    def __call__(self, x, alpha, m, t=0.0):
+    def __call__(self, t, x, alpha, m):
         a = np.atleast_1d(alpha)
         return float(0.5 * np.sum(a**2) + self.OFFSET * np.sum(a))
 
@@ -303,10 +303,10 @@ class AnalyticUnboundedL(LagrangianBase):
     fallback box that the numerical default would otherwise silently truncate.
     """
 
-    def __call__(self, x, alpha, m, t=0.0):
+    def __call__(self, t, x, alpha, m):
         return float(0.5 * np.sum(np.atleast_1d(alpha) ** 2))
 
-    def conjugate_argmax(self, x, m, p, t=0.0):
+    def conjugate_argmax(self, t, x, p, m):
         return np.atleast_1d(p).astype(float)
 
     def control_bounds(self):

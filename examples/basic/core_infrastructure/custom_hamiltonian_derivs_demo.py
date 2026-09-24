@@ -175,19 +175,19 @@ def demonstrate_hamiltonian_methods():
     logger.info(f"  x = {x[0]}, m = {m}, p = {p[0]}, t = {t}")
 
     # Evaluate Hamiltonian
-    H_val = hamiltonian(x, m, p, t)
+    H_val = hamiltonian(x=x, m=m, p=p, t=t)
     logger.info(f"\nH(x, m, p, t) = {H_val:.4f}")
     logger.info(f"  Expected: (1/2*{control_cost})*{p[0]}^2 + |{x[0]}-{target_x}| + {congestion_cost}*{m}")
     expected = (p[0] ** 2) / (2 * control_cost) + abs(x[0] - target_x) + congestion_cost * m
     logger.info(f"  Computed: {expected:.4f}")
 
     # Optimal control (dH/dp)
-    dp_val = hamiltonian.dp(x, m, p, t)
+    dp_val = hamiltonian.dp(x=x, m=m, p=p, t=t)
     logger.info(f"\ndH/dp (optimal control): {dp_val[0]:.4f}")
     logger.info(f"  Expected: p / lambda = {p[0] / control_cost:.4f}")
 
     # Coupling derivative (dH/dm)
-    dm_val = hamiltonian.dm(x, m, p, t)
+    dm_val = hamiltonian.dm(x=x, m=m, p=p, t=t)
     logger.info(f"\ndH/dm (coupling derivative): {dm_val:.4f}")
     logger.info(f"  Expected: gamma = {congestion_cost}")
 
@@ -198,7 +198,7 @@ def demonstrate_hamiltonian_methods():
 
     # Evaluate Lagrangian at optimal control
     alpha = dp_val  # Optimal control = dH/dp
-    L_val = lagrangian(x, alpha, m, t)
+    L_val = lagrangian(x=x, alpha=alpha, m=m, t=t)
     logger.info(f"  L(x, alpha*, m, t) = {L_val:.4f}")
 
     return hamiltonian

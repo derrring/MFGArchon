@@ -123,7 +123,7 @@ class NetworkHamiltonian(HamiltonianBase):
         k = self.population_index
         return m[k * N : (k + 1) * N]
 
-    def __call__(self, x, m, p, t=0.0):
+    def __call__(self, t, x, p, m):
         """Evaluate H at node x with density m and costate p.
 
         x: node index (int or array with single int)
@@ -197,7 +197,7 @@ class NetworkHamiltonian(HamiltonianBase):
             return float(self._node_interaction(node, m, t))
         return 0.5 * float(self._extract_own_density(m)[node]) ** 2
 
-    def optimal_control(self, x, m, p, t=0.0):
+    def optimal_control(self, t, x, p, m):
         """Optimal transition rates from node x (Issue #1474/#1476).
 
         Finite-state MFG: ``alpha*_ij = w_ij * max(s*(u_i - u_j), 0)`` with orientation ``s = +1`` (minimisation-only)
@@ -219,7 +219,7 @@ class NetworkHamiltonian(HamiltonianBase):
             alpha[neighbor] = w * max(du, 0.0)
         return alpha
 
-    def dp(self, x, m, p, t=0.0):
+    def dp(self, t, x, p, m):
         """dH/dp at node x (Issue #1474/#1476). Gradient of the one-sided control Hamiltonian
         ``0.5 sum_j w_ij max(s*(u_i-u_j),0)^2`` with ``s = +1``: differentiating gives
         ``dH/du_i = +s*sum_j alpha*_ij`` and ``dH/du_j = -s*alpha*_ij`` where
@@ -239,7 +239,7 @@ class NetworkHamiltonian(HamiltonianBase):
             grad[node] += s * a
         return grad
 
-    def dm(self, x, m, p, t=0.0):
+    def dm(self, t, x, p, m):
         """dH/dm at node x. The coupling enters H as -f (#2375 ruling 3), so this is -df/dm. Issue #1470
         Strand A: the default node congestion has the EXACT analytic derivative ``d/dm (0.5 * m_own[node]^2)
         = m_own[node]`` (own-population slice, matching ``coupling_value``); a custom

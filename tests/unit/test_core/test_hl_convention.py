@@ -338,7 +338,7 @@ class TestSeparableRoundTrip:
         box = _search_box(cost)
 
         for p in P_SWEEP:
-            expected = float(H(x=X_POINT, m=M_VALUE, p=np.array([p])))
+            expected = float(H(x=X_POINT, m=M_VALUE, p=np.array([p]), t=0.0))
             got = _conjugate(L, p, bounds=box)
             assert got == pytest.approx(expected, abs=1e-6), (
                 f"{cost_name} p={p}: conjugate of L gave {got}, H gave {expected}"
@@ -419,7 +419,7 @@ class TestCongestionRoundTrip:
         box = _congestion_box(cost)
 
         for p in P_SWEEP:
-            expected = float(H(x=X_POINT, m=M_VALUE, p=np.array([p])))
+            expected = float(H(x=X_POINT, m=M_VALUE, p=np.array([p]), t=0.0))
             got = _conjugate(L, p, bounds=box)
             assert got == pytest.approx(expected, abs=1e-6), (
                 f"{cost_name}/{vf_name} p={p}: conjugate of the analytic L gave {got}, H gave {expected}"

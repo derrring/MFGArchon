@@ -33,7 +33,7 @@ class _SmoothProbe(HamiltonianBase):
     def is_hamiltonian(self) -> bool:
         return True
 
-    def __call__(self, x, m, p, t):
+    def __call__(self, t, x, p, m):
         p_arr = np.atleast_2d(np.asarray(p, dtype=float))
         m_arr = np.asarray(m, dtype=float)
         v = 0.5 * np.sum(p_arr**2, axis=-1) + 0.3 * np.sum(p_arr**3, axis=-1) + 0.7 * m_arr.ravel() ** 2

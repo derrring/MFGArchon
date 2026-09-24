@@ -3284,7 +3284,7 @@ if __name__ == "__main__":
         def __init__(self):
             super().__init__()
 
-        def __call__(self, x, m, p, t=0.0):
+        def __call__(self, t, x, p, m):
             p_arr = np.atleast_1d(np.asarray(p, dtype=float))
             return np.zeros(p_arr.shape[:-1]) if p_arr.ndim > 0 else 0.0
 

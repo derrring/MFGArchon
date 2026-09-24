@@ -80,7 +80,7 @@ class TestMFGOperatorBase:
         """Test LagrangianBase.is_lagrangian returns True."""
 
         class TestLagrangian(LagrangianBase):
-            def __call__(self, x, alpha, m, t=0.0):
+            def __call__(self, t, x, alpha, m):
                 return 0.5 * np.sum(alpha**2)
 
         L = TestLagrangian()
@@ -181,7 +181,7 @@ class TestLagrangianBase:
                 super().__init__()
                 self.lam = lam
 
-            def __call__(self, x, alpha, m, t=0.0):
+            def __call__(self, t, x, alpha, m):
                 return 0.5 * self.lam * np.sum(alpha**2)
 
         return QuadraticLagrangian(lam=2.0)
@@ -245,7 +245,7 @@ class TestLegendreDuality:
                 super().__init__()
                 self.lam = lam
 
-            def __call__(self, x, alpha, m, t=0.0):
+            def __call__(self, t, x, alpha, m):
                 return 0.5 * self.lam * np.sum(alpha**2)
 
         L_orig = QuadraticLagrangian(lam=2.0)
@@ -280,7 +280,7 @@ class TestLegendreDuality:
                 super().__init__()
                 self.lam = lam
 
-            def __call__(self, x, alpha, m, t=0.0):
+            def __call__(self, t, x, alpha, m):
                 return 0.5 * self.lam * np.sum(np.atleast_1d(alpha) ** 2)
 
         x, m, p, t = np.array([0.5]), 0.3, np.array([1.0]), 0.0
@@ -424,14 +424,14 @@ class TestBatchPolymorphism:
         N = x.shape[0]
 
         # Batch
-        H_batch = separable_2d(x=x, m=m, p=p)
-        dp_batch = separable_2d.dp(x=x, m=m, p=p)
-        dm_batch = separable_2d.dm(x=x, m=m, p=p)
+        H_batch = separable_2d(x=x, m=m, p=p, t=0.0)
+        dp_batch = separable_2d.dp(x=x, m=m, p=p, t=0.0)
+        dm_batch = separable_2d.dm(x=x, m=m, p=p, t=0.0)
 
         # Pointwise
-        H_pw = np.array([separable_2d(x=x[i], m=m[i], p=p[i]) for i in range(N)])
-        dp_pw = np.stack([separable_2d.dp(x=x[i], m=m[i], p=p[i]) for i in range(N)])
-        dm_pw = np.array([separable_2d.dm(x=x[i], m=m[i], p=p[i]) for i in range(N)])
+        H_pw = np.array([separable_2d(x=x[i], m=m[i], p=p[i], t=0.0) for i in range(N)])
+        dp_pw = np.stack([separable_2d.dp(x=x[i], m=m[i], p=p[i], t=0.0) for i in range(N)])
+        dm_pw = np.array([separable_2d.dm(x=x[i], m=m[i], p=p[i], t=0.0) for i in range(N)])
 
         np.testing.assert_allclose(H_batch, H_pw, rtol=1e-12)
         np.testing.assert_allclose(dp_batch, dp_pw, rtol=1e-12)
@@ -441,7 +441,7 @@ class TestBatchPolymorphism:
         """Custom Hamiltonian with no analytic dp uses FD batch path."""
 
         class CustomH(HamiltonianBase):
-            def __call__(self, x, m, p, t=0.0):
+            def __call__(self, t, x, p, m):
                 # H = sum(p^2) + m (non-separable, no analytic dp)
                 p_arr = np.atleast_1d(p)
                 return float(np.sum(p_arr**2)) + float(m)
@@ -457,14 +457,14 @@ class TestBatchPolymorphism:
         assert result.shape == (N, d)
 
         # Verify against pointwise
-        dp_pw = np.stack([H.dp(x=x[i], m=m[i], p=p[i]) for i in range(N)])
+        dp_pw = np.stack([H.dp(x=x[i], m=m[i], p=p[i], t=0.0) for i in range(N)])
         np.testing.assert_allclose(result, dp_pw, rtol=1e-10)
 
     def test_base_dm_batch_fallback(self):
         """Custom Hamiltonian with no analytic dm uses FD batch path."""
 
         class CustomH(HamiltonianBase):
-            def __call__(self, x, m, p, t=0.0):
+            def __call__(self, t, x, p, m):
                 p_arr = np.atleast_1d(p)
                 return float(np.sum(p_arr**2)) + float(m) ** 2
 
@@ -480,7 +480,7 @@ class TestBatchPolymorphism:
         assert result.shape == (N,)
 
         # Verify against pointwise
-        dm_pw = np.array([H.dm(x=x[i], m=m[i], p=p[i]) for i in range(N)])
+        dm_pw = np.array([H.dm(x=x[i], m=m[i], p=p[i], t=0.0) for i in range(N)])
         np.testing.assert_allclose(result, dm_pw, rtol=1e-10)
 
     def test_single_point_unchanged(self):
@@ -512,7 +512,7 @@ class TestBatchPolymorphism:
         m = np.ones(N)
         p = np.ones((N, d))
 
-        result = H.dm(x=x, m=m, p=p)
+        result = H.dm(x=x, m=m, p=p, t=0.0)
         assert isinstance(result, np.ndarray)
         assert result.shape == (N,)
         np.testing.assert_array_equal(result, np.zeros(N))
@@ -526,12 +526,12 @@ class TestBatchPolymorphism:
         m = rng.uniform(0.1, 2.0, size=N)
         p = rng.standard_normal((N, d))
 
-        H_batch = H(x=x, m=m, p=p)
+        H_batch = H(x=x, m=m, p=p, t=0.0)
         assert isinstance(H_batch, np.ndarray)
         assert H_batch.shape == (N,)
 
         # Verify pointwise
-        H_pw = np.array([H(x=x[i], m=m[i], p=p[i]) for i in range(N)])
+        H_pw = np.array([H(x=x[i], m=m[i], p=p[i], t=0.0) for i in range(N)])
         np.testing.assert_allclose(H_batch, H_pw, rtol=1e-12)
 
 
@@ -575,7 +575,7 @@ class TestCongestionHamiltonian:
         x = np.array([0.5])
         m = 1.0
         p = np.array([3.0])
-        result = congestion_1d(x=x, m=m, p=p)
+        result = congestion_1d(x=x, m=m, p=p, t=0.0)
         assert isinstance(result, float)
         # Manual: |p|^2/(2*lambda*c(m)) - V(x)
         # = 9/(2*2*(1+1)) - 0.25 = 9/8 - 0.25 = 0.875
@@ -587,7 +587,7 @@ class TestCongestionHamiltonian:
         x = np.array([0.5])
         m = 1.0
         p = np.array([3.0])
-        result = congestion_1d.dp(x=x, m=m, p=p)
+        result = congestion_1d.dp(x=x, m=m, p=p, t=0.0)
         assert result.shape == (1,)
         # dH/dp = p / (lambda * c(m)) = 3 / (2 * 2) = 0.75
         expected = 3.0 / (2.0 * 2.0)
@@ -598,7 +598,7 @@ class TestCongestionHamiltonian:
         x = np.array([0.5])
         m = 1.0
         p = np.array([3.0])
-        result = congestion_1d.dm(x=x, m=m, p=p)
+        result = congestion_1d.dm(x=x, m=m, p=p, t=0.0)
         assert isinstance(result, float)
         # dH/dm = -c'(m)*|p|^2/(2*lambda*c(m)^2)
         # = -1*9/(2*2*4) = -9/16 = -0.5625
@@ -608,21 +608,21 @@ class TestCongestionHamiltonian:
     def test_batch_call_shape(self, congestion_2d, batch_data_2d):
         """Batch __call__ returns shape (N,)."""
         x, m, p = batch_data_2d
-        result = congestion_2d(x=x, m=m, p=p)
+        result = congestion_2d(x=x, m=m, p=p, t=0.0)
         assert isinstance(result, np.ndarray)
         assert result.shape == (5,)
 
     def test_batch_dp_shape(self, congestion_2d, batch_data_2d):
         """Batch dp returns shape (N, d)."""
         x, m, p = batch_data_2d
-        result = congestion_2d.dp(x=x, m=m, p=p)
+        result = congestion_2d.dp(x=x, m=m, p=p, t=0.0)
         assert isinstance(result, np.ndarray)
         assert result.shape == (5, 2)
 
     def test_batch_dm_shape(self, congestion_2d, batch_data_2d):
         """Batch dm returns shape (N,)."""
         x, m, p = batch_data_2d
-        result = congestion_2d.dm(x=x, m=m, p=p)
+        result = congestion_2d.dm(x=x, m=m, p=p, t=0.0)
         assert isinstance(result, np.ndarray)
         assert result.shape == (5,)
 
@@ -631,13 +631,13 @@ class TestCongestionHamiltonian:
         x, m, p = batch_data_2d
         N = x.shape[0]
 
-        H_batch = congestion_2d(x=x, m=m, p=p)
-        dp_batch = congestion_2d.dp(x=x, m=m, p=p)
-        dm_batch = congestion_2d.dm(x=x, m=m, p=p)
+        H_batch = congestion_2d(x=x, m=m, p=p, t=0.0)
+        dp_batch = congestion_2d.dp(x=x, m=m, p=p, t=0.0)
+        dm_batch = congestion_2d.dm(x=x, m=m, p=p, t=0.0)
 
-        H_pw = np.array([congestion_2d(x=x[i], m=m[i], p=p[i]) for i in range(N)])
-        dp_pw = np.stack([congestion_2d.dp(x=x[i], m=m[i], p=p[i]) for i in range(N)])
-        dm_pw = np.array([congestion_2d.dm(x=x[i], m=m[i], p=p[i]) for i in range(N)])
+        H_pw = np.array([congestion_2d(x=x[i], m=m[i], p=p[i], t=0.0) for i in range(N)])
+        dp_pw = np.stack([congestion_2d.dp(x=x[i], m=m[i], p=p[i], t=0.0) for i in range(N)])
+        dm_pw = np.array([congestion_2d.dm(x=x[i], m=m[i], p=p[i], t=0.0) for i in range(N)])
 
         np.testing.assert_allclose(H_batch, H_pw, rtol=1e-12)
         np.testing.assert_allclose(dp_batch, dp_pw, rtol=1e-12)
@@ -667,9 +667,9 @@ class TestCongestionHamiltonian:
         m = 1.5
         p = rng.standard_normal(2)
 
-        np.testing.assert_allclose(H_cong(x=x, m=m, p=p), H_sep(x=x, m=m, p=p), rtol=1e-12)
-        np.testing.assert_allclose(H_cong.dp(x=x, m=m, p=p), H_sep.dp(x=x, m=m, p=p), rtol=1e-12)
-        np.testing.assert_allclose(H_cong.dm(x=x, m=m, p=p), H_sep.dm(x=x, m=m, p=p), rtol=1e-12)
+        np.testing.assert_allclose(H_cong(x=x, m=m, p=p, t=0.0), H_sep(x=x, m=m, p=p, t=0.0), rtol=1e-12)
+        np.testing.assert_allclose(H_cong.dp(x=x, m=m, p=p, t=0.0), H_sep.dp(x=x, m=m, p=p, t=0.0), rtol=1e-12)
+        np.testing.assert_allclose(H_cong.dm(x=x, m=m, p=p, t=0.0), H_sep.dm(x=x, m=m, p=p, t=0.0), rtol=1e-12)
 
     def test_analytic_dm_matches_finite_diff(self):
         """Analytic dm agrees with finite-difference fallback."""
@@ -691,8 +691,8 @@ class TestCongestionHamiltonian:
         m = 2.0
         p = np.array([0.7, -1.2])
 
-        dm_analytic = H_analytic.dm(x=x, m=m, p=p)
-        dm_fd = H_fd.dm(x=x, m=m, p=p)
+        dm_analytic = H_analytic.dm(x=x, m=m, p=p, t=0.0)
+        dm_fd = H_fd.dm(x=x, m=m, p=p, t=0.0)
         np.testing.assert_allclose(dm_analytic, dm_fd, rtol=1e-4)
 
     def test_optimal_control(self, congestion_1d):
@@ -700,8 +700,8 @@ class TestCongestionHamiltonian:
         x = np.array([0.5])
         m = 1.0
         p = np.array([3.0])
-        alpha = congestion_1d.optimal_control(x=x, m=m, p=p)
-        dp_val = congestion_1d.dp(x=x, m=m, p=p)
+        alpha = congestion_1d.optimal_control(x=x, m=m, p=p, t=0.0)
+        dp_val = congestion_1d.dp(x=x, m=m, p=p, t=0.0)
         # MINIMIZE sense: alpha = -dp
         np.testing.assert_allclose(alpha, -dp_val)
 
@@ -1160,7 +1160,7 @@ class TestLagrangianBaseNumerical:
         from mfgarchon.core.hamiltonian import LagrangianBase
 
         class QuarticLagrangian(LagrangianBase):
-            def __call__(self, x, alpha, m, t=0.0):
+            def __call__(self, t, x, alpha, m):
                 return 0.25 * np.sum(alpha**4)
 
         L = QuarticLagrangian()
@@ -1175,7 +1175,7 @@ class TestLagrangianBaseNumerical:
         from mfgarchon.core.hamiltonian import LagrangianBase
 
         class QuadLagrangian(LagrangianBase):
-            def __call__(self, x, alpha, m, t=0.0):
+            def __call__(self, t, x, alpha, m):
                 return 0.5 * np.sum(alpha**2)
 
         L = QuadLagrangian()
@@ -1186,3 +1186,32 @@ class TestLagrangianBaseNumerical:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_a_family_method_declared_x_before_t_is_refused_at_class_creation():
+    """#2375 ruling 8 (#2378 phase 5): the family's order is (t, x, p, m) / (t, x, alpha, m).
+
+    The library calls these methods by keyword, so an old-order subclass would still compute
+    correctly from the library, and bind silently wrongly for anyone calling it positionally in the
+    new order. So it is refused where it is written. The new order is accepted, and so is a method
+    that takes no `t` at all; that one fails loudly at its first keyword call instead.
+    """
+    from mfgarchon.core.hamiltonian import HamiltonianBase, LagrangianBase
+
+    with pytest.raises(TypeError, match=r"declares x before t"):
+
+        class _OldH(HamiltonianBase):
+            def __call__(self, x, m, p, t):
+                return 0.0
+
+    with pytest.raises(TypeError, match=r"declares x before t"):
+
+        class _OldL(LagrangianBase):
+            def __call__(self, x, alpha, m, t):
+                return 0.0
+
+    class _NewH(HamiltonianBase):
+        def __call__(self, t, x, p, m):
+            return float(np.sum(np.asarray(p) ** 2)) / 2
+
+    assert _NewH()(t=0.0, x=np.zeros(1), p=np.array([2.0]), m=1.0) == 2.0

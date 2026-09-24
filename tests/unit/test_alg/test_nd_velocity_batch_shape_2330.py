@@ -40,7 +40,7 @@ SHIFT = np.array([0.5, -0.8])
 class _PointOrBatch(HamiltonianBase):
     """A user Hamiltonian written to the shapes `HamiltonianBase` documents, with the base finite-difference dp."""
 
-    def __call__(self, x, m, p, t=0.0):
+    def __call__(self, t, x, p, m):
         q = np.asarray(p) - SHIFT * np.asarray(x)
         if q.ndim == 1:
             return 0.5 * float(q @ q) / (1.0 + LAM * float(m))
@@ -48,14 +48,14 @@ class _PointOrBatch(HamiltonianBase):
 
 
 class _ScalarSpeed(_PointOrBatch):
-    def dp(self, x, m, p, t=0.0):
+    def dp(self, t, x, p, m):
         return np.linalg.norm(np.asarray(p), axis=-1) / (1.0 + LAM * np.asarray(m))
 
 
 class _ComponentsFirst(_PointOrBatch):
     """The right numbers in the wrong layout: ``(d, N)``, which has the size of ``(N, d)``."""
 
-    def dp(self, x, m, p, t=0.0):
+    def dp(self, t, x, p, m):
         return (np.asarray(p) / (1.0 + LAM * np.asarray(m))[:, None]).T
 
 

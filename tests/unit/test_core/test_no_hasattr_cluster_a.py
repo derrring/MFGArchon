@@ -115,10 +115,10 @@ class TestCapabilityDispatchBehavior:
         from mfgarchon.core.hamiltonian import DualHamiltonian, LagrangianBase
 
         class _SimpleLagrangian(LagrangianBase):
-            def __call__(self, x, alpha, m, t=0.0):
+            def __call__(self, t, x, alpha, m):
                 return 0.5 * np.sum(alpha**2)
 
-            def optimal_control(self, x, m, p, t=0.0):
+            def optimal_control(self, t, x, p, m):
                 return np.asarray(p)
 
         L = _SimpleLagrangian()
@@ -167,17 +167,17 @@ class TestCapabilityDispatchBehavior:
         class _MinimalH(HamiltonianBase):
             """Minimal concrete Hamiltonian without control_cost/_potential."""
 
-            def __call__(self, x, m, derivs_or_p, t=0.0):
+            def __call__(self, t, x, p, m):
                 return np.zeros(1)
 
-            def dp(self, x, m, derivs_or_p, t=0.0):
-                return np.zeros_like(np.atleast_1d(derivs_or_p))
+            def dp(self, t, x, p, m):
+                return np.zeros_like(np.atleast_1d(p))
 
-            def dm(self, x, m, derivs_or_p, t=0.0):
+            def dm(self, t, x, p, m):
                 return 0.0
 
-            def optimal_control(self, x, m, derivs_or_p, t=0.0):
-                return np.zeros_like(np.atleast_1d(derivs_or_p))
+            def optimal_control(self, t, x, p, m):
+                return np.zeros_like(np.atleast_1d(p))
 
         H = _MinimalH()
         comp = MFGComponents(

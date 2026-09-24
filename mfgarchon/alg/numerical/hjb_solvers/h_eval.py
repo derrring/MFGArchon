@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 
 
 def eval_H_batch(H_class: HamiltonianBase, x: NDArray, m: NDArray, p: NDArray, t: float) -> NDArray:
-    """Evaluate the Hamiltonian value ``H(x, m, p, t)`` over a batch of points.
+    """Evaluate the Hamiltonian value ``H(t, x, p, m)`` over a batch of points.
 
     Thin shim over the single-source primitive ``H_class.evaluate_H`` (Issue #1071):
     this is no longer a parallel implementation, it delegates to the method on the

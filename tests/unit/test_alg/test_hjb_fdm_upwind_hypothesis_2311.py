@@ -33,7 +33,7 @@ class _ShiftedQuadraticL(LagrangianBase):
         self.beta = beta
         self.offset = offset
 
-    def __call__(self, x, alpha, m, t=0.0):
+    def __call__(self, t, x, alpha, m):
         return 0.5 * float(np.sum((np.atleast_1d(alpha) - self.beta) ** 2)) - self.offset
 
 
@@ -44,15 +44,15 @@ class _QuadraticPlusTilt(HamiltonianBase):
         super().__init__()
         self.tilt, self.tilt_dp, self.tilt_dm = tilt, tilt_dp, tilt_dm
 
-    def __call__(self, x, m, p, t=0.0):
+    def __call__(self, t, x, p, m):
         p = np.atleast_1d(p)
         return float(0.5 * np.sum(p**2) + self.tilt(np.atleast_1d(x), m, p))
 
-    def dp(self, x, m, p, t=0.0):
+    def dp(self, t, x, p, m):
         p = np.atleast_1d(p)
         return p + np.asarray(self.tilt_dp(np.atleast_1d(x), m, p))
 
-    def dm(self, x, m, p, t=0.0):
+    def dm(self, t, x, p, m):
         return self.tilt_dm(np.atleast_1d(x), m, np.atleast_1d(p))
 
 

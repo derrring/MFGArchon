@@ -29,8 +29,8 @@ Architecture (v0.17.2+)
 -----------------------
 Two complementary class hierarchies:
 
-1. **Hamiltonian** (Issue #673): Full MFG Hamiltonian H(x, m, p, t)
-   - Clean callable API: `H(x, m, p, t)` or `H(x, m, derivs, t)`
+1. **Hamiltonian** (Issue #673): Full MFG Hamiltonian H(t, x, p, m)
+   - Clean callable API: `H(t, x, p, m)` or `H(x, m, derivs, t)`
    - Auto-computed derivatives via `dp()` and `dm()` (Issue #667)
    - Supports state-dependent terms (congestion, potential)
 
@@ -39,7 +39,7 @@ Two complementary class hierarchies:
    - `optimal_control(p)`, `lagrangian(α)`, `hamiltonian(p)`
    - Can be composed into Hamiltonian
 
-3. **Lagrangian** (Issue #651): Running cost L(x, α, m, t)
+3. **Lagrangian** (Issue #651): Running cost L(t, x, α, m)
    - Legendre transform to Hamiltonian
    - Duality: L ↔ H via `to_hamiltonian()` and `to_lagrangian()`
 
@@ -59,6 +59,7 @@ For general cases, numerical Legendre transform is available.
 
 from __future__ import annotations
 
+import inspect
 import math
 import numbers
 from abc import ABC, abstractmethod
@@ -758,19 +759,22 @@ BoundedHamiltonian = BoundedControlCost
 # ============================================================================
 
 
+_FAMILY_METHODS = ("__call__", "dp", "dm", "dx", "optimal_control", "conjugate_argmax", "evaluate_hamiltonian")
+
+
 class MFGOperatorBase(ABC):
     """
     Abstract base class for MFG operators (Hamiltonian and Lagrangian).
 
-    This provides a common interface for both H(x, m, p, t) and L(x, α, m, t),
+    This provides a common interface for both H(t, x, p, m) and L(t, x, α, m),
     enabling symmetric treatment via Legendre transform duality.
 
     Mathematical Background (Issue #651)
     -------------------------------------
     In optimal control, Hamiltonian and Lagrangian are Legendre duals:
 
-        H(x, p, m, t) = sup_α { -p·α - L(x, α, m, t) }   (Legendre transform)
-        L(x, α, m, t) = sup_p { -p·α - H(x, p, m, t) }   (Inverse transform)
+        H(t, x, p, m) = sup_α { -p·α - L(t, x, α, m) }   (Legendre transform)
+        L(t, x, α, m) = sup_p { -p·α - H(t, x, p, m) }   (Inverse transform)
 
     Both carry the SAME sign on the pairing (#2375, ruling 5). Flipping one and not the
     other returns L(-α) from the round trip -- equal to L for every even L, and wrong for
@@ -788,11 +792,11 @@ class MFGOperatorBase(ABC):
     term of L. V and f are cost-signed (#2375 ruling 3): they are part of the running cost the
     agent pays, so
 
-        L(x, alpha, m, t) = L_ctrl(alpha) + V(x, t) + f(m)
+        L(t, x, alpha, m) = L_ctrl(alpha) + V(x, t) + f(m)
 
     Derivation. The dynamic programming principle gives
 
-        (u^n - u^{n+1}) / dt = min_alpha { L(x, alpha, m, t) + p . alpha }
+        (u^n - u^{n+1}) / dt = min_alpha { L(t, x, alpha, m) + p . alpha }
 
     so with L = L_ctrl + W the PDE reads  -d_t u + H_ctrl(p) - W = 0.  The
     residual assembled in ``alg/numerical/hjb_solvers/base_hjb.py`` is
@@ -802,7 +806,7 @@ class MFGOperatorBase(ABC):
     Equivalently, and this is the form the round-trip test asserts: since V and
     f do not depend on alpha,
 
-        sup_alpha { -p . alpha - L(x, alpha, m, t) } = H_ctrl(p) - W = H(x, m, p, t)
+        sup_alpha { -p . alpha - L(t, x, alpha, m) } = H_ctrl(p) - W = H(t, x, p, m)
 
     holds if and only if W = V + f. Giving V and f the same sign in H and in L breaks
     conjugacy by exactly 2(V + f), constant in p.
@@ -843,6 +847,29 @@ class MFGOperatorBase(ABC):
     finite_diff_eps : float
         Step size for finite difference derivatives (default: 1e-6)
     """
+
+    def __init_subclass__(cls, **kwargs):
+        """Refuse a subclass that declares a family method in the pre-ruling-8 order.
+
+        The order is ``(t, x, p, m)`` for a Hamiltonian and ``(t, x, alpha, m)`` for a
+        Lagrangian (#2375 ruling 8, #2378 phase 5). The library calls these methods by
+        keyword, so a subclass written as ``(x, m, p, t)`` would still compute correctly when
+        the library calls it, and silently wrongly when anyone calls it positionally in the
+        new order. So it is refused here, at class creation, where the traceback points at
+        the definition.
+        """
+        super().__init_subclass__(**kwargs)
+        for name in _FAMILY_METHODS:
+            fn = cls.__dict__.get(name)
+            if fn is None:
+                continue
+            params = list(inspect.signature(fn).parameters)[1:]
+            if "x" in params and "t" in params and params.index("x") < params.index("t"):
+                raise TypeError(
+                    f"{cls.__qualname__}.{name}({', '.join(params)}) declares x before t. Since #2378 phase 5 "
+                    f"(#2375 ruling 8) the order is (t, x, p, m) for a Hamiltonian and (t, x, alpha, m) for a "
+                    f"Lagrangian, with t required: reorder the parameters."
+                )
 
     def __init__(
         self,
@@ -889,7 +916,7 @@ class MFGOperatorBase(ABC):
 
 
 # ============================================================================
-# Hamiltonian: Full MFG Hamiltonian H(x, m, p, t) - Issue #673
+# Hamiltonian: Full MFG Hamiltonian H(t, x, p, m) - Issue #673
 # ============================================================================
 
 
@@ -988,7 +1015,7 @@ class Regularizer(Protocol):
 
 class HamiltonianBase(MFGOperatorBase):
     """
-    Abstract base for full MFG Hamiltonians H(x, m, p, t).
+    Abstract base for full MFG Hamiltonians H(t, x, p, m).
 
     This is the primary interface for class-based Hamiltonians in MFG.
     Unlike ControlCostBase (which handles only H(p)), Hamiltonian
@@ -996,7 +1023,7 @@ class HamiltonianBase(MFGOperatorBase):
 
     Key Features (Issue #673)
     -------------------------
-    - Clean callable API: `H(x, m, p, t)` returns Hamiltonian value
+    - Clean callable API: `H(t, x, p, m)` returns Hamiltonian value
     - Auto-differentiation: `dp()` and `dm()` computed automatically (#667)
     - Composable: Can wrap ControlCostBase for control cost component
     - Extensible: Subclass for custom state-dependent Hamiltonians
@@ -1010,7 +1037,7 @@ class HamiltonianBase(MFGOperatorBase):
 
     Where H typically has the form:
 
-        H(x, m, p, t) = H_control(p) - V(x, t) - f(m)
+        H(t, x, p, m) = H_control(p) - V(x, t) - f(m)
 
     With:
     - H_control(p): Control cost term (e.g., ½|p|²/λ for quadratic)
@@ -1032,14 +1059,14 @@ class HamiltonianBase(MFGOperatorBase):
     ...     coupling=lambda m: m**2
     ... )
     >>> x, m, p, t = np.array([0.5]), 0.3, np.array([1.0]), 0.0
-    >>> H(x, m, p, t)  # Evaluate Hamiltonian
-    >>> H.dp(x, m, p, t)  # Get ∂H/∂p (auto-computed)
-    >>> H.dm(x, m, p, t)  # Get ∂H/∂m (auto-computed)
+    >>> H(t, x, p, m)  # Evaluate Hamiltonian
+    >>> H.dp(t, x, p, m)  # Get ∂H/∂p (auto-computed)
+    >>> H.dm(t, x, p, m)  # Get ∂H/∂m (auto-computed)
     >>> L = H.legendre_transform()  # Convert to Lagrangian (Issue #651)
 
     See Also
     --------
-    LagrangianBase : Running cost L(x, α, m, t)
+    LagrangianBase : Running cost L(t, x, α, m)
     DualHamiltonian : Hamiltonian from Lagrangian via Legendre transform
     DualLagrangian : Lagrangian from Hamiltonian via inverse Legendre
     """
@@ -1141,13 +1168,13 @@ class HamiltonianBase(MFGOperatorBase):
     @abstractmethod
     def __call__(
         self,
+        t: float,
         x: NDArray,
-        m: float | NDArray,
         p: NDArray,
-        t: float = 0.0,
+        m: float | NDArray,
     ) -> float | NDArray:
         """
-        Evaluate Hamiltonian H(x, m, p, t).
+        Evaluate Hamiltonian H(t, x, p, m).
 
         Parameters
         ----------
@@ -1169,10 +1196,10 @@ class HamiltonianBase(MFGOperatorBase):
 
     def dp(
         self,
+        t: float,
         x: NDArray,
-        m: float | NDArray,
         p: NDArray,
-        t: float = 0.0,
+        m: float | NDArray,
     ) -> NDArray:
         """
         Compute ∂H/∂p (gradient w.r.t. momentum).
@@ -1226,10 +1253,10 @@ class HamiltonianBase(MFGOperatorBase):
 
     def dm(
         self,
+        t: float,
         x: NDArray,
-        m: float | NDArray,
         p: NDArray,
-        t: float = 0.0,
+        m: float | NDArray,
     ) -> float | NDArray:
         """
         Compute ∂H/∂m (derivative w.r.t. density).
@@ -1277,10 +1304,10 @@ class HamiltonianBase(MFGOperatorBase):
 
     def dx(
         self,
+        t: float,
         x: NDArray,
-        m: float | NDArray,
         p: NDArray,
-        t: float = 0.0,
+        m: float | NDArray,
     ) -> NDArray:
         """Compute dH/dx (gradient w.r.t. position).
 
@@ -1318,10 +1345,10 @@ class HamiltonianBase(MFGOperatorBase):
 
     def optimal_control(
         self,
+        t: float,
         x: NDArray,
-        m: float | NDArray,
         p: NDArray,
-        t: float = 0.0,
+        m: float | NDArray,
     ) -> NDArray:
         """
         Compute optimal control α* given state and momentum.
@@ -1549,7 +1576,7 @@ class HamiltonianBase(MFGOperatorBase):
         """
         Convert Hamiltonian to Lagrangian via Legendre transform.
 
-        Computes L(x, α, m, t) = sup_p { -p·α - H(x, p, m, t) }
+        Computes L(t, x, α, m) = sup_p { -p·α - H(t, x, p, m) }
 
         The Legendre transform is involutive: applying it twice recovers
         the original (up to convexification). This provides symmetric
@@ -1583,7 +1610,7 @@ class HamiltonianBase(MFGOperatorBase):
 
 
 # =============================================================================
-# Lagrangian: Running cost L(x, α, m, t) with Legendre transform - Issue #651
+# Lagrangian: Running cost L(t, x, α, m) with Legendre transform - Issue #651
 # =============================================================================
 
 #: Search box used by the numerical fallbacks when ``control_bounds()`` returns
@@ -1595,7 +1622,7 @@ _FALLBACK_CONTROL_BOUNDS: tuple[float, float] = (-10.0, 10.0)
 
 class LagrangianBase(MFGOperatorBase):
     """
-    Abstract base for Lagrangian (running cost) L(x, alpha, m, t).
+    Abstract base for Lagrangian (running cost) L(t, x, alpha, m).
 
     First-class MFG specification, parallel to HamiltonianBase.
     Users can specify either H or L; both provide optimal_control().
@@ -1606,7 +1633,7 @@ class LagrangianBase(MFGOperatorBase):
     - ``proximal(tau, z)`` -- for ADMM/variational solvers
     - ``control_bounds()`` -- for semi-Lagrangian solver
 
-    Duality: H(x, p, m, t) = sup_alpha { -p . alpha - L(x, alpha, m, t) }
+    Duality: H(t, x, p, m) = sup_alpha { -p . alpha - L(t, x, alpha, m) }
 
     Parameters
     ----------
@@ -1623,12 +1650,12 @@ class LagrangianBase(MFGOperatorBase):
     @abstractmethod
     def __call__(
         self,
+        t: float,
         x: NDArray,
         alpha: NDArray,
         m: float | NDArray,
-        t: float = 0.0,
     ) -> float | NDArray:
-        """Evaluate L(x, alpha, m, t)."""
+        """Evaluate L(t, x, alpha, m)."""
         ...
 
     # === Numerical search box: one owner for the control_bounds() fallback ===
@@ -1680,12 +1707,12 @@ class LagrangianBase(MFGOperatorBase):
 
     def conjugate_argmax(
         self,
+        t: float,
         x: NDArray,
-        m: float | NDArray,
         p: NDArray,
-        t: float = 0.0,
+        m: float | NDArray,
     ) -> NDArray:
-        """∂H/∂p for H = sup_alpha { -p . alpha - L(x, alpha, m, t) } = L*(-p) -- MINUS its maximizer.
+        """∂H/∂p for H = sup_alpha { -p . alpha - L(t, x, alpha, m) } = L*(-p) -- MINUS its maximizer.
 
         **This is THE extension point for analytic subclasses.** Both
         optimal_control() and evaluate_hamiltonian() derive from it, so
@@ -1739,17 +1766,17 @@ class LagrangianBase(MFGOperatorBase):
 
     def optimal_control(
         self,
+        t: float,
         x: NDArray,
-        m: float | NDArray,
         p: NDArray,
-        t: float = 0.0,
+        m: float | NDArray,
     ) -> NDArray:
         """Compute the optimal control alpha*, the drift the agent applies.
 
         Same convention as HamiltonianBase.optimal_control() (Issue #1642):
         - MINIMIZE: alpha* = -dH/dp
 
-        with dH/dp = -argmax_alpha { -p . alpha - L(x, alpha, m, t) } (#2375 ruling 5). Computed
+        with dH/dp = -argmax_alpha { -p . alpha - L(t, x, alpha, m) } (#2375 ruling 5). Computed
         directly from L without constructing DualHamiltonian.
 
         Before #1642 this returned the bare argmax -- i.e. +p/lambda under
@@ -1767,12 +1794,12 @@ class LagrangianBase(MFGOperatorBase):
 
     def evaluate_hamiltonian(
         self,
+        t: float,
         x: NDArray,
-        m: float | NDArray,
         p: NDArray,
-        t: float = 0.0,
+        m: float | NDArray,
     ) -> float | NDArray:
-        """H(x, m, p, t) = sup_alpha { -p . alpha - L(x, alpha, m, t) } = L*(-p).
+        """H(t, x, p, m) = sup_alpha { -p . alpha - L(t, x, alpha, m) } = L*(-p).
 
         The convex conjugate, evaluated at its own maximizer. Matches
         DualHamiltonian.__call__ and the always-sup ControlCostBase.evaluate:
@@ -1883,7 +1910,7 @@ class LagrangianBase(MFGOperatorBase):
 
 
 class SeparableLagrangian(LagrangianBase):
-    """Separable Lagrangian: L(x, alpha, m, t) = L_control(alpha) - V(x, t) - f(m).
+    """Separable Lagrangian: L(t, x, alpha, m) = L_control(alpha) - V(x, t) - f(m).
 
     The non-kinetic terms carry the OPPOSITE sign to the Hamiltonian's, so that this
     class is self-conjugate against its own ``evaluate_hamiltonian`` (Issue #1645).
@@ -1913,7 +1940,7 @@ class SeparableLagrangian(LagrangianBase):
         self._potential = potential
         self._coupling = coupling
 
-    def __call__(self, x, alpha, m, t=0.0):
+    def __call__(self, t, x, alpha, m):
         """L = L_control(alpha) + V(x, t) + f(m): V and f are costs (#2375 ruling 3).
 
         The non-kinetic terms carry the OPPOSITE sign to the Hamiltonian's (Issue #1645):
@@ -1927,11 +1954,11 @@ class SeparableLagrangian(LagrangianBase):
         f_m = float(self._coupling(m)) if self._coupling is not None else 0.0
         return L_ctrl + V + f_m
 
-    def optimal_control(self, x, m, p, t=0.0):
+    def optimal_control(self, t, x, p, m):
         """Delegates to control_cost.optimal_control(p). Analytic."""
         return self.control_cost.optimal_control(np.atleast_1d(p))
 
-    def evaluate_hamiltonian(self, x, m, p, t=0.0):
+    def evaluate_hamiltonian(self, t, x, p, m):
         """H = H_control(p) - V(x,t) - f(m). Uses control_cost.evaluate()."""
         p_arr = np.atleast_1d(p)
         H_ctrl = self.control_cost.evaluate(p_arr)
@@ -1967,7 +1994,7 @@ class DualHamiltonian(HamiltonianBase):
     """
     Hamiltonian defined via Legendre transform of a Lagrangian.
 
-    This class computes H(x, p, m, t) = sup_α { -p·α - L(x, α, m, t) }   (#2375 ruling 5)
+    This class computes H(t, x, p, m) = sup_α { -p·α - L(t, x, α, m) }   (#2375 ruling 5)
     numerically for general Lagrangians. It is the "dual" of a given
     Lagrangian in the sense of Legendre/convex duality.
 
@@ -2008,15 +2035,15 @@ class DualHamiltonian(HamiltonianBase):
 
     def __call__(
         self,
+        t: float,
         x: NDArray,
-        m: float | NDArray,
         p: NDArray,
-        t: float = 0.0,
+        m: float | NDArray,
     ) -> float | NDArray:
         """
         Compute H via numerical Legendre transform.
 
-        H(x, p, m, t) = sup_α { -p·α - L(x, α, m, t) }   (#2375 ruling 5)
+        H(t, x, p, m) = sup_α { -p·α - L(t, x, α, m) }   (#2375 ruling 5)
         """
         d = p.shape[0] if p.ndim > 0 else 1
         p_flat = np.atleast_1d(p)
@@ -2069,10 +2096,10 @@ class DualHamiltonian(HamiltonianBase):
 
     def dp(
         self,
+        t: float,
         x: NDArray,
-        m: float | NDArray,
         p: NDArray,
-        t: float = 0.0,
+        m: float | NDArray,
     ) -> NDArray:
         """
         Compute ∂H/∂p = -α*.
@@ -2144,7 +2171,7 @@ class DualLagrangian(LagrangianBase):
     """
     Lagrangian defined via inverse Legendre transform of a Hamiltonian.
 
-    This class computes L(x, α, m, t) = sup_p { -p·α - H(x, p, m, t) }   (#2375 ruling 5)
+    This class computes L(t, x, α, m) = sup_p { -p·α - H(t, x, p, m) }   (#2375 ruling 5)
     numerically for general Hamiltonians. It is the "dual" of a given
     Hamiltonian in the sense of Legendre/convex duality.
 
@@ -2179,15 +2206,15 @@ class DualLagrangian(LagrangianBase):
 
     def __call__(
         self,
+        t: float,
         x: NDArray,
         alpha: NDArray,
         m: float | NDArray,
-        t: float = 0.0,
     ) -> float | NDArray:
         """
         Compute L via inverse Legendre transform.
 
-        L(x, α, m, t) = sup_p { -p·α - H(x, p, m, t) }   (#2375 ruling 5)
+        L(t, x, α, m) = sup_p { -p·α - H(t, x, p, m) }   (#2375 ruling 5)
         """
         d = alpha.shape[0] if alpha.ndim > 0 else 1
         alpha_flat = np.atleast_1d(alpha)
@@ -2249,10 +2276,10 @@ class DualLagrangian(LagrangianBase):
 
     def dm(
         self,
+        t: float,
         x: NDArray,
         alpha: NDArray,
         m: float | NDArray,
-        t: float = 0.0,
     ) -> float:
         """Compute ∂L/∂m using finite differences."""
         eps = self.finite_diff_eps
@@ -2321,7 +2348,7 @@ class DualLagrangian(LagrangianBase):
 
 class SeparableHamiltonian(HamiltonianBase):
     """
-    Separable Hamiltonian: H(x, m, p, t) = H_control(p) - V(x, t) - f(m).
+    Separable Hamiltonian: H(t, x, p, m) = H_control(p) - V(x, t) - f(m).
 
     This is the most common form in MFG, where:
     - H_control(p): Control cost (from ControlCostBase)
@@ -2422,10 +2449,10 @@ class SeparableHamiltonian(HamiltonianBase):
 
     def __call__(
         self,
+        t: float,
         x: NDArray,
-        m: float | NDArray,
         p: NDArray,
-        t: float = 0.0,
+        m: float | NDArray,
     ) -> float | NDArray:
         """
         Evaluate H = H_control(p) - V(x, t) - f(m).
@@ -2470,10 +2497,10 @@ class SeparableHamiltonian(HamiltonianBase):
 
     def dp(
         self,
+        t: float,
         x: NDArray,
-        m: float | NDArray,
         p: NDArray,
-        t: float = 0.0,
+        m: float | NDArray,
     ) -> NDArray:
         """
         dH/dp from control cost component. No isinstance dispatch (Issue #898).
@@ -2485,10 +2512,10 @@ class SeparableHamiltonian(HamiltonianBase):
 
     def dm(
         self,
+        t: float,
         x: NDArray,
-        m: float | NDArray,
         p: NDArray,
-        t: float = 0.0,
+        m: float | NDArray,
     ) -> float | NDArray:
         """
         Compute ∂H/∂m = -df/dm (only the coupling term depends on m, and it enters H as -f).
@@ -2527,10 +2554,10 @@ class SeparableHamiltonian(HamiltonianBase):
 
     def dx(
         self,
+        t: float,
         x: NDArray,
-        m: float | NDArray,
         p: NDArray,
-        t: float = 0.0,
+        m: float | NDArray,
     ) -> NDArray:
         """dH/dx = -grad_V(x, t) for separable H.
 
@@ -2558,10 +2585,10 @@ class SeparableHamiltonian(HamiltonianBase):
 
     def optimal_control(
         self,
+        t: float,
         x: NDArray,
-        m: float | NDArray,
         p: NDArray,
-        t: float = 0.0,
+        m: float | NDArray,
     ) -> NDArray:
         """
         Optimal control from the control cost specification.
@@ -2591,7 +2618,7 @@ class CongestionHamiltonian(HamiltonianBase):
     """
     Non-separable Hamiltonian with density-dependent kinetic cost (Issue #782).
 
-    H(x, m, p, t) = |p|^2 / (2*lambda*c(m)) - V(x, t) - f(m)
+    H(t, x, p, m) = |p|^2 / (2*lambda*c(m)) - V(x, t) - f(m)
 
     The congestion factor c(m) modifies the kinetic term, making movement
     costlier in high-density regions (multiplicative congestion). Unlike
@@ -2647,10 +2674,10 @@ class CongestionHamiltonian(HamiltonianBase):
 
     def __call__(
         self,
+        t: float,
         x: NDArray,
-        m: float | NDArray,
         p: NDArray,
-        t: float = 0.0,
+        m: float | NDArray,
     ) -> float | NDArray:
         """
         Evaluate H = |p|^2 / (2*lambda*c(m)) - V(x, t) - f(m).
@@ -2709,10 +2736,10 @@ class CongestionHamiltonian(HamiltonianBase):
 
     def dp(
         self,
+        t: float,
         x: NDArray,
-        m: float | NDArray,
         p: NDArray,
-        t: float = 0.0,
+        m: float | NDArray,
     ) -> NDArray:
         """
         Compute dH/dp = p / (lambda * c(m)).
@@ -2745,10 +2772,10 @@ class CongestionHamiltonian(HamiltonianBase):
 
     def dm(
         self,
+        t: float,
         x: NDArray,
-        m: float | NDArray,
         p: NDArray,
-        t: float = 0.0,
+        m: float | NDArray,
     ) -> float | NDArray:
         """
         Compute dH/dm = -c'(m) * H_control(p) / c(m)^2 - f'(m).
@@ -2818,10 +2845,10 @@ class CongestionHamiltonian(HamiltonianBase):
 
     def optimal_control(
         self,
+        t: float,
         x: NDArray,
-        m: float | NDArray,
         p: NDArray,
-        t: float = 0.0,
+        m: float | NDArray,
     ) -> NDArray:
         """
         Optimal control: alpha* = -sign * dH/dp.
@@ -3039,7 +3066,7 @@ if __name__ == "__main__":
     # Test QuadraticMFGHamiltonian (and backward-compat alias DefaultMFGHamiltonian)
     print("\n6. QuadraticMFGHamiltonian:")
     H_default = QuadraticMFGHamiltonian(coupling_coefficient=1.0)
-    H_default_val = H_default(x, m_val, p_val, t_val)
+    H_default_val = H_default(x=x, m=m_val, p=p_val, t=t_val)
     # H = ½c|p|² - m² = 0.5 * 1.0 * 1.0 - 0.09 = 0.5 - 0.09 = 0.41
     print(f"   H(x={x}, m={m_val}, p={p_val}) = {H_default_val:.4f}")
     print("   Expected: 0.5 * 1.0 * 1.0² - 0.3² = 0.5 - 0.09 = 0.41")
@@ -3048,7 +3075,7 @@ if __name__ == "__main__":
     # Test factory function
     print("\n7. create_hamiltonian factory:")
     H_factory = create_hamiltonian("quadratic", control_cost=2.0)
-    H_factory_val = H_factory(x, m_val, p_val, t_val)
+    H_factory_val = H_factory(x=x, m=m_val, p=p_val, t=t_val)
     print("   create_hamiltonian('quadratic', control_cost=2.0)")
     print(f"   H = {H_factory_val:.4f}  (expected: 0.25)")
     # H = ½|p|²/λ = 0.5 * 1.0 / 2.0 = 0.25
@@ -3062,7 +3089,7 @@ if __name__ == "__main__":
         coupling_dm=lambda m: 2 * m,
     )
 
-    # Call class-based API directly: H(x, m, p, t)
+    # Call class-based API directly: H(t, x, p, m)
     p_test = np.array([2.0])  # p = 2.0 in 1D
     m_test = 0.3
     H_direct = H_class(x=x, m=m_test, p=p_test, t=t_val)
@@ -3085,7 +3112,7 @@ if __name__ == "__main__":
             super().__init__()
             self.lam = lam
 
-        def __call__(self, x, alpha, m, t=0.0):
+        def __call__(self, t, x, alpha, m):
             return 0.5 * self.lam * np.sum(alpha**2)
 
     print("\n9. Lagrangian -> Hamiltonian via Legendre transform:")
@@ -3094,7 +3121,7 @@ if __name__ == "__main__":
 
     # For L = ½λ|α|², the Legendre transform gives H = ½|p|²/λ
     # With λ=2 and p=1: H = 0.5 * 1 / 2 = 0.25
-    H_legendre_val = H_legendre(x, m_val, p_val, t_val)
+    H_legendre_val = H_legendre(x=x, m=m_val, p=p_val, t=t_val)
     print("   L(α) = ½ * 2 * |α|² -> H(p) = ½|p|²/2")
     print(f"   H(p=1) = {H_legendre_val:.4f}  (expected: ~0.25)")
     # Allow some tolerance for numerical Legendre transform
@@ -3110,7 +3137,7 @@ if __name__ == "__main__":
     # For H = ½|p|²/λ, the inverse Legendre transform gives L = ½λ|α|²
     # With λ=2 (control_cost=2): L(α=1) = 0.5 * 2 * 1 = 1.0
     alpha_test = np.array([1.0])
-    L_val = L_from_H(x, alpha_test, m_val, t_val)
+    L_val = L_from_H(x=x, alpha=alpha_test, m=m_val, t=t_val)
     print("   H(p) = ½|p|²/2 -> L(α) = ½ * 2 * |α|²")
     print(f"   L(α=1) = {L_val:.4f}  (expected: ~1.0)")
     assert abs(L_val - 1.0) < 0.1, f"Inverse Legendre transform failed: {L_val}"
@@ -3121,8 +3148,8 @@ if __name__ == "__main__":
     L_recovered = H_from_L.legendre_transform()
 
     # L_recovered(α=1) should ≈ L_orig(α=1) = 0.5 * 2 * 1 = 1.0
-    L_orig_val = L_orig(x, alpha_test, m_val, t_val)
-    L_recovered_val = L_recovered(x, alpha_test, m_val, t_val)
+    L_orig_val = L_orig(x=x, alpha=alpha_test, m=m_val, t=t_val)
+    L_recovered_val = L_recovered(x=x, alpha=alpha_test, m=m_val, t=t_val)
     print(f"   L_orig(α=1) = {L_orig_val:.4f}")
     print(f"   L_recovered(α=1) = {L_recovered_val:.4f}")
     assert abs(L_recovered_val - L_orig_val) < 0.2, f"Duality cycle failed: {L_recovered_val} vs {L_orig_val}"
