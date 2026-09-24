@@ -948,10 +948,8 @@ def main() -> None:
         selected = select_shard(MUTATIONS, *args.shard)
     else:
         selected = [m for m in MUTATIONS if not args.only or m.name in args.only]
-    if not selected:
-        if args.shard:
-            sys.exit(f"--shard {args.shard[0]}/{args.shard[1]} selects nothing: there are {len(MUTATIONS)} mutations")
-        sys.exit(f"No mutation matched {args.only}. Known: {[m.name for m in MUTATIONS]}")
+    if args.shard and not selected:  # `--only` names are validated above, so only a shard can select nothing
+        sys.exit(f"--shard {args.shard[0]}/{args.shard[1]} selects nothing: there are {len(MUTATIONS)} mutations")
 
     paths = args.paths.split()
     print(f"Baseline: pytest {' '.join(paths)} (excluding {SELF_TESTS}) ...", flush=True)

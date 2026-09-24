@@ -966,3 +966,26 @@ def test_a_shard_run_checks_its_slice_through_main_and_still_reports_a_deleted_m
     assert reported == ["  deleted_from_the_code: mutation DISAPPEARED (baseline killed 1)"], (
         f"the shard should report the deleted mutation and nothing from the other slice:\n{out[-1500:]}"
     )
+
+
+def test_an_unknown_only_name_is_refused_not_dropped(td, monkeypatch, capsys):
+    """`--only real --only typo` used to drop the typo and, with a subset now checked on its own,
+    pass green over one mutation."""
+    code = _drive_main(td, monkeypatch, ["--only", td.MUTATIONS[0].name, "--only", "no_such_mutation"], [])
+    assert code == 2, f"an unknown --only name was not refused at argument parsing (exit {code})"
+    assert "no_such_mutation" in capsys.readouterr().err
+
+
+def test_write_baseline_does_not_need_the_reference_it_is_about_to_replace(td, monkeypatch, tmp_path):
+    """`--write-baseline` exits before the check, so the reference is not loaded first: with it absent,
+    the run records rather than refusing at start."""
+    name = td.MUTATIONS[0].name
+    written = tmp_path / "new_baseline.json"
+    code = _drive_main(
+        td,
+        monkeypatch,
+        ["--only", name, "--check-baseline", str(tmp_path / "absent" / "b.json"), "--write-baseline", str(written)],
+        [td.Run(collected=10), td.Run(failed={"tests/a.py::t"}, returncode=1, collected=10)],
+    )
+    assert code == 0, f"--write-baseline with an absent reference exited {code} instead of recording"
+    assert name in json.loads(written.read_text())["mutations"], "the baseline was not written"

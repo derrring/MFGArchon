@@ -3,8 +3,7 @@ name: Weekly Test-Discrimination Sweep
 # Measures which tests notice a change to a convention the library single-sources,
 # by mutating each one and running the suite. Weekly, not nightly: it is one full suite run per
 # mutation plus a baseline per shard -- `N + len(MUTATIONS)` runs over N shards, not a fixed number
-# (#2349, #2389) -- and the
-# quantity it tracks moves on the timescale of a campaign, not a commit.
+# (#2349, #2389) -- and the quantity it tracks moves on the timescale of a campaign, not a commit.
 #
 # It answers what #1715 asked and #1701 generalises. Measured 2026-09-10 at 2c923694 over
 # 3,822 collected tests (#2285): 665 (17.4%) notice at least one of the 24 conventions and
@@ -122,20 +121,26 @@ jobs:
         # `needs.<job>.result` aggregates a matrix with both a failed and a cancelled leg is not
         # documented, so the script reads each shard's own conclusion and uses this only if it cannot.
         RESULT: ${{ needs.discrimination.result }}
+        # A dispatch on a branch reports here too, deliberately (see above); the notice says which ref.
+        REF: ${{ github.ref_name }}
       with:
         script: |
           const date = new Date().toISOString().split('T')[0];
           const title = 'Weekly test-discrimination sweep is failing';
           const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
           let shards = [];
+          let why = '';
           try {
             const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
               owner: context.repo.owner, repo: context.repo.repo, run_id: context.runId, per_page: 100,
             });
+            // The prefix is a second copy of the job's `name:` above; renamed there, it matches nothing here.
             shards = jobs.filter(j => j.name.startsWith('mutation sweep')).map(j => ({ name: j.name, conclusion: j.conclusion }));
+            if (!shards.length) why = `none of this run's ${jobs.length} jobs is named 'mutation sweep ...'`;
           } catch (e) {
-            core.warning(`Could not list this run's jobs, so the aggregate result decides the text: ${e.message}`);
+            why = `this run's job list could not be read: ${e.message}`;
           }
+          if (why) core.warning(`${why}; the aggregate result decides the text`);
           const failed = shards.filter(s => s.conclusion === 'failure');
           const unfinished = shards.filter(s => s.conclusion !== 'success' && s.conclusion !== 'failure');
           const anyFailed = shards.length ? failed.length > 0 : process.env.RESULT === 'failure';
@@ -143,7 +148,7 @@ jobs:
           const what = anyFailed ? 'failed' : 'did not finish';
           const perShard = shards.length
             ? shards.map(s => `- ${s.name}: ${s.conclusion}`)
-            : [`- the run's job list was unreadable; aggregate result: ${process.env.RESULT}`];
+            : [`- ${why}; aggregate result: ${process.env.RESULT}`];
           // Paginated, like nightly.yml. The unpaginated default is 30, so past that
           // this would stop finding its own issue and open a fresh duplicate weekly.
           const issues = await github.paginate(github.rest.issues.listForRepo, {
@@ -160,13 +165,14 @@ jobs:
             );
           }
           if (anyUnfinished) {
+            if (cause.length) cause.push('');
             cause.push(
               'A shard that did not finish (its time limit, or a manual cancel) has no verdict for its',
               'mutations. That part is not a discrimination result; its log shows how far it got.',
             );
           }
           const body = [
-            `The weekly mutation sweep ${what} on ${date}. Run: ${url}`,
+            `The weekly mutation sweep ${what} on ${date}, on \`${process.env.REF}\`. Run: ${url}`,
             '',
             ...perShard,
             '',
@@ -184,7 +190,7 @@ jobs:
           if (open) {
             await github.rest.issues.createComment({
               owner: context.repo.owner, repo: context.repo.repo,
-              issue_number: open.number, body: [`The sweep ${what} again on ${date}. Run: ${url}`, '', ...perShard].join('\n'),
+              issue_number: open.number, body: [`The sweep ${what} again on ${date}, on \`${process.env.REF}\`. Run: ${url}`, '', ...perShard].join('\n'),
             });
           } else {
             await github.rest.issues.create({
