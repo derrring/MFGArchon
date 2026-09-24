@@ -1,15 +1,16 @@
-# A close that takes the LAST open member of a backlog family opens a notice.
+# A close that takes the last open carrier of a backlog blocker label, or the last open member of a
+# backlog family, opens a notice. `scripts/family_queue.py --closed` decides; this file only runs it.
 #
-# Not a notice on every close. Measured over the 30 days to 2026-09-21: 203 issues opened, 138
-# closed, 11.4 events/day, peaking at 45 in one day. A line on every close is scenery -- a signal
-# that fires identically every time carries no information. A close that EMPTIES a family fired
-# ONCE in the same window, on 2026-09-13, when the MMS-reachability family closed; nothing noticed
-# for eight days, while the family it unblocks sat with eleven open members averaging six weeks old.
-# 138 against 1 is the whole argument for putting the trigger on the sub-event.
+# Not a notice on every close. Measured 2026-09-24 over issues created or closed 2026-08-22 to
+# 2026-09-21 (search API): 207 opened and 140 closed, peaking at 45 events on 2026-09-05. A line on
+# every close is scenery -- a signal that fires identically every time carries no information. The
+# sub-event happened once in that window: #1991 took the last `blocks: no-convergence-obligation` on
+# 2026-09-13, and nothing noticed for eight days while the family it unblocks sat with eleven open
+# members.
 #
-# No loop guard is needed and none is written: the notice this opens carries no `family:` label, so
-# closing it makes `--emptied` return silently. That is a property of the design rather than a
-# check, which is why it is stated here instead of coded.
+# No loop guard is needed and none is written: a notice carries no `family:` or `blocks:` label, so
+# closing it produces no event. That is a property of the design rather than a check, which is why it
+# is stated here instead of coded.
 
 name: A backlog family emptied
 
@@ -20,77 +21,52 @@ on:
   # `pull_request`. So this file cannot run at all until it is merged -- there is no branch on which
   # to verify it, and the merge is the act that makes it live. Measured: `gh run list` returns
   # `404 ... not found on the default branch`. This dispatch is the only route to exercising it with
-  # a chosen issue after the merge, and it exists because otherwise the first real firing would be
-  # the first execution.
+  # a chosen issue after the merge, and it prints without posting unless `post` is set, so replaying
+  # an old close does not open a notice for it.
   workflow_dispatch:
     inputs:
       issue:
         description: "Issue number to evaluate as if it had just been closed"
         required: true
-        type: string
+        type: number
+      post:
+        description: "Open the notices, instead of only printing them"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
   issues: write
 
+# No `concurrency:` group, on purpose: see `post()` in scripts/family_queue.py. One pull request
+# closing several issues runs this once per issue, and a group would cancel the pending runs.
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The instrument before its answer. This is the ONLINE half of the self-test: it asserts that
-      # the order file's family names are labels that exist. The local gate runs the offline half
-      # and deliberately not this one, because that gate makes no network call.
+      # the order file's labels exist. The local gate runs the offline half, which drives the
+      # decision itself, and deliberately not this one, because that gate makes no network call.
       - name: Self-test the instrument
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: python3 scripts/family_queue.py --self-test --online
 
-      - name: Did this close empty a family?
-        id: check
+      # The issue number reaches the shell through `env:`, never as template text in `run:`.
+      - name: Report what this close changed
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+          POST: ${{ github.event_name == 'issues' || inputs.post }}
         run: |
-          out="$(python3 scripts/family_queue.py --emptied ${{ github.event.inputs.issue || github.event.issue.number }})"
-          printf '%s\n' "$out"
-          {
-            echo "report<<EOF"
-            printf '%s\n' "$out"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-          # Silence is the normal outcome; only a non-empty report continues.
-          if [ -n "$out" ]; then echo "fired=yes" >> "$GITHUB_OUTPUT"; fi
-
-      - name: Open the notice
-        if: steps.check.outputs.fired == 'yes'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPORT: ${{ steps.check.outputs.report }}
-        run: |
-          fam="$(printf '%s' "$REPORT" | sed -n 's/^FAMILY_EMPTIED=//p')"
-          body="$(cat <<EOF
-          Closing #${{ github.event.inputs.issue || github.event.issue.number }} took the last open member of a backlog family.
-
-          \`\`\`
-          $REPORT
-          \`\`\`
-
-          **What this is for.** The families are ordered by *evidence dependency* -- a family whose
-          fix needs another family's oracle to be accepted sorts after it -- so a family emptying is
-          the only event that can change the head of the queue. It last happened on 2026-09-13 and
-          was not noticed for eight days, during which the work went to issues filed a day or two
-          earlier while the unblocked family sat with eleven open members averaging six weeks old.
-
-          **What to do with it.** Read the family's members in the private ledger, not here: this
-          notice carries issue numbers because they are public, and the reasoning is internal
-          analysis. Then decide whether the unblocked family is now the head, against whatever else
-          is in flight. The trigger's job is to make someone look; it does not decide.
-
-          Opened by \`.github/workflows/family-emptied.yml\`.
-          EOF
-          )"
-          gh issue create \
-            --title "A backlog family emptied: $fam" \
-            --body "$body" \
-            --label "priority: medium,area: testing,size: small,type: chore"
+          if [ "$POST" = "true" ]; then
+            python3 scripts/family_queue.py --closed "$ISSUE" --post
+          else
+            python3 scripts/family_queue.py --closed "$ISSUE"
+          fi

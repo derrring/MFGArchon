@@ -7,7 +7,7 @@
     {
       "blocker_label": "blocks: no-convergence-obligation",
       "unblocks": "no-convergence-obligation",
-      "why": "MMS is this library's only external oracle for correctness; 'does this scheme converge' has no trustworthy test until it reaches most solvers. The five issues that carried this closed on 2026-09-13 and nothing noticed for eight days, which is why the trigger exists."
+      "why": "MMS is this library's only external oracle for correctness; 'does this scheme converge' has no trustworthy test until it reaches most solvers. The five issues that carried this closed between 2026-09-04 and 2026-09-13; the last, #1991, closed on 2026-09-13 and nothing noticed for eight days, which is why the trigger exists."
     }
   ]
 }

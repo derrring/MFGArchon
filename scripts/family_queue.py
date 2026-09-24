@@ -10,22 +10,28 @@ script read a mirrored `{family: [issue numbers]}` snapshot; that snapshot went 
 rate of the analysis it mirrored, which is the defect the family map exists to name, one level down.
 A `family: <slug>` label lives on the issue, is maintained where the classification happens, is
 current by construction, and shows up in the issue list -- which is where someone picks work, so the
-family is visible before any tool runs. The only thing left in a file is the ORDER (below), because
-a dependency between two families is a claim about oracles and not a property of any issue.
+family is visible before any tool runs. ORDER is a separate `blocks: <slug>` label on the issues that
+stand in a family's way; the order file only declares that such a dependency exists.
 
-Two modes, one per observable moment:
+Two modes:
 
 1. ``--branch <issue>`` -- which family does this issue belong to, how many siblings are open, and
-   is some other family the head of the queue? Run when a branch is created, which is the only
-   artifact that task SELECTION produces.
-2. ``--emptied <issue>`` -- did closing this issue take the last open member of a family? Run on
-   ``issues: closed``. **Silent unless it did**, which is the point.
+   is some other family the head of the queue? Run by hand when picking work; nothing triggers it.
+2. ``--closed <issue>`` -- what did closing this issue change? Run on ``issues: closed``. Two events,
+   and **silent unless one of them happened**:
 
-**Why (2) is not a notice on every close.** Measured over the 30 days to 2026-09-21: 203 issues
-opened, 138 closed, 11.4 events/day, peaking at 45 in one day. A line on every close is scenery -- a
-signal that fires identically every time carries no information. A close that EMPTIES a family fired
-**once** in the same window, on 2026-09-13, and that once is the event nobody noticed. 138 against 1
-is why the trigger sits on the sub-event rather than the event.
+   - **a blocker cleared**: the issue carried a `blocks:` label and no open issue carries it now.
+     That is what changes the head of the queue, and it is the only event that reports what it
+     unblocks. The one in the record: #1991 took the last `blocks: no-convergence-obligation` on
+     2026-09-13, and nothing noticed for eight days.
+   - **a family emptied**: the issue carried a `family:` label and no open issue carries it now.
+     Grouping, not order: it unblocks nothing by itself. No family has emptied yet (measured
+     2026-09-24: none of the 28 `family:` labels has a closed member).
+
+**Why not a notice on every close.** Measured 2026-09-24 over issues created or closed 2026-08-22
+to 2026-09-21 (search API): 207 opened and 140 closed, peaking at 45 events on 2026-09-05. A line on
+every close is scenery -- a signal that fires identically every time carries no information. The
+sub-events above happened once in that window.
 
 **Why there is no ``--opened`` mode.** Which family a new issue belongs to cannot be computed: a
 deterministic route (citation-graph clustering) measured recall 0.40 and precision 0.17-0.22 against
@@ -41,51 +47,181 @@ import json
 import pathlib
 import subprocess
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 HERE = pathlib.Path(__file__).resolve().parent
 ORDER = HERE / "backlog_family_order.json"
 PREFIX = "family: "
+NOTICE_LABELS = "automated,priority: medium,area: testing,size: small,type: chore"
 
 
-def gh_json(args: list[str]) -> list | dict:
-    """Run `gh` and parse JSON, raising on failure rather than returning an empty result.
+def _gh(args: list[str]) -> str:
+    """Run `gh`, raising on failure rather than returning an empty result.
 
-    An empty list would make every family look emptied and every issue look unclassified, so both
-    callers must see the failure instead of a plausible answer.
+    An empty list would make every label look cleared and every issue look unclassified, so every
+    caller must see the failure instead of a plausible answer.
     """
-    r = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60)
+    r = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=120)
     if r.returncode != 0:
-        raise RuntimeError(f"gh {' '.join(args[:3])} failed: {r.stderr.strip()[:200]}")
-    return json.loads(r.stdout)
+        raise RuntimeError(f"gh {' '.join(args[:4])} failed: {r.stderr.strip()[:200]}")
+    return r.stdout
 
 
-def families_of(issue: int) -> list[str]:
-    labels = gh_json(["issue", "view", str(issue), "--json", "labels"])["labels"]
-    return sorted(lb["name"] for lb in labels if lb["name"].startswith(PREFIX))
+def rest_issues(state: str, label: str | None = None) -> list[dict]:
+    """Issues (not pull requests) in `state`, optionally carrying `label`, from the REST list endpoint.
 
-
-LIMIT = 400
-
-
-def issues_with(label: str, state: str = "open") -> list[int]:
-    """Issue numbers carrying `label`. Raises if the page size was reached rather than truncating.
-
-    `gh --limit N` returns N and says nothing about there being more -- a limit is a page size
-    wearing a number. A truncated list here would under-report a family's open members and, at the
-    limit, could report a populated family as empty.
+    Not `gh issue list`, which is served by the search index. That index is updated asynchronously,
+    and this runs seconds after a close, so the issue just closed could still read as open and the
+    run would be silent (review of #2395). `--paginate` also removes the page-size question: a
+    `--limit N` returns N and says nothing about there being more.
     """
-    rows = gh_json(["issue", "list", "--label", label, "--state", state, "--limit", str(LIMIT), "--json", "number"])
-    if len(rows) >= LIMIT:
-        raise RuntimeError(f"'{label}' returned {len(rows)} at the page size; raise LIMIT rather than trusting this")
-    return sorted(r["number"] for r in rows)
+    args = [
+        "api",
+        "-X",
+        "GET",
+        "repos/{owner}/{repo}/issues",
+        "--paginate",
+        "-f",
+        f"state={state}",
+        "-f",
+        "per_page=100",
+    ]
+    if label:
+        args += ["-f", f"labels={label}"]
+    args += ["--jq", ".[] | select(.pull_request | not) | {number, title, labels: [.labels[].name]}"]
+    return [json.loads(line) for line in _gh(args).splitlines() if line.strip()]
 
 
-def open_in(family: str) -> list[int]:
-    return issues_with(family, "open")
+def open_numbers(label: str) -> list[int]:
+    return sorted(r["number"] for r in rest_issues("open", label))
+
+
+def labels_of(issue: int) -> list[str]:
+    return [lb["name"] for lb in json.loads(_gh(["issue", "view", str(issue), "--json", "labels"]))["labels"]]
+
+
+def family_labels(labels: list[str]) -> list[str]:
+    return sorted(name for name in labels if name.startswith(PREFIX))
 
 
 def load_order() -> dict:
     return json.loads(ORDER.read_text())
+
+
+def close_events(
+    issue: int, labels: list[str], open_with: Callable[[str], list[int]], dependencies: list[dict]
+) -> list[dict]:
+    """What closing `issue` changed. Pure given `open_with`, so the self-test drives this decision.
+
+    `issue` is excluded from every open list. The trigger runs after the close, but a lookup can lag
+    it, and a replay by dispatch evaluates an issue that may still be open, "as if it had just been
+    closed".
+
+    UNBLOCKS belongs to a blocker label the closed issue CARRIED and nothing else. Printed for every
+    unblocked dependency, it attached a dependency cleared weeks earlier to every family that emptied
+    since (review of #2395, B1).
+    """
+    carried = set(labels)
+    events = []
+    for dep in dependencies:
+        blocker = dep["blocker_label"]
+        if blocker in carried and not [n for n in open_with(blocker) if n != issue]:
+            dependents = [n for n in open_with(PREFIX + dep["unblocks"]) if n != issue]
+            events.append(
+                {
+                    "kind": "blocker",
+                    "label": blocker,
+                    "unblocks": dep["unblocks"],
+                    "open": dependents,
+                    "why": dep["why"],
+                }
+            )
+    for fam in family_labels(labels):
+        if not [n for n in open_with(fam) if n != issue]:
+            events.append({"kind": "family", "label": fam})
+    return events
+
+
+def render(issue: int, event: dict) -> tuple[str, str]:
+    """Title and body of the notice for one event. One title per event, so no title spans two lines."""
+    if event["kind"] == "blocker":
+        members = " ".join(f"#{n}" for n in event["open"]) or "none"
+        title = f"A backlog blocker cleared: {event['label']}"
+        body = "\n".join(
+            [
+                f"After #{issue} closed, no open issue carries `{event['label']}`.",
+                "",
+                f"That label marked what stood in the way of `{PREFIX}{event['unblocks']}`, which has "
+                f"{len(event['open'])} open member(s): {members}",
+                "",
+                f"Why the dependency exists: {event['why']}",
+                "",
+                "**What to do with it.** Decide whether that family is now the head of the queue, against",
+                "whatever else is in flight. The trigger's job is to make someone look; it does not decide.",
+                "Read the members in the private ledger, not here: this notice carries issue numbers because",
+                "they are public, and the reasoning is internal analysis.",
+            ]
+        )
+    else:
+        title = f"A backlog family emptied: {event['label']}"
+        body = "\n".join(
+            [
+                f"After #{issue} closed, no open issue carries `{event['label']}`.",
+                "",
+                "A family is a grouping, not an order: this unblocks nothing by itself. Order lives on",
+                "`blocks:` labels, and a cleared blocker opens its own notice.",
+            ]
+        )
+    return title, body + "\n\nOpened by `.github/workflows/family-emptied.yml`.\n"
+
+
+def post(issue: int, events: list[dict]) -> None:
+    """Open one notice per event, or comment on the open one with the same title.
+
+    One pull request closing k members of a family runs this k times, seconds apart, and each run
+    sees the family empty. Dedupe is on title plus the `automated` label, which is how the other
+    notifying workflows here find their own issues. There is no `concurrency:` group: GitHub keeps one
+    pending run per group and cancels the one before it (documented behaviour, not measured here), so
+    a group would drop events, and a dropped run whose issue carried a `blocks:` label would lose the
+    one notice that matters. Two runs that race past the dedupe both create; the later one then finds
+    the earlier and closes itself as a duplicate.
+    """
+    for event in events:
+        title, body = render(issue, event)
+        same = sorted(r["number"] for r in rest_issues("open", "automated") if r["title"] == title)
+        if same:
+            _gh(["issue", "comment", str(same[0]), "--body", f"#{issue} closed too, and the state above still holds."])
+            continue
+        url = _gh(["issue", "create", "--title", title, "--body", body, "--label", NOTICE_LABELS]).strip()
+        mine = int(url.rsplit("/", 1)[-1])
+        same = sorted(r["number"] for r in rest_issues("open", "automated") if r["title"] == title)
+        if same and same[0] != mine:
+            _gh(
+                [
+                    "issue",
+                    "close",
+                    str(mine),
+                    "--reason",
+                    "not planned",
+                    "--comment",
+                    f"Duplicate of #{same[0]}: two runs raced.",
+                ]
+            )
+            _gh(["issue", "comment", str(same[0]), "--body", f"#{issue} closed too, and the state above still holds."])
+
+
+def report_closed(issue: int, *, do_post: bool) -> int:
+    """Print the notices closing `issue` warrants, and open them with `do_post`. Silent otherwise."""
+    events = close_events(issue, labels_of(issue), open_numbers, load_order().get("dependencies", []))
+    for event in events:
+        title, body = render(issue, event)
+        print(f"== {title}\n{body}")
+    if do_post and events:
+        post(issue, events)
+    return 0
 
 
 def unblocked() -> list[dict]:
@@ -103,8 +239,7 @@ def unblocked() -> list[dict]:
         # either -- it says the relation is real, not that anyone ever identified what blocks it.
         # So the evidence for "unblocked" is that something CLOSED carries the label: the blockers
         # were identified, and they are done.
-        ever = issues_with(blocker, "all")
-        if not ever:
+        if not rest_issues("all", blocker):
             out.append(
                 {
                     **dep,
@@ -113,19 +248,19 @@ def unblocked() -> list[dict]:
                 }
             )
             continue
-        if not open_in(blocker) and (still := open_in(PREFIX + dep["unblocks"])):
+        if not open_numbers(blocker) and (still := open_numbers(PREFIX + dep["unblocks"])):
             out.append({**dep, "open": still})
     return out
 
 
 def report_branch(issue: int) -> int:
-    fams = families_of(issue)
+    fams = family_labels(labels_of(issue))
     if not fams:
-        total = len(gh_json(["issue", "list", "--state", "open", "--limit", "600", "--json", "number"]))
+        total = len(rest_issues("open"))
         print(f"  #{issue} carries no family label. {total} issues are open; an unlabelled one is")
         print("  the common case, not a judgement that it stands alone.")
     for fam in fams:
-        siblings = [n for n in open_in(fam) if n != issue]
+        siblings = [n for n in open_numbers(fam) if n != issue]
         print(f"  #{issue} is in '{fam}' -- {len(siblings)} other members still open")
         if siblings:
             print(f"    {' '.join('#' + str(n) for n in siblings)}")
@@ -151,73 +286,81 @@ def report_branch(issue: int) -> int:
     return 0
 
 
-def report_emptied(issue: int) -> int:
-    """Print nothing unless closing `issue` left one of its families with no open members."""
-    for fam in families_of(issue):
-        if open_in(fam):
-            continue
-        print(f"FAMILY_EMPTIED={fam}")
-        print(f"CLOSED_BY=#{issue}")
-        for u in unblocked():
-            if not u.get("unverified"):
-                print(f"UNBLOCKS={u['unblocks']}")
-                print(f"UNBLOCKS_OPEN={' '.join('#' + str(n) for n in u['open'])}")
-                print(f"WHY={u['why']}")
-    return 0
-
-
 def self_test(online: bool = False) -> int:
-    """Controls on the parsing and the order file. Offline by default, and that is deliberate.
+    """Controls on the decision, the rendering and the order file. Offline by default, deliberately.
 
-    The failure this guards is the silent one: a label prefix that matches nothing would make
-    `report_emptied` silent for every input, which reads exactly like "no family emptied". The
-    negative control is therefore mandatory.
+    The failure this guards is the silent one: a trigger that never fires reads exactly like "nothing
+    changed". So the offline half drives `close_events` itself -- not a copy of its filter -- over
+    fabricated labels and open lists, with positive and negative controls. The review of #2395
+    found the earlier self-test copied the label filter inline, and stayed green with
+    `families_of` returning [] while the trigger went silent.
 
     **`--online` is separated out because the local gate does not touch the network.** Measured:
     `scripts/local_ci.sh` contains zero `gh`/`curl` invocations, and putting a network call in its
     self-test loop would trade that property for one check. So the gate runs the offline half, and
     the workflow -- which has a token anyway -- runs `--self-test --online`, which additionally
-    asserts that the order file's family names are labels that actually exist. That assertion
-    matters: an order file naming a label nobody created makes the queue head silent forever, in a
-    way no offline check can see.
+    asserts that the order file's labels exist. That assertion matters: an order file naming a label
+    nobody created makes the queue head silent forever, in a way no offline check can see.
     """
     failures = []
+    dep = {"blocker_label": "blocks: b", "unblocks": "f", "why": "w"}
+    open_lists = {"blocks: b": [7], "family: f": [11, 12], "family: g": [7], "family: h": [8, 9]}
 
-    fake = {"labels": [{"name": "family: ghost-value-unowned"}, {"name": "type: bug"}, {"name": "area: core"}]}
-    got = sorted(lb["name"] for lb in fake["labels"] if lb["name"].startswith(PREFIX))
-    if got != ["family: ghost-value-unowned"]:
-        failures.append(f"label filter picked {got}")
-    none = [lb["name"] for lb in fake["labels"][1:] if lb["name"].startswith(PREFIX)]
-    if none:
-        failures.append(f"label filter matched a non-family label: {none}")
+    def open_with(label: str) -> list[int]:
+        return open_lists.get(label, [])
+
+    def kinds(issue: int, labels: list[str]) -> list[tuple[str, str]]:
+        return [(e["kind"], e["label"]) for e in close_events(issue, labels, open_with, [dep])]
+
+    # the last open carrier of a blocker, still listed open (a lagging lookup, or a dispatch replay)
+    got = kinds(7, ["blocks: b", "family: g", "type: bug"])
+    if got != [("blocker", "blocks: b"), ("family", "family: g")]:
+        failures.append(f"closing the last carrier of a blocker and the last member of a family gave {got}")
+    unblocks = [e for e in close_events(7, ["blocks: b"], open_with, [dep]) if e["kind"] == "blocker"]
+    if not unblocks or unblocks[0]["open"] != [11, 12]:
+        failures.append(f"a cleared blocker did not report its dependent family's open members: {unblocks}")
+    # negative controls
+    if kinds(8, ["family: h"]):
+        failures.append("a family with another open member was reported empty")
+    if kinds(9, ["type: bug", "area: core"]):
+        failures.append("an issue with no family or blocker label produced an event")
+    # the #2224 case: the blocker cleared long ago, and an unrelated family empties now
+    cleared = {"blocks: b": [], "family: f": [11, 12], "family: k": [20]}
+    got = [(e["kind"], e["label"]) for e in close_events(20, ["family: k"], lambda lb: cleared.get(lb, []), [dep])]
+    if got != [("family", "family: k")]:
+        failures.append(f"a family emptying after its blocker cleared elsewhere gave {got} (review of #2395, B1)")
+    for event in close_events(7, ["blocks: b", "family: g"], open_with, [dep]):
+        title, _ = render(7, event)
+        if "\n" in title:
+            failures.append(f"a notice title spans lines: {title!r}")
 
     try:
         order = load_order()
         if not order.get("dependencies"):
-            failures.append("the order file declares no dependencies, so the queue head can never fire")
-        for dep in order.get("dependencies", []):
+            failures.append("the order file declares no dependencies, so no blocker can ever clear")
+        for d in order.get("dependencies", []):
             for key in ("blocker_label", "unblocks"):
-                if not dep.get(key):
+                if not d.get(key):
                     failures.append(f"a dependency has no '{key}'")
-            if not dep.get("why"):
+            if not d.get("why"):
                 failures.append(
-                    f"dependency on {dep.get('blocker_label')} states no reason, "
-                    "so the notice it fires cannot explain itself"
+                    f"dependency on {d.get('blocker_label')} states no reason, "
+                    "so the notice it opens cannot explain itself"
                 )
     except Exception as exc:  # the self-test reports; it does not handle
         failures.append(f"the order file does not load: {exc}")
 
     if online:
         try:
-            live = {lb["name"] for lb in gh_json(["label", "list", "--limit", "120", "--json", "name"])}
-            for dep in load_order().get("dependencies", []):
-                for name in (dep["blocker_label"], PREFIX + dep["unblocks"]):
+            live = set(_gh(["api", "repos/{owner}/{repo}/labels", "--paginate", "--jq", ".[].name"]).splitlines())
+            for d in load_order().get("dependencies", []):
+                for name in (d["blocker_label"], PREFIX + d["unblocks"]):
                     if name not in live:
                         failures.append(
                             f"order names '{name}', which is not a label in this repository -- the dependency is inert"
                         )
             if not any(n.startswith(PREFIX) for n in live):
-                failures.append("no family labels exist at all, so both modes are inert")
+                failures.append("no family labels exist at all, so neither event can fire")
         except Exception as exc:  # reported as a self-test failure, not handled
             failures.append(f"online label check failed: {exc}")
 
@@ -232,15 +375,18 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--branch", type=int, metavar="ISSUE")
-    g.add_argument("--emptied", type=int, metavar="ISSUE")
+    g.add_argument("--closed", type=int, metavar="ISSUE")
     g.add_argument("--self-test", action="store_true")
     ap.add_argument(
         "--online", action="store_true", help="add the checks that need the network; the local gate does not use this"
     )
+    ap.add_argument("--post", action="store_true", help="with --closed: open the notices instead of only printing them")
     a = ap.parse_args()
     if a.self_test:
         return self_test(online=a.online)
-    return report_branch(a.branch) if a.branch else report_emptied(a.emptied)
+    if a.branch:
+        return report_branch(a.branch)
+    return report_closed(a.closed, do_post=a.post)
 
 
 if __name__ == "__main__":
