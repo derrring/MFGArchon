@@ -178,7 +178,20 @@ def render(issue: int, event: dict) -> tuple[str, str]:
     return title, body + "\n\nOpened by `.github/workflows/family-emptied.yml`.\n"
 
 
-def post(issue: int, events: list[dict]) -> None:
+def _still_holds(issue: int, event: dict) -> str:
+    """The comment a later close adds: what THIS run re-checked, not an assurance about the notice."""
+    line = f"#{issue} closed too. Checked at that close: no open issue carries `{event['label']}`."
+    if event["kind"] == "blocker":
+        line += f" `{PREFIX}{event['unblocks']}` has {len(event['open'])} open member(s)."
+    return line
+
+
+def post(
+    issue: int,
+    events: list[dict],
+    gh: Callable[[list[str]], str] = _gh,
+    list_open: Callable[[str, str], list[dict]] = rest_issues,
+) -> None:
     """Open one notice per event, or comment on the open one with the same title.
 
     One pull request closing k members of a family runs this k times, seconds apart, and each run
@@ -187,19 +200,20 @@ def post(issue: int, events: list[dict]) -> None:
     pending run per group and cancels the one before it (documented behaviour, not measured here), so
     a group would drop events, and a dropped run whose issue carried a `blocks:` label would lose the
     one notice that matters. Two runs that race past the dedupe both create; the later one then finds
-    the earlier and closes itself as a duplicate.
+    the earlier and closes itself as a duplicate. `gh` and `list_open` are parameters so the offline
+    self-test can drive all three paths.
     """
     for event in events:
         title, body = render(issue, event)
-        same = sorted(r["number"] for r in rest_issues("open", "automated") if r["title"] == title)
+        same = sorted(r["number"] for r in list_open("open", "automated") if r["title"] == title)
         if same:
-            _gh(["issue", "comment", str(same[0]), "--body", f"#{issue} closed too, and the state above still holds."])
+            gh(["issue", "comment", str(same[0]), "--body", _still_holds(issue, event)])
             continue
-        url = _gh(["issue", "create", "--title", title, "--body", body, "--label", NOTICE_LABELS]).strip()
+        url = gh(["issue", "create", "--title", title, "--body", body, "--label", NOTICE_LABELS]).strip()
         mine = int(url.rsplit("/", 1)[-1])
-        same = sorted(r["number"] for r in rest_issues("open", "automated") if r["title"] == title)
+        same = sorted(r["number"] for r in list_open("open", "automated") if r["title"] == title)
         if same and same[0] != mine:
-            _gh(
+            gh(
                 [
                     "issue",
                     "close",
@@ -210,7 +224,7 @@ def post(issue: int, events: list[dict]) -> None:
                     f"Duplicate of #{same[0]}: two runs raced.",
                 ]
             )
-            _gh(["issue", "comment", str(same[0]), "--body", f"#{issue} closed too, and the state above still holds."])
+            gh(["issue", "comment", str(same[0]), "--body", _still_holds(issue, event)])
 
 
 def report_closed(issue: int, *, do_post: bool) -> int:
@@ -304,7 +318,8 @@ def self_test(online: bool = False) -> int:
     """
     failures = []
     dep = {"blocker_label": "blocks: b", "unblocks": "f", "why": "w"}
-    open_lists = {"blocks: b": [7], "family: f": [11, 12], "family: g": [7], "family: h": [8, 9]}
+    # #7 is also in the family the blocker stands in front of: it must not count as one of its open members
+    open_lists = {"blocks: b": [7], "family: f": [7, 11, 12], "family: g": [7], "family: h": [8, 9]}
 
     def open_with(label: str) -> list[int]:
         return open_lists.get(label, [])
@@ -334,6 +349,29 @@ def self_test(online: bool = False) -> int:
         if "\n" in title:
             failures.append(f"a notice title spans lines: {title!r}")
 
+    # post(): a fresh notice, a second close, and a race, against a fake gh and listing
+    event = close_events(7, ["blocks: b"], open_with, [dep])[0]
+    title = render(7, event)[0]
+    for label, listings, expected in (
+        ("fresh", [[], [{"title": title, "number": 900}]], ["create"]),
+        ("second close", [[{"title": title, "number": 5}]], ["comment 5"]),
+        (
+            "race",
+            [[], [{"title": title, "number": 3}, {"title": title, "number": 900}]],
+            ["create", "close 900", "comment 3"],
+        ),
+    ):
+        calls: list[str] = []
+        pages = iter(listings)
+
+        def fake_gh(args: list[str], calls: list[str] = calls) -> str:
+            calls.append(" ".join(args[1:3]) if args[1] != "create" else "create")
+            return "https://github.com/o/r/issues/900\n" if args[1] == "create" else ""
+
+        post(7, [event], gh=fake_gh, list_open=lambda state, lab, pages=pages: next(pages))
+        if calls != expected:
+            failures.append(f"post(), {label}: made {calls}, expected {expected}")
+
     try:
         order = load_order()
         if not order.get("dependencies"):
@@ -361,6 +399,21 @@ def self_test(online: bool = False) -> int:
                         )
             if not any(n.startswith(PREFIX) for n in live):
                 failures.append("no family labels exist at all, so neither event can fire")
+            # The reads the offline half cannot reach. With the `labels` filter dropped, the REST list
+            # returns every open issue: every open list is non-empty and neither event can fire, while
+            # the checks above still pass (review of #2395, NF1). So require every row a label-filtered
+            # list returns to carry the label, and `labels_of` to read that label back from one of them.
+            fam = next((n for n in sorted(live) if n.startswith(PREFIX) and rest_issues("open", n)), None)
+            if fam is None:
+                failures.append("no family label has an open member, so the label filter cannot be verified")
+            else:
+                rows = rest_issues("open", fam)
+                if stray := [r["number"] for r in rows if fam not in r["labels"]]:
+                    failures.append(f"the open list for '{fam}' returned issues without that label: {stray[:5]}")
+                if fam not in labels_of(rows[0]["number"]):
+                    failures.append(
+                        f"labels_of(#{rows[0]['number']}) did not return '{fam}', which the list says it carries"
+                    )
         except Exception as exc:  # reported as a self-test failure, not handled
             failures.append(f"online label check failed: {exc}")
 

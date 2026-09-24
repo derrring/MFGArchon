@@ -70,3 +70,34 @@ jobs:
           else
             python3 scripts/family_queue.py --closed "$ISSUE"
           fi
+
+      # A run that fails -- a transient API error, a self-test red -- would otherwise lose its event with
+      # only a red run to show for it, and this workflow exists because the event is rare enough to miss
+      # (review of #2395, NF3). One open notice collects every failed run, with the issue to replay.
+      - name: Report that the trigger itself failed
+        if: failure()
+        uses: actions/github-script@v9
+        env:
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+        with:
+          script: |
+            const title = 'The backlog family trigger failed';
+            const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const line = `The run for the close of #${process.env.ISSUE} failed, so whether that close cleared a ` +
+              `blocker or emptied a family is unknown. Once the cause is fixed, replay it with workflow_dispatch ` +
+              `(issue ${process.env.ISSUE}, post: true); a notice that already exists is commented on, not duplicated. ` +
+              `Run: ${url}`;
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner, repo: context.repo.repo, state: 'open', labels: 'automated', per_page: 100,
+            });
+            const open = issues.find(i => i.title === title && !i.pull_request);
+            if (open) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: open.number, body: line,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo, title, body: line,
+                labels: ['automated', 'area: testing', 'priority: medium', 'type: bug'],
+              });
+            }
