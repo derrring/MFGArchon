@@ -85,7 +85,7 @@ V_NONZERO = 0.7
 F_SLOPE = 0.3
 
 
-def _potential(x, t):
+def _potential(t, x):
     return V_NONZERO
 
 

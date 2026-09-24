@@ -51,8 +51,8 @@ Conventions (mirrored verbatim from the prior ``FixedPointIterator`` copy):
   to provide, since a constraint penalty needs ``v`` and ``source_term`` is ``(t, x) -> array``.
 
 - The HJB source passes the **value-function slice** ``v_t`` to
-  ``source_term_hjb(x, m, v, t)`` (Issue #1382), matching the documented
-  ``Callable(x, m, v, t)`` contract (``mfg_problem.py``: "source_term_hjb/fp"),
+  ``source_term_hjb`` (Issue #1382), matching the documented
+  ``Callable(t, x, v, m)`` contract (``mfg_problem.py``: "source_term_hjb/fp"),
   the FP source (which already binds ``v_t``), and ``graph_mfg_solver``. The
   prior copy passed ``v = 0`` here — a latent divergence from the graph coupler
   for any ``v``-dependent HJB source. Both couplers now build these terms through
@@ -97,7 +97,7 @@ def _problem_hjb_source_terms(
     """The convention-bearing HJB source terms shared by every coupler (Issue #1382).
 
     Returns a dict with the present problem-level HJB source contributions evaluated
-    at the time-``t`` slices: ``"source"`` = ``source_term_hjb(x, m_t, v_t, t)`` with
+    at the time-``t`` slices: ``"source"`` = ``source_term_hjb(t, x, v_t, m_t)`` with
     ``v_t`` the value-function slice (NOT zero), and ``"nonlocal"`` =
     ``nonlocal_operator @ v_t``. This is the single source of the ``v_t`` convention
     for both the grid couplers (``compose_hjb_source``) and ``graph_mfg_solver``, so a

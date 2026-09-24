@@ -206,7 +206,7 @@ def test_a_zero_wall_is_a_no_op_on_a_vectorised_base_potential():
     base frozen at `x_batch[0]` at worst.
     """
 
-    def vectorised_base(x, t=0.0):
+    def vectorised_base(t, x):
         column = np.atleast_1d(np.asarray(x, dtype=float))
         values = np.sin(2 * np.pi * (column[..., 0] if column.ndim > 1 else column))
         return float(values[0]) if values.size == 1 else values
@@ -236,7 +236,7 @@ def test_the_composed_potential_returns_what_the_base_returns():
     """
     seen = {}
 
-    def recording_base(x, t=0.0):
+    def recording_base(t, x):
         column = np.atleast_1d(np.asarray(x, dtype=float))
         value = np.sin(2 * np.pi * (column[..., 0] if column.ndim > 1 else column))
         # Per-point callers wrap this in float(), so a size-1 answer must be scalar. That is the
@@ -252,7 +252,7 @@ def test_the_composed_potential_returns_what_the_base_returns():
 
     for probe in (np.array([0.3]), np.linspace(0.0, 1.0, 5).reshape(-1, 1)):
         seen.clear()
-        out = composed(probe, 0.0)
+        out = composed(t=0.0, x=probe)
         base_shape = seen[np.shape(probe)]
         assert np.shape(out) == base_shape, (
             f"composed returned {np.shape(out)} where the base returned {base_shape} for x of "

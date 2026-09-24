@@ -739,7 +739,7 @@ def _make_nonlq_solver(hamiltonian, inner_solver, *, LX=1.0, n_int=15, sigma=0.4
     return gfdm, pts
 
 
-def _v_quadratic(x, t):
+def _v_quadratic(t, x):
     """Bowl V(x) = 2(x-0.5)^2, a cost lowest at x = 0.5 (time-independent: Newton's per-point H call passes no t)."""
     x = np.asarray(x, dtype=float)
     return 2.0 * (x[..., 0] - 0.5) ** 2

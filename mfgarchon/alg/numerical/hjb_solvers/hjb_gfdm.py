@@ -3038,7 +3038,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             source_term: MMS forcing ``r_u`` of ``-u_t - (sigma^2/2) lap u + H = r_u``, with the
                 package-wide contract ``source_term(t, x) -> array``, ``x`` of shape ``(N, d)``
                 (:mod:`base_hjb`). This is the ONLY additive channel a caller can reach. The
-                alpha-independent part of the Lagrangian -- the potential ``V(x,t)`` and the
+                alpha-independent part of the Lagrangian -- the potential ``V(t, x)`` and the
                 coupling ``f(m)`` -- belongs to the Hamiltonian and arrives through it, so a
                 source cannot be confused with a running cost: there is no longer a second slot
                 to confuse it with (Issue #1999). Internally the two still meet with OPPOSITE
@@ -3101,7 +3101,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         self._output_spatial_shape = M_density.shape[1:]
 
         # Issue #1999: there is no user running-cost channel. The alpha-independent part of the
-        # Lagrangian -- V(x,t) + f(m) -- is owned by the Hamiltonian and already enters through
+        # Lagrangian -- V(t, x) + f(m) -- is owned by the Hamiltonian and already enters through
         # `eval_H_batch` on the Newton path and `howard_running_cost` on the Howard path. A second
         # channel could only carry the same quantity, and adding it on top of a Hamiltonian that
         # already holds a potential double-counted it silently (#2001). The MMS source is now the
@@ -3229,7 +3229,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         space; the caller handles grid<->collocation mapping. Requires a Hamiltonian exposing
         dp(). SOCP stencils are used when present and are no longer required (#2066).
 
-        Issue #1247 (#1118 PR2): the separable Hamiltonian's potential V(x, t) and density
+        Issue #1247 (#1118 PR2): the separable Hamiltonian's potential V(t, x) and density
         coupling f(m), plus any caller-supplied running cost, are wired into Howard's
         running_cost slot (see `running_cost` closure below), so Howard solves the full non-LQ
         HJB ``-d_t u + (1/2)|grad u|^2 - V(x) - f(m) - (sigma^2/2) Lap u = 0`` (#2375 ruling 3). Still deferred
@@ -3254,7 +3254,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Howard derives alpha* = -dH/dp and now consumes the control-cost Lagrangian
         # L(alpha) = lambda/2 |alpha|^2 from the single source (control_cost.lagrangian, wired
         # below), so any QUADRATIC control cost (unit or lambda != 1) is faithful. The
-        # potential V(x, t), the density coupling f(m), and the MMS source are wired
+        # potential V(t, x), the density coupling f(m), and the MMS source are wired
         # (Issue #1247, below); the user running-cost channel is gone (#1999). What remains
         # unmodelled -- a NON-quadratic control cost -- is failed loud below (validated by
         # tests/unit/test_alg/test_hjb_howard_solver.py::test_integrated_howard_rejects_*).
@@ -3280,7 +3280,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # the generic "assumptions do not hold" message. The specific one names the mechanism
         # and the attribute, which is what a caller can act on.
         # CongestionHamiltonian (Issue #782) carries a MULTIPLICATIVE kinetic factor c(m):
-        # H = |p|^2/(2*lambda*c(m)) - V(x, t) - f(m). The control-cost gate above does NOT catch
+        # H = |p|^2/(2*lambda*c(m)) - V(t, x) - f(m). The control-cost gate above does NOT catch
         # it — c(m) lives in `_congestion_factor`, outside control_cost (a plain unit-quadratic
         # QuadraticControlCost here) — and V(x)/f(m) are wired below, but the congestion factor
         # is not: Howard's policy evaluation hardcodes the unit-quadratic Lagrangian (1/2)|alpha|^2
@@ -3596,7 +3596,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             return -eval_dH_dp_batch(H_class, x_pts, m, p, t_idx * dt)
 
         # Issue #1247 (#1118 PR2): route the Hamiltonian's non-quadratic-in-alpha source terms
-        # — potential V(x, t), density coupling f(m^n) — and the MMS source into Howard's
+        # — potential V(t, x), density coupling f(m^n) — and the MMS source into Howard's
         # running_cost slot, so Howard solves the full non-LQ HJB. There is no user running
         # cost to route: #1999 removed that channel.
         #

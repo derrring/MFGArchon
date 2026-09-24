@@ -65,8 +65,8 @@ class TestGate3LionsBridgeEquivalence:
 
         m = np.sin(np.pi * x) + 1.2
         v = np.zeros(N)
-        r_analytic = source_analytic(x, m, v, 0.0)
-        r_nonlocal = source_nonlocal(x, m, v, 0.0)
+        r_analytic = source_analytic(t=0.0, x=x, v=v, m=m)
+        r_nonlocal = source_nonlocal(t=0.0, x=x, v=v, m=m)
         # Both equal (W @ m) * dx to machine precision.
         np.testing.assert_allclose(r_analytic, r_nonlocal, atol=1e-12)
 
@@ -94,8 +94,8 @@ class TestGate3LionsBridgeEquivalence:
 
         m = np.sin(np.pi * x) + 1.2
         v = np.zeros(N)
-        r_analytic = source_analytic(x, m, v, 0.0)
-        r_fd = source_fd(x, m, v, 0.0)
+        r_analytic = source_analytic(t=0.0, x=x, v=v, m=m)
+        r_fd = source_fd(t=0.0, x=x, v=v, m=m)
         rel = np.max(np.abs(r_analytic - r_fd)) / np.max(np.abs(r_analytic))
         assert rel < 1e-6
 
@@ -125,8 +125,8 @@ class TestGate3LionsBridgeEquivalence:
 
         fd = FiniteDifferenceFunctionalDerivative(epsilon=1e-5, method="central")
         source_user = create_lions_source(f_physical, fd, weights=dx)
-        r_user = source_user(x, m, np.zeros(N), 0.0)
-        r_analytic = create_lions_source(energy)(x, m, np.zeros(N), 0.0)
+        r_user = source_user(t=0.0, x=x, v=np.zeros(N), m=m)
+        r_analytic = create_lions_source(energy)(t=0.0, x=x, v=np.zeros(N), m=m)
         rel = np.max(np.abs(r_analytic - r_user)) / np.max(np.abs(r_analytic))
         assert rel < 1e-6
 
@@ -170,7 +170,7 @@ class TestGate3LionsBridgeEquivalence:
 
         source = create_lions_source(energy_lambda, fd, weights=np.full(7, 0.02))
         with pytest.raises(ValueError, match=r"does not match weights shape"):
-            source(np.linspace(0, 1, 10), np.ones(10), np.zeros(10), 0.0)
+            source(t=0.0, x=np.linspace(0, 1, 10), v=np.zeros(10), m=np.ones(10))
 
     def test_fd_path_requires_functional_derivative(self):
         """Backward compat: plain callable without FD instance raises clearly."""
@@ -199,14 +199,14 @@ class TestGate3LionsBridgeEquivalence:
         m_traj = np.tile(m_slice, (5, 1))  # (Nt+1, Nx), constant in time
 
         # 1-D slice path still works.
-        r_slice = source(x, m_slice, np.zeros(N), 0.0)
+        r_slice = source(t=0.0, x=x, v=np.zeros(N), m=m_slice)
         assert r_slice.shape == (N,)
 
         # 2-D trajectory rejected on both paths.
         with pytest.raises(ValueError, match=r"1-D spatial density"):
-            source(x, m_traj, np.zeros(N), 0.0)
+            source(t=0.0, x=x, v=np.zeros(N), m=m_traj)
         with pytest.raises(ValueError, match=r"1-D spatial density"):
-            source_nonlocal(x, m_traj, np.zeros(N), 0.0)
+            source_nonlocal(t=0.0, x=x, v=np.zeros(N), m=m_traj)
 
 
 class _TimeStampedEnergy:
@@ -259,7 +259,7 @@ class TestD3TimeTransport:
 
         x = np.linspace(0.0, 1.0, N)
         m = np.ones(N)
-        r = source(x, m, np.zeros(N), 2.5)
+        r = source(t=2.5, x=x, v=np.zeros(N), m=m)
 
         assert probe.seen_flat == [2.5]
         np.testing.assert_allclose(r, np.full(N, 2.5), rtol=0, atol=0)
@@ -272,9 +272,9 @@ class TestD3TimeTransport:
         x = np.linspace(0.0, 1.0, N)
         m = np.ones(N)
 
-        r0 = source(x, m, np.zeros(N), 0.0)
-        r1 = source(x, m, np.zeros(N), 1.0)
-        r2 = source(x, m, np.zeros(N), 3.0)
+        r0 = source(t=0.0, x=x, v=np.zeros(N), m=m)
+        r1 = source(t=1.0, x=x, v=np.zeros(N), m=m)
+        r2 = source(t=3.0, x=x, v=np.zeros(N), m=m)
 
         np.testing.assert_allclose(r0, np.zeros(N), rtol=0, atol=0)
         np.testing.assert_allclose(r1, np.ones(N), rtol=0, atol=0)
@@ -303,14 +303,14 @@ class TestD3TimeTransport:
         assert b.seen_second == [4.0]
 
     def test_t_survives_dispatch_and_delegation_together(self):
-        """End-to-end: source_term_hjb(x, m, v, t) -> CombinedEnergy -> component."""
+        """End-to-end: source_term_hjb(t, x, v, m) -> CombinedEnergy -> component."""
         N = 5
         w = np.full(N, 0.25)
         a = _TimeStampedEnergy(w, scale=2.0)
         b = _TimeStampedEnergy(w, scale=5.0)
         source = create_lions_source(CombinedEnergy([a, b]))
 
-        r = source(np.linspace(0.0, 1.0, N), np.ones(N), np.zeros(N), 1.75)
+        r = source(t=1.75, x=np.linspace(0.0, 1.0, N), v=np.zeros(N), m=np.ones(N))
 
         np.testing.assert_allclose(r, np.full(N, 1.75 * 7.0), rtol=0, atol=0)
         assert a.seen_flat == [1.75]
@@ -352,7 +352,7 @@ class TestNearMissRefusedLoudly:
         fd = FiniteDifferenceFunctionalDerivative(epsilon=1e-5, method="central")
         source = create_lions_source(lambda m: 0.5 * float(np.sum(np.asarray(m) ** 2)) * 0.1, fd, weights=0.1)
         m = np.linspace(1.0, 2.0, 8)
-        np.testing.assert_allclose(source(np.linspace(0, 1, 8), m, np.zeros(8), 0.0), m, rtol=1e-6)
+        np.testing.assert_allclose(source(t=0.0, x=np.linspace(0, 1, 8), v=np.zeros(8), m=m), m, rtol=1e-6)
 
 
 def _ring_problem(grid_only=False, amp=5.0, length_scale=0.15, bowl=4.0):

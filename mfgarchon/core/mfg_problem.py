@@ -565,7 +565,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # These enable generalized MFG equations beyond the classical form:
         #   HJB: -du/dt + H(x,m,Du) - S_hjb = 0
         #   FP:  dm/dt - (sigma^2/2)Dm - div(m*alpha*) - S_fp = 0
-        # source_term_hjb/fp: Callable(x, m, v, t) -> array (problem-level signature)
+        # source_term_hjb/fp: Callable(t, x, v, m) -> array (problem-level signature, #2375 ruling 8)
         # nonlocal_operator: LinearOperator for integro-differential terms J[v]
         # state_penalty: Callable(x) -> array, a COST-signed level-set penalty (soft wall).
         #   Composed into the Hamiltonian's potential, NOT into source_term -- see below.
@@ -1920,14 +1920,14 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         penalty = self.state_penalty
         scale = self.state_penalty_scale
 
-        def composed_potential(x: Any, t: float = 0.0) -> Any:
+        def composed_potential(t: float, x: Any) -> Any:
             import numpy as _np
 
             wall = scale * _np.asarray(penalty(x), dtype=float)
             if previous is None:
                 squeezed = wall.squeeze()
                 return float(squeezed) if squeezed.ndim == 0 else squeezed
-            base = previous(x=x, t=t)
+            base = previous(t=t, x=x)
             # Match the base's own contract exactly -- it decides the shape, not this wrapper.
             if _np.size(wall) == _np.size(base):
                 wall = _np.reshape(wall, _np.shape(base))

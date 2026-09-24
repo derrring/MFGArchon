@@ -194,7 +194,7 @@ class TestRobinSolveLoopWiring:
             # `u_steady` below is built from `+_source`. H enters the equation as -M@H, and H = -V
             # (#2375 ruling 3), so the potential that makes `u_steady` the true fixed point is
             # V = +_source.
-            potential=lambda x, t: 4.0 * D * np.sin(2.0 * x[:, 0]),
+            potential=lambda t, x: 4.0 * D * np.sin(2.0 * x[:, 0]),
             coupling=lambda m: 0.0,
         )
         problem = _robin_problem_1d(ne, sigma, g_left, g_right, hamiltonian=ham)

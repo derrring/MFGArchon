@@ -88,7 +88,7 @@ class _CountingSource:
     def __init__(self) -> None:
         self.calls = 0
 
-    def __call__(self, x, m, v, t):
+    def __call__(self, t, x, v, m):
         self.calls += 1
         a = np.asarray(x, dtype=float)
         return np.full(a.shape[0] if a.ndim == 2 else a.size, _MAGNITUDE)

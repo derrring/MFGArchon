@@ -93,8 +93,8 @@ def create_custom_problem(
         MFGProblem with class-based Hamiltonian
     """
 
-    # Define the potential V(x, t) = |x - target|
-    def potential(x, t=0.0):
+    # Define the potential V(t, x) = |x - target|
+    def potential(t, x):
         return float(np.abs(x[0] - target_x))
 
     # Define the density coupling f(m) = gamma * m and its derivative df/dm = gamma
@@ -104,7 +104,7 @@ def create_custom_problem(
     def coupling_dm(m):
         return congestion_cost
 
-    # Create class-based Hamiltonian: H = H_control(p) + V(x, t) + f(m)
+    # Create class-based Hamiltonian: H = H_control(p) - V(t, x) - f(m) (#2375 ruling 3)
     # H(t, x, p, m) = (1/2 lambda)|p|^2 + |x - target| + gamma * m
     hamiltonian = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=control_cost),
@@ -160,7 +160,7 @@ def demonstrate_hamiltonian_methods():
 
     hamiltonian = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=control_cost),
-        potential=lambda x, t=0.0: float(np.abs(x[0] - target_x)),
+        potential=lambda t, x: float(np.abs(x[0] - target_x)),
         coupling=lambda m: congestion_cost * m,
         coupling_dm=lambda m: congestion_cost,
     )

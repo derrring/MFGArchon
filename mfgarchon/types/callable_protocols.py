@@ -26,11 +26,14 @@ from numpy.typing import NDArray
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-# The argument order of each user-supplied callable the library invokes (#2375 ruling 8). These
-# tuples are the one statement of it: every invocation goes through `bind_user_callable`.
-POTENTIAL_SLOTS: tuple[str, ...] = ("x", "t")
-SOURCE_TERM_SLOTS: tuple[str, ...] = ("x", "m", "v", "t")
-MEASURE_FIELD_SLOTS: tuple[str, ...] = ("x", "mu", "t")
+# The argument order of each user-supplied callable the library invokes: time, then space, then the
+# u-derivative family, then the measure (#2375 ruling 8, #2378 phase 5). These tuples are the one
+# statement of it: every invocation goes through `bind_user_callable`.
+POTENTIAL_SLOTS: tuple[str, ...] = ("t", "x")
+SOURCE_TERM_SLOTS: tuple[str, ...] = ("t", "x", "v", "m")
+MEASURE_FIELD_SLOTS: tuple[str, ...] = ("t", "x", "mu")
+
+_TIME_NAMES = ("t", "time")
 
 
 def bind_user_callable(
@@ -51,8 +54,13 @@ def bind_user_callable(
     - **By position, in slot order**, otherwise, when it can take every slot positionally.
     - **``x`` alone**, where ``spatial_only`` allows a one-argument spatial callable.
 
-    Anything else cannot be told apart and is refused here rather than failing, or computing,
-    at the first call.
+    Refused here, rather than failing or computing at the first call:
+
+    - **The order before #2378 phase 5**: a time parameter (``t`` or ``time``) anywhere but first,
+      or slot-named parameters declared out of slot order. Such a callable would compute correctly
+      when bound by name, but not when its author calls it positionally, and a positional one with
+      a time parameter would receive ``x`` as time.
+    - Anything that cannot be matched to the slots.
     """
     try:
         params = list(inspect.signature(fn).parameters.values())
@@ -60,6 +68,14 @@ def bind_user_callable(
         return BoundCallable(fn, "positional", slots)
     kinds = inspect.Parameter
     positional = [p for p in params if p.kind in (kinds.POSITIONAL_ONLY, kinds.POSITIONAL_OR_KEYWORD)]
+    order = [p.name for p in positional]
+    ranked = [slots.index(name) for name in order if name in slots]
+    if any(name in _TIME_NAMES for name in order[1:]) or ranked != sorted(ranked):
+        raise TypeError(
+            f"{role} {getattr(fn, '__qualname__', fn)!r} takes ({', '.join(order)}), which is out of order. Since "
+            f"#2378 phase 5 (#2375 ruling 8) a {role} takes ({', '.join(slots)}), time first: reorder its "
+            f"parameters, and call it by keyword wherever you call it yourself."
+        )
     named = [p.name for p in params if p.name in slots and p.kind in (kinds.POSITIONAL_OR_KEYWORD, kinds.KEYWORD_ONLY)]
     required = [p for p in positional if p.default is kinds.empty]
     if named and all(p.name in named for p in required):
@@ -296,20 +312,20 @@ class HamiltonianDerivativeCallable(Protocol):
 @runtime_checkable
 class PotentialCallable(Protocol):
     """
-    Protocol for potential function V(x, t).
+    Protocol for potential function V(t, x) (#2375 ruling 8: time first).
 
     The potential appears in the running cost:
-        Running cost = ∫ V(x, t) m(t, x) dx
+        Running cost = ∫ V(t, x) m(t, x) dx
 
     Signature:
-        V(x, t=None) -> float
+        V(t, x) -> float
 
     Args:
+        t: Time (float)
         x: Spatial position (float for 1D, ndarray for nD)
-        t: Time (optional, float)
 
     Returns:
-        Potential value V(x, t)
+        Potential value V(t, x)
 
     Examples:
         >>> # Time-independent potential
@@ -317,13 +333,13 @@ class PotentialCallable(Protocol):
         ...     return 0.5 * x**2
 
         >>> # Time-dependent potential
-        >>> def moving_well(x: float, t: float) -> float:
+        >>> def moving_well(t: float, x: float) -> float:
         ...     center = np.sin(t)
         ...     return 0.5 * (x - center)**2
     """
 
-    def __call__(self, x: float | NDArray[np.floating], t: float | None = None) -> float:
-        """Evaluate potential at (x, t)."""
+    def __call__(self, t: float, x: float | NDArray[np.floating]) -> float:
+        """Evaluate potential at (t, x)."""
         ...
 
 

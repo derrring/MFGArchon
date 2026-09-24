@@ -129,9 +129,9 @@ def potential_field(x: float) -> float:
     )
 
 
-def hamiltonian_potential(x: np.ndarray, t: float) -> float:
+def hamiltonian_potential(t: float, x: np.ndarray) -> float:
     """
-    Potential function V(x, t) for the class-based Hamiltonian.
+    Potential function V(t, x) for the class-based Hamiltonian (#2375 ruling 8: time first).
 
     This wraps the potential_field function to match the expected signature.
 
@@ -186,7 +186,7 @@ geometry = TensorProductGrid(
 # Coupling is part of the Hamiltonian in v1.0 (no separate coupling_coefficient).
 hamiltonian = SeparableHamiltonian(
     control_cost=QuadraticControlCost(control_cost=1.0),
-    potential=hamiltonian_potential,  # V(x, t) = potential_field(x)
+    potential=hamiltonian_potential,  # V(t, x) = potential_field(x)
     coupling=lambda m: coupling_coefficient * m,  # Linear congestion
     coupling_dm=lambda m: coupling_coefficient,  # dH/dm = coupling_coefficient
 )

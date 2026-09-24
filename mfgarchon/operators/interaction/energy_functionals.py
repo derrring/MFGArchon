@@ -77,7 +77,7 @@ class EnergyFunctional(Protocol):
 
     All time arguments are **keyword-only**. The source pipeline already
     carries the true per-slice ``t`` (``source_composition.compose_hjb_source``
-    calls ``source_term_hjb(x, m, v, t)``), so non-autonomous running couplings
+    calls ``source_term_hjb(t, x, v, m)``), so non-autonomous running couplings
     ``F_t[m]`` are expressible without a later signature break. The functionals
     shipped in this module are autonomous and ignore ``t``.
 

@@ -382,7 +382,7 @@ class TestBatchPolymorphism:
         """2D separable Hamiltonian with coupling and potential."""
         return SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=2.0),
-            potential=lambda x, t: float(np.sum(x**2)),
+            potential=lambda t, x: float(np.sum(x**2)),
             coupling=lambda m: -(m**2),
             coupling_dm=lambda m: -2 * m,
         )
@@ -545,7 +545,7 @@ class TestCongestionHamiltonian:
             control_cost=QuadraticControlCost(control_cost=2.0),
             congestion_factor=lambda m: 1.0 + m,
             congestion_factor_dm=lambda m: np.ones_like(m) if isinstance(m, np.ndarray) else 1.0,
-            potential=lambda x, t: float(np.sum(x**2)),
+            potential=lambda t, x: float(np.sum(x**2)),
         )
 
     @pytest.fixture

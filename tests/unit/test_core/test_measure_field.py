@@ -30,7 +30,7 @@ class TestMeasureFieldProtocol:
         assert isinstance(field, MeasureFieldProtocol)
 
     def test_functional_field_satisfies_protocol(self):
-        field = FunctionalMeasureField(lambda x, mu, t: np.zeros_like(x))
+        field = FunctionalMeasureField(lambda t, x, mu: np.zeros_like(x))
         assert isinstance(field, MeasureFieldProtocol)
 
 
@@ -90,7 +90,7 @@ class TestGridMeasureFieldEvaluate:
         field.add_snapshot(mu, U)
 
         x = field.grid_points[:, 0]
-        result = field.evaluate(x, mu, t=0.0)
+        result = field.evaluate(t=0.0, x=x, mu=mu)
         np.testing.assert_array_equal(result, U[0])
 
     def test_time_interpolation_nearest(self):
@@ -100,7 +100,7 @@ class TestGridMeasureFieldEvaluate:
         U[3] = 1.0  # t=0.6
         field.add_snapshot(mu, U)
 
-        result = field.evaluate(field.grid_points[:, 0], mu, t=0.55)
+        result = field.evaluate(t=0.55, x=field.grid_points[:, 0], mu=mu)
         # Nearest to 0.55 in [0, 0.2, 0.4, 0.6, 0.8, 1.0] is 0.6 (index 3)
         np.testing.assert_array_equal(result, U[3])
 
@@ -116,19 +116,19 @@ class TestGridMeasureFieldEvaluate:
 
         # Query near mu1
         mu_query = ParticleMeasure(np.array([0.25]))
-        result = field.evaluate(field.grid_points[:, 0], mu_query, t=0.0)
+        result = field.evaluate(t=0.0, x=field.grid_points[:, 0], mu=mu_query)
         np.testing.assert_array_equal(result, U1[0])
 
         # Query near mu2
         mu_query2 = ParticleMeasure(np.array([0.75]))
-        result2 = field.evaluate(field.grid_points[:, 0], mu_query2, t=0.0)
+        result2 = field.evaluate(t=0.0, x=field.grid_points[:, 0], mu=mu_query2)
         np.testing.assert_array_equal(result2, U2[0])
 
     def test_no_snapshots_raises(self):
         field = _make_grid_field()
         mu = ParticleMeasure(np.array([0.5]))
         with pytest.raises(RuntimeError, match="No snapshots"):
-            field.evaluate(field.grid_points[:, 0], mu, t=0.0)
+            field.evaluate(t=0.0, x=field.grid_points[:, 0], mu=mu)
 
 
 class TestGridMeasureFieldGradient:
@@ -140,7 +140,7 @@ class TestGridMeasureFieldGradient:
         U = np.tile(x, (6, 1))  # v(x,t) = x for all t
         field.add_snapshot(mu, U)
 
-        grad = field.spatial_gradient(x, mu, t=0.0)
+        grad = field.spatial_gradient(t=0.0, x=x, mu=mu)
         np.testing.assert_allclose(grad, 1.0, atol=1e-10)
 
     def test_gradient_quadratic(self):
@@ -151,7 +151,7 @@ class TestGridMeasureFieldGradient:
         U = np.tile(x**2, (6, 1))
         field.add_snapshot(mu, U)
 
-        grad = field.spatial_gradient(x, mu, t=0.0)
+        grad = field.spatial_gradient(t=0.0, x=x, mu=mu)
         np.testing.assert_allclose(grad, 2 * x, atol=1e-10)
 
 
@@ -216,42 +216,42 @@ class TestGridMeasureFieldContinuity:
 
 class TestFunctionalMeasureField:
     def test_evaluate(self):
-        def v(x, mu, t):
+        def v(t, x, mu):
             return np.sin(np.pi * x) * t
 
         field = FunctionalMeasureField(v)
         x = np.linspace(0, 1, 11)
         mu = ParticleMeasure(np.array([0.5]))
-        result = field.evaluate(x, mu, t=1.0)
+        result = field.evaluate(t=1.0, x=x, mu=mu)
         np.testing.assert_allclose(result, np.sin(np.pi * x))
 
     def test_gradient_fd(self):
         """FD gradient of sin(pi*x) should be pi*cos(pi*x)."""
 
-        def v(x, mu, t):
+        def v(t, x, mu):
             return np.sin(np.pi * x)
 
         field = FunctionalMeasureField(v, grid_spacing=0.001)
         x = np.linspace(0.1, 0.9, 9)
         mu = ParticleMeasure(np.array([0.5]))
-        grad = field.spatial_gradient(x, mu, t=0.0)
+        grad = field.spatial_gradient(t=0.0, x=x, mu=mu)
         np.testing.assert_allclose(grad, np.pi * np.cos(np.pi * x), atol=1e-4)
 
     def test_gradient_analytical(self):
         """Provided gradient function should be used."""
 
-        def v(x, mu, t):
+        def v(t, x, mu):
             return x**2
 
-        def grad_v(x, mu, t):
+        def grad_v(t, x, mu):
             return 2 * x
 
         field = FunctionalMeasureField(v, gradient_fn=grad_v)
         x = np.linspace(0, 1, 11)
         mu = ParticleMeasure(np.array([0.5]))
-        grad = field.spatial_gradient(x, mu, t=0.0)
+        grad = field.spatial_gradient(t=0.0, x=x, mu=mu)
         np.testing.assert_allclose(grad, 2 * x)
 
     def test_repr(self):
-        field = FunctionalMeasureField(lambda x, mu, t: x)
+        field = FunctionalMeasureField(lambda t, x, mu: x)
         assert "FunctionalMeasureField" in repr(field)

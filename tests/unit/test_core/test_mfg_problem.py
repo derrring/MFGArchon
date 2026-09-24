@@ -239,7 +239,7 @@ def test_mfg_problem_temporal_grid():
 def test_mfg_problem_with_custom_potential():
     """Test MFGProblem with custom potential function."""
 
-    def custom_potential(x, t):
+    def custom_potential(t, x):
         return x**2
 
     geometry = default_geometry(bounds=[(0.0, 1.0)], Nx_points=[11])

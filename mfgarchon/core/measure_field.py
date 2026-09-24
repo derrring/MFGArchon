@@ -1,7 +1,7 @@
 """
 Measure-dependent fields for Layer 2 MFG.
 
-A MeasureField represents v(x, mu, t) — a function on the product space
+A MeasureField represents v(t, x, mu) — a function on the product space
 Omega x P_2(R^d) x [0,T]. This is the central object in:
 
 - Master equation: dU/dt + H(x, nabla_x U, mu) + integral of Lions derivative = 0
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class MeasureFieldProtocol(Protocol):
-    """Protocol for measure-dependent fields v(x, mu, t).
+    """Protocol for measure-dependent fields v(t, x, mu).
 
     Any object satisfying this protocol can be used as a value function
     in measure-dependent MFG solvers (master equation, common noise).
@@ -48,8 +48,8 @@ class MeasureFieldProtocol(Protocol):
         v: Omega x P_2(R^d) x [0,T] -> R
     """
 
-    def evaluate(self, x: NDArray, mu: MeasureRepresentation, t: float) -> NDArray:
-        """Evaluate v(x, mu, t) at spatial points x.
+    def evaluate(self, t: float, x: NDArray, mu: MeasureRepresentation) -> NDArray:
+        """Evaluate v(t, x, mu) at spatial points x.
 
         Args:
             x: Spatial points, shape (N,) for 1D or (N, d) for dD.
@@ -61,8 +61,8 @@ class MeasureFieldProtocol(Protocol):
         """
         ...
 
-    def spatial_gradient(self, x: NDArray, mu: MeasureRepresentation, t: float) -> NDArray:
-        """Compute nabla_x v(x, mu, t).
+    def spatial_gradient(self, t: float, x: NDArray, mu: MeasureRepresentation) -> NDArray:
+        """Compute nabla_x v(t, x, mu).
 
         Args:
             x: Spatial points, shape (N,) for 1D or (N, d) for dD.
@@ -101,7 +101,7 @@ class GridMeasureField:
     >>> field = GridMeasureField(x_grid, t_grid)
     >>> field.add_snapshot(mu_0, U_0)  # U_0 shape (Nt+1, Nx)
     >>> field.add_snapshot(mu_1, U_1)
-    >>> v = field.evaluate(x_query, mu_query, t=0.5)
+    >>> v = field.evaluate(t=0.5, x=x_query, mu=mu_query)
     """
 
     def __init__(self, grid_points: NDArray, times: NDArray):
@@ -150,8 +150,8 @@ class GridMeasureField:
         """Get the (measure, values) pair at given index."""
         return self._snapshots[index]
 
-    def evaluate(self, x: NDArray, mu: MeasureRepresentation, t: float) -> NDArray:
-        """Evaluate v(x, mu, t) by nearest-snapshot lookup.
+    def evaluate(self, t: float, x: NDArray, mu: MeasureRepresentation) -> NDArray:
+        """Evaluate v(t, x, mu) by nearest-snapshot lookup.
 
         Finds the stored measure closest to mu in Wasserstein distance
         and returns the corresponding value function at time t.
@@ -178,7 +178,7 @@ class GridMeasureField:
         best_idx = self._find_nearest_snapshot(mu)
         return self._snapshots[best_idx][1][t_idx]
 
-    def spatial_gradient(self, x: NDArray, mu: MeasureRepresentation, t: float) -> NDArray:
+    def spatial_gradient(self, t: float, x: NDArray, mu: MeasureRepresentation) -> NDArray:
         """Compute nabla_x v at nearest snapshot via finite differences.
 
         Args:
@@ -204,7 +204,7 @@ class GridMeasureField:
         return np.column_stack(grads)
 
     def restrict_to_density(self, mu: MeasureRepresentation) -> NDArray:
-        """Get classical value function u(t, x) = v(x, mu, t) for fixed mu.
+        """Get classical value function u(t, x) = v(t, x, mu) for fixed mu.
 
         Args:
             mu: The measure to fix.
@@ -334,24 +334,24 @@ class GridMeasureField:
 
 
 class FunctionalMeasureField:
-    """MeasureField defined by a callable v(x, mu, t).
+    """MeasureField defined by a callable v(t, x, mu).
 
     Wraps a user-provided function into the MeasureFieldProtocol interface.
     Useful for analytical solutions or parameterized models.
 
     Parameters
     ----------
-    field_fn : Callable[[NDArray, MeasureRepresentation, float], NDArray]
-        The field function v(x, mu, t) -> values at x.
+    field_fn : Callable[[float, NDArray, MeasureRepresentation], NDArray]
+        The field function v(t, x, mu) -> values at x (#2375 ruling 8: time first).
     gradient_fn : Callable or None
-        Optional nabla_x v(x, mu, t). If None, computed via finite differences.
+        Optional nabla_x v(t, x, mu). If None, computed via finite differences.
     grid_spacing : float
         Grid spacing for FD gradient (only used if gradient_fn is None).
 
     Example
     -------
-    >>> # Analytical: v(x, mu, t) = -log(mu.to_density(x))
-    >>> def v_fn(x, mu, t):
+    >>> # Analytical: v(t, x, mu) = -log(mu.to_density(x))
+    >>> def v_fn(t, x, mu):
     ...     m = mu.to_density(x)
     ...     return -np.log(np.maximum(m, 1e-15))
     >>> field = FunctionalMeasureField(v_fn)
@@ -377,11 +377,11 @@ class FunctionalMeasureField:
     def _gradient(self) -> BoundCallable:
         return bound_attribute(self, "_grad_fn", MEASURE_FIELD_SLOTS, role="gradient_fn")
 
-    def evaluate(self, x: NDArray, mu: MeasureRepresentation, t: float) -> NDArray:
-        """Evaluate v(x, mu, t)."""
+    def evaluate(self, t: float, x: NDArray, mu: MeasureRepresentation) -> NDArray:
+        """Evaluate v(t, x, mu)."""
         return np.asarray(self._field()(x=x, mu=mu, t=t))
 
-    def spatial_gradient(self, x: NDArray, mu: MeasureRepresentation, t: float) -> NDArray:
+    def spatial_gradient(self, t: float, x: NDArray, mu: MeasureRepresentation) -> NDArray:
         """Compute nabla_x v via provided function or finite differences."""
         if self._grad_fn is not None:
             return np.asarray(self._gradient()(x=x, mu=mu, t=t))

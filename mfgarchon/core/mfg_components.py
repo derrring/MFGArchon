@@ -87,7 +87,7 @@ class MFGComponents:
     u_terminal : Callable | NDArray
         Terminal value function u_T(x).
     potential_func : Callable, optional
-        Additional potential V(x, t) (if not in Hamiltonian).
+        Additional potential V(t, x) (if not in Hamiltonian); a time-independent V(x) is accepted.
     boundary_conditions : BoundaryConditions, optional
         Boundary conditions for the domain.
     """
@@ -102,7 +102,7 @@ class MFGComponents:
     u_final: Callable | NDArray | None = None  # DEPRECATED: use u_terminal instead
 
     # Optional potential (if not included in Hamiltonian)
-    potential_func: Callable | None = None  # V(x, t) -> float
+    potential_func: Callable | None = None  # V(t, x) -> float
 
     # Boundary conditions
     boundary_conditions: BoundaryConditions | None = None
