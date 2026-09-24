@@ -347,7 +347,7 @@ class VariationalMFGProblem:
             Dictionary with Hamiltonian functions
         """
 
-        def hamiltonian(x: float, p: float, m: float, t: float = 0.0) -> float:
+        def hamiltonian(t: float, x: float, p: float, m: float) -> float:
             """
             Hamiltonian from Legendre transform of Lagrangian.
 
@@ -375,11 +375,11 @@ class VariationalMFGProblem:
                 return float(result.item())
             return float(result)
 
-        def hamiltonian_dp(x: float, p: float, m: float, t: float = 0.0) -> float:
+        def hamiltonian_dp(t: float, x: float, p: float, m: float) -> float:
             """∂H/∂p = p (for quadratic Hamiltonian)"""
             return p
 
-        def hamiltonian_dm(x: float, p: float, m: float, t: float = 0.0) -> float:
+        def hamiltonian_dm(t: float, x: float, p: float, m: float) -> float:
             """∂H/∂m from Lagrangian coupling"""
             if self.components.lagrangian_dm_func:
                 # For velocity-independent coupling, ∂H/∂m = ∂L/∂m

@@ -10,7 +10,7 @@ Mathematical Notation:
     - m(t,x): Density function
     - u(t,x): Value function
     - ∂u/∂x: Spatial gradient
-    - H(x, m, p, t): Hamiltonian
+    - H(t, x, p, m): Hamiltonian
     - g(x): Terminal cost
     - f(x, m, t): Running cost
 
@@ -56,7 +56,7 @@ class MFGProblemProtocol(Protocol):
 
     MFG Components:
         All problems must provide:
-        - hamiltonian(x, m, p, t): H(x, m, p, t)
+        - hamiltonian(t, x, p, m): H(t, x, p, m)
         - terminal_cost(x): g(x)
         - initial_density(x): m₀(x)
         - running_cost(x, m, t): f(x, m, t)
@@ -102,22 +102,23 @@ class MFGProblemProtocol(Protocol):
     # MFG Components
     # ====================
 
-    def hamiltonian(self, x, m, p, t) -> float:
+    def hamiltonian(self, t, x, p, m) -> float:
         """
-        Hamiltonian H(x, m, p, t).
+        Hamiltonian H(t, x, p, m) (#2375 ruling 8: time first). A subclass of ``MFGProblem`` that
+        defines it in another order is refused at class creation; the library calls it by keyword.
 
         Args:
+            t: Time
             x: Spatial position
                 - 1D: float
                 - nD: tuple/array of length d
-            m: Density value m(t,x) at this position
             p: Momentum/co-state ∂u/∂x
                 - 1D: float
                 - nD: tuple/array of length d
-            t: Time
+            m: Density value m(t,x) at this position
 
         Returns:
-            Hamiltonian value H(x, m, p, t)
+            Hamiltonian value H(t, x, p, m)
 
         Note:
             On the grid and mesh interface ``m`` is the density AT ``x``, a scalar -- not the
@@ -138,7 +139,7 @@ class MFGProblemProtocol(Protocol):
 
         Example:
             >>> # Separable Hamiltonian with a LOCAL coupling: H_0(p) plus a term in m alone.
-            >>> def hamiltonian(self, x, m, p, t):
+            >>> def hamiltonian(self, t, x, p, m):
             ...     p_arr = np.array(p) if hasattr(p, '__iter__') else p
             ...     return 0.5 * np.sum(p_arr**2) - 0.1 * m
 

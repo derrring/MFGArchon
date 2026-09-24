@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from scipy.sparse import csr_matrix
 
     from mfgarchon.geometry.graph.network_geometry import BaseNetworkGeometry
+    from mfgarchon.types.callable_protocols import Slots
 
 
 class NetworkHamiltonian(HamiltonianBase):
@@ -351,6 +352,10 @@ class NetworkMFGProblem(MFGProblem):
     - Δ_G: Graph Laplacian operator
     - H_i: Hamiltonian at node i
     """
+
+    # The network's `hamiltonian(node, neighbors, m, p, t)` is its own API, not the continuum
+    # (t, x, p, m) one MFGProblem checks; its order is #2378 phase 5 part 3b's.
+    _ruling8_methods: ClassVar[dict[str, Slots | None]] = {"hamiltonian": None}
 
     def __init__(
         self,

@@ -25,7 +25,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Mapping, Sequence
 
 
 @dataclass(frozen=True)
@@ -57,9 +57,9 @@ class Slots:
 POTENTIAL_SLOTS = Slots(("t", "x"))
 SOURCE_TERM_SLOTS = Slots(("t", "x", "v", "m"), aliases={"m_t": "m", "v_t": "v"}, swapped=("v", "m"))
 MEASURE_FIELD_SLOTS = Slots(("t", "x", "mu"))
-HAMILTONIAN_SLOTS = Slots(("x", "m", "p", "t"), required=("x", "m", "p", "t"))
-CONDITIONAL_HAMILTONIAN_SLOTS = Slots(("x", "p", "m", "theta", "t"), optional=("t",))
-ALPHA_STAR_SLOTS = Slots(("x", "p", "m", "t"), aliases={"t_idx": "t"})
+HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m"), swapped=("p", "m"), required=("t", "x", "p", "m"))
+CONDITIONAL_HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m", "theta"), optional=("t",))
+ALPHA_STAR_SLOTS = Slots(("t", "x", "p", "m"), aliases={"t_idx": "t"})
 
 _TIME_NAMES = ("t", "time")
 
@@ -108,9 +108,7 @@ def bind_user_callable(
     slot_of = slots.slot_of()
     positional = [p for p in params if p.kind in (kinds.POSITIONAL_ONLY, kinds.POSITIONAL_OR_KEYWORD)]
     order = [p.name for p in positional]
-    ranked = [order_.index(slot_of[name]) for name in order if name in slot_of]
-    t_at = order_.index("t") if "t" in order_ else None
-    if any(name in _TIME_NAMES and i != t_at for i, name in enumerate(order)) or ranked != sorted(ranked):
+    if out_of_order(order, slots):
         raise TypeError(
             f"{role} {getattr(fn, '__qualname__', fn)!r} takes ({', '.join(order)}), which is out of order. Since "
             f"#2378 phase 5 (#2375 ruling 8) a {role} takes ({', '.join(order_)}), time first: reorder its "
@@ -149,6 +147,47 @@ def bind_user_callable(
         )
         + f", or take exactly {len(order_)} positionally in that order."
     )
+
+
+def out_of_order(names: Sequence[str], slots: Slots) -> bool:
+    """Whether positional parameter ``names`` break ``slots``' order: a time parameter anywhere but
+    at the ``t`` slot's position, or slot-named parameters out of slot order. The one statement of
+    the rule, for a callable at acceptance and for a method at class creation."""
+    slot_of = slots.slot_of()
+    ranked = [slots.order.index(slot_of[name]) for name in names if name in slot_of]
+    t_at = slots.order.index("t") if "t" in slots.order else None
+    return any(name in _TIME_NAMES and i != t_at for i, name in enumerate(names)) or ranked != sorted(ranked)
+
+
+def refuse_methods_out_of_order(cls: type, table: Mapping[str, Slots | None]) -> None:
+    """Refuse, at class creation, a method ``cls`` defines under a name in ``table`` whose
+    parameters break that name's slot order (#2375 ruling 8).
+
+    The library calls these methods by keyword, so an out-of-order definition would compute
+    correctly from the library and wrongly for anyone calling it positionally. A ``None`` entry
+    leaves that name unchecked, for a subclass whose method of the same name is another API.
+    """
+    for name, slots in table.items():
+        if slots is None:  # a subclass whose method of that name has another signature
+            continue
+        member = cls.__dict__.get(name)
+        fn = member.__func__ if isinstance(member, (staticmethod, classmethod)) else member
+        if not callable(fn):
+            continue
+        try:
+            params = list(inspect.signature(fn).parameters.values())
+        except (TypeError, ValueError):
+            continue
+        kinds = inspect.Parameter
+        names = [p.name for p in params if p.kind in (kinds.POSITIONAL_ONLY, kinds.POSITIONAL_OR_KEYWORD)]
+        if not isinstance(member, staticmethod) and names:
+            names = names[1:]  # self, or cls
+        if out_of_order(names, slots):
+            raise TypeError(
+                f"{cls.__qualname__}.{name} takes ({', '.join(names)}), which is out of order. Since #2378 phase 5 "
+                f"(#2375 ruling 8) it takes ({', '.join(slots.order)}), time first: reorder the parameters, and "
+                f"call the method by keyword."
+            )
 
 
 class BoundCallable:

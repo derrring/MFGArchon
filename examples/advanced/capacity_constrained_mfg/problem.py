@@ -146,12 +146,12 @@ class CapacityConstrainedMFGProblem(MFGProblem):
                     f"doesn't match problem dimension ({self.dimension})"
                 )
 
-    def hamiltonian(self, x, m, p, t) -> float:
+    def hamiltonian(self, t, x, p, m) -> float:
         """
         Compute Hamiltonian with congestion term.
 
         The total Hamiltonian is:
-            H(x, m, p, t) = (1/2)|p|² + α·m + γ·g(m(x)/C(x))
+            H(t, x, p, m) = (1/2)|p|² + α·m + γ·g(m(x)/C(x))
 
         where:
         - (1/2)|p|²: Kinetic energy (standard)

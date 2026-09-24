@@ -26,13 +26,13 @@ References:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
 from mfgarchon.core.hamiltonian import HamiltonianBase
 from mfgarchon.core.mfg_problem import MFGComponents, MFGProblem
-from mfgarchon.types.callable_protocols import CONDITIONAL_HAMILTONIAN_SLOTS, bound_attribute
+from mfgarchon.types.callable_protocols import CONDITIONAL_HAMILTONIAN_SLOTS, Slots, bound_attribute
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -87,6 +87,8 @@ class StochasticMFGProblem(MFGProblem):
         ...     conditional_hamiltonian=market_hamiltonian,
         ... )
     """
+
+    _ruling8_methods: ClassVar[dict[str, Slots]] = {"H_conditional": CONDITIONAL_HAMILTONIAN_SLOTS}
 
     def __init__(
         self,
@@ -220,24 +222,25 @@ class StochasticMFGProblem(MFGProblem):
 
     def H_conditional(
         self,
+        t: float,
         x: float | np.ndarray,
         p: float | np.ndarray,
         m: float | np.ndarray,
         theta: float | np.ndarray,
-        t: float,
     ) -> float | np.ndarray:
         """
-        Evaluate conditional Hamiltonian H(x, p, m, θ).
+        Evaluate conditional Hamiltonian H(t, x, p, m, θ) (#2375 ruling 8: θ is a further
+        parameter, after the measure).
 
         Args:
+            t: Current time
             x: Spatial position
             p: Momentum (∇u)
             m: Density value
             theta: Current noise value θ_t
-            t: Current time
 
         Returns:
-            Hamiltonian value H(x, p, m, θ)
+            Hamiltonian value H(t, x, p, m, θ)
 
         Raises:
             ValueError: If conditional_hamiltonian not defined

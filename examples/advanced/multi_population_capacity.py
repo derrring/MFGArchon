@@ -74,7 +74,7 @@ class CapacityConstrainedMFGProblem(MultiPopulationMFGProblem):
         self.capacity_field = capacity_field
         self.capacity_weight = capacity_weight
 
-    def hamiltonian_k(self, k: int, x, m_all: list[float], p, t) -> float:
+    def hamiltonian_k(self, t, x, p, m_all: list[float], k: int) -> float:
         """
         Hamiltonian with capacity constraint.
 
@@ -105,7 +105,7 @@ class CapacityConstrainedMFGProblem(MultiPopulationMFGProblem):
 
         return H_kinetic + H_coupling + capacity_penalty
 
-    def terminal_cost_k(self, k: int, x) -> float:
+    def terminal_cost_k(self, x, k: int) -> float:
         """
         Population-specific terminal cost.
 
@@ -130,7 +130,7 @@ class CapacityConstrainedMFGProblem(MultiPopulationMFGProblem):
             # Quadratic cost centered at city center (x=0.5)
             return 0.5 * (x_val - 0.5) ** 2
 
-    def initial_density_k(self, k: int, x) -> float:
+    def initial_density_k(self, x, k: int) -> float:
         """
         Population-specific initial distribution.
 

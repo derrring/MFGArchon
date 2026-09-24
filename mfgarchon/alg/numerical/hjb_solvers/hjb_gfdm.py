@@ -3591,9 +3591,9 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         dt = float(self.problem.T) / int(self.problem.Nt)
 
-        def alpha_star(x_pts, p, m, t_idx):
+        def alpha_star(t_idx, x, p, m):
             # Optimal feedback control alpha* = -dH/dp (the same dp() the Newton Jacobian reads).
-            return -eval_dH_dp_batch(H_class, x_pts, m, p, t_idx * dt)
+            return -eval_dH_dp_batch(H_class, x, m, p, t_idx * dt)
 
         # Issue #1247 (#1118 PR2): route the Hamiltonian's non-quadratic-in-alpha source terms
         # — potential V(t, x), density coupling f(m^n) — and the MMS source into Howard's

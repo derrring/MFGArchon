@@ -64,14 +64,14 @@ if TYPE_CHECKING:
     from mfgarchon.core.mfg_problem import MFGProblem
 
 
-AlphaStarFn = Callable[[np.ndarray, np.ndarray, np.ndarray, int], np.ndarray]
-"""Legendre transform: alpha_star(x, p, m, t_idx) -> alpha.
+AlphaStarFn = Callable[[int, np.ndarray, np.ndarray, np.ndarray], np.ndarray]
+"""Legendre transform: alpha_star(t_idx, x, p, m) -> alpha (#2375 ruling 8: time first).
 
 Given collocation points `x` (shape (n, d)), gradient `p = ∇U` (shape (n, d)),
 density `m` (shape (n,)), and time index `t_idx`, returns the optimal control
 `alpha` (shape (n, d)) that achieves `min_α (α · p + L(t, x, α, m))`.
 
-For LQ `H = |p|²/(2c) + g(x, m)`: `alpha_star(x, p, m, t) = -p/c`.
+For LQ `H = |p|²/(2c) + g(x, m)`: `alpha_star(t, x, p, m) = -p/c`.
 """
 
 RunningCostFn = Callable[[int], np.ndarray]
@@ -272,9 +272,10 @@ class HJBHowardSolver:
         boundary-segment classification (`_bc_segment_per_point`) are also
         consumed.
     alpha_star : Callable
-        Legendre transform: `alpha_star(x, p, m, t_idx) -> alpha`.
+        Legendre transform: `alpha_star(t_idx, x, p, m) -> alpha`, bound by name when its
+        parameters are named `t` (or `t_idx`), `x`, `p`, `m`, and refused in the old order.
         See module docstring `AlphaStarFn` type alias. For LQ
-        `H = |p|²/(2c)`, pass `lambda x, p, m, t: -p / c`. The Hamiltonian
+        `H = |p|²/(2c)`, pass `lambda t, x, p, m: -p / c`. The Hamiltonian
         must be strictly convex in `p` for policy iteration to converge
         (Legendre uniqueness of the optimal control). Separability is
         neither necessary nor sufficient.

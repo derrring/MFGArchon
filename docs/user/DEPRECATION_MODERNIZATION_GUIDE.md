@@ -1,8 +1,8 @@
 # Deprecation Modernization Guide
 
 **Auto-generated** by `scripts/generate_deprecation_guide.py`
-**Total deprecated items**: 51
-**Versions covered**: v0.21.0, v0.20.5, v0.20.0, v0.19.2, v0.19.0, v0.18.6, v0.18.0, v0.17.6, v0.17.1, v0.17.0, v0.16.11, v0.12.0
+**Total deprecated items**: 54
+**Versions covered**: v0.22.0, v0.21.0, v0.20.5, v0.20.0, v0.19.2, v0.19.0, v0.18.6, v0.18.0, v0.17.6, v0.17.1, v0.17.0, v0.16.11, v0.12.0
 
 ---
 
@@ -37,6 +37,18 @@ It does mean a migration you read on one row **does not transfer** to another so
 | `MeshlessGalerkinFPSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
 | `NetworkFPSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
 | `WeakFormFPSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
+
+---
+
+## Deprecated since v0.22.0
+
+*3 items*
+
+### Functions / Classes
+
+- **`HamiltonianAdapter()`** — use `bind_user_callable(func, HAMILTONIAN_SLOTS, role=...) from mfgarchon.types.callable_protocols, or a HamiltonianBase called by keyword` instead (remove by v0.25.0)
+- **`adapt_hamiltonian()`** — use `bind_user_callable(func, HAMILTONIAN_SLOTS, role=...) from mfgarchon.types.callable_protocols, or a HamiltonianBase called by keyword` instead (remove by v0.25.0)
+- **`create_hamiltonian_adapter()`** — use `bind_user_callable(func, HAMILTONIAN_SLOTS, role=...) from mfgarchon.types.callable_protocols, or a HamiltonianBase called by keyword` instead (remove by v0.25.0)
 
 ---
 
