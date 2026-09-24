@@ -44,6 +44,7 @@ Usage:
     python scripts/test_discrimination.py                  # all mutations
     python scripts/test_discrimination.py --only diffusion_scalar_2x
     python scripts/test_discrimination.py --paths tests/unit --json out.json
+    python scripts/test_discrimination.py --shard 2/5      # the weekly workflow's slices (#2389)
 """
 
 from __future__ import annotations
@@ -766,6 +767,34 @@ def _write_baseline(path: Path, results: dict, *, paths: list[str], collected: i
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
+def parse_shard(text: str) -> tuple[int, int]:
+    """`K/N`, 1-based: the K-th of N slices. An `argparse` type, so a bad value fails at parsing."""
+    import argparse
+
+    try:
+        k, n = (int(part) for part in text.split("/"))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"--shard takes K/N, e.g. 2/5; got {text!r}") from None
+    if n < 1 or not 1 <= k <= n:
+        raise argparse.ArgumentTypeError(f"--shard K/N needs 1 <= K <= N; got {text!r}")
+    return k, n
+
+
+def select_shard(mutations: list[Mutation], k: int, n: int) -> list[Mutation]:
+    """The K-th of N slices by position. The N slices partition the list for every N, so a mutation
+    added later lands in exactly one shard without anyone assigning it (#2389)."""
+    return [m for i, m in enumerate(mutations) if i % n == k - 1]
+
+
+def restrict_to_selection(baseline: dict, selected: set[str], declared: set[str]) -> dict:
+    """The baseline as seen by a run over a subset: its own mutations, plus any the code no longer
+    declares. Those belong to no shard, so every shard must still report them as DISAPPEARED."""
+    return {
+        **baseline,
+        "mutations": {n: v for n, v in baseline["mutations"].items() if n in selected or n not in declared},
+    }
+
+
 def compare_to_baseline(results: dict, baseline: dict, matrix: dict | None = None) -> list[str]:
     """Every way discrimination can degrade. Empty list means it did not.
 
@@ -877,14 +906,50 @@ def main() -> None:
     parser.add_argument("--json", metavar="FILE", help="Write the full kill matrix to FILE")
     parser.add_argument("--write-baseline", metavar="FILE", help="Write the ratchet baseline to FILE")
     parser.add_argument("--check-baseline", metavar="FILE", help="Fail if discrimination degraded vs FILE")
+    parser.add_argument(
+        "--shard", metavar="K/N", type=parse_shard, help="Run only the K-th of N slices of the mutation list (1-based)"
+    )
     args = parser.parse_args()
+    if args.shard and args.only:
+        parser.error("--shard and --only both select mutations; pass one")
+    if args.shard and args.write_baseline:
+        parser.error("--write-baseline records every mutation, and a shard runs 1/N of them")
+    # An unknown name used to drop silently, and with a subset now checked on its own that made
+    # `--only real --only typo` a green run over one mutation.
+    if unknown := sorted(set(args.only or ()) - {m.name for m in MUTATIONS}):
+        parser.error(f"--only names no mutation called {unknown}")
 
     _assert_clean_tree()
     _assert_import_is_the_mutated_tree()
 
-    selected = [m for m in MUTATIONS if not args.only or m.name in args.only]
-    if not selected:
-        sys.exit(f"No mutation matched {args.only}. Known: {[m.name for m in MUTATIONS]}")
+    # The reference is read BEFORE the sweep, for two reasons. The weekly workflow passes `--json` the
+    # same path read here, so the uploaded artifact's `reproduce` names the committed file (#2349).
+    # Read after that write, the reference was this run's own output, and no killer set could ever
+    # differ from it (#2389). And a missing matrix is known now, not after hours of mutations.
+    if args.check_baseline and not args.write_baseline:  # --write-baseline exits before the check
+        baseline_path = Path(args.check_baseline)
+        baseline = json.loads(baseline_path.read_text())
+        # The killer sets are the half a count cannot express, and they live beside the
+        # baseline rather than inside it -- the matrix is the richer artifact and a test
+        # already pins the two to the same run. Absent, the gate degrades to counts and
+        # SAYS so, because a silently weaker gate is the failure mode this tool is for.
+        matrix_path = baseline_path.parent / "discrimination_killmatrix.json"
+        matrix = json.loads(matrix_path.read_text()) if matrix_path.exists() else None
+        if matrix is None:
+            print(
+                f"CANNOT MEASURE: {matrix_path.name} is absent, so killer sets cannot be compared "
+                f"and this gate would silently degrade to counts. Exit 2 is 'could not measure', "
+                f"distinct from 0 (matches) and 1 (degraded) -- a green run with half the gate off "
+                f"is invisible in a three-hour log."
+            )
+            sys.exit(2)
+
+    if args.shard:
+        selected = select_shard(MUTATIONS, *args.shard)
+    else:
+        selected = [m for m in MUTATIONS if not args.only or m.name in args.only]
+    if args.shard and not selected:  # `--only` names are validated above, so only a shard can select nothing
+        sys.exit(f"--shard {args.shard[0]}/{args.shard[1]} selects nothing: there are {len(MUTATIONS)} mutations")
 
     paths = args.paths.split()
     print(f"Baseline: pytest {' '.join(paths)} (excluding {SELF_TESTS}) ...", flush=True)
@@ -978,6 +1043,7 @@ def main() -> None:
             "markers": MARKERS,
             "collected": base.collected,
             "excluded": SELF_TESTS,
+            **({"shard": "{}/{}".format(*args.shard)} if args.shard else {}),
         },
         "_selection_regex_for_agreement_shaped": AGREEMENT_SHAPED,
         "uncovered": uncovered,
@@ -1000,22 +1066,9 @@ def main() -> None:
         sys.exit(0)
 
     if args.check_baseline:
-        baseline_path = Path(args.check_baseline)
-        baseline = json.loads(baseline_path.read_text())
-        # The killer sets are the half a count cannot express, and they live beside the
-        # baseline rather than inside it -- the matrix is the richer artifact and a test
-        # already pins the two to the same run. Absent, the gate degrades to counts and
-        # SAYS so, because a silently weaker gate is the failure mode this tool is for.
-        matrix_path = baseline_path.parent / "discrimination_killmatrix.json"
-        matrix = json.loads(matrix_path.read_text()) if matrix_path.exists() else None
-        if matrix is None:
-            print(
-                f"CANNOT MEASURE: {matrix_path.name} is absent, so killer sets cannot be compared "
-                f"and this gate would silently degrade to counts. Exit 2 is 'could not measure', "
-                f"distinct from 0 (matches) and 1 (degraded) -- a green run with half the gate off "
-                f"is invisible in a three-hour log."
-            )
-            sys.exit(2)
+        recorded = len(baseline["mutations"])
+        if args.shard or args.only:
+            baseline = restrict_to_selection(baseline, {m.name for m in selected}, {m.name for m in MUTATIONS})
         problems = compare_to_baseline(results, baseline, matrix)
         if problems:
             print("\nDiscrimination baseline mismatch:")
@@ -1028,7 +1081,10 @@ def main() -> None:
                 "test_the_kill_matrix_is_committed_beside_the_baseline and costs a second sweep."
             )
             sys.exit(1)
-        print(f"Discrimination matches baseline ({len(baseline['mutations'])} mutations, counts and killer sets).")
+        print(
+            f"Discrimination matches baseline ({len(baseline['mutations'])} of {recorded} mutations, "
+            f"counts and killer sets)."
+        )
         sys.exit(0)
 
     sys.exit(0 if effective else 1)

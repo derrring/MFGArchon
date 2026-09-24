@@ -839,3 +839,153 @@ def test_the_owner_prose_in_the_artifacts_matches_the_code(td):
             f"the code's bytes, so either the script changed without a re-record or the artifact was hand-edited "
             f"into disagreement. Re-record, or correct the script."
         )
+
+
+# ---------------------------------------------------------------------------
+# Sharding, and where the killer-set reference comes from (#2389)
+# ---------------------------------------------------------------------------
+
+
+def _drive_main(td, monkeypatch, argv, runs, applied=None):
+    """Run `main()` over fabricated pytest runs, with every step that touches the tree stubbed.
+
+    The mutation is never applied and nothing is restored, so this cannot mutate the checkout under
+    `-n auto`. What remains real is the part under test: argument handling, where the reference is
+    read, and the verdict. `applied`, when given, records which mutations the run selected.
+    """
+    runs = iter(runs)
+    monkeypatch.setattr(td, "_pytest", lambda paths: next(runs))
+    monkeypatch.setattr(td, "_assert_clean_tree", lambda: None)
+    monkeypatch.setattr(td, "_assert_import_is_the_mutated_tree", lambda: None)
+    monkeypatch.setattr(
+        td, "apply_mutation", lambda mut, backups: None if applied is None else applied.append(mut.name)
+    )
+    monkeypatch.setattr(td, "restore", lambda backups: None)
+    monkeypatch.setattr(td, "_mutation_is_live", lambda mut: True)
+    monkeypatch.setattr(td, "_assert_mutations_restored", lambda selected: None)
+    monkeypatch.setattr(td, "_provenance", lambda artifact: {})
+    monkeypatch.setattr(td.sys, "argv", ["test_discrimination.py", *argv])
+    with pytest.raises(SystemExit) as exc:
+        td.main()
+    return exc.value.code
+
+
+def test_the_killer_reference_is_the_committed_matrix_not_this_runs_output(td, monkeypatch, tmp_path, capsys):
+    """The weekly workflow passes `--json scripts/discrimination_killmatrix.json`, the same path
+    `--check-baseline` reads its killer sets from, so the artifact's `reproduce` names the committed
+    file (#2349). Read after that write, the reference was the run's own output: every killer set
+    matched itself, and the half of the gate a count cannot express could never fire on the schedule.
+    The input is the #1901 case, a one-for-one swap that holds the count.
+    """
+    name = td.MUTATIONS[0].name
+    baseline = tmp_path / "discrimination_baseline.json"
+    matrix = tmp_path / "discrimination_killmatrix.json"
+    baseline.write_text(json.dumps({"mutations": {name: {"owner": "x", "status": "ok", "kill_count": 1}}}))
+    matrix.write_text(json.dumps({"mutations": {name: {"status": "ok", "killed": ["tests/a.py::test_before"]}}}))
+    code = _drive_main(
+        td,
+        monkeypatch,
+        ["--only", name, "--check-baseline", str(baseline), "--json", str(matrix)],
+        [td.Run(collected=10), td.Run(failed={"tests/a.py::test_after"}, returncode=1, collected=10)],
+    )
+    out = capsys.readouterr().out
+    assert code == 1, (
+        f"a killer swap passed with --json pointed at the reference (exit {code}): the check read the "
+        f"run's own output as its reference\n{out[-600:]}"
+    )
+    assert "STOPPED killing" in out, f"exit 1, but not for the killer swap:\n{out[-600:]}"
+
+
+def test_the_shards_partition_the_mutation_list(td):
+    """Complete and disjoint for every N, so a mutation added later is always in exactly one shard.
+
+    Listing names per shard in the workflow would drift: a new mutation in no list is unchecked, and
+    nothing would say so.
+    """
+    names = [m.name for m in td.MUTATIONS]
+    for n in range(1, len(names) + 2):
+        shards = [[m.name for m in td.select_shard(td.MUTATIONS, k, n)] for k in range(1, n + 1)]
+        flat = [name for shard in shards for name in shard]
+        assert sorted(flat) == sorted(names), f"N={n}: the shards do not cover the mutation list"
+        assert len(flat) == len(set(flat)), f"N={n}: a mutation is in two shards"
+
+
+@pytest.mark.parametrize("text", ["0/5", "6/5", "5", "a/b", "1/0", "-1/5"])
+def test_a_malformed_shard_is_refused(td, text):
+    import argparse
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        td.parse_shard(text)
+
+
+def test_a_shard_checks_its_own_mutations_and_still_sees_a_deleted_one(td):
+    """`--only` or `--shard` runs a subset. Every baseline mutation outside it used to read as
+    DISAPPEARED, so a subset could not pass `--check-baseline` at all. Restricting to the subset must
+    not hide a mutation that was really removed from `MUTATIONS`: that one belongs to no shard.
+    """
+    baseline = _base(ours=1, other_shards=2, removed=3)
+    restricted = td.restrict_to_selection(baseline, selected={"ours"}, declared={"ours", "other_shards"})
+    problems = td.compare_to_baseline(_now(ours=1), restricted)
+    assert problems == ["  removed: mutation DISAPPEARED (baseline killed 3)"], problems
+
+
+def test_a_shard_cannot_write_the_baseline(td, monkeypatch, capsys):
+    """A shard runs 1/N of the mutations; a baseline written from it silently drops the rest."""
+    code = _drive_main(td, monkeypatch, ["--shard", "1/5", "--write-baseline", "x.json"], [])
+    assert code == 2, f"--shard with --write-baseline was not refused at argument parsing (exit {code})"
+    err = capsys.readouterr().err
+    # The refusal's own words: an unknown `--shard` also exits 2, and its usage text names --write-baseline.
+    assert "a shard runs 1/N" in err, f"exit 2, but not the shard refusal:\n{err}"
+
+
+def test_a_shard_run_checks_its_slice_through_main_and_still_reports_a_deleted_mutation(
+    td, monkeypatch, tmp_path, capsys
+):
+    """The path the workflow takes, `--shard K/N --check-baseline`, driven through `main()`.
+
+    The function-level test above pins `restrict_to_selection`; this pins the call site. Review of
+    #2396 planted three defects that left every other test green: the restriction skipped for
+    `--shard`, `--shard` ignored so every shard ran every mutation, and the declared set taken from
+    the baseline, which makes a mutation deleted from `MUTATIONS` vanish from every shard.
+    """
+    names = [m.name for m in td.MUTATIONS]
+    mine = [m.name for m in td.select_shard(td.MUTATIONS, 1, 2)]
+    baseline = tmp_path / "discrimination_baseline.json"
+    matrix = tmp_path / "discrimination_killmatrix.json"
+    rows = {n: {"owner": "x", "status": "ok", "kill_count": 1} for n in [*names, "deleted_from_the_code"]}
+    baseline.write_text(json.dumps({"mutations": rows}))
+    matrix.write_text(json.dumps({"mutations": {n: {"status": "ok", "killed": [f"tests/a.py::t_{n}"]} for n in names}}))
+    applied = []
+    runs = [td.Run(collected=10)] + [td.Run(failed={f"tests/a.py::t_{n}"}, returncode=1, collected=10) for n in mine]
+    code = _drive_main(td, monkeypatch, ["--shard", "1/2", "--check-baseline", str(baseline)], runs, applied)
+    out = capsys.readouterr().out
+
+    assert applied == mine, f"shard 1/2 ran {applied}, not its slice {mine}"
+    assert code == 1, f"a mutation deleted from MUTATIONS passed the shard (exit {code})\n{out[-800:]}"
+    reported = out.split("Discrimination baseline mismatch:\n", 1)[-1].split("\n\n", 1)[0].splitlines()
+    assert reported == ["  deleted_from_the_code: mutation DISAPPEARED (baseline killed 1)"], (
+        f"the shard should report the deleted mutation and nothing from the other slice:\n{out[-1500:]}"
+    )
+
+
+def test_an_unknown_only_name_is_refused_not_dropped(td, monkeypatch, capsys):
+    """`--only real --only typo` used to drop the typo and, with a subset now checked on its own,
+    pass green over one mutation."""
+    code = _drive_main(td, monkeypatch, ["--only", td.MUTATIONS[0].name, "--only", "no_such_mutation"], [])
+    assert code == 2, f"an unknown --only name was not refused at argument parsing (exit {code})"
+    assert "no_such_mutation" in capsys.readouterr().err
+
+
+def test_write_baseline_does_not_need_the_reference_it_is_about_to_replace(td, monkeypatch, tmp_path):
+    """`--write-baseline` exits before the check, so the reference is not loaded first: with it absent,
+    the run records rather than refusing at start."""
+    name = td.MUTATIONS[0].name
+    written = tmp_path / "new_baseline.json"
+    code = _drive_main(
+        td,
+        monkeypatch,
+        ["--only", name, "--check-baseline", str(tmp_path / "absent" / "b.json"), "--write-baseline", str(written)],
+        [td.Run(collected=10), td.Run(failed={"tests/a.py::t"}, returncode=1, collected=10)],
+    )
+    assert code == 0, f"--write-baseline with an absent reference exited {code} instead of recording"
+    assert name in json.loads(written.read_text())["mutations"], "the baseline was not written"
