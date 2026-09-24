@@ -1072,7 +1072,7 @@ class HamiltonianBase(MFGOperatorBase):
         ``∂H/∂p``. Returns a float ``ndarray`` shaped as ``__call__`` returns it
         (callers ``.ravel()`` / reshape as their assembly needs).
         """
-        return np.asarray(self(state.x, state.m, state.p, t=state.t), dtype=float)
+        return np.asarray(self(x=state.x, m=state.m, p=state.p, t=state.t), dtype=float)
 
     def evaluate_dp(self, state: HEvalState) -> NDArray:
         """Momentum gradient ``∂H/∂p`` over a batch (Issue #1071 granular primitive).
@@ -1082,7 +1082,7 @@ class HamiltonianBase(MFGOperatorBase):
         Jacobian-path primitive: it computes ``∂H/∂p`` only and never recomputes
         ``H``. Callers keep their own sign convention (drift ``α* = -∂H/∂p``).
         """
-        return np.asarray(self.dp(state.x, state.m, state.p, t=state.t), dtype=float)
+        return np.asarray(self.dp(x=state.x, m=state.m, p=state.p, t=state.t), dtype=float)
 
     def dH_dm(self, state: HEvalState) -> NDArray:
         """Density derivative ``∂H/∂m`` over a batch (Issue #1071, FP-coupling only).
@@ -1090,7 +1090,7 @@ class HamiltonianBase(MFGOperatorBase):
         Separate from the residual/Jacobian primitives — the FP source term, not the
         HJB hot path — so it stays off the :class:`HamiltonianValues` bundle.
         """
-        return np.asarray(self.dm(state.x, state.m, state.p, t=state.t), dtype=float)
+        return np.asarray(self.dm(x=state.x, m=state.m, p=state.p, t=state.t), dtype=float)
 
     def evaluate(self, state: HEvalState) -> HamiltonianValues:
         """Convenience: ``H``, ``∂H/∂p`` and physical σ in one bundle (Issue #1071).
@@ -1214,8 +1214,8 @@ class HamiltonianBase(MFGOperatorBase):
                     p_plus[:, i] += eps
                     p_minus = p_arr.copy()
                     p_minus[:, i] -= eps
-                    H_plus = np.asarray(self(x, m, p_plus, t), dtype=float).ravel()
-                    H_minus = np.asarray(self(x, m, p_minus, t), dtype=float).ravel()
+                    H_plus = np.asarray(self(x=x, m=m, p=p_plus, t=t), dtype=float).ravel()
+                    H_minus = np.asarray(self(x=x, m=m, p=p_minus, t=t), dtype=float).ravel()
                     grad[:, i] = _central_difference(H_plus, H_minus, eps)
                 return grad
             except (TypeError, ValueError):
@@ -1266,8 +1266,8 @@ class HamiltonianBase(MFGOperatorBase):
             m_arr = np.asarray(m)
             eps = self.finite_diff_eps
             try:
-                H_plus = np.asarray(self(x, m_arr + eps, p_arr, t), dtype=float).ravel()
-                H_minus = np.asarray(self(x, m_arr - eps, p_arr, t), dtype=float).ravel()
+                H_plus = np.asarray(self(x=x, m=m_arr + eps, p=p_arr, t=t), dtype=float).ravel()
+                H_minus = np.asarray(self(x=x, m=m_arr - eps, p=p_arr, t=t), dtype=float).ravel()
                 return _central_difference(H_plus, H_minus, eps)
             except (TypeError, ValueError):
                 return np.array(
@@ -1345,7 +1345,7 @@ class HamiltonianBase(MFGOperatorBase):
         NDArray
             Optimal control α*, same shape as p
         """
-        dH_dp = self.dp(x, m, p, t)
+        dH_dp = self.dp(x=x, m=m, p=p, t=t)
         return -dH_dp
 
     def jacobian_fd(
@@ -1400,7 +1400,7 @@ class HamiltonianBase(MFGOperatorBase):
         >>> A_upper = diffusion_upper + jac.upper
         """
         # Get ∂H/∂p from the class method
-        dH_dp = self.dp(x, m, p, t)
+        dH_dp = self.dp(x=x, m=m, p=p, t=t)
         # Issue #1068: use np.ndim() instead of hasattr(, "__len__") to detect arrays.
         dH_dp_scalar = float(dH_dp[0]) if np.ndim(dH_dp) > 0 else float(dH_dp)
 
@@ -1458,8 +1458,8 @@ class HamiltonianBase(MFGOperatorBase):
             p_plus[i] += eps
             p_minus[i] -= eps
 
-            H_plus = self(x, m, p_plus, t)
-            H_minus = self(x, m, p_minus, t)
+            H_plus = self(x=x, m=m, p=p_plus, t=t)
+            H_minus = self(x=x, m=m, p=p_minus, t=t)
             grad[i] = _central_difference(H_plus, H_minus, eps)
 
         return grad
@@ -1475,8 +1475,8 @@ class HamiltonianBase(MFGOperatorBase):
         eps = self.finite_diff_eps
         m_scalar = float(m) if np.isscalar(m) else float(np.mean(m))
 
-        H_plus = self(x, m_scalar + eps, p, t)
-        H_minus = self(x, m_scalar - eps, p, t)
+        H_plus = self(x=x, m=m_scalar + eps, p=p, t=t)
+        H_minus = self(x=x, m=m_scalar - eps, p=p, t=t)
 
         return float(_central_difference(H_plus, H_minus, eps))
 
@@ -1499,8 +1499,8 @@ class HamiltonianBase(MFGOperatorBase):
             x_plus[i] += eps
             x_minus[i] -= eps
 
-            H_plus = self(x_plus, m, p, t)
-            H_minus = self(x_minus, m, p, t)
+            H_plus = self(x=x_plus, m=m, p=p, t=t)
+            H_minus = self(x=x_minus, m=m, p=p, t=t)
             grad[i] = _central_difference(H_plus, H_minus, eps)
 
         return grad
@@ -1717,7 +1717,7 @@ class LagrangianBase(MFGOperatorBase):
 
             def neg_objective(a):
                 alpha = np.array([a])
-                return -(-p_val * a - float(self(x, alpha, m, t)))
+                return -(-p_val * a - float(self(x=x, alpha=alpha, m=m, t=t)))
 
             res = minimize_scalar(neg_objective, bounds=bounds, method="bounded")
             argmax = np.array([res.x])
@@ -1728,7 +1728,7 @@ class LagrangianBase(MFGOperatorBase):
         from scipy.optimize import minimize as scipy_minimize
 
         def neg_objective_nd(alpha):
-            return -(-np.dot(p_arr.ravel(), alpha) - float(self(x, alpha, m, t)))
+            return -(-np.dot(p_arr.ravel(), alpha) - float(self(x=x, alpha=alpha, m=m, t=t)))
 
         x0 = np.clip(-p_arr.ravel(), bounds[0], bounds[1])
         res = scipy_minimize(neg_objective_nd, x0, bounds=[bounds] * d, method="L-BFGS-B")
@@ -1761,7 +1761,7 @@ class LagrangianBase(MFGOperatorBase):
         analytic subclass. evaluate_hamiltonian() reads conjugate_argmax()
         directly, so an override placed here alone would not reach it.
         """
-        return -self.conjugate_argmax(x, m, p, t)
+        return -self.conjugate_argmax(x=x, m=m, p=p, t=t)
 
     # === On-the-fly H evaluation ===
 
@@ -1785,7 +1785,7 @@ class LagrangianBase(MFGOperatorBase):
 
         Computes the Hamiltonian value on-the-fly without DualHamiltonian.
         """
-        dH_dp = self.conjugate_argmax(x, m, p, t)
+        dH_dp = self.conjugate_argmax(x=x, m=m, p=p, t=t)
         # THE MAXIMISER IS -dH_dp, NOT dH_dp (#2375 ruling 5). H = sup{-p.a - L} is attained at
         # alpha* = -dH/dp, so L must be evaluated THERE. The pairing term is unaffected --
         # -p.alpha* = -p.(-dH_dp) = +p.dH_dp -- which is why only the second term moves and why a
@@ -1794,7 +1794,7 @@ class LagrangianBase(MFGOperatorBase):
         # caught the half-done version, returning 1.265 where L*(-p) is 2.645.
         alpha_star = -dH_dp
         p_dot_alpha = float(np.sum(np.atleast_1d(p) * dH_dp))
-        return p_dot_alpha - float(self(x, alpha_star, m, t))
+        return p_dot_alpha - float(self(x=x, alpha=alpha_star, m=m, t=t))
 
     # === ADMM / variational interface ===
 
@@ -1834,7 +1834,7 @@ class LagrangianBase(MFGOperatorBase):
 
             def objective(a):
                 alpha = np.array([a])
-                return float(self(x, alpha, m, t)) + (a - z_val) ** 2 / (2 * tau)
+                return float(self(x=x, alpha=alpha, m=m, t=t)) + (a - z_val) ** 2 / (2 * tau)
 
             res = minimize_scalar(objective, bounds=bounds, method="bounded")
             prox = np.array([res.x])
@@ -1844,7 +1844,7 @@ class LagrangianBase(MFGOperatorBase):
         from scipy.optimize import minimize as scipy_minimize
 
         def objective_nd(alpha):
-            return float(self(x, alpha, m, t)) + np.sum((alpha - z_arr) ** 2) / (2 * tau)
+            return float(self(x=x, alpha=alpha, m=m, t=t)) + np.sum((alpha - z_arr) ** 2) / (2 * tau)
 
         x0 = np.clip(z_arr, bounds[0], bounds[1])
         res = scipy_minimize(objective_nd, x0, bounds=[bounds] * d, method="L-BFGS-B")
@@ -2025,7 +2025,7 @@ class DualHamiltonian(HamiltonianBase):
         if d == 1:
             alpha_grid = np.linspace(self.alpha_bounds[0], self.alpha_bounds[1], self.n_search)
             values = np.array(
-                [-float(p_flat[0]) * a - float(self.lagrangian(x, np.array([a]), m, t)) for a in alpha_grid]
+                [-float(p_flat[0]) * a - float(self.lagrangian(x=x, alpha=np.array([a]), m=m, t=t)) for a in alpha_grid]
             )
 
             # H is the convex conjugate evaluated at -p: L*(-p) = sup_alpha { -p.alpha - L(alpha) },
@@ -2039,7 +2039,7 @@ class DualHamiltonian(HamiltonianBase):
 
             def neg_objective(alpha):
                 # Minimize negative of (-p·α - L)
-                return -(-np.dot(p_flat, alpha) - float(self.lagrangian(x, alpha, m, t)))
+                return -(-np.dot(p_flat, alpha) - float(self.lagrangian(x=x, alpha=alpha, m=m, t=t)))
 
             # Initial guess: -p, because the maximiser of {-p.a - L} sits near -p/lambda, not
             # +p/lambda (#2375 ruling 5). Under the old pairing `clip(p)` started ON the optimum;
@@ -2062,7 +2062,7 @@ class DualHamiltonian(HamiltonianBase):
 
             for alpha_tuple in product(alpha_1d, repeat=d):
                 alpha = np.array(alpha_tuple)
-                val = -np.dot(p_flat, alpha) - float(self.lagrangian(x, alpha, m, t))
+                val = -np.dot(p_flat, alpha) - float(self.lagrangian(x=x, alpha=alpha, m=m, t=t))
                 best_val = max(best_val, val)
 
             return float(best_val)
@@ -2106,7 +2106,7 @@ class DualHamiltonian(HamiltonianBase):
         if d == 1:
             alpha_grid = np.linspace(self.alpha_bounds[0], self.alpha_bounds[1], self.n_search)
             values = np.array(
-                [-float(p_flat[0]) * a - float(self.lagrangian(x, np.array([a]), m, t)) for a in alpha_grid]
+                [-float(p_flat[0]) * a - float(self.lagrangian(x=x, alpha=np.array([a]), m=m, t=t)) for a in alpha_grid]
             )
             best_idx = np.argmax(values)
             return -np.array([alpha_grid[best_idx]])
@@ -2116,7 +2116,7 @@ class DualHamiltonian(HamiltonianBase):
             from scipy.optimize import minimize as scipy_minimize
 
             def neg_objective(alpha):
-                return -(-np.dot(p_flat, alpha) - float(self.lagrangian(x, alpha, m, t)))
+                return -(-np.dot(p_flat, alpha) - float(self.lagrangian(x=x, alpha=alpha, m=m, t=t)))
 
             x0 = np.clip(-p_flat, self.alpha_bounds[0], self.alpha_bounds[1])
             bounds = [self.alpha_bounds] * d
@@ -2132,7 +2132,7 @@ class DualHamiltonian(HamiltonianBase):
 
             for alpha_tuple in product(alpha_1d, repeat=d):
                 alpha = np.array(alpha_tuple)
-                val = -np.dot(p_flat, alpha) - float(self.lagrangian(x, alpha, m, t))
+                val = -np.dot(p_flat, alpha) - float(self.lagrangian(x=x, alpha=alpha, m=m, t=t))
                 if val > best_val:
                     best_val = val
                     best_alpha = alpha
@@ -2196,7 +2196,10 @@ class DualLagrangian(LagrangianBase):
         if d == 1:
             p_grid = np.linspace(self.p_bounds[0], self.p_bounds[1], self.n_search)
             values = np.array(
-                [-float(p) * float(alpha_flat[0]) - float(self.hamiltonian(x, m, np.array([p]), t)) for p in p_grid]
+                [
+                    -float(p) * float(alpha_flat[0]) - float(self.hamiltonian(x=x, m=m, p=np.array([p]), t=t))
+                    for p in p_grid
+                ]
             )
 
             # L is the convex conjugate evaluated at -alpha: H*(-alpha) = sup_p { -p.alpha - H(p) },
@@ -2209,7 +2212,7 @@ class DualLagrangian(LagrangianBase):
             from scipy.optimize import minimize as scipy_minimize
 
             def neg_objective(p):
-                return -(-np.dot(p, alpha_flat) - float(self.hamiltonian(x, m, p, t)))
+                return -(-np.dot(p, alpha_flat) - float(self.hamiltonian(x=x, m=m, p=p, t=t)))
 
             x0 = np.clip(-alpha_flat, self.p_bounds[0], self.p_bounds[1])
             bounds = [self.p_bounds] * d
@@ -2224,7 +2227,7 @@ class DualLagrangian(LagrangianBase):
 
             for p_tuple in product(p_1d, repeat=d):
                 p = np.array(p_tuple)
-                val = -np.dot(p, alpha_flat) - float(self.hamiltonian(x, m, p, t))
+                val = -np.dot(p, alpha_flat) - float(self.hamiltonian(x=x, m=m, p=p, t=t))
                 best_val = max(best_val, val)
 
             return float(best_val)
@@ -2255,8 +2258,8 @@ class DualLagrangian(LagrangianBase):
         eps = self.finite_diff_eps
         m_scalar = float(m) if np.isscalar(m) else float(np.mean(m))
 
-        L_plus = self(x, alpha, m_scalar + eps, t)
-        L_minus = self(x, alpha, m_scalar - eps, t)
+        L_plus = self(x=x, alpha=alpha, m=m_scalar + eps, t=t)
+        L_minus = self(x=x, alpha=alpha, m=m_scalar - eps, t=t)
 
         return float(_central_difference(L_plus, L_minus, eps))
 
@@ -2274,7 +2277,10 @@ class DualLagrangian(LagrangianBase):
         if d == 1:
             p_grid = np.linspace(self.p_bounds[0], self.p_bounds[1], self.n_search)
             values = np.array(
-                [-float(p) * float(alpha_flat[0]) - float(self.hamiltonian(x, m, np.array([p]), t)) for p in p_grid]
+                [
+                    -float(p) * float(alpha_flat[0]) - float(self.hamiltonian(x=x, m=m, p=np.array([p]), t=t))
+                    for p in p_grid
+                ]
             )
             best_idx = np.argmax(values)
             return -np.array([p_grid[best_idx]])
@@ -2284,7 +2290,7 @@ class DualLagrangian(LagrangianBase):
             from scipy.optimize import minimize as scipy_minimize
 
             def neg_objective(p):
-                return -(-np.dot(p, alpha_flat) - float(self.hamiltonian(x, m, p, t)))
+                return -(-np.dot(p, alpha_flat) - float(self.hamiltonian(x=x, m=m, p=p, t=t)))
 
             x0 = np.clip(-alpha_flat, self.p_bounds[0], self.p_bounds[1])
             bounds = [self.p_bounds] * d
@@ -2300,7 +2306,7 @@ class DualLagrangian(LagrangianBase):
 
             for p_tuple in product(p_1d, repeat=d):
                 p = np.array(p_tuple)
-                val = -np.dot(p, alpha_flat) - float(self.hamiltonian(x, m, p, t))
+                val = -np.dot(p, alpha_flat) - float(self.hamiltonian(x=x, m=m, p=p, t=t))
                 if val > best_val:
                     best_val = val
                     best_p = p
@@ -2823,7 +2829,7 @@ class CongestionHamiltonian(HamiltonianBase):
         For congestion Hamiltonian, the optimal control depends on density m
         (unlike separable case where it only depends on p).
         """
-        return -self.dp(x, m, p, t)
+        return -self.dp(x=x, m=m, p=p, t=t)
 
     def is_smooth(self) -> bool:
         """Delegates to control cost component."""
@@ -3009,24 +3015,24 @@ if __name__ == "__main__":
     p_val = np.array([1.0])
     t_val = 0.0
 
-    H_val = H(x, m_val, p_val, t_val)
+    H_val = H(x=x, m=m_val, p=p_val, t=t_val)
     # H = ½|p|²/λ - f(m) = 0.5 * 1.0 / 2.0 - 0.09 = 0.25 - 0.09 = 0.16
     print(f"   H(x={x}, m={m_val}, p={p_val}) = {H_val:.4f}")
     print("   Expected: 0.5 * 1.0² / 2.0 - 0.3² = 0.25 - 0.09 = 0.16")
     assert abs(H_val - 0.16) < 1e-10, f"SeparableHamiltonian value failed: {H_val}"
 
     # Test dp (analytic)
-    dp_val = H.dp(x, m_val, p_val, t_val)
+    dp_val = H.dp(x=x, m=m_val, p=p_val, t=t_val)
     print(f"   ∂H/∂p = {dp_val}  (expected: p/λ = [0.5])")
     assert np.allclose(dp_val, [0.5]), f"SeparableHamiltonian dp failed: {dp_val}"
 
     # Test dm (analytic)
-    dm_val = H.dm(x, m_val, p_val, t_val)
+    dm_val = H.dm(x=x, m=m_val, p=p_val, t=t_val)
     print(f"   ∂H/∂m = {dm_val:.4f}  (expected: -2m = -0.6)")
     assert abs(dm_val - (-0.6)) < 1e-10, f"SeparableHamiltonian dm failed: {dm_val}"
 
     # Test optimal control
-    alpha_opt = H.optimal_control(x, m_val, p_val, t_val)
+    alpha_opt = H.optimal_control(x=x, m=m_val, p=p_val, t=t_val)
     print(f"   α* = {alpha_opt}  (expected: -p/λ = [-0.5])")
     assert np.allclose(alpha_opt, [-0.5]), "SeparableHamiltonian optimal_control failed"
 
@@ -3059,13 +3065,13 @@ if __name__ == "__main__":
     # Call class-based API directly: H(x, m, p, t)
     p_test = np.array([2.0])  # p = 2.0 in 1D
     m_test = 0.3
-    H_direct = H_class(x, m_test, p_test, t_val)
+    H_direct = H_class(x=x, m=m_test, p=p_test, t=t_val)
     # H = ½|p|²/λ - m² = 0.5 * 4.0 / 1.0 - 0.09 = 2.0 - 0.09 = 1.91
     print(f"   H(x, m=0.3, p=2.0, t) = {H_direct:.4f}")
     print("   Expected: 0.5 * 2² - 0.3² = 2.0 - 0.09 = 1.91")
     assert abs(H_direct - 1.91) < 1e-10, f"Class-based H failed: {H_direct}"
 
-    dm_direct = H_class.dm(x, m_test, p_test, t_val)
+    dm_direct = H_class.dm(x=x, m=m_test, p=p_test, t=t_val)
     print(f"   H.dm(x, m=0.3, p, t) = {dm_direct:.4f}  (expected: -0.6)")
     assert abs(dm_direct - (-0.6)) < 1e-10, "Class-based dm failed"
 

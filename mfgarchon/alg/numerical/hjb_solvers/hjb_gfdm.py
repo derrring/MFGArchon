@@ -3458,11 +3458,13 @@ class HJBGFDMSolver(BaseHJBSolver):
                 for _n in _slices:
                     _m_n = np.asarray(M_collocation[_n], dtype=float).ravel()
                     _t_n = float(_n) * _dt_probe
-                    _h0 = np.asarray(H_class(_pts, _m_n, np.zeros((self.n_points, self.dimension)), _t_n), dtype=float)
+                    _h0 = np.asarray(
+                        H_class(x=_pts, m=_m_n, p=np.zeros((self.n_points, self.dimension)), t=_t_n), dtype=float
+                    )
                     _af = np.maximum(_af, np.abs(_h0).max())
                     for _d in _dirs:
                         _P = np.tile(np.asarray(_d, dtype=float), (self.n_points, 1))
-                        _h = np.asarray(H_class(_pts, _m_n, _P, _t_n), dtype=float)
+                        _h = np.asarray(H_class(x=_pts, m=_m_n, p=_P, t=_t_n), dtype=float)
                         _scale = np.maximum(_scale, np.abs(_h).max())
                         _ke = np.maximum(_ke, np.abs((_h - _h0) - _kinetic_ref(_d)).max())
             except (TypeError, ValueError, AttributeError, IndexError) as _exc:

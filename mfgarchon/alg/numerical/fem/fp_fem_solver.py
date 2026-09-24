@@ -197,7 +197,7 @@ class FPFEMSolver(WeakFormFPSolver):
         # the base time-stepping loop threads neither the density DOFs nor the step index n into
         # _build_advection, so m/t are passed as None/0.0.
         x_qp = self._basis.global_coordinates().value
-        alpha = H.optimal_control(x_qp, None, du.grad, 0.0)
+        alpha = H.optimal_control(x=x_qp, m=None, p=du.grad, t=0.0)
 
         @BilinearForm
         def advection_form(u, v, w):

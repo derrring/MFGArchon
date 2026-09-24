@@ -458,7 +458,7 @@ class HamiltonianMixin:
         x = np.atleast_1d(x_position if x_position is not None else 0.0)
 
         # Call class-based Hamiltonian directly: H(x, m, p, t)
-        return float(H_class(x, m_at_x, p, current_time))
+        return float(H_class(x=x, m=m_at_x, p=p, t=current_time))
 
     def dH_dm(
         self,
@@ -552,7 +552,7 @@ class HamiltonianMixin:
         x = np.atleast_1d(x_position if x_position is not None else 0.0)
 
         # Call class-based Hamiltonian.dm() directly: dm(x, m, p, t)
-        return float(H_class.dm(x, m_at_x, p, current_time))
+        return float(H_class.dm(x=x, m=m_at_x, p=p, t=current_time))
 
     def dH_dp(
         self,
@@ -616,7 +616,7 @@ class HamiltonianMixin:
         x = np.atleast_1d(x_position if x_position is not None else 0.0)
 
         # Call class-based Hamiltonian.dp() directly: dp(x, m, p, t)
-        return H_class.dp(x, m_at_x, p, current_time)
+        return H_class.dp(x=x, m=m_at_x, p=p, t=current_time)
 
     def get_hjb_hamiltonian_jacobian_contrib(
         self,

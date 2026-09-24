@@ -1855,7 +1855,7 @@ class FPParticleSolver(BaseFPSolver):
 
         H = getattr(self.problem, "hamiltonian_class", None)
         if isinstance(H, SeparableHamiltonian):
-            return H.optimal_control(positions, None, grad_at_particles, t)
+            return H.optimal_control(x=positions, m=None, p=grad_at_particles, t=t)
         return -coupling_coefficient * grad_at_particles
 
     def _solve_fp_system_cpu(self, m_initial_condition: np.ndarray, U_solution_for_drift: np.ndarray) -> np.ndarray:

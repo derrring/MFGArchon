@@ -171,7 +171,7 @@ def validate_hamiltonian(
 
     # Evaluate: HamiltonianBase.__call__ signature is (x, m, p, t=0.0)
     try:
-        value = hamiltonian(x_sample, m_sample, p_sample, 0.0)
+        value = hamiltonian(x=x_sample, m=m_sample, p=p_sample, t=0.0)
     except TypeError as e:
         result.add_error(
             f"Hamiltonian has wrong signature: {e}",
@@ -237,7 +237,7 @@ def validate_hamiltonian_derivative(
 
     # Evaluate: derivative signature is (x, m, p, t=0.0)
     try:
-        value = derivative_func(x_sample, m_sample, p_sample, 0.0)
+        value = derivative_func(x=x_sample, m=m_sample, p=p_sample, t=0.0)
     except TypeError as e:
         result.add_error(
             f"{name} has wrong signature: {e}",
@@ -465,17 +465,17 @@ def validate_hamiltonian_consistency(
 
     try:
         for m, p in _consistency_probes(dimension):
-            h_center = float(hamiltonian(x_sample, m, p, 0.0))
+            h_center = float(hamiltonian(x=x_sample, m=m, p=p, t=0.0))
 
             # --- dH_dm ---
-            h_m_plus = float(hamiltonian(x_sample, m + step, p, 0.0))
-            h_m_minus = float(hamiltonian(x_sample, m - step, p, 0.0))
+            h_m_plus = float(hamiltonian(x=x_sample, m=m + step, p=p, t=0.0))
+            h_m_minus = float(hamiltonian(x=x_sample, m=m - step, p=p, t=0.0))
             comparison = _compare_derivative(
                 h_m_minus,
                 h_center,
                 h_m_plus,
                 step,
-                float(dH_dm(x_sample, m, p, 0.0)),
+                float(dH_dm(x=x_sample, m=m, p=p, t=0.0)),
                 m,
                 p,
                 tolerance,
@@ -488,16 +488,16 @@ def validate_hamiltonian_consistency(
             # --- dH_dp, per component ---
             if dH_dp is None:
                 continue
-            dp_analytical = np.atleast_1d(dH_dp(x_sample, m, p, 0.0)).astype(float)
+            dp_analytical = np.atleast_1d(dH_dp(x=x_sample, m=m, p=p, t=0.0)).astype(float)
             for i in range(dimension):
                 p_plus = p.copy()
                 p_minus = p.copy()
                 p_plus[i] += step
                 p_minus[i] -= step
                 comparison = _compare_derivative(
-                    float(hamiltonian(x_sample, m, p_minus, 0.0)),
+                    float(hamiltonian(x=x_sample, m=m, p=p_minus, t=0.0)),
                     h_center,
-                    float(hamiltonian(x_sample, m, p_plus, 0.0)),
+                    float(hamiltonian(x=x_sample, m=m, p=p_plus, t=0.0)),
                     step,
                     float(dp_analytical[i]),
                     m,

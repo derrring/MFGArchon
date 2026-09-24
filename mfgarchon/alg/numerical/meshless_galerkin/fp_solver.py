@@ -180,7 +180,7 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         # control depends on p alone, so alpha* is exact for this family's supported (separable) Hamiltonians.
         # Feed the IDENTICAL grad_U the solver already recovered -- that is what preserves byte-identity.
         velocity = H.optimal_control(
-            self._disc.dof_coordinates, None, grad_U, 0.0
+            x=self._disc.dof_coordinates, m=None, p=grad_U, t=0.0
         ).T  # (dim, N): alpha* = -grad(U)/lambda
         # FP weak form (Neumann, integrate by parts): the advection contributes
         # -C_b^T to the implicit operator (M/dt + D K - C_b^T), where

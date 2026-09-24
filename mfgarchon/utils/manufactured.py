@@ -225,7 +225,7 @@ def _drift_coefficient(hamiltonian: HamiltonianBase, dim: int) -> float:
         )
     probes = _drift_probes(dim)
     alpha = np.asarray(
-        hamiltonian.optimal_control(np.zeros_like(probes), np.ones(len(probes)), probes, 0.0),
+        hamiltonian.optimal_control(x=np.zeros_like(probes), m=np.ones(len(probes)), p=probes, t=0.0),
         dtype=float,
     )
     if alpha.shape != probes.shape:
@@ -305,7 +305,7 @@ def fp_source(
         grad_u = _gradient(pair.grad_u(t, pts), n, dim, "grad_u")
         m = _scalar(pair.m(t, pts), n, "m")
         alpha = _gradient(
-            np.asarray(hamiltonian.optimal_control(pts, m, grad_u, t), dtype=float), n, dim, "optimal_control"
+            np.asarray(hamiltonian.optimal_control(x=pts, m=m, p=grad_u, t=t), dtype=float), n, dim, "optimal_control"
         )
         hess_u = _hessian(pair.hess_u(t, pts), n, dim, "hess_u")
         grad_m = _gradient(pair.grad_m(t, pts), n, dim, "grad_m")

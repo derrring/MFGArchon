@@ -2132,7 +2132,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                         # Apply boundary handling
                         x_next = self._apply_boundary_to_point(x_next)
                         u_next = self._interpolate_value(U_next, x_next)
-                        L_val = float(L_class(x_arr, np.array([alpha]), m_i, t_value))
+                        L_val = float(L_class(x=x_arr, alpha=np.array([alpha]), m=m_i, t=t_value))
                         cost = dt * L_val + u_next
                         if cost < best_val:
                             best_val = cost
@@ -2143,7 +2143,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                         x_next = _xi + alpha * dt
                         x_next = self._apply_boundary_to_point(x_next)
                         u_next = self._interpolate_value(U_next, x_next)
-                        L_val = float(L_class(_xa, np.array([alpha]), _mi, t_value))
+                        L_val = float(L_class(x=_xa, alpha=np.array([alpha]), m=_mi, t=t_value))
                         return dt * L_val + u_next
 
                     result = minimize_scalar(
@@ -2194,7 +2194,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                     for d in range(self.dimension):
                         x_next[d] = np.clip(x_next[d], _lo[d], _hi[d])
                     u_next = self._interpolate_value(U_next_shaped, x_next)
-                    L_val = float(L_class(_xc, alpha_vec, _mc, t_value))
+                    L_val = float(L_class(x=_xc, alpha=alpha_vec, m=_mc, t=t_value))
                     return dt * L_val + u_next
 
                 alpha0 = np.zeros(self.dimension)

@@ -490,13 +490,13 @@ class NetworkMFGProblem(MFGProblem):
         the object recomputes the neighborhood from ``network_data``. Byte-identical (pinned by
         ``test_network_hamiltonian_method_equals_object``).
         """
-        return float(self.hamiltonian_class(node, m, p, t))
+        return float(self.hamiltonian_class(x=node, m=m, p=p, t=t))
 
     def hamiltonian_dm(self, node: int, neighbors: list[int], m: np.ndarray, p: np.ndarray, t: float) -> float:
         """Derivative of the Hamiltonian w.r.t. density dH/dm. Issue #1470 Strand A: delegates to the
         wired single-source Hamiltonian object's ``dm`` (which owns the custom ``hamiltonian_dm_func``,
         the analytic default-congestion derivative, and the finite-difference fallback)."""
-        return float(self.hamiltonian_class.dm(node, m, p, t))
+        return float(self.hamiltonian_class.dm(x=node, m=m, p=p, t=t))
 
     # Lagrangian formulation methods (based on ArXiv 2207.10908v3)
 
