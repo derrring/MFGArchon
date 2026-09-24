@@ -1,0 +1,18 @@
+- **User callables take time first, and the old order is refused when the library accepts them** (#2375 ruling 8, #2378 phase 5 part 2, #2402). **This breaks code that passes these callables in the old order.**
+  - **What changed.**
+    - `potential` (`SeparableHamiltonian`, `CongestionHamiltonian`, `SeparableLagrangian`) and `MFGComponents.potential_func`: `(x, t)` → `(t, x)`. A time-independent `V(x)` is still accepted.
+    - `source_term_hjb` and `source_term_fp`: `(x, m, v, t)` → `(t, x, v, m)`.
+    - `FunctionalMeasureField`'s `field_fn` and `gradient_fn`: `(x, mu, t)` → `(t, x, mu)`. `MeasureField.evaluate` and `.spatial_gradient` take `(t, x, mu)`.
+    - `HEvalState` is `(t, x, p, m)` with `t` required.
+  - **How the library calls them.** Each callable is bound once when the library accepts it. Parameters named after the slots are passed by name:
+    - `t`, or `time` for `t`;
+    - `x`, `v`, `m`, `mu`;
+    - `m_t` and `v_t` for a source term.
+    Their declared order then no longer affects the numbers.
+  - **What is refused, at construction**, with a message naming the new order:
+    - a callable written in the old order;
+    - a parameter named after one slot at another slot's position;
+    - an unnamed four-parameter source term, since the reorder swapped `m` and `v`;
+    - `*args` outside a spatial `potential_func`.
+  - **What to change in your code.** Reorder the parameters, and call the callable by keyword wherever you call it yourself.
+  - **`detect_callable_signature`** now reports `f(x, t)` as an error instead of classifying it with `f(t, x)`.
