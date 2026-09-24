@@ -1,0 +1,104 @@
+# A close that takes the last open carrier of a backlog blocker label, or the last open member of a
+# backlog family, opens a notice. `scripts/family_queue.py --closed` decides; this file only runs it.
+#
+# Not a notice on every close. Measured 2026-09-24 over issues created or closed 2026-08-22 to
+# 2026-09-21 (search API): 207 opened and 140 closed, peaking at 45 events on 2026-09-05. A line on
+# every close is scenery -- a signal that fires identically every time carries no information. The
+# sub-event happened once in that window: #1991 took the last `blocks: no-convergence-obligation` on
+# 2026-09-13, and nothing noticed for eight days while the family it unblocks sat with eleven open
+# members.
+#
+# No loop guard is needed and none is written: a notice carries no `family:` or `blocks:` label, so
+# closing it produces no event. That is a property of the design rather than a check, which is why it
+# is stated here instead of coded.
+
+name: A backlog family emptied
+
+on:
+  issues:
+    types: [closed]
+  # `issues:` events always read the workflow definition from the DEFAULT branch, unlike
+  # `pull_request`. So this file cannot run at all until it is merged -- there is no branch on which
+  # to verify it, and the merge is the act that makes it live. Measured: `gh run list` returns
+  # `404 ... not found on the default branch`. This dispatch is the only route to exercising it with
+  # a chosen issue after the merge, and it prints without posting unless `post` is set, so replaying
+  # an old close does not open a notice for it.
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: "Issue number to evaluate as if it had just been closed"
+        required: true
+        type: number
+      post:
+        description: "Open the notices, instead of only printing them"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+# No `concurrency:` group, on purpose: see `post()` in scripts/family_queue.py. One pull request
+# closing several issues runs this once per issue, and a group would cancel the pending runs.
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The instrument before its answer. This is the ONLINE half of the self-test: it asserts that
+      # the order file's labels exist. The local gate runs the offline half, which drives the
+      # decision itself, and deliberately not this one, because that gate makes no network call.
+      - name: Self-test the instrument
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 scripts/family_queue.py --self-test --online
+
+      # The issue number reaches the shell through `env:`, never as template text in `run:`.
+      - name: Report what this close changed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+          POST: ${{ github.event_name == 'issues' || inputs.post }}
+        run: |
+          if [ "$POST" = "true" ]; then
+            python3 scripts/family_queue.py --closed "$ISSUE" --post
+          else
+            python3 scripts/family_queue.py --closed "$ISSUE"
+          fi
+
+      # A run that fails -- a transient API error, a self-test red -- would otherwise lose its event with
+      # only a red run to show for it, and this workflow exists because the event is rare enough to miss
+      # (review of #2395, NF3). One open notice collects every failed run, with the issue to replay.
+      - name: Report that the trigger itself failed
+        # Only where a notice could have been posted: a failed dry-run dispatch writes nothing (review of #2395).
+        if: failure() && (github.event_name == 'issues' || inputs.post)
+        uses: actions/github-script@v9
+        env:
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+        with:
+          script: |
+            const title = 'The backlog family trigger failed';
+            const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const line = `The run for the close of #${process.env.ISSUE} failed, so whether that close cleared a ` +
+              `blocker or emptied a family is unknown. Once the cause is fixed, replay it with workflow_dispatch ` +
+              `(issue ${process.env.ISSUE}, post: true); a notice that already exists is commented on, not duplicated. ` +
+              `Run: ${url}`;
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner, repo: context.repo.repo, state: 'open', labels: 'automated', per_page: 100,
+            });
+            const open = issues.find(i => i.title === title && !i.pull_request);
+            if (open) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: open.number, body: line,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo, title, body: line,
+                labels: ['automated', 'area: testing', 'priority: medium', 'type: bug'],
+              });
+            }

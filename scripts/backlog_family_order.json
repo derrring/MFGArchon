@@ -1,0 +1,13 @@
+{
+  "_what": "The ORDER backlog work is taken in. Membership is a `family: <slug>` label; ORDER is a `blocks: <slug>` label; this file declares that a dependency EXISTS, which is what makes an empty query mean 'unblocked' rather than 'nobody ever labelled a blocker'.",
+  "_criterion": "Order by EVIDENCE DEPENDENCY, not severity: work whose fix needs another oracle to be accepted sorts after that oracle is reachable.",
+  "_why_not_keyed_to_a_family": "It was, for one day, and a live query falsified it the same afternoon. The family `oracle-cannot-reach` is the general class -- an oracle that cannot reach what it certifies -- and #2224 joined it: a GPU performance benchmark that dies before it times anything. Its mechanism is the family's exactly, and it blocks nothing about convergence, because what it certifies is speed. A family is the unit of GROUPING and a dependency is a relation of ORDER, and the two do not share a grain: keyed to the family, one unrelated member holds the queue head shut forever. So the blocker carries its own label, applied to the issues that actually stand in the way.",
+  "_consumer": "scripts/family_queue.py",
+  "dependencies": [
+    {
+      "blocker_label": "blocks: no-convergence-obligation",
+      "unblocks": "no-convergence-obligation",
+      "why": "MMS is this library's only external oracle for correctness; 'does this scheme converge' has no trustworthy test until it reaches most solvers. The five issues that carried this closed between 2026-09-04 and 2026-09-13; the last, #1991, closed on 2026-09-13 and nothing noticed for eight days, which is why the trigger exists."
+    }
+  ]
+}
