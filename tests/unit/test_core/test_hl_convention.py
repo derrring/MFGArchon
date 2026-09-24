@@ -292,7 +292,7 @@ def _congestion_lagrangian(cost_name, potential, coupling):
     l_ctrl = CONGESTION_L_CTRL[cost_name]
 
     def L(x, alpha, m, t=0.0):
-        v = potential(x, t) if potential is not None else 0.0
+        v = potential(t=t, x=x) if potential is not None else 0.0
         f = coupling(m) if coupling is not None else 0.0
         return l_ctrl(float(np.atleast_1d(alpha)[0]), _congestion_factor(m)) + v + f
 

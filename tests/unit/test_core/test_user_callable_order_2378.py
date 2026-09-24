@@ -108,3 +108,33 @@ def test_detect_callable_signature_tells_the_two_orders_apart():
     old = detect_callable_signature(lambda x, t: 0.0)
     assert (new.context["signature_type"], new.is_valid) == ("spatiotemporal", True)
     assert (old.context["signature_type"], old.is_valid) == ("spatiotemporal_old_order", False)
+
+
+@pytest.mark.parametrize(
+    ("slots", "callable_"),
+    [
+        (POTENTIAL_SLOTS, lambda x, tau: 0.0),  # positionally, x would receive t
+        (SOURCE_TERM_SLOTS, lambda t, x, m, v_t: 0.0),  # m would receive v
+        (SOURCE_TERM_SLOTS, lambda t, x, dens, v: 0.0),  # v would receive m
+        (SOURCE_TERM_SLOTS, lambda t, x, m_t, v_t: 0.0),  # the documented names, half-migrated
+        (SOURCE_TERM_SLOTS, lambda t, x, a, b: 0.0),  # m and v swapped places: names are required
+        (POTENTIAL_SLOTS, lambda a, b=1.0: 0.0),  # a default is not a slot to fill
+    ],
+)
+def test_a_parameter_that_positional_binding_would_misfill_is_refused(slots, callable_):
+    """#2402 review: a slot-named parameter at another slot's index was bound to that other slot."""
+    with pytest.raises(TypeError, match=r"out of order|cannot be matched"):
+        bind_user_callable(callable_, slots, role="callable")
+
+
+def test_the_source_term_names_the_library_documented_are_bound_by_name():
+    bound = bind_user_callable(lambda t, x, v_t, m_t: (v_t, m_t), SOURCE_TERM_SLOTS, role="source_term_hjb")
+    assert bound(t=0.0, x=_X, v="v", m="m") == ("v", "m")
+
+
+def test_a_ufunc_is_a_spatial_potential_func_and_its_out_parameter_is_left_alone():
+    """#2402 review: `np.cos` has (x, /, out=None, ...); filling out with a slot wrote into x."""
+    x = np.array([0.5])
+    bound = bind_user_callable(np.cos, POTENTIAL_SLOTS, role="potential_func", spatial_only=True)
+    np.testing.assert_array_equal(bound(t=np.array([9.0]), x=x), np.cos([0.5]))
+    np.testing.assert_array_equal(x, [0.5])

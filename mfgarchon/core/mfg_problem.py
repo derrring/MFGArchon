@@ -2016,13 +2016,11 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 if not drift_result.is_valid:
                     raise ValidationError(drift_result)
 
-            # Validate potential if callable
+            # Validate the potential through its binding (#2375 ruling 8): the check `validate_running_cost`
+            # made here tried positional (x, m), (0.0, x, m) and (x), whose verdict depended on the order
+            # the potential takes and refused valid (t, x) potentials.
             if self.components.potential_func is not None:
-                from mfgarchon.utils.validation import validate_running_cost
-
-                pot_result = validate_running_cost(self.components.potential_func, self.geometry)
-                if not pot_result.is_valid:
-                    raise ValidationError(pot_result)
+                self._bound_potential_func()
 
         # Issue #687: Validate array-type diffusion/drift fields
         if self.geometry is not None and self.spatial_shape is not None:

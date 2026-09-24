@@ -35,6 +35,13 @@ MEASURE_FIELD_SLOTS: tuple[str, ...] = ("t", "x", "mu")
 
 _TIME_NAMES = ("t", "time")
 
+# Names the library itself documented for a slot before #2378 phase 5, checked like the slot's own.
+_ALIASES: dict[tuple[str, ...], dict[str, str]] = {SOURCE_TERM_SLOTS: {"m_t": "m", "v_t": "v"}}
+
+# Roles whose reorder permutes two non-time slots (m and v swapped places): an unnamed parameter
+# list reads the same in either order, so these must name their parameters.
+_NAMES_REQUIRED = frozenset({SOURCE_TERM_SLOTS})
+
 
 def bind_user_callable(
     fn: Callable[..., Any],
@@ -48,10 +55,13 @@ def bind_user_callable(
     The result is invoked with every slot by keyword, ``bound(x=..., t=...)``, and passes the
     user's function what it declares:
 
-    - **By name**, when every required positional parameter is named after a slot. Slots it
-      does not declare are omitted, so a time-independent ``V(x)`` is accepted where ``t`` is.
-      Its declared order then does not matter to the numbers.
-    - **By position, in slot order**, otherwise, when it can take every slot positionally.
+    - **By name**, when every required positional parameter is named after a slot (or a name the
+      library documented for it, ``m_t`` and ``v_t`` for a source term). Slots it does not declare
+      are omitted, so a time-independent ``V(x)`` is accepted where ``t`` is. Its declared order
+      then does not matter to the numbers.
+    - **By position, in slot order**, when it requires exactly one parameter per slot and none of
+      them is named after a different slot. Not for a source term: its reorder swapped ``m`` and
+      ``v``, so unnamed parameters cannot say which order they were written in.
     - **``x`` alone**, where ``spatial_only`` allows a one-argument spatial callable.
 
     Refused here, rather than failing or computing at the first call:
@@ -60,54 +70,68 @@ def bind_user_callable(
       or slot-named parameters declared out of slot order. Such a callable would compute correctly
       when bound by name, but not when its author calls it positionally, and a positional one with
       a time parameter would receive ``x`` as time.
-    - Anything that cannot be matched to the slots.
+    - A parameter named after one slot at another slot's position: bound positionally, it would
+      receive the wrong one (``V(x, tau)`` would get ``t`` as ``x``).
+    - Anything else that cannot be matched to the slots.
     """
     try:
         params = list(inspect.signature(fn).parameters.values())
     except (TypeError, ValueError):
         return BoundCallable(fn, "positional", slots)
     kinds = inspect.Parameter
+    slot_of = {name: name for name in slots} | _ALIASES.get(slots, {})
     positional = [p for p in params if p.kind in (kinds.POSITIONAL_ONLY, kinds.POSITIONAL_OR_KEYWORD)]
     order = [p.name for p in positional]
-    ranked = [slots.index(name) for name in order if name in slots]
+    ranked = [slots.index(slot_of[name]) for name in order if name in slot_of]
     if any(name in _TIME_NAMES for name in order[1:]) or ranked != sorted(ranked):
         raise TypeError(
             f"{role} {getattr(fn, '__qualname__', fn)!r} takes ({', '.join(order)}), which is out of order. Since "
             f"#2378 phase 5 (#2375 ruling 8) a {role} takes ({', '.join(slots)}), time first: reorder its "
             f"parameters, and call it by keyword wherever you call it yourself."
         )
-    named = [p.name for p in params if p.name in slots and p.kind in (kinds.POSITIONAL_OR_KEYWORD, kinds.KEYWORD_ONLY)]
+    named = [
+        p.name for p in params if p.name in slot_of and p.kind in (kinds.POSITIONAL_OR_KEYWORD, kinds.KEYWORD_ONLY)
+    ]
     required = [p for p in positional if p.default is kinds.empty]
     if named and all(p.name in named for p in required):
-        return BoundCallable(fn, "keyword", tuple(named))
-    capacity = len(slots) if any(p.kind is kinds.VAR_POSITIONAL for p in params) else len(positional)
-    if len(required) <= len(slots) <= capacity:
+        return BoundCallable(fn, "keyword", tuple(slot_of[name] for name in named), tuple(named))
+    takes_all = len(required) == len(slots) or (
+        any(p.kind is kinds.VAR_POSITIONAL for p in params) and len(required) <= len(slots)
+    )
+    misplaced = [
+        name for i, name in enumerate(order[: len(slots)]) if name in slot_of and slots.index(slot_of[name]) != i
+    ]
+    if takes_all and not misplaced and slots not in _NAMES_REQUIRED:
         return BoundCallable(fn, "positional", slots)
-    if spatial_only and len(required) <= 1 <= capacity:
+    if spatial_only and len(required) == 1 and order[0] not in ("t", "time"):
         return BoundCallable(fn, "spatial", ("x",))
     raise TypeError(
         f"{role} {getattr(fn, '__qualname__', fn)!r} takes ({', '.join(p.name for p in params)}), which cannot be "
-        f"matched to ({', '.join(slots)}): name its parameters {', '.join(slots)}, or take all {len(slots)} "
-        f"positionally in that order."
+        f"matched to ({', '.join(slots)})"
+        + (f": {', '.join(misplaced)} would receive another slot's value" if misplaced else "")
+        + f". Name its parameters {', '.join(slots)}"
+        + ("." if slots in _NAMES_REQUIRED else f", or take exactly {len(slots)} positionally in that order.")
     )
 
 
 class BoundCallable:
-    """A user callable and how it receives its slots: ``binding`` is the rule that matched and
-    ``passes`` the slots it receives, in the order it receives them. A class, not a closure, so an
-    object holding one still pickles."""
+    """A user callable and how it receives its slots: ``binding`` is the rule that matched,
+    ``passes`` the slots it receives in the order it receives them, and ``params`` the parameter
+    names they go to when bound by name. A class, not a closure, so an object holding one still
+    pickles."""
 
-    __slots__ = ("binding", "fn", "passes")
+    __slots__ = ("binding", "fn", "params", "passes")
 
-    def __init__(self, fn: Callable[..., Any], binding: str, passes: tuple[str, ...]):
+    def __init__(self, fn: Callable[..., Any], binding: str, passes: tuple[str, ...], params: tuple[str, ...] = ()):
         self.fn = fn
         self.binding = binding
         self.passes = passes
+        self.params = params
 
     def __call__(self, **values: Any) -> Any:
         if self.binding == "keyword":
-            return self.fn(**{name: values[name] for name in self.passes})
-        return self.fn(*(values[name] for name in self.passes))
+            return self.fn(**{param: values[slot] for param, slot in zip(self.params, self.passes, strict=True)})
+        return self.fn(*(values[slot] for slot in self.passes))
 
 
 def bound_attribute(
