@@ -1,0 +1,14 @@
+- **The Hamiltonian family takes time first: `H(t, x, p, m)` and `L(t, x, alpha, m)`** (#2375 ruling 8, #2378 phase 5 part 1, #2400). **This breaks code that calls or subclasses the family.**
+  - **What changed.**
+    - `HamiltonianBase`'s `__call__`, `dp`, `dm`, `dx`, `optimal_control` and every shipped subclass: `(x, m, p, t=0.0)` → `(t, x, p, m)`.
+    - `LagrangianBase.__call__` and every shipped subclass, with `DualLagrangian.dm` and `.d_alpha`: `(x, alpha, m, t=0.0)` → `(t, x, alpha, m)`.
+    - `optimal_control`, `conjugate_argmax` and `evaluate_hamiltonian` on the Lagrangian side: `(x, m, p, t=0.0)` → `(t, x, p, m)`.
+    - `HamiltonianBase.jacobian_fd`: `(x, m, p, dx, t=0.0, scheme)` → `(t, x, p, m, dx, scheme)`.
+    - `NetworkHamiltonian.source_term`, `.coupling_value` and `.node_potential_value`: `(x, m, t=0.0)` / `(x, t=0.0)` → `(t, x, m)` / `(t, x)`.
+    - `proximal(tau, z, *, t=0.0, x=None, m=None)` takes its context keyword-only.
+  - **`t` has no default** anywhere except `proximal`, and must be passed. The library calls these methods by keyword.
+  - **What to change in your code.** Call family methods by keyword, `H(t=t, x=x, p=p, m=m)`, and reorder your subclasses' overrides. A subclass that overrides a family method in the old order is refused when the class is created, with a message naming the new order.
+  - **A positional call in the old order is not refused; it computes with the arguments misbound.**
+    - `H(x, m, p, t)` binds `t←x`, `x←m`, `m←t`.
+    - `L(x, alpha, m, t)` binds `t←x`, `x←alpha`, `alpha←m`, `m←t`.
+    - Converting such calls to keywords is the migration.

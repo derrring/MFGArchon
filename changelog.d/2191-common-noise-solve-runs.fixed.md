@@ -9,7 +9,7 @@
   `HamiltonianBase` with the noise realisation bound into it, which makes the conditional problem an
   ordinary deterministic MFG to everything downstream ~~in every respect~~ — with the terminal
   condition being the exception that had to be fixed separately, below. That is an adapter rather than a cast: the
-  base class evaluates `(x, m, p, t)` of values, while the old component callables took
+  base class evaluates `(t, x, p, m)` of values (the order since #2378 phase 5), while the old component callables took
   `(x_idx, m_at_x, p_values, t_idx)` of grid indices with `p` arriving as a forward/backward dict.
 
   Behind that, the default `conditional_solver_factory` returned `prob.solve(verbose=False)` — a

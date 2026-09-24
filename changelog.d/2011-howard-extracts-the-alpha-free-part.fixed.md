@@ -9,7 +9,7 @@
   union with the guard's own measurement, so the change can only admit more than before.
 
   **What licenses it is an algebraic identity, not `H_control(0) = 0`.** Howard assembles
-  `ref(∇u) + H(x, m, 0, t)` and the `_ke` gate certifies `ref(p) = H(p) − H(0)`, so the sum
+  `ref(∇u) + H(t, x, 0, m)` and the `_ke` gate certifies `ref(p) = H(p) − H(0)`, so the sum
   telescopes back to `H(∇u)` for whatever the extracted value is. `H_control(p) = ½|p|² + C` and a
   constant potential `V = C` are the same function and no probe separates them; the identity is why
   nothing has to.
