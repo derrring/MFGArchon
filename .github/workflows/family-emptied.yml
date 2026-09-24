@@ -75,7 +75,8 @@ jobs:
       # only a red run to show for it, and this workflow exists because the event is rare enough to miss
       # (review of #2395, NF3). One open notice collects every failed run, with the issue to replay.
       - name: Report that the trigger itself failed
-        if: failure()
+        # Only where a notice could have been posted: a failed dry-run dispatch writes nothing (review of #2395).
+        if: failure() && (github.event_name == 'issues' || inputs.post)
         uses: actions/github-script@v9
         env:
           ISSUE: ${{ github.event.issue.number || inputs.issue }}

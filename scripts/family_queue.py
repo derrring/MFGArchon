@@ -91,8 +91,26 @@ def rest_issues(state: str, label: str | None = None) -> list[dict]:
     ]
     if label:
         args += ["-f", f"labels={label}"]
-    args += ["--jq", ".[] | select(.pull_request | not) | {number, title, labels: [.labels[].name]}"]
-    return [json.loads(line) for line in _gh(args).splitlines() if line.strip()]
+    args += ["--jq", ".[] | {number, title, state, labels: [.labels[].name], pr: (.pull_request != null)}"]
+    return issue_rows(_gh(args), state, label)
+
+
+def issue_rows(ndjson: str, state: str, label: str | None) -> list[dict]:
+    """The issues in a REST listing, refusing a listing whose filters were not applied.
+
+    A dropped `state` or `labels` filter does not fail: it returns more rows, every open list comes
+    back non-empty, and neither event can fire (review of #2395). So each row is checked against the
+    filter it was asked for, and a mismatch raises, which the workflow reports as a failed run. The
+    endpoint lists pull requests too, and they are removed here rather than in the query, so the
+    self-test can drive the removal.
+    """
+    rows = [json.loads(line) for line in ndjson.splitlines() if line.strip()]
+    issues = [r for r in rows if not r["pr"]]
+    if state != "all" and (wrong := [r["number"] for r in issues if r["state"] != state]):
+        raise RuntimeError(f"asked for state={state} and the listing returned #{wrong[:5]} in another state")
+    if label and (stray := [r["number"] for r in issues if label not in r["labels"]]):
+        raise RuntimeError(f"asked for label {label!r} and the listing returned #{stray[:5]} without it")
+    return issues
 
 
 def open_numbers(label: str) -> list[int]:
@@ -349,8 +367,28 @@ def self_test(online: bool = False) -> int:
         if "\n" in title:
             failures.append(f"a notice title spans lines: {title!r}")
 
+    # issue_rows(): pull requests removed, and a listing whose filter was not applied refused
+    def row(n: int, state: str, labels: list[str], pr: bool = False) -> str:
+        return json.dumps({"number": n, "title": "", "state": state, "labels": labels, "pr": pr})
+
+    kept = issue_rows(
+        "\n".join([row(1, "open", ["family: f"]), row(2, "open", ["family: f"], pr=True)]), "open", "family: f"
+    )
+    if [r["number"] for r in kept] != [1]:
+        failures.append(f"issue_rows kept {[r['number'] for r in kept]}; a pull request must be removed")
+    for label, text, state, lab in (
+        ("a closed issue in an open listing", row(3, "closed", ["family: f"]), "open", "family: f"),
+        ("an issue without the label asked for", row(4, "open", ["type: bug"]), "open", "family: f"),
+    ):
+        try:
+            issue_rows(text, state, lab)
+            failures.append(f"issue_rows accepted {label}")
+        except RuntimeError:
+            pass
+
     # post(): a fresh notice, a second close, and a race, against a fake gh and listing
-    event = close_events(7, ["blocks: b"], open_with, [dep])[0]
+    events = close_events(7, ["blocks: b"], open_with, [dep])
+    event = events[0] if events else {"kind": "blocker", "label": "blocks: b", "unblocks": "f", "open": [], "why": "w"}
     title = render(7, event)[0]
     for label, listings, expected in (
         ("fresh", [[], [{"title": title, "number": 900}]], ["create"]),
@@ -365,10 +403,23 @@ def self_test(online: bool = False) -> int:
         pages = iter(listings)
 
         def fake_gh(args: list[str], calls: list[str] = calls) -> str:
-            calls.append(" ".join(args[1:3]) if args[1] != "create" else "create")
-            return "https://github.com/o/r/issues/900\n" if args[1] == "create" else ""
+            if args[1] == "create":
+                # dedupe finds notices by the `automated` label, so a notice without it is never found
+                automated = "automated" in args[args.index("--label") + 1].split(",")
+                calls.append("create" if automated else "create WITHOUT automated")
+                return "https://github.com/o/r/issues/900\n"
+            calls.append(" ".join(args[1:3]))
+            return ""
 
-        post(7, [event], gh=fake_gh, list_open=lambda state, lab, pages=pages: next(pages))
+        def fake_list(state: str, lab: str | None, pages=pages, calls: list[str] = calls) -> list[dict]:
+            if (state, lab) != ("open", "automated"):
+                calls.append(f"listed state={state} label={lab}")
+            return next(pages, [])
+
+        try:
+            post(7, [event], gh=fake_gh, list_open=fake_list)
+        except Exception as exc:  # reported as a self-test failure, so the other failures still print
+            calls.append(f"raised {type(exc).__name__}: {exc}")
         if calls != expected:
             failures.append(f"post(), {label}: made {calls}, expected {expected}")
 
@@ -399,17 +450,18 @@ def self_test(online: bool = False) -> int:
                         )
             if not any(n.startswith(PREFIX) for n in live):
                 failures.append("no family labels exist at all, so neither event can fire")
-            # The reads the offline half cannot reach. With the `labels` filter dropped, the REST list
-            # returns every open issue: every open list is non-empty and neither event can fire, while
-            # the checks above still pass (review of #2395, NF1). So require every row a label-filtered
-            # list returns to carry the label, and `labels_of` to read that label back from one of them.
+            # The read the offline half cannot reach. `rest_issues` refuses a listing whose filters were
+            # not applied (see `issue_rows`), so listing a family exercises that guard on live data; and
+            # `labels_of` must read the family back from one of its members (review of #2395, NF1).
+            # And the unfiltered open listing, whose guard sees a closed row whatever the families hold: no
+            # `family:` label has had a closed member yet, so a listing that ignored `state` would return
+            # the same rows for every family and pass (review of #2395).
+            rest_issues("open")
             fam = next((n for n in sorted(live) if n.startswith(PREFIX) and rest_issues("open", n)), None)
             if fam is None:
-                failures.append("no family label has an open member, so the label filter cannot be verified")
+                print("  SKIPPED: no family label has an open member to read labels_of against")
             else:
                 rows = rest_issues("open", fam)
-                if stray := [r["number"] for r in rows if fam not in r["labels"]]:
-                    failures.append(f"the open list for '{fam}' returned issues without that label: {stray[:5]}")
                 if fam not in labels_of(rows[0]["number"]):
                     failures.append(
                         f"labels_of(#{rows[0]['number']}) did not return '{fam}', which the list says it carries"
