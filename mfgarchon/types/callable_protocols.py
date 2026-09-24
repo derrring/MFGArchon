@@ -17,10 +17,99 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+import inspect
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import numpy as np
 from numpy.typing import NDArray
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+# The argument order of each user-supplied callable the library invokes (#2375 ruling 8). These
+# tuples are the one statement of it: every invocation goes through `bind_user_callable`.
+POTENTIAL_SLOTS: tuple[str, ...] = ("x", "t")
+SOURCE_TERM_SLOTS: tuple[str, ...] = ("x", "m", "v", "t")
+MEASURE_FIELD_SLOTS: tuple[str, ...] = ("x", "mu", "t")
+
+
+def bind_user_callable(
+    fn: Callable[..., Any],
+    slots: tuple[str, ...],
+    *,
+    role: str,
+    spatial_only: bool = False,
+) -> BoundCallable:
+    """Bind a user-supplied callable to its slots, once, when the library accepts it.
+
+    The result is invoked with every slot by keyword, ``bound(x=..., t=...)``, and passes the
+    user's function what it declares:
+
+    - **By name**, when every required positional parameter is named after a slot. Slots it
+      does not declare are omitted, so a time-independent ``V(x)`` is accepted where ``t`` is.
+      Its declared order then does not matter to the numbers.
+    - **By position, in slot order**, otherwise, when it can take every slot positionally.
+    - **``x`` alone**, where ``spatial_only`` allows a one-argument spatial callable.
+
+    Anything else cannot be told apart and is refused here rather than failing, or computing,
+    at the first call.
+    """
+    try:
+        params = list(inspect.signature(fn).parameters.values())
+    except (TypeError, ValueError):
+        return BoundCallable(fn, "positional", slots)
+    kinds = inspect.Parameter
+    positional = [p for p in params if p.kind in (kinds.POSITIONAL_ONLY, kinds.POSITIONAL_OR_KEYWORD)]
+    named = [p.name for p in params if p.name in slots and p.kind in (kinds.POSITIONAL_OR_KEYWORD, kinds.KEYWORD_ONLY)]
+    required = [p for p in positional if p.default is kinds.empty]
+    if named and all(p.name in named for p in required):
+        return BoundCallable(fn, "keyword", tuple(named))
+    capacity = len(slots) if any(p.kind is kinds.VAR_POSITIONAL for p in params) else len(positional)
+    if len(required) <= len(slots) <= capacity:
+        return BoundCallable(fn, "positional", slots)
+    if spatial_only and len(required) <= 1 <= capacity:
+        return BoundCallable(fn, "spatial", ("x",))
+    raise TypeError(
+        f"{role} {getattr(fn, '__qualname__', fn)!r} takes ({', '.join(p.name for p in params)}), which cannot be "
+        f"matched to ({', '.join(slots)}): name its parameters {', '.join(slots)}, or take all {len(slots)} "
+        f"positionally in that order."
+    )
+
+
+class BoundCallable:
+    """A user callable and how it receives its slots: ``binding`` is the rule that matched and
+    ``passes`` the slots it receives, in the order it receives them. A class, not a closure, so an
+    object holding one still pickles."""
+
+    __slots__ = ("binding", "fn", "passes")
+
+    def __init__(self, fn: Callable[..., Any], binding: str, passes: tuple[str, ...]):
+        self.fn = fn
+        self.binding = binding
+        self.passes = passes
+
+    def __call__(self, **values: Any) -> Any:
+        if self.binding == "keyword":
+            return self.fn(**{name: values[name] for name in self.passes})
+        return self.fn(*(values[name] for name in self.passes))
+
+
+def bound_attribute(
+    owner: Any, attr: str, slots: tuple[str, ...], *, role: str, spatial_only: bool = False
+) -> BoundCallable:
+    """``getattr(owner, attr)`` bound to ``slots``, cached on ``owner`` and keyed on the callable.
+
+    Keyed on identity rather than bound once at construction, because the attribute can be
+    replaced afterwards (``MFGProblem`` composes a soft wall into a copy's ``_potential``), and a
+    binding cached earlier would silently keep evaluating the old callable.
+    """
+    fn = getattr(owner, attr)
+    key = f"_{attr.lstrip('_')}_binding"
+    cached = owner.__dict__.get(key)
+    if cached is None or cached.fn is not fn:
+        cached = bind_user_callable(fn, slots, role=role, spatial_only=spatial_only)
+        setattr(owner, key, cached)
+    return cached
 
 
 @runtime_checkable

@@ -31,7 +31,7 @@ from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
     resolve_fp_drift_kwargs,
 )
 from mfgarchon.alg.numerical.coupling.graph_coupling import _get_time_slice
-from mfgarchon.alg.numerical.coupling.source_composition import _problem_hjb_source_terms
+from mfgarchon.alg.numerical.coupling.source_composition import _call_problem_source, _problem_hjb_source_terms
 
 from .fixed_point_utils import diverged_value_function
 
@@ -401,7 +401,7 @@ class GraphMFGSolver(BaseCouplingIterator):
             s = coupling_source(t, x_eval)
             v_t = _get_time_slice(Us_new[k], t, dt)
             m_t = _get_time_slice(Ms_expanded[k], t, dt)
-            s = s + p.source_term_fp(x_eval, m_t, v_t, t)
+            s = s + _call_problem_source(p, "source_term_fp", t=t, x=x_eval, m=m_t, v=v_t)
             return s
 
         return composed

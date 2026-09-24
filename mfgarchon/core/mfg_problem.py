@@ -17,6 +17,12 @@ from mfgarchon.core.mfg_components import (
 from mfgarchon.geometry.protocol import GeometryProtocol  # noqa: TC001
 
 # Deprecation utilities (Issue #616, #666)
+from mfgarchon.types.callable_protocols import (
+    POTENTIAL_SLOTS,
+    SOURCE_TERM_SLOTS,
+    bind_user_callable,
+    bound_attribute,
+)
 from mfgarchon.utils.deprecation import validate_kwargs
 
 # Use unified nD-capable BoundaryConditions from conditions.py
@@ -587,6 +593,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # "Sign conventions" note for the unified picture.
         self.source_term_hjb: Callable | None = kwargs.pop("source_term_hjb", None)
         self.source_term_fp: Callable | None = kwargs.pop("source_term_fp", None)
+        # Bound at acceptance, so a signature that cannot be matched is refused here (#2375 ruling 8)
+        for name in ("source_term_hjb", "source_term_fp"):
+            if getattr(self, name) is not None:
+                bound_attribute(self, name, SOURCE_TERM_SLOTS, role=name)
         self.nonlocal_operator: Any | None = kwargs.pop("nonlocal_operator", None)
         # A soft wall: `state_penalty(x)` is a COST, positive where the region is expensive.
         # It is `alpha`-free and `u`-free, which is what makes it a potential rather than a
@@ -1905,6 +1915,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             )
 
         previous = getattr(hamiltonian, "_potential", None)
+        if previous is not None:
+            previous = bind_user_callable(previous, POTENTIAL_SLOTS, role="potential")
         penalty = self.state_penalty
         scale = self.state_penalty_scale
 
@@ -1915,7 +1927,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             if previous is None:
                 squeezed = wall.squeeze()
                 return float(squeezed) if squeezed.ndim == 0 else squeezed
-            base = previous(x, t)
+            base = previous(x=x, t=t)
             # Match the base's own contract exactly -- it decides the shape, not this wrapper.
             if _np.size(wall) == _np.size(base):
                 wall = _np.reshape(wall, _np.shape(base))

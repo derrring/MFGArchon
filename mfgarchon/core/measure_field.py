@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 
+from mfgarchon.types.callable_protocols import MEASURE_FIELD_SLOTS, BoundCallable, bound_attribute
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -364,21 +366,31 @@ class FunctionalMeasureField:
         self._fn = field_fn
         self._grad_fn = gradient_fn
         self._dx = grid_spacing
+        # Bound at acceptance, so a signature that cannot be matched is refused here (#2375 ruling 8)
+        self._field()
+        if gradient_fn is not None:
+            self._gradient()
+
+    def _field(self) -> BoundCallable:
+        return bound_attribute(self, "_fn", MEASURE_FIELD_SLOTS, role="field_fn")
+
+    def _gradient(self) -> BoundCallable:
+        return bound_attribute(self, "_grad_fn", MEASURE_FIELD_SLOTS, role="gradient_fn")
 
     def evaluate(self, x: NDArray, mu: MeasureRepresentation, t: float) -> NDArray:
         """Evaluate v(x, mu, t)."""
-        return np.asarray(self._fn(x, mu, t))
+        return np.asarray(self._field()(x=x, mu=mu, t=t))
 
     def spatial_gradient(self, x: NDArray, mu: MeasureRepresentation, t: float) -> NDArray:
         """Compute nabla_x v via provided function or finite differences."""
         if self._grad_fn is not None:
-            return np.asarray(self._grad_fn(x, mu, t))
+            return np.asarray(self._gradient()(x=x, mu=mu, t=t))
 
         # Central finite differences
         x = np.asarray(x, dtype=float)
         if x.ndim == 1:
-            v_plus = self._fn(x + self._dx, mu, t)
-            v_minus = self._fn(x - self._dx, mu, t)
+            v_plus = self._field()(x=x + self._dx, mu=mu, t=t)
+            v_minus = self._field()(x=x - self._dx, mu=mu, t=t)
             return (np.asarray(v_plus) - np.asarray(v_minus)) / (2 * self._dx)
 
         # nD: per-axis
@@ -388,8 +400,8 @@ class FunctionalMeasureField:
             x_minus = x.copy()
             x_plus[:, axis] += self._dx
             x_minus[:, axis] -= self._dx
-            v_plus = self._fn(x_plus, mu, t)
-            v_minus = self._fn(x_minus, mu, t)
+            v_plus = self._field()(x=x_plus, mu=mu, t=t)
+            v_minus = self._field()(x=x_minus, mu=mu, t=t)
             grads.append((np.asarray(v_plus) - np.asarray(v_minus)) / (2 * self._dx))
         return np.column_stack(grads)
 

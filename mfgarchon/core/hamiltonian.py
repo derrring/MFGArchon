@@ -64,12 +64,13 @@ import math
 import numbers
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 
 # Issue #700: Import HamiltonianJacobians for jacobian_fd() method
 from mfgarchon.types import HamiltonianJacobians
+from mfgarchon.types.callable_protocols import POTENTIAL_SLOTS, BoundCallable, bound_attribute
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -788,6 +789,11 @@ def _out_of_ruling8_order(names: Iterable[str]) -> bool:
     """
     ranks = [_ARGUMENT_RANK[p] for p in names if p in _ARGUMENT_RANK]
     return ranks != sorted(ranks) or len(set(ranks)) != len(ranks)
+
+
+def _bound_potential(owner: Any) -> BoundCallable:
+    """``owner._potential`` bound to its slots (#2375 ruling 8), rebound whenever it is replaced."""
+    return bound_attribute(owner, "_potential", POTENTIAL_SLOTS, role="potential")
 
 
 class MFGOperatorBase(ABC):
@@ -1983,6 +1989,8 @@ class SeparableLagrangian(LagrangianBase):
         self.control_cost = control_cost
         self._potential = potential
         self._coupling = coupling
+        if potential is not None:
+            _bound_potential(self)
 
     def __call__(self, t, x, alpha, m):
         """L = L_control(alpha) + V(x, t) + f(m): V and f are costs (#2375 ruling 3).
@@ -1994,7 +2002,7 @@ class SeparableLagrangian(LagrangianBase):
         its own evaluate_hamiltonian by exactly 2(V+f).
         """
         L_ctrl = self.control_cost.lagrangian(np.atleast_1d(alpha))
-        V = float(self._potential(x, t)) if self._potential is not None else 0.0
+        V = float(_bound_potential(self)(x=x, t=t)) if self._potential is not None else 0.0
         f_m = float(self._coupling(m)) if self._coupling is not None else 0.0
         return L_ctrl + V + f_m
 
@@ -2008,7 +2016,7 @@ class SeparableLagrangian(LagrangianBase):
         H_ctrl = self.control_cost.evaluate(p_arr)
         if not isinstance(H_ctrl, (int, float)):
             H_ctrl = float(H_ctrl.sum()) if p_arr.ndim < 2 else H_ctrl
-        V = float(self._potential(x, t)) if self._potential is not None else 0.0
+        V = float(_bound_potential(self)(x=x, t=t)) if self._potential is not None else 0.0
         f_m = float(self._coupling(m)) if self._coupling is not None else 0.0
         return H_ctrl - V - f_m
 
@@ -2462,6 +2470,8 @@ class SeparableHamiltonian(HamiltonianBase):
         self._potential = potential
         self._coupling = coupling
         self._coupling_dm = coupling_dm
+        if potential is not None:
+            _bound_potential(self)
         # Issue #929: Cache vectorized-callable detection result
         self._potential_is_vectorized: bool | None = None
 
@@ -2482,14 +2492,14 @@ class SeparableHamiltonian(HamiltonianBase):
                 self._potential_is_vectorized = False
             else:
                 try:
-                    probe = np.asarray(self._potential(x_batch[:2], t), dtype=float)
+                    probe = np.asarray(_bound_potential(self)(x=x_batch[:2], t=t), dtype=float)
                     self._potential_is_vectorized = probe.shape == (2,)
                 except (TypeError, IndexError, ValueError):
                     self._potential_is_vectorized = False
 
         if self._potential_is_vectorized:
-            return np.asarray(self._potential(x_batch, t), dtype=float)
-        return np.array([float(self._potential(x_batch[i], t)) for i in range(N)])
+            return np.asarray(_bound_potential(self)(x=x_batch, t=t), dtype=float)
+        return np.array([float(_bound_potential(self)(x=x_batch[i], t=t)) for i in range(N)])
 
     def __call__(
         self,
@@ -2518,7 +2528,7 @@ class SeparableHamiltonian(HamiltonianBase):
             if is_batch:
                 V = self._evaluate_potential_batch(x, t)
             else:
-                V = float(self._potential(x, t))
+                V = float(_bound_potential(self)(x=x, t=t))
         else:
             V = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
@@ -2624,7 +2634,9 @@ class SeparableHamiltonian(HamiltonianBase):
             x_minus = x_flat.copy()
             x_plus[i] += eps
             x_minus[i] -= eps
-            grad[i] = _central_difference(float(self._potential(x_plus, t)), float(self._potential(x_minus, t)), eps)
+            grad[i] = _central_difference(
+                float(_bound_potential(self)(x=x_plus, t=t)), float(_bound_potential(self)(x=x_minus, t=t)), eps
+            )
         return -grad
 
     def optimal_control(
@@ -2715,6 +2727,8 @@ class CongestionHamiltonian(HamiltonianBase):
         self._potential = potential
         self._coupling = coupling
         self._coupling_dm = coupling_dm
+        if potential is not None:
+            _bound_potential(self)
 
     def __call__(
         self,
@@ -2755,9 +2769,9 @@ class CongestionHamiltonian(HamiltonianBase):
         # Potential term V(x, t)
         if self._potential is not None:
             if is_batch:
-                V = np.array([float(self._potential(x[i], t)) for i in range(x.shape[0])])
+                V = np.array([float(_bound_potential(self)(x=x[i], t=t)) for i in range(x.shape[0])])
             else:
-                V = float(self._potential(x, t))
+                V = float(_bound_potential(self)(x=x, t=t))
         else:
             V = np.zeros(p_arr.shape[0]) if is_batch else 0.0
 
