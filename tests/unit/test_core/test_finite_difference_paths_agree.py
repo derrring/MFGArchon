@@ -55,7 +55,7 @@ _P = np.linspace(-2.0, 2.0, _N).reshape(-1, 1)
 )
 def test_the_two_finite_difference_paths_agree(batched, per_point, exact):
     h = _SmoothProbe()
-    b = np.asarray(getattr(h, batched)(_X, _M, _P, 0.0)).reshape(_N, -1)
+    b = np.asarray(getattr(h, batched)(x=_X, m=_M, p=_P, t=0.0)).reshape(_N, -1)
     loop = np.stack([np.atleast_1d(getattr(h, per_point)(_X[i], float(_M[i]), _P[i], 0.0)) for i in range(_N)]).reshape(
         _N, -1
     )

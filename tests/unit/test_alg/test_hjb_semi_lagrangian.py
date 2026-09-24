@@ -1342,7 +1342,7 @@ class TestSLHamiltonianSingleSource:
             m = float(rng.uniform(1e-3, 5.0))
             t_idx = int(rng.integers(0, problem.Nt + 1))
             t_value = t_idx * problem.T / problem.Nt
-            inline = float(H_class(np.atleast_1d(x), m, np.atleast_1d(p), t_value))
+            inline = float(H_class(x=np.atleast_1d(x), m=m, p=np.atleast_1d(p), t=t_value))
             routed = solver._evaluate_hamiltonian(x, p, m, t_idx)
             assert routed.hex() == inline.hex(), (
                 f"x={x} p={p} m={m} t_idx={t_idx}: routed {routed!r} != inline {inline!r}"

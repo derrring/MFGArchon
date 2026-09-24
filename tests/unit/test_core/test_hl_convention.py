@@ -102,7 +102,7 @@ def _conjugate(L, p, *, bounds, alpha_sign=-1.0):
     """
 
     def neg_objective(a):
-        return -(alpha_sign * p * a - float(L(X_POINT, np.array([a]), M_VALUE, 0.0)))
+        return -(alpha_sign * p * a - float(L(x=X_POINT, alpha=np.array([a]), m=M_VALUE, t=0.0)))
 
     res = minimize_scalar(neg_objective, bounds=bounds, method="bounded", options={"xatol": 1e-13})
     return -res.fun
@@ -338,7 +338,7 @@ class TestSeparableRoundTrip:
         box = _search_box(cost)
 
         for p in P_SWEEP:
-            expected = float(H(X_POINT, M_VALUE, np.array([p])))
+            expected = float(H(x=X_POINT, m=M_VALUE, p=np.array([p])))
             got = _conjugate(L, p, bounds=box)
             assert got == pytest.approx(expected, abs=1e-6), (
                 f"{cost_name} p={p}: conjugate of L gave {got}, H gave {expected}"
@@ -419,7 +419,7 @@ class TestCongestionRoundTrip:
         box = _congestion_box(cost)
 
         for p in P_SWEEP:
-            expected = float(H(X_POINT, M_VALUE, np.array([p])))
+            expected = float(H(x=X_POINT, m=M_VALUE, p=np.array([p])))
             got = _conjugate(L, p, bounds=box)
             assert got == pytest.approx(expected, abs=1e-6), (
                 f"{cost_name}/{vf_name} p={p}: conjugate of the analytic L gave {got}, H gave {expected}"

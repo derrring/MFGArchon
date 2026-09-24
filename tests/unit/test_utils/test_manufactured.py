@@ -182,7 +182,7 @@ class TestConventionsComeFromTheirOwners:
         t = 1.3
         hamiltonian = _hamiltonian(lam=lam)
         m, grad_u, grad_m = pair.m(t, points), pair.grad_u(t, points), pair.grad_m(t, points)
-        alpha = np.asarray(hamiltonian.optimal_control(points, m, grad_u, t), dtype=float)
+        alpha = np.asarray(hamiltonian.optimal_control(x=points, m=m, p=grad_u, t=t), dtype=float)
         coefficient = float(alpha.flat[0] / grad_u.flat[0])
         expected = (
             pair.m_t(t, points)

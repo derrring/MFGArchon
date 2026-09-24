@@ -111,7 +111,7 @@ def test_fp_scalar_drift_matches_hamiltonian_optimal_control(control_cost):
     x = np.array([0.5])
     for p in (np.array([0.0]), np.array([1.3]), np.array([-2.7]), np.array([12.5])):
         drift_form = -c * p  # the functional form every FP solver hand-writes (-c * grad U)
-        alpha_star = H.optimal_control(x, 1.0, p, 0.0)  # the drift the Hamiltonian prescribes
+        alpha_star = H.optimal_control(x=x, m=1.0, p=p, t=0.0)  # the drift the Hamiltonian prescribes
         np.testing.assert_allclose(
             drift_form,
             alpha_star,

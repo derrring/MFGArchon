@@ -188,7 +188,7 @@ def test_hamiltonian_consistency_gates_on_dp_witness(dimension):
     wrong_index = dimension - 1
 
     def wrong_dp(x, m, p, t=0.0):
-        claimed = np.atleast_1d(H.dp(x, m, p, t)).astype(float).copy()
+        claimed = np.atleast_1d(H.dp(x=x, m=m, p=p, t=t)).astype(float).copy()
         claimed[wrong_index] = 99.0
         return claimed
 
