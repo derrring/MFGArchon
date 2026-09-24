@@ -8,7 +8,7 @@ came out 31.4% from Newton, against a 5.5% control from a genuine unit quadratic
 problem. The gate that would have caught it sat behind `if control_cost is not None:`, so the class
 it was written to stop was the class that skipped it.
 
-The shipped guard measures `H(x, m, 0, t)` and probes `H(x, m, p, t) − H(x, m, 0, t) == (1/2)|p|²`
+The shipped guard measures `H(t, x, 0, m)` and probes `H(t, x, p, m) − H(t, x, 0, m) == (1/2)|p|²`
 **on the problem's own data** — every `M_collocation` time slice, at the matching physical times,
 over momentum vectors whose magnitudes are derived from the terminal datum rather than hard-coded.
 Only the second is a refusal; the first decides whether to build Howard's running-cost closure.

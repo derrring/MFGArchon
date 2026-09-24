@@ -13,7 +13,7 @@
     - a source term whose parameters are not all named after its slots, since the reorder swapped `m` and `v`;
     - `*args` outside a spatial `potential_func`.
   - **Not refused, and wrong:**
-    - an old-order callable whose parameters are **not** named after the slots. `potential=lambda pos, s: ...` receives `t` as `pos` and `x` as `s`. Reorder or rename such callables;
+    - an old-order potential or measure field whose parameters are **not** named after the slots. `potential=lambda pos, s: ...` receives `t` as `pos` and `x` as `s`. Reorder or rename such callables. (A source term with such names is refused, above.)
     - a positional call in the old order to an API this reordered: `HEvalState(x, p, m, t)`, `field.evaluate(x, mu, t)`, or a library-built source called as `source(x, m, v, t)`. It binds the arguments to the wrong parameters. Construct and call these by keyword.
   - **What to change in your code.** Reorder the parameters, name them after the slots, and call by keyword wherever you call these yourself.
   - **`detect_callable_signature`** now reports `f(x, t)` as an error instead of classifying it with `f(t, x)`.

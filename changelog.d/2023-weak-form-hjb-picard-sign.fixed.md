@@ -33,7 +33,7 @@ Three tests changed, none by weakening a bound:
 
 - `test_fem_robin_bc.py::test_hjb_linear_loop_fixed_point` built its reference by `spsolve`-ing the
   solver's own matrices against the same source the Hamiltonian carries (measured
-  `max|H(x,m,p=0) − _source| = 0.0`) — it was the buggy right-hand side written down twice. The
+  `max|H(t, x, p=0, m) − _source| = 0.0`) — it was the buggy right-hand side written down twice. The
   Hamiltonian potential is negated; the manufactured solution, the Robin data and the oracle line are
   untouched, and `max|U[0] − u_steady|` is now 1.010e-14 against the unchanged 1e-9 bound.
 - The two coupled-FEM mass tests specified `coupling = lambda m: m`, which under this repo's
