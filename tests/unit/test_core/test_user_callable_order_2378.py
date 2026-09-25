@@ -330,6 +330,7 @@ def test_the_deprecated_hamiltonian_adapter_redirects_to_the_binder():
         lambda node, neighbors, m, p, t: 0.0,  # the old order
         lambda t, node, neighbors, m, p: 0.0,  # the half-migration, named
         lambda t, n, nb, a, b: 0.0,  # the half-migration, unnamed: t alone cannot tell it from the new order
+        lambda a, b, c, p, e: 0.0,  # only p named, and p is fourth in both orders: it tells none apart
     ],
 )
 def test_a_network_hamiltonian_in_an_old_order_is_refused(refused):

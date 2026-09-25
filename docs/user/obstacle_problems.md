@@ -680,7 +680,7 @@ print(f"Mass conservation error: {abs(mass_final - mass_initial) / mass_initial:
 
 # 3. Hamiltonian consistency
 # Compute H(x, m, ∇u) at all points, check for NaN/Inf
-H_values = problem.hamiltonian(positions, m.ravel(), grad_u.ravel(), t=0)
+H_values = problem.hamiltonian(t=0, x=positions, p=grad_u.ravel(), m=m.ravel())
 print(f"Hamiltonian range: [{H_values.min():.3f}, {H_values.max():.3f}]")
 assert np.all(np.isfinite(H_values)), "Hamiltonian contains NaN/Inf"
 ```

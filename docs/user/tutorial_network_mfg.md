@@ -314,7 +314,7 @@ def terminal_reward(node):
         return -5.0  # High reward (negative cost)
     return 0.0
 
-def congestion_cost(node, m, t):
+def congestion_cost(t, node, m):
     return 2.0 * m[node]**2  # Quadratic congestion
 
 problem = create_grid_mfg_problem(

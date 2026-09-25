@@ -338,7 +338,7 @@ if __name__ == "__main__":
 
     # Test 3: Hamiltonian derivative
     print("\n3. Hamiltonian derivative (∂H/∂m)...")
-    H_dm = problem.hamiltonian_dm(x, m, p, t)
+    H_dm = problem.hamiltonian_dm(t=t, x=x, p=p, m=m)
     print(f"   ∂H/∂m = {H_dm:.6f}")
     assert np.isfinite(H_dm), "Derivative should be finite"
     assert H_dm > 0, "Derivative should be positive (convex congestion)"

@@ -396,6 +396,32 @@ def test_hamiltonian_dm_custom_interaction_finite_difference():
         assert dm_method == pytest.approx(-0.6 * m[node], abs=1e-4)
 
 
+def test_a_custom_dm_and_lagrangian_receive_each_argument_by_its_name():
+    """#2378 phase 5 part 3b: `hamiltonian_dm_func` and `lagrangian_func` are bound like the other
+    network callables, time first. No other test binds either (#2405 review)."""
+    net = GridNetwork(width=3, height=1)
+    net.create_network()
+    seen = {}
+
+    def dm(t, node, neighbors, p, m):
+        seen["dm"] = (t, node, list(neighbors), p[0], m[1])
+        return 0.0
+
+    def lagrangian(t, node, velocity, m):
+        seen["lagrangian"] = (t, node, velocity[0], m[1])
+        return 0.0
+
+    comps = NetworkMFGComponents(hamiltonian_dm_func=dm, lagrangian_func=lagrangian)
+    prob = NetworkMFGProblem(geometry=net, components=comps, T=0.5, Nt=5)
+    m, p = np.array([0.1, 0.2, 0.3]), np.array([7.0, 8.0, 9.0])
+    prob.hamiltonian_dm(t=0.25, node=1, neighbors=prob.get_node_neighbors(1), p=p, m=m)
+    prob.lagrangian(t=0.25, node=1, velocity=np.array([5.0]), m=m)
+    assert seen == {
+        "dm": (0.25, 1, list(prob.get_node_neighbors(1)), 7.0, 0.2),
+        "lagrangian": (0.25, 1, 5.0, 0.2),
+    }
+
+
 def test_a_non_uniform_running_cost_reaches_the_right_nodes_with_the_cost_sign():
     """#2378 phase 2 (#2375 rulings 3-4): the network source is cost-signed and lands node by node.
 

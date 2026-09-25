@@ -75,7 +75,7 @@ class NetworkHamiltonian(HamiltonianBase):
         If None, the built-in one-sided control ``0.5*sum_j w_ij*max(u_i - u_j, 0)^2`` minus the node
         potential and the node congestion.
     hamiltonian_dm_func : callable or None
-        Custom dH/dm.
+        Custom dH/dm(t, node, neighbors, p, m) -> float, the same order as ``hamiltonian_func``.
     node_potential_func : callable or None
         V(t, node) -> float.
     node_interaction_func : callable or None
@@ -315,7 +315,7 @@ class NetworkMFGComponents(MFGComponents):
 
     # Network-specific Hamiltonian (depends on node states and edge flows)
     hamiltonian_func: Callable | None = None  # H(t, node, neighbors, p, m)
-    hamiltonian_dm_func: Callable | None = None  # dH/dm at nodes
+    hamiltonian_dm_func: Callable | None = None  # dH/dm(t, node, neighbors, p, m) at nodes
 
     # Lagrangian formulation support (based on ArXiv 2207.10908v3)
     lagrangian_func: Callable | None = None  # L(t, node, velocity, m)
