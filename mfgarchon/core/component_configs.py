@@ -78,7 +78,7 @@ class NetworkMFGConfig:
     network_geometry : Any, optional
         NetworkGeometry instance defining graph structure.
     node_interaction_func : Callable, optional
-        f_node(node_id, density, t) -> float. Interactions at nodes.
+        f_node(t, node_id, density) -> float. Interactions at nodes (#2375 ruling 8: time first).
     edge_interaction_func : Callable, optional
         f_edge(edge_id, density, t) -> float. Interactions along edges.
     edge_cost_func : Callable, optional

@@ -67,6 +67,11 @@ MEASURE_FIELD_SLOTS = Slots(("t", "x", "mu"))
 HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m"), unmoved=("p",), swapped=("p", "m"), required=("t", "x", "p", "m"))
 CONDITIONAL_HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m", "theta"), optional=("t",))
 ALPHA_STAR_SLOTS = Slots(("t", "x", "p", "m"), aliases={"t_idx": "t"})
+# A graph's node plays x; its adjacency stays with it (user ruling 2026-09-25).
+NETWORK_HAMILTONIAN_SLOTS = Slots(("t", "node", "neighbors", "p", "m"), unmoved=("p",), swapped=("p", "m"))
+NODE_POTENTIAL_SLOTS = Slots(("t", "node"))
+NODE_INTERACTION_SLOTS = Slots(("t", "node", "m"))
+NODE_LAGRANGIAN_SLOTS = Slots(("t", "node", "velocity", "m"))
 
 _TIME_NAMES = ("t", "time")
 
