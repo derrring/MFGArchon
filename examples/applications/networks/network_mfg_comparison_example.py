@@ -258,7 +258,7 @@ class NetworkMFGBenchmark:
             total_cost += m[i] * u[i]
 
             # Congestion cost
-            total_cost += m[i] * problem.density_coupling(i, m, problem.T)
+            total_cost += m[i] * problem.density_coupling(t=problem.T, node=i, m=m)
 
         return total_cost
 

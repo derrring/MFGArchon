@@ -30,6 +30,14 @@ from mfgarchon.core.hamiltonian import (
 )
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
+from mfgarchon.types.callable_protocols import (
+    NETWORK_HAMILTONIAN_SLOTS,
+    NODE_INTERACTION_SLOTS,
+    NODE_LAGRANGIAN_SLOTS,
+    NODE_POTENTIAL_SLOTS,
+    BoundCallable,
+    bound_attribute,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -38,6 +46,15 @@ if TYPE_CHECKING:
 
     from mfgarchon.geometry.graph.network_geometry import BaseNetworkGeometry
     from mfgarchon.types.callable_protocols import Slots
+
+
+# The network's user callables and their slots (#2375 ruling 8), bound by `NetworkHamiltonian`.
+_USER_CALLABLE_SLOTS = {
+    "_hamiltonian_func": NETWORK_HAMILTONIAN_SLOTS,
+    "_hamiltonian_dm_func": NETWORK_HAMILTONIAN_SLOTS,
+    "_node_potential": NODE_POTENTIAL_SLOTS,
+    "_node_interaction": NODE_INTERACTION_SLOTS,
+}
 
 
 class NetworkHamiltonian(HamiltonianBase):
@@ -95,6 +112,10 @@ class NetworkHamiltonian(HamiltonianBase):
         self._node_potential = node_potential_func
         self._node_interaction = node_interaction_func
         self._num_nodes: int | None = None
+        # Each user callable is bound at acceptance and invoked by keyword (#2375 ruling 8)
+        for attr, slots in _USER_CALLABLE_SLOTS.items():
+            if getattr(self, attr) is not None:
+                bound_attribute(self, attr, slots, role=attr.lstrip("_"))
 
     @property
     def has_custom_hamiltonian(self) -> bool:
@@ -138,9 +159,12 @@ class NetworkHamiltonian(HamiltonianBase):
         if self._hamiltonian_func is not None:
             neighbors = self.network_data.get_neighbors(node)
             # Single-pop: custom H gets own density only
-            return float(self._hamiltonian_func(node, neighbors, m_arr, p_arr, t))
+            return float(self._bound("_hamiltonian_func")(t=t, node=node, neighbors=neighbors, p=p_arr, m=m_arr))
 
         return self._default_hamiltonian(node, m_arr, p_arr, t)
+
+    def _bound(self, attr: str) -> BoundCallable:
+        return bound_attribute(self, attr, _USER_CALLABLE_SLOTS[attr], role=attr.lstrip("_"))
 
     def _default_hamiltonian(self, node, m, p, t):
         """Default: quadratic control on edges + potential + congestion.
@@ -183,7 +207,7 @@ class NetworkHamiltonian(HamiltonianBase):
         (Issue #1470 Strand A). ``0.0`` when no ``node_potential_func`` is set.
         """
         node = int(np.asarray(x).flat[0])
-        return float(self._node_potential(node, t)) if self._node_potential else 0.0
+        return float(self._bound("_node_potential")(t=t, node=node)) if self._node_potential else 0.0
 
     def coupling_value(self, t, x, m):
         """Density coupling ``f(node, m, t)`` — the single source for
@@ -195,7 +219,7 @@ class NetworkHamiltonian(HamiltonianBase):
         """
         node = int(np.asarray(x).flat[0])
         if self._node_interaction is not None:
-            return float(self._node_interaction(node, m, t))
+            return float(self._bound("_node_interaction")(t=t, node=node, m=m))
         return 0.5 * float(self._extract_own_density(m)[node]) ** 2
 
     def optimal_control(self, t, x, p, m):
@@ -252,7 +276,11 @@ class NetworkHamiltonian(HamiltonianBase):
         node = int(np.asarray(x).flat[0])
         if self._hamiltonian_dm_func is not None:
             neighbors = self.network_data.get_neighbors(node)
-            return float(self._hamiltonian_dm_func(node, neighbors, np.atleast_1d(m), np.atleast_1d(p), t))
+            return float(
+                self._bound("_hamiltonian_dm_func")(
+                    t=t, node=node, neighbors=neighbors, p=np.atleast_1d(p), m=np.atleast_1d(m)
+                )
+            )
         if self._node_interaction is None:
             return -float(self._extract_own_density(np.atleast_1d(m))[node])
         # Custom node_interaction_func: central finite difference of the coupling in the OWN node
@@ -522,12 +550,13 @@ class NetworkMFGProblem(MFGProblem):
             Lagrangian value L(node, velocity, m, t)
         """
         if self.components.lagrangian_func is not None:  # type: ignore[attr-defined]
-            return self.components.lagrangian_func(node, velocity, m, t)  # type: ignore[attr-defined]
+            bound = bound_attribute(self.components, "lagrangian_func", NODE_LAGRANGIAN_SLOTS, role="lagrangian_func")
+            return bound(t=t, node=node, velocity=velocity, m=m)
 
         # Default Lagrangian: kinetic energy + potential + interaction
         kinetic_energy = 0.5 * np.linalg.norm(velocity) ** 2
-        potential = self.node_potential(node, t)
-        interaction = self.density_coupling(node, m, t)
+        potential = self.node_potential(t=t, node=node)
+        interaction = self.density_coupling(t=t, node=node, m=m)
 
         return float(kinetic_energy + potential + interaction)
 

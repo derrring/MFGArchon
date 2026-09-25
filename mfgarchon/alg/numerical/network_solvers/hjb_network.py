@@ -194,7 +194,7 @@ class NetworkHJBSolver(BaseHJBSolver):
         H = np.zeros(self.num_nodes)
         for i in range(self.num_nodes):
             neighbors = self.gradient_ops[i]
-            H[i] = self.network_problem.hamiltonian(i, neighbors, m, u, t)
+            H[i] = self.network_problem.hamiltonian(t=t, node=i, neighbors=neighbors, p=u, m=m)
         return H
 
     def _source_terms(self, m: np.ndarray, t: float) -> np.ndarray:

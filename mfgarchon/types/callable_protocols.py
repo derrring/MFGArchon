@@ -67,6 +67,10 @@ MEASURE_FIELD_SLOTS = Slots(("t", "x", "mu"))
 HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m"), unmoved=("p",), swapped=("p", "m"), required=("t", "x", "p", "m"))
 CONDITIONAL_HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m", "theta"), optional=("t",))
 ALPHA_STAR_SLOTS = Slots(("t", "x", "p", "m"), aliases={"t_idx": "t"})
+NETWORK_HAMILTONIAN_SLOTS = Slots(("node", "neighbors", "m", "p", "t"))
+NODE_POTENTIAL_SLOTS = Slots(("node", "t"))
+NODE_INTERACTION_SLOTS = Slots(("node", "m", "t"))
+NODE_LAGRANGIAN_SLOTS = Slots(("node", "velocity", "m", "t"))
 
 _TIME_NAMES = ("t", "time")
 
