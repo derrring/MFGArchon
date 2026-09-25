@@ -33,16 +33,19 @@ class Slots:
     """The argument order of one kind of user callable, and what binding it may assume.
 
     ``aliases`` are other names a parameter may carry for a slot: ``time`` for ``t`` always, plus
-    names the library documented before #2378 phase 5. ``swapped`` is a pair of slots whose
-    relative order #2375 ruling 8 reversed: a parameter list that names neither reads the same in
-    either order, so positional binding needs one of them named. ``required`` are slots a callable
-    must declare to be bound by name (a raw Hamiltonian takes all four). ``optional`` are slots a
-    positional callable may leave out (a conditional Hamiltonian's ``t``, as it always could).
+    names the library documented before #2378 phase 5. ``unmoved`` are slots at the same position
+    in the order before #2375 ruling 8 as after it (``v`` for a source term, ``p`` for a
+    Hamiltonian): a parameter named after one cannot tell the two orders apart, so it does not
+    identify the order for positional binding. ``required`` are slots a callable must declare to
+    be bound by name (a raw Hamiltonian takes all four). ``optional`` are slots a positional
+    callable may leave out (a conditional Hamiltonian's ``t``, as it always could); what remains
+    must be in the same order before ruling 8 as after it, so a positional callable without them
+    needs no name to say which order it is in.
     """
 
     order: tuple[str, ...]
     aliases: Mapping[str, str] = field(default_factory=dict)
-    swapped: tuple[str, str] | None = None
+    unmoved: tuple[str, ...] = ()
     required: tuple[str, ...] = ()
     optional: tuple[str, ...] = ()
 
@@ -55,9 +58,9 @@ class Slots:
 # u-derivative family, then the measure, then further parameters (#2375 ruling 8, #2378 phase 5).
 # These are the one statement of it: every invocation goes through `bind_user_callable`.
 POTENTIAL_SLOTS = Slots(("t", "x"))
-SOURCE_TERM_SLOTS = Slots(("t", "x", "v", "m"), aliases={"m_t": "m", "v_t": "v"}, swapped=("v", "m"))
+SOURCE_TERM_SLOTS = Slots(("t", "x", "v", "m"), aliases={"m_t": "m", "v_t": "v"}, unmoved=("v",))
 MEASURE_FIELD_SLOTS = Slots(("t", "x", "mu"))
-HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m"), swapped=("p", "m"), required=("t", "x", "p", "m"))
+HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m"), unmoved=("p",), required=("t", "x", "p", "m"))
 CONDITIONAL_HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m", "theta"), optional=("t",))
 ALPHA_STAR_SLOTS = Slots(("t", "x", "p", "m"), aliases={"t_idx": "t"})
 
@@ -81,9 +84,9 @@ def bind_user_callable(
       does not declare are omitted, so a time-independent ``V(x)`` is accepted where ``t`` is. Its
       declared order then does not matter to the numbers.
     - **By position, in slot order**, when it requires exactly one parameter per slot, none of them
-      is named after a different slot, and, where ruling 8 swapped two slots, one of those two is
-      named: a list naming neither cannot say which order it was written in. Not ``*args`` either,
-      for the same reason.
+      is named after a different slot, and at least one is named after a slot that moved in
+      ruling 8's reorder: a list naming none of those reads the same in either order, so it cannot
+      say which one it was written in. Not ``*args`` either, for the same reason.
     - **``x`` alone**, where ``spatial_only`` allows a spatial callable: at most one required
       parameter, or only ``*args``, as ``MFGComponents`` has always called a ``potential_func``
       that declares no time.
@@ -130,22 +133,25 @@ def bind_user_callable(
         misplaced = [
             name for i, name in enumerate(order[: len(passes)]) if name in slot_of and passes.index(slot_of[name]) != i
         ]
-    pinned = slots.swapped is None or any(slot_of.get(name) in slots.swapped for name in order)
-    if passes is not None and not var_positional and not misplaced and pinned:
+    # Without its optional slots a callable is in the same order either way; with all of them, a
+    # name must say which order it is in.
+    identified = passes != order_ or any(name in slot_of and slot_of[name] not in slots.unmoved for name in order)
+    if passes is not None and not var_positional and not misplaced and identified:
         return BoundCallable(fn, "positional", passes)
     if spatial_only and len(required) <= 1 and (positional or var_positional):
         return BoundCallable(fn, "spatial", ("x",))
+    if misplaced:
+        why = f": {', '.join(misplaced)} would receive another slot's value. Name its parameters {', '.join(order_)}."
+    elif passes is not None and not var_positional:
+        why = (
+            f": none of its parameters is named after a slot whose position #2375 ruling 8 changed, so they "
+            f"read the same in the old order and the new. Name them {', '.join(order_)}."
+        )
+    else:
+        why = f". Name its parameters {', '.join(order_)}, or take exactly {len(order_)} positionally in that order."
     raise TypeError(
         f"{role} {getattr(fn, '__qualname__', fn)!r} takes ({', '.join(p.name for p in params)}), which cannot be "
-        f"matched to ({', '.join(order_)})"
-        + (f": {', '.join(misplaced)} would receive another slot's value" if misplaced else "")
-        + f". Name its parameters {', '.join(order_)}"
-        + (
-            f" (at least one of {' and '.join(slots.swapped)}, whose order #2375 ruling 8 reversed)"
-            if slots.swapped and not pinned
-            else ""
-        )
-        + f", or take exactly {len(order_)} positionally in that order."
+        f"matched to ({', '.join(order_)}){why}"
     )
 
 
@@ -318,7 +324,7 @@ class DiffusionFieldCallable(Protocol):
 @runtime_checkable
 class HamiltonianCallable(Protocol):
     """
-    Protocol for custom Hamiltonian function H(x, m, p, t).
+    Protocol for the per-point Hamiltonian API, H(t, x, p, m) at one grid point.
 
     The Hamiltonian appears in the HJB equation:
         -∂u/∂t + H(x, m, ∇u, t) - (σ²/2) Δu = 0
@@ -338,7 +344,7 @@ class HamiltonianCallable(Protocol):
         problem: Problem instance (optional)
 
     Returns:
-        Hamiltonian value H(x, m, p, t)
+        Hamiltonian value H(t, x, p, m)
 
     Examples:
         >>> # Quadratic Hamiltonian (LQ control)
@@ -362,14 +368,14 @@ class HamiltonianCallable(Protocol):
         current_time: float | None = None,
         problem: object | None = None,
     ) -> float:
-        """Evaluate Hamiltonian at (x, m, p, t)."""
+        """Evaluate the Hamiltonian at one grid point."""
         ...
 
 
 @runtime_checkable
 class HamiltonianDerivativeCallable(Protocol):
     """
-    Protocol for Hamiltonian derivative dH/dm(x, m, p, t).
+    Protocol for the per-point Hamiltonian derivative dH/dm, at one grid point.
 
     The derivative dH/dm appears in the Fokker-Planck coupling term:
         ∂m/∂t + ∇·(α m) = (σ²/2) Δm - ∇·(m ∇(dH/dm))
@@ -381,7 +387,7 @@ class HamiltonianDerivativeCallable(Protocol):
         (Same as HamiltonianCallable)
 
     Returns:
-        Derivative dH/dm at (x, m, p, t)
+        Derivative dH/dm at (t, x, p, m)
 
     Examples:
         >>> # For H = 0.5 p² - V - m²
@@ -403,7 +409,7 @@ class HamiltonianDerivativeCallable(Protocol):
         current_time: float | None = None,
         problem: object | None = None,
     ) -> float:
-        """Evaluate dH/dm at (x, m, p, t)."""
+        """Evaluate dH/dm at one grid point."""
         ...
 
 

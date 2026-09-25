@@ -68,11 +68,16 @@ def test_named_slots_are_passed_by_name_and_an_omitted_one_is_not_passed():
     assert seen == {"t": 1.0, "x": 2.0, "m": 4.0}
 
 
-def test_unnamed_parameters_receive_the_slots_positionally_in_the_new_order():
+def test_parameters_bind_positionally_only_when_one_names_the_order():
+    """#2404 review: a list naming no slot whose position ruling 8 changed reads the same in either
+    order, so it is refused; one such name at its new index settles which order it is in."""
     received = []
-    bound = bind_user_callable(lambda a, b: received.append((a, b)), POTENTIAL_SLOTS, role="potential")
+    bound = bind_user_callable(lambda t, pos: received.append((t, pos)), POTENTIAL_SLOTS, role="potential")
     bound(t=0.25, x=_X)
     assert received == [(0.25, _X)]
+    for unnamed in (lambda a, b: 0.0, lambda pos, s: 0.0):
+        with pytest.raises(TypeError, match=r"read the same in the old order and the new"):
+            bind_user_callable(unnamed, POTENTIAL_SLOTS, role="potential")
 
 
 def test_a_one_argument_spatial_potential_func_receives_x_only():
@@ -117,7 +122,8 @@ def test_detect_callable_signature_tells_the_two_orders_apart():
         (SOURCE_TERM_SLOTS, lambda t, x, m, v_t: 0.0),  # m would receive v
         (SOURCE_TERM_SLOTS, lambda t, x, dens, v: 0.0),  # v would receive m
         (SOURCE_TERM_SLOTS, lambda t, x, m_t, v_t: 0.0),  # the documented names, half-migrated
-        (SOURCE_TERM_SLOTS, lambda t, x, a, b: 0.0),  # m and v swapped places: names are required
+        (SOURCE_TERM_SLOTS, lambda x_, m_, v, t_: 0.0),  # v is at index 2 in both orders: it pins nothing
+        (SOURCE_TERM_SLOTS, lambda a, b, c, d: 0.0),  # nothing says which order
         (POTENTIAL_SLOTS, lambda a, b=1.0: 0.0),  # a default is not a slot to fill
     ],
 )
@@ -184,8 +190,17 @@ def test_a_problem_subclass_defining_an_old_order_hamiltonian_is_refused_at_clas
             def hamiltonian(self, x, m, p, t):
                 return 0.0
 
+    with pytest.raises(TypeError, match=r"_OldCost\.running_cost takes \(x, m, t\), which is out of order"):
+
+        class _OldCost(MFGProblem):
+            def running_cost(self, x, m, t):
+                return 0.0
+
     class _NewProblem(MFGProblem):
         def hamiltonian(self, t, x, p, m):
+            return 0.0
+
+        def running_cost(self, t, x, m):
             return 0.0
 
 
@@ -248,20 +263,21 @@ def test_alpha_star_takes_time_first_with_t_idx_for_t():
             bind_user_callable(old_order, ALPHA_STAR_SLOTS, role="alpha_star")
 
 
-def test_a_raw_hamiltonian_must_declare_all_four_slots_and_names_one_of_p_and_m():
-    """Validation has always demanded (t, x, p, m) of a raw callable; ruling 8 swapped p and m."""
+def test_a_raw_hamiltonian_must_declare_all_four_slots_and_name_one_that_moved():
+    """Validation has always demanded (t, x, p, m) of a raw callable; ruling 8 moved t, x and m."""
     from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS
 
     by_name = bind_user_callable(lambda t, x, p, m: p - m, HAMILTONIAN_SLOTS, role="h")
     pinned = bind_user_callable(lambda t, x, grad, m: grad - m, HAMILTONIAN_SLOTS, role="h")  # m pins the pair
     assert by_name(t=0.0, x=0.0, p=2.0, m=0.5) == pinned(t=0.0, x=0.0, p=2.0, m=0.5) == 1.5
-    for incomplete in (lambda x: 0.0, lambda t, x, a, b: 0.0):  # omits slots; names neither of p and m
+    # Omits slots; or names only p, which is at index 2 in both orders (#2404 review).
+    for incomplete in (lambda x: 0.0, lambda x_, m_, p, t_: 0.0):
         with pytest.raises(TypeError, match=r"cannot be matched"):
             bind_user_callable(incomplete, HAMILTONIAN_SLOTS, role="h")
 
 
 def test_a_source_term_naming_m_binds_its_other_parameter_positionally():
-    """One member of the swapped pair named pins the other, so the list is not ambiguous."""
+    """m moved in ruling 8's reorder, so naming it at its new index settles the order."""
     bound = bind_user_callable(lambda t, x, val, m: (val, m), SOURCE_TERM_SLOTS, role="source_term_hjb")
     assert bound(t=0.0, x=_X, v="v", m="m") == ("v", "m")
 

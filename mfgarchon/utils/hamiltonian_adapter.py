@@ -6,7 +6,8 @@ It used to guess which of several argument orders a Hamiltonian callable took an
 to a "standard" ``(x, m, p, t)``. #2375 ruling 8 fixes one order, ``(t, x, p, m)``, and the library
 refuses a callable written in another rather than guessing. These wrappers now bind through
 ``bind_user_callable`` with ``HAMILTONIAN_SLOTS``, the one owner of that rule, and keep their call
-interface until they are removed.
+interface until they are removed. The deprecation policy's no-behaviour-change clause is waived for
+them by user ruling (2026-09-25): the orders they accepted are what ruling 8 refuses.
 
 Use instead:
     >>> from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS, bind_user_callable

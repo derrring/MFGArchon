@@ -11,7 +11,7 @@ Mathematical Framework
 For populations k = 1, ..., K, the coupled system is:
 
     HJB equations (backward in time):
-        -∂uₖ/∂t + Hₖ(x, {mⱼ}ⱼ₌₁ᴷ, ∇uₖ, t) = 0    for k = 1, ..., K
+        -∂uₖ/∂t + Hₖ(t, x, ∇uₖ, {mⱼ}ⱼ₌₁ᴷ) = 0    for k = 1, ..., K
         uₖ(T, x) = gₖ(x)
 
     FP equations (forward in time):
@@ -19,7 +19,7 @@ For populations k = 1, ..., K, the coupled system is:
         mₖ(0, x) = m₀ₖ(x)
 
     Cross-population coupling:
-        Hₖ(x, {mⱼ}, p, t) = ½|p|² + Σⱼ αₖⱼ·mⱼ(x) + fₖ(x, {mⱼ}, t)
+        Hₖ(t, x, p, {mⱼ}) = ½|p|² + Σⱼ αₖⱼ·mⱼ(x) + fₖ(t, x, {mⱼ})
 
     where:
         - uₖ(t,x): Value function for population k
@@ -85,7 +85,7 @@ class MultiPopulationMFGProtocol(MFGProblemProtocol, Protocol):
 
     Extends MFGProblemProtocol with population-indexed methods for
     heterogeneous MFG systems. Each population k has its own:
-    - Hamiltonian Hₖ(x, {mⱼ}, p, t)
+    - Hamiltonian Hₖ(t, x, p, {mⱼ})
     - Terminal cost gₖ(x)
     - Initial density m₀ₖ(x)
     - Running cost fₖ(x, {mⱼ}, t)
@@ -156,22 +156,22 @@ class MultiPopulationMFGProtocol(MFGProblemProtocol, Protocol):
         Hamiltonian for population k with cross-population coupling.
 
         Args:
-            k: Population index (0 to K-1)
+            t: Time
             x: Spatial position
+                - 1D: float
+                - nD: tuple/array of length d
+            p: Momentum/co-state ∇uₖ for population k
                 - 1D: float
                 - nD: tuple/array of length d
             m_all: Density values for all populations
                    Shape: (K,) array [m₁(x), m₂(x), ..., mₖ(x)]
-            p: Momentum/co-state ∇uₖ for population k
-                - 1D: float
-                - nD: tuple/array of length d
-            t: Time
+            k: Population index (0 to K-1), a further parameter after the measure (#2375 ruling 8)
 
         Returns:
-            Hamiltonian value Hₖ(x, {mⱼ}, p, t)
+            Hamiltonian value Hₖ(t, x, p, {mⱼ})
 
         Mathematical Form:
-            Hₖ(x, {mⱼ}, p, t) = ½|p|² + Σⱼ αₖⱼ·mⱼ(x) + fₖ(x, {mⱼ}, t)
+            Hₖ(t, x, p, {mⱼ}) = ½|p|² + Σⱼ αₖⱼ·mⱼ(x) + fₖ(t, x, {mⱼ})
 
         Example:
             >>> # Competition for resources with shared congestion
@@ -193,8 +193,8 @@ class MultiPopulationMFGProtocol(MFGProblemProtocol, Protocol):
         Terminal cost gₖ(x) for population k.
 
         Args:
-            k: Population index (0 to K-1)
             x: Spatial position
+            k: Population index (0 to K-1)
 
         Returns:
             Terminal cost value gₖ(x)
@@ -219,8 +219,8 @@ class MultiPopulationMFGProtocol(MFGProblemProtocol, Protocol):
         Initial density m₀ₖ(x) for population k.
 
         Args:
-            k: Population index (0 to K-1)
             x: Spatial position
+            k: Population index (0 to K-1)
 
         Returns:
             Initial density value m₀ₖ(x) ≥ 0
@@ -242,10 +242,10 @@ class MultiPopulationMFGProtocol(MFGProblemProtocol, Protocol):
         Running cost fₖ(x, {mⱼ}, t) for population k.
 
         Args:
-            k: Population index (0 to K-1)
+            t: Time
             x: Spatial position
             m_all: Density values for all populations [m₁(x), ..., mₖ(x)]
-            t: Time
+            k: Population index (0 to K-1)
 
         Returns:
             Running cost value fₖ(x, {mⱼ}, t)
@@ -301,7 +301,7 @@ class MultiPopulationMFGProblem(MFGProblem):
 
     Mathematical Formulation:
         For k = 1, ..., K:
-            Hₖ(x, {mⱼ}, p, t) = ½|p|² + Σⱼ αₖⱼ·mⱼ(x)
+            Hₖ(t, x, p, {mⱼ}) = ½|p|² + Σⱼ αₖⱼ·mⱼ(x)
 
         Coupling interpretation:
             - αₖₖ > 0: Population k experiences self-congestion
@@ -402,7 +402,7 @@ class MultiPopulationMFGProblem(MFGProblem):
         Hamiltonian with linear cross-population coupling.
 
         Implements:
-            Hₖ(x, {mⱼ}, p, t) = ½|p|² + Σⱼ αₖⱼ·mⱼ(x)
+            Hₖ(t, x, p, {mⱼ}) = ½|p|² + Σⱼ αₖⱼ·mⱼ(x)
 
         Args:
             k: Population index (0 to K-1)

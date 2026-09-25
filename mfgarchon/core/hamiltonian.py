@@ -96,7 +96,7 @@ class ControlCostBase(ABC):
     Kinetic/control cost component for MFG Hamiltonians.
 
     Internal component used by SeparableHamiltonian, CongestionHamiltonian, etc.
-    NOT a standalone Hamiltonian -- use HamiltonianBase for full H(x,m,p,t).
+    NOT a standalone Hamiltonian -- use HamiltonianBase for full H(t, x, p, m).
 
     Subclasses must implement: optimal_control(), dp(), evaluate(), lagrangian().
 

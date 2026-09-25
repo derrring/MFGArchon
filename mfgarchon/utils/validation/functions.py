@@ -448,8 +448,8 @@ def validate_hamiltonian_consistency(
     Check that dH_dm and dH_dp are the derivatives of H, by finite differences.
 
     Numerical checks, over a small grid of probe points (m, p):
-        dH_dm_numerical = (H(x, m+eps, p, t) - H(x, m-eps, p, t)) / (2*eps)
-        dH_dp_numerical[i] = (H(x, m, p+eps*e_i, t) - H(x, m, p-eps*e_i, t)) / (2*eps)
+        dH_dm_numerical = (H(t, x, p, m+eps) - H(t, x, p, m-eps)) / (2*eps)
+        dH_dp_numerical[i] = (H(t, x, p+eps*e_i, m) - H(t, x, p-eps*e_i, m)) / (2*eps)
 
     Severity (Issue #1642, capability C1). This validator can invalidate its
     result, so a caller doing `if not result.is_valid: raise ValidationError(...)`

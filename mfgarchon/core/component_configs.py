@@ -26,17 +26,17 @@ if TYPE_CHECKING:
 class StandardMFGConfig:
     """Configuration for standard HJB-FP MFG formulation.
 
-    This is the most common MFG formulation using Hamiltonian H(x,m,p,t)
+    This is the most common MFG formulation using Hamiltonian H(t, x, p, m)
     to define agent dynamics and coupling through density m.
 
     Parameters
     ----------
     hamiltonian_func : Callable, optional
-        H(x, m, p, t) -> float. Agent Hamiltonian defining dynamics.
+        H(t, x, p, m) -> float. Agent Hamiltonian defining dynamics.
     hamiltonian_dm_func : Callable, optional
-        dH/dm(x, m, p, t) -> float. Derivative w.r.t. density.
+        dH/dm(t, x, p, m) -> float. Derivative w.r.t. density.
     hamiltonian_dp_func : Callable, optional
-        dH/dp(x, m, p, t) -> array. Derivative w.r.t. momentum (for analytic Jacobian).
+        dH/dp(t, x, p, m) -> array. Derivative w.r.t. momentum (for analytic Jacobian).
     hamiltonian_jacobian_func : Callable, optional
         Jacobian contribution for coupling terms.
     potential_func : Callable, optional

@@ -210,7 +210,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
     # Methods a subclass may define that take #2375 ruling 8's order, checked at class creation.
     # A subclass that adds such methods declares them here too; the tables are merged along the MRO.
-    _ruling8_methods: ClassVar[dict[str, Slots | None]] = {"hamiltonian": HAMILTONIAN_SLOTS}
+    _ruling8_methods: ClassVar[dict[str, Slots | None]] = {
+        "hamiltonian": HAMILTONIAN_SLOTS,
+        "running_cost": Slots(("t", "x", "m")),
+    }
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)

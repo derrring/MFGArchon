@@ -200,7 +200,7 @@ class CapacityConstrainedMFGProblem(MFGProblem):
         # Total Hamiltonian
         return H_base + self.congestion_weight * congestion_cost
 
-    def hamiltonian_dm(self, x, m, p, t) -> float:
+    def hamiltonian_dm(self, t, x, p, m) -> float:
         """
         Compute derivative of Hamiltonian with respect to density: ∂H/∂m.
 

@@ -12,7 +12,7 @@ Mathematical Notation:
     - ∂u/∂x: Spatial gradient
     - H(t, x, p, m): Hamiltonian
     - g(x): Terminal cost
-    - f(x, m, t): Running cost
+    - f(t, x, m): Running cost
 
 Part of: Issue #245 - Incremental Evolution toward Unified nD Architecture
 """
@@ -59,7 +59,7 @@ class MFGProblemProtocol(Protocol):
         - hamiltonian(t, x, p, m): H(t, x, p, m)
         - terminal_cost(x): g(x)
         - initial_density(x): m₀(x)
-        - running_cost(x, m, t): f(x, m, t)
+        - running_cost(t, x, m): f(t, x, m)
 
     Examples:
         >>> # Geometry-agnostic solver
@@ -201,21 +201,21 @@ class MFGProblemProtocol(Protocol):
         """
         ...
 
-    def running_cost(self, x, m, t) -> float:
+    def running_cost(self, t, x, m) -> float:
         """
-        Running cost f(x, m, t).
+        Running cost f(t, x, m) (#2375 ruling 8: time first).
 
         Args:
+            t: Time
             x: Spatial position
             m: Density value m(t,x)
-            t: Time
 
         Returns:
-            Running cost value f(x, m, t)
+            Running cost value f(t, x, m)
 
         Example:
             >>> # Congestion cost
-            >>> def running_cost(self, x, m, t):
+            >>> def running_cost(self, t, x, m):
             ...     return 0.1 * m  # Penalize high density
         """
         ...
