@@ -69,3 +69,33 @@ def test_no_solver_calls_its_source_term_directly():
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "source_term":
                 direct.append(f"{path.relative_to(package)}:{node.lineno}")
     assert not direct, f"source_term called directly, not through evaluate_solver_source: {direct}"
+
+
+def test_the_variational_lagrangian_callables_are_bound_time_first():
+    """`VariationalMFGComponents`' Lagrangian and its derivatives were always (t, x, v, m), called
+    positionally: the binding refuses one written space-first."""
+    from mfgarchon.types.callable_protocols import VARIATIONAL_LAGRANGIAN_SLOTS, bind_user_callable
+
+    bound = bind_user_callable(lambda t, x, v, m: (t, x, v, m), VARIATIONAL_LAGRANGIAN_SLOTS, role="lagrangian_func")
+    assert bound(t=1, x=2, v=3, m=4) == (1, 2, 3, 4)
+    with pytest.raises(TypeError, match=r"out of order"):
+        bind_user_callable(lambda x, t, v, m: 0.0, VARIATIONAL_LAGRANGIAN_SLOTS, role="lagrangian_func")
+
+
+def test_no_variational_lagrangian_callable_is_called_directly():
+    import ast
+    from pathlib import Path
+
+    import mfgarchon.alg.optimization.variational_problem as module
+
+    tree = ast.parse(Path(module.__file__).read_text())
+    direct = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr.startswith("lagrangian")
+        and node.func.attr.endswith("_func")
+        and "components" in ast.unparse(node.func.value)
+    ]
+    assert not direct, f"a Lagrangian callable called directly, not through its binding, at lines {direct}"

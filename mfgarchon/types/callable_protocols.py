@@ -71,6 +71,7 @@ HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m"), unmoved=("p",), swapped=("p", "m
 CONDITIONAL_HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m", "theta"), optional=("t",))
 ALPHA_STAR_SLOTS = Slots(("t", "x", "p", "m"), aliases={"t_idx": "t"})
 SOLVER_SOURCE_SLOTS = Slots(("t", "x"), reordered=False)
+VARIATIONAL_LAGRANGIAN_SLOTS = Slots(("t", "x", "v", "m"), reordered=False)
 
 _TIME_NAMES = ("t", "time")
 

@@ -1,1 +1,7 @@
-- **A solver's `source_term` written space-first is refused** (#2375 ruling 8, #2378 phase 5 part 3c). The HJB and FP solvers' `source_term` has always been `(t, x)`. Every solver now evaluates it through one binding, so a callable written `(x, t)`, or `(pts, time)`, raises `TypeError` at its first evaluation. It used to receive time as space without an error. Unnamed parameters, such as `lambda a, b: ...`, still bind positionally as `(t, x)`, since that order never changed. Nothing written `(t, x)` changes value.
+- **Callables that were always time-first are now bound, so a space-first one is refused** (#2375 ruling 8, #2378 phase 5 part 3c).
+  - **Which callables:**
+    - the HJB and FP solvers' `source_term(t, x)`;
+    - `VariationalMFGComponents`' `lagrangian_func` and its `dx`, `dv` and `dm` derivatives, `(t, x, v, m)`.
+  - **What changed.** Every evaluation now goes through one binding. A callable written `(x, t)`, or `(pts, time)`, raises `TypeError` at its first evaluation; it used to receive time as space without an error.
+  - **What still binds.** Unnamed parameters, such as `lambda a, b: ...`, still bind positionally in the documented order, since that order never changed.
+  - **Nothing written in the documented order changes value.**
