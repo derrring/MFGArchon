@@ -28,7 +28,6 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.interpolate import interp1d
 
-# Import BC infrastructure from HJB-SL (reuse unified components)
 from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import (
     apply_boundary_conditions_1d,
 )
@@ -42,6 +41,9 @@ from mfgarchon.geometry.boundary.types import BCType
 
 # Issue #625: Migrated from tensor_calculus to operators/stencils
 from mfgarchon.operators.stencils.finite_difference import laplacian_with_bc
+
+# Import BC infrastructure from HJB-SL (reuse unified components)
+from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.implicit_diffusion import neumann_cn_step
@@ -320,7 +322,9 @@ class FPSLJacobianSolver(BaseFPSolver):
             )
 
             if source_term is not None:
-                s_values = np.asarray(source_term((n + 1) * self.dt, source_points), dtype=float).ravel()
+                s_values = np.asarray(
+                    evaluate_solver_source(source_term, t=(n + 1) * self.dt, x=source_points), dtype=float
+                ).ravel()
                 if s_values.size != Nx:
                     raise ValueError(
                         f"FPSLJacobianSolver: source_term returned {s_values.size} values at "

@@ -30,6 +30,7 @@ import numpy as np
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
 from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import TaylorOperator
 from mfgarchon.geometry.boundary.types import BCType
+from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
@@ -630,7 +631,9 @@ class FPGFDMSolver(BaseFPSolver):
                 #
                 # A sign error here is not silent: flipping it puts the error at 1.041e-01, about
                 # twice the no-source 5.25e-02, against 1.65e-04 with the sign right.
-                s_values = np.asarray(source_term(t_idx * dt, self.collocation_points), dtype=float).ravel()
+                s_values = np.asarray(
+                    evaluate_solver_source(source_term, t=t_idx * dt, x=self.collocation_points), dtype=float
+                ).ravel()
                 if s_values.size != self.n_points:
                     raise ValueError(
                         f"FPGFDMSolver: source_term returned {s_values.size} values at "

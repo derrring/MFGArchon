@@ -67,6 +67,7 @@ from mfgarchon.geometry.boundary.applicator_base import (
 )
 from mfgarchon.geometry.boundary.conditions import repeated_endpoint_mirror
 from mfgarchon.geometry.boundary.types import BoundaryFace
+from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise, mass_fabricated_by_clip
 from mfgarchon.utils.pde_coefficients import (
     CoefficientField,
@@ -1013,7 +1014,7 @@ def solve_fp_nd_full_system(
         # Evaluate source term at current timestep (implicit: evaluate at t_{k+1})
         if source_term is not None:
             t_next = (k + 1) * dt
-            source_values = source_term(t_next, x_grid).ravel()
+            source_values = evaluate_solver_source(source_term, t=t_next, x=x_grid).ravel()
         else:
             source_values = None
 

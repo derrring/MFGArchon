@@ -37,6 +37,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from mfgarchon.types.callable_protocols import evaluate_solver_source
+
 from .base_hjb import BaseHJBSolver
 
 if TYPE_CHECKING:
@@ -165,7 +167,7 @@ class PenaltyHJBSolver(BaseHJBSolver):
 
         def penalized_source(t: float, x: NDArray) -> NDArray:
             # Start with existing source term if any
-            base = source_term(t, x) if source_term is not None else np.zeros(x.shape[0])
+            base = evaluate_solver_source(source_term, t=t, x=x) if source_term is not None else np.zeros(x.shape[0])
 
             # Penalty: (1/eps) * max(0, Psi(x) - v)
             # Note: We evaluate Psi at x but don't have v here.

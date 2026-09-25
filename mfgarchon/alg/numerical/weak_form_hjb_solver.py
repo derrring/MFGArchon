@@ -24,6 +24,7 @@ from scipy import sparse
 from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
+from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import scalar_diffusion_from_volatility
 
@@ -311,7 +312,9 @@ class WeakFormHJBSolver(BaseHJBSolver):
             """M @ S(t, dofs). Zero vector when no source, so both branches stay one code path."""
             if source_term is None:
                 return np.zeros(N)
-            s_vals = np.asarray(source_term(t, self._disc.dof_coordinates), dtype=float).ravel()
+            s_vals = np.asarray(
+                evaluate_solver_source(source_term, t=t, x=self._disc.dof_coordinates), dtype=float
+            ).ravel()
             if s_vals.shape != (N,):
                 raise ValueError(
                     f"source_term returned shape {s_vals.shape}; this solver needs ({N},), one value "

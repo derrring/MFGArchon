@@ -85,6 +85,7 @@ from mfgarchon.alg.numerical.fp_solvers.fp_fvm_flux import advective_divergence,
 from mfgarchon.geometry.boundary.conditions import periodic_axis_span
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.operators.differential.laplacian import LaplacianOperator
+from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.numerical.quadrature import quadrature_weights_nd
@@ -584,7 +585,7 @@ class FPFVMSolver(BaseFPSolver):
                 # is first order in SPACE (measured 1.026 / 1.004 / 0.978) and the spatial floor
                 # dominates before the temporal order is visible. Changing it would be a behaviour
                 # change with no evidence behind it.
-                s_vals = np.asarray(source_term(k * dt, source_grid), dtype=float).ravel()
+                s_vals = np.asarray(evaluate_solver_source(source_term, t=k * dt, x=source_grid), dtype=float).ravel()
                 if s_vals.size != m.size:
                     raise ValueError(
                         f"source_term returned {s_vals.size} values for {m.size} cells. It is "

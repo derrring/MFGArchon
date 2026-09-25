@@ -36,6 +36,7 @@ from mfgarchon.geometry.boundary.bc_utils import (
 )
 from mfgarchon.geometry.boundary.enforcement import enforce_periodic_value_nd
 from mfgarchon.geometry.boundary.types import BCType
+from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import check_adi_compatibility, diffusion_from_volatility
 
@@ -2758,7 +2759,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         oracle is the one failure that cannot be afforded: the study keeps converging and measures
         a different equation.
         """
-        values = np.asarray(source_term(t, points), dtype=float).ravel()
+        values = np.asarray(evaluate_solver_source(source_term, t=t, x=points), dtype=float).ravel()
         expected = int(np.prod(grid_shape))
         if values.size != expected:
             raise ValueError(

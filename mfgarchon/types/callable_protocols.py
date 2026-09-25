@@ -43,13 +43,16 @@ class Slots:
     be bound by name (a raw Hamiltonian takes all four). ``optional`` are slots a positional
     callable may leave out (a conditional Hamiltonian's ``t``, as it always could); what remains
     must be in the same order before ruling 8 as after it, so a positional callable without them
-    needs no name to say which order it is in.
+    needs no name to say which order it is in. ``reordered`` is False for a callable ruling 8 did
+    not reorder (a solver's ``source_term`` was always ``(t, x)``): its unnamed parameters can only
+    mean the one order it has ever had.
     """
 
     order: tuple[str, ...]
     aliases: Mapping[str, str] = field(default_factory=dict)
     unmoved: tuple[str, ...] = ()
     swapped: tuple[str, str] | None = None
+    reordered: bool = True
     required: tuple[str, ...] = ()
     optional: tuple[str, ...] = ()
 
@@ -67,6 +70,7 @@ MEASURE_FIELD_SLOTS = Slots(("t", "x", "mu"))
 HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m"), unmoved=("p",), swapped=("p", "m"), required=("t", "x", "p", "m"))
 CONDITIONAL_HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m", "theta"), optional=("t",))
 ALPHA_STAR_SLOTS = Slots(("t", "x", "p", "m"), aliases={"t_idx": "t"})
+SOLVER_SOURCE_SLOTS = Slots(("t", "x"), reordered=False)
 
 _TIME_NAMES = ("t", "time")
 
@@ -142,7 +146,7 @@ def bind_user_callable(
     # name must say which order it is in.
     names_moved = any(name in slot_of and slot_of[name] not in slots.unmoved for name in order)
     names_pair = slots.swapped is None or any(slot_of.get(name) in slots.swapped for name in order)
-    identified = passes != order_ or (names_moved and names_pair)
+    identified = not slots.reordered or passes != order_ or (names_moved and names_pair)
     if passes is not None and not var_positional and not misplaced and identified:
         return BoundCallable(fn, "positional", passes)
     if spatial_only and len(required) <= 1 and (positional or var_positional):
@@ -201,6 +205,15 @@ def refuse_methods_out_of_order(cls: type, table: Mapping[str, Slots | None]) ->
                 f"(#2375 ruling 8) it takes ({', '.join(slots.order)}), time first: reorder the parameters, and "
                 f"call the method by keyword."
             )
+
+
+def evaluate_solver_source(source_term: Callable[..., Any], *, t: Any, x: Any) -> Any:
+    """A solver's ``source_term`` at ``(t, x)``, through its binding (#2375 ruling 8).
+
+    The one place a solver evaluates the source it was handed: a callable written ``(x, t)`` is
+    refused rather than handed time as space.
+    """
+    return bind_user_callable(source_term, SOLVER_SOURCE_SLOTS, role="source_term")(t=t, x=x)
 
 
 class BoundCallable:
