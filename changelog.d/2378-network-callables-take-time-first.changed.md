@@ -1,0 +1,17 @@
+- **The network callables take time first, with the node for `x` and its adjacency beside it** (#2375 ruling 8, #2378 phase 5 part 3b; the adjacency's place by user ruling 2026-09-25). **This breaks code that defines, passes or calls these in the old order.**
+  - **What changed.**
+    - `NetworkMFGComponents` / `NetworkHamiltonian` callables:
+      - `hamiltonian_func` and `hamiltonian_dm_func`: `(node, neighbors, m, p, t)` → `(t, node, neighbors, p, m)`;
+      - `node_potential_func`: `(node, t)` → `(t, node)`;
+      - `node_interaction_func`: `(node, m, t)` → `(t, node, m)`;
+      - `lagrangian_func`: `(node, velocity, m, t)` → `(t, node, velocity, m)`.
+    - `NetworkMFGProblem`'s `hamiltonian`, `hamiltonian_dm`, `lagrangian`, `node_potential` and `density_coupling` take the same orders.
+  - **Refused:**
+    - **A user callable, when `NetworkHamiltonian` accepts it:**
+      - the old order;
+      - the half-migration `(t, node, neighbors, m, p)`;
+      - a Hamiltonian naming neither `p` nor `m`, which reads the same in the new order and in that half-migration.
+      - A `lagrangian_func` is refused at its first evaluation, `problem.lagrangian(...)`.
+    - **A subclass method, when the class is created:** the old order and the named half-migration. Names are not required there, since the library calls these methods by keyword.
+  - **Not refused, and wrong:** a positional call in the old order to one of these methods, such as `problem.hamiltonian(node, neighbors, m, p, t)`. Call them by keyword.
+  - **What to change in your code.** Reorder the parameters, and call these by keyword.

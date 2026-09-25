@@ -124,14 +124,14 @@ def create_el_farol_problem(
         """Start with 50% home, 50% bar."""
         return 0.5
 
-    def node_potential_func(node: int, t: float) -> float:
+    def node_potential_func(t: float, node: int) -> float:
         """Running cost at each node (before interaction)."""
         if node == 0:  # Home
             return -home_utility  # Negative utility = positive cost
         else:  # Bar
             return 0.0  # Base cost for being at bar
 
-    def node_interaction_func(node: int, m: np.ndarray, t: float) -> float:
+    def node_interaction_func(t: float, node: int, m: np.ndarray) -> float:
         """
         Interaction cost based on bar attendance.
 

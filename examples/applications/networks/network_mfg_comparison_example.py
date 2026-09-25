@@ -124,11 +124,11 @@ class NetworkMFGBenchmark:
             """Start with uniform distribution."""
             return 1.0 / self.num_nodes
 
-        def node_potential_func(node: int, t: float) -> float:
+        def node_potential_func(t: float, node: int) -> float:
             """Small staying cost."""
             return 0.05
 
-        def node_interaction_func(node: int, m: np.ndarray, t: float) -> float:
+        def node_interaction_func(t: float, node: int, m: np.ndarray) -> float:
             """Quadratic congestion."""
             return 1.5 * m[node] ** 2
 
@@ -258,7 +258,7 @@ class NetworkMFGBenchmark:
             total_cost += m[i] * u[i]
 
             # Congestion cost
-            total_cost += m[i] * problem.density_coupling(i, m, problem.T)
+            total_cost += m[i] * problem.density_coupling(t=problem.T, node=i, m=m)
 
         return total_cost
 

@@ -70,15 +70,15 @@ def test_network_hamiltonian_object_equals_method_node_by_node(case):
     net = GridNetwork(width=4, height=3)
     net.create_network()
     if case == "default":
-        comps = NetworkMFGComponents(node_potential_func=lambda n, t: 0.2 * n)
+        comps = NetworkMFGComponents(node_potential_func=lambda t, n: 0.2 * n)
     elif case == "interaction":
         comps = NetworkMFGComponents(
-            node_interaction_func=lambda n, m, t: 0.3 * m[n] + 0.1 * m[n] ** 3,
-            node_potential_func=lambda n, t: 0.2 * n,
+            node_interaction_func=lambda t, n, m: 0.3 * m[n] + 0.1 * m[n] ** 3,
+            node_potential_func=lambda t, n: 0.2 * n,
         )
     else:  # custom full H (dispatch through hamiltonian_func)
         comps = NetworkMFGComponents(
-            hamiltonian_func=lambda n, nb, m, p, t: sum((p[j] - p[n]) ** 2 for j in nb) + 0.7 * m[n]
+            hamiltonian_func=lambda t, n, nb, p, m: sum((p[j] - p[n]) ** 2 for j in nb) + 0.7 * m[n]
         )
     prob = NetworkMFGProblem(geometry=net, T=1.0, Nt=5, components=comps)
     H = _build_H(prob)
@@ -92,7 +92,7 @@ def test_network_hamiltonian_object_equals_method_node_by_node(case):
 
     for i in range(N):
         nbrs = prob.get_node_neighbors(i)
-        method_val = prob.hamiltonian(i, nbrs, m, u, t)
+        method_val = prob.hamiltonian(t=t, node=i, neighbors=nbrs, p=u, m=m)
         object_val = float(H(x=np.array([i]), m=m, p=u, t=t))
         assert method_val == object_val, f"node {i} ({case}): method={method_val!r} object={object_val!r}"
 
@@ -121,7 +121,7 @@ def test_network_components_is_mfg_components_byte_identical():
     assert prob.get_boundary_conditions() is None, "no geometry node-BC -> resolves to None (Issue #1471)"
 
     # network-native construction is unaffected
-    comps = NetworkMFGComponents(node_potential_func=lambda n, t: 0.1 * n)
+    comps = NetworkMFGComponents(node_potential_func=lambda t, n: 0.1 * n)
     assert isinstance(comps, MFGComponents)
 
 
@@ -161,7 +161,7 @@ def test_network_hamiltonian_minimize_consistency():
     assert abs(control2 - 0.5) < 1e-9, f"one-sided control at node2 should be 0.5, got {control2}"
     assert abs(control2 - envelope2) < 1e-9, f"H control != envelope 0.5*sum(alpha^2): {control2} vs {envelope2}"
 
-    method2 = prob.hamiltonian(2, prob.get_node_neighbors(2), m, u, t)
+    method2 = prob.hamiltonian(t=t, node=2, neighbors=prob.get_node_neighbors(2), p=u, m=m)
     assert abs(method2 - float(H(x=np.array([2]), m=m, p=u, t=t))) < 1e-9, "RK45 method H must equal object H"
 
 
@@ -189,7 +189,7 @@ def test_network_policy_iteration_converges_to_rk45():
     net = GridNetwork(width=5, height=1)
     net.create_network()
     g = np.array([0.0, 0.0, 0.0, 0.0, 10.0])
-    comps = NetworkMFGComponents(node_potential_func=lambda i, t: 2.0 * i - 0.4 * i * i)
+    comps = NetworkMFGComponents(node_potential_func=lambda t, i: 2.0 * i - 0.4 * i * i)
     errs = []
     for nt in (20, 40, 80):
         prob = NetworkMFGProblem(geometry=net, T=0.5, Nt=nt, components=comps)
@@ -231,11 +231,11 @@ def test_network_hamiltonian_method_equals_object():
     for comps in (
         NetworkMFGComponents(),
         NetworkMFGComponents(
-            node_potential_func=lambda n, t: 0.3 * n,
-            node_interaction_func=lambda n, m, t: 2.0 * m[n],
+            node_potential_func=lambda t, n: 0.3 * n,
+            node_interaction_func=lambda t, n, m: 2.0 * m[n],
         ),
         NetworkMFGComponents(
-            hamiltonian_func=lambda node, nbrs, m, p, t: sum(max(p[node] - p[j], 0) ** 2 for j in nbrs) + 0.7
+            hamiltonian_func=lambda t, node, nbrs, p, m: sum(max(p[node] - p[j], 0) ** 2 for j in nbrs) + 0.7
         ),
     ):
         net = GridNetwork(width=5, height=1)
@@ -244,7 +244,7 @@ def test_network_hamiltonian_method_equals_object():
         obj = prob.hamiltonian_class
         for node in range(prob.num_nodes):
             nbrs = prob.get_node_neighbors(node)
-            method_val = prob.hamiltonian(node, nbrs, m5, p5, 0.1)
+            method_val = prob.hamiltonian(t=0.1, node=node, neighbors=nbrs, p=p5, m=m5)
             object_val = float(obj(x=node, m=m5, p=p5, t=0.1))
             assert method_val == object_val, f"method != object at node {node} (single-source broken)"
 
@@ -269,8 +269,8 @@ def test_network_geometry_alias_equivalence_and_deprecation():
     m = np.ones(prob_new.num_nodes) / prob_new.num_nodes
     p = np.arange(prob_new.num_nodes, dtype=float)
     for node in range(prob_new.num_nodes):
-        h_new = prob_new.hamiltonian(node, prob_new.get_node_neighbors(node), m, p, 0.1)
-        h_old = prob_old.hamiltonian(node, prob_old.get_node_neighbors(node), m, p, 0.1)
+        h_new = prob_new.hamiltonian(t=0.1, node=node, neighbors=prob_new.get_node_neighbors(node), p=p, m=m)
+        h_old = prob_old.hamiltonian(t=0.1, node=node, neighbors=prob_old.get_node_neighbors(node), p=p, m=m)
         assert h_new == h_old, f"alias construction diverged at node {node}"
 
 
@@ -293,7 +293,7 @@ def test_source_term_single_source_and_multipop_slice():
     """
     net = GridNetwork(width=3, height=3)
     net.create_network()
-    comps = NetworkMFGComponents(node_potential_func=lambda n, t: 0.2 * n)  # default congestion
+    comps = NetworkMFGComponents(node_potential_func=lambda t, n: 0.2 * n)  # default congestion
     prob = NetworkMFGProblem(geometry=net, components=comps, T=0.5, Nt=5)
     H = _build_H(prob)
     N = prob.num_nodes
@@ -326,8 +326,8 @@ def test_problem_methods_delegate_to_object():
     net = GridNetwork(width=4, height=3)
     net.create_network()
     comps = NetworkMFGComponents(
-        node_potential_func=lambda n, t: 0.2 * n + t,
-        node_interaction_func=lambda n, m, t: 0.3 * m[n] ** 2,
+        node_potential_func=lambda t, n: 0.2 * n + t,
+        node_interaction_func=lambda t, n, m: 0.3 * m[n] ** 2,
     )
     prob = NetworkMFGProblem(geometry=net, components=comps, T=1.0, Nt=5)
     H = prob.hamiltonian_class
@@ -336,17 +336,17 @@ def test_problem_methods_delegate_to_object():
     t = 0.4
     for node in range(N):
         # delegation identity (method == the wired object's accessor)
-        assert prob.node_potential(node, t) == H.node_potential_value(x=node, t=t)
-        assert prob.density_coupling(node, m, t) == H.coupling_value(x=node, m=m, t=t)
+        assert prob.node_potential(t=t, node=node) == H.node_potential_value(x=node, t=t)
+        assert prob.density_coupling(t=t, node=node, m=m) == H.coupling_value(x=node, m=m, t=t)
         # byte-identical to the legacy computation
-        assert prob.node_potential(node, t) == pytest.approx(0.2 * node + t)
-        assert prob.density_coupling(node, m, t) == pytest.approx(0.3 * m[node] ** 2)
+        assert prob.node_potential(t=t, node=node) == pytest.approx(0.2 * node + t)
+        assert prob.density_coupling(t=t, node=node, m=m) == pytest.approx(0.3 * m[node] ** 2)
 
     # default branch (no funcs): V == 0, congestion == 0.5*m[node]^2 (single-pop, own == raw)
     prob0 = NetworkMFGProblem(geometry=net, T=1.0, Nt=5)
     for node in range(N):
-        assert prob0.node_potential(node, t) == 0.0
-        assert prob0.density_coupling(node, m, t) == pytest.approx(0.5 * m[node] ** 2)
+        assert prob0.node_potential(t=t, node=node) == 0.0
+        assert prob0.density_coupling(t=t, node=node, m=m) == pytest.approx(0.5 * m[node] ** 2)
 
 
 def test_hamiltonian_dm_single_sourced_analytic():
@@ -365,7 +365,7 @@ def test_hamiltonian_dm_single_sourced_analytic():
     for node in range(N):
         # analytic default derivative == -m[node]; problem method delegates to the object
         assert H.dm(x=node, m=m, p=p, t=0.0) == pytest.approx(-m[node])
-        dm_method = prob.hamiltonian_dm(node, prob.get_node_neighbors(node), m, p, 0.0)
+        dm_method = prob.hamiltonian_dm(t=0.0, node=node, neighbors=prob.get_node_neighbors(node), p=p, m=m)
         assert dm_method == pytest.approx(-m[node])
         assert dm_method == H.dm(x=node, m=m, p=p, t=0.0)
 
@@ -384,7 +384,7 @@ def test_hamiltonian_dm_custom_interaction_finite_difference():
     """
     net = GridNetwork(width=5, height=1)
     net.create_network()
-    comps = NetworkMFGComponents(node_interaction_func=lambda n, m, t: 0.3 * m[n] ** 2)
+    comps = NetworkMFGComponents(node_interaction_func=lambda t, n, m: 0.3 * m[n] ** 2)
     prob = NetworkMFGProblem(geometry=net, components=comps, T=0.5, Nt=5)
     H = prob.hamiltonian_class
     m = np.array([0.1, 0.3, 0.5, 0.7, 0.9])
@@ -392,8 +392,34 @@ def test_hamiltonian_dm_custom_interaction_finite_difference():
     for node in range(5):
         # no crash for any node, and matches the analytic derivative -0.6*m[node]
         assert H.dm(x=node, m=m, p=p, t=0.0) == pytest.approx(-0.6 * m[node], abs=1e-4)
-        dm_method = prob.hamiltonian_dm(node, prob.get_node_neighbors(node), m, p, 0.0)
+        dm_method = prob.hamiltonian_dm(t=0.0, node=node, neighbors=prob.get_node_neighbors(node), p=p, m=m)
         assert dm_method == pytest.approx(-0.6 * m[node], abs=1e-4)
+
+
+def test_a_custom_dm_and_lagrangian_receive_each_argument_by_its_name():
+    """#2378 phase 5 part 3b: `hamiltonian_dm_func` and `lagrangian_func` are bound like the other
+    network callables, time first. No other test binds either (#2405 review)."""
+    net = GridNetwork(width=3, height=1)
+    net.create_network()
+    seen = {}
+
+    def dm(t, node, neighbors, p, m):
+        seen["dm"] = (t, node, list(neighbors), p[0], m[1])
+        return 0.0
+
+    def lagrangian(t, node, velocity, m):
+        seen["lagrangian"] = (t, node, velocity[0], m[1])
+        return 0.0
+
+    comps = NetworkMFGComponents(hamiltonian_dm_func=dm, lagrangian_func=lagrangian)
+    prob = NetworkMFGProblem(geometry=net, components=comps, T=0.5, Nt=5)
+    m, p = np.array([0.1, 0.2, 0.3]), np.array([7.0, 8.0, 9.0])
+    prob.hamiltonian_dm(t=0.25, node=1, neighbors=prob.get_node_neighbors(1), p=p, m=m)
+    prob.lagrangian(t=0.25, node=1, velocity=np.array([5.0]), m=m)
+    assert seen == {
+        "dm": (0.25, 1, list(prob.get_node_neighbors(1)), 7.0, 0.2),
+        "lagrangian": (0.25, 1, 5.0, 0.2),
+    }
 
 
 def test_a_non_uniform_running_cost_reaches_the_right_nodes_with_the_cost_sign():
@@ -409,7 +435,7 @@ def test_a_non_uniform_running_cost_reaches_the_right_nodes_with_the_cost_sign()
 
     net = GridNetwork(width=5, height=1)
     net.create_network()
-    comps = NetworkMFGComponents(node_potential_func=lambda n, t: 2.0 * n)  # a running COST, rising with n
+    comps = NetworkMFGComponents(node_potential_func=lambda t, n: 2.0 * n)  # a running COST, rising with n
     prob = NetworkMFGProblem(geometry=net, T=0.5, Nt=40, components=comps)
     n = prob.num_nodes
     m = np.ones((41, n)) / n

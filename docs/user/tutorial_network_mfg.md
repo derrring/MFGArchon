@@ -143,8 +143,8 @@ Defines network-specific MFG components:
 @dataclass
 class NetworkMFGComponents:
     # Network-specific functions
-    hamiltonian_func: Optional[Callable] = None              # H(node, neighbors, m, p, t)
-    node_potential_func: Optional[Callable] = None           # V(node, t)
+    hamiltonian_func: Optional[Callable] = None              # H(t, node, neighbors, p, m)
+    node_potential_func: Optional[Callable] = None           # V(t, node)
     edge_cost_func: Optional[Callable] = None                # Cost of edge traversal
     
     # Initial and terminal conditions
@@ -314,7 +314,7 @@ def terminal_reward(node):
         return -5.0  # High reward (negative cost)
     return 0.0
 
-def congestion_cost(node, m, t):
+def congestion_cost(t, node, m):
     return 2.0 * m[node]**2  # Quadratic congestion
 
 problem = create_grid_mfg_problem(
@@ -484,7 +484,7 @@ class CustomNetwork(BaseNetworkGeometry):
 Define problem-specific Hamiltonians:
 
 ```python
-def custom_hamiltonian(node, neighbors, m, p, t):
+def custom_hamiltonian(t, node, neighbors, p, m):
     # Implement custom Hamiltonian logic
     # Example: distance-based costs
     total_cost = 0.0
@@ -494,7 +494,7 @@ def custom_hamiltonian(node, neighbors, m, p, t):
         total_cost += control_cost
     
     # Potential and congestion are costs, so they enter H with a minus sign
-    total_cost -= node_potential(node, t) + congestion_function(node, m, t)
+    total_cost -= node_potential(t, node) + congestion_function(t, node, m)
     return total_cost
 
 # Use in problem definition. A custom hamiltonian_func is the whole H: do not also pass

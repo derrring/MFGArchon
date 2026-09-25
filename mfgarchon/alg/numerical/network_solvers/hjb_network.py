@@ -194,11 +194,11 @@ class NetworkHJBSolver(BaseHJBSolver):
         H = np.zeros(self.num_nodes)
         for i in range(self.num_nodes):
             neighbors = self.gradient_ops[i]
-            H[i] = self.network_problem.hamiltonian(i, neighbors, m, u, t)
+            H[i] = self.network_problem.hamiltonian(t=t, node=i, neighbors=neighbors, p=u, m=m)
         return H
 
     def _source_terms(self, m: np.ndarray, t: float) -> np.ndarray:
-        """Per-node RHS source terms V(i, t) + f(i, m, t) — node potential + congestion coupling
+        """Per-node RHS source terms V(t, i) + f(t, i, m) — node potential + congestion coupling
         (Issue #1474). In mfgarchon's convention ``-u_t + H_control = source`` these sit on the RHS,
         so in reversed time they enter ``du/ds`` with the OPPOSITE sign to the control Hamiltonian.
         Read only by policy evaluation, whose running cost is the Lagrangian ``c(alpha) + V + f``.
