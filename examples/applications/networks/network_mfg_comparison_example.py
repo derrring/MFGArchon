@@ -124,11 +124,11 @@ class NetworkMFGBenchmark:
             """Start with uniform distribution."""
             return 1.0 / self.num_nodes
 
-        def node_potential_func(node: int, t: float) -> float:
+        def node_potential_func(t: float, node: int) -> float:
             """Small staying cost."""
             return 0.05
 
-        def node_interaction_func(node: int, m: np.ndarray, t: float) -> float:
+        def node_interaction_func(t: float, node: int, m: np.ndarray) -> float:
             """Quadratic congestion."""
             return 1.5 * m[node] ** 2
 

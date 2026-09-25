@@ -70,15 +70,15 @@ def test_network_hamiltonian_object_equals_method_node_by_node(case):
     net = GridNetwork(width=4, height=3)
     net.create_network()
     if case == "default":
-        comps = NetworkMFGComponents(node_potential_func=lambda n, t: 0.2 * n)
+        comps = NetworkMFGComponents(node_potential_func=lambda t, n: 0.2 * n)
     elif case == "interaction":
         comps = NetworkMFGComponents(
-            node_interaction_func=lambda n, m, t: 0.3 * m[n] + 0.1 * m[n] ** 3,
-            node_potential_func=lambda n, t: 0.2 * n,
+            node_interaction_func=lambda t, n, m: 0.3 * m[n] + 0.1 * m[n] ** 3,
+            node_potential_func=lambda t, n: 0.2 * n,
         )
     else:  # custom full H (dispatch through hamiltonian_func)
         comps = NetworkMFGComponents(
-            hamiltonian_func=lambda n, nb, m, p, t: sum((p[j] - p[n]) ** 2 for j in nb) + 0.7 * m[n]
+            hamiltonian_func=lambda t, n, nb, p, m: sum((p[j] - p[n]) ** 2 for j in nb) + 0.7 * m[n]
         )
     prob = NetworkMFGProblem(geometry=net, T=1.0, Nt=5, components=comps)
     H = _build_H(prob)
@@ -121,7 +121,7 @@ def test_network_components_is_mfg_components_byte_identical():
     assert prob.get_boundary_conditions() is None, "no geometry node-BC -> resolves to None (Issue #1471)"
 
     # network-native construction is unaffected
-    comps = NetworkMFGComponents(node_potential_func=lambda n, t: 0.1 * n)
+    comps = NetworkMFGComponents(node_potential_func=lambda t, n: 0.1 * n)
     assert isinstance(comps, MFGComponents)
 
 
@@ -189,7 +189,7 @@ def test_network_policy_iteration_converges_to_rk45():
     net = GridNetwork(width=5, height=1)
     net.create_network()
     g = np.array([0.0, 0.0, 0.0, 0.0, 10.0])
-    comps = NetworkMFGComponents(node_potential_func=lambda i, t: 2.0 * i - 0.4 * i * i)
+    comps = NetworkMFGComponents(node_potential_func=lambda t, i: 2.0 * i - 0.4 * i * i)
     errs = []
     for nt in (20, 40, 80):
         prob = NetworkMFGProblem(geometry=net, T=0.5, Nt=nt, components=comps)
@@ -231,11 +231,11 @@ def test_network_hamiltonian_method_equals_object():
     for comps in (
         NetworkMFGComponents(),
         NetworkMFGComponents(
-            node_potential_func=lambda n, t: 0.3 * n,
-            node_interaction_func=lambda n, m, t: 2.0 * m[n],
+            node_potential_func=lambda t, n: 0.3 * n,
+            node_interaction_func=lambda t, n, m: 2.0 * m[n],
         ),
         NetworkMFGComponents(
-            hamiltonian_func=lambda node, nbrs, m, p, t: sum(max(p[node] - p[j], 0) ** 2 for j in nbrs) + 0.7
+            hamiltonian_func=lambda t, node, nbrs, p, m: sum(max(p[node] - p[j], 0) ** 2 for j in nbrs) + 0.7
         ),
     ):
         net = GridNetwork(width=5, height=1)
@@ -293,7 +293,7 @@ def test_source_term_single_source_and_multipop_slice():
     """
     net = GridNetwork(width=3, height=3)
     net.create_network()
-    comps = NetworkMFGComponents(node_potential_func=lambda n, t: 0.2 * n)  # default congestion
+    comps = NetworkMFGComponents(node_potential_func=lambda t, n: 0.2 * n)  # default congestion
     prob = NetworkMFGProblem(geometry=net, components=comps, T=0.5, Nt=5)
     H = _build_H(prob)
     N = prob.num_nodes
@@ -326,8 +326,8 @@ def test_problem_methods_delegate_to_object():
     net = GridNetwork(width=4, height=3)
     net.create_network()
     comps = NetworkMFGComponents(
-        node_potential_func=lambda n, t: 0.2 * n + t,
-        node_interaction_func=lambda n, m, t: 0.3 * m[n] ** 2,
+        node_potential_func=lambda t, n: 0.2 * n + t,
+        node_interaction_func=lambda t, n, m: 0.3 * m[n] ** 2,
     )
     prob = NetworkMFGProblem(geometry=net, components=comps, T=1.0, Nt=5)
     H = prob.hamiltonian_class
@@ -384,7 +384,7 @@ def test_hamiltonian_dm_custom_interaction_finite_difference():
     """
     net = GridNetwork(width=5, height=1)
     net.create_network()
-    comps = NetworkMFGComponents(node_interaction_func=lambda n, m, t: 0.3 * m[n] ** 2)
+    comps = NetworkMFGComponents(node_interaction_func=lambda t, n, m: 0.3 * m[n] ** 2)
     prob = NetworkMFGProblem(geometry=net, components=comps, T=0.5, Nt=5)
     H = prob.hamiltonian_class
     m = np.array([0.1, 0.3, 0.5, 0.7, 0.9])
@@ -409,7 +409,7 @@ def test_a_non_uniform_running_cost_reaches_the_right_nodes_with_the_cost_sign()
 
     net = GridNetwork(width=5, height=1)
     net.create_network()
-    comps = NetworkMFGComponents(node_potential_func=lambda n, t: 2.0 * n)  # a running COST, rising with n
+    comps = NetworkMFGComponents(node_potential_func=lambda t, n: 2.0 * n)  # a running COST, rising with n
     prob = NetworkMFGProblem(geometry=net, T=0.5, Nt=40, components=comps)
     n = prob.num_nodes
     m = np.ones((41, n)) / n

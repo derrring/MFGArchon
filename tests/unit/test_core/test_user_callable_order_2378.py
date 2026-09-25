@@ -233,9 +233,15 @@ def test_the_extensions_register_their_own_method_orders():
             def H_conditional(self, x, p, m, theta, t):
                 return 0.0
 
-    # The network's `hamiltonian(node, neighbors, m, p, t)` is another API (part 3b), not checked here.
+    # The network's own order: the node for x, its adjacency beside it (part 3b, ruling 2026-09-25).
+    with pytest.raises(TypeError, match=r"_OldNetwork\.hamiltonian takes \(node, neighbors, m, p, t\)"):
+
+        class _OldNetwork(NetworkMFGProblem):
+            def hamiltonian(self, node, neighbors, m, p, t):
+                return 0.0
+
     class _Network(NetworkMFGProblem):
-        def hamiltonian(self, node, neighbors, m, p, t):
+        def hamiltonian(self, t, node, neighbors, p, m):
             return 0.0
 
 
@@ -311,3 +317,53 @@ def test_the_deprecated_hamiltonian_adapter_redirects_to_the_binder():
         pytest.raises(TypeError, match=r"signature_hint"),
     ):
         HamiltonianAdapter(H, signature_hint="legacy")
+
+
+# ---------------------------------------------------------------------------
+# Part 3b: the network callables (node for x, its adjacency beside it; ruling 2026-09-25)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "refused",
+    [
+        lambda node, neighbors, m, p, t: 0.0,  # the old order
+        lambda t, node, neighbors, m, p: 0.0,  # the half-migration, named
+        lambda t, n, nb, a, b: 0.0,  # the half-migration, unnamed: t alone cannot tell it from the new order
+    ],
+)
+def test_a_network_hamiltonian_in_an_old_order_is_refused(refused):
+    from mfgarchon.types.callable_protocols import NETWORK_HAMILTONIAN_SLOTS
+
+    with pytest.raises(TypeError, match=r"out of order|cannot be matched"):
+        bind_user_callable(refused, NETWORK_HAMILTONIAN_SLOTS, role="hamiltonian_func")
+
+
+def test_a_network_hamiltonian_in_the_new_order_receives_each_slot():
+    from mfgarchon.types.callable_protocols import NETWORK_HAMILTONIAN_SLOTS
+
+    values = {"t": 0.5, "node": 2, "neighbors": [1, 3], "p": "P", "m": "M"}
+    for new_order in (
+        lambda t, node, neighbors, p, m: (t, node, neighbors, p, m),
+        lambda t, n, nb, p, m: (t, n, nb, p, m),
+    ):
+        bound = bind_user_callable(new_order, NETWORK_HAMILTONIAN_SLOTS, role="hamiltonian_func")
+        assert bound(**values) == (0.5, 2, [1, 3], "P", "M")
+
+
+def test_node_callables_take_time_first():
+    from mfgarchon.types.callable_protocols import NODE_INTERACTION_SLOTS, NODE_POTENTIAL_SLOTS
+
+    assert bind_user_callable(lambda t, n: (t, n), NODE_POTENTIAL_SLOTS, role="node_potential_func")(t=0.5, node=3) == (
+        0.5,
+        3,
+    )
+    assert (
+        bind_user_callable(lambda t, n, m: m, NODE_INTERACTION_SLOTS, role="node_interaction_func")(
+            t=0.5, node=3, m="M"
+        )
+        == "M"
+    )
+    for old, slots in ((lambda n, t: 0.0, NODE_POTENTIAL_SLOTS), (lambda n, m, t: 0.0, NODE_INTERACTION_SLOTS)):
+        with pytest.raises(TypeError, match=r"out of order"):
+            bind_user_callable(old, slots, role="node callable")
