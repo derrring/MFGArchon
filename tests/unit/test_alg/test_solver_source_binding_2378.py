@@ -168,3 +168,34 @@ def test_a_misplaced_slot_name_with_star_args_is_refused():
     reading is the old call, so it is refused."""
     with pytest.raises(TypeError, match=r"x would receive another slot's value"):
         evaluate_solver_source(lambda x, *rest: x, t=0.5, x=_X)
+
+
+def test_two_different_sources_that_compare_equal_are_each_bound_on_their_own():
+    """#2406 review, round 3: a cache looked up by equality let a space-first source borrow the plan
+    of an equal time-first one and receive time as space. Keyed by identity, each is bound itself."""
+    import functools
+
+    class Wrap:
+        def __init__(self, f):
+            functools.update_wrapper(self, f)  # inspect.signature follows the per-instance __wrapped__
+            self.f = f
+
+        def __call__(self, *a, **k):
+            return self.f(*a, **k)
+
+        def __eq__(self, other):
+            return isinstance(other, Wrap)
+
+        def __hash__(self):
+            return 0
+
+    def time_first(t, x):
+        return t
+
+    def space_first(x, t):
+        return t
+
+    kept = Wrap(time_first)
+    assert evaluate_solver_source(kept, t=0.5, x=_X) == 0.5
+    with pytest.raises(TypeError, match=r"out of order"):
+        evaluate_solver_source(Wrap(space_first), t=0.5, x=_X)

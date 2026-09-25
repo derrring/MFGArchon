@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import functools
 import inspect
 import weakref
 from dataclasses import dataclass, field
@@ -234,12 +235,12 @@ def refuse_methods_out_of_order(cls: type, table: Mapping[str, Slots | None]) ->
             )
 
 
-# How each source callable is bound -- the rule and the slots, never the callable itself -- keyed
-# weakly on the callable. The couplers build a fresh closure per Picard iteration that captures that
-# iteration's arrays; a cache holding the callable kept every one of them alive (#2406 review).
-_SOURCE_PLANS: weakref.WeakKeyDictionary[Any, tuple[str, tuple[str, ...], tuple[str, ...]]] = (
-    weakref.WeakKeyDictionary()
-)
+# How each source callable is bound -- the rule and the slots, never the callable itself -- keyed by
+# the callable's identity, with a weak reference that drops the entry when the callable dies. Not by
+# the callable: the couplers build a fresh closure per Picard iteration that captures that
+# iteration's arrays, and holding it kept every one alive (#2406 review, round 2). Not by equality
+# either: two different callables that compare equal would share one plan (round 3).
+_SOURCE_PLANS: dict[int, tuple[weakref.ref, tuple[str, tuple[str, ...], tuple[str, ...]]]] = {}
 
 
 def evaluate_solver_source(source_term: Callable[..., Any], *, t: Any, x: Any) -> Any:
@@ -248,20 +249,25 @@ def evaluate_solver_source(source_term: Callable[..., Any], *, t: Any, x: Any) -
     The one place a solver evaluates the source it was handed: a callable written ``(x, t)`` is
     refused rather than handed time as space. How it binds is remembered per callable, so a time
     loop inspects the signature once, not once per step (#2406 review: +7.5% on a small FP solve).
-    A callable that cannot be weakly referenced or hashed is bound on every call.
+    A callable that cannot be weakly referenced is bound on every call.
     """
-    try:
-        plan = _SOURCE_PLANS.get(source_term)
-    except TypeError:
-        plan, cacheable = None, False
-    else:
-        cacheable = True
-    if plan is not None:
-        return BoundCallable(source_term, *plan)(t=t, x=x)
+    key = id(source_term)
+    entry = _SOURCE_PLANS.get(key)
+    if entry is not None and entry[0]() is source_term:
+        return BoundCallable(source_term, *entry[1])(t=t, x=x)
     bound = bind_user_callable(source_term, SOLVER_SOURCE_SLOTS, role="source_term")
-    if cacheable:
-        _SOURCE_PLANS[source_term] = (bound.binding, bound.passes, bound.params)
+    try:
+        ref = weakref.ref(source_term, functools.partial(_forget_source, key))
+    except TypeError:
+        return bound(t=t, x=x)
+    _SOURCE_PLANS[key] = (ref, (bound.binding, bound.passes, bound.params))
     return bound(t=t, x=x)
+
+
+def _forget_source(key: int, dead: weakref.ref) -> None:
+    entry = _SOURCE_PLANS.get(key)
+    if entry is not None and entry[0] is dead:
+        del _SOURCE_PLANS[key]
 
 
 class BoundCallable:
