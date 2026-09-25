@@ -1,0 +1,201 @@
+"""A solver's `source_term(t, x)` is evaluated through its binding (#2375 ruling 8, #2378 phase 5 part 3c).
+
+The order was always (t, x), so ruling 8 did not reorder it and unnamed parameters can only mean
+that order. What the binding adds is the refusal: a source written (x, t) used to receive time as
+space without an error.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+import numpy as np
+
+from mfgarchon.types.callable_protocols import evaluate_solver_source
+
+_X = np.linspace(0.0, 1.0, 5)
+
+# The names under which a solver-level source reaches a call: a solver's own `source_term`, and the
+# `coupling_source` a graph coupling operator returns (#2406 review).
+_SOLVER_SOURCES = {"source_term", "coupling_source"}
+
+
+@pytest.mark.parametrize(
+    "source",
+    [lambda t, x: t + x, lambda t, pts: t + pts, lambda a, b: a + b],
+    ids=["named", "time named", "unnamed"],
+)
+def test_a_time_first_source_is_evaluated_at_t_and_x(source):
+    np.testing.assert_array_equal(evaluate_solver_source(source, t=0.5, x=_X), 0.5 + _X)
+
+
+@pytest.mark.parametrize("source", [lambda x, t: x, lambda pts, time: pts], ids=["x, t", "pts, time"])
+def test_a_space_first_source_is_refused(source):
+    with pytest.raises(TypeError, match=r"out of order"):
+        evaluate_solver_source(source, t=0.5, x=_X)
+
+
+def test_a_solver_refuses_a_space_first_source_instead_of_computing_with_it():
+    """End to end, on the n-D FDM HJB path: it used to hand `t` to the parameter it believed was `x`."""
+    from mfgarchon import Conditions, MFGProblem, Model
+    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import no_flux_bc
+
+    problem = MFGProblem(
+        model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost()), sigma=0.2),
+        domain=TensorProductGrid(
+            bounds=[(0.0, 1.0)] * 2, Nx_points=[5, 5], boundary_conditions=no_flux_bc(dimension=2)
+        ),
+        conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.2),
+        Nt=4,
+    )
+    shape = (problem.Nt + 1, *problem.geometry.get_grid_shape())
+    args = (np.ones(shape), np.zeros(shape[1:]), np.zeros(shape))
+    with pytest.raises(TypeError, match=r"source_term .* out of order"):
+        HJBFDMSolver(problem).solve_hjb_system(*args, source_term=lambda x, t: np.zeros(np.shape(x)[0]))
+
+
+def test_no_solver_calls_its_source_term_directly():
+    """Every evaluation goes through `evaluate_solver_source`: a site that calls `source_term(...)`
+    itself would pass an (x, t) source time as space again. The population is the package source,
+    read statically, so a site no test reaches is covered too."""
+    import ast
+    from pathlib import Path
+
+    import mfgarchon
+
+    package = Path(mfgarchon.__file__).parent
+    direct = []
+    for path in sorted(package.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in _SOLVER_SOURCES:
+                direct.append(f"{path.relative_to(package)}:{node.lineno}")
+    assert not direct, f"source_term called directly, not through evaluate_solver_source: {direct}"
+
+
+def test_the_variational_lagrangian_callables_are_bound_time_first():
+    """`VariationalMFGComponents`' Lagrangian and its derivatives were always (t, x, v, m), called
+    positionally: the binding refuses one written space-first."""
+    from mfgarchon.types.callable_protocols import VARIATIONAL_LAGRANGIAN_SLOTS, bind_user_callable
+
+    bound = bind_user_callable(lambda t, x, v, m: (t, x, v, m), VARIATIONAL_LAGRANGIAN_SLOTS, role="lagrangian_func")
+    assert bound(t=1, x=2, v=3, m=4) == (1, 2, 3, 4)
+    with pytest.raises(TypeError, match=r"out of order"):
+        bind_user_callable(lambda x, t, v, m: 0.0, VARIATIONAL_LAGRANGIAN_SLOTS, role="lagrangian_func")
+
+
+def test_no_variational_lagrangian_callable_is_called_directly():
+    import ast
+    from pathlib import Path
+
+    import mfgarchon.alg.optimization.variational_problem as module
+
+    tree = ast.parse(Path(module.__file__).read_text())
+    direct = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr.startswith("lagrangian")
+        and node.func.attr.endswith("_func")
+        and "components" in ast.unparse(node.func.value)
+    ]
+    assert not direct, f"a Lagrangian callable called directly, not through its binding, at lines {direct}"
+
+
+def _plain(t, x):
+    return t + x
+
+
+def _wrapper(*a, **k):
+    return _plain(*a, **k)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [_wrapper, lambda *a: _plain(*a), np.vectorize(_plain), lambda t, *rest: _plain(t, *rest)],
+    ids=["*args, **kwargs wrapper", "lambda *a", "np.vectorize", "t, *rest"],
+)
+def test_a_source_that_takes_its_arguments_positionally_is_called_as_before(source):
+    """#2406 review: a callable ruling 8 did not reorder is called positionally in slot order when it
+    can take every slot that way, exactly as before, not refused or called by keyword."""
+    np.testing.assert_allclose(evaluate_solver_source(source, t=0.5, x=_X), 0.5 + _X)
+
+
+def test_a_jax_grad_lagrangian_derivative_is_called_positionally():
+    """`jax.grad` shows the wrapped function's names but accepts positions only; the variational
+    module's own idiom for derivatives (#2406 review)."""
+    jax = pytest.importorskip("jax")
+    from mfgarchon.types.callable_protocols import VARIATIONAL_LAGRANGIAN_SLOTS, bind_user_callable
+
+    def lagrangian(t, x, v, m):
+        return 0.5 * v**2 + x * m + t * x
+
+    for argnum, expected in ((1, 0.4 + 0.1), (2, 0.3), (3, 0.2)):
+        bound = bind_user_callable(jax.grad(lagrangian, argnums=argnum), VARIATIONAL_LAGRANGIAN_SLOTS, role="d")
+        assert float(bound(t=0.1, x=0.2, v=0.3, m=0.4)) == pytest.approx(expected)
+
+
+def test_remembering_a_binding_keeps_no_solve_s_arrays_alive():
+    """#2406 review: the couplers build a closure per Picard iteration that captures that iteration's
+    arrays. A cache holding the callable kept all of them alive after the solve; the binding plan is
+    now remembered weakly, so a closure and its arrays go when the solve drops them."""
+    import gc
+    import weakref
+
+    def closure_over(k):
+        captured = np.full(1000, float(k))
+
+        def source(t, x):
+            return captured[: np.shape(x)[0]] * 0.0 + t
+
+        return source, weakref.ref(captured)
+
+    alive = []
+    for k in range(5):
+        source, ref = closure_over(k)
+        evaluate_solver_source(source, t=0.5, x=_X)
+        alive.append(ref)
+        del source
+    gc.collect()
+    assert [ref() is None for ref in alive] == [True] * 5
+
+
+def test_a_misplaced_slot_name_with_star_args_is_refused():
+    """#2406 review: `(x, *rest)` was bound by name with x alone, where main passed t as x. Neither
+    reading is the old call, so it is refused."""
+    with pytest.raises(TypeError, match=r"x would receive another slot's value"):
+        evaluate_solver_source(lambda x, *rest: x, t=0.5, x=_X)
+
+
+def test_two_different_sources_that_compare_equal_are_each_bound_on_their_own():
+    """#2406 review, round 3: a cache looked up by equality let a space-first source borrow the plan
+    of an equal time-first one and receive time as space. Keyed by identity, each is bound itself."""
+    import functools
+
+    class Wrap:
+        def __init__(self, f):
+            functools.update_wrapper(self, f)  # inspect.signature follows the per-instance __wrapped__
+            self.f = f
+
+        def __call__(self, *a, **k):
+            return self.f(*a, **k)
+
+        def __eq__(self, other):
+            return isinstance(other, Wrap)
+
+        def __hash__(self):
+            return 0
+
+    def time_first(t, x):
+        return t
+
+    def space_first(x, t):
+        return t
+
+    kept = Wrap(time_first)
+    assert evaluate_solver_source(kept, t=0.5, x=_X) == 0.5
+    with pytest.raises(TypeError, match=r"out of order"):
+        evaluate_solver_source(Wrap(space_first), t=0.5, x=_X)

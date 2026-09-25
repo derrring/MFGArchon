@@ -42,6 +42,7 @@ from mfgarchon.geometry.boundary.bc_utils import (
 )
 from mfgarchon.geometry.boundary.enforcement import enforce_periodic_value_nd
 from mfgarchon.geometry.boundary.types import BCType
+from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
@@ -330,7 +331,7 @@ class FPSLSolver(BaseFPSolver):
         source_points = self.problem.geometry.get_spatial_grid() if source_term is not None else None
 
         def _source_increment(t: float) -> np.ndarray:
-            values = np.asarray(source_term(t, source_points), dtype=float).ravel()
+            values = np.asarray(evaluate_solver_source(source_term, t=t, x=source_points), dtype=float).ravel()
             if values.size != M[0].size:
                 raise ValueError(
                     f"FPSLSolver: source_term returned {values.size} values at t={t:.6g}, expected "

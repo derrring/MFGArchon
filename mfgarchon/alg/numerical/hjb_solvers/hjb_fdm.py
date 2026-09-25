@@ -25,6 +25,7 @@ from mfgarchon.operators.stencils.finite_difference import (
     upwind_momentum,
     upwind_momentum_derivatives,
 )
+from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import FixedPointSolver, NewtonSolver
@@ -697,7 +698,7 @@ class HJBFDMSolver(BaseHJBSolver):
             # Evaluate source term at current timestep (if provided)
             if source_term is not None:
                 x_grid = self.problem.geometry.get_spatial_grid()  # (N, d)
-                source_at_n = source_term(t_current, x_grid).reshape(self.shape)
+                source_at_n = evaluate_solver_source(source_term, t=t_current, x=x_grid).reshape(self.shape)
             else:
                 source_at_n = None
 

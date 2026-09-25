@@ -17,7 +17,9 @@ Usage:
 
 from __future__ import annotations
 
+import functools
 import inspect
+import weakref
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -43,13 +45,16 @@ class Slots:
     be bound by name (a raw Hamiltonian takes all four). ``optional`` are slots a positional
     callable may leave out (a conditional Hamiltonian's ``t``, as it always could); what remains
     must be in the same order before ruling 8 as after it, so a positional callable without them
-    needs no name to say which order it is in.
+    needs no name to say which order it is in. ``reordered`` is False for a callable ruling 8 did
+    not reorder (a solver's ``source_term`` was always ``(t, x)``): its unnamed parameters can only
+    mean the one order it has ever had.
     """
 
     order: tuple[str, ...]
     aliases: Mapping[str, str] = field(default_factory=dict)
     unmoved: tuple[str, ...] = ()
     swapped: tuple[str, str] | None = None
+    reordered: bool = True
     required: tuple[str, ...] = ()
     optional: tuple[str, ...] = ()
 
@@ -72,6 +77,9 @@ NETWORK_HAMILTONIAN_SLOTS = Slots(("t", "node", "neighbors", "p", "m"), unmoved=
 NODE_POTENTIAL_SLOTS = Slots(("t", "node"))
 NODE_INTERACTION_SLOTS = Slots(("t", "node", "m"))
 NODE_LAGRANGIAN_SLOTS = Slots(("t", "node", "velocity", "m"))
+# Callables ruling 8 did not reorder: always time-first, bound so a space-first one is refused.
+SOLVER_SOURCE_SLOTS = Slots(("t", "x"), reordered=False)
+VARIATIONAL_LAGRANGIAN_SLOTS = Slots(("t", "x", "v", "m"), reordered=False)
 
 _TIME_NAMES = ("t", "time")
 
@@ -131,10 +139,29 @@ def bind_user_callable(
         p.name for p in params if p.name in slot_of and p.kind in (kinds.POSITIONAL_OR_KEYWORD, kinds.KEYWORD_ONLY)
     ]
     required = [p for p in positional if p.default is kinds.empty]
+    var_positional = any(p.kind is kinds.VAR_POSITIONAL for p in params)
+    if not slots.reordered:
+        # Never reordered: a callable that can take every slot positionally, with no slot-named
+        # parameter misplaced, is called exactly as before -- positionally, in slot order. That keeps
+        # `*args` wrappers, `np.vectorize` and `jax.grad` callables (keyword-hostile, though their
+        # signature shows names) working as they did (#2406 review).
+        takes_all = var_positional or len(positional) >= len(order_)
+        misplaced_here = [
+            name for i, name in enumerate(order[: len(order_)]) if name in slot_of and order_.index(slot_of[name]) != i
+        ]
+        if takes_all and len(required) <= len(order_) and not misplaced_here:
+            return BoundCallable(fn, "positional", order_)
+        if takes_all and misplaced_here:
+            # Positionally it would receive another slot's value; by name it would receive fewer
+            # arguments than it did (#2406 review: `(x, *rest)` got t as x). Neither is the old call.
+            raise TypeError(
+                f"{role} {getattr(fn, '__qualname__', fn)!r} takes ({', '.join(p.name for p in params)}): "
+                f"{', '.join(misplaced_here)} would receive another slot's value. It takes "
+                f"({', '.join(order_)}); name its parameters in that order."
+            )
     declares_required = {slot_of[name] for name in named} >= set(slots.required)
     if named and all(p.name in named for p in required) and declares_required:
         return BoundCallable(fn, "keyword", tuple(slot_of[name] for name in named), tuple(named))
-    var_positional = any(p.kind is kinds.VAR_POSITIONAL for p in params)
     # Positionally it receives every slot, or every slot but the optional ones.
     shortened = tuple(slot for slot in order_ if slot not in slots.optional)
     passes = order_ if len(required) == len(order_) else shortened if len(required) == len(shortened) else None
@@ -147,7 +174,7 @@ def bind_user_callable(
     # name must say which order it is in.
     names_moved = any(name in slot_of and slot_of[name] not in slots.unmoved for name in order)
     names_pair = slots.swapped is None or any(slot_of.get(name) in slots.swapped for name in order)
-    identified = passes != order_ or (names_moved and names_pair)
+    identified = not slots.reordered or passes != order_ or (names_moved and names_pair)
     if passes is not None and not var_positional and not misplaced and identified:
         return BoundCallable(fn, "positional", passes)
     if spatial_only and len(required) <= 1 and (positional or var_positional):
@@ -206,6 +233,41 @@ def refuse_methods_out_of_order(cls: type, table: Mapping[str, Slots | None]) ->
                 f"(#2375 ruling 8) it takes ({', '.join(slots.order)}), time first: reorder the parameters, and "
                 f"call the method by keyword."
             )
+
+
+# How each source callable is bound -- the rule and the slots, never the callable itself -- keyed by
+# the callable's identity, with a weak reference that drops the entry when the callable dies. Not by
+# the callable: the couplers build a fresh closure per Picard iteration that captures that
+# iteration's arrays, and holding it kept every one alive (#2406 review, round 2). Not by equality
+# either: two different callables that compare equal would share one plan (round 3).
+_SOURCE_PLANS: dict[int, tuple[weakref.ref, tuple[str, tuple[str, ...], tuple[str, ...]]]] = {}
+
+
+def evaluate_solver_source(source_term: Callable[..., Any], *, t: Any, x: Any) -> Any:
+    """A solver's ``source_term`` at ``(t, x)``, through its binding (#2375 ruling 8).
+
+    The one place a solver evaluates the source it was handed: a callable written ``(x, t)`` is
+    refused rather than handed time as space. How it binds is remembered per callable, so a time
+    loop inspects the signature once, not once per step (#2406 review: +7.5% on a small FP solve).
+    A callable that cannot be weakly referenced is bound on every call.
+    """
+    key = id(source_term)
+    entry = _SOURCE_PLANS.get(key)
+    if entry is not None and entry[0]() is source_term:
+        return BoundCallable(source_term, *entry[1])(t=t, x=x)
+    bound = bind_user_callable(source_term, SOLVER_SOURCE_SLOTS, role="source_term")
+    try:
+        ref = weakref.ref(source_term, functools.partial(_forget_source, key))
+    except TypeError:
+        return bound(t=t, x=x)
+    _SOURCE_PLANS[key] = (ref, (bound.binding, bound.passes, bound.params))
+    return bound(t=t, x=x)
+
+
+def _forget_source(key: int, dead: weakref.ref) -> None:
+    entry = _SOURCE_PLANS.get(key)
+    if entry is not None and entry[0] is dead:
+        del _SOURCE_PLANS[key]
 
 
 class BoundCallable:

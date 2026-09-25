@@ -11,6 +11,7 @@ import scipy.sparse as sparse
 from mfgarchon.alg.base_solver import BaseNumericalSolver, SchemeFamily
 from mfgarchon.backends.compat import backend_aware_assign, backend_aware_copy, has_nan_or_inf
 from mfgarchon.core.hamiltonian import HEvalState
+from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
@@ -1841,7 +1842,7 @@ def solve_hjb_system_backward(
         # Evaluate source term at current timestep (if provided)
         if source_term is not None:
             x_grid = problem.geometry.get_spatial_grid()  # (Nx, d) ndarray
-            source_at_n = source_term(current_time, x_grid).ravel()
+            source_at_n = evaluate_solver_source(source_term, t=current_time, x=x_grid).ravel()
         else:
             source_at_n = None
 

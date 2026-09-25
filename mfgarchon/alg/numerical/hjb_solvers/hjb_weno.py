@@ -45,6 +45,7 @@ from mfgarchon.core.derivatives import DerivativeTensors, to_multi_index_dict
 from mfgarchon.geometry.boundary.applicator_fdm import PreallocatedGhostBuffer
 from mfgarchon.geometry.boundary.conditions import neumann_bc
 from mfgarchon.geometry.boundary.types import BCType
+from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 from .base_hjb import BaseHJBSolver
@@ -1055,7 +1056,7 @@ class HJBWENOSolver(BaseHJBSolver):
             # linspace here would make one manufactured source unrunnable across two solvers,
             # which defeats the point of a shared MMS channel.
             x_grid = self.problem.geometry.get_spatial_grid()
-            forcing = lambda tt: source_term(tt, x_grid)  # noqa: E731
+            forcing = lambda tt: evaluate_solver_source(source_term, t=tt, x=x_grid)  # noqa: E731
 
         # Backward time integration
         for t_idx in range(n_time_points - 2, -1, -1):

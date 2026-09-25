@@ -34,6 +34,7 @@ from mfgarchon.alg.numerical.hjb_solvers.h_eval import (
 from mfgarchon.geometry.boundary.applicator_base import DiscretizationType
 from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL
 from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace
+from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.qp_utils import QPCache, QPSolver
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, resolve_diffusion_source
@@ -3117,7 +3118,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 # - D*lap_u` while the source contract is `F(u) = (u-u_next)/dt + H - S = 0`.
                 # Getting this backwards is not subtle -- measured on the manufactured pair,
                 # `-r_u` converges at EOC 2.00/1.99 while `+r_u` sits flat at 1.42.
-                s_n = np.asarray(source_term(n * _dt, _x), dtype=float)
+                s_n = np.asarray(evaluate_solver_source(source_term, t=n * _dt, x=_x), dtype=float)
                 # Shape-check rather than reshape. A 2D source handed back in the wrong point
                 # order has the right SIZE and silently yields a different value function --
                 # measured, an F-ordered (nx, ny) array is accepted and changes Linf from
