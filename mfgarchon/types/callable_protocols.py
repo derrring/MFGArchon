@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import inspect
+import weakref
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -149,6 +150,14 @@ def bind_user_callable(
         ]
         if takes_all and len(required) <= len(order_) and not misplaced_here:
             return BoundCallable(fn, "positional", order_)
+        if takes_all and misplaced_here:
+            # Positionally it would receive another slot's value; by name it would receive fewer
+            # arguments than it did (#2406 review: `(x, *rest)` got t as x). Neither is the old call.
+            raise TypeError(
+                f"{role} {getattr(fn, '__qualname__', fn)!r} takes ({', '.join(p.name for p in params)}): "
+                f"{', '.join(misplaced_here)} would receive another slot's value. It takes "
+                f"({', '.join(order_)}); name its parameters in that order."
+            )
     declares_required = {slot_of[name] for name in named} >= set(slots.required)
     if named and all(p.name in named for p in required) and declares_required:
         return BoundCallable(fn, "keyword", tuple(slot_of[name] for name in named), tuple(named))
@@ -225,23 +234,33 @@ def refuse_methods_out_of_order(cls: type, table: Mapping[str, Slots | None]) ->
             )
 
 
-_SOURCE_BINDINGS: dict[int, BoundCallable] = {}
+# How each source callable is bound -- the rule and the slots, never the callable itself -- keyed
+# weakly on the callable. The couplers build a fresh closure per Picard iteration that captures that
+# iteration's arrays; a cache holding the callable kept every one of them alive (#2406 review).
+_SOURCE_PLANS: weakref.WeakKeyDictionary[Any, tuple[str, tuple[str, ...], tuple[str, ...]]] = (
+    weakref.WeakKeyDictionary()
+)
 
 
 def evaluate_solver_source(source_term: Callable[..., Any], *, t: Any, x: Any) -> Any:
     """A solver's ``source_term`` at ``(t, x)``, through its binding (#2375 ruling 8).
 
     The one place a solver evaluates the source it was handed: a callable written ``(x, t)`` is
-    refused rather than handed time as space. The binding is cached by the callable's identity, so a
-    solve's time loop inspects the signature once, not once per step (#2406 review: +7.5% on a
-    small FP solve).
+    refused rather than handed time as space. How it binds is remembered per callable, so a time
+    loop inspects the signature once, not once per step (#2406 review: +7.5% on a small FP solve).
+    A callable that cannot be weakly referenced or hashed is bound on every call.
     """
-    bound = _SOURCE_BINDINGS.get(id(source_term))
-    if bound is None or bound.fn is not source_term:
-        bound = bind_user_callable(source_term, SOLVER_SOURCE_SLOTS, role="source_term")
-        if len(_SOURCE_BINDINGS) >= 256:
-            _SOURCE_BINDINGS.clear()
-        _SOURCE_BINDINGS[id(source_term)] = bound
+    try:
+        plan = _SOURCE_PLANS.get(source_term)
+    except TypeError:
+        plan, cacheable = None, False
+    else:
+        cacheable = True
+    if plan is not None:
+        return BoundCallable(source_term, *plan)(t=t, x=x)
+    bound = bind_user_callable(source_term, SOLVER_SOURCE_SLOTS, role="source_term")
+    if cacheable:
+        _SOURCE_PLANS[source_term] = (bound.binding, bound.passes, bound.params)
     return bound(t=t, x=x)
 
 

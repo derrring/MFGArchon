@@ -136,3 +136,35 @@ def test_a_jax_grad_lagrangian_derivative_is_called_positionally():
     for argnum, expected in ((1, 0.4 + 0.1), (2, 0.3), (3, 0.2)):
         bound = bind_user_callable(jax.grad(lagrangian, argnums=argnum), VARIATIONAL_LAGRANGIAN_SLOTS, role="d")
         assert float(bound(t=0.1, x=0.2, v=0.3, m=0.4)) == pytest.approx(expected)
+
+
+def test_remembering_a_binding_keeps_no_solve_s_arrays_alive():
+    """#2406 review: the couplers build a closure per Picard iteration that captures that iteration's
+    arrays. A cache holding the callable kept all of them alive after the solve; the binding plan is
+    now remembered weakly, so a closure and its arrays go when the solve drops them."""
+    import gc
+    import weakref
+
+    def closure_over(k):
+        captured = np.full(1000, float(k))
+
+        def source(t, x):
+            return captured[: np.shape(x)[0]] * 0.0 + t
+
+        return source, weakref.ref(captured)
+
+    alive = []
+    for k in range(5):
+        source, ref = closure_over(k)
+        evaluate_solver_source(source, t=0.5, x=_X)
+        alive.append(ref)
+        del source
+    gc.collect()
+    assert [ref() is None for ref in alive] == [True] * 5
+
+
+def test_a_misplaced_slot_name_with_star_args_is_refused():
+    """#2406 review: `(x, *rest)` was bound by name with x alone, where main passed t as x. Neither
+    reading is the old call, so it is refused."""
+    with pytest.raises(TypeError, match=r"x would receive another slot's value"):
+        evaluate_solver_source(lambda x, *rest: x, t=0.5, x=_X)
