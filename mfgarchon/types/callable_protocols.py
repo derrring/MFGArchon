@@ -18,34 +18,62 @@ Usage:
 from __future__ import annotations
 
 import inspect
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import numpy as np
 from numpy.typing import NDArray
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping, Sequence
+
+
+@dataclass(frozen=True)
+class Slots:
+    """The argument order of one kind of user callable, and what binding it may assume.
+
+    ``aliases`` are other names a parameter may carry for a slot: ``time`` for ``t`` always, plus
+    names the library documented before #2378 phase 5. ``unmoved`` are slots at the same position
+    in the order before #2375 ruling 8 as after it (``v`` for a source term, ``p`` for a
+    Hamiltonian): a parameter named after one cannot tell the two orders apart, so it does not
+    identify the order for positional binding. ``swapped`` is the pair of slots whose relative order
+    ruling 8 reversed (``v``/``m``, ``p``/``m``): a name for ``t`` or ``x`` separates the new order
+    from the full old one but not from the half-migration that moved only ``t`` to the front, so a
+    positional callable of such a role must also name one of the pair. ``required`` are slots a callable must declare to
+    be bound by name (a raw Hamiltonian takes all four). ``optional`` are slots a positional
+    callable may leave out (a conditional Hamiltonian's ``t``, as it always could); what remains
+    must be in the same order before ruling 8 as after it, so a positional callable without them
+    needs no name to say which order it is in.
+    """
+
+    order: tuple[str, ...]
+    aliases: Mapping[str, str] = field(default_factory=dict)
+    unmoved: tuple[str, ...] = ()
+    swapped: tuple[str, str] | None = None
+    required: tuple[str, ...] = ()
+    optional: tuple[str, ...] = ()
+
+    def slot_of(self) -> dict[str, str]:
+        """Parameter name -> slot, for every name that identifies a slot."""
+        return {name: name for name in self.order} | ({"time": "t"} if "t" in self.order else {}) | dict(self.aliases)
+
 
 # The argument order of each user-supplied callable the library invokes: time, then space, then the
-# u-derivative family, then the measure (#2375 ruling 8, #2378 phase 5). These tuples are the one
-# statement of it: every invocation goes through `bind_user_callable`.
-POTENTIAL_SLOTS: tuple[str, ...] = ("t", "x")
-SOURCE_TERM_SLOTS: tuple[str, ...] = ("t", "x", "v", "m")
-MEASURE_FIELD_SLOTS: tuple[str, ...] = ("t", "x", "mu")
+# u-derivative family, then the measure, then further parameters (#2375 ruling 8, #2378 phase 5).
+# These are the one statement of it: every invocation goes through `bind_user_callable`.
+POTENTIAL_SLOTS = Slots(("t", "x"))
+SOURCE_TERM_SLOTS = Slots(("t", "x", "v", "m"), aliases={"m_t": "m", "v_t": "v"}, unmoved=("v",), swapped=("v", "m"))
+MEASURE_FIELD_SLOTS = Slots(("t", "x", "mu"))
+HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m"), unmoved=("p",), swapped=("p", "m"), required=("t", "x", "p", "m"))
+CONDITIONAL_HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m", "theta"), optional=("t",))
+ALPHA_STAR_SLOTS = Slots(("t", "x", "p", "m"), aliases={"t_idx": "t"})
 
 _TIME_NAMES = ("t", "time")
-
-# Names the library itself documented for a slot before #2378 phase 5, checked like the slot's own.
-_ALIASES: dict[tuple[str, ...], dict[str, str]] = {SOURCE_TERM_SLOTS: {"m_t": "m", "v_t": "v"}}
-
-# Roles whose reorder permutes two non-time slots (m and v swapped places): an unnamed parameter
-# list reads the same in either order, so these must name their parameters.
-_NAMES_REQUIRED = frozenset({SOURCE_TERM_SLOTS})
 
 
 def bind_user_callable(
     fn: Callable[..., Any],
-    slots: tuple[str, ...],
+    slots: Slots,
     *,
     role: str,
     spatial_only: bool = False,
@@ -56,64 +84,123 @@ def bind_user_callable(
     user's function what it declares:
 
     - **By name**, when every required positional parameter is named after a slot, or ``time``
-      for ``t``, or a name the library documented for the slot (``m_t`` and ``v_t`` for a source
-      term). Slots it does not declare are omitted, so a time-independent ``V(x)`` is accepted
-      where ``t`` is. Its declared order then does not matter to the numbers.
-    - **By position, in slot order**, when it requires exactly one named parameter per slot and
-      none of them is named after a different slot. Not for a source term: its reorder swapped
-      ``m`` and ``v``, so unnamed parameters cannot say which order they were written in. Not
-      ``*args`` either, for the same reason: it cannot say which order it expects.
+      for ``t``, or an alias the role documents (``m_t`` and ``v_t`` for a source term). Slots it
+      does not declare are omitted, so a time-independent ``V(x)`` is accepted where ``t`` is. Its
+      declared order then does not matter to the numbers.
+    - **By position, in slot order**, when it requires exactly one parameter per slot, none of them
+      is named after a different slot, at least one is named after a slot that moved in ruling 8's
+      reorder, and, where the reorder swapped a pair, one of the pair is named: otherwise the list
+      reads the same in the new order as in the old one, or as in the half-migration that moved
+      only ``t``. Not ``*args`` either, for the same reason.
     - **``x`` alone**, where ``spatial_only`` allows a spatial callable: at most one required
       parameter, or only ``*args``, as ``MFGComponents`` has always called a ``potential_func``
       that declares no time.
 
     Refused here, rather than failing or computing at the first call:
 
-    - **The order before #2378 phase 5**: a time parameter (``t`` or ``time``) anywhere but first,
-      or slot-named parameters declared out of slot order. Such a callable would compute correctly
+    - **The order before #2378 phase 5**: a time parameter (``t`` or ``time``) anywhere but at the
+      ``t`` slot's position, first in every order ruling 8 sets, or slot-named parameters declared
+      out of slot order. Such a callable would compute correctly
       when bound by name, but not when its author calls it positionally, and a positional one with
       a time parameter would receive ``x`` as time.
     - A parameter named after one slot at another slot's position: bound positionally, it would
       receive the wrong one (``V(x, tau)`` would get ``t`` as ``x``).
     - Anything else that cannot be matched to the slots.
     """
+    order_ = slots.order
     try:
         params = list(inspect.signature(fn).parameters.values())
     except (TypeError, ValueError):
-        return BoundCallable(fn, "positional", slots)
+        return BoundCallable(fn, "positional", order_)
     kinds = inspect.Parameter
-    slot_of = {name: name for name in slots} | ({"time": "t"} if "t" in slots else {}) | _ALIASES.get(slots, {})
+    slot_of = slots.slot_of()
     positional = [p for p in params if p.kind in (kinds.POSITIONAL_ONLY, kinds.POSITIONAL_OR_KEYWORD)]
     order = [p.name for p in positional]
-    ranked = [slots.index(slot_of[name]) for name in order if name in slot_of]
-    if any(name in _TIME_NAMES for name in order[1:]) or ranked != sorted(ranked):
+    if out_of_order(order, slots):
         raise TypeError(
             f"{role} {getattr(fn, '__qualname__', fn)!r} takes ({', '.join(order)}), which is out of order. Since "
-            f"#2378 phase 5 (#2375 ruling 8) a {role} takes ({', '.join(slots)}), time first: reorder its "
+            f"#2378 phase 5 (#2375 ruling 8) a {role} takes ({', '.join(order_)}), time first: reorder its "
             f"parameters, and call it by keyword wherever you call it yourself."
         )
     named = [
         p.name for p in params if p.name in slot_of and p.kind in (kinds.POSITIONAL_OR_KEYWORD, kinds.KEYWORD_ONLY)
     ]
     required = [p for p in positional if p.default is kinds.empty]
-    if named and all(p.name in named for p in required):
+    declares_required = {slot_of[name] for name in named} >= set(slots.required)
+    if named and all(p.name in named for p in required) and declares_required:
         return BoundCallable(fn, "keyword", tuple(slot_of[name] for name in named), tuple(named))
     var_positional = any(p.kind is kinds.VAR_POSITIONAL for p in params)
-    takes_all = len(required) == len(slots) and not var_positional
-    misplaced = [
-        name for i, name in enumerate(order[: len(slots)]) if name in slot_of and slots.index(slot_of[name]) != i
-    ]
-    if takes_all and not misplaced and slots not in _NAMES_REQUIRED:
-        return BoundCallable(fn, "positional", slots)
+    # Positionally it receives every slot, or every slot but the optional ones.
+    shortened = tuple(slot for slot in order_ if slot not in slots.optional)
+    passes = order_ if len(required) == len(order_) else shortened if len(required) == len(shortened) else None
+    misplaced = []
+    if passes is not None:
+        misplaced = [
+            name for i, name in enumerate(order[: len(passes)]) if name in slot_of and passes.index(slot_of[name]) != i
+        ]
+    # Without its optional slots a callable is in the same order either way; with all of them, a
+    # name must say which order it is in.
+    names_moved = any(name in slot_of and slot_of[name] not in slots.unmoved for name in order)
+    names_pair = slots.swapped is None or any(slot_of.get(name) in slots.swapped for name in order)
+    identified = passes != order_ or (names_moved and names_pair)
+    if passes is not None and not var_positional and not misplaced and identified:
+        return BoundCallable(fn, "positional", passes)
     if spatial_only and len(required) <= 1 and (positional or var_positional):
         return BoundCallable(fn, "spatial", ("x",))
+    if misplaced:
+        why = f": {', '.join(misplaced)} would receive another slot's value. Name its parameters {', '.join(order_)}."
+    elif passes is not None and not var_positional:
+        why = (
+            f": none of its parameters is named after a slot whose position #2375 ruling 8 changed, so they "
+            f"read the same in the old order and the new. Name them {', '.join(order_)}."
+        )
+    else:
+        why = f". Name its parameters {', '.join(order_)}, or take exactly {len(order_)} positionally in that order."
     raise TypeError(
         f"{role} {getattr(fn, '__qualname__', fn)!r} takes ({', '.join(p.name for p in params)}), which cannot be "
-        f"matched to ({', '.join(slots)})"
-        + (f": {', '.join(misplaced)} would receive another slot's value" if misplaced else "")
-        + f". Name its parameters {', '.join(slots)}"
-        + ("." if slots in _NAMES_REQUIRED else f", or take exactly {len(slots)} positionally in that order.")
+        f"matched to ({', '.join(order_)}){why}"
     )
+
+
+def out_of_order(names: Sequence[str], slots: Slots) -> bool:
+    """Whether positional parameter ``names`` break ``slots``' order: a time parameter anywhere but
+    at the ``t`` slot's position, or slot-named parameters out of slot order. The one statement of
+    the rule, for a callable at acceptance and for a method at class creation."""
+    slot_of = slots.slot_of()
+    ranked = [slots.order.index(slot_of[name]) for name in names if name in slot_of]
+    t_at = slots.order.index("t") if "t" in slots.order else None
+    return any(name in _TIME_NAMES and i != t_at for i, name in enumerate(names)) or ranked != sorted(ranked)
+
+
+def refuse_methods_out_of_order(cls: type, table: Mapping[str, Slots | None]) -> None:
+    """Refuse, at class creation, a method ``cls`` defines under a name in ``table`` whose
+    parameters break that name's slot order (#2375 ruling 8).
+
+    The library calls these methods by keyword, so an out-of-order definition would compute
+    correctly from the library and wrongly for anyone calling it positionally. A ``None`` entry
+    leaves that name unchecked, for a subclass whose method of the same name is another API.
+    """
+    for name, slots in table.items():
+        if slots is None:  # a subclass whose method of that name has another signature
+            continue
+        member = cls.__dict__.get(name)
+        fn = member.__func__ if isinstance(member, (staticmethod, classmethod)) else member
+        if not callable(fn):
+            continue
+        try:
+            params = list(inspect.signature(fn).parameters.values())
+        except (TypeError, ValueError):
+            continue
+        kinds = inspect.Parameter
+        names = [p.name for p in params if p.kind in (kinds.POSITIONAL_ONLY, kinds.POSITIONAL_OR_KEYWORD)]
+        if not isinstance(member, staticmethod) and names:
+            names = names[1:]  # self, or cls
+        if out_of_order(names, slots):
+            raise TypeError(
+                f"{cls.__qualname__}.{name} takes ({', '.join(names)}), which is out of order. Since #2378 phase 5 "
+                f"(#2375 ruling 8) it takes ({', '.join(slots.order)}), time first: reorder the parameters, and "
+                f"call the method by keyword."
+            )
 
 
 class BoundCallable:
@@ -136,9 +223,7 @@ class BoundCallable:
         return self.fn(*(values[slot] for slot in self.passes))
 
 
-def bound_attribute(
-    owner: Any, attr: str, slots: tuple[str, ...], *, role: str, spatial_only: bool = False
-) -> BoundCallable:
+def bound_attribute(owner: Any, attr: str, slots: Slots, *, role: str, spatial_only: bool = False) -> BoundCallable:
     """``getattr(owner, attr)`` bound to ``slots``, cached on ``owner`` and keyed on the callable.
 
     Keyed on identity rather than bound once at construction, because the attribute can be
@@ -246,7 +331,7 @@ class DiffusionFieldCallable(Protocol):
 @runtime_checkable
 class HamiltonianCallable(Protocol):
     """
-    Protocol for custom Hamiltonian function H(x, m, p, t).
+    Protocol for the per-point Hamiltonian API, H(t, x, p, m) at one grid point.
 
     The Hamiltonian appears in the HJB equation:
         -∂u/∂t + H(x, m, ∇u, t) - (σ²/2) Δu = 0
@@ -266,7 +351,7 @@ class HamiltonianCallable(Protocol):
         problem: Problem instance (optional)
 
     Returns:
-        Hamiltonian value H(x, m, p, t)
+        Hamiltonian value H(t, x, p, m)
 
     Examples:
         >>> # Quadratic Hamiltonian (LQ control)
@@ -290,14 +375,14 @@ class HamiltonianCallable(Protocol):
         current_time: float | None = None,
         problem: object | None = None,
     ) -> float:
-        """Evaluate Hamiltonian at (x, m, p, t)."""
+        """Evaluate the Hamiltonian at one grid point."""
         ...
 
 
 @runtime_checkable
 class HamiltonianDerivativeCallable(Protocol):
     """
-    Protocol for Hamiltonian derivative dH/dm(x, m, p, t).
+    Protocol for the per-point Hamiltonian derivative dH/dm, at one grid point.
 
     The derivative dH/dm appears in the Fokker-Planck coupling term:
         ∂m/∂t + ∇·(α m) = (σ²/2) Δm - ∇·(m ∇(dH/dm))
@@ -309,7 +394,7 @@ class HamiltonianDerivativeCallable(Protocol):
         (Same as HamiltonianCallable)
 
     Returns:
-        Derivative dH/dm at (x, m, p, t)
+        Derivative dH/dm at (t, x, p, m)
 
     Examples:
         >>> # For H = 0.5 p² - V - m²
@@ -331,7 +416,7 @@ class HamiltonianDerivativeCallable(Protocol):
         current_time: float | None = None,
         problem: object | None = None,
     ) -> float:
-        """Evaluate dH/dm at (x, m, p, t)."""
+        """Evaluate dH/dm at one grid point."""
         ...
 
 

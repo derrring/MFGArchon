@@ -1,0 +1,15 @@
+- **The Hamiltonian signature on other objects takes time first** (#2375 ruling 8, #2378 phase 5 part 3a). **This breaks code that defines, passes or calls these in the old order.**
+  - **What changed.**
+    - A problem's own `hamiltonian` and `running_cost` (`MFGProblemProtocol`): `(x, m, p, t)` → `(t, x, p, m)` and `(x, m, t)` → `(t, x, m)`.
+    - `MultiPopulationMFGProblem`: `hamiltonian_k(k, x, m_all, p, t)` → `(t, x, p, m_all, k)`; `running_cost_k(k, x, m_all, t)` → `(t, x, m_all, k)`; `terminal_cost_k` and `initial_density_k(k, x)` → `(x, k)`. The population index is a further parameter, after the measure.
+    - `StochasticMFGProblem.H_conditional(x, p, m, theta, t)` → `(t, x, p, m, theta)`.
+    - `HJBHowardSolver`'s `alpha_star(x, p, m, t_idx)` → `(t_idx, x, p, m)`.
+    - A raw Hamiltonian callable given to `validate_hamiltonian` / `validate_custom_functions`: `(x, m, p, t)` → `(t, x, p, m)`.
+  - **Refused, when the class is created:** an `MFGProblem` subclass defining `hamiltonian` or `running_cost`, or a multi-population or stochastic subclass defining one of the methods above, in another order.
+  - **Refused, when the callable is accepted:**
+    - a `conditional_hamiltonian` written `(x, p, m, theta, t)`. The time-free `(x, p, m, theta)` every example uses is still accepted, since time is optional there;
+    - an `alpha_star` in the old order, including under the name `t_idx`;
+    - in validation, a raw callable that does not take all four arguments, or that names neither `p` nor `m`, or none of `t`, `x`, `m`. `p` is third in both orders, so it cannot tell them apart; and `(t, x, a, b)` reads the same in the new order and in the half-migration `(t, x, m, p)`.
+  - **Deprecated:** `HamiltonianAdapter`, `create_hamiltonian_adapter` and `adapt_hamiltonian`. They guessed among argument orders and converted to `(x, m, p, t)`; they now bind through `bind_user_callable` with the new order and refuse the old one. `signature_hint` is refused. The deprecation policy asks a deprecated API to change no behaviour; that clause is waived here by user ruling (2026-09-25), since what these accepted is what ruling 8 refuses.
+  - **Not refused, and wrong:** a positional call in the old order to one of these methods, such as `problem.hamiltonian(x, m, p, t)`. It binds the arguments to the wrong parameters. Call these by keyword.
+  - **What to change in your code.** Reorder the parameters, and call these methods by keyword.

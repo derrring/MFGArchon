@@ -56,6 +56,7 @@ from scipy.sparse import csr_matrix, diags, eye, lil_matrix
 from scipy.sparse.linalg import spsolve
 from scipy.spatial import cKDTree
 
+from mfgarchon.types.callable_protocols import ALPHA_STAR_SLOTS, bind_user_callable
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 if TYPE_CHECKING:
@@ -63,14 +64,14 @@ if TYPE_CHECKING:
     from mfgarchon.core.mfg_problem import MFGProblem
 
 
-AlphaStarFn = Callable[[np.ndarray, np.ndarray, np.ndarray, int], np.ndarray]
-"""Legendre transform: alpha_star(x, p, m, t_idx) -> alpha.
+AlphaStarFn = Callable[[int, np.ndarray, np.ndarray, np.ndarray], np.ndarray]
+"""Legendre transform: alpha_star(t_idx, x, p, m) -> alpha (#2375 ruling 8: time first).
 
 Given collocation points `x` (shape (n, d)), gradient `p = ∇U` (shape (n, d)),
 density `m` (shape (n,)), and time index `t_idx`, returns the optimal control
 `alpha` (shape (n, d)) that achieves `min_α (α · p + L(t, x, α, m))`.
 
-For LQ `H = |p|²/(2c) + g(x, m)`: `alpha_star(x, p, m, t) = -p/c`.
+For LQ `H = |p|²/(2c) + g(x, m)`: `alpha_star(t, x, p, m) = -p/c`.
 """
 
 RunningCostFn = Callable[[int], np.ndarray]
@@ -271,9 +272,10 @@ class HJBHowardSolver:
         boundary-segment classification (`_bc_segment_per_point`) are also
         consumed.
     alpha_star : Callable
-        Legendre transform: `alpha_star(x, p, m, t_idx) -> alpha`.
+        Legendre transform: `alpha_star(t_idx, x, p, m) -> alpha`, bound by name when its
+        parameters are named `t` (or `t_idx`), `x`, `p`, `m`, and refused in the old order.
         See module docstring `AlphaStarFn` type alias. For LQ
-        `H = |p|²/(2c)`, pass `lambda x, p, m, t: -p / c`. The Hamiltonian
+        `H = |p|²/(2c)`, pass `lambda t, x, p, m: -p / c`. The Hamiltonian
         must be strictly convex in `p` for policy iteration to converge
         (Legendre uniqueness of the optimal control). Separability is
         neither necessary nor sufficient.
@@ -366,6 +368,8 @@ class HJBHowardSolver:
         self.problem = problem
         self.stencil_provider = stencil_provider
         self.alpha_star = alpha_star
+        # Bound once at acceptance and invoked by keyword (#2375 ruling 8)
+        self._alpha_star = bind_user_callable(alpha_star, ALPHA_STAR_SLOTS, role="alpha_star")
         self.running_cost = running_cost
         self.control_lagrangian = control_lagrangian
         self.discretisation = discretisation
@@ -512,7 +516,7 @@ class HJBHowardSolver:
             p = np.zeros((n, dimension))
             for d in range(dimension):
                 p[:, d] = static["D_grad_central"][d] @ u_next
-            alpha = self.alpha_star(pts, p, m_n, t_idx)
+            alpha = self._alpha_star(t=t_idx, x=pts, p=p, m=m_n)
 
         rc_t = self.running_cost(t_idx) if self.running_cost is not None else None
         u_new = u_next.copy()
@@ -615,7 +619,7 @@ class HJBHowardSolver:
             p_new = np.zeros((n, dimension))
             for d in range(dimension):
                 p_new[:, d] = static["D_grad_central"][d] @ u_new
-            alpha_new = self.alpha_star(pts, p_new, m_n, t_idx)
+            alpha_new = self._alpha_star(t=t_idx, x=pts, p=p_new, m=m_n)
 
             # Convergence on policy.
             denom = max(float(np.linalg.norm(alpha, ord=np.inf)), 1e-10)

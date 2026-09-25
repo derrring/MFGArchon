@@ -108,7 +108,7 @@ def test_hamiltonian_returning_nan_raises():
 
 @pytest.mark.unit
 def test_hamiltonian_wrong_signature_raises():
-    """An object that doesn't accept (x, m, p, t) should fail validation."""
+    """An object that doesn't accept (t, x, p, m) should fail validation (#2375 ruling 8)."""
 
     class BadHamiltonian:
         def __call__(self, x):
@@ -146,7 +146,7 @@ def test_hamiltonian_consistency_gates_on_dm_witness():
     H = _hamiltonian()
     geom = _geometry()
 
-    def wrong_dm(x, m, p, t=0.0):
+    def wrong_dm(t, x, p, m):
         return 42.0
 
     result = validate_hamiltonian_consistency(H, wrong_dm, geom)
@@ -187,7 +187,7 @@ def test_hamiltonian_consistency_gates_on_dp_witness(dimension):
     geom = _geometry(dimension=dimension)
     wrong_index = dimension - 1
 
-    def wrong_dp(x, m, p, t=0.0):
+    def wrong_dp(t, x, p, m):
         claimed = np.atleast_1d(H.dp(x=x, m=m, p=p, t=t)).astype(float).copy()
         claimed[wrong_index] = 99.0
         return claimed
@@ -211,7 +211,7 @@ def test_error_reports_the_witness_probe_not_an_earlier_warning():
     H = _hamiltonian()
     geom = _geometry()
 
-    def wrong_dm(x, m, p, t=0.0):
+    def wrong_dm(t, x, p, m):
         if m == 1.0:
             return -42.0  # witness grade: 21x off
         return -2.0 * m * 1.005  # warning grade: 0.5% off, seen first
@@ -240,7 +240,7 @@ def test_consistency_context_reaches_validate_custom_functions():
     H = _hamiltonian()
     geom = _geometry()
 
-    def wrong_dm(x, m, p, t=0.0):
+    def wrong_dm(t, x, p, m):
         return 42.0
 
     result = validate_custom_functions(hamiltonian=H, dH_dm=wrong_dm, dH_dp=H.dp, geometry=geom)
@@ -291,7 +291,7 @@ def test_small_discrepancy_warns_but_does_not_gate():
     H = _hamiltonian()
     geom = _geometry()
 
-    def slightly_off_dm(x, m, p, t=0.0):
+    def slightly_off_dm(t, x, p, m):
         return -2.0 * m * 1.001
 
     result = validate_hamiltonian_consistency(H, slightly_off_dm, geom)
@@ -312,13 +312,13 @@ def test_kink_at_probe_point_warns_but_does_not_gate():
     """
     kink = 0.4157
 
-    def H(x, m, p, t=0.0):
+    def H(t, x, p, m):
         return float(abs(np.atleast_1d(p)[0] - kink))
 
-    def dH_dm(x, m, p, t=0.0):
+    def dH_dm(t, x, p, m):
         return 0.0
 
-    def dH_dp(x, m, p, t=0.0):
+    def dH_dp(t, x, p, m):
         return np.array([1.0 if np.atleast_1d(p)[0] >= kink else -1.0])
 
     result = validate_hamiltonian_consistency(H, dH_dm, _geometry(), dH_dp=dH_dp)
@@ -359,7 +359,7 @@ def test_probe_grid_catches_derivative_correct_only_at_m_equals_one():
     """
     H = _hamiltonian()
 
-    def dm_right_only_at_one(x, m, p, t=0.0):
+    def dm_right_only_at_one(t, x, p, m):
         return -2.0
 
     result = validate_hamiltonian_consistency(H, dm_right_only_at_one, _geometry())
@@ -374,10 +374,10 @@ def test_probe_grid_catches_derivative_correct_only_at_p_zero():
     cannot see a wrong congestion derivative. Catches: dropping the nonzero-p probes.
     """
 
-    def H(x, m, p, t=0.0):
+    def H(t, x, p, m):
         return float(np.dot(np.atleast_1d(p), np.atleast_1d(p))) / (2.0 * (1.0 + 3.0 * m))
 
-    def dH_dm_wrong(x, m, p, t=0.0):
+    def dH_dm_wrong(t, x, p, m):
         # Correct value is -3|p|^2 / (2 (1+3m)^2); zero is right only at p = 0.
         return 0.0
 
@@ -433,7 +433,7 @@ def test_validate_custom_functions_defaults_to_checking_consistency():
     H = _hamiltonian()
     geom = _geometry()
 
-    def wrong_dm(x, m, p, t=0.0):
+    def wrong_dm(t, x, p, m):
         return 42.0
 
     assert not validate_custom_functions(hamiltonian=H, dH_dm=wrong_dm, dH_dp=H.dp, geometry=geom).is_valid
@@ -452,7 +452,7 @@ def test_validate_custom_functions_propagates_consistency_invalidity():
     H = _hamiltonian()
     geom = _geometry()
 
-    def wrong_dm(x, m, p, t=0.0):
+    def wrong_dm(t, x, p, m):
         return 42.0
 
     result = validate_custom_functions(

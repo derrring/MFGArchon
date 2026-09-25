@@ -71,7 +71,7 @@ class QuadraticHamiltonian2D(MFGProblem):
         )
         self.grid_resolution = N
 
-    def hamiltonian(self, x, m, p, t):
+    def hamiltonian(self, t, x, p, m):
         """Quadratic Hamiltonian: H = 0.5·|p|² + 0.5·|x|²"""
         return 0.5 * np.sum(p**2) + 0.5 * np.sum(x**2)
 
@@ -83,7 +83,7 @@ class QuadraticHamiltonian2D(MFGProblem):
         """Initial density: Gaussian centered at origin"""
         return np.exp(-5 * np.sum(x**2))
 
-    def running_cost(self, x, m, t):
+    def running_cost(self, t, x, m):
         """Running cost: f(x,m) = 0.5·|x|²"""
         return 0.5 * np.sum(x**2)
 

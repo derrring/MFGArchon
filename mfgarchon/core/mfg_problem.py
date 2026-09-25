@@ -18,10 +18,13 @@ from mfgarchon.geometry.protocol import GeometryProtocol  # noqa: TC001
 
 # Deprecation utilities (Issue #616, #666)
 from mfgarchon.types.callable_protocols import (
+    HAMILTONIAN_SLOTS,
     POTENTIAL_SLOTS,
     SOURCE_TERM_SLOTS,
+    Slots,
     bind_user_callable,
     bound_attribute,
+    refuse_methods_out_of_order,
 )
 from mfgarchon.utils.deprecation import validate_kwargs
 
@@ -204,6 +207,20 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
     So the same effect through either channel takes an input of the SAME sign.
     """
+
+    # Methods a subclass may define that take #2375 ruling 8's order, checked at class creation.
+    # A subclass that adds such methods declares them here too; the tables are merged along the MRO.
+    _ruling8_methods: ClassVar[dict[str, Slots | None]] = {
+        "hamiltonian": HAMILTONIAN_SLOTS,
+        "running_cost": Slots(("t", "x", "m")),
+    }
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        table: dict[str, Slots | None] = {}
+        for base in reversed(cls.__mro__):
+            table.update(vars(base).get("_ruling8_methods", {}))
+        refuse_methods_out_of_order(cls, table)
 
     # Type annotations for geometry attributes (Phase 6 of Issue #435)
     # These are always non-None after __init__ completes

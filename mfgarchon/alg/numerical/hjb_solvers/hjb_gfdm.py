@@ -598,7 +598,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             # legacy `qp_optimization_level = "precompute"` selects the per-point
             # HJB Newton path (line ~2425), matching the qp_m_matrix+precompute
             # path. Setting it to "none" instead would route through the batch
-            # Hamiltonian path which evaluates H(x,m,p,t) differently and breaks
+            # Hamiltonian path which evaluates H(t, x, p, m) differently and breaks
             # numerical equivalence with the legacy `precompute_socp_weights +
             # patch_operator` workflow used in research code.
             self.qp_optimization_level = "precompute"
@@ -3504,7 +3504,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             # ref(grad u) + H(x, m, 0, t), and `_ke` certifies ref(p) = H(p) - H(0), so the sum
             # telescopes back to H(grad u) for WHATEVER H(x, m, 0, t) is. It does not say that value
             # is zero and nothing here needs it to be. The check that carries this is pointwise and
-            # algebraic, not a solve: -alpha*.p - L(alpha*) + H(x,m,0,t) == H(x,m,p,t) at
+            # algebraic, not a solve: -alpha*.p - L(alpha*) + H(t, x, 0, m) == H(t, x, p, m) at
             # alpha* = -dH/dp. It is EXACT on every algebraically-exact class, including alpha-free
             # parts depending on m at amplitude 1e4, and broken on every refused one. What
             # acceptance guarantees is not exactness but `_ke <= _tol`: a barely-accepted class sits
@@ -3530,7 +3530,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                     f"it on this problem's own density, times and momentum scale shows Howard's "
                     f"substituted assumptions do not hold "
                     f"(its alpha-free part max|H(x,m,0,t)| = {_af:.3e} is extracted and is not the "
-                    f"problem; H(x,m,p,t) - H(x,m,0,t) departs from (1/2)|p|^2 by {_ke:.3e}, which is; "
+                    f"problem; H(t, x, p, m) - H(t, x, 0, m) departs from (1/2)|p|^2 by {_ke:.3e}, which is; "
                     f"tolerance {_tol:.1e}, relative to a probed |H| of {_scale:.3e}). Probed at "
                     f"all {len(_slices)} M_collocation slices, times {round(float(_slices[0]) * _dt_probe, 4)} "
                     f"to {round(float(_slices[-1]) * _dt_probe, 4)}, "
@@ -3591,9 +3591,9 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         dt = float(self.problem.T) / int(self.problem.Nt)
 
-        def alpha_star(x_pts, p, m, t_idx):
+        def alpha_star(t_idx, x, p, m):
             # Optimal feedback control alpha* = -dH/dp (the same dp() the Newton Jacobian reads).
-            return -eval_dH_dp_batch(H_class, x_pts, m, p, t_idx * dt)
+            return -eval_dH_dp_batch(H_class, x, m, p, t_idx * dt)
 
         # Issue #1247 (#1118 PR2): route the Hamiltonian's non-quadratic-in-alpha source terms
         # — potential V(t, x), density coupling f(m^n) — and the MMS source into Howard's

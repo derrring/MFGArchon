@@ -410,7 +410,7 @@ class My2DProblem(MFGProblem):
             sigma=0.01,
         )
 
-    def hamiltonian(self, x, m, p, t):
+    def hamiltonian(self, t, x, p, m):
         return 0.5 * np.sum(p**2) + 0.5 * np.sum(x**2)
 
     def terminal_cost(self, x):
@@ -419,7 +419,7 @@ class My2DProblem(MFGProblem):
     def initial_density(self, x):
         return np.exp(-5 * np.sum(x**2, axis=1))
 
-    def running_cost(self, x, m, t):
+    def running_cost(self, t, x, m):
         return 0.5 * np.sum(x**2, axis=1)
 
     def setup_components(self):

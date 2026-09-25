@@ -146,12 +146,12 @@ class CapacityConstrainedMFGProblem(MFGProblem):
                     f"doesn't match problem dimension ({self.dimension})"
                 )
 
-    def hamiltonian(self, x, m, p, t) -> float:
+    def hamiltonian(self, t, x, p, m) -> float:
         """
         Compute Hamiltonian with congestion term.
 
         The total Hamiltonian is:
-            H(x, m, p, t) = (1/2)|p|² + α·m + γ·g(m(x)/C(x))
+            H(t, x, p, m) = (1/2)|p|² + α·m + γ·g(m(x)/C(x))
 
         where:
         - (1/2)|p|²: Kinetic energy (standard)
@@ -200,7 +200,7 @@ class CapacityConstrainedMFGProblem(MFGProblem):
         # Total Hamiltonian
         return H_base + self.congestion_weight * congestion_cost
 
-    def hamiltonian_dm(self, x, m, p, t) -> float:
+    def hamiltonian_dm(self, t, x, p, m) -> float:
         """
         Compute derivative of Hamiltonian with respect to density: ∂H/∂m.
 
@@ -331,7 +331,7 @@ if __name__ == "__main__":
     p = np.array([0.1, 0.1])  # Small momentum
     t = 0.5
 
-    H = problem.hamiltonian(x, m, p, t)
+    H = problem.hamiltonian(t=t, x=x, p=p, m=m)
     print(f"   H(x={x}, m={m}, p={p}, t={t}) = {H:.6f}")
     assert np.isfinite(H), "Hamiltonian should be finite"
     print("   ✓ Hamiltonian evaluation works")
@@ -365,7 +365,7 @@ if __name__ == "__main__":
     # Test 6: Hamiltonian increases with density (convexity check)
     print("\n6. Hamiltonian convexity check (∂H/∂m > 0)...")
     m_values = np.linspace(0.1, 0.9, 5)
-    H_values = [problem.hamiltonian(x, m_test, p, t) for m_test in m_values]
+    H_values = [problem.hamiltonian(t=t, x=x, p=p, m=m_test) for m_test in m_values]
     print(f"   m = {m_values}")
     print(f"   H = {H_values}")
 
@@ -391,7 +391,7 @@ if __name__ == "__main__":
 
     # Test at overcapacity (m > C)
     m_high = 1.5  # Density exceeds capacity
-    H_high = problem_logbarrier.hamiltonian(x, m_high, p, t)
+    H_high = problem_logbarrier.hamiltonian(t=t, x=x, p=p, m=m_high)
     print(f"   H at overcapacity (m={m_high}): {H_high:.6f}")
     assert np.isfinite(H_high), "Should not return NaN at overcapacity"
     print("   ✓ LogBarrier stable at overcapacity")

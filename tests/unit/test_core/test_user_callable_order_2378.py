@@ -68,11 +68,16 @@ def test_named_slots_are_passed_by_name_and_an_omitted_one_is_not_passed():
     assert seen == {"t": 1.0, "x": 2.0, "m": 4.0}
 
 
-def test_unnamed_parameters_receive_the_slots_positionally_in_the_new_order():
+def test_parameters_bind_positionally_only_when_one_names_the_order():
+    """#2404 review: a list naming no slot whose position ruling 8 changed reads the same in either
+    order, so it is refused; one such name at its new index settles which order it is in."""
     received = []
-    bound = bind_user_callable(lambda a, b: received.append((a, b)), POTENTIAL_SLOTS, role="potential")
+    bound = bind_user_callable(lambda t, pos: received.append((t, pos)), POTENTIAL_SLOTS, role="potential")
     bound(t=0.25, x=_X)
     assert received == [(0.25, _X)]
+    for unnamed in (lambda a, b: 0.0, lambda pos, s: 0.0):
+        with pytest.raises(TypeError, match=r"read the same in the old order and the new"):
+            bind_user_callable(unnamed, POTENTIAL_SLOTS, role="potential")
 
 
 def test_a_one_argument_spatial_potential_func_receives_x_only():
@@ -117,7 +122,13 @@ def test_detect_callable_signature_tells_the_two_orders_apart():
         (SOURCE_TERM_SLOTS, lambda t, x, m, v_t: 0.0),  # m would receive v
         (SOURCE_TERM_SLOTS, lambda t, x, dens, v: 0.0),  # v would receive m
         (SOURCE_TERM_SLOTS, lambda t, x, m_t, v_t: 0.0),  # the documented names, half-migrated
-        (SOURCE_TERM_SLOTS, lambda t, x, a, b: 0.0),  # m and v swapped places: names are required
+        (SOURCE_TERM_SLOTS, lambda x_, m_, v, t_: 0.0),  # v is at index 2 in both orders: it pins nothing
+        (SOURCE_TERM_SLOTS, lambda a, b, c, d: 0.0),  # nothing says which order
+        # The half-migration, t moved to the front and v, m left in the old order: t names the order
+        # against the full old one, not against this, so one of v and m must be named (#2404 round 2).
+        (SOURCE_TERM_SLOTS, lambda t, x, a, b: 0.0),
+        (SOURCE_TERM_SLOTS, lambda t, pos, dens, val: 0.0),
+        (SOURCE_TERM_SLOTS, lambda time, pos, dens, val: 0.0),
         (POTENTIAL_SLOTS, lambda a, b=1.0: 0.0),  # a default is not a slot to fill
     ],
 )
@@ -168,3 +179,135 @@ def test_star_args_is_a_spatial_potential_func_and_refused_where_order_matters(s
 def test_a_defaulted_single_parameter_is_still_a_spatial_potential_func():
     bound = bind_user_callable(lambda pos=0.0: pos, POTENTIAL_SLOTS, role="potential_func", spatial_only=True)
     assert bound(t=4.0, x=0.1) == 0.1
+
+
+# ---------------------------------------------------------------------------
+# Part 3a: the Hamiltonian signature on objects other than the family
+# ---------------------------------------------------------------------------
+
+
+def test_a_problem_subclass_defining_an_old_order_hamiltonian_is_refused_at_class_creation():
+    from mfgarchon.core.mfg_problem import MFGProblem
+
+    with pytest.raises(TypeError, match=r"_OldProblem\.hamiltonian takes \(x, m, p, t\), which is out of order"):
+
+        class _OldProblem(MFGProblem):
+            def hamiltonian(self, x, m, p, t):
+                return 0.0
+
+    with pytest.raises(TypeError, match=r"_OldCost\.running_cost takes \(x, m, t\), which is out of order"):
+
+        class _OldCost(MFGProblem):
+            def running_cost(self, x, m, t):
+                return 0.0
+
+    class _NewProblem(MFGProblem):
+        def hamiltonian(self, t, x, p, m):
+            return 0.0
+
+        def running_cost(self, t, x, m):
+            return 0.0
+
+
+def test_the_extensions_register_their_own_method_orders():
+    """Each problem class declares the methods it owns; the tables merge along the MRO."""
+    from mfgarchon.core.stochastic.stochastic_problem import StochasticMFGProblem
+    from mfgarchon.extensions.multi_population import MultiPopulationMFGProblem
+    from mfgarchon.extensions.topology import NetworkMFGProblem
+
+    with pytest.raises(TypeError, match=r"hamiltonian_k takes \(k, x, m_all, p, t\)"):
+
+        class _OldPopulations(MultiPopulationMFGProblem):
+            def hamiltonian_k(self, k, x, m_all, p, t):
+                return 0.0
+
+    with pytest.raises(TypeError, match=r"terminal_cost_k takes \(k, x\)"):
+
+        class _OldTerminal(MultiPopulationMFGProblem):
+            def terminal_cost_k(self, k, x):
+                return 0.0
+
+    with pytest.raises(TypeError, match=r"H_conditional takes \(x, p, m, theta, t\)"):
+
+        class _OldConditional(StochasticMFGProblem):
+            def H_conditional(self, x, p, m, theta, t):
+                return 0.0
+
+    # The network's `hamiltonian(node, neighbors, m, p, t)` is another API (part 3b), not checked here.
+    class _Network(NetworkMFGProblem):
+        def hamiltonian(self, node, neighbors, m, p, t):
+            return 0.0
+
+
+@pytest.mark.parametrize(
+    ("callable_", "expected"),
+    [
+        (lambda t, x, p, m, theta: (t, theta), (0.5, 0.9)),  # the new order, by name
+        (lambda x, p, m, theta: theta, 0.9),  # no time, by name: the form every caller used
+        (lambda a, b, c, d: d, 0.9),  # no time, unnamed: t is the optional slot, the rest in order
+    ],
+)
+def test_a_conditional_hamiltonian_may_leave_out_time(callable_, expected):
+    from mfgarchon.types.callable_protocols import CONDITIONAL_HAMILTONIAN_SLOTS
+
+    bound = bind_user_callable(callable_, CONDITIONAL_HAMILTONIAN_SLOTS, role="conditional_hamiltonian")
+    assert bound(t=0.5, x=0.1, p=0.2, m=0.3, theta=0.9) == expected
+    with pytest.raises(TypeError, match=r"out of order"):
+        bind_user_callable(lambda x, p, m, theta, t: 0.0, CONDITIONAL_HAMILTONIAN_SLOTS, role="c")
+
+
+def test_alpha_star_takes_time_first_with_t_idx_for_t():
+    from mfgarchon.types.callable_protocols import ALPHA_STAR_SLOTS
+
+    bound = bind_user_callable(lambda t_idx, x, p, m: (t_idx, p), ALPHA_STAR_SLOTS, role="alpha_star")
+    assert bound(t=3, x=_X, p=0.2, m=0.3) == (3, 0.2)
+    # `t_idx` counts as t, so the old order is refused under that name too. Without the alias this
+    # one binds positionally and receives t as x -- the shape hjb_gfdm's own alpha_star had.
+    for old_order in (lambda x, p, m, t: -p, lambda x, p, m, t_idx: -p):
+        with pytest.raises(TypeError, match=r"out of order"):
+            bind_user_callable(old_order, ALPHA_STAR_SLOTS, role="alpha_star")
+
+
+def test_a_raw_hamiltonian_must_declare_all_four_slots_and_name_one_that_moved():
+    """Validation has always demanded (t, x, p, m) of a raw callable; ruling 8 moved t, x and m."""
+    from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS
+
+    by_name = bind_user_callable(lambda t, x, p, m: p - m, HAMILTONIAN_SLOTS, role="h")
+    pinned = bind_user_callable(lambda t, x, grad, m: grad - m, HAMILTONIAN_SLOTS, role="h")  # m pins the pair
+    assert by_name(t=0.0, x=0.0, p=2.0, m=0.5) == pinned(t=0.0, x=0.0, p=2.0, m=0.5) == 1.5
+    # Omits slots; or names only p, which is at index 2 in both orders (#2404 review).
+    for incomplete in (
+        lambda x: 0.0,
+        lambda x_, m_, p, t_: 0.0,
+        lambda t, x, a, b: 0.0,
+        lambda t, pos, dens, grad: 0.0,
+    ):
+        with pytest.raises(TypeError, match=r"cannot be matched"):
+            bind_user_callable(incomplete, HAMILTONIAN_SLOTS, role="h")
+
+
+def test_a_source_term_naming_m_binds_its_other_parameter_positionally():
+    """m moved in ruling 8's reorder, so naming it at its new index settles the order."""
+    bound = bind_user_callable(lambda t, x, val, m: (val, m), SOURCE_TERM_SLOTS, role="source_term_hjb")
+    assert bound(t=0.0, x=_X, v="v", m="m") == ("v", "m")
+
+
+def test_the_deprecated_hamiltonian_adapter_redirects_to_the_binder():
+    """Deprecation policy (AGENTS.md): the old API calls the new one, and an equivalence test pins it."""
+    from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS
+    from mfgarchon.utils import HamiltonianAdapter, adapt_hamiltonian
+
+    def H(t, x, p, m):
+        return 0.5 * p**2 + m + t
+
+    new = bind_user_callable(H, HAMILTONIAN_SLOTS, role="hamiltonian")(t=0.25, x=1.0, p=2.0, m=0.5)
+    with pytest.warns(DeprecationWarning, match="HamiltonianAdapter|adapt_hamiltonian"):
+        adapter = HamiltonianAdapter(H)
+    with pytest.warns(DeprecationWarning, match="HamiltonianAdapter|adapt_hamiltonian"):
+        one_shot = adapt_hamiltonian(H, x=1.0, m=0.5, p=2.0, t=0.25)
+    assert adapter(x=1.0, m=0.5, p=2.0, t=0.25) == one_shot == new == 2.75
+    with (
+        pytest.warns(DeprecationWarning, match="HamiltonianAdapter|adapt_hamiltonian"),
+        pytest.raises(TypeError, match=r"signature_hint"),
+    ):
+        HamiltonianAdapter(H, signature_hint="legacy")

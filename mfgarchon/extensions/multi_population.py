@@ -11,7 +11,7 @@ Mathematical Framework
 For populations k = 1, ..., K, the coupled system is:
 
     HJB equations (backward in time):
-        -∂uₖ/∂t + Hₖ(x, {mⱼ}ⱼ₌₁ᴷ, ∇uₖ, t) = 0    for k = 1, ..., K
+        -∂uₖ/∂t + Hₖ(t, x, ∇uₖ, {mⱼ}ⱼ₌₁ᴷ) = 0    for k = 1, ..., K
         uₖ(T, x) = gₖ(x)
 
     FP equations (forward in time):
@@ -19,7 +19,7 @@ For populations k = 1, ..., K, the coupled system is:
         mₖ(0, x) = m₀ₖ(x)
 
     Cross-population coupling:
-        Hₖ(x, {mⱼ}, p, t) = ½|p|² + Σⱼ αₖⱼ·mⱼ(x) + fₖ(x, {mⱼ}, t)
+        Hₖ(t, x, p, {mⱼ}) = ½|p|² + Σⱼ αₖⱼ·mⱼ(x) + fₖ(t, x, {mⱼ})
 
     where:
         - uₖ(t,x): Value function for population k
@@ -61,12 +61,13 @@ Part of: Issue #295 - Multi-population MFG support
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, ClassVar, Protocol, runtime_checkable
 
 import numpy as np
 
 from mfgarchon.core.base_problem import MFGProblemProtocol
 from mfgarchon.core.mfg_problem import MFGProblem
+from mfgarchon.types.callable_protocols import Slots
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -84,7 +85,7 @@ class MultiPopulationMFGProtocol(MFGProblemProtocol, Protocol):
 
     Extends MFGProblemProtocol with population-indexed methods for
     heterogeneous MFG systems. Each population k has its own:
-    - Hamiltonian Hₖ(x, {mⱼ}, p, t)
+    - Hamiltonian Hₖ(t, x, p, {mⱼ})
     - Terminal cost gₖ(x)
     - Initial density m₀ₖ(x)
     - Running cost fₖ(x, {mⱼ}, t)
@@ -108,18 +109,18 @@ class MultiPopulationMFGProtocol(MFGProblemProtocol, Protocol):
             Names for each population (for visualization/logging)
 
     Population-Indexed Methods:
-        hamiltonian_k(k, x, m_all, p, t)
+        hamiltonian_k(t, x, p, m_all, k)
             Hamiltonian for population k
-        terminal_cost_k(k, x)
+        terminal_cost_k(x, k)
             Terminal cost for population k
-        initial_density_k(k, x)
+        initial_density_k(x, k)
             Initial density for population k
-        running_cost_k(k, x, m_all, t)
+        running_cost_k(t, x, m_all, k)
             Running cost for population k
 
     Mathematical Framework:
         For k = 1, ..., K:
-            Hₖ(x, {mⱼ}, p, t) = ½|p|² + Σⱼ αₖⱼ·mⱼ + fₖ(x, {mⱼ}, t)
+            Hₖ(t, x, p, {mⱼ}) = ½|p|² + Σⱼ αₖⱼ·mⱼ + fₖ(t, x, {mⱼ})
 
         Coupling matrix A = [αₖⱼ]:
         - Diagonal αₖₖ: self-congestion
@@ -135,7 +136,7 @@ class MultiPopulationMFGProtocol(MFGProblemProtocol, Protocol):
         ...     K = problem.num_populations
         ...     # Solve K coupled HJB-FP systems
         ...     for k in range(K):
-        ...         H_k = lambda x, m_all, p, t: problem.hamiltonian_k(k, x, m_all, p, t)
+        ...         H_k = lambda t, x, p, m_all: problem.hamiltonian_k(t=t, x=x, p=p, m_all=m_all, k=k)
         ...         # ... solver implementation ...
     """
 
@@ -150,31 +151,31 @@ class MultiPopulationMFGProtocol(MFGProblemProtocol, Protocol):
     # Population-Indexed MFG Components
     # ====================
 
-    def hamiltonian_k(self, k: int, x, m_all: NDArray, p, t) -> float:
+    def hamiltonian_k(self, t, x, p, m_all: NDArray, k: int) -> float:
         """
         Hamiltonian for population k with cross-population coupling.
 
         Args:
-            k: Population index (0 to K-1)
+            t: Time
             x: Spatial position
+                - 1D: float
+                - nD: tuple/array of length d
+            p: Momentum/co-state ∇uₖ for population k
                 - 1D: float
                 - nD: tuple/array of length d
             m_all: Density values for all populations
                    Shape: (K,) array [m₁(x), m₂(x), ..., mₖ(x)]
-            p: Momentum/co-state ∇uₖ for population k
-                - 1D: float
-                - nD: tuple/array of length d
-            t: Time
+            k: Population index (0 to K-1), a further parameter after the measure (#2375 ruling 8)
 
         Returns:
-            Hamiltonian value Hₖ(x, {mⱼ}, p, t)
+            Hamiltonian value Hₖ(t, x, p, {mⱼ})
 
         Mathematical Form:
-            Hₖ(x, {mⱼ}, p, t) = ½|p|² + Σⱼ αₖⱼ·mⱼ(x) + fₖ(x, {mⱼ}, t)
+            Hₖ(t, x, p, {mⱼ}) = ½|p|² + Σⱼ αₖⱼ·mⱼ(x) + fₖ(t, x, {mⱼ})
 
         Example:
             >>> # Competition for resources with shared congestion
-            >>> def hamiltonian_k(self, k, x, m_all, p, t):
+            >>> def hamiltonian_k(self, t, x, p, m_all, k):
             ...     # Kinetic energy
             ...     H = 0.5 * np.sum(np.atleast_1d(p)**2)
             ...     # Cross-population coupling
@@ -187,13 +188,13 @@ class MultiPopulationMFGProtocol(MFGProblemProtocol, Protocol):
         """
         ...
 
-    def terminal_cost_k(self, k: int, x) -> float:
+    def terminal_cost_k(self, x, k: int) -> float:
         """
         Terminal cost gₖ(x) for population k.
 
         Args:
-            k: Population index (0 to K-1)
             x: Spatial position
+            k: Population index (0 to K-1)
 
         Returns:
             Terminal cost value gₖ(x)
@@ -206,20 +207,20 @@ class MultiPopulationMFGProtocol(MFGProblemProtocol, Protocol):
 
         Example:
             >>> # Different destinations for each population
-            >>> def terminal_cost_k(self, k, x):
+            >>> def terminal_cost_k(self, x, k):
             ...     x_arr = np.atleast_1d(x)
             ...     target = self.targets[k]  # Population k's destination
             ...     return 0.5 * np.sum((x_arr - target)**2)
         """
         ...
 
-    def initial_density_k(self, k: int, x) -> float:
+    def initial_density_k(self, x, k: int) -> float:
         """
         Initial density m₀ₖ(x) for population k.
 
         Args:
-            k: Population index (0 to K-1)
             x: Spatial position
+            k: Population index (0 to K-1)
 
         Returns:
             Initial density value m₀ₖ(x) ≥ 0
@@ -229,22 +230,22 @@ class MultiPopulationMFGProtocol(MFGProblemProtocol, Protocol):
 
         Example:
             >>> # Different initial distributions
-            >>> def initial_density_k(self, k, x):
+            >>> def initial_density_k(self, x, k):
             ...     x_arr = np.atleast_1d(x)
             ...     center = self.initial_centers[k]
             ...     return np.exp(-10 * np.sum((x_arr - center)**2))
         """
         ...
 
-    def running_cost_k(self, k: int, x, m_all: NDArray, t) -> float:
+    def running_cost_k(self, t, x, m_all: NDArray, k: int) -> float:
         """
         Running cost fₖ(x, {mⱼ}, t) for population k.
 
         Args:
-            k: Population index (0 to K-1)
+            t: Time
             x: Spatial position
             m_all: Density values for all populations [m₁(x), ..., mₖ(x)]
-            t: Time
+            k: Population index (0 to K-1)
 
         Returns:
             Running cost value fₖ(x, {mⱼ}, t)
@@ -258,7 +259,7 @@ class MultiPopulationMFGProtocol(MFGProblemProtocol, Protocol):
 
         Example:
             >>> # Population-specific tolls with congestion
-            >>> def running_cost_k(self, k, x, m_all, t):
+            >>> def running_cost_k(self, t, x, m_all, k):
             ...     toll = self.tolls[k]  # Per-population toll rate
             ...     congestion = np.sum(m_all)  # Total congestion
             ...     return toll * self.is_toll_zone(x) + 0.1 * congestion
@@ -300,7 +301,7 @@ class MultiPopulationMFGProblem(MFGProblem):
 
     Mathematical Formulation:
         For k = 1, ..., K:
-            Hₖ(x, {mⱼ}, p, t) = ½|p|² + Σⱼ αₖⱼ·mⱼ(x)
+            Hₖ(t, x, p, {mⱼ}) = ½|p|² + Σⱼ αₖⱼ·mⱼ(x)
 
         Coupling interpretation:
             - αₖₖ > 0: Population k experiences self-congestion
@@ -341,6 +342,15 @@ class MultiPopulationMFGProblem(MFGProblem):
         ...     T=1.0, Nt=50
         ... )
     """
+
+    # #2375 ruling 8's order for the population-indexed methods: the index k is a further parameter,
+    # after the measure. A subclass overriding one out of order is refused at class creation.
+    _ruling8_methods: ClassVar[dict[str, Slots]] = {
+        "hamiltonian_k": Slots(("t", "x", "p", "m_all", "k")),
+        "running_cost_k": Slots(("t", "x", "m_all", "k")),
+        "terminal_cost_k": Slots(("x", "k")),
+        "initial_density_k": Slots(("x", "k")),
+    }
 
     def __init__(
         self,
@@ -387,12 +397,12 @@ class MultiPopulationMFGProblem(MFGProblem):
             if len(self.sigma_vec) != num_populations:
                 raise ValueError(f"sigma length ({len(self.sigma_vec)}) must match num_populations ({num_populations})")
 
-    def hamiltonian_k(self, k: int, x, m_all: NDArray, p, t) -> float:
+    def hamiltonian_k(self, t, x, p, m_all: NDArray, k: int) -> float:
         """
         Hamiltonian with linear cross-population coupling.
 
         Implements:
-            Hₖ(x, {mⱼ}, p, t) = ½|p|² + Σⱼ αₖⱼ·mⱼ(x)
+            Hₖ(t, x, p, {mⱼ}) = ½|p|² + Σⱼ αₖⱼ·mⱼ(x)
 
         Args:
             k: Population index (0 to K-1)
@@ -420,7 +430,7 @@ class MultiPopulationMFGProblem(MFGProblem):
 
         return H
 
-    def terminal_cost_k(self, k: int, x) -> float:
+    def terminal_cost_k(self, x, k: int) -> float:
         """
         Terminal cost for population k.
 
@@ -440,7 +450,7 @@ class MultiPopulationMFGProblem(MFGProblem):
         # Default: no terminal cost
         return 0.0
 
-    def initial_density_k(self, k: int, x) -> float:
+    def initial_density_k(self, x, k: int) -> float:
         """
         Initial density for population k.
 
@@ -460,7 +470,7 @@ class MultiPopulationMFGProblem(MFGProblem):
         # Default: uniform distribution across populations
         return 1.0 / self.num_populations
 
-    def running_cost_k(self, k: int, x, m_all: NDArray, t) -> float:
+    def running_cost_k(self, t, x, m_all: NDArray, k: int) -> float:
         """
         Running cost for population k.
 
@@ -574,8 +584,8 @@ if __name__ == "__main__":
     m_all = np.array([1.0, 2.0])
     p = 1.0
     t = 0.5
-    H0 = problem.hamiltonian_k(0, x, m_all, p, t)
-    H1 = problem.hamiltonian_k(1, x, m_all, p, t)
+    H0 = problem.hamiltonian_k(t=t, x=x, p=p, m_all=m_all, k=0)
+    H1 = problem.hamiltonian_k(t=t, x=x, p=p, m_all=m_all, k=1)
     H0_expected = 0.5 * p**2 + 0.1 * m_all[0] + 0.05 * m_all[1]  # ½p² + α₀₀m₀ + α₀₁m₁
     H1_expected = 0.5 * p**2 + 0.03 * m_all[0] + 0.1 * m_all[1]  # ½p² + α₁₀m₀ + α₁₁m₁
     assert np.isclose(H0, H0_expected), f"H0 mismatch: {H0} vs {H0_expected}"
@@ -587,9 +597,9 @@ if __name__ == "__main__":
     print("\nTest 5: Population-Indexed Methods")
     print("-" * 40)
     for k in range(2):
-        g_k = problem.terminal_cost_k(k, x)
-        m0_k = problem.initial_density_k(k, x)
-        f_k = problem.running_cost_k(k, x, m_all, t)
+        g_k = problem.terminal_cost_k(x=x, k=k)
+        m0_k = problem.initial_density_k(x=x, k=k)
+        f_k = problem.running_cost_k(t=t, x=x, m_all=m_all, k=k)
         print(f"  Population {k} ({problem.population_labels[k]}):")
         print(f"    Terminal cost: {g_k:.4f}")
         print(f"    Initial density: {m0_k:.4f}")

@@ -55,17 +55,17 @@ def _call_h(fn: Any, x: Any, m: Any, p: Any, t: float = 0.0) -> Any:
 
     A family object (a ``HamiltonianBase``/``LagrangianBase`` instance, or a bound method of
     one) takes ``(t, x, p, m)`` since #2378 phase 5 and is called by keyword. A raw user callable
-    keeps the positional ``(x, m, p, t)`` convention it had before, with whatever parameter names
-    it declares, until phase 5 part 2 settles user callables.
+    goes through its binding (``HAMILTONIAN_SLOTS``), like every user callable the library accepts.
     """
     import functools
 
     from mfgarchon.core.hamiltonian import MFGOperatorBase
+    from mfgarchon.types.callable_protocols import HAMILTONIAN_SLOTS, bind_user_callable
 
     target = fn.func if isinstance(fn, functools.partial) else fn  # partial(H.dm) is still a family method
     if isinstance(getattr(target, "__self__", target), MFGOperatorBase):
         return fn(t=t, x=x, p=p, m=m)
-    return fn(x, m, p, t)
+    return bind_user_callable(fn, HAMILTONIAN_SLOTS, role="Hamiltonian callable")(t=t, x=x, p=p, m=m)
 
 
 def _get_sample_inputs(
@@ -125,9 +125,9 @@ def validate_custom_functions(
 
     Args:
         hamiltonian: HamiltonianBase instance (called as H(t, x, p, m) by keyword) or a raw
-            callable H(x, m, p, t), called positionally
-        dH_dm: Derivative dH/dm: a family bound method (called by keyword) or a raw callable(x, m, p, t)
-        dH_dp: Derivative dH/dp: a family bound method (called by keyword) or a raw callable(x, m, p, t)
+            callable H(t, x, p, m), bound by name or position (#2375 ruling 8)
+        dH_dm: Derivative dH/dm: a family bound method (called by keyword) or a raw callable(t, x, p, m)
+        dH_dp: Derivative dH/dp: a family bound method (called by keyword) or a raw callable(t, x, p, m)
         geometry: Geometry for sample point generation
         check_consistency: If True (default), verify dH_dm/dH_dp are the
             derivatives of H by finite differences. Costs O(dimension) extra
@@ -165,7 +165,7 @@ def validate_hamiltonian(
     geometry: GeometryProtocol,
 ) -> ValidationResult:
     """
-    Validate a Hamiltonian: a HamiltonianBase instance, or a raw callable H(x, m, p, t).
+    Validate a Hamiltonian: a HamiltonianBase instance, or a raw callable H(t, x, p, m).
 
     Supports HamiltonianBase instances (called as H(t, x, p, m) by keyword)
     and raw callables (tried with same signature).
@@ -188,14 +188,14 @@ def validate_hamiltonian(
     if err is not None:
         return err
 
-    # Evaluate: a HamiltonianBase by keyword, (t, x, p, m); a raw callable positionally, (x, m, p, t)
+    # Evaluate: a HamiltonianBase by keyword; a raw callable through its binding, (t, x, p, m)
     try:
         value = _call_h(hamiltonian, x_sample, m_sample, p_sample)
     except TypeError as e:
         result.add_error(
             f"Hamiltonian has wrong signature: {e}",
             location="hamiltonian",
-            suggestion="A HamiltonianBase takes (t, x, p, m); a raw callable is called as H(x, m, p, t)",
+            suggestion="A Hamiltonian takes (t, x, p, m) (#2375 ruling 8); name a raw callable's parameters t, x, p, m",
         )
         return result
     except Exception as e:
@@ -237,7 +237,7 @@ def validate_hamiltonian_derivative(
     """
     Validate a Hamiltonian derivative function (dH_dm or dH_dp).
 
-    The derivative should have signature f(x, m, p, t) matching
+    The derivative should have signature f(t, x, p, m) matching
     HamiltonianBase.dm() / HamiltonianBase.dp().
 
     Args:
@@ -254,14 +254,14 @@ def validate_hamiltonian_derivative(
     if err is not None:
         return err
 
-    # Evaluate: a family bound method by keyword, (t, x, p, m); a raw callable positionally, (x, m, p, t)
+    # Evaluate: a family bound method by keyword; a raw callable through its binding, (t, x, p, m)
     try:
         value = _call_h(derivative_func, x_sample, m_sample, p_sample)
     except TypeError as e:
         result.add_error(
             f"{name} has wrong signature: {e}",
             location=name,
-            suggestion=f"{name}: a family method takes (t, x, p, m); a raw callable is called as {name}(x, m, p, t)",
+            suggestion=f"{name} takes (t, x, p, m) (#2375 ruling 8); name a raw callable's parameters t, x, p, m",
         )
         return result
     except Exception as e:
@@ -448,8 +448,8 @@ def validate_hamiltonian_consistency(
     Check that dH_dm and dH_dp are the derivatives of H, by finite differences.
 
     Numerical checks, over a small grid of probe points (m, p):
-        dH_dm_numerical = (H(x, m+eps, p, t) - H(x, m-eps, p, t)) / (2*eps)
-        dH_dp_numerical[i] = (H(x, m, p+eps*e_i, t) - H(x, m, p-eps*e_i, t)) / (2*eps)
+        dH_dm_numerical = (H(t, x, p, m+eps) - H(t, x, p, m-eps)) / (2*eps)
+        dH_dp_numerical[i] = (H(t, x, p+eps*e_i, m) - H(t, x, p-eps*e_i, m)) / (2*eps)
 
     Severity (Issue #1642, capability C1). This validator can invalidate its
     result, so a caller doing `if not result.is_valid: raise ValidationError(...)`
@@ -462,8 +462,8 @@ def validate_hamiltonian_consistency(
 
     Args:
         hamiltonian: HamiltonianBase instance (called as H(t, x, p, m) by keyword) or a raw
-            callable H(x, m, p, t), called positionally
-        dH_dm: Claimed derivative dH/dm: a family bound method (called by keyword) or a raw callable(x, m, p, t)
+            callable H(t, x, p, m), bound by name or position (#2375 ruling 8)
+        dH_dm: Claimed derivative dH/dm: a family bound method (called by keyword) or a raw callable(t, x, p, m)
         geometry: Geometry for sample point
         tolerance: Relative tolerance for the warning tier
         dH_dp: Claimed gradient dH/dp, the same kinds as dH_dm. Optional.
