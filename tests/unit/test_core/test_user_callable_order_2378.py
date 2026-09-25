@@ -124,6 +124,11 @@ def test_detect_callable_signature_tells_the_two_orders_apart():
         (SOURCE_TERM_SLOTS, lambda t, x, m_t, v_t: 0.0),  # the documented names, half-migrated
         (SOURCE_TERM_SLOTS, lambda x_, m_, v, t_: 0.0),  # v is at index 2 in both orders: it pins nothing
         (SOURCE_TERM_SLOTS, lambda a, b, c, d: 0.0),  # nothing says which order
+        # The half-migration, t moved to the front and v, m left in the old order: t names the order
+        # against the full old one, not against this, so one of v and m must be named (#2404 round 2).
+        (SOURCE_TERM_SLOTS, lambda t, x, a, b: 0.0),
+        (SOURCE_TERM_SLOTS, lambda t, pos, dens, val: 0.0),
+        (SOURCE_TERM_SLOTS, lambda time, pos, dens, val: 0.0),
         (POTENTIAL_SLOTS, lambda a, b=1.0: 0.0),  # a default is not a slot to fill
     ],
 )
@@ -271,7 +276,12 @@ def test_a_raw_hamiltonian_must_declare_all_four_slots_and_name_one_that_moved()
     pinned = bind_user_callable(lambda t, x, grad, m: grad - m, HAMILTONIAN_SLOTS, role="h")  # m pins the pair
     assert by_name(t=0.0, x=0.0, p=2.0, m=0.5) == pinned(t=0.0, x=0.0, p=2.0, m=0.5) == 1.5
     # Omits slots; or names only p, which is at index 2 in both orders (#2404 review).
-    for incomplete in (lambda x: 0.0, lambda x_, m_, p, t_: 0.0):
+    for incomplete in (
+        lambda x: 0.0,
+        lambda x_, m_, p, t_: 0.0,
+        lambda t, x, a, b: 0.0,
+        lambda t, pos, dens, grad: 0.0,
+    ):
         with pytest.raises(TypeError, match=r"cannot be matched"):
             bind_user_callable(incomplete, HAMILTONIAN_SLOTS, role="h")
 

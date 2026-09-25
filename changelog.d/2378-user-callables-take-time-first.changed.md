@@ -6,11 +6,12 @@
     - `HEvalState` is `(t, x, p, m)` with `t` required.
   - **How the library calls them.** Each callable is bound once when the library accepts it.
     - Parameters named after the slots are passed by name: `t` (or `time`), `x`, `v`, `m`, `mu`, and `m_t` and `v_t` for a source term. Their declared order then no longer affects the numbers.
-    - Parameters with other names receive the slots **positionally, in the new order**, provided at least one parameter is named after a slot whose position the reorder changed (`t`, `x`, `m`, `mu`; not `v`, which is third in both orders). That name, at its new position, settles which order the callable is in.
+    - Parameters with other names receive the slots **positionally, in the new order**, provided at least one parameter is named after a slot whose position the reorder changed (`t`, `x`, `m`, `mu`; not `v`, which is third in both orders), and, for a source term, one of `v` and `m` is named. The first settles the new order against the old one; the second settles it against the half-migration that moved only `t` to the front, `(t, x, m, v)`.
   - **Refused at construction**, with a message naming the new order:
     - a callable whose slot-named parameters are in the old order;
     - a parameter named after one slot at another slot's position;
     - a callable naming no slot whose position changed: `potential=lambda pos, s: ...` or a source `(x_, m_, v, t_)` reads the same in the old order and the new;
+    - a source term naming neither `v` nor `m`, such as `(t, x, a, b)`: it reads the same in the new order and in the half-migration `(t, x, m, v)`;
     - `*args` outside a spatial `potential_func`.
   - **Not refused, and wrong:** a positional call in the old order to an API this reordered, such as `HEvalState(x, p, m, t)`, `field.evaluate(x, mu, t)`, or a library-built source called as `source(x, m, v, t)`. It binds the arguments to the wrong parameters. Construct and call these by keyword.
   - **What to change in your code.** Reorder the parameters, name them after the slots, and call by keyword wherever you call these yourself.

@@ -36,7 +36,10 @@ class Slots:
     names the library documented before #2378 phase 5. ``unmoved`` are slots at the same position
     in the order before #2375 ruling 8 as after it (``v`` for a source term, ``p`` for a
     Hamiltonian): a parameter named after one cannot tell the two orders apart, so it does not
-    identify the order for positional binding. ``required`` are slots a callable must declare to
+    identify the order for positional binding. ``swapped`` is the pair of slots whose relative order
+    ruling 8 reversed (``v``/``m``, ``p``/``m``): a name for ``t`` or ``x`` separates the new order
+    from the full old one but not from the half-migration that moved only ``t`` to the front, so a
+    positional callable of such a role must also name one of the pair. ``required`` are slots a callable must declare to
     be bound by name (a raw Hamiltonian takes all four). ``optional`` are slots a positional
     callable may leave out (a conditional Hamiltonian's ``t``, as it always could); what remains
     must be in the same order before ruling 8 as after it, so a positional callable without them
@@ -46,6 +49,7 @@ class Slots:
     order: tuple[str, ...]
     aliases: Mapping[str, str] = field(default_factory=dict)
     unmoved: tuple[str, ...] = ()
+    swapped: tuple[str, str] | None = None
     required: tuple[str, ...] = ()
     optional: tuple[str, ...] = ()
 
@@ -58,9 +62,9 @@ class Slots:
 # u-derivative family, then the measure, then further parameters (#2375 ruling 8, #2378 phase 5).
 # These are the one statement of it: every invocation goes through `bind_user_callable`.
 POTENTIAL_SLOTS = Slots(("t", "x"))
-SOURCE_TERM_SLOTS = Slots(("t", "x", "v", "m"), aliases={"m_t": "m", "v_t": "v"}, unmoved=("v",))
+SOURCE_TERM_SLOTS = Slots(("t", "x", "v", "m"), aliases={"m_t": "m", "v_t": "v"}, unmoved=("v",), swapped=("v", "m"))
 MEASURE_FIELD_SLOTS = Slots(("t", "x", "mu"))
-HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m"), unmoved=("p",), required=("t", "x", "p", "m"))
+HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m"), unmoved=("p",), swapped=("p", "m"), required=("t", "x", "p", "m"))
 CONDITIONAL_HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m", "theta"), optional=("t",))
 ALPHA_STAR_SLOTS = Slots(("t", "x", "p", "m"), aliases={"t_idx": "t"})
 
@@ -84,9 +88,10 @@ def bind_user_callable(
       does not declare are omitted, so a time-independent ``V(x)`` is accepted where ``t`` is. Its
       declared order then does not matter to the numbers.
     - **By position, in slot order**, when it requires exactly one parameter per slot, none of them
-      is named after a different slot, and at least one is named after a slot that moved in
-      ruling 8's reorder: a list naming none of those reads the same in either order, so it cannot
-      say which one it was written in. Not ``*args`` either, for the same reason.
+      is named after a different slot, at least one is named after a slot that moved in ruling 8's
+      reorder, and, where the reorder swapped a pair, one of the pair is named: otherwise the list
+      reads the same in the new order as in the old one, or as in the half-migration that moved
+      only ``t``. Not ``*args`` either, for the same reason.
     - **``x`` alone**, where ``spatial_only`` allows a spatial callable: at most one required
       parameter, or only ``*args``, as ``MFGComponents`` has always called a ``potential_func``
       that declares no time.
@@ -135,7 +140,9 @@ def bind_user_callable(
         ]
     # Without its optional slots a callable is in the same order either way; with all of them, a
     # name must say which order it is in.
-    identified = passes != order_ or any(name in slot_of and slot_of[name] not in slots.unmoved for name in order)
+    names_moved = any(name in slot_of and slot_of[name] not in slots.unmoved for name in order)
+    names_pair = slots.swapped is None or any(slot_of.get(name) in slots.swapped for name in order)
+    identified = passes != order_ or (names_moved and names_pair)
     if passes is not None and not var_positional and not misplaced and identified:
         return BoundCallable(fn, "positional", passes)
     if spatial_only and len(required) <= 1 and (positional or var_positional):

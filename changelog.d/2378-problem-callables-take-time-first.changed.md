@@ -9,7 +9,7 @@
   - **Refused, when the callable is accepted:**
     - a `conditional_hamiltonian` written `(x, p, m, theta, t)`. The time-free `(x, p, m, theta)` every example uses is still accepted, since time is optional there;
     - an `alpha_star` in the old order, including under the name `t_idx`;
-    - in validation, a raw callable that does not take all four arguments, or whose parameters name none of `t`, `x`, `m`. `p` is third in both orders, so it cannot tell them apart.
+    - in validation, a raw callable that does not take all four arguments, or that names neither `p` nor `m`, or none of `t`, `x`, `m`. `p` is third in both orders, so it cannot tell them apart; and `(t, x, a, b)` reads the same in the new order and in the half-migration `(t, x, m, p)`.
   - **Deprecated:** `HamiltonianAdapter`, `create_hamiltonian_adapter` and `adapt_hamiltonian`. They guessed among argument orders and converted to `(x, m, p, t)`; they now bind through `bind_user_callable` with the new order and refuse the old one. `signature_hint` is refused. The deprecation policy asks a deprecated API to change no behaviour; that clause is waived here by user ruling (2026-09-25), since what these accepted is what ruling 8 refuses.
   - **Not refused, and wrong:** a positional call in the old order to one of these methods, such as `problem.hamiltonian(x, m, p, t)`. It binds the arguments to the wrong parameters. Call these by keyword.
   - **What to change in your code.** Reorder the parameters, and call these methods by keyword.
