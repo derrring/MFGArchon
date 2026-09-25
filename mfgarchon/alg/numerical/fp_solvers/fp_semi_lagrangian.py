@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.interpolate import interp1d
 
+# Import BC infrastructure from HJB-SL (reuse unified components)
 from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import (
     apply_boundary_conditions_1d,
 )
@@ -41,8 +42,6 @@ from mfgarchon.geometry.boundary.types import BCType
 
 # Issue #625: Migrated from tensor_calculus to operators/stencils
 from mfgarchon.operators.stencils.finite_difference import laplacian_with_bc
-
-# Import BC infrastructure from HJB-SL (reuse unified components)
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger

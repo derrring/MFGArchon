@@ -1,7 +1,12 @@
 - **Callables that were always time-first are now bound, so a space-first one is refused** (#2375 ruling 8, #2378 phase 5 part 3c).
   - **Which callables:**
-    - the HJB and FP solvers' `source_term(t, x)`;
+    - the HJB and FP solvers' `source_term(t, x)`, including the source a graph coupling operator returns;
     - `VariationalMFGComponents`' `lagrangian_func` and its `dx`, `dv` and `dm` derivatives, `(t, x, v, m)`.
-  - **What changed.** Every evaluation now goes through one binding. A callable written `(x, t)`, or `(pts, time)`, raises `TypeError` at its first evaluation; it used to receive time as space without an error.
-  - **What still binds.** Unnamed parameters, such as `lambda a, b: ...`, still bind positionally in the documented order, since that order never changed.
-  - **Nothing written in the documented order changes value.**
+  - **What changed.** Every evaluation goes through one binding. A callable written `(x, t)`, or `(pts, time)`, raises `TypeError` instead of receiving time as space without an error. It raises at the first evaluation. The variational Lagrangian with JAX available is the exception: it raises when the problem is constructed.
+  - **What is called exactly as before.** Anything that can take every argument positionally is still called positionally, in the documented order:
+    - unnamed parameters (`lambda a, b`);
+    - `*args` wrappers;
+    - `np.vectorize`;
+    - `jax.grad` derivatives.
+  - **What is newly accepted.** A callable that takes only `t`, or only `x`, by name is now accepted; it used to fail.
+  - **Nothing that worked changes value.**

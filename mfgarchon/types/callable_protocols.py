@@ -137,10 +137,21 @@ def bind_user_callable(
         p.name for p in params if p.name in slot_of and p.kind in (kinds.POSITIONAL_OR_KEYWORD, kinds.KEYWORD_ONLY)
     ]
     required = [p for p in positional if p.default is kinds.empty]
+    var_positional = any(p.kind is kinds.VAR_POSITIONAL for p in params)
+    if not slots.reordered:
+        # Never reordered: a callable that can take every slot positionally, with no slot-named
+        # parameter misplaced, is called exactly as before -- positionally, in slot order. That keeps
+        # `*args` wrappers, `np.vectorize` and `jax.grad` callables (keyword-hostile, though their
+        # signature shows names) working as they did (#2406 review).
+        takes_all = var_positional or len(positional) >= len(order_)
+        misplaced_here = [
+            name for i, name in enumerate(order[: len(order_)]) if name in slot_of and order_.index(slot_of[name]) != i
+        ]
+        if takes_all and len(required) <= len(order_) and not misplaced_here:
+            return BoundCallable(fn, "positional", order_)
     declares_required = {slot_of[name] for name in named} >= set(slots.required)
     if named and all(p.name in named for p in required) and declares_required:
         return BoundCallable(fn, "keyword", tuple(slot_of[name] for name in named), tuple(named))
-    var_positional = any(p.kind is kinds.VAR_POSITIONAL for p in params)
     # Positionally it receives every slot, or every slot but the optional ones.
     shortened = tuple(slot for slot in order_ if slot not in slots.optional)
     passes = order_ if len(required) == len(order_) else shortened if len(required) == len(shortened) else None
@@ -214,13 +225,24 @@ def refuse_methods_out_of_order(cls: type, table: Mapping[str, Slots | None]) ->
             )
 
 
+_SOURCE_BINDINGS: dict[int, BoundCallable] = {}
+
+
 def evaluate_solver_source(source_term: Callable[..., Any], *, t: Any, x: Any) -> Any:
     """A solver's ``source_term`` at ``(t, x)``, through its binding (#2375 ruling 8).
 
     The one place a solver evaluates the source it was handed: a callable written ``(x, t)`` is
-    refused rather than handed time as space.
+    refused rather than handed time as space. The binding is cached by the callable's identity, so a
+    solve's time loop inspects the signature once, not once per step (#2406 review: +7.5% on a
+    small FP solve).
     """
-    return bind_user_callable(source_term, SOLVER_SOURCE_SLOTS, role="source_term")(t=t, x=x)
+    bound = _SOURCE_BINDINGS.get(id(source_term))
+    if bound is None or bound.fn is not source_term:
+        bound = bind_user_callable(source_term, SOLVER_SOURCE_SLOTS, role="source_term")
+        if len(_SOURCE_BINDINGS) >= 256:
+            _SOURCE_BINDINGS.clear()
+        _SOURCE_BINDINGS[id(source_term)] = bound
+    return bound(t=t, x=x)
 
 
 class BoundCallable:

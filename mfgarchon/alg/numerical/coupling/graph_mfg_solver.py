@@ -32,6 +32,7 @@ from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
 )
 from mfgarchon.alg.numerical.coupling.graph_coupling import _get_time_slice
 from mfgarchon.alg.numerical.coupling.source_composition import _call_problem_source, _problem_hjb_source_terms
+from mfgarchon.types.callable_protocols import evaluate_solver_source
 
 from .fixed_point_utils import diverged_value_function
 
@@ -368,7 +369,7 @@ class GraphMFGSolver(BaseCouplingIterator):
         dt = self._dt
 
         def composed(t: float, x_eval: NDArray) -> NDArray:
-            s = coupling_source(t, x_eval)
+            s = evaluate_solver_source(coupling_source, t=t, x=x_eval)
             # Source + nonlocal via the shared single-source primitive (Issue #1382),
             # layered on the graph coupling source. Order [coupling, source, nonlocal]
             # preserves byte-for-byte agreement with the pre-#1382 graph closure. Uses
@@ -398,7 +399,7 @@ class GraphMFGSolver(BaseCouplingIterator):
         dt = self._dt
 
         def composed(t: float, x_eval: NDArray) -> NDArray:
-            s = coupling_source(t, x_eval)
+            s = evaluate_solver_source(coupling_source, t=t, x=x_eval)
             v_t = _get_time_slice(Us_new[k], t, dt)
             m_t = _get_time_slice(Ms_expanded[k], t, dt)
             s = s + _call_problem_source(p, "source_term_fp", t=t, x=x_eval, m=m_t, v=v_t)

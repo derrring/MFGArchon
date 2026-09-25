@@ -15,6 +15,10 @@ from mfgarchon.types.callable_protocols import evaluate_solver_source
 
 _X = np.linspace(0.0, 1.0, 5)
 
+# The names under which a solver-level source reaches a call: a solver's own `source_term`, and the
+# `coupling_source` a graph coupling operator returns (#2406 review).
+_SOLVER_SOURCES = {"source_term", "coupling_source"}
+
 
 @pytest.mark.parametrize(
     "source",
@@ -66,7 +70,7 @@ def test_no_solver_calls_its_source_term_directly():
     direct = []
     for path in sorted(package.rglob("*.py")):
         for node in ast.walk(ast.parse(path.read_text())):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "source_term":
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in _SOLVER_SOURCES:
                 direct.append(f"{path.relative_to(package)}:{node.lineno}")
     assert not direct, f"source_term called directly, not through evaluate_solver_source: {direct}"
 
@@ -99,3 +103,36 @@ def test_no_variational_lagrangian_callable_is_called_directly():
         and "components" in ast.unparse(node.func.value)
     ]
     assert not direct, f"a Lagrangian callable called directly, not through its binding, at lines {direct}"
+
+
+def _plain(t, x):
+    return t + x
+
+
+def _wrapper(*a, **k):
+    return _plain(*a, **k)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [_wrapper, lambda *a: _plain(*a), np.vectorize(_plain), lambda t, *rest: _plain(t, *rest)],
+    ids=["*args, **kwargs wrapper", "lambda *a", "np.vectorize", "t, *rest"],
+)
+def test_a_source_that_takes_its_arguments_positionally_is_called_as_before(source):
+    """#2406 review: a callable ruling 8 did not reorder is called positionally in slot order when it
+    can take every slot that way, exactly as before, not refused or called by keyword."""
+    np.testing.assert_allclose(evaluate_solver_source(source, t=0.5, x=_X), 0.5 + _X)
+
+
+def test_a_jax_grad_lagrangian_derivative_is_called_positionally():
+    """`jax.grad` shows the wrapped function's names but accepts positions only; the variational
+    module's own idiom for derivatives (#2406 review)."""
+    jax = pytest.importorskip("jax")
+    from mfgarchon.types.callable_protocols import VARIATIONAL_LAGRANGIAN_SLOTS, bind_user_callable
+
+    def lagrangian(t, x, v, m):
+        return 0.5 * v**2 + x * m + t * x
+
+    for argnum, expected in ((1, 0.4 + 0.1), (2, 0.3), (3, 0.2)):
+        bound = bind_user_callable(jax.grad(lagrangian, argnums=argnum), VARIATIONAL_LAGRANGIAN_SLOTS, role="d")
+        assert float(bound(t=0.1, x=0.2, v=0.3, m=0.4)) == pytest.approx(expected)
