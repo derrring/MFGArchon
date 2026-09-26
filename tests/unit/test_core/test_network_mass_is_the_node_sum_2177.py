@@ -102,7 +102,7 @@ class TestNetworkMassIsMeasuredOnTheNodes:
                     hamiltonian=SeparableHamiltonian(
                         control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m
                     ),
-                    sigma=0.3,
+                    volatility=0.3,
                 ),
                 domain=TensorProductGrid(
                     bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)
@@ -131,7 +131,7 @@ class TestNetworkMassIsMeasuredOnTheNodes:
                 hamiltonian=SeparableHamiltonian(
                     control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m
                 ),
-                sigma=0.3,
+                volatility=0.3,
             ),
             domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)),
             conditions=Conditions(u_terminal=lambda x: np.squeeze(0.0 * np.asarray(x)), m_initial=lambda x: 1.0, T=0.1),

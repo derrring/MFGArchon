@@ -44,7 +44,7 @@ if __name__ == "__main__":
         coupling_dm=lambda m: 0.3,
     )
 
-    model = Model(hamiltonian=hamiltonian, sigma=0.15)
+    model = Model(hamiltonian=hamiltonian, volatility=0.15)
 
     # The mass warning below is the library reporting, not complaining: this Gaussian integrates to
     # about 0.25 on `grid`, and Issue #1887 stopped the constructor from quietly rescaling it. If you

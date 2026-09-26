@@ -146,7 +146,7 @@ def _problem(**source_fields):
                 coupling=lambda m: np.asarray(m) * 0.0,
                 coupling_dm=lambda m: np.asarray(m) * 0.0,
             ),
-            sigma=0.3,
+            volatility=0.3,
         ),
         domain=grid,
         conditions=Conditions(m_initial=_m_initial, u_terminal=_u_terminal, T=0.2),

@@ -43,7 +43,7 @@ def _make_problem() -> MFGProblem:
         geometry=geometry,
         T=0.2,
         Nt=4,
-        sigma=0.2,
+        volatility=0.2,
         components=components,
     )
 

@@ -47,7 +47,7 @@ class TestNonQuadraticHamiltonians:
             geometry=geometry,
             T=1.0,
             Nt=20,
-            sigma=0.1,
+            volatility=0.1,
             coupling_coefficient=0.0,  # No coupling for unit tests
             components=_default_components(),
         )
@@ -128,7 +128,7 @@ class TestNonQuadraticHamiltonians:
             geometry=geometry,
             T=1.0,
             Nt=20,
-            sigma=0.1,
+            volatility=0.1,
             coupling_coefficient=1.0,
             components=_default_components(),
         )
@@ -365,7 +365,7 @@ class TestFixedPointIteratorDrift:
             geometry=geom,
             T=1.0,
             Nt=Nt,
-            sigma=0.1,
+            volatility=0.1,
             boundary_conditions=bc,
             components=components,
         )

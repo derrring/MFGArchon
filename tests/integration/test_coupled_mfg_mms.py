@@ -250,7 +250,7 @@ def _build_problem(mfg: CoupledSinusoid1D, Nx: int, Nt: int, T: float) -> MFGPro
         geometry=geometry,
         T=T,
         Nt=Nt,
-        sigma=mfg.sigma,
+        volatility=mfg.sigma,
         # INERT on this solver path -- it aligns nothing. Kept only because MFGProblem's own
         # default (0.5) would be equally inert and more confusing.
         coupling_coefficient=mfg.c,

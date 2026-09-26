@@ -26,7 +26,7 @@ from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConven
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import scalar_diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, scalar_volatility
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -109,9 +109,10 @@ class WeakFormFPSolver(BaseFPSolver):
         raise NotImplementedError
 
     def _diffusion_coefficient(self, volatility_field) -> float:
-        # D = sigma^2 / 2 via the single-source converter (Issue #811). A spatially-varying field
-        # is collapsed to its mean with a warning (this scalar-D solver cannot represent it).
-        return scalar_diffusion_from_volatility(volatility_field, self.problem.sigma)
+        # D = sigma^2 / 2 via the single-source converter (Issue #811). This solver assembles one
+        # scalar D, so an array or callable volatility is refused, not averaged (#2376).
+        volatility = volatility_field if volatility_field is not None else self.problem.volatility
+        return diffusion_from_volatility(scalar_volatility(volatility, consumer=type(self).__name__))
 
     @deprecated_parameter(param_name="drift_field", since="v0.20.0", replacement="potential_field")
     def solve_fp_system(

@@ -97,7 +97,8 @@ class StochasticMFGProblem(MFGProblem):
         Nx: int = 51,
         T: float = 1.0,
         Nt: int = 51,
-        sigma: float = 1.0,
+        volatility: Any = 1.0,
+        volatility_kind: str | None = None,
         noise_process: NoiseProcess | None = None,
         conditional_hamiltonian: Callable | None = None,
         conditional_terminal_cost: Callable | None = None,
@@ -111,7 +112,9 @@ class StochasticMFGProblem(MFGProblem):
         Args:
             xmin, xmax, Nx: Spatial domain [xmin, xmax] with Nx grid points
             T, Nt: Time horizon [0, T] with Nt time steps
-            sigma: Diffusion coefficient in spatial dynamics
+            volatility: The agents' own SDE volatility Sigma, as on MFGProblem -- not the common
+                noise's, which belongs to ``noise_process``. The PDE diffusion is 1/2 Sigma Sigma^T.
+            volatility_kind: How an array volatility is read, as on MFGProblem.
             noise_process: Common noise process θ_t (e.g., OrnsteinUhlenbeck)
             conditional_hamiltonian: H(x, p, m, theta) - Hamiltonian depending on noise
             conditional_terminal_cost: g(x, theta_T) - Terminal cost depending on final noise
@@ -129,7 +132,8 @@ class StochasticMFGProblem(MFGProblem):
             super().__init__(
                 T=T,
                 Nt=Nt,
-                sigma=sigma,
+                volatility=volatility,
+                volatility_kind=volatility_kind,
                 components=components,
                 **kwargs,
             )
@@ -146,7 +150,8 @@ class StochasticMFGProblem(MFGProblem):
                 geometry=geometry,
                 T=T,
                 Nt=Nt,
-                sigma=sigma,
+                volatility=volatility,
+                volatility_kind=volatility_kind,
                 components=components,
                 **kwargs,
             )
@@ -408,7 +413,8 @@ class StochasticMFGProblem(MFGProblem):
             geometry=self.geometry,
             T=self.T,
             Nt=self.Nt,
-            sigma=self.sigma,
+            volatility=self.volatility,
+            volatility_kind=self.volatility_kind,
             components=conditional_components,
         )
 
@@ -422,7 +428,7 @@ class StochasticMFGProblem(MFGProblem):
             f"StochasticMFGProblem(\n"
             f"  domain=[{b[0][0]}, {b[1][0]}], Nx={self.geometry.num_spatial_points - 1},\n"
             f"  time=[0, {self.T}], Nt={self.Nt},\n"
-            f"  sigma={self.sigma},\n"
+            f"  volatility={self.volatility!r},\n"
             f"  noise_process={noise_info}\n"
             f")"
         )

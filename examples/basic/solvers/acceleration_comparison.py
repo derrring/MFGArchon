@@ -51,7 +51,7 @@ def create_test_problem():
         ),
         T=1.0,
         Nt=25,
-        sigma=0.5,
+        volatility=0.5,
         hamiltonian=hamiltonian,
     )
 

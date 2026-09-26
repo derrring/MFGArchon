@@ -46,7 +46,7 @@ from mfgarchon.geometry.boundary.applicator_fdm import PreallocatedGhostBuffer
 from mfgarchon.geometry.boundary.conditions import neumann_bc
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.types.callable_protocols import evaluate_solver_source
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, scalar_volatility
 
 from .base_hjb import BaseHJBSolver
 
@@ -199,6 +199,8 @@ class HJBWENOSolver(BaseHJBSolver):
 
         # Detect problem dimension
         self.dimension = self._detect_problem_dimension()
+        # The one read of the problem's volatility: this solver uses one scalar throughout (#2376).
+        self._volatility = scalar_volatility(problem.volatility, consumer="HJBWENOSolver")
         self.hjb_method_name = f"{self.dimension}D-WENO-{weno_variant.upper()}"
 
         # Store raw parameters for validation, then adjust for dimension
@@ -775,7 +777,7 @@ class HJBWENOSolver(BaseHJBSolver):
         h_mid, alpha = self._directional_hamiltonian_and_speed(m, p_mid, direction, axis)
         h_hat = h_mid - 0.5 * alpha * (p_plus - p_minus)
 
-        diffusion = diffusion_from_volatility(self.problem.sigma)
+        diffusion = diffusion_from_volatility(self._volatility)
         return -h_hat + diffusion * u_aa
 
     def _weno5_hj_derivatives(self, u_padded: np.ndarray, axis: int, dx: float) -> tuple[np.ndarray, np.ndarray]:
@@ -891,7 +893,7 @@ class HJBWENOSolver(BaseHJBSolver):
         dt_cfl = self.cfl_number * dx / max_speed
 
         # Stability condition for diffusion term
-        dt_diffusion = self.diffusion_stability_factor * dx**2 / self.problem.sigma**2
+        dt_diffusion = self.diffusion_stability_factor * dx**2 / self._volatility**2
 
         # Take minimum for stability
         dt_stable = min(dt_cfl, dt_diffusion)
@@ -922,23 +924,22 @@ class HJBWENOSolver(BaseHJBSolver):
         Returns:
             U_solved: Complete solution u(t,x) over time domain
         """
-        # Issue #1316: the WENO solver reads diffusion from problem.sigma at multiple
-        # scattered sites (the diffusion CFL bound and the diffusion update in each
-        # dimensional sweep), with no single sigma chokepoint to redirect. Honoring a
-        # volatility_field that differs from problem.sigma would require threading it
-        # through all of them; doing nothing would silently solve HJB with problem.sigma
-        # while FP uses the field, breaking the Picard correspondence. Fail loud instead
-        # of accept-and-ignore. A scalar field equal to problem.sigma is the iterator's
-        # redundant forwarding of problem.volatility_field (Issue #1248) and is a no-op.
+        # Issue #1316: this solver takes one scalar volatility from the problem at construction
+        # (self._volatility) and uses it in the diffusion CFL bound and in every sweep. A
+        # volatility_field that differs from it is refused, not accepted and ignored, which would
+        # solve HJB with one diffusion while FP uses another. The iterator's forwarding of the
+        # problem's own volatility (Issue #1248) is a no-op.
         if volatility_field is not None and not (
-            np.isscalar(volatility_field) and float(volatility_field) == float(self.problem.sigma)
+            volatility_field is self.problem.volatility
+            or (np.isscalar(volatility_field) and float(volatility_field) == self._volatility)
         ):
             raise NotImplementedError(
-                "HJBWENOSolver cannot honor a volatility_field that differs from problem.sigma: "
-                "it reads diffusion from problem.sigma at multiple sites with no single chokepoint "
-                "(Issue #1316). A spatially-varying or mismatched field would make HJB solve a "
-                "different diffusion than FP, breaking the Picard fixed point. Use HJBGFDMSolver "
-                "(which consumes volatility_field) or set problem.sigma to match."
+                "HJBWENOSolver cannot honor a volatility_field that differs from the problem's "
+                "volatility: it uses the problem's scalar volatility, read once at construction, at "
+                "several sites (Issue #1316). A spatially-varying or mismatched field would make HJB "
+                "solve a different diffusion than FP, breaking the Picard fixed point. Use "
+                "HJBGFDMSolver (which consumes volatility_field), or build the problem with that "
+                "volatility."
             )
 
         # Validate required parameters
@@ -1165,7 +1166,7 @@ class HJBWENOSolver(BaseHJBSolver):
         # was firing.
         dt_cfl_list = []
         dt_diffusion_list = []
-        sigma_sq = self.problem.sigma**2
+        sigma_sq = self._volatility**2
 
         for axis in range(self.dimension):
             u_grad = np.gradient(u, self.grid_spacing[axis], axis=axis)
@@ -1226,7 +1227,7 @@ if __name__ == "__main__":
 
     # Test 1D problem
     geometry_1d = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31])
-    problem_1d = MFGProblem(geometry=geometry_1d, T=1.0, Nt=20, sigma=0.1)
+    problem_1d = MFGProblem(geometry=geometry_1d, T=1.0, Nt=20, volatility=0.1)
     n_pts = problem_1d.geometry.num_spatial_points  # number of spatial grid points (Nx + 1)
 
     # Test standard WENO variant

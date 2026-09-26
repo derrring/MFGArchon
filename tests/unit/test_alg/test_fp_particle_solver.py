@@ -239,7 +239,7 @@ class TestFPParticleSolverInitialization:
     def test_forward_time_propagation(self):
         """Test that solution is computed for all time steps."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=30, sigma=0.3, components=_default_components())
+        problem = MFGProblem(geometry=geometry, T=1.0, Nt=30, volatility=0.3, components=_default_components())
         solver = FPParticleSolver(problem, num_particles=2000)
 
         Nx_points = problem.geometry.get_grid_shape()[0]
@@ -562,7 +562,7 @@ class TestFPParticleSolverCallableDrift:
         # Expected displacement: drift * T = 0.5 * 0.5 = 0.25
         # With diffusion = 0.05, drift dominates (Peclet number ~ 10)
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.5, Nt=25, sigma=0.05, components=_default_components())
+        problem = MFGProblem(geometry=geometry, T=0.5, Nt=25, volatility=0.05, components=_default_components())
         # Increase particles to reduce statistical variance
         solver = FPParticleSolver(problem, num_particles=2000)
 
@@ -600,7 +600,7 @@ class TestFPParticleSolverCallableDrift:
         domain = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[21, 21], boundary_conditions=no_flux_bc(dimension=2)
         )
-        problem = MFGProblem(geometry=domain, T=0.3, Nt=15, sigma=0.05, components=_default_components_2d())
+        problem = MFGProblem(geometry=domain, T=0.3, Nt=15, volatility=0.05, components=_default_components_2d())
         solver = FPParticleSolver(problem, num_particles=2000)
 
         Nx, Ny = domain.num_points[0], domain.num_points[1]
@@ -635,7 +635,7 @@ class TestFPParticleSolverCallableDrift:
     def test_state_dependent_drift_1d(self):
         """Test state-dependent drift: alpha(t, x, m) depends on density."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.5, Nt=25, sigma=0.1, components=_default_components())
+        problem = MFGProblem(geometry=geometry, T=0.5, Nt=25, volatility=0.1, components=_default_components())
         solver = FPParticleSolver(problem, num_particles=1000)
 
         Nx_points = problem.geometry.get_grid_shape()[0]
@@ -672,7 +672,7 @@ class TestFPParticleSolverCallableDrift:
     def test_time_dependent_drift_1d(self):
         """Test time-dependent drift: alpha(t, x, m) varies with time."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=30, sigma=0.1, components=_default_components())
+        problem = MFGProblem(geometry=geometry, T=1.0, Nt=30, volatility=0.1, components=_default_components())
         solver = FPParticleSolver(problem, num_particles=1000)
 
         Nx_points = problem.geometry.get_grid_shape()[0]
@@ -708,7 +708,7 @@ class TestFPParticleSolverCallableDrift:
     def test_callable_drift_with_array_diffusion(self):
         """Test callable drift combined with array diffusion."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, sigma=0.1, components=_default_components())
+        problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, volatility=0.1, components=_default_components())
         # Seeded because this test is otherwise UNSEEDABLE, which is not obvious: the ensemble is
         # drawn by `RandomState(None)` at sampling.py's initial-position draw, and conftest's autouse
         # `cleanup_numpy_state` calls `np.random.seed(None)` after every test -- so a global
@@ -889,7 +889,7 @@ class TestFPParticlePreserveIndices:
         )
         grid = TensorProductGrid([(0, Lx), (0, Ly)], Nx_points=[21, 11], boundary_conditions=bc)
         return MFGProblem(
-            geometry=grid, Nt=Nt, T=T, sigma=0.3, boundary_conditions=bc, components=_default_components_2d()
+            geometry=grid, Nt=Nt, T=T, volatility=0.3, boundary_conditions=bc, components=_default_components_2d()
         ), bc
 
     @staticmethod
@@ -958,7 +958,7 @@ class TestFPParticlePreserveIndices:
         bc = no_flux_bc(dimension=2)
         grid = TensorProductGrid([(0, Lx), (0, Ly)], Nx_points=[21, 11], boundary_conditions=bc)
         problem = MFGProblem(
-            geometry=grid, Nt=Nt, T=T, sigma=0.3, boundary_conditions=bc, components=_default_components_2d()
+            geometry=grid, Nt=Nt, T=T, volatility=0.3, boundary_conditions=bc, components=_default_components_2d()
         )
         solver = FPParticleSolver(
             problem,

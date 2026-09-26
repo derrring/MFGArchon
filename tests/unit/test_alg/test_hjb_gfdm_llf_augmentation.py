@@ -59,7 +59,7 @@ def problem_and_pts():
         Nx_points=[21],
         boundary_conditions=no_flux_bc(dimension=1),
     )
-    problem = MFGProblem(geometry=domain, T=1.0, Nt=21, sigma=sigma, components=_components())
+    problem = MFGProblem(geometry=domain, T=1.0, Nt=21, volatility=sigma, components=_components())
     bounds = problem.geometry.get_bounds()
     (Nx,) = problem.geometry.get_grid_shape()
     pts = np.linspace(bounds[0][0], bounds[1][0], Nx).reshape(-1, 1)
@@ -99,17 +99,17 @@ class TestLLFAugmentationPinning:
     def test_llf_sigma_eff_recomputed_from_volatility_override(self, problem_and_pts):
         """Issue #1429 (S0-13): a per-solve volatility_field override (#1316) must propagate into
         the LLF effective volatility. _llf_sigma_eff is otherwise frozen at __init__ from
-        problem.sigma, so an LLF-augmented solve with an override stabilizes off the base sigma.
+        problem.volatility, so an LLF-augmented solve with an override stabilizes off the base sigma.
 
         Uses a tiny llf_l_H so nu_i = 0 (no augmentation) and sigma_eff == the base sigma exactly,
         making the override directly observable as sigma_eff == override."""
-        problem, pts = problem_and_pts  # problem.sigma = 0.5
+        problem, pts = problem_and_pts  # problem.volatility = 0.5
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             solver = HJBGFDMSolver(
                 problem, pts, monotonicity_scheme="none", llf_augmentation=True, llf_cone_constant=0.5, llf_l_H=0.01
             )
-        base = solver._llf_sigma_eff.copy()  # nu_i = 0 -> sigma_eff = problem.sigma = 0.5
+        base = solver._llf_sigma_eff.copy()  # nu_i = 0 -> sigma_eff = problem.volatility = 0.5
         n = solver.n_points
         M = np.ones((problem.Nt + 1, n)) / n
         U_T = np.zeros(n)
@@ -121,7 +121,7 @@ class TestLLFAugmentationPinning:
             solver._llf_sigma_eff,
             0.9,
             rtol=1e-9,
-            err_msg="LLF sigma_eff ignored the per-solve volatility_field override (S0-13: frozen at problem.sigma)",
+            err_msg="LLF sigma_eff ignored the per-solve volatility_field override (S0-13: frozen at problem.volatility)",
         )
         assert not np.allclose(solver._llf_sigma_eff, base), "override had no effect — _llf_sigma_eff stayed frozen"
 
@@ -139,7 +139,7 @@ class TestLLFAugmentationPinning:
     def test_llf_sigma_eff_ge_base(self, problem_and_pts):
         """PINNING: sigma_eff_i >= sigma everywhere (LLF only adds diffusion)."""
         problem, pts = problem_and_pts
-        sigma_base = problem.sigma
+        sigma_base = problem.volatility
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             solver = HJBGFDMSolver(
@@ -200,7 +200,7 @@ class TestLLFAugmentationPinning:
     def test_llf_off_get_sigma_value_unchanged(self, problem_and_pts):
         """PINNING: LLF OFF → _get_sigma_value(i) returns base problem sigma."""
         problem, pts = problem_and_pts
-        sigma_base = float(problem.sigma)
+        sigma_base = float(problem.volatility)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             solver = HJBGFDMSolver(problem, pts, monotonicity_scheme="none")
@@ -253,7 +253,7 @@ class TestLLFNumerics:
     def test_zero_l_H_gives_base_sigma(self, problem_and_pts):
         """l_H = 0 → nu_i = 0 → sigma_eff_i = sigma (no augmentation at any node)."""
         problem, pts = problem_and_pts
-        sigma_base = float(problem.sigma)
+        sigma_base = float(problem.volatility)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             solver = HJBGFDMSolver(
@@ -273,7 +273,7 @@ class TestLLFNumerics:
     def test_sigma_eff_formula_scalar_l_H(self, problem_and_pts):
         """Verify sigma_eff_i matches the analytic formula for scalar l_H."""
         problem, pts = problem_and_pts
-        sigma = float(problem.sigma)
+        sigma = float(problem.volatility)
         C = 0.5
         l_H = 5.0
         delta = 0.1  # default
@@ -303,7 +303,7 @@ class TestLLFNumerics:
     def test_sigma_eff_formula_per_node_l_H(self, problem_and_pts):
         """sigma_eff_i computed correctly when l_H is a per-node array."""
         problem, pts = problem_and_pts
-        sigma = float(problem.sigma)
+        sigma = float(problem.volatility)
         C = 0.5
         delta = 0.1
         n = pts.shape[0]
@@ -360,7 +360,7 @@ class TestLLFNumerics:
         # The analytic formula is available at both C, so pin the C-dependence exactly
         # instead of only its sign: nu = max(0, C*l_H*delta - sigma^2/2) with delta=0.1 and
         # sigma=0.5 gives sigma_eff = sqrt(0.8) at C=0.5 and sqrt(1.6) at C=1.0, at every node.
-        sigma = float(problem.sigma)
+        sigma = float(problem.volatility)
         delta = 0.1  # default, as in test_sigma_eff_formula_scalar_l_H
         for C, solver in ((0.5, solver_c05), (1.0, solver_c10)):
             nu = max(0.0, C * l_H * delta - 0.5 * sigma**2)

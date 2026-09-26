@@ -51,8 +51,8 @@ class MFGProblemProtocol(Protocol):
             Number of time steps
         tSpace: NDArray
             Time points array [t₀, t₁, ..., t_Nt]
-        sigma: float | Callable
-            Diffusion coefficient σ
+        volatility: float | NDArray | Callable
+            SDE volatility Σ, as supplied (the PDE diffusion is A = ½ΣΣᵀ, #2375 ruling 6)
 
     MFG Components:
         All problems must provide:
@@ -67,14 +67,14 @@ class MFGProblemProtocol(Protocol):
         ...     # Works for grids, networks, meshes, etc.
         ...     T = problem.T
         ...     tSpace = problem.tSpace
-        ...     sigma = problem.sigma
+        ...     volatility = problem.volatility
         ...     # ... solver code ...
         ...     return u
 
         >>> # Runtime validation
         >>> from mfgarchon.geometry import TensorProductGrid
         >>> grid = TensorProductGrid(bounds=[(0, 1)], Nx_points=[101])
-        >>> problem = MFGProblem(geometry=grid, T=1, Nt=50, sigma=0.1)
+        >>> problem = MFGProblem(geometry=grid, T=1, Nt=50, volatility=0.1)
         >>> assert isinstance(problem, MFGProblemProtocol)  # Should pass!
     """
 
@@ -96,7 +96,7 @@ class MFGProblemProtocol(Protocol):
     # Physical (universal)
     # ====================
 
-    sigma: float | Callable  # Diffusion coefficient
+    volatility: float | NDArray | Callable  # SDE volatility; the PDE diffusion is derived from it
 
     # ====================
     # MFG Components

@@ -66,7 +66,7 @@ def _make_solver(sigma: float, n_x: int = 21):
             coupling_dm=lambda m: np.ones_like(np.asarray(m)),
         ),
     )
-    problem = MFGProblem(geometry=geometry, T=0.5, Nt=10, sigma=sigma, components=components)
+    problem = MFGProblem(geometry=geometry, T=0.5, Nt=10, volatility=sigma, components=components)
     bounds = problem.geometry.get_bounds()
     x_coords = np.linspace(bounds[0][0], bounds[1][0], n_x)
     collocation_points = x_coords.reshape(-1, 1)
@@ -404,7 +404,7 @@ def _make_solver_check_dmp(sigma: float, check_dmp: bool, n_x: int = 21):
             coupling_dm=lambda m: np.ones_like(np.asarray(m)),
         ),
     )
-    problem = MFGProblem(geometry=geometry, T=0.5, Nt=10, sigma=sigma, components=components)
+    problem = MFGProblem(geometry=geometry, T=0.5, Nt=10, volatility=sigma, components=components)
     x_coords = np.linspace(0.0, 1.0, n_x).reshape(-1, 1)
     return HJBGFDMSolver(
         problem,

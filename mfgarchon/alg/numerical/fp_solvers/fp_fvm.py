@@ -234,13 +234,22 @@ class FPFVMSolver(BaseFPSolver):
         return [bc_type] * ndim
 
     def _scalar_diffusion(self, volatility_field: float | np.ndarray | Callable | None) -> float:
-        """Resolve the scalar diffusion coefficient D = sigma^2/2 (single source)."""
-        if volatility_field is None:
-            sigma = self.problem.sigma
-        elif isinstance(volatility_field, (int, float)):
-            sigma = float(volatility_field)
-        elif isinstance(volatility_field, np.ndarray):
-            arr = np.asarray(volatility_field, dtype=float)
+        """Resolve the scalar diffusion coefficient D = sigma^2/2 (single source).
+
+        ``None`` is the problem's own volatility, taken through the same checks as an override (#2376).
+        """
+        volatility = self.problem.volatility if volatility_field is None else volatility_field
+        if isinstance(volatility, (int, float)):
+            sigma = float(volatility)
+        elif isinstance(volatility, np.ndarray):
+            # The problem's tensor volatility is refused before the constancy check below, which an
+            # all-equal matrix such as np.full((2, 2), s) would pass as the scalar s.
+            if volatility is self.problem.volatility and self.problem.volatility_kind == "tensor":
+                raise NotImplementedError(
+                    "FP FVM solver supports only a scalar volatility; the problem's is a tensor "
+                    "(volatility_kind='tensor')."
+                )
+            arr = np.asarray(volatility, dtype=float)
             if float(np.ptp(arr)) > 1e-12:
                 raise NotImplementedError(
                     "FP FVM solver supports only scalar (constant) volatility in v1 (Issue #422). "
@@ -250,7 +259,7 @@ class FPFVMSolver(BaseFPSolver):
         else:
             raise NotImplementedError(
                 "FP FVM solver supports only scalar/None volatility in v1 (Issue #422). "
-                f"Callable volatility is deferred (got {type(volatility_field).__name__})."
+                f"Callable volatility is deferred (got {type(volatility).__name__})."
             )
         return float(diffusion_from_volatility(sigma))
 
@@ -470,7 +479,7 @@ class FPFVMSolver(BaseFPSolver):
             nD shape ``(Nt+1, *spatial, ndim)``. Averaged to faces. Mutually exclusive with
             ``potential_field``.
         volatility_field : float | None
-            SDE volatility ``sigma`` (``D = sigma^2/2``). ``None`` uses ``problem.sigma``.
+            SDE volatility ``sigma`` (``D = sigma^2/2``). ``None`` uses ``problem.volatility``.
             Only scalar/constant volatility is supported in v1.
         potential_field : np.ndarray | None
             Value function ``U(t, x)``, shape ``(Nt+1, *spatial)``. The face velocity is
@@ -661,7 +670,7 @@ if __name__ == "__main__":
     )
     comps = MFGComponents(hamiltonian=H, u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0)
     geom = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[101], boundary_conditions=no_flux_bc(dimension=1))
-    prob = MFGProblem(geometry=geom, T=0.1, Nt=50, sigma=0.3, components=comps)
+    prob = MFGProblem(geometry=geom, T=0.1, Nt=50, volatility=0.3, components=comps)
 
     x = _np.linspace(0.0, 1.0, 101)
     # The grid's own measure (#2145), on both sides. This solver takes its control volumes from the

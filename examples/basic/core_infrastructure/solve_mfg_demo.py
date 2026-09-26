@@ -43,7 +43,7 @@ def build_problem(Nx: int = 20, Nt: int = 10) -> MFGProblem:
             coupling=lambda m: 0.05 * m,
             coupling_dm=lambda m: 0.05,
         ),
-        sigma=0.15,
+        volatility=0.15,
     )
     conditions = Conditions(
         u_terminal=lambda x: (x - 0.5) ** 2,

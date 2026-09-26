@@ -83,7 +83,7 @@ def _fixture(bc_name: str, sigma: float = 0.3, hamiltonian=None):
         geometry=grid,
         Nt=10,
         T=1.0,
-        sigma=sigma,
+        volatility=sigma,
         components=MFGComponents(
             m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
             u_terminal=lambda x: 0.0,
@@ -464,7 +464,7 @@ def test_a_tied_wall_row_that_is_not_a_switching_node_still_gets_the_right_branc
         geometry=grid,
         Nt=10,
         T=1.0,
-        sigma=0.3,
+        volatility=0.3,
         components=MFGComponents(
             m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
             u_terminal=lambda x: 0.0,
@@ -538,7 +538,7 @@ def test_a_time_dependent_boundary_reaches_the_advection_block(upwind: bool):
         geometry=grid,
         Nt=10,
         T=1.0,
-        sigma=0.3,
+        volatility=0.3,
         components=MFGComponents(
             m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
             u_terminal=lambda x: 0.0,

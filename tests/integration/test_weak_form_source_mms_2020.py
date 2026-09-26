@@ -87,7 +87,7 @@ def _problem(ne, nt):
         geometry=mesh,
         T=_T,
         Nt=nt,
-        sigma=_SIGMA,
+        volatility=_SIGMA,
         coupling_coefficient=0.0,
         components=MFGComponents(
             m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)),

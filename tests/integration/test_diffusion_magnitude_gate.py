@@ -119,7 +119,7 @@ def _fp_pure_diffusion_decay(path: str, sigma: float, n: int = 81, nt: int = 40,
         u_terminal=lambda xx: np.asarray(xx) * 0.0,
         hamiltonian=H,
     )
-    prob = MFGProblem(geometry=grid, T=T, Nt=nt, sigma=sigma, components=comps)
+    prob = MFGProblem(geometry=grid, T=T, Nt=nt, volatility=sigma, components=comps)
     solver = FPFDMSolver(prob)
     m0 = 1.0 + 0.4 * np.cos(_K * x)
     if path == "explicit":
@@ -180,7 +180,7 @@ def test_weak_form_fem_fp_diffusion_magnitude():
         u_terminal=lambda xx: np.asarray(xx) * 0.0,
         hamiltonian=H,
     )
-    prob = MFGProblem(geometry=geom, T=T, Nt=nt, sigma=sigma, components=comps, coupling_coefficient=0.0)
+    prob = MFGProblem(geometry=geom, T=T, Nt=nt, volatility=sigma, components=comps, coupling_coefficient=0.0)
     solver = FPFEMSolver(prob, order=1)
     x = solver._disc.dof_coordinates[:, 0]
     m0 = 1.0 + 0.4 * np.cos(_K * x)
@@ -233,7 +233,7 @@ def _gfdm_diffusion_field_relerr(
         u_terminal=lambda xx: amp * np.cos(_PI * np.asarray(xx, dtype=float)),
         hamiltonian=H,
     )
-    prob = MFGProblem(geometry=grid, T=T, Nt=nt, sigma=sigma, components=comps)
+    prob = MFGProblem(geometry=grid, T=T, Nt=nt, volatility=sigma, components=comps)
     solver = HJBGFDMSolver(
         prob, x.reshape(-1, 1), delta=delta, monotonicity_scheme="joint_socp", monotonicity_application="precompute"
     )

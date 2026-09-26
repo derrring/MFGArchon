@@ -78,7 +78,7 @@ def _steep_1d_problem(nx: int = 41, nt: int = 8) -> MFGProblem:
         geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=no_flux_bc(dimension=1)),
         T=0.4,
         Nt=nt,
-        sigma=0.2,
+        volatility=0.2,
         components=MFGComponents(
             m_initial=lambda x: 1.0,
             u_terminal=lambda x: 0.05 * np.exp(-300 * (np.asarray(x) - 0.5) ** 2),
@@ -101,7 +101,7 @@ def _solver_for(dimension: int, method: str, **solver_kwargs) -> HJBSemiLagrangi
         ),
         T=0.4,
         Nt=4,
-        sigma=0.2,
+        volatility=0.2,
         components=MFGComponents(
             m_initial=lambda x: 1.0,
             u_terminal=lambda x: 0.0,
@@ -213,7 +213,7 @@ class TestTheFoldOvershootsAndTheInterpolantMustSurviveIt:
             geometry=TensorProductGrid(bounds=[bounds], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1)),
             T=0.4,
             Nt=8,
-            sigma=0.2,
+            volatility=0.2,
             components=MFGComponents(
                 m_initial=lambda x: 1.0,
                 u_terminal=lambda x: 0.05 * np.exp(-300 * (np.asarray(x) - 0.5) ** 2),

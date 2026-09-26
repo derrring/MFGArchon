@@ -41,7 +41,7 @@ def _small_problem():
             coupling_dm=lambda m: 1.0,
         ),
     )
-    return MFGProblem(geometry=geometry, T=0.15, Nt=3, sigma=0.3, components=components)
+    return MFGProblem(geometry=geometry, T=0.15, Nt=3, volatility=0.3, components=components)
 
 
 def _picard_solution(problem):

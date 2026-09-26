@@ -146,7 +146,7 @@ def create_mfg_problem(phi_current: np.ndarray) -> MFGProblem:
     )
 
     # Model: game rules (Hamiltonian + diffusion)
-    model = Model(hamiltonian=hamiltonian, sigma=sigma)
+    model = Model(hamiltonian=hamiltonian, volatility=sigma)
 
     # Conditions: problem data (initial/terminal + time horizon)
     # Wrap arrays in callables for Conditions API

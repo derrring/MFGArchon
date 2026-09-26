@@ -105,7 +105,7 @@ def create_towel_problem_standard_bc(
         coupling=lambda m: lambda_crowd * np.log(max(m, 1e-10)),
         coupling_dm=lambda m: lambda_crowd / max(m, 1e-10),
     )
-    model = Model(hamiltonian=hamiltonian, sigma=sigma)
+    model = Model(hamiltonian=hamiltonian, volatility=sigma)
     conditions = Conditions(
         m_initial=lambda x: np.ones_like(x) / L,
         u_terminal=lambda x: np.zeros_like(x),
@@ -146,7 +146,7 @@ def create_towel_problem_adjoint_bc(
         coupling=lambda m: lambda_crowd * np.log(max(m, 1e-10)),
         coupling_dm=lambda m: lambda_crowd / max(m, 1e-10),
     )
-    model = Model(hamiltonian=hamiltonian, sigma=sigma)
+    model = Model(hamiltonian=hamiltonian, volatility=sigma)
     conditions = Conditions(
         m_initial=lambda x: np.ones_like(x) / L,
         u_terminal=lambda x: np.zeros_like(x),

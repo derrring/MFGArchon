@@ -56,7 +56,7 @@ def _fem_problem(refine: int = 2):
         geometry=geom,
         T=0.2,
         Nt=5,
-        sigma=0.3,
+        volatility=0.3,
         components=components,
         coupling_coefficient=0.5,
         boundary_conditions=no_flux_bc(dimension=2),
@@ -234,7 +234,9 @@ class TestFEMFacetBoundaryTags:
                 control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
             ),
         )
-        problem = MFGProblem(geometry=geom, T=0.2, Nt=5, sigma=0.3, components=components, coupling_coefficient=0.5)
+        problem = MFGProblem(
+            geometry=geom, T=0.2, Nt=5, volatility=0.3, components=components, coupling_coefficient=0.5
+        )
         fp = FPFEMSolver(problem)
         dofs, _vals = fp._dirichlet_dofs_and_values()  # previously raised NoneType-not-iterable
         assert len(dofs) > 0
@@ -289,7 +291,7 @@ def test_fem_solvers_fail_loud_on_non_mesh_geometry():
             control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
         ),
     )
-    problem = MFGProblem(geometry=geom, T=0.2, Nt=5, sigma=0.3, components=comp, coupling_coefficient=1.0)
+    problem = MFGProblem(geometry=geom, T=0.2, Nt=5, volatility=0.3, components=comp, coupling_coefficient=1.0)
     for solver_cls in (HJBFEMSolver, FPFEMSolver):
         with pytest.raises(ValueError, match=r"mesh_data|Mesh2D"):
             solver_cls(problem)

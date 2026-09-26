@@ -44,7 +44,7 @@ Examples
 ...     spatial_discretization=[50, 50],
 ...     coupling_matrix=[[0.1, 0.05], [0.05, 0.1]],  # Asymmetric interaction
 ...     T=1.0, Nt=50,
-...     sigma=[0.01, 0.02]  # Different volatility per population
+...     volatility=0.01,  # shared by all populations
 ... )
 
 >>> # Capacity-constrained multi-population (see examples/)
@@ -99,8 +99,8 @@ class MultiPopulationMFGProtocol(MFGProblemProtocol, Protocol):
             Number of time steps
         tSpace: NDArray
             Time discretization array
-        sigma: float | Callable
-            Diffusion coefficient (scalar or per-population)
+        volatility: float
+            SDE volatility, shared by all populations (the PDE diffusion is derived from it)
 
     Multi-Population Properties:
         num_populations: int
@@ -286,9 +286,9 @@ class MultiPopulationMFGProblem(MFGProblem):
             - αₖⱼ: Effect of population j's density on population k's cost
             - Default: Identity matrix * 0.1 (self-congestion only)
             - Shape: (K, K)
-        sigma: Diffusion coefficient
-            - Scalar: Same diffusion for all populations
-            - Array of length K: Per-population diffusion [σ₁, ..., σₖ]
+        volatility: SDE volatility, shared by all populations. A per-population list is accepted only
+            when its entries are equal: no multi-population solver reads a population's own
+            volatility, so distinct entries would all be solved at population 0's (#2376).
         population_labels: Names for populations (for visualization)
             - Default: ["Pop0", "Pop1", ..., "Pop{K-1}"]
         **kwargs: Additional arguments passed to MFGProblem
@@ -297,7 +297,7 @@ class MultiPopulationMFGProblem(MFGProblem):
         num_populations: Number of populations K
         population_labels: List of population names
         coupling_matrix: K×K coupling matrix αₖⱼ
-        sigma_vec: Per-population volatility coefficients
+        volatility_vec: The volatility of each population (all equal, see ``volatility``)
 
     Mathematical Formulation:
         For k = 1, ..., K:
@@ -320,13 +320,13 @@ class MultiPopulationMFGProblem(MFGProblem):
         ...     T=1.0, Nt=50
         ... )
 
-        >>> # 3 populations with different diffusion rates
+        >>> # 3 populations, self-congestion only
         >>> problem = MultiPopulationMFGProblem(
         ...     num_populations=3,
         ...     spatial_bounds=[(0, 1)],
         ...     spatial_discretization=[100],
         ...     coupling_matrix=np.eye(3) * 0.1,  # Self-congestion only
-        ...     sigma=[0.01, 0.02, 0.03],  # Increasing volatility
+        ...     volatility=0.02,
         ...     population_labels=["Fast", "Medium", "Slow"],
         ...     T=1.0, Nt=50
         ... )
@@ -356,7 +356,7 @@ class MultiPopulationMFGProblem(MFGProblem):
         self,
         num_populations: int,
         coupling_matrix: NDArray | None = None,
-        sigma: float | list[float] = 0.1,
+        volatility: float | list[float] = 0.1,
         population_labels: list[str] | None = None,
         **kwargs,
     ):
@@ -364,8 +364,29 @@ class MultiPopulationMFGProblem(MFGProblem):
         if num_populations < 2:
             raise ValueError(f"num_populations must be ≥ 2, got {num_populations}")
 
+        # Per-population volatility. Before #2376 a list was stored here and population 0's entry
+        # handed to MFGProblem, and nothing read the rest, so every population was solved at
+        # population 0's volatility with no warning. Distinct entries are refused until a solver
+        # reads them.
+        if isinstance(volatility, (int, float)):
+            self.volatility_vec = np.full(num_populations, float(volatility))
+        else:
+            self.volatility_vec = np.array(volatility, dtype=float)
+            if self.volatility_vec.shape != (num_populations,):
+                raise ValueError(
+                    f"volatility has shape {self.volatility_vec.shape}; a per-population list needs "
+                    f"shape ({num_populations},)"
+                )
+            if not np.all(self.volatility_vec == self.volatility_vec[0]):
+                raise NotImplementedError(
+                    f"MultiPopulationMFGProblem got distinct per-population volatilities "
+                    f"{self.volatility_vec.tolist()}, but no multi-population solver reads a population's "
+                    "own volatility: every population would be solved at population 0's (#2376). "
+                    "Pass one scalar volatility shared by all populations."
+                )
+
         # Initialize base MFG problem
-        super().__init__(sigma=sigma if isinstance(sigma, (int, float)) else sigma[0], **kwargs)
+        super().__init__(volatility=float(self.volatility_vec[0]), **kwargs)
 
         # Multi-population attributes
         self.num_populations = num_populations
@@ -388,14 +409,6 @@ class MultiPopulationMFGProblem(MFGProblem):
         else:
             # Default: self-congestion only (diagonal matrix)
             self.coupling_matrix = np.eye(num_populations) * 0.1
-
-        # Per-population diffusion coefficients
-        if isinstance(sigma, (int, float)):
-            self.sigma_vec = np.full(num_populations, sigma)
-        else:
-            self.sigma_vec = np.array(sigma)
-            if len(self.sigma_vec) != num_populations:
-                raise ValueError(f"sigma length ({len(self.sigma_vec)}) must match num_populations ({num_populations})")
 
     def hamiltonian_k(self, t, x, p, m_all: NDArray, k: int) -> float:
         """
@@ -492,20 +505,20 @@ class MultiPopulationMFGProblem(MFGProblem):
         # Default: no additional running cost
         return 0.0
 
-    def get_sigma_k(self, k: int) -> float:
+    def get_volatility_k(self, k: int) -> float:
         """
-        Get diffusion coefficient for population k.
+        Get the SDE volatility of population k.
 
         Args:
             k: Population index
 
         Returns:
-            Diffusion coefficient σₖ
+            The volatility σₖ (all populations share one, see ``volatility``)
         """
         if not 0 <= k < self.num_populations:
             raise ValueError(f"Population index k={k} out of range [0, {self.num_populations})")
 
-        return self.sigma_vec[k]
+        return self.volatility_vec[k]
 
 
 # ============================================================================
@@ -552,22 +565,22 @@ if __name__ == "__main__":
     assert np.allclose(problem.coupling_matrix, coupling), "Coupling matrix mismatch"
     print(f"✓ Coupling matrix:\n{problem.coupling_matrix}")
 
-    # Test 3: Per-population diffusion
-    print("\nTest 3: Per-Population Diffusion")
+    # Test 3: Per-population volatility (distinct entries are refused, #2376)
+    print("\nTest 3: Per-Population Volatility")
     print("-" * 40)
-    sigma_vec = [0.01, 0.02, 0.03]
+    volatility_vec = [0.02, 0.02, 0.02]
     problem = MultiPopulationMFGProblem(
         num_populations=3,
-        sigma=sigma_vec,
+        volatility=volatility_vec,
         spatial_bounds=[(0, 1), (0, 1)],
         spatial_discretization=[10, 10],
         T=1.0,
         Nt=10,
     )
-    assert np.allclose(problem.sigma_vec, sigma_vec), "Sigma vector mismatch"
+    assert np.allclose(problem.volatility_vec, volatility_vec), "Volatility vector mismatch"
     for k in range(3):
-        assert problem.get_sigma_k(k) == sigma_vec[k], f"Sigma mismatch for population {k}"
-    print(f"✓ Per-population diffusion: {problem.sigma_vec}")
+        assert problem.get_volatility_k(k) == volatility_vec[k], f"Volatility mismatch for population {k}"
+    print(f"✓ Per-population volatility: {problem.volatility_vec}")
 
     # Test 4: Hamiltonian evaluation
     print("\nTest 4: Hamiltonian Evaluation")

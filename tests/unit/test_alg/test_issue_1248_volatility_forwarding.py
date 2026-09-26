@@ -97,8 +97,10 @@ class TestD1SolveMustForwardVolatilityField:
         geo = _geometry()
         comp = _components()
 
-        problem_array = MFGProblem(geometry=geo, components=comp, T=T, Nt=Nt, sigma=sigma_arr)
-        problem_mean = MFGProblem(geometry=geo, components=comp, T=T, Nt=Nt, sigma=sigma_mean)
+        problem_array = MFGProblem(
+            geometry=geo, components=comp, T=T, Nt=Nt, volatility=sigma_arr, volatility_kind="field"
+        )
+        problem_mean = MFGProblem(geometry=geo, components=comp, T=T, Nt=Nt, volatility=sigma_mean)
 
         result_array = problem_array.solve()
         result_mean = problem_mean.solve()
@@ -108,8 +110,8 @@ class TestD1SolveMustForwardVolatilityField:
 
         # After fix the spatial-sigma solve must diverge from the mean-sigma solve.
         assert not np.allclose(m_array, m_mean, atol=1e-6), (
-            "D1 regression: MFGProblem(sigma=array).solve() produced the same "
-            "density as MFGProblem(sigma=mean(array)).solve() — volatility_field "
+            "D1 regression: MFGProblem(volatility=array).solve() produced the same "
+            "density as MFGProblem(volatility=mean(array)).solve() — volatility_field "
             "was not forwarded to the FixedPointIterator (Issue #1248 D1)."
         )
 
@@ -121,7 +123,7 @@ class TestD1SolveMustForwardVolatilityField:
         """
         geo = _geometry()
         comp = _components()
-        problem = MFGProblem(geometry=geo, components=comp, T=T, Nt=Nt, sigma=0.25)
+        problem = MFGProblem(geometry=geo, components=comp, T=T, Nt=Nt, volatility=0.25)
         result = problem.solve()
         assert result.M is not None
         assert result.M.shape[0] == Nt + 1
@@ -155,7 +157,7 @@ class TestD2ParticleVolatilityFieldNotDropped:
         geo = _geometry()
         comp = _components()
         # problem.sigma = 0.1 (the small baseline)
-        problem = MFGProblem(geometry=geo, components=comp, T=T, Nt=Nt, sigma=0.1)
+        problem = MFGProblem(geometry=geo, components=comp, T=T, Nt=Nt, volatility=0.1)
 
         solver = FPParticleSolver(problem, num_particles=500)
 
@@ -191,7 +193,7 @@ class TestD2ParticleVolatilityFieldNotDropped:
         """
         geo = _geometry()
         comp = _components()
-        problem = MFGProblem(geometry=geo, components=comp, T=T, Nt=Nt, sigma=0.1)
+        problem = MFGProblem(geometry=geo, components=comp, T=T, Nt=Nt, volatility=0.1)
         solver = FPParticleSolver(problem, num_particles=200)
 
         m0 = _m_initial_normalised()
@@ -212,7 +214,7 @@ class TestD2ParticleVolatilityFieldNotDropped:
         """
         geo = _geometry()
         comp = _components()
-        problem = MFGProblem(geometry=geo, components=comp, T=T, Nt=Nt, sigma=0.1)
+        problem = MFGProblem(geometry=geo, components=comp, T=T, Nt=Nt, volatility=0.1)
         solver = FPParticleSolver(problem, num_particles=200)
 
         m0 = _m_initial_normalised()

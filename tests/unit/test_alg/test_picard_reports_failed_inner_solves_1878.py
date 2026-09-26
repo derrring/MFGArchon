@@ -48,7 +48,7 @@ def _smoke_problem() -> MFGProblem:
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="initial density mass", category=UserWarning)
         return MFGProblem(
-            model=Model(hamiltonian=hamiltonian, sigma=0.0),
+            model=Model(hamiltonian=hamiltonian, volatility=0.0),
             domain=grid,
             conditions=Conditions(
                 m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2), u_terminal=lambda x: 0.0, T=1.0
@@ -152,7 +152,7 @@ def test_the_nd_path_records_its_non_converged_steps_too():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         problem = MFGProblem(
-            model=Model(hamiltonian=hamiltonian, sigma=0.3),
+            model=Model(hamiltonian=hamiltonian, volatility=0.3),
             domain=grid,
             conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.1),
             Nt=4,

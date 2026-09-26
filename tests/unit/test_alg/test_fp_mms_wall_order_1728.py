@@ -130,7 +130,7 @@ def _build(nx: int, d: int, sigma: float, horizon: float) -> tuple[TensorProduct
         m_initial=lambda x: 1.0 / L**d,
         u_terminal=lambda x: 0.0,
     )
-    return grid, MFGProblem(geometry=grid, components=components, T=horizon, Nt=NT, sigma=sigma)
+    return grid, MFGProblem(geometry=grid, components=components, T=horizon, Nt=NT, volatility=sigma)
 
 
 def _zero_flux_pair(grid: TensorProductGrid, phi: np.ndarray, diffusion: float):

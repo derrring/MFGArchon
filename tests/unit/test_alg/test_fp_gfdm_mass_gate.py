@@ -40,7 +40,7 @@ def _build(sigma, Nt=NT):
         geometry=grid,
         Nt=Nt,
         T=T,
-        sigma=sigma,
+        volatility=sigma,
         components=MFGComponents(
             m_initial=lambda x: np.exp(-30 * (np.asarray(x) - 0.5) ** 2),
             u_terminal=lambda x: 0.0,
@@ -183,7 +183,7 @@ def test_the_remedy_does_not_tell_a_stabilised_solve_to_stabilise():
         geometry=grid,
         Nt=n_t,
         T=T,
-        sigma=0.1,
+        volatility=0.1,
         components=MFGComponents(
             m_initial=lambda x: np.exp(-30 * (np.asarray(x) - 0.5) ** 2),
             u_terminal=lambda x: 0.0,
@@ -276,7 +276,7 @@ def test_refining_the_timestep_silences_the_gate_while_the_answer_gets_worse():
         geometry=grid,
         Nt=n_t,
         T=T,
-        sigma=0.5,
+        volatility=0.5,
         components=MFGComponents(
             m_initial=lambda x: np.exp(-30 * (np.asarray(x) - 0.5) ** 2),
             u_terminal=lambda x: 0.0,

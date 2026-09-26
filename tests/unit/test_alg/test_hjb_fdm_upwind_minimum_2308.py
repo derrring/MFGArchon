@@ -50,7 +50,9 @@ def _error(nx: int, sigma: float) -> float:
 
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=periodic_bc(dimension=1))
     problem = MFGProblem(
-        model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), sigma=sigma),
+        model=Model(
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=sigma
+        ),
         domain=grid,
         conditions=Conditions(m_initial=lambda p: 1.0, u_terminal=lambda p: 0.0, T=_T),
         Nt=_NT,

@@ -65,7 +65,7 @@ def _problem_1d(Nt: int) -> MFGProblem:
         Nx_points=[N + 1],
         boundary_conditions=no_flux_bc(dimension=1),
     )
-    return MFGProblem(geometry=geom, components=_components(), T=T, Nt=Nt, sigma=SIGMA)
+    return MFGProblem(geometry=geom, components=_components(), T=T, Nt=Nt, volatility=SIGMA)
 
 
 def _problem_2d(Nt: int) -> MFGProblem:
@@ -74,7 +74,7 @@ def _problem_2d(Nt: int) -> MFGProblem:
         Nx_points=[N + 1, N + 1],
         boundary_conditions=no_flux_bc(dimension=2),
     )
-    return MFGProblem(geometry=geom, components=_components(), T=T, Nt=Nt, sigma=SIGMA)
+    return MFGProblem(geometry=geom, components=_components(), T=T, Nt=Nt, volatility=SIGMA)
 
 
 class TestHJBFDMCouplingIndexCrossPath:

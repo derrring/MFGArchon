@@ -51,7 +51,7 @@ class TestWenoFamilySolver:
     def simple_problem(self) -> MFGProblem:
         """Create simple MFG problem for testing using modern geometry-first API."""
         domain = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[33], boundary_conditions=no_flux_bc(dimension=1))
-        return MFGProblem(geometry=domain, T=0.1, Nt=10, sigma=0.1, components=_default_components())
+        return MFGProblem(geometry=domain, T=0.1, Nt=10, volatility=0.1, components=_default_components())
 
     @pytest.fixture
     def test_values(self) -> np.ndarray:
@@ -275,7 +275,7 @@ class TestWenoSolverIntegration:
     def integration_problem(self) -> MFGProblem:
         """Create MFG problem for integration testing using modern geometry-first API."""
         domain = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
-        return MFGProblem(geometry=domain, T=1.0, Nt=30, sigma=0.1, components=_default_components())
+        return MFGProblem(geometry=domain, T=1.0, Nt=30, volatility=0.1, components=_default_components())
 
     def test_solve_hjb_system_final_condition(self, integration_problem):
         """Test that final condition is preserved."""
@@ -489,7 +489,7 @@ class TestWenoTimeSubstepping:
             hamiltonian=ham,
         )
         dom = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[Nx], boundary_conditions=no_flux_bc(dimension=1))
-        return MFGProblem(geometry=dom, T=T, Nt=Nt, sigma=sigma, components=comps)
+        return MFGProblem(geometry=dom, T=T, Nt=Nt, volatility=sigma, components=comps)
 
     @pytest.mark.slow
     def test_integrates_full_horizon_not_one_dt_stable(self):
@@ -570,7 +570,7 @@ class TestWenoHJDerivativeCorrectness:
         )
         comp = MFGComponents(m_initial=lambda x: np.ones_like(x), u_terminal=lambda x: 0.0, hamiltonian=H)
         dom = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
-        prob = MFGProblem(geometry=dom, T=1.0, Nt=30, sigma=0.1, components=comp)
+        prob = MFGProblem(geometry=dom, T=1.0, Nt=30, volatility=0.1, components=comp)
         return HJBWENOSolver(prob, weno_variant=variant)
 
     def _derivatives(self, solver, u):
@@ -673,7 +673,7 @@ class TestWeno2DSolve:
         dom = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[n, n], boundary_conditions=no_flux_bc(dimension=2)
         )
-        return MFGProblem(geometry=dom, T=0.2, Nt=10, sigma=0.2, components=comp)
+        return MFGProblem(geometry=dom, T=0.2, Nt=10, volatility=0.2, components=comp)
 
     def test_2d_solve_finite_and_bounded(self):
         """A 2D HJB solve with oscillatory terminal data stays finite and bounded."""
@@ -727,7 +727,7 @@ class TestWeno2DSolve:
         )
         comp = MFGComponents(m_initial=lambda x: np.ones_like(x[..., 0]), u_terminal=lambda x: 0.0, hamiltonian=H)
         dom = TensorProductGrid(bounds=bounds, Nx_points=npts, boundary_conditions=no_flux_bc(dimension=2))
-        return MFGProblem(geometry=dom, T=0.2, Nt=10, sigma=0.2, components=comp)
+        return MFGProblem(geometry=dom, T=0.2, Nt=10, volatility=0.2, components=comp)
 
     def test_2d_anisotropic_transpose_invariance(self):
         """Per-axis grid spacing is honoured (Issue #1200). On a SQUARE grid a
@@ -767,7 +767,7 @@ def test_weno_bc_resolved_via_inherited_single_source():
     default. Pins that _get_boundary_conditions returns exactly the inherited resolution (a
     silent-Neumann regression would return a fresh object, not the configured periodic BC)."""
     domain = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[33], boundary_conditions=periodic_bc(dimension=1))
-    problem = MFGProblem(geometry=domain, T=0.1, Nt=10, sigma=0.1, components=_default_components())
+    problem = MFGProblem(geometry=domain, T=0.1, Nt=10, volatility=0.1, components=_default_components())
     solver = HJBWENOSolver(problem)
 
     inherited = solver.get_boundary_conditions()

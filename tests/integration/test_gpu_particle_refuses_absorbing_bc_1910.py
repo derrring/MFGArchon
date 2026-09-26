@@ -71,7 +71,7 @@ def _problem(bc):
         geometry=grid,
         T=0.5,
         Nt=_NT,
-        sigma=0.15,
+        volatility=0.15,
         components=MFGComponents(
             m_initial=lambda x: np.exp(-50 * (x - 0.5) ** 2),
             u_terminal=lambda x: 0.0 * x,

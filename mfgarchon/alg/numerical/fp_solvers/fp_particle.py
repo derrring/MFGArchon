@@ -227,8 +227,8 @@ class FPParticleSolver(BaseFPSolver):
         self._mass_factor: float | None = None
         self.M_particles_trajectory: np.ndarray | list | None = None
         # Issue #1412: per-solve volatility override (the resolved scalar sigma the grid-drift
-        # paths use), set by solve_fp_system instead of mutating the shared problem.sigma.
-        # None => use problem.sigma. Explicit init for object-shape stability (CLAUDE.md).
+        # paths use), set by solve_fp_system instead of mutating the shared problem.
+        # None => the problem's own volatility. Explicit init for object-shape stability (CLAUDE.md).
         self._effective_sigma_override: float | None = None
 
         # Density mode for direct queries (Issue #489 Phase 2)
@@ -430,18 +430,18 @@ class FPParticleSolver(BaseFPSolver):
             if self.problem.dt is not None
             else (self.problem.T / self.problem.Nt if self.problem.Nt > 0 else 0.0)
         )
-        # Issue #1081: problem.sigma is typed float and resolved in the MFGProblem
-        # constructor, so it is never None here; the prior `else 0.1` silent
-        # default was dead defensive code masking a malformed problem.
-        # Issue #1412: a per-solve volatility override (set by solve_fp_system for a custom
-        # volatility_field) is the authoritative diffusion source, resolved through the shared
-        # single source; None falls back to the byte-identical problem.sigma path.
+        # Issue #1412: the per-solve volatility solve_fp_system installs is the authoritative source.
+        # Without one, a scalar problem volatility is used as is, and a field or callable one gives
+        # None rather than a collapsed scalar (#2376): the only readers of params["sigma"] are the
+        # grid-drift solves, which run after solve_fp_system has installed a scalar.
         from mfgarchon.utils.pde_coefficients import fp_drift_coefficient, resolve_diffusion_source
 
-        sigma_source = (
-            self._effective_sigma_override if self._effective_sigma_override is not None else self.problem.sigma
-        )
-        sigma = resolve_diffusion_source(sigma_source)
+        if self._effective_sigma_override is not None:
+            sigma = resolve_diffusion_source(self._effective_sigma_override)
+        elif isinstance(self.problem.volatility, (int, float)):
+            sigma = float(self.problem.volatility)
+        else:
+            sigma = None
         # Issue #1420 / G-017: source the drift coefficient from the Hamiltonian's control_cost
         # (single source), not the independent coupling_coefficient field. This params value flows
         # to every particle drift path (CPU 1D/nD + GPU) via params["coupling_coefficient"].
@@ -1625,7 +1625,7 @@ class FPParticleSolver(BaseFPSolver):
                 dX = v dt + Σ dW with dW ~ N(0, dt·I_d), giving diffusion tensor
                 D = (1/2) Σ Σ^T (matches the FDM tensor-diffusion convention, Issue #1249/#1276);
                 a scalar σ is Σ = σ·I (isotropic D = σ²/2). Supported forms:
-                - None: Use problem.sigma (backward compatible)
+                - None: Use problem.volatility
                 - float: Constant isotropic volatility σ
                 - np.ndarray, shape == grid_shape: spatially varying isotropic σ(x)
                 - np.ndarray (d, d): constant anisotropic noise matrix Σ
@@ -1685,11 +1685,11 @@ class FPParticleSolver(BaseFPSolver):
         else:
             raise TypeError(f"drift_field must be None, np.ndarray, or Callable, got {type(drift_field)}")
 
-        # Handle volatility_field parameter (SDE noise coefficient σ or Σ)
+        # Handle volatility_field parameter (SDE noise coefficient σ or Σ). None is the problem's
+        # own volatility, taken through the same dispatch as an override (#2376).
         if volatility_field is None:
-            # Use problem.sigma (backward compatible)
-            effective_sigma = self.problem.sigma
-        elif isinstance(volatility_field, (int, float)):
+            volatility_field = self.problem.volatility
+        if isinstance(volatility_field, (int, float)):
             # Constant isotropic volatility σ
             effective_sigma = float(volatility_field)
         elif isinstance(volatility_field, np.ndarray) or callable(volatility_field):
@@ -1712,12 +1712,10 @@ class FPParticleSolver(BaseFPSolver):
                 )
             else:
                 # Issue #1248: ndarray drift + array/callable volatility_field.
-                # Previously fell back to self.problem.sigma (the mean-scalar
-                # placeholder), silently ignoring the supplied volatility.
-                # The ndarray-drift CPU/GPU paths consume sigma as a scalar
-                # (patched onto self.problem.sigma via the block below); collapse
-                # the array to its mean.  For a callable we cannot reduce to a
-                # scalar without evaluation — raise rather than silently drop.
+                # The ndarray-drift CPU/GPU paths consume sigma as a scalar (installed as
+                # the solver-local override below); collapse the array to its mean, with a
+                # warning. For a callable we cannot reduce to a scalar without evaluation --
+                # raise rather than silently drop.
                 if isinstance(volatility_field, np.ndarray):
                     # Issue #1256: an anisotropic Σ (trailing (d,d)) cannot be carried by
                     # the grid-drift path, which consumes a single scalar sigma. Mean-
@@ -1763,10 +1761,8 @@ class FPParticleSolver(BaseFPSolver):
             )
 
         # Issue #1412: install the resolved per-solve volatility as a solver-local override
-        # (consumed by _get_grid_params), instead of mutating the shared problem.sigma. None
-        # restores the byte-identical problem.sigma path. Replaces the prior #1248 monkeypatch
-        # (self.problem.sigma = effective_sigma + finally-restore), which mutated shared state.
-        self._effective_sigma_override = effective_sigma if volatility_field is not None else None
+        # (consumed by _get_grid_params), instead of mutating the shared problem.
+        self._effective_sigma_override = effective_sigma
 
         # Reset time step counter for normalization logic
 
@@ -1821,8 +1817,7 @@ class FPParticleSolver(BaseFPSolver):
                 # GPU nD solver not yet implemented
                 return self._solve_fp_system_cpu_nd(M_initial, effective_U)
         finally:
-            # Issue #1412: clear the per-solve volatility override (transient state); no shared
-            # problem.sigma to restore now that the monkeypatch is gone.
+            # Issue #1412: clear the per-solve volatility override (transient state).
             self._effective_sigma_override = None
 
     def _advective_drift(
@@ -1870,7 +1865,7 @@ class FPParticleSolver(BaseFPSolver):
         coupling_coefficient = params["coupling_coefficient"]
 
         # SDE: dX = alpha*dt + sigma*dW
-        # Convention: problem.sigma is the SDE noise coefficient directly
+        # Convention: params["sigma"] is the SDE volatility, used directly
         sigma_sde = sigma
         x_grid = params["xSpace"]
         xmin = params["xmin"]
@@ -2062,7 +2057,7 @@ class FPParticleSolver(BaseFPSolver):
             return np.zeros((0, *tuple(grid_shape)))
 
         # SDE: dX = alpha*dt + sigma*dW
-        # Convention: problem.sigma is the SDE noise coefficient directly
+        # Convention: params["sigma"] is the SDE volatility, used directly
         sigma_sde = sigma
 
         # Check if we need segment-aware BC (for absorbing boundaries)
@@ -2414,7 +2409,7 @@ class FPParticleSolver(BaseFPSolver):
         volatility_field : float, np.ndarray, Callable, or None
             Volatility (SDE noise coefficient). SDE: dX = v dt + Σ dW, dW ~ N(0, dt·I_d),
             so D = (1/2) Σ Σ^T (Issue #1249/#1276); a scalar σ is Σ = σ·I. Uses
-            problem.sigma if None.
+            problem.volatility if None.
             - float: constant isotropic volatility σ
             - (*grid_shape,) array: spatially varying isotropic σ(x)
             - (d, d) array: constant anisotropic noise matrix Σ
@@ -2457,7 +2452,10 @@ class FPParticleSolver(BaseFPSolver):
             self._particle_history = []
 
         # Get volatility - supports constant, array, or callable
-        # For SDE: dX = drift*dt + σ*dW (volatility_field = σ)
+        # For SDE: dX = drift*dt + σ*dW (volatility_field = σ). None is the problem's own
+        # volatility, classified like an override below (#2376).
+        if volatility_field is None:
+            volatility_field = self.problem.volatility
         volatility_is_callable = callable(volatility_field)
         volatility_is_array = isinstance(volatility_field, np.ndarray)
 
@@ -2513,9 +2511,7 @@ class FPParticleSolver(BaseFPSolver):
                 )
             # else: vf_shape == grid_shape — spatial scalar field (existing isotropic path)
 
-        if volatility_field is None:
-            base_sigma = self.problem.sigma
-        elif isinstance(volatility_field, (int, float)):
+        if isinstance(volatility_field, (int, float)):
             base_sigma = float(volatility_field)
         elif volatility_is_array or volatility_is_callable:
             # Spatially varying or state-dependent volatility
@@ -2911,7 +2907,7 @@ if __name__ == "__main__":
         Nx_points=[31],
         boundary_conditions=neumann_bc(dimension=1),
     )
-    problem = MFGProblem(geometry=geometry_1d, T=1.0, Nt=20, sigma=0.1, components=components)
+    problem = MFGProblem(geometry=geometry_1d, T=1.0, Nt=20, volatility=0.1, components=components)
     solver = FPParticleSolver(problem, num_particles=1000)
 
     # Test solver initialization
@@ -2945,7 +2941,7 @@ if __name__ == "__main__":
         Nx_points=[16, 16],
         boundary_conditions=neumann_bc(dimension=2),
     )
-    problem_2d = MFGProblem(geometry=geometry_2d, Nt=10, T=0.5, sigma=0.1, components=components)
+    problem_2d = MFGProblem(geometry=geometry_2d, Nt=10, T=0.5, volatility=0.1, components=components)
 
     solver_2d = FPParticleSolver(problem_2d, num_particles=500, density_mode="hybrid")
 

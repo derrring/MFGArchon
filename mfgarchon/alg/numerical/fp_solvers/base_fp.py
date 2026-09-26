@@ -276,7 +276,7 @@ class BaseFPSolver(BaseNumericalSolver):
 
         Volatility Specification (Issue #717 unified API):
             volatility_field can be:
-            - None: Use problem.sigma (backward compatible)
+            - None: Use problem.volatility
             - float: Constant isotropic volatility σ → D = σ²/2
             - (d,) array: Diagonal volatility [σ₀, σ₁, ...] → D = diag(σᵢ²)/2
             - (d, d) array: Full volatility matrix Σ → D = ΣΣᵀ/2
@@ -300,7 +300,7 @@ class BaseFPSolver(BaseNumericalSolver):
                 Default: None
 
             volatility_field: Volatility specification (optional, Issue #717):
-                - None: Use problem.sigma
+                - None: Use problem.volatility
                 - float: Constant isotropic volatility σ
                 - np.ndarray: Spatially varying volatility
                 - Callable: Function σ(t, x, m) -> volatility
@@ -346,7 +346,7 @@ class BaseFPSolver(BaseNumericalSolver):
         Note:
             For MFG problems:
             - drift = -∇U / λ (user computes externally)
-            - diffusion = problem.sigma (default) or custom
+            - volatility = problem.volatility (default) or the override
             This gives full control over both drift and diffusion.
 
         Helper Functions (Phase 2):
@@ -399,7 +399,7 @@ if __name__ == "__main__":
         Nx_points=[21],
         boundary_conditions=neumann_bc(dimension=1),
     )
-    problem = MFGProblem(geometry=geometry, T=1.0, Nt=10, sigma=0.1, components=components)
+    problem = MFGProblem(geometry=geometry, T=1.0, Nt=10, volatility=0.1, components=components)
 
     try:
         # This should fail because BaseFPSolver is abstract

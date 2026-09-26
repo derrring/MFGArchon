@@ -31,7 +31,7 @@ def _problem(n=41, nt=40):
     comp = MFGComponents(
         hamiltonian=H, m_initial=lambda x: np.exp(-40 * (x - 0.35) ** 2), u_terminal=lambda x: 0.5 * (x - 0.5) ** 2
     )
-    return MFGProblem(geometry=grid, components=comp, T=0.5, Nt=nt, sigma=0.3, coupling_coefficient=0.5)
+    return MFGProblem(geometry=grid, components=comp, T=0.5, Nt=nt, volatility=0.3, coupling_coefficient=0.5)
 
 
 def _mass(grid, field):
@@ -226,7 +226,7 @@ def test_callable_drift_explicit_path_respects_no_flux_no_periodic_wrap():
         u_terminal=lambda x: np.asarray(x) * 0.0,
         hamiltonian=H,
     )
-    prob = MFGProblem(geometry=grid, T=T, Nt=nt, sigma=0.05, components=comps)
+    prob = MFGProblem(geometry=grid, T=T, Nt=nt, volatility=0.05, components=comps)
     x = np.linspace(0.0, 1.0, n)
     dx = x[1] - x[0]  # the partial-region screen below is still a plain rectangle sum
     m0 = np.exp(-((x - 0.5) ** 2) / 0.01)

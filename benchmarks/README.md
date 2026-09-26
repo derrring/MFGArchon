@@ -127,7 +127,7 @@ from mfgarchon import MFGProblem
 # Create problem with sharp features
 def create_sharp_problem():
     return MFGProblem(
-        T=1.0, Nx=64, sigma=0.01,  # Low diffusion = sharp features
+        T=1.0, Nx=64, volatility=0.01,  # Low diffusion = sharp features
         coupling_coefficient=3.0  # High congestion = localized dynamics
     )
 

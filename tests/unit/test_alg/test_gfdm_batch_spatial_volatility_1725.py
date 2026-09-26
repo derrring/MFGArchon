@@ -56,6 +56,13 @@ class _HJBKwargBuilder(BaseCouplingIterator):
         raise NotImplementedError
 
 
+def _volatility(sigma, kind=None):
+    """An array volatility states its kind (#2375 ruling 6); here a per-point field unless told."""
+    if kind is None and not callable(sigma) and np.ndim(sigma) > 0:
+        kind = "field"
+    return {"volatility": sigma, "volatility_kind": kind} if kind else {"volatility": sigma}
+
+
 def _problem(sigma=0.3):
     return MFGProblem(
         geometry=TensorProductGrid(
@@ -74,11 +81,11 @@ def _problem(sigma=0.3):
         ),
         T=0.1,
         Nt=5,
-        sigma=sigma,
+        **_volatility(sigma),
     )
 
 
-def _problem_2d(nx, ny, sigma):
+def _problem_2d(nx, ny, sigma, kind=None):
     return MFGProblem(
         geometry=TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)],
@@ -96,7 +103,7 @@ def _problem_2d(nx, ny, sigma):
         ),
         T=0.1,
         Nt=2,
-        sigma=sigma,
+        **_volatility(sigma, kind),
     )
 
 
@@ -402,9 +409,14 @@ def test_ambiguous_2d_field_requires_explicit_solve_override():
     expected = 0.1 + 0.2 * collocation[:, 0] + 0.1 * collocation[:, 1]
     np.testing.assert_allclose(solver._solve_sigma, expected, rtol=1e-14, atol=1e-14)
 
-    problem.volatility_field = field_on_grid
-    with pytest.raises(NotImplementedError, match=r"ambiguous.*solve_hjb_system"):
-        HJBGFDMSolver(problem, collocation)
+    # The problem's constructor declares the kind too (#2375 ruling 6), so the same (d, d) array on a
+    # 2 x 2 grid is a field or a tensor by declaration, never by shape: accepted as the one, refused
+    # as the other.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        HJBGFDMSolver(_problem_2d(2, 2, field_on_grid, kind="field"), collocation)
+        with pytest.raises(NotImplementedError, match="tensor volatility"):
+            HJBGFDMSolver(_problem_2d(2, 2, field_on_grid, kind="tensor"), collocation)
 
 
 @pytest.mark.unit
@@ -428,7 +440,8 @@ def test_problem_owned_implicit_field_stays_collocation_indexed():
         ),
         T=0.1,
         Nt=2,
-        sigma=field,
+        volatility=field,
+        volatility_kind="field",
     )
     solver = _solver(
         problem,

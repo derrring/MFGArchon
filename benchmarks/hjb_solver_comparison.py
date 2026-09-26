@@ -31,7 +31,7 @@ class QuadraticHamiltonian2D(MFGProblem):
             spatial_discretization=[N, N],
             T=T,
             Nt=Nt,
-            sigma=nu,
+            volatility=nu,
         )
         self.grid_resolution = N
 

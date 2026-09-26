@@ -146,7 +146,7 @@ def create_towel_beach_problem(
     )
 
     # Model: game rules (Hamiltonian + diffusion)
-    model = Model(hamiltonian=hamiltonian, sigma=sigma)
+    model = Model(hamiltonian=hamiltonian, volatility=sigma)
 
     # Conditions: problem data (initial/terminal + time horizon)
     conditions = Conditions(

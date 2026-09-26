@@ -259,7 +259,7 @@ def _build_problem(nx: int, nt: int):
         geometry=grid,
         T=T,
         Nt=nt,
-        sigma=SIGMA,
+        volatility=SIGMA,
         # INERT here, and kept only because MFGProblem's own default (0.5) would be equally
         # inert and more confusing. The drift scale comes from `fp_drift_coefficient` = 1/lambda,
         # never from this argument (see SIGN CONVENTIONS above). Measured: solves at
@@ -381,12 +381,10 @@ def test_coupled_2d_no_flux_converges_at_first_order():
     read 0.956 / 0.945. See the measured table at the order assertion. No level bound is asserted
     on em.
 
-    Do NOT reproduce any of this by mutating `problem.sigma` after construction -- that is inert
-    and silently so. `get_diffusion_coefficient_field` (mfg_problem.py:1416) resolves
-    override -> volatility_field -> self.sigma, and `volatility_field` is snapshotted at
-    construction (:560), so the solve comes back byte-identical while `problem.diffusion` reports
-    the mutated value. Measured: k = 1.21 and k = 2.0 that way both reproduce the baseline to
-    every printed digit.
+    Reproduce any of this by building a new problem with the other volatility, not by changing the
+    old one: `problem.volatility` is read-only (#2375 ruling 6). Before it was, assigning
+    `problem.sigma` after construction was inert and silently so -- the solve came back
+    byte-identical at k = 1.21 and k = 2.0 while `problem.diffusion` reported the new value.
     """
     errors = [_solve(nx, nt) for nx, nt in LEVELS]
     eu = [e[0] for e in errors]
@@ -495,4 +493,4 @@ def test_the_source_and_the_solver_agree_on_the_coefficients():
         f"with lambda={source_side}; the study would measure the scheme against an equation nobody "
         f"solves, and converge cleanly doing it."
     )
-    assert problem.sigma == SIGMA, f"solver sigma={problem.sigma} vs source sigma={SIGMA}"
+    assert problem.volatility == SIGMA, f"solver volatility={problem.volatility} vs source sigma={SIGMA}"

@@ -13,8 +13,8 @@ Issue: derrring/MFGArchon#875
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from dataclasses import InitVar, dataclass
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -31,15 +31,19 @@ class Model:
     Provide EITHER hamiltonian OR lagrangian (dual descriptions of the same game).
     The other is derived via Legendre transform.
 
-    The Hamiltonian formulation H(x, p, m) enters the HJB equation:
-        -du/dt + H(x, grad(u), m) = 0
-    The Lagrangian formulation L(x, alpha, m) enters the variational problem:
-        min_alpha integral L(x, alpha, m) dt
+    The Hamiltonian formulation H(t, x, p, m) enters the HJB equation:
+        -du/dt + H(t, x, grad(u), m) = 0
+    The Lagrangian formulation L(t, x, alpha, m) enters the variational problem:
+        min_alpha integral L(t, x, alpha, m) dt
 
     Args:
-        hamiltonian: H(x, p, m) -- Hamiltonian formulation.
-        lagrangian: L(x, alpha, m) -- Lagrangian formulation.
-        sigma: Diffusion coefficient (float, array, or callable).
+        hamiltonian: H(t, x, p, m) -- Hamiltonian formulation.
+        lagrangian: L(t, x, alpha, m) -- Lagrangian formulation.
+        volatility: The SDE volatility Sigma in dX = alpha dt + Sigma dW -- a float, an array
+            (which needs ``volatility_kind``), or a callable. Not the PDE diffusion, which is
+            A = 1/2 Sigma Sigma^T and is derived from it (#2375 ruling 6).
+        volatility_kind: For an array volatility, ``"field"`` (isotropic per-point sigma) or
+            ``"tensor"`` (trailing ``(d, k)`` axes are the noise matrix). Required for an array.
         drift_field: Prescribed drift for FP-only problems (no optimization).
         coupling_cost: F(m) -- interaction cost (variational formulation).
         terminal_coupling: G(x, m(T)) -- terminal cost in objective (variational).
@@ -47,12 +51,21 @@ class Model:
 
     hamiltonian: HamiltonianBase | None = None
     lagrangian: Callable | None = None
-    sigma: float | NDArray | Callable = 0.1
+    volatility: float | NDArray | Callable = 0.1
+    volatility_kind: str | None = None
     drift_field: Callable | None = None
     coupling_cost: Callable | None = None
     terminal_coupling: Callable | None = None
+    # Retired (#2375 ruling 6). An InitVar rather than nothing, so that `Model(sigma=...)` and
+    # `dataclasses.replace(model, sigma=...)` name the replacement instead of a bare unexpected keyword.
+    sigma: InitVar[Any] = None
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, sigma: Any) -> None:
+        if sigma is not None:
+            raise TypeError(
+                "Model(sigma=...) is retired (#2375 ruling 6): pass volatility= -- the SDE volatility "
+                "Sigma, with volatility_kind='field' or 'tensor' for an array."
+            )
         has_h = self.hamiltonian is not None
         has_l = self.lagrangian is not None
         has_d = self.drift_field is not None

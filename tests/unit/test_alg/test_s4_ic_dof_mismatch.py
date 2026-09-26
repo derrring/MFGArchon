@@ -23,7 +23,7 @@ def _meshless_fp_solver():
             control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
         ),
     )
-    prob = MFGProblem(geometry=geom, T=0.2, Nt=5, sigma=0.3, components=comp, coupling_coefficient=1.0)
+    prob = MFGProblem(geometry=geom, T=0.2, Nt=5, volatility=0.3, components=comp, coupling_coefficient=1.0)
     cloud = np.linspace(0.0, 1.0, 11).reshape(-1, 1)
     return MeshlessGalerkinFPSolver(prob, cloud, delta=2.6 / np.sqrt(11), degree=2)
 

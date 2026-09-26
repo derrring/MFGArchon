@@ -56,7 +56,7 @@ class TestSigmaToDiffusionAgreement:
             ),
         )
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.1, Nt=5, sigma=sigma, components=components)
+        problem = MFGProblem(geometry=geometry, T=0.1, Nt=5, volatility=sigma, components=components)
 
         assert diffusion_from_volatility(sigma) == pytest.approx(d_reference, rel=1e-12)
         assert float(problem.diffusion) == pytest.approx(d_reference, rel=1e-12)
@@ -74,7 +74,7 @@ class TestSigmaToDiffusionAgreement:
         # three in __init__. LLF off + no override is the default sigma resolution path this
         # convention guard exercises.
         stub = SimpleNamespace(
-            problem=SimpleNamespace(sigma=sigma),
+            problem=SimpleNamespace(volatility=sigma, volatility_kind=None),
             llf_augmentation=False,
             _llf_sigma_eff=None,
             _volatility_field_override=None,
@@ -139,7 +139,7 @@ class TestSigmaToDiffusionAgreement:
                 control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
             ),
         )
-        prob = MFGProblem(geometry=geom, T=0.2, Nt=5, sigma=0.3, components=comp, coupling_coefficient=1.0)
+        prob = MFGProblem(geometry=geom, T=0.2, Nt=5, volatility=0.3, components=comp, coupling_coefficient=1.0)
         solver = HJBFDMSolver(prob)
         xx, yy = np.meshgrid(np.linspace(0, 1, 11), np.linspace(0, 1, 11), indexing="ij")
         u = (xx**2 + 0.5 * yy**2).ravel()  # nonzero, unequal second derivatives per axis

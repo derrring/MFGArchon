@@ -192,7 +192,7 @@ hamiltonian = SeparableHamiltonian(
 )
 
 # v1.0 API: Model holds game rules, Conditions holds IC/TC + time horizon
-model = Model(hamiltonian=hamiltonian, sigma=sigma)
+model = Model(hamiltonian=hamiltonian, volatility=sigma)
 conditions = Conditions(
     u_terminal=terminal_condition,
     m_initial=initial_density,

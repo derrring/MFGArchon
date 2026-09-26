@@ -44,7 +44,7 @@ problem = MFGProblem(
     spatial_discretization=[64, 32],   # 64x32 grid
     T=1.0,
     Nt=100,
-    sigma=0.1,
+    volatility=0.1,
 )
 
 # Solve MFG problem
@@ -61,7 +61,7 @@ problem = MFGProblem(
     spatial_discretization=[32, 32, 32],       # 32³ grid points
     T=1.0,
     Nt=50,
-    sigma=0.1,
+    volatility=0.1,
 )
 
 result = problem.solve(max_iterations=30)
@@ -78,7 +78,7 @@ problem = MFGProblem(
     spatial_discretization=[16, 16, 16, 16],          # 16^4 grid
     T=1.0,
     Nt=50,
-    sigma=0.05,
+    volatility=0.05,
 )
 ```
 

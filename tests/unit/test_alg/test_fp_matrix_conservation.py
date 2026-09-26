@@ -65,7 +65,7 @@ def _zero_drift_density_evolution(bc, n=41, nt=40, T=0.2, sigma=0.5, m_init=_cos
         u_terminal=lambda xx: 0.0 * np.asarray(xx),
         hamiltonian=H,
     )
-    prob = MFGProblem(geometry=grid, T=T, Nt=nt, sigma=sigma, components=comps)
+    prob = MFGProblem(geometry=grid, T=T, Nt=nt, volatility=sigma, components=comps)
     solver = FPFDMSolver(prob)
     m0 = np.asarray(m_init(x), dtype=float)
     # drift_field as an (nt+1, n) array routes through the implicit per-point assembly
@@ -366,7 +366,7 @@ class TestConservativeAdvection:
             u_terminal=lambda xx: 0.0 * np.asarray(xx),
             hamiltonian=H,
         )
-        prob = MFGProblem(geometry=grid, T=0.4, Nt=50, sigma=0.05, components=comps)
+        prob = MFGProblem(geometry=grid, T=0.4, Nt=50, volatility=0.05, components=comps)
         w = _w(n, dx)
         M = np.exp(-200.0 * (x - 0.18) ** 2)
         M /= float(w @ M)
@@ -666,7 +666,7 @@ class TestStrictAdjointPerPointSigma:
             u_terminal=lambda x: 0.0 * np.asarray(x),
             hamiltonian=H,
         )
-        prob = MFGProblem(geometry=grid, T=0.3, Nt=30, sigma=0.1, components=comps)
+        prob = MFGProblem(geometry=grid, T=0.3, Nt=30, volatility=0.1, components=comps)
         return FPFDMSolver(prob)
 
     def test_array_sigma_conserves_and_per_point(self):

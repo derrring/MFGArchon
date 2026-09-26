@@ -122,14 +122,14 @@ def _create_2d_problem(N=10, T=0.2, Nt=10, sigma=0.1, bc=None):
             components=_default_components_2d(N),
             T=T,
             Nt=Nt,
-            sigma=sigma,
+            volatility=sigma,
         )
     return MFGProblem(
         spatial_bounds=[(-1, 1), (-1, 1)],
         spatial_discretization=[N, N],
         T=T,
         Nt=Nt,
-        sigma=sigma,
+        volatility=sigma,
         components=_default_components_2d(N),
     )
 

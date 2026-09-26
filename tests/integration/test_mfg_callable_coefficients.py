@@ -53,7 +53,7 @@ class TestMFGCallableCoefficients:
         geometry = TensorProductGrid(
             bounds=[(0.0, 1.0)], boundary_conditions=no_flux_bc(dimension=1), Nx_points=[31]
         )  # Nx=30 intervals
-        problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, sigma=0.1, components=_default_components())
+        problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, volatility=0.1, components=_default_components())
 
         # Porous medium diffusion: D(m) = σ² m
         def porous_medium_diffusion(t, x, m):
@@ -91,7 +91,7 @@ class TestMFGCallableCoefficients:
         geometry = TensorProductGrid(
             bounds=[(0.0, 1.0)], boundary_conditions=no_flux_bc(dimension=1), Nx_points=[31]
         )  # Nx=30 intervals
-        problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, sigma=0.1, components=_default_components())
+        problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, volatility=0.1, components=_default_components())
 
         # Crowd diffusion: lower diffusion in high-density regions
         def crowd_diffusion(t, x, m):
@@ -128,7 +128,7 @@ class TestMFGCallableCoefficients:
         geometry = TensorProductGrid(
             bounds=[(0.0, 1.0)], boundary_conditions=no_flux_bc(dimension=1), Nx_points=[31]
         )  # Nx=30 intervals
-        problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, sigma=0.15, components=_default_components())
+        problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, volatility=0.15, components=_default_components())
 
         # Callable returning constant
         def constant_diffusion(t, x, m):
@@ -146,7 +146,7 @@ class TestMFGCallableCoefficients:
         )
         result_callable = mfg_solver_callable.solve(max_iterations=5, tolerance=1e-3, verbose=False)
 
-        # Solve with constant (None uses problem.sigma)
+        # Solve with constant (None uses problem.volatility)
         hjb_solver_constant = HJBFDMSolver(problem)
         fp_solver_constant = FPFDMSolver(problem)
         mfg_solver_constant = FixedPointIterator(
@@ -154,7 +154,7 @@ class TestMFGCallableCoefficients:
             hjb_solver=hjb_solver_constant,
             fp_solver=fp_solver_constant,
             relaxation=0.5,
-            volatility_field=None,  # Use problem.sigma
+            volatility_field=None,  # Use problem.volatility
         )
         result_constant = mfg_solver_constant.solve(max_iterations=5, tolerance=1e-3, verbose=False)
 
@@ -172,7 +172,7 @@ class TestMFGCallableCoefficients:
         geometry = TensorProductGrid(
             bounds=[(0.0, 1.0)], boundary_conditions=no_flux_bc(dimension=1), Nx_points=[31]
         )  # Nx=30 intervals
-        problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, sigma=0.1, components=_default_components())
+        problem = MFGProblem(geometry=geometry, T=0.5, Nt=20, volatility=0.1, components=_default_components())
 
         # Spatially varying diffusion (higher at boundaries)
         (Nx_points,) = problem.geometry.get_grid_shape()  # 1D spatial grid
@@ -219,12 +219,14 @@ class TestMFGCallableCoefficients:
 
         M_none = _solve_with(None)
 
-        # Single source of truth: an array holding problem.sigma everywhere must reproduce the
+        # Single source of truth: an array holding problem.volatility everywhere must reproduce the
         # volatility_field=None path exactly, since both name the same volatility.
         # Measured byte-identical (max|dU| = max|dM| = 0.0), so equality is asserted, not a tolerance.
-        flat_field = np.tile(np.full(Nx_points, problem.sigma), (Nt_points, 1))
+        flat_field = np.tile(np.full(Nx_points, problem.volatility), (Nt_points, 1))
         np.testing.assert_array_equal(
-            _solve_with(flat_field), M_none, err_msg="constant array volatility diverges from the problem.sigma path"
+            _solve_with(flat_field),
+            M_none,
+            err_msg="constant array volatility diverges from the problem.volatility path",
         )
 
         # Liveness: the spatially varying array must reach the solve. Byte-identity above establishes

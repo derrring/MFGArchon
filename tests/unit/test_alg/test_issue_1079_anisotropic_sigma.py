@@ -136,8 +136,8 @@ class TestGFDMFullTensorSigmaRaises:
     """
 
     @staticmethod
-    def _make_2d_problem_scalar_sigma():
-        """Build a minimal 2D MFGProblem with scalar sigma (passes MFGProblem validation)."""
+    def _make_2d_problem_scalar_sigma(**volatility):
+        """Build a minimal 2D MFGProblem, with a scalar volatility of 0.1 unless one is passed."""
         from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
         from mfgarchon.core.mfg_components import MFGComponents
         from mfgarchon.core.mfg_problem import MFGProblem
@@ -163,8 +163,8 @@ class TestGFDMFullTensorSigmaRaises:
             geometry=domain,
             T=0.1,
             Nt=5,
-            sigma=0.1,
             components=components,
+            **(volatility or {"volatility": 0.1}),
         )
 
     @staticmethod
@@ -176,27 +176,20 @@ class TestGFDMFullTensorSigmaRaises:
         return np.column_stack([X.ravel(), Y.ravel()])
 
     def test_full_tensor_volatility_field_raises_not_implemented(self) -> None:
-        """HJBGFDMSolver construction raises NotImplementedError when problem.volatility_field
-        is a (d,d) tensor.
+        """HJBGFDMSolver construction raises NotImplementedError for a (d,d) tensor volatility.
 
-        Reproduces the silent-drop path: problem is built with scalar sigma (valid), then
-        volatility_field is overwritten with a full tensor before the solver is created.
-        On pre-fix code, HJBGFDMSolver.__init__ does not check volatility_field shape →
-        it silently uses the scalar MFGProblem.sigma mean, dropping cross-derivative terms.
-        After the fix, NotImplementedError is raised immediately at construction.
+        The GFDM Laplacian drops the cross-derivative terms, so solving a tensor volatility as if it
+        were isotropic is refused at construction (fail-loud, Issue #1079). The tensor reaches the
+        problem through its constructor, MFGProblem(volatility=S, volatility_kind="tensor").
         """
         from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
 
-        problem = self._make_2d_problem_scalar_sigma()
+        problem = self._make_2d_problem_scalar_sigma(
+            volatility=np.array([[0.1, 0.04], [0.04, 0.1]]), volatility_kind="tensor"
+        )
         coll = self._make_2d_collocation_points()
 
-        # Simulate the condition that was silently wrong: volatility_field is a (d,d) tensor
-        sigma_tensor = np.array([[0.1, 0.04], [0.04, 0.1]])
-        problem.volatility_field = sigma_tensor  # bypass MFGProblem construction validation
-
-        # Pre-fix: HJBGFDMSolver.__init__ has no guard → no error → wrong isotropic solve.
-        # Post-fix: NotImplementedError at construction (fail-loud, Issue #1079).
-        with pytest.raises(NotImplementedError, match="full-tensor"):
+        with pytest.raises(NotImplementedError, match="tensor volatility"):
             HJBGFDMSolver(problem, coll)
 
     def test_scalar_sigma_gfdm_does_not_raise(self) -> None:
@@ -210,8 +203,8 @@ class TestGFDMFullTensorSigmaRaises:
         solver = HJBGFDMSolver(problem, coll)
         assert solver is not None
 
-    def test_1d_array_sigma_gfdm_does_not_raise(self) -> None:
-        """1-D per-axis diagonal sigma array must not trigger the tensor guard."""
+    def test_a_field_volatility_gfdm_does_not_raise(self) -> None:
+        """A non-tensor array (a per-point field) must not trigger the tensor guard."""
         from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
         from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
         from mfgarchon.core.mfg_components import MFGComponents
@@ -238,14 +231,12 @@ class TestGFDMFullTensorSigmaRaises:
             geometry=domain,
             T=0.1,
             Nt=5,
-            sigma=0.1,
+            volatility=np.full((10, 10), 0.1),
+            volatility_kind="field",
             components=components,
         )
         coll = self._make_2d_collocation_points()
 
-        # Simulate a 1-D diagonal sigma stored in volatility_field
-        problem.volatility_field = np.array([0.1, 0.08])  # ndim == 1, OK
-
-        # Should not raise: 1-D is diagonal per-axis, not a full tensor
+        # Should not raise: a per-point field is not a tensor
         solver = HJBGFDMSolver(problem, coll)
         assert solver is not None

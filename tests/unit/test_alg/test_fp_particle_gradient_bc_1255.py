@@ -87,7 +87,7 @@ class TestGradientBCOverrideThreaded:
             geometry=geom,
             T=1.0,
             Nt=2,
-            sigma=0.1,
+            volatility=0.1,
             coupling_coefficient=0.5,
             components=_default_components(),
         )
@@ -427,7 +427,7 @@ class TestHyperrectangleTorusEndToEnd:
             geometry=torus,
             T=0.1,
             Nt=3,
-            sigma=0.1,
+            volatility=0.1,
             coupling_coefficient=0.5,
             components=components,
         )

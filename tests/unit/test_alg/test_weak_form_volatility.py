@@ -28,7 +28,7 @@ def _problem(sigma, n=15):
     comp = MFGComponents(
         hamiltonian=H, m_initial=lambda x: np.exp(-20 * (x - 0.5) ** 2), u_terminal=lambda x: 0.5 * (x - 0.5) ** 2
     )
-    return MFGProblem(geometry=grid, components=comp, T=0.5, Nt=10, sigma=sigma, coupling_coefficient=0.5)
+    return MFGProblem(geometry=grid, components=comp, T=0.5, Nt=10, volatility=sigma, coupling_coefficient=0.5)
 
 
 def _cloud(n=15):
@@ -36,11 +36,16 @@ def _cloud(n=15):
 
 
 def test_diffusion_coefficient_converts_sigma_to_D():
-    """volatility_field (scalar or array) is sigma -> D = sigma^2 / 2."""
+    """A scalar volatility_field is sigma -> D = sigma^2 / 2; an array is refused, not averaged.
+
+    This solver assembles one scalar D, so a per-point volatility has no representation here. It
+    was collapsed to its mean with a warning until #2376; now the solver refuses it, naming itself.
+    """
     fp = MeshlessGalerkinFPSolver(_problem(sigma=0.5), collocation_points=_cloud(), delta=3.5 / 14)
-    assert fp._diffusion_coefficient(None) == pytest.approx(0.5 * 0.5**2)  # uses problem.sigma
+    assert fp._diffusion_coefficient(None) == pytest.approx(0.5 * 0.5**2)  # uses problem.volatility
     assert fp._diffusion_coefficient(0.3) == pytest.approx(0.5 * 0.3**2)  # NOT 0.3
-    assert fp._diffusion_coefficient(np.full(fp.n_dof, 0.3)) == pytest.approx(0.5 * 0.3**2)
+    with pytest.raises(NotImplementedError, match="MeshlessGalerkinFPSolver uses one scalar volatility"):
+        fp._diffusion_coefficient(np.full(fp.n_dof, 0.3))
 
 
 def test_fp_volatility_override_equals_problem_with_that_sigma():

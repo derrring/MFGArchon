@@ -32,7 +32,7 @@ def benchmark_particle_solver(Nx: int, Nt: int, N_particles: int, device: str = 
         ),
         Nt=Nt,
         T=1.0,
-        sigma=0.1,
+        volatility=0.1,
         coupling_coefficient=1.0,
     )
 

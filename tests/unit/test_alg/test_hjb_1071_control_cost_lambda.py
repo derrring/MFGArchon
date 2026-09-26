@@ -42,7 +42,7 @@ def _problem_with_lambda(control_lambda: float) -> MFGProblem:
         m_initial=lambda x: 1.0,
         u_terminal=lambda x: 0.0,
     )
-    return MFGProblem(geometry=grid, T=0.2, Nt=10, sigma=0.3, components=components)
+    return MFGProblem(geometry=grid, T=0.2, Nt=10, volatility=0.3, components=components)
 
 
 def _gfdm_solver(problem: MFGProblem) -> HJBGFDMSolver:

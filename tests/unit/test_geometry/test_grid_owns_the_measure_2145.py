@@ -189,7 +189,7 @@ class TestWhatTheRefusalDoesToCallers:
                 ),
                 Nt=2,
                 T=0.1,
-                sigma=0.1,
+                volatility=0.1,
                 components=MFGComponents(
                     m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)),
                     u_terminal=lambda x: 0.0,
@@ -225,7 +225,7 @@ class TestWhatTheRefusalDoesToCallers:
                 ),
                 Nt=3,
                 T=0.05,
-                sigma=0.3,
+                volatility=0.3,
                 components=MFGComponents(
                     m_initial=lambda x: np.exp(-30.0 * (np.asarray(x, dtype=float) - 0.5) ** 2),
                     u_terminal=lambda x: 0.0,

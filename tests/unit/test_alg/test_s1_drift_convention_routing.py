@@ -60,7 +60,7 @@ def _problem(control_cost) -> MFGProblem:
             coupling_dm=lambda m: 1.0,
         ),
     )
-    return MFGProblem(geometry=geometry, T=0.3, Nt=6, sigma=0.2, components=components)
+    return MFGProblem(geometry=geometry, T=0.3, Nt=6, volatility=0.2, components=components)
 
 
 def _state(problem: MFGProblem) -> tuple[np.ndarray, np.ndarray]:
@@ -296,7 +296,7 @@ def test_u_as_drift_field_solves_a_different_problem_than_u_as_potential_field()
         geometry=grid,
         Nt=nt,
         T=0.2,
-        sigma=0.2,
+        volatility=0.2,
         components=MFGComponents(
             m_initial=lambda x: 1.0,
             u_terminal=lambda x: 0.0,

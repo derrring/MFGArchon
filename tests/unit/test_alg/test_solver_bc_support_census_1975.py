@@ -433,7 +433,7 @@ def test_an_unsupported_bc_raises_at_construction():
                 coupling=lambda m: 0.5 * m,
                 coupling_dm=lambda m: 0.5,
             ),
-            sigma=0.1,
+            volatility=0.1,
         ),
         domain=TensorProductGrid(
             bounds=[(0.0, 1.0)],

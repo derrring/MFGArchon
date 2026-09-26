@@ -133,7 +133,7 @@ if __name__ == "__main__":
     hamiltonian = CongestionHamiltonian(congestion_strength=congestion_strength)
 
     # Bundle model and conditions
-    model = Model(hamiltonian=hamiltonian, sigma=sigma)
+    model = Model(hamiltonian=hamiltonian, volatility=sigma)
     conditions = Conditions(u_terminal=terminal_cost, m_initial=initial_density, T=1.0)
 
     # ==============================================================================
@@ -171,7 +171,7 @@ if __name__ == "__main__":
     print("Solving baseline (no congestion)...")
 
     baseline_hamiltonian = CongestionHamiltonian(congestion_strength=0.0)
-    baseline = problem.with_model(Model(hamiltonian=baseline_hamiltonian, sigma=sigma))
+    baseline = problem.with_model(Model(hamiltonian=baseline_hamiltonian, volatility=sigma))
     result_baseline = baseline.solve(verbose=False)
 
     # Measure evacuation efficiency

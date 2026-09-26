@@ -426,7 +426,7 @@ if __name__ == "__main__":
 
     # Create simple 1D problem
     geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
-    problem = MFGProblem(geometry=geometry, T=0.5, Nt=10, sigma=0.2)
+    problem = MFGProblem(geometry=geometry, T=0.5, Nt=10, volatility=0.2)
 
     # Create solvers
     hjb_solver = HJBFDMSolver(problem)

@@ -81,7 +81,7 @@ def _components() -> MFGComponents:
 
 def _problem(bc, bounds, npts) -> MFGProblem:
     grid = TensorProductGrid(bounds=bounds, Nx_points=npts, boundary_conditions=bc)
-    return MFGProblem(geometry=grid, T=0.2, Nt=2, sigma=0.1, components=_components())
+    return MFGProblem(geometry=grid, T=0.2, Nt=2, volatility=0.1, components=_components())
 
 
 def test_sl_mixed_per_axis_bc_fails_loud_1560(still_refused):

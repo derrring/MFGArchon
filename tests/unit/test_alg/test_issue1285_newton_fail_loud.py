@@ -58,7 +58,7 @@ def _make(**extra) -> MFGProblem:
         ),
         T=0.15,
         Nt=_NT,
-        sigma=0.3,
+        volatility=0.3,
         components=_components(),
         **extra,
     )

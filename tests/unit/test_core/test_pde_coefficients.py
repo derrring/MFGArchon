@@ -320,7 +320,7 @@ class TestGetSpatialGrid:
     def test_geometry_based_api_1d(self):
         """Test grid extraction with geometry-based API (1D)."""
         domain = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=domain, T=1.0, Nt=50, sigma=0.1, components=_default_components())
+        problem = MFGProblem(geometry=domain, T=1.0, Nt=50, volatility=0.1, components=_default_components())
 
         grid = get_spatial_grid(problem)
 
@@ -332,7 +332,7 @@ class TestGetSpatialGrid:
         """Test grid extraction with legacy API (1D)."""
         # This test now uses Geometry-First API instead of deprecated legacy API
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, sigma=0.1, components=_default_components())
+        problem = MFGProblem(geometry=geometry, T=1.0, Nt=50, volatility=0.1, components=_default_components())
 
         grid = get_spatial_grid(problem)
 
@@ -407,31 +407,30 @@ class TestCoefficientFieldEdgeCases:
             field.evaluate_at(timestep_idx=0, grid=grid, density=density, dt=0.01)
 
 
-class TestScalarDiffusionFromVolatility:
-    """Issue #811 / FEM survey: the weak-form / FEM family's single scalar D = sigma^2/2,
-    single-sourced via diffusion_from_volatility. Byte-identical to the prior inline copies
-    (None -> 0.5*sigma^2, scalar -> 0.5*v^2, array -> 0.5*mean(v)^2); the array case warns
-    because a scalar-D solver cannot represent a spatially-varying field."""
+class TestScalarVolatility:
+    """#2376: the declaring helper for a consumer that can use only one scalar volatility.
 
-    def test_none_uses_fallback_sigma(self):
-        from mfgarchon.utils.pde_coefficients import scalar_diffusion_from_volatility
+    It replaced ``scalar_diffusion_from_volatility``, whose array arm averaged a field to its mean
+    with a warning. There is no scalar view of a field or a callable, so both are refused, naming the
+    consumer; a scalar passes through as a float."""
 
-        assert scalar_diffusion_from_volatility(None, 0.3) == pytest.approx(0.5 * 0.3**2, rel=1e-12)
+    def test_a_scalar_passes_through(self):
+        from mfgarchon.utils.pde_coefficients import scalar_volatility
 
-    def test_scalar_is_converted(self):
-        from mfgarchon.utils.pde_coefficients import scalar_diffusion_from_volatility
+        for v in (0.0, 0.1, 0.7, 2.5, np.float32(0.3), 3):
+            assert scalar_volatility(v, consumer="X") == float(v)
 
-        for v in (0.1, 0.7, 2.5):
-            assert scalar_diffusion_from_volatility(v, 0.3) == pytest.approx(0.5 * v**2, rel=1e-12)
+    def test_an_array_is_refused_not_averaged(self):
+        from mfgarchon.utils.pde_coefficients import scalar_volatility
 
-    def test_array_collapses_to_mean_with_warning(self):
-        from mfgarchon.utils.pde_coefficients import scalar_diffusion_from_volatility
+        with pytest.raises(NotImplementedError, match=r"WeakFormFPSolver uses one scalar volatility.*shape \(3,\)"):
+            scalar_volatility(np.array([0.2, 0.4, 0.6]), consumer="WeakFormFPSolver")
 
-        arr = np.array([0.2, 0.4, 0.6])
-        with pytest.warns(UserWarning, match="collapsed to its mean"):
-            d = scalar_diffusion_from_volatility(arr, 0.3)
-        # byte-identical to the prior inline `0.5 * mean(arr)**2`
-        assert d == pytest.approx(0.5 * float(np.mean(arr)) ** 2, rel=1e-12)
+    def test_a_callable_is_refused_not_replaced(self):
+        from mfgarchon.utils.pde_coefficients import scalar_volatility
+
+        with pytest.raises(NotImplementedError, match=r"WeakFormFPSolver uses one scalar volatility.*callable"):
+            scalar_volatility(lambda t, x, m: 0.05, consumer="WeakFormFPSolver")
 
 
 class TestFpDriftCoefficient:
@@ -447,7 +446,7 @@ class TestFpDriftCoefficient:
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=control_cost)),
         )
-        prob = MFGProblem(geometry=grid, components=comp, T=0.2, Nt=2, sigma=0.1)
+        prob = MFGProblem(geometry=grid, components=comp, T=0.2, Nt=2, volatility=0.1)
         # the quadratic-Sep-H path wins over the default coupling_coefficient (0.5)
         assert fp_drift_coefficient(prob) == pytest.approx(1.0 / control_cost)
 
@@ -486,7 +485,7 @@ class TestFpDriftCoefficient:
             u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(control_cost=L1ControlCost(lambda_=2.0)),
         )
-        prob = MFGProblem(geometry=grid, components=comp, T=0.2, Nt=2, sigma=0.1)
+        prob = MFGProblem(geometry=grid, components=comp, T=0.2, Nt=2, volatility=0.1)
         assert getattr(prob, "coupling_coefficient", None) is not None  # the trap the old code fell into
         with pytest.raises(NotImplementedError, match="quadratic"):
             fp_drift_coefficient(prob)
@@ -548,7 +547,7 @@ class TestResolveDiffusionSource:
         from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
 
         grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=grid, T=0.2, Nt=10, sigma=0.3, components=_default_components())
+        problem = MFGProblem(geometry=grid, T=0.2, Nt=10, volatility=0.3, components=_default_components())
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             solver = HJBGFDMSolver(problem, collocation_points=self._POINTS, delta=0.3)

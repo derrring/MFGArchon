@@ -173,7 +173,7 @@ def create_santa_fe_problem(
         payoff_function=payoff_function,
         attendance_cache=attendance_cache,
     )
-    model = Model(hamiltonian=hamiltonian, sigma=sigma)
+    model = Model(hamiltonian=hamiltonian, volatility=sigma)
 
     # Conditions: problem data (initial/terminal + time horizon)
     conditions = Conditions(

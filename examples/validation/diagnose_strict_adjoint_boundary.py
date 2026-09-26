@@ -33,7 +33,7 @@ def diagnose_boundary_behavior(Nx: int = 21, x_stall: float = 0.3):
         geometry=geometry,
         T=1.0,
         Nt=11,
-        sigma=0.2,
+        volatility=0.2,
     )
 
     # Create value function with stall at x_stall
@@ -112,7 +112,7 @@ def diagnose_boundary_behavior(Nx: int = 21, x_stall: float = 0.3):
     M_next = fp_solver.solve_fp_step_adjoint_mode(
         M_current=M_initial,
         A_advection_T=A_hjb_T,
-        sigma=problem.sigma,
+        sigma=problem.volatility,
         time=0.0,
     )
     final_mass = np.sum(M_next)
@@ -135,7 +135,7 @@ def diagnose_boundary_behavior(Nx: int = 21, x_stall: float = 0.3):
     masses = [initial_mass]
 
     for step in range(10):
-        M_current = fp_solver.solve_fp_step_adjoint_mode(M_current, A_hjb_T, sigma=problem.sigma)
+        M_current = fp_solver.solve_fp_step_adjoint_mode(M_current, A_hjb_T, sigma=problem.volatility)
         masses.append(np.sum(M_current))
 
     print("\nMass evolution over 10 FP steps:")
@@ -172,7 +172,7 @@ def compare_with_explicit_fp(Nx: int = 21, x_stall: float = 0.3):
         geometry=geometry,
         T=1.0,
         Nt=11,
-        sigma=0.2,
+        volatility=0.2,
     )
 
     x = np.linspace(0, 1, Nx)
@@ -190,7 +190,7 @@ def compare_with_explicit_fp(Nx: int = 21, x_stall: float = 0.3):
     # Method 1: Strict Adjoint Mode
     M_adjoint = M_initial.copy()
     for _ in range(10):
-        M_adjoint = fp_solver.solve_fp_step_adjoint_mode(M_adjoint, A_hjb.T, sigma=problem.sigma)
+        M_adjoint = fp_solver.solve_fp_step_adjoint_mode(M_adjoint, A_hjb.T, sigma=problem.volatility)
 
     # Method 2: Standard FP (uses internal matrix construction)
     M_solution = fp_solver.solve(M_initial, U)

@@ -1000,7 +1000,7 @@ class TestStochasticSLUnificationPinning:
             get_bc_type_string,
         )
 
-        sigma = solver.problem.sigma
+        sigma = solver.problem.volatility
         sqrt_dt = float(np.sqrt(dt))
         diffusion_offset = sigma * sqrt_dt
         grad_u = solver._compute_gradient(U_next, check_cfl=True, t_idx=time_idx, m_density=M_next)
@@ -1119,7 +1119,7 @@ class TestStochasticCharacteristicSL_nD:  # noqa: N801 — SL_nD = semi-Lagrangi
                 geometry=grid,
                 T=T,
                 Nt=Nt,
-                sigma=sigma,
+                volatility=sigma,
                 components=components,
                 boundary_conditions=bc,
             ),
@@ -1375,7 +1375,7 @@ class TestSLHJBConsistency:
                 coupling_dm=coupling_dm,
             ),
         )
-        problem = MFGProblem(geometry=geom, T=T, Nt=Nt, sigma=sigma, components=comp)
+        problem = MFGProblem(geometry=geom, T=T, Nt=Nt, volatility=sigma, components=comp)
         x = np.linspace(0.0, 1.0, nx)
         U_T = 0.5 * (x - 0.5) ** 2
         M = np.tile(0.5 + np.exp(-10 * (x - 0.5) ** 2), (Nt + 1, 1))
@@ -1467,7 +1467,7 @@ class TestSLValueUpdateND:
                 coupling_dm=lambda m: 0.7 * np.ones_like(m),
             ),
         )
-        problem = MFGProblem(geometry=geom, T=0.1, Nt=10, sigma=0.1, components=comp)
+        problem = MFGProblem(geometry=geom, T=0.1, Nt=10, volatility=0.1, components=comp)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             solver = HJBSemiLagrangianSolver(problem)

@@ -696,12 +696,17 @@ class HJBHowardSolver:
         T_final = float(self.problem.T)
         dt = T_final / Nt
 
-        if self._volatility_field_override is None:
-            sigma = float(self.stencil_provider._get_sigma_value(None))
-        elif np.isscalar(self._volatility_field_override):
-            sigma = float(self._volatility_field_override)
+        # The override, or the problem's volatility as the stencil provider normalises it -- a
+        # scalar or a collocation-space field, never a collapsed scalar (#2376).
+        source = (
+            self._volatility_field_override
+            if self._volatility_field_override is not None
+            else self.stencil_provider._get_sigma_value(None)
+        )
+        if np.isscalar(source):
+            sigma = float(source)
         else:
-            sigma = np.asarray(self._volatility_field_override, dtype=float)
+            sigma = np.asarray(source, dtype=float)
             if sigma.ndim == 0:
                 sigma = float(sigma)
             elif sigma.shape != (n,):

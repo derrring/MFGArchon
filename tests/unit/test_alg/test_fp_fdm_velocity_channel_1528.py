@@ -50,7 +50,7 @@ def _problem(control_cost=None) -> MFGProblem:
         control_cost=control_cost if control_cost is not None else QuadraticControlCost(lambda_=1.0),
     )
     return MFGProblem(
-        model=Model(hamiltonian=hamiltonian, sigma=0.2),
+        model=Model(hamiltonian=hamiltonian, volatility=0.2),
         domain=TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)],
             Nx_points=[N, N],

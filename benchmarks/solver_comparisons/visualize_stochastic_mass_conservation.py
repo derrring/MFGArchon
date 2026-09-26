@@ -31,7 +31,7 @@ def main():
         ),
         T=1.0,
         Nt=51,
-        sigma=1.0,
+        volatility=1.0,
         coupling_coefficient=0.5,
     )
     bc = neumann_bc(dimension=1, value=0.0)

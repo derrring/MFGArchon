@@ -47,7 +47,7 @@ def _make_problem(coupling_strength: float = 1.0, sigma: float = 0.3, T: float =
         ),
         T=T,
         Nt=Nt,
-        sigma=sigma,
+        volatility=sigma,
         components=components,
     )
 

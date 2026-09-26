@@ -44,7 +44,7 @@ def test_a_solver_refuses_a_space_first_source_instead_of_computing_with_it():
     from mfgarchon.geometry.boundary import no_flux_bc
 
     problem = MFGProblem(
-        model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost()), sigma=0.2),
+        model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost()), volatility=0.2),
         domain=TensorProductGrid(
             bounds=[(0.0, 1.0)] * 2, Nx_points=[5, 5], boundary_conditions=no_flux_bc(dimension=2)
         ),

@@ -152,7 +152,7 @@ def create_adjoint_consistent_bc_1d(
         >>> hjb_bc = create_adjoint_consistent_bc_1d(
         ...     m_current=m_current[-1, :],  # Final time slice
         ...     dx=problem.geometry.get_grid_spacing()[0],
-        ...     sigma=problem.sigma,
+        ...     sigma=problem.volatility,
         ...     domain_bounds=problem.geometry.domain_bounds,
         ... )
         >>> U_new = hjb_solver.solve_hjb_system(bc=hjb_bc, ...)
@@ -236,7 +236,7 @@ def compute_adjoint_consistent_bc_values(
         >>> bc = compute_adjoint_consistent_bc_values(
         ...     m_current=m[-1, :],
         ...     geometry=problem.geometry,
-        ...     sigma=problem.sigma,
+        ...     sigma=problem.volatility,
         ...     dimension=problem.dimension,
         ... )
         >>> U = hjb_solver.solve_hjb_system(bc=bc, ...)

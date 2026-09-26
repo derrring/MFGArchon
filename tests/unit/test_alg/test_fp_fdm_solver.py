@@ -71,7 +71,7 @@ def standard_problem():
     - Diffusion: sigma=1.0
     """
     domain = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-    return MFGProblem(geometry=domain, T=1.0, Nt=51, sigma=1.0, components=_default_components())
+    return MFGProblem(geometry=domain, T=1.0, Nt=51, volatility=1.0, components=_default_components())
 
 
 class TestFPFDMSolverInitialization:
@@ -741,18 +741,25 @@ class TestFPFDMSolverProblemVolatility:
     """problem-level non-scalar volatility must reach the solver (#1248, 2026-06-10 audit)."""
 
     def test_problem_array_sigma_reaches_solver(self):
-        """A per-point problem.sigma array must drive the solve, not its mean.
+        """A per-point problem volatility must drive the solve, not its mean.
 
-        MFGProblem stores a placeholder problem.sigma = mean(array) for non-scalar volatility,
-        and the FP solver read that placeholder, so a spatially-varying sigma silently solved
-        the mean PDE. After the fix the no-override path uses problem.volatility_field, so the
+        MFGProblem once stored a placeholder scalar = mean(array) beside a non-scalar volatility,
+        and the FP solver read that placeholder, so a spatially-varying volatility silently solved
+        the mean PDE (#1248, #2376). The no-override path uses problem.volatility, so the
         problem-level solve matches an explicit per-point volatility_field and differs from the
         mean scalar.
         """
         domain = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(dimension=1))
         Nx = domain.num_points[0]
         sigma_arr = np.linspace(0.1, 0.5, Nx)  # low-left, high-right per-point volatility
-        problem = MFGProblem(geometry=domain, T=0.05, Nt=10, sigma=sigma_arr, components=_default_components())
+        problem = MFGProblem(
+            geometry=domain,
+            T=0.05,
+            Nt=10,
+            volatility=sigma_arr,
+            volatility_kind="field",
+            components=_default_components(),
+        )
         solver = FPFDMSolver(problem, boundary_conditions=no_flux_bc(dimension=1))
 
         Nt = problem.Nt + 1
@@ -761,7 +768,7 @@ class TestFPFDMSolverProblemVolatility:
         m0 /= np.sum(m0) * domain.spacing[0]
         U = np.zeros((Nt, Nx))
 
-        M_problem = solver.solve_fp_system(m0, U)  # no override -> must use problem.volatility_field
+        M_problem = solver.solve_fp_system(m0, U)  # no override -> must use problem.volatility
         M_explicit = solver.solve_fp_system(m0, U, volatility_field=sigma_arr)
         M_mean = solver.solve_fp_system(m0, U, volatility_field=float(np.mean(sigma_arr)))
 
@@ -781,7 +788,7 @@ class TestFPFDMSolverTensorDiffusion:
         domain = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 0.6)], Nx_points=[31, 21], boundary_conditions=no_flux_bc(dimension=2)
         )
-        problem = MFGProblem(geometry=domain, T=0.05, Nt=10, sigma=0.1, components=_default_components_2d())
+        problem = MFGProblem(geometry=domain, T=0.05, Nt=10, volatility=0.1, components=_default_components_2d())
 
         boundary_conditions = no_flux_bc(dimension=1)
         solver = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
@@ -823,7 +830,7 @@ class TestFPFDMSolverTensorDiffusion:
         domain = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[26, 26], boundary_conditions=no_flux_bc(dimension=2)
         )
-        problem = MFGProblem(geometry=domain, T=0.05, Nt=10, sigma=sigma, components=_default_components_2d())
+        problem = MFGProblem(geometry=domain, T=0.05, Nt=10, volatility=sigma, components=_default_components_2d())
         solver = FPFDMSolver(problem, boundary_conditions=no_flux_bc(dimension=1))
 
         Nt = problem.Nt + 1
@@ -851,7 +858,7 @@ class TestFPFDMSolverTensorDiffusion:
         domain = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[26, 26], boundary_conditions=no_flux_bc(dimension=2)
         )
-        problem = MFGProblem(geometry=domain, T=0.05, Nt=10, sigma=0.1, components=_default_components_2d())
+        problem = MFGProblem(geometry=domain, T=0.05, Nt=10, volatility=0.1, components=_default_components_2d())
 
         boundary_conditions = periodic_bc(dimension=1)
         solver = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
@@ -883,7 +890,7 @@ class TestFPFDMSolverTensorDiffusion:
         domain = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 0.6)], Nx_points=[26, 16], boundary_conditions=no_flux_bc(dimension=2)
         )
-        problem = MFGProblem(geometry=domain, T=0.05, Nt=10, sigma=0.1, components=_default_components_2d())
+        problem = MFGProblem(geometry=domain, T=0.05, Nt=10, volatility=0.1, components=_default_components_2d())
 
         boundary_conditions = no_flux_bc(dimension=1)
         solver = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
@@ -921,7 +928,7 @@ class TestFPFDMSolverTensorDiffusion:
         domain = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 0.6)], Nx_points=[21, 16], boundary_conditions=no_flux_bc(dimension=2)
         )
-        problem = MFGProblem(geometry=domain, T=0.05, Nt=10, sigma=0.1, components=_default_components_2d())
+        problem = MFGProblem(geometry=domain, T=0.05, Nt=10, volatility=0.1, components=_default_components_2d())
 
         boundary_conditions = no_flux_bc(dimension=1)
         solver = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
@@ -983,7 +990,7 @@ class TestFPFDMSolverTensorDiffusion:
         domain = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[26, 26], boundary_conditions=no_flux_bc(dimension=2)
         )
-        problem = MFGProblem(geometry=domain, T=0.05, Nt=10, sigma=0.1, components=_default_components_2d())
+        problem = MFGProblem(geometry=domain, T=0.05, Nt=10, volatility=0.1, components=_default_components_2d())
 
         solver = FPFDMSolver(problem, boundary_conditions=no_flux_bc(dimension=2))
 
@@ -1019,7 +1026,7 @@ class TestFPFDMSolverTensorDiffusion:
         domain = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[26, 26], boundary_conditions=no_flux_bc(dimension=2)
         )
-        problem = MFGProblem(geometry=domain, T=0.05, Nt=10, sigma=0.1, components=_default_components_2d())
+        problem = MFGProblem(geometry=domain, T=0.05, Nt=10, volatility=0.1, components=_default_components_2d())
 
         boundary_conditions = no_flux_bc(dimension=1)
         solver = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
@@ -1058,7 +1065,7 @@ class TestFPFDMSolverTensorDiffusion:
         domain = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[21, 21], boundary_conditions=no_flux_bc(dimension=2)
         )
-        problem = MFGProblem(geometry=domain, T=0.05, Nt=5, sigma=0.1, components=_default_components_2d())
+        problem = MFGProblem(geometry=domain, T=0.05, Nt=5, volatility=0.1, components=_default_components_2d())
 
         boundary_conditions = no_flux_bc(dimension=1)
         solver = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
@@ -1080,7 +1087,7 @@ class TestFPFDMSolverTensorDiffusion:
         domain = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 0.6)], Nx_points=[31, 21], boundary_conditions=no_flux_bc(dimension=2)
         )
-        problem = MFGProblem(geometry=domain, T=0.05, Nt=50, sigma=0.1, components=_default_components_2d())
+        problem = MFGProblem(geometry=domain, T=0.05, Nt=50, volatility=0.1, components=_default_components_2d())
 
         boundary_conditions = no_flux_bc(dimension=1)
         solver = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
@@ -1280,7 +1287,7 @@ class TestFPFDMSolverCallableDrift:
         domain = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[21, 21], boundary_conditions=no_flux_bc(dimension=2)
         )
-        problem = MFGProblem(geometry=domain, T=0.1, Nt=10, sigma=0.1, components=_default_components_2d())
+        problem = MFGProblem(geometry=domain, T=0.1, Nt=10, volatility=0.1, components=_default_components_2d())
 
         solver = FPFDMSolver(problem)
 
@@ -1350,7 +1357,7 @@ class TestVaryingSigmaExplicitDriftPerPoint:
             return np.exp(-((np.asarray(xx) - bump_center) ** 2) / 0.01)
 
         comps = MFGComponents(m_initial=m_init, u_terminal=lambda xx: np.asarray(xx) * 0.0, hamiltonian=H)
-        prob = MFGProblem(geometry=grid, T=0.3, Nt=nt, sigma=0.1, components=comps)
+        prob = MFGProblem(geometry=grid, T=0.3, Nt=nt, volatility=0.1, components=comps)
         m0 = m_init(x)
         # Normalised on the control volumes (#2145), which is what the scheme conserves; the
         # rectangle would make `mass == 1` a statement about a different functional.
@@ -1410,7 +1417,7 @@ class TestFPFDMSolverCFLDiagnostic:
 
         solver = FPFDMSolver(standard_problem)
 
-        sigma = standard_problem.sigma
+        sigma = standard_problem.volatility
         dt = standard_problem.dt
         dx = standard_problem.geometry.get_grid_spacing()[0]
         expected = 0.5 * sigma**2 * dt / dx**2

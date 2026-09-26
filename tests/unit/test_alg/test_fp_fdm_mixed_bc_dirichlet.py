@@ -43,7 +43,7 @@ def _make_problem(N: int = 20, Nt: int = 10, sigma: float = 0.3, T: float = 0.5)
             coupling_dm=lambda m: 1.0,
         ),
     )
-    return MFGProblem(geometry=domain, T=T, Nt=Nt, sigma=sigma, components=components)
+    return MFGProblem(geometry=domain, T=T, Nt=Nt, volatility=sigma, components=components)
 
 
 def _make_mixed_bc() -> BoundaryConditions:

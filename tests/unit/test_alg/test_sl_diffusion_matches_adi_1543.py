@@ -47,7 +47,9 @@ def _diffusion_problem(d: int, N: int, Nt: int, sigma: float = SIGMA) -> MFGProb
         dimension=d, bounds=[(0.0, L)] * d, Nx_points=[N] * d, boundary_conditions=no_flux_bc(dimension=d)
     )
     return MFGProblem(
-        model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1e8)), sigma=sigma),
+        model=Model(
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1e8)), volatility=sigma
+        ),
         domain=grid,
         conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=1.0),
         Nt=Nt,

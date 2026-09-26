@@ -88,7 +88,7 @@ from mfgarchon.utils.mfg_logging import get_logger, configure_research_logging
 There is no local override to the host's cross-project typography rules. Project notation is `u(t,x)`, `m(t,x)`.
 
 ### Physics conventions (single-source; #811/#1412/#1512)
-- `problem.sigma` = SDE volatility $\sigma$; `problem.diffusion` = PDE coefficient $D = \sigma^2/2$. Never conflate.
+- `problem.volatility` = SDE volatility $\Sigma$, held as supplied (scalar, array with `volatility_kind`, or callable); `problem.diffusion` = PDE coefficient $A = \tfrac12\Sigma\Sigma^{\mathsf T}$ ($D = \sigma^2/2$ for a scalar). Never conflate. There is no scalar view of a non-scalar volatility: a consumer that needs one calls `scalar_volatility(problem.volatility, consumer=...)`, which refuses rather than averaging (#2376).
 - Resolve $\sigma \to D$ through the one converter `diffusion_from_volatility(sigma)`; never inline `0.5*sigma**2` in a solver.
 - FP drift scale comes from `fp_drift_coefficient(problem)` (= 1/control_cost), not a private per-solver copy.
 - The weak-form FP family receives the value function through `potential_field`; each backend differentiates it on its own FEM or MLS basis and obtains the velocity from `H.optimal_control`. Do not replace that path in isolation with a coupling-layer velocity computed on another basis.

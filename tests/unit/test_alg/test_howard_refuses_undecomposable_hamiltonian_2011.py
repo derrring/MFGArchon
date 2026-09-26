@@ -117,7 +117,7 @@ def _solve(hamiltonian, inner_solver, *, terminal=None, **solver_kwargs):
         return float(np.cos(2.0 * np.pi * np.asarray(point).ravel()[0])) if terminal == "cos" else 0.0
 
     components = MFGComponents(hamiltonian=hamiltonian, m_initial=lambda p: 1.0, u_terminal=_uT)
-    problem = MFGProblem(geometry=grid, components=components, T=T, Nt=NT, sigma=0.5)
+    problem = MFGProblem(geometry=grid, components=components, T=T, Nt=NT, volatility=0.5)
     solver = HJBGFDMSolver(problem, collocation_points=x.reshape(-1, 1), inner_solver=inner_solver, **solver_kwargs)
     m = np.tile(np.exp(-((x - 0.3) ** 2) / 0.02), (NT + 1, 1))
     m /= m[0].sum() * (L / (NX - 1))

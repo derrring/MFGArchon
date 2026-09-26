@@ -122,7 +122,7 @@ def solve_lq_mfg_with_value_iteration():
         ),
         Nt=50,
         T=1.0,
-        sigma=0.1,
+        volatility=0.1,
         coupling_coefficient=0.5,
     )
 
@@ -132,7 +132,7 @@ def solve_lq_mfg_with_value_iteration():
     print(f"  Domain: [{bounds[0][0]}, {bounds[1][0]}]")
     print(f"  Grid: {grid_shape[0]} spatial points")
     print(f"  Time: {problem.Nt + 1} time steps")
-    print(f"  Diffusion: σ = {problem.sigma}")
+    print(f"  Volatility: σ = {problem.volatility}")
     print(f"  Control cost: {problem.coupling_coefficient}")
 
     # Create HJB solver with fixed-point iteration

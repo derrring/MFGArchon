@@ -46,7 +46,7 @@ def main():
         coupling=lambda m: m,
         coupling_dm=lambda m: 1.0,
     )
-    model = Model(hamiltonian=hamiltonian, sigma=1.0)
+    model = Model(hamiltonian=hamiltonian, volatility=1.0)
 
     # Conditions
     conditions = Conditions(
@@ -177,7 +177,7 @@ FAST TEST CONFIGURATION
 Grid: {Nx_points} × {Nt_points}
 Particles: 500
 Iterations: 30 max
-Diffusion: σ = {problem.sigma}
+Volatility: σ = {problem.volatility}
 
 MASS CONSERVATION
 {"=" * 40}

@@ -41,7 +41,7 @@ def _problem_with_source(captured: list, *, kind: str) -> MFGProblem:
     )
     # source_term_hjb/fp are MFGProblem-level kwargs (mfg_problem.py), not MFGComponents fields.
     source_kw = {"source_term_hjb": spy} if kind == "hjb" else {"source_term_fp": spy}
-    return MFGProblem(geometry=grid, T=0.4, Nt=_NT, sigma=0.3, components=comps, **source_kw)
+    return MFGProblem(geometry=grid, T=0.4, Nt=_NT, volatility=0.3, components=comps, **source_kw)
 
 
 def _row_indexed_field() -> np.ndarray:

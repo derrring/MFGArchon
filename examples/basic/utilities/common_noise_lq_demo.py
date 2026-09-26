@@ -111,7 +111,7 @@ def create_market_volatility_problem():
         Nx=Nx,
         T=T,
         Nt=Nt,
-        sigma=sigma,
+        volatility=sigma,
         noise_process=market_volatility,
         conditional_hamiltonian=conditional_hamiltonian,
         theta_initial=0.0,  # Start at mean volatility

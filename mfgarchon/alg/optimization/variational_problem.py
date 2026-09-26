@@ -537,7 +537,7 @@ class VariationalMFGProblem:
             geometry=geometry,
             T=self.T,
             Nt=self.Nt,
-            sigma=self.sigma,
+            volatility=self.sigma,
             components=mfg_components,
         )
 

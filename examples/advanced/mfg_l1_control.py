@@ -258,7 +258,7 @@ def main():
         geometry=geometry,
         T=1.0,
         Nt=50,
-        sigma=0.1,  # Diffusion coefficient
+        volatility=0.1,  # Diffusion coefficient
         coupling_coefficient=0.0,  # No coupling for this demo
     )
 

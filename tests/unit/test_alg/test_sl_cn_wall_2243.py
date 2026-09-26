@@ -129,7 +129,7 @@ def test_the_fp_solver_conserves_the_grid_measure_and_not_the_rectangle_rule():
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=no_flux_bc(dimension=1))
     m0 = m0 / float(grid.integrate(m0))  # unit mass on the grid's own measure; the library does not rescale
     problem = MFGProblem(
-        model=Model(hamiltonian=_ZERO_COUPLING_HAMILTONIAN, sigma=sigma),
+        model=Model(hamiltonian=_ZERO_COUPLING_HAMILTONIAN, volatility=sigma),
         domain=grid,
         conditions=Conditions(m_initial=lambda p: 1.0, u_terminal=lambda p: 0.0, T=t_end),
         Nt=nt,
@@ -232,7 +232,7 @@ def test_the_transport_and_diffusion_half_steps_conserve_the_same_measure(dims):
     )
     m0 = m0 / float(grid.integrate(m0))  # unit mass on the grid's own measure; the library does not rescale
     problem = MFGProblem(
-        model=Model(hamiltonian=_ZERO_COUPLING_HAMILTONIAN, sigma=sigma),
+        model=Model(hamiltonian=_ZERO_COUPLING_HAMILTONIAN, volatility=sigma),
         domain=grid,
         conditions=Conditions(m_initial=lambda p: 1.0, u_terminal=lambda p: 0.0, T=t_end),
         Nt=nt,

@@ -47,7 +47,7 @@ def _problem(dimension: int, n: int, periodic: bool = False) -> MFGProblem:
             ),
             Nt=10,
             T=0.5,
-            sigma=0.0,
+            volatility=0.0,
             components=MFGComponents(
                 m_initial=lambda x: 1.0,
                 u_terminal=lambda x: 0.0,

@@ -45,7 +45,7 @@ def _free_diffusion_problem(T: float, Nt: int):
         geometry=geometry,
         T=T,
         Nt=Nt,
-        sigma=0.1,
+        volatility=0.1,
         components=MFGComponents(
             m_initial=lambda x: np.exp(-np.sum(np.asarray(x) ** 2)),
             u_terminal=lambda x: 0.0,

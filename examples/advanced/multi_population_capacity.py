@@ -216,7 +216,7 @@ def main():
         capacity_weight=0.5,
         T=1.0,
         Nt=50,
-        sigma=[0.01, 0.03],  # Residents faster, tourists slower
+        volatility=[0.01, 0.03],  # Residents faster, tourists slower
         population_labels=["Residents", "Tourists"],
     )
 

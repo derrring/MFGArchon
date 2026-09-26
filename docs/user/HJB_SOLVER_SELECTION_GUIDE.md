@@ -407,7 +407,7 @@ class My2DProblem(MFGProblem):
             spatial_discretization=[20, 20],     # Grid resolution
             T=1.0,
             Nt=20,
-            sigma=0.01,
+            volatility=0.01,
         )
 
     def hamiltonian(self, t, x, p, m):

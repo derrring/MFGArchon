@@ -254,7 +254,7 @@ class TestCapabilityDispatchBehavior:
         problem = MFGProblem(
             geometry=grid,
             components=comp,
-            sigma=0.1,
+            volatility=0.1,
             T=1.0,
             Nt=5,
         )

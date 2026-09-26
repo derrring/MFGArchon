@@ -63,7 +63,7 @@ def _transpose_gap(shape: tuple[int, ...], numerical_hamiltonian: str | None) ->
             geometry=grid,
             Nt=10,
             T=1.0,
-            sigma=0.0,
+            volatility=0.0,
             components=MFGComponents(
                 m_initial=lambda x: 1.0,
                 u_terminal=lambda x: 0.0,
@@ -217,7 +217,7 @@ def test_the_linearised_operator_is_the_derivative_of_the_hamiltonian_it_lineari
             geometry=grid,
             Nt=10,
             T=1.0,
-            sigma=0.0,
+            volatility=0.0,
             components=MFGComponents(
                 m_initial=lambda x: 1.0,
                 u_terminal=lambda x: 0.0,
@@ -262,7 +262,7 @@ def test_the_solver_refuses_a_preset_it_does_not_have():
             geometry=grid,
             Nt=4,
             T=1.0,
-            sigma=0.0,
+            volatility=0.0,
             components=MFGComponents(
                 m_initial=lambda x: 1.0,
                 u_terminal=lambda x: 0.0,
@@ -285,7 +285,7 @@ def _public_entry_problem(n: int = 41, Nt: int = 4):
             geometry=grid,
             Nt=Nt,
             T=0.4,
-            sigma=0.05,
+            volatility=0.05,
             components=MFGComponents(
                 m_initial=lambda _x: 1.0,
                 u_terminal=lambda _x: np.cos(4 * np.pi * np.asarray(_x)),

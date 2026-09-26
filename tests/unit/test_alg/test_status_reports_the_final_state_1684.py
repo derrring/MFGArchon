@@ -107,7 +107,7 @@ def _problem():
         ),
         Nt=_NT,
         T=_T,
-        sigma=_SIG,
+        volatility=_SIG,
         components=comps,
     )
 

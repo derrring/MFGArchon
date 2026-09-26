@@ -55,7 +55,8 @@ class _MockProblem:
         self.Nt = Nt
         self.Dx = 0.1
         self.Dt = T / Nt
-        self.sigma = sigma
+        self.volatility = sigma  # the MFGProblem surface (#2375 ruling 6)
+        self.volatility_kind = None
         self.T = T
         self.lambda_ = 1.0
         self.is_custom = False

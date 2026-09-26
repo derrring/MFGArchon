@@ -138,7 +138,7 @@ def create_capacity_constrained_problem(
         spatial_discretization=[Nx, Ny],
         T=T,
         Nt=Nt,
-        sigma=sigma,
+        volatility=sigma,
     )
 
     print(f"   Problem created: dimension={problem.dimension}")

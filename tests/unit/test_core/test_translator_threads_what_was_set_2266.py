@@ -50,7 +50,7 @@ def _problem():
     return MFGProblem(
         model=Model(
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m),
-            sigma=0.3,
+            volatility=0.3,
         ),
         domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)),
         conditions=Conditions(

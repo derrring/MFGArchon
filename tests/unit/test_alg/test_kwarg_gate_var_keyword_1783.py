@@ -64,10 +64,9 @@ from mfgarchon.alg.numerical.coupling.base_mfg import resolve_volatility_kwarg
 
 @dataclass
 class _Problem:
-    """Only the two attributes the owner reads."""
+    """Only the attribute the owner reads."""
 
-    sigma: Any
-    volatility_field: Any = None
+    volatility: Any
 
 
 def test_a_var_keyword_override_does_not_count_as_accepting_the_parameter():
@@ -112,20 +111,19 @@ def test_the_message_names_the_signature_and_the_consequence():
 
 
 def test_an_exempt_scalar_is_still_forwarded_when_the_solver_names_it():
-    """Indistinguishable from sigma is a reason not to REFUSE, not a reason not to FORWARD.
+    """Indistinguishable from the problem's volatility is a reason not to REFUSE, not a reason not
+    to FORWARD.
 
-    The first fix of #1783 put the forward inside the hazard branch, so a scalar equal to
-    ``problem.sigma`` stopped being forwarded at all. That is silent-wrong in the same way the
-    original defect was: ``problem.volatility_field`` is not always ``problem.sigma`` -- construct
-    with an array sigma and the field is the array while ``sigma`` is its mean -- so a solver
-    falling back through ``get_diffusion_coefficient_field(None)`` picks up the array instead of
-    the constant the caller asked for.
+    The first fix of #1783 put the forward inside the hazard branch, so an override that looked
+    equal to the problem's volatility stopped being forwarded at all -- and a solver falling back to
+    the problem then picked up something other than the constant the caller asked for. Here the
+    problem's volatility is an array and the caller asks for the scalar 0.3.
     """
     named = inspect.signature(lambda self, volatility_field=None: None).parameters
-    array_sigma = _Problem(0.3, volatility_field=np.full(9, 0.3))
-    assert resolve_volatility_kwarg(named, 0.3, array_sigma, "FDM", "solve_hjb_system", "HJB") == {
+    array_problem = _Problem(np.full(9, 0.3))
+    assert resolve_volatility_kwarg(named, 0.3, array_problem, "FDM", "solve_hjb_system", "HJB") == {
         "volatility_field": 0.3
-    }, "an explicit override must reach the solver even when it equals problem.sigma"
+    }, "an explicit override must reach the solver even when it looks equal to the problem's volatility"
 
     # The exemption still applies where it was needed: a solver that cannot take it, and a field
     # whose loss changes nothing. Without this branch every ordinary solve would refuse.
@@ -163,7 +161,7 @@ def test_the_meshless_pair_forwards_and_a_swallowing_solver_is_refused():
         geometry=grid,
         T=0.2,
         Nt=5,
-        sigma=0.3,
+        volatility=0.3,
         components=MFGComponents(
             m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
             u_terminal=lambda x: 0.0,
@@ -186,8 +184,9 @@ def test_the_meshless_pair_forwards_and_a_swallowing_solver_is_refused():
     hjb, _fp = pair()
     # #2020: MeshlessGalerkinHJBSolver now NAMES volatility_field, so it is no longer an example of
     # the hole -- and it never was an example of a solver that cannot consume the field. Measured:
-    # passing 0.9 against problem.sigma = 0.3 moves the solve by 4.369684e-01, a (0.5..0.9) array by
-    # 2.846775e-01, and passing 0.3 itself by exactly 0.0. So the gate should now FORWARD to this
+    # passing 0.9 against a problem volatility of 0.3 moves the solve by 4.369684e-01, and passing
+    # 0.3 itself by exactly 0.0. (A (0.5..0.9) array moved it by 2.846775e-01, through a mean these
+    # scalar-D solvers now refuse to take, #2376.) So the gate should now FORWARD to this
     # pair, not refuse it, and the refusal below is exercised against a stub instead. Pinning the
     # gate to a stub is also what stops this test being invalidated again the next time a production
     # solver widens its signature.
@@ -211,7 +210,10 @@ def test_the_meshless_pair_forwards_and_a_swallowing_solver_is_refused():
 
         spy = functools.wraps(inner)(spy)
         setattr(solver, name, spy)
-    field = np.linspace(0.5, 0.9, n)
+    # A scalar the problem does not carry (0.9 against 0.3): distinguishable, so forwarded. Not an
+    # array -- these weak-form solvers assemble one scalar D and refuse an array (#2376), and the HJB
+    # side would then raise before the FP spy is reached.
+    field = 0.9
     FixedPointIterator(problem, hjb2, fp2, volatility_field=field).solve(max_iterations=2, verbose=False)
     for name in ("solve_hjb_system", "solve_fp_system"):
         assert seen.get(name) is not None, f"{name} did not receive volatility_field"
@@ -265,7 +267,7 @@ def test_the_newton_path_refuses_the_same_pair_the_picard_path_does():
         geometry=grid,
         T=0.2,
         Nt=5,
-        sigma=0.3,
+        volatility=0.3,
         components=MFGComponents(
             m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
             u_terminal=lambda x: 0.0,
@@ -292,8 +294,9 @@ def test_the_newton_path_refuses_the_same_pair_the_picard_path_does():
     M0 = np.tile(np.ones(n) / n, (problem.Nt + 1, 1))
     U0 = np.zeros(shape)
 
-    # A field the two sides would disagree about: mean 0.7 against problem.sigma = 0.3.
-    hazard = np.linspace(0.5, 0.9, n)
+    # A volatility the problem does not carry: 0.9 against 0.3. A scalar, because these weak-form
+    # solvers refuse an array (#2376), and the forwarding is what this test pins.
+    hazard = 0.9
     residual = MFGResidual(problem, hjb, fp, volatility_field=hazard)
     seen_hjb: dict[str, object] = {}
     inner_hjb = hjb.solve_hjb_system
@@ -398,7 +401,7 @@ def test_the_newton_path_refuses_a_swallowing_solver():
         geometry=grid,
         T=0.2,
         Nt=5,
-        sigma=0.3,
+        volatility=0.3,
         components=MFGComponents(
             m_initial=lambda x: np.exp(-10 * (x - 0.5) ** 2),
             u_terminal=lambda x: 0.0,

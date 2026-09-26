@@ -38,7 +38,7 @@ from mfgarchon.geometry.boundary.enforcement import enforce_periodic_value_nd
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import check_adi_compatibility, diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import check_adi_compatibility, diffusion_from_volatility, scalar_volatility
 
 from .base_hjb import BaseHJBSolver
 from .hjb_sl_adi import (
@@ -69,6 +69,32 @@ if TYPE_CHECKING:
 from mfgarchon.core.derivatives import DerivativeTensors
 
 logger = get_logger(__name__)
+
+
+def _constant_volatility(problem: Any) -> float | np.ndarray:
+    """The problem's volatility as this solver consumes it: a scalar, or a constant (d, d) tensor.
+
+    A constant tensor is what the ADI step discretises, cross term included (#2198); the one route
+    to it is ``MFGProblem(volatility=S, volatility_kind="tensor")``. A per-point field, a spatially
+    varying tensor or a callable is refused: every site here reads one constant value.
+    """
+    volatility = problem.volatility
+    if isinstance(volatility, (int, float)):
+        return float(volatility)
+    if isinstance(volatility, np.ndarray) and problem.volatility_kind == "tensor" and volatility.ndim == 2:
+        return volatility
+    what = (
+        "a callable"
+        if callable(volatility)
+        else f"an array of shape {np.shape(volatility)} ({problem.volatility_kind})"
+    )
+    raise NotImplementedError(
+        "HJBSemiLagrangianSolver reads one constant volatility -- a scalar, or a constant (d, d) tensor "
+        f"(volatility_kind='tensor') -- and this problem's is {what} (#2376). Use a solver that reads "
+        "a per-point volatility, such as the FDM scheme."
+    )
+
+
 try:
     import jax.numpy as jnp
     from jax import jit
@@ -302,6 +328,11 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 f"Compatible geometries: TensorProductGrid, ImplicitDomain."
             )
 
+        # The one read of the problem's volatility (Issue #1316's missing chokepoint): a scalar, or
+        # a constant (d, d) tensor, which the ADI step and the feet consume. A per-point field or a
+        # callable is refused here rather than averaged (#2376).
+        self._volatility = _constant_volatility(problem)
+
         # Precompute grid and time parameters (dimension-agnostic)
         if self.dimension == 1:
             # 1D problem: Use geometry API
@@ -331,7 +362,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             self.x_grid = None  # Not used for nD
 
             # Check ADI compatibility for nD diffusion
-            adi_ok, adi_msg = check_adi_compatibility(problem.sigma)
+            adi_ok, adi_msg = check_adi_compatibility(self._volatility)
             self._adi_compatible = adi_ok
             if not adi_ok:
                 logger.warning(
@@ -986,23 +1017,26 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Returns:
             (Nt, *grid_shape) solution array for value function
         """
-        # Issue #1316: the semi-Lagrangian solver reads diffusion from problem.sigma at
-        # multiple scattered sites (the advection-diffusion split, ADI, Crank-Nicolson),
-        # with no single sigma chokepoint to redirect. Honoring a volatility_field that
-        # differs from problem.sigma would require threading it through all of them; doing
-        # nothing would silently solve HJB with problem.sigma while FP uses the field,
-        # breaking the Picard correspondence. Fail loud instead of accept-and-ignore. A
-        # scalar field equal to problem.sigma is the iterator's redundant forwarding of
-        # problem.volatility_field (Issue #1248) and is accepted as a no-op.
+        # Issue #1316: this solver takes its volatility from the problem, once, at construction
+        # (self._volatility), and threads it to the advection-diffusion split, ADI and
+        # Crank-Nicolson. A volatility_field it cannot thread there is refused, not accepted and
+        # ignored, which would solve HJB with one diffusion while FP uses another. The iterator's
+        # forwarding of the problem's own volatility (Issue #1248) is accepted as a no-op.
         if volatility_field is not None and not (
-            np.isscalar(volatility_field) and float(volatility_field) == float(self.problem.sigma)
+            volatility_field is self.problem.volatility
+            or (
+                np.isscalar(volatility_field)
+                and np.isscalar(self._volatility)
+                and float(volatility_field) == float(self._volatility)
+            )
         ):
             raise NotImplementedError(
-                "HJBSemiLagrangianSolver cannot honor a volatility_field that differs from "
-                "problem.sigma: it reads diffusion from problem.sigma at multiple sites with no "
-                "single chokepoint (Issue #1316). A spatially-varying or mismatched field would "
+                "HJBSemiLagrangianSolver cannot honor a volatility_field that differs from the "
+                "problem's volatility: it threads the problem's volatility, read once at construction, "
+                "through several sites (Issue #1316). A spatially-varying or mismatched field would "
                 "make HJB solve a different diffusion than FP, breaking the Picard fixed point. "
-                "Use HJBGFDMSolver (which consumes volatility_field) or set problem.sigma to match."
+                "Use HJBGFDMSolver (which consumes volatility_field), or build the problem with that "
+                "volatility."
             )
 
         # `source_term` is honoured by the OPERATOR-SPLITTING path only (Issue #2198). The three
@@ -1575,7 +1609,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         must not re-derive ``σ·√dt`` independently (the divergence that was Issue #1543).
         """
         d = self.dimension
-        sigma = self.problem.sigma
+        sigma = self._volatility
         if isinstance(sigma, np.ndarray):
             sigma_diag = np.asarray(sigma, dtype=float).ravel()
             if sigma_diag.size != d:
@@ -2792,7 +2826,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         """
         if self.dimension == 1:
             # For 1D, use standard Crank-Nicolson
-            return self._solve_crank_nicolson_diffusion(U_star, dt, self.problem.sigma)
+            return self._solve_crank_nicolson_diffusion(U_star, dt, self._volatility)
 
         bc_op = self._get_diffusion_bc_type()
         if bc_op == "periodic":
@@ -2805,7 +2839,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         return adi_diffusion_step(
             U_star,
             dt,
-            self.problem.sigma,
+            self._volatility,
             self.dx,
             tuple(self._grid_shape),
             bc_type=bc_op,
@@ -2856,7 +2890,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         else:  # "adi" (default)
             if self.dimension == 1:
-                return self._solve_crank_nicolson_diffusion(U_star, dt, self.problem.sigma)
+                return self._solve_crank_nicolson_diffusion(U_star, dt, self._volatility)
             else:
                 return self._adi_diffusion_step(U_star, dt)
 
@@ -2877,7 +2911,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Returns:
             Solution after explicit diffusion step
         """
-        sigma = self.problem.sigma
+        sigma = scalar_volatility(self._volatility, consumer="HJBSemiLagrangianSolver explicit diffusion")
         sigma_sq_half = diffusion_from_volatility(sigma)
 
         if self.dimension == 1:

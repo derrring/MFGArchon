@@ -81,7 +81,7 @@ class TestNewtonMFGSolverBasic:
     def simple_1d_problem(self):
         """Create a simple 1D MFG problem for testing."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], boundary_conditions=no_flux_bc(dimension=1), Nx_points=[21])
-        problem = MFGProblem(geometry=geometry, T=0.5, Nt=10, sigma=0.2, components=_default_components())
+        problem = MFGProblem(geometry=geometry, T=0.5, Nt=10, volatility=0.2, components=_default_components())
         return problem
 
     @pytest.fixture
@@ -143,7 +143,7 @@ class TestNewtonMFGSolverHybrid:
     def moderate_problem(self):
         """Create moderate-size problem for hybrid testing."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], boundary_conditions=no_flux_bc(dimension=1), Nx_points=[31])
-        problem = MFGProblem(geometry=geometry, T=0.5, Nt=15, sigma=0.15, components=_default_components())
+        problem = MFGProblem(geometry=geometry, T=0.5, Nt=15, volatility=0.15, components=_default_components())
         return problem
 
     def test_picard_warmup_executed(self, moderate_problem):
@@ -217,7 +217,7 @@ class TestNewtonVsPicard:
     def comparison_problem(self):
         """Create problem for Picard vs Newton comparison."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], boundary_conditions=no_flux_bc(dimension=1), Nx_points=[25])
-        problem = MFGProblem(geometry=geometry, T=0.4, Nt=12, sigma=0.18, components=_default_components())
+        problem = MFGProblem(geometry=geometry, T=0.4, Nt=12, volatility=0.18, components=_default_components())
         return problem
 
     def test_both_solvers_produce_similar_results(self, comparison_problem):
@@ -273,7 +273,7 @@ class TestNewtonMFGSolverParameters:
     def param_test_problem(self):
         """Create problem for parameter testing."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], boundary_conditions=no_flux_bc(dimension=1), Nx_points=[21])
-        problem = MFGProblem(geometry=geometry, T=0.3, Nt=8, sigma=0.2, components=_default_components())
+        problem = MFGProblem(geometry=geometry, T=0.3, Nt=8, volatility=0.2, components=_default_components())
         return problem
 
     def test_custom_tolerances(self, param_test_problem):
@@ -314,7 +314,7 @@ def test_one_newton_step_reduces_the_mfg_residual():
     it leaves all four automatic Newton tests green.
     """
     problem = MFGProblem(
-        model=Model(hamiltonian=_default_hamiltonian(), sigma=0.2),
+        model=Model(hamiltonian=_default_hamiltonian(), volatility=0.2),
         domain=TensorProductGrid(
             bounds=[(0.0, 1.0)],
             boundary_conditions=no_flux_bc(dimension=1),
@@ -366,7 +366,7 @@ class TestMFGResidualComputation:
     def residual_test_problem(self):
         """Create problem for residual testing."""
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], boundary_conditions=no_flux_bc(dimension=1), Nx_points=[21])
-        problem = MFGProblem(geometry=geometry, T=0.3, Nt=8, sigma=0.2, components=_default_components())
+        problem = MFGProblem(geometry=geometry, T=0.3, Nt=8, volatility=0.2, components=_default_components())
         return problem
 
     def test_residual_computation(self, residual_test_problem):

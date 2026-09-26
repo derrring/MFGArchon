@@ -465,7 +465,7 @@ class TestHJBFDMSolverDiagonalTensor:
         domain = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 0.6)], Nx_points=[16, 11], boundary_conditions=no_flux_bc(dimension=2)
         )
-        problem = MFGProblem(geometry=domain, T=0.05, Nt=5, sigma=0.1, components=_default_components_2d())
+        problem = MFGProblem(geometry=domain, T=0.05, Nt=5, volatility=0.1, components=_default_components_2d())
 
         solver = HJBFDMSolver(problem, solver_type="newton", newton_tolerance=1e-8)
 
@@ -517,7 +517,7 @@ class TestHJBFDMSolverDiagonalTensor:
         domain = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 0.6)], Nx_points=[16, 11], boundary_conditions=no_flux_bc(dimension=2)
         )
-        problem = MFGProblem(geometry=domain, T=0.05, Nt=5, sigma=0.1, components=_default_components_2d())
+        problem = MFGProblem(geometry=domain, T=0.05, Nt=5, volatility=0.1, components=_default_components_2d())
 
         solver = HJBFDMSolver(problem, solver_type="newton")
 
@@ -560,7 +560,7 @@ class TestHJBFDMSolverDiagonalTensor:
         domain = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 0.6)], Nx_points=[12, 9], boundary_conditions=no_flux_bc(dimension=2)
         )
-        problem = MFGProblem(geometry=domain, T=0.05, Nt=4, sigma=0.1, components=_default_components_2d())
+        problem = MFGProblem(geometry=domain, T=0.05, Nt=4, volatility=0.1, components=_default_components_2d())
         solver = HJBFDMSolver(problem, solver_type="newton")
 
         Nx, Ny = domain.get_grid_shape()
@@ -618,7 +618,7 @@ class TestHJBFDMSolverDiagonalTensor:
         domain = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 0.6)], Nx_points=[11, 9], boundary_conditions=no_flux_bc(dimension=2)
         )
-        problem = MFGProblem(geometry=domain, T=0.05, Nt=3, sigma=0.1, components=_default_components_2d())
+        problem = MFGProblem(geometry=domain, T=0.05, Nt=3, volatility=0.1, components=_default_components_2d())
 
         solver = HJBFDMSolver(problem, solver_type="newton")
 
@@ -732,7 +732,7 @@ class TestHJBFDMSolverGhostValueBC:
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[10, 10], boundary_conditions=no_flux_bc(dimension=2)
         )
 
-        problem = MFGProblem(geometry=domain, T=0.1, Nt=5, sigma=0.1, components=_default_components_2d())
+        problem = MFGProblem(geometry=domain, T=0.1, Nt=5, volatility=0.1, components=_default_components_2d())
         solver = HJBFDMSolver(problem, solver_type="fixed_point", advection_scheme="gradient_upwind")
 
         # Get grid shape
@@ -769,7 +769,7 @@ class TestHJBFDMSolverGhostValueBC:
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[8, 8], boundary_conditions=dirichlet_bc(dimension=2, value=0.0)
         )
 
-        problem = MFGProblem(geometry=domain, T=0.1, Nt=3, sigma=0.1, components=_default_components_2d())
+        problem = MFGProblem(geometry=domain, T=0.1, Nt=3, volatility=0.1, components=_default_components_2d())
         solver = HJBFDMSolver(problem, solver_type="fixed_point", advection_scheme="gradient_upwind")
 
         # Test gradient computation directly
@@ -801,7 +801,7 @@ class TestHJBFDMSolverGhostValueBC:
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[10, 10], boundary_conditions=no_flux_bc(dimension=2)
         )
 
-        problem = MFGProblem(geometry=domain, T=0.1, Nt=3, sigma=0.1, components=_default_components_2d())
+        problem = MFGProblem(geometry=domain, T=0.1, Nt=3, volatility=0.1, components=_default_components_2d())
         # Use centered scheme (non-upwind)
         solver = HJBFDMSolver(problem, solver_type="fixed_point", advection_scheme="gradient_centered")
 
@@ -876,7 +876,7 @@ class TestHJBFDMSolverGhostValueBC:
         # Nt = 4 it diverges on this problem (max|U| 68.8, then NaN, returned rather than raised: #2390),
         # while Newton returns 0.199 at every Nt and fixed-point agrees from Nt = 16 on.
         Nt = 16
-        problem = MFGProblem(geometry=domain, T=T, Nt=Nt, sigma=0.1, components=_default_components_2d())
+        problem = MFGProblem(geometry=domain, T=T, Nt=Nt, volatility=0.1, components=_default_components_2d())
         solver = HJBFDMSolver(problem, solver_type="fixed_point", advection_scheme="gradient_upwind")
 
         Nx, Ny = domain.get_grid_shape()
@@ -925,7 +925,7 @@ class TestHJBFDMSolverNewtonFallback:
         geometry = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[8, 8], boundary_conditions=no_flux_bc(dimension=2)
         )
-        problem = MFGProblem(geometry=geometry, T=0.1, Nt=2, sigma=0.1, components=_default_components_2d())
+        problem = MFGProblem(geometry=geometry, T=0.1, Nt=2, volatility=0.1, components=_default_components_2d())
         solver = HJBFDMSolver(problem, solver_type="newton", on_newton_failure="raise")
 
         Nx, Ny = 8, 8
@@ -951,7 +951,7 @@ class TestHJBFDMSolverNewtonFallback:
         geometry = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[8, 8], boundary_conditions=no_flux_bc(dimension=2)
         )
-        problem = MFGProblem(geometry=geometry, T=0.1, Nt=2, sigma=0.1, components=_default_components_2d())
+        problem = MFGProblem(geometry=geometry, T=0.1, Nt=2, volatility=0.1, components=_default_components_2d())
         solver = HJBFDMSolver(problem, solver_type="newton", on_newton_failure="raise")
 
         Nx, Ny = 8, 8
@@ -977,7 +977,7 @@ class TestHJBFDMSolverNewtonFallback:
         geometry = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[8, 8], boundary_conditions=no_flux_bc(dimension=2)
         )
-        problem = MFGProblem(geometry=geometry, T=0.1, Nt=2, sigma=0.1, components=_default_components_2d())
+        problem = MFGProblem(geometry=geometry, T=0.1, Nt=2, volatility=0.1, components=_default_components_2d())
         solver = HJBFDMSolver(problem, solver_type="newton", on_newton_failure="warn_and_fallback")
 
         # Mock Newton solver to return non-converged result
@@ -1018,7 +1018,7 @@ class TestHJBFDMSolverNewtonFallback:
         geometry = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[8, 8], boundary_conditions=no_flux_bc(dimension=2)
         )
-        problem = MFGProblem(geometry=geometry, T=0.1, Nt=2, sigma=0.1, components=_default_components_2d())
+        problem = MFGProblem(geometry=geometry, T=0.1, Nt=2, volatility=0.1, components=_default_components_2d())
 
         # Should accept the parameter without error even for fixed_point
         solver = HJBFDMSolver(problem, solver_type="fixed_point", on_newton_failure="warn_and_fallback")
@@ -1075,7 +1075,7 @@ class TestBoundaryGradientBCAware1384:
             hamiltonian=_default_hamiltonian(),
         )
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[Nx], boundary_conditions=bc)
-        problem = MFGProblem(geometry=geometry, T=T, Nt=Nt, sigma=sigma, components=components)
+        problem = MFGProblem(geometry=geometry, T=T, Nt=Nt, volatility=sigma, components=components)
         solver = HJBFDMSolver(problem)
         Nx_points = problem.geometry.get_grid_shape()[0]
         Nt_points = problem.Nt_points

@@ -1,8 +1,8 @@
 # Deprecation Modernization Guide
 
 **Auto-generated** by `scripts/generate_deprecation_guide.py`
-**Total deprecated items**: 54
-**Versions covered**: v0.22.0, v0.21.0, v0.20.5, v0.20.0, v0.19.2, v0.19.0, v0.18.6, v0.18.0, v0.17.6, v0.17.1, v0.17.0, v0.16.11, v0.12.0
+**Total deprecated items**: 52
+**Versions covered**: v0.22.0, v0.21.0, v0.20.5, v0.20.0, v0.19.2, v0.19.0, v0.18.6, v0.18.0, v0.17.6, v0.17.0, v0.16.11, v0.12.0
 
 ---
 
@@ -143,17 +143,6 @@ It does mean a migration you read on one row **does not transfer** to another so
 ### Functions / Classes
 
 - **`__init__()`** — use `FPSLSolver` instead (remove by v0.25.0)
-
----
-
-## Deprecated since v0.17.1
-
-*2 items*
-
-### Functions / Classes
-
-- **`_solve_fp_1d()`** — use `solve_fp_system` instead (remove by v0.25.0)
-- **`_solve_fp_1d_with_callable()`** — use `solve_fp_system` instead (remove by v0.25.0)
 
 ---
 

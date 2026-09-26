@@ -78,7 +78,7 @@ def terminal_cost_2d(xy):
 
 
 # v1.0 API: Model holds game rules, Conditions holds IC/TC + time horizon
-model = Model(hamiltonian=hamiltonian, sigma=0.1)
+model = Model(hamiltonian=hamiltonian, volatility=0.1)
 conditions = Conditions(
     u_terminal=terminal_cost_2d,
     m_initial=lambda xy: np.exp(-50 * ((xy[:, 0] - x0) ** 2 + (xy[:, 1] - y0) ** 2)),

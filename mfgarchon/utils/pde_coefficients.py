@@ -231,6 +231,89 @@ def validate_symmetric_psd(
         )
 
 
+def volatility_from_diffusion(
+    D: float | np.ndarray,
+    *,
+    kind: str | None = None,
+) -> float | np.ndarray:
+    r"""SDE volatility :math:`\Sigma` from a PDE diffusion ``A`` -- the reverse of
+    :func:`diffusion_from_volatility`, under the same ``kind`` contract (#2375 ruling 6).
+
+    - scalar ``D``: :math:`\sigma = \sqrt{2D}`; ``kind`` is not needed.
+    - ``kind="field"``: :math:`\sigma = \sqrt{2D}` elementwise.
+    - ``kind="tensor"``: the trailing two axes are ``A``, shape ``(d, d)``, possibly preceded by grid
+      axes. :math:`\Sigma` is the **symmetric** square root of :math:`2A` (via ``eigh``), not a
+      Cholesky factor: consumers validate a ``(d, d)`` volatility as symmetric PSD
+      (:func:`validate_symmetric_psd`, RFC #1596), so the round trip volatility -> diffusion ->
+      volatility must land on a symmetric matrix.
+
+    An array without ``kind`` is refused for the reason :func:`diffusion_from_volatility` gives: a
+    ``(d, d)`` tensor and a ``d x d`` spatial field have the same shape.
+
+    Raises ``ValueError`` for a negative scalar or field, a tensor that is not positive
+    semi-definite, an array with ``kind is None``, an unknown ``kind``, or a ``kind="tensor"``
+    array whose trailing two axes are not square.
+    """
+    arr = np.asarray(D, dtype=float)
+    if arr.ndim == 0:
+        value = float(arr)
+        if value < 0:
+            raise ValueError(f"Diffusion coefficient must be non-negative, got {value}")
+        return float(np.sqrt(2.0 * value))
+    if kind is None:
+        raise ValueError(
+            "array diffusion is ambiguous: pass kind='field' (isotropic per-point D, sigma = sqrt(2D) "
+            "elementwise) or kind='tensor' (trailing (d,d) is the diffusion matrix A, Sigma its "
+            "symmetric square root times sqrt(2)). Refusing to guess a (d,d) tensor vs a spatial field "
+            "(#2375 ruling 6)."
+        )
+    if kind == "field":
+        if np.any(arr < 0):
+            raise ValueError("Diffusion coefficient array must be non-negative")
+        return np.sqrt(2.0 * arr)
+    if kind == "tensor":
+        if arr.ndim < 2 or arr.shape[-1] != arr.shape[-2]:
+            raise ValueError(f"kind='tensor' needs a (d,d) or (*spatial,d,d) diffusion matrix, got shape {arr.shape}.")
+        two_D = 2.0 * arr
+        eigvals, eigvecs = np.linalg.eigh(0.5 * (two_D + np.swapaxes(two_D, -1, -2)))  # symmetrize guards fp asymmetry
+        if float(np.min(eigvals)) < -1e-10:
+            raise ValueError(
+                f"Diffusion tensor must be positive semi-definite to take a real square root; "
+                f"got min eigenvalue {float(np.min(eigvals)):.6e} (RFC #1596)."
+            )
+        sqrt_eigvals = np.sqrt(np.clip(eigvals, 0.0, None))
+        return (eigvecs * sqrt_eigvals[..., None, :]) @ np.swapaxes(eigvecs, -1, -2)
+    raise ValueError(f"kind must be 'field' or 'tensor' (or None for a scalar D), got {kind!r}.")
+
+
+def scalar_volatility(volatility: Any, *, consumer: str) -> float:
+    """A volatility as one scalar, for a consumer that can use nothing else (#2376).
+
+    ``volatility`` is what the consumer was handed -- ``problem.volatility``, a per-solve override,
+    a BC provider's state. There is no scalar view of a volatility that is not a scalar, and this
+    function does not invent one. An array or callable raises, naming ``consumer``, where the retired
+    ``problem.sigma`` returned the mean of an array and the literal ``1.0`` for a callable -- a
+    factor of 400 in ``D`` for ``lambda x: 0.05`` against ``0.05``. Calling this is the consumer's
+    declaration that it cannot handle a field.
+
+    Raises
+    ------
+    NotImplementedError
+        If ``volatility`` is an array or a callable.
+    """
+    if callable(volatility):
+        what = f"a callable ({getattr(volatility, '__name__', type(volatility).__name__)})"
+    elif np.ndim(volatility) != 0:
+        what = f"an array of shape {np.shape(volatility)}"
+    else:
+        return float(volatility)
+    raise NotImplementedError(
+        f"{consumer} uses one scalar volatility, and the volatility it was given is {what}. It is not "
+        f"collapsed to a representative value (#2376). Pass a scalar volatility= to use {consumer}, or "
+        f"use a solver that reads the field, such as the FDM scheme (NumericalScheme.FDM_UPWIND)."
+    )
+
+
 def diffusion_from_volatility_torch(sigma: Any) -> Any:
     r"""Canonical PDE diffusion coefficient ``D`` from SDE volatility ``sigma`` for torch tensors.
 
@@ -332,37 +415,6 @@ def resolve_volatility(
         value = problem_params[legacy_key]
         return value**0.5 if legacy_is_squared else value
     return default
-
-
-def scalar_diffusion_from_volatility(volatility_field: Any, fallback_sigma: Any) -> float:
-    """Single scalar PDE diffusion ``D`` for solvers that assemble ``D * K`` with a scalar ``D``
-    (the weak-form / FEM family).
-
-    Routes the SDE-volatility -> PDE-diffusion conversion through the single source
-    :func:`diffusion_from_volatility` (``D = sigma^2 / 2``; Issue #811) so the ``0.5 * sigma**2``
-    formula is not re-copied per solver:
-
-    - ``volatility_field is None`` -> ``D`` from ``fallback_sigma`` (the problem's ``sigma``);
-    - scalar ``volatility_field`` -> ``D`` from that scalar;
-    - array ``volatility_field`` -> ``D`` from ``mean(volatility_field)``, with a warning. These
-      solvers cannot represent a spatially-varying field (``D`` multiplies the assembled stiffness
-      as one scalar), so the field is collapsed to its mean -- made loud here rather than silent
-      (Issue #1079-adjacent). Use an FDM/GFDM path with ``coefficient_field`` for true varying ``D``.
-
-    Byte-identical to the prior inline ``0.5 * sigma**2`` / ``0.5 * mean(sigma)**2`` copies.
-    """
-    if volatility_field is None:
-        return float(diffusion_from_volatility(fallback_sigma))
-    if np.ndim(volatility_field) == 0:
-        return float(diffusion_from_volatility(float(volatility_field)))
-    warnings.warn(
-        "Weak-form/FEM solver uses a single scalar diffusion D; the spatially-varying volatility "
-        "field is collapsed to its mean (D = mean(sigma)^2 / 2). For a true varying-coefficient "
-        "diffusion use an FDM/GFDM FP path with coefficient_field (Issue #1079).",
-        UserWarning,
-        stacklevel=2,
-    )
-    return float(diffusion_from_volatility(float(np.mean(volatility_field))))
 
 
 def resolve_diffusion_source(
@@ -478,7 +530,7 @@ class CoefficientField:
         - Callable: State-dependent coefficient with signature (t, x, m) -> float | ndarray
                    OR with keyword-only signature (*, t, x, m) for explicit dependencies
     default_value : float | ndarray
-        Default value to use when field is None (typically problem.sigma or problem.drift)
+        Default value to use when field is None (typically 0.0)
     field_name : str
         Name of coefficient for error messages (e.g., "volatility_field", "drift_field")
     dimension : int
@@ -490,28 +542,28 @@ class CoefficientField:
     Examples
     --------
     Scalar diffusion:
-    >>> field = CoefficientField(0.1, problem.sigma, "volatility_field", dimension=1)
+    >>> field = CoefficientField(0.1, 0.0, "volatility_field", dimension=1)
     >>> sigma = field.evaluate_at(timestep=5, grid=x_coords, density=m)
 
     Array diffusion:
     >>> sigma_array = np.ones((Nt, Nx)) * 0.1
-    >>> field = CoefficientField(sigma_array, problem.sigma, "volatility_field", dimension=1)
+    >>> field = CoefficientField(sigma_array, 0.0, "volatility_field", dimension=1)
     >>> sigma = field.evaluate_at(timestep=5, grid=x_coords, density=m)
 
     Callable diffusion (modern keyword-only style):
     >>> sigma_tm = lambda *, t, m: 0.1 * t * np.sqrt(m)
-    >>> field = CoefficientField(sigma_tm, problem.sigma, "volatility_field", dimension=1)
+    >>> field = CoefficientField(sigma_tm, 0.0, "volatility_field", dimension=1)
     >>> sigma = field.evaluate_at(timestep=5, grid=x_coords, density=m)
 
     Callable diffusion (legacy positional style with mode):
     >>> sigma_t = lambda t: 0.1 + 0.05 * t
-    >>> field = CoefficientField(sigma_t, problem.sigma, "volatility", mode="time")
+    >>> field = CoefficientField(sigma_t, 0.0, "volatility", mode="time")
     >>> sigma = field.evaluate_at(timestep=5, grid=x_coords, density=m)
 
     Porous medium diffusion:
     >>> def porous_medium(*, m):
     ...     return 0.1 * np.sqrt(m + 1e-6)
-    >>> field = CoefficientField(porous_medium, problem.sigma, "volatility_field", dimension=1)
+    >>> field = CoefficientField(porous_medium, 0.0, "volatility_field", dimension=1)
     >>> sigma = field.evaluate_at(timestep=5, grid=x_coords, density=m)
     """
 

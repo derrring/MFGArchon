@@ -75,7 +75,7 @@ class TestHJBWithLowerObstacle:
             return (x_coords[0] - 0.5) ** 2
 
         # Create MFGProblem with minimal parameters (HJB solver uses explicit inputs)
-        problem = MFGProblem(geometry=grid, T=T, Nt=Nt, sigma=sigma, components=_default_components())
+        problem = MFGProblem(geometry=grid, T=T, Nt=Nt, volatility=sigma, components=_default_components())
 
         # Obstacle: ψ(x) = -κ(x - 0.5)²
         x = grid.coordinates[0]
@@ -120,7 +120,7 @@ class TestHJBWithLowerObstacle:
             return (x_coords[0] - 0.5) ** 2 + (x_coords[1] - 0.5) ** 2
 
         # Create MFGProblem with minimal parameters (HJB solver uses explicit inputs)
-        problem = MFGProblem(geometry=grid, T=T, Nt=Nt, sigma=sigma, components=_default_components_2d())
+        problem = MFGProblem(geometry=grid, T=T, Nt=Nt, volatility=sigma, components=_default_components_2d())
 
         # Obstacle: Bowl-shaped
         X, Y = grid.meshgrid()
@@ -176,7 +176,7 @@ class TestHJBWithLowerObstacle:
             return (x_coords[0] - 0.5) ** 2
 
         # Create MFGProblem with minimal parameters
-        problem = MFGProblem(geometry=grid, T=T, Nt=Nt, sigma=sigma, components=_default_components())
+        problem = MFGProblem(geometry=grid, T=T, Nt=Nt, volatility=sigma, components=_default_components())
 
         x = grid.coordinates[0]
         psi = -kappa * (x - 0.5) ** 2
@@ -234,7 +234,7 @@ class TestHJBWithUpperObstacle:
             return (x_coords[0] - 0.5) ** 2
 
         # Create MFGProblem with minimal parameters
-        problem = MFGProblem(geometry=grid, T=T, Nt=Nt, sigma=sigma, components=_default_components())
+        problem = MFGProblem(geometry=grid, T=T, Nt=Nt, volatility=sigma, components=_default_components())
 
         # Upper obstacle: a ceiling low enough to bind. The free solution reaches 0.0733 at
         # t = 0, so the original 0.3 ceiling was never touched and the constrained output was
@@ -292,7 +292,7 @@ class TestHJBWithBilateralObstacle:
             return 0.5 * (x_coords[0] - 0.5) ** 2
 
         # Create MFGProblem with minimal parameters
-        problem = MFGProblem(geometry=grid, T=T, Nt=Nt, sigma=sigma, components=_default_components())
+        problem = MFGProblem(geometry=grid, T=T, Nt=Nt, volatility=sigma, components=_default_components())
 
         # Bilateral obstacle: a corridor narrow enough to bind on BOTH faces. The free
         # solution runs over [-0.0063, 0.125] on this configuration, so the original
@@ -357,7 +357,7 @@ class TestObstacleConvergenceProperties:
             return (x_coords[0] - 0.5) ** 2
 
         # Create MFGProblem with minimal parameters
-        problem = MFGProblem(geometry=grid, T=T, Nt=Nt, sigma=sigma, components=_default_components())
+        problem = MFGProblem(geometry=grid, T=T, Nt=Nt, volatility=sigma, components=_default_components())
 
         x = grid.coordinates[0]
         psi = -kappa * (x - 0.5) ** 2
@@ -413,7 +413,7 @@ class TestObstacleConvergenceProperties:
             return (x_coords[0] - 0.5) ** 2
 
         # Create MFGProblem with minimal parameters
-        problem = MFGProblem(geometry=grid, T=T, Nt=Nt, sigma=sigma, components=_default_components())
+        problem = MFGProblem(geometry=grid, T=T, Nt=Nt, volatility=sigma, components=_default_components())
 
         x = grid.coordinates[0]
         psi = -kappa * (x - 0.5) ** 2

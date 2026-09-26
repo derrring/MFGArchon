@@ -66,7 +66,7 @@ def _problem(dimension: int, n: int, m0=None) -> MFGProblem:
             ),
             Nt=4,
             T=0.2,
-            sigma=0.4,
+            volatility=0.4,
             components=MFGComponents(
                 m_initial=m0 or _gaussian(dimension),
                 u_terminal=lambda x: 0.0,
@@ -154,7 +154,7 @@ class TestTheReportedMass:
                     spatial_discretization=[intervals] * dimension,
                     Nt=4,
                     T=0.2,
-                    sigma=0.4,
+                    volatility=0.4,
                     components=via_geometry.components,
                 )
             assert np.allclose(via_geometry.geometry.get_grid_spacing(), via_bounds.geometry.get_grid_spacing()), (
@@ -235,7 +235,7 @@ class TestTheThreeTiers:
                 ),
                 Nt=4,
                 T=0.2,
-                sigma=0.4,
+                volatility=0.4,
                 components=MFGComponents(
                     m_initial=_gaussian(1),
                     u_terminal=lambda x: 0.0,
@@ -265,7 +265,7 @@ class TestTheThreeTiers:
                 geometry=grid,
                 Nt=4,
                 T=0.2,
-                sigma=0.4,
+                volatility=0.4,
                 components=MFGComponents(
                     m_initial=lambda x: np.interp(np.asarray(x), axis, normalised),
                     u_terminal=lambda x: 0.0,

@@ -61,7 +61,7 @@ class SimpleLQMFG2D(MFGProblem):
             ),
             T=1.0,
             Nt=20,
-            sigma=0.2,
+            volatility=0.2,
             coupling_coefficient=0.5,
             components=_default_components_2d(),
         )
