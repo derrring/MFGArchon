@@ -76,23 +76,39 @@ def _same_geometry(a: object, b: object) -> bool:
     return a is b
 
 
-def _callable_output_kind(value: Any, declared: str | None, dimension: Any) -> str:
+def _evaluation_shape(x: Any, m: Any) -> tuple[int, ...] | None:
+    """The shape of the points a callable volatility was evaluated at: the density's, else x's."""
+    if np.ndim(m) > 0:
+        return tuple(np.shape(m))
+    try:
+        return tuple(np.shape(x)[:-1]) if np.ndim(x) >= 2 else tuple(np.shape(x))
+    except ValueError:  # ragged per-axis coordinate lists carry no single point shape
+        return None
+
+
+def _callable_output_kind(value: Any, declared: str | None, dimension: Any, points: tuple[int, ...] | None) -> str:
     """How a callable volatility's (or diffusion's) output is read: as declared, else per point.
 
     Per point is how every solver that evaluates a callable volatility reads its array output. The
-    exception is an output whose trailing axes are (d, d): a per-point field on a d x d grid and a
-    (d, d) tensor have that shape, and the library does not guess (#2375 ruling 6).
+    exception is an output whose trailing axes are (d, d) and which is not simply one value per
+    evaluation point: a constant (d, d) tensor, a per-point tensor, or -- on a d x d grid, where the
+    two readings coincide -- either. There the library does not guess (#2375 ruling 6). A 3-D grid
+    shaped (Nx, 3, 3) returns one value per point with trailing (3, 3) axes, and is read per point.
     """
     if declared is not None:
         return declared
-    if isinstance(dimension, int) and dimension >= 2 and np.shape(value)[-2:] == (dimension, dimension):
-        raise ValueError(
-            f"A callable volatility with no volatility_kind returned an array of shape {np.shape(value)}, "
-            f"whose trailing ({dimension}, {dimension}) axes a per-point field on a {dimension} x {dimension} "
-            "grid and a tensor share. Declare volatility_kind='tensor' (a noise matrix) or 'field' "
-            "(isotropic per point) on the problem (#2375 ruling 6)."
-        )
-    return "field"
+    shape = np.shape(value)
+    if not (isinstance(dimension, int) and dimension >= 2 and shape[-2:] == (dimension, dimension)):
+        return "field"
+    if shape == points and shape != (dimension, dimension):
+        return "field"
+    raise ValueError(
+        f"A callable volatility with no volatility_kind returned an array of shape {shape} at points "
+        f"of shape {points}; its trailing ({dimension}, {dimension}) axes make it a tensor, or on a "
+        f"{dimension} x {dimension} grid either a tensor or a per-point field. Declare "
+        "volatility_kind='tensor' (a noise matrix) or 'field' (isotropic per point) on the problem "
+        "(#2375 ruling 6)."
+    )
 
 
 class MFGProblem(HamiltonianMixin, ConditionsMixin):
@@ -486,7 +502,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
                 def vola_value(t, x, m, *, _D=_D_callable, _kind=volatility_kind):
                     D = _D(t, x, m)
-                    return volatility_from_diffusion(D, kind=_callable_output_kind(D, _kind, self.dimension))
+                    kind = _callable_output_kind(D, _kind, self.dimension, _evaluation_shape(x, m))
+                    return volatility_from_diffusion(D, kind=kind)
             else:
                 vola_value = volatility_from_diffusion(diffusion, kind=volatility_kind)
         else:
@@ -1252,7 +1269,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
             def diffusion(t, x, m):
                 value = volatility(t, x, m)
-                return diffusion_from_volatility(value, kind=_callable_output_kind(value, kind, self.dimension))
+                output_kind = _callable_output_kind(value, kind, self.dimension, _evaluation_shape(x, m))
+                return diffusion_from_volatility(value, kind=output_kind)
 
             return diffusion
         return diffusion_from_volatility(volatility, kind=kind)

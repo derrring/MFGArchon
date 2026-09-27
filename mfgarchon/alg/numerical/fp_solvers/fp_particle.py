@@ -2449,12 +2449,11 @@ class FPParticleSolver(BaseFPSolver):
         matrix_is_spatial = False
         if volatility_is_array:
             vf_shape = volatility_field.shape
-            if problem_tensor:
-                # Declared a tensor; the problem's constructor checked its shape.
-                volatility_is_matrix = True
-                matrix_is_spatial = len(vf_shape) > 2
-            elif from_problem and vf_shape == grid_shape:
-                pass  # declared a field, and read as one even on a d x d grid
+            if from_problem and self.problem.volatility_kind == "field" and vf_shape == grid_shape:
+                # Declared a field, and read as one even on a d x d grid. The kind decides here, not
+                # the branch order: a declared tensor falls through to the shape reading below,
+                # which its constructor-checked shape always takes to the matrix branches.
+                pass
             elif vf_shape == (dimension, dimension):
                 # Constant anisotropic noise matrix Σ
                 volatility_is_matrix = True

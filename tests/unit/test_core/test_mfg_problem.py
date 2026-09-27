@@ -1095,6 +1095,40 @@ def test_a_callable_s_d_by_d_output_needs_a_declared_kind():
             geometry=grid_2d, components=components_2d, diffusion=lambda t, x, m: 0.5 * S @ S.T
         ).volatility(0.0, np.zeros((4, 2)), None)
 
+    # On a 2 x 2 grid a (2, 2) output from the grid's own points is either reading: still refused.
+    grid_2x2 = default_geometry(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[2, 2], dimension=2)
+    per_point_2x2 = create_test_problem(
+        geometry=grid_2x2, components=components_2d, volatility=lambda t, x, m: np.full(np.shape(m), 0.3)
+    )
+    with pytest.raises(ValueError, match=r"trailing \(2, 2\) axes"):
+        per_point_2x2.diffusion(0.0, None, np.ones((2, 2)))
+
+
+@pytest.mark.unit
+def test_a_per_point_callable_on_a_grid_ending_in_d_by_d_is_read_per_point():
+    """A 3-D grid shaped (Nx, 3, 3) gives one value per point with trailing (3, 3) axes.
+
+    The (d, d) refusal must key on the evaluation points, not on the output alone: d4c7351f refused
+    this mid-solve, where 928bfa8d solved it (#2378 re-review, D2). The oracle is the scalar: a
+    constant per-point diffusion is the scalar one, and FP-FDM must solve it to the same density.
+    """
+    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+
+    grid_3d = default_geometry(bounds=[(0.0, 1.0)] * 3, Nx_points=[4, 3, 3], dimension=3)
+    components_3d = MFGComponents(
+        hamiltonian=default_hamiltonian(),
+        m_initial=lambda x: np.exp(-10 * np.sum((np.asarray(x) - 0.5) ** 2, axis=-1)),
+        u_terminal=lambda x: np.zeros(np.asarray(x).shape[:-1]),
+    )
+    x, y, z = np.meshgrid(np.linspace(0, 1, 4), np.linspace(0, 1, 3), np.linspace(0, 1, 3), indexing="ij")
+    m0 = np.exp(-10 * ((x - 0.5) ** 2 + (y - 0.3) ** 2 + (z - 0.6) ** 2))
+
+    def solve(diffusion):
+        problem = create_test_problem(geometry=grid_3d, components=components_3d, T=0.1, Nt=2, diffusion=diffusion)
+        return FPFDMSolver(problem).solve_fp_system(m0)
+
+    np.testing.assert_array_equal(solve(lambda t, x, m: np.full(np.shape(m), 0.02)), solve(0.02))
+
 
 @pytest.mark.unit
 def test_callable_volatility_is_held_as_supplied():

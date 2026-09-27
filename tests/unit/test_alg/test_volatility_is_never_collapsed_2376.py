@@ -446,6 +446,31 @@ def test_the_particle_callable_drift_path_refuses_a_callable_tensor():
         FPParticleSolver(problem, num_particles=100).solve_fp_system(np.ones((6, 5)), drift_field=lambda t, x, m: 0.0)
 
 
+@ROUTES
+def test_the_particle_callable_drift_path_reads_a_declared_tensor_on_a_d_by_d_grid(route):
+    """The other half of the same grid: a declared full-rank 2 x 2 tensor is the noise matrix.
+
+    Sigma = [[0.3, 0.15], [0.15, 0.3]] gives Sigma Sigma^T = [[0.1125, 0.09], [0.09, 0.1125]], so the
+    increments correlate at 0.8 (measured 0.797) with spread sqrt(0.1125 dt). Read as a field on
+    this grid -- which a shape-keyed field branch ahead of the matrix branches did, had it not been
+    shadowed -- they would be independent (#2378 re-review, D1).
+    """
+    from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
+
+    problem = _problem_2x2(volatility=np.array([[0.3, 0.15], [0.15, 0.3]]), volatility_kind="tensor")
+    solver = FPParticleSolver(problem, num_particles=4000, density_mode="hybrid", seed=5)
+    solver.solve_fp_system(
+        np.ones((2, 2)),
+        drift_field=lambda t, x, m: np.zeros_like(x),
+        initial_particles=np.full((4000, 2), 0.5),
+        **_route(problem, route),
+    )
+    step = np.asarray(solver._particle_history[1]) - np.asarray(solver._particle_history[0])
+
+    assert np.corrcoef(step[:, 0], step[:, 1])[0, 1] == pytest.approx(0.8, abs=0.05)
+    np.testing.assert_allclose(step.std(axis=0), np.sqrt(0.1125 * problem.dt), rtol=0.05)
+
+
 @pytest.mark.parametrize(
     ("hjb", "hjb_kind", "fp", "fp_kind", "differ"),
     [
