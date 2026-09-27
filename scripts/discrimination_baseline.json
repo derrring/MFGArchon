@@ -1,8 +1,8 @@
 {
   "_comment": "Kill counts per mutated convention. --check-baseline fails when a count DROPS (discrimination lost) and when one RISES (record the gain in the same change). Counts, not test names: this population cannot be selected by name -- the agreement-shaped patterns give 51, 114 or 156 depending on the regex.",
   "_measured_at": {
-    "collected": 4075,
-    "commit": "27d45c19",
+    "collected": 4209,
+    "commit": "928bfa8d",
     "excluded": "tests/unit/test_discrimination_ratchet.py",
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment and not manual",
     "paths": [
@@ -32,17 +32,17 @@
       "status": "ok"
     },
     "diffusion_field_2x": {
-      "kill_count": 7,
+      "kill_count": 11,
       "owner": "D = sigma^2/2 elementwise for a volatility field (#811)",
       "status": "ok"
     },
     "diffusion_scalar_2x": {
-      "kill_count": 187,
+      "kill_count": 185,
       "owner": "D = sigma^2/2 for scalar sigma (#811)",
       "status": "ok"
     },
     "drift_coefficient_2x": {
-      "kill_count": 37,
+      "kill_count": 40,
       "owner": "FP drift c = 1/control_cost (#1420 / G-017)",
       "status": "ok"
     },
@@ -52,12 +52,12 @@
       "status": "ok"
     },
     "engquist_osher_magnitude_is_the_larger_branch": {
-      "kill_count": 41,
+      "kill_count": 42,
       "owner": "the default `engquist_osher` preset of `upwind_momentum` evaluates H at sqrt(a+^2 + b-^2) per axis (ACD's Example 1), which at a discrete local maximum sums both one-sided differences; that sum is what makes its linearisation the transpose of the FDM FP divergence_upwind operator (#2313). Taking the larger branch instead is Rouy-Tourin, which leaves the transpose defect at maxima",
       "status": "ok"
     },
     "fp_initial_condition_written_at_final_index": {
-      "kill_count": 130,
+      "kill_count": 131,
       "owner": "The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, fp_fdm_time_stepping.py:797, whose own docstring states the convention at :681: \"- Forward time evolution: k=0 -> Nt-1\". No issue n",
       "status": "ok"
     },
@@ -82,7 +82,7 @@
       "status": "ok"
     },
     "hjb_marches_forward_in_time": {
-      "kill_count": 27,
+      "kill_count": 30,
       "owner": "The HJB marches BACKWARD in time, from the terminal row down to t=0, while the FP marches forward -- the adjoint pairing. Single site: base_hjb.py:1780, the only time loop in solve_hjb_system_backward. The M-indexing that rides on it is documented in the same loop body at base_hjb.py:1790: \"# BUG #7",
       "status": "ok"
     },
@@ -102,7 +102,7 @@
       "status": "ok"
     },
     "optimal_control_sign": {
-      "kill_count": 35,
+      "kill_count": 37,
       "owner": "QuadraticControlCost alpha* = -p/lambda (#1649, #2373)",
       "status": "ok"
     },

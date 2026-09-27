@@ -1,7 +1,7 @@
 {
   "_measured_at": {
-    "collected": 4075,
-    "commit": "27d45c19",
+    "collected": 4209,
+    "commit": "928bfa8d",
     "excluded": "tests/unit/test_discrimination_ratchet.py",
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment and not manual",
     "paths": [
@@ -10,7 +10,7 @@
     "reproduce": "the `commit` key above is a pre-merge branch sha and does not survive the squash merge that ships this file. `git log --oneline --follow scripts/discrimination_killmatrix.json` and check out its FIRST entry -- squash merges here are single-parent, so there is no merge commit to find. That yields the tree this artifact SHIPPED in, which is not necessarily the tree the sweep ran on; compare with `git diff --stat` against `commit` if the difference matters"
   },
   "_selection_regex_for_agreement_shaped": "::[^:]*?(_agree|_agrees|_matches|_equals|_single_source|_identical|_consistent)",
-  "baseline_seconds": 332.4,
+  "baseline_seconds": 142.6,
   "killed_by": {
     "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_gauss_seidel_runs_and_produces_finite_M": [
       "quadrature_wall_node_counting_measure",
@@ -21,6 +21,7 @@
       "fp_initial_condition_written_at_final_index"
     ],
     "tests/integration/test_1043_coupler_fp_drift_convention.py::TestFictitiousPlayFPDriftConvention::test_pre_fix_drift_field_produces_wrong_M": [
+      "hjb_marches_forward_in_time",
       "fp_initial_condition_written_at_final_index"
     ],
     "tests/integration/test_block_iterators.py::TestBlockIteratorBasic::test_gauss_seidel_executes": [
@@ -171,6 +172,7 @@
       "fp_initial_condition_written_at_final_index"
     ],
     "tests/integration/test_newton_mfg_solver.py::TestMFGResidualComputation::test_residual_computation": [
+      "drift_coefficient_2x",
       "terminal_condition_pinned_at_initial_index",
       "fp_initial_condition_written_at_final_index"
     ],
@@ -240,6 +242,7 @@
       "drift_coefficient_2x",
       "grid_spacing_uses_point_count",
       "quadrature_wall_node_counting_measure",
+      "engquist_osher_magnitude_is_the_larger_branch",
       "terminal_condition_pinned_at_initial_index",
       "hjb_marches_forward_in_time",
       "fp_initial_condition_written_at_final_index"
@@ -1367,9 +1370,15 @@
       "fp_initial_condition_written_at_final_index"
     ],
     "tests/unit/test_alg/test_meshless_stabilization.py::test_recipe_coupled_matches_fdm_on_wellposed_problem[newton_sd]": [
+      "drift_coefficient_2x",
+      "optimal_control_sign",
+      "hjb_marches_forward_in_time",
       "fp_initial_condition_written_at_final_index"
     ],
     "tests/unit/test_alg/test_meshless_stabilization.py::test_recipe_coupled_matches_fdm_on_wellposed_problem[picard]": [
+      "drift_coefficient_2x",
+      "optimal_control_sign",
+      "hjb_marches_forward_in_time",
       "fp_initial_condition_written_at_final_index"
     ],
     "tests/unit/test_alg/test_meshless_stabilization.py::test_sd_block_identical_in_fp_and_hjb": [
@@ -1629,6 +1638,13 @@
     "tests/unit/test_alg/test_true_adjoint.py::TestJacobianTransposeEqualsAdvection::test_jacobian_coefficients_match_analytical_dh_dp": [
       "grid_spacing_uses_point_count"
     ],
+    "tests/unit/test_alg/test_volatility_is_never_collapsed_2376.py::test_fp_fdm_reads_a_declared_field_as_a_field_on_a_d_by_d_grid": [
+      "fp_initial_condition_written_at_final_index"
+    ],
+    "tests/unit/test_alg/test_volatility_is_never_collapsed_2376.py::test_hjb_fdm_solves_a_2d_field_and_a_constant_one_is_the_scalar": [
+      "diffusion_scalar_2x",
+      "diffusion_field_2x"
+    ],
     "tests/unit/test_alg/test_weak_form_hjb_picard_sign_2023.py::test_the_weak_form_family_agrees_with_the_reference_fdm_solver[-3.0]": [
       "hjb_marches_forward_in_time"
     ],
@@ -1839,19 +1855,28 @@
     "tests/unit/test_core/test_lagrangian_base_alpha_sign_1642.py::TestOptimalControlSign::test_dual_lagrangian_alpha_star_matches_its_source_hamiltonian[p2]": [
       "optimal_control_sign"
     ],
+    "tests/unit/test_core/test_mfg_problem.py::test_a_callable_s_array_output_is_per_point_unless_declared_a_tensor": [
+      "diffusion_field_2x"
+    ],
+    "tests/unit/test_core/test_mfg_problem.py::test_a_legacy_pickled_array_volatility_is_a_field": [
+      "diffusion_field_2x"
+    ],
+    "tests/unit/test_core/test_mfg_problem.py::test_array_volatility_is_held_as_supplied": [
+      "diffusion_field_2x"
+    ],
+    "tests/unit/test_core/test_mfg_problem.py::test_callable_volatility_is_held_as_supplied": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_core/test_mfg_problem.py::test_diffusion_input_implies_the_volatility": [
+      "diffusion_scalar_2x"
+    ],
     "tests/unit/test_core/test_mfg_problem.py::test_diffusion_primary_parameter": [
       "diffusion_scalar_2x"
     ],
     "tests/unit/test_core/test_mfg_problem.py::test_mfg_problem_custom_domain": [
       "grid_spacing_uses_point_count"
     ],
-    "tests/unit/test_core/test_mfg_problem.py::test_sigma_direct_sde_volatility": [
-      "diffusion_scalar_2x"
-    ],
-    "tests/unit/test_core/test_mfg_problem.py::test_volatility_alias_for_sigma": [
-      "diffusion_scalar_2x"
-    ],
-    "tests/unit/test_core/test_mfg_problem.py::test_volatility_field_scalar": [
+    "tests/unit/test_core/test_mfg_problem.py::test_volatility_is_the_sde_volatility": [
       "diffusion_scalar_2x"
     ],
     "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[0.5]": [
@@ -1863,19 +1888,10 @@
     "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[2.0]": [
       "drift_coefficient_2x"
     ],
-    "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_array_collapses_to_mean_with_warning": [
-      "diffusion_scalar_2x"
-    ],
-    "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_none_uses_fallback_sigma": [
-      "diffusion_scalar_2x"
-    ],
-    "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_scalar_is_converted": [
-      "diffusion_scalar_2x"
-    ],
     "tests/unit/test_core/test_state_penalty_is_a_potential_2002.py::test_the_wall_is_local": [
       "diffusion_scalar_2x"
     ],
-    "tests/unit/test_core/test_unified_mfg_problem.py::TestNDGridMode::test_diffusion_converts_to_sigma": [
+    "tests/unit/test_core/test_unified_mfg_problem.py::TestNDGridMode::test_diffusion_converts_to_volatility": [
       "diffusion_scalar_2x"
     ],
     "tests/unit/test_docstring_examples_2346.py::test_every_example_in_this_module_still_runs[mfgarchon.geometry.boundary.bc_utils]": [
@@ -2612,7 +2628,7 @@
         "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_absent_bc_defaults_to_clamp_not_reflect"
       ],
       "owner": "absent BC defaults to clamp/absorbing (#1698)",
-      "seconds": 328.2,
+      "seconds": 245.3,
       "status": "ok",
       "verify": "bc_type_to_geometric_operation(None) == 'reflect'"
     },
@@ -2633,7 +2649,7 @@
         "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_the_guard_and_the_lookup_are_separable_2284"
       ],
       "owner": "no_flux/neumann/robin -> reflect (#1698)",
-      "seconds": 337.2,
+      "seconds": 141.8,
       "status": "ok",
       "verify": "bc_type_to_geometric_operation('no_flux') == 'clamp'"
     },
@@ -2654,7 +2670,7 @@
         "tests/unit/test_geometry/test_poly_extrapolation.py::test_order_5_nonzero_neumann_flux"
       ],
       "owner": "PreallocatedGhostBuffer.update_ghosts routes a uniform BC to the single-segment path and a mixed BC to the per-face path (#577 Phase 3 for the mixed rewrite, #1255 (C) for the alpha/beta forwarding the uniform branch carries). The two paths are NOT equivalent: the uniform branch applies the inhomoge",
-      "seconds": 345.4,
+      "seconds": 149.1,
       "status": "ok",
       "verify": "abs(_ghost0(neumann_bc(dimension=1, value=2.0), 3) - 1.1) < 1e-12"
     },
@@ -2673,28 +2689,32 @@
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_linearised_operator_is_the_derivative_of_the_hamiltonian_it_linearises[2d-rouy_tourin]"
       ],
       "owner": "the numerical Hamiltonian a solver is CONSTRUCTED with is the one every one of its paths evaluates -- `numerical_hamiltonian` is validated and stored in `HJBFDMSolver.__init__` and read at eight further sites: the refusal check, `solve_hjb_system`, `_compute_gradients_nd`, `_build_advection_matrix_1d`, and twice each in `_build_linearized_operator_1d` and `_build_linearized_operator_nd`, which read the momentum and its derivatives separately (#2313, user ruling of 2026-09-16); the presets differ only at a discrete local maximum along an axis, so an argument accepted and dropped is invisible on any smooth fixture, and the strict-adjoint FP coupling consumes the linearisation as A_fp = J^T (#707, #2338). It drops a threaded ARGUMENT rather than altering arithmetic, and the validation still raises on a bad preset, so the constructor looks like it honoured the request. Not the first of that shape in this matrix: `ghost_spacing_ignored` (#1904) has a constructor accept `spacing`, validate its length, and store `None` -- the precedent is the reason the class is worth a row. What is new here is that the replacement is another VALID value rather than a sentinel: an `engquist_osher` solver works, it is simply not the one asked for. It drops the preset at all eight sites at once -- the union over single-site mutations is 4 distinct tests, so six of the ten killers fire only on a total drop",
-      "seconds": 329.1,
+      "seconds": 130.7,
       "status": "ok",
       "verify": "float(np.abs(_linearised_1d(\"rouy_tourin\") - _linearised_1d(\"engquist_osher\")).max()) == 0.0"
     },
     "diffusion_field_2x": {
-      "kill_count": 7,
+      "kill_count": 11,
       "killed": [
         "tests/integration/test_mfg_callable_coefficients.py::TestMFGCallableCoefficients::test_mfg_callable_diffusion_with_array",
         "tests/unit/test_alg/test_gfdm_batch_spatial_volatility_1725.py::test_dmp_guard_uses_each_nodes_resolved_diffusion",
         "tests/unit/test_alg/test_hjb_jacobian_matches_residual_1894.py::test_periodic_wrap_with_a_volatility_field_does_not_collapse_the_jacobian",
         "tests/unit/test_alg/test_sigma_tensor_convention_rfc_1596.py::TestDiffusionOperatorShapeConsistency::test_from_volatility_vector_matches_diag_half_sigma_sq",
+        "tests/unit/test_alg/test_volatility_is_never_collapsed_2376.py::test_hjb_fdm_solves_a_2d_field_and_a_constant_one_is_the_scalar",
         "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_hjb_scalar_and_diagonal_tensor_diffusion_agree",
+        "tests/unit/test_core/test_mfg_problem.py::test_a_callable_s_array_output_is_per_point_unless_declared_a_tensor",
+        "tests/unit/test_core/test_mfg_problem.py::test_a_legacy_pickled_array_volatility_is_a_field",
+        "tests/unit/test_core/test_mfg_problem.py::test_array_volatility_is_held_as_supplied",
         "tests/unit/test_utils/test_diffusion_from_volatility.py::TestField::test_1d_field_is_elementwise",
         "tests/unit/test_utils/test_diffusion_from_volatility.py::TestField::test_2d_field_is_elementwise"
       ],
       "owner": "D = sigma^2/2 elementwise for a volatility field (#811)",
-      "seconds": 336.0,
+      "seconds": 141.2,
       "status": "ok",
       "verify": "float(diffusion_from_volatility(np.array([2.0]), kind='field')[0]) == 4.0"
     },
     "diffusion_scalar_2x": {
-      "kill_count": 187,
+      "kill_count": 185,
       "killed": [
         "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[1]",
         "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[2]",
@@ -2828,6 +2848,7 @@
         "tests/unit/test_alg/test_sl_diffusion_matches_adi_1543.py::test_sl_diffusion_agrees_with_adi_2d",
         "tests/unit/test_alg/test_sl_periodic_diffusion_1820.py::test_the_periodic_step_matches_the_analytic_heat_kernel",
         "tests/unit/test_alg/test_sl_periodic_diffusion_1820.py::test_the_spatial_order_is_second_not_first",
+        "tests/unit/test_alg/test_volatility_is_never_collapsed_2376.py::test_hjb_fdm_solves_a_2d_field_and_a_constant_one_is_the_scalar",
         "tests/unit/test_alg/test_weak_form_volatility.py::test_diffusion_coefficient_converts_sigma_to_D",
         "tests/unit/test_alg/test_weno_mms_order_1991.py::test_diffusion_dominated_order_is_two",
         "tests/unit/test_alg/test_weno_one_dimensional_solve_2021.py::test_the_2d_solve_still_reproduces_the_pre_consolidation_output",
@@ -2857,15 +2878,12 @@
         "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_manufactured_source_assembly_resolves_through_the_converter[1.4142135623730951]",
         "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_manufactured_source_assembly_resolves_through_the_converter[2.5]",
         "tests/unit/test_convention_agreement.py::TestSigmaToDiffusionAgreement::test_manufactured_source_assembly_resolves_through_the_converter[3.0]",
+        "tests/unit/test_core/test_mfg_problem.py::test_callable_volatility_is_held_as_supplied",
+        "tests/unit/test_core/test_mfg_problem.py::test_diffusion_input_implies_the_volatility",
         "tests/unit/test_core/test_mfg_problem.py::test_diffusion_primary_parameter",
-        "tests/unit/test_core/test_mfg_problem.py::test_sigma_direct_sde_volatility",
-        "tests/unit/test_core/test_mfg_problem.py::test_volatility_alias_for_sigma",
-        "tests/unit/test_core/test_mfg_problem.py::test_volatility_field_scalar",
-        "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_array_collapses_to_mean_with_warning",
-        "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_none_uses_fallback_sigma",
-        "tests/unit/test_core/test_pde_coefficients.py::TestScalarDiffusionFromVolatility::test_scalar_is_converted",
+        "tests/unit/test_core/test_mfg_problem.py::test_volatility_is_the_sde_volatility",
         "tests/unit/test_core/test_state_penalty_is_a_potential_2002.py::test_the_wall_is_local",
-        "tests/unit/test_core/test_unified_mfg_problem.py::TestNDGridMode::test_diffusion_converts_to_sigma",
+        "tests/unit/test_core/test_unified_mfg_problem.py::TestNDGridMode::test_diffusion_converts_to_volatility",
         "tests/unit/test_fp_fvm.py::test_gate3_convergence_muscl_second_order",
         "tests/unit/test_fp_fvm.py::test_gate3_convergence_upwind_first_order",
         "tests/unit/test_geometry/test_bc_fail_loud_1558_1559.py::test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmless",
@@ -2885,14 +2903,15 @@
         "tests/unit/test_utils/test_neumann_cn_wall_2237.py::test_order_at_the_wall[mirror-2.0]"
       ],
       "owner": "D = sigma^2/2 for scalar sigma (#811)",
-      "seconds": 334.8,
+      "seconds": 256.6,
       "status": "ok",
       "verify": "diffusion_from_volatility(2.0) == 4.0"
     },
     "drift_coefficient_2x": {
-      "kill_count": 37,
+      "kill_count": 40,
       "killed": [
         "tests/integration/test_coupled_mfg_mms.py::TestCoupledMMSConvergence::test_the_drift_scale_follows_lambda_not_coupling_coefficient",
+        "tests/integration/test_newton_mfg_solver.py::TestMFGResidualComputation::test_residual_computation",
         "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline",
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_check_runs_and_reports_which_pairing_is_adjoint[engquist_osher-False]",
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_check_runs_in_every_adjoint_mode",
@@ -2923,6 +2942,8 @@
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_engquist_osher_linearises_to_the_transpose_of_the_fp_operator[2d]",
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_solver_default_is_the_preset_whose_linearisation_transposes[1d]",
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_solver_default_is_the_preset_whose_linearisation_transposes[2d]",
+        "tests/unit/test_alg/test_meshless_stabilization.py::test_recipe_coupled_matches_fdm_on_wellposed_problem[newton_sd]",
+        "tests/unit/test_alg/test_meshless_stabilization.py::test_recipe_coupled_matches_fdm_on_wellposed_problem[picard]",
         "tests/unit/test_alg/test_meshless_stabilization.py::test_sd_block_identical_in_fp_and_hjb",
         "tests/unit/test_alg/test_weakform_fp_drift_single_source.py::test_fp_drift_coefficient_sources_from_control_cost_not_coupling",
         "tests/unit/test_check_single_source.py::test_repo_baseline_is_current",
@@ -2931,7 +2952,7 @@
         "tests/unit/test_core/test_pde_coefficients.py::TestFpDriftCoefficient::test_sources_inverse_control_cost_from_quadratic_hamiltonian[2.0]"
       ],
       "owner": "FP drift c = 1/control_cost (#1420 / G-017)",
-      "seconds": 358.1,
+      "seconds": 148.8,
       "status": "ok",
       "verify": "fp_drift_coefficient(_stub_problem(control_cost=2.0)) == 1.0"
     },
@@ -2998,13 +3019,14 @@
         "tests/unit/test_alg/test_hjb_jacobian_periodic_wrap_1834.py::test_the_jacobian_is_the_derivative_of_the_residual[periodic_bc_none-upwind-analytic-engquist_osher]"
       ],
       "owner": "`upwind_momentum_derivatives` is the one owner of d(p)/d(backward) and d(p)/d(forward); for `engquist_osher` both are nonzero at a local maximum, and the analytic HJB Jacobian, the nD linearised operator and the strict-adjoint operator all read them, so the Jacobian is the residual's own derivative (#2313)",
-      "seconds": 336.7,
+      "seconds": 196.5,
       "status": "ok",
       "verify": "float(upwind_momentum_derivatives(np.array([1.0]), np.array([-1.0]), \"engquist_osher\")[1][0]) == 0.0"
     },
     "engquist_osher_magnitude_is_the_larger_branch": {
-      "kill_count": 41,
+      "kill_count": 42,
       "killed": [
+        "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline",
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_check_runs_and_reports_which_pairing_is_adjoint[engquist_osher-False]",
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_check_runs_in_every_adjoint_mode",
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_report_agrees_with_the_check_it_ships_beside",
@@ -3048,12 +3070,12 @@
         "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_engquist_osher_is_monotone_and_the_integral_flux"
       ],
       "owner": "the default `engquist_osher` preset of `upwind_momentum` evaluates H at sqrt(a+^2 + b-^2) per axis (ACD's Example 1), which at a discrete local maximum sums both one-sided differences; that sum is what makes its linearisation the transpose of the FDM FP divergence_upwind operator (#2313). Taking the larger branch instead is Rouy-Tourin, which leaves the transpose defect at maxima",
-      "seconds": 329.7,
+      "seconds": 159.2,
       "status": "ok",
       "verify": "float(upwind_momentum(np.array([1.0]), np.array([-1.0]), \"engquist_osher\")[0]) == 1.0"
     },
     "fp_initial_condition_written_at_final_index": {
-      "kill_count": 130,
+      "kill_count": 131,
       "killed": [
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_gauss_seidel_runs_and_produces_finite_M",
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestFictitiousPlayFPDriftConvention::test_fictitious_play_density_is_non_negative",
@@ -3183,13 +3205,14 @@
         "tests/unit/test_alg/test_regime_switching_iterator.py::TestDiagonalOutflowIsNotALaggedSource::test_regime_masses_track_the_markov_chain_closed_form",
         "tests/unit/test_alg/test_regime_switching_iterator.py::TestRegimeSwitchingUpdateSchemes::test_jacobi_scheme",
         "tests/unit/test_alg/test_s1_drift_convention_routing.py::test_u_as_drift_field_solves_a_different_problem_than_u_as_potential_field",
+        "tests/unit/test_alg/test_volatility_is_never_collapsed_2376.py::test_fp_fdm_reads_a_declared_field_as_a_field_on_a_d_by_d_grid",
         "tests/unit/test_fp_fvm.py::test_gate4_fvm_fdm_agreement_shrinks",
         "tests/unit/test_geometry/test_bc_fail_loud_1558_1559.py::test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmless"
       ],
       "owner": "The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, fp_fdm_time_stepping.py:797, whose own docstring states the convention at :681: \"- Forward time evolution: k=0 -> Nt-1\". No issue n",
-      "seconds": 546.1,
+      "seconds": 382.8,
       "status": "ok",
-      "verify": "float(np.sum(solve_fp_nd_full_system(np.ones(6), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), sigma=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x, m_initial=lambda x: 1.0 + 0.0 * x, T=0.1), Nt=2))[0])) == 0.0"
+      "verify": "float(np.sum(solve_fp_nd_full_system(np.ones(6), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), volatility=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x, m_initial=lambda x: 1.0 + 0.0 * x, T=0.1), Nt=2))[0])) == 0.0"
     },
     "fv_upwind_donor_cell_swapped": {
       "kill_count": 8,
@@ -3204,7 +3227,7 @@
         "tests/unit/test_operators/test_divergence.py::TestAdvectionPeriodicGridConvention::test_the_wrap_face_velocity_comes_from_the_last_real_cell_not_the_repeat"
       ],
       "owner": "the conservative FV upwind flux takes the UPSTREAM cell: F_{i+1/2} = v_{i+1/2} m_i when v_{i+1/2} >= 0, else v_{i+1/2} m_{i+1} (#1184 / #1428)",
-      "seconds": 332.9,
+      "seconds": 166.7,
       "status": "ok",
       "verify": "float(AdvectionOperator(velocity_field=np.ones((1, 3)), spacings=[1.0], field_shape=(3,), scheme='upwind', form='divergence', bc=no_flux_bc(dimension=1), mass_conservative=True)(np.array([1.0, 2.0, 3.0]))[0]) == 4.0"
     },
@@ -3292,7 +3315,7 @@
         "tests/unit/test_geometry/test_ghost_spacing_1904.py::test_the_solver_gradient_path_now_carries_the_spacing[2.0-81]"
       ],
       "owner": "the ghost buffer uses the caller's spacing, not dx = 1.0 (#1904)",
-      "seconds": 331.3,
+      "seconds": 185.1,
       "status": "ok",
       "verify": "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0), ghost_depth=1, spacing=0.05)[0] == 3.0"
     },
@@ -3336,7 +3359,7 @@
         "tests/validation/test_stefan_analytical.py::TestStefanEnergyConservation::test_total_energy_preservation"
       ],
       "owner": "`Nx` names the INTERVAL count, so node count = Nx + 1 -- the #1889 interval-vs-node ambiguity at the grid's own entry point. Stated in the constructor docstring at tensor_grid.py:181-182: \"- Nx (intervals): Nx_points = Nx + 1\" / \"- Nx_points (points): Nx = Nx_points - 1\". Line 220-221 normalises a s",
-      "seconds": 330.4,
+      "seconds": 151.7,
       "status": "ok",
       "verify": "TensorProductGrid(bounds=[(0.0, 1.0)], Nx=[10], boundary_conditions=no_flux_bc(dimension=1)).Nx_points == [10]"
     },
@@ -3405,13 +3428,14 @@
         "tests/validation/test_stefan_analytical.py::TestNeumannSolution::test_convergence_with_grid_refinement"
       ],
       "owner": "uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim, get_spacing() indexes it, legacy_1d_attrs[\"Dx\"] reads it, cell volume ",
-      "seconds": 338.0,
+      "seconds": 210.2,
       "status": "ok",
       "verify": "TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)).get_grid_spacing()[0] == 1.0 / 11"
     },
     "hjb_marches_forward_in_time": {
-      "kill_count": 27,
+      "kill_count": 30,
       "killed": [
+        "tests/integration/test_1043_coupler_fp_drift_convention.py::TestFictitiousPlayFPDriftConvention::test_pre_fix_drift_field_produces_wrong_M",
         "tests/integration/test_mfg_callable_coefficients.py::TestMFGCallableCoefficients::test_mfg_callable_diffusion_with_array",
         "tests/integration/test_mms_validation.py::TestMMSHJB1D::test_backward_heat_periodic_convergence",
         "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline",
@@ -3428,6 +3452,8 @@
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_backward_solve_returns_a_root_of_its_own_presets_residual[rouy_tourin]",
         "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestSLHJBConsistency::test_matches_fdm_with_potential[1.0]",
         "tests/unit/test_alg/test_hjb_semi_lagrangian.py::TestSLHJBConsistency::test_matches_fdm_with_potential[2.0]",
+        "tests/unit/test_alg/test_meshless_stabilization.py::test_recipe_coupled_matches_fdm_on_wellposed_problem[newton_sd]",
+        "tests/unit/test_alg/test_meshless_stabilization.py::test_recipe_coupled_matches_fdm_on_wellposed_problem[picard]",
         "tests/unit/test_alg/test_picard_reports_failed_inner_solves_1878.py::test_a_converged_result_satisfies_the_discrete_hjb_at_every_step",
         "tests/unit/test_alg/test_sl_dpp_potential_sign_1645.py::test_dpp_error_converges_under_refinement",
         "tests/unit/test_alg/test_sl_dpp_potential_sign_1645.py::test_dpp_error_does_not_grow_with_the_potential[0.0]",
@@ -3441,9 +3467,9 @@
         "tests/unit/test_alg/test_weak_form_hjb_picard_sign_2023.py::test_the_weak_form_family_agrees_with_the_reference_fdm_solver[2.0]"
       ],
       "owner": "The HJB marches BACKWARD in time, from the terminal row down to t=0, while the FP marches forward -- the adjoint pairing. Single site: base_hjb.py:1780, the only time loop in solve_hjb_system_backward. The M-indexing that rides on it is documented in the same loop body at base_hjb.py:1790: \"# BUG #7",
-      "seconds": 312.9,
+      "seconds": 241.3,
       "status": "ok",
-      "verify": "float(solve_hjb_system_backward(np.ones((3, 6)), np.full(6, 3.0), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), sigma=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x, m_initial=lambda x: 1.0 + 0.0 * x, T=0.1), Nt=2))[0, 0]) < 1.0"
+      "verify": "float(solve_hjb_system_backward(np.ones((3, 6)), np.full(6, 3.0), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), volatility=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x, m_initial=lambda x: 1.0 + 0.0 * x, T=0.1), Nt=2))[0, 0]) < 1.0"
     },
     "mass_drift_reported_as_deviation_from_one": {
       "kill_count": 2,
@@ -3452,9 +3478,9 @@
         "tests/unit/test_utils/test_mass_conservation_error_1672.py::test_the_coupled_solve_reports_the_quantity_it_documents[fdm_upwind]"
       ],
       "owner": "`SolverResult.mass_conservation_error` is DRIFT from the initial mass, `|mass(t)/mass(0) - 1|`, not deviation from 1 (#1672). Sole owner: the coupling loop, which is the only site that writes the field. The convention is not decorative: #1887 stopped the constructor rescaling `m_initial`, so `mass(0)` is whatever the caller handed in and the two expressions are different numbers. A target of 1 is not a property of the Fokker-Planck equation -- it conserves whatever it started with -- so measuring against 1 reports a caller's modelling decision as a solver defect. REINSTATED HERE from the hand-off note on `fix/2145-the-mass-is-the-trapezoid`, where this mutation is INEFFECTIVE by construction: that branch normalises `m_initial`, so `mass(0) == 1` on every path reaching the iterator and no test can separate the two expressions. The hand-off named a merge conflict as its forcing function; splitting #1887 onto its own branch removed the conflict and the re-add dropped silently, which is the outcome that note predicted by name. Independent review of PR #2174 caught it.",
-      "seconds": 328.2,
+      "seconds": 133.6,
       "status": "ok",
-      "verify": "MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, sigma=0.5, components=MFGComponents(m_initial=lambda x: np.exp(-50.0 * (np.asarray(x) - 0.5) ** 2), u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0))).solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False).mass_conservation_error > 0.1"
+      "verify": "MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, volatility=0.5, components=MFGComponents(m_initial=lambda x: np.exp(-50.0 * (np.asarray(x) - 0.5) ** 2), u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0))).solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False).mass_conservation_error > 0.1"
     },
     "neumann_low_wall_flux_sign": {
       "kill_count": 39,
@@ -3500,7 +3526,7 @@
         "tests/unit/test_geometry/test_neumann_low_wall_sign.py::TestNeumannLowWallSign::test_order2_low_ghost_plus_dx_v"
       ],
       "owner": "inhomogeneous Neumann is prescribed on the OUTWARD normal, so at the low wall (outward normal -x) du/dx = -v and the offset is ADDED, the same sign as the high wall (#1262). Since #1967 the magnitude is (2k-1)*dx*v rather than dx*v -- ghost layer k sits that far from its mirror -- so the k=1 case is the historical dx*v and the deeper layers scale.",
-      "seconds": 348.4,
+      "seconds": 140.0,
       "status": "ok",
       "verify": "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0), ghost_depth=1, spacing=0.05)[0] == 0.9"
     },
@@ -3514,12 +3540,12 @@
         "tests/unit/test_convention_agreement.py::TestHJBResidualNormGridScaling::test_the_scaling_is_what_makes_two_resolutions_comparable"
       ],
       "owner": "The HJB Newton residual is the grid-scaled discrete L2 norm ||F||_2 * sqrt(dx). Owner: hjb_residual_norm, base_hjb.py:1362, whose docstring says verbatim 'The one owner of \"how large is this HJB residual\".' and 'It is a function rather than an inline expression because the ``sqrt(dx)`` is load-beari",
-      "seconds": 342.9,
+      "seconds": 180.0,
       "status": "ok",
       "verify": "hjb_residual_norm(np.array([1.0, 0.0]), 0.25) == 1.0"
     },
     "optimal_control_sign": {
-      "kill_count": 35,
+      "kill_count": 37,
       "killed": [
         "tests/integration/test_fem_solver_path.py::TestFEMBoundaryConditionResolution::test_coupled_fem_no_flux_runs_and_conserves_mass",
         "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[0.5]",
@@ -3541,6 +3567,8 @@
         "tests/unit/test_alg/test_fp_particle_time_level_1792.py::test_the_density_follows_the_well_forward_in_time[1-41-20000-2.0]",
         "tests/unit/test_alg/test_fp_particle_time_level_1792.py::test_the_density_follows_the_well_forward_in_time[1-41-20000-5.0]",
         "tests/unit/test_alg/test_fp_particle_time_level_1792.py::test_the_density_follows_the_well_forward_in_time[2-21-20000-5.0]",
+        "tests/unit/test_alg/test_meshless_stabilization.py::test_recipe_coupled_matches_fdm_on_wellposed_problem[newton_sd]",
+        "tests/unit/test_alg/test_meshless_stabilization.py::test_recipe_coupled_matches_fdm_on_wellposed_problem[picard]",
         "tests/unit/test_alg/test_particle_multi_exit.py::test_particle_solver_multi_exit_1d",
         "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPParticleSolver-DIRICHLET]",
         "tests/unit/test_alg/test_periodic_capability_invariant_1822.py::test_a_declared_bc_type_is_honoured[FPParticleSolver-PERIODIC]",
@@ -3558,7 +3586,7 @@
         "tests/unit/test_utils/test_manufactured.py::TestAgreesWithTheHandAssembly::test_fp_source_reproduces_it"
       ],
       "owner": "QuadraticControlCost alpha* = -p/lambda (#1649, #2373)",
-      "seconds": 339.1,
+      "seconds": 144.4,
       "status": "ok",
       "verify": "float(QuadraticControlCost(control_cost=1.0).optimal_control(np.array([1.0]))[0]) > 0"
     },
@@ -3581,7 +3609,7 @@
         "tests/unit/test_alg/test_particle_mass_is_the_callers_2181.py::test_two_populations_keep_their_shares"
       ],
       "owner": "The particle FP step measures a slice's mass on the GEOMETRY'S OWN measure, not the counting measure and not `sum(m) * dx` -- the rectangle rule is not the mass on an endpoint-inclusive grid (#2145). Sole owner: `FPParticleSolver._measure`, reached by `_to_caller_mass`, which is the only thing that decides what a reconstructed slice's mass is. RETARGETED from `_compute_total_mass`, which #2181 deleted: that helper measured `sum(density) * dV` and the KDE normalisation divided by it so the density integrated to 1. Both halves of that sentence stopped being true -- the measure is now the geometry's, and the target is the caller's mass rather than 1 -- but the convention it defended survived and moved here, so the mutation follows it.",
-      "seconds": 327.5,
+      "seconds": 136.7,
       "status": "ok",
       "verify": "abs(_measure_probe() - 21.0) < 1e-9"
     },
@@ -3614,7 +3642,7 @@
         "tests/unit/test_geometry/test_bc_fail_loud_1558_1559.py::test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmless"
       ],
       "owner": "where the last node sits, MEASURED from the coordinates the grid built (#1822). `_axis_convention` is the single owner: `periodic_convention` calls it (tensor_grid.py:415) and `_first_axis_with_convention` calls it (:385). The property docstring states why it is derived rather than asserted: \"Derive",
-      "seconds": 343.6,
+      "seconds": 168.4,
       "status": "ok",
       "verify": "TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)).periodic_convention is PeriodicGridConvention.ENDPOINT_EXCLUSIVE"
     },
@@ -3673,7 +3701,7 @@
         "tests/unit/test_operators/test_laplacian.py::TestLaplacianBCFailLoud1071::test_bc_none_still_periodic"
       ],
       "owner": "how many trailing nodes of a periodic axis repeat a node the array already holds -- the ONE number both the ghost skip and the modular span derive from (#1822). types.py:126-130 states the ownership verbatim: \"Every periodic wrap in the package is one of two expressions of this single number, which ",
-      "seconds": 354.2,
+      "seconds": 157.3,
       "status": "ok",
       "verify": "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), periodic_bc(dimension=1), ghost_depth=1)[0] == 2.0"
     },
@@ -3684,7 +3712,7 @@
         "tests/unit/test_convention_agreement.py::TestPicardCriterionIsAConjunction::test_a_small_relative_error_alone_is_not_convergence"
       ],
       "owner": "Picard convergence requires BOTH the relative AND the absolute L2 error below tolerance. Owner: check_convergence_criteria, fixed_point_utils.py:192-229, whose docstring states 'Convergence criteria (both must be satisfied)'. Single-sourced by three call sites routing to it: fixed_point_iterator.py:",
-      "seconds": 318.3,
+      "seconds": 134.6,
       "status": "ok",
       "verify": "check_convergence_criteria(1e-9, 1e-9, 1.0, 1.0, 1e-6)[0]"
     },
@@ -3787,7 +3815,7 @@
         "tests/unit/test_utils/test_mass_conservation_error_1672.py::test_the_coupled_solve_reports_the_quantity_it_documents[fdm_upwind]"
       ],
       "owner": "The measure on a node-centred grid is the TRAPEZOID: `TensorProductGrid` is endpoint-inclusive, so the wall lies ON the end node and that node owns half a cell. Those weights are also the control volumes the conservative FP schemes telescope against, which is why this is one convention and not two (#2145). Sole owner: `mfgarchon/utils/numerical/quadrature.py`, reached by `TensorProductGrid.integrate`, `mass_drift`, the FV advection kernel and the FDM wall rows. SUPERSEDES `m_initial_1d_counting_measure`, which mutated the constructor's normalisation dispatch -- #1887 removed that rescale (the library validates the initial mass and does not change it), so that anchor no longer exists. The convention it defended survived and moved here; the mutation follows it.",
-      "seconds": 327.3,
+      "seconds": 144.0,
       "status": "ok",
       "verify": "abs(quadrature_weights_1d(np.linspace(0.0, 1.0, 5))[0] - 0.25) < 1e-12"
     },
@@ -3831,7 +3859,7 @@
         "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_the_selection_predicate_is_pinned_not_only_the_branch_bodies"
       ],
       "owner": "Rouy-Tourin upwind takes the clamped BACKWARD part max(backward, 0) where it dominates the clamped forward part min(forward, 0) in magnitude -- the `rouy_tourin` preset of `upwind_momentum`, the one owner of the HJB upwind momentum (#2308, #2313), consumed by the HJB residual and Jacobian when that preset is selected, by GradientOperator(scheme='upwind') and by PDE reinitialisation (of phi or -phi by sign(phi0), #2310); transport upwinds by the velocity instead since #2309",
-      "seconds": 326.5,
+      "seconds": 144.0,
       "status": "ok",
       "verify": "float(gradient_upwind(np.array([0.0, 1.0, 3.0]), axis=0, h=1.0)[1]) == 0.0"
     },
@@ -3858,7 +3886,7 @@
         "tests/unit/test_utils/test_runtime_validation.py::test_terminal_condition_survives_an_hjb_divergence"
       ],
       "owner": "u is boundary-data at the TERMINAL time and m at the INITIAL one: preserve_terminal_condition re-imposes u(T)=g on the LAST time row after damping/Anderson. Single owner, three caller families -- fixed_point_iterator.py:644 and :724 (Picard), fictitious_play.py:432, block_iterators.py:583. No issue ",
-      "seconds": 672.2,
+      "seconds": 472.8,
       "status": "ok",
       "verify": "preserve_terminal_condition(np.zeros((3, 4)), np.full(4, 7.0))[0, 0] == 7.0"
     },
@@ -3898,7 +3926,7 @@
         "tests/unit/test_operators/test_stencils.py::TestGradientUpwind::test_the_selection_predicate_is_pinned_not_only_the_branch_bodies"
       ],
       "owner": "at a discrete local minimum (backward < 0 < forward) the upwind momentum is 0, the value of the min/max numerical Hamiltonian for an H even in each momentum component and nondecreasing in its magnitude; selecting on sign(central) returned the one-sided difference of smaller magnitude there, a non-monotone numerical Hamiltonian that Newton still converges on (#2308)",
-      "seconds": 326.3,
+      "seconds": 142.2,
       "status": "ok",
       "verify": "float(gradient_upwind(np.array([0.0, -1.0, 1.0]), axis=0, h=1.0)[1]) == -1.0"
     }
