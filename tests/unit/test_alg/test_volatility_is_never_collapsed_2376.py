@@ -496,9 +496,10 @@ def test_the_pairing_guard_on_mixed_kinds(hjb, hjb_kind, fp, fp_kind, differ):
     """Exactly one callable against a value differs: no evaluation can show them equal (#1316).
 
     At 0f937601 these pairs were refused only because the callable collapsed to 1.0; 23bbb9e5 let
-    them through. Two callables stay identity-only, which is what keeps Mock doubles passing
-    (#1489). A scalar and a constant FIELD equal to it are one problem; an all-equal tensor is not,
-    since its A = 1/2 Sigma Sigma^T is not sigma^2/2 I, and 928bfa8d let that pair through too.
+    them through. Two callables are not compared -- the 'two-callables' case is two distinct ones,
+    and they pass -- which is what keeps Mock doubles passing (#1489). A scalar and a constant FIELD
+    equal to it are one problem; an all-equal tensor is not, since its A = 1/2 Sigma Sigma^T is not
+    sigma^2/2 I, and 928bfa8d let that pair through too.
     """
     from types import SimpleNamespace
 

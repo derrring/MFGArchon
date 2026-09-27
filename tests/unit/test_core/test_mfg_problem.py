@@ -1129,6 +1129,16 @@ def test_a_per_point_callable_on_a_grid_ending_in_d_by_d_is_read_per_point():
 
     np.testing.assert_array_equal(solve(lambda t, x, m: np.full(np.shape(m), 0.02)), solve(0.02))
 
+    # Called directly with no density, the points are read from x: a meshgrid list is the grid's
+    # points, so its per-point output is accepted; per-axis coordinate vectors are not points, so a
+    # (3, 3)-trailing output from them stays refused (#2378 re-review, F2).
+    per_point = create_test_problem(
+        geometry=grid_3d, components=components_3d, diffusion=lambda t, x, m: np.full((4, 3, 3), 0.02)
+    )
+    np.testing.assert_allclose(per_point.volatility(0.0, [x, y, z], None), np.full((4, 3, 3), 0.2))
+    with pytest.raises(ValueError, match=r"trailing \(3, 3\) axes"):
+        per_point.volatility(0.0, [np.linspace(0, 1, 4), np.linspace(0, 1, 3), np.linspace(0, 1, 3)], None)
+
 
 @pytest.mark.unit
 def test_callable_volatility_is_held_as_supplied():

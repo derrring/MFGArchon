@@ -80,12 +80,16 @@ def _evaluation_shape(x: Any, m: Any) -> tuple[int, ...] | None:
     """The shape of the points a callable volatility was evaluated at, or None if it cannot be read.
 
     The density's shape when one is given (every solver passes it). Otherwise x's: an array of points
-    shaped (..., d) gives its leading axes, a 1-D array its own shape. A list of per-axis coordinates
-    or of meshgrid arrays carries no single point shape.
+    shaped (..., d) gives its leading axes, a 1-D array its own shape, and a meshgrid list -- d arrays
+    of one shape, each with d axes -- that shape. A list of per-axis coordinate vectors is not a set
+    of points and gives None.
     """
     if np.ndim(m) > 0:
         return tuple(np.shape(m))
     if isinstance(x, (list, tuple)):
+        shapes = {np.shape(axis) for axis in x}
+        if len(shapes) == 1 and all(np.ndim(axis) == len(x) for axis in x):
+            return next(iter(shapes))
         return None
     return tuple(np.shape(x)[:-1]) if np.ndim(x) >= 2 else tuple(np.shape(x))
 

@@ -49,13 +49,13 @@ def assert_bc_providers_resolvable(problem: MFGProblem, iterator_name: str) -> N
 def _volatilities_differ(a: Any, b: Any, kind_a: Any = None, kind_b: Any = None) -> bool:
     """Whether two volatilities are shown to differ: by value, by content, and by volatility_kind.
 
-    Two callables are compared only by identity: nothing short of evaluating them could show two
-    distinct ones equal, and that is also what keeps Mock-vs-Mock test doubles -- callable by
-    construction -- from tripping a guard (#1489). Exactly one callable against a scalar or an array
-    differs: no evaluation can show them equal, and refusing is the #1316 rule. An array is read by
-    its kind, so the same entries under two kinds are two diffusions, and a scalar equals only a
-    constant FIELD of its value -- never an all-equal tensor, whose A = 1/2 Sigma Sigma^T is not
-    sigma^2/2 I.
+    Two callables are never shown to differ, identical or not: nothing short of evaluating them
+    could compare them, and Mock test doubles are callable by construction (#1489). So two problems
+    with distinct callable volatilities pass; build both solvers from one problem. Exactly one
+    callable against a scalar or an array differs: no evaluation can show them equal, and refusing
+    is the #1316 rule. An array is read by its kind, so the same entries under two kinds are two
+    diffusions, and a scalar equals only a constant FIELD of its value -- never an all-equal
+    tensor, whose A = 1/2 Sigma Sigma^T is not sigma^2/2 I.
     """
     if a is b:
         return False
@@ -86,7 +86,7 @@ def assert_paired_solver_sigma(hjb_solver: Any, fp_solver: Any, context: str) ->
     had no guard) -- shares one check. For a list-based iterator, call once per sub-problem pair
     (naming the sub-problem in ``context``). Scalars compare by value, and arrays by content and
     volatility_kind; before #2376 each problem's array was compared through its mean, so two fields
-    with one mean passed. Callables compare by identity only (see ``_volatilities_differ``).
+    with one mean passed. Two callables are not compared (see ``_volatilities_differ``).
     """
     hjb_problem, fp_problem = getattr(hjb_solver, "problem", None), getattr(fp_solver, "problem", None)
     hjb_volatility = getattr(hjb_problem, "volatility", None)
