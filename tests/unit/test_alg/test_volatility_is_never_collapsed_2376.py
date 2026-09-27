@@ -206,8 +206,18 @@ def _hjb_fdm_2d(problem, **override):
     return HJBFDMSolver(problem).solve_hjb_system(M, U_terminal, np.zeros_like(M), **override)
 
 
-def test_hjb_fdm_reads_the_problems_diagonal_tensor_on_the_none_path():
-    """The None default is the problem's own volatility, dispatched by its declared kind.
+# The problem's own volatility reaches a solver two ways: as the None default (a standalone solve,
+# BlockIterator), and as the object itself, which MFGProblem.solve() forwards as volatility_field.
+# Both must be read by the declared kind, so every kind-dispatch pin below runs on both.
+ROUTES = pytest.mark.parametrize("route", ["none", "same-object"])
+
+
+def _route(problem, route):
+    return {} if route == "none" else {"volatility_field": problem.volatility}
+
+
+def _hjb_fdm_reads_the_diagonal_tensor(route):
+    """The problem's own volatility is dispatched by its declared kind, on either route.
 
     Before, the (d, d) tensor dispatch looked only at an explicit override: with None the problem's
     tensor went to the field reader and raised a grid-shape error, so FixedPointIterator,
@@ -216,10 +226,21 @@ def test_hjb_fdm_reads_the_problems_diagonal_tensor_on_the_none_path():
     """
     problem = _problem_2d(volatility=np.diag([0.3, 0.2]), volatility_kind="tensor")
 
-    np.testing.assert_array_equal(_hjb_fdm_2d(problem), _hjb_fdm_2d(problem, volatility_field=np.array([0.3, 0.2])))
+    np.testing.assert_array_equal(
+        _hjb_fdm_2d(problem, **_route(problem, route)), _hjb_fdm_2d(problem, volatility_field=np.array([0.3, 0.2]))
+    )
 
 
-@pytest.mark.parametrize(
+def test_hjb_fdm_reads_the_problems_diagonal_tensor_on_the_none_path():
+    _hjb_fdm_reads_the_diagonal_tensor("none")
+
+
+def test_hjb_fdm_reads_the_problems_diagonal_tensor_on_the_same_object_route():
+    """MFGProblem.solve() forwards the problem's own volatility; a None-only pin left it open."""
+    _hjb_fdm_reads_the_diagonal_tensor("same-object")
+
+
+UNASSEMBLED_TENSORS = pytest.mark.parametrize(
     ("volatility", "what"),
     [
         (np.array([[0.3, 0.1], [0.1, 0.2]]), "non-diagonal"),
@@ -228,6 +249,9 @@ def test_hjb_fdm_reads_the_problems_diagonal_tensor_on_the_none_path():
     ],
     ids=["non-diagonal", "per-point", "callable"],
 )
+
+
+@UNASSEMBLED_TENSORS
 def test_hjb_fdm_refuses_a_problem_tensor_it_would_solve_at_the_wrong_diffusion(volatility, what):
     """HJB-FDM's tensor path is a constant diagonal Laplacian with weights sigma_ii^2/2.
 
@@ -240,18 +264,47 @@ def test_hjb_fdm_refuses_a_problem_tensor_it_would_solve_at_the_wrong_diffusion(
         _hjb_fdm_2d(problem)
 
 
+@UNASSEMBLED_TENSORS
+def test_hjb_fdm_refuses_a_problem_tensor_on_the_same_object_route(volatility, what):
+    """The route MFGProblem.solve() takes: it forwards the problem's own volatility as the override.
+
+    A pin on the None route alone left this one open -- deleting the identity arm of the dispatch
+    brought back the warned-about wrong solve on MFGProblem.solve() with the whole gate green
+    (#2378 re-review).
+    """
+    problem = _problem_2d(volatility=volatility, volatility_kind="tensor")
+    with pytest.raises(NotImplementedError, match=rf"only as a constant diagonal.*is {what}.*HJBSemiLagrangianSolver"):
+        _hjb_fdm_2d(problem, volatility_field=problem.volatility)
+
+
 def test_hjb_fdm_solves_a_2d_field_and_a_constant_one_is_the_scalar():
     """The nD field path multiplied a grid-shaped D by the flattened Laplacian and crashed.
 
-    Two measurements: a constant field solves to the scalar's answer, and a ramp does not solve to
-    its mean's -- so the field is read per point, not collapsed.
+    A constant field solves to the scalar's answer. For a varying one the reference is independent
+    of that path: a field and a terminal cost that vary along x only
+    make the 2-D solution y-independent and equal to the 1-D HJB-FDM solve on the same x grid, which
+    is a different code path (base_hjb's 1-D Newton). A D laid onto the grid in the wrong order --
+    raveled Fortran-style, say -- passes a constant-field check and a ramp-vs-mean check alike, and
+    fails this one (#2378 re-review).
     """
+    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+
     constant = _problem_2d(volatility=np.full((6, 5), 0.3), volatility_kind="field")
     np.testing.assert_allclose(_hjb_fdm_2d(constant), _hjb_fdm_2d(_problem_2d(volatility=0.3)), rtol=0, atol=1e-14)
 
-    ramp = np.broadcast_to(np.linspace(0.1, 0.5, 6)[:, None], (6, 5)).copy()
-    varying = _problem_2d(volatility=ramp, volatility_kind="field")
-    assert not np.allclose(_hjb_fdm_2d(varying), _hjb_fdm_2d(_problem_2d(volatility=float(ramp.mean()))))
+    ramp_x = np.linspace(0.1, 0.5, 6)
+    problem_2d = _problem_2d(volatility=np.repeat(ramp_x[:, None], 5, axis=1), volatility_kind="field")
+    x2 = np.linspace(0.0, 1.0, 6)[:, None] * np.ones((6, 5))
+    M2 = np.ones((problem_2d.Nt + 1, 6, 5))
+    U2 = HJBFDMSolver(problem_2d).solve_hjb_system(M2, (x2 - 0.3) ** 2, np.zeros_like(M2))
+
+    problem_1d = _v1_problem([(0.0, 1.0)], [6], volatility=ramp_x, volatility_kind="field")
+    x1 = np.linspace(0.0, 1.0, 6)
+    M1 = np.ones((problem_1d.Nt + 1, 6))
+    U1 = HJBFDMSolver(problem_1d).solve_hjb_system(M1, (x1 - 0.3) ** 2, np.zeros_like(M1))
+
+    assert np.abs(U2 - U2[..., :1]).max() < 1e-12, "an x-only problem solved to a y-dependent U"
+    np.testing.assert_allclose(U2[..., 0], U1, rtol=0, atol=1e-7)  # measured 2.8e-9: the two Newton stops
 
 
 def _problem_2x2(**volatility):
@@ -259,7 +312,7 @@ def _problem_2x2(**volatility):
     return _v1_problem([(0.0, 1.0), (0.0, 1.0)], [2, 2], **volatility)
 
 
-def test_fp_fdm_reads_a_declared_field_as_a_field_on_a_d_by_d_grid():
+def _fp_fdm_reads_a_declared_field_on_a_d_by_d_grid(route):
     """FP-FDM dispatched the problem's array by shape, so a declared 2 x 2 field was solved as Sigma.
 
     A constant field is the scalar exactly; the same array declared a tensor is a different
@@ -269,14 +322,24 @@ def test_fp_fdm_reads_a_declared_field_as_a_field_on_a_d_by_d_grid():
 
     m0 = np.array([[2.0, 0.5], [1.0, 0.5]])  # non-uniform: a uniform density is invariant under any diffusion
     scalar = FPFDMSolver(_problem_2x2(volatility=0.3)).solve_fp_system(m0)
-    field = FPFDMSolver(_problem_2x2(volatility=np.full((2, 2), 0.3), volatility_kind="field")).solve_fp_system(m0)
-    tensor = FPFDMSolver(_problem_2x2(volatility=np.full((2, 2), 0.3), volatility_kind="tensor")).solve_fp_system(m0)
+    declared_field = _problem_2x2(volatility=np.full((2, 2), 0.3), volatility_kind="field")
+    field = FPFDMSolver(declared_field).solve_fp_system(m0, **_route(declared_field, route))
+    declared_tensor = _problem_2x2(volatility=np.full((2, 2), 0.3), volatility_kind="tensor")
+    tensor = FPFDMSolver(declared_tensor).solve_fp_system(m0, **_route(declared_tensor, route))
 
     np.testing.assert_array_equal(field, scalar)
     assert not np.allclose(tensor, scalar)
 
 
-def test_fp_fdm_callable_drift_reads_the_problems_tensor():
+def test_fp_fdm_reads_a_declared_field_as_a_field_on_a_d_by_d_grid():
+    _fp_fdm_reads_a_declared_field_on_a_d_by_d_grid("none")
+
+
+def test_fp_fdm_reads_a_declared_field_on_a_d_by_d_grid_on_the_same_object_route():
+    _fp_fdm_reads_a_declared_field_on_a_d_by_d_grid("same-object")
+
+
+def _fp_fdm_callable_drift_reads_the_problems_tensor(route):
     """The callable-drift route passed None through as a field, so the problem's tensor was misread.
 
     With a zero drift it is the pure-diffusion route, which reads the tensor by kind.
@@ -288,9 +351,67 @@ def test_fp_fdm_callable_drift_reads_the_problems_tensor():
     m0 = np.exp(-10 * ((x - 0.5) ** 2 + (y - 0.3) ** 2))
 
     np.testing.assert_array_equal(
-        FPFDMSolver(problem).solve_fp_system(m0, drift_field=lambda t, x, m: 0.0),
+        FPFDMSolver(problem).solve_fp_system(m0, drift_field=lambda t, x, m: 0.0, **_route(problem, route)),
         FPFDMSolver(problem).solve_fp_system(m0),
     )
+
+
+def test_fp_fdm_callable_drift_reads_the_problems_tensor():
+    _fp_fdm_callable_drift_reads_the_problems_tensor("none")
+
+
+def test_fp_fdm_callable_drift_reads_the_problems_tensor_on_the_same_object_route():
+    _fp_fdm_callable_drift_reads_the_problems_tensor("same-object")
+
+
+@ROUTES
+def test_hjb_fdm_reads_a_declared_field_as_a_field_on_a_d_by_d_grid(route):
+    """HJB-FDM dispatched the problem's array by shape, so a declared 2 x 2 field was solved as Sigma.
+
+    A constant field cannot show it -- HJB-FDM's tensor path keeps sigma_ii^2/2, which for a constant
+    field is its own D -- so the field varies along x. The reference is the same x-only field on a
+    2 x 3 grid, whose shape no dispatch can mistake for a tensor: with an x-only terminal cost both
+    solutions are y-independent and must agree column for column.
+    """
+    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+
+    def solve(shape, **kw):
+        problem = _v1_problem(
+            [(0.0, 1.0), (0.0, 1.0)],
+            list(shape),
+            volatility=np.repeat([[0.3], [0.6]], shape[1], axis=1),
+            volatility_kind="field",
+        )
+        x = np.linspace(0.0, 1.0, shape[0])[:, None] * np.ones(shape)
+        M = np.ones((problem.Nt + 1, *shape))
+        return HJBFDMSolver(problem).solve_hjb_system(M, (x - 0.3) ** 2, np.zeros_like(M), **_route(problem, route))
+
+    np.testing.assert_allclose(solve((2, 2))[..., 0], solve((2, 3))[..., 0], rtol=0, atol=1e-12)
+
+
+@ROUTES
+def test_the_particle_callable_drift_path_reads_a_declared_field_on_a_d_by_d_grid(route):
+    """Read by shape, a declared 2 x 2 field full of sigma became the noise matrix Sigma = sigma 1 1^T.
+
+    That matrix drives both axes with one Brownian increment, so every particle's dx and dy are equal;
+    a field draws them independently. Started at the centre, where one step reaches no wall, the
+    increments' correlation separates the two readings (1.0 against measured 0.013), and their
+    spread is the field's sigma sqrt(dt).
+    """
+    from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
+
+    problem = _problem_2x2(volatility=np.full((2, 2), 0.3), volatility_kind="field")
+    solver = FPParticleSolver(problem, num_particles=2000, density_mode="hybrid", seed=3)
+    solver.solve_fp_system(
+        np.ones((2, 2)),
+        drift_field=lambda t, x, m: np.zeros_like(x),
+        initial_particles=np.full((2000, 2), 0.5),
+        **_route(problem, route),
+    )
+    step = np.asarray(solver._particle_history[1]) - np.asarray(solver._particle_history[0])
+
+    assert abs(np.corrcoef(step[:, 0], step[:, 1])[0, 1]) < 0.2
+    np.testing.assert_allclose(step.std(axis=0), 0.3 * np.sqrt(problem.dt), rtol=0.1)
 
 
 def test_the_strict_adjoint_fp_step_refuses_the_problems_tensor():
@@ -326,13 +447,15 @@ def test_the_particle_callable_drift_path_refuses_a_callable_tensor():
 
 
 @pytest.mark.parametrize(
-    ("hjb", "fp", "differ"),
+    ("hjb", "hjb_kind", "fp", "fp_kind", "differ"),
     [
-        (0.3, lambda t, x, m: 0.3, True),
-        (RAMP, lambda t, x, m: 0.3, True),
-        (lambda t, x, m: 0.3, lambda t, x, m: 0.3, False),
-        (0.3, np.full(N, 0.3), False),
-        (0.3, np.full(N, 0.4), True),
+        (0.3, None, lambda t, x, m: 0.3, None, True),
+        (RAMP, "field", lambda t, x, m: 0.3, None, True),
+        (lambda t, x, m: 0.3, None, lambda t, x, m: 0.3, None, False),
+        (0.3, None, np.full(N, 0.3), "field", False),
+        (0.3, None, np.full(N, 0.4), "field", True),
+        (0.3, None, np.full((2, 2), 0.3), "tensor", True),
+        (np.full((2, 2), 0.3), "field", np.full((2, 2), 0.3), "tensor", True),
     ],
     ids=[
         "scalar-vs-callable",
@@ -340,22 +463,25 @@ def test_the_particle_callable_drift_path_refuses_a_callable_tensor():
         "two-callables",
         "scalar-vs-equal-constant",
         "scalar-vs-other-constant",
+        "scalar-vs-all-equal-tensor",
+        "field-vs-tensor-same-entries",
     ],
 )
-def test_the_pairing_guard_on_mixed_kinds(hjb, fp, differ):
+def test_the_pairing_guard_on_mixed_kinds(hjb, hjb_kind, fp, fp_kind, differ):
     """Exactly one callable against a value differs: no evaluation can show them equal (#1316).
 
     At 0f937601 these pairs were refused only because the callable collapsed to 1.0; 23bbb9e5 let
     them through. Two callables stay identity-only, which is what keeps Mock doubles passing
-    (#1489); a scalar and a constant field equal to it are one problem.
+    (#1489). A scalar and a constant FIELD equal to it are one problem; an all-equal tensor is not,
+    since its A = 1/2 Sigma Sigma^T is not sigma^2/2 I, and 928bfa8d let that pair through too.
     """
     from types import SimpleNamespace
 
     from mfgarchon.alg.numerical.coupling.base_mfg import assert_paired_solver_sigma
 
     pair = (
-        SimpleNamespace(problem=SimpleNamespace(volatility=hjb)),
-        SimpleNamespace(problem=SimpleNamespace(volatility=fp)),
+        SimpleNamespace(problem=SimpleNamespace(volatility=hjb, volatility_kind=hjb_kind)),
+        SimpleNamespace(problem=SimpleNamespace(volatility=fp, volatility_kind=fp_kind)),
     )
     if differ:
         with pytest.raises(ValueError, match="different volatility"):
@@ -378,3 +504,11 @@ def test_save_experiment_data_stores_a_callable_volatility_by_tag(tmp_path):
     params = load_experiment_data(path)["problem_params"]
     assert params["sigma"] == "callable"
     assert params["volatility_kind"] is None
+
+    # An array is tagged in the file name by its kind: a tensor is not a field.
+    tensor = _problem_2d(volatility=np.diag([0.3, 0.2]), volatility_kind="tensor")
+    zeros = np.zeros((tensor.Nt + 1, 6, 5))
+    path = save_experiment_data(
+        tensor, zeros, zeros, "test", 1, np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1), 0.0, str(tmp_path)
+    )
+    assert "_sigtensor_" in path

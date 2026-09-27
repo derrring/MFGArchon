@@ -76,6 +76,25 @@ def _same_geometry(a: object, b: object) -> bool:
     return a is b
 
 
+def _callable_output_kind(value: Any, declared: str | None, dimension: Any) -> str:
+    """How a callable volatility's (or diffusion's) output is read: as declared, else per point.
+
+    Per point is how every solver that evaluates a callable volatility reads its array output. The
+    exception is an output whose trailing axes are (d, d): a per-point field on a d x d grid and a
+    (d, d) tensor have that shape, and the library does not guess (#2375 ruling 6).
+    """
+    if declared is not None:
+        return declared
+    if isinstance(dimension, int) and dimension >= 2 and np.shape(value)[-2:] == (dimension, dimension):
+        raise ValueError(
+            f"A callable volatility with no volatility_kind returned an array of shape {np.shape(value)}, "
+            f"whose trailing ({dimension}, {dimension}) axes a per-point field on a {dimension} x {dimension} "
+            "grid and a tensor share. Declare volatility_kind='tensor' (a noise matrix) or 'field' "
+            "(isotropic per point) on the problem (#2375 ruling 6)."
+        )
+    return "field"
+
+
 class MFGProblem(HamiltonianMixin, ConditionsMixin):
     """
     Unified MFG problem class that can handle both predefined and custom formulations.
@@ -464,12 +483,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
             if callable(diffusion):
                 _D_callable = diffusion
-                # A callable's array output is per point unless the kind says tensor -- the reading
-                # every solver that evaluates a callable volatility gives it.
-                _callable_kind = volatility_kind or "field"
 
-                def vola_value(t, x, m, *, _D=_D_callable, _kind=_callable_kind):
-                    return volatility_from_diffusion(_D(t, x, m), kind=_kind)
+                def vola_value(t, x, m, *, _D=_D_callable, _kind=volatility_kind):
+                    D = _D(t, x, m)
+                    return volatility_from_diffusion(D, kind=_callable_output_kind(D, _kind, self.dimension))
             else:
                 vola_value = volatility_from_diffusion(diffusion, kind=volatility_kind)
         else:
@@ -1232,12 +1249,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         volatility, kind = self._volatility, self._volatility_kind
         if callable(volatility):
-            # A callable's array output is per point unless the kind says tensor, as every solver
-            # that evaluates one reads it.
-            callable_kind = kind or "field"
 
             def diffusion(t, x, m):
-                return diffusion_from_volatility(volatility(t, x, m), kind=callable_kind)
+                value = volatility(t, x, m)
+                return diffusion_from_volatility(value, kind=_callable_output_kind(value, kind, self.dimension))
 
             return diffusion
         return diffusion_from_volatility(volatility, kind=kind)

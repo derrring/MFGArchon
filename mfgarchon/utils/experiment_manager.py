@@ -82,7 +82,7 @@ def save_experiment_data(
     volatility_tag = (
         f"{volatility:.1e}"
         if isinstance(volatility, (int, float))
-        else ("callable" if callable(volatility) else "field")
+        else ("callable" if callable(volatility) else problem.volatility_kind)
     )
     filename_parts = [
         f"T{problem.T:.1f}",

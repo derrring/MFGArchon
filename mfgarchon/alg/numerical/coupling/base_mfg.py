@@ -46,13 +46,16 @@ def assert_bc_providers_resolvable(problem: MFGProblem, iterator_name: str) -> N
         )
 
 
-def _volatilities_differ(a: Any, b: Any) -> bool:
-    """Whether two volatilities are shown to differ. Scalars by value, arrays and scalars by content.
+def _volatilities_differ(a: Any, b: Any, kind_a: Any = None, kind_b: Any = None) -> bool:
+    """Whether two volatilities are shown to differ: by value, by content, and by volatility_kind.
 
     Two callables are compared only by identity: nothing short of evaluating them could show two
     distinct ones equal, and that is also what keeps Mock-vs-Mock test doubles -- callable by
     construction -- from tripping a guard (#1489). Exactly one callable against a scalar or an array
-    differs: no evaluation can show them equal, and refusing is the #1316 rule.
+    differs: no evaluation can show them equal, and refusing is the #1316 rule. An array is read by
+    its kind, so the same entries under two kinds are two diffusions, and a scalar equals only a
+    constant FIELD of its value -- never an all-equal tensor, whose A = 1/2 Sigma Sigma^T is not
+    sigma^2/2 I.
     """
     if a is b:
         return False
@@ -63,10 +66,10 @@ def _volatilities_differ(a: Any, b: Any) -> bool:
     if a_real and b_real:
         return abs(float(a) - float(b)) > 1e-12
     if a_array and b_array:
-        return not np.array_equal(a, b)
+        return kind_a != kind_b or not np.array_equal(a, b)
     if (a_real and b_array) or (a_array and b_real):
-        scalar, array = (a, b) if a_real else (b, a)
-        return not np.all(array == float(scalar))  # a constant field equal to the scalar is the same
+        scalar, array, array_kind = (a, b, kind_b) if a_real else (b, a, kind_a)
+        return array_kind != "field" or not np.all(array == float(scalar))
     return False
 
 
@@ -81,13 +84,15 @@ def assert_paired_solver_sigma(hjb_solver: Any, fp_solver: Any, context: str) ->
     Extracted from ``FixedPointIterator`` (Issue #1603) to a single owner so EVERY coupling loop --
     FixedPoint, Block, FictitiousPlay, Newton, and the regime / multi-population / graph lists (which
     had no guard) -- shares one check. For a list-based iterator, call once per sub-problem pair
-    (naming the sub-problem in ``context``). Scalars compare by value and arrays by content; before
-    #2376 each problem's array was compared through its mean, so two fields with one mean passed.
-    Callables compare by identity only (see ``_volatilities_differ``).
+    (naming the sub-problem in ``context``). Scalars compare by value, and arrays by content and
+    volatility_kind; before #2376 each problem's array was compared through its mean, so two fields
+    with one mean passed. Callables compare by identity only (see ``_volatilities_differ``).
     """
-    hjb_volatility = getattr(getattr(hjb_solver, "problem", None), "volatility", None)
-    fp_volatility = getattr(getattr(fp_solver, "problem", None), "volatility", None)
-    if _volatilities_differ(hjb_volatility, fp_volatility):
+    hjb_problem, fp_problem = getattr(hjb_solver, "problem", None), getattr(fp_solver, "problem", None)
+    hjb_volatility = getattr(hjb_problem, "volatility", None)
+    fp_volatility = getattr(fp_problem, "volatility", None)
+    kinds = getattr(hjb_problem, "volatility_kind", None), getattr(fp_problem, "volatility_kind", None)
+    if _volatilities_differ(hjb_volatility, fp_volatility, *kinds):
         raise ValueError(
             f"{context}: paired HJB / FP solvers were built from problems with different volatility "
             f"(HJB={hjb_volatility!r}, FP={fp_volatility!r}); a coupled MFG pair is an adjoint pair and "

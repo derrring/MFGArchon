@@ -1062,6 +1062,41 @@ def test_a_callable_s_array_output_is_per_point_unless_declared_a_tensor():
 
 
 @pytest.mark.unit
+def test_a_callable_s_d_by_d_output_needs_a_declared_kind():
+    """A (d, d) output is what a per-point field on a d x d grid and a tensor share: not guessed.
+
+    Read per point by default, a kind-less callable returning a (2, 2) Sigma gave problem.diffusion
+    = Sigma^2/2 elementwise, which is not A = 1/2 Sigma Sigma^T (#2378 re-review). Declared, the
+    same callable converts either way.
+    """
+    grid_2d = default_geometry(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[5, 4], dimension=2)
+    components_2d = MFGComponents(
+        hamiltonian=default_hamiltonian(),
+        m_initial=lambda x: np.exp(-np.sum((np.asarray(x) - 0.5) ** 2, axis=-1)),
+        u_terminal=lambda x: np.zeros(np.asarray(x).shape[:-1]),
+    )
+    S = np.array([[0.3, 0.1], [0.1, 0.2]])
+
+    def build(**kind):
+        return create_test_problem(geometry=grid_2d, components=components_2d, volatility=lambda t, x, m: S, **kind)
+
+    with pytest.raises(ValueError, match=r"trailing \(2, 2\) axes.*volatility_kind='tensor'"):
+        build().diffusion(0.0, np.zeros((4, 2)), None)
+    np.testing.assert_allclose(build(volatility_kind="tensor").diffusion(0.0, np.zeros((4, 2)), None), 0.5 * S @ S.T)
+    np.testing.assert_allclose(build(volatility_kind="field").diffusion(0.0, np.zeros((4, 2)), None), 0.5 * S**2)
+    # A (N,) output from N points is per point, declared or not.
+    per_point = create_test_problem(
+        geometry=grid_2d, components=components_2d, volatility=lambda t, x, m: np.full(len(x), 0.3)
+    )
+    np.testing.assert_allclose(per_point.diffusion(0.0, np.zeros((4, 2)), None), np.full(4, 0.045))
+
+    with pytest.raises(ValueError, match=r"trailing \(2, 2\) axes"):
+        create_test_problem(
+            geometry=grid_2d, components=components_2d, diffusion=lambda t, x, m: 0.5 * S @ S.T
+        ).volatility(0.0, np.zeros((4, 2)), None)
+
+
+@pytest.mark.unit
 def test_callable_volatility_is_held_as_supplied():
     """#2376: a callable volatility is held as the same object, never replaced by 1.0.
 
