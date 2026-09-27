@@ -77,13 +77,17 @@ def _same_geometry(a: object, b: object) -> bool:
 
 
 def _evaluation_shape(x: Any, m: Any) -> tuple[int, ...] | None:
-    """The shape of the points a callable volatility was evaluated at: the density's, else x's."""
+    """The shape of the points a callable volatility was evaluated at, or None if it cannot be read.
+
+    The density's shape when one is given (every solver passes it). Otherwise x's: an array of points
+    shaped (..., d) gives its leading axes, a 1-D array its own shape. A list of per-axis coordinates
+    or of meshgrid arrays carries no single point shape.
+    """
     if np.ndim(m) > 0:
         return tuple(np.shape(m))
-    try:
-        return tuple(np.shape(x)[:-1]) if np.ndim(x) >= 2 else tuple(np.shape(x))
-    except ValueError:  # ragged per-axis coordinate lists carry no single point shape
+    if isinstance(x, (list, tuple)):
         return None
+    return tuple(np.shape(x)[:-1]) if np.ndim(x) >= 2 else tuple(np.shape(x))
 
 
 def _callable_output_kind(value: Any, declared: str | None, dimension: Any, points: tuple[int, ...] | None) -> str:
@@ -104,7 +108,8 @@ def _callable_output_kind(value: Any, declared: str | None, dimension: Any, poin
         return "field"
     raise ValueError(
         f"A callable volatility with no volatility_kind returned an array of shape {shape} at points "
-        f"of shape {points}; its trailing ({dimension}, {dimension}) axes make it a tensor, or on a "
+        f"of shape {points if points is not None else 'unknown (pass the density m)'}; its trailing "
+        f"({dimension}, {dimension}) axes make it a tensor, or on a "
         f"{dimension} x {dimension} grid either a tensor or a per-point field. Declare "
         "volatility_kind='tensor' (a noise matrix) or 'field' (isotropic per point) on the problem "
         "(#2375 ruling 6)."
