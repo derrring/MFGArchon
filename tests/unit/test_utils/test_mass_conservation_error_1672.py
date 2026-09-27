@@ -71,7 +71,7 @@ def test_the_coupled_solve_reports_the_quantity_it_documents(scheme):
     including the literal ``0.0`` that is bug #1672 itself. Review of this PR caught that: all four
     tests stayed green with the measurement replaced by a constant zero.
     """
-    problem = _problem(sigma=1.0)
+    problem = _problem(volatility=1.0)
     result = problem.solve(scheme=scheme, max_iterations=5, verbose=False)
 
     # #2145: the quantity is the integral on THIS grid, whose end nodes hold half a cell each --
@@ -127,7 +127,7 @@ def test_a_solve_that_loses_mass_reports_an_order_one_error():
         ),
         Nt=10,
         T=1.0,
-        sigma=1.0,
+        volatility=1.0,
         components=MFGComponents(
             m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(),
             u_terminal=lambda x: 0.0,

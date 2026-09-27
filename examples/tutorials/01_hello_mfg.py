@@ -43,7 +43,7 @@ if __name__ == "__main__":
         coupling_dm=lambda m: coupling,
     )
 
-    model = Model(hamiltonian=hamiltonian, sigma=sigma)
+    model = Model(hamiltonian=hamiltonian, volatility=sigma)
 
     print("Model created:")
     print(f"  Hamiltonian: H(p, m) = |p|^2/2 + {coupling}*m")
@@ -152,7 +152,7 @@ if __name__ == "__main__":
     print()
 
     # Swap the Model component (same domain, same conditions)
-    model2 = Model(hamiltonian=hamiltonian, sigma=0.3)
+    model2 = Model(hamiltonian=hamiltonian, volatility=0.3)
     problem2 = problem.with_model(model2)
     result2 = problem2.solve(verbose=False)
     print(f"sigma=0.3: converged={result2.converged}, error={result2.max_error:.2e}")

@@ -33,7 +33,7 @@ def _problem(v_amp: float, nx: int, nt: int) -> MFGProblem:
         potential=lambda t, x: v_amp * np.ones_like(np.atleast_1d(x)).squeeze(),
     )
     return MFGProblem(
-        model=Model(hamiltonian=hamiltonian, sigma=0.15),
+        model=Model(hamiltonian=hamiltonian, volatility=0.15),
         domain=grid,
         conditions=Conditions(u_terminal=lambda x: (x - 0.5) ** 2, m_initial=lambda x: 1.0, T=0.5),
         Nt=nt,

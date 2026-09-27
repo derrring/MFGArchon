@@ -51,7 +51,7 @@ geometry = TensorProductGrid(
 )
 
 # Create problem
-problem = MFGProblem(geometry=geometry, T=1.0, Nt=100, sigma=0.1)
+problem = MFGProblem(geometry=geometry, T=1.0, Nt=100, volatility=0.1)
 ```
 
 **Old API** (deprecated, still works):
@@ -61,7 +61,7 @@ problem = MFGProblem(
     spatial_discretization=[101, 51],
     T=1.0,
     Nt=100,
-    sigma=0.1
+    volatility=0.1
 )
 ```
 
@@ -76,7 +76,7 @@ from mfgarchon.core import MFGProblem
 domain = Domain1D(xmin=0.0, xmax=1.0, boundary_conditions="periodic")
 domain.create_grid(Nx=101)
 
-problem = MFGProblem(geometry=domain, T=1.0, Nt=100, sigma=0.1)
+problem = MFGProblem(geometry=domain, T=1.0, Nt=100, volatility=0.1)
 ```
 
 **Removed API** (raises `ValueError` since Issue #1363):
@@ -94,7 +94,7 @@ grid = TensorProductGrid(
     Nx_points=[102],  # Nx=101 intervals -> 102 points
     boundary_conditions=no_flux_bc(dimension=1),
 )
-problem = MFGProblem(geometry=grid, T=1.0, Nt=100, sigma=0.1)
+problem = MFGProblem(geometry=grid, T=1.0, Nt=100, volatility=0.1)
 ```
 
 ### 3. Implicit Domains (Meshfree)
@@ -108,7 +108,7 @@ import numpy as np
 # Create [0,1]² box
 geometry = Hyperrectangle(bounds=np.array([[0, 1], [0, 1]]))
 
-problem = MFGProblem(geometry=geometry, T=1.0, Nt=100, sigma=0.1)
+problem = MFGProblem(geometry=geometry, T=1.0, Nt=100, volatility=0.1)
 ```
 
 **Hypersphere** (sphere via signed distance function):
@@ -119,7 +119,7 @@ from mfgarchon.core import MFGProblem
 # Create unit sphere centered at origin
 geometry = Hypersphere(center=[0, 0], radius=1.0)
 
-problem = MFGProblem(geometry=geometry, T=1.0, Nt=100, sigma=0.1)
+problem = MFGProblem(geometry=geometry, T=1.0, Nt=100, volatility=0.1)
 ```
 
 ### 4. Maze Geometry
@@ -132,7 +132,7 @@ from mfgarchon.core import MFGProblem
 maze_gen = PerfectMazeGenerator(rows=10, cols=10)
 geometry = maze_gen.generate()
 
-problem = MFGProblem(geometry=geometry, T=1.0, Nt=100, sigma=0.1)
+problem = MFGProblem(geometry=geometry, T=1.0, Nt=100, volatility=0.1)
 ```
 
 ### 5. High-Dimensional Grids
@@ -148,7 +148,7 @@ geometry = TensorProductGrid(
     Nx_points=[10, 10, 10, 10]  # 10^4 = 10,000 points
 )
 
-problem = MFGProblem(geometry=geometry, T=1.0, Nt=100, sigma=0.1)
+problem = MFGProblem(geometry=geometry, T=1.0, Nt=100, volatility=0.1)
 ```
 
 ## GeometryProtocol
@@ -278,7 +278,7 @@ geometry = TensorProductGrid(
 )
 
 # Create problem
-problem = MFGProblem(geometry=geometry, T=1.0, Nt=10, sigma=0.1)
+problem = MFGProblem(geometry=geometry, T=1.0, Nt=10, volatility=0.1)
 
 # Verify
 assert problem.dimension == 2
@@ -326,7 +326,7 @@ geometry = MyCustomGeometry(
     dim=2
 )
 
-problem = MFGProblem(geometry=geometry, T=1.0, Nt=10, sigma=0.1)
+problem = MFGProblem(geometry=geometry, T=1.0, Nt=10, volatility=0.1)
 ```
 
 ## Common Patterns
@@ -338,8 +338,8 @@ problem = MFGProblem(geometry=geometry, T=1.0, Nt=10, sigma=0.1)
 geometry = TensorProductGrid(dimension=2, bounds=[(0,1), (0,1)], Nx_points=[51, 51])
 
 # Use for multiple problems with different parameters
-problem1 = MFGProblem(geometry=geometry, T=1.0, Nt=10, sigma=0.1)
-problem2 = MFGProblem(geometry=geometry, T=2.0, Nt=20, sigma=0.2)
+problem1 = MFGProblem(geometry=geometry, T=1.0, Nt=10, volatility=0.1)
+problem2 = MFGProblem(geometry=geometry, T=2.0, Nt=20, volatility=0.2)
 ```
 
 ### Geometry Refinement
@@ -352,7 +352,7 @@ coarse = TensorProductGrid(dimension=2, bounds=[(0,1), (0,1)], Nx_points=[11, 11
 fine = coarse.refine(factor=2)  # Now 21×21
 
 # Use refined grid
-problem = MFGProblem(geometry=fine, T=1.0, Nt=10, sigma=0.1)
+problem = MFGProblem(geometry=fine, T=1.0, Nt=10, volatility=0.1)
 ```
 
 ### Composing Geometries

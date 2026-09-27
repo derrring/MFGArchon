@@ -319,7 +319,7 @@ if __name__ == "__main__":
         spatial_discretization=[50, 50],
         T=1.0,
         Nt=50,
-        sigma=0.01,
+        volatility=0.01,
     )
     print(f"   Created problem: dimension={problem.dimension}, T={problem.T}, Nt={problem.Nt}")
     print("   ✓ Initialization successful")
@@ -386,7 +386,7 @@ if __name__ == "__main__":
         spatial_discretization=[50, 50],
         T=1.0,
         Nt=50,
-        sigma=0.01,
+        volatility=0.01,
     )
 
     # Test at overcapacity (m > C)

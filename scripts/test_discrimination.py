@@ -228,7 +228,7 @@ MUTATIONS: list[Mutation] = [
         ),
         verify=(
             "MFGProblem(geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], "
-            "boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, sigma=0.5, "
+            "boundary_conditions=no_flux_bc(dimension=1)), Nt=4, T=0.2, volatility=0.5, "
             "components=MFGComponents(m_initial=lambda x: np.exp(-50.0 * (np.asarray(x) - 0.5) ** 2), "
             "u_terminal=lambda x: 0.0, hamiltonian=SeparableHamiltonian("
             "control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, "
@@ -392,7 +392,7 @@ MUTATIONS: list[Mutation] = [
         old="    for n_idx_hjb in range(Nt - 2, -1, -1):  # Solves for U_solution_this_picard_iter at t_idx_n = n_idx_hjb",
         new="    for n_idx_hjb in range(0, Nt - 1):  # MUTATED: HJB marched forward from t=0, not backward from T",
         owner='The HJB marches BACKWARD in time, from the terminal row down to t=0, while the FP marches forward -- the adjoint pairing. Single site: base_hjb.py:1780, the only time loop in solve_hjb_system_backward. The M-indexing that rides on it is documented in the same loop body at base_hjb.py:1790: "# BUG #7',
-        verify="float(solve_hjb_system_backward(np.ones((3, 6)), np.full(6, 3.0), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), sigma=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x, m_initial=lambda x: 1.0 + 0.0 * x, T=0.1), Nt=2))[0, 0]) < 1.0",
+        verify="float(solve_hjb_system_backward(np.ones((3, 6)), np.full(6, 3.0), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), volatility=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x, m_initial=lambda x: 1.0 + 0.0 * x, T=0.1), Nt=2))[0, 0]) < 1.0",
     ),
     Mutation(
         name="fp_initial_condition_written_at_final_index",
@@ -400,7 +400,7 @@ MUTATIONS: list[Mutation] = [
         old="    M_solution[0] = m_initial_condition.copy()",
         new="    M_solution[-1] = m_initial_condition.copy()  # MUTATED: forward march anchored at t=T, not t=0",
         owner='The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, fp_fdm_time_stepping.py:797, whose own docstring states the convention at :681: "- Forward time evolution: k=0 -> Nt-1". No issue n',
-        verify="float(np.sum(solve_fp_nd_full_system(np.ones(6), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), sigma=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x, m_initial=lambda x: 1.0 + 0.0 * x, T=0.1), Nt=2))[0])) == 0.0",
+        verify="float(np.sum(solve_fp_nd_full_system(np.ones(6), np.zeros((3, 6)), MFGProblem(model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: 0.0 * m, coupling_dm=lambda m: 0.0), volatility=0.3), domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[6], boundary_conditions=no_flux_bc(dimension=1)), conditions=Conditions(u_terminal=lambda x: 3.0 + 0.0 * x, m_initial=lambda x: 1.0 + 0.0 * x, T=0.1), Nt=2))[0])) == 0.0",
     ),
 ]
 
@@ -592,7 +592,7 @@ def _linearised_1d(preset):
     # A maximum is the only place the two presets differ, so a fixture without one cannot witness the threading.
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[9], boundary_conditions=neumann_bc(dimension=1))
     problem = MFGProblem(
-        geometry=grid, Nt=4, T=1.0, sigma=0.0,
+        geometry=grid, Nt=4, T=1.0, volatility=0.0,
         components=MFGComponents(
             m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0,
             hamiltonian=SeparableHamiltonian(
@@ -610,7 +610,7 @@ def _measure_probe():
     # `_measure` needs the weights the solve would have set, so set them the way `solve_fp_system`
     # does. Returns 1.0 on the geometry's measure and 21.0 under the counting measure.
     g = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
-    p = MFGProblem(geometry=g, Nt=4, T=0.2, sigma=1.0, components=MFGComponents(
+    p = MFGProblem(geometry=g, Nt=4, T=0.2, volatility=1.0, components=MFGComponents(
         m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2).squeeze(),
         u_terminal=lambda x: 0.0,
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0))))

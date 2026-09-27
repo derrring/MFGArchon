@@ -50,7 +50,7 @@ def _problem() -> MFGProblem:
             ),
             Nt=10,
             T=0.5,
-            sigma=0.3,
+            volatility=0.3,
             components=MFGComponents(
                 m_initial=lambda z: 1.0,
                 u_terminal=lambda z: 0.0,

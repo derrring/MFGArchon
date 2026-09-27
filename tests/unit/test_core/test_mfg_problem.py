@@ -150,9 +150,8 @@ def test_mfg_problem_default_initialization():
     assert problem.Nt == 51
     assert problem.dt == pytest.approx(1.0 / 51)
 
-    # Physical parameters (None → 0 for diffusion/drift)
-    assert problem.sigma == 0.0
-    assert problem.volatility_field == 0.0
+    # Physical parameters (None → 0 for volatility/drift)
+    assert problem.volatility == 0.0
     assert problem.drift_field == 0.0
     assert problem.coupling_coefficient == 0.5
 
@@ -190,10 +189,10 @@ def test_mfg_problem_custom_time():
 @pytest.mark.unit
 def test_mfg_problem_custom_coefficients():
     """Test MFGProblem with custom coefficients (Issue #811 convention)."""
-    # sigma= provides SDE volatility directly
-    problem = create_test_problem(sigma=0.5, coupling_coefficient=0.8)
+    # volatility= provides the SDE volatility directly
+    problem = create_test_problem(volatility=0.5, coupling_coefficient=0.8)
 
-    assert problem.sigma == 0.5
+    assert problem.volatility == 0.5
     assert problem.coupling_coefficient == 0.8
 
 
@@ -437,24 +436,31 @@ def test_mfg_problem_validates_zero_mass_m_initial():
 
 
 @pytest.mark.unit
-def test_mfg_problem_rejects_negative_sigma():
-    """Issue #1077 (case 3): a negative scalar sigma is nonsensical volatility -> fail fast."""
-    with pytest.raises(ValueError, match=r"sigma.*must be >= 0"):
-        create_test_problem(sigma=-1.0)
+def test_mfg_problem_rejects_negative_volatility():
+    """Issue #1077 (case 3): a negative scalar volatility is nonsensical -> fail fast.
+
+    A 0-d array is a scalar too: it once skipped the sign check, which tested Python and NumPy
+    scalar types only, and was stored as a 0-d array (#2378 review).
+    """
+    with pytest.raises(ValueError, match=r"volatility.*must be >= 0"):
+        create_test_problem(volatility=-1.0)
+    with pytest.raises(ValueError, match=r"volatility.*must be >= 0"):
+        create_test_problem(volatility=np.array(-1.0))
+    assert isinstance(create_test_problem(volatility=np.array(0.3)).volatility, float)
 
 
 @pytest.mark.unit
-def test_mfg_problem_zero_sigma_is_allowed_and_reconstruction_safe():
-    """Issue #1077 (case 3): sigma == 0 is the deterministic sentinel and must stay allowed,
-    so the negative-sigma guard is reconstruction-safe -- rebuilding from a deterministic
-    problem's stored sigma (0.0) does not raise."""
-    determ = create_test_problem(sigma=None)
-    assert determ.sigma == 0.0
-    assert create_test_problem(sigma=0.0).sigma == 0.0
-    # Reconstruction: MFGProblem(sigma=other.sigma) with a deterministic ``other``.
-    assert create_test_problem(sigma=determ.sigma).sigma == 0.0
+def test_mfg_problem_zero_volatility_is_allowed_and_reconstruction_safe():
+    """Issue #1077 (case 3): volatility == 0 is the deterministic value and must stay allowed,
+    so the negative-volatility guard is reconstruction-safe -- rebuilding from a deterministic
+    problem's volatility (0.0) does not raise."""
+    determ = create_test_problem(volatility=None)
+    assert determ.volatility == 0.0
+    assert create_test_problem(volatility=0.0).volatility == 0.0
+    # Reconstruction: MFGProblem(volatility=other.volatility) with a deterministic ``other``.
+    assert create_test_problem(volatility=determ.volatility).volatility == 0.0
     # Positive volatility is unaffected.
-    assert create_test_problem(sigma=0.3).sigma == 0.3
+    assert create_test_problem(volatility=0.3).volatility == 0.3
 
 
 # ===================================================================
@@ -465,7 +471,7 @@ def test_mfg_problem_zero_sigma_is_allowed_and_reconstruction_safe():
 @pytest.mark.unit
 def test_hamiltonian_h_default():
     """Test default Hamiltonian H computation."""
-    problem = create_test_problem(sigma=1.0, coupling_coefficient=0.5)
+    problem = create_test_problem(volatility=1.0, coupling_coefficient=0.5)
 
     x_idx = 5
     m_at_x = 1.0
@@ -632,7 +638,7 @@ def test_get_initial_m():
 def test_get_problem_info():
     """Test get_problem_info returns comprehensive info dict."""
     geometry = default_geometry(bounds=[(0.0, 1.0)], Nx_points=[51])  # Nx=50 intervals
-    problem = create_test_problem(geometry=geometry, T=1.0, Nt=100, sigma=0.5, coupling_coefficient=0.8)
+    problem = create_test_problem(geometry=geometry, T=1.0, Nt=100, volatility=0.5, coupling_coefficient=0.8)
 
     info = problem.get_problem_info()
 
@@ -649,7 +655,7 @@ def test_get_problem_info():
     assert info["domain"]["Nx"] == 50  # Intervals, from legacy info
     assert info["time"]["T"] == 1.0
     assert info["time"]["Nt"] == 100
-    assert info["coefficients"]["sigma"] == 0.5
+    assert info["coefficients"]["volatility"] == 0.5
     assert info["coefficients"]["coupling_coefficient"] == 0.8
 
 
@@ -733,7 +739,7 @@ def test_dual_geometry_specification():
         hjb_geometry=hjb_grid,
         fp_geometry=fp_grid,
         time_domain=(1.0, 50),
-        sigma=0.1,
+        volatility=0.1,
         components=components,
     )
 
@@ -762,7 +768,7 @@ def test_dual_geometry_backward_compatibility():
         u_terminal=lambda x: 0.0,
     )
     # Create problem with unified geometry (old API)
-    problem = MFGProblem(geometry=grid, time_domain=(1.0, 50), sigma=0.1, components=components)
+    problem = MFGProblem(geometry=grid, time_domain=(1.0, 50), volatility=0.1, components=components)
 
     # Check that both hjb_geometry and fp_geometry point to the same geometry
     assert problem.hjb_geometry is grid
@@ -877,7 +883,7 @@ def test_dual_geometry_with_1d_grids():
 
     components = MFGComponents(hamiltonian=default_hamiltonian(), m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0)
     problem = MFGProblem(
-        hjb_geometry=hjb_grid, fp_geometry=fp_grid, time_domain=(1.0, 50), sigma=0.1, components=components
+        hjb_geometry=hjb_grid, fp_geometry=fp_grid, time_domain=(1.0, 50), volatility=0.1, components=components
     )
 
     # Verify dual geometry setup
@@ -906,132 +912,319 @@ def test_dual_geometry_legacy_mode_compatibility():
 
 
 @pytest.mark.unit
-def test_volatility_field_none():
-    """Test MFGProblem with no diffusion (deterministic). None → 0."""
+def test_volatility_none_is_deterministic():
+    """No volatility and no diffusion: deterministic, Sigma = 0."""
     problem = create_test_problem(diffusion=None)
 
-    assert problem.volatility_field == 0.0
-    assert problem.sigma == 0.0
+    assert problem.volatility == 0.0
+    assert problem.volatility_kind is None
+    assert problem.diffusion == 0.0
     assert not problem.has_state_dependent_coefficients()
 
 
 @pytest.mark.unit
-def test_volatility_field_scalar():
-    """Test MFGProblem with scalar diffusion D = sigma^2/2 (Issue #811)."""
+def test_diffusion_input_implies_the_volatility():
+    """diffusion=D is the PDE coefficient; the problem holds the volatility it implies (#811)."""
     # diffusion=0.125 means D=0.125, so sigma = sqrt(2*0.125) = 0.5
     problem = create_test_problem(diffusion=0.125)
 
-    assert problem.sigma == pytest.approx(0.5)
-    # volatility_field stores SDE volatility (for solver compatibility)
-    assert problem.volatility_field == pytest.approx(0.5)
-    # diffusion property returns PDE coefficient D
+    assert problem.volatility == pytest.approx(0.5)
     assert problem.diffusion == pytest.approx(0.125)
     assert not problem.has_state_dependent_coefficients()
 
 
 @pytest.mark.unit
-def test_volatility_field_array():
-    """Test MFGProblem with array diffusion coefficient (spatially varying)."""
-    # Create a spatially varying diffusion array (11 points from default_geometry)
-    sigma_array = np.linspace(0.1, 1.0, 11)
+def test_array_volatility_is_held_as_supplied():
+    """#2376: an array volatility is held verbatim and never collapsed to its mean.
 
-    problem = create_test_problem(sigma=sigma_array)
+    Before, problem.sigma was mean(array) and every scalar reader of it silently solved at the mean.
+    Now no scalar view exists, and a consumer that can only use a scalar refuses, naming itself.
+    """
+    from mfgarchon.utils.pde_coefficients import scalar_volatility
 
-    # Array should be stored in volatility_field
-    assert isinstance(problem.volatility_field, np.ndarray)
-    assert np.array_equal(problem.volatility_field, sigma_array)
+    sigma_array = np.linspace(0.1, 1.0, 11)  # 11 points from default_geometry
+    problem = create_test_problem(volatility=sigma_array, volatility_kind="field")
 
-    # Scalar sigma should be the mean for backward compatibility
-    assert problem.sigma == pytest.approx(np.mean(sigma_array))
+    assert problem.volatility is sigma_array
+    assert problem.volatility_kind == "field"
+    np.testing.assert_array_equal(problem.diffusion, 0.5 * sigma_array**2)
+    with pytest.raises(NotImplementedError, match="SomeSolver uses one scalar volatility"):
+        scalar_volatility(problem.volatility, consumer="SomeSolver")
     assert not problem.has_state_dependent_coefficients()
 
 
 @pytest.mark.unit
-def test_volatility_field_callable():
-    """Test MFGProblem with callable diffusion coefficient (state-dependent)."""
+def test_array_volatility_needs_a_kind():
+    """A (d, d) tensor and a d x d field have the same shape, so an array states its kind."""
+    with pytest.raises(ValueError, match="needs volatility_kind"):
+        create_test_problem(volatility=np.linspace(0.1, 1.0, 11))
+    with pytest.raises(ValueError, match="needs volatility_kind"):
+        create_test_problem(diffusion=np.linspace(0.1, 1.0, 11))
+    with pytest.raises(ValueError, match="read by nothing"):
+        create_test_problem(volatility=0.3, volatility_kind="field")
+    with pytest.raises(ValueError, match="must be 'field' or 'tensor'"):
+        create_test_problem(volatility=np.linspace(0.1, 1.0, 11), volatility_kind="diagonal")
+
+
+@pytest.mark.unit
+def test_a_list_volatility_is_validated_like_an_array():
+    """A list is held as a float array, so the shape and finiteness checks see it (#2378 review).
+
+    It was held as a list, which the ndarray-keyed validation skipped: a wrong-length list was
+    accepted at construction, and every solver then failed at solve time on the type.
+    """
+    from mfgarchon.utils.validation import ValidationError
+
+    problem = create_test_problem(volatility=[0.2] * 11, volatility_kind="field")
+    assert isinstance(problem.volatility, np.ndarray)
+    assert problem.volatility.dtype == np.float64
+    with pytest.raises(ValidationError, match=r"volatility has shape \(7,\)"):
+        create_test_problem(volatility=[0.2] * 7, volatility_kind="field")
+    with pytest.raises(ValidationError, match=r"volatility has shape \(7,\)"):
+        create_test_problem(diffusion=[0.02] * 7, volatility_kind="field")
+
+
+@pytest.mark.unit
+def test_tensor_volatility_shape_is_checked_against_the_problem():
+    """kind='tensor' is (d, k) or (*spatial_shape, d, k); a 1-D problem has no tensor reader."""
+    grid_2d = default_geometry(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[5, 4], dimension=2)
+    components_2d = MFGComponents(
+        hamiltonian=default_hamiltonian(),
+        m_initial=lambda x: np.exp(-np.sum((np.asarray(x) - 0.5) ** 2, axis=-1)),
+        u_terminal=lambda x: np.zeros(np.asarray(x).shape[:-1]),
+    )
+
+    def build(volatility):
+        return create_test_problem(
+            geometry=grid_2d, components=components_2d, volatility=volatility, volatility_kind="tensor"
+        )
+
+    S = np.array([[0.3, 0.1], [0.1, 0.2]])
+    np.testing.assert_allclose(build(S).diffusion, 0.5 * S @ S.T)
+    build(np.broadcast_to(S, (5, 4, 2, 2)).copy())
+    with pytest.raises(ValueError, match=r"needs shape \(d, k\) or \(\*spatial_shape, d, k\)"):
+        build(np.eye(3))
+    with pytest.raises(ValueError, match=r"needs shape \(d, k\) or \(\*spatial_shape, d, k\)"):
+        build(np.zeros((3, 4, 2, 2)))
+    with pytest.raises(ValueError, match="1-D problem"):
+        create_test_problem(volatility=np.array([[0.3]]), volatility_kind="tensor")
+    # k != d is admitted by the (d, k) shape but read by no solver: refused, naming the square
+    # root with the same diffusion (#2378 review).
+    with pytest.raises(ValueError, match=r"3 noise sources on a 2-D problem.*symmetric \(d, d\) square root"):
+        build(np.full((2, 3), 0.1))
+    with pytest.raises(ValueError, match="3 noise sources"):
+        build(np.full((5, 4, 2, 3), 0.1))
+
+
+@pytest.mark.unit
+def test_a_legacy_pickled_array_volatility_is_a_field():
+    """A problem pickled before #2375 ruling 6 held its array on `volatility_field`.
+
+    The old constructor admitted only grid-shaped fields, so the restored kind is "field"; left at
+    None, the restored problem could not convert its own volatility (#2378 review).
+    """
+    sigma_array = np.linspace(0.1, 1.0, 11)
+    state = dict(create_test_problem(volatility=sigma_array, volatility_kind="field").__dict__)
+    state["volatility_field"] = state.pop("_volatility")
+    del state["_volatility_kind"]
+    state["sigma"] = float(np.mean(sigma_array))  # the collapsed scalar, which is not carried over
+
+    restored = MFGProblem.__new__(MFGProblem)
+    restored.__setstate__(state)
+
+    assert restored.volatility is sigma_array
+    assert restored.volatility_kind == "field"
+    np.testing.assert_array_equal(restored.diffusion, 0.5 * sigma_array**2)
+
+    scalar_state = dict(create_test_problem(volatility=0.3).__dict__)
+    scalar_state["volatility_field"] = scalar_state.pop("_volatility")
+    del scalar_state["_volatility_kind"]
+    restored_scalar = MFGProblem.__new__(MFGProblem)
+    restored_scalar.__setstate__(scalar_state)
+    assert restored_scalar.volatility_kind is None
+
+
+@pytest.mark.unit
+def test_a_callable_s_array_output_is_per_point_unless_declared_a_tensor():
+    """A callable's array output is a per-point field by default, as every solver evaluating one reads it.
+
+    Before, a callable diffusion= returning an array raised on its first evaluation, naming a kind=
+    the problem does not take -- and it had solved at 0f937601 (#2378 review).
+    """
+    x = np.linspace(0.0, 1.0, 11)
+    D_of_x = 0.02 + 0.1 * x
+
+    from_diffusion = create_test_problem(diffusion=lambda t, x, m: 0.02 + 0.1 * np.asarray(x))
+    np.testing.assert_allclose(from_diffusion.volatility(0.0, x, None), np.sqrt(2.0 * D_of_x), rtol=1e-15)
+
+    from_volatility = create_test_problem(volatility=lambda t, x, m: np.sqrt(2.0 * (0.02 + 0.1 * np.asarray(x))))
+    np.testing.assert_allclose(from_volatility.diffusion(0.0, x, None), D_of_x, rtol=1e-14)
+
+
+@pytest.mark.unit
+def test_a_callable_s_d_by_d_output_needs_a_declared_kind():
+    """A (d, d) output is what a per-point field on a d x d grid and a tensor share: not guessed.
+
+    Read per point by default, a kind-less callable returning a (2, 2) Sigma gave problem.diffusion
+    = Sigma^2/2 elementwise, which is not A = 1/2 Sigma Sigma^T (#2378 re-review). Declared, the
+    same callable converts either way.
+    """
+    grid_2d = default_geometry(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[5, 4], dimension=2)
+    components_2d = MFGComponents(
+        hamiltonian=default_hamiltonian(),
+        m_initial=lambda x: np.exp(-np.sum((np.asarray(x) - 0.5) ** 2, axis=-1)),
+        u_terminal=lambda x: np.zeros(np.asarray(x).shape[:-1]),
+    )
+    S = np.array([[0.3, 0.1], [0.1, 0.2]])
+
+    def build(**kind):
+        return create_test_problem(geometry=grid_2d, components=components_2d, volatility=lambda t, x, m: S, **kind)
+
+    with pytest.raises(ValueError, match=r"trailing \(2, 2\) axes.*volatility_kind='tensor'"):
+        build().diffusion(0.0, np.zeros((4, 2)), None)
+    np.testing.assert_allclose(build(volatility_kind="tensor").diffusion(0.0, np.zeros((4, 2)), None), 0.5 * S @ S.T)
+    np.testing.assert_allclose(build(volatility_kind="field").diffusion(0.0, np.zeros((4, 2)), None), 0.5 * S**2)
+    # A (N,) output from N points is per point, declared or not.
+    per_point = create_test_problem(
+        geometry=grid_2d, components=components_2d, volatility=lambda t, x, m: np.full(len(x), 0.3)
+    )
+    np.testing.assert_allclose(per_point.diffusion(0.0, np.zeros((4, 2)), None), np.full(4, 0.045))
+
+    with pytest.raises(ValueError, match=r"trailing \(2, 2\) axes"):
+        create_test_problem(
+            geometry=grid_2d, components=components_2d, diffusion=lambda t, x, m: 0.5 * S @ S.T
+        ).volatility(0.0, np.zeros((4, 2)), None)
+
+    # On a 2 x 2 grid a (2, 2) output from the grid's own points is either reading: still refused.
+    grid_2x2 = default_geometry(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[2, 2], dimension=2)
+    per_point_2x2 = create_test_problem(
+        geometry=grid_2x2, components=components_2d, volatility=lambda t, x, m: np.full(np.shape(m), 0.3)
+    )
+    with pytest.raises(ValueError, match=r"trailing \(2, 2\) axes"):
+        per_point_2x2.diffusion(0.0, None, np.ones((2, 2)))
+
+
+@pytest.mark.unit
+def test_a_per_point_callable_on_a_grid_ending_in_d_by_d_is_read_per_point():
+    """A 3-D grid shaped (Nx, 3, 3) gives one value per point with trailing (3, 3) axes.
+
+    The (d, d) refusal must key on the evaluation points, not on the output alone: d4c7351f refused
+    this mid-solve, where 928bfa8d solved it (#2378 re-review, D2). The oracle is the scalar: a
+    constant per-point diffusion is the scalar one, and FP-FDM must solve it to the same density.
+    """
+    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+
+    grid_3d = default_geometry(bounds=[(0.0, 1.0)] * 3, Nx_points=[4, 3, 3], dimension=3)
+    components_3d = MFGComponents(
+        hamiltonian=default_hamiltonian(),
+        m_initial=lambda x: np.exp(-10 * np.sum((np.asarray(x) - 0.5) ** 2, axis=-1)),
+        u_terminal=lambda x: np.zeros(np.asarray(x).shape[:-1]),
+    )
+    x, y, z = np.meshgrid(np.linspace(0, 1, 4), np.linspace(0, 1, 3), np.linspace(0, 1, 3), indexing="ij")
+    m0 = np.exp(-10 * ((x - 0.5) ** 2 + (y - 0.3) ** 2 + (z - 0.6) ** 2))
+
+    def solve(diffusion):
+        problem = create_test_problem(geometry=grid_3d, components=components_3d, T=0.1, Nt=2, diffusion=diffusion)
+        return FPFDMSolver(problem).solve_fp_system(m0)
+
+    np.testing.assert_array_equal(solve(lambda t, x, m: np.full(np.shape(m), 0.02)), solve(0.02))
+
+    # Called directly with no density, the points are read from x: a meshgrid list is the grid's
+    # points, so its per-point output is accepted; per-axis coordinate vectors are not points, so a
+    # (3, 3)-trailing output from them stays refused (#2378 re-review, F2).
+    per_point = create_test_problem(
+        geometry=grid_3d, components=components_3d, diffusion=lambda t, x, m: np.full((4, 3, 3), 0.02)
+    )
+    np.testing.assert_allclose(per_point.volatility(0.0, [x, y, z], None), np.full((4, 3, 3), 0.2))
+    with pytest.raises(ValueError, match=r"trailing \(3, 3\) axes"):
+        per_point.volatility(0.0, [np.linspace(0, 1, 4), np.linspace(0, 1, 3), np.linspace(0, 1, 3)], None)
+
+
+@pytest.mark.unit
+def test_callable_volatility_is_held_as_supplied():
+    """#2376: a callable volatility is held as the same object, never replaced by 1.0.
+
+    Before, problem.sigma was the literal 1.0 for any callable -- for sigma = 0.05 a factor of 400
+    in D. The diffusion is the callable's own value, converted per call.
+    """
+    from mfgarchon.utils.pde_coefficients import scalar_volatility
 
     def sigma_func(t, x, m):
-        """State-dependent diffusion: higher diffusion in high-density regions."""
+        """State-dependent volatility: more noise in high-density regions."""
         return 0.1 + 0.5 * m
 
-    problem = create_test_problem(sigma=sigma_func)
+    problem = create_test_problem(volatility=sigma_func)
 
-    # Callable should be stored in volatility_field
-    assert callable(problem.volatility_field)
-    assert problem.volatility_field is sigma_func
-
-    # Scalar sigma should default to 1.0 for callable
-    assert problem.sigma == 1.0
+    assert problem.volatility is sigma_func
+    assert problem.diffusion(0.0, 0.3, 0.4) == pytest.approx(0.5 * (0.1 + 0.5 * 0.4) ** 2)
+    with pytest.raises(NotImplementedError, match="SomeSolver uses one scalar volatility"):
+        scalar_volatility(problem.volatility, consumer="SomeSolver")
     assert problem.has_state_dependent_coefficients()
 
 
 @pytest.mark.unit
 def test_diffusion_primary_parameter():
-    """Test that 'diffusion' converts D -> sigma (Issue #811)."""
-    # diffusion=0.3 means D=0.3, sigma = sqrt(2*0.3) ~ 0.7746
+    """'diffusion' converts D -> the volatility sqrt(2D) (Issue #811)."""
     import math
 
     problem = create_test_problem(diffusion=0.3)
 
-    assert problem.sigma == pytest.approx(math.sqrt(2 * 0.3))
+    assert problem.volatility == pytest.approx(math.sqrt(2 * 0.3))
     assert problem.diffusion == pytest.approx(0.3)
-    # volatility_field stores converted volatility
-    assert problem.volatility_field == pytest.approx(math.sqrt(2 * 0.3))
 
 
 @pytest.mark.unit
-def test_sigma_direct_sde_volatility():
-    """Test that sigma= provides SDE volatility directly (Issue #811)."""
-    # sigma= is NOT deprecated — it's the canonical SDE volatility input
-    problem = create_test_problem(sigma=0.4)
+def test_volatility_is_the_sde_volatility():
+    """volatility= is the SDE volatility, held without conversion; diffusion is sigma^2/2 (#811)."""
+    problem = create_test_problem(volatility=0.4)
 
-    # sigma stored directly (no conversion)
-    assert problem.sigma == 0.4
-    assert problem.volatility_field == 0.4
-    # diffusion property computes D = sigma^2/2
-    assert problem.diffusion == pytest.approx(0.4**2 / 2.0)
-    # volatility is alias for sigma
     assert problem.volatility == 0.4
+    assert problem.diffusion == pytest.approx(0.4**2 / 2.0)
 
 
 @pytest.mark.unit
-def test_volatility_alias_for_sigma():
-    """Test that volatility= is an alias for sigma= (Issue #811)."""
-    problem = create_test_problem(volatility=0.6)
+def test_sigma_is_retired():
+    """#2375 ruling 6: sigma= is refused, naming its replacement, and problem.sigma is gone."""
+    with pytest.raises(TypeError, match=r"MFGProblem\(sigma=\.\.\.\) is retired.*volatility="):
+        create_test_problem(sigma=0.5)
+    problem = create_test_problem(volatility=0.5)
+    for name in ("sigma", "volatility_field", "diffusion_field"):
+        with pytest.raises(AttributeError, match=rf"problem\.{name} is retired"):
+            getattr(problem, name)
 
-    assert problem.sigma == 0.6
-    assert problem.volatility == 0.6
-    assert problem.diffusion == pytest.approx(0.6**2 / 2.0)
+    import dataclasses
+
+    from mfgarchon.core.model import Model
+
+    model = Model(hamiltonian=default_hamiltonian(), volatility=0.2)
+    with pytest.raises(TypeError, match=r"Model\(sigma=\.\.\.\) is retired.*volatility="):
+        Model(hamiltonian=default_hamiltonian(), sigma=0.2)
+    with pytest.raises(TypeError, match=r"Model\(sigma=\.\.\.\) is retired"):
+        dataclasses.replace(model, sigma=0.3)
+    # Read, it raises too: a retired field read back as None would pass every getattr default.
+    with pytest.raises(AttributeError, match=r"Model\.sigma is retired.*Model\.volatility"):
+        model.sigma  # noqa: B018
+    assert dataclasses.replace(model, volatility=0.3).volatility == 0.3
 
 
 @pytest.mark.unit
-def test_diffusion_sigma_mutual_exclusion():
-    """Test that diffusion=, sigma=, volatility= are mutually exclusive."""
-    # Two at once should raise
-    with pytest.raises(ValueError, match="at most one"):
-        create_test_problem(diffusion=0.1, sigma=0.5)
-
-    with pytest.raises(ValueError, match="at most one"):
-        create_test_problem(sigma=0.5, volatility=0.5)
-
+def test_diffusion_volatility_mutual_exclusion():
+    """diffusion= and volatility= are mutually exclusive."""
     with pytest.raises(ValueError, match="at most one"):
         create_test_problem(diffusion=0.1, volatility=0.5)
 
 
 @pytest.mark.unit
-def test_diffusion_sigma_equivalence():
-    """Test that diffusion=D and sigma=sqrt(2D) give identical results (Issue #811)."""
+def test_diffusion_volatility_equivalence():
+    """diffusion=D and volatility=sqrt(2D) describe one problem (Issue #811)."""
     import math
 
     D = 0.125  # PDE coefficient
-    sigma = math.sqrt(2 * D)  # SDE volatility = 0.5
-
     p1 = create_test_problem(diffusion=D)
-    p2 = create_test_problem(sigma=sigma)
+    p2 = create_test_problem(volatility=math.sqrt(2 * D))
 
-    assert p1.sigma == pytest.approx(p2.sigma)
-    assert p1.diffusion == pytest.approx(p2.diffusion)
     assert p1.volatility == pytest.approx(p2.volatility)
+    assert p1.diffusion == pytest.approx(p2.diffusion)
 
 
 @pytest.mark.unit
@@ -1083,7 +1276,7 @@ def test_drift_field_callable():
 @pytest.mark.unit
 def test_get_diffusion_coefficient_field():
     """Test get_diffusion_coefficient_field returns CoefficientField wrapper."""
-    problem = create_test_problem(sigma=0.5)
+    problem = create_test_problem(volatility=0.5)
 
     coeff_field = problem.get_diffusion_coefficient_field()
 
@@ -1096,43 +1289,34 @@ def test_get_diffusion_coefficient_field():
 
 @pytest.mark.unit
 def test_get_diffusion_coefficient_field_override_precedence():
-    """Issue #1412: the factory resolves override > volatility_field > sigma.
+    """Issue #1412: the factory resolves override > problem.volatility.
 
-    A per-solve override wins; with no override the FULL ``volatility_field`` is used, NOT the
-    derived scalar ``problem.sigma`` (``mean`` for an array, ``1.0`` for a callable). This is the
-    precedence the FDM/HJB solver sites now route through, instead of the old
-    ``CoefficientField(override, problem.sigma)`` that dropped a spatial ``volatility_field`` on a
-    ``None`` override."""
+    A per-solve override wins; with no override the FULL array volatility is used -- there is no
+    scalar fallback to fall to (#2376)."""
     sigma_arr = np.linspace(0.2, 0.8, 11)
-    problem = create_test_problem(sigma=sigma_arr)
-    # problem.sigma is the derived scalar (mean); volatility_field is the full array.
-    assert problem.sigma == pytest.approx(float(np.mean(sigma_arr)))
-    np.testing.assert_array_equal(problem.volatility_field, sigma_arr)
+    problem = create_test_problem(volatility=sigma_arr, volatility_kind="field")
 
     # override given -> override wins
     assert problem.get_diffusion_coefficient_field(override=0.9).field == 0.9
 
-    # override None -> the FULL volatility_field (array), not the scalar mean placeholder
+    # override None -> the full array volatility
     field = problem.get_diffusion_coefficient_field(override=None)
     np.testing.assert_array_equal(field.field, sigma_arr)
-    assert field.default == pytest.approx(problem.sigma)  # sigma only the ultimate fallback
 
 
 @pytest.mark.unit
 def test_get_diffusion_coefficient_field_scalar_is_byte_identical():
-    """Issue #1412: for a scalar problem volatility_field == sigma, so an override=None resolution
-    equals the old problem.sigma fallback — the solver-site migration is byte-identical."""
-    problem = create_test_problem(sigma=0.3)
+    """Issue #1412: for a scalar problem an override=None resolution is the scalar itself."""
+    problem = create_test_problem(volatility=0.3)
     field = problem.get_diffusion_coefficient_field(override=None)
     assert field.field == pytest.approx(0.3)
-    assert field.default == pytest.approx(0.3)
 
 
 @pytest.mark.unit
 def test_get_diffusion_coefficient_field_name_and_dimension_params():
     """Issue #1412: default field_name stays 'diffusion' (back-compat); solvers pass
     'volatility_field' and their own dimension."""
-    problem = create_test_problem(sigma=0.3)
+    problem = create_test_problem(volatility=0.3)
     assert problem.get_diffusion_coefficient_field().name == "diffusion"
     f = problem.get_diffusion_coefficient_field(field_name="volatility_field", dimension=1)
     assert f.name == "volatility_field"
@@ -1163,18 +1347,18 @@ def test_has_state_dependent_coefficients_mixed():
         return 0.1 + 0.5 * m
 
     # Scalar drift, callable volatility (default_geometry has 11 grid points)
-    problem1 = create_test_problem(sigma=sigma_func, drift=np.zeros(11))
+    problem1 = create_test_problem(volatility=sigma_func, drift=np.zeros(11))
     assert problem1.has_state_dependent_coefficients()
 
     # Callable drift, scalar diffusion
     def drift_func(t, x, m):
         return -0.1 * x
 
-    problem2 = create_test_problem(sigma=0.5, drift=drift_func)
+    problem2 = create_test_problem(volatility=0.5, drift=drift_func)
     assert problem2.has_state_dependent_coefficients()
 
     # Both scalar
-    problem3 = create_test_problem(sigma=0.5, drift=np.zeros(11))
+    problem3 = create_test_problem(volatility=0.5, drift=np.zeros(11))
     assert not problem3.has_state_dependent_coefficients()
 
 
@@ -1197,8 +1381,8 @@ def test_volatility_field_with_geometry():
         m_initial=lambda x: 1.0,
         u_terminal=lambda x: 0.0,
     )
-    problem = MFGProblem(geometry=grid, time_domain=(1.0, 50), sigma=sigma_func, components=components)
+    problem = MFGProblem(geometry=grid, time_domain=(1.0, 50), volatility=sigma_func, components=components)
 
-    assert callable(problem.volatility_field)
+    assert problem.volatility is sigma_func
     assert problem.has_state_dependent_coefficients()
     assert problem.dimension == 2

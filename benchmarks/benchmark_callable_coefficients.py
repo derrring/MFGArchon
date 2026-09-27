@@ -40,7 +40,7 @@ def benchmark_scalar_diffusion(Nx=100, Nt=100, num_runs=3):
                 ),
                 T=1.0,
                 Nt=Nt,
-                sigma=0.1,
+                volatility=0.1,
                 drift_weight=1.0,
                 coupling_lambda=1.0,
             )
@@ -74,7 +74,7 @@ def benchmark_array_diffusion_spatial(Nx=100, Nt=100, num_runs=3):
                 ),
                 T=1.0,
                 Nt=Nt,
-                sigma=0.1,
+                volatility=0.1,
                 drift_weight=1.0,
                 coupling_lambda=1.0,
             )
@@ -112,7 +112,7 @@ def benchmark_array_diffusion_spatiotemporal(Nx=100, Nt=100, num_runs=3):
                 ),
                 T=1.0,
                 Nt=Nt,
-                sigma=0.1,
+                volatility=0.1,
                 drift_weight=1.0,
                 coupling_lambda=1.0,
             )
@@ -155,7 +155,7 @@ def benchmark_callable_diffusion_scalar(Nx=100, Nt=100, num_runs=3):
                 ),
                 T=1.0,
                 Nt=Nt,
-                sigma=0.1,
+                volatility=0.1,
                 drift_weight=1.0,
                 coupling_lambda=1.0,
             )
@@ -194,7 +194,7 @@ def benchmark_callable_diffusion_porous_medium(Nx=100, Nt=100, num_runs=3):
                 ),
                 T=1.0,
                 Nt=Nt,
-                sigma=0.1,
+                volatility=0.1,
                 drift_weight=1.0,
                 coupling_lambda=1.0,
             )
@@ -234,7 +234,7 @@ def benchmark_callable_diffusion_crowd_dynamics(Nx=100, Nt=100, num_runs=3):
                 ),
                 T=1.0,
                 Nt=Nt,
-                sigma=0.1,
+                volatility=0.1,
                 drift_weight=1.0,
                 coupling_lambda=1.0,
             )

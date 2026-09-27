@@ -28,7 +28,9 @@ def _problem(coupling_coefficient: float) -> MFGProblem:
             coupling_dm=lambda m: 1.0,
         ),
     )
-    return MFGProblem(geometry=geom, T=0.2, Nt=5, sigma=0.3, components=comp, coupling_coefficient=coupling_coefficient)
+    return MFGProblem(
+        geometry=geom, T=0.2, Nt=5, volatility=0.3, components=comp, coupling_coefficient=coupling_coefficient
+    )
 
 
 def test_fp_drift_coefficient_sources_from_control_cost_not_coupling():

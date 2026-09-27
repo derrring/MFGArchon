@@ -216,7 +216,9 @@ def main():
         capacity_weight=0.5,
         T=1.0,
         Nt=50,
-        sigma=[0.01, 0.03],  # Residents faster, tourists slower
+        # One volatility for both: distinct per-population values are refused, since no solver
+        # reads a population's own (#2378). 0.02 sits between the 0.01 / 0.03 this once intended.
+        volatility=0.02,
         population_labels=["Residents", "Tourists"],
     )
 

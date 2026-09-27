@@ -96,7 +96,7 @@ def create_validation_problem(nx: int = 51, nt: int = 51) -> MFGProblem:
         ),
         T=0.5,
         Nt=nt,
-        sigma=0.1,
+        volatility=0.1,
         coupling_coefficient=0.5,
     )
 

@@ -79,7 +79,7 @@ def create_crowd_motion_2d(
         coupling=lambda m: congestion_weight * m,
         coupling_dm=lambda m: congestion_weight,
     )
-    model = Model(hamiltonian=hamiltonian, sigma=sigma)
+    model = Model(hamiltonian=hamiltonian, volatility=sigma)
 
     # Conditions (callables, resolution-independent)
     def initial_density(x):

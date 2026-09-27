@@ -58,7 +58,7 @@ def create_simple_coupled_problem(
         coupling=lambda m: coupling_strength * m,
         coupling_dm=lambda m: coupling_strength,
     )
-    model = Model(hamiltonian=hamiltonian, sigma=diffusion_coeff)
+    model = Model(hamiltonian=hamiltonian, volatility=diffusion_coeff)
 
     def initial_density_func(x):
         """Gaussian initial density centered at (0.3, 0.3)."""

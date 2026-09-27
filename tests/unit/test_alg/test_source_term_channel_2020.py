@@ -118,14 +118,14 @@ def _components():
 
 def _grid_problem():
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[_N], boundary_conditions=no_flux_bc(dimension=1))
-    return MFGProblem(geometry=grid, T=0.2, Nt=5, sigma=0.3, components=_components(), coupling_coefficient=0.0)
+    return MFGProblem(geometry=grid, T=0.2, Nt=5, volatility=0.3, components=_components(), coupling_coefficient=0.0)
 
 
 def _mesh_problem():
     mesh = Mesh1D(bounds=(0.0, 1.0), num_elements=_N - 1)
     mesh.generate_mesh()
     mesh.boundary_conditions = no_flux_bc(dimension=1)
-    return MFGProblem(geometry=mesh, T=0.2, Nt=5, sigma=0.3, components=_components(), coupling_coefficient=0.0)
+    return MFGProblem(geometry=mesh, T=0.2, Nt=5, volatility=0.3, components=_components(), coupling_coefficient=0.0)
 
 
 class _Source:

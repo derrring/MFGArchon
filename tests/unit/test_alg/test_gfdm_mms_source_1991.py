@@ -105,7 +105,7 @@ def _linf(nx, nt=20, sigma=1.0, sign=-1.0, **solver_kw):
         m_initial=lambda xx: np.ones_like(np.asarray(xx, dtype=float)) / L,
         u_terminal=lambda xx: _u_exact(T, xx),
     )
-    problem = MFGProblem(geometry=grid, components=comps, T=T, Nt=nt, sigma=sigma)
+    problem = MFGProblem(geometry=grid, components=comps, T=T, Nt=nt, volatility=sigma)
     solver = HJBGFDMSolver(problem, collocation_points=x.reshape(-1, 1), delta=3.0 * L / (nx - 1), **solver_kw)
     m = np.tile(np.ones(nx) / L, (nt + 1, 1))
     u_T = _u_exact(T, x)
@@ -209,7 +209,7 @@ def test_the_source_reaches_gfdm_in_2d():
         u_terminal=lambda x, y: _a1(T) * (np.cos(C * np.asarray(x)) + np.cos(C * np.asarray(y))),
     )
     nt = 8
-    problem = MFGProblem(geometry=grid, components=comps, T=T, Nt=nt, sigma=1.0)
+    problem = MFGProblem(geometry=grid, components=comps, T=T, Nt=nt, volatility=1.0)
     solver = HJBGFDMSolver(problem, collocation_points=pts, delta=3.0 * L / (n1 - 1))
     m = np.ones((nt + 1, pts.shape[0])) / (L * L)
     u_T = u_ex(T, pts)

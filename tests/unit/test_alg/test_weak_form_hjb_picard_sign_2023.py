@@ -61,12 +61,16 @@ def _mesh_problem(c: float):
     mesh = Mesh1D(bounds=(0.0, 1.0), num_elements=_NE)
     mesh.generate_mesh()
     mesh.boundary_conditions = no_flux_bc(dimension=1)
-    return MFGProblem(geometry=mesh, T=_T, Nt=_NT, sigma=_SIGMA, coupling_coefficient=0.0, components=_components(c))
+    return MFGProblem(
+        geometry=mesh, T=_T, Nt=_NT, volatility=_SIGMA, coupling_coefficient=0.0, components=_components(c)
+    )
 
 
 def _grid_problem(c: float):
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[_NE + 1], boundary_conditions=no_flux_bc(dimension=1))
-    return MFGProblem(geometry=grid, T=_T, Nt=_NT, sigma=_SIGMA, coupling_coefficient=0.0, components=_components(c))
+    return MFGProblem(
+        geometry=grid, T=_T, Nt=_NT, volatility=_SIGMA, coupling_coefficient=0.0, components=_components(c)
+    )
 
 
 @pytest.mark.parametrize("c", _CONSTANTS)

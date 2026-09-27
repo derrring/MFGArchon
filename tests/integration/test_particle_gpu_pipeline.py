@@ -70,7 +70,7 @@ class TestParticleGPUPipeline:
             geometry=geometry,
             Nt=20,
             T=1.0,
-            sigma=0.1,
+            volatility=0.1,
             coupling_coefficient=1.0,
             components=_default_components(),
         )
@@ -144,7 +144,7 @@ class TestParticleGPUPipeline:
             geometry=geometry,
             Nt=10,
             T=0.5,
-            sigma=0.2,
+            volatility=0.2,
             components=_default_components(),
         )
 
@@ -190,7 +190,7 @@ class TestParticleGPUPipeline:
             geometry=geometry,
             Nt=15,
             T=0.5,
-            sigma=0.15,
+            volatility=0.15,
             components=_default_components(),
         )
 

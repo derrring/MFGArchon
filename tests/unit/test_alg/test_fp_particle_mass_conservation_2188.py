@@ -45,7 +45,7 @@ def _problem(bc: BoundaryConditions, nx: int = 21, nt: int = 15, sigma: float = 
     return MFGProblem(
         model=Model(
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m),
-            sigma=sigma,
+            volatility=sigma,
         ),
         domain=grid,
         conditions=Conditions(u_terminal=lambda x: np.squeeze(0.0 * np.asarray(x)), m_initial=lambda x: 1.0, T=0.5),
@@ -218,7 +218,7 @@ class TestBothAbsorbingRepresentationsAgreeThroughARealSolve:
                 hamiltonian=SeparableHamiltonian(
                     control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m
                 ),
-                sigma=0.3,
+                volatility=0.3,
             ),
             domain=grid,
             conditions=Conditions(

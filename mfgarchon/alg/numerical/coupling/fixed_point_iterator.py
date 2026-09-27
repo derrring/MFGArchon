@@ -78,11 +78,12 @@ class FixedPointIterator(BaseCouplingIterator):
         backend: Backend NAME (resolved via ``create_backend``) or a backend OBJECT, or None.
             Only backends whose arrays the loop can write into carry a solve -- jax and
             torch are refused at allocation, naming #1922 (see ``allocate_state_arrays``).
-        volatility_field: Optional diffusion override (float, array, or callable)
-            - None: Use problem.sigma (default)
-            - float: Constant diffusion
-            - ndarray: Spatially/temporally varying diffusion
-            - Callable: State-dependent diffusion D(t, x, m) -> float | ndarray
+        volatility_field: Optional VOLATILITY override (float, array, or callable), forwarded to
+            both the HJB and FP solvers (#1783) -- the SDE volatility Sigma, not the diffusion.
+            - None: the solvers use problem.volatility (default)
+            - float: Constant volatility
+            - ndarray: Spatially/temporally varying volatility
+            - Callable: State-dependent volatility Sigma(t, x, m) -> float | ndarray
         drift_field: Optional drift override for non-MFG problems (array or callable)
             - None: Use MFG drift (default, drift from U)
             - ndarray: Precomputed drift field
@@ -188,38 +189,10 @@ class FixedPointIterator(BaseCouplingIterator):
         self.volatility_field = volatility_field
         self.drift_field = drift_field
 
-        # Issue #1081: warn on HJB-FP volatility mismatch when both are scalars.
-        # If user passes `volatility_field=X` here AND `problem.sigma=Y` with
-        # X != Y, HJB sees Y and FP sees X — Picard fixed point corresponds
-        # to neither original nor (X, Y)-augmented MFG. Same trap pattern as
-        # Issue #811 (`MFGProblem.diffusion` vs `.sigma`). For non-scalar /
-        # callable cases, can't compare cheaply — silently allow (research
-        # code with augmented diffusion intentionally desyncs these).
-        problem_sigma = getattr(problem, "sigma", None)
-        if (
-            volatility_field is not None
-            and problem_sigma is not None
-            and isinstance(volatility_field, (int, float))
-            and isinstance(problem_sigma, (int, float))
-            and abs(float(volatility_field) - float(problem_sigma)) > 1e-12
-        ):
-            import warnings as _warnings
-
-            _warnings.warn(
-                f"FixedPointIterator: volatility_field={volatility_field} differs "
-                f"from problem.sigma={problem_sigma}. HJB will use problem.sigma, "
-                f"FP will use volatility_field. The Picard fixed point may "
-                f"correspond to neither the original nor the augmented MFG. "
-                f"For LLF/regularization-augmented FP, suppress this warning "
-                f"intentionally; for unintentional desync, set both to the "
-                f"same scalar.",
-                UserWarning,
-                stacklevel=2,
-            )
-
-        # Issue #1603: a coupled HJB-FP pair is an adjoint pair and must share the volatility. The
-        # #1081 guard above only covers the volatility_field kwarg, not this two-problem path.
+        # Issue #1603: a coupled HJB-FP pair is an adjoint pair and must share the volatility.
         # Single-sourced to assert_paired_solver_sigma (RFC #1574 C14) so every coupling loop shares it.
+        # A volatility_field override needs no guard of its own: resolve_volatility_kwarg forwards it
+        # to both sides or refuses the solve (#1783).
         assert_paired_solver_sigma(hjb_solver, fp_solver, "FixedPointIterator")
 
         # Anderson acceleration support
@@ -588,7 +561,9 @@ class FixedPointIterator(BaseCouplingIterator):
                     "m_current": M_old,
                     "U_current": U_old,
                     "geometry": self.problem.geometry,
-                    "sigma": getattr(self.problem, "sigma", None),
+                    # The volatility the solve uses, as supplied; a scalar-only provider declares
+                    # itself with scalar_volatility (#2376).
+                    "sigma": self.volatility_field if self.volatility_field is not None else self.problem.volatility,
                     "iteration": iiter,
                 }
 

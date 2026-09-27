@@ -39,7 +39,7 @@ def _problem(control_cost: float) -> MFGProblem:
         u_terminal=lambda x: 0.0,
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=control_cost)),
     )
-    return MFGProblem(geometry=grid, components=comp, T=0.5, Nt=5, sigma=0.3)
+    return MFGProblem(geometry=grid, components=comp, T=0.5, Nt=5, volatility=0.3)
 
 
 def _U() -> np.ndarray:

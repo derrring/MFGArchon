@@ -61,7 +61,7 @@ def _problem(hamiltonian, dimension: int):
         bounds=[(0.0, 1.0)] * dimension, Nx_points=[11] * dimension, boundary_conditions=no_flux_bc(dimension=dimension)
     )
     return MFGProblem(
-        model=Model(hamiltonian=hamiltonian, sigma=0.3),
+        model=Model(hamiltonian=hamiltonian, volatility=0.3),
         domain=grid,
         conditions=Conditions(m_initial=lambda p: 1.0, u_terminal=lambda p: 0.0, T=0.1),
         Nt=3,

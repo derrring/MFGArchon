@@ -13,7 +13,7 @@
 | `xmin` | v0.17.1 | `geometry=TensorProductGrid(...)` | internal_usage, migration_docs |
 | `xmax` | v0.17.1 | `geometry=TensorProductGrid(...)` | internal_usage, migration_docs |
 | `Lx` | v0.17.1 | `geometry=TensorProductGrid(...)` | internal_usage, migration_docs |
-| `sigma` | v0.17.0 | `diffusion` | internal_usage, equivalence_test, migration_docs |
+| `sigma` | v0.17.0 | `volatility=` (the SDE volatility $\Sigma$; `diffusion=` is $A = \tfrac12\Sigma\Sigma^{\mathsf T}$) | **retired, not deprecated**: `MFGProblem(sigma=...)`, `Model(sigma=...)` and `problem.sigma` raise, naming `volatility` (#2375 ruling 6, #2378) |
 
 **Removal readiness** (checked automatically):
 - ❌ **internal_usage**: Production code still uses these parameters

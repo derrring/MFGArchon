@@ -78,7 +78,7 @@ def _make_problem(sigma=0.3):
         geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[_NX], boundary_conditions=no_flux_bc(dimension=1)),
         T=0.2,
         Nt=_NT,
-        sigma=sigma,
+        volatility=sigma,
         components=components,
     )
 

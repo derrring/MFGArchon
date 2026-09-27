@@ -70,7 +70,7 @@ def create_lq_model_and_conditions() -> tuple[Model, Conditions]:
         coupling=lambda m: 0.5 * m,
         coupling_dm=lambda m: 0.5,
     )
-    model = Model(hamiltonian=hamiltonian, sigma=SIGMA)
+    model = Model(hamiltonian=hamiltonian, volatility=SIGMA)
     # These conditions are shared by BOTH problem builders below, which differ in boundary condition
     # rather than resolution -- and that is why the density is left as written. The library reports
     # its mass and does not rescale it (Issue #1887); normalising would have to pick a grid, and a

@@ -480,37 +480,19 @@ class HJBGFDMSolver(BaseHJBSolver):
         """
         super().__init__(problem)
 
-        # Issue #1079: GFDM only supports scalar sigma. A full (d,d) tensor stored in
-        # problem.volatility_field would silently collapse to a scalar mean in
-        # MFGProblem.sigma, then be used as if it were a correct isotropic coefficient.
-        # The GFDM Laplacian stencil target (e_lap in joint_socp.py) has zero weight on
-        # the cross-derivative column, so D_ij d^2u/dx_i dx_j (i!=j) terms are never
-        # discretized. Fail loud at construction rather than returning a silently wrong
-        # solution (fail-fast per CLAUDE.md).
-        _vf = getattr(self.problem, "volatility_field", None)
-        _spatial_shape = tuple(getattr(self.problem, "spatial_shape", ()) or ())
-        _problem_dimension = getattr(self.problem, "dimension", None)
-        _tensor_shape = (_problem_dimension, _problem_dimension) if isinstance(_problem_dimension, int) else None
-        if isinstance(_vf, np.ndarray) and _tensor_shape is not None and _vf.shape == _tensor_shape:
-            if _vf.shape == _spatial_shape:
-                raise NotImplementedError(
-                    "HJBGFDMSolver cannot infer whether problem.volatility_field with shape "
-                    f"{_vf.shape} is a scalar-valued grid field or a full-tensor (d,d) sigma; "
-                    "the two representations are ambiguous. Keep a scalar sigma on the problem "
-                    "and pass the grid field explicitly as "
-                    "solve_hjb_system(volatility_field=field) instead."
-                )
+        # Issue #1079: GFDM only supports a scalar-valued volatility. The GFDM Laplacian stencil
+        # target (e_lap in joint_socp.py) has zero weight on the cross-derivative column, so
+        # D_ij d^2u/dx_i dx_j (i!=j) terms are never discretized. A tensor volatility is refused at
+        # construction rather than solved as if it were isotropic (fail-fast per CLAUDE.md).
+        if getattr(self.problem, "volatility_kind", None) == "tensor":
             raise NotImplementedError(
-                "HJBGFDMSolver does not support full-tensor (d,d) sigma. "
+                "HJBGFDMSolver does not support a tensor volatility (volatility_kind='tensor'). "
                 "The GFDM Laplacian target (e_lap in joint_socp.py) has zero weight on "
                 "the cross-derivative column, so off-diagonal D_ij d^2u/dx_i dx_j "
-                "terms are silently dropped (Issue #1079). HJBSemiLagrangianSolver does "
-                "discretise that term, measured first order on an off-diagonal Sigma (Issue "
-                "#2198) -- but it reads `problem.sigma`, NOT the `volatility_field` you would "
-                "have passed here, so switching solvers without also setting `problem.sigma` to "
-                "the tensor gives a silently ISOTROPIC solve. There is no constructor route for a "
-                "(d, d) `problem.sigma` either (Issue #2204). Otherwise pass scalar sigma or a "
-                "scalar-valued spatial field matching problem.spatial_shape."
+                "terms would be dropped (Issue #1079). HJBSemiLagrangianSolver discretises that "
+                "term, measured first order on an off-diagonal Sigma (Issue #2198), and reads a "
+                "constant tensor volatility from the same problem. Otherwise pass a scalar volatility "
+                "or a scalar-valued field (volatility_kind='field')."
             )
 
         # --- Resolve (scheme, application) from new API or legacy alias (v0.18.0) ---
@@ -727,10 +709,12 @@ class HJBGFDMSolver(BaseHJBSolver):
                 raise ValueError(
                     f"llf_l_H must be non-negative at every node; got min={float(np.min(self._llf_l_H)):.3g} < 0."
                 )
-            self._llf_sigma_eff: np.ndarray = self._compute_llf_sigma_eff()
+            # Computed below, once the grid-collocation mapper exists: for a field problem the LLF
+            # base is the problem's volatility on the collocation points, which goes through it.
+            self._llf_sigma_eff: np.ndarray | None = None
         else:
             self._llf_l_H = None  # type: ignore[assignment]
-            self._llf_sigma_eff = None  # type: ignore[assignment]
+            self._llf_sigma_eff = None
 
         # SOCP adaptive stencil enlargement (Issue #1106), joint_socp scheme only.
         self._socp_max_stencil_enlargements: int = int(socp_max_stencil_enlargements)
@@ -979,6 +963,8 @@ class HJBGFDMSolver(BaseHJBSolver):
             grid_shape=self._output_spatial_shape,
             domain_bounds=self.domain_bounds,
         )
+        if self.llf_augmentation:
+            self._llf_sigma_eff = self._compute_llf_sigma_eff()
 
         # Build neighborhood structure - uses GFDMOperator's neighborhoods as base,
         # only extends for points needing adaptive delta enlargement
@@ -2866,8 +2852,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         1. LLF per-node augmentation (point_idx given)
         2. volatility_field override (Issue #1316) — the per-solve spatial diffusion
         3. problem.nu (legacy attribute)
-        4. problem.sigma is callable → evaluate at the point / center of domain
-        5. problem.sigma is numeric → use directly (fallback: 1.0)
+        4. problem.volatility is a scalar → use directly
+        5. otherwise → the same normalisation a solve uses (_resolve_sigma_for_solve)
         """
         # LLF per-node override: return sigma_eff_i when augmentation is active (Issue #1059).
         # Only applies when point_idx is not None; solve-level assembly reads the full
@@ -2886,7 +2872,7 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         # Issue #1316: the per-solve volatility_field override (the spatial diffusion
         # the coupling layer / FP solver is using) is the authoritative diffusion source,
-        # replacing problem.sigma so HJB and FP stay convention-consistent. None (the
+        # replacing the problem's volatility so HJB and FP stay convention-consistent. None (the
         # default) falls through to the byte-identical legacy path below.
         if self._volatility_field_override is not None:
             return self._resolve_diffusion_source(self._volatility_field_override, point_idx)
@@ -2896,17 +2882,19 @@ class HJBGFDMSolver(BaseHJBSolver):
         if nu is not None:
             return float(nu)
 
-        sigma = getattr(self.problem, "sigma", None)
-        if callable(sigma):
-            # Callable sigma: evaluate at the point (per-point path) or at the center
-            # of the domain (batch path). Issue #1316: the batch path previously returned
-            # a hardcoded 1.0 ("representative value" in name only), silently replacing
-            # callable sigma with sigma=1.0 (~2x diffusion error). Now an actual
-            # center-of-domain evaluation, matching the documented intent.
-            return self._resolve_diffusion_source(sigma, point_idx)
-        else:
-            # Numeric sigma: use directly (with fallback to default)
-            return float(getattr(self.problem, "sigma", 1.0))
+        volatility = self.problem.volatility
+        if isinstance(volatility, (int, float)):
+            return float(volatility)
+        # A field or callable problem volatility goes through the same normalisation a solve uses,
+        # never a representative scalar (#2376).
+        # A problem-owned field is grid-indexed exactly when the problem's domain is a grid -- the
+        # rule _resolve_sigma_for_solve applies to it at solve time.
+        field = self._resolve_sigma_for_solve(
+            None, is_meshfree_input=getattr(self.problem, "domain_type", None) != "grid"
+        )
+        if point_idx is None or not isinstance(field, np.ndarray):
+            return field
+        return float(field[point_idx])
 
     def _sigma_for_assembly(self) -> float | np.ndarray:
         """Return the single solve-level volatility consumed by every assembly path."""
@@ -2923,7 +2911,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         is_meshfree_input: bool,
     ) -> float | np.ndarray:
         """Normalize one volatility source to a scalar or collocation-space ``(N,)`` field."""
-        problem_field = getattr(self.problem, "volatility_field", None)
+        problem_field = self.problem.volatility
         source_is_problem_field = volatility_field is None or volatility_field is problem_field
 
         if volatility_field is not None:
@@ -2933,11 +2921,8 @@ class HJBGFDMSolver(BaseHJBSolver):
             if legacy_nu is not None:
                 source = legacy_nu
                 source_is_problem_field = False
-            elif problem_field is not None:
-                source = problem_field
             else:
-                source = getattr(self.problem, "sigma", 1.0)
-                source_is_problem_field = False
+                source = problem_field
 
         if callable(source):
             try:
@@ -3009,8 +2994,9 @@ class HJBGFDMSolver(BaseHJBSolver):
         Thin adapter over the shared single source
         :func:`mfgarchon.utils.pde_coefficients.resolve_diffusion_source` (Issue #1412): the
         collocation points are this solver's spatial points; the batch path (``point_idx=None``)
-        collapses an array to its mean / evaluates a callable at the domain center, matching
-        ``MFGProblem``'s array -> scalar (sigma = mean) convention.
+        collapses an array to its mean / evaluates a callable at the domain center. That is a
+        representative scalar, not a convention ``MFGProblem`` shares (#2376): a solve reads the
+        normalised ``_solve_sigma`` instead.
         """
         return resolve_diffusion_source(source, index=point_idx, points=self.collocation_points)
 
@@ -4011,7 +3997,7 @@ if __name__ == "__main__":
 
     # Test 1D problem with uniform collocation points matching problem grid
     geometry_1d = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21])
-    problem_1d = MFGProblem(geometry=geometry_1d, T=1.0, Nt=10, sigma=0.1)
+    problem_1d = MFGProblem(geometry=geometry_1d, T=1.0, Nt=10, volatility=0.1)
 
     # Use problem grid points as collocation points to avoid index mismatch
     collocation_points = problem_1d.geometry.get_spatial_grid().reshape(-1, 1)
@@ -4058,7 +4044,7 @@ if __name__ == "__main__":
     points_2d = np.column_stack([xx.ravel(), yy.ravel()])
 
     geometry_2d = TensorProductGrid(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[Nx_2d, Nx_2d])
-    problem_2d = MFGProblem(geometry=geometry_2d, T=1.0, Nt=5, sigma=0.1)
+    problem_2d = MFGProblem(geometry=geometry_2d, T=1.0, Nt=5, volatility=0.1)
 
     solver_2d = HJBGFDMSolver(
         problem_2d,

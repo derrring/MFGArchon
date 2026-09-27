@@ -46,31 +46,57 @@ def assert_bc_providers_resolvable(problem: MFGProblem, iterator_name: str) -> N
         )
 
 
-def assert_paired_solver_sigma(hjb_solver: Any, fp_solver: Any, context: str) -> None:
-    """Fail loud if a coupled HJB / FP solver pair was built from problems with different ``sigma``.
+def _volatilities_differ(a: Any, b: Any, kind_a: Any = None, kind_b: Any = None) -> bool:
+    """Whether two volatilities are shown to differ: by value, by content, and by volatility_kind.
 
-    Issue #1603 / #1081 / RFC #1574 (C14): each paired solver reads sigma from its OWN embedded
-    problem (``hjb_solver.problem.sigma``, ``fp_solver.problem.sigma``). A coupled HJB-FP pair is an
-    adjoint pair and must share the volatility; if the two problems' sigma disagree, HJB and FP
-    diffuse at different rates with no warning and the fixed point is neither problem's MFG.
+    Two callables are never shown to differ, identical or not: nothing short of evaluating them
+    could compare them, and Mock test doubles are callable by construction (#1489). So two problems
+    with distinct callable volatilities pass; build both solvers from one problem. Exactly one
+    callable against a scalar or an array differs: no evaluation can show them equal, and refusing
+    is the #1316 rule. An array is read by its kind, so the same entries under two kinds are two
+    diffusions, and a scalar equals only a constant FIELD of its value -- never an all-equal
+    tensor, whose A = 1/2 Sigma Sigma^T is not sigma^2/2 I.
+    """
+    if a is b:
+        return False
+    a_real, b_real = isinstance(a, numbers.Real), isinstance(b, numbers.Real)
+    a_array, b_array = isinstance(a, np.ndarray), isinstance(b, np.ndarray)
+    if callable(a) or callable(b):
+        return not (callable(a) and callable(b)) and (a_real or a_array or b_real or b_array)
+    if a_real and b_real:
+        return abs(float(a) - float(b)) > 1e-12
+    if a_array and b_array:
+        return kind_a != kind_b or not np.array_equal(a, b)
+    if (a_real and b_array) or (a_array and b_real):
+        scalar, array, array_kind = (a, b, kind_b) if a_real else (b, a, kind_a)
+        return array_kind != "field" or not np.all(array == float(scalar))
+    return False
+
+
+def assert_paired_solver_sigma(hjb_solver: Any, fp_solver: Any, context: str) -> None:
+    """Fail loud if a coupled HJB / FP solver pair was built from problems with different volatility.
+
+    Issue #1603 / #1081 / RFC #1574 (C14): each paired solver reads the volatility from its OWN
+    embedded problem (``hjb_solver.problem.volatility``, ``fp_solver.problem.volatility``). A coupled
+    HJB-FP pair is an adjoint pair and must share it; if the two disagree, HJB and FP diffuse at
+    different rates with no warning and the fixed point is neither problem's MFG.
 
     Extracted from ``FixedPointIterator`` (Issue #1603) to a single owner so EVERY coupling loop --
     FixedPoint, Block, FictitiousPlay, Newton, and the regime / multi-population / graph lists (which
     had no guard) -- shares one check. For a list-based iterator, call once per sub-problem pair
-    (naming the sub-problem in ``context``). Compares only real scalars, so Mock test doubles whose
-    auto-resolved ``.sigma`` is not a number do not trip the guard (#1489).
+    (naming the sub-problem in ``context``). Scalars compare by value, and arrays by content and
+    volatility_kind; before #2376 each problem's array was compared through its mean, so two fields
+    with one mean passed. Two callables are not compared (see ``_volatilities_differ``).
     """
-    hjb_sigma = getattr(getattr(hjb_solver, "problem", None), "sigma", None)
-    fp_sigma = getattr(getattr(fp_solver, "problem", None), "sigma", None)
-    if (
-        isinstance(hjb_sigma, (int, float))
-        and isinstance(fp_sigma, (int, float))
-        and abs(float(hjb_sigma) - float(fp_sigma)) > 1e-12
-    ):
+    hjb_problem, fp_problem = getattr(hjb_solver, "problem", None), getattr(fp_solver, "problem", None)
+    hjb_volatility = getattr(hjb_problem, "volatility", None)
+    fp_volatility = getattr(fp_problem, "volatility", None)
+    kinds = getattr(hjb_problem, "volatility_kind", None), getattr(fp_problem, "volatility_kind", None)
+    if _volatilities_differ(hjb_volatility, fp_volatility, *kinds):
         raise ValueError(
-            f"{context}: paired HJB / FP solvers were built from problems with different sigma "
-            f"(HJB={hjb_sigma}, FP={fp_sigma}); a coupled MFG pair is an adjoint pair and must share "
-            f"the volatility -- the Picard fixed point would correspond to neither problem. Build both "
+            f"{context}: paired HJB / FP solvers were built from problems with different volatility "
+            f"(HJB={hjb_volatility!r}, FP={fp_volatility!r}); a coupled MFG pair is an adjoint pair and "
+            f"must share it -- the Picard fixed point would correspond to neither problem. Build both "
             f"solvers from the same MFGProblem, or use create_paired_solvers. Issue #1603."
         )
 
@@ -167,17 +193,20 @@ def allocate_state_arrays(backend: Any, shape: tuple[int, ...], iterator_name: s
 
 
 def matches_problem_sigma(problem: Any, volatility_field: Any) -> bool:
-    """Whether this field is indistinguishable from the problem's own sigma.
+    """Whether this override is indistinguishable from the problem's own volatility.
 
-    Scalars only. An array or callable cannot be shown equivalent to sigma without evaluating it,
-    and guessing there is what #1316 was about, so those are never called indistinguishable.
-    ``numbers.Real`` rather than ``(int, float)``: ``np.float32(0.3)`` is neither, and rejecting it
-    would refuse a solve that is byte-identical to one it accepts.
+    Two ways to be indistinguishable: the override IS ``problem.volatility`` -- what
+    ``MFGProblem.solve`` forwards -- or both are scalars equal to 1e-12. An array or callable that is
+    a different object cannot be shown equivalent without evaluating it, and guessing there is what
+    #1316 was about. ``numbers.Real`` rather than ``(int, float)``: ``np.float32(0.3)`` is neither,
+    and rejecting it would refuse a solve that is byte-identical to one it accepts.
     """
-    sigma = getattr(problem, "sigma", None)
-    if not isinstance(volatility_field, numbers.Real) or not isinstance(sigma, numbers.Real):
+    volatility = getattr(problem, "volatility", None)
+    if volatility_field is volatility:
+        return True
+    if not isinstance(volatility_field, numbers.Real) or not isinstance(volatility, numbers.Real):
         return False
-    return abs(float(volatility_field) - float(sigma)) <= 1e-12
+    return abs(float(volatility_field) - float(volatility)) <= 1e-12
 
 
 def resolve_volatility_kwarg(
@@ -193,24 +222,22 @@ def resolve_volatility_kwarg(
 
     Three outcomes, in this order:
 
-    - **The solver names the parameter: forward it, unconditionally.** Including when the field is
-      indistinguishable from ``problem.sigma`` -- it is still the caller's explicit value, and
-      ``problem.volatility_field`` is not always ``problem.sigma``. Construct with an array sigma
-      and the field is the array while ``problem.sigma`` is its mean, so a solver that falls back
-      through ``get_diffusion_coefficient_field(None)`` would pick up the array. Declining to
-      forward an "equivalent" scalar hands the solver a different field than the one asked for.
-      The first fix of #1783 put the forward inside the hazard branch and did exactly that.
+    - **The solver names the parameter: forward it, unconditionally.** Including when the override
+      is indistinguishable from the problem's volatility -- it is still the caller's explicit value.
+      Before #2376 the problem carried a collapsed scalar ``sigma`` beside the full field, and
+      declining to forward an "equivalent" scalar handed the solver the field instead of the value
+      asked for; the first fix of #1783 put the forward inside the hazard branch and did exactly that.
     - **The solver does not name it, and the field is a hazard: raise.** Signature introspection
       answers "does this callable name the parameter", not "can this solver consume it", and a
       ``**kwargs`` override makes those two diverge. Measured on the meshless pair, whose HJB
-      wrapper delegates through ``(*args, use_newton=None, **kwargs)``: with ``problem.sigma = 0.3``
-      and a field of mean 0.7, the HJB side ran at D = 0.045 while the paired FP side -- which does
+      wrapper delegates through ``(*args, use_newton=None, **kwargs)``: with a problem volatility of
+      0.3 and an override field of mean 0.7, the HJB side ran at D = 0.045 while the paired FP side -- which does
       name the parameter -- ran at D = 0.245. A 5.4x mismatch, no warning, and a converged density
       for a problem nobody posed. Treating ``VAR_KEYWORD`` as accept-anything was the other
       candidate; it assumes a solver consumes what it swallows, the assumption that produced #1316.
-    - **The solver does not name it, and the field is indistinguishable: drop it silently**, because
-      dropping it changes nothing. ``MFGProblem.volatility_field`` defaults to ``problem.sigma``, so
-      the coupling loop hands a non-None value on EVERY ordinary solve; refusing those is a refusal
+    - **The solver does not name it, and the override is indistinguishable: drop it silently**,
+      because dropping it changes nothing. ``MFGProblem.solve`` forwards ``problem.volatility`` itself,
+      so the coupling loop hands a non-None value on EVERY ordinary solve; refusing those is a refusal
       to run at all, which the full suite caught two tests deep in the meshless recipe when the
       first version of this fix keyed on "is not None".
     """
@@ -224,7 +251,7 @@ def resolve_volatility_kwarg(
     raise NotImplementedError(
         f"{solver_name}.{method} does not accept 'volatility_field', but a volatility_field was "
         f"supplied. Its signature is ({', '.join(sorted(params))}). Dropping it would leave the "
-        f"{side} side on problem.sigma while the {other} side uses the field, so the two equations "
+        f"{side} side on problem.volatility while the {other} side uses the override, so the two equations "
         f"would be solved with different diffusion and the result would be neither problem "
         f"(Issue #1783). Either declare volatility_field on the solver's {method}, or remove it "
         f"from the solve. A solver taking **kwargs does not count as accepting it -- the parameter "
@@ -259,8 +286,8 @@ def resolve_source_kwarg(params: Any, source_term: Any, solver_name: str, method
     for GFDM, which is where that scheme discretises.
 
     Two outcomes, not the three ``resolve_volatility_kwarg`` has, and the reason is a default
-    rather than the nature of the quantity. ``MFGProblem.volatility_field`` **defaults to**
-    ``problem.sigma``, so the coupling loop hands a non-None field on every ordinary solve and
+    rather than the nature of the quantity. ``MFGProblem.solve`` forwards ``problem.volatility``
+    **by default**, so the coupling loop hands a non-None override on every ordinary solve and
     refusing those would be a refusal to run at all -- hence the third outcome, drop-when-
     indistinguishable. ``compose_hjb_source`` returns ``None`` unless the user set a field, so a
     non-None source is always something the caller asked for.

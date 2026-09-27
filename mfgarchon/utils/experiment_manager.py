@@ -78,11 +78,17 @@ def save_experiment_data(
     # (Ensure parameters are sanitized for filenames if they contain special chars)
     grid_shape = problem.geometry.get_grid_shape()
     Nx_intervals = grid_shape[0] - 1
+    volatility = problem.volatility
+    volatility_tag = (
+        f"{volatility:.1e}"
+        if isinstance(volatility, (int, float))
+        else ("callable" if callable(volatility) else problem.volatility_kind)
+    )
     filename_parts = [
         f"T{problem.T:.1f}",
         f"Nx{Nx_intervals}",
         f"Nt{problem.Nt}",
-        f"sig{problem.sigma:.1e}",
+        f"sig{volatility_tag}",
         f"ct{problem.coupling_coefficient:.1e}",
         solver_name.replace("/", "-"),  # Replace slashes if any
         timestamp,
@@ -102,7 +108,10 @@ def save_experiment_data(
         "T": problem.T,
         "Nt": problem.Nt,
         "dt": problem.dt,
-        "sigma": problem.sigma,
+        # The volatility as supplied, except a callable, which np.savez cannot pickle: it would fail
+        # the whole save. The kind says how an array is read.
+        "sigma": "callable" if callable(volatility) else volatility,
+        "volatility_kind": problem.volatility_kind,
         "coupling_coefficient": problem.coupling_coefficient,
         # Add other problem-specific parameters if they exist and are relevant
         # e.g., "potential_type": problem.potential_type if hasattr(problem, 'potential_type') else "default"

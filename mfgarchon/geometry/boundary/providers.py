@@ -54,6 +54,7 @@ import numpy as np
 
 from mfgarchon.geometry.boundary.bc_coupling import compute_boundary_log_density_gradient_1d
 from mfgarchon.utils.deprecation import deprecated_parameter
+from mfgarchon.utils.pde_coefficients import scalar_volatility
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -270,9 +271,9 @@ class AdjointConsistentProvider(BaseBCValueProvider):
                 - 2D: "y_min", "y_max", "bottom", "top"
                 - 3D: "z_min", "z_max", "front", "back"
             sigma: SDE volatility σ (NOT the PDE diffusion D = σ²/2 -- the value is squared internally).
-                If None, reads from state. Named to match the codebase convention (``problem.sigma`` = σ,
-                ``problem.diffusion`` = σ²/2); passing the D-valued ``problem.diffusion`` here is the
-                Issue #1512 trap this canonical name removes.
+                If None, reads from state. The value is ``problem.volatility`` (σ), never
+                ``problem.diffusion`` (σ²/2) -- passing the latter is the Issue #1512 trap. A field or
+                callable volatility is refused (#2376): this provider uses one scalar.
             regularization: Small positive constant added to density
                            to prevent log(0). Default 1e-10.
             diffusion: DEPRECATED (Issue #1512): a misnomer -- this argument is σ, not D, and the name
@@ -338,6 +339,8 @@ class AdjointConsistentProvider(BaseBCValueProvider):
                     "AdjointConsistentProvider: volatility not set in constructor "
                     "and neither 'sigma' nor 'diffusion' found in state"
                 )
+        # The state carries the problem's volatility as supplied, never a collapsed scalar (#2376).
+        sigma = scalar_volatility(sigma, consumer="AdjointConsistentProvider")
 
         # Compute log-density gradient at boundary
         # Delegate to dimension-aware function in bc_coupling module

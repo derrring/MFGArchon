@@ -64,7 +64,7 @@ def _problem(n: int = _N, shape: tuple[int, ...] | None = None) -> MFGProblem:
             geometry=grid,
             Nt=8,
             T=0.4,
-            sigma=0.05,
+            volatility=0.05,
             components=MFGComponents(
                 m_initial=_bump(dimension),
                 u_terminal=_ripple(dimension),

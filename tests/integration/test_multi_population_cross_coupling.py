@@ -67,7 +67,7 @@ def _make_problem(k, cross, K):
         ),
         Nt=_NT,
         T=_T,
-        sigma=_SIG,
+        volatility=_SIG,
         components=comps,
     )
 

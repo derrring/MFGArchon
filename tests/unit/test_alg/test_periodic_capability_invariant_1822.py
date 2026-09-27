@@ -249,7 +249,7 @@ def _periodic_problem(nx: int = NX, nt: int = NT) -> MFGProblem:
         geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=periodic_bc(dimension=1)),
         T=0.5,
         Nt=nt,
-        sigma=0.3,
+        volatility=0.3,
         components=MFGComponents(
             m_initial=_M,
             u_terminal=_U,
@@ -270,7 +270,7 @@ def _problem_with_bc(bc, nx: int, nt: int) -> MFGProblem:
         geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=bc),
         T=0.5,
         Nt=nt,
-        sigma=0.3,
+        volatility=0.3,
         components=MFGComponents(
             m_initial=_M,
             u_terminal=_U,

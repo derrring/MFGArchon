@@ -240,7 +240,7 @@ class FPSLJacobianSolver(BaseFPSolver):
                   The drift velocity is computed as alpha = -grad(U)
             drift_field: DEPRECATED. Renamed to potential_field.
             volatility_field: Optional volatility coefficient σ (SDE noise) override.
-                - None: Use problem.sigma
+                - None: Use problem.volatility
                 - float: Constant volatility
                 Note: Internally converted to diffusion D = σ²/2 for FP equation.
             show_progress: Show progress bar during solve
@@ -270,13 +270,12 @@ class FPSLJacobianSolver(BaseFPSolver):
         if callable(potential_field):
             raise NotImplementedError("Callable potential_field not yet supported for FPSLSolver")
 
-        # Handle volatility (Issue #717: unified API)
-        if volatility_field is None:
-            sigma = self.problem.sigma
-        elif isinstance(volatility_field, (int, float)):
-            sigma = float(volatility_field)
+        # Handle volatility (Issue #717: unified API). None is the problem's own (#2376).
+        volatility = self.problem.volatility if volatility_field is None else volatility_field
+        if isinstance(volatility, (int, float)):
+            sigma = float(volatility)
         else:
-            raise NotImplementedError("Array/callable volatility_field not yet supported for FPSLSolver")
+            raise NotImplementedError(f"Array/callable volatility not yet supported for {type(self).__name__} (#2376)")
 
         # Determine number of time steps from potential_field
         Nt_points = potential_field.shape[0]
@@ -581,7 +580,7 @@ if __name__ == "__main__":
         geometry=domain,
         T=T,
         Nt=Nt,
-        sigma=SIGMA,
+        volatility=SIGMA,
         components=components,
     )
 

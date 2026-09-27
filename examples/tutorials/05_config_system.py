@@ -35,7 +35,7 @@ if __name__ == "__main__":
             coupling=lambda m: coupling_strength * m,
             coupling_dm=lambda m: coupling_strength,
         )
-        return Model(hamiltonian=hamiltonian, sigma=sigma)
+        return Model(hamiltonian=hamiltonian, volatility=sigma)
 
     conditions = Conditions(
         # Integrates to 0.250663 on this 51-point grid, not 1 -- the same density tutorials 01

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 import scipy.sparse as sparse
@@ -9,8 +9,7 @@ from mfgarchon.backends.compat import has_nan_or_inf
 from mfgarchon.geometry import BoundaryConditions
 from mfgarchon.geometry.base import CartesianGrid
 from mfgarchon.geometry.boundary.types import BCType
-from mfgarchon.utils.aux_func import npart, ppart
-from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
+from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
@@ -18,7 +17,6 @@ from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
 from .base_fp import BaseFPSolver
 from .fp_fdm_time_stepping import (
     _get_bc_type,
-    _get_bc_value,
 )
 from .fp_fdm_time_stepping import (
     solve_fp_nd_full_system as _solve_fp_nd_full_system,
@@ -322,7 +320,7 @@ class FPFDMSolver(BaseFPSolver):
 
     # _detect_dimension() inherited from BaseNumericalSolver (Issue #633)
 
-    def _log_cfl_diagnostic(self, volatility_field: float | None = None) -> None:
+    def _log_cfl_diagnostic(self, volatility_field: float | np.ndarray | Callable | None = None) -> None:
         """Log CFL diagnostic for accuracy/convergence guidance (Issue #882, #1052).
 
         Issue #1052: log once at INFO per solver instance, subsequent calls at
@@ -331,7 +329,10 @@ class FPFDMSolver(BaseFPSolver):
         try:
             dt = self.problem.dt
             dx = self.problem.geometry.get_grid_spacing()[0]
-            sigma = volatility_field if isinstance(volatility_field, (int, float)) else self.problem.sigma
+            volatility = volatility_field if volatility_field is not None else self.problem.volatility
+            if not isinstance(volatility, (int, float)):
+                return  # a per-point or callable volatility has no single diffusive CFL number
+            sigma = float(volatility)
             # Diffusive CFL uses the PDE diffusion coefficient D = sigma^2/2 (single source:
             # diffusion_from_volatility, applied at D = 0.5 * sigma**2 below), not the bare sigma^2.
             cfl_diffusive = 0.5 * sigma**2 * dt / dx**2
@@ -478,7 +479,7 @@ class FPFDMSolver(BaseFPSolver):
             Default: None
         volatility_field : float, np.ndarray, or callable, optional
             Volatility specification (unified API). Auto-detects scalar vs matrix:
-            - None: Use problem.sigma (backward compatible)
+            - None: Use problem.volatility
             - float: Constant isotropic volatility σ → D = σ²/2
             - (d,) array: Diagonal volatility [σ₀, σ₁, ...] → D = diag(σᵢ²)/2
             - (d, d) array: Full volatility matrix Σ → D = ΣΣᵀ/2
@@ -608,7 +609,11 @@ class FPFDMSolver(BaseFPSolver):
                 effective_U = None  # Not needed when velocity is provided directly
             elif callable(drift_field):
                 # Custom drift function - Phase 2
-                # Route to unified nD solver (works for all dimensions including 1D)
+                # Route to unified nD solver (works for all dimensions including 1D). The problem's
+                # own volatility is read by its declared kind, as below (#2378 rule A).
+                problem_tensor = (
+                    volatility_field is None or volatility_field is self.problem.volatility
+                ) and self.problem.volatility_kind == "tensor"
                 return _solve_fp_nd_full_system(
                     m_initial_condition=M_initial,
                     U_solution_for_drift=None,
@@ -616,7 +621,11 @@ class FPFDMSolver(BaseFPSolver):
                     boundary_conditions=self.boundary_conditions,
                     show_progress=show_progress,
                     backend=self.backend,
-                    diffusion_field=volatility_field,
+                    diffusion_field=None if problem_tensor else volatility_field,
+                    # A volatility_kind='tensor' volatility is an array or a callable, never a scalar.
+                    tensor_diffusion_field=cast("np.ndarray | Callable", self.problem.volatility)
+                    if problem_tensor
+                    else None,
                     drift_field=drift_field,  # callable velocity → internal drift_field
                     advection_scheme=self.advection_scheme,
                     progress_callback=progress_callback,
@@ -665,25 +674,29 @@ class FPFDMSolver(BaseFPSolver):
         # Unified volatility_field handling with auto-detection
         # Issue #717: volatility_field is the SDE volatility σ or Σ
         # The solver computes D = σ²/2 (scalar) or D = ΣΣᵀ/2 (matrix) internally
+        # Issue #1248: with no explicit override, use the problem's full SDE volatility. The
+        # problem's own volatility is read by its declared kind -- a (d, d) field on a d x d grid and
+        # a (d, d) tensor have the same shape -- while an explicit override is still read by shape
+        # until part 2 of #2378 gives overrides a kind.
+        from_problem = volatility_field is None or volatility_field is self.problem.volatility
         if volatility_field is None:
-            # Issue #1248 (2026-06-10 audit): with no explicit override, use the problem's
-            # full SDE volatility (scalar / per-point array / callable), routed through the
-            # same detection below. The old `effective_sigma = self.problem.sigma` used the
-            # placeholder scalar that MFGProblem stores for non-scalar volatility (an array is
-            # collapsed to its mean, a callable to 1.0), so problem.solve() / the coupled loop
-            # silently solved a different PDE than the user specified.
-            volatility_field = self.problem.volatility_field
+            volatility_field = self.problem.volatility
 
         if volatility_field is None:
-            # Defensive: a problem with neither sigma nor volatility_field is malformed.
+            # Defensive: a duck-typed problem without a volatility is malformed.
             raise ValueError(
-                "No volatility specified: problem.volatility_field is None and no volatility_field "
+                "No volatility specified: problem.volatility is None and no volatility_field "
                 "override was passed to solve_fp_system."
             )
         if isinstance(volatility_field, (int, float)):
             # Constant isotropic volatility
-            effective_sigma = float(volatility_field)
+            effective_sigma: float | np.ndarray | Callable = float(volatility_field)
             is_tensor = False
+        elif from_problem:
+            # An array or a callable, read as its volatility_kind says; a callable without one is
+            # per point.
+            is_tensor = self.problem.volatility_kind == "tensor"
+            effective_sigma = volatility_field
         elif isinstance(volatility_field, np.ndarray):
             # Auto-detect: scalar field vs matrix volatility
             d = self.dimension
@@ -796,10 +809,10 @@ class FPFDMSolver(BaseFPSolver):
             A_advection_T: Transposed advection matrix from HJB solver.
                 Shape: (N_total, N_total) where N_total = prod(spatial_shape).
                 This is A_hjb.T where A_hjb was built by HJBFDMSolver.build_advection_matrix().
-            sigma: Diffusion coefficient (optional).
-                - None: Use problem.sigma
-                - float: Constant diffusion
-                - np.ndarray: Spatially varying diffusion
+            sigma: The SDE volatility (optional); the diffusion is D = sigma^2/2.
+                - None: Use problem.volatility
+                - float: Constant volatility
+                - np.ndarray: Per-point volatility
             time: Current time for time-dependent BCs
 
         Returns:
@@ -842,11 +855,23 @@ class FPFDMSolver(BaseFPSolver):
                 f"({N_total}, {N_total}) for density shape {shape}"
             )
 
-        # Get diffusion coefficient
-        if sigma is None:
-            sigma_val = self.problem.sigma
-        else:
-            sigma_val = sigma
+        # A scalar or per-point volatility; a callable is refused rather than evaluated at an
+        # arbitrary time (#2376).
+        sigma_val = self.problem.volatility if sigma is None else sigma
+        if sigma_val is self.problem.volatility and self.problem.volatility_kind == "tensor":
+            raise NotImplementedError(
+                "FPFDMSolver.solve_fp_step_adjoint_mode assembles an isotropic diffusion sigma^2/2; "
+                "the problem's volatility is a volatility_kind='tensor' Sigma, whose diffusion "
+                "A = 1/2 Sigma Sigma^T it would misread as a per-point field (#2378). With "
+                "BlockIterator, adjoint_mode='off' solves the FP side through solve_fp_system, which "
+                "assembles the tensor."
+            )
+        if callable(sigma_val):
+            raise NotImplementedError(
+                "FPFDMSolver.solve_fp_step_adjoint_mode takes a scalar or per-point volatility, not a "
+                "callable (#2376). With BlockIterator, adjoint_mode='off' solves the FP side through "
+                "solve_fp_system, which evaluates a callable volatility per time step."
+            )
 
         # Build diffusion matrix using LaplacianOperator
         from mfgarchon.operators.differential.laplacian import LaplacianOperator
@@ -911,635 +936,6 @@ class FPFDMSolver(BaseFPSolver):
             ),
         )
 
-    @deprecated(since="v0.17.1", replacement="solve_fp_system")
-    def _solve_fp_1d(
-        self,
-        m_initial_condition: np.ndarray,
-        U_solution_for_drift: np.ndarray,
-        show_progress: bool | None = None,
-        progress_callback: Callable[[int], None] | None = None,  # Issue #640
-    ) -> np.ndarray:
-        """
-        Original 1D FP solver implementation.
-
-        .. deprecated:: 0.17.1
-            This method is deprecated in favor of `solve_fp_nd_full_system` which
-            handles all dimensions including 1D. Will be removed in v1.0.0.
-
-            The unified nD solver provides:
-            - Consistent behavior across all dimensions
-            - ~~Full BC support (no_flux, neumann, robin, periodic, dirichlet)~~
-              [CORRECTED 2026-08-16, #1975] It assembles no-flux, homogeneous Neumann
-              (identical to no-flux for FP), Dirichlet and periodic. **Not Robin**, and not
-              an inhomogeneous Neumann (#1686). `_BOUNDARY_HANDLERS` is keyed on the
-              advection scheme and all four entries are `add_boundary_no_flux_entries_*`,
-              so a ROBIN segment assembles byte-identically to no-flux -- measured at
-              alpha=3.2 and alpha=999, max|difference| = 0 -- reachable only BELOW the
-              `_validate_bc_support` gate, which refuses every ROBIN segment at construction.
-              `_SUPPORTED_BC_TYPES` refuses
-              ROBIN for that reason and the refusal is load-bearing. A *general* Robin wall
-              needs `FPFEMSolver`, which assembles it in weak form and reads the coefficients.
-              The **reflecting** wall is a different matter and does not need a ROBIN segment
-              at all: the conservative schemes (`divergence_upwind`, the default, and
-              `divergence_centered`) impose `J.n = 0` structurally by zeroing the total face
-              flux -- mass conserved to machine precision at a wall with wall-normal drift,
-              with `d_n m` nonzero there. The `gradient_*` family imposes `d_n m = 0` instead
-              and is non-conservative (#1075). See #1975.
-            - Cleaner codebase with less code path branching
-        """
-        # Use geometry-based interface (geometry is always available)
-        Nx = self.problem.geometry.get_grid_shape()[0]
-        Dx = self.problem.geometry.get_grid_spacing()[0]
-        Dt = self.problem.dt
-
-        # Infer number of time points from U_solution shape, not problem.Nt
-        # n_time_points = number of time knots (including t=0 and t=T)
-        # This allows tests to pass edge cases like n_time_points=0 or n_time_points=1
-        n_time_points = U_solution_for_drift.shape[0]
-        from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
-
-        sigma_base = self.problem.sigma  # Base diffusion (scalar or array)
-        # Issue #1420 / G-017: source the drift coefficient from the Hamiltonian's control_cost
-        # (the single source), not the independent coupling_coefficient field. Matches the HJB-side
-        # build_advection_matrix so the strict-adjoint relation A_fp = A_hjb.T is preserved.
-        coupling_coefficient = fp_drift_coefficient(self.problem)
-
-        if n_time_points == 0:
-            if self.backend is not None:
-                return self.backend.zeros((0, Nx))
-            return np.zeros((0, Nx))
-        if n_time_points == 1:
-            if self.backend is not None:
-                m_sol = self.backend.zeros((1, Nx))
-            else:
-                m_sol = np.zeros((1, Nx))
-            m_sol[0, :] = m_initial_condition
-            m_sol[0, :] = np.maximum(m_sol[0, :], 0)
-            # Apply boundary conditions
-            if _get_bc_type(self.boundary_conditions) == "dirichlet":
-                m_sol[0, 0] = _get_bc_value(self.boundary_conditions, "x_min")
-                m_sol[0, -1] = _get_bc_value(self.boundary_conditions, "x_max")
-            return m_sol
-
-        if self.backend is not None:
-            m = self.backend.zeros((n_time_points, Nx))
-        else:
-            m = np.zeros((n_time_points, Nx))
-        m[0, :] = m_initial_condition
-        m[0, :] = np.maximum(m[0, :], 0)
-        # Apply boundary conditions to initial condition
-        bc_type = _get_bc_type(self.boundary_conditions)
-        if bc_type == "dirichlet":
-            m[0, 0] = _get_bc_value(self.boundary_conditions, "x_min")
-            m[0, -1] = _get_bc_value(self.boundary_conditions, "x_max")
-
-        # Pre-allocate lists for COO format, then convert to CSR
-        row_indices: list[int] = []
-        col_indices: list[int] = []
-        data_values: list[float] = []
-
-        # Progress bar for forward timesteps
-        # Forward FP loop: (n_time_points - 1) steps from index 0 to (n_time_points - 2)
-        # Issue #640: When progress_callback is provided (from HierarchicalProgress),
-        # suppress internal bar to avoid duplicate progress display
-        use_external_progress = progress_callback is not None
-        timestep_range = range(n_time_points - 1)
-        from mfgarchon.utils.progress import create_progress_bar, should_show_progress
-
-        timestep_range = create_progress_bar(
-            timestep_range,
-            verbose=should_show_progress(show_progress) and not use_external_progress,
-            desc="FP (forward)",
-        )
-
-        for k_idx_fp in timestep_range:
-            if Dt < 1e-14:
-                m[k_idx_fp + 1, :] = m[k_idx_fp, :]
-                continue
-            if Dx < 1e-14 and Nx > 1:
-                m[k_idx_fp + 1, :] = m[k_idx_fp, :]
-                continue
-
-            u_at_tk = U_solution_for_drift[k_idx_fp, :]
-
-            # Extract diffusion coefficient at current timestep
-            # Handle scalar (constant) or array (spatially/temporally varying)
-            if isinstance(sigma_base, np.ndarray):
-                # Array diffusion: shape (Nt, Nx) or broadcastable
-                if sigma_base.ndim == 1:
-                    # Spatially varying only: sigma.shape = (Nx,)
-                    sigma_at_k = sigma_base
-                elif sigma_base.ndim == 2:
-                    # Spatiotemporal: sigma.shape = (Nt, Nx)
-                    sigma_at_k = sigma_base[k_idx_fp, :]
-                else:
-                    raise ValueError(
-                        f"diffusion_field array must be 1D (Nx,) or 2D (Nt, Nx), got shape {sigma_base.shape}"
-                    )
-            else:
-                # Scalar diffusion (constant)
-                sigma_at_k = sigma_base
-
-            row_indices.clear()
-            col_indices.clear()
-            data_values.clear()
-
-            # Handle different boundary conditions
-            if bc_type == "periodic":
-                # Original periodic boundary implementation
-                for i in range(Nx):
-                    # Get diffusion at point i (scalar or array)
-                    sigma_i = sigma_at_k[i] if isinstance(sigma_at_k, np.ndarray) else sigma_at_k
-
-                    # Diagonal term for m_i^{k+1}
-                    val_A_ii = 1.0 / Dt
-                    if Nx > 1:
-                        val_A_ii += sigma_i**2 / Dx**2
-                        # Advection part of diagonal (outflow from cell i)
-                        ip1 = (i + 1) % Nx
-                        im1 = (i - 1 + Nx) % Nx
-                        val_A_ii += float(
-                            coupling_coefficient
-                            * (npart(u_at_tk[ip1] - u_at_tk[i]) + ppart(u_at_tk[i] - u_at_tk[im1]))
-                            / Dx**2
-                        )
-
-                    row_indices.append(i)
-                    col_indices.append(i)
-                    data_values.append(val_A_ii)
-
-                    if Nx > 1:
-                        # Lower diagonal term
-                        im1 = (i - 1 + Nx) % Nx  # Previous cell index (periodic)
-                        val_A_i_im1 = -(sigma_i**2) / (2 * Dx**2)
-                        val_A_i_im1 += float(-coupling_coefficient * npart(u_at_tk[i] - u_at_tk[im1]) / Dx**2)
-                        row_indices.append(i)
-                        col_indices.append(im1)
-                        data_values.append(val_A_i_im1)
-
-                        # Upper diagonal term
-                        ip1 = (i + 1) % Nx  # Next cell index (periodic)
-                        val_A_i_ip1 = -(sigma_i**2) / (2 * Dx**2)
-                        val_A_i_ip1 += float(-coupling_coefficient * ppart(u_at_tk[ip1] - u_at_tk[i]) / Dx**2)
-                        row_indices.append(i)
-                        col_indices.append(ip1)
-                        data_values.append(val_A_i_ip1)
-
-            elif bc_type == "dirichlet":
-                # Dirichlet boundary conditions: m[0] = left_value, m[Nx-1] = right_value
-                for i in range(Nx):
-                    if i == 0 or i == Nx - 1:
-                        # Boundary points: identity equation m[i] = boundary_value
-                        row_indices.append(i)
-                        col_indices.append(i)
-                        data_values.append(1.0)
-                    else:
-                        # Get diffusion at point i (scalar or array)
-                        sigma_i = sigma_at_k[i] if isinstance(sigma_at_k, np.ndarray) else sigma_at_k
-
-                        # Interior points: standard FDM discretization
-                        val_A_ii = 1.0 / Dt
-                        if Nx > 1:
-                            val_A_ii += sigma_i**2 / Dx**2
-                            # Advection part (no wrapping for interior points)
-                            if i > 0 and i < Nx - 1:
-                                val_A_ii += float(
-                                    coupling_coefficient
-                                    * (npart(u_at_tk[i + 1] - u_at_tk[i]) + ppart(u_at_tk[i] - u_at_tk[i - 1]))
-                                    / Dx**2
-                                )
-
-                        row_indices.append(i)
-                        col_indices.append(i)
-                        data_values.append(val_A_ii)
-
-                        if Nx > 1 and i > 0:
-                            # Lower diagonal term (flux from left)
-                            val_A_i_im1 = -(sigma_i**2) / (2 * Dx**2)
-                            val_A_i_im1 += float(-coupling_coefficient * npart(u_at_tk[i] - u_at_tk[i - 1]) / Dx**2)
-                            row_indices.append(i)
-                            col_indices.append(i - 1)
-                            data_values.append(val_A_i_im1)
-
-                        if Nx > 1 and i < Nx - 1:
-                            # Upper diagonal term (flux from right)
-                            val_A_i_ip1 = -(sigma_i**2) / (2 * Dx**2)
-                            val_A_i_ip1 += float(-coupling_coefficient * ppart(u_at_tk[i + 1] - u_at_tk[i]) / Dx**2)
-                            row_indices.append(i)
-                            col_indices.append(i + 1)
-                            data_values.append(val_A_i_ip1)
-
-            elif bc_type == "no_flux":
-                # Two discretization modes based on advection_scheme:
-                # - divergence_*: Flux FDM with interface velocities (mass-preserving)
-                # - gradient_*: Gradient FDM (original, may lose mass)
-                is_conservative_scheme = self.advection_scheme.startswith("divergence")
-
-                if is_conservative_scheme:
-                    # Conservative Flux FDM: discretize div(alpha * m) as flux differences
-                    # Interface velocity: alpha_{i+1/2} = -coupling * (u[i+1] - u[i]) / Dx
-                    # Upwind flux: F_{i+1/2} = alpha * m_upwind
-                    # Column sums = 0 for advection part -> exact mass conservation
-
-                    for i in range(Nx):
-                        sigma_i = sigma_at_k[i] if isinstance(sigma_at_k, np.ndarray) else sigma_at_k
-
-                        # Start with time derivative and diffusion
-                        val_A_ii = 1.0 / Dt + sigma_i**2 / Dx**2
-                        val_A_i_im1 = 0.0
-                        val_A_i_ip1 = 0.0
-
-                        # Diffusion coupling (symmetric, standard centered)
-                        if i > 0:
-                            val_A_i_im1 -= sigma_i**2 / (2 * Dx**2)
-                        if i < Nx - 1:
-                            val_A_i_ip1 -= sigma_i**2 / (2 * Dx**2)
-
-                        # Right interface: F_{i+1/2}
-                        if i < Nx - 1:
-                            # Interface velocity at x_{i+1/2}
-                            alpha_right = -coupling_coefficient * (u_at_tk[i + 1] - u_at_tk[i]) / Dx
-
-                            if alpha_right >= 0:
-                                # Flow to the right: upwind from m_i
-                                # F_{i+1/2} = alpha_right * m_i
-                                # In row i: +alpha_right/Dx (outflow from cell i)
-                                val_A_ii += alpha_right / Dx
-                            else:
-                                # Flow to the left: upwind from m_{i+1}
-                                # F_{i+1/2} = alpha_right * m_{i+1}
-                                # In row i: coefficient on m_{i+1}
-                                val_A_i_ip1 += alpha_right / Dx
-
-                        # Left interface: -F_{i-1/2}
-                        if i > 0:
-                            # Interface velocity at x_{i-1/2}
-                            alpha_left = -coupling_coefficient * (u_at_tk[i] - u_at_tk[i - 1]) / Dx
-
-                            if alpha_left >= 0:
-                                # Flow to the right: upwind from m_{i-1}
-                                # F_{i-1/2} = alpha_left * m_{i-1}
-                                # In row i: -alpha_left/Dx (inflow to cell i)
-                                val_A_i_im1 -= alpha_left / Dx
-                            else:
-                                # Flow to the left: upwind from m_i
-                                # F_{i-1/2} = alpha_left * m_i
-                                # In row i: -alpha_left/Dx * m_i (outflow from cell i)
-                                val_A_ii -= alpha_left / Dx
-
-                        # Boundary treatment: F at domain boundary = 0 (no flux)
-                        # This is automatic: we simply don't add flux terms at boundaries
-                        # i=0: no left interface flux, only right interface
-                        # i=Nx-1: no right interface flux, only left interface
-
-                        # Add matrix entries
-                        row_indices.append(i)
-                        col_indices.append(i)
-                        data_values.append(val_A_ii)
-
-                        if i > 0 and abs(val_A_i_im1) > 1e-15:
-                            row_indices.append(i)
-                            col_indices.append(i - 1)
-                            data_values.append(val_A_i_im1)
-
-                        if i < Nx - 1 and abs(val_A_i_ip1) > 1e-15:
-                            row_indices.append(i)
-                            col_indices.append(i + 1)
-                            data_values.append(val_A_i_ip1)
-
-                else:
-                    # Non-conservative Gradient FDM (original implementation)
-                    # Bug #8 Fix: No-flux boundaries WITH advection
-                    # Previous "partial fix" dropped advection at boundaries → mass leaked
-                    # New strategy: Include advection with one-sided stencils
-                    # Accept ~1-2% FDM discretization error as normal
-
-                    for i in range(Nx):
-                        # Get diffusion at point i (scalar or array)
-                        sigma_i = sigma_at_k[i] if isinstance(sigma_at_k, np.ndarray) else sigma_at_k
-
-                        if i == 0:
-                            # Left boundary: include both diffusion AND advection
-                            # Use one-sided (forward) stencil for velocity gradient
-
-                            # Diagonal term: time + diffusion + advection (upwind)
-                            val_A_ii = 1.0 / Dt + sigma_i**2 / Dx**2
-
-                            # Add advection contribution (one-sided upwind scheme)
-                            # For left boundary, use forward difference for velocity
-                            # Only positive part contributes (flux out of domain)
-                            if Nx > 1:
-                                val_A_ii += float(coupling_coefficient * ppart(u_at_tk[i + 1] - u_at_tk[i]) / Dx**2)
-
-                            row_indices.append(i)
-                            col_indices.append(i)
-                            data_values.append(val_A_ii)
-
-                            # Coupling to m[1]: diffusion + advection
-                            val_A_i_ip1 = -(sigma_i**2) / Dx**2
-                            if Nx > 1:
-                                val_A_i_ip1 += float(-coupling_coefficient * ppart(u_at_tk[i + 1] - u_at_tk[i]) / Dx**2)
-
-                            row_indices.append(i)
-                            col_indices.append(i + 1)
-                            data_values.append(val_A_i_ip1)
-
-                        elif i == Nx - 1:
-                            # Right boundary: include both diffusion AND advection
-                            # Use one-sided (backward) stencil for velocity gradient
-
-                            # Diagonal term: time + diffusion + advection (upwind)
-                            val_A_ii = 1.0 / Dt + sigma_i**2 / Dx**2
-
-                            # Add advection contribution (one-sided upwind scheme)
-                            # For right boundary, use backward difference for velocity
-                            # Only negative part contributes (flux out of domain)
-                            if Nx > 1:
-                                val_A_ii += float(coupling_coefficient * npart(u_at_tk[i] - u_at_tk[i - 1]) / Dx**2)
-
-                            row_indices.append(i)
-                            col_indices.append(i)
-                            data_values.append(val_A_ii)
-
-                            # Coupling to m[N-2]: diffusion + advection
-                            val_A_i_im1 = -(sigma_i**2) / Dx**2
-                            if Nx > 1:
-                                val_A_i_im1 += float(-coupling_coefficient * npart(u_at_tk[i] - u_at_tk[i - 1]) / Dx**2)
-
-                            row_indices.append(i)
-                            col_indices.append(i - 1)
-                            data_values.append(val_A_i_im1)
-
-                        else:
-                            # Interior points: standard conservative FDM discretization
-                            val_A_ii = 1.0 / Dt + sigma_i**2 / Dx**2
-
-                            val_A_ii += float(
-                                coupling_coefficient
-                                * (npart(u_at_tk[i + 1] - u_at_tk[i]) + ppart(u_at_tk[i] - u_at_tk[i - 1]))
-                                / Dx**2
-                            )
-
-                            row_indices.append(i)
-                            col_indices.append(i)
-                            data_values.append(val_A_ii)
-
-                            # Lower diagonal term
-                            val_A_i_im1 = -(sigma_i**2) / (2 * Dx**2)
-                            val_A_i_im1 += float(-coupling_coefficient * npart(u_at_tk[i] - u_at_tk[i - 1]) / Dx**2)
-                            row_indices.append(i)
-                            col_indices.append(i - 1)
-                            data_values.append(val_A_i_im1)
-
-                            # Upper diagonal term
-                            val_A_i_ip1 = -(sigma_i**2) / (2 * Dx**2)
-                            val_A_i_ip1 += float(-coupling_coefficient * ppart(u_at_tk[i + 1] - u_at_tk[i]) / Dx**2)
-                            row_indices.append(i)
-                            col_indices.append(i + 1)
-                            data_values.append(val_A_i_ip1)
-
-            A_matrix = sparse.coo_matrix((data_values, (row_indices, col_indices)), shape=(Nx, Nx)).tocsr()
-
-            # Set up right-hand side
-            b_rhs = m[k_idx_fp, :] / Dt
-
-            # Apply boundary conditions to RHS
-            if bc_type == "dirichlet":
-                b_rhs[0] = _get_bc_value(self.boundary_conditions, "x_min")
-                b_rhs[-1] = _get_bc_value(self.boundary_conditions, "x_max")
-            elif bc_type == "no_flux":
-                # For no-flux boundaries, RHS remains as m[k]/Dt
-                # The no-flux condition is enforced through the matrix coefficients
-                pass
-
-            if self.backend is not None:
-                m_next_step_raw = self.backend.zeros((Nx,))
-            else:
-                m_next_step_raw = np.zeros(Nx, dtype=np.float64)
-
-            if not A_matrix.nnz > 0 and Nx > 0:
-                m_next_step_raw[:] = m[k_idx_fp, :]
-            else:
-                solution = sparse.linalg.spsolve(A_matrix, b_rhs)
-                m_next_step_raw[:] = solution
-
-            if has_nan_or_inf(m_next_step_raw, self.backend):
-                raise ValueError(f"Fokker-Planck solver produced NaNs at step {k_idx_fp}")
-
-            m[k_idx_fp + 1, :] = m_next_step_raw
-
-            # Ensure boundary conditions are satisfied
-            if bc_type == "dirichlet":
-                m[k_idx_fp + 1, 0] = _get_bc_value(self.boundary_conditions, "x_min")
-                m[k_idx_fp + 1, -1] = _get_bc_value(self.boundary_conditions, "x_max")
-
-            # Issue #880: Enforce non-negativity with diagnostic warning
-            min_val = np.min(m[k_idx_fp + 1, :])
-            if min_val < 0:
-                if min_val < -1e-10:
-                    from mfgarchon.utils.mfg_logging import get_logger
-
-                    get_logger(__name__).warning(
-                        "FP solver: negative density clipped at timestep %d (min=%.2e)",
-                        k_idx_fp + 1,
-                        min_val,
-                    )
-                m[k_idx_fp + 1, :] = np.maximum(m[k_idx_fp + 1, :], 0)
-
-            # Issue #640: Report progress to hierarchical progress bar
-            if progress_callback is not None:
-                progress_callback(1)
-
-        return m
-
-    def _validate_callable_output(
-        self,
-        output: np.ndarray | float,
-        expected_shape: tuple,
-        param_name: str,
-        timestep: int | None = None,
-    ) -> np.ndarray:
-        """
-        Validate callable coefficient output.
-
-        Parameters
-        ----------
-        output : np.ndarray or float
-            Output from callable (diffusion or drift)
-        expected_shape : tuple
-            Expected shape for spatial array
-        param_name : str
-            Parameter name for error messages
-        timestep : int, optional
-            Current timestep (for error messages)
-
-        Returns
-        -------
-        np.ndarray
-            Validated array (converts scalar to array if needed)
-
-        Raises
-        ------
-        ValueError
-            If output shape is incorrect or contains NaN/Inf
-        TypeError
-            If output type is incorrect
-        """
-        # Convert scalar to array
-        if isinstance(output, (int, float)):
-            output = np.full(expected_shape, float(output))
-        elif isinstance(output, np.ndarray):
-            # Validate shape
-            if output.shape != expected_shape:
-                raise ValueError(
-                    f"{param_name} callable returned array with shape {output.shape}, "
-                    f"expected {expected_shape} at timestep {timestep}"
-                )
-        else:
-            raise TypeError(
-                f"{param_name} callable must return float or np.ndarray, got {type(output)} at timestep {timestep}"
-            )
-
-        # Check for NaN/Inf
-        if has_nan_or_inf(output, self.backend):
-            raise ValueError(f"{param_name} callable returned NaN or Inf at timestep {timestep}")
-
-        return output
-
-    @deprecated(since="v0.17.1", replacement="solve_fp_system")
-    def _solve_fp_1d_with_callable(
-        self,
-        m_initial_condition: np.ndarray,
-        drift_field: np.ndarray | None,
-        diffusion_callable: callable,
-        show_progress: bool | None = None,
-    ) -> np.ndarray:
-        """
-        Solve 1D FP equation with callable (state-dependent) diffusion.
-
-        .. deprecated:: 0.17.1
-            This method is deprecated in favor of `solve_fp_nd_full_system` which
-            handles callable diffusion for all dimensions. Will be removed in v1.0.0.
-
-        Uses bootstrap strategy: evaluate callable at each timestep using
-        the already-computed density m[k] to solve for m[k+1].
-
-        Parameters
-        ----------
-        m_initial_condition : np.ndarray
-            Initial density, shape (Nx,)
-        drift_field : np.ndarray or None
-            Precomputed drift field, shape (Nt, Nx), or None for zero drift
-        diffusion_callable : callable
-            Function D(t, x, m) -> diffusion coefficient
-            Signature: (float, np.ndarray, np.ndarray) -> float | np.ndarray
-        show_progress : bool
-            Show progress bar
-
-        Returns
-        -------
-        np.ndarray
-            Density evolution, shape (Nt, Nx)
-        """
-        from mfgarchon.types.pde_coefficients import DiffusionCallable
-
-        # Validate callable signature using protocol
-        if not isinstance(diffusion_callable, DiffusionCallable):
-            raise TypeError(
-                "diffusion_field callable does not match DiffusionCallable protocol. "
-                "Expected signature: (t: float, x: ndarray, m: ndarray) -> float | ndarray"
-            )
-
-        # Get problem dimensions from geometry
-        Nx = self.problem.geometry.get_grid_shape()[0]
-        Dt = self.problem.dt
-        bounds = self.problem.geometry.get_bounds()
-        xmin, xmax = bounds[0][0], bounds[1][0]
-
-        # Infer Nt from drift_field if provided, else use problem.Nt
-        if drift_field is not None:
-            Nt = drift_field.shape[0]
-        else:
-            Nt = self.problem.Nt + 1
-
-        # Create spatial grid for callable evaluation
-        x_grid = np.linspace(xmin, xmax, Nx)
-
-        # Allocate solution array
-        if self.backend is not None:
-            m_solution = self.backend.zeros((Nt, Nx))
-        else:
-            m_solution = np.zeros((Nt, Nx))
-
-        m_solution[0, :] = m_initial_condition
-        m_solution[0, :] = np.maximum(m_solution[0, :], 0)
-
-        # Apply boundary conditions to initial condition
-        if _get_bc_type(self.boundary_conditions) == "dirichlet":
-            m_solution[0, 0] = _get_bc_value(self.boundary_conditions, "x_min")
-            m_solution[0, -1] = _get_bc_value(self.boundary_conditions, "x_max")
-
-        # Progress bar for forward timesteps with callable diffusion
-        # n_time_points - 1 steps to go from t=0 to t=T
-        from mfgarchon.utils.progress import create_progress_bar, should_show_progress
-
-        timestep_range = create_progress_bar(
-            range(Nt - 1),
-            verbose=should_show_progress(show_progress),
-            desc="FP (callable diffusion)",
-        )
-
-        # Bootstrap forward iteration: use m[k] to evaluate callable and compute m[k+1]
-        for k in timestep_range:
-            t_current = k * Dt
-            m_current = m_solution[k, :]
-
-            # Evaluate diffusion callable at current state
-            diffusion_at_k = diffusion_callable(t_current, x_grid, m_current)
-
-            # Validate callable output
-            diffusion_at_k = self._validate_callable_output(
-                diffusion_at_k,
-                expected_shape=(Nx,),
-                param_name="diffusion_field",
-                timestep=k,
-            )
-
-            # Temporarily set sigma to evaluated diffusion for this timestep
-            original_sigma = self.problem.sigma
-            self.problem.sigma = diffusion_at_k
-
-            try:
-                # Get drift at current timestep (or zero)
-                if drift_field is not None:
-                    U_at_k = drift_field[k, :]
-                else:
-                    U_at_k = np.zeros(Nx)
-
-                # Solve single timestep using _solve_fp_1d machinery
-                # Create temporary arrays for single-step solve
-                m_temp = np.zeros((2, Nx))
-                m_temp[0, :] = m_current
-                U_temp = np.zeros((2, Nx))
-                U_temp[0, :] = U_at_k
-
-                # Call _solve_fp_1d for single timestep (Nt=2 gives one step)
-                # This reuses all the boundary condition logic
-                m_result = self._solve_fp_1d(
-                    m_initial_condition=m_current,
-                    U_solution_for_drift=U_temp,
-                    show_progress=False,
-                )
-
-                # Extract result at next timestep
-                m_solution[k + 1, :] = m_result[1, :]
-
-            finally:
-                # Restore original sigma
-                self.problem.sigma = original_sigma
-
-        return m_solution
-
     # NOTE: _solve_fp_1d_with_callable_drift was removed in v0.17.1 (Issue #641)
     # It was dead code - never called from solve_fp_system().
     # Callable drift now routes directly to _solve_fp_nd_full_system() which
@@ -1567,7 +963,7 @@ if __name__ == "__main__":
         geometry=grid_1d,
         Nt=25,
         T=1.0,
-        sigma=0.1,
+        volatility=0.1,
         coupling_coefficient=1.0,
     )
 
@@ -1631,7 +1027,7 @@ if __name__ == "__main__":
         geometry=grid_2d,
         Nt=20,
         T=0.5,
-        sigma=0.2,
+        volatility=0.2,
         coupling_coefficient=1.0,
     )
 

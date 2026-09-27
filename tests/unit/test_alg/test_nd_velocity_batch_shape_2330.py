@@ -73,7 +73,7 @@ def _velocity(hamiltonian, cross_density=None):
             geometry=grid,
             T=0.3,
             Nt=3,
-            sigma=0.3,
+            volatility=0.3,
             components=MFGComponents(m_initial=lambda z: 1.0, u_terminal=lambda z: 0.0, hamiltonian=hamiltonian),
         )
     p = np.stack([SLOPES[0] + TWIST * y + 0.1 * steps, np.broadcast_to(SLOPES[1] + TWIST * x, U.shape)], axis=1)

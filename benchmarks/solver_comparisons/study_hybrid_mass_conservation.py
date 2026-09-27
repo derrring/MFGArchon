@@ -25,7 +25,7 @@ def setup_problem():
         ),
         T=1.0,
         Nt=51,
-        sigma=1.0,
+        volatility=1.0,
         coupling_coefficient=0.5,
     )
 

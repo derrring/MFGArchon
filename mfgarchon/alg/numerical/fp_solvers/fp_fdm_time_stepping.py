@@ -56,6 +56,7 @@ Note:
 
 from __future__ import annotations
 
+import numbers
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -732,7 +733,7 @@ def solve_fp_nd_full_system(
         Array backend (currently unused, NumPy only)
     diffusion_field : float | np.ndarray | Callable | None
         Optional diffusion override (Phase 2.4):
-        - None: Use problem.sigma
+        - None: Use problem.volatility
         - float: Constant diffusion
         - ndarray: Spatially/temporally varying diffusion
         - Callable: State-dependent diffusion D(t, x, m) -> float | ndarray
@@ -916,19 +917,18 @@ def solve_fp_nd_full_system(
         tensor_base = tensor_diffusion_field
         sigma_base = None  # Not used for tensor diffusion
     else:
-        # Scalar diffusion path (Phase 2.4)
-        if diffusion_field is None:
-            sigma_base = problem.sigma
-        elif isinstance(diffusion_field, (int, float)):
-            sigma_base = float(diffusion_field)
-        elif callable(diffusion_field):
-            # Callable: will be evaluated per timestep
-            sigma_base = diffusion_field
-        elif isinstance(diffusion_field, np.ndarray):
-            # Array: spatially or spatiotemporally varying
-            sigma_base = diffusion_field
+        # Scalar diffusion path (Phase 2.4). `diffusion_field` carries the VOLATILITY; None is the
+        # problem's own, as supplied, taken through the same dispatch as an override (#2376).
+        volatility = problem.volatility if diffusion_field is None else diffusion_field
+        if isinstance(volatility, numbers.Real):
+            sigma_base = float(volatility)
+        elif callable(volatility) or isinstance(volatility, np.ndarray):
+            # Callable: evaluated per timestep. Array: spatially or spatiotemporally varying.
+            sigma_base = volatility
         else:
-            sigma_base = problem.sigma
+            raise TypeError(
+                f"volatility must be a real scalar, an ndarray or a callable, got {type(volatility).__name__}"
+            )
         tensor_base = None
 
     # Validate input shapes (spatial dimensions must match)
@@ -989,8 +989,8 @@ def solve_fp_nd_full_system(
     # For constant sigma, the Laplacian matrix is the same at every time step.
     # Caching it avoids Nt redundant sparse matrix assemblies.
     _cached_laplacian = None
-    _is_constant_sigma = not callable(getattr(problem, "volatility_field", None)) and not isinstance(
-        getattr(problem, "volatility_field", None), np.ndarray
+    _is_constant_sigma = not callable(getattr(problem, "volatility", None)) and not isinstance(
+        getattr(problem, "volatility", None), np.ndarray
     )
     # Only cache for uniform BCs (LaplacianOperator doesn't support mixed/Dirichlet)
     _bc_is_uniform = getattr(boundary_conditions, "is_uniform", False) if boundary_conditions is not None else False

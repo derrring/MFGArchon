@@ -64,7 +64,7 @@ def _problem(control_cost: float, coupling_coefficient: float) -> MFGProblem:
         boundary_conditions=no_flux_bc(dimension=1),
     )
     return MFGProblem(
-        geometry=geom, components=comp, T=T, Nt=NT, sigma=SIGMA, coupling_coefficient=coupling_coefficient
+        geometry=geom, components=comp, T=T, Nt=NT, volatility=SIGMA, coupling_coefficient=coupling_coefficient
     )
 
 

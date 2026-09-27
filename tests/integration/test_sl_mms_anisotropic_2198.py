@@ -38,14 +38,10 @@ WHAT IT CANNOT SEE
   than none -- it teaches the reader the fixture cannot reach something it can.
 - **A coupled system.** ``m`` is constant here, so this measures the HJB scheme, not the coupling.
 
-THE SIGMA ROUTE IS A KNOWN HOLE, AND THIS FIXTURE DOCUMENTS IT RATHER THAN HIDING IT
+THE TENSOR ROUTE
 
-``problem.sigma`` is assigned AFTER construction below, because no constructor route accepts a
-``(d, d)`` volatility. Measured: ``sigma=S``, ``volatility=S`` and ``diffusion=0.5*S@S.T`` all raise
-the same ``ValidationError`` -- ``volatility_field has shape (2, 2), expected (11, 11)`` -- because
-every array is validated as a spatial field on the grid. So the anisotropic capability has no
-supported entry point from a user's problem; it is reachable only by the assignment below or by
-calling ``adi_diffusion_step`` directly. Filed separately.
+The ``(d, d)`` volatility reaches the solver through the constructor,
+``MFGProblem(volatility=S, volatility_kind="tensor")`` (#2375 ruling 6).
 """
 
 from __future__ import annotations
@@ -131,10 +127,8 @@ def _solve(nx: int, nt: int, sigma, sigma_kind: str | None) -> float:
         u_terminal=lambda p: float(u_star(T, np.asarray(p).reshape(1, 2))[0]),
         hamiltonian=HAMILTONIAN,
     )
-    problem = MFGProblem(geometry=grid, T=T, Nt=nt, sigma=SIGMA_SCALAR, components=components, coupling_coefficient=1.0)
-    if sigma_kind == "tensor":
-        # See the module docstring: no constructor route accepts a (d, d) volatility.
-        problem.sigma = sigma
+    volatility = {"volatility": sigma, "volatility_kind": "tensor"} if sigma_kind == "tensor" else {"volatility": sigma}
+    problem = MFGProblem(geometry=grid, T=T, Nt=nt, components=components, coupling_coefficient=1.0, **volatility)
     points = problem.geometry.get_spatial_grid()
     shape = tuple(problem.geometry.Nx_points)
     solver = HJBSemiLagrangianSolver(problem)
@@ -168,7 +162,9 @@ def test_the_three_other_sl_variants_refuse_the_source():
     the wrong place verifies a different equation while still converging."""
     grid = TensorProductGrid(bounds=[(0.0, L)] * 2, Nx_points=[11] * 2, boundary_conditions=no_flux_bc(dimension=2))
     components = MFGComponents(m_initial=lambda p: M_CONST, u_terminal=lambda p: 0.0, hamiltonian=HAMILTONIAN)
-    problem = MFGProblem(geometry=grid, T=T, Nt=4, sigma=SIGMA_SCALAR, components=components, coupling_coefficient=1.0)
+    problem = MFGProblem(
+        geometry=grid, T=T, Nt=4, volatility=SIGMA_SCALAR, components=components, coupling_coefficient=1.0
+    )
     shape = (11, 11)
     kwargs = {
         "M_density": np.full((5, *shape), M_CONST),

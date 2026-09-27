@@ -285,7 +285,7 @@ class HighDimMFGBenchmark:
                     spatial_discretization=list(grid_resolution),
                     T=T,
                     Nt=Nt,
-                    sigma=0.1,
+                    volatility=0.1,
                 )
                 self.grid_resolution = grid_resolution
 
@@ -387,7 +387,7 @@ class HighDimMFGBenchmark:
                     spatial_discretization=list(grid_resolution),
                     T=T,
                     Nt=Nt,
-                    sigma=0.1,
+                    volatility=0.1,
                 )
                 self.grid_resolution = grid_resolution
 

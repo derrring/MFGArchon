@@ -55,7 +55,7 @@ problem = MFGProblem(
     hjb_geometry=grid,
     fp_geometry=mesh,
     time_domain=(1.0, 50),
-    sigma=0.1
+    volatility=0.1
 )
 
 # Projections use nearest neighbor fallback automatically

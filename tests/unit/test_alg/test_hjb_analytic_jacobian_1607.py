@@ -43,7 +43,7 @@ def _tiny_problem(Nx: int = 13, Nt: int = 6) -> MFGProblem:
         coupling_dm=lambda m: 0.05,
     )
     return MFGProblem(
-        model=Model(hamiltonian=ham, sigma=0.2),
+        model=Model(hamiltonian=ham, volatility=0.2),
         domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[Nx], boundary_conditions=no_flux_bc(dimension=1)),
         conditions=Conditions(
             u_terminal=lambda x: (x - 0.5) ** 2,

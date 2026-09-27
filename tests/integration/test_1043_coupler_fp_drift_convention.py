@@ -74,7 +74,7 @@ def _lq_problem() -> MFGProblem:
             coupling_dm=lambda m: 1.0,
         ),
     )
-    return MFGProblem(geometry=geometry, T=0.3, Nt=6, sigma=0.2, components=components)
+    return MFGProblem(geometry=geometry, T=0.3, Nt=6, volatility=0.2, components=components)
 
 
 def _realistic_U(problem: MFGProblem, fp_solver: FPFDMSolver, hjb_solver: HJBFDMSolver) -> np.ndarray:
@@ -334,7 +334,7 @@ class TestBlockIteratorFPDriftConvention:
                 coupling_dm=lambda m: 1.0,
             ),
         )
-        problem_nonsmooth = MFGProblem(geometry=geometry, T=0.3, Nt=6, sigma=0.2, components=components)
+        problem_nonsmooth = MFGProblem(geometry=geometry, T=0.3, Nt=6, volatility=0.2, components=components)
 
         fp_solver = FPFDMSolver(problem_nonsmooth)
         hjb_solver = HJBFDMSolver(problem_nonsmooth)
@@ -397,7 +397,7 @@ class TestBlockIteratorFPDriftConvention:
                 coupling_dm=lambda m: 1.0,
             ),
         )
-        problem_l1 = MFGProblem(geometry=geometry, T=0.3, Nt=6, sigma=0.2, components=components)
+        problem_l1 = MFGProblem(geometry=geometry, T=0.3, Nt=6, volatility=0.2, components=components)
 
         Nt = problem_l1.Nt + 1
         spatial_shape = tuple(problem_l1.geometry.get_grid_shape())

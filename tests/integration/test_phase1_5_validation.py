@@ -50,7 +50,7 @@ def _make_lq_problem(coupling_coeff: float = 1.0, sigma: float = 0.1) -> MFGProb
         ),
         Nt=NT,
         T=T,
-        sigma=sigma,
+        volatility=sigma,
         components=components,
     )
 

@@ -19,9 +19,8 @@ import pytest
 import numpy as np
 
 from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import adi_diffusion_step, apply_cross_diffusion_explicit
-from mfgarchon.core.mfg_problem import _diffusion_to_volatility
 from mfgarchon.operators.differential.diffusion import DiffusionOperator
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, volatility_from_diffusion
 
 
 class TestKernelConvention:
@@ -176,20 +175,20 @@ class TestInverseRoundTrip:
 
     def test_roundtrip_symmetric(self) -> None:
         D = np.array([[0.02, 0.005], [0.005, 0.045]])
-        S = _diffusion_to_volatility(D)
+        S = volatility_from_diffusion(D, kind="tensor")
         np.testing.assert_allclose(S, S.T)  # symmetric square root, not a Cholesky factor
         np.testing.assert_allclose(diffusion_from_volatility(S, kind="tensor"), D, atol=1e-14)
 
     def test_diagonal_D_roundtrips_to_sqrt(self) -> None:
         D = np.diag([0.02, 0.045])
-        S = _diffusion_to_volatility(D)
+        S = volatility_from_diffusion(D, kind="tensor")
         # symmetric sqrt of 2D on the diagonal = sqrt(2 * D_ii)
         np.testing.assert_allclose(np.diag(S), np.sqrt(2.0 * np.diag(D)), atol=1e-12)
 
     def test_non_psd_D_rejected(self) -> None:
         """A (d,d) diffusion tensor with a negative eigenvalue has no real symmetric square root;
-        _diffusion_to_volatility must raise rather than silently clip to the nearest PSD (which would
+        volatility_from_diffusion must raise rather than silently clip to the nearest PSD (which would
         return a wrong volatility with no error)."""
         D_bad = np.array([[0.02, 0.05], [0.05, 0.01]])  # det < 0 -> a negative eigenvalue
         with pytest.raises(ValueError, match="positive semi-definite"):
-            _diffusion_to_volatility(D_bad)
+            volatility_from_diffusion(D_bad, kind="tensor")

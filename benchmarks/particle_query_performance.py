@@ -73,7 +73,7 @@ def benchmark_1d_sparse_queries():
     print("=" * 70)
 
     geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[101], boundary_conditions=no_flux_bc(dimension=1))
-    problem = MFGProblem(geometry=geometry, T=0.5, Nt=1, sigma=0.05)
+    problem = MFGProblem(geometry=geometry, T=0.5, Nt=1, volatility=0.05)
 
     num_particles = 10000
     solver = FPParticleSolver(problem, num_particles=num_particles, density_mode="hybrid")
@@ -154,7 +154,7 @@ def benchmark_1d_scaling():
 
     for Nx in grid_sizes:
         geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[Nx], boundary_conditions=no_flux_bc(dimension=1))
-        problem = MFGProblem(geometry=geometry, T=0.5, Nt=1, sigma=0.05)
+        problem = MFGProblem(geometry=geometry, T=0.5, Nt=1, volatility=0.05)
 
         solver = FPParticleSolver(problem, num_particles=num_particles, density_mode="hybrid")
 
@@ -229,7 +229,7 @@ def benchmark_2d_semi_lagrangian():
         geometry = TensorProductGrid(
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[Nx, Ny], boundary_conditions=no_flux_bc(dimension=2)
         )
-        problem = MFGProblem(geometry=geometry, T=0.3, Nt=1, sigma=0.05)
+        problem = MFGProblem(geometry=geometry, T=0.3, Nt=1, volatility=0.05)
 
         solver = FPParticleSolver(problem, num_particles=num_particles, density_mode="hybrid")
 
@@ -307,7 +307,7 @@ def benchmark_query_methods():
     print("=" * 70)
 
     geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[101], boundary_conditions=no_flux_bc(dimension=1))
-    problem = MFGProblem(geometry=geometry, T=0.5, Nt=1, sigma=0.05)
+    problem = MFGProblem(geometry=geometry, T=0.5, Nt=1, volatility=0.05)
 
     num_particles = 10000
     solver = FPParticleSolver(problem, num_particles=num_particles, density_mode="hybrid")

@@ -520,7 +520,7 @@ class BaseHJBSolver(BaseNumericalSolver):
                                For MFG: actual previous iterate U^{k-1}
                                For standalone: initial guess (zeros, terminal condition, etc.)
             volatility_field: Diffusion coefficient specification (optional):
-                              None: use problem.sigma (backward compatible)
+                              None: use problem.volatility
                               float: constant isotropic σ
                               ndarray: spatially/temporally varying
                               Callable: state-dependent σ(t, x, m)
@@ -692,6 +692,22 @@ def _clip_p_values(p_values: dict[str, float], clip_limit: float) -> dict[str, f
     return clipped_p_values
 
 
+def _volatility_at_n(problem: Any, sigma_at_n: float | np.ndarray | None) -> float | np.ndarray:
+    """The volatility an HJB assembly uses at t_n: ``sigma_at_n``, or the problem's own.
+
+    A scalar or per-point array is used as is. A callable problem volatility needs a time and a
+    density to evaluate, which only the per-timestep driver has, so it is refused here rather than
+    replaced by a collapsed scalar (#2376).
+    """
+    sigma = problem.volatility if sigma_at_n is None else sigma_at_n
+    if callable(sigma):
+        raise NotImplementedError(
+            "The HJB assembly needs the volatility evaluated at t_n (sigma_at_n); the problem's "
+            "volatility is a callable, which the per-timestep driver evaluates and passes in (#2376)."
+        )
+    return sigma
+
+
 def compute_hjb_residual(
     U_n_current_newton_iterate: np.ndarray,  # U_kp1_n in notebook's getFnU_withM
     U_n_plus_1_from_hjb_step: np.ndarray,  # U_kp1_np1 in notebook
@@ -713,14 +729,8 @@ def compute_hjb_residual(
     dx = problem.geometry.get_grid_spacing()[0]
     dt = problem.dt
 
-    # Handle diffusion field - NumPy will broadcast scalar automatically
-    if sigma_at_n is None:
-        sigma = problem.sigma  # Backward compatible (scalar)
-    elif isinstance(sigma_at_n, (int, float)):
-        sigma = sigma_at_n  # Keep as scalar (not float()) for broadcasting
-    else:
-        # Spatially varying diffusion array
-        sigma = sigma_at_n
+    # The volatility at t_n; None is the problem's own. NumPy broadcasts a scalar automatically.
+    sigma = _volatility_at_n(problem, sigma_at_n)
 
     if backend is not None:
         Phi_U = backend.zeros((Nx,))
@@ -1122,14 +1132,8 @@ def compute_hjb_jacobian(
     dt = problem.dt
     eps = 1e-7
 
-    # Handle diffusion field - NumPy will broadcast scalar automatically
-    if sigma_at_n is None:
-        sigma = problem.sigma  # Backward compatible (scalar)
-    elif isinstance(sigma_at_n, (int, float)):
-        sigma = sigma_at_n  # Keep as scalar (not float()) for broadcasting
-    else:
-        # Spatially varying diffusion array
-        sigma = sigma_at_n
+    # The volatility at t_n; None is the problem's own. NumPy broadcasts a scalar automatically.
+    sigma = _volatility_at_n(problem, sigma_at_n)
 
     # For Jacobian, we always need NumPy arrays for scipy.sparse
     # Convert backend arrays to NumPy if needed
@@ -1823,8 +1827,8 @@ def solve_hjb_system_backward(
             continue
 
         # Extract or evaluate diffusion using CoefficientField abstraction (Issue #1412: route
-        # through the single-source factory so a None override falls back to the full
-        # volatility_field, not the scalar problem.sigma placeholder). dimension=1: 1D path.
+        # through the single-source factory so a None override falls back to the problem's
+        # volatility as supplied). dimension=1: 1D path.
         diffusion = problem.get_diffusion_coefficient_field(
             override=volatility_field, field_name="volatility_field", dimension=1
         )
@@ -1895,7 +1899,7 @@ if __name__ == "__main__":
     from mfgarchon.geometry import TensorProductGrid
 
     geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
-    problem = MFGProblem(geometry=geometry, T=1.0, Nt=5, sigma=0.1)
+    problem = MFGProblem(geometry=geometry, T=1.0, Nt=5, volatility=0.1)
 
     try:
         base_solver = BaseHJBSolver(problem)

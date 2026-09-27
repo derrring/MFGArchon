@@ -69,7 +69,7 @@ class TestDualityConvergence:
             ),
             Nt=20,
             T=1.0,
-            sigma=0.1,
+            volatility=0.1,
             components=_default_components(),
         )
 
@@ -328,7 +328,7 @@ class TestNumericalStability:
             ),
             Nt=20,
             T=1.0,
-            sigma=0.1,
+            volatility=0.1,
             components=_default_components(),
         )
 
@@ -382,7 +382,7 @@ class TestNumericalStability:
             ),
             Nt=20,
             T=1.0,
-            sigma=0.1,
+            volatility=0.1,
             components=_default_components(),
         )
 
@@ -426,7 +426,7 @@ if __name__ == "__main__":
         ),
         Nt=20,
         T=1.0,
-        sigma=0.1,
+        volatility=0.1,
         components=_default_components(),
     )
     solve_result = problem.solve(

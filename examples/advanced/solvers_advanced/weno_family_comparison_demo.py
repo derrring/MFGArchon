@@ -49,7 +49,7 @@ def create_challenging_mfg_problem() -> MFGProblem:
         ),
         T=1.0,
         Nt=200,
-        sigma=0.05,
+        volatility=0.05,
         coupling_coefficient=2.0,
     )
 

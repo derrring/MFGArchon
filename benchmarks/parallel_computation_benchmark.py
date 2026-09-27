@@ -50,7 +50,7 @@ def mfg_solve_function(Nx, Nt, sigma):
             bounds=[(0.0, 1.0)], Nx_points=[Nx + 1], boundary_conditions=no_flux_bc(dimension=1)
         ),
         Nt=Nt,
-        sigma=sigma,
+        volatility=sigma,
     )
     solver = create_fast_solver(problem)
     result = solver.solve()
@@ -81,7 +81,7 @@ def benchmark_common_noise_parallel():
             Nx=51,  # Moderate size
             T=1.0,
             Nt=51,
-            sigma=0.2,
+            volatility=0.2,
             noise_process=noise_process,
             conditional_hamiltonian=h,  # Pass during construction
             theta_initial=0.0,

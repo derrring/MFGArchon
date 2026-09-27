@@ -59,7 +59,7 @@ def _problem(nx, sigma, k=1.0):
         geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=periodic_bc(dimension=1)),
         T=T_FINAL,
         Nt=NT,
-        sigma=sigma,
+        volatility=sigma,
         components=MFGComponents(
             m_initial=lambda z: _datum(z, k),
             u_terminal=lambda z: np.zeros_like(np.asarray(z)),

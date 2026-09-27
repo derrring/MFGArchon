@@ -58,7 +58,7 @@ grid = TensorProductGrid(dimension=2, bounds=[(0, 1), (0, 1)], Nx_points=[51, 51
 problem = MFGProblem(
     geometry=grid,  # Same geometry for HJB and FP
     time_domain=(1.0, 50),
-    sigma=0.1
+    volatility=0.1
 )
 
 # Both solvers use the same grid
@@ -81,7 +81,7 @@ problem = MFGProblem(
     hjb_geometry=hjb_grid,  # Fine grid for value iteration
     fp_geometry=fp_grid,     # Coarse grid for density evolution
     time_domain=(1.0, 50),
-    sigma=0.1
+    volatility=0.1
 )
 
 # Automatic projection between geometries
@@ -110,7 +110,7 @@ problem = MFGProblem(
     hjb_geometry=hjb_grid,
     fp_geometry=fp_grid,
     time_domain=(1.0, 100),
-    sigma=0.5,
+    volatility=0.5,
     final_condition=lambda x, y: (x - 5)**2 + (y - 5)**2,  # Target center
     m0=lambda x, y: np.exp(-((x-2)**2 + (y-2)**2))  # Initial density at corner
 )
@@ -159,7 +159,7 @@ problem = MFGProblem(
     hjb_geometry=hjb_grid,
     fp_geometry=fp_particles,
     time_domain=(1.0, 50),
-    sigma=0.1
+    volatility=0.1
 )
 
 # Access projector
@@ -207,7 +207,7 @@ problem = MFGProblem(
     hjb_geometry=hjb_grid,
     fp_geometry=fp_network,
     time_domain=(1.0, 100),
-    sigma=0.5,
+    volatility=0.5,
     final_condition=lambda x, y: -((x - 9)**2 + (y - 9)**2)  # Exit at (9,9)
 )
 
@@ -260,7 +260,7 @@ problem = MFGProblem(
     hjb_geometry=hjb_grid,
     fp_geometry=fp_particles,
     time_domain=(1.0, 50),
-    sigma=0.1
+    volatility=0.1
 )
 
 # Value function computed in 2D, applied to high-D particles
@@ -357,7 +357,7 @@ problem = MFGProblem(
     hjb_geometry=my_custom_geo,
     fp_geometry=grid,
     time_domain=(1.0, 50),
-    sigma=0.1
+    volatility=0.1
 )
 
 # Automatically uses registered projectors
@@ -566,7 +566,7 @@ problem = MFGProblem(
     hjb_geometry=hjb_grid,
     fp_geometry=fp_grid,
     time_domain=(5.0, 100),  # 5 seconds to evacuate, 100 time steps
-    sigma=0.5,
+    volatility=0.5,
     final_condition=g,
     m0=m0,
     running_cost=f,

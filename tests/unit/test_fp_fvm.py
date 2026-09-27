@@ -39,13 +39,13 @@ def _components():
 def make_problem_1d(N, T, Nt, sigma, bounds=(0.0, 1.0), bc="no_flux"):
     bc_obj = {"no_flux": no_flux_bc(dimension=1), "periodic": periodic_bc(dimension=1)}[bc]
     geom = TensorProductGrid(bounds=[bounds], Nx_points=[N], boundary_conditions=bc_obj)
-    prob = MFGProblem(geometry=geom, T=T, Nt=Nt, sigma=sigma, components=_components())
+    prob = MFGProblem(geometry=geom, T=T, Nt=Nt, volatility=sigma, components=_components())
     return prob, geom
 
 
 def make_problem_2d(Nx, Ny, T, Nt, sigma, bounds=((0.0, 1.0), (0.0, 1.0))):
     geom = TensorProductGrid(bounds=list(bounds), Nx_points=[Nx, Ny], boundary_conditions=no_flux_bc(dimension=2))
-    prob = MFGProblem(geometry=geom, T=T, Nt=Nt, sigma=sigma, components=_components())
+    prob = MFGProblem(geometry=geom, T=T, Nt=Nt, volatility=sigma, components=_components())
     return prob, geom
 
 

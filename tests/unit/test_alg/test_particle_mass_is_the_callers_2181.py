@@ -71,7 +71,7 @@ def _problem(grid: TensorProductGrid, centre: float, share: float) -> MFGProblem
         return MFGProblem(
             model=Model(
                 hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
-                sigma=0.4,
+                volatility=0.4,
             ),
             domain=grid,
             conditions=Conditions(

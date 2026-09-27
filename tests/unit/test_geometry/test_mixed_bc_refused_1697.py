@@ -389,7 +389,7 @@ def test_hjb_sl_refuses_the_rename_signature_at_construction_2284():
         geometry=grid,
         T=0.2,
         Nt=2,
-        sigma=0.1,
+        volatility=0.1,
         components=MFGComponents(hamiltonian=H, u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0),
     )
 

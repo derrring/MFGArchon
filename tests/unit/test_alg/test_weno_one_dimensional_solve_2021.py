@@ -43,7 +43,7 @@ def _solve(dim, n, nt):
         geometry=grid,
         T=0.2,
         Nt=nt,
-        sigma=0.3,
+        volatility=0.3,
         coupling_coefficient=0.0,
         components=MFGComponents(
             m_initial=lambda q: 1.0,
@@ -121,7 +121,7 @@ def test_the_cfl_step_has_no_floor_and_names_the_zero_gradient_case():
     n = 11
     flat = np.ones((n, n))
     dt_flat = solver._compute_dt_stable_nd(flat, np.ones((n, n)))
-    diff_bound = solver.diffusion_stability_factor * solver.grid_spacing[0] ** 2 / solver.problem.sigma**2
+    diff_bound = solver.diffusion_stability_factor * solver.grid_spacing[0] ** 2 / solver.problem.volatility**2
     assert dt_flat == pytest.approx(diff_bound, rel=1e-12), (
         "with no gradient anywhere the CFL limit is absent and the diffusion bound must govern "
         "exactly -- an epsilon in the denominator would return a slightly different number and hide "

@@ -51,7 +51,7 @@ def _problem(**kwargs):
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[_N], boundary_conditions=no_flux_bc(dimension=1))
     hamiltonian = SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0))
     return MFGProblem(
-        model=Model(hamiltonian=hamiltonian, sigma=0.2),
+        model=Model(hamiltonian=hamiltonian, volatility=0.2),
         domain=grid,
         conditions=Conditions(
             u_terminal=lambda x: np.zeros_like(np.atleast_1d(x)).squeeze(),
@@ -151,7 +151,7 @@ def _hamiltonian_with(population_index=0, potential=None):
 def _problem_with(hamiltonian, **kwargs):
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[_N], boundary_conditions=no_flux_bc(dimension=1))
     return MFGProblem(
-        model=Model(hamiltonian=hamiltonian, sigma=0.2),
+        model=Model(hamiltonian=hamiltonian, volatility=0.2),
         domain=grid,
         conditions=Conditions(
             u_terminal=lambda x: np.zeros_like(np.atleast_1d(x)).squeeze(),

@@ -62,7 +62,7 @@ class FPGFDMSolver(BaseFPSolver):
         >>> from mfgarchon.geometry import TensorProductGrid
         >>>
         >>> grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31])
-        >>> problem = MFGProblem(geometry=grid, Nt=20, T=1.0, sigma=0.1)
+        >>> problem = MFGProblem(geometry=grid, Nt=20, T=1.0, volatility=0.1)
         >>> points = np.random.rand(100, 1)  # Scattered 1D points
         >>> solver = FPGFDMSolver(problem, collocation_points=points)
         >>>
@@ -479,7 +479,7 @@ class FPGFDMSolver(BaseFPSolver):
                     * Custom H: Any function of grad(U)
                 - Callable: Custom drift function α(t, x, m) -> drift_vector
                 Default: None
-            volatility_field: Volatility coefficient σ (SDE noise). If None, uses problem.sigma.
+            volatility_field: Volatility coefficient σ (SDE noise). If None, uses problem.volatility.
                             Currently only scalar volatility supported.
                             Note: Internally converted to diffusion D = σ²/2 for FP equation.
             source_term: Manufactured forcing S(t, x) -> (N,), with x the collocation points of
@@ -522,13 +522,14 @@ class FPGFDMSolver(BaseFPSolver):
         n_time_points = self.problem.Nt + 1
         dt = self.problem.T / self.problem.Nt
 
-        # Volatility coefficient (Issue #717: unified API)
-        if volatility_field is None:
-            sigma = self.problem.sigma
-        elif isinstance(volatility_field, (int, float)):
-            sigma = float(volatility_field)
+        # Volatility coefficient (Issue #717: unified API). None is the problem's own (#2376).
+        volatility = self.problem.volatility if volatility_field is None else volatility_field
+        if isinstance(volatility, (int, float)):
+            sigma = float(volatility)
         else:
-            raise NotImplementedError("Only scalar volatility currently supported")
+            raise NotImplementedError(
+                f"FPGFDMSolver supports only a scalar volatility, got {type(volatility).__name__} (#2376)."
+            )
 
         diffusion_coeff = diffusion_from_volatility(sigma)
 
@@ -747,7 +748,7 @@ if __name__ == "__main__":
         Nx_points=[31],
         boundary_conditions=neumann_bc(dimension=1),
     )
-    problem = MFGProblem(geometry=geometry_1d, T=1.0, Nt=20, sigma=0.1, components=components)
+    problem = MFGProblem(geometry=geometry_1d, T=1.0, Nt=20, volatility=0.1, components=components)
 
     # Create 1D collocation points
     points_1d = np.linspace(0, 1, 50).reshape(-1, 1)
@@ -782,7 +783,7 @@ if __name__ == "__main__":
         Nx_points=[10, 10],
         boundary_conditions=neumann_bc(dimension=2),
     )
-    problem_2d = MFGProblem(geometry=geometry_2d, Nt=10, T=0.5, sigma=0.1, components=components)
+    problem_2d = MFGProblem(geometry=geometry_2d, Nt=10, T=0.5, volatility=0.1, components=components)
 
     # Create 2D scattered points
     np.random.seed(42)

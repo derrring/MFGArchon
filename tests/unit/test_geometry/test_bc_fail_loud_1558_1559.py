@@ -61,7 +61,7 @@ def _small_1d_problem(n=11):
         u_terminal=lambda x: 0.0 * np.asarray(x, dtype=float),
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
     )
-    return MFGProblem(geometry=grid, T=0.1, Nt=2, sigma=0.3, components=comps)
+    return MFGProblem(geometry=grid, T=0.1, Nt=2, volatility=0.3, components=comps)
 
 
 def test_legacy_mishandled_bc_fails_loud():
@@ -148,7 +148,7 @@ def test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmles
                 coupling_dm=lambda m: 1.0,
             ),
         )
-        problem = MFGProblem(geometry=geometry, T=0.4, Nt=n_steps, sigma=0.35, components=components)
+        problem = MFGProblem(geometry=geometry, T=0.4, Nt=n_steps, volatility=0.35, components=components)
         return FPFDMSolver(problem).solve_fp_system(
             m_initial_shared, potential_field=np.zeros((n_steps + 1, n_points))
         )[-1]

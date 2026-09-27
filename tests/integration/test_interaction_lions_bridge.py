@@ -377,7 +377,7 @@ def _ring_problem(grid_only=False, amp=5.0, length_scale=0.15, bowl=4.0):
         ),
         T=0.5,
         Nt=4,
-        sigma=0.2,
+        volatility=0.2,
         components=components,
     )
     g = problem.geometry.get_spatial_grid().ravel()

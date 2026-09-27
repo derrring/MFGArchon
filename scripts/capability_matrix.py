@@ -209,7 +209,7 @@ def _smoke_problem_2d():
         ),
         Nt=_SMOKE_2D["Nt"],
         T=_SMOKE_2D["T"],
-        sigma=_SMOKE_2D["sigma"],
+        volatility=_SMOKE_2D["sigma"],
         components=MFGComponents(
             m_initial=lambda x: np.exp(-30 * np.sum((np.asarray(x) - 0.5) ** 2, axis=-1)),
             u_terminal=lambda x: 0.0,
@@ -236,7 +236,7 @@ def _lq_problem_1d():
         geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[25], boundary_conditions=no_flux_bc(dimension=1)),
         T=0.3,
         Nt=12,
-        sigma=0.4,
+        volatility=0.4,
         coupling_coefficient=coupling,
         components=MFGComponents(
             m_initial=lambda x: np.exp(-((np.asarray(x) - 0.4) ** 2) / (2 * 0.13**2)),
@@ -804,7 +804,7 @@ def _regime_switching_cell():
                 ),
                 Nt=10,
                 T=1.0,
-                sigma=0.1,
+                volatility=0.1,
                 components=MFGComponents(
                     m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
                     u_terminal=lambda x: 0.0,

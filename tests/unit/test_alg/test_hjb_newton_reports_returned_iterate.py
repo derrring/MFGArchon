@@ -44,7 +44,7 @@ def _stiff_problem():
         geometry=grid,
         Nt=10,
         T=1.0,
-        sigma=0.05,
+        volatility=0.05,
         components=MFGComponents(
             m_initial=lambda x: np.exp(-30 * (np.asarray(x) - 0.5) ** 2),
             u_terminal=lambda x: 0.0,

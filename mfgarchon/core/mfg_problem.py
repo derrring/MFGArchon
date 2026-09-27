@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
@@ -35,109 +34,16 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-    from mfgarchon.types.pde_coefficients import DiffusionField, DriftField
+    from mfgarchon.types.pde_coefficients import DriftField
 
 
-# ============================================================================
-# Diffusion / Volatility Conversion Helpers (Issue #811)
-# ============================================================================
-#
-# Physics/PDE convention: D = sigma^2/2 = (1/2)*Sigma*Sigma^T
-# SDE convention: dX = alpha*dt + Sigma*dW
-#
-# diffusion= parameter: D (PDE coefficient, appears directly in PDE)
-# sigma= parameter: Sigma (SDE volatility, what solvers use internally)
-
-
-def _diffusion_to_volatility(
-    D: float | int | np.ndarray,
-) -> float | np.ndarray:
-    """Convert PDE diffusion coefficient D to SDE volatility sigma.
-
-    Scalar:   D = sigma^2/2  =>  sigma = sqrt(2D)
-    Diagonal: D_i = sigma_i^2/2  =>  sigma_i = sqrt(2 D_i)
-    Tensor:   D = (1/2) S S^T  =>  S = symmetric matrix square root of 2D (RFC #1596;
-              the SYMMETRIC square root, not a Cholesky factor, so the volatility->D->volatility
-              round-trip lands on a symmetric std-dev matrix that passes validate_symmetric_psd).
-
-    Args:
-        D: PDE diffusion coefficient (non-negative scalar, 1D diagonal, or 2D SPD tensor).
-
-    Returns:
-        SDE volatility sigma (same shape semantics as input).
-
-    Raises:
-        ValueError: If D is negative (scalar) or has unsupported shape.
-    """
-    if isinstance(D, (int, float)):
-        D_f = float(D)
-        if D_f < 0:
-            raise ValueError(f"Diffusion coefficient must be non-negative, got {D_f}")
-        return math.sqrt(2.0 * D_f)
-
-    D_arr = np.asarray(D, dtype=float)
-    if D_arr.ndim == 0:
-        # 0-d numpy array
-        val = float(D_arr)
-        if val < 0:
-            raise ValueError(f"Diffusion coefficient must be non-negative, got {val}")
-        return math.sqrt(2.0 * val)
-    if D_arr.ndim == 1:
-        # Diagonal: element-wise
-        if np.any(D_arr < 0):
-            raise ValueError("Diffusion coefficient array must be non-negative")
-        return np.sqrt(2.0 * D_arr)
-    if D_arr.ndim == 2:
-        # Full tensor: D = (1/2) S S^T => S = symmetric square root of 2D. Emit the SYMMETRIC
-        # square root (not a Cholesky factor): the volatility convention is that a (d,d) sigma is
-        # the symmetric std-dev matrix (RFC #1596), so the round-trip volatility->D->volatility
-        # must land back on a symmetric S that passes validate_symmetric_psd. Cholesky returns a
-        # lower-triangular (asymmetric) factor and would be rejected by the grid consumers.
-        two_D = 2.0 * D_arr
-        eigvals, eigvecs = np.linalg.eigh(0.5 * (two_D + two_D.T))  # symmetrize guards fp asymmetry
-        if float(np.min(eigvals)) < -1e-10:
-            raise ValueError(
-                f"Diffusion tensor must be positive semi-definite to take a real square root; "
-                f"got min eigenvalue {float(np.min(eigvals)):.6e} (RFC #1596)."
-            )
-        sqrt_eigvals = np.sqrt(np.clip(eigvals, 0.0, None))
-        return (eigvecs * sqrt_eigvals) @ eigvecs.T
-
-    raise ValueError(f"Unsupported diffusion shape: {D_arr.shape}")
-
-
-def _volatility_to_diffusion(
-    sigma: float | int | np.ndarray,
-) -> float | np.ndarray:
-    """Convert SDE volatility sigma to PDE diffusion coefficient D.
-
-    Scalar:   sigma => D = sigma^2/2
-    Diagonal: sigma_i => D_i = sigma_i^2/2
-    Tensor:   Sigma => D = (1/2) Sigma Sigma^T
-
-    Args:
-        sigma: SDE volatility (scalar, 1D diagonal, or 2D matrix).
-
-    Returns:
-        PDE diffusion coefficient D.
-    """
-    # Single source for the conversion (Issue #811): delegate the shape dispatch
-    # to the canonical converter. Byte-identical: scalar -> sigma^2/2, 1D diagonal
-    # -> sigma_i^2/2 elementwise (kind="field"), 2D -> 0.5 Sigma Sigma^T (kind="tensor").
-    from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
-
-    if isinstance(sigma, (int, float)):
-        return diffusion_from_volatility(float(sigma))
-
-    sigma_arr = np.asarray(sigma, dtype=float)
-    if sigma_arr.ndim == 0:
-        return diffusion_from_volatility(sigma_arr)
-    if sigma_arr.ndim == 1:
-        return diffusion_from_volatility(sigma_arr, kind="field")
-    if sigma_arr.ndim == 2:
-        return diffusion_from_volatility(sigma_arr, kind="tensor")
-
-    raise ValueError(f"Unsupported volatility shape: {sigma_arr.shape}")
+_RETIRED_VOLATILITY_ATTRIBUTE = (
+    "problem.{name} is retired (#2375 ruling 6). The SDE volatility Sigma is problem.volatility, held "
+    "as supplied (scalar, array or callable), and the PDE diffusion A = 1/2 Sigma Sigma^T is "
+    "problem.diffusion. A consumer that needs one scalar calls scalar_volatility(problem.volatility, consumer=...) "
+    "from mfgarchon.utils.pde_coefficients, which refuses an array or a callable rather than "
+    "averaging it (#2376)."
+)
 
 
 # ============================================================================
@@ -168,6 +74,50 @@ def _same_geometry(a: object, b: object) -> bool:
     prevented; over-refusing is not that.
     """
     return a is b
+
+
+def _evaluation_shape(x: Any, m: Any) -> tuple[int, ...] | None:
+    """The shape of the points a callable volatility was evaluated at, or None if it cannot be read.
+
+    The density's shape when one is given (every solver passes it). Otherwise x's: an array of points
+    shaped (..., d) gives its leading axes, a 1-D array its own shape, and a meshgrid list -- d arrays
+    of one shape, each with d axes -- that shape. A list of per-axis coordinate vectors is not a set
+    of points and gives None.
+    """
+    if np.ndim(m) > 0:
+        return tuple(np.shape(m))
+    if isinstance(x, (list, tuple)):
+        shapes = {np.shape(axis) for axis in x}
+        if len(shapes) == 1 and all(np.ndim(axis) == len(x) for axis in x):
+            return next(iter(shapes))
+        return None
+    return tuple(np.shape(x)[:-1]) if np.ndim(x) >= 2 else tuple(np.shape(x))
+
+
+def _callable_output_kind(value: Any, declared: str | None, dimension: Any, points: tuple[int, ...] | None) -> str:
+    """How a callable volatility's (or diffusion's) output is read: as declared, else per point.
+
+    Per point is how every solver that evaluates a callable volatility reads its array output. The
+    exception is an output whose trailing axes are (d, d) and which is not simply one value per
+    evaluation point: a constant (d, d) tensor, a per-point tensor, or -- on a d x d grid, where the
+    two readings coincide -- either. There the library does not guess (#2375 ruling 6). A 3-D grid
+    shaped (Nx, 3, 3) returns one value per point with trailing (3, 3) axes, and is read per point.
+    """
+    if declared is not None:
+        return declared
+    shape = np.shape(value)
+    if not (isinstance(dimension, int) and dimension >= 2 and shape[-2:] == (dimension, dimension)):
+        return "field"
+    if shape == points and shape != (dimension, dimension):
+        return "field"
+    raise ValueError(
+        f"A callable volatility with no volatility_kind returned an array of shape {shape} at points "
+        f"of shape {points if points is not None else 'unknown (pass the density m)'}; its trailing "
+        f"({dimension}, {dimension}) axes make it a tensor, or on a "
+        f"{dimension} x {dimension} grid either a tensor or a per-point field. Declare "
+        "volatility_kind='tensor' (a noise matrix) or 'field' (isotropic per point) on the problem "
+        "(#2375 ruling 6)."
+    )
 
 
 class MFGProblem(HamiltonianMixin, ConditionsMixin):
@@ -228,13 +178,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
     hjb_geometry: GeometryProtocol | None
     fp_geometry: GeometryProtocol | None
 
-    # Type annotations for PDE coefficient fields (Issue #811)
-    # sigma: SDE volatility (scalar, used by all solvers as problem.sigma)
-    # volatility_field: Full volatility field — stores SDE volatility (sigma), NOT PDE D
-    #   (all solvers expect sigma, not D)
-    # drift_field: Optional drift (float, array, or callable)
-    sigma: float
-    volatility_field: DiffusionField
+    # drift_field: Optional drift (float, array, or callable). The volatility is the read-only
+    # property `volatility`, and the diffusion `A = 1/2 Sigma Sigma^T` is derived from it (#2375 ruling 6).
     drift_field: DriftField
 
     def __init__(
@@ -260,10 +205,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         T: float | None = None,
         Nt: int | None = None,
         time_domain: tuple[float, int] | None = None,  # Alternative to T/Nt
-        # Physical parameters — Issue #811 convention: diffusion = D = sigma^2/2
-        diffusion: float | NDArray[np.floating] | Callable | None = None,  # PDE coefficient D = sigma^2/2
-        sigma: float | NDArray[np.floating] | Callable | None = None,  # SDE volatility sigma
-        volatility: float | NDArray[np.floating] | Callable | None = None,  # Alias for sigma
+        # Physical parameters (#2375 ruling 6): volatility= is Sigma, diffusion= is A = 1/2 Sigma Sigma^T
+        diffusion: float | NDArray[np.floating] | Callable | None = None,  # PDE diffusion A
+        volatility: float | NDArray[np.floating] | Callable | None = None,  # SDE volatility Sigma
+        volatility_kind: str | None = None,  # "field" | "tensor"; required for an array
         drift: float | NDArray[np.floating] | Callable | None = None,  # Optional drift field
         coupling_coefficient: float = 0.5,
         # MFG coupling parameters
@@ -306,19 +251,24 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                         Note: Both hjb_geometry and fp_geometry must be specified together
             network: NetworkGraph for network MFG problems
             T, Nt, time_domain: Time domain parameters (T, Nt) or tuple (T, Nt)
-            diffusion: PDE diffusion coefficient D = sigma^2/2 (Issue #811).
-                None -> 0 (deterministic). Internally converted to SDE volatility
-                sigma = sqrt(2D) for solver consumption.
-                Supports:
-                - None: No diffusion (deterministic dynamics)
-                - float: Constant isotropic D
-                - ndarray: Spatially varying D (element-wise conversion)
-                - Callable: State-dependent D(t, x, m) (wrapped with conversion)
-                Mutually exclusive with sigma= and volatility=.
-            sigma: SDE volatility sigma. Mutually exclusive with diffusion=.
-                Direct specification of noise coefficient in dX = alpha dt + sigma dW.
-                Supports same types as diffusion= (no conversion applied).
-            volatility: Alias for sigma (SDE volatility). Same semantics.
+            volatility: The SDE volatility Sigma in dX = alpha dt + Sigma dW (#2375 ruling 6).
+                Held as supplied on ``problem.volatility``; the PDE diffusion
+                A = 1/2 Sigma Sigma^T is derived from it on ``problem.diffusion``.
+                - None (and no diffusion=): deterministic, Sigma = 0
+                - float: constant isotropic sigma
+                - ndarray: needs ``volatility_kind`` -- there is no default
+                - Callable: state-dependent Sigma(t, x, m)
+                Mutually exclusive with diffusion=. ``sigma=`` is retired and raises.
+            volatility_kind: How an array volatility (or an array diffusion=) is read:
+                ``"field"`` -- isotropic per-point sigma, shape ``spatial_shape``;
+                ``"tensor"`` -- trailing ``(d, k)`` axes are the noise matrix, constant
+                ``(d, k)`` or ``(*spatial_shape, d, k)``. Required for an array, refused for
+                a scalar. A ``(d, d)`` tensor and a d x d field have the same shape, which is
+                why the library does not guess.
+            diffusion: The PDE diffusion A (D = sigma^2/2 in the scalar case). Converted to the
+                volatility it implies -- sqrt(2D), or for a tensor the symmetric square root of
+                2A -- so ``problem.volatility`` is always Sigma. Same types as volatility=, with
+                the same ``volatility_kind`` rule for an array. Mutually exclusive with volatility=.
             drift: Drift field α(t, x, m) for FP equation. None → 0 (no drift).
                 Supports:
                 - None: No drift (no advection)
@@ -379,21 +329,22 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             projector = GeometryProjector(hjb_geometry=hjb_grid, fp_geometry=fp_grid)
             m_on_fp = projector.project_hjb_to_fp(np.zeros(41))
 
-            # Advanced: State-dependent diffusion (callable)
-            def density_dependent_diffusion(t, x, m):
-                return 0.1 * (1 + m)  # Higher diffusion in dense regions
+            # Advanced: State-dependent volatility (callable)
+            def density_dependent_volatility(t, x, m):
+                return 0.1 * (1 + m)  # More noise in dense regions
             problem = MFGProblem(
                 geometry=domain,
-                sigma=density_dependent_diffusion,
+                volatility=density_dependent_volatility,
                 time_domain=(1.0, 50)
             )
 
-            # Advanced: Spatially varying diffusion (array)
-            sigma_array = np.ones((51, 51)) * 0.1  # Base diffusion
-            sigma_array[20:30, 20:30] = 0.5  # Higher diffusion in center region
+            # Advanced: Spatially varying volatility (array, isotropic per point)
+            sigma_array = np.ones((51, 51)) * 0.1
+            sigma_array[20:30, 20:30] = 0.5  # More noise in the center region
             problem = MFGProblem(
                 geometry=domain,
-                sigma=sigma_array,
+                volatility=sigma_array,
+                volatility_kind="field",
                 time_domain=(1.0, 50)
             )
 
@@ -408,6 +359,14 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             )
         """
         import warnings
+
+        if "sigma" in kwargs:
+            raise TypeError(
+                "MFGProblem(sigma=...) is retired (#2375 ruling 6). Pass volatility= -- the SDE "
+                "volatility Sigma, with volatility_kind='field' or 'tensor' for an array -- or "
+                "diffusion= -- the PDE coefficient A = 1/2 Sigma Sigma^T. On the v1.0 API it is "
+                "Model(volatility=...)."
+            )
 
         # =====================================================================
         # API v1.0 path (Issue #875): Model + Domain + Conditions
@@ -439,9 +398,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                     ("geometry", geometry),
                     ("spatial_bounds", spatial_bounds),
                     ("spatial_discretization", spatial_discretization),
-                    ("sigma", sigma),
                     ("diffusion", diffusion),
                     ("volatility", volatility),
+                    ("volatility_kind", volatility_kind),
                     ("T", T),
                     ("time_domain", time_domain),
                     ("components", components),
@@ -457,7 +416,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
             # Translate to legacy parameters
             geometry = domain
-            sigma = model.sigma
+            volatility = model.volatility
+            volatility_kind = model.volatility_kind
             T = conditions.T
             # Nt must be provided — fail fast (no silent defaults)
             if Nt is None:
@@ -489,7 +449,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
             # Issue #875: Deprecation warning for legacy API path
             warnings.warn(
-                "Legacy MFGProblem(geometry=, components=, sigma=, T=, Nt=) is deprecated. "
+                "Legacy MFGProblem(geometry=, components=, volatility=, T=, Nt=) is deprecated. "
                 "Use the v1.0 API: MFGProblem(model=Model(...), domain=grid, "
                 "conditions=Conditions(...), Nt=50). "
                 "Legacy support will be removed in v1.0.0.",
@@ -503,51 +463,60 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 raise ValueError("Specify EITHER (T, Nt) OR time_domain, not both")
             T, Nt = time_domain
 
-        # --- Diffusion / sigma / volatility: mutual exclusion (Issue #811) ---
-        # Convention: diffusion = D = sigma^2/2 (PDE coefficient)
-        #             sigma = SDE volatility (what solvers use internally)
-        #             volatility = alias for sigma
-        _n_phys = sum(x is not None for x in [diffusion, sigma, volatility])
-        if _n_phys > 1:
-            _names = [
-                n for n, v in [("diffusion", diffusion), ("sigma", sigma), ("volatility", volatility)] if v is not None
-            ]
-            raise ValueError(f"Specify at most one of: diffusion=, sigma=, volatility=. Got: {', '.join(_names)}")
-
-        # Resolve volatility alias
-        if volatility is not None:
-            sigma = volatility
-
-        # Convert to SDE volatility (the internal representation used by all solvers).
-        # After this block, `vola_value` holds the SDE volatility field.
-        if sigma is not None:
-            # Issue #1077 (case 3): reject a nonsensical NEGATIVE scalar volatility
-            # (fail-fast). A scalar sigma == 0 is the legitimate deterministic sentinel
-            # (identical to the sigma=None path below), so it stays allowed -- this guard is
-            # reconstruction-safe: MFGProblem(sigma=other.sigma) with a deterministic
-            # ``other`` (self.sigma == 0.0) does not raise. Callable / array sigma
-            # (Issue #1248) is validated where it is evaluated, not here.
-            if isinstance(sigma, (int, float, np.floating, np.integer)) and sigma < 0:
+        # --- volatility= / diffusion=: mutually exclusive (#811, #2375 ruling 6) ---
+        if diffusion is not None and volatility is not None:
+            raise ValueError("Specify at most one of: diffusion=, volatility=. Got both.")
+        # An array-like volatility becomes a float array, and a 0-d one a float, before any check reads
+        # it: a list would otherwise skip the array validation, and a 0-d array the sign check. A
+        # diffusion= array-like needs no such step -- volatility_from_diffusion converts it below.
+        if volatility is not None and not callable(volatility):
+            volatility = np.asarray(volatility, dtype=float) if np.ndim(volatility) > 0 else float(volatility)
+        supplied = volatility if volatility is not None else diffusion
+        if volatility_kind is not None:
+            if volatility_kind not in ("field", "tensor"):
+                raise ValueError(f"volatility_kind must be 'field' or 'tensor', got {volatility_kind!r}.")
+            if supplied is None or (not callable(supplied) and np.ndim(supplied) == 0):
                 raise ValueError(
-                    f"sigma (SDE volatility) must be >= 0, got {sigma}. "
-                    "Use sigma=0 or sigma=None for deterministic dynamics."
+                    "volatility_kind says how an ARRAY (or a callable's array output) is read; it was "
+                    f"given with {'no' if supplied is None else 'a scalar'} volatility/diffusion, where "
+                    "it would be read by nothing."
                 )
-            # User provided SDE volatility directly — no conversion needed
-            vola_value = sigma
+        if supplied is not None and not callable(supplied) and volatility_kind is None:
+            if np.ndim(supplied) > 0:
+                raise ValueError(
+                    f"An array {'volatility' if volatility is not None else 'diffusion'} of shape "
+                    f"{np.shape(supplied)} needs volatility_kind='field' (isotropic per-point) or 'tensor' "
+                    "(trailing (d, k) noise matrix). A (d, d) tensor and a d x d spatial field have the "
+                    "same shape, and the library does not guess (#2375 ruling 6)."
+                )
+
+        # After this block `vola_value` is the SDE volatility Sigma, as supplied or as implied by D.
+        if volatility is not None:
+            # Issue #1077 (case 3): reject a NEGATIVE scalar volatility (fail-fast). A scalar 0 is
+            # the legitimate deterministic value, identical to passing nothing, so
+            # MFGProblem(volatility=other.volatility) from a deterministic `other` does not raise.
+            # Callable / array volatility (Issue #1248) is validated where it is evaluated.
+            if isinstance(volatility, float) and volatility < 0:
+                raise ValueError(
+                    f"volatility (the SDE volatility) must be >= 0, got {volatility}. "
+                    "Use volatility=0 or leave it unset for deterministic dynamics."
+                )
+            vola_value = volatility
         elif diffusion is not None:
-            # User provided PDE coefficient D = sigma^2/2.
-            # (Negative D is already rejected by `_diffusion_to_volatility` -- the #811
-            # "Diffusion coefficient must be non-negative" guard -- so no extra check here.)
-            # Convert to SDE volatility: sigma = sqrt(2D).
+            # D -> Sigma by the one reverse converter (a negative D is refused there, #811).
+            from mfgarchon.utils.pde_coefficients import volatility_from_diffusion
+
             if callable(diffusion):
                 _D_callable = diffusion
 
-                def vola_value(t, x, m, *, _D=_D_callable):  # type: ignore[misc]
-                    return _diffusion_to_volatility(_D(t, x, m))
+                def vola_value(t, x, m, *, _D=_D_callable, _kind=volatility_kind):
+                    D = _D(t, x, m)
+                    kind = _callable_output_kind(D, _kind, self.dimension, _evaluation_shape(x, m))
+                    return volatility_from_diffusion(D, kind=kind)
             else:
-                vola_value = _diffusion_to_volatility(diffusion)
+                vola_value = volatility_from_diffusion(diffusion, kind=volatility_kind)
         else:
-            # No physical parameter specified — deterministic (sigma = 0)
+            # No physical parameter specified -- deterministic (Sigma = 0)
             vola_value = 0.0
 
         # Issue #1077: T <= 0 is a degenerate (zero/inverted) time horizon — dt = T/Nt = 0
@@ -566,16 +535,16 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         if drift is None:
             drift = 0.0
 
-        # Store the full volatility field for advanced solvers.
-        # Note (Issue #811): volatility_field stores SDE volatility (sigma),
-        # not PDE diffusion D. All solvers expect sigma and compute D = sigma^2/2
-        # internally.
+        # The volatility is held as supplied -- scalar, array or callable -- and never collapsed to
+        # a representative scalar (#2376). A consumer that can only use a scalar asks
+        # `scalar_volatility(problem.volatility, consumer=...)`, which refuses anything else.
         # Note (Issue #1085): mfgarchon SDE convention is **Itô**, not Stratonovich.
         # For constant sigma, the two coincide. For callable sigma(t, x, m) with
         # spatial dependence, users with Stratonovich-derived drift must apply
         # the correction `alpha_Ito = alpha_Strat - (1/2) sigma * d_x sigma`
         # before passing the drift. mfgarchon does NOT add this correction.
-        self.volatility_field = vola_value
+        self._volatility = vola_value
+        self._volatility_kind = volatility_kind
         self.drift_field = drift
 
         # Extended PDE form fields (Issue #921).
@@ -644,18 +613,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 "Note also that `obstacles` (plural) is a different field entirely -- geometric "
                 "regions excluded from the domain -- and was never related to this one."
             )
-
-        # Extract scalar sigma for backward compatibility.
-        # If volatility is callable or array, use a representative scalar value.
-        if callable(vola_value):
-            # Callable: store 1.0 as default, solvers should use volatility_field
-            sigma_scalar = 1.0
-        elif isinstance(vola_value, np.ndarray):
-            # Array: use mean value as representative scalar
-            sigma_scalar = float(np.mean(vola_value))
-        else:
-            # Scalar: use directly
-            sigma_scalar = float(vola_value)
 
         # Initialize geometry-related attributes explicitly (Issue #543 - fail-fast principle)
         # These may be set by init methods, but should have explicit defaults
@@ -739,12 +696,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         mode = self._detect_init_mode(spatial_bounds=spatial_bounds, geometry=geometry_for_detection, network=network)
 
         # Dispatch to appropriate initializer
-        # Note: Pass sigma_scalar (the backward-compatible float value)
         if mode == "nd_grid":
             # Mode 1: N-dimensional grid
-            self._init_grid(
-                spatial_bounds, spatial_discretization, T, Nt, sigma_scalar, coupling_coefficient, suppress_warnings
-            )
+            self._init_grid(spatial_bounds, spatial_discretization, T, Nt, coupling_coefficient, suppress_warnings)
 
         elif mode == "geometry":
             # Mode 2: Complex geometry
@@ -753,7 +707,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 obstacles,
                 T,
                 Nt,
-                sigma_scalar,
                 coupling_coefficient,
                 lambda_,
                 gamma,
@@ -766,7 +719,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         elif mode == "network":
             # Mode 3: Network MFG
-            self._init_network(network, T, Nt, sigma_scalar, coupling_coefficient, lambda_, gamma)
+            self._init_network(network, T, Nt, coupling_coefficient, lambda_, gamma)
 
         elif mode == "default":
             # Default: 1D unit interval with 51 grid points
@@ -775,7 +728,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 UserWarning,
                 stacklevel=2,
             )
-            self._init_grid([(0.0, 1.0)], [51], T, Nt, sigma_scalar, coupling_coefficient, suppress_warnings)
+            self._init_grid([(0.0, 1.0)], [51], T, Nt, coupling_coefficient, suppress_warnings)
 
         else:
             raise ValueError(f"Unknown initialization mode: {mode}")
@@ -845,7 +798,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         spatial_discretization: list[int] | None,
         T: float,
         Nt: int,
-        sigma: float,
         coupling_coefficient: float,
         suppress_warnings: bool,
     ) -> None:
@@ -864,7 +816,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 dimension when None.
             T: Terminal time.
             Nt: Number of time intervals.
-            sigma: Diffusion coefficient.
             coupling_coefficient: Control cost coefficient.
             suppress_warnings: Skip the computational-feasibility check.
         """
@@ -918,7 +869,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         self.tSpace: np.ndarray = np.linspace(0, T, Nt + 1, endpoint=True)
 
         # Coefficients
-        self.sigma: float = sigma
         self.coupling_coefficient: float = coupling_coefficient
 
         # Check computational feasibility and warn if needed
@@ -1036,7 +986,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         obstacles: list | None,
         T: float,
         Nt: int,
-        sigma: float,
         coupling_coefficient: float,
         lambda_: float | None,
         gamma: float,
@@ -1052,7 +1001,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             geometry: Any object implementing GeometryProtocol
             obstacles: List of obstacle geometries (for domain geometries)
             T, Nt: Time domain parameters
-            sigma, coupling_coefficient: Physical parameters
+            coupling_coefficient: Physical parameters
             lambda_, gamma: MFG coupling parameters
             suppress_warnings: Suppress warnings
         """
@@ -1087,7 +1036,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         self.tSpace = np.linspace(0, T, Nt + 1, endpoint=True)
 
         # Physical parameters
-        self.sigma = sigma  # Already sigma_scalar from __init__ dispatch
         self.coupling_coefficient = coupling_coefficient
 
         # MFG coupling parameters (for custom Hamiltonians)
@@ -1156,7 +1104,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         network: Any,
         T: float,
         Nt: int,
-        sigma: float,
         coupling_coefficient: float,
         lambda_: float | None,
         gamma: float,
@@ -1167,7 +1114,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         Args:
             network: NetworkGraph or networkx.Graph
             T, Nt: Time domain parameters
-            sigma, coupling_coefficient: Physical parameters
+            coupling_coefficient: Physical parameters
         """
         # Import CustomNetwork for geometry-first API
         from mfgarchon.geometry.graph import CustomNetwork
@@ -1208,7 +1155,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         self.tSpace = np.linspace(0, T, Nt + 1, endpoint=True)
 
         # Physical parameters
-        self.sigma = sigma  # Already sigma_scalar from __init__ dispatch
         self.coupling_coefficient = coupling_coefficient
 
         # MFG coupling parameters (for custom Hamiltonians)
@@ -1300,43 +1246,55 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         return self.domain_type == "implicit"
 
     # =========================================================================
-    # Physical Parameter Properties (Issue #811)
+    # Physical Parameter Properties (#811, #2375 ruling 6)
     # =========================================================================
 
     @property
-    def volatility(self) -> float:
-        """SDE volatility sigma. Alias for ``self.sigma``.
+    def volatility(self) -> float | np.ndarray | Callable:
+        """The SDE volatility Sigma, as supplied: a float, an array, or a callable Sigma(t, x, m).
 
-        Returns the scalar SDE noise coefficient. For the full field
-        (array or callable), use ``self.volatility_field``.
+        Never collapsed to a scalar (#2376). A consumer that can only use a scalar calls
+        ``scalar_volatility(problem.volatility, consumer=...)``, which refuses an array or a callable.
         """
-        return self.sigma
+        return self._volatility
 
     @property
-    def diffusion(self) -> float:
-        """PDE diffusion coefficient D = sigma^2/2.
+    def volatility_kind(self) -> str | None:
+        """How an array volatility is read: ``"field"``, ``"tensor"``, or ``None`` for a scalar."""
+        return self._volatility_kind
 
-        This is the coefficient appearing directly in the PDE:
-            dm/dt + div(alpha m) = D Laplacian(m)
+    @property
+    def diffusion(self) -> float | np.ndarray | Callable:
+        """The PDE diffusion A = 1/2 Sigma Sigma^T, derived by the one converter.
 
-        Computed from the scalar ``self.sigma``. For non-scalar or
-        state-dependent diffusion, evaluate ``self.volatility_field`` and
-        apply the conversion ``D = sigma^2/2`` as needed.
+        Same form as ``volatility``: a float (D = sigma^2/2), an array read under
+        ``volatility_kind``, or a callable A(t, x, m). For one scalar D, a consumer calls
+        ``diffusion_from_volatility(scalar_volatility(problem.volatility, consumer=...))``.
         """
-        return _volatility_to_diffusion(self.sigma)
+        from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+
+        volatility, kind = self._volatility, self._volatility_kind
+        if callable(volatility):
+
+            def diffusion(t, x, m):
+                value = volatility(t, x, m)
+                output_kind = _callable_output_kind(value, kind, self.dimension, _evaluation_shape(x, m))
+                return diffusion_from_volatility(value, kind=output_kind)
+
+            return diffusion
+        return diffusion_from_volatility(volatility, kind=kind)
+
+    @property
+    def sigma(self):
+        raise AttributeError(_RETIRED_VOLATILITY_ATTRIBUTE.format(name="sigma"))
+
+    @property
+    def volatility_field(self):
+        raise AttributeError(_RETIRED_VOLATILITY_ATTRIBUTE.format(name="volatility_field"))
 
     @property
     def diffusion_field(self):
-        """Deprecated: use volatility_field instead."""
-        import warnings
-
-        warnings.warn(
-            "diffusion_field is deprecated, use volatility_field. "
-            "The field stores SDE volatility (sigma), not PDE diffusion (D).",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.volatility_field
+        raise AttributeError(_RETIRED_VOLATILITY_ATTRIBUTE.format(name="diffusion_field"))
 
     # =========================================================================
     # Hamiltonian Properties (Issue #673)
@@ -1465,27 +1423,23 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         Get a CoefficientField wrapper for the diffusion coefficient.
 
         Returns a CoefficientField that handles scalar, array, and callable
-        diffusion coefficients uniformly. Use this in solvers instead of
-        hand-constructing ``CoefficientField(..., self.sigma)`` (Issue #1412).
+        volatilities uniformly (Issue #1412). What it wraps is the VOLATILITY Sigma, not the
+        diffusion; the evaluated value goes through ``diffusion_from_volatility``.
 
-        Precedence — the single source for the solver-side volatility lookup: a per-solve
-        ``override`` (the ``volatility_field`` a solver receives) wins; otherwise the problem's
-        full ``volatility_field`` (the SDE volatility property — scalar/array/callable); the
-        derived scalar ``self.sigma`` is only the ultimate fallback. Before this, the
-        FDM/time-stepping solver sites hand-built ``CoefficientField(override, self.sigma)`` and
-        so fell back to ``self.sigma`` (``mean(array)``, or ``1.0`` for a callable) when no
-        override was passed, silently dropping a spatially-varying ``volatility_field``.
+        Precedence -- the single source for the solver-side volatility lookup: a per-solve
+        ``override`` (the volatility a solver receives) wins; otherwise ``self.volatility``, as
+        supplied. There is no scalar fallback (#2376).
 
         Args:
             override: Per-solve volatility override (a solver's ``volatility_field`` argument).
-                ``None`` falls back to ``self.volatility_field`` then ``self.sigma``.
+                ``None`` uses ``self.volatility``.
             field_name: Name used in CoefficientField diagnostics (default ``"diffusion"``;
                 solvers pass ``"volatility_field"`` to preserve their error wording).
             dimension: Spatial dimension for array/spatiotemporal extraction; defaults to
                 ``self.dimension``.
 
         Returns:
-            CoefficientField wrapping the resolved field with self.sigma as the scalar default
+            CoefficientField wrapping the resolved volatility
 
         Example:
             >>> diffusion = problem.get_diffusion_coefficient_field()
@@ -1499,8 +1453,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         from mfgarchon.utils.pde_coefficients import CoefficientField
 
         return CoefficientField(
-            field=override if override is not None else self.volatility_field,
-            default_value=self.sigma,
+            field=override if override is not None else self._volatility,
+            default_value=0.0,  # read only when `field` is None, which it never is here
             field_name=field_name,
             dimension=self.dimension if dimension is None else dimension,
         )
@@ -1545,9 +1499,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         constant/precomputed ones (e.g., re-evaluate at each timestep).
 
         Returns:
-            True if volatility_field or drift_field is callable
+            True if the volatility or drift_field is callable
         """
-        return callable(self.volatility_field) or callable(self.drift_field)
+        return callable(self._volatility) or callable(self.drift_field)
 
     def __repr__(self) -> str:
         """
@@ -1560,7 +1514,14 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         geom_type = type(self.geometry).__name__ if self.geometry else "None"
         dim = self.dimension
 
-        return f"MFGProblem(geometry={geom_type}, dim={dim}, T={self.T}, Nt={self.Nt}, sigma={self.sigma})"
+        vol = self._volatility
+        if callable(vol):
+            vol_repr = "<callable>"
+        elif np.ndim(vol) != 0:
+            vol_repr = f"<array {np.shape(vol)}, {self._volatility_kind}>"
+        else:
+            vol_repr = repr(vol)
+        return f"MFGProblem(geometry={geom_type}, dim={dim}, T={self.T}, Nt={self.Nt}, volatility={vol_repr})"
 
     def __getstate__(self) -> dict[str, Any]:
         """
@@ -1578,6 +1539,15 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         attributes (xmin, xmax, Nx) are present. Reconstructs geometry
         from these attributes for backward compatibility.
         """
+        # Pickled before #2375 ruling 6: the volatility sat on `volatility_field`, beside a collapsed
+        # scalar `sigma` that is not carried over (#2376).
+        if "_volatility" not in state and "volatility_field" in state:
+            volatility = state.pop("volatility_field")
+            state["_volatility"] = volatility
+            # The old constructor admitted only grid-shaped fields, so a legacy array is one.
+            state["_volatility_kind"] = "field" if isinstance(volatility, np.ndarray) and volatility.ndim > 0 else None
+            state.pop("sigma", None)
+
         # Detect legacy format: geometry=None but has legacy 1D attrs
         if state.get("geometry") is None and state.get("xmin") is not None:
             try:
@@ -2048,13 +2018,38 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 validate_finite,
             )
 
-            # Validate volatility_field if ndarray
-            if isinstance(self.volatility_field, np.ndarray):
+            # Validate an array volatility against the shape its kind promises (#2375 ruling 6)
+            vol = self._volatility
+            if isinstance(vol, np.ndarray) and vol.ndim > 0:
+                if self._volatility_kind == "tensor":
+                    # Sigma is (d, k), constant or per grid point: grid axes lead, matrix axes trail.
+                    d, grid = self.dimension, tuple(self.spatial_shape)
+                    if d == 1:
+                        raise ValueError(
+                            "volatility_kind='tensor' on a 1-D problem: no 1-D solver reads a tensor "
+                            "volatility, and a (1, k) noise matrix is the scalar sqrt(sum_k Sigma_1k^2) -- "
+                            "pass that as volatility=."
+                        )
+                    if vol.ndim < 2 or vol.shape[-2] != d or vol.shape[:-2] not in ((), grid):
+                        raise ValueError(
+                            f"volatility_kind='tensor' needs shape (d, k) or (*spatial_shape, d, k) with "
+                            f"d = {d} and spatial_shape = {grid}; got {vol.shape}."
+                        )
+                    if vol.shape[-1] != d:
+                        raise ValueError(
+                            f"volatility_kind='tensor' with {vol.shape[-1]} noise sources on a {d}-D problem: "
+                            "no solver reads a non-square noise matrix yet. The symmetric (d, d) square root "
+                            "of Sigma Sigma^T has the same diffusion A = 1/2 Sigma Sigma^T -- pass that "
+                            "(volatility_from_diffusion(A, kind='tensor') builds it)."
+                        )
+                    shape_check = []
+                else:
+                    shape_check = [validate_field_shape(vol, self.spatial_shape, "volatility")]
                 arr_result = ValidationResult()
                 for check in [
-                    validate_array_dtype(self.volatility_field, "volatility_field"),
-                    validate_field_shape(self.volatility_field, self.spatial_shape, "volatility_field"),
-                    validate_finite(self.volatility_field, "volatility_field"),
+                    validate_array_dtype(vol, "volatility"),
+                    *shape_check,
+                    validate_finite(vol, "volatility"),
                 ]:
                     arr_result.issues.extend(check.issues)
                     if not check.is_valid:
@@ -2316,7 +2311,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 "parameters": self.components.parameters,
                 "domain": domain_info,
                 "time": {"T": self.T, "Nt": self.Nt},
-                "coefficients": {"sigma": self.sigma, "coupling_coefficient": self.coupling_coefficient},
+                "coefficients": {"volatility": self._volatility, "coupling_coefficient": self.coupling_coefficient},
             }
         else:
             return {
@@ -2332,7 +2327,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 "parameters": {},
                 "domain": domain_info,
                 "time": {"T": self.T, "Nt": self.Nt},
-                "coefficients": {"sigma": self.sigma, "coupling_coefficient": self.coupling_coefficient},
+                "coefficients": {"volatility": self._volatility, "coupling_coefficient": self.coupling_coefficient},
             }
 
     # ============================================================================
@@ -2405,7 +2400,7 @@ Use the geometry-first API:
       boundary_conditions=no_flux_bc(dimension=1),
   )
 
-  problem = MFGProblem(geometry=geometry, T=T, Nt=Nt, sigma=sigma)
+  problem = MFGProblem(geometry=geometry, T=T, Nt=Nt, volatility=sigma)
 
 See: docs/user/GEOMETRY_FIRST_API_GUIDE.md"""
             else:
@@ -2425,7 +2420,7 @@ Use MFGComponents for custom problem definitions:
   problem = MFGProblem(
       geometry=my_geometry,
       T=T, Nt=Nt,
-      sigma=sigma,
+      volatility=sigma,
       components=components,
   )
 
@@ -2670,13 +2665,9 @@ See: docs/migration/HAMILTONIAN_API.md"""
         # ─────────────────────────────────────────────────────────────────────
         # Create fixed-point iterator with selected/validated solvers
         # ─────────────────────────────────────────────────────────────────────
-        # Issue #1248: forward problem.volatility_field so both the HJB and FP
-        # solvers receive the full SDE volatility (array or callable). Without
-        # this, FixedPointIterator.volatility_field defaults to None, causing
-        # HJB to use problem.sigma (the mean-scalar placeholder) and silently
-        # solve a different PDE than the user specified. FP-FDM was fixed
-        # separately in PR #1277 to fall back to problem.volatility_field when
-        # None is passed, but HJB and other solvers still use problem.sigma.
+        # Issue #1248: forward the problem's volatility, as supplied, so both the HJB and FP
+        # solvers receive the full SDE volatility (array or callable) rather than a collapsed
+        # scalar (#2376).
         #
         # Issue #1155: thread anderson_memory and backend from config to iterator.
         from mfgarchon.config.translator import (
@@ -2694,7 +2685,7 @@ See: docs/migration/HAMILTONIAN_API.md"""
             hjb_solver=hjb_solver,
             fp_solver=fp_solver,
             config=config,
-            volatility_field=self.volatility_field,
+            volatility_field=self._volatility,
             **_iterator_extra_kw,
             **_backend_kw,
         )
@@ -2744,7 +2735,7 @@ See: docs/migration/HAMILTONIAN_API.md"""
             Nt=self.Nt,
         )
 
-    # No with_sigma() or with_T() — these are premature convenience shortcuts
-    # that break orthogonality. sigma lives in Model, T lives in Conditions.
-    # Use with_model(Model(hamiltonian=H, sigma=0.2)) or
+    # No with_volatility() or with_T() — these are premature convenience shortcuts
+    # that break orthogonality. The volatility lives in Model, T lives in Conditions.
+    # Use with_model(Model(hamiltonian=H, volatility=0.2)) or
     # with_conditions(Conditions(u_terminal=..., m_initial=..., T=2.0)) instead.

@@ -264,7 +264,7 @@ def main():
         geometry=geometry,
         T=T,
         Nt=Nt,
-        sigma=sigma,
+        volatility=sigma,
         coupling_coefficient=0.0,  # No density coupling for clarity
         components=MFGComponents(
             m_initial=lambda x: float(np.exp(-100 * (x - 0.2) ** 2)),

@@ -29,7 +29,7 @@ def create_lq_model_and_conditions():
         coupling=lambda m: 0.5 * m,
         coupling_dm=lambda m: 0.5,
     )
-    model = Model(hamiltonian=hamiltonian, sigma=0.1)
+    model = Model(hamiltonian=hamiltonian, volatility=0.1)
     conditions = Conditions(
         u_terminal=lambda x: (x - 0.5) ** 2,
         m_initial=lambda x: np.exp(-50 * (x - 0.5) ** 2),

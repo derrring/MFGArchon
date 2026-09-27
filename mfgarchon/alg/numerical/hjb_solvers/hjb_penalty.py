@@ -248,7 +248,7 @@ if __name__ == "__main__":
         m_initial=lambda x: 1.0,
     )
     geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-    problem = MFGProblem(geometry=geometry, T=1.0, Nt=20, sigma=0.3, components=components)
+    problem = MFGProblem(geometry=geometry, T=1.0, Nt=20, volatility=0.3, components=components)
     inner = HJBFDMSolver(problem)
 
     # Obstacle: Psi(x) = 0.5 * sin(pi * x) — agents must stay above this

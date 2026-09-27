@@ -42,7 +42,7 @@ def _problem(dim, n, nt):
         geometry=grid,
         T=_T,
         Nt=nt,
-        sigma=_SIGMA,
+        volatility=_SIGMA,
         coupling_coefficient=0.0,
         components=MFGComponents(
             # Per-point callables returning a float: what the 2-D validator accepts.

@@ -86,7 +86,7 @@ class GradientDescentMFGSolver:
         # sigma is the SDE volatility; the HJB/FP diffusion term below is written
         # as (sigma^2 / 2) * second_derivative, so this must hold sigma, not the
         # PDE diffusion D = sigma^2/2 (repo convention #811/#1412/#1512).
-        self.sigma = problem.sigma
+        self.sigma = problem.volatility
 
         # Get initial/final conditions
         self.m_initial = problem.get_initial_m()
@@ -512,7 +512,7 @@ if __name__ == "__main__":
         coupling=lambda m: 0.5 * m,
         coupling_dm=lambda m: 0.5,
     )
-    model = Model(hamiltonian=hamiltonian, sigma=0.1)
+    model = Model(hamiltonian=hamiltonian, volatility=0.1)
     domain = TensorProductGrid(
         bounds=[(0.0, 1.0)],
         Nx_points=[21],

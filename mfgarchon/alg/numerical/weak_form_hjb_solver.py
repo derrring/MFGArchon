@@ -26,7 +26,7 @@ from scipy.sparse.linalg import spsolve
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import scalar_diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, scalar_volatility
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -334,8 +334,9 @@ class WeakFormHJBSolver(BaseHJBSolver):
             M_density = np.tile(M_density, (Nt + 1, 1))
 
         # D = sigma^2 / 2 via the single-source converter (Issue #811) -- matches the FP
-        # _diffusion_coefficient / adjoint mode. Array field collapses to its mean (with a warning).
-        D = scalar_diffusion_from_volatility(volatility_field, self.problem.sigma)
+        # _diffusion_coefficient / adjoint mode. One scalar D: an array or callable is refused (#2376).
+        volatility = volatility_field if volatility_field is not None else self.problem.volatility
+        D = diffusion_from_volatility(scalar_volatility(volatility, consumer=type(self).__name__))
 
         U = np.zeros((Nt + 1, N))
         U[Nt] = U_terminal
@@ -375,7 +376,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
                     H_values = np.asarray(
                         H_class(x=self._disc.dof_coordinates, m=M_density[n], p=p_prev, t=n * dt), dtype=float
                     ).ravel()
-                    # MINUS. The canonical equation (mfg_problem.py:197) is
+                    # MINUS. The canonical equation (the MFGProblem class docstring) is
                     # -u_t + H - (sigma^2/2) Lap(u) = S, so backward Euler gives
                     # (M/dt + D*K) U[n] = (M/dt) U[n+1] - M @ H: H moves to the RHS with a sign
                     # flip. This read `+=` from the file's FIRST version (d9f66701, #773) until

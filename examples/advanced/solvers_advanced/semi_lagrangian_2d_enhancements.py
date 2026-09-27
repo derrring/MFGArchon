@@ -75,7 +75,7 @@ def create_2d_crowd_navigation_problem(
         coupling=lambda m: coupling_strength * m,
         coupling_dm=lambda m: coupling_strength,
     )
-    model = Model(hamiltonian=hamiltonian, sigma=sigma)
+    model = Model(hamiltonian=hamiltonian, volatility=sigma)
 
     # Conditions (callables, resolution-independent)
     def initial_density(x):

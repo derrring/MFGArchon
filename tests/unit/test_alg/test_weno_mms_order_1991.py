@@ -123,7 +123,7 @@ def _problem(nx, nt, sigma, dimension=1):
         m_initial=m_initial,
         u_terminal=u_terminal,
     )
-    return MFGProblem(geometry=grid, components=comps, T=T, Nt=nt, sigma=sigma)
+    return MFGProblem(geometry=grid, components=comps, T=T, Nt=nt, volatility=sigma)
 
 
 def _linf_error(nx, nt, sigma):

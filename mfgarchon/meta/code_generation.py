@@ -385,7 +385,7 @@ class Generated{solver_name}(BaseMFGSolver):
         """Generate flux computation code."""
         return textwrap.dedent(
             """
-        sigma = self.problem.sigma
+        sigma = float(self.problem.volatility)
         dx = self.problem.geometry.get_grid_spacing()[0]
 
         # Compute density gradient

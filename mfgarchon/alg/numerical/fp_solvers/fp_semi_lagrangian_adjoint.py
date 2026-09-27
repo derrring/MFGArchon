@@ -292,13 +292,12 @@ class FPSLSolver(BaseFPSolver):
                 "potential_field (value function U) is required for Adjoint SL FP. Pass the U solution from HJB solver."
             )
 
-        # Handle volatility (Issue #717: unified API)
-        if volatility_field is None:
-            sigma = self.problem.sigma
-        elif isinstance(volatility_field, (int, float)):
-            sigma = float(volatility_field)
+        # Handle volatility (Issue #717: unified API). None is the problem's own (#2376).
+        volatility = self.problem.volatility if volatility_field is None else volatility_field
+        if isinstance(volatility, (int, float)):
+            sigma = float(volatility)
         else:
-            raise NotImplementedError("Array/callable volatility_field not yet supported")
+            raise NotImplementedError(f"Array/callable volatility not yet supported for {type(self).__name__} (#2376)")
 
         # Determine number of time steps from potential_field
         Nt_points = potential_field.shape[0]
@@ -673,7 +672,7 @@ if __name__ == "__main__":
         geometry=domain,
         T=T,
         Nt=Nt,
-        sigma=SIGMA,
+        volatility=SIGMA,
         components=components,
     )
 
@@ -788,7 +787,7 @@ if __name__ == "__main__":
         geometry=domain_2d,
         T=T2D,
         Nt=Nt2D,
-        sigma=SIGMA2D,
+        volatility=SIGMA2D,
         components=components_2d,
     )
 

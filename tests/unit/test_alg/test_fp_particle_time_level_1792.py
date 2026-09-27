@@ -107,7 +107,7 @@ def _problem(nx: int, dim: int) -> MFGProblem:
         ),
         T=T,
         Nt=NT,
-        sigma=SIGMA,
+        volatility=SIGMA,
         components=MFGComponents(
             # *coords: the nD path calls these with one argument per axis.
             m_initial=lambda *c: np.exp(

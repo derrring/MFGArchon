@@ -93,7 +93,7 @@ def _problem(segments):
     # deprecated, and the warning census gates on it: a new file using it adds a warning identity
     # and turns the gate red, which is #2119 working as intended.
     return MFGProblem(
-        model=Model(hamiltonian=hamiltonian, sigma=0.5),
+        model=Model(hamiltonian=hamiltonian, volatility=0.5),
         domain=geometry,
         conditions=Conditions(m_initial=lambda p: 1.0, u_terminal=lambda p: 0.0, T=0.1),
         Nt=3,

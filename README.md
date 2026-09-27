@@ -38,7 +38,7 @@ model = Model(
         coupling=lambda m: 0.1 * m,
         coupling_dm=lambda m: 0.1 * np.ones_like(m),
     ),
-    sigma=0.1,
+    volatility=0.1,
 )
 
 # Domain: spatial grid with boundary conditions

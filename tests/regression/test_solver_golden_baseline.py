@@ -129,7 +129,7 @@ def _make_lq_problem(control_cost: float = 1.0) -> MFGProblem:
         m_initial=lambda x: np.exp(-30 * (np.atleast_1d(x)[0] - 0.5) ** 2) / scale,
         u_terminal=lambda x: 0.0,
     )
-    return MFGProblem(geometry=grid, T=0.2, Nt=10, sigma=0.3, components=components)
+    return MFGProblem(geometry=grid, T=0.2, Nt=10, volatility=0.3, components=components)
 
 
 def _solve(problem: MFGProblem):
@@ -179,7 +179,7 @@ def _make_gfdm_problem(control_cost: float = 1.0) -> MFGProblem:
         m_initial=lambda x: 1.0,
         u_terminal=lambda x: 0.0,
     )
-    return MFGProblem(geometry=grid, T=0.2, Nt=10, sigma=0.3, components=components)
+    return MFGProblem(geometry=grid, T=0.2, Nt=10, volatility=0.3, components=components)
 
 
 def _solve_gfdm(problem: MFGProblem) -> np.ndarray:

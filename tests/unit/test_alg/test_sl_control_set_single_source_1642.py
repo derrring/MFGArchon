@@ -52,7 +52,7 @@ def _solve(control_cost) -> np.ndarray:
     # H-only construction: MFGComponents derives the SeparableLagrangian that
     # ``problem.lagrangian_class`` returns, which is the route production code takes.
     problem = MFGProblem(
-        model=Model(hamiltonian=SeparableHamiltonian(control_cost=control_cost), sigma=0.15),
+        model=Model(hamiltonian=SeparableHamiltonian(control_cost=control_cost), volatility=0.15),
         domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[NX], boundary_conditions=no_flux_bc(dimension=1)),
         conditions=Conditions(u_terminal=lambda x: (x - 0.5) ** 2, m_initial=lambda x: 1.0, T=0.5),
         Nt=NT,
