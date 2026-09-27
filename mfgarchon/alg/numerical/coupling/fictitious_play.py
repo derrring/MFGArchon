@@ -99,7 +99,13 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             - Callable[[int], float]: Custom schedule function
         config: Configuration object (optional)
         initial_learning_rate: Learning rate for first iteration (default 1.0)
-        min_learning_rate: Minimum learning rate floor (default 0.01)
+        min_learning_rate: Floor on the learning rate (default 0.0, no floor). A positive floor
+            turns the schedule into constant damping once the schedule falls below it, and
+            constant damping is not fictitious play: the convergence results are for the
+            unfloored 1/(n+1) average (Cardaliaguet-Hadikhanloo 2017, (2.2) with Theorem 2.1
+            for the second-order system, (3.3) with Theorem 3.1 for the first-order one). On
+            #1914's sigma=0 fixture, measured at 0f937601, a 0.01 floor left the fixed-point
+            residual at 2.45e-01 after 300 sweeps, against 4.67e-04 unfloored (#2415).
         damp_value_function: Whether to also damp U (default False)
             - False: Pure fictitious play (damp only M)
             - True: Hybrid approach (damp both U and M)
@@ -129,7 +135,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         learning_rate_schedule: str | Callable[[int], float] = "harmonic",
         config: MFGSolverConfig | None = None,
         initial_learning_rate: float = 1.0,
-        min_learning_rate: float = 0.01,
+        min_learning_rate: float = 0.0,
         damp_value_function: bool = False,
         backend: str | BaseBackend | None = None,
         volatility_field: float | np.ndarray | Any | None = None,
@@ -460,7 +466,13 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             # Calculate convergence metrics
             from mfgarchon.utils.convergence import calculate_l2_convergence_metrics
 
-            metrics = calculate_l2_convergence_metrics(self.U, U_old, self.M, M_old, grid_spacing, time_step)
+            # The residual of the map, M_candidate vs M_old -- not the averaged step. The step is
+            # exactly alpha * (M_candidate - M_old), so under a decaying alpha it shrinks whether or
+            # not the belief is near a fixed point: measured at 0f937601 with the floor removed, the
+            # default tolerance reported converged=True at sweep 359 with the map residual 3.57e-04
+            # on #1914's sigma=0 fixture (#2415). This is
+            # #1684 item 7, which FixedPointIterator already measures this way.
+            metrics = calculate_l2_convergence_metrics(U_new, U_old, M_candidate, M_old, grid_spacing, time_step)
             self.l2distu_abs[k] = metrics["l2distu_abs"]
             self.l2distu_rel[k] = metrics["l2distu_rel"]
             self.l2distm_abs[k] = metrics["l2distm_abs"]
