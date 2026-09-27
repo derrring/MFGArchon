@@ -206,7 +206,7 @@ if __name__ == "__main__":
     print("  4. How to visualize 2D density evolution")
     print()
     print("Key API elements for 2D:")
-    print("  - Model(hamiltonian=..., sigma=...)")
+    print("  - Model(hamiltonian=..., volatility=...)")
     print("  - TensorProductGrid(bounds=[(xmin,xmax), (ymin,ymax)], Nx_points=[Nx, Ny])")
     print("  - Conditions with callables: f(x) where x is shape (2,) for 2D points")
     print("  - boundary_conditions=no_flux_bc(dimension=2)")

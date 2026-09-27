@@ -9,18 +9,17 @@ D1: MFGProblem.solve() must forward problem.volatility_field to the
     density that is NOT allclose to MFGProblem(sigma=mean(array)).solve().
     Before the fix the two are byte-identical (both solve with the mean scalar).
 
-D2: FPParticleSolver.solve_fp_system(drift_field=ndarray, volatility_field=array)
-    must use the supplied array's mean as effective sigma, not problem.sigma.
+D2: FPParticleSolver.solve_fp_system(drift_field=ndarray, volatility_field=...) must not
+    drop the override for the problem's volatility. Before the fix it did, and both solves
+    produced the same density.
 
-    Pinning: solve with ndarray drift + array volatility_field whose mean differs
-    from problem.sigma must produce a density NOT allclose to the reference solve
-    that uses only problem.sigma.  Before the fix both produce the same density
-    because the array is silently dropped and problem.sigma is used for both.
+    Pinning: a scalar override that differs from the problem's changes the density. An array
+    or a callable override is refused by name: this path consumes one scalar sigma, and
+    ~~the array's mean~~ [SUPERSEDED 2026-09-27, #2376] a representative value is no longer
+    substituted for a field. SUPERSEDED-BY: test_volatility_is_never_collapsed_2376.py.
 """
 
 from __future__ import annotations
-
-import warnings
 
 import pytest
 
@@ -145,18 +144,14 @@ class TestD1SolveMustForwardVolatilityField:
 class TestD2ParticleVolatilityFieldNotDropped:
     """Issue #1248 D2 — FPParticleSolver uses array volatility_field with ndarray drift."""
 
-    def test_array_volatility_with_ndarray_drift_differs_from_problem_sigma(self):
-        """After fix: solve with array volatility != problem.sigma produces different density.
+    def test_scalar_volatility_override_with_ndarray_drift_is_not_dropped(self):
+        """A scalar override that differs from the problem's changes the density.
 
-        Before fix: line 1409 in fp_particle.py always fell back to
-        effective_sigma = self.problem.sigma regardless of the supplied array,
-        so both solves used 0.1 and produced byte-identical densities.  After
-        fix, effective_sigma = mean(sigma_array) = 0.5, which differs from
-        problem.sigma = 0.1, so the densities diverge.
+        Before the fix the grid-drift path fell back to the problem's volatility regardless of
+        the override, so both solves used 0.1 and produced byte-identical densities.
         """
         geo = _geometry()
         comp = _components()
-        # problem.sigma = 0.1 (the small baseline)
         problem = MFGProblem(geometry=geo, components=comp, T=T, Nt=Nt, volatility=0.1)
 
         solver = FPParticleSolver(problem, num_particles=500)
@@ -165,52 +160,29 @@ class TestD2ParticleVolatilityFieldNotDropped:
         # Simple value-function array for drift (Nt+1 time slices)
         U_arr = np.tile(0.3 * (np.linspace(0.0, 1.0, Nx) - 0.5) ** 2, (Nt + 1, 1))
 
-        # Reference: no volatility_field override → uses problem.sigma = 0.1
+        # Reference: no volatility_field override -> the problem's 0.1
         np.random.seed(42)
         m_ref = solver.solve_fp_system(m0, drift_field=U_arr)
 
-        # Test: supply array volatility whose mean (0.5) differs from problem.sigma (0.1).
-        sigma_arr = np.full(Nx, 0.5)
         np.random.seed(42)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", UserWarning)  # expected collapse-to-mean warning
-            m_new = solver.solve_fp_system(m0, drift_field=U_arr, volatility_field=sigma_arr)
+        m_new = solver.solve_fp_system(m0, drift_field=U_arr, volatility_field=0.5)
 
-        # After fix the two densities must differ: mean(0.5) >> 0.1 so diffusion is much
-        # stronger and the density spreads measurably more.
         assert not np.allclose(m_new, m_ref, atol=1e-6), (
-            "D2 regression: FPParticleSolver with ndarray drift_field + array "
-            "volatility_field produced the same density as the problem.sigma "
-            "solve — the array volatility_field was silently dropped (Issue #1248 D2)."
+            "D2 regression: FPParticleSolver with ndarray drift_field + a scalar "
+            "volatility_field produced the same density as the problem-volatility "
+            "solve -- the override was silently dropped (Issue #1248 D2)."
         )
 
-    def test_array_volatility_with_ndarray_drift_emits_warning(self):
-        """Collapsing array volatility to its mean on the grid-drift path must warn.
+    @pytest.mark.parametrize(
+        "override",
+        [np.full(Nx, 0.5), lambda t, x, m: 0.5 * np.ones_like(np.atleast_1d(x))],
+        ids=["array", "callable"],
+    )
+    def test_non_scalar_volatility_with_ndarray_drift_is_refused_by_name(self, override):
+        """An array or callable override on the grid-drift path is refused, not dropped or averaged.
 
-        The collapse (mean(sigma_array)) is a necessary approximation on the CPU/GPU
-        grid-drift paths; a UserWarning informs the caller that true per-point
-        volatility is unavailable on this path.
-        """
-        geo = _geometry()
-        comp = _components()
-        problem = MFGProblem(geometry=geo, components=comp, T=T, Nt=Nt, volatility=0.1)
-        solver = FPParticleSolver(problem, num_particles=200)
-
-        m0 = _m_initial_normalised()
-        U_arr = np.tile(0.3 * (np.linspace(0.0, 1.0, Nx) - 0.5) ** 2, (Nt + 1, 1))
-        sigma_arr = np.full(Nx, 0.5)
-
-        np.random.seed(42)
-        with pytest.warns(UserWarning, match="collapsed to mean"):
-            solver.solve_fp_system(m0, drift_field=U_arr, volatility_field=sigma_arr)
-
-    def test_callable_volatility_with_ndarray_drift_raises(self):
-        """Callable volatility_field + ndarray drift_field must raise NotImplementedError.
-
-        Before the fix this silently used problem.sigma.  After the fix we
-        raise (fail-fast) because we cannot reduce a callable to a scalar without
-        evaluating it over the domain — and this path does not support per-point
-        evaluation.  Users should pass a callable drift_field instead.
+        The path consumes one scalar sigma. Averaging an array was the #1248 stopgap; #2376
+        replaced it with a refusal that names the path and the callable-drift alternative.
         """
         geo = _geometry()
         comp = _components()
@@ -220,10 +192,5 @@ class TestD2ParticleVolatilityFieldNotDropped:
         m0 = _m_initial_normalised()
         U_arr = np.tile(0.3 * (np.linspace(0.0, 1.0, Nx) - 0.5) ** 2, (Nt + 1, 1))
 
-        def sigma_callable(t, x, m):
-            if hasattr(x, "__len__"):
-                return 0.5 * np.ones_like(x)
-            return 0.5
-
-        with pytest.raises(NotImplementedError, match="callable volatility_field"):
-            solver.solve_fp_system(m0, drift_field=U_arr, volatility_field=sigma_callable)
+        with pytest.raises(NotImplementedError, match="FPParticleSolver's grid-drift path"):
+            solver.solve_fp_system(m0, drift_field=U_arr, volatility_field=override)

@@ -709,10 +709,12 @@ class HJBGFDMSolver(BaseHJBSolver):
                 raise ValueError(
                     f"llf_l_H must be non-negative at every node; got min={float(np.min(self._llf_l_H)):.3g} < 0."
                 )
-            self._llf_sigma_eff: np.ndarray = self._compute_llf_sigma_eff()
+            # Computed below, once the grid-collocation mapper exists: for a field problem the LLF
+            # base is the problem's volatility on the collocation points, which goes through it.
+            self._llf_sigma_eff: np.ndarray | None = None
         else:
             self._llf_l_H = None  # type: ignore[assignment]
-            self._llf_sigma_eff = None  # type: ignore[assignment]
+            self._llf_sigma_eff = None
 
         # SOCP adaptive stencil enlargement (Issue #1106), joint_socp scheme only.
         self._socp_max_stencil_enlargements: int = int(socp_max_stencil_enlargements)
@@ -961,6 +963,8 @@ class HJBGFDMSolver(BaseHJBSolver):
             grid_shape=self._output_spatial_shape,
             domain_bounds=self.domain_bounds,
         )
+        if self.llf_augmentation:
+            self._llf_sigma_eff = self._compute_llf_sigma_eff()
 
         # Build neighborhood structure - uses GFDMOperator's neighborhoods as base,
         # only extends for points needing adaptive delta enlargement
@@ -2883,7 +2887,11 @@ class HJBGFDMSolver(BaseHJBSolver):
             return float(volatility)
         # A field or callable problem volatility goes through the same normalisation a solve uses,
         # never a representative scalar (#2376).
-        field = self._resolve_sigma_for_solve(None, is_meshfree_input=False)
+        # A problem-owned field is grid-indexed exactly when the problem's domain is a grid -- the
+        # rule _resolve_sigma_for_solve applies to it at solve time.
+        field = self._resolve_sigma_for_solve(
+            None, is_meshfree_input=getattr(self.problem, "domain_type", None) != "grid"
+        )
         if point_idx is None or not isinstance(field, np.ndarray):
             return field
         return float(field[point_idx])
@@ -2986,8 +2994,9 @@ class HJBGFDMSolver(BaseHJBSolver):
         Thin adapter over the shared single source
         :func:`mfgarchon.utils.pde_coefficients.resolve_diffusion_source` (Issue #1412): the
         collocation points are this solver's spatial points; the batch path (``point_idx=None``)
-        collapses an array to its mean / evaluates a callable at the domain center, matching
-        ``MFGProblem``'s array -> scalar (sigma = mean) convention.
+        collapses an array to its mean / evaluates a callable at the domain center. That is a
+        representative scalar, not a convention ``MFGProblem`` shares (#2376): a solve reads the
+        normalised ``_solve_sigma`` instead.
         """
         return resolve_diffusion_source(source, index=point_idx, points=self.collocation_points)
 

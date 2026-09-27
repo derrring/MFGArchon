@@ -376,7 +376,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
                     H_values = np.asarray(
                         H_class(x=self._disc.dof_coordinates, m=M_density[n], p=p_prev, t=n * dt), dtype=float
                     ).ravel()
-                    # MINUS. The canonical equation (mfg_problem.py:197) is
+                    # MINUS. The canonical equation (the MFGProblem class docstring) is
                     # -u_t + H - (sigma^2/2) Lap(u) = S, so backward Euler gives
                     # (M/dt + D*K) U[n] = (M/dt) U[n+1] - M @ H: H moves to the RHS with a sign
                     # flip. This read `+=` from the file's FIRST version (d9f66701, #773) until

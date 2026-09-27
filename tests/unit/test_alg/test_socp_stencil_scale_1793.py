@@ -8,7 +8,7 @@ enters in two places:
 
 A 25-axis mutation sweep found the suite blind to the scale entirely: 5770 passed with `median`
 replaced by `max`. This file pins one non-degenerate quantity on each of the two dispatch paths,
-both at production's `C = 8.0` (`hjb_gfdm.py:1073`).
+both at production's `C = 8.0` (`HJBGFDMSolver.__init__`, its `cone_constant_C=8.0`).
 
 DO NOT REACH FOR `kappa_max` ON `SCALE_STENCIL`
 -----------------------------------------------
@@ -118,7 +118,7 @@ FAST_PATH_STENCIL = np.array(
     ]
 )
 
-#: `hjb_gfdm.py:1073` builds the production cache with `cone_constant_C=8.0`, `eps_pos=0.0`.
+#: `HJBGFDMSolver.__init__` builds the production cache with `cone_constant_C=8.0`, `eps_pos=0.0`.
 #: Both pins run at that setting.
 PRODUCTION_C = 8.0
 

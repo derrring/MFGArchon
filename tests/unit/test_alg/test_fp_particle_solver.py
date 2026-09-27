@@ -790,7 +790,7 @@ class TestFPParticleSolverCallableDrift:
 
         assert 0.8 * 0.15**2 < var_slope < 1.45 * 0.15**2, (
             f"spread rate {var_slope:.5f} does not match the override volatility 0.15 "
-            f"(law {0.15**2:.5f}); problem.sigma={problem.sigma} would give {problem.sigma**2:.5f}"
+            f"(law {0.15**2:.5f}); problem.volatility={problem.volatility} would give {problem.volatility**2:.5f}"
         )
         # The drift is the other half of the SDE: measured mean-slope 0.1899..0.2176 against 0.2.
         assert mean_slope == pytest.approx(0.2, rel=0.25), f"drift rate {mean_slope:.4f} is not 0.2"

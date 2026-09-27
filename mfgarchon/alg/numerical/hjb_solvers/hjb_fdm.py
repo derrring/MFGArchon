@@ -37,14 +37,30 @@ from .base_hjb import BaseHJBSolver, InnerSolveFailure, _volatility_at_n
 logger = get_logger(__name__)
 
 _NON_DIAGONAL_TENSOR_WARNING = (
-    "Non-diagonal tensor diffusion detected: dropping the off-diagonal sigma_ij terms (diagonal "
-    "approximation). This is an O(1) error on the cross-derivative operator "
-    "2*sum_{i<j} D_ij d2u/dx_i dx_j -- NOT a small correction (Issue #1079). The result is only "
-    "meaningful when the off-diagonals are physically negligible. HJBSemiLagrangianSolver DOES "
-    "discretise the cross-derivative, measured first order on an off-diagonal Sigma (EOC 1.040, "
-    "1.017, against 0.718, 0.385 with that term dropped, Issue #2198), and reads a constant tensor "
-    "from MFGProblem(volatility=S, volatility_kind='tensor'). Otherwise pass a scalar or diagonal "
-    "Sigma and accept the approximation."
+    "Non-diagonal tensor volatility Sigma passed as volatility_field: HJB-FDM assembles axis weights "
+    "sigma_ii^2/2 and no cross term, while the diffusion is A = 1/2 Sigma Sigma^T. It drops "
+    "2*sum_{i<j} A_ij d2u/dx_i dx_j -- an O(1) error, NOT a small correction (Issue #1079) -- and the "
+    "weights it keeps are wrong too: A_ii = 1/2 sum_k Sigma_ik^2, not sigma_ii^2/2. "
+    "HJBSemiLagrangianSolver discretises the full A, measured first order on an off-diagonal Sigma "
+    "(EOC 1.040, 1.017, against 0.718, 0.385 with the cross term dropped, Issue #2198), and reads a "
+    "constant tensor from MFGProblem(volatility=S, volatility_kind='tensor') -- which this solver "
+    "refuses rather than warns on."
+)
+
+# HJB-FDM's tensor path is a constant-coefficient weighted Laplacian with axis weights sigma_ii^2/2:
+# exact for a constant diagonal Sigma and for nothing else. A problem that declares a tensor is
+# refused otherwise, by name, rather than solved at the wrong diffusion (#2378 phase 4).
+_UNASSEMBLED_TENSOR_REFUSAL = (
+    "HJBFDMSolver reads a tensor volatility only as a constant diagonal (d, d) Sigma: it assembles a "
+    "constant-coefficient Laplacian with axis weights sigma_ii^2/2 and no cross term. The problem's "
+    "volatility_kind='tensor' volatility is {what}, where that would solve a different diffusion than "
+    "A = 1/2 Sigma Sigma^T -- a non-diagonal Sigma loses the cross term and gets A_ii wrong, a "
+    "per-point or callable one would be averaged over the grid. For a constant tensor, "
+    "HJBSemiLagrangianSolver assembles the full A (#2198); pair it with FPFDMSolver: "
+    "problem.solve(hjb_solver=HJBSemiLagrangianSolver(problem), fp_solver=FPFDMSolver(problem)). "
+    "FPFDMSolver's explicit cross-derivative stencil does not preserve positivity: on a density with "
+    "near-zero regions it can refuse a step that goes negative, and a finer Nt shrinks the undershoot "
+    "without removing it. One converter for every assembled operator is #2378 part 3."
 )
 
 # Type alias for HJB advection schemes (gradient form only - HJB is not a conservation law)
@@ -624,7 +640,7 @@ class HJBFDMSolver(BaseHJBSolver):
         M_density: NDArray,
         U_final: NDArray,
         U_prev: NDArray,
-        volatility_field: float | NDArray | None = None,
+        volatility_field: float | NDArray | Callable | None = None,
         progress_callback: Callable[[int], None] | None = None,  # Issue #640
         source_term: Callable | None = None,  # MMS verification
         show_progress: bool | None = None,  # Issue #934
@@ -643,6 +659,24 @@ class HJBFDMSolver(BaseHJBSolver):
             raise ValueError(f"M_density shape {M_density.shape} != {expected_shape}")
         if U_final.shape != self.shape:
             raise ValueError(f"U_final shape {U_final.shape} != {self.shape}")
+
+        # A None default is the problem's own volatility, through the same dispatch as an override
+        # (#2378 rule A). The problem's volatility is read by its declared kind -- a (d, d) field on a
+        # d x d grid and a (d, d) tensor have the same shape -- while an explicit override is still
+        # read by shape until part 2 gives overrides a kind.
+        from_problem = volatility_field is None or volatility_field is self.problem.volatility
+        if volatility_field is None:
+            volatility_field = self.problem.volatility
+        problem_tensor = from_problem and self.problem.volatility_kind == "tensor"
+        if problem_tensor:
+            if callable(volatility_field):
+                raise NotImplementedError(_UNASSEMBLED_TENSOR_REFUSAL.format(what="a callable"))
+            if np.ndim(volatility_field) != 2:
+                raise NotImplementedError(
+                    _UNASSEMBLED_TENSOR_REFUSAL.format(what=f"per point, shape {np.shape(volatility_field)}")
+                )
+            if not is_diagonal_tensor(np.asarray(volatility_field)):
+                raise NotImplementedError(_UNASSEMBLED_TENSOR_REFUSAL.format(what="non-diagonal"))
 
         # Allocate solution array with shape (n_time_points, *spatial)
         U_solution = np.zeros(expected_shape, dtype=np.float64)
@@ -678,7 +712,11 @@ class HJBFDMSolver(BaseHJBSolver):
             Sigma_at_n = None
             sigma_at_n = None
 
-            if volatility_field is not None and isinstance(volatility_field, np.ndarray):
+            if problem_tensor:
+                Sigma_at_n = np.asarray(volatility_field)  # a constant (d, d) array, checked above
+            elif from_problem:
+                pass  # a scalar, a field, or a callable whose output is per point (volatility_kind rule)
+            elif isinstance(volatility_field, np.ndarray):
                 # Auto-detect tensor vs scalar from shape
                 if volatility_field.ndim >= 2 and volatility_field.shape[-2:] == (d, d):
                     Sigma_at_n = volatility_field
@@ -1073,7 +1111,9 @@ class HJBFDMSolver(BaseHJBSolver):
             # Follows the 1D pattern in base_hjb's compute_hjb_residual
             sigma = _volatility_at_n(self.problem, sigma_at_n)
             lap_u = self._get_laplacian_op()(U).ravel()
-            H_values_flat = H_convective - diffusion_from_volatility(sigma, kind="field") * lap_u
+            # A per-point D comes on the grid's shape; the Laplacian is flat.
+            D = np.ravel(diffusion_from_volatility(sigma, kind="field"))
+            H_values_flat = H_convective - (D if D.size > 1 else D.item()) * lap_u
 
         return H_values_flat.reshape(self.shape)
 

@@ -437,9 +437,16 @@ def test_mfg_problem_validates_zero_mass_m_initial():
 
 @pytest.mark.unit
 def test_mfg_problem_rejects_negative_volatility():
-    """Issue #1077 (case 3): a negative scalar volatility is nonsensical -> fail fast."""
+    """Issue #1077 (case 3): a negative scalar volatility is nonsensical -> fail fast.
+
+    A 0-d array is a scalar too: it once skipped the sign check, which tested Python and NumPy
+    scalar types only, and was stored as a 0-d array (#2378 review).
+    """
     with pytest.raises(ValueError, match=r"volatility.*must be >= 0"):
         create_test_problem(volatility=-1.0)
+    with pytest.raises(ValueError, match=r"volatility.*must be >= 0"):
+        create_test_problem(volatility=np.array(-1.0))
+    assert isinstance(create_test_problem(volatility=np.array(0.3)).volatility, float)
 
 
 @pytest.mark.unit
@@ -960,6 +967,24 @@ def test_array_volatility_needs_a_kind():
 
 
 @pytest.mark.unit
+def test_a_list_volatility_is_validated_like_an_array():
+    """A list is held as a float array, so the shape and finiteness checks see it (#2378 review).
+
+    It was held as a list, which the ndarray-keyed validation skipped: a wrong-length list was
+    accepted at construction, and every solver then failed at solve time on the type.
+    """
+    from mfgarchon.utils.validation import ValidationError
+
+    problem = create_test_problem(volatility=[0.2] * 11, volatility_kind="field")
+    assert isinstance(problem.volatility, np.ndarray)
+    assert problem.volatility.dtype == np.float64
+    with pytest.raises(ValidationError, match=r"volatility has shape \(7,\)"):
+        create_test_problem(volatility=[0.2] * 7, volatility_kind="field")
+    with pytest.raises(ValidationError, match=r"volatility has shape \(7,\)"):
+        create_test_problem(diffusion=[0.02] * 7, volatility_kind="field")
+
+
+@pytest.mark.unit
 def test_tensor_volatility_shape_is_checked_against_the_problem():
     """kind='tensor' is (d, k) or (*spatial_shape, d, k); a 1-D problem has no tensor reader."""
     grid_2d = default_geometry(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[5, 4], dimension=2)
@@ -983,6 +1008,57 @@ def test_tensor_volatility_shape_is_checked_against_the_problem():
         build(np.zeros((3, 4, 2, 2)))
     with pytest.raises(ValueError, match="1-D problem"):
         create_test_problem(volatility=np.array([[0.3]]), volatility_kind="tensor")
+    # k != d is admitted by the (d, k) shape but read by no solver: refused, naming the square
+    # root with the same diffusion (#2378 review).
+    with pytest.raises(ValueError, match=r"3 noise sources on a 2-D problem.*symmetric \(d, d\) square root"):
+        build(np.full((2, 3), 0.1))
+    with pytest.raises(ValueError, match="3 noise sources"):
+        build(np.full((5, 4, 2, 3), 0.1))
+
+
+@pytest.mark.unit
+def test_a_legacy_pickled_array_volatility_is_a_field():
+    """A problem pickled before #2375 ruling 6 held its array on `volatility_field`.
+
+    The old constructor admitted only grid-shaped fields, so the restored kind is "field"; left at
+    None, the restored problem could not convert its own volatility (#2378 review).
+    """
+    sigma_array = np.linspace(0.1, 1.0, 11)
+    state = dict(create_test_problem(volatility=sigma_array, volatility_kind="field").__dict__)
+    state["volatility_field"] = state.pop("_volatility")
+    del state["_volatility_kind"]
+    state["sigma"] = float(np.mean(sigma_array))  # the collapsed scalar, which is not carried over
+
+    restored = MFGProblem.__new__(MFGProblem)
+    restored.__setstate__(state)
+
+    assert restored.volatility is sigma_array
+    assert restored.volatility_kind == "field"
+    np.testing.assert_array_equal(restored.diffusion, 0.5 * sigma_array**2)
+
+    scalar_state = dict(create_test_problem(volatility=0.3).__dict__)
+    scalar_state["volatility_field"] = scalar_state.pop("_volatility")
+    del scalar_state["_volatility_kind"]
+    restored_scalar = MFGProblem.__new__(MFGProblem)
+    restored_scalar.__setstate__(scalar_state)
+    assert restored_scalar.volatility_kind is None
+
+
+@pytest.mark.unit
+def test_a_callable_s_array_output_is_per_point_unless_declared_a_tensor():
+    """A callable's array output is a per-point field by default, as every solver evaluating one reads it.
+
+    Before, a callable diffusion= returning an array raised on its first evaluation, naming a kind=
+    the problem does not take -- and it had solved at 0f937601 (#2378 review).
+    """
+    x = np.linspace(0.0, 1.0, 11)
+    D_of_x = 0.02 + 0.1 * x
+
+    from_diffusion = create_test_problem(diffusion=lambda t, x, m: 0.02 + 0.1 * np.asarray(x))
+    np.testing.assert_allclose(from_diffusion.volatility(0.0, x, None), np.sqrt(2.0 * D_of_x), rtol=1e-15)
+
+    from_volatility = create_test_problem(volatility=lambda t, x, m: np.sqrt(2.0 * (0.02 + 0.1 * np.asarray(x))))
+    np.testing.assert_allclose(from_volatility.diffusion(0.0, x, None), D_of_x, rtol=1e-14)
 
 
 @pytest.mark.unit
@@ -1046,6 +1122,9 @@ def test_sigma_is_retired():
         Model(hamiltonian=default_hamiltonian(), sigma=0.2)
     with pytest.raises(TypeError, match=r"Model\(sigma=\.\.\.\) is retired"):
         dataclasses.replace(model, sigma=0.3)
+    # Read, it raises too: a retired field read back as None would pass every getattr default.
+    with pytest.raises(AttributeError, match=r"Model\.sigma is retired.*Model\.volatility"):
+        model.sigma  # noqa: B018
     assert dataclasses.replace(model, volatility=0.3).volatility == 0.3
 
 

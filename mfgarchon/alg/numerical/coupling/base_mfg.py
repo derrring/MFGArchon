@@ -47,20 +47,27 @@ def assert_bc_providers_resolvable(problem: MFGProblem, iterator_name: str) -> N
 
 
 def _volatilities_differ(a: Any, b: Any) -> bool:
-    """Whether two volatilities are shown to differ. Scalars by value, arrays by content.
+    """Whether two volatilities are shown to differ. Scalars by value, arrays and scalars by content.
 
-    A callable is compared only by identity and otherwise never shown to differ, which is also what
-    keeps Mock test doubles -- callable by construction -- from tripping a guard (#1489).
+    Two callables are compared only by identity: nothing short of evaluating them could show two
+    distinct ones equal, and that is also what keeps Mock-vs-Mock test doubles -- callable by
+    construction -- from tripping a guard (#1489). Exactly one callable against a scalar or an array
+    differs: no evaluation can show them equal, and refusing is the #1316 rule.
     """
     if a is b:
         return False
     a_real, b_real = isinstance(a, numbers.Real), isinstance(b, numbers.Real)
+    a_array, b_array = isinstance(a, np.ndarray), isinstance(b, np.ndarray)
+    if callable(a) or callable(b):
+        return not (callable(a) and callable(b)) and (a_real or a_array or b_real or b_array)
     if a_real and b_real:
         return abs(float(a) - float(b)) > 1e-12
-    a_array, b_array = isinstance(a, np.ndarray), isinstance(b, np.ndarray)
     if a_array and b_array:
         return not np.array_equal(a, b)
-    return (a_real or a_array) and (b_real or b_array)  # one a scalar, the other an array
+    if (a_real and b_array) or (a_array and b_real):
+        scalar, array = (a, b) if a_real else (b, a)
+        return not np.all(array == float(scalar))  # a constant field equal to the scalar is the same
+    return False
 
 
 def assert_paired_solver_sigma(hjb_solver: Any, fp_solver: Any, context: str) -> None:

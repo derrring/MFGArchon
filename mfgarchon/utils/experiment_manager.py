@@ -108,7 +108,10 @@ def save_experiment_data(
         "T": problem.T,
         "Nt": problem.Nt,
         "dt": problem.dt,
-        "sigma": volatility,
+        # The volatility as supplied, except a callable, which np.savez cannot pickle: it would fail
+        # the whole save. The kind says how an array is read.
+        "sigma": "callable" if callable(volatility) else volatility,
+        "volatility_kind": problem.volatility_kind,
         "coupling_coefficient": problem.coupling_coefficient,
         # Add other problem-specific parameters if they exist and are relevant
         # e.g., "potential_type": problem.potential_type if hasattr(problem, 'potential_type') else "default"

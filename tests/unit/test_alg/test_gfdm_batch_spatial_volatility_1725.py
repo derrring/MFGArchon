@@ -276,6 +276,20 @@ def test_llf_path_consumes_nonconstant_field():
 
 
 @pytest.mark.unit
+def test_llf_base_reads_a_problem_owned_field_at_construction():
+    """The construction-time LLF base reads the problem's own field, not only an override's.
+
+    It was computed before the grid-collocation mapper existed, so every LLF-augmented solver on a
+    field problem raised AttributeError at construction (#2378 review). With l_H = 0 there is no
+    augmentation and the base is the field itself.
+    """
+    field = np.linspace(_SIGMA_LO, _SIGMA_HI, _N)
+    solver = _solver(_problem(field), np.linspace(0.0, 1.0, _N), llf_augmentation=True, llf_l_H=0.0)
+
+    np.testing.assert_array_equal(solver._llf_sigma_eff, field)
+
+
+@pytest.mark.unit
 def test_callable_field_is_evaluated_once_per_collocation_node():
     """A time-invariant spatial callable is normalized once, not inside every Newton probe."""
     calls = 0
@@ -449,6 +463,11 @@ def test_problem_owned_implicit_field_stays_collocation_indexed():
         max_newton_iterations=0,
         boundary_conditions=no_flux_bc(dimension=1),
     )
+
+    # Before the solve, the fallback reads the same space: the problem's domain is not a grid, so its
+    # field is node-indexed, not interpolated off an invented uniform grid (#2378 review).
+    np.testing.assert_array_equal(solver._get_sigma_value(None), field)
+    assert solver._get_sigma_value(3) == field[3]
 
     solver.solve_hjb_system(
         M_density=np.ones((problem.Nt + 1, len(points))),

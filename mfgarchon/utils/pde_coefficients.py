@@ -434,8 +434,9 @@ def resolve_diffusion_source(
     FP side. The ``sigma -> D`` conversion stays in :func:`diffusion_from_volatility`; this
     function only resolves *which* scalar ``sigma`` a given solve sees.
 
-    Resolution (matching ``MFGProblem``'s own array -> scalar ``mean`` convention so the batch
-    path is convention-consistent with the per-point path):
+    Resolution. The batch path (no ``index``) reduces to one representative scalar; this is not a
+    convention ``MFGProblem`` shares -- it holds the volatility as supplied and has no scalar view of
+    a field (#2376) -- so a caller that needs the field passes ``index``:
 
     - **callable** ``source(x)``: evaluate at ``points[index]`` when ``index`` is given, else at
       the domain center ``points.mean(axis=0)`` (the batch path). A callable source therefore

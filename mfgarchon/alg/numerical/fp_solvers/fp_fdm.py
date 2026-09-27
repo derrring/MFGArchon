@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 import scipy.sparse as sparse
@@ -609,7 +609,11 @@ class FPFDMSolver(BaseFPSolver):
                 effective_U = None  # Not needed when velocity is provided directly
             elif callable(drift_field):
                 # Custom drift function - Phase 2
-                # Route to unified nD solver (works for all dimensions including 1D)
+                # Route to unified nD solver (works for all dimensions including 1D). The problem's
+                # own volatility is read by its declared kind, as below (#2378 rule A).
+                problem_tensor = (
+                    volatility_field is None or volatility_field is self.problem.volatility
+                ) and self.problem.volatility_kind == "tensor"
                 return _solve_fp_nd_full_system(
                     m_initial_condition=M_initial,
                     U_solution_for_drift=None,
@@ -617,7 +621,11 @@ class FPFDMSolver(BaseFPSolver):
                     boundary_conditions=self.boundary_conditions,
                     show_progress=show_progress,
                     backend=self.backend,
-                    diffusion_field=volatility_field,
+                    diffusion_field=None if problem_tensor else volatility_field,
+                    # A volatility_kind='tensor' volatility is an array or a callable, never a scalar.
+                    tensor_diffusion_field=cast("np.ndarray | Callable", self.problem.volatility)
+                    if problem_tensor
+                    else None,
                     drift_field=drift_field,  # callable velocity → internal drift_field
                     advection_scheme=self.advection_scheme,
                     progress_callback=progress_callback,
@@ -666,9 +674,12 @@ class FPFDMSolver(BaseFPSolver):
         # Unified volatility_field handling with auto-detection
         # Issue #717: volatility_field is the SDE volatility σ or Σ
         # The solver computes D = σ²/2 (scalar) or D = ΣΣᵀ/2 (matrix) internally
+        # Issue #1248: with no explicit override, use the problem's full SDE volatility. The
+        # problem's own volatility is read by its declared kind -- a (d, d) field on a d x d grid and
+        # a (d, d) tensor have the same shape -- while an explicit override is still read by shape
+        # until part 2 of #2378 gives overrides a kind.
+        from_problem = volatility_field is None or volatility_field is self.problem.volatility
         if volatility_field is None:
-            # Issue #1248: with no explicit override, use the problem's full SDE volatility
-            # (scalar / per-point array / callable), routed through the same detection below.
             volatility_field = self.problem.volatility
 
         if volatility_field is None:
@@ -679,8 +690,13 @@ class FPFDMSolver(BaseFPSolver):
             )
         if isinstance(volatility_field, (int, float)):
             # Constant isotropic volatility
-            effective_sigma = float(volatility_field)
+            effective_sigma: float | np.ndarray | Callable = float(volatility_field)
             is_tensor = False
+        elif from_problem:
+            # An array or a callable, read as its volatility_kind says; a callable without one is
+            # per point.
+            is_tensor = self.problem.volatility_kind == "tensor"
+            effective_sigma = volatility_field
         elif isinstance(volatility_field, np.ndarray):
             # Auto-detect: scalar field vs matrix volatility
             d = self.dimension
@@ -842,6 +858,14 @@ class FPFDMSolver(BaseFPSolver):
         # A scalar or per-point volatility; a callable is refused rather than evaluated at an
         # arbitrary time (#2376).
         sigma_val = self.problem.volatility if sigma is None else sigma
+        if sigma_val is self.problem.volatility and self.problem.volatility_kind == "tensor":
+            raise NotImplementedError(
+                "FPFDMSolver.solve_fp_step_adjoint_mode assembles an isotropic diffusion sigma^2/2; "
+                "the problem's volatility is a volatility_kind='tensor' Sigma, whose diffusion "
+                "A = 1/2 Sigma Sigma^T it would misread as a per-point field (#2378). With "
+                "BlockIterator, adjoint_mode='off' solves the FP side through solve_fp_system, which "
+                "assembles the tensor."
+            )
         if callable(sigma_val):
             raise NotImplementedError(
                 "FPFDMSolver.solve_fp_step_adjoint_mode takes a scalar or per-point volatility, not a "

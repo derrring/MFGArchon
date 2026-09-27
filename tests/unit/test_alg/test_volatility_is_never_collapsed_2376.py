@@ -12,6 +12,8 @@ property is a scalar contract, and 2-D only for the tensor rows, which have no 1
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
 import numpy as np
@@ -19,6 +21,7 @@ import numpy as np
 from mfgarchon import MFGProblem
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
+from mfgarchon.core.model import Conditions, Model
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
@@ -26,24 +29,49 @@ N = 11
 RAMP = np.linspace(0.2, 0.6, N)  # mean 0.4: a consumer averaging it would look plausible
 
 
+def _hamiltonian():
+    return SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0))
+
+
 def _components(dim=1):
+    """The MultiPopulationMFGProblem inputs, which that class takes as components."""
     return MFGComponents(
-        hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
+        hamiltonian=_hamiltonian(),
         m_initial=lambda x: np.exp(-10 * np.sum((np.atleast_1d(np.asarray(x)) - 0.5) ** 2, axis=-1)),
         u_terminal=lambda x: np.zeros(np.asarray(x).shape[:-1]) if dim > 1 else 0.0 * np.asarray(x),
     )
 
 
+def _v1_problem(bounds, nx_points, **volatility):
+    """The v1.0 constructor: the volatility and its kind sit on the Model (#2375 ruling 6)."""
+    dim = len(bounds)
+    if dim == 1:
+        conditions = Conditions(
+            m_initial=lambda x: np.exp(-10 * (np.asarray(x) - 0.5) ** 2),
+            u_terminal=lambda x: 0.0 * np.asarray(x),
+            T=0.2,
+        )
+    else:
+        conditions = Conditions(
+            m_initial=lambda x: np.exp(-10 * np.sum((np.asarray(x) - 0.5) ** 2, axis=-1)),
+            u_terminal=lambda x: np.zeros(np.asarray(x).shape[:-1]),
+            T=0.2,
+        )
+    grid = TensorProductGrid(bounds=bounds, Nx_points=nx_points, boundary_conditions=no_flux_bc(dimension=dim))
+    with warnings.catch_warnings():
+        # The fixture's density is not normalised, and no pin here turns on its mass.
+        warnings.filterwarnings("ignore", message="initial density mass", category=UserWarning)
+        return MFGProblem(
+            model=Model(hamiltonian=_hamiltonian(), **volatility), domain=grid, conditions=conditions, Nt=4
+        )
+
+
 def _problem(**volatility):
-    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[N], boundary_conditions=no_flux_bc(dimension=1))
-    return MFGProblem(geometry=grid, T=0.2, Nt=4, components=_components(), **volatility)
+    return _v1_problem([(0.0, 1.0)], [N], **volatility)
 
 
 def _problem_2d(**volatility):
-    grid = TensorProductGrid(
-        bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[6, 5], boundary_conditions=no_flux_bc(dimension=2)
-    )
-    return MFGProblem(geometry=grid, T=0.2, Nt=4, components=_components(dim=2), **volatility)
+    return _v1_problem([(0.0, 1.0), (0.0, 1.0)], [6, 5], **volatility)
 
 
 FIELD = {"volatility": RAMP, "volatility_kind": "field"}
@@ -106,11 +134,13 @@ def test_gfdm_falls_back_to_the_field_not_to_one():
     from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
 
     points = np.linspace(0.0, 1.0, N).reshape(-1, 1)
-    solver = HJBGFDMSolver(_problem(**FIELD), collocation_points=points)
+    solver = HJBGFDMSolver(_problem(**FIELD), collocation_points=points, monotonicity_scheme="none")
     np.testing.assert_allclose(solver._get_sigma_value(None), RAMP, rtol=0, atol=1e-15)
     assert solver._get_sigma_value(3) == pytest.approx(RAMP[3], abs=1e-15)
     with pytest.raises(NotImplementedError, match="space-only volatility callable"):
-        HJBGFDMSolver(_problem(**CALLABLE), collocation_points=points)._get_sigma_value(None)
+        HJBGFDMSolver(_problem(**CALLABLE), collocation_points=points, monotonicity_scheme="none")._get_sigma_value(
+            None
+        )
 
 
 def test_fvm_refuses_the_problems_tensor_even_when_its_entries_are_equal():
@@ -155,4 +185,196 @@ def test_distinct_per_population_volatilities_are_refused():
     }
     with pytest.raises(NotImplementedError, match="population 0's"):
         MultiPopulationMFGProblem(volatility=[0.1, 0.3], **kwargs)
-    assert MultiPopulationMFGProblem(volatility=[0.2, 0.2], **kwargs).volatility == 0.2
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="initial density mass", category=UserWarning)
+        assert MultiPopulationMFGProblem(volatility=[0.2, 0.2], **kwargs).volatility == 0.2
+
+
+# --- The #2378 review round: the None paths, a declared kind, and refusals by name. -------------
+
+
+def _hjb_fdm_2d(problem, **override):
+    """A standalone nD HJB-FDM solve, the route FixedPointIterator and BlockIterator take with None.
+
+    The terminal cost is asymmetric in the two axes, so a transposed or swapped diffusion shows.
+    """
+    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+
+    x, y = np.meshgrid(np.linspace(0.0, 1.0, 6), np.linspace(0.0, 1.0, 5), indexing="ij")
+    U_terminal = (x - 0.5) ** 2 + 0.5 * (y - 0.3) ** 2
+    M = np.ones((problem.Nt + 1, 6, 5))
+    return HJBFDMSolver(problem).solve_hjb_system(M, U_terminal, np.zeros_like(M), **override)
+
+
+def test_hjb_fdm_reads_the_problems_diagonal_tensor_on_the_none_path():
+    """The None default is the problem's own volatility, dispatched by its declared kind.
+
+    Before, the (d, d) tensor dispatch looked only at an explicit override: with None the problem's
+    tensor went to the field reader and raised a grid-shape error, so FixedPointIterator,
+    BlockIterator and a standalone solve failed where MFGProblem.solve, which forwards the object,
+    ran. The reference is the per-axis override, which reaches the tensor path by its own route.
+    """
+    problem = _problem_2d(volatility=np.diag([0.3, 0.2]), volatility_kind="tensor")
+
+    np.testing.assert_array_equal(_hjb_fdm_2d(problem), _hjb_fdm_2d(problem, volatility_field=np.array([0.3, 0.2])))
+
+
+@pytest.mark.parametrize(
+    ("volatility", "what"),
+    [
+        (np.array([[0.3, 0.1], [0.1, 0.2]]), "non-diagonal"),
+        (np.broadcast_to(np.diag([0.3, 0.2]), (6, 5, 2, 2)).copy(), "per point"),
+        (lambda t, x, m: np.diag([0.3, 0.2]), "a callable"),
+    ],
+    ids=["non-diagonal", "per-point", "callable"],
+)
+def test_hjb_fdm_refuses_a_problem_tensor_it_would_solve_at_the_wrong_diffusion(volatility, what):
+    """HJB-FDM's tensor path is a constant diagonal Laplacian with weights sigma_ii^2/2.
+
+    A non-diagonal Sigma loses the cross term and gets A_ii = 1/2 sum_k Sigma_ik^2 wrong as well
+    (0.045 against 0.05 here); a per-point or callable one would be averaged over the grid. Before,
+    MFGProblem.solve reached the first with a warning that named only the cross term.
+    """
+    problem = _problem_2d(volatility=volatility, volatility_kind="tensor")
+    with pytest.raises(NotImplementedError, match=rf"only as a constant diagonal.*is {what}.*HJBSemiLagrangianSolver"):
+        _hjb_fdm_2d(problem)
+
+
+def test_hjb_fdm_solves_a_2d_field_and_a_constant_one_is_the_scalar():
+    """The nD field path multiplied a grid-shaped D by the flattened Laplacian and crashed.
+
+    Two measurements: a constant field solves to the scalar's answer, and a ramp does not solve to
+    its mean's -- so the field is read per point, not collapsed.
+    """
+    constant = _problem_2d(volatility=np.full((6, 5), 0.3), volatility_kind="field")
+    np.testing.assert_allclose(_hjb_fdm_2d(constant), _hjb_fdm_2d(_problem_2d(volatility=0.3)), rtol=0, atol=1e-14)
+
+    ramp = np.broadcast_to(np.linspace(0.1, 0.5, 6)[:, None], (6, 5)).copy()
+    varying = _problem_2d(volatility=ramp, volatility_kind="field")
+    assert not np.allclose(_hjb_fdm_2d(varying), _hjb_fdm_2d(_problem_2d(volatility=float(ramp.mean()))))
+
+
+def _problem_2x2(**volatility):
+    """A 2 x 2 grid, where a (d, d) field and a (d, d) tensor have the same shape."""
+    return _v1_problem([(0.0, 1.0), (0.0, 1.0)], [2, 2], **volatility)
+
+
+def test_fp_fdm_reads_a_declared_field_as_a_field_on_a_d_by_d_grid():
+    """FP-FDM dispatched the problem's array by shape, so a declared 2 x 2 field was solved as Sigma.
+
+    A constant field is the scalar exactly; the same array declared a tensor is a different
+    diffusion, A = 1/2 Sigma Sigma^T, which is the control that the fixture can tell them apart.
+    """
+    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+
+    m0 = np.array([[2.0, 0.5], [1.0, 0.5]])  # non-uniform: a uniform density is invariant under any diffusion
+    scalar = FPFDMSolver(_problem_2x2(volatility=0.3)).solve_fp_system(m0)
+    field = FPFDMSolver(_problem_2x2(volatility=np.full((2, 2), 0.3), volatility_kind="field")).solve_fp_system(m0)
+    tensor = FPFDMSolver(_problem_2x2(volatility=np.full((2, 2), 0.3), volatility_kind="tensor")).solve_fp_system(m0)
+
+    np.testing.assert_array_equal(field, scalar)
+    assert not np.allclose(tensor, scalar)
+
+
+def test_fp_fdm_callable_drift_reads_the_problems_tensor():
+    """The callable-drift route passed None through as a field, so the problem's tensor was misread.
+
+    With a zero drift it is the pure-diffusion route, which reads the tensor by kind.
+    """
+    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+
+    problem = _problem_2d(volatility=np.diag([0.3, 0.2]), volatility_kind="tensor")
+    x, y = np.meshgrid(np.linspace(0.0, 1.0, 6), np.linspace(0.0, 1.0, 5), indexing="ij")
+    m0 = np.exp(-10 * ((x - 0.5) ** 2 + (y - 0.3) ** 2))
+
+    np.testing.assert_array_equal(
+        FPFDMSolver(problem).solve_fp_system(m0, drift_field=lambda t, x, m: 0.0),
+        FPFDMSolver(problem).solve_fp_system(m0),
+    )
+
+
+def test_the_strict_adjoint_fp_step_refuses_the_problems_tensor():
+    """The step assembles sigma^2/2 per point; a (d, d) tensor would be read as a 2 x 2 field."""
+    from scipy import sparse
+
+    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+
+    problem = _problem_2d(volatility=np.diag([0.3, 0.2]), volatility_kind="tensor")
+    with pytest.raises(NotImplementedError, match=r"assembles an isotropic diffusion.*volatility_kind='tensor'"):
+        FPFDMSolver(problem).solve_fp_step_adjoint_mode(np.ones((6, 5)), sparse.csr_matrix((30, 30)))
+
+
+def test_the_particle_grid_drift_path_refuses_the_problems_field():
+    """With an ndarray drift, the path consumes one scalar; it averaged the problem's field before.
+
+    The None default reaches it from the coupled solve; the override route is pinned in #1248's file.
+    """
+    from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
+
+    U = np.tile(0.3 * (np.linspace(0.0, 1.0, N) - 0.5) ** 2, (5, 1))
+    with pytest.raises(NotImplementedError, match="FPParticleSolver's grid-drift path"):
+        FPParticleSolver(_problem(**FIELD), num_particles=100).solve_fp_system(np.ones(N), drift_field=U)
+
+
+def test_the_particle_callable_drift_path_refuses_a_callable_tensor():
+    """It evaluates a callable as one sigma per particle, and a (d, d) output would be raveled into it."""
+    from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
+
+    problem = _problem_2d(volatility=lambda t, x, m: np.diag([0.3, 0.2]), volatility_kind="tensor")
+    with pytest.raises(NotImplementedError, match=r"one sigma per particle.*volatility_kind='tensor'"):
+        FPParticleSolver(problem, num_particles=100).solve_fp_system(np.ones((6, 5)), drift_field=lambda t, x, m: 0.0)
+
+
+@pytest.mark.parametrize(
+    ("hjb", "fp", "differ"),
+    [
+        (0.3, lambda t, x, m: 0.3, True),
+        (RAMP, lambda t, x, m: 0.3, True),
+        (lambda t, x, m: 0.3, lambda t, x, m: 0.3, False),
+        (0.3, np.full(N, 0.3), False),
+        (0.3, np.full(N, 0.4), True),
+    ],
+    ids=[
+        "scalar-vs-callable",
+        "field-vs-callable",
+        "two-callables",
+        "scalar-vs-equal-constant",
+        "scalar-vs-other-constant",
+    ],
+)
+def test_the_pairing_guard_on_mixed_kinds(hjb, fp, differ):
+    """Exactly one callable against a value differs: no evaluation can show them equal (#1316).
+
+    At 0f937601 these pairs were refused only because the callable collapsed to 1.0; 23bbb9e5 let
+    them through. Two callables stay identity-only, which is what keeps Mock doubles passing
+    (#1489); a scalar and a constant field equal to it are one problem.
+    """
+    from types import SimpleNamespace
+
+    from mfgarchon.alg.numerical.coupling.base_mfg import assert_paired_solver_sigma
+
+    pair = (
+        SimpleNamespace(problem=SimpleNamespace(volatility=hjb)),
+        SimpleNamespace(problem=SimpleNamespace(volatility=fp)),
+    )
+    if differ:
+        with pytest.raises(ValueError, match="different volatility"):
+            assert_paired_solver_sigma(*pair, "test")
+    else:
+        assert_paired_solver_sigma(*pair, "test")
+
+
+def test_save_experiment_data_stores_a_callable_volatility_by_tag(tmp_path):
+    """np.savez pickles the parameter dict, and a callable would fail the whole save (#2378 review)."""
+    from mfgarchon.utils.experiment_manager import load_experiment_data, save_experiment_data
+
+    problem = _problem(**CALLABLE)
+    zeros = np.zeros((problem.Nt + 1, N))
+    path = save_experiment_data(
+        problem, zeros, zeros, "test", 1, np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1), 0.0, str(tmp_path)
+    )
+
+    assert path, "the save failed"
+    params = load_experiment_data(path)["problem_params"]
+    assert params["sigma"] == "callable"
+    assert params["volatility_kind"] is None

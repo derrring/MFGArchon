@@ -422,6 +422,11 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # --- volatility= / diffusion=: mutually exclusive (#811, #2375 ruling 6) ---
         if diffusion is not None and volatility is not None:
             raise ValueError("Specify at most one of: diffusion=, volatility=. Got both.")
+        # An array-like volatility becomes a float array, and a 0-d one a float, before any check reads
+        # it: a list would otherwise skip the array validation, and a 0-d array the sign check. A
+        # diffusion= array-like needs no such step -- volatility_from_diffusion converts it below.
+        if volatility is not None and not callable(volatility):
+            volatility = np.asarray(volatility, dtype=float) if np.ndim(volatility) > 0 else float(volatility)
         supplied = volatility if volatility is not None else diffusion
         if volatility_kind is not None:
             if volatility_kind not in ("field", "tensor"):
@@ -447,20 +452,23 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             # the legitimate deterministic value, identical to passing nothing, so
             # MFGProblem(volatility=other.volatility) from a deterministic `other` does not raise.
             # Callable / array volatility (Issue #1248) is validated where it is evaluated.
-            if isinstance(volatility, (int, float, np.floating, np.integer)) and volatility < 0:
+            if isinstance(volatility, float) and volatility < 0:
                 raise ValueError(
                     f"volatility (the SDE volatility) must be >= 0, got {volatility}. "
                     "Use volatility=0 or leave it unset for deterministic dynamics."
                 )
-            vola_value = volatility if callable(volatility) or np.ndim(volatility) > 0 else float(volatility)
+            vola_value = volatility
         elif diffusion is not None:
             # D -> Sigma by the one reverse converter (a negative D is refused there, #811).
             from mfgarchon.utils.pde_coefficients import volatility_from_diffusion
 
             if callable(diffusion):
                 _D_callable = diffusion
+                # A callable's array output is per point unless the kind says tensor -- the reading
+                # every solver that evaluates a callable volatility gives it.
+                _callable_kind = volatility_kind or "field"
 
-                def vola_value(t, x, m, *, _D=_D_callable, _kind=volatility_kind):
+                def vola_value(t, x, m, *, _D=_D_callable, _kind=_callable_kind):
                     return volatility_from_diffusion(_D(t, x, m), kind=_kind)
             else:
                 vola_value = volatility_from_diffusion(diffusion, kind=volatility_kind)
@@ -1224,9 +1232,12 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         volatility, kind = self._volatility, self._volatility_kind
         if callable(volatility):
+            # A callable's array output is per point unless the kind says tensor, as every solver
+            # that evaluates one reads it.
+            callable_kind = kind or "field"
 
             def diffusion(t, x, m):
-                return diffusion_from_volatility(volatility(t, x, m), kind=kind)
+                return diffusion_from_volatility(volatility(t, x, m), kind=callable_kind)
 
             return diffusion
         return diffusion_from_volatility(volatility, kind=kind)
@@ -1489,8 +1500,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # Pickled before #2375 ruling 6: the volatility sat on `volatility_field`, beside a collapsed
         # scalar `sigma` that is not carried over (#2376).
         if "_volatility" not in state and "volatility_field" in state:
-            state["_volatility"] = state.pop("volatility_field")
-            state["_volatility_kind"] = None
+            volatility = state.pop("volatility_field")
+            state["_volatility"] = volatility
+            # The old constructor admitted only grid-shaped fields, so a legacy array is one.
+            state["_volatility_kind"] = "field" if isinstance(volatility, np.ndarray) and volatility.ndim > 0 else None
             state.pop("sigma", None)
 
         # Detect legacy format: geometry=None but has legacy 1D attrs
@@ -1979,6 +1992,13 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                         raise ValueError(
                             f"volatility_kind='tensor' needs shape (d, k) or (*spatial_shape, d, k) with "
                             f"d = {d} and spatial_shape = {grid}; got {vol.shape}."
+                        )
+                    if vol.shape[-1] != d:
+                        raise ValueError(
+                            f"volatility_kind='tensor' with {vol.shape[-1]} noise sources on a {d}-D problem: "
+                            "no solver reads a non-square noise matrix yet. The symmetric (d, d) square root "
+                            "of Sigma Sigma^T has the same diffusion A = 1/2 Sigma Sigma^T -- pass that "
+                            "(volatility_from_diffusion(A, kind='tensor') builds it)."
                         )
                     shape_check = []
                 else:
