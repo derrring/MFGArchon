@@ -31,6 +31,7 @@ from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConven
 from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import TaylorOperator
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.types.callable_protocols import evaluate_solver_source
+from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
@@ -452,13 +453,15 @@ class FPGFDMSolver(BaseFPSolver):
 
         return divergence
 
+    @deprecated_parameter(param_name="m_initial_condition", since="v0.22.0", replacement="M_initial")
     def solve_fp_system(
         self,
-        m_initial_condition: np.ndarray,
+        M_initial: np.ndarray | None = None,
         drift_field: np.ndarray | Callable | None = None,
         volatility_field: float | np.ndarray | Callable | None = None,
         source_term: Callable | None = None,
         show_progress: bool | None = None,
+        m_initial_condition: np.ndarray | None = None,  # deprecated alias for M_initial (#2377)
     ) -> np.ndarray:
         """
         Solve FP system on collocation points using GFDM.
@@ -468,7 +471,7 @@ class FPGFDMSolver(BaseFPSolver):
         where alpha is the drift velocity.
 
         Args:
-            m_initial_condition: Initial density at collocation points, shape (N,)
+            M_initial: Initial density at collocation points, shape (N,)
             drift_field: Drift velocity specification (Issue #573):
                 - None: Zero drift (pure diffusion)
                 - np.ndarray: Drift velocity field α*(t,x), shape (Nt+1, N, d)
@@ -533,10 +536,17 @@ class FPGFDMSolver(BaseFPSolver):
 
         diffusion_coeff = diffusion_from_volatility(sigma)
 
+        if m_initial_condition is not None:
+            if M_initial is not None:
+                raise ValueError("Cannot specify both M_initial and m_initial_condition; use M_initial (#2377).")
+            M_initial = m_initial_condition
+        if M_initial is None:
+            raise ValueError("M_initial is required")
+
         # Validate inputs
-        m_init = np.asarray(m_initial_condition).ravel()
+        m_init = np.asarray(M_initial).ravel()
         if m_init.shape[0] != self.n_points:
-            raise ValueError(f"m_initial_condition length {m_init.shape[0]} must match n_points {self.n_points}")
+            raise ValueError(f"M_initial length {m_init.shape[0]} must match n_points {self.n_points}")
 
         # Handle drift field (Issue #573: accepts drift velocity α* for any H)
         N_colloc = self.n_points  # Number of collocation points

@@ -32,10 +32,12 @@ subclass may override with `(*args, **kwargs)` and nothing checks, which is the 
 this could exist unnoticed. `BaseHJBSolver` and `BaseFPSolver` now validate overrides at class
 definition: an override that accepts `**kwargs` must NAME `source_term` and `volatility_field`.
 Scoped to those two because they have the incident history (#1424, #2020; #1316, #1783); a blanket
-"name every declared parameter" rule is not satisfiable, since the base declares
+"name every declared parameter" rule is not satisfiable, since ~~the base declares
 `m_initial_condition` while implementations use `m_initial` or `M_initial` — that is a rename, not a
-gate. Solvers without `**kwargs` are untouched: an unnamed parameter there already raises
-`TypeError`, which is loud.
+gate~~ implementations legitimately take different optional parameters, so satisfying it would mean
+adding parameters, not renaming one **[CORRECTED 2026-09-28: #2377 gave the first parameter one
+name, `M_initial`, on the base and every implementation]**. Solvers without `**kwargs` are
+untouched: an unnamed parameter there already raises `TypeError`, which is loud.
 
 A solver that cannot support a parameter still names it and raises inside. That is what
 `HJBWENOSolver` does for multi-D `source_term`, and it is the honest shape: refusal is a behaviour,

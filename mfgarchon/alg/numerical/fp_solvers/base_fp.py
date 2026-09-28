@@ -80,9 +80,9 @@ class BaseFPSolver(BaseNumericalSolver):
     #
     # Scoped to the two parameters with an incident history rather than to every declared name:
     # `source_term` (#1424, #2020) and `volatility_field` (#1316, #1783). A blanket "must name every
-    # declared parameter" rule is NOT satisfiable here -- the base declares `m_initial_condition` while
-    # implementations use other names for it, so it would fail almost every solver in the tree and
-    # would be a rename, not a gate.
+    # declared parameter" rule is not the right gate here -- implementations legitimately take different
+    # optional parameters. The first parameter's name, `M_initial`, is pinned on every implementation by
+    # test_solve_fp_system_first_parameter_2377.py instead (#2377).
     #
     # Fires at class-definition time, so an offending solver cannot be imported rather than failing
     # at some caller far away. A solver that cannot support a parameter still NAMES it and raises
@@ -239,7 +239,7 @@ class BaseFPSolver(BaseNumericalSolver):
     @abstractmethod
     def solve_fp_system(
         self,
-        m_initial_condition: np.ndarray,
+        M_initial: np.ndarray,
         drift_field: np.ndarray | Callable | None = None,
         volatility_field: float | np.ndarray | Callable | None = None,
         show_progress: bool | None = None,
@@ -290,7 +290,7 @@ class BaseFPSolver(BaseNumericalSolver):
             are deprecated. Use volatility_field with appropriate shape.
 
         Args:
-            m_initial_condition: Initial density M(0,x) at t=0
+            M_initial: Initial density M(0,x) at t=0
                 Shape: (Nx,) for 1D, (Nx, Ny) for 2D, etc.
 
             drift_field: Drift field specification (optional):
