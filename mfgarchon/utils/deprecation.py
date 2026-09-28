@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import os
 import sys
 import warnings
 from collections.abc import Callable
@@ -506,6 +507,13 @@ def deprecated_alias(
     alias_wrapper.__name__ = old_name
 
     return alias_wrapper
+
+
+#: ``skip_file_prefixes`` for a warning raised inside a function this module's decorators wrap, so the
+#: warning names the caller and not the wrapper (#2417). The path WITHOUT its ``.py``: measured on
+#: CPython 3.12.13 (2026-09-28), a prefix equal to the whole filename does not match it, while any
+#: strict prefix does.
+WRAPPER_FRAMES: tuple[str, ...] = (os.path.splitext(__file__)[0],)
 
 
 def retired_parameters(

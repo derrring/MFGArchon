@@ -56,6 +56,7 @@ from scipy.sparse import csr_matrix, diags, eye, lil_matrix
 from scipy.sparse.linalg import spsolve
 from scipy.spatial import cKDTree
 
+import mfgarchon.utils.deprecation as _deprecation
 from mfgarchon.types.callable_protocols import ALPHA_STAR_SLOTS, bind_user_callable
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
@@ -367,6 +368,9 @@ class HJBHowardSolver:
                 "monotonicity_scheme='joint_socp' for the covered case (#2066).",
                 UserWarning,
                 stacklevel=2,
+                # The retired-keyword refusal wraps __init__; without this the warning is attributed
+                # to that wrapper in deprecation.py instead of the caller (#2417).
+                skip_file_prefixes=_deprecation.WRAPPER_FRAMES,
             )
         if discretisation not in ("upwind_projection", "upwind_per_axis", "central"):
             raise ValueError(
