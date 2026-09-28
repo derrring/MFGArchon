@@ -27,7 +27,8 @@ Example:
     >>>
     >>> class LeftDensity(BaseBCValueProvider):
     ...     def compute(self, state):
-    ...         return float(state["m_current"][0])
+    ...         # m_current is space-time, time first: (Nt+1, *grid). Final slice, left wall.
+    ...         return float(state["m_current"][-1, 0])
     >>>
     >>> # Store intent in BCSegment
     >>> segment = BCSegment(
@@ -72,8 +73,9 @@ class BCProviderState(TypedDict, total=False):
     All keys are optional (total=False) as different providers need different subsets.
 
     Keys:
-        m_current: Current FP density array
-        U_current: Current value function array
+        m_current: The previous Picard iterate of the FP density, space-time and time first:
+            shape ``(Nt+1, *grid)``.
+        U_current: The previous iterate of the value function, same shape.
         geometry: Problem geometry object
         volatility: The SDE volatility σ as supplied, never D = σ²/2 (#1512, #2378). A provider that
             needs a scalar calls ``scalar_volatility`` on it, which refuses a field (#2376).
@@ -121,8 +123,8 @@ class BCValueProvider(Protocol):
 
         Args:
             state: Dictionary containing iteration state. Standard keys:
-                - 'm_current': Current FP density array
-                - 'U_current': Current value function array
+                - 'm_current': previous Picard iterate of the FP density, shape (Nt+1, *grid)
+                - 'U_current': previous iterate of the value function, same shape
                 - 'geometry': Problem geometry object
                 - 'volatility': the SDE volatility σ as supplied (not D = σ²/2; #1512, #2378)
                 - 't': Current time (for time-dependent problems)

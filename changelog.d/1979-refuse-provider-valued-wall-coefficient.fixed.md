@@ -21,7 +21,7 @@ did this correctly for `g`. `alpha` and `beta` now get the same guard, with the 
 ROBIN segment, and that route is not reachable: every grid FP solver refuses `ROBIN` at construction
 (`_validate_bc_support`, #1456, stated in `conditions.py:1149`), measured — `FPFDMSolver` raises
 before any assembly. The reachable case is a provider on the `alpha` of a **NO_FLUX** or **NEUMANN**
-segment, which passes the capability gate. That is precisely what `NormalDriftProvider` produces,
+segment, which passes the capability gate. That is precisely what `NormalDriftProvider` ~~produces~~ produced (removed in this same release, #2422),
 since an impermeable wall *is* Robin in `m` (`alpha*m - D*d_n m = 0`) and its coefficient lives
 there. So the defect is not narrower than filed; it sits on the path the provider layer was built
 for.
@@ -44,13 +44,18 @@ Three corrections from review, each of which changed the fix rather than its wor
   state, so that advice converts the feature into its absence and calls it a fix. ~~The message now
   names `FPFEMSolver` — whose weak form implements a general Robin wall and reads `alpha`/`beta`/`g`,
   established when #1975 was closed — as the path that can actually do this~~ **[CORRECTED
-  2026-09-28, #2422]** `FPFEMSolver` reads a constant coefficient and refuses a provider too, by the
-  FEM guard this same fix added, so the message now says that no FP solver recomputes one. It still
-  labels resolving as a downgrade. The pointer to #1975 as future work is dropped: it is closed COMPLETED, and its
-  finding is that the FEM path already does this.
+  2026-09-28, #2422]** `FPFEMSolver` does not do this either. The FEM guard this fix added covers a
+  ROBIN segment's coefficients, but on the reachable case above, a NO_FLUX or NEUMANN segment, FEM
+  never reads `alpha`: `assemble_robin_terms` keeps only ROBIN and NEUMANN segments and assembles
+  NEUMANN as alpha = 0, beta = 1. The message now says that no FP solver recomputes one. It still
+  labels resolving as a downgrade. The pointer to #1975 as future work is dropped: it is closed
+  COMPLETED~~, and its finding is that the FEM path already does this~~.
 
 Pinned in `tests/unit/test_geometry/test_provider_robin_coefficient_refused_1979.py`, both paths,
 each `raises` paired with a float-coefficient control so that a blanket refusal cannot pass. Both
 guards verified mutation-red: removing the FDM one fails 2 of 7, removing the FEM one fails 3 of 7.
+**[2026-09-28, #2422: that file was deleted in #2227 (`18d8cc80`). The FDM refusal is pinned by
+`test_solver_bc_support_census_1975.py::test_a_provider_valued_coefficient_is_refused_rather_than_dropped`;
+the FEM `alpha`/`beta` one has no pin (`test_fem_inhomogeneous_neumann_2294.py` pins the separate `value` guard).]**
 
 Unblocks #1970, which is in draft pending this. (#1970 then merged, and #2422 removed what it added.)
