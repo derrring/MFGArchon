@@ -27,6 +27,7 @@ import numpy as np
 
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.pde_coefficients import retired_volatility_keywords
 
 from .base_mfg import assert_bc_providers_resolvable, resolve_source_kwarg, resolve_volatility_kwarg
 from .fixed_point_utils import resolve_fp_drift_kwargs
@@ -108,13 +109,15 @@ class MFGResidual:
         >>> print(f"Residual norm: {np.linalg.norm(F):.2e}")
     """
 
+    @retired_volatility_keywords
     def __init__(
         self,
         problem: MFGProblem,
         hjb_solver: BaseHJBSolver,
         fp_solver: BaseFPSolver,
         *,
-        volatility_field: float | NDArray | Any | None = None,
+        volatility: float | NDArray | Any | None = None,
+        volatility_kind: str | None = None,
         drift_field: NDArray | Any | None = None,
     ):
         """
@@ -124,14 +127,16 @@ class MFGResidual:
             problem: MFG problem definition
             hjb_solver: HJB solver instance
             fp_solver: FP solver instance
-            volatility_field: Optional diffusion override (Phase 2.3)
+            volatility: Optional volatility override -- the SDE volatility, not a diffusion (Phase 2.3)
+            volatility_kind: 'field' or 'tensor' for an array override (#2378 part 2a)
             drift_field: Optional drift override for non-MFG problems
         """
         self.problem = problem
         assert_bc_providers_resolvable(self.problem, "MFGResidual (NewtonMFGSolver)")
         self.hjb_solver = hjb_solver
         self.fp_solver = fp_solver
-        self.volatility_field = volatility_field
+        self.volatility = volatility
+        self.volatility_kind = volatility_kind
         self.drift_field = drift_field
 
         # Cache problem dimensions
@@ -236,7 +241,8 @@ class MFGResidual:
             kwargs.update(
                 resolve_volatility_kwarg(
                     self._hjb_sig_params,
-                    self.volatility_field,
+                    self.volatility,
+                    self.volatility_kind,
                     self.problem,
                     type(self.hjb_solver).__name__,
                     "solve_hjb_system",
@@ -294,7 +300,8 @@ class MFGResidual:
         kwargs.update(
             resolve_volatility_kwarg(
                 params,
-                self.volatility_field,
+                self.volatility,
+                self.volatility_kind,
                 self.problem,
                 type(self.fp_solver).__name__,
                 "solve_fp_system",

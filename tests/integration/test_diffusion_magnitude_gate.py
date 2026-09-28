@@ -123,9 +123,9 @@ def _fp_pure_diffusion_decay(path: str, sigma: float, n: int = 81, nt: int = 40,
     solver = FPFDMSolver(prob)
     m0 = 1.0 + 0.4 * np.cos(_K * x)
     if path == "explicit":
-        M = solver.solve_fp_system(m0.copy(), drift_field=lambda t, g, m: np.zeros(n), volatility_field=sigma)
+        M = solver.solve_fp_system(m0.copy(), drift_field=lambda t, g, m: np.zeros(n), volatility=sigma)
     else:
-        M = solver.solve_fp_system(m0.copy(), drift_field=np.zeros((nt + 1, n)), volatility_field=sigma)
+        M = solver.solve_fp_system(m0.copy(), drift_field=np.zeros((nt + 1, n)), volatility=sigma)
     D = 0.5 * sigma**2
     amp0, ampT = M[0] - 1.0, M[-1] - 1.0
     i = int(np.argmax(np.abs(amp0)))
@@ -184,7 +184,7 @@ def test_weak_form_fem_fp_diffusion_magnitude():
     solver = FPFEMSolver(prob, order=1)
     x = solver._disc.dof_coordinates[:, 0]
     m0 = 1.0 + 0.4 * np.cos(_K * x)
-    M = solver.solve_fp_system(m0.copy(), potential_field=None, volatility_field=sigma)
+    M = solver.solve_fp_system(m0.copy(), potential_field=None, volatility=sigma)
     amp0, ampT = M[0] - 1.0, M[-1] - 1.0
     i = int(np.argmax(np.abs(amp0)))
     factor, analytic = ampT[i] / amp0[i], np.exp(-D * _K**2 * T)

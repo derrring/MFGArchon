@@ -58,7 +58,7 @@ def _zero_drift(t, x, m):
     return np.zeros_like(x)
 
 
-def _final_cloud_covariance(volatility_field, *, T=0.5, Nt=50, num_particles=20000, seed=11):
+def _final_cloud_covariance(volatility, *, T=0.5, Nt=50, num_particles=20000, seed=11):
     """Run free diffusion from a single point (all particles at the origin) and return
     the empirical covariance of the final particle cloud.
 
@@ -75,7 +75,9 @@ def _final_cloud_covariance(volatility_field, *, T=0.5, Nt=50, num_particles=200
     solver.solve_fp_system(
         M_initial=m0,
         drift_field=_zero_drift,
-        volatility_field=volatility_field,
+        volatility=volatility,
+        # Every array in this file is a noise matrix Sigma, constant or per point (#2378).
+        volatility_kind="tensor" if np.ndim(volatility) else None,
         initial_particles=initial_particles,
         show_progress=False,
     )

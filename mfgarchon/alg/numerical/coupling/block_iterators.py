@@ -40,6 +40,7 @@ import scipy.sparse as sparse
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.pde_coefficients import resolve_volatility_override, retired_volatility_keywords
 from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import BaseCouplingIterator, assert_bc_providers_resolvable, assert_paired_solver_sigma
@@ -93,7 +94,8 @@ class BlockIterator(BaseCouplingIterator):
         fp_solver: FP solver instance
         method: Block iteration method ('jacobi' or 'gauss_seidel')
         damping_factor: Damping parameter in (0, 1] (default: 1.0 = no damping)
-        volatility_field: Optional diffusion override
+        volatility: Optional volatility override -- the SDE volatility, not a diffusion
+        volatility_kind: 'field' or 'tensor' for an array override (#2378 part 2a)
         drift_field: Optional drift override for non-MFG problems
         adjoint_mode: Adjoint enforcement mode (Issue #622, #704, #707).
             - "off": Independent matrix construction (default)
@@ -113,6 +115,7 @@ class BlockIterator(BaseCouplingIterator):
         >>> result = solver.solve(max_iterations=100, tolerance=1e-5)
     """
 
+    @retired_volatility_keywords
     @deprecated_parameter(param_name="damping_factor", since="v0.19.2", replacement="relaxation")
     @deprecated_parameter(param_name="damping_factor_M", since="v0.19.2", replacement="relaxation_M")
     def __init__(
@@ -124,7 +127,8 @@ class BlockIterator(BaseCouplingIterator):
         method: str | BlockMethod = BlockMethod.GAUSS_SEIDEL,
         relaxation: float = 1.0,
         relaxation_M: float | None = None,
-        volatility_field: float | NDArray | Any | None = None,
+        volatility: float | NDArray | Any | None = None,
+        volatility_kind: str | None = None,
         drift_field: NDArray | Any | None = None,
         adjoint_mode: str = "off",
         adjoint_verify: bool = False,
@@ -155,7 +159,7 @@ class BlockIterator(BaseCouplingIterator):
 
         self.hjb_solver = hjb_solver
         self.fp_solver = fp_solver
-        assert_paired_solver_sigma(hjb_solver, fp_solver, "BlockIterator")
+        assert_paired_solver_sigma(hjb_solver, fp_solver, "BlockIterator", problem=problem, override=volatility)
 
         # Parse method
         if isinstance(method, str):
@@ -167,7 +171,8 @@ class BlockIterator(BaseCouplingIterator):
         self.relaxation_M = relaxation_M  # None = use `relaxation` for both
 
         # PDE coefficient overrides
-        self.volatility_field = volatility_field
+        self.volatility = volatility
+        self.volatility_kind = volatility_kind
         self.drift_field = drift_field
 
         # Issue #622, #704, #707: Adjoint mode
@@ -289,7 +294,7 @@ class BlockIterator(BaseCouplingIterator):
         """Solve HJB equation with given density."""
         # Issue #934: Progress handled via context routing
         # Issue #2207: same omission as FictitiousPlay -- no source was composed here at all.
-        kwargs = self._build_hjb_kwargs(M=M, U=U_prev, volatility_field=self.volatility_field)
+        kwargs = self._build_hjb_kwargs(M=M, U=U_prev, volatility=self.volatility, volatility_kind=self.volatility_kind)
         return self.hjb_solver.solve_hjb_system(M, U_terminal, U_prev, **kwargs)
 
     def _solve_fp(self, M_initial: NDArray, U: NDArray, M_current: NDArray | None = None) -> NDArray:
@@ -310,7 +315,9 @@ class BlockIterator(BaseCouplingIterator):
         _M_curr = M_current if M_current is not None else M_initial
 
         if self._fp_sig_params is not None:
-            kwargs = self._build_fp_kwargs(M=_M_curr, U=U, volatility_field=self.volatility_field)
+            kwargs = self._build_fp_kwargs(
+                M=_M_curr, U=U, volatility=self.volatility, volatility_kind=self.volatility_kind
+            )
             # Issue #1043 Phase 2: route through single-source convention, same as
             # FixedPointIterator.solve().
             # Previously used a sig-probe heuristic (Issue #919) that put U directly
@@ -369,7 +376,19 @@ class BlockIterator(BaseCouplingIterator):
         M_solution = np.zeros((num_time_steps, *spatial_shape))
         M_solution[0] = M_initial
 
-        sigma = self.volatility_field if self.volatility_field is not None else self.problem.volatility
+        sigma, sigma_kind = resolve_volatility_override(
+            self.volatility,
+            self.volatility_kind,
+            problem=self.problem,
+            consumer=f"{type(self).__name__} strict-adjoint FP step",
+        )
+        if sigma_kind == "tensor":
+            # Before #2378 part 2a a tensor reached solve_fp_step_adjoint_mode, which reads a
+            # non-constant array per point: a noise matrix read as a spatial field.
+            raise NotImplementedError(
+                f"{type(self).__name__}: the strict-adjoint FP step reads a scalar or per-point field "
+                "volatility, and this one is a tensor (volatility_kind='tensor'). Use adjoint_mode='off'."
+            )
 
         # Import utilities
         if self.adjoint_mode == "auto":

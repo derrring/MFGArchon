@@ -151,6 +151,12 @@ def format_collisions(collisions: dict[str, dict[str, list[dict]]]) -> list[str]
     return lines
 
 
+#: What a removal blocker means, for a reader of the guide rather than of the audit.
+_BLOCKER_TEXT = {
+    "var_keyword": "the function takes **kwargs, which would accept a retired name and ignore it",
+}
+
+
 def format_item(item: dict, collisions: dict[str, dict] | None = None) -> str:
     """Format a single deprecation item as markdown."""
     name = item.get("name", "unknown")
@@ -165,6 +171,16 @@ def format_item(item: dict, collisions: dict[str, dict] | None = None) -> str:
             flag = " [see *Do not migrate these across solvers*: "
             flag += ", ".join(f"`{h}`" for h in sorted(hit)) + "]"
 
+    if item_type == "retired_parameters":
+        # Already refused: the old names raise TypeError naming the replacement. What is scheduled
+        # is the removal of that refusal, which leaves Python's generic "unexpected keyword".
+        names = ", ".join(f"`{n}=`" for n in item.get("retired", []))
+        blocked = [_BLOCKER_TEXT.get(b, b) for b in item.get("removal_blockers") or []]
+        until = f", once no longer blocked: {'; '.join(blocked)}" if blocked else ""
+        return (
+            f"- {names} in `{name}()` — refused with a TypeError that names the replacement "
+            f"({item.get('issue', '')}); the refusal goes by {removal}{until}"
+        )
     if item_type == "parameter":
         # "ClassName.method.param_name" -> extract parts
         parts = name.split(".")
@@ -201,8 +217,10 @@ def generate_guide(items: list[dict]) -> str:
         "## Overview",
         "",
         "This guide documents deprecated usage patterns in MFGArchon and provides",
-        "migration paths to modern APIs. All deprecated patterns emit warnings at",
-        "runtime and will be removed at the version specified.",
+        "migration paths to modern APIs. Deprecated patterns emit warnings at",
+        "runtime and will be removed at the version specified. Refused parameters",
+        "already raise a TypeError naming the replacement; the version is when that",
+        "refusal goes.",
         "",
         "To find deprecated usage in your code:",
         "```bash",
@@ -226,8 +244,9 @@ def generate_guide(items: list[dict]) -> str:
         lines.append(f"*{len(version_items)} items*")
         lines.append("")
 
-        type_order = ["parameter", "function", "property", "alias"]
+        type_order = ["parameter", "function", "property", "alias", "retired_parameters"]
         type_labels = {
+            "retired_parameters": "Refused parameters (already raise TypeError)",
             "parameter": "Parameters",
             "function": "Functions / Classes",
             "property": "Properties",

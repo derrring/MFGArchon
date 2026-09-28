@@ -463,7 +463,9 @@ class TestFPFDMSolverArrayDiffusion:
         U_solution = np.zeros((Nt_points, Nx_points))
 
         # Solve with array diffusion
-        M = solver.solve_fp_system(m_initial, potential_field=U_solution, volatility_field=diffusion_array)
+        M = solver.solve_fp_system(
+            m_initial, potential_field=U_solution, volatility=diffusion_array, volatility_kind="field"
+        )
 
         assert M.shape == (Nt_points, Nx_points)
         assert np.all(M >= 0)
@@ -496,7 +498,9 @@ class TestFPFDMSolverArrayDiffusion:
         U_solution = np.zeros((Nt_points, Nx_points))
 
         # Solve with array diffusion
-        M = solver.solve_fp_system(m_initial, potential_field=U_solution, volatility_field=volatility_field)
+        M = solver.solve_fp_system(
+            m_initial, potential_field=U_solution, volatility=volatility_field, volatility_kind="field"
+        )
 
         assert M.shape == (Nt_points, Nx_points)
         assert np.all(M >= 0)
@@ -525,7 +529,9 @@ class TestFPFDMSolverArrayDiffusion:
             U_solution[t, :] = -0.2 * x_grid  # Moderate drift
 
         # Solve with array diffusion and drift
-        M = solver.solve_fp_system(m_initial, potential_field=U_solution, volatility_field=diffusion_array)
+        M = solver.solve_fp_system(
+            m_initial, potential_field=U_solution, volatility=diffusion_array, volatility_kind="field"
+        )
 
         assert M.shape == (Nt_points, Nx_points)
         assert np.all(M >= 0)
@@ -552,7 +558,9 @@ class TestFPFDMSolverArrayDiffusion:
         U_solution = np.zeros((Nt_points, Nx_points))
 
         # Solve
-        M = solver.solve_fp_system(m_initial, potential_field=U_solution, volatility_field=diffusion_array)
+        M = solver.solve_fp_system(
+            m_initial, potential_field=U_solution, volatility=diffusion_array, volatility_kind="field"
+        )
 
         # Check mass conservation at all timesteps
         masses = np.sum(M, axis=1)
@@ -587,7 +595,7 @@ class TestFPFDMSolverCallableDiffusion:
         U_solution = np.zeros((Nt_points, Nx_points))
 
         # Solve with callable diffusion
-        M = solver.solve_fp_system(m_initial, potential_field=U_solution, volatility_field=porous_medium_diffusion)
+        M = solver.solve_fp_system(m_initial, potential_field=U_solution, volatility=porous_medium_diffusion)
 
         assert M.shape == (Nt_points, Nx_points)
         assert np.all(M >= 0)
@@ -617,7 +625,7 @@ class TestFPFDMSolverCallableDiffusion:
         U_solution = np.zeros((Nt_points, Nx_points))
 
         # Solve
-        M = solver.solve_fp_system(m_initial, potential_field=U_solution, volatility_field=crowd_diffusion)
+        M = solver.solve_fp_system(m_initial, potential_field=U_solution, volatility=crowd_diffusion)
 
         assert M.shape == (Nt_points, Nx_points)
         assert np.all(M >= 0)
@@ -646,7 +654,7 @@ class TestFPFDMSolverCallableDiffusion:
             U_solution[t, :] = -0.1 * x_grid
 
         # Solve
-        M = solver.solve_fp_system(m_initial, potential_field=U_solution, volatility_field=state_diffusion)
+        M = solver.solve_fp_system(m_initial, potential_field=U_solution, volatility=state_diffusion)
 
         assert M.shape == (Nt_points, Nx_points)
         assert np.all(M >= 0)
@@ -658,7 +666,7 @@ class TestFPFDMSolverCallableDiffusion:
 
         # Direction control: flipping the sign of U must reverse the transport. Without it the
         # test passes for a solver that takes |grad U| or drops the sign. Measured 0.20851.
-        M_flipped = solver.solve_fp_system(m_initial, potential_field=-U_solution, volatility_field=state_diffusion)
+        M_flipped = solver.solve_fp_system(m_initial, potential_field=-U_solution, volatility=state_diffusion)
         com_flipped = (M_flipped * x_grid).sum(axis=1) / M_flipped.sum(axis=1)
         assert com_flipped[-1] < com[0] - 0.05, f"sign of the drift not honoured: {com_flipped[-1]:.5f}"
 
@@ -689,7 +697,7 @@ class TestFPFDMSolverCallableDiffusion:
         m_initial /= np.sum(m_initial)
 
         # Solve
-        M = solver.solve_fp_system(m_initial, volatility_field=constant_diffusion)
+        M = solver.solve_fp_system(m_initial, volatility=constant_diffusion)
 
         assert M.shape == (Nt_points, Nx_points)
         assert np.all(M >= 0)
@@ -697,7 +705,7 @@ class TestFPFDMSolverCallableDiffusion:
         # The contract of the scalar-return branch: a callable yielding a bare scalar is broadcast
         # exactly like the constant-scalar volatility. Byte-identical here (max deviation 0.0);
         # a silent coercion of the scalar (e.g. squaring it to 0.04) shows up as 3.8e-02.
-        M_const = solver.solve_fp_system(m_initial, volatility_field=0.2)
+        M_const = solver.solve_fp_system(m_initial, volatility=0.2)
         np.testing.assert_array_equal(M, M_const)
 
     def test_callable_validation_wrong_shape(self, standard_problem):
@@ -715,7 +723,7 @@ class TestFPFDMSolverCallableDiffusion:
 
         # Should raise ValueError about shape
         with pytest.raises(ValueError, match="returned array with shape"):
-            solver.solve_fp_system(m_initial, volatility_field=bad_diffusion)
+            solver.solve_fp_system(m_initial, volatility=bad_diffusion)
 
     def test_callable_validation_nan(self, standard_problem):
         """Test that callable returning NaN raises error."""
@@ -734,7 +742,7 @@ class TestFPFDMSolverCallableDiffusion:
 
         # Should raise ValueError about NaN
         with pytest.raises(ValueError, match="NaN or Inf"):
-            solver.solve_fp_system(m_initial, volatility_field=nan_diffusion)
+            solver.solve_fp_system(m_initial, volatility=nan_diffusion)
 
 
 class TestFPFDMSolverProblemVolatility:
@@ -769,8 +777,8 @@ class TestFPFDMSolverProblemVolatility:
         U = np.zeros((Nt, Nx))
 
         M_problem = solver.solve_fp_system(m0, U)  # no override -> must use problem.volatility
-        M_explicit = solver.solve_fp_system(m0, U, volatility_field=sigma_arr)
-        M_mean = solver.solve_fp_system(m0, U, volatility_field=float(np.mean(sigma_arr)))
+        M_explicit = solver.solve_fp_system(m0, U, volatility=sigma_arr, volatility_kind="field")
+        M_mean = solver.solve_fp_system(m0, U, volatility=float(np.mean(sigma_arr)))
 
         assert np.allclose(M_problem[-1], M_explicit[-1], atol=1e-12), (
             "problem-level solve must equal the explicit per-point volatility_field"
@@ -809,7 +817,7 @@ class TestFPFDMSolverTensorDiffusion:
         U_solution = np.zeros((Nt, Nx, Ny))
 
         # Solve with tensor diffusion
-        M = solver.solve_fp_system(m_initial, potential_field=U_solution, tensor_diffusion_field=Sigma)
+        M = solver.solve_fp_system(m_initial, potential_field=U_solution, volatility=Sigma, volatility_kind="tensor")
 
         assert M.shape == (Nt, Nx, Ny)
         assert np.all(M >= 0)
@@ -843,7 +851,7 @@ class TestFPFDMSolverTensorDiffusion:
 
         M_scalar = solver.solve_fp_system(m0, potential_field=U)  # scalar workhorse, D = sigma^2/2
         M_tensor = solver.solve_fp_system(
-            m0, potential_field=U, tensor_diffusion_field=sigma * np.eye(2)
+            m0, potential_field=U, volatility=sigma * np.eye(2), volatility_kind="tensor"
         )  # tensor path; D must also be sigma^2/2
 
         peak = np.max(np.abs(M_scalar[-1]))
@@ -876,7 +884,7 @@ class TestFPFDMSolverTensorDiffusion:
         m_initial /= np.sum(m_initial) * domain.spacing[0] * domain.spacing[1]
 
         # Solve
-        M = solver.solve_fp_system(m_initial, tensor_diffusion_field=Sigma, show_progress=False)
+        M = solver.solve_fp_system(m_initial, volatility=Sigma, volatility_kind="tensor", show_progress=False)
 
         assert M.shape == (Nt, Nx, Ny)
         assert np.all(M >= 0)
@@ -915,7 +923,7 @@ class TestFPFDMSolverTensorDiffusion:
         m_initial /= np.sum(m_initial) * domain.spacing[0] * domain.spacing[1]
 
         # Solve
-        M = solver.solve_fp_system(m_initial, tensor_diffusion_field=Sigma_spatial, show_progress=False)
+        M = solver.solve_fp_system(m_initial, volatility=Sigma_spatial, volatility_kind="tensor", show_progress=False)
 
         assert M.shape == (Nt, Nx, Ny)
         assert np.all(M >= 0)
@@ -951,7 +959,9 @@ class TestFPFDMSolverTensorDiffusion:
         m_initial /= np.sum(m_initial) * domain.spacing[0] * domain.spacing[1]
 
         # Solve
-        M = solver.solve_fp_system(m_initial, tensor_diffusion_field=crowd_anisotropic, show_progress=False)
+        M = solver.solve_fp_system(
+            m_initial, volatility=crowd_anisotropic, volatility_kind="tensor", show_progress=False
+        )
 
         assert M.shape == (problem.Nt + 1, Nx, Ny)
         assert np.all(M >= 0)
@@ -1013,36 +1023,13 @@ class TestFPFDMSolverTensorDiffusion:
 
         # Solve
         M = solver.solve_fp_system(
-            m_initial, potential_field=U_solution, tensor_diffusion_field=Sigma, show_progress=False
+            m_initial, potential_field=U_solution, volatility=Sigma, volatility_kind="tensor", show_progress=False
         )
 
         assert M.shape == (Nt, Nx, Ny)
         assert np.all(M >= 0)
         # Solution should evolve (not static)
         assert not np.allclose(M[0], M[-1])
-
-    def test_tensor_diffusion_mutual_exclusivity(self):
-        """Test that tensor_diffusion_field and volatility_field are mutually exclusive."""
-        domain = TensorProductGrid(
-            bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[26, 26], boundary_conditions=no_flux_bc(dimension=2)
-        )
-        problem = MFGProblem(geometry=domain, T=0.05, Nt=10, volatility=0.1, components=_default_components_2d())
-
-        boundary_conditions = no_flux_bc(dimension=1)
-        solver = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
-
-        Nx, Ny = domain.num_points[0], domain.num_points[1]
-
-        # Initial condition
-        m_initial = np.ones((Nx, Ny)) / (Nx * Ny)
-
-        # Tensor and scalar both specified
-        Sigma = np.eye(2)
-        scalar_sigma = 0.2
-
-        # Should raise ValueError (Issue #717: volatility API - deprecated params get converted)
-        with pytest.raises(ValueError, match="Cannot specify both volatility_field and tensor_diffusion_field"):
-            solver.solve_fp_system(m_initial, volatility_field=scalar_sigma, tensor_diffusion_field=Sigma)
 
     def test_tensor_diffusion_1d_raises_error(self, standard_problem):
         """Test that tensor diffusion in 1D raises NotImplementedError."""
@@ -1058,7 +1045,7 @@ class TestFPFDMSolverTensorDiffusion:
 
         # Should raise NotImplementedError (Issue #717: volatility API)
         with pytest.raises(NotImplementedError, match="Anisotropic volatility not yet implemented for 1D"):
-            solver.solve_fp_system(m_initial, tensor_diffusion_field=Sigma)
+            solver.solve_fp_system(m_initial, volatility=Sigma, volatility_kind="tensor")
 
     def test_tensor_psd_validation(self):
         """Test that non-PSD tensor raises error."""
@@ -1080,7 +1067,7 @@ class TestFPFDMSolverTensorDiffusion:
 
         # Should raise ValueError about PSD
         with pytest.raises(ValueError, match="positive semi-definite"):
-            solver.solve_fp_system(m_initial, tensor_diffusion_field=Sigma_bad, show_progress=False)
+            solver.solve_fp_system(m_initial, volatility=Sigma_bad, volatility_kind="tensor", show_progress=False)
 
     def test_tensor_diffusion_mass_conservation(self):
         """Test mass conservation with tensor diffusion."""
@@ -1102,7 +1089,7 @@ class TestFPFDMSolverTensorDiffusion:
         m_initial /= np.sum(m_initial) * domain.spacing[0] * domain.spacing[1]
 
         # Solve
-        M = solver.solve_fp_system(m_initial, tensor_diffusion_field=Sigma, show_progress=False)
+        M = solver.solve_fp_system(m_initial, volatility=Sigma, volatility_kind="tensor", show_progress=False)
 
         # Check mass conservation at each timestep
         masses = np.sum(M, axis=(1, 2)) * domain.spacing[0] * domain.spacing[1]
@@ -1114,10 +1101,11 @@ class TestFPFDMSolverRemovedDeprecatedParams:
 
     ``m_initial_condition`` -> ``M_initial`` and ``diffusion_field`` -> ``volatility_field``
     were deprecated in v0.17.0 and removed at v0.20 (3 minor versions past). Passing the old
-    names must now raise ``TypeError`` (unexpected keyword argument), not silently alias.
+    names must now raise ``TypeError``, not silently alias. #2378 part 2a renamed
+    ``volatility_field`` in turn, to ``volatility=`` with a declared ``volatility_kind``, and
+    ``diffusion_field`` is now one of four retired names refused with a ``TypeError`` naming it.
     New-name coverage is retained by the rest of this module (positional ``M_initial`` and
-    ``volatility_field=``). The ``tensor_diffusion_field`` / ``volatility_matrix`` aliases are
-    intentionally NOT removed (no callable-tensor equivalent on ``volatility_field`` yet).
+    ``volatility=``).
     """
 
     def test_m_initial_condition_removed(self, standard_problem):
@@ -1252,7 +1240,7 @@ class TestFPFDMSolverCallableDrift:
 
         # Solve
         M = solver.solve_fp_system(
-            m_initial, drift_field=simple_drift, volatility_field=simple_diffusion, show_progress=False
+            m_initial, drift_field=simple_drift, volatility=simple_diffusion, show_progress=False
         )
 
         assert M.shape == (Nt_points, Nx_points)
@@ -1277,7 +1265,7 @@ class TestFPFDMSolverCallableDrift:
         # which no scale or sign convention in the drift assembly can fake. Measured 0.69831 and
         # 0.30169, summing to 1.0 against 2*com[0] within 2.2e-16.
         M_reversed = solver.solve_fp_system(
-            m_initial, drift_field=reversed_drift, volatility_field=simple_diffusion, show_progress=False
+            m_initial, drift_field=reversed_drift, volatility=simple_diffusion, show_progress=False
         )
         com_reversed = (M_reversed * w * x_grid).sum(axis=1) / (M_reversed * w).sum(axis=1)
         assert com[-1] + com_reversed[-1] == pytest.approx(2 * com[0], abs=1e-9)
@@ -1363,8 +1351,10 @@ class TestVaryingSigmaExplicitDriftPerPoint:
         # rectangle would make `mass == 1` a statement about a different functional.
         m0 /= float(quadrature_weights_1d(x) @ m0)
         # callable drift routes through the explicit path (signature (t, grid, density))
+        # A scalar has no kind; the per-point array is declared a field (#2378).
+        kind = "field" if np.ndim(sigma_field) else None
         traj = FPFDMSolver(prob).solve_fp_system(
-            m0, drift_field=lambda t, g, m: np.zeros(n), volatility_field=sigma_field
+            m0, drift_field=lambda t, g, m: np.zeros(n), volatility=sigma_field, volatility_kind=kind
         )
         return np.asarray(traj)[-1], dx
 

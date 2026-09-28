@@ -136,7 +136,7 @@ def _fp_error(ne, nt, steady):
         solver.solve_fp_system(
             _m_star(0.0, x, steady),
             potential_field=None,
-            volatility_field=_SIGMA,
+            volatility=_SIGMA,
             source_term=lambda t, pts: _s_fp(t, np.asarray(pts)[:, 0], steady),
         )
     )

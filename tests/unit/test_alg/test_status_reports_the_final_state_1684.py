@@ -115,12 +115,12 @@ def _problem():
 class _StaticFP(FPFDMSolver):
     """Returns the same density every sweep, so `max|dM|` is exactly 0 from sweep 2 on."""
 
-    def solve_fp_system(self, m_initial, *args, source_term=None, volatility_field=None, **kwargs):
+    def solve_fp_system(self, m_initial, *args, source_term=None, volatility=None, **kwargs):
         # `source_term` / `volatility_field` are named because the base class refuses a bare
         # **kwargs that would swallow them (#2020). This stub honours neither, and the fixture
         # supplies neither, so silence is correct here rather than a quiet drop.
         assert source_term is None, "this stub cannot honour a source term"
-        assert volatility_field is None, "this stub cannot honour a volatility field"
+        assert volatility is None, "this stub cannot honour a volatility field"
         return np.tile(np.asarray(m_initial, float), (_NT + 1, 1))
 
 
@@ -131,11 +131,11 @@ class _DriftingHJB(HJBFDMSolver):
         super().__init__(problem)
         self._sweep = 0
 
-    def solve_hjb_system(self, *args, source_term=None, volatility_field=None, **kwargs):
+    def solve_hjb_system(self, *args, source_term=None, volatility=None, **kwargs):
         # Named for the same reason as the FP stub above (#2020): a bare **kwargs would swallow
         # them. Neither is supplied by this fixture and neither is honoured.
         assert source_term is None, "this stub cannot honour a source term"
-        assert volatility_field is None, "this stub cannot honour a volatility field"
+        assert volatility is None, "this stub cannot honour a volatility field"
         self._sweep += 1
         return np.full((_NT + 1, _NX + 1), float(self._sweep))
 

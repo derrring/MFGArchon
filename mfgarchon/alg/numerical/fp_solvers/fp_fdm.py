@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import scipy.sparse as sparse
@@ -12,7 +12,11 @@ from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
-from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
+from mfgarchon.utils.pde_coefficients import (
+    fp_drift_coefficient,
+    resolve_volatility_override,
+    retired_volatility_keywords,
+)
 
 from .base_fp import BaseFPSolver
 from .fp_fdm_time_stepping import (
@@ -320,7 +324,7 @@ class FPFDMSolver(BaseFPSolver):
 
     # _detect_dimension() inherited from BaseNumericalSolver (Issue #633)
 
-    def _log_cfl_diagnostic(self, volatility_field: float | np.ndarray | Callable | None = None) -> None:
+    def _log_cfl_diagnostic(self, volatility: float | np.ndarray | Callable | None = None) -> None:
         """Log CFL diagnostic for accuracy/convergence guidance (Issue #882, #1052).
 
         Issue #1052: log once at INFO per solver instance, subsequent calls at
@@ -329,7 +333,7 @@ class FPFDMSolver(BaseFPSolver):
         try:
             dt = self.problem.dt
             dx = self.problem.geometry.get_grid_spacing()[0]
-            volatility = volatility_field if volatility_field is not None else self.problem.volatility
+            volatility = volatility if volatility is not None else self.problem.volatility
             if not isinstance(volatility, (int, float)):
                 return  # a per-point or callable volatility has no single diffusive CFL number
             sigma = float(volatility)
@@ -432,19 +436,15 @@ class FPFDMSolver(BaseFPSolver):
             )  # fmt: skip
         return sparse.coo_matrix((values, (rows, cols)), shape=(total, total)).tocsr()
 
-    @deprecated_parameter(param_name="tensor_diffusion_field", since="v0.17.0", replacement="volatility_field")
-    @deprecated_parameter(param_name="volatility_matrix", since="v0.17.0", replacement="volatility_field")
+    @retired_volatility_keywords
     @deprecated_parameter(param_name="velocity_field", since="v0.18.6", replacement="drift_field")
     def solve_fp_system(
         self,
         M_initial: np.ndarray | None = None,
         drift_field: np.ndarray | Callable | None = None,
-        volatility_field: float | np.ndarray | Callable | None = None,
+        volatility: float | np.ndarray | Callable | None = None,
         show_progress: bool | None = None,
         progress_callback: Callable[[int], None] | None = None,  # Issue #640
-        # Deprecated parameter names for backward compatibility
-        tensor_diffusion_field: np.ndarray | Callable | None = None,  # Issue #717: deprecated
-        volatility_matrix: np.ndarray | Callable | None = None,  # Deprecated: use volatility_field
         # Deprecated: velocity_field renamed to drift_field (v0.18.6)
         velocity_field: np.ndarray | None = None,
         # Live second channel: value function U (solver forms alpha = -c*grad(U) internally).
@@ -453,6 +453,7 @@ class FPFDMSolver(BaseFPSolver):
         potential_field: np.ndarray | None = None,
         # MMS verification support
         source_term: Callable | None = None,
+        volatility_kind: str | None = None,
     ) -> np.ndarray:
         """
         Solve FP system forward in time with general drift and diffusion support.
@@ -477,17 +478,18 @@ class FPFDMSolver(BaseFPSolver):
             - Callable: Custom drift function α(t, x, m) -> drift_vector
               Signature: (t: float, x_coords: list, m: ndarray) -> ndarray
             Default: None
-        volatility_field : float, np.ndarray, or callable, optional
-            Volatility specification (unified API). Auto-detects scalar vs matrix:
-            - None: Use problem.volatility
+        volatility : float, np.ndarray, or callable, optional
+            The SDE volatility, read by its declared kind (#2378 part 2a, #2375 ruling 6):
+            - None: Use problem.volatility, with the problem's kind
             - float: Constant isotropic volatility σ → D = σ²/2
-            - (d,) array: Diagonal volatility [σ₀, σ₁, ...] → D = diag(σᵢ²)/2
-            - (d, d) array: Full volatility matrix Σ → D = ΣΣᵀ/2
-            - (*shape, d, d) array: Spatially varying Σ(x) → D(x) = Σ(x)Σ(x)ᵀ/2
-            - Callable: State-dependent σ(t, x, m) or Σ(t, x, m)
-            Default: None
-        tensor_diffusion_field : DEPRECATED, use volatility_field with (d,d) array
-        volatility_matrix : DEPRECATED, use volatility_field with (d,d) array
+            - array, volatility_kind="field": one σ per point, spatial or (Nt+1, *grid)
+            - array, volatility_kind="tensor": a (d, k) Σ → D = ΣΣᵀ/2, constant or (*grid, d, k)
+            - Callable: σ(t, x, m) read per point; with volatility_kind="tensor", Σ(t, x, m)
+            An array without a kind is refused; a per-axis (σ₀, σ₁) is np.diag of it, as a tensor.
+            The retired keywords volatility_field, tensor_diffusion_field and volatility_matrix
+            raise TypeError naming volatility=. Default: None
+        volatility_kind : str, optional
+            "field" or "tensor" for an array volatility; "tensor" for a tensor-valued callable.
         show_progress : bool
             Whether to show progress bar
 
@@ -507,46 +509,43 @@ class FPFDMSolver(BaseFPSolver):
         >>> M = solver.solve_fp_system(m0, drift_field=drift)
 
         Custom volatility coefficient:
-        >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility_field=0.5)
+        >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility=0.5)
 
         Spatially varying volatility (higher at boundaries):
         >>> Nx = problem.geometry.get_grid_shape()[0]
         >>> x_grid = np.linspace(0, 1, Nx)
         >>> volatility_array = 0.1 + 0.2 * np.abs(x_grid - 0.5)
-        >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility_field=volatility_array)
+        >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility=volatility_array, volatility_kind="field")
 
         Spatiotemporal volatility (time and space dependent):
         >>> Nt, Nx = problem.Nt + 1, problem.geometry.get_grid_shape()[0]
-        >>> volatility_field = np.zeros((Nt, Nx))
+        >>> sigma = np.zeros((Nt, Nx))
         >>> for t in range(Nt):
-        ...     volatility_field[t, :] = 0.1 * (1 + 0.5 * t / Nt)  # Increasing over time
-        >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility_field=volatility_field)
+        ...     sigma[t, :] = 0.1 * (1 + 0.5 * t / Nt)  # Increasing over time
+        >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility=sigma, volatility_kind="field")
 
         State-dependent volatility (porous medium equation):
         >>> def porous_medium(t, x, m):
         ...     return 0.1 * m  # Volatility proportional to density
-        >>> M = solver.solve_fp_system(m0, volatility_field=porous_medium)
+        >>> M = solver.solve_fp_system(m0, volatility=porous_medium)
 
         Density-dependent volatility with drift:
         >>> def crowd_diffusion(t, x, m):
         ...     return 0.05 + 0.15 * (1 - m / np.max(m))  # Lower volatility in crowds
-        >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility_field=crowd_diffusion)
+        >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility=crowd_diffusion)
 
         Pure advection (zero volatility):
-        >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility_field=0.0)
+        >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility=0.0)
 
         Anisotropic volatility (unified API):
         >>> # Diagonal volatility: faster horizontal diffusion
         >>> Sigma = np.diag([0.2, 0.05])  # σ_x=0.2, σ_y=0.05 → D = diag(0.02, 0.00125)
-        >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility_field=Sigma)
-        >>>
-        >>> # Or pass as 1D array (auto-converted to diagonal matrix):
-        >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility_field=[0.2, 0.05])
+        >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility=Sigma, volatility_kind="tensor")
 
         Full tensor with cross-diffusion:
         >>> # 2x2 symmetric tensor
         >>> Sigma = np.array([[0.2, 0.05], [0.05, 0.1]])
-        >>> M = solver.solve_fp_system(m0, drift_field=drift, tensor_diffusion_field=Sigma)
+        >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility=Sigma, volatility_kind="tensor")
 
         State-dependent tensor diffusion:
         >>> def anisotropic_crowd(t, x, m):
@@ -554,7 +553,7 @@ class FPFDMSolver(BaseFPSolver):
         ...     sigma_parallel = 0.2
         ...     sigma_perp = 0.05 * (1 - m / np.max(m))
         ...     return np.diag([sigma_parallel, sigma_perp])
-        >>> M = solver.solve_fp_system(m0, tensor_diffusion_field=anisotropic_crowd)
+        >>> M = solver.solve_fp_system(m0, volatility=anisotropic_crowd, volatility_kind="tensor")
 
         Non-quadratic Hamiltonians (Issue #573):
 
@@ -579,6 +578,12 @@ class FPFDMSolver(BaseFPSolver):
         # Validate required parameter
         if M_initial is None:
             raise ValueError("M_initial is required")
+
+        # The volatility and its kind, resolved once for every route below -- the callable-drift
+        # early return included, which read an override by its own rules before #2378 part 2a.
+        volatility, volatility_kind = resolve_volatility_override(
+            volatility, volatility_kind, problem=self.problem, consumer="FPFDMSolver.solve_fp_system"
+        )
 
         # Handle deprecated velocity_field -> drift_field (v0.18.6)
         if velocity_field is not None:
@@ -609,11 +614,8 @@ class FPFDMSolver(BaseFPSolver):
                 effective_U = None  # Not needed when velocity is provided directly
             elif callable(drift_field):
                 # Custom drift function - Phase 2
-                # Route to unified nD solver (works for all dimensions including 1D). The problem's
-                # own volatility is read by its declared kind, as below (#2378 rule A).
-                problem_tensor = (
-                    volatility_field is None or volatility_field is self.problem.volatility
-                ) and self.problem.volatility_kind == "tensor"
+                # Route to unified nD solver (works for all dimensions including 1D), with the
+                # volatility and kind resolved above (#2378 part 2a).
                 return _solve_fp_nd_full_system(
                     m_initial_condition=M_initial,
                     U_solution_for_drift=None,
@@ -621,11 +623,8 @@ class FPFDMSolver(BaseFPSolver):
                     boundary_conditions=self.boundary_conditions,
                     show_progress=show_progress,
                     backend=self.backend,
-                    diffusion_field=None if problem_tensor else volatility_field,
-                    # A volatility_kind='tensor' volatility is an array or a callable, never a scalar.
-                    tensor_diffusion_field=cast("np.ndarray | Callable", self.problem.volatility)
-                    if problem_tensor
-                    else None,
+                    volatility=volatility,
+                    volatility_kind=volatility_kind,
                     drift_field=drift_field,  # callable velocity → internal drift_field
                     advection_scheme=self.advection_scheme,
                     progress_callback=progress_callback,
@@ -649,87 +648,12 @@ class FPFDMSolver(BaseFPSolver):
                 grid_shape = self.problem.geometry.get_grid_shape()
                 effective_U = np.zeros((Nt, *grid_shape))
 
-        # Handle deprecated tensor_diffusion_field → volatility_field
-        # Track if input came from tensor-specific parameter (for callable routing)
-        _from_tensor_param = False
-        if tensor_diffusion_field is not None:
-            if volatility_field is not None:
-                raise ValueError(
-                    "Cannot specify both volatility_field and tensor_diffusion_field. "
-                    "Use volatility_field (tensor_diffusion_field is deprecated)."
-                )
-            volatility_field = tensor_diffusion_field
-            _from_tensor_param = True
-
-        # Handle deprecated volatility_matrix → volatility_field
-        if volatility_matrix is not None:
-            if volatility_field is not None:
-                raise ValueError(
-                    "Cannot specify both volatility_field and volatility_matrix. "
-                    "Use volatility_field (volatility_matrix is deprecated)."
-                )
-            volatility_field = volatility_matrix
-            _from_tensor_param = True
-
-        # Unified volatility_field handling with auto-detection
-        # Issue #717: volatility_field is the SDE volatility σ or Σ
-        # The solver computes D = σ²/2 (scalar) or D = ΣΣᵀ/2 (matrix) internally
-        # Issue #1248: with no explicit override, use the problem's full SDE volatility. The
-        # problem's own volatility is read by its declared kind -- a (d, d) field on a d x d grid and
-        # a (d, d) tensor have the same shape -- while an explicit override is still read by shape
-        # until part 2 of #2378 gives overrides a kind.
-        from_problem = volatility_field is None or volatility_field is self.problem.volatility
-        if volatility_field is None:
-            volatility_field = self.problem.volatility
-
-        if volatility_field is None:
-            # Defensive: a duck-typed problem without a volatility is malformed.
-            raise ValueError(
-                "No volatility specified: problem.volatility is None and no volatility_field "
-                "override was passed to solve_fp_system."
-            )
-        if isinstance(volatility_field, (int, float)):
-            # Constant isotropic volatility
-            effective_sigma: float | np.ndarray | Callable = float(volatility_field)
-            is_tensor = False
-        elif from_problem:
-            # An array or a callable, read as its volatility_kind says; a callable without one is
-            # per point.
-            is_tensor = self.problem.volatility_kind == "tensor"
-            effective_sigma = volatility_field
-        elif isinstance(volatility_field, np.ndarray):
-            # Auto-detect: scalar field vs matrix volatility
-            d = self.dimension
-            if volatility_field.ndim == 2 and volatility_field.shape == (d, d):
-                # Constant volatility matrix Σ (d × d)
-                is_tensor = True
-                effective_sigma = volatility_field
-            elif volatility_field.ndim >= 2 and volatility_field.shape[-2:] == (d, d):
-                # Spatially varying volatility Σ(x) with shape (*spatial, d, d)
-                is_tensor = True
-                effective_sigma = volatility_field
-            elif volatility_field.ndim == 1 and len(volatility_field) == d:
-                # Diagonal volatility [σ₀, σ₁, ...] → convert to diag matrix
-                is_tensor = True
-                effective_sigma = np.diag(volatility_field)
-            else:
-                # Scalar field (spatial or spatiotemporal varying σ)
-                is_tensor = False
-                effective_sigma = volatility_field
-        elif callable(volatility_field):
-            # State-dependent volatility - callable σ(t, x, m) or Σ(t, x, m)
-            # Issue #641: Always route to unified nD solver (handles 1D too)
-            effective_sigma = volatility_field
-            # If came from tensor-specific deprecated param, route to tensor path
-            # Otherwise, route to scalar path (runtime detection not yet implemented)
-            is_tensor = _from_tensor_param
-        else:
-            raise TypeError(
-                f"volatility_field must be None, float, np.ndarray, or Callable, got {type(volatility_field)}"
-            )
+        # The kind decides the route (#2378 part 2a): no shape reading, no identity test.
+        is_tensor = volatility_kind == "tensor"
+        effective_sigma: float | np.ndarray | Callable = volatility
 
         # CFL diagnostic (Issue #882)
-        self._log_cfl_diagnostic(volatility_field)
+        self._log_cfl_diagnostic(volatility)
 
         # Resolve velocity for internal routing:
         # drift_field (after deprecation handling) is velocity when effective_U is None
@@ -739,7 +663,7 @@ class FPFDMSolver(BaseFPSolver):
         if is_tensor:
             if self.dimension == 1:
                 raise NotImplementedError(
-                    "Anisotropic volatility not yet implemented for 1D problems. Use scalar volatility_field for 1D."
+                    "Anisotropic volatility not yet implemented for 1D problems. Use a scalar or field volatility for 1D."
                 )
             # Route to nD solver with tensor volatility
             return _solve_fp_nd_full_system(
@@ -749,8 +673,8 @@ class FPFDMSolver(BaseFPSolver):
                 boundary_conditions=self.boundary_conditions,
                 show_progress=show_progress,
                 backend=self.backend,
-                diffusion_field=None,
-                tensor_diffusion_field=effective_sigma,  # Internal API uses old name
+                volatility=effective_sigma,
+                volatility_kind="tensor",
                 advection_scheme=self.advection_scheme,
                 progress_callback=progress_callback,
                 source_term=source_term,
@@ -758,7 +682,6 @@ class FPFDMSolver(BaseFPSolver):
             )
 
         # Issue #641: Always route to unified nD solver (works for all dimensions)
-        # Internal API still uses diffusion_field name for backward compatibility
         return _solve_fp_nd_full_system(
             m_initial_condition=M_initial,
             U_solution_for_drift=effective_U,
@@ -766,7 +689,8 @@ class FPFDMSolver(BaseFPSolver):
             boundary_conditions=self.boundary_conditions,
             show_progress=show_progress,
             backend=self.backend,
-            diffusion_field=effective_sigma if volatility_field is not None else None,
+            volatility=effective_sigma,
+            volatility_kind=volatility_kind,
             advection_scheme=self.advection_scheme,
             progress_callback=progress_callback,
             source_term=source_term,

@@ -3,7 +3,9 @@
 D1: MFGProblem.solve() must forward problem.volatility_field to the
     FixedPointIterator so both HJB and FP solvers see the full SDE volatility
     (array or callable) rather than the mean-scalar placeholder stored in
-    problem.sigma.
+    problem.sigma. [SUPERSEDED 2026-09-28, #2378 part 2a] SUPERSEDED-BY: solve() forwards nothing;
+    each solver reads the problem's own volatility with its kind. The pin below still holds, since
+    what it measures is that the full array reaches the solve, whichever route carries it.
 
     Pinning: MFGProblem(sigma=spatially_varying_array).solve() must produce a
     density that is NOT allclose to MFGProblem(sigma=mean(array)).solve().
@@ -70,7 +72,10 @@ def _m_initial_normalised() -> np.ndarray:
 
 
 class TestD1SolveMustForwardVolatilityField:
-    """Issue #1248 D1 — problem.solve() forwards volatility_field to the iterator."""
+    """Issue #1248 D1 — the problem's full volatility reaches the solvers through problem.solve().
+
+    Until #2378 part 2a by forwarding it to the iterator; now each solver reads it itself.
+    """
 
     @staticmethod
     def _sigma_array() -> np.ndarray:
@@ -110,8 +115,8 @@ class TestD1SolveMustForwardVolatilityField:
         # After fix the spatial-sigma solve must diverge from the mean-sigma solve.
         assert not np.allclose(m_array, m_mean, atol=1e-6), (
             "D1 regression: MFGProblem(volatility=array).solve() produced the same "
-            "density as MFGProblem(volatility=mean(array)).solve() — volatility_field "
-            "was not forwarded to the FixedPointIterator (Issue #1248 D1)."
+            "density as MFGProblem(volatility=mean(array)).solve() — the array did not "
+            "reach the solvers (Issue #1248 D1)."
         )
 
     def test_scalar_sigma_solve_is_unchanged(self):
@@ -165,7 +170,7 @@ class TestD2ParticleVolatilityFieldNotDropped:
         m_ref = solver.solve_fp_system(m0, drift_field=U_arr)
 
         np.random.seed(42)
-        m_new = solver.solve_fp_system(m0, drift_field=U_arr, volatility_field=0.5)
+        m_new = solver.solve_fp_system(m0, drift_field=U_arr, volatility=0.5)
 
         assert not np.allclose(m_new, m_ref, atol=1e-6), (
             "D2 regression: FPParticleSolver with ndarray drift_field + a scalar "
@@ -192,5 +197,6 @@ class TestD2ParticleVolatilityFieldNotDropped:
         m0 = _m_initial_normalised()
         U_arr = np.tile(0.3 * (np.linspace(0.0, 1.0, Nx) - 0.5) ** 2, (Nt + 1, 1))
 
+        kind = {"volatility_kind": "field"} if isinstance(override, np.ndarray) else {}
         with pytest.raises(NotImplementedError, match="FPParticleSolver's grid-drift path"):
-            solver.solve_fp_system(m0, drift_field=U_arr, volatility_field=override)
+            solver.solve_fp_system(m0, drift_field=U_arr, volatility=override, **kind)

@@ -155,12 +155,22 @@ def counts(entries: list[dict[str, Any]]) -> dict[str, int]:
     by_type: dict[str, int] = {}
     for entry in entries:
         by_type[entry["type"]] = by_type.get(entry["type"], 0) + 1
-    cleared = sum(1 for e in entries if not _blocked_on_internal_usage(e))
+    cleared = sum(1 for e in entries if not _is_refusal(e) and not _blocked_on_internal_usage(e))
     return {
         "total": len(entries),
         "internal_usage_cleared": cleared,
         **{f"type:{k}": v for k, v in sorted(by_type.items())},
     }
+
+
+def _is_refusal(entry: dict[str, Any]) -> bool:
+    """A retired keyword's refusal (``retired_parameters``) has no internal usage to clear.
+
+    Calling the retired name raises, so no production caller of it can work. The entry's name is the
+    function that refuses it, which production code calls legitimately, so matching that name
+    against production would report every ordinary call as a use of something about to go.
+    """
+    return entry.get("type") == "retired_parameters"
 
 
 def _blocked_on_internal_usage(entry: dict[str, Any]) -> bool:
@@ -203,6 +213,7 @@ SENTINELS = {
     "function": "create_solver",
     "parameter": "FPFDMSolver.solve_fp_system.velocity_field",
     "property": "num_points",
+    "retired_parameters": "FPFDMSolver.solve_fp_system",
 }
 
 
@@ -312,7 +323,7 @@ def main() -> int:
         )
         return 1
 
-    ready = {e["name"].split(".")[-1] for e in entries if not _blocked_on_internal_usage(e)}
+    ready = {e["name"].split(".")[-1] for e in entries if not _is_refusal(e) and not _blocked_on_internal_usage(e)}
     violations = production_uses(ready)
     if violations:
         print(f"\nProduction code calls {len(violations)} deprecated symbol(s) with internal_usage cleared:")

@@ -30,7 +30,8 @@ measuring the spatial floor. `test_the_time_fixture_is_not_degenerate` asserts $
 **The gate.** An abstract method's signature is a declaration and Python does not enforce it — a
 subclass may override with `(*args, **kwargs)` and nothing checks, which is the structural reason
 this could exist unnoticed. `BaseHJBSolver` and `BaseFPSolver` now validate overrides at class
-definition: an override that accepts `**kwargs` must NAME `source_term` and `volatility_field`.
+definition: an override that accepts `**kwargs` must NAME `source_term` and ~~`volatility_field`~~
+`volatility` **[#2378 part 2a, 2026-09-28]**.
 Scoped to those two because they have the incident history (#1424, #2020; #1316, #1783); a blanket
 "name every declared parameter" rule is not satisfiable, since ~~the base declares
 `m_initial_condition` while implementations use `m_initial` or `M_initial` — that is a rename, not a

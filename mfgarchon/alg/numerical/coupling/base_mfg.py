@@ -73,7 +73,9 @@ def _volatilities_differ(a: Any, b: Any, kind_a: Any = None, kind_b: Any = None)
     return False
 
 
-def assert_paired_solver_sigma(hjb_solver: Any, fp_solver: Any, context: str) -> None:
+def assert_paired_solver_sigma(
+    hjb_solver: Any, fp_solver: Any, context: str, *, problem: Any = None, override: Any = None
+) -> None:
     """Fail loud if a coupled HJB / FP solver pair was built from problems with different volatility.
 
     Issue #1603 / #1081 / RFC #1574 (C14): each paired solver reads the volatility from its OWN
@@ -87,6 +89,18 @@ def assert_paired_solver_sigma(hjb_solver: Any, fp_solver: Any, context: str) ->
     (naming the sub-problem in ``context``). Scalars compare by value, and arrays by content and
     volatility_kind; before #2376 each problem's array was compared through its mean, so two fields
     with one mean passed. Two callables are not compared (see ``_volatilities_differ``).
+
+    With ``problem`` -- the one the coupling loop solves -- and no ``override``, the pair's volatility
+    must also be that problem's. Each solver reads its own problem's volatility, and the loop hands
+    ``problem``'s to the boundary-condition providers, so a pair built from another problem would
+    solve its interior at one volatility and resolve its boundary at another. Until #2378 part 2a,
+    ``MFGProblem.solve`` forwarded its volatility as an override and so papered over that case in
+    Expert Mode; it now raises here instead. An override is forwarded to both solvers and to the
+    providers, so it needs no such check. Each solver's problem is compared, and a solver built from
+    ``problem`` itself is skipped. Here, unlike between the pair, two callables are compared -- by
+    identity, the only comparison an opaque callable admits: a pair built for another problem's
+    callable volatility is refused (#2420 review, round 2), and one built from this problem, or
+    sharing its callable, is not.
     """
     hjb_problem, fp_problem = getattr(hjb_solver, "problem", None), getattr(fp_solver, "problem", None)
     hjb_volatility = getattr(hjb_problem, "volatility", None)
@@ -99,6 +113,29 @@ def assert_paired_solver_sigma(hjb_solver: Any, fp_solver: Any, context: str) ->
             f"must share it -- the Picard fixed point would correspond to neither problem. Build both "
             f"solvers from the same MFGProblem, or use create_paired_solvers. Issue #1603."
         )
+    if problem is None or override is not None:
+        return
+    own, own_kind = getattr(problem, "volatility", None), getattr(problem, "volatility_kind", None)
+    for side, solver_problem in (("HJB", hjb_problem), ("FP", fp_problem)):
+        if solver_problem is None or solver_problem is problem:
+            continue
+        theirs = getattr(solver_problem, "volatility", None)
+        theirs_kind = getattr(solver_problem, "volatility_kind", None)
+        distinct_callables = callable(own) and callable(theirs) and own is not theirs
+        if distinct_callables or _volatilities_differ(own, theirs, own_kind, theirs_kind):
+            why = (
+                "; two distinct callables count as different, since they cannot be compared"
+                if distinct_callables
+                else ""
+            )
+            raise ValueError(
+                f"{context}: the {side} solver was built from a problem whose volatility differs from the "
+                f"problem being solved (solved={own!r}, solver's={theirs!r}{why}). With no volatility= override "
+                f"each solver reads "
+                f"its own problem's volatility, so the interior would diffuse at the solver's value while the "
+                f"boundary conditions read this problem's. Build the solvers from the problem being solved, or "
+                f"pass volatility= (with volatility_kind for an array) to the coupling loop (#2378)."
+            )
 
 
 def resolve_backend(backend: Any, iterator_name: str) -> Any:
@@ -192,27 +229,34 @@ def allocate_state_arrays(backend: Any, shape: tuple[int, ...], iterator_name: s
     return U, M
 
 
-def matches_problem_sigma(problem: Any, volatility_field: Any) -> bool:
+def matches_problem_sigma(problem: Any, volatility: Any, volatility_kind: str | None = None) -> bool:
     """Whether this override is indistinguishable from the problem's own volatility.
 
-    Two ways to be indistinguishable: the override IS ``problem.volatility`` -- what
-    ``MFGProblem.solve`` forwards -- or both are scalars equal to 1e-12. An array or callable that is
-    a different object cannot be shown equivalent without evaluating it, and guessing there is what
-    #1316 was about. ``numbers.Real`` rather than ``(int, float)``: ``np.float32(0.3)`` is neither,
-    and rejecting it would refuse a solve that is byte-identical to one it accepts.
+    Two ways to be indistinguishable: the override IS ``problem.volatility`` and declares the
+    problem's kind, or both are scalars equal to 1e-12. An array or callable that is a different
+    object cannot be shown equivalent without evaluating it, and guessing there is what #1316 was
+    about. ``numbers.Real`` rather than ``(int, float)``: ``np.float32(0.3)`` is neither, and
+    rejecting it would refuse a solve that is byte-identical to one it accepts.
     """
-    volatility = getattr(problem, "volatility", None)
-    if volatility_field is volatility:
-        return True
-    if not isinstance(volatility_field, numbers.Real) or not isinstance(volatility, numbers.Real):
+    own = getattr(problem, "volatility", None)
+    if volatility is own:
+        return volatility_kind == getattr(problem, "volatility_kind", None)
+    if not isinstance(volatility, numbers.Real) or not isinstance(own, numbers.Real):
         return False
-    return abs(float(volatility_field) - float(volatility)) <= 1e-12
+    return abs(float(volatility) - float(own)) <= 1e-12
 
 
 def resolve_volatility_kwarg(
-    params: Any, volatility_field: Any, problem: Any, solver_name: str, method: str, side: str
+    params: Any,
+    volatility: Any,
+    volatility_kind: str | None,
+    problem: Any,
+    solver_name: str,
+    method: str,
+    side: str,
 ) -> dict[str, Any]:
-    """The ``volatility_field`` kwarg for ``method``, or ``{}`` when there is nothing to forward.
+    """The ``volatility`` and ``volatility_kind`` kwargs for ``method``, or ``{}`` when there is
+    nothing to forward.
 
     One owner for all four coupling call sites -- both Picard sides (:class:`BaseCouplingIterator`)
     and both Newton sides (:class:`~.mfg_residual.MFGResidual`). Issue #1783 was filed against two
@@ -222,7 +266,9 @@ def resolve_volatility_kwarg(
 
     Three outcomes, in this order:
 
-    - **The solver names the parameter: forward it, unconditionally.** Including when the override
+    - **The solver names the parameter: forward it, unconditionally, with its kind** (#2378 part
+      2a: an array override declares one, and a solver that cannot receive it is refused rather than
+      left to read the kind from the shape). Including when the override
       is indistinguishable from the problem's volatility -- it is still the caller's explicit value.
       Before #2376 the problem carried a collapsed scalar ``sigma`` beside the full field, and
       declining to forward an "equivalent" scalar handed the solver the field instead of the value
@@ -236,24 +282,32 @@ def resolve_volatility_kwarg(
       for a problem nobody posed. Treating ``VAR_KEYWORD`` as accept-anything was the other
       candidate; it assumes a solver consumes what it swallows, the assumption that produced #1316.
     - **The solver does not name it, and the override is indistinguishable: drop it silently**,
-      because dropping it changes nothing. ``MFGProblem.solve`` forwards ``problem.volatility`` itself,
-      so the coupling loop hands a non-None value on EVERY ordinary solve; refusing those is a refusal
-      to run at all, which the full suite caught two tests deep in the meshless recipe when the
-      first version of this fix keyed on "is not None".
+      because dropping it changes nothing. Until #2378 part 2a ``MFGProblem.solve`` forwarded
+      ``problem.volatility`` itself, so this branch ran on every ordinary solve; it no longer does
+      (a solver reads its own problem's volatility), and the branch now serves a caller who passes the
+      problem's own volatility explicitly.
     """
-    if volatility_field is None:
+    if volatility is None:
         return {}
-    if "volatility_field" in params:
-        return {"volatility_field": volatility_field}
-    if matches_problem_sigma(problem, volatility_field):
+    if "volatility" in params:
+        if volatility_kind is None:
+            return {"volatility": volatility}
+        if "volatility_kind" not in params:
+            raise NotImplementedError(
+                f"{solver_name}.{method} names 'volatility' but not 'volatility_kind', and the override "
+                f"declares volatility_kind={volatility_kind!r}. Forwarding the value without its kind "
+                f"would leave the solver to guess it from the shape (#2375 ruling 6)."
+            )
+        return {"volatility": volatility, "volatility_kind": volatility_kind}
+    if matches_problem_sigma(problem, volatility, volatility_kind):
         return {}
     other = "FP" if side == "HJB" else "HJB"
     raise NotImplementedError(
-        f"{solver_name}.{method} does not accept 'volatility_field', but a volatility_field was "
+        f"{solver_name}.{method} does not accept 'volatility', but a volatility override was "
         f"supplied. Its signature is ({', '.join(sorted(params))}). Dropping it would leave the "
         f"{side} side on problem.volatility while the {other} side uses the override, so the two equations "
         f"would be solved with different diffusion and the result would be neither problem "
-        f"(Issue #1783). Either declare volatility_field on the solver's {method}, or remove it "
+        f"(Issue #1783). Either declare volatility on the solver's {method}, or remove it "
         f"from the solve. A solver taking **kwargs does not count as accepting it -- the parameter "
         f"must be named."
     )
@@ -286,10 +340,11 @@ def resolve_source_kwarg(params: Any, source_term: Any, solver_name: str, method
     for GFDM, which is where that scheme discretises.
 
     Two outcomes, not the three ``resolve_volatility_kwarg`` has, and the reason is a default
-    rather than the nature of the quantity. ``MFGProblem.solve`` forwards ``problem.volatility``
-    **by default**, so the coupling loop hands a non-None override on every ordinary solve and
-    refusing those would be a refusal to run at all -- hence the third outcome, drop-when-
-    indistinguishable. ``compose_hjb_source`` returns ``None`` unless the user set a field, so a
+    rather than the nature of the quantity. ``MFGProblem.solve`` forwarded ``problem.volatility``
+    **by default** until #2378 part 2a, so the coupling loop handed a non-None override on every
+    ordinary solve and refusing those would have been a refusal to run at all -- hence the third
+    outcome, drop-when-indistinguishable, which now serves a caller who passes the problem's own
+    volatility explicitly. ``compose_hjb_source`` returns ``None`` unless the user set a field, so a
     non-None source is always something the caller asked for.
 
     ~~a composed source has no such case~~ [CORRECTED 2026-09-04] It does: a ``source_term_hjb``
@@ -394,7 +449,8 @@ class BaseCouplingIterator(ABC):
         *,
         M: np.ndarray,
         U: np.ndarray,
-        volatility_field: float | np.ndarray | Any | None = None,
+        volatility: float | np.ndarray | Any | None = None,
+        volatility_kind: str | None = None,
     ) -> dict[str, Any]:
         """Build kwargs for solve_hjb_system, respecting solver capabilities.
 
@@ -423,7 +479,8 @@ class BaseCouplingIterator(ABC):
         kwargs.update(
             resolve_volatility_kwarg(
                 params,
-                volatility_field,
+                volatility,
+                volatility_kind,
                 self.problem,
                 self._hjb_solver_name,
                 "solve_hjb_system",
@@ -439,7 +496,8 @@ class BaseCouplingIterator(ABC):
         M: np.ndarray,
         U: np.ndarray,
         drift_field: np.ndarray | Callable | Any | None = None,
-        volatility_field: float | np.ndarray | Any | None = None,
+        volatility: float | np.ndarray | Any | None = None,
+        volatility_kind: str | None = None,
     ) -> dict[str, Any]:
         """Build kwargs for solve_fp_system, respecting solver capabilities.
 
@@ -486,7 +544,8 @@ class BaseCouplingIterator(ABC):
         kwargs.update(
             resolve_volatility_kwarg(
                 params,
-                volatility_field,
+                volatility,
+                volatility_kind,
                 self.problem,
                 self._fp_solver_name,
                 "solve_fp_system",

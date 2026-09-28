@@ -116,7 +116,7 @@ class TestLLFAugmentationPinning:
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            solver.solve_hjb_system(M_density=M, U_terminal=U_T, volatility_field=0.9)
+            solver.solve_hjb_system(M_density=M, U_terminal=U_T, volatility=0.9)
         np.testing.assert_allclose(
             solver._llf_sigma_eff,
             0.9,
@@ -128,7 +128,7 @@ class TestLLFAugmentationPinning:
         # A subsequent default solve must reset sigma_eff to the base (unconditional recompute).
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            solver.solve_hjb_system(M_density=M, U_terminal=U_T, volatility_field=None)
+            solver.solve_hjb_system(M_density=M, U_terminal=U_T, volatility=None)
         np.testing.assert_allclose(
             solver._llf_sigma_eff,
             base,

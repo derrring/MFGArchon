@@ -38,7 +38,13 @@ from mfgarchon.geometry.boundary.enforcement import enforce_periodic_value_nd
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import check_adi_compatibility, diffusion_from_volatility, scalar_volatility
+from mfgarchon.utils.pde_coefficients import (
+    check_adi_compatibility,
+    diffusion_from_volatility,
+    resolve_volatility_override,
+    retired_volatility_keywords,
+    scalar_volatility,
+)
 
 from .base_hjb import BaseHJBSolver
 from .hjb_sl_adi import (
@@ -987,13 +993,15 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # Use InterpolationApplicator for dimension-agnostic BC enforcement
         return self.interp_bc_applicator.enforce_values(U, bc, time=time)
 
+    @retired_volatility_keywords
     def solve_hjb_system(
         self,
         M_density: np.ndarray | None = None,
         U_terminal: np.ndarray | None = None,
         U_coupling_prev: np.ndarray | None = None,
-        volatility_field: float | np.ndarray | None = None,
+        volatility: float | np.ndarray | None = None,
         source_term: Callable | None = None,
+        volatility_kind: str | None = None,
     ) -> np.ndarray:
         """
         Solve the HJB system using semi-Lagrangian method.
@@ -1012,32 +1020,38 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             M_density: (Nt, *spatial_shape) density from FP solver
             U_terminal: (*spatial_shape,) terminal condition u(T, x)
             U_coupling_prev: (Nt, *spatial_shape) previous coupling iteration estimate
-            volatility_field: Optional diffusion coefficient override
+            volatility: Optional volatility override. Honoured only when it equals the volatility
+                read at construction; any other value is refused (Issue #1316).
+            volatility_kind: "field" or "tensor" for an array volatility (#2378).
 
         Returns:
             (Nt, *grid_shape) solution array for value function
         """
         # Issue #1316: this solver takes its volatility from the problem, once, at construction
         # (self._volatility), and threads it to the advection-diffusion split, ADI and
-        # Crank-Nicolson. A volatility_field it cannot thread there is refused, not accepted and
-        # ignored, which would solve HJB with one diffusion while FP uses another. The iterator's
-        # forwarding of the problem's own volatility (Issue #1248) is accepted as a no-op.
-        if volatility_field is not None and not (
-            volatility_field is self.problem.volatility
-            or (
-                np.isscalar(volatility_field)
-                and np.isscalar(self._volatility)
-                and float(volatility_field) == float(self._volatility)
+        # Crank-Nicolson. A volatility it cannot thread there is refused, not accepted and
+        # ignored, which would solve HJB with one diffusion while FP uses another. An override equal
+        # to that volatility, with the same kind, is a no-op; equality is by value and kind, never by
+        # identity with problem.volatility (#2378 part 2a).
+        if volatility is not None or volatility_kind is not None:
+            volatility, volatility_kind = resolve_volatility_override(
+                volatility, volatility_kind, problem=self.problem, consumer="HJBSemiLagrangianSolver.solve_hjb_system"
             )
-        ):
-            raise NotImplementedError(
-                "HJBSemiLagrangianSolver cannot honor a volatility_field that differs from the "
-                "problem's volatility: it threads the problem's volatility, read once at construction, "
-                "through several sites (Issue #1316). A spatially-varying or mismatched field would "
-                "make HJB solve a different diffusion than FP, breaking the Picard fixed point. "
-                "Use HJBGFDMSolver (which consumes volatility_field), or build the problem with that "
-                "volatility."
+            constructed_is_tensor = isinstance(self._volatility, np.ndarray)
+            same = (
+                np.array_equal(volatility, self._volatility)
+                if constructed_is_tensor
+                else not callable(volatility) and np.ndim(volatility) == 0 and float(volatility) == self._volatility
             )
+            if not same or (volatility_kind == "tensor") != constructed_is_tensor:
+                raise NotImplementedError(
+                    "HJBSemiLagrangianSolver cannot honor a volatility that differs from the "
+                    "problem's volatility: it threads the problem's volatility, read once at construction, "
+                    "through several sites (Issue #1316). A spatially-varying or mismatched field would "
+                    "make HJB solve a different diffusion than FP, breaking the Picard fixed point. "
+                    "Use HJBGFDMSolver (which consumes a volatility field), or build the problem with that "
+                    "volatility."
+                )
 
         # `source_term` is honoured by the OPERATOR-SPLITTING path only (Issue #2198). The three
         # variants below replace that path wholesale rather than adding to it, so there is no

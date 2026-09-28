@@ -29,30 +29,24 @@ from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import FixedPointSolver, NewtonSolver
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, fp_drift_coefficient
+from mfgarchon.utils.pde_coefficients import (
+    diffusion_from_volatility,
+    fp_drift_coefficient,
+    resolve_volatility_override,
+    retired_volatility_keywords,
+)
 
 from . import base_hjb
 from .base_hjb import BaseHJBSolver, InnerSolveFailure, _volatility_at_n
 
 logger = get_logger(__name__)
 
-_NON_DIAGONAL_TENSOR_WARNING = (
-    "Non-diagonal tensor volatility Sigma passed as volatility_field: HJB-FDM assembles axis weights "
-    "sigma_ii^2/2 and no cross term, while the diffusion is A = 1/2 Sigma Sigma^T. It drops "
-    "2*sum_{i<j} A_ij d2u/dx_i dx_j -- an O(1) error, NOT a small correction (Issue #1079) -- and the "
-    "weights it keeps are wrong too: A_ii = 1/2 sum_k Sigma_ik^2, not sigma_ii^2/2. "
-    "HJBSemiLagrangianSolver discretises the full A, measured first order on an off-diagonal Sigma "
-    "(EOC 1.040, 1.017, against 0.718, 0.385 with the cross term dropped, Issue #2198), and reads a "
-    "constant tensor from MFGProblem(volatility=S, volatility_kind='tensor') -- which this solver "
-    "refuses rather than warns on."
-)
-
 # HJB-FDM's tensor path is a constant-coefficient weighted Laplacian with axis weights sigma_ii^2/2:
 # exact for a constant diagonal Sigma and for nothing else. A problem that declares a tensor is
 # refused otherwise, by name, rather than solved at the wrong diffusion (#2378 phase 4).
 _UNASSEMBLED_TENSOR_REFUSAL = (
     "HJBFDMSolver reads a tensor volatility only as a constant diagonal (d, d) Sigma: it assembles a "
-    "constant-coefficient Laplacian with axis weights sigma_ii^2/2 and no cross term. The problem's "
+    "constant-coefficient Laplacian with axis weights sigma_ii^2/2 and no cross term. The "
     "volatility_kind='tensor' volatility is {what}, where that would solve a different diffusion than "
     "A = 1/2 Sigma Sigma^T -- a non-diagonal Sigma loses the cross term and gets A_ii wrong, a "
     "per-point or callable one would be averaged over the grid. For a constant tensor, "
@@ -473,7 +467,7 @@ class HJBFDMSolver(BaseHJBSolver):
             self._laplacian_op = self.problem.geometry.get_laplacian_operator(order=2, bc=bc)
         return self._laplacian_op
 
-    def _log_cfl_diagnostic(self, volatility_field: Any = None) -> None:
+    def _log_cfl_diagnostic(self, volatility: Any = None) -> None:
         """Log CFL diagnostic for accuracy/convergence guidance (Issue #882, #1052).
 
         Issue #1052: log once at INFO per solver instance, subsequent calls at
@@ -484,7 +478,7 @@ class HJBFDMSolver(BaseHJBSolver):
         try:
             dt = self.problem.dt
             dx = self.problem.geometry.get_grid_spacing()[0]
-            volatility = volatility_field if volatility_field is not None else self.problem.volatility
+            volatility = volatility if volatility is not None else self.problem.volatility
             if not isinstance(volatility, (int, float)):
                 return  # a per-point or callable volatility has no single diffusive CFL number
             sigma = float(volatility)
@@ -513,16 +507,18 @@ class HJBFDMSolver(BaseHJBSolver):
         """
         return None if self._inner_solve_failures is None else tuple(self._inner_solve_failures)
 
+    @retired_volatility_keywords
     def solve_hjb_system(
         self,
         M_density: NDArray | None = None,
         U_terminal: NDArray | None = None,
         U_coupling_prev: NDArray | None = None,
-        volatility_field: float | NDArray | None = None,
+        volatility: float | NDArray | None = None,
         progress_callback: Callable[[int], None] | None = None,  # Issue #640
         show_progress: bool | None = None,  # Issue #934
         # MMS verification support
         source_term: Callable | None = None,
+        volatility_kind: str | None = None,
         *,
         cross_density=None,  # Issue #1071: stacked (Nt+1, K*Nx) cross-density trajectory (lock-faithful)
     ) -> NDArray:
@@ -535,7 +531,8 @@ class HJBFDMSolver(BaseHJBSolver):
             M_density: Density field from FP solver
             U_terminal: Terminal condition u(T,x)
             U_coupling_prev: Previous coupling iteration estimate
-            volatility_field: Volatility override (None uses problem.volatility)
+            volatility: Volatility override (None uses problem.volatility, with its kind)
+            volatility_kind: 'field' or 'tensor' for an array override (#2378 part 2a)
 
         Note:
             For adjoint-consistent BC, use AdjointConsistentProvider in BCSegment.value
@@ -562,7 +559,7 @@ class HJBFDMSolver(BaseHJBSolver):
             )
         # CFL diagnostic (Issue #882): implicit scheme is unconditionally stable,
         # but large CFL numbers indicate potential accuracy/convergence issues
-        self._log_cfl_diagnostic(volatility_field)
+        self._log_cfl_diagnostic(volatility)
 
         if self.dimension == 1:
             # Extract BC from geometry for Issue #542 fix
@@ -606,7 +603,8 @@ class HJBFDMSolver(BaseHJBSolver):
                 max_newton_iterations=self.max_newton_iterations,
                 newton_tolerance=self.newton_tolerance,
                 backend=effective_backend,
-                volatility_field=volatility_field,
+                volatility=volatility,
+                volatility_kind=volatility_kind,
                 use_upwind=self.use_upwind,
                 numerical_hamiltonian=self.numerical_hamiltonian,
                 bc=bc,  # Uses Robin BC from geometry; providers resolved by iterator (Issue #625)
@@ -629,7 +627,8 @@ class HJBFDMSolver(BaseHJBSolver):
                 M_density,
                 U_terminal,
                 U_coupling_prev,
-                volatility_field,
+                volatility,
+                volatility_kind=volatility_kind,
                 progress_callback=progress_callback,
                 source_term=source_term,
                 show_progress=show_progress,
@@ -640,15 +639,17 @@ class HJBFDMSolver(BaseHJBSolver):
         M_density: NDArray,
         U_final: NDArray,
         U_prev: NDArray,
-        volatility_field: float | NDArray | Callable | None = None,
+        volatility: float | NDArray | Callable | None = None,
+        volatility_kind: str | None = None,
         progress_callback: Callable[[int], None] | None = None,  # Issue #640
         source_term: Callable | None = None,  # MMS verification
         show_progress: bool | None = None,  # Issue #934
     ) -> NDArray:
         """Solve nD HJB using centralized nonlinear solvers with variable diffusion.
 
-        volatility_field accepts scalar, array, (d,d) tensor, or callable.
-        Shape-based auto-detection dispatches to scalar or tensor path.
+        The volatility is read by its declared kind (#2378 part 2a): a scalar, a field or a per-point
+        callable goes through CoefficientField; a tensor is admitted only as a constant diagonal
+        (d, d) Sigma, the one case the axis-weighted Laplacian is exact for.
         """
         # Validate shapes
         # n_time_points = problem.Nt + 1 (number of time knots including t=0 and t=T)
@@ -660,22 +661,21 @@ class HJBFDMSolver(BaseHJBSolver):
         if U_final.shape != self.shape:
             raise ValueError(f"U_final shape {U_final.shape} != {self.shape}")
 
-        # A None default is the problem's own volatility, through the same dispatch as an override
-        # (#2378 rule A). The problem's volatility is read by its declared kind -- a (d, d) field on a
-        # d x d grid and a (d, d) tensor have the same shape -- while an explicit override is still
-        # read by shape until part 2 gives overrides a kind.
-        from_problem = volatility_field is None or volatility_field is self.problem.volatility
-        if volatility_field is None:
-            volatility_field = self.problem.volatility
-        problem_tensor = from_problem and self.problem.volatility_kind == "tensor"
-        if problem_tensor:
-            if callable(volatility_field):
+        # One dispatch for an override and for the problem's own volatility, on the declared kind
+        # (#2378 part 2a) -- never on the shape, since a (d, d) field on a d x d grid and a (d, d)
+        # tensor have the same one.
+        volatility, volatility_kind = resolve_volatility_override(
+            volatility, volatility_kind, problem=self.problem, consumer="HJBFDMSolver.solve_hjb_system"
+        )
+        is_tensor = volatility_kind == "tensor"
+        if is_tensor:
+            if callable(volatility):
                 raise NotImplementedError(_UNASSEMBLED_TENSOR_REFUSAL.format(what="a callable"))
-            if np.ndim(volatility_field) != 2:
+            if np.ndim(volatility) != 2:
                 raise NotImplementedError(
-                    _UNASSEMBLED_TENSOR_REFUSAL.format(what=f"per point, shape {np.shape(volatility_field)}")
+                    _UNASSEMBLED_TENSOR_REFUSAL.format(what=f"per point, shape {np.shape(volatility)}")
                 )
-            if not is_diagonal_tensor(np.asarray(volatility_field)):
+            if not is_diagonal_tensor(np.asarray(volatility)):
                 raise NotImplementedError(_UNASSEMBLED_TENSOR_REFUSAL.format(what="non-diagonal"))
 
         # Allocate solution array with shape (n_time_points, *spatial)
@@ -707,38 +707,16 @@ class HJBFDMSolver(BaseHJBSolver):
             M_n = M_density[n]
             U_guess = U_prev[n]
 
-            # Issue #889: unified volatility_field with shape-based dispatch
             d = self.dimension
             Sigma_at_n = None
             sigma_at_n = None
 
-            if problem_tensor:
-                Sigma_at_n = np.asarray(volatility_field)  # a constant (d, d) array, checked above
-            elif from_problem:
-                pass  # a scalar, a field, or a callable whose output is per point (volatility_kind rule)
-            elif isinstance(volatility_field, np.ndarray):
-                # Auto-detect tensor vs scalar from shape
-                if volatility_field.ndim >= 2 and volatility_field.shape[-2:] == (d, d):
-                    Sigma_at_n = volatility_field
-                elif volatility_field.ndim == 1 and len(volatility_field) == d:
-                    Sigma_at_n = np.diag(volatility_field)
-            elif callable(volatility_field):
-                # Callable: evaluate and check shape
-                t = n * self.problem.dt
-                test_x = np.array([self.grid.coordinates[dd][0] for dd in range(d)])
-                test_val = volatility_field(t, test_x, float(M_n.flat[0]))
-                test_arr = np.asarray(test_val)
-                if test_arr.ndim >= 2 and test_arr.shape[-2:] == (d, d):
-                    # Tensor callable — evaluate at all points
-                    Sigma_at_n = np.zeros((*self.shape, d, d))
-                    for idx in np.ndindex(self.shape):
-                        x_coords = np.array([self.grid.coordinates[dd][idx[dd]] for dd in range(d)])
-                        Sigma_at_n[idx] = volatility_field(t, x_coords, float(M_n[idx]))
-
-            if Sigma_at_n is None:
-                # Scalar path (CoefficientField handles float, array, callable)
+            if is_tensor:
+                Sigma_at_n = np.asarray(volatility)  # a constant diagonal (d, d) Sigma, checked above
+            else:
+                # A scalar, a field, or a callable read per point (CoefficientField handles all three)
                 diffusion = self.problem.get_diffusion_coefficient_field(
-                    override=volatility_field, field_name="volatility_field", dimension=d
+                    override=volatility, field_name="volatility", dimension=d
                 )
                 sigma_at_n = diffusion.evaluate_at(
                     timestep_idx=n, grid=self.grid.coordinates, density=M_n, dt=self.problem.dt
@@ -1047,35 +1025,11 @@ class HJBFDMSolver(BaseHJBSolver):
         m_grid = M.ravel()  # (N_total,)
 
         if Sigma_at_n is not None:
-            # Tensor diffusion mode — batch H_class + anisotropic Laplacian (Issue #784)
-            # Extract diagonal weights from diffusion tensor
-            if Sigma_at_n.ndim == 2:
-                if not is_diagonal_tensor(Sigma_at_n):
-                    import warnings
-
-                    warnings.warn(_NON_DIAGONAL_TENSOR_WARNING, UserWarning, stacklevel=3)
-                sigma_diag = np.diag(Sigma_at_n)  # (d,)
-            else:
-                if not is_diagonal_tensor(Sigma_at_n):
-                    import warnings
-
-                    warnings.warn(_NON_DIAGONAL_TENSOR_WARNING, UserWarning, stacklevel=3)
-                # Spatially-varying: extract diagonal, average to constant weights
-                sigma_diag = np.diagonal(Sigma_at_n, axis1=-2, axis2=-1)
-                if sigma_diag.ndim > 1:
-                    import warnings
-
-                    warnings.warn(
-                        "Spatially-varying diffusion tensor averaged to constant per-axis "
-                        "weights (grid mean): the FDM tensor path discretizes a "
-                        "constant-coefficient Laplacian, so spatial variation in D(x) is dropped "
-                        "(Issue #1079). Pass a scalar/constant sigma, or use a "
-                        "variable-coefficient FP path, if the variation is physically "
-                        "significant.",
-                        UserWarning,
-                        stacklevel=3,
-                    )
-                    sigma_diag = sigma_diag.reshape(-1, self.dimension).mean(axis=0)
+            # Tensor diffusion mode -- batch H_class + anisotropic Laplacian (Issue #784). Only a
+            # constant diagonal (d, d) Sigma reaches here (_solve_hjb_nd refuses the rest, #2378), so the
+            # axis weights are its diagonal. The non-diagonal warning and the per-point averaging this
+            # block used to carry served override tensors read by shape, which part 2a retired.
+            sigma_diag = np.diag(Sigma_at_n)  # (d,)
 
             # Convective Hamiltonian via H_class (same pattern as scalar path)
             H_class = self.problem.hamiltonian_class

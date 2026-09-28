@@ -733,9 +733,7 @@ class TestFPParticleSolverCallableDrift:
         m_initial /= np.sum(m_initial)
 
         # Solve with callable drift and constant scalar diffusion
-        M = solver.solve_fp_system(
-            M_initial=m_initial, drift_field=simple_drift, volatility_field=0.15, show_progress=False
-        )
+        M = solver.solve_fp_system(M_initial=m_initial, drift_field=simple_drift, volatility=0.15, show_progress=False)
 
         assert np.all(np.isfinite(M))
         assert np.all(M >= -1e-10)
@@ -910,7 +908,7 @@ class TestFPParticlePreserveIndices:
         return solver.solve_fp_system(
             initial_particles=init,
             drift_field=self._drift_rightward,
-            volatility_field=0.3,
+            volatility=0.3,
             drift_needs_density=False,
             show_progress=False,
         )
@@ -973,7 +971,7 @@ class TestFPParticlePreserveIndices:
             solver.solve_fp_system(
                 initial_particles=init,
                 drift_field=lambda t, x, m: np.column_stack([np.full(len(x), 2.0), np.zeros(len(x))]),
-                volatility_field=0.3,
+                volatility=0.3,
                 drift_needs_density=False,
                 show_progress=False,
             )

@@ -1,5 +1,6 @@
 - **`HJBGFDMSolver` now preserves a spatial `volatility_field` through every HJB path** (Issue
-  #1725). The solver normalizes a scalar, native-shaped or flattened grid field, meshfree
+  #1725). **[#2378 part 2a, 2026-09-28: the parameter is now `volatility=`, and an array declares
+  `volatility_kind="field"`.]** The solver normalizes a scalar, native-shaped or flattened grid field, meshfree
   collocation field, or space-only callable once per solve into one collocation-space coefficient.
   Batch and per-point residual/Jacobian assembly, LLF augmentation, the DMP diagnostic, and Howard
   policy iteration all consume that same value. Nonconstant fields are no longer replaced by

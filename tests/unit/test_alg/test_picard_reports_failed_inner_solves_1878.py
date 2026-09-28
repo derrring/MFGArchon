@@ -173,11 +173,9 @@ class _ReportsOnSomeSolves(HJBFDMSolver):
         super().__init__(problem)
         self.rule, self.calls, self.flags = rule, 0, []
 
-    def solve_hjb_system(
-        self, M_density, U_terminal, U_coupling_prev, volatility_field=None, source_term=None, **kwargs
-    ):
+    def solve_hjb_system(self, M_density, U_terminal, U_coupling_prev, volatility=None, source_term=None, **kwargs):
         out = super().solve_hjb_system(
-            M_density, U_terminal, U_coupling_prev, volatility_field=volatility_field, source_term=source_term, **kwargs
+            M_density, U_terminal, U_coupling_prev, volatility=volatility, source_term=source_term, **kwargs
         )
         self.flags.append(self.rule(self.calls))
         self.calls += 1
@@ -220,11 +218,9 @@ class _DuckTypedHJB:
     def __init__(self, problem):
         self.inner = HJBFDMSolver(problem)
 
-    def solve_hjb_system(
-        self, M_density, U_terminal, U_coupling_prev, volatility_field=None, source_term=None, **kwargs
-    ):
+    def solve_hjb_system(self, M_density, U_terminal, U_coupling_prev, volatility=None, source_term=None, **kwargs):
         return self.inner.solve_hjb_system(
-            M_density, U_terminal, U_coupling_prev, volatility_field=volatility_field, source_term=source_term, **kwargs
+            M_density, U_terminal, U_coupling_prev, volatility=volatility, source_term=source_term, **kwargs
         )
 
 

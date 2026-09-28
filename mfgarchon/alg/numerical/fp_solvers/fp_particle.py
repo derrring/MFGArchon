@@ -29,7 +29,11 @@ from mfgarchon.utils.numerical.particle import (
     interpolate_grid_to_particles,
     sample_from_density,
 )
-from mfgarchon.utils.pde_coefficients import scalar_volatility
+from mfgarchon.utils.pde_coefficients import (
+    resolve_volatility_override,
+    retired_volatility_keywords,
+    scalar_volatility,
+)
 
 from .base_fp import BaseFPSolver, DriftConvention
 from .fp_particle_bc import apply_boundary_conditions as _apply_bc
@@ -1485,17 +1489,19 @@ class FPParticleSolver(BaseFPSolver):
         mass = float(arr)
         return mass if np.isfinite(mass) and mass > 0.0 else None
 
+    @retired_volatility_keywords
     def solve_fp_system(
         self,
         M_initial: np.ndarray | None = None,
         drift_field: np.ndarray | Callable | None = None,
-        volatility_field: float | np.ndarray | Callable | None = None,
+        volatility: float | np.ndarray | Callable | None = None,
         show_progress: bool | None = None,
         drift_is_precomputed: bool = False,
         initial_particles: np.ndarray | None = None,
         drift_needs_density: bool = True,
         potential_field: np.ndarray | None = None,
         source_term: Callable | None = None,
+        volatility_kind: str | None = None,
     ) -> np.ndarray:
         """Solve the FP system, and return it at the mass the caller handed in (#2181).
 
@@ -1581,7 +1587,8 @@ class FPParticleSolver(BaseFPSolver):
         M = self._solve_fp_system_unscaled(
             M_initial=M_initial,
             drift_field=drift_field,
-            volatility_field=volatility_field,
+            volatility=volatility,
+            volatility_kind=volatility_kind,
             show_progress=show_progress,
             drift_is_precomputed=drift_is_precomputed,
             initial_particles=initial_particles,
@@ -1594,7 +1601,8 @@ class FPParticleSolver(BaseFPSolver):
         self,
         M_initial: np.ndarray | None = None,
         drift_field: np.ndarray | Callable | None = None,
-        volatility_field: float | np.ndarray | Callable | None = None,
+        volatility: float | np.ndarray | Callable | None = None,
+        volatility_kind: str | None = None,
         show_progress: bool | None = None,
         drift_is_precomputed: bool = False,
         initial_particles: np.ndarray | None = None,
@@ -1622,16 +1630,17 @@ class FPParticleSolver(BaseFPSolver):
                                   If False (default), drift_field is treated as value function U(t,x) and
                                   drift is computed as α = -coupling_coefficient * ∇U.
                                   Use True to preserve high-precision gradients from GFDM or other meshfree methods.
-            volatility_field: Volatility specification for SDE noise (optional). The SDE is
+            volatility: Volatility specification for SDE noise (optional). The SDE is
                 dX = v dt + Σ dW with dW ~ N(0, dt·I_d), giving diffusion tensor
                 D = (1/2) Σ Σ^T (matches the FDM tensor-diffusion convention, Issue #1249/#1276);
-                a scalar σ is Σ = σ·I (isotropic D = σ²/2). Supported forms:
-                - None: Use problem.volatility
+                a scalar σ is Σ = σ·I (isotropic D = σ²/2). Read by its declared kind (#2378):
+                - None: Use problem.volatility, with the problem's kind
                 - float: Constant isotropic volatility σ
-                - np.ndarray, shape == grid_shape: spatially varying isotropic σ(x)
-                - np.ndarray (d, d): constant anisotropic noise matrix Σ
-                - np.ndarray (*grid_shape, d, d): spatially varying anisotropic Σ(x)
+                - array, volatility_kind="field", shape == grid_shape: isotropic σ(x)
+                - array, volatility_kind="tensor", (d, d): constant anisotropic noise matrix Σ
+                - array, volatility_kind="tensor", (*grid_shape, d, d): anisotropic Σ(x)
                 - Callable: state-dependent scalar volatility σ(t,x,m) -> per-particle σ
+            volatility_kind: "field" or "tensor" for an array volatility.
                 The (d, d) and (*grid_shape, d, d) anisotropic matrix forms are implemented on
                 the nD CPU path (drift_field None for pure diffusion, or a callable drift);
                 an anisotropic Σ with an ndarray (grid) drift_field is unsupported and raises.
@@ -1678,7 +1687,8 @@ class FPParticleSolver(BaseFPSolver):
             return self._solve_fp_system_callable_drift(
                 M_initial=M_initial,
                 drift_callable=drift_field,
-                volatility_field=volatility_field,
+                volatility=volatility,
+                volatility_kind=volatility_kind,
                 show_progress=show_progress,
                 initial_particles=initial_particles,
                 drift_needs_density=drift_needs_density,
@@ -1686,14 +1696,15 @@ class FPParticleSolver(BaseFPSolver):
         else:
             raise TypeError(f"drift_field must be None, np.ndarray, or Callable, got {type(drift_field)}")
 
-        # Handle volatility_field parameter (SDE noise coefficient σ or Σ). None is the problem's
-        # own volatility, taken through the same dispatch as an override (#2376).
-        if volatility_field is None:
-            volatility_field = self.problem.volatility
-        if isinstance(volatility_field, (int, float)):
+        # The volatility (SDE noise coefficient σ or Σ) and its kind. None is the problem's own,
+        # taken through the same dispatch as an override (#2376, #2378 part 2a).
+        volatility, volatility_kind = resolve_volatility_override(
+            volatility, volatility_kind, problem=self.problem, consumer="FPParticleSolver.solve_fp_system"
+        )
+        if isinstance(volatility, (int, float)):
             # Constant isotropic volatility σ
-            effective_sigma = float(volatility_field)
-        elif isinstance(volatility_field, np.ndarray) or callable(volatility_field):
+            effective_sigma = float(volatility)
+        elif isinstance(volatility, np.ndarray) or callable(volatility):
             # Spatially varying or state-dependent volatility
             # Route to callable drift solver which supports this
             # Note: If drift_field is None, we need to handle pure diffusion case
@@ -1708,24 +1719,23 @@ class FPParticleSolver(BaseFPSolver):
                 return self._solve_fp_system_callable_drift(
                     M_initial=M_initial,
                     drift_callable=zero_drift,
-                    volatility_field=volatility_field,
+                    volatility=volatility,
+                    volatility_kind=volatility_kind,
                     show_progress=show_progress,
                 )
             else:
-                # Issue #1248: ndarray drift + array/callable volatility_field. The ndarray-drift
+                # Issue #1248: ndarray drift + array/callable volatility. The ndarray-drift
                 # CPU/GPU paths consume one scalar sigma (installed as the solver-local override
                 # below), so a field or a tensor is refused by name rather than averaged (#2376).
                 effective_sigma = scalar_volatility(
-                    volatility_field,
+                    volatility,
                     consumer=(
                         "FPParticleSolver's grid-drift path (an ndarray drift_field; a callable "
                         "drift_field, or drift_field=None, reads the volatility per particle)"
                     ),
                 )
         else:
-            raise TypeError(
-                f"volatility_field must be None, float, np.ndarray, or Callable, got {type(volatility_field)}"
-            )
+            raise TypeError(f"volatility must be None, float, np.ndarray, or Callable, got {type(volatility)}")
 
         # Issue #1412: install the resolved per-solve volatility as a solver-local override
         # (consumed by _get_grid_params), instead of mutating the shared problem.
@@ -2352,10 +2362,11 @@ class FPParticleSolver(BaseFPSolver):
         self,
         M_initial: np.ndarray | None,
         drift_callable: Callable,
-        volatility_field: float | np.ndarray | Callable | None = None,
+        volatility: float | np.ndarray | Callable | None = None,
         show_progress: bool | None = None,
         initial_particles: np.ndarray | None = None,
         drift_needs_density: bool = True,
+        volatility_kind: str | None = None,
     ) -> np.ndarray:
         """
         Solve FP equation with callable (state-dependent) drift using particles.
@@ -2373,15 +2384,17 @@ class FPParticleSolver(BaseFPSolver):
             - x: particle positions, shape (N_particles, d)
             - m: density at particle positions, shape (N_particles,)
             Returns: drift velocity, shape (N_particles, d) for nD or (N_particles,) for 1D
-        volatility_field : float, np.ndarray, Callable, or None
+        volatility : float, np.ndarray, Callable, or None
             Volatility (SDE noise coefficient). SDE: dX = v dt + Σ dW, dW ~ N(0, dt·I_d),
             so D = (1/2) Σ Σ^T (Issue #1249/#1276); a scalar σ is Σ = σ·I. Uses
-            problem.volatility if None.
+            problem.volatility, with its kind, if None. Read by the declared kind (#2378):
             - float: constant isotropic volatility σ
-            - (*grid_shape,) array: spatially varying isotropic σ(x)
-            - (d, d) array: constant anisotropic noise matrix Σ
-            - (*grid_shape, d, d) array: spatially varying anisotropic Σ(x)
+            - "field", (*grid_shape,) array: spatially varying isotropic σ(x)
+            - "tensor", (d, d) array: constant anisotropic noise matrix Σ
+            - "tensor", (*grid_shape, d, d) array: spatially varying anisotropic Σ(x)
             - Callable: state-dependent scalar volatility σ(t, x, m) -> per-particle σ
+        volatility_kind : str or None
+            "field" or "tensor" for an array volatility; a tensor-valued callable is refused.
         show_progress : bool
             Show progress bar
         initial_particles : np.ndarray or None
@@ -2419,94 +2432,62 @@ class FPParticleSolver(BaseFPSolver):
             self._particle_history = []
 
         # Get volatility - supports constant, array, or callable
-        # For SDE: dX = drift*dt + σ*dW (volatility_field = σ). None is the problem's own
-        # volatility, classified like an override below (#2376).
-        from_problem = volatility_field is None or volatility_field is self.problem.volatility
-        if volatility_field is None:
-            volatility_field = self.problem.volatility
-        volatility_is_callable = callable(volatility_field)
-        volatility_is_array = isinstance(volatility_field, np.ndarray)
-        # The problem's own volatility is read by its declared kind -- a (d, d) field on a d x d
-        # grid and a (d, d) tensor have the same shape -- while an override is read by shape until
-        # part 2 of #2378 gives overrides a kind.
-        problem_tensor = from_problem and self.problem.volatility_kind == "tensor"
-        if problem_tensor and volatility_is_callable:
+        # For SDE: dX = drift*dt + σ*dW (volatility = σ). One dispatch on the declared kind, for an
+        # override and for the problem's own volatility alike (#2378 part 2a): a (d, d) field on a
+        # d x d grid and a (d, d) tensor have the same shape, so the shape cannot decide.
+        volatility, volatility_kind = resolve_volatility_override(
+            volatility, volatility_kind, problem=self.problem, consumer="FPParticleSolver.solve_fp_system"
+        )
+        volatility_is_callable = callable(volatility)
+        volatility_is_array = isinstance(volatility, np.ndarray)
+        if volatility_kind == "tensor" and volatility_is_callable:
             raise NotImplementedError(
-                "FPParticleSolver evaluates a callable volatility as one sigma per particle; the "
-                "problem declares it volatility_kind='tensor', whose Sigma(t, x, m) this path does not "
+                "FPParticleSolver evaluates a callable volatility as one sigma per particle, and this "
+                "one is declared volatility_kind='tensor', whose Sigma(t, x, m) this path does not "
                 "apply (#2378). Pass the tensor as a constant (d, d) or per-point (*grid, d, d) array."
             )
 
-        # Issue #1256: classify the volatility array shape. Four valid array forms:
-        #   (1) spatial scalar field, shape == grid_shape  (isotropic σ(x), existing path);
-        #   (2) constant anisotropic matrix Σ, shape == (d, d);
-        #   (3) spatial anisotropic matrix Σ(x), shape == (*grid_shape, d, d).
-        # SDE convention (matches the FDM tensor-diffusion path, Issue #1249/#1276):
-        #   dX = v dt + Σ dW,  dW ~ N(0, dt·I_d)  =>  diffusion tensor D = (1/2) Σ Σ^T.
-        # A scalar σ (Σ = σ·I) reduces to the existing isotropic D = σ²/2 path exactly.
-        # A (d,) per-axis array is rejected (ambiguous: neither scalar nor grid field).
+        # Issue #1256: the array forms, by kind. SDE convention (matches the FDM tensor-diffusion
+        # path, Issue #1249/#1276): dX = v dt + Σ dW, dW ~ N(0, dt·I_d)  =>  D = (1/2) Σ Σ^T. A scalar
+        # σ (Σ = σ·I) reduces to the isotropic D = σ²/2 path exactly.
         volatility_is_matrix = False
         matrix_is_spatial = False
         if volatility_is_array:
-            vf_shape = volatility_field.shape
-            if from_problem and self.problem.volatility_kind == "field" and vf_shape == grid_shape:
-                # Declared a field, and read as one even on a d x d grid. The kind decides here, not
-                # the branch order: a declared tensor falls through to the shape reading below,
-                # which its constructor-checked shape always takes to the matrix branches.
-                pass
-            elif vf_shape == (dimension, dimension):
-                # Constant anisotropic noise matrix Σ
-                volatility_is_matrix = True
-                matrix_is_spatial = False
-            elif (
-                len(vf_shape) == dimension + 2
-                and vf_shape[:-2] == grid_shape
-                and vf_shape[-2:] == (dimension, dimension)
-            ):
-                # Spatially varying anisotropic noise matrix Σ(x) on the grid
-                volatility_is_matrix = True
-                matrix_is_spatial = True
-            elif len(vf_shape) >= 3 and vf_shape[-2:] == (dimension, dimension):
-                # Matrix-trailing array whose leading dims do not match the grid — unsupported
-                raise ValueError(
-                    f"volatility_field has shape {vf_shape}: the trailing ({dimension}, {dimension}) "
-                    f"matches an anisotropic Σ, but the leading dims do not match the grid {grid_shape}. "
-                    f"Pass a constant matrix ({dimension}, {dimension}) or a spatial matrix field "
-                    f"of shape {(*grid_shape, dimension, dimension)}."
-                )
-            elif vf_shape == (dimension,):
-                # Reject (d,) per-axis array — ambiguous and unsupported
-                raise ValueError(
-                    f"volatility_field has shape {vf_shape}, which is ambiguous: it matches "
-                    f"neither a scalar σ nor the spatial grid shape {grid_shape}. "
-                    "Pass a scalar float for constant isotropic volatility, a spatial array "
-                    f"of shape {grid_shape} for spatially varying isotropic volatility, a "
-                    f"constant matrix ({dimension}, {dimension}) for anisotropic Σ, or a "
-                    "Callable sigma(t,x,m)->float."
-                )
+            vf_shape = volatility.shape
+            if volatility_kind == "tensor":
+                if vf_shape == (dimension, dimension):
+                    # Constant anisotropic noise matrix Σ
+                    volatility_is_matrix = True
+                elif vf_shape == (*grid_shape, dimension, dimension):
+                    # Spatially varying anisotropic noise matrix Σ(x) on the grid
+                    volatility_is_matrix = True
+                    matrix_is_spatial = True
+                else:
+                    raise ValueError(
+                        f"A volatility_kind='tensor' volatility has shape {vf_shape}. Pass a constant "
+                        f"matrix ({dimension}, {dimension}) or a spatial matrix field of shape "
+                        f"{(*grid_shape, dimension, dimension)}."
+                    )
             elif vf_shape != grid_shape:
-                # Spatial scalar field must match the grid exactly
+                # A field is one σ per grid point, so it matches the grid exactly
                 raise ValueError(
-                    f"volatility_field has shape {vf_shape} but the spatial grid shape is "
-                    f"{grid_shape}. For a spatially varying isotropic σ field, the array "
-                    f"must match the grid shape exactly; for anisotropic noise pass a "
-                    f"({dimension}, {dimension}) matrix or a {(*grid_shape, dimension, dimension)} field."
+                    f"A volatility_kind='field' volatility has shape {vf_shape} but the spatial grid "
+                    f"shape is {grid_shape}: a field is one σ per grid point. For anisotropic noise, "
+                    f"pass a ({dimension}, {dimension}) or {(*grid_shape, dimension, dimension)} "
+                    "matrix with volatility_kind='tensor'."
                 )
-            # else: vf_shape == grid_shape — spatial scalar field (existing isotropic path)
 
-        if isinstance(volatility_field, (int, float)):
-            base_sigma = float(volatility_field)
+        if isinstance(volatility, (int, float)):
+            base_sigma = float(volatility)
         elif volatility_is_array or volatility_is_callable:
             # Spatially varying or state-dependent volatility
             # Will be evaluated per timestep at particle positions
             base_sigma = None  # Evaluated dynamically
         else:
-            raise TypeError(
-                f"volatility_field must be None, float, np.ndarray, or Callable, got {type(volatility_field)}"
-            )
+            raise TypeError(f"volatility must be None, float, np.ndarray, or Callable, got {type(volatility)}")
 
         # Pre-compute constant sigma_sde if volatility is constant
-        # Issue #717 fix: volatility_field IS the SDE volatility σ, use directly
+        # Issue #717 fix: volatility IS the SDE volatility σ, use directly
         # The PDE diffusion D = σ²/2 is computed internally when needed
         if base_sigma is not None:
             sigma_sde_constant = base_sigma  # Direct use: σ_sde = σ
@@ -2671,12 +2652,12 @@ class FPParticleSolver(BaseFPSolver):
                     # Σ(x): interpolate each matrix entry to particles (same linear
                     # grid-to-particle path used for spatial scalar volatility).
                     sigma_matrix_at_particles = self._interpolate_matrix_field_at_particles(
-                        particles_t, volatility_field, bounds, dimension
+                        particles_t, volatility, bounds, dimension
                     )
                     dW = np.einsum("pij,pj->pi", sigma_matrix_at_particles, dW_unit)
                 else:
                     # Constant Σ: (Σ @ dW_p^T)^T == dW_unit @ Σ^T
-                    dW = dW_unit @ volatility_field.T
+                    dW = dW_unit @ volatility.T
             else:
                 # Spatially varying or callable volatility - evaluate at particle positions
                 if volatility_is_callable:
@@ -2685,11 +2666,11 @@ class FPParticleSolver(BaseFPSolver):
                         x_for_callable = particles_t[:, 0]
                     else:
                         x_for_callable = particles_t
-                    sigma_at_particles = volatility_field(t_current, x_for_callable, m_at_particles)
+                    sigma_at_particles = volatility(t_current, x_for_callable, m_at_particles)
                 else:
                     # Array: interpolate from grid
                     sigma_at_particles = self._interpolate_field_at_particles(
-                        particles_t, volatility_field, coordinates, bounds
+                        particles_t, volatility, coordinates, bounds
                     )
 
                 # Ensure sigma_at_particles is 1D array of shape (n_particles_t,)

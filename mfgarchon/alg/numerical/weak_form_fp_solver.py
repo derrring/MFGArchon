@@ -26,7 +26,12 @@ from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConven
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, scalar_volatility
+from mfgarchon.utils.pde_coefficients import (
+    diffusion_from_volatility,
+    resolve_volatility_override,
+    retired_volatility_keywords,
+    scalar_volatility,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -108,22 +113,24 @@ class WeakFormFPSolver(BaseFPSolver):
         term (e.g. meshless streamline diffusion) uses the same ``D`` as the stiffness block."""
         raise NotImplementedError
 
-    def _diffusion_coefficient(self, volatility_field) -> float:
+    def _diffusion_coefficient(self, volatility) -> float:
         # D = sigma^2 / 2 via the single-source converter (Issue #811). This solver assembles one
         # scalar D, so an array or callable volatility is refused, not averaged (#2376).
-        volatility = volatility_field if volatility_field is not None else self.problem.volatility
+        volatility = volatility if volatility is not None else self.problem.volatility
         return diffusion_from_volatility(scalar_volatility(volatility, consumer=type(self).__name__))
 
+    @retired_volatility_keywords
     @deprecated_parameter(param_name="drift_field", since="v0.20.0", replacement="potential_field")
     @deprecated_parameter(param_name="m_initial", since="v0.22.0", replacement="M_initial")
     def solve_fp_system(
         self,
         M_initial: NDArray | None = None,
         potential_field: NDArray | None = None,
-        volatility_field: float | NDArray | None = None,
+        volatility: float | NDArray | None = None,
         drift_field: NDArray | None = None,  # DEPRECATED alias for potential_field (Issue #1043)
         source_term: Callable | None = None,
         m_initial: NDArray | None = None,  # DEPRECATED alias for M_initial, the base's name (#2377)
+        volatility_kind: str | None = None,
         **kwargs,
     ) -> NDArray:
         """Solve the FP equation forward in time on the weak-form operators.
@@ -149,7 +156,10 @@ class WeakFormFPSolver(BaseFPSolver):
         dt = self.problem.dt
         N = self._n_dof
 
-        D = self._diffusion_coefficient(volatility_field)
+        volatility, _ = resolve_volatility_override(
+            volatility, volatility_kind, problem=self.problem, consumer=f"{type(self).__name__}.solve_fp_system"
+        )
+        D = self._diffusion_coefficient(volatility)
 
         M = np.zeros((Nt + 1, N))
         # Issue #1489 (S4): the initial density must live on ALL N solver DOFs. The former length-only

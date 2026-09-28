@@ -57,8 +57,8 @@ def test_fp_volatility_override_equals_problem_with_that_sigma():
 
     fp_override = MeshlessGalerkinFPSolver(_problem(sigma=0.9), collocation_points=_cloud(), delta=3.5 / 14)
     fp_native = MeshlessGalerkinFPSolver(_problem(sigma=0.3), collocation_points=_cloud(), delta=3.5 / 14)
-    traj_override = fp_override.solve_fp_system(m0, drift_field=drift, volatility_field=0.3)
-    traj_native = fp_native.solve_fp_system(m0, drift_field=drift, volatility_field=None)
+    traj_override = fp_override.solve_fp_system(m0, drift_field=drift, volatility=0.3)
+    traj_native = fp_native.solve_fp_system(m0, drift_field=drift, volatility=None)
     assert np.allclose(traj_override, traj_native, atol=1e-12)
 
 
@@ -70,6 +70,6 @@ def test_hjb_volatility_override_equals_problem_with_that_sigma():
 
     hjb_override = MeshlessGalerkinHJBSolver(_problem(sigma=0.9), collocation_points=_cloud(), delta=3.5 / 14)
     hjb_native = MeshlessGalerkinHJBSolver(_problem(sigma=0.3), collocation_points=_cloud(), delta=3.5 / 14)
-    U_override = hjb_override.solve_hjb_system(M_density=m, U_terminal=u_T, volatility_field=0.3)
-    U_native = hjb_native.solve_hjb_system(M_density=m, U_terminal=u_T, volatility_field=None)
+    U_override = hjb_override.solve_hjb_system(M_density=m, U_terminal=u_T, volatility=0.3)
+    U_native = hjb_native.solve_hjb_system(M_density=m, U_terminal=u_T, volatility=None)
     assert np.allclose(U_override, U_native, atol=1e-12)

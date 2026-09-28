@@ -34,7 +34,11 @@ from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConven
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import (
+    diffusion_from_volatility,
+    resolve_volatility_override,
+    retired_volatility_keywords,
+)
 
 _logger = get_logger(__name__)
 
@@ -125,7 +129,7 @@ class FPNetworkSolver(BaseFPSolver):
             scheme: Time discretization ("explicit" or "implicit"). "upwind"/"flow" were removed
                 (Issue #1541): "upwind" was an identity map and "flow" was never implemented.
             diffusion_coefficient: Network diffusion coefficient D = σ²/2. If None (default), falls
-                back to 0.1 with a warning (Issue #1532) — pass it explicitly (or `volatility_field`
+                back to 0.1 with a warning (Issue #1532) — pass it explicitly (or `volatility`
                 to solve_fp_system) for correct physics.
             cfl_factor: CFL stability factor for explicit schemes
             max_iterations: Maximum iterations for implicit schemes
@@ -251,17 +255,19 @@ class FPNetworkSolver(BaseFPSolver):
             if self.dt > self.dt_stable:
                 print(f"Warning: dt={self.dt:.2e} > dt_stable={self.dt_stable:.2e}")
 
+    @retired_volatility_keywords
     @deprecated_parameter(param_name="m_initial_condition", since="v0.17.0", replacement="M_initial")
     @deprecated_parameter(param_name="drift_field", since="v0.21.0", replacement="potential_field")
     def solve_fp_system(
         self,
         M_initial: np.ndarray | None = None,
         potential_field: np.ndarray | Callable | None = None,
-        volatility_field: float | np.ndarray | Callable | None = None,
+        volatility: float | np.ndarray | Callable | None = None,
         show_progress: bool | None = None,
         # Deprecated parameter names for backward compatibility
         m_initial_condition: np.ndarray | None = None,
         drift_field: np.ndarray | Callable | None = None,
+        volatility_kind: str | None = None,
     ) -> np.ndarray:
         """
         Solve FP system on network with unified drift and diffusion API.
@@ -277,12 +283,14 @@ class FPNetworkSolver(BaseFPSolver):
             drift_field: DEPRECATED since v0.21.0 — use potential_field.
                 Accepted U under the old drift_field name (U-semantic). The rename
                 mirrors the weak-form rename from PR #1205 (Issue #1043 Phase 2).
-            volatility_field: SDE volatility sigma (optional); D = sigma^2/2 internally
+            volatility: SDE volatility sigma (optional); D = sigma^2/2 internally
                 (Issue #1429 S0-15 — the base_fp contract, consistent with FDM/FVM/GFDM):
                 - None: Use the D-valued self.diffusion_coefficient constructor knob (backward
-                  compatible).
+                  compatible). The network problem carries no volatility of its own.
                 - float: constant SDE volatility sigma; the diffusion is D = sigma^2/2.
                 - np.ndarray/Callable: Phase 2 (not yet supported).
+            volatility_kind: "field" or "tensor" for an array volatility (#2378); read by the
+                shared override rule, which this solver then refuses for any array.
             show_progress: Whether to display progress bar for timesteps.
 
         Returns:
@@ -332,39 +340,42 @@ class FPNetworkSolver(BaseFPSolver):
         else:
             raise TypeError(f"potential_field must be None, np.ndarray, or Callable, got {type(potential_field)}")
 
-        # Handle volatility_field parameter
-        if volatility_field is None:
+        # The volatility override, read by the one rule every solver uses (#2378). The network problem
+        # carries no volatility, so None falls back to the constructor's D, not to the problem.
+        if volatility is not None or volatility_kind is not None:
+            volatility, volatility_kind = resolve_volatility_override(
+                volatility, volatility_kind, problem=self.network_problem, consumer="FPNetworkSolver.solve_fp_system"
+            )
+        if volatility is None:
             # Issue #1532: warn when the physical diffusion is neither given here nor at construction
             # — the solve then runs at the D=0.1 fallback, decoupled from the problem's physics.
             if self._diffusion_was_defaulted:
                 warnings.warn(
                     "FPNetworkSolver: network diffusion defaulted to D=0.1, decoupled from the "
                     "problem's physics (NetworkMFGProblem carries no sigma). Pass "
-                    "diffusion_coefficient=... at construction or volatility_field=sigma to "
+                    "diffusion_coefficient=... at construction or volatility=sigma to "
                     "solve_fp_system for correct physics (Issue #1532).",
                     UserWarning,
                     stacklevel=2,
                 )
             effective_diffusion = self.diffusion_coefficient
-        elif isinstance(volatility_field, (int, float)):
-            # Issue #1429 (S0-15): volatility_field is the SDE volatility sigma (the base_fp
+        elif isinstance(volatility, (int, float)):
+            # Issue #1429 (S0-15): volatility is the SDE volatility sigma (the base_fp
             # contract used by FDM/FVM/GFDM), NOT the diffusion D — convert via the single source
             # D = sigma^2/2. (The `diffusion_coefficient` constructor knob stays D-valued.)
-            effective_diffusion = float(diffusion_from_volatility(float(volatility_field)))
-        elif isinstance(volatility_field, np.ndarray) or callable(volatility_field):
+            effective_diffusion = float(diffusion_from_volatility(float(volatility)))
+        elif isinstance(volatility, np.ndarray) or callable(volatility):
             # Spatially varying or state-dependent - Phase 2
             raise NotImplementedError(
-                "FPNetworkSolver does not yet support spatially varying or callable volatility_field. "
+                "FPNetworkSolver does not yet support spatially varying or callable volatility. "
                 "Pass constant diffusion as float. Support coming in Phase 2."
             )
         else:
-            raise TypeError(
-                f"volatility_field must be None, float, np.ndarray, or Callable, got {type(volatility_field)}"
-            )
+            raise TypeError(f"volatility must be None, float, np.ndarray, or Callable, got {type(volatility)}")
 
         # Temporarily override diffusion_coefficient if custom diffusion provided
         original_diffusion = self.diffusion_coefficient
-        if volatility_field is not None:
+        if volatility is not None:
             self.diffusion_coefficient = effective_diffusion
 
         try:

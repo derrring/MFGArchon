@@ -87,7 +87,7 @@ def scenario_porous_medium():
         hjb_solver,
         fp_solver,
         relaxation=0.5,
-        volatility_field=porous_medium_diffusion,  # State-dependent!
+        volatility=porous_medium_diffusion,  # State-dependent!
     )
 
     # Solve MFG system
@@ -148,7 +148,7 @@ def scenario_crowd_dynamics():
         hjb_solver,
         fp_solver,
         relaxation=0.5,
-        volatility_field=crowd_diffusion,
+        volatility=crowd_diffusion,
     )
 
     print("Solving MFG with crowd dynamics diffusion...")
@@ -205,7 +205,7 @@ def scenario_spatially_varying():
         hjb_solver,
         fp_solver,
         relaxation=0.5,
-        volatility_field=spatial_diffusion,
+        volatility=spatial_diffusion,
     )
 
     print("Solving MFG with spatially varying diffusion...")

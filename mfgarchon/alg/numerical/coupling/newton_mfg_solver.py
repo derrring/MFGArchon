@@ -34,6 +34,7 @@ import numpy as np
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.nonlinear_solvers import NewtonSolver, SolverInfo
+from mfgarchon.utils.pde_coefficients import retired_volatility_keywords
 from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import BaseCouplingIterator, assert_paired_solver_sigma
@@ -115,7 +116,8 @@ class NewtonMFGSolver(BaseCouplingIterator):
             supported one; ``'auto'``/``True`` are retained only for a hypothetical
             JAX-traceable residual and will warn-and-fall-back with the standard solvers
             (Issue #1233).
-        volatility_field: Optional diffusion override
+        volatility: Optional volatility override -- the SDE volatility, not a diffusion
+        volatility_kind: 'field' or 'tensor' for an array override (#2378 part 2a)
         drift_field: Optional drift override
 
     Example:
@@ -124,6 +126,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
         >>> print(f"Converged: {info['converged']}, iterations: {info['iterations']}")
     """
 
+    @retired_volatility_keywords
     def __init__(
         self,
         problem: MFGProblem,
@@ -136,7 +139,8 @@ class NewtonMFGSolver(BaseCouplingIterator):
         newton_max_iterations: int = 20,
         line_search: bool = True,
         use_jax_autodiff: bool | str = False,
-        volatility_field: float | NDArray | Any | None = None,
+        volatility: float | NDArray | Any | None = None,
+        volatility_kind: str | None = None,
         drift_field: NDArray | Any | None = None,
     ):
         """Initialize Newton MFG solver."""
@@ -144,7 +148,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
         self.hjb_solver = hjb_solver
         self.fp_solver = fp_solver
-        assert_paired_solver_sigma(hjb_solver, fp_solver, "NewtonMFGSolver")
+        assert_paired_solver_sigma(hjb_solver, fp_solver, "NewtonMFGSolver", problem=problem, override=volatility)
 
         # Picard warm-up parameters
         self.picard_warmup = picard_warmup
@@ -157,7 +161,8 @@ class NewtonMFGSolver(BaseCouplingIterator):
         self.use_jax_autodiff = use_jax_autodiff
 
         # PDE coefficient overrides
-        self.volatility_field = volatility_field
+        self.volatility = volatility
+        self.volatility_kind = volatility_kind
         self.drift_field = drift_field
 
         # Create MFG residual computer
@@ -165,7 +170,8 @@ class NewtonMFGSolver(BaseCouplingIterator):
             problem,
             hjb_solver,
             fp_solver,
-            volatility_field=volatility_field,
+            volatility=volatility,
+            volatility_kind=volatility_kind,
             drift_field=drift_field,
         )
 

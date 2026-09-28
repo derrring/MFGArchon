@@ -201,7 +201,7 @@ def _fp_fem():
     x = s._disc.dof_coordinates[:, 0]
     m0 = np.ones_like(x) / len(x)
     return lambda f: s.solve_fp_system(
-        m0.copy(), potential_field=None, volatility_field=0.3, **({"source_term": f} if f else {})
+        m0.copy(), potential_field=None, volatility=0.3, **({"source_term": f} if f else {})
     )
 
 
@@ -545,7 +545,7 @@ def test_the_swallowing_set_has_not_grown():
     this test stayed green. Stated independently, and checked against each gate, the two fail
     separately.
     """
-    guarded = {"source_term", "volatility_field"}
+    guarded = {"source_term", "volatility"}
     for base in (BaseHJBSolver, BaseFPSolver):
         assert guarded <= set(base._GUARDED_PARAMETERS), (
             f"{base.__name__}._GUARDED_PARAMETERS = {base._GUARDED_PARAMETERS} no longer guards "
@@ -588,13 +588,13 @@ def test_howard_refuses_a_volatility_field_its_constructor_owns():
         with pytest.warns(UserWarning, match="non-SOCP"):
             return HJBHowardSolver(p, stencil_provider=provider, alpha_star=lambda t, x, grad, m: -grad, **kwargs)
 
-    # 0.0 as well as 3.0: a truthiness check (`if volatility_field:`) refuses 3.0 and ignores 0.0,
+    # 0.0 as well as 3.0: a truthiness check (`if volatility:`) refuses 3.0 and ignores 0.0,
     # and 0.0 through the constructor is not a no-op -- it removes the diffusion.
     for value in (3.0, 0.0):
-        with pytest.raises(NotImplementedError, match="volatility_field"):
-            howard().solve_hjb_system(None, u_terminal, volatility_field=value)
+        with pytest.raises(NotImplementedError, match="does not accept volatility"):
+            howard().solve_hjb_system(None, u_terminal, volatility=value)
 
     moved = np.abs(
-        howard(volatility_field=3.0).solve_hjb_system(None, u_terminal) - howard().solve_hjb_system(None, u_terminal)
+        howard(volatility=3.0).solve_hjb_system(None, u_terminal) - howard().solve_hjb_system(None, u_terminal)
     )
-    assert moved.max() > 1e-3, f"volatility_field=3.0 through the constructor moved U by {moved.max():.3e}"
+    assert moved.max() > 1e-3, f"volatility=3.0 through the constructor moved U by {moved.max():.3e}"

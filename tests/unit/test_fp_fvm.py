@@ -155,7 +155,7 @@ def test_gate2_positivity_muscl_sharp_advection():
     drift = 0.7 * np.ones((Nt + 1, N))
 
     solver = FPFVMSolver(prob, reconstruction="muscl")
-    M = solver.solve_fp_system(m0, drift_field=drift, volatility_field=0.0)
+    M = solver.solve_fp_system(m0, drift_field=drift, volatility=0.0)
 
     assert M.min() >= -1e-14, f"MUSCL produced negative density: {M.min():.2e}"
 
@@ -194,7 +194,7 @@ def _convergence_slope(reconstruction, grids):
         drift = v0 * np.ones((Nt + 1, N))
 
         solver = FPFVMSolver(prob, reconstruction=reconstruction)
-        M = solver.solve_fp_system(m0, drift_field=drift, volatility_field=sigma)
+        M = solver.solve_fp_system(m0, drift_field=drift, volatility=sigma)
 
         m_exact = analytic_gaussian_adv_diff(x, T, x0, s0, v0, diffusion)
         err = np.sqrt(dx * np.sum((M[-1] - m_exact) ** 2))
@@ -246,10 +246,10 @@ def _fvm_fdm_maxdiff(N):
     drift = v0 * np.ones((Nt + 1, N))
 
     fvm = FPFVMSolver(prob, reconstruction="upwind")
-    M_fvm = fvm.solve_fp_system(m0, drift_field=drift, volatility_field=sigma)
+    M_fvm = fvm.solve_fp_system(m0, drift_field=drift, volatility=sigma)
 
     fdm = FPFDMSolver(prob, advection_scheme="divergence_upwind")
-    M_fdm = fdm.solve_fp_system(m0, drift_field=drift, volatility_field=sigma)
+    M_fdm = fdm.solve_fp_system(m0, drift_field=drift, volatility=sigma)
 
     return float(np.max(np.abs(M_fvm[-1] - M_fdm[-1]))), dx
 
@@ -319,4 +319,4 @@ def test_varying_volatility_not_implemented():
     m0 = normalized_gaussian_1d(x, 0.5, 0.12)
     bad_sigma = np.linspace(0.1, 0.5, 41)
     with pytest.raises(NotImplementedError, match="scalar"):
-        FPFVMSolver(prob).solve_fp_system(m0, volatility_field=bad_sigma)
+        FPFVMSolver(prob).solve_fp_system(m0, volatility=bad_sigma, volatility_kind="field")

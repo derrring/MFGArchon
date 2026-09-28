@@ -37,7 +37,12 @@ from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.qp_utils import QPCache, QPSolver
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, resolve_diffusion_source
+from mfgarchon.utils.pde_coefficients import (
+    diffusion_from_volatility,
+    resolve_diffusion_source,
+    resolve_volatility_override,
+    retired_volatility_keywords,
+)
 
 from .base_hjb import (
     DEFAULT_NEWTON_MAX_ITERATIONS,
@@ -58,6 +63,17 @@ if TYPE_CHECKING:
     from mfgarchon.core.derivatives import DerivativeTensors
     from mfgarchon.core.mfg_problem import MFGProblem
     from mfgarchon.geometry import BoundaryConditions
+
+
+_TENSOR_VOLATILITY_REFUSAL = (
+    "HJBGFDMSolver does not support a tensor volatility (volatility_kind='tensor'). "
+    "The GFDM Laplacian target (e_lap in joint_socp.py) has zero weight on "
+    "the cross-derivative column, so off-diagonal D_ij d^2u/dx_i dx_j "
+    "terms would be dropped (Issue #1079). HJBSemiLagrangianSolver discretises that "
+    "term, measured first order on an off-diagonal Sigma (Issue #2198), and reads a "
+    "constant tensor volatility from the same problem. Otherwise pass a scalar volatility "
+    "or a scalar-valued field (volatility_kind='field')."
+)
 
 
 class HJBGFDMSolver(BaseHJBSolver):
@@ -485,15 +501,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # D_ij d^2u/dx_i dx_j (i!=j) terms are never discretized. A tensor volatility is refused at
         # construction rather than solved as if it were isotropic (fail-fast per CLAUDE.md).
         if getattr(self.problem, "volatility_kind", None) == "tensor":
-            raise NotImplementedError(
-                "HJBGFDMSolver does not support a tensor volatility (volatility_kind='tensor'). "
-                "The GFDM Laplacian target (e_lap in joint_socp.py) has zero weight on "
-                "the cross-derivative column, so off-diagonal D_ij d^2u/dx_i dx_j "
-                "terms would be dropped (Issue #1079). HJBSemiLagrangianSolver discretises that "
-                "term, measured first order on an off-diagonal Sigma (Issue #2198), and reads a "
-                "constant tensor volatility from the same problem. Otherwise pass a scalar volatility "
-                "or a scalar-valued field (volatility_kind='field')."
-            )
+            raise NotImplementedError(_TENSOR_VOLATILITY_REFUSAL)
 
         # --- Resolve (scheme, application) from new API or legacy alias (v0.18.0) ---
         #
@@ -680,10 +688,10 @@ class HJBGFDMSolver(BaseHJBSolver):
         self._dmp_alpha_crit: float | None = None
         self._dmp_warned = False
 
-        # Issue #1316: retain the raw per-solve override for public-state compatibility.
+        # Issue #1316: retain the per-solve override (#2378: read by the shared override rule).
         # Issue #1725: normalize it once per solve into collocation space; every live
         # diffusion consumer reads `_solve_sigma`, so coefficient resolution cannot fork.
-        self._volatility_field_override: float | np.ndarray | Callable | None = None
+        self._volatility_override: float | np.ndarray | Callable | None = None
         self._solve_sigma: float | np.ndarray | None = None
 
         # LLF augmented diffusion (Issue #1059, paper P2 branch of thm:discrete_comparison).
@@ -2850,7 +2858,7 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         Handles, in precedence order:
         1. LLF per-node augmentation (point_idx given)
-        2. volatility_field override (Issue #1316) — the per-solve spatial diffusion
+        2. volatility override (Issue #1316) — the per-solve spatial diffusion
         3. problem.nu (legacy attribute)
         4. problem.volatility is a scalar → use directly
         5. otherwise → the same normalisation a solve uses (_resolve_sigma_for_solve)
@@ -2870,12 +2878,12 @@ class HJBGFDMSolver(BaseHJBSolver):
                 return float(self._solve_sigma[point_idx])
             return self._solve_sigma
 
-        # Issue #1316: the per-solve volatility_field override (the spatial diffusion
+        # Issue #1316: the per-solve volatility override (the spatial diffusion
         # the coupling layer / FP solver is using) is the authoritative diffusion source,
         # replacing the problem's volatility so HJB and FP stay convention-consistent. None (the
         # default) falls through to the byte-identical legacy path below.
-        if self._volatility_field_override is not None:
-            return self._resolve_diffusion_source(self._volatility_field_override, point_idx)
+        if self._volatility_override is not None:
+            return self._resolve_diffusion_source(self._volatility_override, point_idx)
 
         # Check for legacy "nu" attribute (optional)
         nu = getattr(self.problem, "nu", None)
@@ -2906,16 +2914,22 @@ class HJBGFDMSolver(BaseHJBSolver):
 
     def _resolve_sigma_for_solve(
         self,
-        volatility_field: float | np.ndarray | Callable | None,
+        volatility: float | np.ndarray | Callable | None,
         *,
         is_meshfree_input: bool,
     ) -> float | np.ndarray:
-        """Normalize one volatility source to a scalar or collocation-space ``(N,)`` field."""
-        problem_field = self.problem.volatility
-        source_is_problem_field = volatility_field is None or volatility_field is problem_field
+        """Normalize one volatility source to a scalar or collocation-space ``(N,)`` field.
 
-        if volatility_field is not None:
-            source = volatility_field
+        ``volatility`` is a per-solve override already read by ``resolve_volatility_override``, or
+        None for the problem's own. Which of the two it is decides the indexing of an array, and
+        nothing else does: before #2378 part 2a an override that WAS ``problem.volatility`` was
+        indexed as the problem's, which only mattered because ``MFGProblem.solve`` forwarded it.
+        """
+        problem_field = self.problem.volatility
+        source_is_problem_field = volatility is None
+
+        if volatility is not None:
+            source = volatility
         else:
             legacy_nu = getattr(self.problem, "nu", None)
             if legacy_nu is not None:
@@ -2966,7 +2980,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 sigma_grid = sigma
             else:
                 raise ValueError(
-                    "volatility_field shape mismatch: a grid-indexed scalar-volatility field "
+                    "volatility shape mismatch: a grid-indexed scalar-volatility field "
                     f"must have native shape {grid_shape} or flattened one-dimensional shape "
                     f"({grid_size},), got {sigma.shape}; collocation space has "
                     f"{self.n_points} points."
@@ -2975,7 +2989,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         else:
             if sigma.shape != (self.n_points,):
                 raise ValueError(
-                    "volatility_field shape mismatch: a meshfree scalar-volatility field "
+                    "volatility shape mismatch: a meshfree scalar-volatility field "
                     f"must have one-dimensional collocation shape ({self.n_points},), "
                     f"got {sigma.shape}."
                 )
@@ -2983,7 +2997,7 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         if resolved.shape != (self.n_points,):
             raise AssertionError(
-                "volatility_field normalization violated the collocation-space invariant: "
+                "volatility normalization violated the collocation-space invariant: "
                 f"expected ({self.n_points},), got {resolved.shape}."
             )
         return resolved
@@ -3005,14 +3019,16 @@ class HJBGFDMSolver(BaseHJBSolver):
     # Note: _build_monotonicity_constraints moved to MonotonicityEnforcer component
     # Note: _build_hamiltonian_gradient_constraints moved to MonotonicityEnforcer component
 
+    @retired_volatility_keywords
     def solve_hjb_system(
         self,
         M_density: np.ndarray | None = None,
         U_terminal: np.ndarray | None = None,
         U_coupling_prev: np.ndarray | None = None,
         show_progress: bool | None = None,
-        volatility_field: float | np.ndarray | Callable | None = None,
+        volatility: float | np.ndarray | Callable | None = None,
         source_term: Callable | None = None,
+        volatility_kind: str | None = None,
     ) -> np.ndarray:
         """
         Solve the HJB system using GFDM collocation method.
@@ -3034,24 +3050,31 @@ class HJBGFDMSolver(BaseHJBSolver):
                 which returns ``-S``. So the effective Hamiltonian is ``H_total = H - S``, NOT
                 ``H + S``: migrating a callable from the retired ``running_cost=`` channel
                 requires FLIPPING ITS SIGN, since ``running_cost = -source_term``.
-            volatility_field: Optional SDE-volatility override. Accepts a scalar,
+            volatility: Optional SDE-volatility override. Accepts a scalar,
                 an inspectable one-argument space-only callable ``sigma(x)`` evaluated
-                at each collocation point, or a
-                scalar-valued spatial array. Grid-indexed arrays may use the native
+                at each collocation point, or a scalar-valued spatial array declared
+                ``volatility_kind="field"``. Grid-indexed arrays may use the native
                 problem spatial shape or its flattened form and are mapped to
                 collocation points; meshfree arrays must have shape ``(n_points,)``.
-                If the native grid shape is also ``(d, d)``, pass the array through
-                this argument to distinguish a scalar grid field from tensor sigma.
                 Time-/density-varying callables, time-varying arrays, and tensor
-                volatility are unsupported.
+                volatility (``volatility_kind="tensor"``) are unsupported.
+            volatility_kind: "field" or "tensor" for an array volatility (#2378).
 
         Returns:
             (Nt, *spatial_shape) solution array
         """
-        # Retain the raw public argument and clear the previous solve's normalized value
-        # before validating this solve.
-        self._volatility_field_override = volatility_field
+        # Clear the previous solve's override and normalized value before validating this solve.
+        self._volatility_override = None
         self._solve_sigma = None
+        # An override is read by the one rule every solver uses (#2378); None stays None, so the
+        # problem's own volatility keeps its problem-geometry indexing in _resolve_sigma_for_solve.
+        if volatility is not None or volatility_kind is not None:
+            volatility, volatility_kind = resolve_volatility_override(
+                volatility, volatility_kind, problem=self.problem, consumer="HJBGFDMSolver.solve_hjb_system"
+            )
+            if volatility_kind == "tensor":
+                raise NotImplementedError(_TENSOR_VOLATILITY_REFUSAL)
+        self._volatility_override = volatility
 
         # Pick up any per-Picard resolved BC the coupling layer installed on the
         # geometry since construction (Issue #1118; matches FDM's per-solve re-read).
@@ -3137,7 +3160,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Issue #1725: resolve once, after the input representation is known and before
         # any interpolation, Newton probe, sparse assembly, LLF, DMP, or Howard path.
         self._solve_sigma = self._resolve_sigma_for_solve(
-            volatility_field,
+            volatility,
             is_meshfree_input=is_meshfree_input,
         )
         self._dmp_alpha_crit = None
@@ -3653,6 +3676,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # from the single source (control_cost.lagrangian), not a hardcoded (1/2)|alpha|^2. The
         # gate above guarantees a QuadraticControlCost, so L(alpha) = lambda/2 |alpha|^2.
         control_lagrangian = control_cost.lagrangian if control_cost is not None else None
+        assembly_sigma = self._sigma_for_assembly()
         howard = HJBHowardSolver(
             self.problem,
             stencil_provider=self,
@@ -3660,7 +3684,9 @@ class HJBGFDMSolver(BaseHJBSolver):
             running_cost=howard_running_cost,
             control_lagrangian=control_lagrangian,
             discretisation="central" if self.dimension == 1 else "upwind_projection",
-            volatility_field=self._sigma_for_assembly(),
+            volatility=assembly_sigma,
+            # _sigma_for_assembly yields a scalar or a collocation-space (N,) field, never a tensor.
+            volatility_kind="field" if isinstance(assembly_sigma, np.ndarray) else None,
             use_provider_bc_rows=True,  # Issue #1118 PR2a: shared value-form BC rows
         )
         return howard.solve_hjb_system(M_collocation, U_terminal_colloc)

@@ -26,7 +26,12 @@ from scipy.sparse.linalg import spsolve
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, scalar_volatility
+from mfgarchon.utils.pde_coefficients import (
+    diffusion_from_volatility,
+    resolve_volatility_override,
+    retired_volatility_keywords,
+    scalar_volatility,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -262,12 +267,13 @@ class WeakFormHJBSolver(BaseHJBSolver):
 
         return U_current
 
+    @retired_volatility_keywords
     def solve_hjb_system(
         self,
         M_density: NDArray | None = None,
         U_terminal: NDArray | None = None,
         U_coupling_prev: NDArray | None = None,
-        volatility_field: float | NDArray | None = None,
+        volatility: float | NDArray | None = None,
         source_term: Callable | None = None,
         use_newton: bool = False,
         max_newton_iterations: int = 30,
@@ -277,6 +283,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
         U_final_condition_at_T: NDArray | None = None,
         U_from_prev_picard: NDArray | None = None,
         cross_density=None,
+        volatility_kind: str | None = None,
         **kwargs,
     ) -> NDArray:
         """Solve the HJB system backward in time on the weak-form operators.
@@ -335,7 +342,9 @@ class WeakFormHJBSolver(BaseHJBSolver):
 
         # D = sigma^2 / 2 via the single-source converter (Issue #811) -- matches the FP
         # _diffusion_coefficient / adjoint mode. One scalar D: an array or callable is refused (#2376).
-        volatility = volatility_field if volatility_field is not None else self.problem.volatility
+        volatility, _ = resolve_volatility_override(
+            volatility, volatility_kind, problem=self.problem, consumer=f"{type(self).__name__}.solve_hjb_system"
+        )
         D = diffusion_from_volatility(scalar_volatility(volatility, consumer=type(self).__name__))
 
         U = np.zeros((Nt + 1, N))
