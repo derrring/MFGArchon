@@ -159,7 +159,7 @@ class BlockIterator(BaseCouplingIterator):
 
         self.hjb_solver = hjb_solver
         self.fp_solver = fp_solver
-        assert_paired_solver_sigma(hjb_solver, fp_solver, "BlockIterator")
+        assert_paired_solver_sigma(hjb_solver, fp_solver, "BlockIterator", problem=problem, override=volatility)
 
         # Parse method
         if isinstance(method, str):

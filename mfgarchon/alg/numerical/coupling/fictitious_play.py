@@ -142,8 +142,8 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         damp_value_function: bool = False,
         backend: str | BaseBackend | None = None,
         volatility: float | np.ndarray | Any | None = None,
-        volatility_kind: str | None = None,
         drift_field: np.ndarray | Any | None = None,
+        volatility_kind: str | None = None,
     ):
         super().__init__(problem)
         assert_bc_providers_resolvable(self.problem, "FictitiousPlayIterator")
@@ -153,7 +153,9 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         self.backend = resolve_backend(backend, "FictitiousPlayIterator")
         self.hjb_solver = hjb_solver
         self.fp_solver = fp_solver
-        assert_paired_solver_sigma(hjb_solver, fp_solver, "FictitiousPlayIterator")
+        assert_paired_solver_sigma(
+            hjb_solver, fp_solver, "FictitiousPlayIterator", problem=problem, override=volatility
+        )
         self.config = config
 
         # Fictitious play parameters

@@ -464,10 +464,10 @@ class FPGFDMSolver(BaseFPSolver):
         M_initial: np.ndarray | None = None,
         drift_field: np.ndarray | Callable | None = None,
         volatility: float | np.ndarray | Callable | None = None,
-        volatility_kind: str | None = None,
         source_term: Callable | None = None,
         show_progress: bool | None = None,
         m_initial_condition: np.ndarray | None = None,  # deprecated alias for M_initial (#2377)
+        volatility_kind: str | None = None,
     ) -> np.ndarray:
         """
         Solve FP system on collocation points using GFDM.

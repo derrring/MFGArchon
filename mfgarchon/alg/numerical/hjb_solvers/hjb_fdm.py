@@ -514,11 +514,11 @@ class HJBFDMSolver(BaseHJBSolver):
         U_terminal: NDArray | None = None,
         U_coupling_prev: NDArray | None = None,
         volatility: float | NDArray | None = None,
-        volatility_kind: str | None = None,
         progress_callback: Callable[[int], None] | None = None,  # Issue #640
         show_progress: bool | None = None,  # Issue #934
         # MMS verification support
         source_term: Callable | None = None,
+        volatility_kind: str | None = None,
         *,
         cross_density=None,  # Issue #1071: stacked (Nt+1, K*Nx) cross-density trajectory (lock-faithful)
     ) -> NDArray:

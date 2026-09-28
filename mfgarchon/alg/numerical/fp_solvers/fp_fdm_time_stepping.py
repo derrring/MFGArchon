@@ -693,7 +693,6 @@ def solve_fp_nd_full_system(
     show_progress: bool | None = None,
     backend: Any | None = None,
     volatility: float | np.ndarray | Any | None = None,
-    volatility_kind: str | None = None,
     advection_scheme: str = "divergence_upwind",
     # Callable drift support (Phase 2 - Issue #487)
     drift_field: Callable | None = None,
@@ -703,6 +702,7 @@ def solve_fp_nd_full_system(
     source_term: Callable | None = None,
     # Issue #919: Direct velocity field input
     velocity_field: np.ndarray | None = None,
+    volatility_kind: str | None = None,
 ) -> np.ndarray:
     """
     Solve multi-dimensional FP equation using full-dimensional sparse linear system.

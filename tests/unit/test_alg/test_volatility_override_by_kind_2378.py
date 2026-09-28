@@ -27,13 +27,17 @@ _ENTRY_POINTS = ("solve_fp_system", "solve_hjb_system", "__init__")
 
 
 def _override_takers() -> dict[str, tuple[object, bool]]:
-    """Every solver entry point in `mfgarchon.alg` that takes the override: name -> (function, is_method).
+    """Every solver entry point in `mfgarchon.alg` that takes a volatility override: name -> (function, is_method).
 
-    An entry point is a class's `solve_fp_system`, `solve_hjb_system` or `__init__`, or a module
-    function named `solve_*`, whose signature names both `volatility` and `volatility_kind`. Found by
-    walking the package, not listed, so a solver added later is in the population.
+    The population must not be defined by the property audited (the refusal), nor by what the part 2a
+    conversion added (`volatility_kind`): a function it missed would then be absent from the census and
+    from its own completeness check (#2420 review). So it is every concrete `solve_fp_system` /
+    `solve_hjb_system`, whatever its parameters, plus every `__init__` or module `solve_*` function
+    that names `volatility` or any retired keyword. Found by walking the package, so a solver added
+    later is in the population.
     """
     found: dict[str, tuple[object, bool]] = {}
+    volatility_names = {"volatility", *RETIRED_VOLATILITY_KEYWORDS}
     for info in pkgutil.walk_packages(mfgarchon.alg.__path__, "mfgarchon.alg."):
         module = importlib.import_module(info.name)
         for obj in vars(module).values():
@@ -46,8 +50,8 @@ def _override_takers() -> dict[str, tuple[object, bool]]:
             for qualname, func, is_method in members:
                 if not inspect.isfunction(func) or getattr(func, "__isabstractmethod__", False):
                     continue
-                params = inspect.signature(func).parameters
-                if "volatility" in params and "volatility_kind" in params:
+                is_solve_method = is_method and func.__name__ in ("solve_fp_system", "solve_hjb_system")
+                if is_solve_method or volatility_names & set(inspect.signature(func).parameters):
                     found[qualname] = (func, is_method)
     return found
 
@@ -154,7 +158,7 @@ def test_the_owner_returns_the_problems_own_volatility_and_passes_a_declared_ove
     assert resolve_volatility_override(vector_field, "field", problem=_OWNER_PROBLEM, consumer="probe")[1] == "field"
 
 
-def _problem_2d(n=9):
+def _problem_2d(n=9, volatility=0.3):
     from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
     from mfgarchon.core.mfg_problem import MFGProblem
     from mfgarchon.core.model import Conditions, Model
@@ -169,7 +173,7 @@ def _problem_2d(n=9):
         control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: -m, coupling_dm=lambda m: -1.0
     )
     problem = MFGProblem(
-        model=Model(hamiltonian=hamiltonian, volatility=0.3),
+        model=Model(hamiltonian=hamiltonian, volatility=volatility),
         domain=grid,
         conditions=Conditions(
             m_initial=lambda z: (
@@ -232,3 +236,27 @@ def test_fvm_refuses_an_all_equal_tensor_override_and_reads_a_constant_field_as_
     )
     scalar = FPFVMSolver(problem).solve_fp_system(m0, potential_field=U, volatility=0.45)
     np.testing.assert_array_equal(field, scalar)
+
+
+def test_a_pair_built_for_another_volatility_is_refused_unless_an_override_carries_one():
+    """#2420 review, blocker 1: a pair of solvers built for another problem's volatility.
+
+    Before part 2a, `MFGProblem.solve` forwarded its volatility as an override, so Expert Mode with a
+    pair built from a problem of volatility 0.3 solved at the calling problem's 0.6. With no forwarding
+    each solver reads its own problem, and the same call returned the 0.3 solve while the boundary
+    providers were handed 0.6: the review measured, on a 1-D pair, the other problem's solve returned
+    bit for bit. Now the coupling
+    loop refuses the mismatch by name; an explicit override, forwarded to both solvers and to the
+    providers, is still accepted.
+    """
+    from mfgarchon.alg.numerical.coupling import FixedPointIterator
+    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+
+    built_for, _ = _problem_2d(volatility=0.3)
+    solved, _ = _problem_2d(volatility=0.6)
+
+    with pytest.raises(ValueError, match=r"differs from the problem being solved \(solved=0\.6, solvers'=0\.3\)"):
+        solved.solve(hjb_solver=HJBFDMSolver(built_for), fp_solver=FPFDMSolver(built_for), max_iterations=1)
+
+    FixedPointIterator(solved, HJBFDMSolver(built_for), FPFDMSolver(built_for), volatility=0.6)

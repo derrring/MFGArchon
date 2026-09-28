@@ -73,7 +73,9 @@ def _volatilities_differ(a: Any, b: Any, kind_a: Any = None, kind_b: Any = None)
     return False
 
 
-def assert_paired_solver_sigma(hjb_solver: Any, fp_solver: Any, context: str) -> None:
+def assert_paired_solver_sigma(
+    hjb_solver: Any, fp_solver: Any, context: str, *, problem: Any = None, override: Any = None
+) -> None:
     """Fail loud if a coupled HJB / FP solver pair was built from problems with different volatility.
 
     Issue #1603 / #1081 / RFC #1574 (C14): each paired solver reads the volatility from its OWN
@@ -87,6 +89,14 @@ def assert_paired_solver_sigma(hjb_solver: Any, fp_solver: Any, context: str) ->
     (naming the sub-problem in ``context``). Scalars compare by value, and arrays by content and
     volatility_kind; before #2376 each problem's array was compared through its mean, so two fields
     with one mean passed. Two callables are not compared (see ``_volatilities_differ``).
+
+    With ``problem`` -- the one the coupling loop solves -- and no ``override``, the pair's volatility
+    must also be that problem's. Each solver reads its own problem's volatility, and the loop hands
+    ``problem``'s to the boundary-condition providers, so a pair built from another problem would
+    solve its interior at one volatility and resolve its boundary at another. Until #2378 part 2a,
+    ``MFGProblem.solve`` forwarded its volatility as an override and so papered over that case in
+    Expert Mode; it now raises here instead. An override is forwarded to both solvers and to the
+    providers, so it needs no such check.
     """
     hjb_problem, fp_problem = getattr(hjb_solver, "problem", None), getattr(fp_solver, "problem", None)
     hjb_volatility = getattr(hjb_problem, "volatility", None)
@@ -98,6 +108,17 @@ def assert_paired_solver_sigma(hjb_solver: Any, fp_solver: Any, context: str) ->
             f"(HJB={hjb_volatility!r}, FP={fp_volatility!r}); a coupled MFG pair is an adjoint pair and "
             f"must share it -- the Picard fixed point would correspond to neither problem. Build both "
             f"solvers from the same MFGProblem, or use create_paired_solvers. Issue #1603."
+        )
+    if problem is None or override is not None:
+        return
+    own, own_kind = getattr(problem, "volatility", None), getattr(problem, "volatility_kind", None)
+    if _volatilities_differ(own, hjb_volatility, own_kind, kinds[0]):
+        raise ValueError(
+            f"{context}: the solvers were built from a problem whose volatility differs from the problem "
+            f"being solved (solved={own!r}, solvers'={hjb_volatility!r}). With no volatility= override each "
+            f"solver reads its own problem's volatility, so the interior would diffuse at the solvers' value "
+            f"while the boundary conditions read this problem's. Build the solvers from the problem being "
+            f"solved, or pass volatility= (with volatility_kind for an array) to the coupling loop (#2378)."
         )
 
 
@@ -303,10 +324,11 @@ def resolve_source_kwarg(params: Any, source_term: Any, solver_name: str, method
     for GFDM, which is where that scheme discretises.
 
     Two outcomes, not the three ``resolve_volatility_kwarg`` has, and the reason is a default
-    rather than the nature of the quantity. ``MFGProblem.solve`` forwards ``problem.volatility``
-    **by default**, so the coupling loop hands a non-None override on every ordinary solve and
-    refusing those would be a refusal to run at all -- hence the third outcome, drop-when-
-    indistinguishable. ``compose_hjb_source`` returns ``None`` unless the user set a field, so a
+    rather than the nature of the quantity. ``MFGProblem.solve`` forwarded ``problem.volatility``
+    **by default** until #2378 part 2a, so the coupling loop handed a non-None override on every
+    ordinary solve and refusing those would have been a refusal to run at all -- hence the third
+    outcome, drop-when-indistinguishable, which now serves a caller who passes the problem's own
+    volatility explicitly. ``compose_hjb_source`` returns ``None`` unless the user set a field, so a
     non-None source is always something the caller asked for.
 
     ~~a composed source has no such case~~ [CORRECTED 2026-09-04] It does: a ``source_term_hjb``

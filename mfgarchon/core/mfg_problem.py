@@ -2665,10 +2665,6 @@ See: docs/migration/HAMILTONIAN_API.md"""
         # ─────────────────────────────────────────────────────────────────────
         # Create fixed-point iterator with selected/validated solvers
         # ─────────────────────────────────────────────────────────────────────
-        # Issue #1248: forward the problem's volatility, as supplied, so both the HJB and FP
-        # solvers receive the full SDE volatility (array or callable) rather than a collapsed
-        # scalar (#2376).
-        #
         # Issue #1155: thread anderson_memory and backend from config to iterator.
         from mfgarchon.config.translator import (
             backend_config_to_kwargs,
@@ -2686,8 +2682,10 @@ See: docs/migration/HAMILTONIAN_API.md"""
             fp_solver=fp_solver,
             config=config,
             # No volatility= override: each solver reads this problem's own volatility, with its
-            # declared kind. Until #2378 part 2a this forwarded self._volatility without the kind,
-            # and ten sites told it apart from a user override by identity.
+            # declared kind, so both the HJB and FP solvers see the full volatility, as supplied
+            # (#1248, #2376). Until #2378 part 2a this forwarded self._volatility without the kind,
+            # and ten sites told it apart from a user override by identity. A pair built from another
+            # problem's volatility is refused by the iterator's pairing guard (#2420 review).
             **_iterator_extra_kw,
             **_backend_kw,
         )

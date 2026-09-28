@@ -496,8 +496,8 @@ class BaseHJBSolver(BaseNumericalSolver):
         U_terminal: np.ndarray,
         U_coupling_prev: np.ndarray,
         volatility: float | np.ndarray | None = None,
-        volatility_kind: str | None = None,
         source_term: Callable | None = None,
+        volatility_kind: str | None = None,
     ) -> np.ndarray:
         """
         Solve the HJB system given density evolution and boundary conditions.

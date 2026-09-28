@@ -148,7 +148,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
         self.hjb_solver = hjb_solver
         self.fp_solver = fp_solver
-        assert_paired_solver_sigma(hjb_solver, fp_solver, "NewtonMFGSolver")
+        assert_paired_solver_sigma(hjb_solver, fp_solver, "NewtonMFGSolver", problem=problem, override=volatility)
 
         # Picard warm-up parameters
         self.picard_warmup = picard_warmup

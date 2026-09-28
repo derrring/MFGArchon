@@ -139,13 +139,13 @@ class FixedPointIterator(BaseCouplingIterator):
         anderson_beta: float = 1.0,
         backend: str | BaseBackend | None = None,
         volatility: float | np.ndarray | Any | None = None,  # Phase 2.3
-        volatility_kind: str | None = None,
         drift_field: np.ndarray | Any | None = None,  # Phase 2.3
         adaptive_relaxation: bool = False,
         adaptive_relaxation_decay: float = 0.5,
         adaptive_relaxation_min: float = 0.05,
         relaxation_schedule: str = "constant",
         relaxation_schedule_M: str | None = None,
+        volatility_kind: str | None = None,
         **kwargs: Any,
     ):
         """
@@ -200,7 +200,7 @@ class FixedPointIterator(BaseCouplingIterator):
         # Single-sourced to assert_paired_solver_sigma (RFC #1574 C14) so every coupling loop shares it.
         # A volatility override needs no guard of its own: resolve_volatility_kwarg forwards it
         # to both sides or refuses the solve (#1783).
-        assert_paired_solver_sigma(hjb_solver, fp_solver, "FixedPointIterator")
+        assert_paired_solver_sigma(hjb_solver, fp_solver, "FixedPointIterator", problem=problem, override=volatility)
 
         # Anderson acceleration support
         self.use_anderson = use_anderson

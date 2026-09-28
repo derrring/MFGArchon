@@ -257,11 +257,11 @@ class FPSLSolver(BaseFPSolver):
         M_initial: np.ndarray | None = None,
         potential_field: np.ndarray | None = None,
         volatility: float | np.ndarray | None = None,
-        volatility_kind: str | None = None,
         source_term: Callable | None = None,
         show_progress: bool | None = None,
         # Deprecated parameters
         drift_field: np.ndarray | None = None,  # Deprecated: renamed to potential_field
+        volatility_kind: str | None = None,
     ) -> np.ndarray:
         """
         Solve FP system forward in time using Adjoint Semi-Lagrangian method.

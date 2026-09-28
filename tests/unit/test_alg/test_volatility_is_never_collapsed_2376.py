@@ -206,18 +206,23 @@ def _hjb_fdm_2d(problem, **override):
     return HJBFDMSolver(problem).solve_hjb_system(M, U_terminal, np.zeros_like(M), **override)
 
 
-# The problem's own volatility reaches a solver as the None default, and a caller can pass the same
-# object back as a per-solve override. Until #2378 part 2a MFGProblem.solve() did the second, and an
-# identity arm read the forwarded object by the problem's kind. The override now declares its kind
-# like any other and goes through the same dispatch, so every kind-dispatch pin below runs on both.
+# The problem's own volatility reaches a solver as the None default, and a caller can pass it back as a
+# per-solve override. Until #2378 part 2a MFGProblem.solve() did the second, and an identity arm read the
+# forwarded object by the problem's kind. The override now declares its kind like any other and goes
+# through the same dispatch, so every kind-dispatch pin below runs on both. The override is a COPY: the
+# problem's own object would let a dispatch keyed on identity with problem.volatility pass these pins,
+# which is the shape the identity arms had (#2420 review: 112 and 94 tests green with one reinstated).
 ROUTES = pytest.mark.parametrize("route", ["none", "same-object"])
 
 
 def _route(problem, route):
     if route == "none":
         return {}
+    volatility = problem.volatility
+    if isinstance(volatility, np.ndarray):
+        volatility = volatility.copy()
     kind = {"volatility_kind": problem.volatility_kind} if problem.volatility_kind is not None else {}
-    return {"volatility": problem.volatility, **kind}
+    return {"volatility": volatility, **kind}
 
 
 def _hjb_fdm_reads_the_diagonal_tensor(route):
