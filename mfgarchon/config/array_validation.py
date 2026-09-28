@@ -57,8 +57,8 @@ class MFGGridConfig(BaseConfig):
     @model_validator(mode="before")
     @classmethod
     def _refuse_retired_sigma(cls, data: Any) -> Any:
-        """``sigma=`` is retired (#2378 part 2b). Refused by name: this model ignores unknown fields,
-        so without this an old ``sigma=`` would be dropped and the default volatility used."""
+        """``sigma=`` is retired (#2378 part 2b). ``extra="forbid"`` already rejects it as an unknown
+        field; this refusal is there so the error names ``volatility=``."""
         if isinstance(data, dict) and "sigma" in data:
             raise ValueError("MFGGridConfig(sigma=...) is retired (#2378); pass volatility=, the SDE volatility.")
         return data

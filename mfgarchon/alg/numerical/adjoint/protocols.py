@@ -72,7 +72,8 @@ class AdjointCapableFPSolver(Protocol):
         self,
         m_current: NDArray[np.floating],
         A_advection_T: sparse.csr_matrix,
-        volatility: float,
+        volatility: float | NDArray[np.floating] | None = None,
+        time: float = 0.0,
         volatility_kind: str | None = None,
     ) -> NDArray[np.floating]:
         """

@@ -721,7 +721,7 @@ def compute_hjb_residual(
     problem: MFGProblem,
     t_idx_n: int,  # Time index for U_n
     backend=None,  # Backend for MPS/CUDA support
-    sigma_at_n: float | np.ndarray | None = None,  # Diffusion at time t_n
+    sigma_at_n: float | np.ndarray | None = None,  # SDE volatility at t_n (not D = sigma^2/2)
     use_upwind: bool = True,  # Use the upwind momentum (True) or central (False)
     bc: BoundaryConditions | None = None,  # Boundary conditions (Issue #542 fix)
     domain_bounds: np.ndarray | None = None,  # Domain bounds for BC
@@ -1125,7 +1125,7 @@ def compute_hjb_jacobian(
     problem: MFGProblem,
     t_idx_n: int,
     backend=None,  # Backend for MPS/CUDA support
-    sigma_at_n: float | np.ndarray | None = None,  # Diffusion at time t_n
+    sigma_at_n: float | np.ndarray | None = None,  # SDE volatility at t_n (not D = sigma^2/2)
     use_upwind: bool = True,  # Use the upwind momentum (True) or central (False)
     bc: BoundaryConditions | None = None,  # Boundary conditions (Issue #542 fix)
     domain_bounds: np.ndarray | None = None,  # Domain bounds for BC
@@ -1378,7 +1378,7 @@ def newton_hjb_step(
     problem: MFGProblem,
     t_idx_n: int,
     backend=None,  # Add backend parameter for MPS/CUDA support
-    sigma_at_n: float | np.ndarray | None = None,  # Diffusion at time t_n
+    sigma_at_n: float | np.ndarray | None = None,  # SDE volatility at t_n (not D = sigma^2/2)
     use_upwind: bool = True,  # Use the upwind momentum (True) or central (False)
     bc: BoundaryConditions | None = None,  # Boundary conditions (Issue #542 fix)
     domain_bounds: np.ndarray | None = None,  # Domain bounds for BC
@@ -1492,7 +1492,7 @@ def solve_hjb_timestep_newton(
     newton_tolerance: float | None = None,
     t_idx_n: int | None = None,  # time index for U_n being solved
     backend: BaseBackend | None = None,
-    sigma_at_n: float | np.ndarray | None = None,  # Diffusion at time t_n
+    sigma_at_n: float | np.ndarray | None = None,  # SDE volatility at t_n (not D = sigma^2/2)
     use_upwind: bool = True,  # Use the upwind momentum (True) or central (False)
     bc: BoundaryConditions | None = None,  # Boundary conditions (Issue #542 fix)
     domain_bounds: np.ndarray | None = None,  # Domain bounds for BC
@@ -1550,7 +1550,7 @@ def solve_hjb_timestep_newton(
             problem,
             t_idx_n,
             backend,  # Pass backend for MPS/CUDA support
-            sigma_at_n,  # Pass diffusion field
+            sigma_at_n,  # the volatility at t_n
             use_upwind,  # Pass advection scheme flag
             bc=bc,
             domain_bounds=domain_bounds,
@@ -1874,7 +1874,7 @@ def solve_hjb_system_backward(
             newton_tolerance=newton_tolerance,
             t_idx_n=n_idx_hjb,
             backend=backend,  # Pass backend for acceleration
-            sigma_at_n=sigma_at_n,  # Pass diffusion at time n
+            sigma_at_n=sigma_at_n,  # the volatility at t_n
             use_upwind=use_upwind,  # Pass advection scheme flag
             bc=bc,  # Pass BC for Issue #542 fix
             domain_bounds=domain_bounds,

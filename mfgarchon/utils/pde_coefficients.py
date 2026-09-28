@@ -1128,10 +1128,12 @@ def check_adi_compatibility(
     Parameters
     ----------
     volatility : float | ndarray
-        SDE volatility σ (the diffusion is D = σ²/2):
-        - Scalar: σ² (isotropic) - ADI OK
-        - Vector (d,): diagonal [σ₁², σ₂², ...] - ADI OK
-        - Matrix (d, d): full tensor Σ - check off-diagonal
+        SDE volatility Σ (the diffusion is D = ΣΣᵀ/2):
+        - Scalar σ: isotropic - ADI OK
+        - Vector (d,): diagonal Σ = diag(σ₁, σ₂, ...) - ADI OK
+        - Matrix (d, d): Σ - its off-diagonal is checked. A diagonal Σ gives a diagonal D, so this
+          is sufficient for ADI; a non-diagonal Σ with orthogonal rows also gives a diagonal D and
+          is reported incompatible anyway.
         - Spatially varying (..., d, d): check all tensors
     tolerance : float, optional
         Threshold for off-diagonal entries (default: 1e-10)

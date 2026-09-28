@@ -53,9 +53,14 @@ def _functions_taking_sigma() -> set[str]:
 
 
 def test_no_function_takes_sigma_for_the_volatility():
-    """The population is every function and method in the package, whatever its role; the property
-    audited is a parameter spelt `sigma`. A new one must either be one of the listed quantities or be
-    named `volatility`."""
+    """The population is every plain function defined at module level in the package and every
+    function, classmethod and staticmethod defined in one of its classes, whatever its role; the
+    property audited is a parameter spelt `sigma`. A new one must either be one of the listed
+    quantities or be named `volatility`.
+
+    Outside it: nested functions, `@jit`-compiled ones (a jax `PjitFunction` is not a function), and
+    pydantic fields. At da768800 an AST scan, which sees the first two, found the same seven; the one
+    pydantic field that carried the volatility has its own test below."""
     found = _functions_taking_sigma()
     assert "mfgarchon.core.stochastic.noise_processes:OrnsteinUhlenbeckProcess.__init__" in found, (
         "reach control: the walk no longer finds a known `sigma` parameter"
@@ -113,8 +118,8 @@ def test_the_renamed_public_api_refuses_sigma_by_name():
     for func, args in _renamed_public_api():
         try:
             with warnings.catch_warnings():
-                # The alg.numerical.adjoint builders are deprecated aliases; their own warning is not
-                # what this test measures.
+                # The geometry.boundary builders are deprecated aliases of the alg.numerical.adjoint
+                # ones; their own warning is not what this test measures.
                 warnings.simplefilter("ignore", DeprecationWarning)
                 func(*args, sigma=0.3)
         except TypeError as exc:
@@ -134,9 +139,9 @@ def test_the_renamed_public_api_refuses_sigma_by_name():
             func(sigma_kind="tensor")
 
 
-def test_the_grid_config_refuses_sigma_rather_than_ignoring_it():
-    """The pydantic model ignores unknown fields, so without a refusal `sigma=0.3` would be dropped and
-    the default volatility 0.1 used, silently."""
+def test_the_grid_config_refusal_names_volatility():
+    """`extra="forbid"` already rejects `sigma=` as an unknown field; the refusal makes the error name
+    `volatility=`."""
     from mfgarchon.config.array_validation import MFGGridConfig
 
     assert MFGGridConfig(Nx=100, Nt=1000, volatility=0.3).volatility == 0.3
