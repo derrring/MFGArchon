@@ -123,10 +123,15 @@ def assert_paired_solver_sigma(
         theirs_kind = getattr(solver_problem, "volatility_kind", None)
         distinct_callables = callable(own) and callable(theirs) and own is not theirs
         if distinct_callables or _volatilities_differ(own, theirs, own_kind, theirs_kind):
+            why = (
+                "; two distinct callables count as different, since they cannot be compared"
+                if distinct_callables
+                else ""
+            )
             raise ValueError(
                 f"{context}: the {side} solver was built from a problem whose volatility differs from the "
-                f"problem being solved (solved={own!r}, solver's={theirs!r}; two distinct callables count as "
-                f"different, since they cannot be compared). With no volatility= override each solver reads "
+                f"problem being solved (solved={own!r}, solver's={theirs!r}{why}). With no volatility= override "
+                f"each solver reads "
                 f"its own problem's volatility, so the interior would diffuse at the solver's value while the "
                 f"boundary conditions read this problem's. Build the solvers from the problem being solved, or "
                 f"pass volatility= (with volatility_kind for an array) to the coupling loop (#2378)."

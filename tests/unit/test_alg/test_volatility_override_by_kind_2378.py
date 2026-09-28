@@ -283,8 +283,9 @@ def test_every_coupling_loop_refuses_a_pair_built_for_another_volatility(loop):
     cls = _loops()[loop]
     built_for, _ = _problem_2d(volatility=0.3)
     solved, _ = _problem_2d(volatility=0.6)
-    with pytest.raises(ValueError, match=r"HJB solver was built from a problem whose volatility differs"):
+    with pytest.raises(ValueError, match=r"HJB solver was built from a problem whose volatility differs") as refusal:
         cls(solved, HJBFDMSolver(built_for), FPFDMSolver(built_for))
+    assert "callables" not in str(refusal.value), "a scalar mismatch must not be explained as a callable one"
     cls(solved, HJBFDMSolver(built_for), FPFDMSolver(built_for), volatility=0.6)
 
     def sigma_low(t, x, m):
