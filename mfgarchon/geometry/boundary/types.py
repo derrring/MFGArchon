@@ -778,7 +778,7 @@ class BCSegment:
             t: Time
             state: Optional iteration state dict for BCValueProvider resolution
                    (Issue #625). Required if value is a provider. Standard keys:
-                   'm_current', 'U_current', 'geometry', 'sigma', 'iteration'.
+                   'm_current', 'U_current', 'geometry', 'volatility', 'iteration'.
 
         Returns:
             BC value at this point and time

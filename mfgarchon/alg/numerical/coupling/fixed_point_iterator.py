@@ -570,7 +570,7 @@ class FixedPointIterator(BaseCouplingIterator):
                     "geometry": self.problem.geometry,
                     # The volatility the solve uses, as supplied; a scalar-only provider declares
                     # itself with scalar_volatility (#2376).
-                    "sigma": self.volatility if self.volatility is not None else self.problem.volatility,
+                    "volatility": self.volatility if self.volatility is not None else self.problem.volatility,
                     "iteration": iiter,
                 }
 

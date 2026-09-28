@@ -394,7 +394,7 @@ class FPSLSolver(BaseFPSolver):
         m: np.ndarray,
         alpha: np.ndarray,
         dt: float,
-        sigma: float,
+        volatility: float,
     ) -> np.ndarray:
         """
         One Adjoint Semi-Lagrangian step for 1D Fokker-Planck equation.
@@ -407,7 +407,7 @@ class FPSLSolver(BaseFPSolver):
             m: Current density, shape (Nx,)
             alpha: Velocity field, shape (Nx,)
             dt: Time step
-            sigma: Diffusion coefficient
+            volatility: SDE volatility σ (the diffusion is D = σ²/2)
 
         Returns:
             Density at next time step, shape (Nx,)
@@ -463,7 +463,7 @@ class FPSLSolver(BaseFPSolver):
             # carry a half weight, so summing would double-count them (Issue #1820).
             m_star = m_star.copy()
             enforce_periodic_value_nd(m_star, axis=0)
-            return solve_crank_nicolson_diffusion_1d(m_star, dt, sigma, self.x_grid, bc_type="periodic")
+            return solve_crank_nicolson_diffusion_1d(m_star, dt, volatility, self.x_grid, bc_type="periodic")
 
         # Zero-flux path. Issue #708 recorded this stencil as an FV choice specific to this
         # solver -- "the standard ghost-point strong-form method breaks the integral of m". #2237
@@ -483,7 +483,7 @@ class FPSLSolver(BaseFPSolver):
         # #2243 applied the correction. On #2237's own MMS this one parameter was the whole gap:
         # 1.989e-03 -> 2.806e-05, landing exactly on `FPSLJacobianSolver`, which has had `mirror`
         # all along. The sigma=0 control is unchanged at 6.458e-13, so the transport is untouched.
-        m_new = neumann_cn_step(m_star, dt, sigma, self.dx, treatment="mirror")
+        m_new = neumann_cn_step(m_star, dt, volatility, self.dx, treatment="mirror")
 
         # Ensure non-negativity
         m_new = self._clip_nonneg(m_new)
@@ -495,7 +495,7 @@ class FPSLSolver(BaseFPSolver):
         m: np.ndarray,
         alpha: tuple[np.ndarray, ...],
         dt: float,
-        sigma: float,
+        volatility: float,
     ) -> np.ndarray:
         """
         One Adjoint Semi-Lagrangian step for nD Fokker-Planck equation.
@@ -508,7 +508,7 @@ class FPSLSolver(BaseFPSolver):
             m: Current density, shape grid_shape
             alpha: Velocity field tuple, each element shape grid_shape
             dt: Time step
-            sigma: Diffusion coefficient
+            volatility: SDE volatility σ (the diffusion is D = σ²/2)
 
         Returns:
             Density at next time step, shape grid_shape
@@ -585,7 +585,7 @@ class FPSLSolver(BaseFPSolver):
         m_new = adi_diffusion_step(
             U_star=m_star,
             dt=dt,
-            sigma=sigma,
+            volatility=volatility,
             spacing=self.spacing,
             grid_shape=self.grid_shape,
             bc_type=self._get_diffusion_bc_type(),

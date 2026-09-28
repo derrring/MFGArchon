@@ -446,14 +446,14 @@ def _tridiagonal_solve_numpy(a: JAXArray, b: JAXArray, c: JAXArray, d: JAXArray)
 
 
 @jit
-def compute_hamiltonian(u_x: JAXArray, m: JAXArray, sigma: float) -> JAXArray:
+def compute_hamiltonian(u_x: JAXArray, m: JAXArray, volatility: float) -> JAXArray:
     """
     Compute Hamiltonian for HJB equation.
 
     Args:
         u_x: Spatial derivative of value function
         m: Density function
-        sigma: Diffusion coefficient
+        volatility: SDE volatility σ; not read by this function (#2378 part 2b renamed it from sigma)
 
     Returns:
         Hamiltonian value
@@ -482,13 +482,13 @@ def compute_optimal_control(u_x: JAXArray) -> JAXArray:
 
 
 @jit
-def compute_drift(u_x: JAXArray, sigma: float) -> JAXArray:
+def compute_drift(u_x: JAXArray, volatility: float) -> JAXArray:
     """
     Compute drift term for Fokker-Planck equation.
 
     Args:
         u_x: Spatial derivative of value function
-        sigma: Diffusion coefficient
+        volatility: SDE volatility σ; not read by this function (#2378 part 2b renamed it from sigma)
 
     Returns:
         Drift term

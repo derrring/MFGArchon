@@ -43,7 +43,7 @@ def add_boundary_no_flux_entries(
     shape: tuple[int, ...],
     ndim: int,
     dt: float,
-    sigma: float,
+    volatility: float,
     coupling_coefficient: float,
     spacing: tuple[float, ...],
     u_flat: np.ndarray,
@@ -72,7 +72,7 @@ def add_boundary_no_flux_entries(
     diagonal_value = 1.0 / dt
 
     # Diffusion coefficient D = sigma^2/2
-    D = diffusion_from_volatility(sigma)
+    D = diffusion_from_volatility(volatility)
 
     # For each dimension, check if we're at a boundary in that dimension
     for d in range(ndim):
@@ -228,7 +228,7 @@ def add_boundary_no_flux_entries_conservative(
     shape: tuple[int, ...],
     ndim: int,
     dt: float,
-    sigma: float,
+    volatility: float,
     coupling_coefficient: float,
     spacing: tuple[float, ...],
     u_flat: np.ndarray,
@@ -252,7 +252,7 @@ def add_boundary_no_flux_entries_conservative(
     diagonal_value = 1.0 / dt
 
     # Diffusion coefficient D = sigma^2/2
-    D = diffusion_from_volatility(sigma)
+    D = diffusion_from_volatility(volatility)
 
     # For each dimension, check if we're at a boundary in that dimension
     for d in range(ndim):

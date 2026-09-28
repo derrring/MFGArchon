@@ -685,10 +685,10 @@ class TestStrictAdjointPerPointSigma:
 
         m_pp = m0.copy()
         for _ in range(30):
-            m_pp = solver.solve_fp_step_adjoint_mode(m_pp, a_t_zero, sigma=sigma_field)
+            m_pp = solver.solve_fp_step_adjoint_mode(m_pp, a_t_zero, volatility=sigma_field, volatility_kind="field")
         m_mc = m0.copy()
         for _ in range(30):
-            m_mc = solver.solve_fp_step_adjoint_mode(m_mc, a_t_zero, sigma=float(np.mean(sigma_field)))
+            m_mc = solver.solve_fp_step_adjoint_mode(m_mc, a_t_zero, volatility=float(np.mean(sigma_field)))
 
         assert abs(float(w @ m_pp) - 1.0) < 1e-9, f"per-point strict-adjoint leaked mass: {float(w @ m_pp):.8f}"
         assert np.all(m_pp >= -1e-12), "per-point strict-adjoint produced a negative density"

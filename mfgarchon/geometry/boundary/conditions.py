@@ -265,7 +265,7 @@ class BoundaryConditions:
 
         Args:
             state: Iteration state dict passed to provider.compute().
-                   Standard keys: 'm_current', 'U_current', 'geometry', 'sigma'.
+                   Standard keys: 'm_current', 'U_current', 'geometry', 'volatility'.
 
         Returns:
             New BoundaryConditions instance with concrete values (no providers)

@@ -424,7 +424,9 @@ class BlockIterator(BaseCouplingIterator):
             if self.adjoint_verify:
                 self._verify_adjoint_at_step(U_k, M_current, k)
 
-            M_next = self.fp_solver.solve_fp_step_adjoint_mode(M_current, A_fp, sigma=sigma, time=k * self.problem.dt)
+            M_next = self.fp_solver.solve_fp_step_adjoint_mode(
+                M_current, A_fp, volatility=sigma, time=k * self.problem.dt, volatility_kind=sigma_kind
+            )
             M_solution[k + 1] = M_next
 
         return M_solution

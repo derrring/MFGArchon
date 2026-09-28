@@ -145,7 +145,7 @@ def test_the_shipped_adjoint_consistent_config_is_unchanged(state):
                 bc_type=BCType.ROBIN,
                 alpha=0.0,
                 beta=1.0,
-                value=AdjointConsistentProvider(side="left", sigma=0.4),
+                value=AdjointConsistentProvider(side="left", volatility=0.4),
                 boundary="x_min",
             ),
             BCSegment(
@@ -153,7 +153,7 @@ def test_the_shipped_adjoint_consistent_config_is_unchanged(state):
                 bc_type=BCType.ROBIN,
                 alpha=0.0,
                 beta=1.0,
-                value=AdjointConsistentProvider(side="right", sigma=0.4),
+                value=AdjointConsistentProvider(side="right", volatility=0.4),
                 boundary="x_max",
             ),
         ],

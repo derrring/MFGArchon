@@ -58,7 +58,7 @@ class TestADIAsymmetricSigmaRaises:
         assert not np.allclose(sigma_asym, sigma_asym.T), "Setup: tensor must be asymmetric"
 
         with pytest.raises(ValueError, match="symmetric"):
-            adi_diffusion_step(U, dt=0.01, sigma=sigma_asym, spacing=spacing, grid_shape=grid_shape)
+            adi_diffusion_step(U, dt=0.01, volatility=sigma_asym, spacing=spacing, grid_shape=grid_shape)
 
     def test_symmetric_off_diagonal_does_not_raise(self) -> None:
         """Symmetric (d,d) sigma with off-diagonal must NOT raise."""
@@ -72,7 +72,7 @@ class TestADIAsymmetricSigmaRaises:
         assert np.allclose(sigma_sym, sigma_sym.T), "Setup: tensor must be symmetric"
 
         # Should not raise; cross-derivative is applied
-        U_out = adi_diffusion_step(U, dt=0.01, sigma=sigma_sym, spacing=spacing, grid_shape=grid_shape)
+        U_out = adi_diffusion_step(U, dt=0.01, volatility=sigma_sym, spacing=spacing, grid_shape=grid_shape)
         assert U_out.shape == grid_shape
 
     def test_symmetric_off_diagonal_cross_term_applied(self) -> None:
@@ -93,12 +93,12 @@ class TestADIAsymmetricSigmaRaises:
 
         # Diagonal sigma: no cross term
         sigma_diag = np.array([[0.1, 0.0], [0.0, 0.1]])
-        U_diag = adi_diffusion_step(U.copy(), dt=0.01, sigma=sigma_diag, spacing=spacing, grid_shape=grid_shape)
+        U_diag = adi_diffusion_step(U.copy(), dt=0.01, volatility=sigma_diag, spacing=spacing, grid_shape=grid_shape)
 
         # Full symmetric sigma with nonzero off-diagonal: cross term is applied
         b = 0.05
         sigma_full = np.array([[0.1, b], [b, 0.1]])
-        U_full = adi_diffusion_step(U.copy(), dt=0.01, sigma=sigma_full, spacing=spacing, grid_shape=grid_shape)
+        U_full = adi_diffusion_step(U.copy(), dt=0.01, volatility=sigma_full, spacing=spacing, grid_shape=grid_shape)
 
         # Results must differ at interior points (cross-derivative contribution nonzero)
         interior = np.s_[1:-1, 1:-1]

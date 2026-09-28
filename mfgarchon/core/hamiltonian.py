@@ -64,7 +64,7 @@ import math
 import numbers
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, NoReturn, Protocol
 
 import numpy as np
 
@@ -1030,7 +1030,7 @@ class HamiltonianValues:
         Hamiltonian value, shape ``(N,)``.
     dH_dp : NDArray
         Momentum gradient ``∂H/∂p``, shape ``(N, d)``. Drift ``α* = -sign · ∂H/∂p``.
-    sigma : NDArray
+    volatility : NDArray
         PHYSICAL volatility σ, ALWAYS an array — shape ``(N,)`` (isotropic) or
         ``(N, d, d)`` (anisotropic). This is σ, NOT the diffusion coefficient
         ``D = σ²/2`` (folded at the stencil by ``diffusion_from_volatility``) and
@@ -1039,7 +1039,14 @@ class HamiltonianValues:
 
     H: NDArray
     dH_dp: NDArray
-    sigma: NDArray
+    volatility: NDArray
+
+    @property
+    def sigma(self) -> NoReturn:
+        raise AttributeError(
+            "HamiltonianValues.sigma is retired (#2378 part 2b); the physical volatility it held is "
+            "HamiltonianValues.volatility."
+        )
 
 
 class Regularizer(Protocol):
@@ -1181,7 +1188,7 @@ class HamiltonianBase(MFGOperatorBase):
         return HamiltonianValues(
             H=self.evaluate_H(state),
             dH_dp=self.evaluate_dp(state),
-            sigma=self._resolve_physical_sigma(state),
+            volatility=self._resolve_physical_sigma(state),
         )
 
     def _resolve_physical_sigma(self, state: HEvalState) -> NDArray:

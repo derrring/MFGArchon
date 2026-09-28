@@ -36,6 +36,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.sparse.linalg import LinearOperator
 
+from mfgarchon.utils.pde_coefficients import retired_sigma_keyword
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -143,9 +145,10 @@ class DiffusionOperator(LinearOperator):
         super().__init__(shape=(N, N), dtype=np.float64)
 
     @classmethod
+    @retired_sigma_keyword
     def from_volatility(
         cls,
-        sigma: float | NDArray,
+        volatility: float | NDArray,
         spacings: Sequence[float],
         field_shape: tuple[int, ...] | int,
         bc: BoundaryConditions | None = None,
@@ -160,10 +163,10 @@ class DiffusionOperator(LinearOperator):
         """
         from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, validate_symmetric_psd
 
-        if np.isscalar(sigma):
-            D: float | NDArray = diffusion_from_volatility(float(sigma))
+        if np.isscalar(volatility):
+            D: float | NDArray = diffusion_from_volatility(float(volatility))
         else:
-            S = np.asarray(sigma, dtype=float)
+            S = np.asarray(volatility, dtype=float)
             if S.ndim == 0:
                 D = diffusion_from_volatility(S)
             elif S.ndim == 1:
@@ -348,7 +351,7 @@ def apply_diffusion(
 
     Example:
         >>> from mfgarchon.operators.differential.diffusion import apply_diffusion
-        >>> result = apply_diffusion(u, sigma=0.1, spacings=[dx, dy], bc=bc)
+        >>> result = apply_diffusion(u, coefficient=0.1, spacings=[dx, dy], bc=bc)
     """
     op = DiffusionOperator(
         coefficient=coefficient,

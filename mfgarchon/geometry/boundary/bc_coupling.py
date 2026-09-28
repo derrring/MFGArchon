@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from mfgarchon.utils.deprecation import deprecated
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, retired_sigma_keyword
 
 # Import from submodules directly (deprecated module, see Issue #704)
 from .conditions import BoundaryConditions
@@ -62,10 +62,11 @@ def compute_boundary_log_density_gradient_1d(
     since="v0.17.0",
     replacement="Use mfgarchon.alg.numerical.adjoint.create_adjoint_consistent_bc_1d instead.",
 )
+@retired_sigma_keyword
 def create_adjoint_consistent_bc_1d(
     m_current: NDArray[np.floating],
     dx: float,
-    sigma: float,
+    volatility: float,
     domain_bounds: NDArray[np.floating] | None = None,
     regularization: float = 1e-10,
 ) -> BoundaryConditions:
@@ -82,7 +83,7 @@ def create_adjoint_consistent_bc_1d(
     grad_ln_m_left = -(ln_m[1] - ln_m[0]) / dx
     grad_ln_m_right = (ln_m[-1] - ln_m[-2]) / dx
 
-    diffusion_coeff = diffusion_from_volatility(sigma)
+    diffusion_coeff = diffusion_from_volatility(volatility)
     value_left = -diffusion_coeff * grad_ln_m_left
     value_right = -diffusion_coeff * grad_ln_m_right
 
@@ -120,10 +121,11 @@ def create_adjoint_consistent_bc_1d(
     since="v0.17.0",
     replacement="Use mfgarchon.alg.numerical.adjoint.compute_adjoint_consistent_bc_values instead.",
 )
+@retired_sigma_keyword
 def compute_adjoint_consistent_bc_values(
     m_current: NDArray[np.floating],
     geometry: object,
-    sigma: float,
+    volatility: float,
     dimension: int = 1,
     regularization: float = 1e-10,
 ) -> BoundaryConditions:
@@ -139,7 +141,7 @@ def compute_adjoint_consistent_bc_values(
         return create_adjoint_consistent_bc_1d(
             m_current=m_current,
             dx=dx,
-            sigma=sigma,
+            volatility=volatility,
             domain_bounds=domain_bounds,
             regularization=regularization,
         )

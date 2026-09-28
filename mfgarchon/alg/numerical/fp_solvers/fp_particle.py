@@ -437,7 +437,7 @@ class FPParticleSolver(BaseFPSolver):
         )
         # Issue #1412: the per-solve volatility solve_fp_system installs is the authoritative source.
         # Without one, a scalar problem volatility is used as is, and a field or callable one gives
-        # None rather than a collapsed scalar (#2376): the only readers of params["sigma"] are the
+        # None rather than a collapsed scalar (#2376): the only readers of params["volatility"] are the
         # grid-drift solves, which run after solve_fp_system has installed a scalar.
         from mfgarchon.utils.pde_coefficients import fp_drift_coefficient, resolve_diffusion_source
 
@@ -465,7 +465,7 @@ class FPParticleSolver(BaseFPSolver):
             "n_time_points": n_time_points,  # Nt + 1 (number of knots)
             "Nt": n_time_points,  # Backward compatible alias (deprecated)
             "Dt": Dt,
-            "sigma": sigma,
+            "volatility": sigma,
             "coupling_coefficient": coupling_coefficient,
         }
 
@@ -935,7 +935,7 @@ class FPParticleSolver(BaseFPSolver):
         num_particles: int,
         dimension: int,
         Dt: float,
-        sigma: float,
+        volatility: float,
     ) -> np.ndarray:
         """
         Generate d-dimensional Brownian increment for SDE evolution.
@@ -950,8 +950,8 @@ class FPParticleSolver(BaseFPSolver):
             Spatial dimension
         Dt : float
             Time step size
-        sigma : float
-            Diffusion coefficient
+        volatility : float
+            SDE volatility σ (the diffusion is D = σ²/2)
 
         Returns
         -------
@@ -960,7 +960,7 @@ class FPParticleSolver(BaseFPSolver):
         """
         # rng=, or this branch keeps drawing from the global stream while the varying-sigma
         # branch below uses self._rng -- two parallel physics paths, one owner between them.
-        result = _gen_brownian(num_particles, dimension, Dt, sigma, rng=self._rng)
+        result = _gen_brownian(num_particles, dimension, Dt, volatility, rng=self._rng)
         # Ensure 2D output for backward compatibility (this method always returns 2D)
         if result.ndim == 1:
             return result[:, np.newaxis]
@@ -1838,11 +1838,11 @@ class FPParticleSolver(BaseFPSolver):
         Nt = params["Nt"]
         Dx = params["Dx"]
         Dt = params["Dt"]
-        sigma = params["sigma"]
+        sigma = params["volatility"]
         coupling_coefficient = params["coupling_coefficient"]
 
         # SDE: dX = alpha*dt + sigma*dW
-        # Convention: params["sigma"] is the SDE volatility, used directly
+        # Convention: params["volatility"] is the SDE volatility, used directly
         sigma_sde = sigma
         x_grid = params["xSpace"]
         xmin = params["xmin"]
@@ -2027,14 +2027,14 @@ class FPParticleSolver(BaseFPSolver):
         coordinates = params["coordinates"]
         Nt = params["Nt"]
         Dt = params["Dt"]
-        sigma = params["sigma"]
+        sigma = params["volatility"]
         coupling_coefficient = params["coupling_coefficient"]
 
         if Nt == 0:
             return np.zeros((0, *tuple(grid_shape)))
 
         # SDE: dX = alpha*dt + sigma*dW
-        # Convention: params["sigma"] is the SDE volatility, used directly
+        # Convention: params["volatility"] is the SDE volatility, used directly
         sigma_sde = sigma
 
         # Check if we need segment-aware BC (for absorbing boundaries)
@@ -2237,7 +2237,7 @@ class FPParticleSolver(BaseFPSolver):
         Nt = params["Nt"]
         Dx = params["Dx"]
         Dt = params["Dt"]
-        sigma_sde = params["sigma"]
+        sigma_sde = params["volatility"]
         coupling_coefficient = params["coupling_coefficient"]
         x_grid = params["xSpace"]
         xmin = params["xmin"]

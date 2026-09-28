@@ -283,7 +283,7 @@ class TestRobinSolveLoopWiring:
         m_steady = spsolve((D * solver._K + A_robin).tocsc(), rhs_robin)
 
         m_next = solver.solve_fp_step_adjoint_mode(
-            m_steady.copy().reshape(-1, 1), sparse.csr_matrix((N, N)), sigma=sigma
+            m_steady.copy().reshape(-1, 1), sparse.csr_matrix((N, N)), volatility=sigma
         )
         assert np.abs(m_next.ravel() - m_steady).max() < 1e-9, "Robin terms not folded into the FP adjoint mode"
 

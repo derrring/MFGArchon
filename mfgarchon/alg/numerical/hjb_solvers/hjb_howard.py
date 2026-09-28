@@ -517,7 +517,7 @@ class HJBHowardSolver:
         u_next: np.ndarray,
         m_n: np.ndarray,
         t_idx: int,
-        sigma: float | np.ndarray,
+        volatility: float | np.ndarray,
         dt: float,
         static: dict,
         alpha_init: np.ndarray | None,
@@ -547,10 +547,10 @@ class HJBHowardSolver:
         # Issue #1118 PR2: value-form BC rows from the provider's shared builder. Constant
         # across inner iterations at this time step; None -> the legacy self-contained scheme.
         bc_rows = self.stencil_provider._value_form_bc_rows(t_idx) if self.use_provider_bc_rows else None
-        if isinstance(sigma, np.ndarray):
-            diffusion_operator = diags(diffusion_from_volatility(sigma, kind="field")) @ D_lap
+        if isinstance(volatility, np.ndarray):
+            diffusion_operator = diags(diffusion_from_volatility(volatility, kind="field")) @ D_lap
         else:
-            diffusion_operator = 0.5 * sigma * sigma * D_lap
+            diffusion_operator = 0.5 * volatility * volatility * D_lap
 
         for _iteration in range(self.max_iter):  # named for the #2072 diagnostic below
             A_adv = self._build_A_adv(alpha, static)

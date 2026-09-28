@@ -217,7 +217,7 @@ class TestRefusals:
     def test_a_bare_1d_array_is_refused(self, pair, points):
         """Everywhere else in this package a 1-D sigma array is a spatially varying FIELD. Reading
         it here as per-axis variances applied the grid-summed sigma^2 at every point, silently."""
-        with pytest.raises(ValueError, match="sigma_kind"):
+        with pytest.raises(ValueError, match="volatility_kind"):
             hjb_source(pair, _hamiltonian(), np.array([0.3, 0.7]))(1.3, points)
 
     def test_a_spatially_varying_sigma_is_refused(self, pair, points):
@@ -226,15 +226,15 @@ class TestRefusals:
 
     def test_a_tensor_of_the_wrong_dimension_is_refused(self, pair, points):
         with pytest.raises(ValueError, match=r"shape \(2, 2\)"):
-            hjb_source(pair, _hamiltonian(), np.eye(3), sigma_kind="tensor")(1.3, points)
+            hjb_source(pair, _hamiltonian(), np.eye(3), volatility_kind="tensor")(1.3, points)
 
     def test_an_asymmetric_tensor_is_refused(self, pair, points):
         with pytest.raises(ValueError, match="symmetric"):
-            hjb_source(pair, _hamiltonian(), np.array([[1.0, 0.4], [0.0, 1.0]]), sigma_kind="tensor")(1.3, points)
+            hjb_source(pair, _hamiltonian(), np.array([[1.0, 0.4], [0.0, 1.0]]), volatility_kind="tensor")(1.3, points)
 
     def test_a_scalar_with_a_kind_is_refused(self, pair, points):
         with pytest.raises(ValueError, match="unambiguous"):
-            hjb_source(pair, _hamiltonian(), 0.5, sigma_kind="tensor")(1.3, points)
+            hjb_source(pair, _hamiltonian(), 0.5, volatility_kind="tensor")(1.3, points)
 
     def test_a_nonlinear_drift_is_refused_when_the_source_is_built(self, pair):
         """L1: ``div(alpha*)`` is not ``c tr(Hess u)``. The refusal must happen at build time, not
@@ -278,7 +278,7 @@ class TestCheckPair:
     def test_an_anisotropic_source_does_see_it(self, pair, points):
         """Positive control for the test above: the path exists and is live, it is simply not
         entered under an isotropic sigma. This is the #2198 cross-derivative term."""
-        volatility, kwargs = np.array([[1.0, 0.4], [0.4, 1.0]]), {"sigma_kind": "tensor"}
+        volatility, kwargs = np.array([[1.0, 0.4], [0.4, 1.0]]), {"volatility_kind": "tensor"}
         good = fp_source(pair, _hamiltonian(), volatility, **kwargs)(1.3, points)
         bad = fp_source(self._cross_flipped(pair), _hamiltonian(), volatility, **kwargs)(1.3, points)
         assert np.max(np.abs(good - bad)) > 1e-5

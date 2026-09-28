@@ -20,12 +20,13 @@ The variational formulation provides:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import numpy as np
 
 from mfgarchon.types.callable_protocols import VARIATIONAL_LAGRANGIAN_SLOTS, BoundCallable, bound_attribute
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.pde_coefficients import retired_sigma_keyword
 
 if TYPE_CHECKING:
     # For type checking only - these imports may not be available at runtime
@@ -123,6 +124,7 @@ class VariationalMFGProblem:
     - Conversion to/from Hamiltonian formulation
     """
 
+    @retired_sigma_keyword
     def __init__(
         self,
         # Domain parameters
@@ -134,7 +136,7 @@ class VariationalMFGProblem:
         # Lagrangian components
         components: VariationalMFGComponents | None = None,
         # Standard MFG parameters (for compatibility)
-        sigma: float = 1.0,
+        volatility: float = 1.0,
         **kwargs: Any,
     ):
         """
@@ -144,7 +146,7 @@ class VariationalMFGProblem:
             xmin, xmax, Nx: Spatial domain discretization
             T, Nt: Time domain discretization
             components: Lagrangian problem specification
-            sigma: Noise intensity (volatility coefficient)
+            volatility: Noise intensity, the SDE volatility σ (the PDE diffusion is σ²/2)
             **kwargs: Additional parameters
         """
         # Domain setup
@@ -164,7 +166,7 @@ class VariationalMFGProblem:
         self.t = np.linspace(0, T, Nt + 1)
 
         # Noise/diffusion
-        self.sigma = sigma
+        self.volatility: float = volatility
 
         # Lagrangian components
         self.components = components or self._create_default_components()
@@ -178,7 +180,14 @@ class VariationalMFGProblem:
             self._setup_jax_functions()
 
         logger.info(f"Created Lagrangian MFG problem: domain=[{xmin},{xmax}], T={T}")
-        logger.info(f"  Grid: Nx={Nx}, Nt={Nt}, σ={sigma}")
+        logger.info(f"  Grid: Nx={Nx}, Nt={Nt}, σ={volatility}")
+
+    @property
+    def sigma(self) -> NoReturn:
+        raise AttributeError(
+            "VariationalMFGProblem.sigma is retired (#2378 part 2b); the SDE volatility it held is "
+            "VariationalMFGProblem.volatility."
+        )
 
     def _create_default_components(self) -> VariationalMFGComponents:
         """Create default Lagrangian components for standard MFG problem."""
@@ -217,7 +226,7 @@ class VariationalMFGProblem:
             lagrangian_dm_func=default_lagrangian_dm,
             terminal_cost_func=default_terminal_cost,
             m_initial=default_initial_density,
-            noise_intensity=self.sigma,
+            noise_intensity=self.volatility,
             parameters={"congestion_coefficient": 0.5},
         )
 
@@ -537,7 +546,7 @@ class VariationalMFGProblem:
             geometry=geometry,
             T=self.T,
             Nt=self.Nt,
-            volatility=self.sigma,
+            volatility=self.volatility,
             components=mfg_components,
         )
 
@@ -551,7 +560,7 @@ class VariationalMFGProblem:
                 "discretization": {"Nx": self.Nx, "Nt": self.Nt},
             },
             "parameters": {
-                "noise_intensity": self.sigma,
+                "noise_intensity": self.volatility,
                 "lagrangian_parameters": self.components.parameters,
             },
             "components": {
@@ -569,6 +578,7 @@ class VariationalMFGProblem:
 # Utility functions for common Lagrangian formulations
 
 
+@retired_sigma_keyword
 def create_quadratic_variational_mfg(
     xmin: float = 0.0,
     xmax: float = 1.0,
@@ -577,7 +587,7 @@ def create_quadratic_variational_mfg(
     Nt: int = 51,
     kinetic_coefficient: float = 0.5,
     congestion_coefficient: float = 0.5,
-    sigma: float = 1.0,
+    volatility: float = 1.0,
 ) -> VariationalMFGProblem:
     """
     Create standard quadratic Lagrangian MFG problem.
@@ -588,7 +598,7 @@ def create_quadratic_variational_mfg(
         Domain and discretization parameters
         kinetic_coefficient: α (control cost)
         congestion_coefficient: β (congestion cost)
-        sigma: Noise intensity
+        volatility: Noise intensity, the SDE volatility σ
 
     Returns:
         VariationalMFGProblem with quadratic structure
@@ -609,7 +619,7 @@ def create_quadratic_variational_mfg(
         lagrangian_dm_func=lagrangian_dm,
         terminal_cost_func=lambda x: 0.0,
         m_initial=lambda x: 1.0 / (xmax - xmin),
-        noise_intensity=sigma,
+        noise_intensity=volatility,
         parameters={
             "kinetic_coefficient": kinetic_coefficient,
             "congestion_coefficient": congestion_coefficient,
@@ -617,9 +627,10 @@ def create_quadratic_variational_mfg(
         description="Quadratic Lagrangian MFG",
     )
 
-    return VariationalMFGProblem(xmin=xmin, xmax=xmax, Nx=Nx, T=T, Nt=Nt, sigma=sigma, components=components)
+    return VariationalMFGProblem(xmin=xmin, xmax=xmax, Nx=Nx, T=T, Nt=Nt, volatility=volatility, components=components)
 
 
+@retired_sigma_keyword
 def create_obstacle_variational_mfg(
     xmin: float = 0.0,
     xmax: float = 1.0,
@@ -629,7 +640,7 @@ def create_obstacle_variational_mfg(
     obstacle_center: float = 0.5,
     obstacle_radius: float = 0.1,
     obstacle_penalty: float = 100.0,
-    sigma: float = 1.0,
+    volatility: float = 1.0,
 ) -> VariationalMFGProblem:
     """
     Create Lagrangian MFG with obstacle avoidance.
@@ -641,7 +652,7 @@ def create_obstacle_variational_mfg(
         obstacle_center: Center of obstacle
         obstacle_radius: Radius of obstacle region
         obstacle_penalty: Penalty coefficient for obstacle
-        sigma: Noise intensity
+        volatility: Noise intensity, the SDE volatility σ
 
     Returns:
         VariationalMFGProblem with obstacle constraints
@@ -672,7 +683,7 @@ def create_obstacle_variational_mfg(
         terminal_cost_func=lambda x: 0.0,
         m_initial=lambda x: 1.0 / (xmax - xmin),
         state_constraints=[obstacle_constraint],
-        noise_intensity=sigma,
+        noise_intensity=volatility,
         parameters={
             "obstacle_center": obstacle_center,
             "obstacle_radius": obstacle_radius,
@@ -681,4 +692,4 @@ def create_obstacle_variational_mfg(
         description="Obstacle Avoidance Lagrangian MFG",
     )
 
-    return VariationalMFGProblem(xmin=xmin, xmax=xmax, Nx=Nx, T=T, Nt=Nt, sigma=sigma, components=components)
+    return VariationalMFGProblem(xmin=xmin, xmax=xmax, Nx=Nx, T=T, Nt=Nt, volatility=volatility, components=components)

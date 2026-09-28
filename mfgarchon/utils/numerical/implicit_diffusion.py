@@ -158,9 +158,9 @@ class NeumannCNStencil:
     explicit_wall_off: float
 
 
-def cn_alpha(dt: float, sigma: float, dx: float) -> float:
+def cn_alpha(dt: float, volatility: float, dx: float) -> float:
     """The diffusion number ``alpha = D dt / dx^2``, with ``D = sigma^2 / 2`` (#811, one owner)."""
-    return diffusion_from_volatility(sigma) * dt / dx**2
+    return diffusion_from_volatility(volatility) * dt / dx**2
 
 
 def neumann_cn_stencil(
@@ -203,7 +203,7 @@ def neumann_cn_stencil(
 def neumann_cn_step(
     u: NDArray[np.floating],
     dt: float,
-    sigma: float,
+    volatility: float,
     dx: float,
     *,
     treatment: WallTreatment,
@@ -225,7 +225,7 @@ def neumann_cn_step(
     if n < 3:
         raise ValueError(f"neumann_cn_step: need at least 3 nodes for a wall and an interior; got {n}.")
 
-    st = neumann_cn_stencil(cn_alpha(dt, sigma, dx), treatment=treatment, theta=theta)
+    st = neumann_cn_stencil(cn_alpha(dt, volatility, dx), treatment=treatment, theta=theta)
 
     ab = np.zeros((3, n))
     ab[0, 1:] = st.implicit_off

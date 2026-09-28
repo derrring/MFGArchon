@@ -108,9 +108,9 @@ def test_evaluate_convenience_consistent_with_primitives():
     np.testing.assert_array_equal(hv.H, H.evaluate_H(st))
     np.testing.assert_array_equal(hv.dH_dp, H.evaluate_dp(st))
     # sigma ALWAYS an array (physical volatility), broadcast to (N,)
-    assert isinstance(hv.sigma, np.ndarray)
-    assert hv.sigma.shape == (x.shape[0],)
-    np.testing.assert_array_equal(hv.sigma, np.full(x.shape[0], 0.7))
+    assert isinstance(hv.volatility, np.ndarray)
+    assert hv.volatility.shape == (x.shape[0],)
+    np.testing.assert_array_equal(hv.volatility, np.full(x.shape[0], 0.7))
 
 
 def test_evaluate_requires_physical_sigma_fail_fast():

@@ -52,7 +52,7 @@ import numpy as np
 from scipy import sparse
 
 from mfgarchon.utils.numerical.implicit_diffusion import cn_alpha, neumann_cn_stencil, wall_factor
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, retired_sigma_keyword
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -99,8 +99,8 @@ class OperatorConfig:
     dx: float | tuple[float, ...]
     """Grid spacing."""
 
-    sigma: float
-    """Diffusion coefficient."""
+    volatility: float
+    """SDE volatility σ; the diffusion is D = σ²/2 (``diffusion_from_volatility``)."""
 
     dt: float
     """Time step size."""
@@ -109,10 +109,11 @@ class OperatorConfig:
     """Boundary condition type: 'neumann', 'dirichlet', 'periodic'."""
 
 
+@retired_sigma_keyword
 def build_diffusion_matrix(
     grid_shape: int | tuple[int, ...],
     dx: float | tuple[float, ...],
-    sigma: float,
+    volatility: float,
     dt: float,
     theta: float = 0.5,
     bc_type: str = "neumann",
@@ -129,7 +130,7 @@ def build_diffusion_matrix(
     Args:
         grid_shape: Number of grid points (int for 1D, tuple for nD)
         dx: Grid spacing (float for uniform, tuple for per-dimension)
-        sigma: Diffusion coefficient
+        volatility: SDE volatility σ (the diffusion is D = σ²/2)
         dt: Time step
         theta: Crank-Nicolson parameter (0.5=CN, 1.0=implicit Euler)
         bc_type: Boundary condition type ('neumann', 'dirichlet', 'periodic')
@@ -157,7 +158,7 @@ def build_diffusion_matrix(
 
     if ndim == 1:
         # Direct 1D implementation (slightly more efficient)
-        return build_diffusion_matrix_1d(grid_shape[0], dx[0], sigma, dt, theta, bc_type)
+        return build_diffusion_matrix_1d(grid_shape[0], dx[0], volatility, dt, theta, bc_type)
 
     # nD: Use Kronecker product construction
     # L_nD = sum_d (I ⊗ ... ⊗ L_d ⊗ ... ⊗ I)
@@ -169,7 +170,7 @@ def build_diffusion_matrix(
     for d in range(ndim):
         # Build 1D Laplacian for dimension d
         Nd = grid_shape[d]
-        alpha_d = diffusion_from_volatility(sigma) * dt / dx[d] ** 2
+        alpha_d = diffusion_from_volatility(volatility) * dt / dx[d] ** 2
 
         # 1D Laplacian: L = [-1, 2, -1] / dx²
         # For (I - θ·α·L), we need to add θ·α times the Laplacian contribution
@@ -301,10 +302,11 @@ def _kron_with_identity(L_1d: sparse.spmatrix, dim: int, grid_shape: tuple[int, 
     return result
 
 
+@retired_sigma_keyword
 def build_diffusion_matrix_1d(
     Nx: int,
     dx: float,
-    sigma: float,
+    volatility: float,
     dt: float,
     theta: float = 0.5,
     bc_type: str = "neumann",
@@ -320,7 +322,7 @@ def build_diffusion_matrix_1d(
     Args:
         Nx: Number of grid points
         dx: Grid spacing
-        sigma: Diffusion coefficient
+        volatility: SDE volatility σ (the diffusion is D = σ²/2)
         dt: Time step
         theta: Crank-Nicolson parameter (0.5 for CN, 1.0 for implicit Euler)
         bc_type: Boundary condition ('neumann', 'dirichlet', 'periodic')
@@ -360,7 +362,7 @@ def build_diffusion_matrix_1d(
     # Same shape as the conservation column, and for the same reason: the half wall was a coherent
     # scheme measured against an inner product this grid does not carry. `W` is the one it does, so
     # `mirror` is the self-adjoint operator here and the docstring's Note says so.
-    st = neumann_cn_stencil(cn_alpha(dt, sigma, dx), treatment="mirror", theta=theta)
+    st = neumann_cn_stencil(cn_alpha(dt, volatility, dx), treatment="mirror", theta=theta)
     alpha = st.alpha
 
     main = np.ones(Nx) * st.implicit_main
@@ -393,10 +395,11 @@ def build_diffusion_matrix_1d(
     return A.tocsr()
 
 
+@retired_sigma_keyword
 def build_diffusion_matrix_2d(
     grid_shape: tuple[int, int],
     dx: float | tuple[float, float],
-    sigma: float,
+    volatility: float,
     dt: float,
     theta: float = 0.5,
     bc_type: str = "neumann",
@@ -409,7 +412,7 @@ def build_diffusion_matrix_2d(
     Args:
         grid_shape: (Nx, Ny) grid dimensions
         dx: Grid spacing (scalar for uniform, tuple for non-uniform)
-        sigma: Diffusion coefficient
+        volatility: SDE volatility σ (the diffusion is D = σ²/2)
         dt: Time step
         theta: Crank-Nicolson parameter
         bc_type: Boundary condition type
@@ -434,8 +437,8 @@ def build_diffusion_matrix_2d(
     # `mirror` since #2243, with `_build_1d_laplacian` -- the seventh site, which `build_diffusion_matrix`
     # reaches for the same grid shape. The two must name the same wall or one function answers
     # differently by dimension; measured equal to 0.000e+00 before the switch and after it.
-    st_x = neumann_cn_stencil(cn_alpha(dt, sigma, dx_x), treatment="mirror", theta=theta)
-    st_y = neumann_cn_stencil(cn_alpha(dt, sigma, dx_y), treatment="mirror", theta=theta)
+    st_x = neumann_cn_stencil(cn_alpha(dt, volatility, dx_x), treatment="mirror", theta=theta)
+    st_y = neumann_cn_stencil(cn_alpha(dt, volatility, dx_y), treatment="mirror", theta=theta)
 
     # Build sparse matrix
     A = sparse.lil_matrix((N, N))
@@ -639,9 +642,10 @@ def make_operator_adjoint(
 # =============================================================================
 
 
+@retired_sigma_keyword
 def build_diffusion_matrix_from_geometry(
     geometry: OperatorGeometry,
-    sigma: float,
+    volatility: float,
     dt: float,
     theta: float = 0.5,
     bc_type: str = "neumann",
@@ -655,7 +659,7 @@ def build_diffusion_matrix_from_geometry(
     Args:
         geometry: Any geometry implementing OperatorGeometry protocol
             (e.g., TensorProductGrid, Domain, etc.)
-        sigma: Diffusion coefficient
+        volatility: SDE volatility σ (the diffusion is D = σ²/2)
         dt: Time step
         theta: Crank-Nicolson parameter (0.5 for CN, 1.0 for implicit Euler)
         bc_type: Boundary condition type ('neumann', 'dirichlet', 'periodic')
@@ -666,7 +670,7 @@ def build_diffusion_matrix_from_geometry(
     Example:
         >>> from mfgarchon.geometry import TensorProductGrid
         >>> grid = TensorProductGrid(bounds=[(0, 1), (0, 1)], Nx=[50, 50])
-        >>> A_diff = build_diffusion_matrix_from_geometry(grid, sigma=0.2, dt=0.01)
+        >>> A_diff = build_diffusion_matrix_from_geometry(grid, volatility=0.2, dt=0.01)
         >>> # A_diff is 2500x2500 sparse matrix for 2D problem
     """
     grid_shape = geometry.get_grid_shape()
@@ -678,7 +682,7 @@ def build_diffusion_matrix_from_geometry(
     else:
         dx = tuple(spacing)
 
-    return build_diffusion_matrix(grid_shape, dx, sigma, dt, theta, bc_type)
+    return build_diffusion_matrix(grid_shape, dx, volatility, dt, theta, bc_type)
 
 
 def build_advection_matrix_from_geometry(
@@ -1094,7 +1098,7 @@ if __name__ == "__main__":
     # Test 1: Diffusion matrix self-adjointness (primitive API)
     print("Test 1: Diffusion matrix with Neumann BC (primitive API)")
     Nx = 20
-    A_diff = build_diffusion_matrix_1d(Nx, dx=0.1, sigma=0.2, dt=0.01, bc_type="neumann")
+    A_diff = build_diffusion_matrix_1d(Nx, dx=0.1, volatility=0.2, dt=0.01, bc_type="neumann")
     is_sym, err = _grid_measure_symmetry(A_diff, (np.arange(Nx) * 0.1,))
     print(f"  Self-adjoint in the grid measure: {is_sym}")
     print(f"  Asymmetry error: {err:.2e}")
@@ -1108,7 +1112,7 @@ if __name__ == "__main__":
 
     # Test 2: Periodic diffusion
     print("Test 2: Diffusion matrix with periodic BC")
-    A_diff_per = build_diffusion_matrix_1d(Nx, dx=0.1, sigma=0.2, dt=0.01, bc_type="periodic")
+    A_diff_per = build_diffusion_matrix_1d(Nx, dx=0.1, volatility=0.2, dt=0.01, bc_type="periodic")
     is_sym, err = check_operator_adjoint(A_diff_per, A_diff_per)
     print(f"  Symmetric (self-adjoint): {is_sym}")
     print(f"  Asymmetry error: {err:.2e}")
@@ -1149,7 +1153,7 @@ if __name__ == "__main__":
             Nx=[20],
             boundary_conditions=neumann_bc(dimension=1),
         )
-        A_diff_1d = build_diffusion_matrix_from_geometry(grid_1d, sigma=0.2, dt=0.01)
+        A_diff_1d = build_diffusion_matrix_from_geometry(grid_1d, volatility=0.2, dt=0.01)
         is_sym, err = _grid_measure_symmetry(A_diff_1d, tuple(grid_1d.coordinates))
         print(f"  1D grid: shape={A_diff_1d.shape}, self-adjoint in the grid measure={is_sym}")
         assert is_sym, "1D diffusion should be self-adjoint in the grid measure (#2243)"
@@ -1160,7 +1164,7 @@ if __name__ == "__main__":
             Nx=[10, 10],
             boundary_conditions=neumann_bc(dimension=2),
         )
-        A_diff_2d = build_diffusion_matrix_from_geometry(grid_2d, sigma=0.2, dt=0.01)
+        A_diff_2d = build_diffusion_matrix_from_geometry(grid_2d, volatility=0.2, dt=0.01)
         is_sym, err = _grid_measure_symmetry(A_diff_2d, tuple(grid_2d.coordinates))
         print(f"  2D grid: shape={A_diff_2d.shape}, self-adjoint in the grid measure={is_sym}")
         assert is_sym, "2D diffusion should be self-adjoint in the grid measure (#2243)"

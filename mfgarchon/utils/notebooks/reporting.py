@@ -204,10 +204,11 @@ The Mean Field Game system is defined with the following parameters:
         # Format configuration nicely
         for key, value in config.items():
             if isinstance(value, int | float | str | bool):
-                if key in ["sigma", "T", "coupling_coefficient"]:
-                    # Add mathematical context for key parameters
-                    if key == "sigma":
-                        config_markdown += f"- **Diffusion coefficient** $\\sigma = {value}$\n"
+                if key in ["volatility", "sigma", "T", "coupling_coefficient"]:
+                    # Add mathematical context for key parameters. A user config may still spell the
+                    # volatility `sigma`; either way it is the SDE volatility, not a diffusion (#2378).
+                    if key in ("volatility", "sigma"):
+                        config_markdown += f"- **SDE volatility** $\\sigma = {value}$\n"
                     elif key == "T":
                         config_markdown += f"- **Time horizon** $T = {value}$\n"
                     elif key == "coupling_coefficient":

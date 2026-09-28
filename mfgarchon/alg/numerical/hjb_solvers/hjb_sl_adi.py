@@ -39,7 +39,7 @@ from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, validate
 def solve_crank_nicolson_diffusion_1d(
     U_star: np.ndarray,
     dt: float,
-    sigma: float,
+    volatility: float,
     x_grid: np.ndarray,
     bc_type: str = "neumann",
 ) -> np.ndarray:
@@ -52,7 +52,7 @@ def solve_crank_nicolson_diffusion_1d(
     Args:
         U_star: Intermediate solution after advection step, shape (Nx,)
         dt: Time step size
-        sigma: Diffusion coefficient
+        volatility: SDE volatility σ (the diffusion is D = σ²/2)
         x_grid: 1D spatial grid points
         bc_type: Boundary condition type for diffusion step.
             'neumann' (default): du/dx = 0 at boundaries.
@@ -64,7 +64,7 @@ def solve_crank_nicolson_diffusion_1d(
     dx = x_grid[1] - x_grid[0]
 
     # Diffusion coefficient: alpha = D * dt/dx^2, D = sigma^2/2 (Issue #811, single source).
-    alpha = diffusion_from_volatility(sigma) * dt / dx**2
+    alpha = diffusion_from_volatility(volatility) * dt / dx**2
     theta = 0.5  # Crank-Nicolson parameter
 
     if bc_type == "periodic":
@@ -87,7 +87,7 @@ def solve_crank_nicolson_diffusion_1d(
     # here: the half wall was paying an order at the wall and buying nothing. The rate of the SL
     # solve as a whole is still capped at 1 by the transport, so what this buys is the constant,
     # not the order -- see #2243's PR for the measured MMS levels.
-    return neumann_cn_step(U_star, dt, sigma, dx, treatment="mirror", theta=theta)
+    return neumann_cn_step(U_star, dt, volatility, dx, treatment="mirror", theta=theta)
 
 
 def _crank_nicolson_periodic_1d(
@@ -200,7 +200,7 @@ def _crank_nicolson_periodic_distinct(
 def adi_diffusion_step(
     U_star: np.ndarray,
     dt: float,
-    sigma: float | np.ndarray,
+    volatility: float | np.ndarray,
     spacing: np.ndarray,
     grid_shape: tuple[int, ...],
     bc_type: str = "neumann",
@@ -231,7 +231,7 @@ def adi_diffusion_step(
     Args:
         U_star: Intermediate solution after advection step, shape (N1, N2, ..., Nd)
         dt: Time step size
-        sigma: Diffusion coefficient - scalar, 1D array (diagonal), or 2D array (full tensor)
+        volatility: SDE volatility σ (the diffusion is D = σ²/2) - scalar, 1D array (diagonal), or 2D array (full tensor)
         spacing: Grid spacing in each dimension, shape (d,)
         grid_shape: Shape of the grid (N1, N2, ..., Nd)
 
@@ -245,13 +245,13 @@ def adi_diffusion_step(
 
     # Backend compatibility - NumPy array detection (Issue #543 acceptable)
     # hasattr used to detect array vs scalar sigma parameter
-    if isinstance(sigma, (int, float)):
+    if isinstance(volatility, (int, float)):
         # Isotropic: same sigma in all directions
-        sigma_vec = np.full(dimension, float(sigma))
-    elif hasattr(sigma, "ndim") and sigma.ndim == 1 and len(sigma) == dimension:  # Issue #543 acceptable
+        sigma_vec = np.full(dimension, float(volatility))
+    elif hasattr(volatility, "ndim") and volatility.ndim == 1 and len(volatility) == dimension:  # Issue #543 acceptable
         # Diagonal anisotropic: different sigma per direction
-        sigma_vec = np.asarray(sigma)
-    elif hasattr(sigma, "ndim") and sigma.ndim == 2:  # Issue #543 acceptable
+        sigma_vec = np.asarray(volatility)
+    elif hasattr(volatility, "ndim") and volatility.ndim == 2:  # Issue #543 acceptable
         # Full tensor diffusion. Convention (RFC #1596): the (d,d) sigma is the SYMMETRIC
         # standard-deviation matrix S (the symmetric square root of the covariance), NOT the
         # covariance itself and NOT a Cholesky factor. The diffusion is D = 1/2 S S^T = 1/2 C.
@@ -261,15 +261,15 @@ def adi_diffusion_step(
         # the local re-derivation was why #1079 (covariance, no-square) and #1548 (square,
         # no-symmetry) diverged. Downstream is unchanged: the diagonal ADI reads
         # alpha_d = 1/2 C_dd = D_dd, and apply_cross_diffusion_explicit reads C_ij = 2 D_ij.
-        S = np.asarray(sigma, dtype=float)
+        S = np.asarray(volatility, dtype=float)
         validate_symmetric_psd(S, name="adi_diffusion_step sigma tensor")
         sigma_tensor = 2.0 * diffusion_from_volatility(S, kind="tensor")  # C = S S^T = 2D
         sigma_vec = np.sqrt(np.diag(sigma_tensor))  # per-axis std-dev sqrt(C_dd); alpha_d = 1/2 C_dd = D_dd
     else:
         # Issue #1286, 2026-06-11 survey: fail-fast — never silently default sigma.
         # A wrong sigma type causes adi_diffusion_step to solve a different PDE.
-        sigma_type = type(sigma).__name__
-        sigma_shape = getattr(sigma, "shape", "N/A")
+        sigma_type = type(volatility).__name__
+        sigma_shape = getattr(volatility, "shape", "N/A")
         raise ValueError(
             f"adi_diffusion_step: unsupported sigma type '{sigma_type}' "
             f"(shape={sigma_shape}). "
@@ -704,7 +704,7 @@ if __name__ == "__main__":
     x_grid = np.linspace(0, 1, 51)
     U_test = np.exp(-50 * (x_grid - 0.5) ** 2)
 
-    U_diffused = solve_crank_nicolson_diffusion_1d(U_test, dt=0.01, sigma=0.1, x_grid=x_grid)
+    U_diffused = solve_crank_nicolson_diffusion_1d(U_test, dt=0.01, volatility=0.1, x_grid=x_grid)
 
     assert U_diffused.shape == U_test.shape
     assert not np.any(np.isnan(U_diffused))
@@ -721,7 +721,7 @@ if __name__ == "__main__":
     X, Y = np.meshgrid(x, y, indexing="ij")
     U_2d = np.exp(-50 * ((X - 0.5) ** 2 + (Y - 0.5) ** 2))
 
-    U_2d_diffused = adi_diffusion_step(U_2d, dt=0.01, sigma=0.1, spacing=spacing, grid_shape=grid_shape)
+    U_2d_diffused = adi_diffusion_step(U_2d, dt=0.01, volatility=0.1, spacing=spacing, grid_shape=grid_shape)
 
     assert U_2d_diffused.shape == U_2d.shape
     assert not np.any(np.isnan(U_2d_diffused))
@@ -732,7 +732,9 @@ if __name__ == "__main__":
     # Test 3: 2D ADI with anisotropic sigma
     print("\n3. Testing 2D ADI (anisotropic)...")
     sigma_aniso = np.array([0.15, 0.05])
-    U_2d_aniso = adi_diffusion_step(U_2d.copy(), dt=0.01, sigma=sigma_aniso, spacing=spacing, grid_shape=grid_shape)
+    U_2d_aniso = adi_diffusion_step(
+        U_2d.copy(), dt=0.01, volatility=sigma_aniso, spacing=spacing, grid_shape=grid_shape
+    )
 
     assert U_2d_aniso.shape == U_2d.shape
     assert not np.any(np.isnan(U_2d_aniso))
@@ -742,7 +744,9 @@ if __name__ == "__main__":
     # Test 4: Full tensor diffusion
     print("\n4. Testing 2D ADI (full tensor)...")
     sigma_tensor = np.array([[0.01, 0.005], [0.005, 0.01]])
-    U_2d_tensor = adi_diffusion_step(U_2d.copy(), dt=0.01, sigma=sigma_tensor, spacing=spacing, grid_shape=grid_shape)
+    U_2d_tensor = adi_diffusion_step(
+        U_2d.copy(), dt=0.01, volatility=sigma_tensor, spacing=spacing, grid_shape=grid_shape
+    )
 
     assert U_2d_tensor.shape == U_2d.shape
     assert not np.any(np.isnan(U_2d_tensor))
@@ -759,7 +763,7 @@ if __name__ == "__main__":
     X3, Y3, Z3 = np.meshgrid(x3, y3, z3, indexing="ij")
     U_3d = np.exp(-30 * ((X3 - 0.5) ** 2 + (Y3 - 0.5) ** 2 + (Z3 - 0.5) ** 2))
 
-    U_3d_diffused = adi_diffusion_step(U_3d, dt=0.01, sigma=0.1, spacing=spacing_3d, grid_shape=grid_shape_3d)
+    U_3d_diffused = adi_diffusion_step(U_3d, dt=0.01, volatility=0.1, spacing=spacing_3d, grid_shape=grid_shape_3d)
 
     assert U_3d_diffused.shape == U_3d.shape
     assert not np.any(np.isnan(U_3d_diffused))
@@ -782,7 +786,9 @@ if __name__ == "__main__":
     x_periodic = np.linspace(0, 1, 51)
     # Sinusoidal initial condition (compatible with periodic BC)
     U_sin = np.sin(2 * np.pi * x_periodic)
-    U_sin_diffused = solve_crank_nicolson_diffusion_1d(U_sin, dt=0.01, sigma=0.1, x_grid=x_periodic, bc_type="periodic")
+    U_sin_diffused = solve_crank_nicolson_diffusion_1d(
+        U_sin, dt=0.01, volatility=0.1, x_grid=x_periodic, bc_type="periodic"
+    )
     assert U_sin_diffused.shape == U_sin.shape
     assert not np.any(np.isnan(U_sin_diffused))
     # Diffusion should reduce amplitude of sinusoidal
@@ -799,7 +805,7 @@ if __name__ == "__main__":
     print("\n8. Testing periodic BC ADI (2D)...")
     U_2d_sin = np.sin(2 * np.pi * X) * np.sin(2 * np.pi * Y)
     U_2d_sin_diffused = adi_diffusion_step(
-        U_2d_sin, dt=0.01, sigma=0.1, spacing=spacing, grid_shape=grid_shape, bc_type="periodic"
+        U_2d_sin, dt=0.01, volatility=0.1, spacing=spacing, grid_shape=grid_shape, bc_type="periodic"
     )
     assert U_2d_sin_diffused.shape == U_2d_sin.shape
     assert not np.any(np.isnan(U_2d_sin_diffused))
