@@ -129,7 +129,7 @@ def _solve(solver_name: str, kind: str, g: float):
     # FP half. Renaming the parameter alone did not fix that; a value is needed. `U = -x` gives
     # `alpha* = -grad U = (+1, 0)`, so the wall-normal component is non-zero at both x walls.
     return np.asarray(
-        solver.solve_fp_system(m_initial=1.0 + 0.5 * np.sin(np.pi * x), potential_field=np.tile(-x, (4, 1)))
+        solver.solve_fp_system(M_initial=1.0 + 0.5 * np.sin(np.pi * x), potential_field=np.tile(-x, (4, 1)))
     )
 
 
