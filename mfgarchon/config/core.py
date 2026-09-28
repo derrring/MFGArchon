@@ -134,7 +134,12 @@ class PicardConfig(BaseConfig):
         Issue #719: Per-variable relaxation support.
     relaxation_schedule : str
         Iteration-based relaxation schedule for U: "constant", "harmonic",
-        "sqrt", or "exponential". Issue #719 Phase 2.
+        "sqrt", or "exponential". Issue #719 Phase 2. FixedPointIterator floors
+        the decaying schedules at its ``adaptive_relaxation_min`` (default 0.05)
+        whether or not ``adaptive_relaxation`` is on, so "harmonic" becomes
+        constant relaxation from the sweep where relaxation/(k+1) falls below
+        it. That is damped Picard, fast where Picard contracts; it is not
+        fictitious play, which is FictitiousPlayIterator (#2415).
     relaxation_schedule_M : str | None
         Separate schedule for M (None = follow U schedule).
     adaptive_relaxation : bool
