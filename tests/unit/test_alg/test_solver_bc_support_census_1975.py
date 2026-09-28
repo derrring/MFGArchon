@@ -405,12 +405,14 @@ def test_a_provider_valued_coefficient_is_refused_rather_than_dropped():
     that assertion.
 
     Recorded so the history is not lost: before the fix, a ROBIN segment carrying an
-    `AdjointConsistentProvider` on `alpha` assembled `np.array_equal` to a plain NO_FLUX wall. The
-    wall a user wired a coupled coefficient to AVOID was returned as though it were their request.
+    `AdjointConsistentProvider` (since removed, #2422) on `alpha` assembled `np.array_equal` to a
+    plain NO_FLUX wall. The wall a user wired a coupled coefficient to AVOID was returned as though
+    it were their request. The library ships no provider for `alpha` any more (#2422), but a user's
+    own still reaches this path; the refusal keys on `is_provider`, so any provider exercises it.
     """
-    from mfgarchon.geometry.boundary.providers import AdjointConsistentProvider
+    from mfgarchon.geometry.boundary.providers import ConstantProvider
 
-    bc = _mixed(BCType.ROBIN, alpha=AdjointConsistentProvider(side="left", volatility=0.3), beta=-0.045, value=0.0)
+    bc = _mixed(BCType.ROBIN, alpha=ConstantProvider(1.0), beta=-0.045, value=0.0)
     with pytest.raises(NotImplementedError, match=r"provider-valued wall coefficient"):
         _step(bc)
 

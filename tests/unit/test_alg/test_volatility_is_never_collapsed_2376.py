@@ -90,19 +90,6 @@ def test_scalar_only_hjb_solvers_refuse_by_name(volatility):
         HJBSemiLagrangianSolver(problem)
 
 
-def test_the_adjoint_consistent_provider_refuses_a_field():
-    """The provider squares one scalar; the BC state now carries the problem's volatility as supplied."""
-    from mfgarchon.geometry.boundary import AdjointConsistentProvider
-
-    problem = _problem(**FIELD)
-    state = {"m_current": np.ones(N), "geometry": problem.geometry, "volatility": problem.volatility}
-    with pytest.raises(NotImplementedError, match="AdjointConsistentProvider uses one scalar volatility"):
-        AdjointConsistentProvider(side="left").compute(state)
-    # Control: the same state with a scalar computes.
-    state["volatility"] = 0.4
-    assert np.isfinite(AdjointConsistentProvider(side="left").compute(state))
-
-
 def test_the_hjb_residual_refuses_a_callable_it_cannot_evaluate():
     """The 1-D residual has no (t, m) to evaluate a callable at; the per-timestep driver does."""
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _volatility_at_n

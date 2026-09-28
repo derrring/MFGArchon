@@ -14,10 +14,10 @@ use names defined in a neighbouring docstring. `doctest`'s unit of isolation is 
 under any runner, and turning execution on package-wide is a documentation rewrite rather than a check. The 24 modules
 below are the ones whose examples already pass, all 178 of them.
 
-**So this covers 24 of 182 modules with examples, and nothing else.** The number is in `test_the_allowlist_states_its_own_coverage`
+**So this covers 24 of 181 modules with examples, and nothing else.** The number is in `test_the_allowlist_states_its_own_coverage`
 so that it cannot quietly be read as "the package's examples are checked". The complement is covered differently and
-statically, by `scripts/check_docstring_kwargs.py`, which needs no executability and analyses 624 of the 643
-docstring blocks — the other 19 do not parse as Python.
+statically, by `scripts/check_docstring_kwargs.py`, which needs no executability and analyses 619 of the 636
+docstring blocks — the other 17 do not parse as Python (measured 2026-09-28, #2422).
 
 What reddens this file: any change that breaks an example in a listed module — a renamed parameter, a moved import,
 a changed repr.
@@ -173,7 +173,7 @@ def test_every_example_in_this_module_still_runs(module_name):
 
 
 def test_the_allowlist_states_its_own_coverage():
-    """A list of 24 modules must not read as a claim about the package's 182.
+    """A list of 24 modules must not read as a claim about the package's 181.
 
     This is the positive control on the file's honesty rather than on the code: it fails if the package grows modules
     with examples and the list stays put without the docstring above being updated to say so. The ratio is the thing a
@@ -197,12 +197,13 @@ def test_the_allowlist_states_its_own_coverage():
             if any(t.examples for t in doctest.DocTestFinder().find(module)):
                 with_examples += 1
 
-    # `len(EXECUTABLE) <= with_examples` was the first version of this and is vacuous -- 24 <= 182 holds
+    # `len(EXECUTABLE) <= with_examples` was the first version of this and is vacuous -- 24 <= 181 holds
     # however few of the listed modules carry examples, and the property it names is actually tested above by
     # `assert tests` per module (review of #2351). The ratio is what this test is for, and it is asserted
-    # EXACTLY: a docstring that says "24 of 182" stops being true at 183, so 183 is where this fires.
-    assert with_examples == 182, (
-        f"modules carrying examples moved {182} -> {with_examples}. This file's docstring states the ratio "
-        f"24 of 182 and `scripts/check_docstring_kwargs.py`'s docstring states 624 analysed blocks; both are "
+    # EXACTLY: a docstring that says "24 of 181" stops being true at 182, so 182 is where this fires. #2422 took it
+    # from 182 to 181 by deleting a module that carried examples.
+    assert with_examples == 181, (
+        f"modules carrying examples moved {181} -> {with_examples}. This file's docstring states the ratio "
+        f"24 of 181 and `scripts/check_docstring_kwargs.py`'s docstring states 619 analysed blocks; both are "
         f"now wrong. Update them and this number together, or the coverage claim overstates itself silently."
     )

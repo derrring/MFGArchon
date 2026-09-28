@@ -1,8 +1,8 @@
 # Deprecation Modernization Guide
 
 **Auto-generated** by `scripts/generate_deprecation_guide.py`
-**Total deprecated items**: 107
-**Versions covered**: v0.22.0, v0.21.0, v0.20.5, v0.20.0, v0.19.2, v0.19.0, v0.18.6, v0.18.0, v0.17.6, v0.17.0, v0.16.11, v0.12.0
+**Total deprecated items**: 99
+**Versions covered**: v0.22.0, v0.21.0, v0.20.0, v0.19.2, v0.19.0, v0.18.6, v0.18.0, v0.17.6, v0.17.0, v0.16.11, v0.12.0
 
 ---
 
@@ -44,7 +44,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 ## Deprecated since v0.22.0
 
-*60 items*
+*56 items*
 
 ### Parameters
 
@@ -61,7 +61,6 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 ### Refused parameters (already raise TypeError)
 
-- `sigma=` in `AdjointConsistentProvider.__init__()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `BlockIterator.__init__()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma=` in `DiffusionOperator.from_volatility()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma=` in `FPFDMSolver.solve_fp_step_adjoint_mode()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
@@ -103,9 +102,6 @@ It does mean a migration you read on one row **does not transfer** to another so
 - `sigma=` in `build_diffusion_matrix_2d()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma=` in `build_diffusion_matrix_from_geometry()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma=` in `check_adi_compatibility()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
-- `sigma=` in `compute_adjoint_consistent_bc_values()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
-- `sigma=` in `compute_coupled_hjb_bc_values()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
-- `sigma=` in `create_adjoint_consistent_bc_1d()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma=` in `create_obstacle_variational_mfg()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma=` in `create_quadratic_variational_mfg()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma=` in `diffusion_from_volatility()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
@@ -125,16 +121,6 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 - **`drift_field`** in `FPNetworkSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0) [see *Do not migrate these across solvers*: `drift_field`]
 - **`drift_field`** in `NetworkFPSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0) [see *Do not migrate these across solvers*: `drift_field`]
-
----
-
-## Deprecated since v0.20.5
-
-*1 items*
-
-### Parameters
-
-- **`diffusion`** in `AdjointConsistentProvider.__init__()` — use `volatility` instead (remove by v0.25.0)
 
 ---
 
@@ -213,7 +199,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 ## Deprecated since v0.17.0
 
-*23 items*
+*20 items*
 
 ### Parameters
 
@@ -235,9 +221,6 @@ It does mean a migration you read on one row **does not transfer** to another so
 ### Functions / Classes
 
 - **`__init__()`** — use `Use TaylorOperator from gfdm_strategies instead: from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import TaylorOperator` instead (remove by v0.25.0)
-- **`compute_adjoint_consistent_bc_values()`** — use `Use mfgarchon.alg.numerical.adjoint.compute_adjoint_consistent_bc_values instead.` instead (remove by v0.25.0)
-- **`compute_boundary_log_density_gradient_1d()`** — use `Use mfgarchon.alg.numerical.adjoint.compute_boundary_log_density_gradient_1d instead.` instead (remove by v0.25.0)
-- **`create_adjoint_consistent_bc_1d()`** — use `Use mfgarchon.alg.numerical.adjoint.create_adjoint_consistent_bc_1d instead.` instead (remove by v0.25.0)
 - **`create_solver()`** — use `Use the new three-mode solving API instead (Issue #580):
   - Safe Mode: problem.solve(scheme=NumericalScheme.FDM_UPWIND)
   - Expert Mode: problem.solve(hjb_solver=hjb, fp_solver=fp)

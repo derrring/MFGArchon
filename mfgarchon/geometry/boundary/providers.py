@@ -9,7 +9,7 @@ by the coupling iterator.
 Architecture:
 ------------
 1. BCValueProvider protocol defines the compute(state) -> value contract
-2. Concrete providers (e.g., AdjointConsistentProvider) implement the formula
+2. Concrete providers implement the formula (``ConstantProvider`` is the reference one)
 3. BCSegment.value can hold a provider (intent) or static value
 4. FixedPointIterator resolves providers before passing BC to solvers
 
@@ -22,39 +22,37 @@ Benefits:
 
 Example:
 --------
-    >>> from mfgarchon.geometry.boundary.providers import AdjointConsistentProvider
+    >>> from mfgarchon.geometry.boundary.providers import BaseBCValueProvider
     >>> from mfgarchon.geometry.boundary import BCSegment, BCType
+    >>>
+    >>> class LeftDensity(BaseBCValueProvider):
+    ...     def compute(self, state):
+    ...         # 1-D: m_current is space-time, time first, (Nt+1, Nx). Final slice, left wall.
+    ...         return float(state["m_current"][-1, 0])
     >>>
     >>> # Store intent in BCSegment
     >>> segment = BCSegment(
-    ...     name="left_ac",
-    ...     bc_type=BCType.ROBIN,
-    ...     alpha=0.0, beta=1.0,
-    ...     value=AdjointConsistentProvider(side="left", volatility=0.2),
+    ...     name="left",
+    ...     bc_type=BCType.NEUMANN,
+    ...     value=LeftDensity(),
     ...     boundary="x_min",
     ... )
     >>>
     >>> # Later, iterator resolves provider with current state
-    >>> state = {'m_current': m, 'geometry': geometry, 'volatility': 0.2}
+    >>> state = {'m_current': m, 'geometry': geometry}
     >>> concrete_value = segment.value.compute(state)
 
 References:
 -----------
 - Issue #625: Dynamic BC value provider architecture
-- Issue #574: Original adjoint-consistent BC implementation
-- docs/development/boundary_condition_handling_summary.md
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, ClassVar, NoReturn, Protocol, TypedDict, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict, runtime_checkable
 
 import numpy as np
-
-from mfgarchon.geometry.boundary.bc_coupling import compute_boundary_log_density_gradient_1d
-from mfgarchon.utils.deprecation import deprecated_parameter
-from mfgarchon.utils.pde_coefficients import retired_sigma_keyword, scalar_volatility
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -74,25 +72,20 @@ class BCProviderState(TypedDict, total=False):
     This defines the standard keys passed to BCValueProvider.compute().
     All keys are optional (total=False) as different providers need different subsets.
 
-    Required by AdjointConsistentProvider:
-        m_current: Current FP density array
+    Keys:
+        m_current: The previous Picard iterate of the FP density, space-time and time first:
+            shape ``(Nt+1, *grid)``.
+        U_current: The previous iterate of the value function, same shape.
         geometry: Problem geometry object
-        volatility: SDE volatility σ (canonical, #2378; the retired 'sigma' key is refused by name, and the
-            deprecated 'diffusion' key is also σ, Issue #1512)
-
-    Optional (context-dependent):
-        U_current: Current value function array
-        t: Current time (for time-dependent problems)
+        volatility: The SDE volatility σ as supplied, never D = σ²/2 (#1512, #2378). A provider that
+            needs a scalar calls ``scalar_volatility`` on it, which refuses a field (#2376).
         iteration: Current Picard iteration number
-        diffusion: Deprecated alias for 'volatility' (Issue #1512): the key holds σ, NOT D = σ²/2
     """
 
     m_current: NDArray[np.floating]
     U_current: NDArray[np.floating]
     geometry: GeometryProtocol
     volatility: float
-    diffusion: float  # Deprecated (Issue #1512), use 'volatility'
-    t: float
     iteration: int
 
 
@@ -107,8 +100,8 @@ class BCValueProvider(Protocol):
     Protocol for dynamic boundary condition value generation.
 
     Providers compute BC values from the current system state during
-    iteration. This enables state-dependent BCs (like adjoint-consistent
-    reflecting boundaries) without coupling logic in solvers.
+    iteration. This enables state-dependent BCs (like a wall coefficient that
+    moves with the Picard iterate) without coupling logic in solvers.
 
     The protocol is runtime-checkable, allowing isinstance() checks:
         >>> if isinstance(segment.value, BCValueProvider):
@@ -128,12 +121,10 @@ class BCValueProvider(Protocol):
 
         Args:
             state: Dictionary containing iteration state. Standard keys:
-                - 'm_current': Current FP density array
-                - 'U_current': Current value function array
+                - 'm_current': previous Picard iterate of the FP density, shape (Nt+1, *grid)
+                - 'U_current': previous iterate of the value function, same shape
                 - 'geometry': Problem geometry object
-                - 'volatility': SDE volatility σ (canonical; the retired 'sigma' key is refused, #2378)
-                - 'diffusion': deprecated alias for 'volatility' (σ, not D = σ²/2; Issue #1512)
-                - 't': Current time (for time-dependent problems)
+                - 'volatility': the SDE volatility σ as supplied (not D = σ²/2; #1512, #2378)
                 - 'iteration': Current Picard iteration number
 
         Returns:
@@ -175,354 +166,6 @@ class BaseBCValueProvider(ABC):
 # =============================================================================
 
 
-class AdjointConsistentProvider(BaseBCValueProvider):
-    """
-    Provider for adjoint-consistent Robin BC values (Issue #574).
-
-    Computes the Robin BC value for reflecting boundaries that maintains
-    adjoint consistency between HJB and FP equations:
-
-        g = -σ²/2 · d(ln m)/dn
-
-    where:
-        - sigma: SDE volatility σ (NOT the PDE diffusion D = σ²/2; Issue #1512)
-        - m: current FP density
-        - d/dn: outward normal derivative at boundary
-
-    SCOPE LIMITATION (Issue #625 Validation):
-    -----------------------------------------
-    This provider is designed for **boundary stall configurations only**.
-
-    The formula is derived from the zero-flux equilibrium condition, which
-    assumes the boundary IS the equilibrium point (stall). For interior stall:
-    - The derivation doesn't apply (equilibrium flux is not zero at boundary)
-    - Results are worse than standard Neumann BC (validated experimentally)
-    - Use Strict Adjoint Mode (Issue #622) instead for universal applicability
-
-    Validation results:
-    - Boundary stall (x=0): AC BC error 1.36 vs Neumann 2.09 (1.54x better)
-    - Interior stall (x=0.5): AC BC error 5.88 vs Neumann 1.55 (3.8x WORSE)
-
-    When to use:
-    - Stall point at domain boundary (x_stall = 0 or x_stall = L)
-    - Reflecting (zero-flux) boundary conditions
-    - MFG problems with crowd-aversion coupling
-
-    When NOT to use:
-    - Interior stall points (use Strict Adjoint Mode instead)
-    - Absorbing boundaries
-    - Periodic boundaries
-
-    Attributes:
-        side: Boundary side ("left" or "right" for 1D)
-        diffusion: Diffusion coefficient (can be None to read from state)
-        regularization: Small constant to prevent log(0)
-
-    Example:
-        >>> # Appropriate: boundary stall configuration
-        >>> provider = AdjointConsistentProvider(side="left", volatility=0.04)
-        >>> state = {'m_current': m_array, 'geometry': geom}
-        >>> g_left = provider.compute(state)  # Robin BC value at left boundary
-
-    See Also:
-        - Strict Adjoint Mode (Issue #622): Universal L_FP = L_HJB^T enforcement
-        - docs/development/boundary_condition_handling_summary.md for full analysis
-    """
-
-    # Side name aliases: map various conventions to canonical form
-    # Canonical: "left"/"right" for 1D, "{axis}_min"/"{axis}_max" for nD
-    _SIDE_ALIASES: ClassVar[dict[str, str]] = {
-        # 1D aliases (all map to left/right)
-        "left": "left",
-        "right": "right",
-        "x_min": "left",
-        "x_max": "right",
-        "min": "left",
-        "max": "right",
-        # 2D/3D aliases (for future nD support)
-        "y_min": "y_min",
-        "y_max": "y_max",
-        "z_min": "z_min",
-        "z_max": "z_max",
-        "bottom": "y_min",
-        "top": "y_max",
-        "front": "z_min",
-        "back": "z_max",
-    }
-
-    @deprecated_parameter(
-        param_name="diffusion",
-        since="v0.20.5",
-        replacement="volatility",
-    )
-    @retired_sigma_keyword
-    def __init__(
-        self,
-        side: str,
-        volatility: float | None = None,
-        regularization: float = 1e-10,
-        *,
-        diffusion: float | None = None,  # Deprecated alias for volatility (misnomer; Issue #1512)
-    ) -> None:
-        """
-        Initialize adjoint-consistent BC provider.
-
-        Args:
-            side: Boundary side identifier. Accepts multiple conventions:
-                - 1D: "left", "right", "x_min", "x_max", "min", "max"
-                - 2D: "y_min", "y_max", "bottom", "top"
-                - 3D: "z_min", "z_max", "front", "back"
-            volatility: SDE volatility σ (NOT the PDE diffusion D = σ²/2 -- the value is squared internally).
-                If None, reads from state. The value is ``problem.volatility`` (σ), never
-                ``problem.diffusion`` (σ²/2) -- passing the latter is the Issue #1512 trap. A field or
-                callable volatility is refused (#2376): this provider uses one scalar.
-            regularization: Small positive constant added to density
-                           to prevent log(0). Default 1e-10.
-            diffusion: DEPRECATED (Issue #1512): a misnomer -- this argument is σ, not D, and the name
-                collided with the ``D = σ²/2`` convention. Use ``volatility``.
-        """
-        if side not in self._SIDE_ALIASES:
-            valid = sorted(self._SIDE_ALIASES.keys())
-            raise ValueError(f"side must be one of {valid}, got '{side}'")
-
-        # Issue #1512: `diffusion` was a misnamed alias for σ (it is squared in compute) that collided
-        # with the codebase D = σ²/2 convention. `volatility` is canonical (#2378); `diffusion` redirects to it.
-        if diffusion is not None and volatility is None:
-            volatility = diffusion
-
-        # Store both original and normalized side names
-        self._original_side = side
-        self.side = self._SIDE_ALIASES[side]  # Normalize to canonical form
-        self.volatility = volatility
-        self.regularization = regularization
-
-    @property
-    def sigma(self) -> NoReturn:
-        raise AttributeError(
-            "AdjointConsistentProvider.sigma is retired (#2378 part 2b); the SDE volatility it held is "
-            "AdjointConsistentProvider.volatility."
-        )
-
-    def compute(self, state: dict[str, Any]) -> float:
-        """
-        Compute adjoint-consistent Robin BC value.
-
-        Args:
-            state: Must contain:
-                - 'm_current': FP density array (interior points)
-                - 'geometry': Geometry object with get_grid_spacing()
-                - 'volatility' (or the deprecated 'diffusion', read only when 'volatility' is
-                  absent): the SDE volatility σ, if not set in __init__.
-
-        Returns:
-            Robin BC value: g = -σ²/2 * d(ln m)/dn
-
-        Raises:
-            KeyError: If required state keys missing
-            ValueError: If density has invalid shape
-        """
-        # Get density
-        m = state.get("m_current")
-        if m is None:
-            raise KeyError("AdjointConsistentProvider requires 'm_current' in state")
-
-        # Handle time-dependent density (take final time slice)
-        if m.ndim > 1:
-            m = m[-1, :]  # Final time slice for backward HJB
-
-        # Get geometry for grid spacing
-        geometry = state.get("geometry")
-        if geometry is None:
-            raise KeyError("AdjointConsistentProvider requires 'geometry' in state")
-
-        # Get diffusion coefficient (try constructor, then state)
-        sigma = self.volatility
-        if sigma is None:
-            # 'volatility' is canonical (σ, #2378); 'diffusion' is the deprecated key (Issue #1512) -- also
-            # σ here, NOT the D = σ²/2 the same word means elsewhere. The retired 'sigma' key is refused
-            # by name rather than read, so a state built for the old name fails where it is built.
-            if "sigma" in state:
-                raise KeyError(
-                    "AdjointConsistentProvider: the provider state's 'sigma' key is retired (#2378 part 2b); "
-                    "put the SDE volatility under 'volatility'."
-                )
-            sigma = state.get("volatility")
-            if sigma is None:
-                sigma = state.get("diffusion")
-            if sigma is None:
-                raise KeyError(
-                    "AdjointConsistentProvider: volatility not set in constructor "
-                    "and neither 'volatility' nor 'diffusion' found in state"
-                )
-        # The state carries the problem's volatility as supplied, never a collapsed scalar (#2376).
-        sigma = scalar_volatility(sigma, consumer="AdjointConsistentProvider")
-
-        # Compute log-density gradient at boundary
-        # Delegate to dimension-aware function in bc_coupling module
-        grad_ln_m = self._compute_boundary_log_gradient(m, geometry, self.side, self.regularization)
-
-        # Robin BC value: g = -σ²/2 * d(ln m)/dn
-        return -(sigma**2) / 2 * grad_ln_m
-
-    def _compute_boundary_log_gradient(
-        self,
-        m: NDArray[np.floating],
-        geometry: Any,
-        side: str,
-        regularization: float,
-    ) -> float:
-        """
-        Compute ∂ln(m)/∂n at boundary using geometry-appropriate method.
-
-        This method dispatches to dimension-specific implementations.
-        For nD support, geometry should provide gradient operators.
-
-        Args:
-            m: Density array (interior points)
-            geometry: Geometry object with get_grid_spacing()
-            side: Normalized boundary side identifier
-            regularization: Small constant to prevent log(0)
-
-        Returns:
-            Outward normal derivative of ln(m) at boundary
-
-        Note:
-            Current implementation: 1D only (uses finite differences)
-            Future (Issue #624): Use geometry.get_gradient_operator() for nD
-        """
-        dimension = getattr(geometry, "dimension", 1)
-
-        if dimension == 1 or side in ("left", "right"):
-            # 1D case: use finite difference implementation
-            dx = geometry.get_grid_spacing()[0]
-            return compute_boundary_log_density_gradient_1d(m, dx, side, regularization)
-        else:
-            # nD case: requires geometry gradient operators (Issue #624)
-            raise NotImplementedError(
-                f"AdjointConsistentProvider: {dimension}D not yet implemented. "
-                f"See Issue #624 for nD adjoint-consistent BC support."
-            )
-
-    def __repr__(self) -> str:
-        sig_str = f"{self.volatility}" if self.volatility is not None else "from_state"
-        # Show original side name for user clarity
-        return f"AdjointConsistentProvider(side='{self._original_side}', volatility={sig_str})"
-
-
-class NormalDriftProvider(BaseBCValueProvider):
-    """Outward normal drift at a wall, for the ``alpha`` of a Fokker-Planck no-flux condition.
-
-    An impermeable wall is ``J . n = 0`` with ``J = m*v - D*grad(m)``, i.e.
-
-        v_n * m - D * d_n m = 0,
-
-    which is Robin in ``m`` with ``alpha = v_n``, ``beta = -D``, ``g = 0``. Imposing
-    ``d_n m = 0`` instead is the same condition only when the drift is tangential at the wall;
-    otherwise mass leaves at a rate proportional to ``m_wall * v_n``. Measured on this package,
-    1-D, sigma = 0.3, with a wall-normal drift of magnitude 3.2: the non-conservative assembly
-    loses **5.4% of the mass**, the conservative one is at machine precision.
-
-    WHICH SOLVERS CAN CONSUME THIS (#1979 / #2013). The FDM grid paths **refuse** a provider-valued
-    wall coefficient: their boundary handlers are keyed on the advection scheme and take no
-    ``boundary_conditions`` argument at all, so nothing reads ``alpha``. Before that refusal existed
-    the segment assembled byte-identically to a plain no-flux wall with no diagnostic -- which is
-    the failure this provider is meant to prevent, arriving by a different route. ``FPFEMSolver``
-    reads ``alpha``/``beta``/``g`` in its weak form and is the path where this provider does its
-    job.
-
-    Resolving it with ``bc.with_resolved_providers(state)`` will get past that refusal and is a
-    DOWNGRADE, not a workaround: this provider exists to be recomputed each Picard iterate from the
-    current ``m``, and resolving freezes it at one state. A frozen normal drift is a constant Robin
-    coefficient, which is a different boundary condition.
-
-    ``v_n`` is a functional of the *coupled* solution -- ``v = -c*grad(U)`` with ``c`` from the
-    Hamiltonian's control law -- so it is known only per Picard iterate. That is what a provider
-    is for, and it is why this one sits on ``alpha`` rather than on ``value``: ``value`` is the
-    homogeneous right-hand side, which for an impermeable wall is zero.
-
-    Sign convention: **outward normal**, matching ``BCSegment.beta``'s declared ``du/dn`` and
-    every ghost formula since #1907. At the low wall the outward normal is ``-x``, so
-    ``v_n = -v_x`` there. Passing an axis component instead gives a physically different wall.
-
-    Attributes:
-        side: Boundary side, in any spelling ``AdjointConsistentProvider`` accepts.
-        drift_coefficient: The ``c`` in ``v = -c*grad(U)``. ``None`` reads ``'drift_coefficient'``
-            from the state, which is where ``fp_drift_coefficient(problem)`` -- the single source
-            (#1420) -- puts it. There is no default: ``c`` is a mathematical parameter of the
-            problem, and a defaulted one silently rescales the wall.
-
-    Example:
-        >>> seg = BCSegment(name="wall", bc_type=BCType.NO_FLUX, value=0.0,
-        ...                 alpha=NormalDriftProvider(side="left"), beta=-diffusion)
-    """
-
-    def __init__(self, side: str, drift_coefficient: float | None = None) -> None:
-        if side not in AdjointConsistentProvider._SIDE_ALIASES:
-            valid = sorted(AdjointConsistentProvider._SIDE_ALIASES)
-            raise ValueError(f"side must be one of {valid}, got '{side}'")
-        self._original_side = side
-        self.side = AdjointConsistentProvider._SIDE_ALIASES[side]
-        self.drift_coefficient = drift_coefficient
-
-    def compute(self, state: dict[str, Any]) -> float:
-        """Outward normal component of ``v = -c*grad(U)`` at this wall.
-
-        Args:
-            state: Must contain ``'U_current'`` (the value function) and ``'geometry'``; and
-                ``'drift_coefficient'`` unless it was given to ``__init__``.
-
-        Returns:
-            ``v_n``, the outward normal drift.
-
-        Raises:
-            KeyError: naming the missing state key.
-            NotImplementedError: for a wall other than the two 1-D ones -- an nD outward normal
-                needs the geometry's gradient operator, the same limit
-                ``AdjointConsistentProvider`` states (#624).
-        """
-        u = state.get("U_current")
-        if u is None:
-            raise KeyError("NormalDriftProvider requires 'U_current' in state")
-        geometry = state.get("geometry")
-        if geometry is None:
-            raise KeyError("NormalDriftProvider requires 'geometry' in state")
-
-        c = self.drift_coefficient
-        if c is None:
-            c = state.get("drift_coefficient")
-            if c is None:
-                raise KeyError(
-                    "NormalDriftProvider requires 'drift_coefficient' in state (or in its "
-                    "constructor). It is the c in v = -c*grad(U); source it from "
-                    "fp_drift_coefficient(problem), not from a per-solver copy (#1420). There is "
-                    "no default because a defaulted c silently rescales the wall's drift."
-                )
-
-        u = np.asarray(u)
-        if u.ndim > 1:
-            u = u[-1, :]  # final time slice, matching AdjointConsistentProvider
-
-        if self.side not in ("left", "right"):
-            raise NotImplementedError(
-                f"NormalDriftProvider: side '{self._original_side}' needs the geometry's gradient "
-                "operator for the outward normal. See Issue #624, the same limit "
-                "AdjointConsistentProvider states."
-            )
-
-        dx = geometry.get_grid_spacing()[0]
-        # One-sided difference toward the interior, then projected onto the OUTWARD normal.
-        # Low wall: n = -x, so v_n = -v_x = +c * dU/dx. High wall: n = +x, so v_n = -c * dU/dx.
-        if self.side == "left":
-            du_dx = (u[1] - u[0]) / dx
-            return float(c * du_dx)
-        du_dx = (u[-1] - u[-2]) / dx
-        return float(-c * du_dx)
-
-    def __repr__(self) -> str:
-        c = self.drift_coefficient if self.drift_coefficient is not None else "from_state"
-        return f"NormalDriftProvider(side='{self._original_side}', drift_coefficient={c})"
-
-
 class ConstantProvider(BaseBCValueProvider):
     """
     Trivial provider that returns a constant value.
@@ -559,7 +202,7 @@ def is_provider(value: Any) -> bool:
     Example:
         >>> from mfgarchon.geometry.boundary.providers import is_provider
         >>> is_provider(0.0)  # False
-        >>> is_provider(AdjointConsistentProvider("left", 0.2))  # True
+        >>> is_provider(ConstantProvider(1.0))  # True
     """
     return isinstance(value, BCValueProvider)
 
@@ -579,7 +222,7 @@ def resolve_provider(
         Resolved value - float for scalar BCs, NDArray for spatially-varying BCs
 
     Example:
-        >>> value = AdjointConsistentProvider("left", 0.2)
+        >>> value = ConstantProvider(1.0)
         >>> resolved = resolve_provider(value, state)  # Calls compute()
         >>> resolve_provider(1.5, state)  # Returns 1.5 unchanged
     """
@@ -587,104 +230,3 @@ def resolve_provider(
         result = value.compute(state)
         return float(result) if not isinstance(result, np.ndarray) else result
     return float(value)
-
-
-# =============================================================================
-# Smoke Test
-# =============================================================================
-
-if __name__ == "__main__":
-    """Quick validation of provider architecture."""
-    import warnings
-
-    print("Testing BC value providers...")
-    print()
-
-    # Test 1: Protocol check
-    print("Test 1: Protocol compliance")
-    provider = AdjointConsistentProvider(side="left", volatility=0.2)
-    assert isinstance(provider, BCValueProvider), "Should implement protocol"
-    assert is_provider(provider), "is_provider() should return True"
-    assert not is_provider(1.5), "Float should not be a provider"
-    print("  Protocol checks passed")
-    print()
-
-    # Test 2: Compute with mock state
-    print("Test 2: Compute with mock state")
-
-    # Create mock geometry
-    class MockGeometry:
-        def get_grid_spacing(self):
-            return [0.1]
-
-    # Exponential density: m(x) = exp(-x), so d(ln m)/dx = -1
-    x = np.linspace(0, 1, 11)
-    m = np.exp(-x)
-
-    state = {
-        "m_current": m,
-        "geometry": MockGeometry(),
-        "volatility": 0.2,  # Canonical key (#2378)
-    }
-
-    # Left boundary: outward normal is -x, so d(ln m)/dn = -(-1) = 1
-    # g = -0.2^2/2 * 1 = -0.02
-    left_provider = AdjointConsistentProvider(side="left", volatility=0.2)
-    g_left = left_provider.compute(state)
-    expected_left = -(0.2**2) / 2 * 1.0  # -0.02
-    print(f"  Left BC value: {g_left:.6f} (expected ~ {expected_left:.6f})")
-
-    # Right boundary: outward normal is +x, so d(ln m)/dn = -1
-    # g = -0.2^2/2 * (-1) = 0.02
-    right_provider = AdjointConsistentProvider(side="right", volatility=0.2)
-    g_right = right_provider.compute(state)
-    expected_right = -(0.2**2) / 2 * (-1.0)  # 0.02
-    print(f"  Right BC value: {g_right:.6f} (expected ~ {expected_right:.6f})")
-    print()
-
-    # Test 3: resolve_provider utility
-    print("Test 3: resolve_provider utility")
-    resolved = resolve_provider(left_provider, state)
-    assert abs(resolved - g_left) < 1e-10, "Should match direct compute"
-    resolved_static = resolve_provider(42.0, state)
-    assert resolved_static == 42.0, "Static value should pass through"
-    print("  resolve_provider works correctly")
-    print()
-
-    # Test 4: Volatility from state (not constructor)
-    print("Test 4: Volatility from state (not constructor)")
-    provider_no_diff = AdjointConsistentProvider(side="left", volatility=None)
-    g_from_state = provider_no_diff.compute(state)
-    assert abs(g_from_state - g_left) < 1e-10, "Should use the volatility from state"
-    print("  Volatility correctly read from state when not in constructor")
-    print()
-
-    # Test 5: the retired 'sigma' key in state is refused by name (#2378 part 2b)
-    print("Test 5: retired 'sigma' key in state")
-    state_legacy = {
-        "m_current": m,
-        "geometry": MockGeometry(),
-        "sigma": 0.2,  # Retired key
-    }
-    provider_legacy = AdjointConsistentProvider(side="left", volatility=None)
-    refusal = ""
-    try:
-        provider_legacy.compute(state_legacy)
-    except KeyError as exc:
-        refusal = str(exc)
-    assert "volatility" in refusal, "the retired 'sigma' key must be refused, naming 'volatility'"
-    print("  Retired 'sigma' key refused, naming 'volatility'")
-    print()
-
-    # Test 6: Deprecated 'diffusion' parameter (Issue #1512: 'diffusion' is a misnomer for the volatility)
-    print("Test 6: Deprecated 'diffusion' parameter (shows warning)")
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        provider_deprecated = AdjointConsistentProvider(side="left", diffusion=0.2)
-        assert len(w) == 1, "Should emit deprecation warning"
-        assert "deprecated" in str(w[0].message).lower()
-        assert provider_deprecated.volatility == 0.2, "diffusion should map to volatility"
-    print("  Deprecated 'diffusion' parameter works with warning")
-    print()
-
-    print("All provider tests passed!")

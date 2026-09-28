@@ -11,7 +11,6 @@ from __future__ import annotations
 import importlib
 import inspect
 import pkgutil
-import warnings
 
 import pytest
 
@@ -72,26 +71,19 @@ def test_no_function_takes_sigma_for_the_volatility():
 
 
 def _renamed_public_api():
-    from mfgarchon.alg.numerical.adjoint import bc_coupling as adjoint_bc
     from mfgarchon.alg.numerical.adjoint import operators as adjoint_ops
     from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
     from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
     from mfgarchon.alg.optimization import variational_problem as vp
-    from mfgarchon.geometry.boundary import bc_coupling as boundary_bc
-    from mfgarchon.geometry.boundary.providers import AdjointConsistentProvider
     from mfgarchon.operators.differential.diffusion import DiffusionOperator
     from mfgarchon.utils import manufactured as mms
     from mfgarchon.utils import pde_coefficients as pc
 
     unbound = [
-        adjoint_bc.create_adjoint_consistent_bc_1d,
-        adjoint_bc.compute_adjoint_consistent_bc_values,
         adjoint_ops.build_diffusion_matrix,
         adjoint_ops.build_diffusion_matrix_1d,
         adjoint_ops.build_diffusion_matrix_2d,
         adjoint_ops.build_diffusion_matrix_from_geometry,
-        boundary_bc.create_adjoint_consistent_bc_1d,
-        boundary_bc.compute_adjoint_consistent_bc_values,
         vp.create_quadratic_variational_mfg,
         vp.create_obstacle_variational_mfg,
         pc.diffusion_from_volatility,
@@ -102,7 +94,6 @@ def _renamed_public_api():
         DiffusionOperator.from_volatility,
     ]
     methods = [
-        AdjointConsistentProvider.__init__,
         vp.VariationalMFGProblem.__init__,
         FPFDMSolver.solve_fp_step_adjoint_mode,
         WeakFormFPSolver.solve_fp_step_adjoint_mode,
@@ -117,11 +108,7 @@ def test_the_renamed_public_api_refuses_sigma_by_name():
     wrong = []
     for func, args in _renamed_public_api():
         try:
-            with warnings.catch_warnings():
-                # The geometry.boundary builders are deprecated aliases of the alg.numerical.adjoint
-                # ones; their own warning is not what this test measures.
-                warnings.simplefilter("ignore", DeprecationWarning)
-                func(*args, sigma=0.3)
+            func(*args, sigma=0.3)
         except TypeError as exc:
             if "no longer takes sigma=; pass volatility=" in str(exc):
                 continue
@@ -152,37 +139,13 @@ def test_the_grid_config_refusal_names_volatility():
 def test_the_retired_attributes_name_the_replacement():
     from mfgarchon.alg.optimization.variational_problem import VariationalMFGProblem
     from mfgarchon.core.hamiltonian import HamiltonianValues
-    from mfgarchon.geometry.boundary.providers import AdjointConsistentProvider
 
-    provider = AdjointConsistentProvider(side="left", volatility=0.2)
-    assert provider.volatility == 0.2
     values = HamiltonianValues(H=np.zeros(3), dH_dp=np.zeros((3, 1)), volatility=np.full(3, 0.2))
     problem = VariationalMFGProblem(volatility=0.2)
     assert problem.volatility == 0.2
-    for owner in (provider, values, problem):
+    for owner in (values, problem):
         with pytest.raises(AttributeError, match=r"\.sigma is retired .*\.volatility"):
             _ = owner.sigma
-
-
-def test_the_provider_state_carries_volatility_and_refuses_sigma():
-    """The coupling loop hands providers `state["volatility"]`; a state built for the old key is refused
-    where it is built, not read as a missing volatility."""
-    from mfgarchon.geometry.boundary.providers import AdjointConsistentProvider
-
-    class _Geometry:
-        dimension = 1
-
-        def get_grid_spacing(self):
-            return [0.1]
-
-    m = np.exp(-np.linspace(0.0, 1.0, 11))
-    provider = AdjointConsistentProvider(side="left")
-    value = provider.compute({"m_current": m, "geometry": _Geometry(), "volatility": 0.2})
-    assert value == AdjointConsistentProvider(side="left", volatility=0.2).compute(
-        {"m_current": m, "geometry": _Geometry()}
-    )
-    with pytest.raises(KeyError, match=r"'sigma' key is retired .*'volatility'"):
-        provider.compute({"m_current": m, "geometry": _Geometry(), "sigma": 0.2})
 
 
 def test_the_strict_adjoint_step_reads_a_tensor_by_its_kind_not_by_identity():

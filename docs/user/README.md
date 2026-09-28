@@ -54,7 +54,6 @@ Step-by-step learning from basics to advanced:
 | [03 - 2D Geometry](../../examples/tutorials/03_2d_geometry.ipynb) | Multi-dimensional problems |
 | [04 - Particle Methods](../../examples/tutorials/04_particle_methods.ipynb) | Monte Carlo FP solver |
 | [05 - Problem Variations](../../examples/tutorials/05_config_system.ipynb) | Parameter studies |
-| [06 - BC Coupling](../../examples/tutorials/06_boundary_condition_coupling.ipynb) | Adjoint-consistent BC |
 
 ### Guides
 

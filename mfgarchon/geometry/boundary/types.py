@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from mfgarchon.geometry.boundary.providers import is_provider
 from mfgarchon.geometry.boundary.tolerances import SDF_BOUNDARY_TOL
 from mfgarchon.geometry.protocols import SupportsRegionMarking
 from mfgarchon.utils.deprecation import deprecated
@@ -799,9 +800,6 @@ class BCSegment:
             ValueError: If value is a provider but state is not provided
         """
         # Check for BCValueProvider first (Issue #625)
-        # Late import: real cycle — types -> providers -> bc_coupling -> types
-        from .providers import is_provider
-
         if is_provider(self.value):
             if state is None:
                 raise ValueError(

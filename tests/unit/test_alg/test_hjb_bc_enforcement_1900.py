@@ -253,7 +253,7 @@ def test_a_uniform_robin_bc_loses_its_alpha_and_beta_before_reaching_the_enforce
     alpha=2, beta=-1 it still returns (1.0, 0.0).
 
     A FACED segment works correctly, which is why this was invisible -- the CLAUDE.md example for
-    adjoint-consistent BCs uses `boundary="x_min"`.
+    adjoint-consistent BCs used `boundary="x_min"` (that section went with the provider, #2422).
 
     xfail(strict=True): this asserts the CORRECT behaviour, so it reddens the day the accessor is
     fixed and the marker has to come off. Filed separately from #1900.

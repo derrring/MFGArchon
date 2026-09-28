@@ -30,9 +30,9 @@ order 5:
 
 So the reached path is `_apply_poly_extrapolation`, which `self._order` selects and
 `_update_ghosts_mixed` ignores. The repaired loop is reachable only per-face, and both in-repo
-per-face HJB constructors — `geometry/boundary/bc_coupling.py` (deprecated) and
-`alg/numerical/adjoint/bc_coupling.py` — emit `ROBIN`, which WENO refuses. **Reachable but
-not currently reached**, which is a weaker claim than the struck sentence and is the true one.
+per-face HJB constructors this was measured against — the two `bc_coupling.py` builders, removed
+since (#2422) — emitted `ROBIN`, which WENO refuses. **Reachable but not currently reached**, which
+is a weaker claim than the struck sentence and is the true one.
 
 **The oracle is an exact continuation, not another code path.** `cos(2πx)` is even about both
 `x = 0` and `x = 1`, so `NEUMANN(0)` is satisfied exactly at both walls and the correct ghost is

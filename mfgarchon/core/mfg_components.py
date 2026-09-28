@@ -906,7 +906,7 @@ class ConditionsMixin:
         Context manager for temporarily using resolved boundary conditions (Issue #625).
 
         This is the unified API for dynamic BC resolution. When BoundaryConditions
-        contain BCValueProvider objects (e.g., AdjointConsistentProvider), this
+        contain BCValueProvider objects, this
         context manager resolves them to concrete values for the duration of
         the context.
 

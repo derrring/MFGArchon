@@ -403,8 +403,7 @@ def assemble_robin_terms(
             raise NotImplementedError(
                 f"{kind} segment '{segment.name}' has a non-constant value ({type(g).__name__}). "
                 f"Only a constant g is implemented for the FEM {kind} boundary load; callable / "
-                "BCValueProvider data is deferred (Issue #1237). For an adjoint-consistent "
-                "(state-dependent) BC, resolve the provider to a constant before the solve."
+                "BCValueProvider data is deferred (Issue #1237)."
             ) from None
 
         if segment.bc_type == BCType.NEUMANN:
@@ -435,9 +434,7 @@ def assemble_robin_terms(
                         f"Robin segment '{segment.name}' has a non-constant {_name} "
                         f"({type(_coeff).__name__}). Only a constant {_name} is implemented for the "
                         "FEM Robin operator augmentation; callable / BCValueProvider coefficients "
-                        "are deferred (Issue #1237). For an adjoint-consistent (state-dependent) "
-                        "Robin BC, resolve the provider to a constant before the solve -- "
-                        "`bc.with_resolved_providers(state)`."
+                        "are deferred (Issue #1237)."
                     )
             alpha = float(getattr(segment, "alpha", 1.0))
             beta = float(getattr(segment, "beta", 0.0))

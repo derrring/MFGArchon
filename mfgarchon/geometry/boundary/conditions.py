@@ -1145,7 +1145,7 @@ def robin_bc(
       Constant ``g`` only; ``beta == 0`` fails loud; a provider-valued ``alpha`` raises a bare
       ``TypeError`` from ``float()``. Neither declares ``_SUPPORTED_BC_TYPES``, so none of that is
       checked at construction (#1977).
-    - ``HJBGFDMSolver`` -- the adjoint-consistent ``Robin(0, 1)`` case only.
+    - ``HJBGFDMSolver`` -- the ``Robin(0, 1)`` case only, i.e. ``n . grad u = g``.
     - **Every grid FP solver refuses ROBIN at construction** (``_validate_bc_support``, #1456,
       raising from ``BaseMFGSolver``), uniform and mixed alike. The refusal is load-bearing:
       the FDM boundary handlers are not passed ``boundary_conditions``, so they read none of

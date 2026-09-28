@@ -1025,7 +1025,7 @@ def _extract_bands(Nx: int, apply, label: str):
         return packed
 
     # Tier 2: one probe per column, O(Nx^2). Exact for any structure -- obstacle masks, nonlocal
-    # terms and Robin/adjoint-consistent BCs (#574) all produce operators the comb cannot attribute.
+    # terms and Robin or inhomogeneous-Neumann BCs (#574) all produce operators the comb cannot attribute.
     # Reached only when tier 1's control fails, so the cost is paid only where it is needed; the FD
     # fallback assembly is already O(Nx^2), and the analytic path keeps O(Nx) wherever tier 1 holds.
     packed = pack({j: column([j]) for j in range(Nx)}, isolated=set(range(Nx)))
@@ -1779,7 +1779,7 @@ def solve_hjb_system_backward(
         newton_tolerance: Newton convergence tolerance (new parameter name)
         bc_values: Per-boundary Neumann BC values (Issue #574):
             {"x_min": gradient_left, "x_max": gradient_right}
-            For adjoint-consistent BC. Default: None (standard BC with 0 gradient).
+            Default: None (standard BC with 0 gradient).
     """
     volatility, volatility_kind = resolve_volatility_override(
         volatility, volatility_kind, problem=problem, consumer="1-D HJB-FDM (solve_hjb_system_backward)"
