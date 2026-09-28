@@ -57,15 +57,6 @@ solution outputs
 
 ---
 
-### 06. [Boundary Condition Coupling](./06_boundary_condition_coupling.py)
-**Difficulty**: Advanced | **Time**: 25 minutes
-
-Adjoint-consistent boundary conditions for reflecting boundaries.
-
-**You'll learn**: `AdjointConsistentProvider`, Robin BC from density gradient, stall point handling
-
----
-
 ## Quick Start
 
 ```bash
@@ -74,7 +65,6 @@ python examples/tutorials/02_custom_hamiltonian.py
 python examples/tutorials/03_2d_geometry.py
 python examples/tutorials/04_particle_methods.py
 python examples/tutorials/05_config_system.py
-python examples/tutorials/06_boundary_condition_coupling.py
 ```
 
 ## Prerequisites

@@ -517,7 +517,7 @@ def pair_for(
     ``FPFDMSolver``, ``FPFVMSolver``, ``FPGFDMSolver``, ``FPSLSolver`` and ``HJBFDMSolver`` all
     raise ``NotImplementedError`` at CONSTRUCTION for a ROBIN segment (``_validate_bc_support``,
     #1456); only ``HJBGFDMSolver`` accepts one, and per ``robin_bc``'s own docstring only for the
-    adjoint-consistent ``Robin(0, 1)`` case, while the FEM pair reads Robin coefficients but takes
+    ``Robin(0, 1)`` case (``n . grad u = g``), while the FEM pair reads Robin coefficients but takes
     a constant ``g`` only. A generated Robin pair would have no consumer able to run it. The
     generator side is ready when that changes: ``g`` for a Robin wall is not a constraint the pair
     must satisfy but a quantity computed FROM it, ``g = alpha*m + beta*d_n m`` evaluated at the

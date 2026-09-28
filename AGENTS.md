@@ -97,19 +97,6 @@ There is no local override to the host's cross-project typography rules. Project
 ### File-path anchoring ⚠️ CRITICAL
 Anchor output paths to **project root**, never CWD: ✅ `Path(__file__).resolve().parent.parent / "results"` or `${hydra:runtime.cwd}/results`; ❌ `Path("results")` / `os.getcwd()` (recursive nesting under `cd`).
 
-### Boundary-condition coupling — adjoint-consistent BC (Issue #574, #625) ⚠️
-Reflecting-boundary HJB couples to the FP density gradient for equilibrium consistency, via the **BCValueProvider** pattern: `AdjointConsistentProvider` stored in `BCSegment.value`, resolved at iteration time.
-```python
-from mfgarchon.geometry.boundary import AdjointConsistentProvider, BCSegment, BCType, BoundaryConditions
-bc = BoundaryConditions(segments=[
-    BCSegment(name="left_ac", bc_type=BCType.ROBIN, alpha=0.0, beta=1.0,
-              value=AdjointConsistentProvider(side="left", volatility=volatility), boundary="x_min"),  # the SDE volatility (#1512, #2378); diffusion= is the deprecated alias
-    BCSegment(name="right_ac", bc_type=BCType.ROBIN, alpha=0.0, beta=1.0,
-              value=AdjointConsistentProvider(side="right", volatility=volatility), boundary="x_max"),
-], dimension=1)
-```
-Internally: the iterator calls `problem.using_resolved_bc(state)` each Picard step; the provider computes $g = -\sigma^2/2 \cdot \partial\ln(m)/\partial n$; the solver receives a resolved BC (no coupling knowledge). **Use for**: boundary-stall reflecting configs. **Not for**: interior stall or periodic BC. Implementation: `geometry/boundary/providers.py`, `geometry/boundary/bc_coupling.py`, `alg/numerical/coupling/fixed_point_iterator.py`. Ref: `mfg-research/docs/archon-notes/development/TOWEL_ON_BEACH_1D_PROTOCOL.md`.
-
 ---
 
 ## 🧪 Testing — repo strategy

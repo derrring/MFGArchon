@@ -186,8 +186,7 @@ class HJBResolver:
     Resolution rules:
         - NO_FLUX, REFLECTING -> NEUMANN(g=0): value function has zero normal
           gradient at reflecting walls (optimal control points inward).
-        - BCValueProvider in segment.value -> resolve to concrete Robin BC
-          (e.g., AdjointConsistentProvider for coupled MFG).
+        - BCValueProvider in segment.value -> resolve to concrete Robin BC.
         - All other types: passthrough.
     """
 
@@ -215,7 +214,7 @@ class HJBResolver:
 
         # Equation-specific: NO_FLUX and REFLECTING
         if segment.bc_type in (BCType.NO_FLUX, BCType.REFLECTING):
-            # Check for dynamic provider (e.g., AdjointConsistentProvider)
+            # Check for dynamic provider
             if is_provider(segment.value):
                 resolved_value = segment.value.compute(solver_state)
                 return ResolvedBC(

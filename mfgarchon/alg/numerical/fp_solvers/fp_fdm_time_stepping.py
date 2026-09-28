@@ -627,16 +627,17 @@ def _refuse_provider_wall_coefficients(boundary_conditions) -> None:
 
     THE REACHABLE CASE IS NOT ROBIN. Every grid FP solver refuses ROBIN at construction
     (`_validate_bc_support`, #1456), so that route is already closed. It is a NO_FLUX or NEUMANN
-    segment carrying a provider, which passes the capability gate -- and that is exactly what
-    #1970's `NormalDriftProvider` produces, since an impermeable wall IS Robin in m
+    segment carrying a provider, which passes the capability gate -- the shape #1970's
+    `NormalDriftProvider` produced (removed since, #2422), since an impermeable wall IS Robin in m
     (`alpha*m - D*d_n m = 0`) and its coefficient lives on `alpha` of a no-flux segment.
 
     `_BOUNDARY_HANDLERS` is keyed on the advection scheme and its handlers take no
     `boundary_conditions` argument at all -- the parameter is absent from every signature -- so
     nothing reads these fields, provider or float, and nothing is in a position to complain.
-    Measured: a segment carrying an `AdjointConsistentProvider` assembles byte-identically to a
-    plain no-flux wall, with no diagnostic. That is the wall a user wired a coupled coefficient to
-    AVOID, returned as though it were their request.
+    Measured, with `AdjointConsistentProvider` as the specimen (removed since, #2422): a segment
+    carrying a provider assembles byte-identically to a plain no-flux wall, with no diagnostic.
+    That is the wall a user wired a coupled coefficient to AVOID, returned as though it were their
+    request.
 
     `value` is checked alongside `alpha` and `beta` because it has the same defect on this path and
     it is separately filed: #1686, "Every FP solver silently drops the value in neumann_bc(value=g)
@@ -673,8 +674,10 @@ def _refuse_provider_wall_coefficients(boundary_conditions) -> None:
         f"keyed on advection_scheme and take no `boundary_conditions` argument, so the segment would "
         f"assemble byte-identically to a no-flux wall with no diagnostic (Issue #1979).\n"
         f"\n"
-        f"Use `FPFEMSolver`, whose weak-form assembly implements a general Robin wall and reads "
-        f"alpha/beta/g (established in #1975).\n"
+        f"No FP solver recomputes a wall coefficient each Picard iterate: `FPFEMSolver` reads a "
+        f"constant alpha/beta/g and refuses a provider too. An impermeable wall needs none on the "
+        f"conservative schemes (divergence_upwind, divergence_centered), which impose J.n = 0 by "
+        f"construction (#2422).\n"
         f"\n"
         f"`bc.with_resolved_providers(state)` will also get past this refusal, but it is a DOWNGRADE "
         f"and not a remedy: a provider exists to be recomputed each Picard iterate, and resolving it "

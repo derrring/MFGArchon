@@ -66,11 +66,9 @@ from .dispatch import (
 
 # Dynamic BC value providers (Issue #625)
 from .providers import (
-    AdjointConsistentProvider,
     BaseBCValueProvider,
     BCValueProvider,
     ConstantProvider,
-    NormalDriftProvider,
     is_provider,
     resolve_provider,
 )
@@ -128,8 +126,6 @@ __all__ = [
     # Dynamic BC providers
     "BCValueProvider",
     "BaseBCValueProvider",
-    "AdjointConsistentProvider",
-    "NormalDriftProvider",
     "ConstantProvider",
     "is_provider",
     "resolve_provider",
@@ -235,10 +231,6 @@ def __getattr__(name: str):
         # BC utilities
         "bc_type_to_geometric_operation": ("bc_utils", "bc_type_to_geometric_operation"),
         "get_bc_type_string": ("bc_utils", "get_bc_type_string"),
-        # BC coupling (deprecated)
-        "compute_adjoint_consistent_bc_values": ("bc_coupling", "compute_adjoint_consistent_bc_values"),
-        "create_adjoint_consistent_bc_1d": ("bc_coupling", "create_adjoint_consistent_bc_1d"),
-        "compute_boundary_log_density_gradient_1d": ("bc_coupling", "compute_boundary_log_density_gradient_1d"),
         # Corner handling
         "reflect_positions": ("corner", "reflect_positions"),
         "absorb_positions": ("corner", "absorb_positions"),
@@ -279,14 +271,6 @@ def __getattr__(name: str):
         from .fdm_bc_1d import BoundaryConditions
 
         return BoundaryConditions
-    if name == "compute_boundary_log_density_gradient":
-        from .bc_coupling import compute_boundary_log_density_gradient_1d
-
-        return compute_boundary_log_density_gradient_1d
-    if name == "compute_coupled_hjb_bc_values":
-        from .bc_coupling import compute_coupled_hjb_bc_values
-
-        return compute_coupled_hjb_bc_values
     if name == "get_ghost_values_nd":
         from ._compat import get_ghost_values_nd
 

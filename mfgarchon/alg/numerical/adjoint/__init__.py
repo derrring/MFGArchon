@@ -11,20 +11,15 @@ The divergence schemes implement the correct Jacobian transpose structure
 from Achdou's structure-preserving discretization.
 
 This module provides:
-1. **BC coupling**: State-dependent BC for HJB at reflecting boundaries (Issue #574)
-2. **Scheme validation**: Verify correct HJB-FP scheme pairing
-3. **Operators**: Matrix building utilities for custom solvers
-4. **Verification**: Tools to check discrete relationships (updated criteria)
+1. **Scheme validation**: Verify correct HJB-FP scheme pairing
+2. **Operators**: Matrix building utilities for custom solvers
+3. **Verification**: Tools to check discrete relationships (updated criteria)
 
 Usage:
 ------
     from mfgarchon.alg.numerical.adjoint import (
         # Scheme pairing validation (RECOMMENDED)
         validate_scheme_pairing,
-
-        # BC coupling (for adjoint-consistent HJB BC at reflecting boundaries)
-        create_adjoint_consistent_bc_1d,
-        compute_adjoint_consistent_bc_values,
 
         # Verification
         verify_discrete_adjoint,
@@ -42,20 +37,10 @@ Usage:
 
 References:
 -----------
-- Issue #574: Adjoint-consistent BC for reflecting boundaries
 - Issue #704: Adjoint module redesign
 - Issue #706: Deprecation of incorrect transpose approach
 - Issue #706: Adjoint discretization mathematical foundations
 """
-
-# BC coupling (state-dependent BC for boundary adjoint correction)
-from .bc_coupling import (
-    compute_adjoint_consistent_bc_values,
-    compute_boundary_log_density_gradient_1d,
-    # Backward compatibility alias
-    compute_coupled_hjb_bc_values,
-    create_adjoint_consistent_bc_1d,
-)
 
 # Diagnostics (error localization and recommendations)
 from .diagnostics import (
@@ -109,11 +94,6 @@ from .verification import (
 )
 
 __all__ = [
-    # BC coupling
-    "create_adjoint_consistent_bc_1d",
-    "compute_adjoint_consistent_bc_values",
-    "compute_boundary_log_density_gradient_1d",
-    "compute_coupled_hjb_bc_values",  # Backward compat
     # Operators - Geometry-aware (preferred)
     "build_diffusion_matrix_from_geometry",
     "build_advection_matrix_from_geometry",

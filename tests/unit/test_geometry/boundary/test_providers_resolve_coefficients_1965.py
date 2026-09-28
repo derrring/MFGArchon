@@ -25,7 +25,6 @@ import pytest
 import numpy as np
 
 from mfgarchon.geometry.boundary import (
-    AdjointConsistentProvider,
     BCSegment,
     BCType,
     BoundaryConditions,
@@ -132,41 +131,6 @@ def test_a_field_on_value_is_no_longer_flattened(state):
 # =============================================================================
 # Nothing that worked before may have moved
 # =============================================================================
-
-
-def test_the_shipped_adjoint_consistent_config_is_unchanged(state):
-    """The one provider configuration this library documents (#574, #625). Captured before the
-    change and asserted to the last digit: widening the resolver must not perturb the field it
-    already resolved."""
-    bc = BoundaryConditions(
-        segments=[
-            BCSegment(
-                name="l",
-                bc_type=BCType.ROBIN,
-                alpha=0.0,
-                beta=1.0,
-                value=AdjointConsistentProvider(side="left", volatility=0.4),
-                boundary="x_min",
-            ),
-            BCSegment(
-                name="r",
-                bc_type=BCType.ROBIN,
-                alpha=0.0,
-                beta=1.0,
-                value=AdjointConsistentProvider(side="right", volatility=0.4),
-                boundary="x_max",
-            ),
-        ],
-        dimension=1,
-        default_bc=BCType.NO_FLUX,
-        domain_bounds=np.array([[0.0, 1.0]]),
-    )
-
-    lo, hi = bc.with_resolved_providers(state).segments
-
-    assert lo.value == pytest.approx(-0.0148194617, abs=1e-10)
-    assert hi.value == pytest.approx(0.0566762920, abs=1e-10)
-    assert (lo.alpha, lo.beta) == (0.0, 1.0), "coefficients without providers are untouched"
 
 
 def test_a_bc_with_no_providers_is_returned_unchanged(state):

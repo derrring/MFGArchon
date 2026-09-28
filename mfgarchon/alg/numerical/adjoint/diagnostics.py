@@ -377,8 +377,10 @@ def _generate_recommendations(
         return recs
 
     if error_source == ErrorSource.BOUNDARY:
-        recs.append("Error is concentrated at boundaries. Consider using state-dependent BC coupling.")
-        recs.append("Import: from mfgarchon.alg.numerical.adjoint import create_adjoint_consistent_bc_1d")
+        recs.append(
+            "Error is concentrated at boundaries. Check that the HJB and FP boundary rows are the "
+            "paired discretisation of one wall condition."
+        )
 
         # Find worst boundary
         if boundary_details:

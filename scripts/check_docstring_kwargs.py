@@ -14,9 +14,10 @@ rather than a check (review of #2351 measured the 154). This is the half that ca
 What it does NOT catch, stated so the number is not read as coverage: a positional argument that
 moved, a keyword whose meaning changed while the name survived, a callee it cannot resolve (a local
 name, a method on an instance built earlier in the example), anything in a `**kwargs` signature,
-keywords hidden behind `f(**mapping)` since those names are not in the AST, and the 19 blocks of 643
-whose source does not parse. Those 19 are excluded from the reported block count rather than counted
-as analysed -- the count below is what was ANALYSED, not what was seen.
+keywords hidden behind `f(**mapping)` since those names are not in the AST, and the blocks whose
+source does not parse -- 17 of 636, measured 2026-09-28 (#2422), leaving 619 analysed. Those are
+excluded from the reported block count rather than counted as analysed -- the count below is what was
+ANALYSED, not what was seen.
 
 An aliased import is NOT a miss; it resolves and fires. That was listed as a limit here before the
 review of #2351 measured it.

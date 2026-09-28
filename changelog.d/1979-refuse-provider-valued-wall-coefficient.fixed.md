@@ -1,7 +1,10 @@
 A provider-valued wall coefficient no longer disappears (#1979). `BCValueProvider` exists so a wall
-coefficient can be recomputed each Picard iterate — that is what `AdjointConsistentProvider` and
-#1970's `NormalDriftProvider` are for, and both live on `alpha`, not on `value`. Two consumers took
-one and did the wrong thing with it.
+coefficient can be recomputed each Picard iterate — ~~that is what `AdjointConsistentProvider` and
+#1970's `NormalDriftProvider` are for, and both live on `alpha`, not on `value`~~
+**[CORRECTED 2026-09-28, #2422]** `AdjointConsistentProvider` sat on `value` and `NormalDriftProvider`
+on `alpha`; #2422 removes both in this same release, because no FP solver recomputes a wall
+coefficient per iterate and the conservative schemes need none. The refusals below stay, for a
+provider of the user's own. Two consumers took one and did the wrong thing with it.
 
 **FDM**: `_BOUNDARY_HANDLERS` is keyed on the advection scheme and its handlers take no
 `boundary_conditions` argument at all, so nothing read `alpha` and the segment assembled
@@ -38,14 +41,16 @@ Three corrections from review, each of which changed the fix rather than its wor
   dropping the datum, so `value` is checked with them.
 - **The message prescribed its own defeat.** It offered `bc.with_resolved_providers(state)` as *the*
   remedy. A provider exists to be recomputed each Picard iterate; resolving it freezes it at one
-  state, so that advice converts the feature into its absence and calls it a fix. The message now
+  state, so that advice converts the feature into its absence and calls it a fix. ~~The message now
   names `FPFEMSolver` — whose weak form implements a general Robin wall and reads `alpha`/`beta`/`g`,
-  established when #1975 was closed — as the path that can actually do this, and labels resolving as
-  a downgrade. The pointer to #1975 as future work is dropped: it is closed COMPLETED, and its
+  established when #1975 was closed — as the path that can actually do this~~ **[CORRECTED
+  2026-09-28, #2422]** `FPFEMSolver` reads a constant coefficient and refuses a provider too, by the
+  FEM guard this same fix added, so the message now says that no FP solver recomputes one. It still
+  labels resolving as a downgrade. The pointer to #1975 as future work is dropped: it is closed COMPLETED, and its
   finding is that the FEM path already does this.
 
 Pinned in `tests/unit/test_geometry/test_provider_robin_coefficient_refused_1979.py`, both paths,
 each `raises` paired with a float-coefficient control so that a blanket refusal cannot pass. Both
 guards verified mutation-red: removing the FDM one fails 2 of 7, removing the FEM one fails 3 of 7.
 
-Unblocks #1970, which is in draft pending this.
+Unblocks #1970, which is in draft pending this. (#1970 then merged, and #2422 removed what it added.)

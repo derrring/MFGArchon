@@ -535,9 +535,8 @@ class HJBFDMSolver(BaseHJBSolver):
             volatility_kind: 'field' or 'tensor' for an array override (#2378 part 2a)
 
         Note:
-            For adjoint-consistent BC, use AdjointConsistentProvider in BCSegment.value
-            when constructing BoundaryConditions. The FixedPointIterator resolves
-            providers each iteration via problem.using_resolved_bc(state).
+            A BCValueProvider stored in a BCSegment is resolved each iteration by the
+            FixedPointIterator via problem.using_resolved_bc(state).
             See mfgarchon/geometry/boundary/providers.py for details.
         """
         # Validate required parameters

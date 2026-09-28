@@ -121,7 +121,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             BCType.DIRICHLET,
             BCType.NEUMANN,
             BCType.NO_FLUX,  # Same as Neumann with g=0
-            BCType.ROBIN,  # adjoint-consistent Robin(0,1); general-Robin sub-cases fail loud in the row builder
+            BCType.ROBIN,  # Robin(0,1), i.e. n.grad u = g; general-Robin sub-cases fail loud in the row builder
             # PERIODIC is honoured, but only on a cloud whose points are not detected as
             # boundary -- seam 2.2e-15 / 3.3e-11 / 6.7e-16 / 6.7e-16 at Nx=11/21/41/81 on a torus
             # cloud, where the Issue #711 wrap does the work. `_detect_boundary_indices` ignores
@@ -1273,10 +1273,9 @@ class HJBGFDMSolver(BaseHJBSolver):
         coupling layer resolves a provider per Picard iteration via
         ``problem.using_resolved_bc`` (Issue #625), it swaps
         ``geometry.boundary_conditions`` for a new object whose segments carry
-        the resolved scalar value (e.g. AdjointConsistentProvider's
-        ``g = -sigma^2/2 * d ln(m)/dn``). Without this refresh the GFDM/Howard
+        the resolved scalar value. Without this refresh the GFDM/Howard
         path would solve every iteration against the construction-time BC,
-        silently freezing the adjoint coupling in the >1000x-impact regime.
+        silently freezing the provider at its first value.
 
         No-op when:
         - BC came from an explicit constructor argument (static, never resolved);
@@ -2540,7 +2539,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                     f"geometries, or rephrase as paired Dirichlet/Neumann segments."
                 )
             case BCType.ROBIN:
-                # Issue #1118 PR2b: the adjoint-consistent BC is ROBIN(alpha=0, beta=1),
+                # Issue #1118 PR2b: ROBIN(alpha=0, beta=1),
                 # whose equation beta*(n.grad u) = g reduces to n.grad u = g — exactly the
                 # Neumann normal-derivative row with RHS = the resolved scalar g (segment.value
                 # is a plain float after with_resolved_providers). Delegate to the SAME builder
@@ -2555,15 +2554,15 @@ class HJBGFDMSolver(BaseHJBSolver):
                     raise NotImplementedError(
                         f"ROBIN BC with alpha={alpha!r} at boundary point {i} is not supported "
                         f"by HJBGFDMSolver: the normal-derivative row encodes only "
-                        f"beta*(n.grad u) = g and cannot represent the alpha*u term. Only the "
-                        f"adjoint-consistent ROBIN(alpha=0, beta=1) case is supported "
-                        f"(Issue #1118 PR2b; see AdjointConsistentProvider)."
+                        f"beta*(n.grad u) = g and cannot represent the alpha*u term. Only "
+                        f"ROBIN(alpha=0, beta=1), the condition n.grad u = g, is supported "
+                        f"(Issue #1118 PR2b)."
                     )
                 if abs(beta - 1.0) > 0.0:
                     raise NotImplementedError(
                         f"ROBIN BC with beta={beta!r} at boundary point {i} is not supported: "
                         f"the delegated Neumann row assumes coefficient 1 on n.grad u and does "
-                        f"not apply a 1/beta scaling. Only beta=1 (the adjoint-consistent case) "
+                        f"not apply a 1/beta scaling. Only beta=1 (the condition n.grad u = g) "
                         f"is supported (Issue #1118 PR2b)."
                     )
                 new_row, bc_target = self._build_neumann_bc_row(
@@ -3556,11 +3555,11 @@ class HJBGFDMSolver(BaseHJBSolver):
         # value-form BC rows (`_value_form_bc_rows` -> `_bc_row_for_point`), so it honors
         # Dirichlet VALUES and the real Neumann normal·grad stencil (not the legacy
         # nearest-interior copy). Still deferred to PR2b: ROBIN / PERIODIC (no row builder on
-        # either path) and BCValueProvider coupling (e.g. AdjointConsistentProvider). Inspect
+        # either path) and BCValueProvider coupling. Inspect
         # segments directly: for a mixed BC, `boundary_conditions.type` raises and
         # `_bc_config["type"]` is a meaningless 'periodic' fallback, so neither is reliable.
         # Issue #1118 PR2b: ROBIN is now consumable by the value-form row builder, but only
-        # the adjoint-consistent ROBIN(alpha=0, beta=1) case (n.grad u = g). The alpha/beta
+        # the ROBIN(alpha=0, beta=1) case (n.grad u = g). The alpha/beta
         # check lives in exactly one place — _bc_row_for_point fail-louds on ROBIN(alpha != 0)
         # or beta != 1 — so we add "robin" here and let the row builder be the gate.
         allowed_bc = {"no_flux", "neumann", "dirichlet", "robin"}

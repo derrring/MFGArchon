@@ -1,0 +1,39 @@
+- **`AdjointConsistentProvider` and `NormalDriftProvider` are removed, with the adjoint-consistent BC builders (#2422).** Breaking (pre-1.0; deprecation clause 4 waived by the maintainer, 2026-09-28). There is no replacement.
+  - **Gone:**
+    - both providers and their exports from `mfgarchon.geometry.boundary`;
+    - `create_adjoint_consistent_bc_1d`, `compute_adjoint_consistent_bc_values`, `compute_boundary_log_density_gradient_1d` and the alias `compute_coupled_hjb_bc_values`, from `alg.numerical.adjoint` and from its deprecated duplicate in `geometry.boundary`;
+    - the provider's `diffusion=` alias, and the `"diffusion"` provider-state key, which only that provider read;
+    - tutorial 06, three validation examples built on the provider, and `AGENTS.md`'s section on it.
+  - **Why `AdjointConsistentProvider` goes.** It returned the HJB boundary datum g = −σ²/2 · ∂ₙ ln m, which is what J·n = 0 gives once ∂ₙu is eliminated from it.
+    - That is a choice of boundary data. It neither enforces nor checks discrete adjointness, which is a property of a scheme pairing that each pairing pursues on its own terms (maintainer ruling).
+    - Its assumptions were never checked:
+      - the control cost is λ = 1, where the library's drift is −∇u/λ;
+      - the Hamiltonian is quadratic;
+      - the volatility is a scalar;
+      - the domain is 1-D.
+    - Against ∂ₙu = 0 its recorded comparison was better at a boundary stall and worse at an interior one.
+  - **Why `NormalDriftProvider` goes.** It supplied the `alpha` of a Fokker–Planck no-flux wall written as Robin in m, meant to be recomputed each Picard iterate. No solve path did that:
+    - FDM and FEM both refuse a provider-valued wall coefficient (#1979), and no other FP solver reads a wall's `alpha`.
+    - `FixedPointIterator` resolves providers only around the HJB solve.
+    - The condition it supplies is imposed already. `divergence_upwind` and `divergence_centered` zero the wall flux by construction, and FEM's natural boundary condition is the total flux.
+  - **Kept:**
+    - the `BCValueProvider` protocol, `BaseBCValueProvider`, `ConstantProvider`, and the per-step resolution (`using_resolved_bc`, `with_resolved_providers`). A provider of your own still uses them: the HJB solvers read the resolved value.
+    - The refusals of a provider-valued wall coefficient stay. The FDM refusal no longer sends you to `FPFEMSolver`, which refuses one too.
+  - **Also:**
+    - `geometry.boundary.types` imports `is_provider` at module level. The cycle that kept that import late ran through the removed `bc_coupling`.
+    - The adjoint diagnostics' boundary recommendation no longer names the removed builder.
+    - Robin(α=0, β=1) is described as the condition n·∇u = g in the eight places that called it "the adjoint-consistent case". `README.md` no longer advertises an adjoint-consistent provider pattern, and FEM's refusals of a non-constant boundary value or coefficient no longer advise resolving "an adjoint-consistent BC" to a constant.
+  - **Fragments in this release, corrected:**
+    - Part 2b's (#2378) listed the provider and the builders among its renames. Those items never ship, so they are dropped.
+    - `1970-normal-drift-provider.added.md` is removed, because its subject never ships.
+    - #1979's is corrected in place where it described the two providers.
+  - **Tests.**
+    - Tests that pinned the removed code go with it: `test_adjoint_bc_coupling.py`, `test_normal_drift_provider_1970.py`, and one test each in the #1965, #2376 and #2378 files.
+    - Tests that used a provider to exercise the kept machinery keep their assertions. Howard's provider-valued Robin tests now use a provider local to the test, and the #1979 refusal pin uses `ConstantProvider`. Howard's load-bearing test goes red when the GFDM boundary refresh is made a no-op.
+    - The discrimination kill matrix is re-recorded at `8107cedf`. Every kill it lost belonged to a deleted test:
+      - `diffusion_scalar_2x` 185 → 184;
+      - `ghost_spacing_ignored` 79 → 73;
+      - `grid_spacing_uses_point_count` 60 → 56;
+      - `grid_interval_count_reads_as_points` 35 → 31.
+    - The same record picks up eight kills that main gained after the previous record at `928bfa8d`, in tests added or changed since (#2378 parts 2a and 2b, #2415). All 27 mutations are live; 764 distinct tests kill at least one, from 769.
+    - Solves are unchanged: the #2378 phase-4 oracles, 123 and 33 fixtures, agree with `8228f6b4` bit for bit, and a one-ulp perturbation of one captured array is reported as a difference.

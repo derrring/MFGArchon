@@ -73,7 +73,7 @@ print(f"Converged: {result.converged} in {result.iterations} iterations")
 - **Modular** - Mix and match HJB + FP solvers (FDM, GFDM, Semi-Lagrangian, WENO, Particles, FEM)
 - **Multi-Dimensional** - 1D/2D/3D/nD support with TensorProductGrid and implicit domains
 - **Geometry Traits** - 12 protocol-based traits for solver-geometry compatibility validation
-- **Unified BC Framework** - 4-layer architecture with adjoint-consistent provider pattern
+- **Unified BC Framework** - 4-layer architecture: specification, resolution, enforcement, application
 - **Network MFG** - Graph-coupled multi-node solvers with pluggable coupling operators
 - **Measure-Dependent MFG** - MeasureField, Lions derivative, Wasserstein distance (Layer 2)
 - **Reinforcement Learning** - ⛔ Frozen design prototype (DDPG, TD3, SAC) — see `CLAUDE.md`
@@ -89,7 +89,6 @@ print(f"Converged: {result.converged} in {result.iterations} iterations")
 - [03 - 2D Geometry](examples/tutorials/03_2d_geometry.ipynb) - Multi-dimensional problems
 - [04 - Particle Methods](examples/tutorials/04_particle_methods.ipynb) - Monte Carlo FP solver
 - [05 - Problem Variations](examples/tutorials/05_config_system.ipynb) - parameter studies and solution comparison
-- [06 - BC Coupling](examples/tutorials/06_boundary_condition_coupling.ipynb) - Adjoint-consistent BC
 
 **Guides** (`docs/user/guides/`):
 - [Boundary Conditions](docs/user/guides/boundary_conditions.md) - BC types, mixed BC, ghost cells

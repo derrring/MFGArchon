@@ -40,7 +40,7 @@ from mfgarchon.core.hamiltonian import (
     SeparableHamiltonian,
 )
 from mfgarchon.geometry import Hyperrectangle
-from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
+from mfgarchon.geometry.boundary import BaseBCValueProvider, BCSegment, BCType, BoundaryConditions
 
 # ---------------------------------------------------------------------------
 # Minimal mock problem (mirrors test_joint_socp_mirror_symmetry pattern)
@@ -1001,52 +1001,63 @@ def test_gfdm_refresh_noop_when_bc_unchanged():
 
 
 # ---------------------------------------------------------------------------
-# 9. ROBIN / adjoint-consistent BC for inner_solver='howard' (Issue #1118 PR2b)
+# 9. ROBIN(alpha=0, beta=1) with a provider-valued datum for inner_solver='howard'
+#    (Issue #1118 PR2b)
 #
-# The adjoint-consistent BC is ROBIN(alpha=0, beta=1) whose resolved scalar is
-# g = -sigma^2/2 * d ln(m)/dn. PR2b routes it through _build_neumann_bc_row
-# (n.grad u = g), lifts the Howard guard for "robin", and fail-louds on the
-# unsupported-but-reachable forms (alpha != 0, beta != 1, unresolved provider).
-# Part 1's per-solve refresh transports the per-Picard resolved float in.
+# ROBIN(alpha=0, beta=1) is n.grad u = g. PR2b routes it through _build_neumann_bc_row,
+# lifts the Howard guard for "robin", and fail-louds on the unsupported-but-reachable
+# forms (alpha != 0, beta != 1, unresolved provider). Part 1's per-solve refresh
+# transports the per-Picard resolved float in. The provider below is local to these
+# tests: they need a datum that moves with the density and has a closed form, and the
+# formula itself is arbitrary.
 # ---------------------------------------------------------------------------
 
-_AC_SIGMA = 0.3
-_AC_DX = 0.1
-_AC_REG = 1e-10
+_DATUM_DX = 0.1
+_DATUM_SCALE = -0.045
 
 
 class _ProviderGeom:
     """Minimal geometry carrying only the grid spacing the provider state needs.
 
-    Decouples the provider's density-array spacing (_AC_DX) from the GFDM cloud
+    Decouples the provider's density-array spacing (_DATUM_DX) from the GFDM cloud
     spacing: the provider indexes the density array, not the collocation cloud.
     """
 
     dimension = 1
 
     def get_grid_spacing(self):
-        return [_AC_DX]
+        return [_DATUM_DX]
 
 
-def _adjoint_robin_bc(sigma=_AC_SIGMA):
-    from mfgarchon.geometry.boundary.providers import AdjointConsistentProvider
+class _DensitySlopeProvider(BaseBCValueProvider):
+    """g = _DATUM_SCALE * (outward one-sided slope of ln m) at one 1-D wall."""
 
+    def __init__(self, side):
+        self.side = side
+
+    def compute(self, state):
+        m = np.asarray(state["m_current"])
+        dx = state["geometry"].get_grid_spacing()[0]
+        return _expected_g(m, dx)[0 if self.side == "left" else 1]
+
+
+def _provider_robin_bc():
     return BoundaryConditions(
         segments=[
             BCSegment(
-                name="left_ac",
+                name="left_datum",
                 bc_type=BCType.ROBIN,
                 alpha=0.0,
                 beta=1.0,
-                value=AdjointConsistentProvider(side="left", diffusion=sigma),
+                value=_DensitySlopeProvider("left"),
                 boundary="x_min",
             ),
             BCSegment(
-                name="right_ac",
+                name="right_datum",
                 bc_type=BCType.ROBIN,
                 alpha=0.0,
                 beta=1.0,
-                value=AdjointConsistentProvider(side="right", diffusion=sigma),
+                value=_DensitySlopeProvider("right"),
                 boundary="x_max",
             ),
         ],
@@ -1054,28 +1065,26 @@ def _adjoint_robin_bc(sigma=_AC_SIGMA):
     )
 
 
-def _expected_g(m, sigma=_AC_SIGMA):
-    """Closed-form adjoint value g = -sigma^2/2 * d ln(m)/dn at each face (outward normal)."""
-    ln = np.log(m + _AC_REG)
-    g_left = -(sigma**2) / 2.0 * (-(ln[1] - ln[0]) / _AC_DX)
-    g_right = -(sigma**2) / 2.0 * ((ln[-1] - ln[-2]) / _AC_DX)
-    return g_left, g_right
+def _expected_g(m, dx=_DATUM_DX):
+    """The provider's value at each face, outward normal: -x at the left wall, +x at the right."""
+    ln = np.log(m)
+    return _DATUM_SCALE * (-(ln[1] - ln[0]) / dx), _DATUM_SCALE * ((ln[-1] - ln[-2]) / dx)
 
 
-def test_howard_robin_row_target_tracks_resolved_adjoint_g():
-    """LOAD-BEARING: two DIFFERENT FP densities -> resolve the AdjointConsistentProvider ->
+def test_howard_robin_row_target_tracks_the_resolved_provider_value():
+    """LOAD-BEARING: two DIFFERENT FP densities -> resolve the provider ->
     Part-1 refresh -> read the value-form BC target from _value_form_bc_rows. The target MUST
     move between the two densities AND equal the hand-computed closed form each time. FAILS if
     g were frozen (refresh/row-builder stale): a frozen g gives g_iter2 == g_iter1, which the
     `!=` assertion rejects. A happy-path 'it ran' test would pass even with a frozen g."""
     prov_geom = _ProviderGeom()
-    bc = _adjoint_robin_bc()
+    bc = _provider_robin_bc()
     gfdm, geom, _pts, bdry = _make_geom_sourced_gfdm_1d(bc, inner_solver="howard")
     assert gfdm._bc_from_geometry is True
     bi_left, bi_right = int(bdry[0]), int(bdry[1])  # lower 1e-7 -> x_min, upper -> x_max
 
     def resolve_refresh_and_read(m):
-        resolved = bc.with_resolved_providers({"m_current": m, "geometry": prov_geom, "diffusion": _AC_SIGMA})
+        resolved = bc.with_resolved_providers({"m_current": m, "geometry": prov_geom})
         assert resolved is not bc  # new object -> Part-1 refresh fires
         assert resolved.segments[0].bc_type is BCType.ROBIN  # stays ROBIN, value -> float
         geom.boundary_conditions = resolved
@@ -1118,32 +1127,10 @@ def test_howard_robin_nonzero_beta_rejected():
 
 
 def test_howard_unresolved_provider_fails_loud():
-    """A raw (unresolved) AdjointConsistentProvider reaching Howard means the coupling layer
-    failed to resolve it; the converted guard must fail loud (AssertionError), not silently
-    solve against a meaningless provider object."""
-    from mfgarchon.geometry.boundary.providers import AdjointConsistentProvider
-
-    bc = BoundaryConditions(
-        segments=[
-            BCSegment(
-                name="left_ac",
-                bc_type=BCType.ROBIN,
-                alpha=0.0,
-                beta=1.0,
-                value=AdjointConsistentProvider(side="left", diffusion=0.3),
-                boundary="x_min",
-            ),
-            BCSegment(
-                name="right_ac",
-                bc_type=BCType.ROBIN,
-                alpha=0.0,
-                beta=1.0,
-                value=AdjointConsistentProvider(side="right", diffusion=0.3),
-                boundary="x_max",
-            ),
-        ],
-        dimension=1,
-    )
+    """A raw (unresolved) provider reaching Howard means the coupling layer failed to resolve
+    it; the converted guard must fail loud (AssertionError), not silently solve against a
+    meaningless provider object."""
+    bc = _provider_robin_bc()
     gfdm, pts, _ = _make_howard_gfdm_with_bc(bc)  # explicit BC, providers NOT resolved
     U_T = 0.5 * (pts[:, 0] - 2.0) ** 2
     with pytest.raises(AssertionError, match=r"unresolved BCValueProvider"):
@@ -1156,13 +1143,11 @@ def test_howard_honors_resolved_robin_in_solution():
     Complements the load-bearing test (which checks the row is BUILT correctly). Verifies the
     value-form RHS=target is consumed by the inner solve (Constraint c) without depending on the
     Newton path (whose stall on this regime is the very motivation for Howard, #1118)."""
-    from mfgarchon.geometry.boundary.providers import AdjointConsistentProvider
-
-    sigma = _AC_SIGMA
+    sigma = 0.3
     m = np.linspace(1.0, 0.25, 10)
-    state = {"m_current": m, "geometry": _ProviderGeom(), "diffusion": sigma}
-    g_left = AdjointConsistentProvider(side="left", diffusion=sigma).compute(state)
-    g_right = AdjointConsistentProvider(side="right", diffusion=sigma).compute(state)
+    state = {"m_current": m, "geometry": _ProviderGeom()}
+    g_left = _DensitySlopeProvider("left").compute(state)
+    g_right = _DensitySlopeProvider("right").compute(state)
     bc = BoundaryConditions(
         segments=[
             BCSegment(name="x_min", bc_type=BCType.ROBIN, alpha=0.0, beta=1.0, value=float(g_left), boundary="x_min"),

@@ -1,8 +1,8 @@
 {
   "_comment": "Kill counts per mutated convention. --check-baseline fails when a count DROPS (discrimination lost) and when one RISES (record the gain in the same change). Counts, not test names: this population cannot be selected by name -- the agreement-shaped patterns give 51, 114 or 156 depending on the regex.",
   "_measured_at": {
-    "collected": 4209,
-    "commit": "928bfa8d",
+    "collected": 4213,
+    "commit": "8107cedf",
     "excluded": "tests/unit/test_discrimination_ratchet.py",
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment and not manual",
     "paths": [
@@ -32,12 +32,12 @@
       "status": "ok"
     },
     "diffusion_field_2x": {
-      "kill_count": 11,
+      "kill_count": 12,
       "owner": "D = sigma^2/2 elementwise for a volatility field (#811)",
       "status": "ok"
     },
     "diffusion_scalar_2x": {
-      "kill_count": 185,
+      "kill_count": 184,
       "owner": "D = sigma^2/2 for scalar sigma (#811)",
       "status": "ok"
     },
@@ -52,12 +52,12 @@
       "status": "ok"
     },
     "engquist_osher_magnitude_is_the_larger_branch": {
-      "kill_count": 42,
+      "kill_count": 43,
       "owner": "the default `engquist_osher` preset of `upwind_momentum` evaluates H at sqrt(a+^2 + b-^2) per axis (ACD's Example 1), which at a discrete local maximum sums both one-sided differences; that sum is what makes its linearisation the transpose of the FDM FP divergence_upwind operator (#2313). Taking the larger branch instead is Rouy-Tourin, which leaves the transpose defect at maxima",
       "status": "ok"
     },
     "fp_initial_condition_written_at_final_index": {
-      "kill_count": 131,
+      "kill_count": 136,
       "owner": "The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, fp_fdm_time_stepping.py:797, whose own docstring states the convention at :681: \"- Forward time evolution: k=0 -> Nt-1\". No issue n",
       "status": "ok"
     },
@@ -67,22 +67,22 @@
       "status": "ok"
     },
     "ghost_spacing_ignored": {
-      "kill_count": 79,
+      "kill_count": 73,
       "owner": "the ghost buffer uses the caller's spacing, not dx = 1.0 (#1904)",
       "status": "ok"
     },
     "grid_interval_count_reads_as_points": {
-      "kill_count": 35,
+      "kill_count": 31,
       "owner": "`Nx` names the INTERVAL count, so node count = Nx + 1 -- the #1889 interval-vs-node ambiguity at the grid's own entry point. Stated in the constructor docstring at tensor_grid.py:181-182: \"- Nx (intervals): Nx_points = Nx + 1\" / \"- Nx_points (points): Nx = Nx_points - 1\". Line 220-221 normalises a s",
       "status": "ok"
     },
     "grid_spacing_uses_point_count": {
-      "kill_count": 60,
+      "kill_count": 56,
       "owner": "uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim, get_spacing() indexes it, legacy_1d_attrs[\"Dx\"] reads it, cell volume ",
       "status": "ok"
     },
     "hjb_marches_forward_in_time": {
-      "kill_count": 30,
+      "kill_count": 31,
       "owner": "The HJB marches BACKWARD in time, from the terminal row down to t=0, while the FP marches forward -- the adjoint pairing. Single site: base_hjb.py:1780, the only time loop in solve_hjb_system_backward. The M-indexing that rides on it is documented in the same loop body at base_hjb.py:1790: \"# BUG #7",
       "status": "ok"
     },
@@ -137,7 +137,7 @@
       "status": "ok"
     },
     "terminal_condition_pinned_at_initial_index": {
-      "kill_count": 18,
+      "kill_count": 19,
       "owner": "u is boundary-data at the TERMINAL time and m at the INITIAL one: preserve_terminal_condition re-imposes u(T)=g on the LAST time row after damping/Anderson. Single owner, three caller families -- fixed_point_iterator.py:644 and :724 (Picard), fictitious_play.py:432, block_iterators.py:583. No issue ",
       "status": "ok"
     },
