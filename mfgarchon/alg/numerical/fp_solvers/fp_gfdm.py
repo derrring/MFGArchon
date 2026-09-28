@@ -33,7 +33,11 @@ from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import (
+    diffusion_from_volatility,
+    resolve_volatility_override,
+    retired_volatility_keywords,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -453,12 +457,14 @@ class FPGFDMSolver(BaseFPSolver):
 
         return divergence
 
+    @retired_volatility_keywords
     @deprecated_parameter(param_name="m_initial_condition", since="v0.22.0", replacement="M_initial")
     def solve_fp_system(
         self,
         M_initial: np.ndarray | None = None,
         drift_field: np.ndarray | Callable | None = None,
-        volatility_field: float | np.ndarray | Callable | None = None,
+        volatility: float | np.ndarray | Callable | None = None,
+        volatility_kind: str | None = None,
         source_term: Callable | None = None,
         show_progress: bool | None = None,
         m_initial_condition: np.ndarray | None = None,  # deprecated alias for M_initial (#2377)
@@ -482,7 +488,9 @@ class FPGFDMSolver(BaseFPSolver):
                     * Custom H: Any function of grad(U)
                 - Callable: Custom drift function α(t, x, m) -> drift_vector
                 Default: None
-            volatility_field: Volatility coefficient σ (SDE noise). If None, uses problem.volatility.
+            volatility: Volatility coefficient σ (SDE noise). If None, uses problem.volatility.
+                A scalar only; an array or callable is refused (#2376).
+            volatility_kind: "field" or "tensor" for an array (#2378); arrays are refused here.
                             Currently only scalar volatility supported.
                             Note: Internally converted to diffusion D = σ²/2 for FP equation.
             source_term: Manufactured forcing S(t, x) -> (N,), with x the collocation points of
@@ -526,7 +534,9 @@ class FPGFDMSolver(BaseFPSolver):
         dt = self.problem.T / self.problem.Nt
 
         # Volatility coefficient (Issue #717: unified API). None is the problem's own (#2376).
-        volatility = self.problem.volatility if volatility_field is None else volatility_field
+        volatility, volatility_kind = resolve_volatility_override(
+            volatility, volatility_kind, problem=self.problem, consumer=f"{type(self).__name__}.solve_fp_system"
+        )
         if isinstance(volatility, (int, float)):
             sigma = float(volatility)
         else:

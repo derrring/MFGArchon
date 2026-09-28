@@ -83,11 +83,11 @@ def test_legacy_mishandled_bc_fails_loud():
     for legacy_type in ("dirichlet", "periodic"):
         solver.boundary_conditions = LegacyBC(type=legacy_type, left_value=0.0, right_value=0.0)
         with pytest.raises(NotImplementedError, match="1559"):
-            solver.solve_fp_system(m0.copy(), drift_field=drift, volatility_field=0.3)
+            solver.solve_fp_system(m0.copy(), drift_field=drift, volatility=0.3)
 
     # Legacy neumann/no_flux ARE no-flux -> still assemble (finite, no raise).
     solver.boundary_conditions = LegacyBC(type="neumann", left_value=0.0, right_value=0.0)
-    M = solver.solve_fp_system(m0.copy(), drift_field=drift, volatility_field=0.3)
+    M = solver.solve_fp_system(m0.copy(), drift_field=drift, volatility=0.3)
     assert np.all(np.isfinite(M))
 
 

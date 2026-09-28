@@ -89,7 +89,12 @@ from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.numerical.quadrature import quadrature_weights_nd
-from mfgarchon.utils.pde_coefficients import assert_quadratic_drift, diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import (
+    assert_quadratic_drift,
+    diffusion_from_volatility,
+    resolve_volatility_override,
+    retired_volatility_keywords,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -233,20 +238,26 @@ class FPFVMSolver(BaseFPSolver):
             ) from exc
         return [bc_type] * ndim
 
-    def _scalar_diffusion(self, volatility_field: float | np.ndarray | Callable | None) -> float:
+    def _scalar_diffusion(
+        self, volatility: float | np.ndarray | Callable | None, volatility_kind: str | None = None
+    ) -> float:
         """Resolve the scalar diffusion coefficient D = sigma^2/2 (single source).
 
-        ``None`` is the problem's own volatility, taken through the same checks as an override (#2376).
+        ``None`` is the problem's own volatility, taken through the same checks as an override (#2376),
+        and both are read by their declared kind (#2378 part 2a).
         """
-        volatility = self.problem.volatility if volatility_field is None else volatility_field
+        volatility, volatility_kind = resolve_volatility_override(
+            volatility, volatility_kind, problem=self.problem, consumer="FPFVMSolver.solve_fp_system"
+        )
         if isinstance(volatility, (int, float)):
             sigma = float(volatility)
         elif isinstance(volatility, np.ndarray):
-            # The problem's tensor volatility is refused before the constancy check below, which an
-            # all-equal matrix such as np.full((2, 2), s) would pass as the scalar s.
-            if volatility is self.problem.volatility and self.problem.volatility_kind == "tensor":
+            # A tensor is refused before the constancy check below, which an all-equal matrix such as
+            # np.full((2, 2), s) would pass as the scalar s. Before #2378 part 2a only the problem's own
+            # tensor was refused, by identity, and an all-equal (2, 2) override solved as the scalar s.
+            if volatility_kind == "tensor":
                 raise NotImplementedError(
-                    "FP FVM solver supports only a scalar volatility; the problem's is a tensor "
+                    "FP FVM solver supports only a scalar volatility, and this one is a tensor "
                     "(volatility_kind='tensor')."
                 )
             arr = np.asarray(volatility, dtype=float)
@@ -457,16 +468,17 @@ class FPFVMSolver(BaseFPSolver):
     # ------------------------------------------------------------------
     # Main solve
     # ------------------------------------------------------------------
+    @retired_volatility_keywords
     def solve_fp_system(
         self,
         M_initial: np.ndarray | None = None,
         drift_field: np.ndarray | Callable | None = None,
-        volatility_field: float | np.ndarray | Callable | None = None,
+        volatility: float | np.ndarray | Callable | None = None,
         show_progress: bool | None = None,
         progress_callback: Callable[[int], None] | None = None,
         potential_field: np.ndarray | None = None,
         source_term: Callable[[float, Any], np.ndarray] | None = None,
-        diffusion_field: float | np.ndarray | Callable | None = None,
+        volatility_kind: str | None = None,
     ) -> np.ndarray:
         """Evolve the FP density forward in time with the conservative FVM scheme.
 
@@ -478,9 +490,11 @@ class FPFVMSolver(BaseFPSolver):
             Advective velocity ``alpha(t, x)`` (node-centered). 1D shape ``(Nt+1, Nx)``;
             nD shape ``(Nt+1, *spatial, ndim)``. Averaged to faces. Mutually exclusive with
             ``potential_field``.
-        volatility_field : float | None
+        volatility : float | np.ndarray | None
             SDE volatility ``sigma`` (``D = sigma^2/2``). ``None`` uses ``problem.volatility``.
-            Only scalar/constant volatility is supported in v1.
+            Only a scalar, or a constant field (``volatility_kind="field"``), is supported in v1.
+        volatility_kind : str | None
+            ``"field"`` or ``"tensor"`` for an array volatility; a tensor is refused (#2378).
         potential_field : np.ndarray | None
             Value function ``U(t, x)``, shape ``(Nt+1, *spatial)``. The face velocity is
             ``alpha = -coupling*grad(U)`` (MFG coupling entry point). Mutually exclusive with
@@ -488,8 +502,6 @@ class FPFVMSolver(BaseFPSolver):
         source_term : Callable | None
             Optional MMS source ``S(t, x_grid)``, applied explicitly (breaks exact conservation
             by design, since a source adds mass).
-        diffusion_field : float | np.ndarray | None
-            Deprecated alias for ``volatility_field`` (accepted for API parity).
 
         Returns
         -------
@@ -503,9 +515,6 @@ class FPFVMSolver(BaseFPSolver):
         if m0.shape != shape:
             raise ValueError(f"M_initial shape {m0.shape} does not match grid shape {shape}.")
 
-        if diffusion_field is not None and volatility_field is None:
-            volatility_field = diffusion_field
-
         if drift_field is not None and potential_field is not None:
             raise ValueError(
                 "Specify at most one of drift_field (velocity) or potential_field (value function U), not both."
@@ -516,7 +525,7 @@ class FPFVMSolver(BaseFPSolver):
             )
 
         spacing = list(self.problem.geometry.get_grid_spacing())
-        diffusion = self._scalar_diffusion(volatility_field)
+        diffusion = self._scalar_diffusion(volatility, volatility_kind)
 
         # Number of time points: from the provided field, else from the problem.
         if potential_field is not None:

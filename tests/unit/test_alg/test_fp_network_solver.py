@@ -242,7 +242,7 @@ class TestFPNetworkSolverSolveFPSystem:
         U = np.zeros((problem.Nt + 1, num_nodes))
         sigma = 0.4
 
-        m_via_sigma = FPNetworkSolver(problem, scheme="explicit").solve_fp_system(m0, U, volatility_field=sigma)
+        m_via_sigma = FPNetworkSolver(problem, scheme="explicit").solve_fp_system(m0, U, volatility=sigma)
         m_via_diffusion = FPNetworkSolver(
             problem, scheme="explicit", diffusion_coefficient=0.5 * sigma**2
         ).solve_fp_system(m0, U)
@@ -630,7 +630,7 @@ class TestFPNetworkDiffusionDefaultWarning1532:
         solver = FPNetworkSolver(problem)  # defaulted, but sigma given at solve time
         with warnings.catch_warnings(record=True) as rec:
             warnings.simplefilter("always")
-            solver.solve_fp_system(m0, U, volatility_field=0.3)
+            solver.solve_fp_system(m0, U, volatility=0.3)
         assert not any("1532" in str(w.message) for w in rec)
 
 

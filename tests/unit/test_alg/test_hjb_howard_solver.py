@@ -308,7 +308,7 @@ def test_1d_lq_closed_form_riccati():
         discretisation="central",
         max_iter=30,
         tol=1e-6,
-        volatility_field=0.0,
+        volatility=0.0,
     )
     U = howard.solve_hjb_system(M_density=None, U_terminal=U_T)
 
@@ -362,7 +362,7 @@ def test_howard_advances_where_newton_would_stall():
         stencil_provider=gfdm,
         alpha_star=lambda t, x, p, m: -p,
         discretisation="central",
-        volatility_field=0.0,
+        volatility=0.0,
     )
     U = howard.solve_hjb_system(M_density=None, U_terminal=U_T)
 
@@ -548,7 +548,7 @@ def test_integrated_howard_inner_solver_lq_1d():
 def test_integrated_howard_consumes_nonconstant_volatility_field():
     """The integrated Howard path must not replace a per-node field with its mean."""
 
-    def solve(volatility_field):
+    def solve(volatility):
         pts, bdry, geom = _make_1d_cloud(LX=2.0, n_int=9)
         problem = _MockProblem(geom, sigma=0.3, T=0.5, Nt=5, dimension=1)
         problem.hamiltonian_class = _LQHam()
@@ -564,7 +564,8 @@ def test_integrated_howard_consumes_nonconstant_volatility_field():
         return gfdm.solve_hjb_system(
             M_density=None,
             U_terminal=U_T,
-            volatility_field=volatility_field,
+            volatility=volatility,
+            volatility_kind="field" if np.ndim(volatility) else None,
         )
 
     field = np.linspace(0.1, 0.7, 11)
@@ -1202,7 +1203,8 @@ def test_array_volatility_field_row_scales_howard_diffusion():
         stencil_provider=gfdm,
         alpha_star=lambda t, x, p, m: -p,
         discretisation="central",
-        volatility_field=sigma_arr,
+        volatility=sigma_arr,
+        volatility_kind="field",
         max_iter=5,
     ).solve_hjb_system(M_density=None, U_terminal=U_T)
 
@@ -1212,7 +1214,7 @@ def test_array_volatility_field_row_scales_howard_diffusion():
         stencil_provider=gfdm,
         alpha_star=lambda t, x, p, m: -p,
         discretisation="central",
-        volatility_field=sigma_mean,
+        volatility=sigma_mean,
         max_iter=5,
     ).solve_hjb_system(M_density=None, U_terminal=U_T)
 

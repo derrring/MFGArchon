@@ -165,7 +165,7 @@ class TestD2ParticleVolatilityFieldNotDropped:
         m_ref = solver.solve_fp_system(m0, drift_field=U_arr)
 
         np.random.seed(42)
-        m_new = solver.solve_fp_system(m0, drift_field=U_arr, volatility_field=0.5)
+        m_new = solver.solve_fp_system(m0, drift_field=U_arr, volatility=0.5)
 
         assert not np.allclose(m_new, m_ref, atol=1e-6), (
             "D2 regression: FPParticleSolver with ndarray drift_field + a scalar "
@@ -192,5 +192,6 @@ class TestD2ParticleVolatilityFieldNotDropped:
         m0 = _m_initial_normalised()
         U_arr = np.tile(0.3 * (np.linspace(0.0, 1.0, Nx) - 0.5) ** 2, (Nt + 1, 1))
 
+        kind = {"volatility_kind": "field"} if isinstance(override, np.ndarray) else {}
         with pytest.raises(NotImplementedError, match="FPParticleSolver's grid-drift path"):
-            solver.solve_fp_system(m0, drift_field=U_arr, volatility_field=override)
+            solver.solve_fp_system(m0, drift_field=U_arr, volatility=override, **kind)

@@ -1431,10 +1431,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         supplied. There is no scalar fallback (#2376).
 
         Args:
-            override: Per-solve volatility override (a solver's ``volatility_field`` argument).
-                ``None`` uses ``self.volatility``.
+            override: Per-solve volatility override (a solver's ``volatility`` argument, already
+                resolved to a scalar or a ``field`` kind). ``None`` uses ``self.volatility``.
             field_name: Name used in CoefficientField diagnostics (default ``"diffusion"``;
-                solvers pass ``"volatility_field"`` to preserve their error wording).
+                solvers pass ``"volatility"`` to preserve their error wording).
             dimension: Spatial dimension for array/spatiotemporal extraction; defaults to
                 ``self.dimension``.
 
@@ -2685,7 +2685,9 @@ See: docs/migration/HAMILTONIAN_API.md"""
             hjb_solver=hjb_solver,
             fp_solver=fp_solver,
             config=config,
-            volatility_field=self._volatility,
+            # No volatility= override: each solver reads this problem's own volatility, with its
+            # declared kind. Until #2378 part 2a this forwarded self._volatility without the kind,
+            # and ten sites told it apart from a user override by identity.
             **_iterator_extra_kw,
             **_backend_kw,
         )

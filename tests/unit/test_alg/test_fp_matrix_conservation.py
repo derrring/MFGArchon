@@ -69,7 +69,7 @@ def _zero_drift_density_evolution(bc, n=41, nt=40, T=0.2, sigma=0.5, m_init=_cos
     solver = FPFDMSolver(prob)
     m0 = np.asarray(m_init(x), dtype=float)
     # drift_field as an (nt+1, n) array routes through the implicit per-point assembly
-    M = solver.solve_fp_system(m0.copy(), drift_field=np.zeros((nt + 1, n)), volatility_field=sigma)
+    M = solver.solve_fp_system(m0.copy(), drift_field=np.zeros((nt + 1, n)), volatility=sigma)
     return M, 1.0 / (n - 1)
 
 

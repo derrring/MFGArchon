@@ -42,7 +42,7 @@ class _HJBKwargBuilder(BaseCouplingIterator):
     """
 
     def __init__(self):
-        self._hjb_sig_params = {"volatility_field"}
+        self._hjb_sig_params = {"volatility", "volatility_kind"}
         self._hjb_solver_name = "HJBGFDMSolver"
         # No `sigma` attribute: a scalar can never be shown equivalent to one that is not
         # there. The two source fields are what `_build_hjb_kwargs` composes from (#2207);
@@ -131,7 +131,7 @@ def _solver(
 
 
 def _solve(
-    volatility_field,
+    volatility,
     *,
     points=None,
     llf_augmentation=False,
@@ -151,7 +151,7 @@ def _solve(
         M,
         0.5 * x**2,
         np.zeros((problem.Nt + 1, len(x))),
-        volatility_field=volatility_field,
+        **_volatility(volatility),
     )
     return (U, solver) if return_solver else U
 
@@ -195,7 +195,7 @@ def test_coupling_builder_forwards_the_nonconstant_field_unchanged():
     field = np.linspace(_SIGMA_LO, _SIGMA_HI, _N)
 
     zeros = np.zeros((2, _N))
-    forwarded = _HJBKwargBuilder()._build_hjb_kwargs(M=zeros, U=zeros, volatility_field=field)["volatility_field"]
+    forwarded = _HJBKwargBuilder()._build_hjb_kwargs(M=zeros, U=zeros, **_volatility(field))["volatility"]
 
     assert forwarded is field
     assert not np.array_equal(_solve(forwarded), _solve(float(field.mean())))
@@ -225,7 +225,7 @@ def test_residual_jacobian_directional_derivative_agrees_under_field():
     solver = _solver(problem, x)
     field = np.linspace(_SIGMA_LO, _SIGMA_HI, _N)
     M = np.tile(np.exp(-10 * (x - 0.5) ** 2), (problem.Nt + 1, 1))
-    solver.solve_hjb_system(M, 0.5 * x**2, volatility_field=field)
+    solver.solve_hjb_system(M, 0.5 * x**2, **_volatility(field))
 
     u = 0.2 * np.sin(np.pi * x) + 0.1 * x
     u_next = 0.9 * u
@@ -356,12 +356,13 @@ def test_hybrid_grid_field_is_mapped_to_collocation_points():
     U_array = array_solver.solve_hjb_system(
         M_density=M_grid,
         U_terminal=U_terminal_grid,
-        volatility_field=field_on_grid,
+        volatility=field_on_grid,
+        volatility_kind="field",
     )
     U_callable = callable_solver.solve_hjb_system(
         M_density=M_grid,
         U_terminal=U_terminal_grid,
-        volatility_field=sigma_of_x,
+        volatility=sigma_of_x,
     )
 
     np.testing.assert_allclose(U_array, U_callable, rtol=1e-12, atol=1e-12)
@@ -417,7 +418,8 @@ def test_ambiguous_2d_field_requires_explicit_solve_override():
     solver.solve_hjb_system(
         M_density=np.ones((problem.Nt + 1, 2, 2)),
         U_terminal=np.zeros((2, 2)),
-        volatility_field=field_on_grid,
+        volatility=field_on_grid,
+        volatility_kind="field",
     )
 
     expected = 0.1 + 0.2 * collocation[:, 0] + 0.1 * collocation[:, 1]
@@ -482,7 +484,7 @@ def test_column_field_fails_before_sparse_assembly():
     """An ``(N, 1)`` field is not a one-dimensional scalar volatility field."""
     column = np.linspace(_SIGMA_LO, _SIGMA_HI, _N).reshape(-1, 1)
 
-    with pytest.raises(ValueError, match=r"volatility_field.*one-dimensional"):
+    with pytest.raises(ValueError, match=r"volatility shape mismatch.*one-dimensional"):
         _solve(column)
 
 
@@ -491,7 +493,7 @@ def test_spatiotemporal_field_fails_before_sparse_assembly():
     """GFDM's space-only coefficient contract must reject an unimplemented time axis."""
     field = np.tile(np.linspace(_SIGMA_LO, _SIGMA_HI, _N), (_problem().Nt + 1, 1))
 
-    with pytest.raises(ValueError, match=r"volatility_field.*one-dimensional"):
+    with pytest.raises(ValueError, match=r"volatility shape mismatch.*one-dimensional"):
         _solve(field)
 
 
@@ -500,7 +502,7 @@ def test_mismatched_field_length_fails_in_coefficient_resolution():
     """A field that matches neither grid nor collocation space must not fall back to its mean."""
     field = np.linspace(_SIGMA_LO, _SIGMA_HI, _N - 1)
 
-    with pytest.raises(ValueError, match=r"volatility_field.*shape"):
+    with pytest.raises(ValueError, match=r"volatility shape mismatch"):
         _solve(field)
 
 
@@ -529,7 +531,7 @@ def test_dmp_guard_uses_each_nodes_resolved_diffusion(monkeypatch):
     M = np.tile(np.exp(-10 * (x - 0.5) ** 2), (solver.problem.Nt + 1, 1))
     solver.check_dmp = False
     solver.monotonicity_scheme = "none"
-    solver.solve_hjb_system(M, 0.5 * x**2, volatility_field=next_field)
+    solver.solve_hjb_system(M, 0.5 * x**2, **_volatility(next_field))
     solver.check_dmp = True
     solver.monotonicity_scheme = "joint_socp"
     solver._maybe_warn_dmp(np.zeros(_N))

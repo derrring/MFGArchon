@@ -29,27 +29,34 @@ import scipy.sparse as sp
 from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
+from mfgarchon.utils.pde_coefficients import resolve_volatility_override, retired_volatility_keywords
 
 if TYPE_CHECKING:
     from mfgarchon.extensions.topology import NetworkMFGProblem
 
 
-def _reject_nonzero_volatility(volatility_field: float | np.ndarray | None) -> None:
+def _reject_nonzero_volatility(
+    volatility: float | np.ndarray | None, volatility_kind: str | None, *, problem: Any, consumer: str
+) -> None:
     """Fail loud if a diffusive volatility is requested (Issue #1544).
 
     The network HJB solvers have NO viscous term -- they solve the deterministic-control game on the
-    graph and ignore volatility_field (the stored graph Laplacian is unused). A nonzero volatility
+    graph and ignore the volatility (the stored graph Laplacian is unused). A nonzero volatility
     would produce a value function inconsistent with the diffusive network FP forward equation
     (``D * Lap_G(m)``), i.e. a non-adjoint, self-consistent WRONG equilibrium -- consistent only at
     D = 0. Reject it instead of silently ignoring it, until the ``+ D * Lap_G(u)`` viscous term is
-    implemented (the natural fix).
+    implemented (the natural fix). The override is read by the one rule every solver uses (#2378):
+    the network problem carries no volatility, so there is no problem-level one to fall back to.
     """
-    if volatility_field is not None and np.any(np.asarray(volatility_field, dtype=float) != 0.0):
+    if volatility is None and volatility_kind is None:
+        return
+    volatility, _ = resolve_volatility_override(volatility, volatility_kind, problem=problem, consumer=consumer)
+    if np.any(np.asarray(volatility, dtype=float) != 0.0):
         raise NotImplementedError(
             "Network HJB solver has no viscous (diffusion) term, so it cannot honor a nonzero "
-            "volatility_field; solving anyway would give a value function inconsistent with the "
+            "volatility; solving anyway would give a value function inconsistent with the "
             "diffusive network FP (D*Lap_G(m)) -- a non-adjoint, self-consistent wrong equilibrium. "
-            "Use volatility_field=None / 0 (deterministic-control graph game, D=0); a diffusive graph "
+            "Use volatility=None / 0 (deterministic-control graph game, D=0); a diffusive graph "
             "HJB (+ D*Lap_G(u)) is not yet implemented (Issue #1544)."
         )
 
@@ -153,12 +160,14 @@ class NetworkHJBSolver(BaseHJBSolver):
         for i in range(self.num_nodes):
             self.gradient_ops[i] = self.network_problem.get_node_neighbors(i)
 
+    @retired_volatility_keywords
     def solve_hjb_system(
         self,
         M_density: np.ndarray | None = None,
         U_terminal: np.ndarray | None = None,
         U_coupling_prev: np.ndarray | None = None,
-        volatility_field: float | np.ndarray | None = None,
+        volatility: float | np.ndarray | None = None,
+        volatility_kind: str | None = None,
     ) -> np.ndarray:
         """
         Solve HJB system on network with given density evolution.
@@ -167,13 +176,16 @@ class NetworkHJBSolver(BaseHJBSolver):
             M_density: (Nt+1, num_nodes) density evolution from FP solver
             U_terminal: Terminal condition u(T, i)
             U_coupling_prev: Previous Picard iterate for coupling
-            volatility_field: Must be None / 0 -- the network HJB has no viscous term (Issue #1544);
+            volatility: Must be None / 0 -- the network HJB has no viscous term (Issue #1544);
                 a nonzero value is rejected rather than silently ignored.
+            volatility_kind: "field" or "tensor" for an array volatility (#2378).
 
         Returns:
             (Nt+1, num_nodes) value function evolution
         """
-        _reject_nonzero_volatility(volatility_field)
+        _reject_nonzero_volatility(
+            volatility, volatility_kind, problem=self.network_problem, consumer="NetworkHJBSolver.solve_hjb_system"
+        )
         # Validate required parameters
         if M_density is None:
             raise ValueError("M_density is required")
@@ -336,15 +348,22 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
         # single dominant action — finite-state control is a full rate row over neighbors.
         self.current_rates: dict[int, np.ndarray] = {}
 
+    @retired_volatility_keywords
     def solve_hjb_system(
         self,
         M_density: np.ndarray | None = None,
         U_terminal: np.ndarray | None = None,
         U_coupling_prev: np.ndarray | None = None,
-        volatility_field: float | np.ndarray | None = None,
+        volatility: float | np.ndarray | None = None,
+        volatility_kind: str | None = None,
     ) -> np.ndarray:
         """Solve HJB using policy iteration."""
-        _reject_nonzero_volatility(volatility_field)
+        _reject_nonzero_volatility(
+            volatility,
+            volatility_kind,
+            problem=self.network_problem,
+            consumer="NetworkPolicyIterationHJBSolver.solve_hjb_system",
+        )
         # Validate required parameters
         if M_density is None:
             raise ValueError("M_density is required")

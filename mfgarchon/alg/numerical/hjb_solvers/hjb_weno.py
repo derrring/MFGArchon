@@ -46,7 +46,12 @@ from mfgarchon.geometry.boundary.applicator_fdm import PreallocatedGhostBuffer
 from mfgarchon.geometry.boundary.conditions import neumann_bc
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.types.callable_protocols import evaluate_solver_source
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, scalar_volatility
+from mfgarchon.utils.pde_coefficients import (
+    diffusion_from_volatility,
+    resolve_volatility_override,
+    retired_volatility_keywords,
+    scalar_volatility,
+)
 
 from .base_hjb import BaseHJBSolver
 
@@ -900,13 +905,15 @@ class HJBWENOSolver(BaseHJBSolver):
 
         return max(dt_stable, 1e-10)  # Ensure positive time step
 
+    @retired_volatility_keywords
     def solve_hjb_system(
         self,
         M_density: np.ndarray | None = None,
         U_terminal: np.ndarray | None = None,
         U_coupling_prev: np.ndarray | None = None,
-        volatility_field: float | np.ndarray | None = None,
+        volatility: float | np.ndarray | None = None,
         source_term: Callable | None = None,
+        volatility_kind: str | None = None,
     ) -> np.ndarray:
         """
         Solve the complete HJB system using WENO spatial discretization.
@@ -919,28 +926,31 @@ class HJBWENOSolver(BaseHJBSolver):
             M_density: Density m(t,x) from FP solver
             U_terminal: Terminal condition u(T,x)
             U_coupling_prev: Value function from previous coupling iteration
-            volatility_field: Optional diffusion coefficient override
+            volatility: Optional volatility override. Honoured only when it is the scalar read at
+                construction; any other value is refused (Issue #1316).
+            volatility_kind: "field" or "tensor" for an array volatility (#2378).
 
         Returns:
             U_solved: Complete solution u(t,x) over time domain
         """
         # Issue #1316: this solver takes one scalar volatility from the problem at construction
         # (self._volatility) and uses it in the diffusion CFL bound and in every sweep. A
-        # volatility_field that differs from it is refused, not accepted and ignored, which would
-        # solve HJB with one diffusion while FP uses another. The iterator's forwarding of the
-        # problem's own volatility (Issue #1248) is a no-op.
-        if volatility_field is not None and not (
-            volatility_field is self.problem.volatility
-            or (np.isscalar(volatility_field) and float(volatility_field) == self._volatility)
-        ):
-            raise NotImplementedError(
-                "HJBWENOSolver cannot honor a volatility_field that differs from the problem's "
-                "volatility: it uses the problem's scalar volatility, read once at construction, at "
-                "several sites (Issue #1316). A spatially-varying or mismatched field would make HJB "
-                "solve a different diffusion than FP, breaking the Picard fixed point. Use "
-                "HJBGFDMSolver (which consumes volatility_field), or build the problem with that "
-                "volatility."
+        # volatility that differs from it is refused, not accepted and ignored, which would
+        # solve HJB with one diffusion while FP uses another. An equal scalar override is a no-op;
+        # equality is by value, never by identity with problem.volatility (#2378 part 2a).
+        if volatility is not None or volatility_kind is not None:
+            volatility, volatility_kind = resolve_volatility_override(
+                volatility, volatility_kind, problem=self.problem, consumer="HJBWENOSolver.solve_hjb_system"
             )
+            if callable(volatility) or np.ndim(volatility) != 0 or float(volatility) != self._volatility:
+                raise NotImplementedError(
+                    "HJBWENOSolver cannot honor a volatility that differs from the problem's "
+                    "volatility: it uses the problem's scalar volatility, read once at construction, at "
+                    "several sites (Issue #1316). A spatially-varying or mismatched field would make HJB "
+                    "solve a different diffusion than FP, breaking the Picard fixed point. Use "
+                    "HJBGFDMSolver (which consumes a volatility field), or build the problem with that "
+                    "volatility."
+                )
 
         # Validate required parameters
         if M_density is None:

@@ -508,6 +508,56 @@ def deprecated_alias(
     return alias_wrapper
 
 
+def retired_parameters(
+    replacements: dict[str, str], *, issue: str, since: str, removal: str = "v0.25.0"
+) -> Callable[[F], F]:
+    """Refuse retired keyword arguments with a ``TypeError`` that names what replaces each.
+
+    For a hard rename whose deprecation window the maintainer waived: the old keyword is neither
+    accepted nor left to a ``**kwargs`` to swallow, and the caller is told the new name. Without
+    this, a signature with no ``**kwargs`` raises Python's generic "unexpected keyword argument",
+    which does not name the replacement, and one with ``**kwargs`` accepts the old name and ignores
+    it -- the silent drop the rename exists to end.
+
+    ``replacements`` maps each retired name to the text that replaces it in the message. The wrapped
+    function's signature is unchanged for ``inspect.signature`` (``functools.wraps`` sets
+    ``__wrapped__``), so signature-keyed gates see the current parameters.
+
+    The refusal is itself scheduled to go at ``removal``, by the same policy as a deprecation.
+    ``scan_deprecated`` reports one ``retired_parameters`` entry per decorated function, so the
+    deprecation audit names it once it is age-eligible. A function that takes ``**kwargs`` carries
+    the removal blocker ``"var_keyword"``: without the refusal, its ``**kwargs`` would accept a
+    retired name and ignore it (#2419). The blocker is read from the signature, so it clears when
+    the ``**kwargs`` goes.
+    """
+
+    def decorator(func: F) -> F:
+        takes_var_keyword = any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in inspect.signature(func).parameters.values()
+        )
+
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            retired = [name for name in kwargs if name in replacements]
+            if retired:
+                name = retired[0]
+                raise TypeError(
+                    f"{func.__qualname__}() no longer takes {name}=; pass {replacements[name]} instead ({issue})."
+                )
+            return func(*args, **kwargs)
+
+        wrapper._retired_parameters = {  # type: ignore[attr-defined]
+            "names": dict(replacements),
+            "issue": issue,
+            "since": since,
+            "removal": removal,
+            "removal_blockers": ["var_keyword"] if takes_var_keyword else [],
+        }
+        return wrapper  # type: ignore[return-value]
+
+    return decorator
+
+
 def validate_kwargs(
     kwargs: dict[str, Any],
     deprecated_kwargs: dict[str, str],
@@ -617,6 +667,25 @@ def _scan_object(obj: Any, name: str, module_name: str, results: list[dict[str, 
                     "deprecated_on": p.get("deprecated_on"),
                 }
             )
+
+    retired = getattr(obj, "_retired_parameters", None)
+    if retired:
+        # One entry per refusing function, not per retired name: the refusal is what goes at
+        # `removal`, and it goes from a whole signature at once.
+        results.append(
+            {
+                "type": "retired_parameters",
+                "name": name,
+                "module": module_name,
+                "since": retired["since"],
+                "replacement": "; ".join(sorted(set(retired["names"].values()))),
+                "retired": sorted(retired["names"]),
+                "issue": retired["issue"],
+                "removal": retired["removal"],
+                "removal_blockers": list(retired["removal_blockers"]),
+                "deprecated_on": None,
+            }
+        )
 
     dep_values = getattr(obj, "_deprecated_values", None)
     if dep_values:

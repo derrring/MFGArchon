@@ -190,14 +190,16 @@ for iteration in range(max_iterations):
         M_density=M,
         U_terminal=U[-1],
         U_coupling_prev=U,
-        tensor_diffusion_field=Sigma,
+        volatility=Sigma,
+        volatility_kind="tensor",
     )
 
     # Solve FP with diagonal tensor
     M_new = fp_solver.solve_fp_system(
         M_initial=m0,
         potential_field=U_new,
-        tensor_diffusion_field=Sigma,
+        volatility=Sigma,
+        volatility_kind="tensor",
         show_progress=False,
     )
 

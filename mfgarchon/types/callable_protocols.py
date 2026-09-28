@@ -10,7 +10,7 @@ Usage:
     def solve_fp_system(
         self,
         drift_field: np.ndarray | DriftFieldCallable | None = None,
-        volatility_field: float | np.ndarray | DiffusionFieldCallable | None = None,
+        volatility: float | np.ndarray | DiffusionFieldCallable | None = None,
     ) -> np.ndarray:
         ...
 """

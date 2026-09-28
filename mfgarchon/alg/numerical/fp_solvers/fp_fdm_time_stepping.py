@@ -75,6 +75,8 @@ from mfgarchon.utils.pde_coefficients import (
     _DriftDispatcher,
     diffusion_from_volatility,
     fp_drift_coefficient,
+    resolve_volatility_override,
+    retired_volatility_keywords,
 )
 
 if TYPE_CHECKING:
@@ -682,6 +684,7 @@ def _refuse_provider_wall_coefficients(boundary_conditions) -> None:
     )
 
 
+@retired_volatility_keywords
 def solve_fp_nd_full_system(
     m_initial_condition: np.ndarray,
     U_solution_for_drift: np.ndarray | None,
@@ -689,8 +692,8 @@ def solve_fp_nd_full_system(
     boundary_conditions: BoundaryConditions | None = None,
     show_progress: bool | None = None,
     backend: Any | None = None,
-    diffusion_field: float | np.ndarray | Any | None = None,
-    tensor_diffusion_field: np.ndarray | Callable | None = None,
+    volatility: float | np.ndarray | Any | None = None,
+    volatility_kind: str | None = None,
     advection_scheme: str = "divergence_upwind",
     # Callable drift support (Phase 2 - Issue #487)
     drift_field: Callable | None = None,
@@ -731,14 +734,13 @@ def solve_fp_nd_full_system(
         Whether to display progress bar
     backend : Any | None
         Array backend (currently unused, NumPy only)
-    diffusion_field : float | np.ndarray | Callable | None
-        Optional diffusion override (Phase 2.4):
-        - None: Use problem.volatility
-        - float: Constant diffusion
-        - ndarray: Spatially/temporally varying diffusion
-        - Callable: State-dependent diffusion D(t, x, m) -> float | ndarray
-    tensor_diffusion_field : np.ndarray | Callable | None
-        Tensor diffusion coefficient (Phase 3.0)
+    volatility : float | np.ndarray | Callable | None
+        The SDE volatility, not the diffusion (#2378 part 2a). None uses problem.volatility with the
+        problem's kind; an array needs volatility_kind; a callable sigma(t, x, m) is read per point
+        unless volatility_kind="tensor".
+    volatility_kind : str | None
+        "field" (one sigma per point, spatial or (Nt+1, *grid)) or "tensor" (a (d, k) noise matrix,
+        constant or per point) for an array; "tensor" for a tensor-valued callable.
     advection_scheme : str
         Advection term discretization scheme. Options:
         - "gradient_centered": Gradient form + central differences
@@ -789,6 +791,13 @@ def solve_fp_nd_full_system(
     ndim = problem.geometry.dimension
     shape = tuple(problem.geometry.get_grid_shape())
     dt = problem.dt
+    # One dispatch on the declared kind, for an override and for the problem's own volatility alike
+    # (#2378 part 2a). Before, a missing override fell to the scalar/field path even when the problem
+    # declared a tensor, and the tensor path was reached only through a second, tensor-only keyword.
+    volatility, volatility_kind = resolve_volatility_override(
+        volatility, volatility_kind, problem=problem, consumer="solve_fp_nd_full_system"
+    )
+    use_tensor_diffusion = volatility_kind == "tensor"
     # Issue #1420 / G-017: source the drift coefficient from the Hamiltonian's control_cost
     # (the single source α* = -∇U/control_cost), not the independent coupling_coefficient field.
     #
@@ -825,9 +834,7 @@ def solve_fp_nd_full_system(
     # the sole member of the accept-list. Keying `_velocity_is_consumed` on the scheme alone made
     # the accept-list false exactly where it is most load-bearing.
     _velocity_is_consumed = (
-        velocity_field is not None
-        and _resolved_scheme in _INTERFACE_VELOCITY_SCHEMES
-        and tensor_diffusion_field is None
+        velocity_field is not None and _resolved_scheme in _INTERFACE_VELOCITY_SCHEMES and not use_tensor_diffusion
     )
     _refuse_provider_wall_coefficients(boundary_conditions)
 
@@ -865,7 +872,7 @@ def solve_fp_nd_full_system(
             "no advection scheme reads 'interface_velocity' on the tensor-diffusion path "
             "(solve_timestep_tensor_explicit takes no such parameter), so the accept-list "
             "does not apply here"
-            if tensor_diffusion_field is not None
+            if use_tensor_diffusion
             else f"advection_scheme={advection_scheme!r} does not read 'interface_velocity'"
         )
         raise NotImplementedError(
@@ -909,17 +916,13 @@ def solve_fp_nd_full_system(
     else:
         raise ValueError("Either velocity_field, U_solution_for_drift, or callable drift_field must be provided")
 
-    # Handle tensor diffusion (Phase 3.0) vs scalar diffusion
-    use_tensor_diffusion = tensor_diffusion_field is not None
-
+    # Tensor diffusion (Phase 3.0) vs scalar diffusion, on the kind resolved above
     if use_tensor_diffusion:
         # Tensor diffusion path
-        tensor_base = tensor_diffusion_field
+        tensor_base = volatility
         sigma_base = None  # Not used for tensor diffusion
     else:
-        # Scalar diffusion path (Phase 2.4). `diffusion_field` carries the VOLATILITY; None is the
-        # problem's own, as supplied, taken through the same dispatch as an override (#2376).
-        volatility = problem.volatility if diffusion_field is None else diffusion_field
+        # Scalar diffusion path (Phase 2.4): a scalar, a field, or a callable read per point.
         if isinstance(volatility, numbers.Real):
             sigma_base = float(volatility)
         elif callable(volatility) or isinstance(volatility, np.ndarray):
@@ -1071,7 +1074,7 @@ def solve_fp_nd_full_system(
             # Callable drift with scalar diffusion - use explicit Forward Euler
             # This avoids the mathematically incorrect synthetic U approach
             diffusion = problem.get_diffusion_coefficient_field(
-                override=sigma_base, field_name="volatility_field", dimension=ndim
+                override=sigma_base, field_name="volatility", dimension=ndim
             )
             sigma_at_k = diffusion.evaluate_at(timestep_idx=k, grid=grid.coordinates, density=M_current, dt=dt)
 
@@ -1089,7 +1092,7 @@ def solve_fp_nd_full_system(
         else:
             # MFG-coupled mode: scalar diffusion + U/velocity-based drift - implicit solver
             diffusion = problem.get_diffusion_coefficient_field(
-                override=sigma_base, field_name="volatility_field", dimension=ndim
+                override=sigma_base, field_name="volatility", dimension=ndim
             )
             sigma_at_k = diffusion.evaluate_at(timestep_idx=k, grid=grid.coordinates, density=M_current, dt=dt)
 
@@ -1248,7 +1251,7 @@ def solve_timestep_tensor_explicit(
             Sigma[idx] = tensor_field(t, x_coords, m_at_point)
 
         # Validate PSD
-        coeff = CoefficientField(tensor_field, None, "tensor_diffusion_field", dimension=ndim)
+        coeff = CoefficientField(tensor_field, None, "volatility", dimension=ndim)
         coeff.validate_tensor_psd(Sigma)
     elif isinstance(tensor_field, np.ndarray):
         # Array tensor: constant or spatially varying
@@ -1265,7 +1268,7 @@ def solve_timestep_tensor_explicit(
             )
 
         # Validate PSD
-        coeff = CoefficientField(tensor_field, None, "tensor_diffusion_field", dimension=ndim)
+        coeff = CoefficientField(tensor_field, None, "volatility", dimension=ndim)
         coeff.validate_tensor_psd(Sigma)
     else:
         raise TypeError(f"tensor_field must be np.ndarray or callable, got {type(tensor_field)}")

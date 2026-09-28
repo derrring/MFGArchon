@@ -49,7 +49,7 @@ class BaseFPSolver(BaseNumericalSolver):
         - Prescribed field: α = v(t,x) (wind, currents)
         - Custom/state-dependent: α = f(t,x,m)
 
-    Diffusion Types (controlled by volatility_field parameter):
+    Diffusion Types (controlled by the volatility parameter; an array declares volatility_kind):
         - Constant isotropic: D = σ²/2 (scalar, same in all directions)
         - Anisotropic: D = diag(σ₁², σ₂², ...) (different per direction)
         - Spatially varying: D(t,x) (depends on location)
@@ -79,7 +79,7 @@ class BaseFPSolver(BaseNumericalSolver):
     # the swallower as accepting the parameter.
     #
     # Scoped to the two parameters with an incident history rather than to every declared name:
-    # `source_term` (#1424, #2020) and `volatility_field` (#1316, #1783). A blanket "must name every
+    # `source_term` (#1424, #2020) and `volatility` (#1316, #1783). A blanket "must name every
     # declared parameter" rule is not the right gate here -- implementations legitimately take different
     # optional parameters. The first parameter's name, `M_initial`, is pinned on every implementation by
     # test_solve_fp_system_first_parameter_2377.py instead (#2377).
@@ -88,7 +88,7 @@ class BaseFPSolver(BaseNumericalSolver):
     # at some caller far away. A solver that cannot support a parameter still NAMES it and raises
     # inside -- that is what HJBWENOSolver does for multi-D `source_term`, and it is the honest
     # shape: refusal is a behaviour, not an absent signature.
-    _GUARDED_PARAMETERS = ("source_term", "volatility_field")
+    _GUARDED_PARAMETERS = ("source_term", "volatility")
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -241,7 +241,8 @@ class BaseFPSolver(BaseNumericalSolver):
         self,
         M_initial: np.ndarray,
         drift_field: np.ndarray | Callable | None = None,
-        volatility_field: float | np.ndarray | Callable | None = None,
+        volatility: float | np.ndarray | Callable | None = None,
+        volatility_kind: str | None = None,
         show_progress: bool | None = None,
         progress_callback: Callable[[int], None] | None = None,  # Issue #640
         # MMS verification support
@@ -258,7 +259,7 @@ class BaseFPSolver(BaseNumericalSolver):
 
             where:
             - α(t,x,m): drift field (controlled by drift_field)
-            - D(t,x,m): diffusion tensor (controlled by volatility_field)
+            - D(t,x,m): diffusion tensor, D = ΣΣᵀ/2 (controlled by volatility)
 
         Equation Types Supported:
             1. Advection-diffusion (D>0, α≠0): Standard MFG, transport with diffusion
@@ -274,20 +275,19 @@ class BaseFPSolver(BaseNumericalSolver):
               Shape: (Nt, Nx) for 1D scalar, (Nt, Nx, d) for d-dim vector
             - Callable: Function α(t, x, m) -> drift
 
-        Volatility Specification (Issue #717 unified API):
-            volatility_field can be:
-            - None: Use problem.volatility
-            - float: Constant isotropic volatility σ → D = σ²/2
-            - (d,) array: Diagonal volatility [σ₀, σ₁, ...] → D = diag(σᵢ²)/2
-            - (d, d) array: Full volatility matrix Σ → D = ΣΣᵀ/2
-            - (*shape, d, d) array: Spatially varying Σ(x) → D(x) = Σ(x)Σ(x)ᵀ/2
-            - Callable: Function σ(t, x, m) or Σ(t, x, m) -> volatility
+        Volatility Specification (#2378 part 2a -- the problem-level rule, #2375 ruling 6):
+            volatility can be:
+            - None: Use problem.volatility, with the kind declared on the problem
+            - float: Constant isotropic volatility σ → D = σ²/2 (no kind)
+            - array with volatility_kind="field": one σ per grid point, spatial or (Nt+1, *grid)
+            - array with volatility_kind="tensor": a (d, k) noise matrix Σ → D = ΣΣᵀ/2, constant
+              or per point (*grid, d, k). A per-axis (σ₀, σ₁, ...) is np.diag of it, as a tensor.
+            - Callable σ(t, x, m), read per point; volatility_kind="tensor" for Σ(t, x, m)
 
-            Note: volatility_field is the SDE noise coefficient σ or Σ. Internally
-            converted to diffusion D = σ²/2 (scalar) or D = ΣΣᵀ/2 (matrix).
-
-            DEPRECATED: tensor_diffusion_field and volatility_matrix (on FPFDMSolver)
-            are deprecated. Use volatility_field with appropriate shape.
+            An array without volatility_kind is refused: a (d, d) tensor and a d x d field have the
+            same shape. volatility is the SDE noise coefficient σ or Σ, converted internally to the
+            diffusion D. The retired keywords volatility_field, volatility_matrix,
+            tensor_diffusion_field and diffusion_field raise TypeError naming volatility=.
 
         Args:
             M_initial: Initial density M(0,x) at t=0
@@ -299,12 +299,11 @@ class BaseFPSolver(BaseNumericalSolver):
                 - Callable: Function α(t, x, m) -> drift
                 Default: None
 
-            volatility_field: Volatility specification (optional, Issue #717):
-                - None: Use problem.volatility
-                - float: Constant isotropic volatility σ
-                - np.ndarray: Spatially varying volatility
-                - Callable: Function σ(t, x, m) -> volatility
-                Default: None
+            volatility: Volatility override (optional); see Volatility Specification above.
+                Default: None (the problem's own)
+
+            volatility_kind: "field" or "tensor" for an array volatility, optionally "tensor" for
+                a callable. Default: None
 
             source_term: Source term for MMS verification (optional):
                 - None: No source term (default, standard PDE)
@@ -328,20 +327,20 @@ class BaseFPSolver(BaseNumericalSolver):
             >>> drift = -problem.compute_gradient(U_hjb) / problem.control_cost
             >>> M = solver.solve_fp_system(m0, drift_field=drift)
 
-            # Anisotropic diffusion
-            >>> D = np.diag([0.1, 0.5])  # Different in x,y directions
-            >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility_field=D)
+            # Anisotropic diffusion: a diagonal noise matrix, D = ΣΣᵀ/2
+            >>> Sigma = np.diag([0.3, 0.7])  # Different in x,y directions
+            >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility=Sigma, volatility_kind="tensor")
 
-            # State-dependent diffusion
-            >>> D_func = lambda t, x, m: 0.1 * (1 + m)  # Increases with density
-            >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility_field=D_func)
+            # State-dependent volatility
+            >>> sigma = lambda t, x, m: 0.1 * (1 + m)  # Increases with density
+            >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility=sigma)
 
             # Pure advection (D=0, α≠0)
-            >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility_field=0.0)
+            >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility=0.0)
 
-            # Spatially varying diffusion
-            >>> D_field = create_spatially_varying_diffusion(...)  # (Nt, Nx)
-            >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility_field=D_field)
+            # Spatially varying volatility, one value per point and time
+            >>> sigma_field = create_spatially_varying_volatility(...)  # (Nt+1, Nx)
+            >>> M = solver.solve_fp_system(m0, drift_field=drift, volatility=sigma_field, volatility_kind="field")
 
         Note:
             For MFG problems:

@@ -148,7 +148,7 @@ def test_fvm_refuses_the_problems_tensor_even_when_its_entries_are_equal():
     from mfgarchon.alg.numerical.fp_solvers import FPFVMSolver
 
     problem = _problem_2d(volatility=np.full((2, 2), 0.3), volatility_kind="tensor")
-    with pytest.raises(NotImplementedError, match="the problem's is a tensor"):
+    with pytest.raises(NotImplementedError, match=r"this one is a tensor \(volatility_kind='tensor'\)"):
         FPFVMSolver(problem)._scalar_diffusion(None)
 
 
@@ -206,14 +206,18 @@ def _hjb_fdm_2d(problem, **override):
     return HJBFDMSolver(problem).solve_hjb_system(M, U_terminal, np.zeros_like(M), **override)
 
 
-# The problem's own volatility reaches a solver two ways: as the None default (a standalone solve,
-# BlockIterator), and as the object itself, which MFGProblem.solve() forwards as volatility_field.
-# Both must be read by the declared kind, so every kind-dispatch pin below runs on both.
+# The problem's own volatility reaches a solver as the None default, and a caller can pass the same
+# object back as a per-solve override. Until #2378 part 2a MFGProblem.solve() did the second, and an
+# identity arm read the forwarded object by the problem's kind. The override now declares its kind
+# like any other and goes through the same dispatch, so every kind-dispatch pin below runs on both.
 ROUTES = pytest.mark.parametrize("route", ["none", "same-object"])
 
 
 def _route(problem, route):
-    return {} if route == "none" else {"volatility_field": problem.volatility}
+    if route == "none":
+        return {}
+    kind = {"volatility_kind": problem.volatility_kind} if problem.volatility_kind is not None else {}
+    return {"volatility": problem.volatility, **kind}
 
 
 def _hjb_fdm_reads_the_diagonal_tensor(route):
@@ -221,13 +225,15 @@ def _hjb_fdm_reads_the_diagonal_tensor(route):
 
     Before, the (d, d) tensor dispatch looked only at an explicit override: with None the problem's
     tensor went to the field reader and raised a grid-shape error, so FixedPointIterator,
-    BlockIterator and a standalone solve failed where MFGProblem.solve, which forwards the object,
-    ran. The reference is the per-axis override, which reaches the tensor path by its own route.
+    BlockIterator and a standalone solve failed where MFGProblem.solve, which forwarded the object,
+    ran. The reference is a fresh tensor override: not the problem's object, so on the same-object
+    route this pins that identity with problem.volatility plays no part in the dispatch (#2378).
     """
     problem = _problem_2d(volatility=np.diag([0.3, 0.2]), volatility_kind="tensor")
 
     np.testing.assert_array_equal(
-        _hjb_fdm_2d(problem, **_route(problem, route)), _hjb_fdm_2d(problem, volatility_field=np.array([0.3, 0.2]))
+        _hjb_fdm_2d(problem, **_route(problem, route)),
+        _hjb_fdm_2d(problem, volatility=np.diag([0.3, 0.2]), volatility_kind="tensor"),
     )
 
 
@@ -236,7 +242,7 @@ def test_hjb_fdm_reads_the_problems_diagonal_tensor_on_the_none_path():
 
 
 def test_hjb_fdm_reads_the_problems_diagonal_tensor_on_the_same_object_route():
-    """MFGProblem.solve() forwards the problem's own volatility; a None-only pin left it open."""
+    """The problem's own volatility passed back as an override, with its kind, is read the same way."""
     _hjb_fdm_reads_the_diagonal_tensor("same-object")
 
 
@@ -266,15 +272,16 @@ def test_hjb_fdm_refuses_a_problem_tensor_it_would_solve_at_the_wrong_diffusion(
 
 @UNASSEMBLED_TENSORS
 def test_hjb_fdm_refuses_a_problem_tensor_on_the_same_object_route(volatility, what):
-    """The route MFGProblem.solve() takes: it forwards the problem's own volatility as the override.
+    """The problem's own tensor passed back as an override, declared a tensor, is refused alike.
 
-    A pin on the None route alone left this one open -- deleting the identity arm of the dispatch
-    brought back the warned-about wrong solve on MFGProblem.solve() with the whole gate green
-    (#2378 re-review).
+    Until #2378 part 2a this was the route MFGProblem.solve() took, and a pin on the None route alone
+    left it open -- deleting the identity arm of the dispatch brought back the warned-about wrong solve
+    with the whole gate green (#2378 re-review). There is no identity arm now; the override is read by
+    its declared kind, through the same refusal.
     """
     problem = _problem_2d(volatility=volatility, volatility_kind="tensor")
     with pytest.raises(NotImplementedError, match=rf"only as a constant diagonal.*is {what}.*HJBSemiLagrangianSolver"):
-        _hjb_fdm_2d(problem, volatility_field=problem.volatility)
+        _hjb_fdm_2d(problem, **_route(problem, "same-object"))
 
 
 def test_hjb_fdm_solves_a_2d_field_and_a_constant_one_is_the_scalar():

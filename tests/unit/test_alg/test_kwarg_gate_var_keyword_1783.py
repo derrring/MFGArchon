@@ -64,9 +64,10 @@ from mfgarchon.alg.numerical.coupling.base_mfg import resolve_volatility_kwarg
 
 @dataclass
 class _Problem:
-    """Only the attribute the owner reads."""
+    """Only the attributes the owner reads."""
 
     volatility: Any
+    volatility_kind: Any = None
 
 
 def test_a_var_keyword_override_does_not_count_as_accepting_the_parameter():
@@ -77,18 +78,18 @@ def test_a_var_keyword_override_does_not_count_as_accepting_the_parameter():
     three HJB solvers declared ``volatility_field`` and ignored it.
     """
     params = inspect.signature(lambda self, *args, **kwargs: None).parameters
-    assert "volatility_field" not in params
+    assert "volatility" not in params
     assert any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()), (
         "the fixture must actually have **kwargs, or it tests nothing about the hole"
     )
 
-    with pytest.raises(NotImplementedError, match="does not accept 'volatility_field'"):
-        resolve_volatility_kwarg(params, 0.7, _Problem(0.3), "FakeSolver", "solve_hjb_system", "HJB")
+    with pytest.raises(NotImplementedError, match="does not accept 'volatility'"):
+        resolve_volatility_kwarg(params, 0.7, None, _Problem(0.3), "FakeSolver", "solve_hjb_system", "HJB")
 
     # And it does NOT refuse when the parameter is named.
-    named = inspect.signature(lambda self, volatility_field=None: None).parameters
-    assert resolve_volatility_kwarg(named, 0.7, _Problem(0.3), "FakeSolver", "solve_hjb_system", "HJB") == {
-        "volatility_field": 0.7
+    named = inspect.signature(lambda self, volatility=None: None).parameters
+    assert resolve_volatility_kwarg(named, 0.7, None, _Problem(0.3), "FakeSolver", "solve_hjb_system", "HJB") == {
+        "volatility": 0.7
     }
 
 
@@ -101,7 +102,9 @@ def test_the_message_names_the_signature_and_the_consequence():
     """
     params = inspect.signature(lambda self, *args, **kwargs: None).parameters
     with pytest.raises(NotImplementedError) as exc:
-        resolve_volatility_kwarg(params, 0.7, _Problem(0.3), "MeshlessGalerkinHJBSolver", "solve_hjb_system", "HJB")
+        resolve_volatility_kwarg(
+            params, 0.7, None, _Problem(0.3), "MeshlessGalerkinHJBSolver", "solve_hjb_system", "HJB"
+        )
     message = str(exc.value)
     assert "MeshlessGalerkinHJBSolver.solve_hjb_system" in message
     assert "different diffusion" in message, "the consequence must be stated, not just the refusal"
@@ -119,30 +122,30 @@ def test_an_exempt_scalar_is_still_forwarded_when_the_solver_names_it():
     the problem then picked up something other than the constant the caller asked for. Here the
     problem's volatility is an array and the caller asks for the scalar 0.3.
     """
-    named = inspect.signature(lambda self, volatility_field=None: None).parameters
+    named = inspect.signature(lambda self, volatility=None: None).parameters
     array_problem = _Problem(np.full(9, 0.3))
-    assert resolve_volatility_kwarg(named, 0.3, array_problem, "FDM", "solve_hjb_system", "HJB") == {
-        "volatility_field": 0.3
+    assert resolve_volatility_kwarg(named, 0.3, None, array_problem, "FDM", "solve_hjb_system", "HJB") == {
+        "volatility": 0.3
     }, "an explicit override must reach the solver even when it looks equal to the problem's volatility"
 
     # The exemption still applies where it was needed: a solver that cannot take it, and a field
     # whose loss changes nothing. Without this branch every ordinary solve would refuse.
     kw_only = inspect.signature(lambda self, *args, **kwargs: None).parameters
-    assert resolve_volatility_kwarg(kw_only, 0.3, _Problem(0.3), "X", "solve_hjb_system", "HJB") == {}
+    assert resolve_volatility_kwarg(kw_only, 0.3, None, _Problem(0.3), "X", "solve_hjb_system", "HJB") == {}
 
 
 def test_a_numpy_scalar_is_not_a_hazard():
     """``np.float32(0.3)`` is neither ``int`` nor ``float``; refusing it refuses an identical solve."""
     kw_only = inspect.signature(lambda self, *args, **kwargs: None).parameters
     p = _Problem(np.float32(0.3))
-    assert resolve_volatility_kwarg(kw_only, np.float32(0.3), p, "X", "solve_hjb_system", "HJB") == {}
+    assert resolve_volatility_kwarg(kw_only, np.float32(0.3), None, p, "X", "solve_hjb_system", "HJB") == {}
 
 
 def test_the_meshless_pair_forwards_and_a_swallowing_solver_is_refused():
     """The real configuration, through the public constructor: forwarding to the pair that names
     the parameter, then the refusal against one that does not.
 
-    `volatility_field` is a CONSTRUCTOR argument of the iterator, not a `solve()` kwarg -- passing
+    `volatility` is a CONSTRUCTOR argument of the iterator, not a `solve()` kwarg -- passing
     it to `solve()` is swallowed by **kwargs and never reaches the gate, which is how a first
     attempt at this test measured nothing while appearing to pass.
     """
@@ -190,7 +193,7 @@ def test_the_meshless_pair_forwards_and_a_swallowing_solver_is_refused():
     # pair, not refuse it, and the refusal below is exercised against a stub instead. Pinning the
     # gate to a stub is also what stops this test being invalidated again the next time a production
     # solver widens its signature.
-    assert "volatility_field" in inspect.signature(hjb.solve_hjb_system).parameters
+    assert "volatility" in inspect.signature(hjb.solve_hjb_system).parameters
 
     # Without the field, nothing changes.
     FixedPointIterator(problem, *pair()).solve(max_iterations=2, verbose=False)
@@ -205,7 +208,7 @@ def test_the_meshless_pair_forwards_and_a_swallowing_solver_is_refused():
         # it is about to call, so a bare wrapper presents (*args, **kwargs) and gets REFUSED -- the
         # instrument would then be measuring itself. wraps sets __wrapped__ and signature follows it.
         def spy(*args, _inner=inner, _name=name, **kwargs):
-            seen[_name] = kwargs.get("volatility_field")
+            seen[_name] = kwargs.get("volatility")
             return _inner(*args, **kwargs)
 
         spy = functools.wraps(inner)(spy)
@@ -214,9 +217,9 @@ def test_the_meshless_pair_forwards_and_a_swallowing_solver_is_refused():
     # array -- these weak-form solvers assemble one scalar D and refuse an array (#2376), and the HJB
     # side would then raise before the FP spy is reached.
     field = 0.9
-    FixedPointIterator(problem, hjb2, fp2, volatility_field=field).solve(max_iterations=2, verbose=False)
+    FixedPointIterator(problem, hjb2, fp2, volatility=field).solve(max_iterations=2, verbose=False)
     for name in ("solve_hjb_system", "solve_fp_system"):
-        assert seen.get(name) is not None, f"{name} did not receive volatility_field"
+        assert seen.get(name) is not None, f"{name} did not receive the volatility"
         assert np.array_equal(seen[name], field), f"{name} received a different field"
 
     # The refusal itself, against a solver that really does have the **kwargs shape. Deliberately
@@ -232,19 +235,19 @@ def test_the_meshless_pair_forwards_and_a_swallowing_solver_is_refused():
             raise AssertionError("the gate must refuse before the solver is reached")
 
     swallow = _SwallowingHJB(problem)
-    assert "volatility_field" not in inspect.signature(swallow.solve_hjb_system).parameters, (
+    assert "volatility" not in inspect.signature(swallow.solve_hjb_system).parameters, (
         "the stub must have the **kwargs shape, or this half tests nothing"
     )
     _hjb_unused, fp3 = pair()
-    with pytest.raises(NotImplementedError, match="does not accept 'volatility_field'"):
-        FixedPointIterator(problem, swallow, fp3, volatility_field=field).solve(max_iterations=2, verbose=False)
+    with pytest.raises(NotImplementedError, match="does not accept 'volatility'"):
+        FixedPointIterator(problem, swallow, fp3, volatility=field).solve(max_iterations=2, verbose=False)
 
 
 def test_the_newton_path_refuses_the_same_pair_the_picard_path_does():
     """The Newton half of the fix, exercised rather than counted.
 
     `test_every_coupling_path_routes_through_one_owner` reads source text, so it stays green if a
-    call site keeps the call and passes the wrong argument. Changing `self.volatility_field` to
+    call site keeps the call and passes the wrong argument. Changing `self.volatility` to
     `None` at either `mfg_residual` site leaves every test in this file passing while the Newton
     gate stops both forwarding and refusing -- strictly worse than the pre-PR behaviour, which at
     least forwarded to solvers that name the parameter.
@@ -288,7 +291,7 @@ def test_the_newton_path_refuses_the_same_pair_the_picard_path_does():
     # `test_one_membership_test_in_the_coupling_package`. The Newton REFUSAL is
     # `test_the_newton_path_refuses_a_swallowing_solver` below; the stub in the Picard test above
     # does not cover it, being driven through FixedPointIterator.
-    assert "volatility_field" in inspect.signature(hjb.solve_hjb_system).parameters
+    assert "volatility" in inspect.signature(hjb.solve_hjb_system).parameters
 
     shape = (problem.Nt + 1, n)
     M0 = np.tile(np.ones(n) / n, (problem.Nt + 1, 1))
@@ -297,7 +300,7 @@ def test_the_newton_path_refuses_the_same_pair_the_picard_path_does():
     # A volatility the problem does not carry: 0.9 against 0.3. A scalar, because these weak-form
     # solvers refuse an array (#2376), and the forwarding is what this test pins.
     hazard = 0.9
-    residual = MFGResidual(problem, hjb, fp, volatility_field=hazard)
+    residual = MFGResidual(problem, hjb, fp, volatility=hazard)
     seen_hjb: dict[str, object] = {}
     inner_hjb = hjb.solve_hjb_system
 
@@ -311,7 +314,7 @@ def test_the_newton_path_refuses_the_same_pair_the_picard_path_does():
         residual.compute_hjb_output(M0, U0)
     finally:
         hjb.solve_hjb_system = inner_hjb
-    assert np.array_equal(seen_hjb.get("volatility_field"), hazard), (
+    assert np.array_equal(seen_hjb.get("volatility"), hazard), (
         "the Newton path must forward the field to an HJB solver that names it"
     )
 
@@ -330,8 +333,8 @@ def test_the_newton_path_refuses_the_same_pair_the_picard_path_does():
         assert residual.compute_fp_output(U0, M0).shape == shape
     finally:
         fp.solve_fp_system = inner
-    assert "volatility_field" in seen, "the FP side names the parameter, so it must be forwarded"
-    assert np.array_equal(seen["volatility_field"], hazard)
+    assert "volatility" in seen, "the FP side names the parameter, so it must be forwarded"
+    assert np.array_equal(seen["volatility"], hazard)
 
     # No field, no refusal -- the Newton path must still run ordinarily.
     MFGResidual(problem, hjb, fp).compute_hjb_output(M0, U0)
@@ -354,7 +357,8 @@ def test_one_membership_test_in_the_coupling_package():
     evades it. `assert len(modules) >= 4` is the reach control for the second of those; the package
     is flat today and the spelling is the one the owner uses.
 
-    Mutation, measured for #2257: a second `"volatility_field" in ` membership test added to
+    Mutation, measured for #2257 (and re-measured for #2378 part 2a under the new spelling): a
+    second `"volatility" in ` membership test added to
     `mfg_residual.py` -- the pre-#1783 shape -- kills this test and nothing else in this file
     (control 8 passed; mutated 1 failed). Nothing else in the repository holds it either: the
     volatility-forwarding decision is not among the five entries of
@@ -364,7 +368,7 @@ def test_one_membership_test_in_the_coupling_package():
     modules = sorted(package.glob("*.py"))
     assert len(modules) >= 4, f"expected the coupling package, found {len(modules)} files"
 
-    inline = {m.name: m.read_text(encoding="utf-8").count('"volatility_field" in ') for m in modules}
+    inline = {m.name: m.read_text(encoding="utf-8").count('"volatility" in ') for m in modules}
     assert sum(inline.values()) == 1, (
         f"exactly one membership test may exist -- the one inside resolve_volatility_kwarg. Found "
         f"{ {k: v for k, v in inline.items() if v} }. An inline copy is the form that dropped the "
@@ -383,7 +387,7 @@ def test_the_newton_path_refuses_a_swallowing_solver():
     `functools.wraps` when installed after construction and do need it when installed before.
 
     Mutation, measured for #2257: replacing the `resolve_volatility_kwarg` call at the
-    `mfg_residual` HJB site with `if "volatility_field" in params: kwargs[...] = ...` -- the
+    `mfg_residual` HJB site with `if "volatility" in params: kwargs[...] = ...` -- the
     pre-#1783 shape, which both loses the refusal and reintroduces an inline copy -- kills TWO:
     this test and `test_one_membership_test_in_the_coupling_package`. Control 8 passed.
     """
@@ -425,13 +429,13 @@ def test_the_newton_path_refuses_a_swallowing_solver():
             raise AssertionError("the gate must refuse before the solver is reached")
 
     swallow = _SwallowingHJB(problem)
-    assert "volatility_field" not in inspect.signature(swallow.solve_hjb_system).parameters, (
+    assert "volatility" not in inspect.signature(swallow.solve_hjb_system).parameters, (
         "the stub must have the **kwargs shape, or this tests nothing"
     )
 
     shape = (problem.Nt + 1, n)
     M0 = np.tile(np.ones(n) / n, (problem.Nt + 1, 1))
     U0 = np.zeros(shape)
-    residual = MFGResidual(problem, swallow, fp, volatility_field=np.linspace(0.5, 0.9, n))
-    with pytest.raises(NotImplementedError, match="does not accept 'volatility_field'"):
+    residual = MFGResidual(problem, swallow, fp, volatility=np.linspace(0.5, 0.9, n), volatility_kind="field")
+    with pytest.raises(NotImplementedError, match="does not accept 'volatility'"):
         residual.compute_hjb_output(M0, U0)

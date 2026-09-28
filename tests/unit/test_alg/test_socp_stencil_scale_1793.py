@@ -48,7 +48,7 @@ Claims of this kind are stated as BOUNDS throughout this file, deliberately: an 
 property of one `DELTA_MULT` on one LAPACK and silently survives changes to either.
 
 `hjb_gfdm.py:1078` picked `C = 8.0` partly to reach this path. How often it is reached is not
-measured here and is not asserted -- it swings on `k_neighbors`, which `hjb_gfdm.py:276` leaves
+measured here and is not asserted -- it swings on `k_neighbors`, which `hjb_gfdm.py:293` leaves
 auto-computed. Reachable and otherwise untested is reason enough.
 
 The measurements behind each number are in the commit history; the production consequence of

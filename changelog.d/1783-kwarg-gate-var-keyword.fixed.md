@@ -1,5 +1,6 @@
 - **The coupling kwarg gate no longer drops `volatility_field` when a solver declares `**kwargs`**
-  (#1783). `_build_hjb_kwargs` / `_build_fp_kwargs` asked `inspect.signature` whether the solver
+  (#1783). **[#2378 part 2a, 2026-09-28: the parameter is now `volatility=`, and the gate forwards it with its
+  `volatility_kind`.]** `_build_hjb_kwargs` / `_build_fp_kwargs` asked `inspect.signature` whether the solver
   named the parameter — which answers "does this callable name it", not "can this solver consume
   it". `MeshlessGalerkinHJBSolver` delegates through `(*args, use_newton=None, **kwargs)`, so the
   field was dropped on the HJB side while the paired FP solver consumed it: measured with
@@ -26,7 +27,8 @@
   `np.float32(0.3)` no longer draws a refusal for a solve byte-identical to one that is accepted.
 
   Known limitation, not addressed here: `MeshlessGalerkinHJBSolver.solve_hjb_system` is a pure
-  delegation to `WeakFormHJBSolver.solve_hjb_system`, which does name `volatility_field` and does
+  delegation to `WeakFormHJBSolver.solve_hjb_system`, which does name `volatility_field` (now
+  `volatility`) and does
   consume it (`D = 0.045` without, `D = 0.245` with). The refusal therefore forecloses a capability
   that solver has; declaring the parameter on the wrapper, or resolving the signature through the
   delegate, is the better fix. Left to the weak-form work in flight rather than edited underneath

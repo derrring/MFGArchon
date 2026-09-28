@@ -47,7 +47,11 @@ from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.numerical.implicit_diffusion import neumann_cn_step
-from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
+from mfgarchon.utils.pde_coefficients import (
+    fp_drift_coefficient,
+    resolve_volatility_override,
+    retired_volatility_keywords,
+)
 
 from .base_fp import BaseFPSolver, DriftConvention
 from .fp_sl_splatting import splat_1d, splat_nd
@@ -246,12 +250,14 @@ class FPSLSolver(BaseFPSolver):
             return "periodic"
         return "neumann"
 
+    @retired_volatility_keywords
     @deprecated_parameter(param_name="drift_field", since="v0.18.6", replacement="potential_field")
     def solve_fp_system(
         self,
         M_initial: np.ndarray | None = None,
         potential_field: np.ndarray | None = None,
-        volatility_field: float | np.ndarray | None = None,
+        volatility: float | np.ndarray | None = None,
+        volatility_kind: str | None = None,
         source_term: Callable | None = None,
         show_progress: bool | None = None,
         # Deprecated parameters
@@ -271,7 +277,8 @@ class FPSLSolver(BaseFPSolver):
                 - np.ndarray: Shape (Nt+1, Nx) - U values at each time step
                   The drift velocity is computed as alpha = -grad(U)
             drift_field: DEPRECATED. Renamed to potential_field.
-            volatility_field: Optional volatility coefficient σ (SDE noise) override.
+            volatility: Optional volatility coefficient σ (SDE noise) override; a scalar only.
+            volatility_kind: "field" or "tensor" for an array (#2378); arrays are refused here.
                 Note: Internally converted to diffusion D = σ²/2 for FP equation.
             show_progress: Show progress bar during solve
 
@@ -293,7 +300,9 @@ class FPSLSolver(BaseFPSolver):
             )
 
         # Handle volatility (Issue #717: unified API). None is the problem's own (#2376).
-        volatility = self.problem.volatility if volatility_field is None else volatility_field
+        volatility, volatility_kind = resolve_volatility_override(
+            volatility, volatility_kind, problem=self.problem, consumer=f"{type(self).__name__}.solve_fp_system"
+        )
         if isinstance(volatility, (int, float)):
             sigma = float(volatility)
         else:

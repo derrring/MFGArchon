@@ -35,7 +35,11 @@ from mfgarchon.operators.stencils.finite_difference import (
     upwind_momentum,
     upwind_momentum_derivatives,
 )
-from mfgarchon.utils.pde_coefficients import get_spatial_grid
+from mfgarchon.utils.pde_coefficients import (
+    get_spatial_grid,
+    resolve_volatility_override,
+    retired_volatility_keywords,
+)
 
 logger = get_logger(__name__)
 if TYPE_CHECKING:
@@ -258,7 +262,7 @@ class BaseHJBSolver(BaseNumericalSolver):
     # the swallower as accepting the parameter.
     #
     # Scoped to the two parameters with an incident history rather than to every declared name:
-    # `source_term` (#1424, #2020) and `volatility_field` (#1316, #1783). A blanket "must name every
+    # `source_term` (#1424, #2020) and `volatility` (#1316, #1783). A blanket "must name every
     # declared parameter" rule is NOT satisfiable here -- the base declares `M_density` while
     # implementations use other names for it, so it would fail almost every solver in the tree and
     # would be a rename, not a gate.
@@ -267,7 +271,7 @@ class BaseHJBSolver(BaseNumericalSolver):
     # at some caller far away. A solver that cannot support a parameter still NAMES it and raises
     # inside -- that is what HJBWENOSolver does for multi-D `source_term`, and it is the honest
     # shape: refusal is a behaviour, not an absent signature.
-    _GUARDED_PARAMETERS = ("source_term", "volatility_field")
+    _GUARDED_PARAMETERS = ("source_term", "volatility")
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -491,7 +495,8 @@ class BaseHJBSolver(BaseNumericalSolver):
         M_density: np.ndarray,
         U_terminal: np.ndarray,
         U_coupling_prev: np.ndarray,
-        volatility_field: float | np.ndarray | None = None,
+        volatility: float | np.ndarray | None = None,
+        volatility_kind: str | None = None,
         source_term: Callable | None = None,
     ) -> np.ndarray:
         """
@@ -519,11 +524,12 @@ class BaseHJBSolver(BaseNumericalSolver):
             U_coupling_prev: Value function from previous Picard iteration
                                For MFG: actual previous iterate U^{k-1}
                                For standalone: initial guess (zeros, terminal condition, etc.)
-            volatility_field: Diffusion coefficient specification (optional):
-                              None: use problem.volatility
-                              float: constant isotropic σ
-                              ndarray: spatially/temporally varying
-                              Callable: state-dependent σ(t, x, m)
+            volatility: Volatility override -- the SDE volatility σ or Σ, not the diffusion
+                        (optional): None uses problem.volatility with the problem's kind; a
+                        float is a constant isotropic σ; an array needs volatility_kind;
+                        a callable σ(t, x, m) is read per point.
+            volatility_kind: "field" (one σ per point) or "tensor" (a (d, k) noise matrix)
+                             for an array override (#2378 part 2a, #2375 ruling 6).
             source_term: Optional source/sink term S(t, x) in the HJB equation.
                          Callable signature: source_term(t: float, x: ndarray) -> ndarray
                          where x has shape (N, d) and return has shape (N,) or matching grid.
@@ -534,7 +540,7 @@ class BaseHJBSolver(BaseNumericalSolver):
             np.ndarray: Value function U(t,x) solution
 
         Note:
-            For MFG consistency, the same volatility_field should be used in both
+            For MFG consistency, the same volatility should be used in both
             HJB and FP solvers. The coupling solver handles this synchronization.
         """
 
@@ -1741,6 +1747,7 @@ def solve_hjb_timestep_newton(
     return U_n_current_newton_iterate
 
 
+@retired_volatility_keywords
 def solve_hjb_system_backward(
     M_density_from_prev_picard: np.ndarray,  # M_k in notebook
     U_final_condition_at_T: np.ndarray,
@@ -1749,7 +1756,7 @@ def solve_hjb_system_backward(
     max_newton_iterations: int | None = None,
     newton_tolerance: float | None = None,
     backend: BaseBackend | None = None,
-    volatility_field: float | np.ndarray | None = None,  # Diffusion field
+    volatility: float | np.ndarray | None = None,  # the SDE volatility, not the diffusion
     use_upwind: bool = True,  # Use the upwind momentum (True) or central (False)
     bc: BoundaryConditions | None = None,  # Boundary conditions (Issue #542 fix)
     domain_bounds: np.ndarray | None = None,  # Domain bounds for BC
@@ -1758,6 +1765,7 @@ def solve_hjb_system_backward(
     cross_density=None,  # Issue #1071: stacked (Nt+1, K*Nx) cross-density trajectory (lock-faithful)
     failures: list[InnerSolveFailure] | None = None,  # Issue #1878: collects every step that does not converge
     numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,  # Issue #2313
+    volatility_kind: str | None = None,  # #2378 part 2a: 'field' for an array; a tensor is refused in 1-D
 ) -> np.ndarray:
     """
     Solve HJB system backward in time using Newton's method.
@@ -1773,6 +1781,15 @@ def solve_hjb_system_backward(
             {"x_min": gradient_left, "x_max": gradient_right}
             For adjoint-consistent BC. Default: None (standard BC with 0 gradient).
     """
+    volatility, volatility_kind = resolve_volatility_override(
+        volatility, volatility_kind, problem=problem, consumer="1-D HJB-FDM (solve_hjb_system_backward)"
+    )
+    if volatility_kind == "tensor":
+        raise NotImplementedError(
+            "The 1-D HJB-FDM solve reads a scalar or per-point field volatility, and this one is a "
+            "tensor (volatility_kind='tensor'); a 1-D volatility is a scalar or a field (#2378)."
+        )
+
     # Set defaults if still None
     if max_newton_iterations is None:
         max_newton_iterations = DEFAULT_NEWTON_MAX_ITERATIONS
@@ -1829,16 +1846,14 @@ def solve_hjb_system_backward(
         # Extract or evaluate diffusion using CoefficientField abstraction (Issue #1412: route
         # through the single-source factory so a None override falls back to the problem's
         # volatility as supplied). dimension=1: 1D path.
-        diffusion = problem.get_diffusion_coefficient_field(
-            override=volatility_field, field_name="volatility_field", dimension=1
-        )
+        diffusion = problem.get_diffusion_coefficient_field(override=volatility, field_name="volatility", dimension=1)
         grid = get_spatial_grid(problem)
         sigma_at_n = diffusion.evaluate_at(timestep_idx=n_idx_hjb, grid=grid, density=M_n_prev_picard, dt=problem.dt)
 
         # Handle backend compatibility for NaN/Inf checking in callable results
         if diffusion.is_callable() and isinstance(sigma_at_n, np.ndarray):
             if has_nan_or_inf(sigma_at_n, backend):
-                raise ValueError(f"Callable volatility_field returned NaN/Inf at timestep {n_idx_hjb}")
+                raise ValueError(f"Callable volatility returned NaN/Inf at timestep {n_idx_hjb}")
 
         # Compute current time for time-dependent BCs
         current_time = n_idx_hjb * problem.dt

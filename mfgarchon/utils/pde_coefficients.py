@@ -314,6 +314,89 @@ def scalar_volatility(volatility: Any, *, consumer: str) -> float:
     )
 
 
+#: The per-solve keywords #2378 phase 4 part 2a retired, and what replaces each (maintainer ruling
+#: 2026-09-28: a hard rename, deprecation clause 4 waived). Read by `retired_volatility_keywords`.
+RETIRED_VOLATILITY_KEYWORDS: dict[str, str] = {
+    "volatility_field": "volatility= (with volatility_kind='field' or 'tensor' for an array)",
+    "volatility_matrix": "volatility= with volatility_kind='tensor'",
+    "tensor_diffusion_field": "volatility= with volatility_kind='tensor'",
+    "diffusion_field": (
+        "volatility= -- the SDE volatility, not a diffusion coefficient -- with "
+        "volatility_kind='field' or 'tensor' for an array"
+    ),
+}
+
+
+def retired_volatility_keywords(func):  # type: ignore[no-untyped-def]
+    """Refuse the four retired volatility keywords on ``func``, naming ``volatility=`` (#2378).
+
+    The refusal goes at v0.25.0, three minors after v0.22.0 -- except on a ``func`` taking
+    ``**kwargs``, where the deprecation audit reports it blocked until that ``**kwargs`` stops
+    swallowing unknown names (#2419).
+    """
+    from mfgarchon.utils.deprecation import retired_parameters
+
+    return retired_parameters(RETIRED_VOLATILITY_KEYWORDS, issue="#2378", since="v0.22.0")(func)
+
+
+def resolve_volatility_override(
+    volatility: Any, volatility_kind: str | None, *, problem: Any, consumer: str
+) -> tuple[Any, str | None]:
+    """The volatility a solve reads, and its kind: the per-solve override if one was passed, else
+    the problem's own (#2378 phase 4 part 2a).
+
+    One rule for an override, the problem-level one (#2375 ruling 6): a scalar has no kind; an array
+    declares ``volatility_kind="field"`` (isotropic, one value per point) or ``"tensor"`` (a trailing
+    ``(d, k)`` noise matrix), because a ``(d, d)`` tensor and a ``d x d`` field have the same shape;
+    a callable may declare ``"tensor"`` and is otherwise read per point. The library does not read the
+    kind from the shape. A consumer dispatches on the returned kind, never on the value's shape and
+    never on whether the value IS ``problem.volatility`` -- the override and the problem's own
+    volatility go through the same branches.
+
+    Raises
+    ------
+    ValueError
+        For a kind with no array or callable to read it, an unknown kind, an array without a kind, or
+        a per-axis ``(d,)`` vector, which is the diagonal tensor ``np.diag(v)`` and not a field.
+    """
+    if volatility is None:
+        if volatility_kind is not None:
+            raise ValueError(
+                f"{consumer}: volatility_kind={volatility_kind!r} was given without a volatility= override. "
+                "With no override the problem's own volatility is read, with the kind declared on the problem."
+            )
+        return problem.volatility, getattr(problem, "volatility_kind", None)
+    if volatility_kind is not None and volatility_kind not in ("field", "tensor"):
+        raise ValueError(f"{consumer}: volatility_kind must be 'field' or 'tensor', got {volatility_kind!r}.")
+    if callable(volatility):
+        return volatility, volatility_kind
+    if np.ndim(volatility) == 0:
+        if volatility_kind is not None:
+            raise ValueError(
+                f"{consumer}: volatility_kind says how an array (or a callable's array output) is read; it "
+                "was given with a scalar volatility=, where it would be read by nothing."
+            )
+        value = float(volatility)
+        if value < 0:
+            raise ValueError(f"{consumer}: a scalar volatility must be non-negative, got {value}.")
+        return value, None
+    array = np.asarray(volatility, dtype=float)
+    dimension = getattr(problem, "dimension", None)
+    per_axis = isinstance(dimension, int) and dimension >= 2 and array.shape == (dimension,)
+    if per_axis and volatility_kind != "field":
+        raise ValueError(
+            f"{consumer}: a volatility= of shape {array.shape} is a per-axis vector. The volatility it "
+            f"means is the diagonal tensor: pass np.diag(v) with volatility_kind='tensor' (#2378)."
+        )
+    if volatility_kind is None:
+        raise ValueError(
+            f"{consumer}: an array volatility= of shape {array.shape} needs volatility_kind='field' "
+            "(isotropic per point) or 'tensor' (trailing (d, k) noise matrix). A (d, d) tensor and a "
+            "d x d spatial field have the same shape, and the library does not guess (#2375 ruling 6)."
+        )
+    return array, volatility_kind
+
+
 def diffusion_from_volatility_torch(sigma: Any) -> Any:
     r"""Canonical PDE diffusion coefficient ``D`` from SDE volatility ``sigma`` for torch tensors.
 
@@ -533,7 +616,7 @@ class CoefficientField:
     default_value : float | ndarray
         Default value to use when field is None (typically 0.0)
     field_name : str
-        Name of coefficient for error messages (e.g., "volatility_field", "drift_field")
+        Name of coefficient for error messages (e.g., "volatility", "drift_field")
     dimension : int
         Spatial dimension (1 for 1D, 2 for 2D, etc.)
     mode : CoefficientMode | str | None, optional
@@ -543,17 +626,17 @@ class CoefficientField:
     Examples
     --------
     Scalar diffusion:
-    >>> field = CoefficientField(0.1, 0.0, "volatility_field", dimension=1)
+    >>> field = CoefficientField(0.1, 0.0, "volatility", dimension=1)
     >>> sigma = field.evaluate_at(timestep=5, grid=x_coords, density=m)
 
     Array diffusion:
     >>> sigma_array = np.ones((Nt, Nx)) * 0.1
-    >>> field = CoefficientField(sigma_array, 0.0, "volatility_field", dimension=1)
+    >>> field = CoefficientField(sigma_array, 0.0, "volatility", dimension=1)
     >>> sigma = field.evaluate_at(timestep=5, grid=x_coords, density=m)
 
     Callable diffusion (modern keyword-only style):
     >>> sigma_tm = lambda *, t, m: 0.1 * t * np.sqrt(m)
-    >>> field = CoefficientField(sigma_tm, 0.0, "volatility_field", dimension=1)
+    >>> field = CoefficientField(sigma_tm, 0.0, "volatility", dimension=1)
     >>> sigma = field.evaluate_at(timestep=5, grid=x_coords, density=m)
 
     Callable diffusion (legacy positional style with mode):
@@ -564,7 +647,7 @@ class CoefficientField:
     Porous medium diffusion:
     >>> def porous_medium(*, m):
     ...     return 0.1 * np.sqrt(m + 1e-6)
-    >>> field = CoefficientField(porous_medium, 0.0, "volatility_field", dimension=1)
+    >>> field = CoefficientField(porous_medium, 0.0, "volatility", dimension=1)
     >>> sigma = field.evaluate_at(timestep=5, grid=x_coords, density=m)
     """
 
@@ -845,7 +928,7 @@ class CoefficientField:
         Examples
         --------
         Scalar diffusion:
-        >>> field = CoefficientField(0.1, 0.05, "volatility_field", dimension=2)
+        >>> field = CoefficientField(0.1, 0.05, "volatility", dimension=2)
         >>> field.validate_tensor_psd(0.1)  # Pass
 
         Full tensor:

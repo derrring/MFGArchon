@@ -90,7 +90,7 @@ class _DivergingHJB(HJBFDMSolver):
     looked at ``U[0, 0]``, and the point of the owner is that it looks at all of it.
     """
 
-    def solve_hjb_system(self, *args, source_term=None, volatility_field=None, **kwargs):
+    def solve_hjb_system(self, *args, source_term=None, volatility=None, **kwargs):
         # Named because the base class refuses a bare **kwargs that would swallow them (#2020).
         #
         # `source_term` is accepted and ignored, and that is sound only because of what this stub
@@ -101,7 +101,7 @@ class _DivergingHJB(HJBFDMSolver):
         #
         # `volatility_field` IS asserted: no site under test supplies one, so a future site that
         # does should surface here rather than be silently dropped.
-        assert volatility_field is None, "this stub cannot honour a volatility field"
+        assert volatility is None, "this stub cannot honour a volatility field"
         # 7.0, not 0.0: the fixture's terminal condition is 4.0, so a published U whose last row
         # is 7.0 means the restore never ran and one that is 4.0 means it did. A zero-filled stub
         # against a zero terminal is the non-discriminating pair this test used to have.
@@ -228,8 +228,8 @@ class _LateDivergingHJB(HJBFDMSolver):
         super().__init__(problem)
         self._sweep = 0
 
-    def solve_hjb_system(self, *args, source_term=None, volatility_field=None, **kwargs):
-        assert volatility_field is None, "this stub cannot honour a volatility field"
+    def solve_hjb_system(self, *args, source_term=None, volatility=None, **kwargs):
+        assert volatility is None, "this stub cannot honour a volatility field"
         self._sweep += 1
         U = np.full((_NT + 1, _NX), 7.0)
         if self._sweep > 1:

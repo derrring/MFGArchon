@@ -86,7 +86,9 @@ def benchmark_array_diffusion_spatial(Nx=100, Nt=100, num_runs=3):
         hjb_solver = HJBFDMSolver(problem)
         fp_solver = FPFDMSolver(problem)
 
-        mfg_solver = FixedPointIterator(problem, hjb_solver, fp_solver, damping_factor=0.5, diffusion_field=sigma_array)
+        mfg_solver = FixedPointIterator(
+            problem, hjb_solver, fp_solver, damping_factor=0.5, volatility=sigma_array, volatility_kind="field"
+        )
 
         start = time.perf_counter()
         mfg_solver.solve(max_iterations=5, tolerance=1e-6, verbose=False)
@@ -126,7 +128,9 @@ def benchmark_array_diffusion_spatiotemporal(Nx=100, Nt=100, num_runs=3):
         hjb_solver = HJBFDMSolver(problem)
         fp_solver = FPFDMSolver(problem)
 
-        mfg_solver = FixedPointIterator(problem, hjb_solver, fp_solver, damping_factor=0.5, diffusion_field=sigma_array)
+        mfg_solver = FixedPointIterator(
+            problem, hjb_solver, fp_solver, damping_factor=0.5, volatility=sigma_array, volatility_kind="field"
+        )
 
         start = time.perf_counter()
         mfg_solver.solve(max_iterations=5, tolerance=1e-6, verbose=False)
@@ -164,7 +168,7 @@ def benchmark_callable_diffusion_scalar(Nx=100, Nt=100, num_runs=3):
         fp_solver = FPFDMSolver(problem)
 
         mfg_solver = FixedPointIterator(
-            problem, hjb_solver, fp_solver, damping_factor=0.5, diffusion_field=constant_diffusion
+            problem, hjb_solver, fp_solver, damping_factor=0.5, volatility=constant_diffusion
         )
 
         start = time.perf_counter()
@@ -202,9 +206,7 @@ def benchmark_callable_diffusion_porous_medium(Nx=100, Nt=100, num_runs=3):
         hjb_solver = HJBFDMSolver(problem)
         fp_solver = FPFDMSolver(problem)
 
-        mfg_solver = FixedPointIterator(
-            problem, hjb_solver, fp_solver, damping_factor=0.5, diffusion_field=porous_medium
-        )
+        mfg_solver = FixedPointIterator(problem, hjb_solver, fp_solver, damping_factor=0.5, volatility=porous_medium)
 
         start = time.perf_counter()
         mfg_solver.solve(max_iterations=5, tolerance=1e-6, verbose=False)
@@ -242,9 +244,7 @@ def benchmark_callable_diffusion_crowd_dynamics(Nx=100, Nt=100, num_runs=3):
         hjb_solver = HJBFDMSolver(problem)
         fp_solver = FPFDMSolver(problem)
 
-        mfg_solver = FixedPointIterator(
-            problem, hjb_solver, fp_solver, damping_factor=0.5, diffusion_field=crowd_diffusion
-        )
+        mfg_solver = FixedPointIterator(problem, hjb_solver, fp_solver, damping_factor=0.5, volatility=crowd_diffusion)
 
         start = time.perf_counter()
         mfg_solver.solve(max_iterations=5, tolerance=1e-6, verbose=False)

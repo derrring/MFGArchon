@@ -19,6 +19,7 @@ import numpy as np
 
 from mfgarchon.utils.deprecation import validate_kwargs
 from mfgarchon.utils.mfg_logging import get_logger
+from mfgarchon.utils.pde_coefficients import retired_volatility_keywords
 from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import BaseCouplingIterator, allocate_state_arrays, assert_paired_solver_sigma, resolve_backend
@@ -78,12 +79,14 @@ class FixedPointIterator(BaseCouplingIterator):
         backend: Backend NAME (resolved via ``create_backend``) or a backend OBJECT, or None.
             Only backends whose arrays the loop can write into carry a solve -- jax and
             torch are refused at allocation, naming #1922 (see ``allocate_state_arrays``).
-        volatility_field: Optional VOLATILITY override (float, array, or callable), forwarded to
+        volatility: Optional VOLATILITY override (float, array, or callable), forwarded to
             both the HJB and FP solvers (#1783) -- the SDE volatility Sigma, not the diffusion.
-            - None: the solvers use problem.volatility (default)
+            - None: the solvers read problem.volatility, with the problem's kind (default)
             - float: Constant volatility
-            - ndarray: Spatially/temporally varying volatility
-            - Callable: State-dependent volatility Sigma(t, x, m) -> float | ndarray
+            - ndarray: needs volatility_kind -- 'field' (one value per point, spatial or
+              (Nt+1, *grid)) or 'tensor' (a (d, k) noise matrix, constant or per point)
+            - Callable: Sigma(t, x, m), read per point unless volatility_kind='tensor'
+        volatility_kind: 'field' or 'tensor' for an array override (#2378 part 2a)
         drift_field: Optional drift override for non-MFG problems (array or callable)
             - None: Use MFG drift (default, drift from U)
             - ndarray: Precomputed drift field
@@ -112,7 +115,8 @@ class FixedPointIterator(BaseCouplingIterator):
         "anderson_depth",
         "anderson_beta",
         "backend",
-        "volatility_field",
+        "volatility",
+        "volatility_kind",
         "drift_field",
         "adaptive_relaxation",
         "adaptive_relaxation_decay",
@@ -121,6 +125,7 @@ class FixedPointIterator(BaseCouplingIterator):
         "relaxation_schedule_M",
     }
 
+    @retired_volatility_keywords
     def __init__(
         self,
         problem: MFGProblem,
@@ -133,7 +138,8 @@ class FixedPointIterator(BaseCouplingIterator):
         anderson_depth: int = 5,
         anderson_beta: float = 1.0,
         backend: str | BaseBackend | None = None,
-        volatility_field: float | np.ndarray | Any | None = None,  # Phase 2.3
+        volatility: float | np.ndarray | Any | None = None,  # Phase 2.3
+        volatility_kind: str | None = None,
         drift_field: np.ndarray | Any | None = None,  # Phase 2.3
         adaptive_relaxation: bool = False,
         adaptive_relaxation_decay: float = 0.5,
@@ -186,12 +192,13 @@ class FixedPointIterator(BaseCouplingIterator):
             )
 
         # PDE coefficient overrides (Phase 2.3)
-        self.volatility_field = volatility_field
+        self.volatility = volatility
+        self.volatility_kind = volatility_kind
         self.drift_field = drift_field
 
         # Issue #1603: a coupled HJB-FP pair is an adjoint pair and must share the volatility.
         # Single-sourced to assert_paired_solver_sigma (RFC #1574 C14) so every coupling loop shares it.
-        # A volatility_field override needs no guard of its own: resolve_volatility_kwarg forwards it
+        # A volatility override needs no guard of its own: resolve_volatility_kwarg forwards it
         # to both sides or refuses the solve (#1783).
         assert_paired_solver_sigma(hjb_solver, fp_solver, "FixedPointIterator")
 
@@ -563,7 +570,7 @@ class FixedPointIterator(BaseCouplingIterator):
                     "geometry": self.problem.geometry,
                     # The volatility the solve uses, as supplied; a scalar-only provider declares
                     # itself with scalar_volatility (#2376).
-                    "sigma": self.volatility_field if self.volatility_field is not None else self.problem.volatility,
+                    "sigma": self.volatility if self.volatility is not None else self.problem.volatility,
                     "iteration": iiter,
                 }
 
@@ -584,7 +591,8 @@ class FixedPointIterator(BaseCouplingIterator):
                     kwargs = self._build_hjb_kwargs(
                         M=M_old,
                         U=U_old,
-                        volatility_field=self.volatility_field,
+                        volatility=self.volatility,
+                        volatility_kind=self.volatility_kind,
                     )
                     U_new = self.hjb_solver.solve_hjb_system(M_old, U_terminal, U_old, **kwargs)
                 inner_failures = read_inner_solve_failures(self.hjb_solver)
@@ -614,7 +622,8 @@ class FixedPointIterator(BaseCouplingIterator):
                 kwargs = self._build_fp_kwargs(
                     M=M_old,
                     U=U_new,
-                    volatility_field=self.volatility_field,
+                    volatility=self.volatility,
+                    volatility_kind=self.volatility_kind,
                 )
 
                 # Drift/potential logic (FP-specific, not in _build_fp_kwargs).

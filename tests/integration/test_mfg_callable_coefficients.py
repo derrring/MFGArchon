@@ -70,7 +70,7 @@ class TestMFGCallableCoefficients:
             hjb_solver=hjb_solver,
             fp_solver=fp_solver,
             relaxation=0.5,
-            volatility_field=porous_medium_diffusion,
+            volatility=porous_medium_diffusion,
         )
 
         # Solve
@@ -108,7 +108,7 @@ class TestMFGCallableCoefficients:
             hjb_solver=hjb_solver,
             fp_solver=fp_solver,
             relaxation=0.5,
-            volatility_field=crowd_diffusion,
+            volatility=crowd_diffusion,
         )
 
         # Solve
@@ -142,7 +142,7 @@ class TestMFGCallableCoefficients:
             hjb_solver=hjb_solver_callable,
             fp_solver=fp_solver_callable,
             relaxation=0.5,
-            volatility_field=constant_diffusion,
+            volatility=constant_diffusion,
         )
         result_callable = mfg_solver_callable.solve(max_iterations=5, tolerance=1e-3, verbose=False)
 
@@ -154,7 +154,7 @@ class TestMFGCallableCoefficients:
             hjb_solver=hjb_solver_constant,
             fp_solver=fp_solver_constant,
             relaxation=0.5,
-            volatility_field=None,  # Use problem.volatility
+            volatility=None,  # Use problem.volatility
         )
         result_constant = mfg_solver_constant.solve(max_iterations=5, tolerance=1e-3, verbose=False)
 
@@ -195,7 +195,8 @@ class TestMFGCallableCoefficients:
             hjb_solver=hjb_solver,
             fp_solver=fp_solver,
             relaxation=0.5,
-            volatility_field=volatility_field,
+            volatility=volatility_field,
+            volatility_kind="field",
         )
 
         # Solve
@@ -213,14 +214,15 @@ class TestMFGCallableCoefficients:
                 hjb_solver=HJBFDMSolver(problem),
                 fp_solver=FPFDMSolver(problem),
                 relaxation=0.5,
-                volatility_field=field,
+                volatility=field,
+                volatility_kind=None if field is None else "field",
             )
             return iterator.solve(max_iterations=5, tolerance=1e-3, verbose=False)[1]
 
         M_none = _solve_with(None)
 
         # Single source of truth: an array holding problem.volatility everywhere must reproduce the
-        # volatility_field=None path exactly, since both name the same volatility.
+        # volatility=None path exactly, since both name the same volatility.
         # Measured byte-identical (max|dU| = max|dM| = 0.0), so equality is asserted, not a tolerance.
         flat_field = np.tile(np.full(Nx_points, problem.volatility), (Nt_points, 1))
         np.testing.assert_array_equal(
@@ -232,7 +234,7 @@ class TestMFGCallableCoefficients:
         # Liveness: the spatially varying array must reach the solve. Byte-identity above establishes
         # that a dropped array falls back to exactly M_none, so any real difference proves it was read.
         # Measured max|M - M_none| = 4.393; threshold 0.5 leaves ~9x margin.
-        assert np.abs(M - M_none).max() > 0.5, "spatially varying volatility_field array was ignored"
+        assert np.abs(M - M_none).max() > 0.5, "spatially varying volatility array was ignored"
 
 
 if __name__ == "__main__":

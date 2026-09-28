@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.types.callable_protocols import evaluate_solver_source
+from mfgarchon.utils.pde_coefficients import retired_volatility_keywords
 
 from .base_hjb import BaseHJBSolver
 
@@ -127,13 +128,15 @@ class PenaltyHJBSolver(BaseHJBSolver):
         """Solve standalone (delegates to inner solver with penalty)."""
         return self._inner.solve()
 
+    @retired_volatility_keywords
     def solve_hjb_system(
         self,
         M_density: NDArray,
         U_terminal: NDArray,
         U_coupling_prev: NDArray,
-        volatility_field: float | NDArray | None = None,
+        volatility: float | NDArray | None = None,
         source_term: Callable | None = None,
+        volatility_kind: str | None = None,
     ) -> NDArray:
         """Solve HJB with obstacle constraint via penalty method.
 
@@ -203,7 +206,8 @@ class PenaltyHJBSolver(BaseHJBSolver):
             M_density,
             U_terminal,
             U_coupling_prev,
-            volatility_field=volatility_field,
+            volatility=volatility,
+            volatility_kind=volatility_kind,
             source_term=penalized_source,
         )
 

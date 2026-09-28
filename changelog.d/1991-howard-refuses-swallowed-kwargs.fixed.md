@@ -1,5 +1,6 @@
 - **`HJBHowardSolver.solve_hjb_system` refuses `source_term` and `volatility_field` instead of
-  discarding them** (Issue #1991). Its signature ended in `**_unused`, so both arguments, and any
+  discarding them** (Issue #1991). **[#2378 part 2a, 2026-09-28: both halves now say `volatility`: the
+  constructor's `volatility=` owns it, and `solve_hjb_system(volatility=...)` is refused.]** Its signature ended in `**_unused`, so both arguments, and any
   misspelt keyword, left the value function bitwise unchanged with no diagnostic. It now names both
   and raises `NotImplementedError` pointing at their owners: the constructor's `volatility_field`,
   and `HJBGFDMSolver(..., inner_solver="howard").solve_hjb_system(..., source_term=...)` for a

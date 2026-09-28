@@ -57,7 +57,11 @@ from scipy.sparse.linalg import spsolve
 from scipy.spatial import cKDTree
 
 from mfgarchon.types.callable_protocols import ALPHA_STAR_SLOTS, bind_user_callable
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import (
+    diffusion_from_volatility,
+    resolve_volatility_override,
+    retired_volatility_keywords,
+)
 
 if TYPE_CHECKING:
     from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
@@ -300,11 +304,13 @@ class HJBHowardSolver:
         Maximum Howard inner iterations per backward time step.
     tol : float
         Relative `∞`-norm tolerance on policy change `(α^{k+1} − α^k)/α^k`.
-    volatility_field : float | np.ndarray | None
+    volatility : float | np.ndarray | None
         Override $\\sigma$ (constant scalar or a collocation-space array of
-        shape `(n,)`). A field row-scales the Laplacian by
+        shape `(n,)` declared ``volatility_kind="field"``). A field row-scales the Laplacian by
         $D_i = \\sigma_i^2/2$. When None, read from `problem` via
         `stencil_provider._get_sigma_value(None)`.
+    volatility_kind : str | None
+        "field" for an array volatility (#2378); a tensor is refused.
 
     Raises
     ------
@@ -313,6 +319,7 @@ class HJBHowardSolver:
         populated (missing SOCP precompute).
     """
 
+    @retired_volatility_keywords
     def __init__(
         self,
         problem: MFGProblem,
@@ -323,8 +330,9 @@ class HJBHowardSolver:
         discretisation: Literal["upwind_projection", "upwind_per_axis", "central"] = "upwind_projection",
         max_iter: int = 20,
         tol: float = 1e-4,
-        volatility_field: float | np.ndarray | None = None,
+        volatility: float | np.ndarray | None = None,
         use_provider_bc_rows: bool = False,
+        volatility_kind: str | None = None,
     ):
         # #2066: this REFUSED without `_joint_socp_stencils`, for operators it can obtain
         # elsewhere. Howard needs D_lap, D_grad and an interior/boundary split; none of those is
@@ -375,7 +383,18 @@ class HJBHowardSolver:
         self.discretisation = discretisation
         self.max_iter = int(max_iter)
         self.tol = float(tol)
-        self._volatility_field_override = volatility_field
+        # The override, read by the one rule every solver uses (#2378). None stays None: the
+        # problem's volatility is read later, as the stencil provider normalises it.
+        if volatility is not None or volatility_kind is not None:
+            volatility, volatility_kind = resolve_volatility_override(
+                volatility, volatility_kind, problem=problem, consumer="HJBHowardSolver"
+            )
+            if volatility_kind == "tensor":
+                raise NotImplementedError(
+                    "HJBHowardSolver row-scales the Laplacian by a scalar D_i = sigma_i^2/2 and has no "
+                    "cross-derivative term, so a volatility_kind='tensor' volatility is refused (#2378)."
+                )
+        self._volatility_override = volatility
         # Issue #1118 PR2: when True, pull value-form BC rows from the provider's shared
         # `_value_form_bc_rows` (Dirichlet value + real Neumann normal·grad stencil) instead
         # of the self-contained Dirichlet-identity/Neumann-by-nearest scheme below.
@@ -632,14 +651,16 @@ class HJBHowardSolver:
 
     # ---- Public solve --------------------------------------------------
 
+    @retired_volatility_keywords
     def solve_hjb_system(
         self,
         M_density: np.ndarray | None,
         U_terminal: np.ndarray,
         cross_density=None,
         *,
-        volatility_field: float | np.ndarray | None = None,
+        volatility: float | np.ndarray | None = None,
         source_term: Callable | None = None,
+        volatility_kind: str | None = None,
     ) -> np.ndarray:
         """Backward sweep using Howard inner.
 
@@ -650,7 +671,7 @@ class HJBHowardSolver:
             treated as zero (no MFG coupling).
         U_terminal : np.ndarray
             Terminal condition `U(T, x)`, shape `(n,)`.
-        volatility_field, source_term
+        volatility, volatility_kind, source_term
             Refused when not None. Both have one owner elsewhere: the volatility is a
             constructor argument, and a source reaches this solver through the constructor's
             `running_cost`, which
@@ -673,7 +694,7 @@ class HJBHowardSolver:
         # Issue #1991: this signature ended in `**_unused`, and this class is not a BaseHJBSolver,
         # so neither the #2020 class-definition gate nor the source_term census could see it.
         # Measured at 7c9f120b: a source that raises when called was never called, and
-        # `volatility_field=3.0` left U bitwise unchanged while the same value through the
+        # `volatility_field=3.0` (now `volatility=`) left U bitwise unchanged while the same value through the
         # constructor moved it by 0.60.
         if source_term is not None:
             raise NotImplementedError(
@@ -682,10 +703,10 @@ class HJBHowardSolver:
                 "HJBGFDMSolver(..., inner_solver='howard').solve_hjb_system(..., source_term=...), which "
                 "does that conversion (Issue #1991)."
             )
-        if volatility_field is not None:
+        if volatility is not None or volatility_kind is not None:
             raise NotImplementedError(
-                "HJBHowardSolver.solve_hjb_system does not accept volatility_field: pass it to "
-                "HJBHowardSolver(volatility_field=...), which owns it (Issue #1991)."
+                "HJBHowardSolver.solve_hjb_system does not accept volatility: pass it to "
+                "HJBHowardSolver(volatility=...), which owns it (Issue #1991)."
             )
         if self._static is None:
             self._static = self._build_static()
@@ -699,8 +720,8 @@ class HJBHowardSolver:
         # The override, or the problem's volatility as the stencil provider normalises it -- a
         # scalar or a collocation-space field, never a collapsed scalar (#2376).
         source = (
-            self._volatility_field_override
-            if self._volatility_field_override is not None
+            self._volatility_override
+            if self._volatility_override is not None
             else self.stencil_provider._get_sigma_value(None)
         )
         if np.isscalar(source):
@@ -711,7 +732,7 @@ class HJBHowardSolver:
                 sigma = float(sigma)
             elif sigma.shape != (n,):
                 raise ValueError(
-                    "HJBHowardSolver volatility_field must be a scalar or a row-wise "
+                    "HJBHowardSolver volatility must be a scalar or a row-wise "
                     f"field with shape ({n},), got {sigma.shape}."
                 )
 

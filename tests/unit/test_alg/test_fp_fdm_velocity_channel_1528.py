@@ -215,7 +215,8 @@ def test_the_accept_list_does_not_apply_on_the_tensor_diffusion_path():
             _problem(),
             velocity_field=_velocity(vx=0.6),
             advection_scheme="divergence_upwind",
-            tensor_diffusion_field=tensor,
+            volatility=tensor,
+            volatility_kind="tensor",
         )
 
 

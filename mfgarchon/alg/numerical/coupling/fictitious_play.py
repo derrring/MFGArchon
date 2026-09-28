@@ -40,6 +40,7 @@ from mfgarchon.utils.iteration.schedules import (
     get_schedule,
     harmonic_schedule,
 )
+from mfgarchon.utils.pde_coefficients import retired_volatility_keywords
 from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import (
@@ -112,7 +113,8 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         backend: Backend NAME (resolved via ``create_backend``) or a backend OBJECT, or None.
             Only backends whose arrays the loop can write into carry a solve -- jax and
             torch are refused at allocation, naming #1922 (see ``allocate_state_arrays``).
-        volatility_field: Optional diffusion override
+        volatility: Optional volatility override -- the SDE volatility, not a diffusion
+        volatility_kind: 'field' or 'tensor' for an array override (#2378 part 2a)
         drift_field: Optional drift override for non-MFG problems
 
     Example:
@@ -127,6 +129,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         >>> result = solver.solve(max_iterations=100, tolerance=1e-4)
     """
 
+    @retired_volatility_keywords
     def __init__(
         self,
         problem: MFGProblem,
@@ -138,7 +141,8 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         min_learning_rate: float = 0.0,
         damp_value_function: bool = False,
         backend: str | BaseBackend | None = None,
-        volatility_field: float | np.ndarray | Any | None = None,
+        volatility: float | np.ndarray | Any | None = None,
+        volatility_kind: str | None = None,
         drift_field: np.ndarray | Any | None = None,
     ):
         super().__init__(problem)
@@ -162,7 +166,8 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         self._lr_schedule_name = learning_rate_schedule if isinstance(learning_rate_schedule, str) else "custom"
 
         # PDE coefficient overrides
-        self.volatility_field = volatility_field
+        self.volatility = volatility
+        self.volatility_kind = volatility_kind
         self.drift_field = drift_field
 
         # State arrays (initialized in solve)
@@ -408,7 +413,9 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             # source_term_hjb / nonlocal_operator solved here without it, bit-identically
             # to one that carried neither. The iterates are now required and the builder
             # composes.
-            hjb_kwargs = self._build_hjb_kwargs(M=M_old, U=U_old, volatility_field=self.volatility_field)
+            hjb_kwargs = self._build_hjb_kwargs(
+                M=M_old, U=U_old, volatility=self.volatility, volatility_kind=self.volatility_kind
+            )
             U_new = self.hjb_solver.solve_hjb_system(M_old, U_terminal, U_old, **hjb_kwargs)
 
             # Issue #1718: the FP call below composes its drift from U_new, so a non-finite U_new
@@ -428,7 +435,9 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             # Previously FictitiousPlay called _build_fp_kwargs(drift_field=U_new) which
             # silently passed the value function U as the velocity alpha* to FPFDMSolver
             # (wrong physics: FPFDMSolver treats drift_field as alpha, not potential).
-            fp_kwargs = self._build_fp_kwargs(M=M_old, U=U_new, volatility_field=self.volatility_field)
+            fp_kwargs = self._build_fp_kwargs(
+                M=M_old, U=U_new, volatility=self.volatility, volatility_kind=self.volatility_kind
+            )
             if self._fp_sig_params is not None:
                 drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
                     self.problem,
