@@ -35,7 +35,11 @@ Three corrections from review, each of which changed the fix rather than its wor
 - **The guard was not where the hazard is.** It sat in `solve_fp_nd_full_system`, while
   `_BOUNDARY_HANDLERS` is dispatched from `solve_timestep_full_nd` — so calling that directly walked
   straight past it. That is the same shape the guard exists to fix, one layer up. It is now a single
-  owner called from both entry points, pinned by a test that fails when either call is removed.
+  owner called from both entry points, ~~pinned by a test that fails when either call is removed~~
+  **[CORRECTED 2026-09-29, #2422]** and only one call is pinned now: with the per-step call in
+  `solve_timestep_full_nd` removed one test fails, and with the entry-point call in
+  `solve_fp_nd_full_system` removed all ten test files that mention a provider stay green. The test
+  that pinned both was deleted in #2227.
 - **`value` was uncovered.** #1686 records that every FP solver silently drops the value in
   `neumann_bc(value=g)`. A guard on `alpha`/`beta` alone would refuse the coefficient and keep
   dropping the datum, so `value` is checked with them.
