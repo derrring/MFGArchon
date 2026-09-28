@@ -96,7 +96,11 @@ def assert_paired_solver_sigma(
     solve its interior at one volatility and resolve its boundary at another. Until #2378 part 2a,
     ``MFGProblem.solve`` forwarded its volatility as an override and so papered over that case in
     Expert Mode; it now raises here instead. An override is forwarded to both solvers and to the
-    providers, so it needs no such check.
+    providers, so it needs no such check. Each solver's problem is compared, and a solver built from
+    ``problem`` itself is skipped. Here, unlike between the pair, two callables are compared -- by
+    identity, the only comparison an opaque callable admits: a pair built for another problem's
+    callable volatility is refused (#2420 review, round 2), and one built from this problem, or
+    sharing its callable, is not.
     """
     hjb_problem, fp_problem = getattr(hjb_solver, "problem", None), getattr(fp_solver, "problem", None)
     hjb_volatility = getattr(hjb_problem, "volatility", None)
@@ -112,14 +116,21 @@ def assert_paired_solver_sigma(
     if problem is None or override is not None:
         return
     own, own_kind = getattr(problem, "volatility", None), getattr(problem, "volatility_kind", None)
-    if _volatilities_differ(own, hjb_volatility, own_kind, kinds[0]):
-        raise ValueError(
-            f"{context}: the solvers were built from a problem whose volatility differs from the problem "
-            f"being solved (solved={own!r}, solvers'={hjb_volatility!r}). With no volatility= override each "
-            f"solver reads its own problem's volatility, so the interior would diffuse at the solvers' value "
-            f"while the boundary conditions read this problem's. Build the solvers from the problem being "
-            f"solved, or pass volatility= (with volatility_kind for an array) to the coupling loop (#2378)."
-        )
+    for side, solver_problem in (("HJB", hjb_problem), ("FP", fp_problem)):
+        if solver_problem is None or solver_problem is problem:
+            continue
+        theirs = getattr(solver_problem, "volatility", None)
+        theirs_kind = getattr(solver_problem, "volatility_kind", None)
+        distinct_callables = callable(own) and callable(theirs) and own is not theirs
+        if distinct_callables or _volatilities_differ(own, theirs, own_kind, theirs_kind):
+            raise ValueError(
+                f"{context}: the {side} solver was built from a problem whose volatility differs from the "
+                f"problem being solved (solved={own!r}, solver's={theirs!r}; two distinct callables count as "
+                f"different, since they cannot be compared). With no volatility= override each solver reads "
+                f"its own problem's volatility, so the interior would diffuse at the solver's value while the "
+                f"boundary conditions read this problem's. Build the solvers from the problem being solved, or "
+                f"pass volatility= (with volatility_kind for an array) to the coupling loop (#2378)."
+            )
 
 
 def resolve_backend(backend: Any, iterator_name: str) -> Any:

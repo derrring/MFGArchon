@@ -238,25 +238,76 @@ def test_fvm_refuses_an_all_equal_tensor_override_and_reads_a_constant_field_as_
     np.testing.assert_array_equal(field, scalar)
 
 
-def test_a_pair_built_for_another_volatility_is_refused_unless_an_override_carries_one():
+def _loops():
+    from mfgarchon.alg.numerical.coupling.block_iterators import BlockIterator
+    from mfgarchon.alg.numerical.coupling.fictitious_play import FictitiousPlayIterator
+    from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
+    from mfgarchon.alg.numerical.coupling.newton_mfg_solver import NewtonMFGSolver
+
+    return {
+        "FixedPointIterator": FixedPointIterator,
+        "FictitiousPlayIterator": FictitiousPlayIterator,
+        "BlockIterator": BlockIterator,
+        "NewtonMFGSolver": NewtonMFGSolver,
+    }
+
+
+def test_expert_mode_refuses_a_pair_built_for_another_volatility():
     """#2420 review, blocker 1: a pair of solvers built for another problem's volatility.
 
     Before part 2a, `MFGProblem.solve` forwarded its volatility as an override, so Expert Mode with a
     pair built from a problem of volatility 0.3 solved at the calling problem's 0.6. With no forwarding
     each solver reads its own problem, and the same call returned the 0.3 solve while the boundary
     providers were handed 0.6: the review measured, on a 1-D pair, the other problem's solve returned
-    bit for bit. Now the coupling
-    loop refuses the mismatch by name; an explicit override, forwarded to both solvers and to the
-    providers, is still accepted.
+    bit for bit. Now the coupling loop refuses the mismatch by name.
     """
-    from mfgarchon.alg.numerical.coupling import FixedPointIterator
     from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
     from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 
     built_for, _ = _problem_2d(volatility=0.3)
     solved, _ = _problem_2d(volatility=0.6)
-
-    with pytest.raises(ValueError, match=r"differs from the problem being solved \(solved=0\.6, solvers'=0\.3\)"):
+    with pytest.raises(ValueError, match=r"differs from the problem being solved \(solved=0\.6, solver's=0\.3"):
         solved.solve(hjb_solver=HJBFDMSolver(built_for), fp_solver=FPFDMSolver(built_for), max_iterations=1)
 
-    FixedPointIterator(solved, HJBFDMSolver(built_for), FPFDMSolver(built_for), volatility=0.6)
+
+@pytest.mark.parametrize("loop", ["FixedPointIterator", "FictitiousPlayIterator", "BlockIterator", "NewtonMFGSolver"])
+def test_every_coupling_loop_refuses_a_pair_built_for_another_volatility(loop):
+    """The same guard in each loop that takes an override, which an override still satisfies.
+
+    And for callables: two distinct callable volatilities cannot be compared, so they count as
+    different, while a pair sharing the solved problem's callable is accepted (#2420 review, round 2).
+    """
+    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+
+    cls = _loops()[loop]
+    built_for, _ = _problem_2d(volatility=0.3)
+    solved, _ = _problem_2d(volatility=0.6)
+    with pytest.raises(ValueError, match=r"HJB solver was built from a problem whose volatility differs"):
+        cls(solved, HJBFDMSolver(built_for), FPFDMSolver(built_for))
+    cls(solved, HJBFDMSolver(built_for), FPFDMSolver(built_for), volatility=0.6)
+
+    def sigma_low(t, x, m):
+        return 0.3 + 0.0 * np.asarray(m)
+
+    def sigma_high(t, x, m):
+        return 0.6 + 0.0 * np.asarray(m)
+
+    callable_built_for, _ = _problem_2d(volatility=sigma_low)
+    callable_solved, _ = _problem_2d(volatility=sigma_high)
+    with pytest.raises(ValueError, match=r"two distinct callables count as different"):
+        cls(callable_solved, HJBFDMSolver(callable_built_for), FPFDMSolver(callable_built_for))
+    sharing, _ = _problem_2d(volatility=sigma_high)
+    cls(callable_solved, HJBFDMSolver(sharing), FPFDMSolver(sharing))
+
+
+def test_the_fp_solvers_problem_is_compared_too():
+    """An HJB solver without a `problem` is not compared, so the FP solver's must be (#2420 review, round 2)."""
+    from mfgarchon.alg.numerical.coupling.base_mfg import assert_paired_solver_sigma
+    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+
+    built_for, _ = _problem_2d(volatility=0.3)
+    solved, _ = _problem_2d(volatility=0.6)
+    fp_for_another = FPFDMSolver(built_for)
+    with pytest.raises(ValueError, match=r"FP solver was built from a problem whose volatility differs"):
+        assert_paired_solver_sigma(SimpleNamespace(), fp_for_another, "probe", problem=solved)
