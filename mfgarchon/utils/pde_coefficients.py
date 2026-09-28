@@ -136,8 +136,34 @@ def fp_drift_coefficient(problem: Any) -> float:
     return float(cc)
 
 
+#: The public ``sigma=`` keyword #2378 phase 4 part 2b retired where it carried the volatility
+#: (maintainer ruling 16, 2026-09-28: a hard rename, deprecation clause 4 waived). Read by
+#: ``retired_sigma_keyword``; the manufactured-solution sources retire ``sigma_kind=`` with it.
+RETIRED_SIGMA_KEYWORD: dict[str, str] = {"sigma": "volatility= -- the SDE volatility, under its one name"}
+
+
+def retired_sigma_keyword[F: Callable[..., Any]](func: F) -> F:
+    """Refuse ``sigma=`` on ``func``, naming ``volatility=`` (#2378 part 2b); the refusal goes at v0.25.0.
+
+    Typed as returning ``func``'s own type: an untyped decorator makes mypy read every decorated
+    function as ``Any`` and stop checking its callers.
+    """
+    from mfgarchon.utils.deprecation import retired_parameters
+
+    return retired_parameters(RETIRED_SIGMA_KEYWORD, issue="#2378", since="v0.22.0")(func)
+
+
+def retired_sigma_and_kind_keywords[F: Callable[..., Any]](func: F) -> F:
+    """``retired_sigma_keyword`` for a function that also took ``sigma_kind=`` (#2378 part 2b)."""
+    from mfgarchon.utils.deprecation import retired_parameters
+
+    replacements = {**RETIRED_SIGMA_KEYWORD, "sigma_kind": "volatility_kind="}
+    return retired_parameters(replacements, issue="#2378", since="v0.22.0")(func)
+
+
+@retired_sigma_keyword
 def diffusion_from_volatility(
-    sigma: float | np.ndarray,
+    volatility: float | np.ndarray,
     *,
     kind: str | None = None,
 ) -> float | np.ndarray:
@@ -169,7 +195,7 @@ def diffusion_from_volatility(
     Raises ``ValueError`` for an array with ``kind is None`` (ambiguous), an unknown ``kind``,
     or ``kind="tensor"`` with ``ndim < 2``.
     """
-    arr = np.asarray(sigma, dtype=float)
+    arr = np.asarray(volatility, dtype=float)
     if arr.ndim == 0:
         return 0.5 * float(arr) ** 2  # scalar isotropic: unambiguous, kind not needed
     if kind is None:
@@ -327,7 +353,7 @@ RETIRED_VOLATILITY_KEYWORDS: dict[str, str] = {
 }
 
 
-def retired_volatility_keywords(func):  # type: ignore[no-untyped-def]
+def retired_volatility_keywords[F: Callable[..., Any]](func: F) -> F:
     """Refuse the four retired volatility keywords on ``func``, naming ``volatility=`` (#2378).
 
     The refusal goes at v0.25.0, three minors after v0.22.0 -- except on a ``func`` taking
@@ -397,7 +423,8 @@ def resolve_volatility_override(
     return array, volatility_kind
 
 
-def diffusion_from_volatility_torch(sigma: Any) -> Any:
+@retired_sigma_keyword
+def diffusion_from_volatility_torch(volatility: Any) -> Any:
     r"""Canonical PDE diffusion coefficient ``D`` from SDE volatility ``sigma`` for torch tensors.
 
     Mirrors the scalar contract of :func:`diffusion_from_volatility` (``D = 0.5 * sigma**2``)
@@ -415,7 +442,7 @@ def diffusion_from_volatility_torch(sigma: Any) -> Any:
 
     Parameters
     ----------
-    sigma : float, numpy scalar, or torch.Tensor
+    volatility : float, numpy scalar, or torch.Tensor
         Volatility coefficient (SDE noise amplitude).
 
     Returns
@@ -423,7 +450,7 @@ def diffusion_from_volatility_torch(sigma: Any) -> Any:
     Same type as input (float, numpy scalar, or torch.Tensor)
         Diffusion coefficient ``D = 0.5 * sigma**2``.
     """
-    return 0.5 * sigma**2
+    return 0.5 * volatility**2
 
 
 _VOLATILITY_LEGACY_KEY_WARNED: set[str] = set()
@@ -1086,8 +1113,9 @@ class CoefficientField:
         validate_symmetric_psd(tensor, name=self.name, tolerance=tolerance)
 
 
+@retired_sigma_keyword
 def check_adi_compatibility(
-    sigma: float | np.ndarray,
+    volatility: float | np.ndarray,
     tolerance: float = 1e-10,
 ) -> tuple[bool, str]:
     """
@@ -1099,11 +1127,13 @@ def check_adi_compatibility(
 
     Parameters
     ----------
-    sigma : float | ndarray
-        Diffusion coefficient:
-        - Scalar: σ² (isotropic) - ADI OK
-        - Vector (d,): diagonal [σ₁², σ₂², ...] - ADI OK
-        - Matrix (d, d): full tensor Σ - check off-diagonal
+    volatility : float | ndarray
+        SDE volatility Σ (the diffusion is D = ΣΣᵀ/2):
+        - Scalar σ: isotropic - ADI OK
+        - Vector (d,): diagonal Σ = diag(σ₁, σ₂, ...) - ADI OK
+        - Matrix (d, d): Σ - its off-diagonal is checked. A diagonal Σ gives a diagonal D, so this
+          is sufficient for ADI; a non-diagonal Σ with orthogonal rows also gives a diagonal D and
+          is reported incompatible anyway.
         - Spatially varying (..., d, d): check all tensors
     tolerance : float, optional
         Threshold for off-diagonal entries (default: 1e-10)
@@ -1131,23 +1161,23 @@ def check_adi_compatibility(
     False full tensor with off-diagonal terms (mixed derivatives)
     """
     # Scalar
-    if isinstance(sigma, (int, float)):
+    if isinstance(volatility, (int, float)):
         return True, "isotropic (scalar σ²)"
 
-    if not isinstance(sigma, np.ndarray):
-        return True, f"unknown type {type(sigma)}, assuming compatible"
+    if not isinstance(volatility, np.ndarray):
+        return True, f"unknown type {type(volatility)}, assuming compatible"
 
     # 0D array
-    if sigma.ndim == 0:
+    if volatility.ndim == 0:
         return True, "isotropic (scalar σ²)"
 
     # 1D array: diagonal
-    if sigma.ndim == 1:
+    if volatility.ndim == 1:
         return True, "diagonal anisotropic"
 
     # 2D array: (d, d) tensor
-    if sigma.ndim == 2:
-        off_diag = sigma - np.diag(np.diag(sigma))
+    if volatility.ndim == 2:
+        off_diag = volatility - np.diag(np.diag(volatility))
         max_off = np.max(np.abs(off_diag))
         if max_off <= tolerance:
             return True, "diagonal tensor"
@@ -1155,10 +1185,10 @@ def check_adi_compatibility(
             return False, f"full tensor with off-diagonal terms (max={max_off:.2e}, mixed derivatives)"
 
     # Higher dimensional: spatially varying
-    if sigma.ndim >= 3 and sigma.shape[-2] == sigma.shape[-1]:
-        tensor_dim = sigma.shape[-1]
-        num_tensors = int(np.prod(sigma.shape[:-2]))
-        reshaped = sigma.reshape(num_tensors, tensor_dim, tensor_dim)
+    if volatility.ndim >= 3 and volatility.shape[-2] == volatility.shape[-1]:
+        tensor_dim = volatility.shape[-1]
+        num_tensors = int(np.prod(volatility.shape[:-2]))
+        reshaped = volatility.reshape(num_tensors, tensor_dim, tensor_dim)
 
         max_off_diag = 0.0
         for idx in range(num_tensors):
@@ -1173,7 +1203,7 @@ def check_adi_compatibility(
                 f"spatially varying tensor with off-diagonal terms (max={max_off_diag:.2e}, mixed derivatives)",
             )
 
-    return True, f"unknown structure (shape={sigma.shape}), assuming compatible"
+    return True, f"unknown structure (shape={volatility.shape}), assuming compatible"
 
 
 def get_spatial_grid(problem: MFGProblem) -> np.ndarray | tuple[np.ndarray, ...]:

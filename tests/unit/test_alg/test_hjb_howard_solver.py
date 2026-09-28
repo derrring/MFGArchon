@@ -1266,7 +1266,7 @@ def test_stencil_less_interior_with_provider_bc_rows_raises():
             u_next=U_T.copy(),
             m_n=np.zeros(n),
             t_idx=0,
-            sigma=0.3,
+            volatility=0.3,
             dt=dt,
             static=static,
             alpha_init=None,

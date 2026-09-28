@@ -428,7 +428,7 @@ class FPSLJacobianSolver(BaseFPSolver):
         alpha: np.ndarray,
         div_alpha: np.ndarray,
         dt: float,
-        sigma: float,
+        volatility: float,
     ) -> np.ndarray:
         """
         One Semi-Lagrangian step for Fokker-Planck equation.
@@ -442,7 +442,7 @@ class FPSLJacobianSolver(BaseFPSolver):
             alpha: Velocity field, shape (Nx,)
             div_alpha: Divergence of velocity, shape (Nx,)
             dt: Time step
-            sigma: Diffusion coefficient
+            volatility: SDE volatility σ (the diffusion is D = σ²/2)
 
         Returns:
             Density at next time step, shape (Nx,)
@@ -517,7 +517,7 @@ class FPSLJacobianSolver(BaseFPSolver):
         # has nothing to correct. What it absorbs is the Jacobian and splatting drift it was
         # written for. A half wall here would have given it the wall's drift to absorb as well --
         # silently, since the correction succeeds either way.
-        m_new = neumann_cn_step(m_advected, dt, sigma, self.dx, treatment="mirror")
+        m_new = neumann_cn_step(m_advected, dt, volatility, self.dx, treatment="mirror")
 
         # Ensure non-negativity
         m_new = np.maximum(m_new, 0)

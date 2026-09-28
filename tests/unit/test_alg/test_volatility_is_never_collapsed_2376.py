@@ -95,11 +95,11 @@ def test_the_adjoint_consistent_provider_refuses_a_field():
     from mfgarchon.geometry.boundary import AdjointConsistentProvider
 
     problem = _problem(**FIELD)
-    state = {"m_current": np.ones(N), "geometry": problem.geometry, "sigma": problem.volatility}
+    state = {"m_current": np.ones(N), "geometry": problem.geometry, "volatility": problem.volatility}
     with pytest.raises(NotImplementedError, match="AdjointConsistentProvider uses one scalar volatility"):
         AdjointConsistentProvider(side="left").compute(state)
     # Control: the same state with a scalar computes.
-    state["sigma"] = 0.4
+    state["volatility"] = 0.4
     assert np.isfinite(AdjointConsistentProvider(side="left").compute(state))
 
 
@@ -540,7 +540,7 @@ def test_save_experiment_data_stores_a_callable_volatility_by_tag(tmp_path):
 
     assert path, "the save failed"
     params = load_experiment_data(path)["problem_params"]
-    assert params["sigma"] == "callable"
+    assert params["volatility"] == "callable"
     assert params["volatility_kind"] is None
 
     # An array is tagged in the file name by its kind: a tensor is not a field.

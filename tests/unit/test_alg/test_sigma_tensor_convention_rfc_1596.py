@@ -49,8 +49,10 @@ class TestSLADIVolatilityConvention:
         U = rng.standard_normal((14, 14))
         spacing = np.array([0.1, 0.1])
         s = 0.35
-        out_scalar = adi_diffusion_step(U.copy(), dt=0.01, sigma=s, spacing=spacing, grid_shape=(14, 14))
-        out_tensor = adi_diffusion_step(U.copy(), dt=0.01, sigma=np.diag([s, s]), spacing=spacing, grid_shape=(14, 14))
+        out_scalar = adi_diffusion_step(U.copy(), dt=0.01, volatility=s, spacing=spacing, grid_shape=(14, 14))
+        out_tensor = adi_diffusion_step(
+            U.copy(), dt=0.01, volatility=np.diag([s, s]), spacing=spacing, grid_shape=(14, 14)
+        )
         np.testing.assert_allclose(out_tensor, out_scalar, rtol=0, atol=1e-13)
 
     def test_cross_derivative_consumption_magnitude(self) -> None:
@@ -84,7 +86,7 @@ class TestSLADIVolatilityConvention:
         u = X * Y
         S = np.array([[0.2, 0.06], [0.06, 0.25]])  # symmetric PSD std-dev matrix
         dt = 0.01
-        out = adi_diffusion_step(u.copy(), dt=dt, sigma=S, spacing=np.array([dx, dy]), grid_shape=(Nx, Ny))
+        out = adi_diffusion_step(u.copy(), dt=dt, volatility=S, spacing=np.array([dx, dy]), grid_shape=(Nx, Ny))
         C = S @ S.T
         deep = np.s_[3:-3, 3:-3]
         mean_incr = float(np.mean((out - u)[deep]))
@@ -95,7 +97,11 @@ class TestSLADIVolatilityConvention:
         U = np.zeros((8, 8))
         with pytest.raises(ValueError, match="symmetric"):
             adi_diffusion_step(
-                U, dt=0.01, sigma=np.array([[0.3, 0.1], [0.0, 0.2]]), spacing=np.array([0.1, 0.1]), grid_shape=(8, 8)
+                U,
+                dt=0.01,
+                volatility=np.array([[0.3, 0.1], [0.0, 0.2]]),
+                spacing=np.array([0.1, 0.1]),
+                grid_shape=(8, 8),
             )
 
 

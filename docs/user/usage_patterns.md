@@ -32,7 +32,7 @@ from mfgarchon.config.array_validation import MFGGridConfig
 
 # Type-safe configuration with automatic validation
 grid_config = MFGGridConfig(
-    Nx=50, Nt=30, xmin=0.0, xmax=1.0, T=1.0, sigma=0.2
+    Nx=50, Nt=30, xmin=0.0, xmax=1.0, T=1.0, volatility=0.2
 )
 
 # Automatic CFL stability warning

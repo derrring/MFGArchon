@@ -30,12 +30,12 @@ Example:
     ...     name="left_ac",
     ...     bc_type=BCType.ROBIN,
     ...     alpha=0.0, beta=1.0,
-    ...     value=AdjointConsistentProvider(side="left", sigma=0.2),
+    ...     value=AdjointConsistentProvider(side="left", volatility=0.2),
     ...     boundary="x_min",
     ... )
     >>>
     >>> # Later, iterator resolves provider with current state
-    >>> state = {'m_current': m, 'geometry': geometry, 'sigma': 0.2}
+    >>> state = {'m_current': m, 'geometry': geometry, 'volatility': 0.2}
     >>> concrete_value = segment.value.compute(state)
 
 References:
@@ -48,13 +48,13 @@ References:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol, TypedDict, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, NoReturn, Protocol, TypedDict, runtime_checkable
 
 import numpy as np
 
 from mfgarchon.geometry.boundary.bc_coupling import compute_boundary_log_density_gradient_1d
 from mfgarchon.utils.deprecation import deprecated_parameter
-from mfgarchon.utils.pde_coefficients import scalar_volatility
+from mfgarchon.utils.pde_coefficients import retired_sigma_keyword, scalar_volatility
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -77,20 +77,21 @@ class BCProviderState(TypedDict, total=False):
     Required by AdjointConsistentProvider:
         m_current: Current FP density array
         geometry: Problem geometry object
-        sigma: SDE volatility σ (canonical; or the deprecated 'diffusion' key -- also σ, Issue #1512)
+        volatility: SDE volatility σ (canonical, #2378; the retired 'sigma' key is refused by name, and the
+            deprecated 'diffusion' key is also σ, Issue #1512)
 
     Optional (context-dependent):
         U_current: Current value function array
         t: Current time (for time-dependent problems)
         iteration: Current Picard iteration number
-        diffusion: Deprecated alias for 'sigma' (Issue #1512): the key holds σ, NOT D = σ²/2
+        diffusion: Deprecated alias for 'volatility' (Issue #1512): the key holds σ, NOT D = σ²/2
     """
 
     m_current: NDArray[np.floating]
     U_current: NDArray[np.floating]
     geometry: GeometryProtocol
-    sigma: float
-    diffusion: float  # Deprecated (Issue #1512), use 'sigma'
+    volatility: float
+    diffusion: float  # Deprecated (Issue #1512), use 'volatility'
     t: float
     iteration: int
 
@@ -130,8 +131,8 @@ class BCValueProvider(Protocol):
                 - 'm_current': Current FP density array
                 - 'U_current': Current value function array
                 - 'geometry': Problem geometry object
-                - 'sigma': SDE volatility σ (canonical)
-                - 'diffusion': deprecated alias for 'sigma' (σ, not D = σ²/2; Issue #1512)
+                - 'volatility': SDE volatility σ (canonical; the retired 'sigma' key is refused, #2378)
+                - 'diffusion': deprecated alias for 'volatility' (σ, not D = σ²/2; Issue #1512)
                 - 't': Current time (for time-dependent problems)
                 - 'iteration': Current Picard iteration number
 
@@ -219,7 +220,7 @@ class AdjointConsistentProvider(BaseBCValueProvider):
 
     Example:
         >>> # Appropriate: boundary stall configuration
-        >>> provider = AdjointConsistentProvider(side="left", sigma=0.04)
+        >>> provider = AdjointConsistentProvider(side="left", volatility=0.04)
         >>> state = {'m_current': m_array, 'geometry': geom}
         >>> g_left = provider.compute(state)  # Robin BC value at left boundary
 
@@ -252,15 +253,16 @@ class AdjointConsistentProvider(BaseBCValueProvider):
     @deprecated_parameter(
         param_name="diffusion",
         since="v0.20.5",
-        replacement="sigma",
+        replacement="volatility",
     )
+    @retired_sigma_keyword
     def __init__(
         self,
         side: str,
-        sigma: float | None = None,
+        volatility: float | None = None,
         regularization: float = 1e-10,
         *,
-        diffusion: float | None = None,  # Deprecated alias for sigma (misnomer; Issue #1512)
+        diffusion: float | None = None,  # Deprecated alias for volatility (misnomer; Issue #1512)
     ) -> None:
         """
         Initialize adjoint-consistent BC provider.
@@ -270,29 +272,36 @@ class AdjointConsistentProvider(BaseBCValueProvider):
                 - 1D: "left", "right", "x_min", "x_max", "min", "max"
                 - 2D: "y_min", "y_max", "bottom", "top"
                 - 3D: "z_min", "z_max", "front", "back"
-            sigma: SDE volatility σ (NOT the PDE diffusion D = σ²/2 -- the value is squared internally).
+            volatility: SDE volatility σ (NOT the PDE diffusion D = σ²/2 -- the value is squared internally).
                 If None, reads from state. The value is ``problem.volatility`` (σ), never
                 ``problem.diffusion`` (σ²/2) -- passing the latter is the Issue #1512 trap. A field or
                 callable volatility is refused (#2376): this provider uses one scalar.
             regularization: Small positive constant added to density
                            to prevent log(0). Default 1e-10.
             diffusion: DEPRECATED (Issue #1512): a misnomer -- this argument is σ, not D, and the name
-                collided with the ``D = σ²/2`` convention. Use ``sigma``.
+                collided with the ``D = σ²/2`` convention. Use ``volatility``.
         """
         if side not in self._SIDE_ALIASES:
             valid = sorted(self._SIDE_ALIASES.keys())
             raise ValueError(f"side must be one of {valid}, got '{side}'")
 
         # Issue #1512: `diffusion` was a misnamed alias for σ (it is squared in compute) that collided
-        # with the codebase D = σ²/2 convention. `sigma` is now canonical; `diffusion` redirects to it.
-        if diffusion is not None and sigma is None:
-            sigma = diffusion
+        # with the codebase D = σ²/2 convention. `volatility` is canonical (#2378); `diffusion` redirects to it.
+        if diffusion is not None and volatility is None:
+            volatility = diffusion
 
         # Store both original and normalized side names
         self._original_side = side
         self.side = self._SIDE_ALIASES[side]  # Normalize to canonical form
-        self.sigma = sigma
+        self.volatility = volatility
         self.regularization = regularization
+
+    @property
+    def sigma(self) -> NoReturn:
+        raise AttributeError(
+            "AdjointConsistentProvider.sigma is retired (#2378 part 2b); the SDE volatility it held is "
+            "AdjointConsistentProvider.volatility."
+        )
 
     def compute(self, state: dict[str, Any]) -> float:
         """
@@ -302,8 +311,8 @@ class AdjointConsistentProvider(BaseBCValueProvider):
             state: Must contain:
                 - 'm_current': FP density array (interior points)
                 - 'geometry': Geometry object with get_grid_spacing()
-                - 'diffusion' or 'sigma': Diffusion coefficient σ
-                  (if not set in __init__). 'diffusion' takes priority.
+                - 'volatility' (or the deprecated 'diffusion', read only when 'volatility' is
+                  absent): the SDE volatility σ, if not set in __init__.
 
         Returns:
             Robin BC value: g = -σ²/2 * d(ln m)/dn
@@ -327,17 +336,23 @@ class AdjointConsistentProvider(BaseBCValueProvider):
             raise KeyError("AdjointConsistentProvider requires 'geometry' in state")
 
         # Get diffusion coefficient (try constructor, then state)
-        sigma = self.sigma
+        sigma = self.volatility
         if sigma is None:
-            # Issue #1512: 'sigma' is canonical (σ); 'diffusion' is the deprecated key -- also σ here,
-            # NOT the D = σ²/2 the same word means elsewhere.
-            sigma = state.get("sigma")
+            # 'volatility' is canonical (σ, #2378); 'diffusion' is the deprecated key (Issue #1512) -- also
+            # σ here, NOT the D = σ²/2 the same word means elsewhere. The retired 'sigma' key is refused
+            # by name rather than read, so a state built for the old name fails where it is built.
+            if "sigma" in state:
+                raise KeyError(
+                    "AdjointConsistentProvider: the provider state's 'sigma' key is retired (#2378 part 2b); "
+                    "put the SDE volatility under 'volatility'."
+                )
+            sigma = state.get("volatility")
             if sigma is None:
                 sigma = state.get("diffusion")
             if sigma is None:
                 raise KeyError(
                     "AdjointConsistentProvider: volatility not set in constructor "
-                    "and neither 'sigma' nor 'diffusion' found in state"
+                    "and neither 'volatility' nor 'diffusion' found in state"
                 )
         # The state carries the problem's volatility as supplied, never a collapsed scalar (#2376).
         sigma = scalar_volatility(sigma, consumer="AdjointConsistentProvider")
@@ -389,9 +404,9 @@ class AdjointConsistentProvider(BaseBCValueProvider):
             )
 
     def __repr__(self) -> str:
-        sig_str = f"{self.sigma}" if self.sigma is not None else "from_state"
+        sig_str = f"{self.volatility}" if self.volatility is not None else "from_state"
         # Show original side name for user clarity
-        return f"AdjointConsistentProvider(side='{self._original_side}', sigma={sig_str})"
+        return f"AdjointConsistentProvider(side='{self._original_side}', volatility={sig_str})"
 
 
 class NormalDriftProvider(BaseBCValueProvider):
@@ -587,7 +602,7 @@ if __name__ == "__main__":
 
     # Test 1: Protocol check
     print("Test 1: Protocol compliance")
-    provider = AdjointConsistentProvider(side="left", sigma=0.2)
+    provider = AdjointConsistentProvider(side="left", volatility=0.2)
     assert isinstance(provider, BCValueProvider), "Should implement protocol"
     assert is_provider(provider), "is_provider() should return True"
     assert not is_provider(1.5), "Float should not be a provider"
@@ -609,19 +624,19 @@ if __name__ == "__main__":
     state = {
         "m_current": m,
         "geometry": MockGeometry(),
-        "diffusion": 0.2,  # Canonical parameter name
+        "volatility": 0.2,  # Canonical key (#2378)
     }
 
     # Left boundary: outward normal is -x, so d(ln m)/dn = -(-1) = 1
     # g = -0.2^2/2 * 1 = -0.02
-    left_provider = AdjointConsistentProvider(side="left", sigma=0.2)
+    left_provider = AdjointConsistentProvider(side="left", volatility=0.2)
     g_left = left_provider.compute(state)
     expected_left = -(0.2**2) / 2 * 1.0  # -0.02
     print(f"  Left BC value: {g_left:.6f} (expected ~ {expected_left:.6f})")
 
     # Right boundary: outward normal is +x, so d(ln m)/dn = -1
     # g = -0.2^2/2 * (-1) = 0.02
-    right_provider = AdjointConsistentProvider(side="right", sigma=0.2)
+    right_provider = AdjointConsistentProvider(side="right", volatility=0.2)
     g_right = right_provider.compute(state)
     expected_right = -(0.2**2) / 2 * (-1.0)  # 0.02
     print(f"  Right BC value: {g_right:.6f} (expected ~ {expected_right:.6f})")
@@ -636,35 +651,39 @@ if __name__ == "__main__":
     print("  resolve_provider works correctly")
     print()
 
-    # Test 4: Diffusion from state (not constructor)
-    print("Test 4: Diffusion from state (not constructor)")
-    provider_no_diff = AdjointConsistentProvider(side="left", sigma=None)
+    # Test 4: Volatility from state (not constructor)
+    print("Test 4: Volatility from state (not constructor)")
+    provider_no_diff = AdjointConsistentProvider(side="left", volatility=None)
     g_from_state = provider_no_diff.compute(state)
-    assert abs(g_from_state - g_left) < 1e-10, "Should use diffusion from state"
-    print("  Diffusion correctly read from state when not in constructor")
+    assert abs(g_from_state - g_left) < 1e-10, "Should use the volatility from state"
+    print("  Volatility correctly read from state when not in constructor")
     print()
 
-    # Test 5: Legacy 'sigma' in state (backward compatibility)
-    print("Test 5: Legacy 'sigma' in state (backward compatibility)")
+    # Test 5: the retired 'sigma' key in state is refused by name (#2378 part 2b)
+    print("Test 5: retired 'sigma' key in state")
     state_legacy = {
         "m_current": m,
         "geometry": MockGeometry(),
-        "sigma": 0.2,  # Legacy parameter name
+        "sigma": 0.2,  # Retired key
     }
-    provider_legacy = AdjointConsistentProvider(side="left", sigma=None)
-    g_legacy = provider_legacy.compute(state_legacy)
-    assert abs(g_legacy - g_left) < 1e-10, "Should accept 'sigma' in state for backward compat"
-    print("  Legacy 'sigma' key in state works correctly")
+    provider_legacy = AdjointConsistentProvider(side="left", volatility=None)
+    refusal = ""
+    try:
+        provider_legacy.compute(state_legacy)
+    except KeyError as exc:
+        refusal = str(exc)
+    assert "volatility" in refusal, "the retired 'sigma' key must be refused, naming 'volatility'"
+    print("  Retired 'sigma' key refused, naming 'volatility'")
     print()
 
-    # Test 6: Deprecated 'diffusion' parameter (Issue #1512: 'diffusion' is a misnomer for sigma)
+    # Test 6: Deprecated 'diffusion' parameter (Issue #1512: 'diffusion' is a misnomer for the volatility)
     print("Test 6: Deprecated 'diffusion' parameter (shows warning)")
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         provider_deprecated = AdjointConsistentProvider(side="left", diffusion=0.2)
         assert len(w) == 1, "Should emit deprecation warning"
         assert "deprecated" in str(w[0].message).lower()
-        assert provider_deprecated.sigma == 0.2, "diffusion should map to sigma"
+        assert provider_deprecated.volatility == 0.2, "diffusion should map to volatility"
     print("  Deprecated 'diffusion' parameter works with warning")
     print()
 

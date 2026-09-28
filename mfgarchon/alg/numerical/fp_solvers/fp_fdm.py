@@ -15,6 +15,7 @@ from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.pde_coefficients import (
     fp_drift_coefficient,
     resolve_volatility_override,
+    retired_sigma_keyword,
     retired_volatility_keywords,
 )
 
@@ -701,12 +702,14 @@ class FPFDMSolver(BaseFPSolver):
     # Strict Adjoint Mode (Issue #622)
     # =========================================================================
 
+    @retired_sigma_keyword
     def solve_fp_step_adjoint_mode(
         self,
         M_current: np.ndarray,
         A_advection_T: sparse.csr_matrix,
-        sigma: float | np.ndarray | None = None,
+        volatility: float | np.ndarray | None = None,
         time: float = 0.0,
+        volatility_kind: str | None = None,
     ) -> np.ndarray:
         """
         Solve single FP timestep using externally provided advection matrix.
@@ -733,10 +736,12 @@ class FPFDMSolver(BaseFPSolver):
             A_advection_T: Transposed advection matrix from HJB solver.
                 Shape: (N_total, N_total) where N_total = prod(spatial_shape).
                 This is A_hjb.T where A_hjb was built by HJBFDMSolver.build_advection_matrix().
-            sigma: The SDE volatility (optional); the diffusion is D = sigma^2/2.
-                - None: Use problem.volatility
+            volatility: The SDE volatility (optional); the diffusion is D = sigma^2/2.
+                - None: Use problem.volatility, with its kind
                 - float: Constant volatility
-                - np.ndarray: Per-point volatility
+                - np.ndarray, volatility_kind="field": Per-point volatility
+                A tensor (volatility_kind="tensor") is refused.
+            volatility_kind: "field" or "tensor" for an array volatility (#2378).
             time: Current time for time-dependent BCs
 
         Returns:
@@ -779,13 +784,16 @@ class FPFDMSolver(BaseFPSolver):
                 f"({N_total}, {N_total}) for density shape {shape}"
             )
 
-        # A scalar or per-point volatility; a callable is refused rather than evaluated at an
-        # arbitrary time (#2376).
-        sigma_val = self.problem.volatility if sigma is None else sigma
-        if sigma_val is self.problem.volatility and self.problem.volatility_kind == "tensor":
+        # A scalar or per-point volatility, read by its declared kind like any other (#2378 part 2b:
+        # this step told the problem's tensor apart by identity with problem.volatility); a callable is
+        # refused rather than evaluated at an arbitrary time (#2376).
+        sigma_val, sigma_kind = resolve_volatility_override(
+            volatility, volatility_kind, problem=self.problem, consumer="FPFDMSolver.solve_fp_step_adjoint_mode"
+        )
+        if sigma_kind == "tensor":
             raise NotImplementedError(
                 "FPFDMSolver.solve_fp_step_adjoint_mode assembles an isotropic diffusion sigma^2/2; "
-                "the problem's volatility is a volatility_kind='tensor' Sigma, whose diffusion "
+                "this volatility is a volatility_kind='tensor' Sigma, whose diffusion "
                 "A = 1/2 Sigma Sigma^T it would misread as a per-point field (#2378). With "
                 "BlockIterator, adjoint_mode='off' solves the FP side through solve_fp_system, which "
                 "assembles the tensor."

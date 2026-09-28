@@ -164,7 +164,7 @@ def generate_brownian_increment(
     num_particles: int,
     dimension: int,
     dt: float,
-    sigma: float,
+    volatility: float,
     rng: ModuleType | np.random.Generator = np.random,
 ) -> np.ndarray:
     """
@@ -180,8 +180,8 @@ def generate_brownian_increment(
         Spatial dimension (1, 2, 3, ...)
     dt : float
         Time step size
-    sigma : float
-        Diffusion coefficient
+    volatility : float
+        SDE volatility σ (the diffusion is D = σ²/2)
     rng : module or np.random.Generator, optional
         Source of the normal draws. Defaults to the global `np.random` module, which is what an
         unseeded `FPParticleSolver` passes; a seeded one passes its private Generator (Issue #1838).
@@ -205,9 +205,9 @@ def generate_brownian_increment(
 
     # Independent Brownian motion in each dimension
     if dimension == 1:
-        return sigma * rng.normal(0, np.sqrt(dt), num_particles)
+        return volatility * rng.normal(0, np.sqrt(dt), num_particles)
 
-    return sigma * rng.normal(0, np.sqrt(dt), (num_particles, dimension))
+    return volatility * rng.normal(0, np.sqrt(dt), (num_particles, dimension))
 
 
 # =============================================================================

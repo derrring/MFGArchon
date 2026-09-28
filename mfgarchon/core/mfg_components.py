@@ -912,7 +912,7 @@ class ConditionsMixin:
 
         Args:
             state: Iteration state dict passed to provider.compute().
-                   Standard keys: 'm_current', 'U_current', 'geometry', 'sigma'.
+                   Standard keys: 'm_current', 'U_current', 'geometry', 'volatility'.
 
         Yields:
             self (the problem instance with resolved BC)

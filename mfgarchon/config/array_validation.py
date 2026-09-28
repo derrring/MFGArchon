@@ -52,7 +52,16 @@ class MFGGridConfig(BaseConfig):
     xmin: float = Field(0.0, description="Spatial domain minimum")
     xmax: float = Field(1.0, description="Spatial domain maximum")
     T: float = Field(1.0, gt=0.0, le=100.0, description="Final time")
-    sigma: float = Field(0.1, gt=0.0, le=10.0, description="SDE volatility sigma (PDE diffusion is D = sigma^2/2)")
+    volatility: float = Field(0.1, gt=0.0, le=10.0, description="SDE volatility sigma (PDE diffusion is D = sigma^2/2)")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_sigma(cls, data: Any) -> Any:
+        """``sigma=`` is retired (#2378 part 2b). ``extra="forbid"`` already rejects it as an unknown
+        field; this refusal is there so the error names ``volatility=``."""
+        if isinstance(data, dict) and "sigma" in data:
+            raise ValueError("MFGGridConfig(sigma=...) is retired (#2378); pass volatility=, the SDE volatility.")
+        return data
 
     @field_validator("xmax")
     @classmethod
@@ -77,17 +86,17 @@ class MFGGridConfig(BaseConfig):
     @property
     def cfl_number(self) -> float:
         """Diffusive CFL number D*dt/dx^2 for stability analysis, with the PDE coefficient
-        D = sigma^2/2 (Issue #1550 / #1426-S0-14). `sigma` is the SDE volatility, so the diffusive
+        D = sigma^2/2 (Issue #1550 / #1426-S0-14). `volatility` is the SDE volatility, so the diffusive
         CFL uses 0.5*sigma^2, matching the corrected solver diagnostics (hjb_fdm/fp_fdm) — not the
         bare sigma^2 (= 2D) this used to report."""
-        return 0.5 * self.sigma**2 * self.dt / (self.dx**2)
+        return 0.5 * self.volatility**2 * self.dt / (self.dx**2)
 
     @property
     def grid_shape(self) -> tuple[int, int]:
         """Expected shape for solution arrays (Nt+1, Nx+1)."""
         return (self.Nt + 1, self.Nx + 1)
 
-    @field_validator("sigma")
+    @field_validator("volatility")
     @classmethod
     def validate_cfl_stability(cls, v: float, info: Any) -> float:
         """Validate CFL condition for numerical stability."""
@@ -380,7 +389,7 @@ class MFGArrays(BaseConfig):
             "cfl_number": self.grid_config.cfl_number,
             "dx": self.grid_config.dx,
             "dt": self.grid_config.dt,
-            "sigma": self.grid_config.sigma,
+            "volatility": self.grid_config.volatility,
         }
 
         return stats

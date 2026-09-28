@@ -270,7 +270,7 @@ def _run(scheme: str) -> tuple[float, float]:
             U_current=-_DRIFT * x,
             problem=object(),
             dt=1e-3,
-            sigma=_SIGMA,
+            volatility=_SIGMA,
             coupling_coefficient=1.0,
             spacing=(h,),
             grid=grid,
@@ -373,7 +373,7 @@ def _step(bc):
         U_current=-3.2 * x,
         problem=object(),
         dt=1e-3,
-        sigma=0.3,
+        volatility=0.3,
         coupling_coefficient=1.0,
         spacing=(h,),
         grid=grid,
@@ -410,7 +410,7 @@ def test_a_provider_valued_coefficient_is_refused_rather_than_dropped():
     """
     from mfgarchon.geometry.boundary.providers import AdjointConsistentProvider
 
-    bc = _mixed(BCType.ROBIN, alpha=AdjointConsistentProvider(side="left", sigma=0.3), beta=-0.045, value=0.0)
+    bc = _mixed(BCType.ROBIN, alpha=AdjointConsistentProvider(side="left", volatility=0.3), beta=-0.045, value=0.0)
     with pytest.raises(NotImplementedError, match=r"provider-valued wall coefficient"):
         _step(bc)
 

@@ -136,7 +136,7 @@ def _solve(nx: int, nt: int, sigma, sigma_kind: str | None) -> float:
         M_density=np.full((nt + 1, *shape), M_CONST),
         U_terminal=u_star(T, points).reshape(shape),
         U_coupling_prev=np.stack([u_star(k * T / nt, points).reshape(shape) for k in range(nt + 1)]),
-        source_term=hjb_source(PAIR, HAMILTONIAN, sigma, sigma_kind=sigma_kind),
+        source_term=hjb_source(PAIR, HAMILTONIAN, sigma, volatility_kind=sigma_kind),
     )
     error = np.asarray(U)[0] - u_star(0.0, points).reshape(shape)
     return float(np.sqrt((error**2).sum()) * (L / (nx - 1)))

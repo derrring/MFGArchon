@@ -52,7 +52,7 @@ def add_interior_entries_divergence_upwind(
     shape: tuple[int, ...],
     ndim: int,
     dt: float,
-    sigma: float,
+    volatility: float,
     coupling_coefficient: float,
     spacing: tuple[float, ...],
     u_flat: np.ndarray,
@@ -89,7 +89,7 @@ def add_interior_entries_divergence_upwind(
     diagonal_value = 1.0 / dt
 
     # Diffusion coefficient D = sigma^2/2
-    D = diffusion_from_volatility(sigma)
+    D = diffusion_from_volatility(volatility)
 
     # For each dimension, add flux-based advection + diffusion contributions
     for d in range(ndim):

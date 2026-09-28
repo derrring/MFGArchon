@@ -42,7 +42,7 @@ class _ScalarProvider:
         self._factor = factor
 
     def compute(self, state: dict[str, Any]) -> float:
-        return self._factor * float(state["sigma"])
+        return self._factor * float(state["volatility"])
 
 
 class _FieldProvider:
@@ -60,7 +60,7 @@ def state() -> dict[str, Any]:
     return {
         "m_current": 0.5 + 0.3 * np.cos(np.pi * x),
         "U_current": 0.5 * x**2,
-        "sigma": 0.4,
+        "volatility": 0.4,
         "geometry": grid,
     }
 
@@ -145,7 +145,7 @@ def test_the_shipped_adjoint_consistent_config_is_unchanged(state):
                 bc_type=BCType.ROBIN,
                 alpha=0.0,
                 beta=1.0,
-                value=AdjointConsistentProvider(side="left", sigma=0.4),
+                value=AdjointConsistentProvider(side="left", volatility=0.4),
                 boundary="x_min",
             ),
             BCSegment(
@@ -153,7 +153,7 @@ def test_the_shipped_adjoint_consistent_config_is_unchanged(state):
                 bc_type=BCType.ROBIN,
                 alpha=0.0,
                 beta=1.0,
-                value=AdjointConsistentProvider(side="right", sigma=0.4),
+                value=AdjointConsistentProvider(side="right", volatility=0.4),
                 boundary="x_max",
             ),
         ],

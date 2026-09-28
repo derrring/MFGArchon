@@ -67,7 +67,7 @@ SCOPE
   ``(1/2) sum_ij d2(sigma_ij m)/dx_i dx_j``, which is not ``tr(D . Hess m)``. Constant ``Sigma`` is
   sufficient for the two to coincide, not necessary -- a divergence-free ``Sigma(x)`` would also do
   -- but a varying ``Sigma`` is refused here rather than approximated, and the refusal is enforced
-  by requiring an array ``sigma`` to be ``(d, d)`` and to declare ``sigma_kind="tensor"``.
+  by requiring an array ``volatility`` to be ``(d, d)`` and to declare ``volatility_kind="tensor"``.
 """
 
 from __future__ import annotations
@@ -79,7 +79,11 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.core.hamiltonian import HEvalState, SeparableHamiltonian
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, validate_symmetric_psd
+from mfgarchon.utils.pde_coefficients import (
+    diffusion_from_volatility,
+    retired_sigma_and_kind_keywords,
+    validate_symmetric_psd,
+)
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -164,7 +168,7 @@ def _hessian(value: NDArray, n: int, dim: int, what: str) -> NDArray:
 # --------------------------------------------------------------------------------------------
 
 
-def _diffusion_tensor(sigma: float | NDArray, dim: int, sigma_kind: str | None) -> NDArray:
+def _diffusion_tensor(volatility: float | NDArray, dim: int, volatility_kind: str | None) -> NDArray:
     """The constant ``(d, d)`` diffusion tensor ``D``, via this package's volatility owner.
 
     ``D`` already carries the ``1/2``: :func:`diffusion_from_volatility` returns ``D = (1/2) S S^T``
@@ -176,16 +180,16 @@ def _diffusion_tensor(sigma: float | NDArray, dim: int, sigma_kind: str | None) 
     does not support; a diagonal-anisotropic volatility is passed as a ``(d, d)`` diagonal matrix,
     which is the same instruction :func:`diffusion_from_volatility` gives.
     """
-    arr = np.asarray(sigma, dtype=float)
+    arr = np.asarray(volatility, dtype=float)
     if arr.ndim == 0:
-        if sigma_kind is not None:
-            raise ValueError(f"a scalar sigma is unambiguous; drop sigma_kind={sigma_kind!r}.")
+        if volatility_kind is not None:
+            raise ValueError(f"a scalar sigma is unambiguous; drop volatility_kind={volatility_kind!r}.")
         return float(diffusion_from_volatility(arr)) * np.eye(dim)
-    if sigma_kind != "tensor":
+    if volatility_kind != "tensor":
         raise ValueError(
-            f"an array sigma must declare sigma_kind='tensor' and be the (d, d) symmetric "
-            f"standard-deviation matrix S (D = 1/2 S S^T, RFC #1596); got sigma_kind="
-            f"{sigma_kind!r} with shape {arr.shape}. A spatially varying sigma -- the meaning a 1-D "
+            f"an array volatility must declare volatility_kind='tensor' and be the (d, d) symmetric "
+            f"standard-deviation matrix S (D = 1/2 S S^T, RFC #1596); got volatility_kind="
+            f"{volatility_kind!r} with shape {arr.shape}. A spatially varying sigma -- the meaning a 1-D "
             f"array carries elsewhere in this package -- is out of scope: the FP diffusion is then "
             f"(1/2) sum_ij d2(sigma_ij m)/dx_i dx_j, not tr(D . Hess m). A diagonal-anisotropic "
             f"volatility is np.diag([s1, ..., sd]), not [s1, ..., sd]."
@@ -246,12 +250,13 @@ def _drift_coefficient(hamiltonian: HamiltonianBase, dim: int) -> float:
 # --------------------------------------------------------------------------------------------
 
 
+@retired_sigma_and_kind_keywords
 def hjb_source(
     pair: ManufacturedPair,
     hamiltonian: HamiltonianBase,
-    sigma: float | NDArray,
+    volatility: float | NDArray,
     *,
-    sigma_kind: str | None = None,
+    volatility_kind: str | None = None,
 ) -> Field:
     """``S_hjb = -d_t u + H(x, grad u, m) - tr(D . Hess u)``.
 
@@ -262,7 +267,7 @@ def hjb_source(
     def source(t: float, x: NDArray) -> NDArray:
         pts = _points(x)
         n, dim = pts.shape
-        diffusion_tensor = _diffusion_tensor(sigma, dim, sigma_kind)
+        diffusion_tensor = _diffusion_tensor(volatility, dim, volatility_kind)
         p = _gradient(pair.grad_u(t, pts), n, dim, "grad_u")
         m = _scalar(pair.m(t, pts), n, "m")
         h = np.asarray(hamiltonian.evaluate_H(HEvalState(x=pts, p=p, m=m, t=t)), dtype=float).ravel()
@@ -275,12 +280,13 @@ def hjb_source(
     return source
 
 
+@retired_sigma_and_kind_keywords
 def fp_source(
     pair: ManufacturedPair,
     hamiltonian: HamiltonianBase,
-    sigma: float | NDArray,
+    volatility: float | NDArray,
     *,
-    sigma_kind: str | None = None,
+    volatility_kind: str | None = None,
 ) -> Field:
     """``S_fp = d_t m + div(m * alpha*) - tr(D . Hess m)``.
 
@@ -300,7 +306,7 @@ def fp_source(
     def source(t: float, x: NDArray) -> NDArray:
         pts = _points(x)
         n, dim = pts.shape
-        diffusion_tensor = _diffusion_tensor(sigma, dim, sigma_kind)
+        diffusion_tensor = _diffusion_tensor(volatility, dim, volatility_kind)
         coefficient = _drift_coefficient(hamiltonian, dim)
         grad_u = _gradient(pair.grad_u(t, pts), n, dim, "grad_u")
         m = _scalar(pair.m(t, pts), n, "m")

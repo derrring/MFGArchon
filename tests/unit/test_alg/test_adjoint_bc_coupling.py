@@ -143,7 +143,7 @@ class TestCreateAdjointConsistentBC1D:
     def test_creates_two_robin_segments(self):
         """Should create BoundaryConditions with 2 Robin segments."""
         m = np.exp(-np.linspace(0, 1, 11))
-        bc = create_adjoint_consistent_bc_1d(m, dx=0.1, sigma=0.2)
+        bc = create_adjoint_consistent_bc_1d(m, dx=0.1, volatility=0.2)
 
         assert bc.dimension == 1
         assert len(bc.segments) == 2
@@ -153,7 +153,7 @@ class TestCreateAdjointConsistentBC1D:
     def test_robin_coefficients(self):
         """Robin segments should have alpha=0, beta=1 (pure Neumann form)."""
         m = np.ones(11)
-        bc = create_adjoint_consistent_bc_1d(m, dx=0.1, sigma=0.2)
+        bc = create_adjoint_consistent_bc_1d(m, dx=0.1, volatility=0.2)
 
         for seg in bc.segments:
             assert seg.alpha == 0.0
@@ -162,7 +162,7 @@ class TestCreateAdjointConsistentBC1D:
     def test_segment_names_and_boundaries(self):
         """Segments should be named and assigned to correct boundaries."""
         m = np.ones(11)
-        bc = create_adjoint_consistent_bc_1d(m, dx=0.1, sigma=0.2)
+        bc = create_adjoint_consistent_bc_1d(m, dx=0.1, volatility=0.2)
 
         left = bc.segments[0]
         right = bc.segments[1]
@@ -179,7 +179,7 @@ class TestCreateAdjointConsistentBC1D:
         dx = x[1] - x[0]
         sigma = 0.2
 
-        bc = create_adjoint_consistent_bc_1d(m, dx=dx, sigma=sigma)
+        bc = create_adjoint_consistent_bc_1d(m, dx=dx, volatility=sigma)
 
         # Expected: g = -sigma^2/2 * d(ln m)/dn
         # Left: d(ln m)/dn ~ 1.0, so g ~ -0.02
@@ -192,7 +192,7 @@ class TestCreateAdjointConsistentBC1D:
         """Domain bounds should be passed to BoundaryConditions."""
         m = np.ones(11)
         bounds = np.array([[0.0, 2.0]])
-        bc = create_adjoint_consistent_bc_1d(m, dx=0.2, sigma=0.1, domain_bounds=bounds)
+        bc = create_adjoint_consistent_bc_1d(m, dx=0.2, volatility=0.1, domain_bounds=bounds)
 
         assert bc.domain_bounds is not None
         np.testing.assert_array_equal(bc.domain_bounds, bounds)
@@ -200,7 +200,7 @@ class TestCreateAdjointConsistentBC1D:
     def test_uniform_density_gives_zero_values(self):
         """Uniform density should produce zero BC values (zero gradient)."""
         m = np.ones(51)
-        bc = create_adjoint_consistent_bc_1d(m, dx=0.02, sigma=0.3)
+        bc = create_adjoint_consistent_bc_1d(m, dx=0.02, volatility=0.3)
 
         for seg in bc.segments:
             assert abs(seg.value) < 1e-8
@@ -221,8 +221,8 @@ class TestComputeAdjointConsistentBCValues:
         m = np.exp(-np.linspace(0, 1, 11))
         geom = _MockGeometry1D(dx=0.1)
 
-        bc = compute_adjoint_consistent_bc_values(m, geom, sigma=0.2, dimension=1)
-        bc_direct = create_adjoint_consistent_bc_1d(m, dx=0.1, sigma=0.2)
+        bc = compute_adjoint_consistent_bc_values(m, geom, volatility=0.2, dimension=1)
+        bc_direct = create_adjoint_consistent_bc_1d(m, dx=0.1, volatility=0.2)
 
         assert len(bc.segments) == len(bc_direct.segments)
         for seg_a, seg_b in zip(bc.segments, bc_direct.segments, strict=False):
@@ -234,10 +234,10 @@ class TestComputeAdjointConsistentBCValues:
         geom = _MockGeometry1D()
 
         with pytest.raises(NotImplementedError, match="not yet implemented for 2D"):
-            compute_adjoint_consistent_bc_values(m, geom, sigma=0.2, dimension=2)
+            compute_adjoint_consistent_bc_values(m, geom, volatility=0.2, dimension=2)
 
         with pytest.raises(NotImplementedError, match="not yet implemented for 3D"):
-            compute_adjoint_consistent_bc_values(m, geom, sigma=0.2, dimension=3)
+            compute_adjoint_consistent_bc_values(m, geom, volatility=0.2, dimension=3)
 
     def test_backward_compat_alias(self):
         """compute_coupled_hjb_bc_values should be an alias."""

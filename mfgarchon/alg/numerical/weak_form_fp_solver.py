@@ -29,6 +29,7 @@ from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     resolve_volatility_override,
+    retired_sigma_keyword,
     retired_volatility_keywords,
     scalar_volatility,
 )
@@ -276,20 +277,29 @@ class WeakFormFPSolver(BaseFPSolver):
             )
         return M
 
+    @retired_sigma_keyword
     def solve_fp_step_adjoint_mode(
         self,
         M_current: NDArray,
         A_advection_T: sparse.csr_matrix,
-        sigma: float | NDArray | None = None,
+        volatility: float | NDArray | None = None,
         time: float = 0.0,
+        volatility_kind: str | None = None,
     ) -> NDArray:
         """Single FP timestep with an externally provided (transposed) advection matrix.
 
         Used by BlockIterator's adjoint modes: the FP operator is supplied directly,
-        e.g. as the transpose of the assembled HJB operator.
+        e.g. as the transpose of the assembled HJB operator. ``volatility`` is read by its declared
+        ``volatility_kind`` (#2378); this solver assembles one scalar D, so an array is refused.
         """
+        volatility, _ = resolve_volatility_override(
+            volatility,
+            volatility_kind,
+            problem=self.problem,
+            consumer=f"{type(self).__name__}.solve_fp_step_adjoint_mode",
+        )
         dt = self.problem.dt
-        D = self._diffusion_coefficient(sigma)
+        D = self._diffusion_coefficient(volatility)
 
         A_system = self._M / dt + A_advection_T + D * self._K
         rhs = (self._M / dt) @ M_current.ravel()

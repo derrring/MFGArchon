@@ -54,7 +54,7 @@ def add_interior_entries_gradient_upwind(
     shape: tuple[int, ...],
     ndim: int,
     dt: float,
-    sigma: float,
+    volatility: float,
     coupling_coefficient: float,
     spacing: tuple[float, ...],
     u_flat: np.ndarray,
@@ -95,8 +95,8 @@ def add_interior_entries_gradient_upwind(
         Spatial dimension
     dt : float
         Time step
-    sigma : float
-        Diffusion coefficient
+    volatility : float
+        SDE volatility σ (the diffusion is D = σ²/2)
     coupling_coefficient : float
         Coefficient for drift term (typically 1/λ in MFG)
     spacing : tuple[float, ...]
@@ -112,7 +112,7 @@ def add_interior_entries_gradient_upwind(
     diagonal_value = 1.0 / dt
 
     # Diffusion coefficient D = sigma^2/2 (Issue #1189: single source)
-    D = diffusion_from_volatility(sigma)
+    D = diffusion_from_volatility(volatility)
 
     # For each dimension, add advection + diffusion contributions
     for d in range(ndim):
@@ -202,7 +202,7 @@ def add_boundary_no_flux_entries_gradient_upwind(
     shape: tuple[int, ...],
     ndim: int,
     dt: float,
-    sigma: float,
+    volatility: float,
     coupling_coefficient: float,
     spacing: tuple[float, ...],
     u_flat: np.ndarray,
@@ -226,7 +226,7 @@ def add_boundary_no_flux_entries_gradient_upwind(
     diagonal_value = 1.0 / dt
 
     # Diffusion coefficient D = σ²/2
-    D = diffusion_from_volatility(sigma)
+    D = diffusion_from_volatility(volatility)
 
     # For each dimension, check if we're at a boundary in that dimension
     for d in range(ndim):

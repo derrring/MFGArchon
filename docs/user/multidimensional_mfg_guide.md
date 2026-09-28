@@ -350,7 +350,7 @@ grid = TensorProductGrid(2, [(0, L), (0, L)], [Nx, Ny])
 dt = T / Nt
 
 # Parameters
-sigma = 0.5  # Diffusion
+sigma = 0.5  # SDE volatility; the PDE diffusion is sigma**2 / 2
 lambda_param = 1.0  # Control cost
 
 # === INITIALIZATION ===

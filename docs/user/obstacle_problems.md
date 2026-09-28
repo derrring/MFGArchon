@@ -118,7 +118,7 @@ x_min, x_max = 0.0, 1.0
 Nx = 100
 T = 1.0
 Nt = 50
-sigma = 0.1  # Diffusion
+sigma = 0.1  # SDE volatility; the PDE diffusion is sigma**2 / 2
 kappa = 0.5  # Obstacle strength
 
 # Create grid and boundary conditions
@@ -139,7 +139,7 @@ problem = MFGProblem(
     geometry=grid,
     T=T,
     Nt=Nt,
-    diffusion=sigma,
+    volatility=sigma,
     bc=bc,
     running_cost=running_cost,
     terminal_cost=terminal_cost,

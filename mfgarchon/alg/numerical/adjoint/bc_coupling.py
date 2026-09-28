@@ -56,7 +56,7 @@ import numpy as np
 # Import BC types from geometry submodules directly for clarity
 from mfgarchon.geometry.boundary.conditions import BoundaryConditions
 from mfgarchon.geometry.boundary.types import BCSegment, BCType
-from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, retired_sigma_keyword
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -112,10 +112,11 @@ def compute_boundary_log_density_gradient_1d(
     return float(grad_ln_m)
 
 
+@retired_sigma_keyword
 def create_adjoint_consistent_bc_1d(
     m_current: NDArray[np.floating],
     dx: float,
-    sigma: float,
+    volatility: float,
     domain_bounds: NDArray[np.floating] | None = None,
     regularization: float = 1e-10,
 ) -> BoundaryConditions:
@@ -138,7 +139,7 @@ def create_adjoint_consistent_bc_1d(
     Args:
         m_current: Current FP density (interior points, shape (Nx,))
         dx: Grid spacing
-        sigma: Diffusion coefficient
+        volatility: SDE volatility σ (the diffusion is D = σ²/2)
         domain_bounds: Domain bounds array of shape (1, 2), optional
         regularization: Regularization constant for log(m)
 
@@ -152,7 +153,7 @@ def create_adjoint_consistent_bc_1d(
         >>> hjb_bc = create_adjoint_consistent_bc_1d(
         ...     m_current=m_current[-1, :],  # Final time slice
         ...     dx=problem.geometry.get_grid_spacing()[0],
-        ...     sigma=problem.volatility,
+        ...     volatility=problem.volatility,
         ...     domain_bounds=problem.geometry.domain_bounds,
         ... )
         >>> U_new = hjb_solver.solve_hjb_system(bc=hjb_bc, ...)
@@ -169,7 +170,7 @@ def create_adjoint_consistent_bc_1d(
     )
 
     # Robin BC values: g = -σ²/2 · ∂ln(m)/∂n
-    diffusion_coeff = diffusion_from_volatility(sigma)
+    diffusion_coeff = diffusion_from_volatility(volatility)
     value_left = -diffusion_coeff * grad_ln_m_left
     value_right = -diffusion_coeff * grad_ln_m_right
 
@@ -205,10 +206,11 @@ def create_adjoint_consistent_bc_1d(
     )
 
 
+@retired_sigma_keyword
 def compute_adjoint_consistent_bc_values(
     m_current: NDArray[np.floating],
     geometry: GeometryProtocol,
-    sigma: float,
+    volatility: float,
     dimension: int = 1,
     regularization: float = 1e-10,
 ) -> BoundaryConditions:
@@ -221,7 +223,7 @@ def compute_adjoint_consistent_bc_values(
     Args:
         m_current: Current FP density (interior points)
         geometry: Geometry object providing grid spacing and bounds
-        sigma: Diffusion coefficient
+        volatility: SDE volatility σ (the diffusion is D = σ²/2)
         dimension: Spatial dimension
         regularization: Regularization constant for log(m)
 
@@ -236,7 +238,7 @@ def compute_adjoint_consistent_bc_values(
         >>> bc = compute_adjoint_consistent_bc_values(
         ...     m_current=m[-1, :],
         ...     geometry=problem.geometry,
-        ...     sigma=problem.volatility,
+        ...     volatility=problem.volatility,
         ...     dimension=problem.dimension,
         ... )
         >>> U = hjb_solver.solve_hjb_system(bc=bc, ...)
@@ -249,7 +251,7 @@ def compute_adjoint_consistent_bc_values(
         return create_adjoint_consistent_bc_1d(
             m_current=m_current,
             dx=dx,
-            sigma=sigma,
+            volatility=volatility,
             domain_bounds=domain_bounds,
             regularization=regularization,
         )
@@ -306,7 +308,7 @@ if __name__ == "__main__":
     bc = create_adjoint_consistent_bc_1d(
         m_current=m_exp,
         dx=dx,
-        sigma=sigma,
+        volatility=sigma,
         domain_bounds=domain_bounds,
     )
 

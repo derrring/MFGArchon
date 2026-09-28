@@ -23,7 +23,7 @@ from mfgarchon.core.hamiltonian import HEvalState
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 
-def _diffusion_coeff(sigma: float | NDArray) -> float | NDArray:
+def _diffusion_coeff(volatility: float | NDArray) -> float | NDArray:
     """Diffusion ``D = sigma^2/2`` for the assembly helpers (Issue #1071 phase 7).
 
     A scalar ``sigma`` keeps the exact prior call ``diffusion_from_volatility(sigma)``
@@ -31,9 +31,9 @@ def _diffusion_coeff(sigma: float | NDArray) -> float | NDArray:
     field (e.g. the GFDM Local-Lax-Friedrichs ``sigma_eff`` array, Issue #1059) is
     isotropic-per-point, so it requires ``kind="field"`` -> ``D = sigma**2/2`` elementwise.
     """
-    if np.ndim(sigma) == 0:
-        return diffusion_from_volatility(sigma)
-    return diffusion_from_volatility(sigma, kind="field")
+    if np.ndim(volatility) == 0:
+        return diffusion_from_volatility(volatility)
+    return diffusion_from_volatility(volatility, kind="field")
 
 
 if TYPE_CHECKING:
@@ -74,7 +74,7 @@ def assemble_hjb_residual(
     m: NDArray,
     p: NDArray,
     lap_u: NDArray,
-    sigma: float | NDArray,
+    volatility: float | NDArray,
     t: float,
     u_t: NDArray,
     additive_source: NDArray | None = None,
@@ -99,7 +99,7 @@ def assemble_hjb_residual(
     H = eval_H_batch(H_class, x, m, p, t)
     if additive_source is not None:
         H = H + additive_source
-    return -u_t + H - _diffusion_coeff(sigma) * lap_u
+    return -u_t + H - _diffusion_coeff(volatility) * lap_u
 
 
 def assemble_hjb_jacobian_diag(
@@ -108,7 +108,7 @@ def assemble_hjb_jacobian_diag(
     x: NDArray,
     m: NDArray,
     p: NDArray,
-    sigma: float | NDArray,
+    volatility: float | NDArray,
     t: float,
     dt: float,
     D_grad: list,
@@ -133,7 +133,7 @@ def assemble_hjb_jacobian_diag(
     jacobian = (1.0 / dt) * eye(n, format="csr")
     for dim in range(dH_dp.shape[1]):
         jacobian = jacobian + diags(dH_dp[:, dim], format="csr") @ D_grad[dim]
-    D = _diffusion_coeff(sigma)
-    if np.ndim(sigma) == 0:
+    D = _diffusion_coeff(volatility)
+    if np.ndim(volatility) == 0:
         return jacobian - D * D_lap
     return jacobian - diags(D, format="csr") @ D_lap

@@ -93,6 +93,8 @@ class BaseVariationalSolver(BaseOptimizationSolver):
         self.Nt = problem.Nt
         self.dx = problem.geometry.get_grid_spacing()[0]
         self.dt = problem.dt
+        # The variational problem's volatility is a float; `self.problem` is typed as the base's problem.
+        self.volatility: float = problem.volatility
 
         logger.info(f"Initialized {self.solver_name} solver")
         logger.info(f"  Problem: {problem.components.description}")
@@ -182,7 +184,7 @@ class BaseVariationalSolver(BaseOptimizationSolver):
                     d2m_dx2 = (
                         density_evolution[i, j + 1] - 2 * density_evolution[i, j] + density_evolution[i, j - 1]
                     ) / self.dx**2
-                    diffusion = 0.5 * self.problem.sigma**2 * d2m_dx2
+                    diffusion = 0.5 * self.volatility**2 * d2m_dx2
 
                     # Solve for velocity (simplified 1D case)
                     # This is an approximation - full implementation would solve the system properly
@@ -224,7 +226,7 @@ class BaseVariationalSolver(BaseOptimizationSolver):
                 d2m_dx2 = (
                     density_evolution[i, j + 1] - 2 * density_evolution[i, j] + density_evolution[i, j - 1]
                 ) / self.dx**2
-                diffusion = 0.5 * self.problem.sigma**2 * d2m_dx2
+                diffusion = 0.5 * self.volatility**2 * d2m_dx2
 
                 # Continuity equation residual
                 residual[i - 1, j - 1] = dm_dt + div_mv - diffusion
@@ -265,7 +267,7 @@ class BaseVariationalSolver(BaseOptimizationSolver):
 
             for i, t in enumerate(self.t_grid):
                 # Width increases with time due to diffusion
-                width = initial_width + self.problem.sigma * np.sqrt(t)
+                width = initial_width + self.volatility * np.sqrt(t)
 
                 gaussian = np.exp(-0.5 * ((self.x_grid - center) / width) ** 2)
                 gaussian = gaussian / trapezoid(gaussian, x=self.x_grid)  # Normalize

@@ -783,7 +783,7 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmpdir:
         # Test NPZ
         npz_path = Path(tmpdir) / "test.npz"
-        config = {"name": "test", "sigma": 0.3}
+        config = {"name": "test", "volatility": 0.3}
 
         with create_recorder(npz_path, config) as rec:
             rec.save_grid(X=np.linspace(0, 1, 10), Y=np.linspace(0, 1, 10))

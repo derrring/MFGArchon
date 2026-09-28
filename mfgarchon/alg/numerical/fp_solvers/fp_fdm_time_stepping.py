@@ -501,7 +501,7 @@ def solve_timestep_explicit_with_drift(
     M_current: np.ndarray,
     drift: np.ndarray,
     dt: float,
-    sigma: float | np.ndarray,
+    volatility: float | np.ndarray,
     spacing: tuple[float, ...],
     ndim: int,
     boundary_conditions: BoundaryConditions | None = None,
@@ -528,8 +528,8 @@ def solve_timestep_explicit_with_drift(
         Drift field. For 1D: shape (N,). For nD: shape (ndim, N1, N2, ...)
     dt : float
         Time step
-    sigma : float or np.ndarray
-        Diffusion coefficient (scalar or spatially varying)
+    volatility : float or np.ndarray
+        SDE volatility σ (the diffusion is D = σ²/2) (scalar or spatially varying)
     spacing : tuple[float, ...]
         Grid spacing (dx, dy, ...)
     ndim : int
@@ -562,7 +562,7 @@ def solve_timestep_explicit_with_drift(
 
         boundary_conditions = no_flux_bc(dimension=ndim)
 
-    sigma_arr = np.asarray(sigma)
+    sigma_arr = np.asarray(volatility)
     varying_sigma = sigma_arr.ndim > 0 and float(np.ptp(sigma_arr)) > 1e-12
 
     # Step 1: implicit diffusion (I/dt - L_D) m* = m^k/dt, mass-conservative no-flux stencil.
@@ -582,7 +582,7 @@ def solve_timestep_explicit_with_drift(
         A_diffusion = sparse.eye(N_total) / dt - L_matrix
     else:
         # Scalar (or uniform-array) sigma: unit mass-conservative Laplacian scaled by the scalar D.
-        scalar_sigma = float(sigma_arr.reshape(-1)[0]) if sigma_arr.ndim > 0 else float(sigma)
+        scalar_sigma = float(sigma_arr.reshape(-1)[0]) if sigma_arr.ndim > 0 else float(volatility)
         D = diffusion_from_volatility(scalar_sigma)
         # Issue #927: reuse the cached unit Laplacian (constant sigma across time steps) if given.
         if cached_laplacian is not None:
@@ -1317,7 +1317,7 @@ def solve_timestep_full_nd(
     U_current: np.ndarray,
     problem: Any,
     dt: float,
-    sigma: float,
+    volatility: float,
     coupling_coefficient: float,
     spacing: tuple[float, ...],
     grid: Any,
@@ -1343,8 +1343,8 @@ def solve_timestep_full_nd(
         Problem definition
     dt : float
         Time step
-    sigma : float
-        Diffusion coefficient
+    volatility : float
+        SDE volatility σ (the diffusion is D = σ²/2)
     coupling_coefficient : float
         Coupling coefficient for drift term
     spacing : tuple[float, ...]
@@ -1429,11 +1429,11 @@ def solve_timestep_full_nd(
             continue
 
         # Extract local diffusion coefficient (scalar or from spatially varying array)
-        if isinstance(sigma, np.ndarray):
+        if isinstance(volatility, np.ndarray):
             # For spatially varying diffusion, extract value at this grid point
-            sigma_local = float(sigma[multi_idx])
+            sigma_local = float(volatility[multi_idx])
         else:
-            sigma_local = sigma
+            sigma_local = volatility
 
         # Check if this is a boundary point
         is_boundary = is_boundary_point(multi_idx, shape, ndim)

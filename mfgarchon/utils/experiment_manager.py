@@ -110,7 +110,7 @@ def save_experiment_data(
         "dt": problem.dt,
         # The volatility as supplied, except a callable, which np.savez cannot pickle: it would fail
         # the whole save. The kind says how an array is read.
-        "sigma": "callable" if callable(volatility) else volatility,
+        "volatility": "callable" if callable(volatility) else volatility,
         "volatility_kind": problem.volatility_kind,
         "coupling_coefficient": problem.coupling_coefficient,
         # Add other problem-specific parameters if they exist and are relevant
@@ -430,7 +430,7 @@ if __name__ == "__main__":
 
     # Create a dummy MFGProblem instance (requires MFGProblem to be importable)
     # from mfgarchon.core.mfg_problem import MFGProblem
-    # dummy_problem_params = {"Nx": 11, "Nt": 11, "T": 0.1, "sigma":1.0, "coupling_coefficient":0.5}
+    # dummy_problem_params = {"Nx": 11, "Nt": 11, "T": 0.1, "volatility":1.0, "coupling_coefficient":0.5}
     # dummy_problem = MFGProblem(**dummy_problem_params)
 
     # Dummy data

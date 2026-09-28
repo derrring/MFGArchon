@@ -2775,7 +2775,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 indices.append(int(np.clip(idx, 0, Nx_i)))
             return tuple(indices)
 
-    def _solve_crank_nicolson_diffusion(self, U_star: np.ndarray, dt: float, sigma: float) -> np.ndarray:
+    def _solve_crank_nicolson_diffusion(self, U_star: np.ndarray, dt: float, volatility: float) -> np.ndarray:
         """
         Solve diffusion step using Crank-Nicolson (unconditionally stable).
 
@@ -2784,7 +2784,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Args:
             U_star: Intermediate solution after advection step
             dt: Time step size
-            sigma: Diffusion coefficient
+            volatility: SDE volatility σ (the diffusion is D = σ²/2)
 
         Returns:
             Solution after implicit diffusion step
@@ -2797,7 +2797,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             # computed twice, so the mean is the identification.
             U_star = U_star.copy()
             enforce_periodic_value_nd(U_star, axis=0)
-        return solve_crank_nicolson_diffusion_1d(U_star, dt, sigma, self.x_grid, bc_type=bc_op)
+        return solve_crank_nicolson_diffusion_1d(U_star, dt, volatility, self.x_grid, bc_type=bc_op)
 
     def _source_increment(self, source_term, points, t: float, grid_shape) -> np.ndarray:
         """Evaluate the MMS forcing ``S(t, x)`` on the grid and shape it like the value array.

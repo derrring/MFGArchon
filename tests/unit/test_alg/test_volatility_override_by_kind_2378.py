@@ -27,31 +27,48 @@ _ENTRY_POINTS = ("solve_fp_system", "solve_hjb_system", "__init__")
 
 
 def _override_takers() -> dict[str, tuple[object, bool]]:
-    """Every solver entry point in `mfgarchon.alg` that takes a volatility override: name -> (function, is_method).
+    """Every solver entry point in `mfgarchon.alg` that could take a volatility override: name -> (function, is_method).
 
     The population must not be defined by the property audited (the refusal), nor by what the part 2a
     conversion added (`volatility_kind`): a function it missed would then be absent from the census and
-    from its own completeness check (#2420 review). So it is every concrete `solve_fp_system` /
-    `solve_hjb_system`, whatever its parameters, plus every `__init__` or module `solve_*` function
-    that names `volatility` or any retired keyword. Found by walking the package, so a solver added
-    later is in the population.
+    from its own completeness check (#2420 review). Nor by the bare name `volatility`, which part 2b
+    gave to helpers that never took an override. So it is keyed on the entry points by name: every
+    concrete `solve_fp_system` / `solve_hjb_system`; every hand-written `__init__` in
+    `mfgarchon.alg.numerical` (not a dataclass record) that names `volatility` or a retired keyword; and
+    every module function `solve_fp_...system` / `solve_hjb_...system`. Found by walking the package.
     """
+    import dataclasses
+    import re
+
     found: dict[str, tuple[object, bool]] = {}
     volatility_names = {"volatility", *RETIRED_VOLATILITY_KEYWORDS}
+    module_entry = re.compile(r"^solve_(fp|hjb)_\w*system")
     for info in pkgutil.walk_packages(mfgarchon.alg.__path__, "mfgarchon.alg."):
         module = importlib.import_module(info.name)
         for obj in vars(module).values():
             if inspect.isclass(obj) and obj.__module__ == module.__name__:
-                members = [(f"{obj.__qualname__}.{k}", v, True) for k, v in vars(obj).items() if k in _ENTRY_POINTS]
-            elif inspect.isfunction(obj) and obj.__module__ == module.__name__ and obj.__name__.startswith("solve_"):
-                members = [(obj.__qualname__, obj, False)]
+                members = [
+                    (f"{obj.__qualname__}.{k}", v, True, obj) for k, v in vars(obj).items() if k in _ENTRY_POINTS
+                ]
+            elif inspect.isfunction(obj) and obj.__module__ == module.__name__ and module_entry.match(obj.__name__):
+                members = [(obj.__qualname__, obj, False, None)]
             else:
                 continue
-            for qualname, func, is_method in members:
+            for qualname, func, is_method, owner in members:
                 if not inspect.isfunction(func) or getattr(func, "__isabstractmethod__", False):
                     continue
-                is_solve_method = is_method and func.__name__ in ("solve_fp_system", "solve_hjb_system")
-                if is_solve_method or volatility_names & set(inspect.signature(func).parameters):
+                names = set(inspect.signature(func).parameters)
+                if is_method and func.__name__ in ("solve_fp_system", "solve_hjb_system"):
+                    found[qualname] = (func, is_method)
+                elif is_method:  # __init__
+                    hand_written = not dataclasses.is_dataclass(owner)
+                    if (
+                        hand_written
+                        and module.__name__.startswith("mfgarchon.alg.numerical")
+                        and volatility_names & names
+                    ):
+                        found[qualname] = (func, is_method)
+                elif volatility_names & names:
                     found[qualname] = (func, is_method)
     return found
 
