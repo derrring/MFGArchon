@@ -50,7 +50,8 @@ def validate_components(
         require_m_initial: Whether m_initial is required
         require_u_terminal: Whether u_terminal is required
         check_mass_normalization: Whether to verify integral of m_initial = 1
-        terminal_time: The horizon T, at which a time-first ``u_terminal(t, x)`` is read (#2431)
+        terminal_time: The horizon T, at which a time-first ``u_terminal(t, x)`` is read (#2431).
+            It defaults to 0, so a caller validating a time-first ``u_terminal`` passes T.
 
     Returns:
         ValidationResult with any issues found
@@ -166,7 +167,8 @@ def validate_u_terminal(
     Args:
         u_terminal: Terminal value function (callable or array)
         geometry: Geometry for shape validation
-        terminal_time: The horizon T, at which a time-first ``u_terminal(t, x)`` is read (#2431)
+        terminal_time: The horizon T, at which a time-first ``u_terminal(t, x)`` is read (#2431).
+            It defaults to 0, so a caller validating a time-first ``u_terminal`` passes T.
 
     Returns:
         ValidationResult

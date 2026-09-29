@@ -101,6 +101,14 @@ def adapt_ic_callable(
         sample = sample_point if isinstance(sample_point, np.ndarray) else np.atleast_1d(sample_point)
 
     # --- The names decide first (#2375 ruling 8, #2431) ---
+    time_names = [name for name, slot in CONDITION_SLOTS.slot_of().items() if slot == "t"]
+    frozen = sorted(set(getattr(func, "keywords", None) or {}) & set(time_names))
+    if isinstance(func, functools.partial) and frozen:
+        raise TypeError(
+            f"{role} is a functools.partial that fixes {frozen[0]}={func.keywords[frozen[0]]!r}, but the library "
+            f"reads {role} at its own time. It takes (t, x) or (x): pass lambda x: f({func.keywords[frozen[0]]!r}, x) "
+            f"to fix the time yourself."
+        )
     names = _positional_names(func)
     bound: BoundCallable | None = None
     refusal: TypeError | None = None
@@ -112,6 +120,11 @@ def adapt_ic_callable(
                 raise
             refusal = e
     if bound is not None and "t" in bound.passes:
+        if "x" not in bound.passes:
+            raise TypeError(
+                f"{role} {getattr(func, '__qualname__', func)!r} takes time and no space. It is a function of "
+                f"space: it takes (t, x), time first, or (x). Name its space parameter x."
+            )
         result, err = _try_call(functools.partial(bound, t=time_value), x=sample)
         if err is None and _is_valid_output(result):
 
@@ -120,7 +133,10 @@ def adapt_ic_callable(
 
             return CallableSignature.SPATIOTEMPORAL_TX, _tx_wrapper
         attempts.append((f"f(t, x) with t={time_value}, bound by its parameter names", _err_str(err, result)))
-        raise TypeError(_format_signature_error(func, dimension, attempts))
+        # A TypeError can mean the signature misreports the call, as a functools.wraps wrapper's
+        # does: it shows the wrapped (t, x). The probes below call it as it really is.
+        if not isinstance(err, TypeError):
+            raise TypeError(_format_signature_error(func, dimension, attempts))
 
     # --- 1D probes ---
     if dimension == 1:
@@ -151,6 +167,17 @@ def adapt_ic_callable(
         if err is None and _is_valid_output(result):
             return CallableSignature.SPATIAL_ARRAY, func
         attempts.append(("f(x) with x=ndarray", _err_str(err, result)))
+
+        # A callable that takes the whole point as its first argument and returns a number with a
+        # second one cannot be taking coordinates: the second argument is time, in the order before
+        # #2378 phase 5 (`lambda x, tau`). Refuse it rather than read it as expanded coordinates.
+        result, err = _try_call(func, array_sample, time_value)
+        if err is None and _is_valid_output(result):
+            raise TypeError(
+                f"{role} {getattr(func, '__qualname__', func)!r} takes the point x first and a second argument "
+                f"after it: that is the order before #2378 phase 5, where the second argument is time. Since "
+                f"#2375 ruling 8 a {role} takes (t, x), time first: reorder its parameters and name them t, x."
+            )
 
         # Probe 2: f(*components) -- expanded coordinates (deprecated). A callable its names bind
         # time-first never reaches here.
@@ -186,17 +213,10 @@ def adapt_ic_callable(
                 return CallableSignature.EXPANDED_3D, _expanded_3d
             attempts.append(("f(x, y, z) with expanded coordinates", _err_str(err, result)))
 
-    # A callable with no readable signature (a builtin, a C extension) is called time-first
-    # positionally, as bind_user_callable calls any such callable.
+    # With no readable signature (a builtin, a C extension) nothing says which argument is time, so a
+    # callable that needs more than x is refused rather than guessed.
     if names is None:
-        result, err = _try_call(func, time_value, sample)
-        if err is None and _is_valid_output(result):
-
-            def _positional_wrapper(x: float | np.ndarray, _fn: Callable = func, _t: float = time_value) -> float:
-                return float(_fn(_t, x))
-
-            return CallableSignature.SPATIOTEMPORAL_TX, _positional_wrapper
-        attempts.append((f"f(t, x) with t={time_value}, positionally", _err_str(err, result)))
+        attempts.append(("f(t, x)", "no readable signature, so which argument is time cannot be read"))
     elif refusal is not None:
         attempts.append(("f(t, x) by parameter names", str(refusal)))
 

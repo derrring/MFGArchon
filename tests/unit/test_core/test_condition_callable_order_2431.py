@@ -13,6 +13,9 @@ which argument is ``x``.
 
 from __future__ import annotations
 
+import functools
+import re
+
 import pytest
 
 import numpy as np
@@ -41,6 +44,24 @@ def _one(x):
 
 def _u_terminal(problem):
     return np.asarray(problem.u_terminal).reshape(-1)
+
+
+def _exact(t, x):
+    return x**2 + 10.0 * t
+
+
+class _NoSignature:
+    """A callable whose signature cannot be read, like a C extension's."""
+
+    def __init__(self, fn):
+        self._fn = fn
+
+    def __call__(self, *args):
+        return self._fn(*args)
+
+    @property
+    def __signature__(self):
+        raise ValueError("no signature")
 
 
 @pytest.mark.parametrize("T", [1.0, 2.0])
@@ -72,17 +93,29 @@ def test_validation_reads_a_time_first_terminal_condition_at_T():
 
 
 @pytest.mark.parametrize(
-    "u_terminal",
+    ("u_terminal", "plus_T"),
     [
-        lambda t, x: float(np.sum(np.asarray(x) ** 2)) + t,  # bound by name
-        lambda tau, x: float(np.sum(np.asarray(x) ** 2)) + tau,  # bound by position: x names the order
+        (lambda t, x: float(np.sum(np.asarray(x) ** 2)) + t, True),  # bound by name
+        (lambda tau, x: float(np.sum(np.asarray(x) ** 2)) + tau, True),  # by position: x names the order
+        (lambda t, x: float(np.sum(np.asarray(x) ** 2)), False),  # ignores t: the defect read x as T here
     ],
-    ids=["t_x", "tau_x"],
+    ids=["t_x", "tau_x", "t_x_time_independent"],
 )
-def test_a_time_first_condition_in_2d_is_read_at_the_point_not_as_expanded_coordinates(u_terminal):
+def test_a_time_first_condition_in_2d_is_read_at_the_point_not_as_expanded_coordinates(u_terminal, plus_T):
     X, Y = np.meshgrid(*_GRID_2D.coordinates, indexing="ij")
     problem = _problem(_GRID_2D, u_terminal, _one, T=2.0)
-    np.testing.assert_allclose(_u_terminal(problem), (X**2 + Y**2 + 2.0).reshape(-1), rtol=0, atol=1e-15)
+    expected = X**2 + Y**2 + (2.0 if plus_T else 0.0)
+    np.testing.assert_allclose(_u_terminal(problem), expected.reshape(-1), rtol=0, atol=1e-15)
+
+
+def test_a_wraps_wrapper_that_fixes_time_is_read_as_it_is_called():
+    # Its signature reports the wrapped (t, x); it takes x alone.
+    @functools.wraps(_exact)
+    def at_half(x):
+        return _exact(0.5, x)
+
+    x = _GRID_1D.coordinates[0]
+    np.testing.assert_array_equal(_u_terminal(_problem(_GRID_1D, at_half, _one, T=2.0)), x**2 + 5.0)
 
 
 def test_expanded_coordinates_in_2d_are_still_read_as_coordinates():
@@ -92,15 +125,24 @@ def test_expanded_coordinates_in_2d_are_still_read_as_coordinates():
     np.testing.assert_allclose(_u_terminal(problem), (X**2 + Y**2).reshape(-1), rtol=0, atol=1e-15)
 
 
+_OUT_OF_ORDER = r"takes \(x, t\), which is out of order.*\(t, x\)"
+
+
 @pytest.mark.parametrize(
-    ("grid", "old_order"),
+    ("grid", "unreadable", "reason"),
     [
-        (_GRID_1D, lambda x, t: x**2 + t),
-        (_GRID_1D, lambda x, t=0.0: x**2 + t),  # a default does not make the old order readable
-        (_GRID_2D, lambda x, t: float(np.sum(np.asarray(x) ** 2)) + t),
+        (_GRID_1D, lambda x, t: x**2 + t, _OUT_OF_ORDER),
+        (_GRID_1D, lambda x, t=0.0: x**2 + t, _OUT_OF_ORDER),  # a default does not make it readable
+        (_GRID_2D, lambda x, t: float(np.sum(np.asarray(x) ** 2)) + t, _OUT_OF_ORDER),
+        # Time not named t: in 2-D it would otherwise pass as expanded coordinates (x, y).
+        (_GRID_2D, lambda x, tau: float(np.sum(np.asarray(x) ** 2)) + tau, r"point x first and a second argument"),
+        (_GRID_1D, functools.partial(_exact, t=0.5), r"functools\.partial that fixes t=0\.5"),
+        (_GRID_1D, lambda t: t**2, r"takes time and no space"),
+        (_GRID_1D, _NoSignature(lambda x, t: x**2 + t), r"no readable signature"),
     ],
-    ids=["1d", "1d_default", "2d"],
+    ids=["1d", "1d_default", "2d", "2d_tau", "partial_fixing_t", "time_only", "no_signature"],
 )
-def test_the_old_order_is_refused_rather_than_read_with_x_as_time(grid, old_order):
-    with pytest.raises(ValidationError, match=r"u_terminal .* takes \(x, t\), which is out of order.*\(t, x\)"):
-        _problem(grid, old_order, _one, T=2.0)
+def test_a_condition_whose_time_cannot_be_read_is_refused_rather_than_misread(grid, unreadable, reason):
+    with pytest.raises(ValidationError, match=r"u_terminal") as refused:
+        _problem(grid, unreadable, _one, T=2.0)
+    assert re.search(reason, str(refused.value), flags=re.S), str(refused.value)
