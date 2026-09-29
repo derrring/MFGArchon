@@ -1,0 +1,23 @@
+- **Every assembled operator derives the diffusion from the volatility through one converter, `diffusion_from_volatility` (#2378 phase 4 part 3).**
+  - **Five sites wrote a scalar σ²/2 inline and now call the converter:**
+    - the scalar branch of FP-FDM's strict-adjoint step, `solve_fp_step_adjoint_mode`;
+    - the scalar branch of Howard's step;
+    - `BaseVariationalSolver`'s two continuity-equation lines;
+    - HJB-SL's smoke block, which built a problem with `diffusion=σ²/2`. It now passes `volatility=`, as do two more smoke problems there that wrote the same with a literal.
+  - **The results are bit-identical.**
+    - The phase-4 solve oracles never reach these paths; that was measured with coverage. So each path was captured directly, before and after, and all ten captures agree bit for bit.
+    - A one-ulp perturbation of one capture is reported as a difference.
+    - The phase-4 oracles (123 and 33 fixtures) are also unchanged.
+  - **What still writes σ² inline is what the convention permits:** three CFL diagnostics, the GBM Itô drift correction, and the torch converter. The single-source ratchet goes from 10 sites to 5.
+  - HJB-FDM's tensor path was already routed: its axis weights come from Σ's diagonal through the converter, and since part 1 anything but a constant diagonal Σ is refused.
+- **The volatility's `sigma`-prefixed names are renamed (maintainer ruling 20, 2026-09-28).**
+  Breaking (pre-1.0; deprecation clause 4 waived by the maintainer, 2026-09-29, as for part 2b's `sigma=`).
+  - **Renamed, with a refusal:**
+    - `sigma_at_n=` is now `volatility_at_n=` on `compute_hjb_residual`, `compute_hjb_jacobian`, `newton_hjb_step` and `solve_hjb_timestep_newton`.
+    - `MonotonicityEnforcer(sigma_function=)` is now `volatility_function=`.
+    - The old keyword raises a `TypeError` naming the new one until v0.25.0, and the deprecation audit lists it.
+  - **Renamed privately:**
+    - `HJBGFDMSolver._get_sigma_value` is now `_get_volatility_value`. It returns the effective volatility, σ_eff, when the LLF augmentation is on.
+    - HJB-FDM's `sigma_at_n` and `Sigma_at_n` plumbing is now `volatility_at_n` and `volatility_tensor_at_n`. Its docstrings had called the tensor a diffusion coefficient.
+  - **What to change in your code:** `sigma_at_n=` → `volatility_at_n=`, and `sigma_function=` → `volatility_function=`.
+  - **Not in this part:** names that say `sigma` but carry the diffusion or covariance tensor, the reverse of this mislabel. They are filed as #2426.

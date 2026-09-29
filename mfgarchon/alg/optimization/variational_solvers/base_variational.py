@@ -17,6 +17,7 @@ import numpy as np
 from mfgarchon.alg.base_solver import BaseOptimizationSolver
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.integration import trapezoid
+from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -184,7 +185,7 @@ class BaseVariationalSolver(BaseOptimizationSolver):
                     d2m_dx2 = (
                         density_evolution[i, j + 1] - 2 * density_evolution[i, j] + density_evolution[i, j - 1]
                     ) / self.dx**2
-                    diffusion = 0.5 * self.volatility**2 * d2m_dx2
+                    diffusion = diffusion_from_volatility(self.volatility) * d2m_dx2
 
                     # Solve for velocity (simplified 1D case)
                     # This is an approximation - full implementation would solve the system properly
@@ -226,7 +227,7 @@ class BaseVariationalSolver(BaseOptimizationSolver):
                 d2m_dx2 = (
                     density_evolution[i, j + 1] - 2 * density_evolution[i, j] + density_evolution[i, j - 1]
                 ) / self.dx**2
-                diffusion = 0.5 * self.volatility**2 * d2m_dx2
+                diffusion = diffusion_from_volatility(self.volatility) * d2m_dx2
 
                 # Continuity equation residual
                 residual[i - 1, j - 1] = dm_dt + div_mv - diffusion

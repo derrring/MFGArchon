@@ -3110,7 +3110,7 @@ if __name__ == "__main__":
         geometry=geometry_1d,
         T=1.0,
         Nt=100,
-        diffusion=0.5 * 0.1**2,
+        volatility=0.1,
         components=_smoke_components_1d(),
     )
     solver = HJBSemiLagrangianSolver(problem, interpolation_method="linear", optimization_method="brent")
@@ -3153,7 +3153,7 @@ if __name__ == "__main__":
         geometry=geometry_2d,
         T=0.5,
         Nt=50,
-        diffusion=0.5 * 0.1**2,
+        volatility=0.1,
         components=_smoke_components_2d(),
     )
 
@@ -3402,7 +3402,7 @@ if __name__ == "__main__":
         geometry=grid_g,
         T=T_test,
         Nt=Nt_test,
-        diffusion=sigma_test**2 / 2,
+        volatility=sigma_test,
         components=components_g,
     )
     U_T_g = np.exp(-(x_g**2) / (2 * beta_T)) / np.sqrt(2 * np.pi * beta_T)

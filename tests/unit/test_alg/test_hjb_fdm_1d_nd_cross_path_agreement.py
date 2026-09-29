@@ -114,9 +114,9 @@ class TestHJBFDMCouplingIndexCrossPath:
         captured_nd: list[float] = []
         orig_nd = s2._solve_single_timestep
 
-        def spy_nd(u_next, m_coupling, u_guess, sigma_at_n, Sigma_at_n, **kw):
+        def spy_nd(u_next, m_coupling, u_guess, volatility_at_n, volatility_tensor_at_n, **kw):
             captured_nd.append(float(np.asarray(m_coupling).flat[0]))
-            return orig_nd(u_next, m_coupling, u_guess, sigma_at_n, Sigma_at_n, **kw)
+            return orig_nd(u_next, m_coupling, u_guess, volatility_at_n, volatility_tensor_at_n, **kw)
 
         monkeypatch.setattr(s2, "_solve_single_timestep", spy_nd)
         with warnings.catch_warnings():

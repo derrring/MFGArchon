@@ -309,7 +309,7 @@ class HJBHowardSolver:
         Override $\\sigma$ (constant scalar or a collocation-space array of
         shape `(n,)` declared ``volatility_kind="field"``). A field row-scales the Laplacian by
         $D_i = \\sigma_i^2/2$. When None, read from `problem` via
-        `stencil_provider._get_sigma_value(None)`.
+        `stencil_provider._get_volatility_value(None)`.
     volatility_kind : str | None
         "field" for an array volatility (#2378); a tensor is refused.
 
@@ -550,7 +550,7 @@ class HJBHowardSolver:
         if isinstance(volatility, np.ndarray):
             diffusion_operator = diags(diffusion_from_volatility(volatility, kind="field")) @ D_lap
         else:
-            diffusion_operator = 0.5 * volatility * volatility * D_lap
+            diffusion_operator = diffusion_from_volatility(volatility) * D_lap
 
         for _iteration in range(self.max_iter):  # named for the #2072 diagnostic below
             A_adv = self._build_A_adv(alpha, static)
@@ -726,7 +726,7 @@ class HJBHowardSolver:
         source = (
             self._volatility_override
             if self._volatility_override is not None
-            else self.stencil_provider._get_sigma_value(None)
+            else self.stencil_provider._get_volatility_value(None)
         )
         if np.isscalar(source):
             sigma = float(source)

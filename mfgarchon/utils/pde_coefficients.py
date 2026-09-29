@@ -153,6 +153,18 @@ def retired_sigma_keyword[F: Callable[..., Any]](func: F) -> F:
     return retired_parameters(RETIRED_SIGMA_KEYWORD, issue="#2378", since="v0.22.0")(func)
 
 
+#: ``sigma_at_n=`` on the public ``base_hjb`` assembly functions, which carried the volatility at t_n
+#: under a sigma prefix (#2378 phase 4 part 3, maintainer ruling 20, 2026-09-28: a hard rename).
+RETIRED_SIGMA_AT_N_KEYWORD: dict[str, str] = {"sigma_at_n": "volatility_at_n= -- the SDE volatility at t_n"}
+
+
+def retired_sigma_at_n_keyword[F: Callable[..., Any]](func: F) -> F:
+    """Refuse ``sigma_at_n=`` on ``func``, naming ``volatility_at_n=`` (#2378 part 3); goes at v0.25.0."""
+    from mfgarchon.utils.deprecation import retired_parameters
+
+    return retired_parameters(RETIRED_SIGMA_AT_N_KEYWORD, issue="#2378", since="v0.22.0")(func)
+
+
 def retired_sigma_and_kind_keywords[F: Callable[..., Any]](func: F) -> F:
     """``retired_sigma_keyword`` for a function that also took ``sigma_kind=`` (#2378 part 2b)."""
     from mfgarchon.utils.deprecation import retired_parameters

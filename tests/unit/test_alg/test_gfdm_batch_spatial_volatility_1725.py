@@ -2,7 +2,7 @@
 """HJBGFDM must preserve one spatial volatility field through every path (Issue #1725).
 
 The original defect appeared in the batch residual and Jacobian, which resolved sigma through
-``_get_sigma_value(None)`` and collapsed a field to its mean. The same resolution fork survived
+``_get_volatility_value(None)`` and collapsed a field to its mean. The same resolution fork survived
 in LLF, DMP, and Howard. These tests pin one solve-level collocation-space coefficient across all
 of those consumers.
 
@@ -468,8 +468,8 @@ def test_problem_owned_implicit_field_stays_collocation_indexed():
 
     # Before the solve, the fallback reads the same space: the problem's domain is not a grid, so its
     # field is node-indexed, not interpolated off an invented uniform grid (#2378 review).
-    np.testing.assert_array_equal(solver._get_sigma_value(None), field)
-    assert solver._get_sigma_value(3) == field[3]
+    np.testing.assert_array_equal(solver._get_volatility_value(None), field)
+    assert solver._get_volatility_value(3) == field[3]
 
     solver.solve_hjb_system(
         M_density=np.ones((problem.Nt + 1, len(points))),

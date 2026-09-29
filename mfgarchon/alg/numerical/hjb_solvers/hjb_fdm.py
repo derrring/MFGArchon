@@ -707,17 +707,17 @@ class HJBFDMSolver(BaseHJBSolver):
             U_guess = U_prev[n]
 
             d = self.dimension
-            Sigma_at_n = None
-            sigma_at_n = None
+            volatility_tensor_at_n = None
+            volatility_at_n = None
 
             if is_tensor:
-                Sigma_at_n = np.asarray(volatility)  # a constant diagonal (d, d) Sigma, checked above
+                volatility_tensor_at_n = np.asarray(volatility)  # a constant diagonal (d, d) Sigma, checked above
             else:
                 # A scalar, a field, or a callable read per point (CoefficientField handles all three)
                 diffusion = self.problem.get_diffusion_coefficient_field(
                     override=volatility, field_name="volatility", dimension=d
                 )
-                sigma_at_n = diffusion.evaluate_at(
+                volatility_at_n = diffusion.evaluate_at(
                     timestep_idx=n, grid=self.grid.coordinates, density=M_n, dt=self.problem.dt
                 )
 
@@ -736,8 +736,8 @@ class HJBFDMSolver(BaseHJBSolver):
                 U_next,
                 M_n,
                 U_guess,
-                sigma_at_n,
-                Sigma_at_n,
+                volatility_at_n,
+                volatility_tensor_at_n,
                 time=t_current,
                 constraint=self.constraint,
                 source_term=source_at_n,
@@ -755,8 +755,8 @@ class HJBFDMSolver(BaseHJBSolver):
         U_next: NDArray,
         M_next: NDArray,
         U_guess: NDArray,
-        sigma_at_n: float | NDArray | None = None,
-        Sigma_at_n: NDArray | None = None,
+        volatility_at_n: float | NDArray | None = None,
+        volatility_tensor_at_n: NDArray | None = None,
         time: float = 0.0,
         constraint: ConstraintProtocol | None = None,
         source_term: NDArray | None = None,
@@ -774,8 +774,9 @@ class HJBFDMSolver(BaseHJBSolver):
             U_next: Value function at next timestep
             M_next: Density at next timestep
             U_guess: Initial guess for current timestep
-            sigma_at_n: Scalar volatility coefficient (sigma) at current timestep (None, float, or array)
-            Sigma_at_n: Tensor diffusion coefficient at current timestep (None or tensor array)
+            volatility_at_n: Scalar volatility coefficient (sigma) at current timestep (None, float, or array)
+            volatility_tensor_at_n: The volatility tensor Sigma at the current timestep, a constant diagonal
+                (d, d) (None when the volatility is not a tensor); D = Sigma_ii^2/2 per axis.
             time: Current time for time-dependent BC values
             constraint: Variational inequality constraint (Issue #591)
                 - ObstacleConstraint: u ≥ ψ or u ≤ ψ
@@ -789,7 +790,9 @@ class HJBFDMSolver(BaseHJBSolver):
             # Fixed-point iteration: u_n = u_{n+1} - dt·(H(∇u_n, m) - S)
             def G(U: NDArray) -> NDArray:
                 gradients = self._compute_gradients_nd(U, time=time)
-                H_values = self._evaluate_hamiltonian_nd(U, M_next, gradients, sigma_at_n, Sigma_at_n, time=time)
+                H_values = self._evaluate_hamiltonian_nd(
+                    U, M_next, gradients, volatility_at_n, volatility_tensor_at_n, time=time
+                )
                 rhs = H_values
                 if source_term is not None:
                     rhs = rhs - source_term
@@ -802,7 +805,9 @@ class HJBFDMSolver(BaseHJBSolver):
             # F(u) = (u - u_next)/dt + H(∇u, m) - S = 0
             def F(U: NDArray) -> NDArray:
                 gradients = self._compute_gradients_nd(U, time=time)
-                H_values = self._evaluate_hamiltonian_nd(U, M_next, gradients, sigma_at_n, Sigma_at_n, time=time)
+                H_values = self._evaluate_hamiltonian_nd(
+                    U, M_next, gradients, volatility_at_n, volatility_tensor_at_n, time=time
+                )
                 residual = (U - U_next) / self.dt + H_values
                 if source_term is not None:
                     residual = residual - source_term
@@ -827,7 +832,7 @@ class HJBFDMSolver(BaseHJBSolver):
                     def G_fallback(U: NDArray) -> NDArray:
                         gradients = self._compute_gradients_nd(U, time=time)
                         H_values = self._evaluate_hamiltonian_nd(
-                            U, M_next, gradients, sigma_at_n, Sigma_at_n, time=time
+                            U, M_next, gradients, volatility_at_n, volatility_tensor_at_n, time=time
                         )
                         rhs = H_values
                         if source_term is not None:
@@ -957,8 +962,8 @@ class HJBFDMSolver(BaseHJBSolver):
         U: NDArray,
         M: NDArray,
         gradients: dict[int, NDArray],
-        sigma_at_n: float | NDArray | None = None,
-        Sigma_at_n: NDArray | None = None,
+        volatility_at_n: float | NDArray | None = None,
+        volatility_tensor_at_n: NDArray | None = None,
         time: float = 0.0,
     ) -> NDArray:
         """Evaluate Hamiltonian at all grid points with variable diffusion support.
@@ -972,19 +977,21 @@ class HJBFDMSolver(BaseHJBSolver):
             M: Density at current timestep
             gradients: Dictionary mapping dimension index to gradient arrays.
                        Key d = dU/dxd.
-            sigma_at_n: Scalar volatility coefficient (sigma)
-            Sigma_at_n: Tensor diffusion coefficient (diagonal only)
+            volatility_at_n: Scalar volatility coefficient (sigma)
+            volatility_tensor_at_n: The volatility tensor Sigma, diagonal only; D = Sigma_ii^2/2 per axis.
             time: Current time for time-dependent Hamiltonians (default 0.0)
         """
-        return self._evaluate_hamiltonian_vectorized(U, M, gradients, sigma_at_n, Sigma_at_n, time=time)
+        return self._evaluate_hamiltonian_vectorized(
+            U, M, gradients, volatility_at_n, volatility_tensor_at_n, time=time
+        )
 
     def _evaluate_hamiltonian_vectorized(
         self,
         U: NDArray,
         M: NDArray,
         gradients: dict[int, NDArray],
-        sigma_at_n=None,
-        Sigma_at_n=None,
+        volatility_at_n=None,
+        volatility_tensor_at_n=None,
         time: float = 0.0,
     ) -> NDArray:
         """
@@ -1000,8 +1007,8 @@ class HJBFDMSolver(BaseHJBSolver):
             M: Density at current timestep
             gradients: Dictionary mapping dimension index to gradient arrays.
                        Key d = dU/dxd.
-            sigma_at_n: Scalar volatility coefficient (sigma)
-            Sigma_at_n: Tensor diffusion coefficient (diagonal only)
+            volatility_at_n: Scalar volatility coefficient (sigma)
+            volatility_tensor_at_n: The volatility tensor Sigma, diagonal only; D = Sigma_ii^2/2 per axis.
             time: Current time for time-dependent Hamiltonians
 
         Returns:
@@ -1023,12 +1030,12 @@ class HJBFDMSolver(BaseHJBSolver):
         # Flatten density
         m_grid = M.ravel()  # (N_total,)
 
-        if Sigma_at_n is not None:
+        if volatility_tensor_at_n is not None:
             # Tensor diffusion mode -- batch H_class + anisotropic Laplacian (Issue #784). Only a
             # constant diagonal (d, d) Sigma reaches here (_solve_hjb_nd refuses the rest, #2378), so the
             # axis weights are its diagonal. The non-diagonal warning and the per-point averaging this
             # block used to carry served override tensors read by shape, which part 2a retired.
-            sigma_diag = np.diag(Sigma_at_n)  # (d,)
+            sigma_diag = np.diag(volatility_tensor_at_n)  # (d,)
 
             # Convective Hamiltonian via H_class (same pattern as scalar path)
             H_class = self.problem.hamiltonian_class
@@ -1062,7 +1069,7 @@ class HJBFDMSolver(BaseHJBSolver):
 
             # Diffusion term: -(sigma^2/2) * Laplacian(U) (Issue #787)
             # Follows the 1D pattern in base_hjb's compute_hjb_residual
-            sigma = _volatility_at_n(self.problem, sigma_at_n)
+            sigma = _volatility_at_n(self.problem, volatility_at_n)
             lap_u = self._get_laplacian_op()(U).ravel()
             # A per-point D comes on the grid's shape; the Laplacian is flat.
             D = np.ravel(diffusion_from_volatility(sigma, kind="field"))

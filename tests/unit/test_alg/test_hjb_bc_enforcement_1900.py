@@ -97,7 +97,7 @@ def _solve_and_measure(bc, nx: int = 21, tol: float = 1e-9):
             newton_tolerance=tol,
             t_idx_n=5,
             backend=None,
-            sigma_at_n=0.3,
+            volatility_at_n=0.3,
             use_upwind=True,
             bc=bc,
             domain_bounds=BOUNDS,

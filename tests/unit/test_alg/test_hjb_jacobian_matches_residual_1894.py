@@ -180,7 +180,7 @@ def test_periodic_wrap_with_a_volatility_field_does_not_collapse_the_jacobian():
     u = np.zeros(nx)
     m = np.ones(nx) / nx
 
-    jac = compute_hjb_jacobian(u, u, m, problem, t_idx_n=9, sigma_at_n=field, bc=grid.boundary_conditions)
+    jac = compute_hjb_jacobian(u, u, m, problem, t_idx_n=9, volatility_at_n=field, bc=grid.boundary_conditions)
     dense = np.asarray(jac.todense())
 
     assert not np.allclose(dense, np.eye(nx) / dt), "the Jacobian collapsed to (1/dt) * I"

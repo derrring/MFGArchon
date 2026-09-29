@@ -1035,7 +1035,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 multi_indices=self.multi_indices,
                 domain_bounds=self.domain_bounds,
                 delta=self.delta,
-                sigma_function=self._get_sigma_value,
+                volatility_function=self._get_volatility_value,
             )
             # Alias qp_stats to enforcer.stats for backward compatibility
             self.qp_stats = self._monotonicity_enforcer.stats
@@ -2192,7 +2192,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         """
         dt = self.problem.T / self.problem.Nt
         u_t = (u_n_plus_1 - u_current) / dt
-        # _get_sigma_value returns σ (not D); the harness applies D = σ²/2 (#1073/#811).
+        # _get_volatility_value returns σ (not D); the harness applies D = σ²/2 (#1073/#811).
         # Issue #1059/#1071 phase 7: a per-node LLF σ_eff field flows through the single-source
         # assemble_hjb_residual (now field-σ capable, D_i = σ_eff_i²/2 elementwise); a plain solve
         # uses the scalar σ. One assembly path either way.
@@ -2236,7 +2236,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             self._build_differentiation_matrices()
 
         dt = self.problem.T / self.problem.Nt
-        # _get_sigma_value returns σ (not D); the harness applies D = σ²/2 (#1073/#811).
+        # _get_volatility_value returns σ (not D); the harness applies D = σ²/2 (#1073/#811).
         # Issue #1059/#1071 phase 7: a per-node LLF σ_eff field flows through the single-source
         # assemble_hjb_jacobian_diag (now field-σ capable: it row-scales the Laplacian via
         # diags(D_i) @ D_lap); a plain solve uses the scalar σ. One assembly path either way.
@@ -2289,7 +2289,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             if additive_source is not None:
                 H = H + additive_source[i]
 
-            sigma_val = self._get_sigma_value(i)
+            sigma_val = self._get_volatility_value(i)
             diffusion_term = diffusion_from_volatility(sigma_val) * laplacian
             residual[i] = -u_t[i] + H - diffusion_term
 
@@ -2443,7 +2443,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             if dH_dp is None:
                 dH_dp = self._compute_dH_dp_fd(i, m_n_plus_1[i], p_derivs, time_idx)
 
-            sigma_val = self._get_sigma_value(i)
+            sigma_val = self._get_volatility_value(i)
             diffusion_coeff = diffusion_from_volatility(sigma_val)
 
             # Neighbor contributions
@@ -2824,7 +2824,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         Returns:
             shape (n_points,) float64 array of per-node effective volatility values.
         """
-        sigma = self._solve_sigma if self._solve_sigma is not None else self._get_sigma_value(None)
+        sigma = self._solve_sigma if self._solve_sigma is not None else self._get_volatility_value(None)
         D_base = (
             diffusion_from_volatility(sigma, kind="field")
             if isinstance(sigma, np.ndarray)
@@ -2839,7 +2839,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # sigma_eff_i = sqrt(sigma^2 + 2*nu_i)
         return np.sqrt(sigma**2 + 2.0 * nu_i)
 
-    def _get_sigma_value(self, point_idx: int | None = None) -> float:
+    def _get_volatility_value(self, point_idx: int | None = None) -> float:
         """
         Get diffusion coefficient value, handling both numeric and callable sigma.
 
@@ -2909,7 +2909,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             return self._llf_sigma_eff
         if self._solve_sigma is not None:
             return self._solve_sigma
-        return self._get_sigma_value(None)
+        return self._get_volatility_value(None)
 
     def _resolve_sigma_for_solve(
         self,

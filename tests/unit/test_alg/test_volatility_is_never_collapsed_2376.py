@@ -114,7 +114,7 @@ def test_the_strict_adjoint_fp_step_refuses_a_callable():
 def test_gfdm_falls_back_to_the_field_not_to_one():
     """HJBGFDMSolver's pre-solve volatility is the field at the collocation points, never 1.0.
 
-    Before #2376 ``_get_sigma_value(None)`` returned ``float(getattr(problem, "sigma", 1.0))``: the
+    Before #2376 ``_get_volatility_value(None)`` returned ``float(getattr(problem, "sigma", 1.0))``: the
     mean for an array, and 1.0 for a callable problem -- reached by a standalone Howard solve and by
     the construction-time LLF base.
     """
@@ -122,12 +122,12 @@ def test_gfdm_falls_back_to_the_field_not_to_one():
 
     points = np.linspace(0.0, 1.0, N).reshape(-1, 1)
     solver = HJBGFDMSolver(_problem(**FIELD), collocation_points=points, monotonicity_scheme="none")
-    np.testing.assert_allclose(solver._get_sigma_value(None), RAMP, rtol=0, atol=1e-15)
-    assert solver._get_sigma_value(3) == pytest.approx(RAMP[3], abs=1e-15)
+    np.testing.assert_allclose(solver._get_volatility_value(None), RAMP, rtol=0, atol=1e-15)
+    assert solver._get_volatility_value(3) == pytest.approx(RAMP[3], abs=1e-15)
     with pytest.raises(NotImplementedError, match="space-only volatility callable"):
-        HJBGFDMSolver(_problem(**CALLABLE), collocation_points=points, monotonicity_scheme="none")._get_sigma_value(
-            None
-        )
+        HJBGFDMSolver(
+            _problem(**CALLABLE), collocation_points=points, monotonicity_scheme="none"
+        )._get_volatility_value(None)
 
 
 def test_fvm_refuses_the_problems_tensor_even_when_its_entries_are_equal():

@@ -10,7 +10,7 @@ Pre-fix (before this PR): ``HJBGFDMSolver.__init__`` has no ``llf_augmentation``
 parameter; constructing with it raises ``TypeError: unexpected keyword argument``.
 
 Post-fix: the parameter exists; the solver stores ``_llf_sigma_eff`` (per-node effective
-sigma), and ``_get_sigma_value(i)`` returns ``sigma_eff_i >= sigma`` for all i when LLF is
+sigma), and ``_get_volatility_value(i)`` returns ``sigma_eff_i >= sigma`` for all i when LLF is
 active.  With LLF OFF the result is byte-identical to the baseline (no sigma override).
 """
 
@@ -181,7 +181,7 @@ class TestLLFAugmentationPinning:
         )
 
     def test_llf_get_sigma_value_returns_eff(self, problem_and_pts):
-        """PINNING: _get_sigma_value(i) returns sigma_eff_i when LLF is on."""
+        """PINNING: _get_volatility_value(i) returns sigma_eff_i when LLF is on."""
         problem, pts = problem_and_pts
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
@@ -193,20 +193,20 @@ class TestLLFAugmentationPinning:
                 llf_l_H=10.0,
             )
         for i in range(min(5, solver.n_points)):
-            got = solver._get_sigma_value(i)
+            got = solver._get_volatility_value(i)
             expected = float(solver._llf_sigma_eff[i])
-            assert abs(got - expected) < 1e-12, f"_get_sigma_value({i}) = {got} != sigma_eff[{i}] = {expected}"
+            assert abs(got - expected) < 1e-12, f"_get_volatility_value({i}) = {got} != sigma_eff[{i}] = {expected}"
 
     def test_llf_off_get_sigma_value_unchanged(self, problem_and_pts):
-        """PINNING: LLF OFF → _get_sigma_value(i) returns base problem sigma."""
+        """PINNING: LLF OFF → _get_volatility_value(i) returns base problem sigma."""
         problem, pts = problem_and_pts
         sigma_base = float(problem.volatility)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             solver = HJBGFDMSolver(problem, pts, monotonicity_scheme="none")
         for i in range(min(5, solver.n_points)):
-            got = solver._get_sigma_value(i)
-            assert abs(got - sigma_base) < 1e-12, f"LLF OFF: _get_sigma_value({i}) = {got} != sigma = {sigma_base}"
+            got = solver._get_volatility_value(i)
+            assert abs(got - sigma_base) < 1e-12, f"LLF OFF: _get_volatility_value({i}) = {got} != sigma = {sigma_base}"
 
 
 # ---------------------------------------------------------------------------
@@ -514,7 +514,7 @@ class TestLLFJacobianEffect:
         H = np.asarray(eval_H_batch(H_class, x, m, grad_u, t), dtype=float)
         d_field = diffusion_from_volatility(solver._llf_sigma_eff, kind="field")
         ref_field = -u_t + H - d_field * lap_u
-        d_scalar = diffusion_from_volatility(solver._get_sigma_value(None))
+        d_scalar = diffusion_from_volatility(solver._get_volatility_value(None))
         ref_scalar = -u_t + H - d_scalar * lap_u
 
         assert np.array_equal(np.asarray(r), ref_field), "LLF residual not byte-identical to inline field formula"

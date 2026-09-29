@@ -63,13 +63,13 @@ class TestSigmaToDiffusionAgreement:
 
     @pytest.mark.parametrize("sigma", SIGMAS)
     def test_gfdm_sigma_resolution_agrees(self, sigma):
-        """The 2D scattered-cloud GFDM HJB path resolves sigma via _get_sigma_value, then applies
+        """The 2D scattered-cloud GFDM HJB path resolves sigma via _get_volatility_value, then applies
         the canonical converter (hjb_gfdm.py:2053-2054 etc.). It must agree with the converter."""
         from types import SimpleNamespace
 
         from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
 
-        # _get_sigma_value reads self.llf_augmentation / self._llf_sigma_eff (LLF augmentation,
+        # _get_volatility_value reads self.llf_augmentation / self._llf_sigma_eff (LLF augmentation,
         # Issue #1059) and self._volatility_override (Issue #1316); a real solver sets all
         # three in __init__. LLF off + no override is the default sigma resolution path this
         # convention guard exercises.
@@ -79,7 +79,7 @@ class TestSigmaToDiffusionAgreement:
             _llf_sigma_eff=None,
             _volatility_override=None,
         )
-        resolved = HJBGFDMSolver._get_sigma_value(stub, None)
+        resolved = HJBGFDMSolver._get_volatility_value(stub, None)
         assert diffusion_from_volatility(resolved) == pytest.approx(0.5 * sigma * sigma, rel=1e-12)
 
     @pytest.mark.parametrize("sigma", SIGMAS)
@@ -146,8 +146,8 @@ class TestSigmaToDiffusionAgreement:
         m = np.ones_like(u)
         grads = solver._compute_gradients_nd(u)
         sigma = 0.3
-        h_scalar = solver._evaluate_hamiltonian_vectorized(u, m, grads, sigma_at_n=sigma)
-        h_tensor = solver._evaluate_hamiltonian_vectorized(u, m, grads, Sigma_at_n=np.diag([sigma, sigma]))
+        h_scalar = solver._evaluate_hamiltonian_vectorized(u, m, grads, volatility_at_n=sigma)
+        h_tensor = solver._evaluate_hamiltonian_vectorized(u, m, grads, volatility_tensor_at_n=np.diag([sigma, sigma]))
         np.testing.assert_allclose(h_tensor, h_scalar, rtol=0, atol=1e-13)  # was ~3.3x off (sigma vs sigma^2)
 
 

@@ -77,7 +77,7 @@ def _hjb_residual_per_step(problem: MFGProblem, U: np.ndarray, M: np.ndarray) ->
     grid = get_spatial_grid(problem)
     out = []
     for n in range(U.shape[0] - 1):
-        sigma_at_n = diffusion.evaluate_at(timestep_idx=n, grid=grid, density=M[n], dt=problem.dt)
+        volatility_at_n = diffusion.evaluate_at(timestep_idx=n, grid=grid, density=M[n], dt=problem.dt)
         residual = base_hjb.compute_hjb_residual(
             U[n],
             U[n + 1],
@@ -85,7 +85,7 @@ def _hjb_residual_per_step(problem: MFGProblem, U: np.ndarray, M: np.ndarray) ->
             problem,
             n,
             None,
-            sigma_at_n,
+            volatility_at_n,
             True,
             bc=bc,
             domain_bounds=domain_bounds,
