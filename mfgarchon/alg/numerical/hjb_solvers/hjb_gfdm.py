@@ -2841,7 +2841,7 @@ class HJBGFDMSolver(BaseHJBSolver):
 
     def _get_volatility_value(self, point_idx: int | None = None) -> float:
         """
-        Get diffusion coefficient value, handling both numeric and callable sigma.
+        Get the SDE volatility sigma (not D = sigma^2/2), handling both numeric and callable sigma.
 
         When llf_augmentation=True and point_idx is not None, returns the per-node
         effective sigma sqrt(sigma^2 + 2*nu_i) from LLF augmentation (Issue #1059).

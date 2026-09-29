@@ -180,7 +180,7 @@ class TestLLFAugmentationPinning:
             err_msg="Expected sigma_eff = 1.0 at every node for l_H=10, delta=0.1, sigma=0.5, C=0.5",
         )
 
-    def test_llf_get_sigma_value_returns_eff(self, problem_and_pts):
+    def test_llf_get_volatility_value_returns_eff(self, problem_and_pts):
         """PINNING: _get_volatility_value(i) returns sigma_eff_i when LLF is on."""
         problem, pts = problem_and_pts
         with warnings.catch_warnings():
@@ -197,7 +197,7 @@ class TestLLFAugmentationPinning:
             expected = float(solver._llf_sigma_eff[i])
             assert abs(got - expected) < 1e-12, f"_get_volatility_value({i}) = {got} != sigma_eff[{i}] = {expected}"
 
-    def test_llf_off_get_sigma_value_unchanged(self, problem_and_pts):
+    def test_llf_off_get_volatility_value_unchanged(self, problem_and_pts):
         """PINNING: LLF OFF → _get_volatility_value(i) returns base problem sigma."""
         problem, pts = problem_and_pts
         sigma_base = float(problem.volatility)

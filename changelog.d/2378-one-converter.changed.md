@@ -4,10 +4,12 @@
     - the scalar branch of Howard's step;
     - `BaseVariationalSolver`'s two continuity-equation lines;
     - HJB-SL's smoke block, which built a problem with `diffusion=σ²/2`. It now passes `volatility=`, as do two more smoke problems there that wrote the same with a literal.
-  - **The results are bit-identical.**
-    - The phase-4 solve oracles never reach these paths; that was measured with coverage. So each path was captured directly, before and after, and all ten captures agree bit for bit.
-    - A one-ulp perturbation of one capture is reported as a difference.
-    - The phase-4 oracles (123 and 33 fixtures) are also unchanged.
+  - **The results are unchanged, except Howard's scalar diffusion, which can move by one ulp.**
+    - FP-FDM's and the variational solver's lines computed `0.5 * sigma**2` on a float before, which is what the converter's scalar path computes. They are identical by construction.
+    - Howard computed `0.5 * sigma * sigma`, i.e. (0.5σ)·σ, which is correctly rounded. The converter squares with `pow`, and this platform's libm `pow` is not correctly rounded: on 10⁶ uniform σ in [10⁻³, 10], 1,256 have `σ**2 != σ*σ` (macOS arm64, CPython 3.12.13). For those σ, Howard's scalar D now differs from before by one ulp. It now equals every other solver's scalar D, which it did not before.
+    - The phase-4 solve oracles never reach these paths; that was measured with coverage. So each path was captured directly, before and after. All ten captures agree bit for bit, at σ values where the two roundings coincide, and a one-ulp perturbation is reported as a difference. The independent review reproduced the Howard difference at σ = 1.509.
+    - The phase-4 oracles (123 and 33 fixtures) are unchanged.
+    - The converter itself gives a different last bit on its scalar path than on its field path for those σ. That is pre-existing, and it is filed as #2428.
   - **What still writes σ² inline is what the convention permits:** three CFL diagnostics, the GBM Itô drift correction, and the torch converter. The single-source ratchet goes from 10 sites to 5.
   - HJB-FDM's tensor path was already routed: its axis weights come from Σ's diagonal through the converter, and since part 1 anything but a constant diagonal Σ is refused.
 - **The volatility's `sigma`-prefixed names are renamed (maintainer ruling 20, 2026-09-28).**
