@@ -110,7 +110,7 @@ class StochasticMFGProblem(MFGProblem):
         Initialize stochastic MFG problem.
 
         Args:
-            xmin, xmax, Nx: Spatial domain [xmin, xmax] with Nx grid points
+            xmin, xmax, Nx: Spatial domain [xmin, xmax] with Nx intervals, so Nx + 1 grid points
             T, Nt: Time horizon [0, T] with Nt time steps
             volatility: The agents' own SDE volatility Sigma, as on MFGProblem -- not the common
                 noise's, which belongs to ``noise_process``. The PDE diffusion is 1/2 Sigma Sigma^T.

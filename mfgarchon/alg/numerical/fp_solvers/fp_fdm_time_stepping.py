@@ -1206,7 +1206,7 @@ def solve_timestep_tensor_explicit(
     """
     Solve one timestep with tensor diffusion using explicit Forward Euler.
 
-    Implements: m^{k+1} = m^k + dt * (div(Sigma * grad(m)) - div(alpha * m))
+    Implements: m^{k+1} = m^k + dt * (div(D * grad(m)) - div(alpha * m)), D = 1/2 Sigma Sigma^T
 
     Parameters
     ----------
@@ -1219,7 +1219,8 @@ def solve_timestep_tensor_explicit(
     dt : float
         Time step
     tensor_field : np.ndarray or callable
-        Tensor diffusion coefficient Sigma
+        The SDE volatility tensor Sigma, ``(d, d)`` or ``(*shape, d, d)``; converted here to the
+        diffusion D (docs/user/CONVENTIONS.md § Volatility and diffusion)
     coupling_coefficient : float
         Drift coupling coefficient
     spacing : tuple

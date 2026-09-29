@@ -46,8 +46,8 @@ def assert_quadratic_drift(problem: Any, *, context: str) -> None:
     control), and also for a non-separable Hamiltonian or no Hamiltonian at all (both outside this
     guard's quadratic-MINIMIZE-vs-not scope). What happens on that non-separable / no-Hamiltonian
     no-op depends on the caller: :func:`fp_drift_coefficient`'s own callers fall through to the legacy
-    scalar ``coupling_coefficient``; the velocity-channel FP solvers (FVM / FEM / meshless-Galerkin)
-    do NOT fall through to a scalar -- they require a ``SeparableHamiltonian`` and reject a
+    scalar ``coupling_coefficient``; the FP solvers that form ``alpha*`` from ``H.optimal_control``
+    themselves (FVM, and the weak-form FEM / meshless-Galerkin family) do NOT fall through to a scalar -- they require a ``SeparableHamiltonian`` and reject a
     non-separable Hamiltonian with their own ``NotImplementedError`` at the ``H.optimal_control`` call
     site (Issue #1528).
 
@@ -487,9 +487,9 @@ def resolve_volatility(
 
     Resolution order (canonical first):
 
-    1. ``problem_params["sigma"]`` -- the canonical SDE volatility key
-       (``docs/user/CONVENTIONS.md`` § Volatility and diffusion). Returned verbatim; the caller
-       computes ``D = sigma**2 / 2``. No warning.
+    1. ``problem_params["sigma"]`` -- the key this resolver treats as canonical; it holds the SDE
+       volatility under a name ``docs/user/CONVENTIONS.md`` § Names retires elsewhere. Returned
+       verbatim; the caller computes ``D = sigma**2 / 2``. No warning.
     2. ``problem_params[legacy_key]`` -- the backend's historical key, when ``legacy_key`` is
        given and present. ``legacy_is_squared=True`` means the stored value is ``sigma**2``
        (the numpy/jax ``"sigma_sq"`` key), so ``sqrt`` is applied; ``legacy_is_squared=False``

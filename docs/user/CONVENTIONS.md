@@ -8,8 +8,9 @@ Each rule keeps at most a one-line reason, where the rule would otherwise read a
 history behind a rule — what was refuted, which incident produced it — lives in the issue that
 settled it, not here.
 
-Where the code does not yet meet a convention, the section says so and points at the tracking issue,
-**#2429**, rather than stating a rule the code breaks.
+Where the code does not yet meet a convention, the section says so and points at the issue that
+tracks it — **#2429** collects them, and a gap with its own owner links there — rather than stating a
+rule the code breaks.
 
 ---
 
@@ -23,7 +24,7 @@ A maximisation problem is negated before it reaches the library:
 ```python
 # maximise E[ reward(X_t) ]  is stated to MFGArchon as
 def reward(x):
-    return -((x - 0.5) ** 2)  # what the agents would maximise
+    return -float(np.sum((np.asarray(x) - 0.5) ** 2))  # what the agents would maximise
 
 
 H = SeparableHamiltonian(
@@ -86,13 +87,15 @@ The FP drift does not move with these signs: $\alpha^* = -D_pH$ depends only on 
 ### The Hamiltonian is where the sign lives
 
 `SeparableHamiltonian.__call__` returns the full combination above (`HamiltonianBase.__call__` is
-abstract). No solver re-signs a part of it: a constant $c$ added to $V$ moves $u(0)$ by $+cT$ in
-every solver family.
+abstract). No solver keeps its own sign for a part of it: a constant $c$ added to $V$ moves $u(0)$ by
+$+cT$ in every solver family that reads the problem's $H$.
 
 How the solvers use it differs, and the difference is part of the convention:
 
 - The Newton and explicit assemblies — FDM, GFDM, WENO, the weak-form family and `NetworkHJBSolver` —
   add $H$ whole.
+- HJB semi-Lagrangian's update assembles control cost $+\,V + f$ from the same object, as
+  $H(p) - 2H(0)$.
 - The policy-iteration assemblies assemble control cost $+\,V + f$ as a running cost:
   `HJBGFDMSolver(inner_solver="howard")` takes each part from the same Hamiltonian object;
   `NetworkPolicyIterationHJBSolver` recomputes the built-in quadratic control cost itself and refuses a
@@ -119,9 +122,10 @@ not claimed for them, and the library does not check it either way.
 
 - **`source_term_hjb(t, x, v, m)` receives the density *slice* $m(t,\cdot)$**, not the full
   $(N_t+1, N_x)$ trajectory. A callback that slices internally slices twice.
-- **Every HJB solver whose `solve_hjb_system` names `source_term` accepts it and adds it.** That is
-  every family except the two network HJB solvers. Handing a composed source to one of those raises
-  `NotImplementedError` rather than dropping it.
+- **Every HJB solver accepts a source and adds it, except three, and those raise
+  `NotImplementedError` rather than drop it.** The two network HJB solvers do not name `source_term`.
+  `HJBHowardSolver` names it and refuses it: a source reaches Howard only through
+  `HJBGFDMSolver(inner_solver="howard")`, which converts it into the running cost.
 - **A $p$-dependent coupling must not be routed through the source.** The FP drift is derived from
   $D_pH$, and a $p$-dependence the Hamiltonian does not see cannot appear in it.
 - For a repulsive interaction energy $F[m]$, with its strength inside $F$, the source is
@@ -222,15 +226,23 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
 
 - **`potential_field` carries the value function $u$.** On the default path — a smooth separable
   $H$ — the coupling layer passes `potential_field=U` to every FP solver that has that parameter, and
-  the solver forms $\alpha^* = -D_pH$ itself.
+  the solver forms $\alpha^* = -D_pH$ itself. *Not yet met (#2429): `MultiPopulationIterator` passes
+  the value function to network populations as `drift_field=`, the deprecated alias.*
 - **`drift_field` carries a velocity $\alpha^*$.** The coupling layer computes it only for a
   non-smooth or non-separable $H$, and passes it only to a solver whose convention is `VELOCITY`
   (FDM, FVM, GFDM).
 
 A solver whose convention is `VALUE_FUNCTION` — the particle solver, the two semi-Lagrangian solvers,
-the network solver and the weak-form family — refuses a non-smooth or non-separable $H$ rather than
-advect with $-c\,\nabla u$. On those solvers `drift_field=` is a deprecated alias for
-`potential_field=`. `FPGFDMSolver` has no `potential_field` and refuses to be handed $u$ as a velocity.
+the network solver and the weak-form family — cannot represent the drift of a non-smooth or
+non-separable $H$, and the coupling layer refuses to route $u$ to one rather than let it advect with
+$-c\,\nabla u$. `FPGFDMSolver` has no `potential_field`, and the coupling layer refuses to hand it $u$
+as a velocity. *Not yet met (#2429): called directly, the semi-Lagrangian pair and the particle solver
+accept `potential_field=U` with a non-separable $H$ and advect with $-c\,\nabla u$, $c$ being the legacy
+`coupling_coefficient`.*
+
+`drift_field=` is a deprecated alias for `potential_field=` on the semi-Lagrangian pair, the network
+solver and the weak-form family. On the particle solver it is a live alias for the same slot, and also
+takes a callable drift, or a precomputed velocity with `drift_is_precomputed=True`.
 
 The two halves of the system agree because both read one Hamiltonian object, not because of where
 the drift is computed. The weak-form family differentiates $u$ on its own FEM or MLS basis; do not
@@ -347,13 +359,14 @@ construction; an override's shape is checked by the solver that reads it.
 |---|---|
 | FP-FDM | every kind, except a tensor that is not symmetric |
 | FP-particle | a scalar on the grid-drift path; on the callable-drift path also a field, a constant or per-point tensor and a per-point callable, but not a callable tensor |
-| HJB-FDM | a scalar, a field, or a tensor only as a constant diagonal $\Sigma$ (none in 1-D) |
-| HJB semi-Lagrangian | a scalar, or a constant $(d, d)$ tensor |
+| HJB-FDM | a scalar, a field, a scalar-valued callable, or a tensor only as a constant diagonal $\Sigma$ (none in 1-D) |
+| HJB semi-Lagrangian | a scalar, or a constant $(d, d)$ tensor; a per-solve override only if it equals the problem's |
 | FVM | a scalar, or a constant field read as its scalar |
 | HJB-GFDM | a scalar, a field, or a space-only callable $\sigma(x)$ — no tensor |
 | Howard (`HJBHowardSolver`) | a scalar or a field, at construction only — a per-solve override is refused |
-| FP-GFDM, the FP semi-Lagrangian pair, the weak-form family, `FPNetworkSolver`, WENO | a scalar only |
-| the network HJB solvers | no non-zero volatility — they have no diffusion term |
+| FP-GFDM, the FP semi-Lagrangian pair, the weak-form family, `FPNetworkSolver` | a scalar only |
+| WENO | a scalar only; a per-solve override only if it equals the problem's |
+| the network HJB solvers | no non-zero volatility — they have no diffusion term *(a callable raises a bare `TypeError` rather than a refusal by name: #2429)* |
 
 **Common noise is not a column of $\Sigma$.** A shared noise source does not average out in the
 mean-field limit and makes $m$ a random measure flow; it enters through `StochasticMFGProblem`'s
@@ -419,7 +432,13 @@ Time-first also agrees with § *Arrays, grids and time* and with `scipy.integrat
 - **Currying the measure needs a keyword**: `partial(H, m=mu)`.
 
 *Not yet met (#2429): the per-point adapter `problem.H` / `problem.dH_dm` is not time-first and
-defaults its time to 0, and some per-point solver paths call it without one.*
+defaults its time to 0, and some per-point solver paths call it without one.
+`LagrangianBase.proximal(tau, z, *, t=0.0, x=None, m=None)` puts its step arguments first and defaults
+its time to 0, and the private finite-difference helpers take `(x, m, p, t)`.*
+
+*Not yet met (#2431): a `u_terminal` or `m_initial` written time-first, `lambda t, x: ...`, is read as
+`f(x, t)` — the coordinate as time and the time as the coordinate — with no error or warning. Write
+them space-only, `lambda x: ...`, until it is fixed.*
 
 ### The library refuses the old order rather than misreading it
 
@@ -472,9 +491,10 @@ names `potential_field` and `drift_field` are lowercase although they carry arra
 time step. Howard replaces the per-time-step Newton only, never the coupling loop.
 
 On the coupling-level API — `MFGProblem.solve`, the coupling iterators, `PicardConfig` —
-`max_iterations` and `tolerance` are the outer loop's. The HJB solvers qualify theirs:
+`max_iterations` and `tolerance` are the outer loop's. HJB-FDM and HJB-GFDM qualify theirs:
 `max_newton_iterations`, `newton_tolerance`. Elsewhere the bare name does not mean the outer loop:
-`NewtonConfig.max_iterations` and `HJBHowardSolver(max_iter=...)` are inner-loop caps.
+`NewtonConfig.max_iterations` / `.tolerance`, `HJBSemiLagrangianSolver(tolerance=)`,
+`NetworkHJBSolver(tolerance=)` and `HJBHowardSolver(max_iter=, tol=)` are inner-loop settings.
 
 The fixed-point relaxation parameter is `relaxation` (with `relaxation_M`, `adaptive_relaxation`,
 `relaxation_schedule`).
@@ -521,8 +541,8 @@ raises. A caller may not assume a number.
 boundary condition as `PeriodicGridConvention.ENDPOINT_INCLUSIVE`.
 
 A parameter named for one count and holding the other is a defect, not a style choice, and an array
-shape is written with the point count. *Not yet met (#2429): several internals bind `Nx` to a point
-count.*
+shape is written with the point count. *Not yet met: several internals bind `Nx` to a point
+count (#2429), and many docstrings write a shape with `Nx` or `Nx+1` where `Nx_points` is meant (#2236).*
 
 ### Spatial parameters are per-axis sequences
 
@@ -544,7 +564,8 @@ axes and refused. The sequence form is the convention, and library code uses it.
   `np.sum(m) * dx` is a *different functional* even on a uniform grid: it gives each end node a full
   cell and over-counts by $\tfrac{dx}{2}(m_0 + m_N)$. No other geometry carries an `integrate`; a
   network is measured on its nodes, and other geometries fall back to a named `uniform-cell` or
-  `point-average` measure.
+  `point-average` measure. *Not yet met (#2429): live sites outside that fallback still measure with
+  `np.sum(m) * dx`, mostly particle/KDE diagnostics and convergence metrics.*
 - **Mass conservation needs both the boundary condition and a conservative discretisation.** Under
   no-flux and periodic boundaries the divergence-form schemes, FVM and the splatting semi-Lagrangian
   solver conserve mass to rounding; FP-FDM's `gradient_upwind` and `gradient_centered` schemes do not,
@@ -681,7 +702,8 @@ or a `constraint=ObstacleConstraint(...)`.
 **Deprecated**, still accepted with a warning: `num_points` → `Nx_points`; `damping_factor` →
 `relaxation`, `damping_factor_M` → `relaxation_M` and `damping` → `relaxation` elsewhere; `u_final` →
 `u_terminal`; `velocity_field` → `drift_field`; `m_initial_condition` and `m_initial` → `M_initial`;
-`drift_field` → `potential_field` on the `VALUE_FUNCTION` FP solvers; `ControlCostBase.control_cost` →
+`drift_field` → `potential_field` on the semi-Lagrangian pair, `FPNetworkSolver` and the weak-form
+family; `ControlCostBase.control_cost` →
 `lambda_`. When each goes is recorded in `docs/user/DEPRECATION_MODERNIZATION_GUIDE.md`, which is
 generated from the code.
 

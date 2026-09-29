@@ -93,7 +93,7 @@ restate them. Cite a rule by its section name, never by line number. The section
 often needs: *The HJB equation, and the sign of every term in it*; *Hamiltonian and Lagrangian* (one
 drift owner, and what the FP solver receives); *Volatility and diffusion* (the kinds, the per-solver
 table, the one converter); *Callable signatures*; *Arrays, grids and time*. Where the code does not yet
-meet a convention, the file says so and points at #2429.
+meet a convention, the file says so and points at the tracking issue; #2429 collects them.
 
 ### File-path anchoring ⚠️ CRITICAL
 Anchor output paths to **project root**, never CWD: ✅ `Path(__file__).resolve().parent.parent / "results"` or `${hydra:runtime.cwd}/results`; ❌ `Path("results")` / `os.getcwd()` (recursive nesting under `cd`).

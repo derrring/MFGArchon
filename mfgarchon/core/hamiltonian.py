@@ -202,8 +202,8 @@ class ControlCostBase(ABC):
         """
         Compute optimal control alpha*(p). Single source of truth for drift.
 
-        For cost minimization: alpha* = -dH/dp
-        For utility maximization: alpha* = +dH/dp
+        alpha* = -dH/dp. The library only minimises, so there is no other sign
+        (docs/user/CONVENTIONS.md § The library minimises).
 
         Parameters
         ----------

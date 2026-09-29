@@ -59,8 +59,8 @@ FP drift: alpha* = H.optimal_control(grad u*) = -grad u*/lambda for this quadrat
   `fp_drift_coefficient(problem)` -- it returns 1/control_cost.lambda_ for such a Hamiltonian and
   never reaches the `coupling_coefficient` fallback (#1420 / G-017). It is NOT a package-wide
   universal, and an earlier draft of this block claimed one: an AST census finds 10 call sites in
-  7 files, and the velocity-channel FP families (FVM / FEM / meshless-Galerkin FP, and the
-  network solvers) resolve the drift through `H.optimal_control` and call that helper ZERO times.
+  7 files, and the FP families FVM / FEM / meshless-Galerkin FP, and the network solvers,
+  resolve the drift through `H.optimal_control` and call that helper ZERO times.
   The FP scope word is load-bearing: `meshless_galerkin/hjb_solver.py:118` IS one of those 10
   call sites, so dropping it makes the sentence contradict its own census --
   `utils/pde_coefficients.py:47-50` already says so. Outside the scope above the fallback is live:
@@ -407,8 +407,8 @@ class TestCoupledMMSConvergence:
         It is inert ON THIS PROBLEM'S SOLVER PATH: the FDM FP/HJB families resolve the drift
         through `fp_drift_coefficient`, which returns 1/control_cost.lambda_ for a
         quadratic-MINIMIZE SeparableHamiltonian and never reaches the `coupling_coefficient`
-        fallback. Not a package-wide universal -- the velocity-channel FP solvers (FVM, FEM,
-        meshless-Galerkin FP) and the network solvers resolve the drift through
+        fallback. Not a package-wide universal -- the FVM, FEM and meshless-Galerkin FP solvers
+        and the network solvers resolve the drift through
         `H.optimal_control` and never call that helper.
 
         This matters for the source, not just the prose: an assembly that scaled the transport by

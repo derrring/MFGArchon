@@ -1,5 +1,9 @@
 # Multi-Dimensional Mean Field Games: User Guide
 
+> **Status (2026-09-29): stale against the current API** — the first code block raises (#2432).
+> Build problems as in the [Quickstart](quickstart.md); the conventions are in
+> [`CONVENTIONS.md`](CONVENTIONS.md).
+
 Complete guide for setting up and solving 2D and 3D Mean Field Game problems using MFGArchon's multi-dimensional infrastructure.
 
 ## Table of Contents
@@ -308,7 +312,7 @@ viz.save(fig, 'slice.html')
 ### Animations (Time evolution)
 
 ```python
-# u_time has shape (Nt+1, Nx, Ny)
+# u_time has shape (Nt+1, *Nx_points)
 fig = viz.animation(
     u_time,
     title='Density Evolution m(t,x,y)',

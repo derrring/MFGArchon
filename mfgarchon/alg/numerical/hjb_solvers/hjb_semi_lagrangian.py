@@ -2660,7 +2660,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         """
         Evaluate Hamiltonian H(x, p, m) at given point (supports 1D and nD).
 
-        Without a Hamiltonian class it builds a DerivativeTensors for the per-point adapter
+        Not called by the solve path, which evaluates the Hamiltonian class in batch. Without a
+        Hamiltonian class this helper builds a DerivativeTensors for the per-point adapter
         ``problem.H``; see docs/user/CONVENTIONS.md § Derivatives.
 
         Args:
