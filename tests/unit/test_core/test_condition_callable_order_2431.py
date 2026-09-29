@@ -51,6 +51,15 @@ def _exact(t, x):
     return x**2 + 10.0 * t
 
 
+def _undecorated(fn):
+    """A decorator that forwards without functools.wraps, so its signature is (*args, **kwargs)."""
+
+    def wrapper(*args, **kwargs):
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
 class _NoSignature:
     """A callable whose signature cannot be read, like a C extension's."""
 
@@ -109,19 +118,6 @@ def test_a_time_first_condition_in_2d_is_read_at_the_point_not_as_expanded_coord
     np.testing.assert_allclose(_u_terminal(problem), expected.reshape(-1), rtol=0, atol=1e-15)
 
 
-def test_a_forwarding_wrapper_around_a_time_first_condition_is_read_time_first():
-    # `*args, **kwargs` names nothing: it is asked by keyword before being read as coordinates.
-    def undecorated(fn):
-        def wrapper(*args, **kwargs):
-            return fn(*args, **kwargs)
-
-        return wrapper
-
-    X, Y = np.meshgrid(*_GRID_2D.coordinates, indexing="ij")
-    problem = _problem(_GRID_2D, undecorated(lambda t, x: float(np.sum(np.asarray(x) ** 2)) + t), _one, T=2.0)
-    np.testing.assert_allclose(_u_terminal(problem), (X**2 + Y**2 + 2.0).reshape(-1), rtol=0, atol=1e-15)
-
-
 def test_a_wraps_wrapper_that_fixes_time_is_read_as_it_is_called():
     # Its signature reports the wrapped (t, x); it takes x alone.
     @functools.wraps(_exact)
@@ -173,6 +169,11 @@ _OUT_OF_ORDER = r"takes \(x, t\), which is out of order.*\(t, x\)"
         (_GRID_1D, lambda t: t**2, r"takes time and no space"),
         (_GRID_1D, _NoSignature(lambda x, t: x**2 + t), r"no readable signature"),
         (_GRID_2D, _NoSignature(lambda t, x: float(np.sum(x**2)) + t), r"no readable signature"),
+        # *args with **kwargs names nothing and cannot be told from a wrapper (user ruling on #2434).
+        (_GRID_2D, _undecorated(lambda t, x: float(np.sum(np.asarray(x) ** 2)) + t), r"functools\.wraps"),
+        (_GRID_2D, lambda *c, **kw: sum(float(a) ** 2 for a in c), r"functools\.wraps"),
+        # A 1-D bare *args that needs more than x: refused with the attempts, not a crash.
+        (_GRID_1D, lambda *c: c[0] + c[1], r"Cannot determine signature of IC/BC callable"),
     ],
     ids=[
         "1d",
@@ -185,6 +186,9 @@ _OUT_OF_ORDER = r"takes \(x, t\), which is out of order.*\(t, x\)"
         "time_only",
         "no_signature",
         "2d_no_signature",
+        "undecorated_wrapper",
+        "varargs_varkwargs",
+        "1d_varargs",
     ],
 )
 def test_a_condition_whose_time_cannot_be_read_is_refused_rather_than_misread(grid, unreadable, reason):

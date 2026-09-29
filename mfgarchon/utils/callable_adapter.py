@@ -78,8 +78,10 @@ def adapt_ic_callable(
     - names that bind time and space, time first, are read at ``time_value``;
     - names that bind ``x`` alone, or no signature at all, are probed for a float or an array;
     - in 2-D and 3-D, names that start ``(x, y)`` / ``(x, y, z)`` with every later parameter
-      defaulted, or a bare ``*args``, are the deprecated expanded coordinates -- except that a bare
-      ``*args`` which also takes ``**kwargs`` (a forwarding wrapper) is first called as ``f(t=..., x=...)``;
+      defaulted, or a bare ``*args``, are the deprecated expanded coordinates;
+    - ``*args, **kwargs`` names nothing and cannot be told from a wrapper around another function, so
+      it is read only if x alone works (a wrapper decorated with ``functools.wraps`` is read by the
+      wrapped function's names);
     - anything else that needs more than ``x`` is refused: names out of order (``f(x, t)``), time
       without space, a ``functools.partial`` that fixes time, and names that say neither order.
 
@@ -165,24 +167,21 @@ def adapt_ic_callable(
     found = _probe_space_only(func, dimension, sample, attempts)
     if found is not None:
         return found
-    # A bare *args names nothing. One that also takes **kwargs forwards to another callable: ask that
-    # one by name first, so a wrapper around f(t, x) is read time-first.
     bare_varargs = not names and _takes_varargs(func)
     if bare_varargs and _takes_varkwargs(func):
-        result, err = _try_call(func, t=time_value, x=sample)
-        if err is None and _is_valid_output(result):
-
-            def _kw_wrapper(x: float | np.ndarray, _fn: Callable = func, _t: float = time_value) -> float:
-                return float(_fn(t=_t, x=x))
-
-            return CallableSignature.SPATIOTEMPORAL_TX, _kw_wrapper
-        attempts.append((f"f(t={time_value}, x=...) by keyword", _err_str(err, result)))
-        if err is not None and not isinstance(err, TypeError):
-            raise refuse()
-    # Otherwise, in 2-D and 3-D, a bare *args (`lambda *c`, one argument per axis) and names that start
-    # (x, y[, z]) with the rest defaulted -- `(x, y=0.0)` binds as x alone -- are the deprecated
-    # expanded coordinates, as they always were.
-    if bare_varargs or _names_coordinates(func, dimension):
+        # `*args, **kwargs` names nothing, and cannot be told from a wrapper around another function.
+        attempts.append(
+            (
+                "f(*args, **kwargs)",
+                f"names none of its parameters, so which argument is time cannot be read. If {role} wraps "
+                f"another function, decorate the wrapper with functools.wraps; otherwise take (t, x) or (x)",
+            )
+        )
+        raise refuse()
+    # In 2-D and 3-D, a bare *args (`lambda *c`, one argument per axis) and names that start (x, y[, z])
+    # with the rest defaulted -- `(x, y=0.0)` binds as x alone -- are the deprecated expanded
+    # coordinates, as they always were.
+    if dimension in (2, 3) and (bare_varargs or _names_coordinates(func, dimension)):
         found = _probe_expanded(func, dimension, sample, attempts)
         if found is not None:
             return found
