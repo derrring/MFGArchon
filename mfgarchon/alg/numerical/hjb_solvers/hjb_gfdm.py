@@ -2845,19 +2845,19 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         When llf_augmentation=True and point_idx is not None, returns the per-node
         effective sigma sqrt(sigma^2 + 2*nu_i) from LLF augmentation (Issue #1059).
-        When point_idx is None, preserves the legacy representative-scalar lookup used
-        by pre-solve diagnostics and compatibility tests. Live assembly reads
-        :meth:`_sigma_for_assembly` instead.
+        When point_idx is None, returns the volatility as a solve would read it -- a scalar,
+        or the per-point field when the volatility is one (#2376) -- for pre-solve diagnostics
+        and compatibility tests. Live assembly reads :meth:`_sigma_for_assembly` instead.
 
         Args:
             point_idx: Collocation point index (for callable sigma evaluation or LLF lookup)
 
         Returns:
-            Numeric sigma value
+            sigma: a float, or the per-point field when point_idx is None and the volatility is one
 
         Handles, in precedence order:
         1. LLF per-node augmentation (point_idx given)
-        2. volatility override (Issue #1316) — the per-solve spatial diffusion
+        2. volatility override (Issue #1316) — the per-solve volatility
         3. problem.nu (legacy attribute)
         4. problem.volatility is a scalar → use directly
         5. otherwise → the same normalisation a solve uses (_resolve_sigma_for_solve)
@@ -2877,8 +2877,8 @@ class HJBGFDMSolver(BaseHJBSolver):
                 return float(self._solve_sigma[point_idx])
             return self._solve_sigma
 
-        # Issue #1316: the per-solve volatility override (the spatial diffusion
-        # the coupling layer / FP solver is using) is the authoritative diffusion source,
+        # Issue #1316: the per-solve volatility override (the volatility the coupling
+        # layer / FP solver is using) is the authoritative volatility source,
         # replacing the problem's volatility so HJB and FP stay convention-consistent. None (the
         # default) falls through to the byte-identical legacy path below.
         if self._volatility_override is not None:

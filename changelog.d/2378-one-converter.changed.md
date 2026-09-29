@@ -4,10 +4,10 @@
     - the scalar branch of Howard's step;
     - `BaseVariationalSolver`'s two continuity-equation lines;
     - HJB-SL's smoke block, which built a problem with `diffusion=σ²/2`. It now passes `volatility=`, as do two more smoke problems there that wrote the same with a literal.
-  - **The results are unchanged, except Howard's scalar diffusion, which can move by one ulp.**
+  - **The results are unchanged, except Howard's scalar diffusion, and so its solution, which can move by one ulp.**
     - FP-FDM's and the variational solver's lines computed `0.5 * sigma**2` on a float before, which is what the converter's scalar path computes. They are identical by construction.
     - Howard computed `0.5 * sigma * sigma`, i.e. (0.5σ)·σ, which is correctly rounded. The converter squares with `pow`, and this platform's libm `pow` is not correctly rounded: on 10⁶ uniform σ in [10⁻³, 10], 1,256 have `σ**2 != σ*σ` (macOS arm64, CPython 3.12.13). For those σ, Howard's scalar D now differs from before by one ulp. It now equals every other solver's scalar D, which it did not before.
-    - The phase-4 solve oracles never reach these paths; that was measured with coverage. So each path was captured directly, before and after. All ten captures agree bit for bit, at σ values where the two roundings coincide, and a one-ulp perturbation is reported as a difference. The independent review reproduced the Howard difference at σ = 1.509.
+    - The phase-4 solve oracles never reach these paths; that was measured with coverage. So each path was captured directly, before and after. All ten captures agree bit for bit, at σ values where the two roundings coincide, and a one-ulp perturbation is reported as a difference. At σ = 1.509, where they do not, Howard's solved U differs by up to 6.7e-16.
     - The phase-4 oracles (123 and 33 fixtures) are unchanged.
     - The converter itself gives a different last bit on its scalar path than on its field path for those σ. That is pre-existing, and it is filed as #2428.
   - **What still writes σ² inline is what the convention permits:** three CFL diagnostics, the GBM Itô drift correction, and the torch converter. The single-source ratchet goes from 10 sites to 5.
