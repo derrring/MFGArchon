@@ -109,6 +109,19 @@ def test_a_time_first_condition_in_2d_is_read_at_the_point_not_as_expanded_coord
     np.testing.assert_allclose(_u_terminal(problem), expected.reshape(-1), rtol=0, atol=1e-15)
 
 
+def test_a_forwarding_wrapper_around_a_time_first_condition_is_read_time_first():
+    # `*args, **kwargs` names nothing: it is asked by keyword before being read as coordinates.
+    def undecorated(fn):
+        def wrapper(*args, **kwargs):
+            return fn(*args, **kwargs)
+
+        return wrapper
+
+    X, Y = np.meshgrid(*_GRID_2D.coordinates, indexing="ij")
+    problem = _problem(_GRID_2D, undecorated(lambda t, x: float(np.sum(np.asarray(x) ** 2)) + t), _one, T=2.0)
+    np.testing.assert_allclose(_u_terminal(problem), (X**2 + Y**2 + 2.0).reshape(-1), rtol=0, atol=1e-15)
+
+
 def test_a_wraps_wrapper_that_fixes_time_is_read_as_it_is_called():
     # Its signature reports the wrapped (t, x); it takes x alone.
     @functools.wraps(_exact)
@@ -127,8 +140,12 @@ def test_a_wraps_wrapper_that_fixes_time_is_read_as_it_is_called():
         (lambda x, y: 1.0, lambda X, Y: np.ones_like(X)),
         # A bare *args names nothing and takes one argument per axis, as this repository's own tests use it.
         (lambda *c: sum((float(a) - 0.5) ** 2 for a in c), lambda X, Y: (X - 0.5) ** 2 + (Y - 0.5) ** 2),
+        # Later parameters defaulted: a closure capture, and a function written for 2-D and 3-D alike.
+        (lambda x, y=0.0: x**2 + y**2, lambda X, Y: X**2 + Y**2),
+        (lambda x, y, c=1.0: c * (x**2 + y**2), lambda X, Y: X**2 + Y**2),
+        (lambda x, y, z=0.0: x**2 + y**2 + z, lambda X, Y: X**2 + Y**2),
     ],
-    ids=["both", "y_only", "constant", "varargs"],
+    ids=["both", "y_only", "constant", "varargs", "y_defaulted", "closure_capture", "z_defaulted"],
 )
 def test_expanded_coordinates_in_2d_named_x_y_or_varargs_are_still_read_as_coordinates(u_terminal, expected):
     X, Y = np.meshgrid(*_GRID_2D.coordinates, indexing="ij")

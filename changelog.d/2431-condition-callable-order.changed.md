@@ -2,13 +2,14 @@
   - **Read:**
     - `lambda x` is read at each point, as before.
     - Names that bind time and space, time first (`(t, x)`, `(tau, x)`, a keyword-only `t`), are read at $T$ for `u_terminal` and $0$ for `m_initial`.
-    - Names exactly `(x, y)` in 2-D or `(x, y, z)` in 3-D, or a bare `*args`, are the deprecated expanded coordinates in 2-D and 3-D, with their warning.
+    - In 2-D and 3-D, names that start `(x, y)` / `(x, y, z)` with every later parameter defaulted (`(x, y, c=1.0)`), and a bare `*args`, are the deprecated expanded coordinates, with their warning.
+    - A bare `*args, **kwargs` forwarding wrapper is first called as `f(t=T, x=...)`, so a wrapper around a time-first callable is read time-first.
     - A `functools.wraps` wrapper is called as it really is.
   - **Refused, naming the reason:**
     - names that put time after space: `lambda x, t`, and `lambda x, t=0.0`, which used to be read at its default `t`;
-    - names that say neither order: `lambda x, tau`, and `lambda a, b` in any dimension; in 2-D and 3-D these used to be tried as expanded coordinates;
+    - names that say neither order: `lambda x, tau`, `lambda a, b`, and in 2-D/3-D the coordinate spellings `(X, Y)`, `(x1, x2)` and `(x, *rest)`, which base read as expanded coordinates. Name them `x, y (, z)`;
     - a time-first callable that fails at the point;
     - a `functools.partial` that fixes `t`;
     - a callable that takes time and no space (`lambda t: ...`);
-    - a callable whose signature cannot be read (a C extension), if it needs more than `x`, in any dimension; and in 1-D a bare `*args` callable that needs more than `x`, such as an `np.vectorize` object.
+    - a callable whose signature cannot be read (a C extension, `math.hypot`), if it needs more than `x`, in any dimension; and in 1-D a bare `*args` callable that needs more than `x`, such as an `np.vectorize` object.
   - `validate_components` and `validate_u_terminal` take a `terminal_time` keyword. It defaults to 0; pass $T$ to validate a time-first `u_terminal`.

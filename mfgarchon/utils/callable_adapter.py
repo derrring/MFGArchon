@@ -77,8 +77,9 @@ def adapt_ic_callable(
 
     - names that bind time and space, time first, are read at ``time_value``;
     - names that bind ``x`` alone, or no signature at all, are probed for a float or an array;
-    - names exactly ``(x, y)`` in 2-D or ``(x, y, z)`` in 3-D, or a bare ``*args``, are the deprecated
-      expanded coordinates;
+    - in 2-D and 3-D, names that start ``(x, y)`` / ``(x, y, z)`` with every later parameter
+      defaulted, or a bare ``*args``, are the deprecated expanded coordinates -- except that a bare
+      ``*args`` which also takes ``**kwargs`` (a forwarding wrapper) is first called as ``f(t=..., x=...)``;
     - anything else that needs more than ``x`` is refused: names out of order (``f(x, t)``), time
       without space, a ``functools.partial`` that fixes time, and names that say neither order.
 
@@ -130,8 +131,8 @@ def adapt_ic_callable(
         if out_of_order(names, CONDITION_SLOTS):
             raise
         # Names that say neither order. Only the deprecated expanded coordinates are named that way on
-        # purpose: (x, y) in 2-D, (x, y, z) in 3-D.
-        if dimension in (2, 3) and tuple(names) == ("x", "y", "z")[:dimension]:
+        # purpose: (x, y) in 2-D, (x, y, z) in 3-D, with any later parameter defaulted.
+        if _names_coordinates(func, dimension):
             found = _probe_expanded(func, dimension, sample, attempts)
             if found is not None:
                 return found
@@ -164,9 +165,24 @@ def adapt_ic_callable(
     found = _probe_space_only(func, dimension, sample, attempts)
     if found is not None:
         return found
-    # A variadic callable, `lambda *c`, names no parameter at all: in 2-D and 3-D it is read as the
-    # deprecated expanded coordinates, one argument per axis, as it always was.
-    if dimension in (2, 3) and not names and _takes_varargs(func):
+    # A bare *args names nothing. One that also takes **kwargs forwards to another callable: ask that
+    # one by name first, so a wrapper around f(t, x) is read time-first.
+    bare_varargs = not names and _takes_varargs(func)
+    if bare_varargs and _takes_varkwargs(func):
+        result, err = _try_call(func, t=time_value, x=sample)
+        if err is None and _is_valid_output(result):
+
+            def _kw_wrapper(x: float | np.ndarray, _fn: Callable = func, _t: float = time_value) -> float:
+                return float(_fn(t=_t, x=x))
+
+            return CallableSignature.SPATIOTEMPORAL_TX, _kw_wrapper
+        attempts.append((f"f(t={time_value}, x=...) by keyword", _err_str(err, result)))
+        if err is not None and not isinstance(err, TypeError):
+            raise refuse()
+    # Otherwise, in 2-D and 3-D, a bare *args (`lambda *c`, one argument per axis) and names that start
+    # (x, y[, z]) with the rest defaulted -- `(x, y=0.0)` binds as x alone -- are the deprecated
+    # expanded coordinates, as they always were.
+    if bare_varargs or _names_coordinates(func, dimension):
         found = _probe_expanded(func, dimension, sample, attempts)
         if found is not None:
             return found
@@ -238,11 +254,35 @@ def _try_call(func: Callable, *args: object, **kwargs: object) -> tuple[object, 
 
 def _takes_varargs(func: Callable) -> bool:
     """Whether ``func`` declares ``*args``."""
+    return _declares(func, inspect.Parameter.VAR_POSITIONAL)
+
+
+def _takes_varkwargs(func: Callable) -> bool:
+    """Whether ``func`` declares ``**kwargs``."""
+    return _declares(func, inspect.Parameter.VAR_KEYWORD)
+
+
+def _declares(func: Callable, kind: inspect._ParameterKind) -> bool:
     try:
         params = inspect.signature(func).parameters.values()
     except (TypeError, ValueError):
         return False
-    return any(p.kind is inspect.Parameter.VAR_POSITIONAL for p in params)
+    return any(p.kind is kind for p in params)
+
+
+def _names_coordinates(func: Callable, dimension: int) -> bool:
+    """Whether ``func``'s positional parameters are the expanded coordinates of a ``dimension``-D point:
+    they start ``x, y`` (2-D) or ``x, y, z`` (3-D), and every later one has a default."""
+    if dimension not in (2, 3):
+        return False
+    try:
+        params = list(inspect.signature(func).parameters.values())
+    except (TypeError, ValueError):
+        return False
+    kinds = inspect.Parameter
+    positional = [p for p in params if p.kind in (kinds.POSITIONAL_ONLY, kinds.POSITIONAL_OR_KEYWORD)]
+    head, rest = positional[:dimension], positional[dimension:]
+    return [p.name for p in head] == ["x", "y", "z"][:dimension] and all(p.default is not kinds.empty for p in rest)
 
 
 def _positional_names(func: Callable) -> list[str] | None:
