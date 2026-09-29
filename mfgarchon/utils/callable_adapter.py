@@ -72,10 +72,15 @@ def adapt_ic_callable(
     - 1D: ``wrapper(x_scalar)`` where x_scalar is a Python float
     - nD: ``wrapper(x_array)`` where x_array is ndarray of shape (d,)
 
-    The parameter names decide first, through ``bind_user_callable``: a callable they bind with a
-    time slot is time-first and is read at ``time_value``, and one whose names are out of order is
-    refused. Only what names cannot say is probed: whether a space-only callable takes a float or an
-    array, and the deprecated expanded coordinates.
+    The parameter names decide, through ``bind_user_callable`` (#2375 ruling 8, #2431), and nothing
+    they leave open is guessed:
+
+    - names that bind time and space, time first, are read at ``time_value``;
+    - names that bind ``x`` alone, or no signature at all, are probed for a float or an array;
+    - names exactly ``(x, y)`` in 2-D or ``(x, y, z)`` in 3-D, or a bare ``*args``, are the deprecated
+      expanded coordinates;
+    - anything else that needs more than ``x`` is refused: names out of order (``f(x, t)``), time
+      without space, a ``functools.partial`` that fixes time, and names that say neither order.
 
     Args:
         func: User-provided IC/BC callable.
@@ -90,17 +95,17 @@ def adapt_ic_callable(
         Tuple of (detected_signature, wrapped_callable).
 
     Raises:
-        TypeError: If no supported signature convention works, or if the callable's parameter names
-            put time after space -- the order before #2378 phase 5 (``f(x, t)``, ``f(x, t=0.0)``).
+        TypeError: If the callable cannot be read by one of the rules above.
     """
     attempts: list[tuple[str, str]] = []
     if dimension == 1:
-        scalar_sample = float(sample_point) if not isinstance(sample_point, float) else sample_point
-        sample: float | np.ndarray = scalar_sample
+        sample: float | np.ndarray = float(sample_point) if not isinstance(sample_point, float) else sample_point
     else:
         sample = sample_point if isinstance(sample_point, np.ndarray) else np.atleast_1d(sample_point)
 
-    # --- The names decide first (#2375 ruling 8, #2431) ---
+    def refuse() -> TypeError:
+        return TypeError(_format_signature_error(func, dimension, attempts))
+
     time_names = [name for name, slot in CONDITION_SLOTS.slot_of().items() if slot == "t"]
     frozen = sorted(set(getattr(func, "keywords", None) or {}) & set(time_names))
     if isinstance(func, functools.partial) and frozen:
@@ -109,17 +114,31 @@ def adapt_ic_callable(
             f"reads {role} at its own time. It takes (t, x) or (x): pass lambda x: f({func.keywords[frozen[0]]!r}, x) "
             f"to fix the time yourself."
         )
+
     names = _positional_names(func)
-    bound: BoundCallable | None = None
-    refusal: TypeError | None = None
-    if names is not None:
-        try:
-            bound = bind_user_callable(func, CONDITION_SLOTS, role=role, spatial_only=True)
-        except TypeError as e:
-            if out_of_order(names, CONDITION_SLOTS):
-                raise
-            refusal = e
-    if bound is not None and "t" in bound.passes:
+    if names is None:
+        # No readable signature (a builtin, a C extension): x alone is all that can be read.
+        found = _probe_space_only(func, dimension, sample, attempts)
+        if found is not None:
+            return found
+        attempts.append(("f(t, x)", "no readable signature, so which argument is time cannot be read"))
+        raise refuse()
+
+    try:
+        bound = bind_user_callable(func, CONDITION_SLOTS, role=role, spatial_only=True)
+    except TypeError as refusal:
+        if out_of_order(names, CONDITION_SLOTS):
+            raise
+        # Names that say neither order. Only the deprecated expanded coordinates are named that way on
+        # purpose: (x, y) in 2-D, (x, y, z) in 3-D.
+        if dimension in (2, 3) and tuple(names) == ("x", "y", "z")[:dimension]:
+            found = _probe_expanded(func, dimension, sample, attempts)
+            if found is not None:
+                return found
+        attempts.append(("f(t, x) by parameter names", str(refusal)))
+        raise refuse() from None
+
+    if "t" in bound.passes:
         if "x" not in bound.passes:
             raise TypeError(
                 f"{role} {getattr(func, '__qualname__', func)!r} takes time and no space. It is a function of "
@@ -133,96 +152,75 @@ def adapt_ic_callable(
 
             return CallableSignature.SPATIOTEMPORAL_TX, _tx_wrapper
         attempts.append((f"f(t, x) with t={time_value}, bound by its parameter names", _err_str(err, result)))
-        # A TypeError can mean the signature misreports the call, as a functools.wraps wrapper's
-        # does: it shows the wrapped (t, x). The probes below call it as it really is.
-        if not isinstance(err, TypeError):
-            raise TypeError(_format_signature_error(func, dimension, attempts))
+        # A functools.wraps wrapper shows the wrapped function's signature, not its own: call it as it
+        # really is, with x alone. Any other callable is what its names say, and is refused.
+        if isinstance(err, TypeError) and inspect.unwrap(func) is not func:
+            found = _probe_space_only(func, dimension, sample, attempts)
+            if found is not None:
+                return found
+        raise refuse()
 
-    # --- 1D probes ---
+    # Its names bind x alone.
+    found = _probe_space_only(func, dimension, sample, attempts)
+    if found is not None:
+        return found
+    # A variadic callable, `lambda *c`, names no parameter at all: in 2-D and 3-D it is read as the
+    # deprecated expanded coordinates, one argument per axis, as it always was.
+    if dimension in (2, 3) and not names and _takes_varargs(func):
+        found = _probe_expanded(func, dimension, sample, attempts)
+        if found is not None:
+            return found
+    raise refuse()
+
+
+def _probe_space_only(
+    func: Callable, dimension: int, sample: float | np.ndarray, attempts: list[tuple[str, str]]
+) -> tuple[CallableSignature, Callable] | None:
+    """Call ``func`` with x alone: a float or a ``(1,)`` array in 1-D, the point in n-D."""
     if dimension == 1:
-        array_sample = np.array([scalar_sample])
-
-        # Probe 1: f(scalar) -- most common 1D convention
-        result, err = _try_call(func, scalar_sample)
+        result, err = _try_call(func, sample)
         if err is None and _is_valid_output(result):
             return CallableSignature.SPATIAL_SCALAR, func
         attempts.append(("f(x) with x=float", _err_str(err, result)))
 
-        # Probe 2: f(ndarray([x])) -- array-expecting 1D
-        result, err = _try_call(func, array_sample)
+        result, err = _try_call(func, np.array([sample]))
         if err is None and _is_valid_output(result):
-            # Wrap: convert scalar -> array for the user's function
+
             def _array_wrapper_1d(x: float, _fn: Callable = func) -> float:
                 return float(_fn(np.array([x])))
 
             return CallableSignature.SPATIAL_ARRAY, _array_wrapper_1d
         attempts.append(("f(x) with x=ndarray([x])", _err_str(err, result)))
+        return None
 
-    # --- nD probes ---
-    else:
-        array_sample = sample
+    result, err = _try_call(func, sample)
+    if err is None and _is_valid_output(result):
+        return CallableSignature.SPATIAL_ARRAY, func
+    attempts.append(("f(x) with x=ndarray", _err_str(err, result)))
+    return None
 
-        # Probe 1: f(ndarray) -- standard nD convention
-        result, err = _try_call(func, array_sample)
-        if err is None and _is_valid_output(result):
-            return CallableSignature.SPATIAL_ARRAY, func
-        attempts.append(("f(x) with x=ndarray", _err_str(err, result)))
 
-        # A callable that takes the whole point as its first argument and returns a number with a
-        # second one cannot be taking coordinates: the second argument is time, in the order before
-        # #2378 phase 5 (`lambda x, tau`). Refuse it rather than read it as expanded coordinates.
-        result, err = _try_call(func, array_sample, time_value)
-        if err is None and _is_valid_output(result):
-            raise TypeError(
-                f"{role} {getattr(func, '__qualname__', func)!r} takes the point x first and a second argument "
-                f"after it: that is the order before #2378 phase 5, where the second argument is time. Since "
-                f"#2375 ruling 8 a {role} takes (t, x), time first: reorder its parameters and name them t, x."
-            )
+def _probe_expanded(
+    func: Callable, dimension: int, sample: np.ndarray, attempts: list[tuple[str, str]]
+) -> tuple[CallableSignature, Callable] | None:
+    """Call ``func`` with the point's coordinates as separate arguments (deprecated)."""
+    coords = [float(c) for c in sample]
+    result, err = _try_call(func, *coords)
+    label = "f(x, y)" if dimension == 2 else "f(x, y, z)"
+    if err is None and _is_valid_output(result):
+        warnings.warn(
+            f"IC/BC callable uses expanded coordinate signature {label}. "
+            f"This is deprecated. Use f(x) where x is ndarray of shape ({dimension},) instead.",
+            DeprecationWarning,
+            stacklevel=4,
+        )
 
-        # Probe 2: f(*components) -- expanded coordinates (deprecated). A callable its names bind
-        # time-first never reaches here.
-        if dimension == 2 and array_sample.shape == (2,):
-            result, err = _try_call(func, float(array_sample[0]), float(array_sample[1]))
-            if err is None and _is_valid_output(result):
-                warnings.warn(
-                    "IC/BC callable uses expanded coordinate signature f(x, y). "
-                    "This is deprecated. Use f(x) where x is ndarray of shape (2,) instead.",
-                    DeprecationWarning,
-                    stacklevel=3,
-                )
+        def _expanded(x: np.ndarray, _fn: Callable = func) -> float:
+            return float(_fn(*(float(c) for c in x)))
 
-                def _expanded_2d(x: np.ndarray, _fn: Callable = func) -> float:
-                    return float(_fn(float(x[0]), float(x[1])))
-
-                return CallableSignature.EXPANDED_2D, _expanded_2d
-            attempts.append(("f(x, y) with expanded coordinates", _err_str(err, result)))
-
-        elif dimension == 3 and array_sample.shape == (3,):
-            result, err = _try_call(func, float(array_sample[0]), float(array_sample[1]), float(array_sample[2]))
-            if err is None and _is_valid_output(result):
-                warnings.warn(
-                    "IC/BC callable uses expanded coordinate signature f(x, y, z). "
-                    "This is deprecated. Use f(x) where x is ndarray of shape (3,) instead.",
-                    DeprecationWarning,
-                    stacklevel=3,
-                )
-
-                def _expanded_3d(x: np.ndarray, _fn: Callable = func) -> float:
-                    return float(_fn(float(x[0]), float(x[1]), float(x[2])))
-
-                return CallableSignature.EXPANDED_3D, _expanded_3d
-            attempts.append(("f(x, y, z) with expanded coordinates", _err_str(err, result)))
-
-    # With no readable signature (a builtin, a C extension) nothing says which argument is time, so a
-    # callable that needs more than x is refused rather than guessed.
-    if names is None:
-        attempts.append(("f(t, x)", "no readable signature, so which argument is time cannot be read"))
-    elif refusal is not None:
-        attempts.append(("f(t, x) by parameter names", str(refusal)))
-
-    # All probes failed
-    msg = _format_signature_error(func, dimension, attempts)
-    raise TypeError(msg)
+        return (CallableSignature.EXPANDED_2D if dimension == 2 else CallableSignature.EXPANDED_3D), _expanded
+    attempts.append((f"{label} with expanded coordinates", _err_str(err, result)))
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +234,15 @@ def _try_call(func: Callable, *args: object, **kwargs: object) -> tuple[object, 
         return func(*args, **kwargs), None
     except Exception as e:
         return None, e
+
+
+def _takes_varargs(func: Callable) -> bool:
+    """Whether ``func`` declares ``*args``."""
+    try:
+        params = inspect.signature(func).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(p.kind is inspect.Parameter.VAR_POSITIONAL for p in params)
 
 
 def _positional_names(func: Callable) -> list[str] | None:

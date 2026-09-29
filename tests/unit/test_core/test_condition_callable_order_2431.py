@@ -14,6 +14,7 @@ which argument is ``x``.
 from __future__ import annotations
 
 import functools
+import math
 import re
 
 import pytest
@@ -118,11 +119,22 @@ def test_a_wraps_wrapper_that_fixes_time_is_read_as_it_is_called():
     np.testing.assert_array_equal(_u_terminal(_problem(_GRID_1D, at_half, _one, T=2.0)), x**2 + 5.0)
 
 
-def test_expanded_coordinates_in_2d_are_still_read_as_coordinates():
+@pytest.mark.parametrize(
+    ("u_terminal", "expected"),
+    [
+        (lambda x, y: x**2 + y**2, lambda X, Y: X**2 + Y**2),
+        (lambda x, y: (y - 0.5) ** 2, lambda X, Y: (Y - 0.5) ** 2),  # independent of its first coordinate
+        (lambda x, y: 1.0, lambda X, Y: np.ones_like(X)),
+        # A bare *args names nothing and takes one argument per axis, as this repository's own tests use it.
+        (lambda *c: sum((float(a) - 0.5) ** 2 for a in c), lambda X, Y: (X - 0.5) ** 2 + (Y - 0.5) ** 2),
+    ],
+    ids=["both", "y_only", "constant", "varargs"],
+)
+def test_expanded_coordinates_in_2d_named_x_y_or_varargs_are_still_read_as_coordinates(u_terminal, expected):
     X, Y = np.meshgrid(*_GRID_2D.coordinates, indexing="ij")
     with pytest.warns(DeprecationWarning, match=r"expanded coordinate signature f\(x, y\)"):
-        problem = _problem(_GRID_2D, lambda x, y: x**2 + y**2, _one)
-    np.testing.assert_allclose(_u_terminal(problem), (X**2 + Y**2).reshape(-1), rtol=0, atol=1e-15)
+        problem = _problem(_GRID_2D, u_terminal, _one)
+    np.testing.assert_allclose(_u_terminal(problem), expected(X, Y).reshape(-1), rtol=0, atol=1e-15)
 
 
 _OUT_OF_ORDER = r"takes \(x, t\), which is out of order.*\(t, x\)"
@@ -134,13 +146,29 @@ _OUT_OF_ORDER = r"takes \(x, t\), which is out of order.*\(t, x\)"
         (_GRID_1D, lambda x, t: x**2 + t, _OUT_OF_ORDER),
         (_GRID_1D, lambda x, t=0.0: x**2 + t, _OUT_OF_ORDER),  # a default does not make it readable
         (_GRID_2D, lambda x, t: float(np.sum(np.asarray(x) ** 2)) + t, _OUT_OF_ORDER),
-        # Time not named t: in 2-D it would otherwise pass as expanded coordinates (x, y).
-        (_GRID_2D, lambda x, tau: float(np.sum(np.asarray(x) ** 2)) + tau, r"point x first and a second argument"),
+        # Time not named t: names that say neither order are not read as expanded coordinates (x, y).
+        (_GRID_2D, lambda x, tau: float(np.sum(np.asarray(x) ** 2)) + tau, r"cannot be matched to \(t, x\)"),
+        # Time-first by its names, but failing at the point: not re-read as expanded coordinates or
+        # as a space-only callable with a default.
+        (_GRID_2D, lambda t, x: math.cos(x) + t, r"bound by its parameter names"),
+        (_GRID_1D, lambda t, x=np.array([0.0]): float(x[0]) ** 2 + t, r"bound by its parameter names"),
         (_GRID_1D, functools.partial(_exact, t=0.5), r"functools\.partial that fixes t=0\.5"),
         (_GRID_1D, lambda t: t**2, r"takes time and no space"),
         (_GRID_1D, _NoSignature(lambda x, t: x**2 + t), r"no readable signature"),
+        (_GRID_2D, _NoSignature(lambda t, x: float(np.sum(x**2)) + t), r"no readable signature"),
     ],
-    ids=["1d", "1d_default", "2d", "2d_tau", "partial_fixing_t", "time_only", "no_signature"],
+    ids=[
+        "1d",
+        "1d_default",
+        "2d",
+        "2d_tau",
+        "2d_fails_at_point",
+        "1d_default_changes_type",
+        "partial_fixing_t",
+        "time_only",
+        "no_signature",
+        "2d_no_signature",
+    ],
 )
 def test_a_condition_whose_time_cannot_be_read_is_refused_rather_than_misread(grid, unreadable, reason):
     with pytest.raises(ValidationError, match=r"u_terminal") as refused:
