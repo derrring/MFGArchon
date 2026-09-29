@@ -484,6 +484,12 @@ parameter. `HJBHowardSolver` takes no `U_coupling_prev`; the network HJB solvers
 The FP solver's first argument is `M_initial` on every solver. `m_initial_condition=` (GFDM,
 network) and `m_initial=` (the weak-form family) survive as deprecated aliases.
 
+*Not yet met (#2429): `WeakFormHJBSolver.solve_hjb_system` still accepts the pre-v0.12 names
+`M_density_evolution_from_FP`, `U_final_condition_at_T` and `U_from_prev_picard` for `M_density`,
+`U_terminal` and `U_coupling_prev`, with no warning; `base_hjb.solve_hjb_system_backward`
+(`M_density_from_prev_picard`, `U_final_condition_at_T`, `U_from_prev_picard`) and HJB-WENO's private
+per-dimension solvers still use these parameter names.*
+
 **Solver-method array parameters and results are uppercase** (`U`, `M`, `U_terminal`, `M_density`,
 `M_initial`, `SolverResult.U`, `SolverResult.M`); scalars and configuration are lowercase. The channel
 names `potential_field` and `drift_field` are lowercase although they carry arrays. A name suffixed
@@ -685,6 +691,23 @@ functions still take `control_cost` as a scalar.*
 `obstacles` (plural) are geometric regions; the retired `obstacle` was a penalty, now `state_penalty`
 or a `constraint=ObstacleConstraint(...)`.
 
+### Symbols or words
+
+A name is a mathematical symbol or a descriptive word according to what it stands for.
+
+- **A symbol for the horizon and the discretisation**: `T`, `Nt`, `Nt_points`, `dt` and `tSpace` on the problem,
+  `Nx` and `Nx_points` on the grid; and `lambda_`, the control-cost weight. Inside an algorithm, a
+  local name may be the symbol of the formula being implemented (`p`, `dx`); a solver-method array
+  keeps § *Solver method surface*'s uppercase (`U`, `M`).
+- **A word for configuration and for the model's terms**: `max_iterations`, `tolerance`, `relaxation`;
+  `potential`, `coupling`, `volatility`, `diffusion`. (A scalar coefficient: § *Not settled here*.)
+
+The volatility shows where the line falls: a formula writes it $\Sigma$, or $\sigma$ when it is a
+scalar (§ *Volatility and diffusion*), and the public API names it `volatility` (#2375 ruling 6).
+*Not yet met (#2429): `VariationalMFGComponents` takes it as `noise_intensity`,
+`MFGProblem.get_diffusion_coefficient_field` as `override`, and internal helpers as `tensor_field`,
+`sigma_tensor`, `Sigma` or `override`.*
+
 ### Retired
 
 **Refused**, with an error naming the replacement:
@@ -729,5 +752,6 @@ Known to be unstated or open. A claim about these must not be read out of this f
   boundary conditions drops.
 - The sign and normalisation of the reported Nash gap.
 - The remaining boundary-condition family (§ *Geometry*).
-- Whether a naming policy for new code — mathematical symbols in algorithm bodies versus descriptive
-  English in configuration — is a convention this library states at all, or a matter left to review.
+- Whether a scalar coefficient of the model or of a method takes its textbook symbol or a word. The
+  library has both: `lambda_`, `GFDMConfig.delta` and `WENOConfig.epsilon` are symbols;
+  `discount_rate` and `coupling_coefficient` are words.
