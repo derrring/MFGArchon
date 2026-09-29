@@ -486,8 +486,9 @@ network) and `m_initial=` (the weak-form family) survive as deprecated aliases.
 
 *Not yet met (#2429): `WeakFormHJBSolver.solve_hjb_system` still accepts the pre-v0.12 names
 `M_density_evolution_from_FP`, `U_final_condition_at_T` and `U_from_prev_picard` for `M_density`,
-`U_terminal` and `U_coupling_prev`, with no warning; `base_hjb.solve_hjb_system_backward` and HJB-WENO's
-private per-dimension solvers still name their parameters that way.*
+`U_terminal` and `U_coupling_prev`, with no warning; `base_hjb.solve_hjb_system_backward`
+(`M_density_from_prev_picard`, `U_final_condition_at_T`, `U_from_prev_picard`) and HJB-WENO's private
+per-dimension solvers still use these parameter names.*
 
 **Solver-method array parameters and results are uppercase** (`U`, `M`, `U_terminal`, `M_density`,
 `M_initial`, `SolverResult.U`, `SolverResult.M`); scalars and configuration are lowercase. The channel
@@ -694,17 +695,18 @@ or a `constraint=ObstacleConstraint(...)`.
 
 A name is a mathematical symbol or a descriptive word according to what it stands for.
 
-- **A symbol for the discretisation**: `T`, `Nt`, `Nt_points`, `dt` and `tSpace` on the problem,
+- **A symbol for the horizon and the discretisation**: `T`, `Nt`, `Nt_points`, `dt` and `tSpace` on the problem,
   `Nx` and `Nx_points` on the grid; and `lambda_`, the control-cost weight. Inside an algorithm, a
   local name may be the symbol of the formula being implemented (`p`, `dx`); a solver-method array
   keeps § *Solver method surface*'s uppercase (`U`, `M`).
 - **A word for configuration and for the model's terms**: `max_iterations`, `tolerance`, `relaxation`;
-  `potential`, `coupling`, `volatility`, `diffusion`.
+  `potential`, `coupling`, `volatility`, `diffusion`. (A scalar coefficient: § *Not settled here*.)
 
 The volatility shows where the line falls: a formula writes it $\Sigma$, or $\sigma$ when it is a
 scalar (§ *Volatility and diffusion*), and the public API names it `volatility` (#2375 ruling 6).
-*Not yet met (#2429): `VariationalMFGComponents` takes it as `noise_intensity`, and internal helpers
-as `tensor_field`, `sigma_tensor` or `Sigma`.*
+*Not yet met (#2429): `VariationalMFGComponents` takes it as `noise_intensity`,
+`MFGProblem.get_diffusion_coefficient_field` as `override`, and internal helpers as `tensor_field`,
+`sigma_tensor`, `Sigma` or `override`.*
 
 ### Retired
 
