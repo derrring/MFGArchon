@@ -1,0 +1,14 @@
+- **`docs/user/CONVENTIONS.md`: the library's conventions, stated in one place (#2378 phase 6).**
+  - **What it covers:** the minimisation convention, the HJB sign rule and the source term, Hamiltonian/Lagrangian duality and the one owner of the FP drift, what an FP solver receives (`potential_field` versus `drift_field`), derivatives, volatility versus diffusion with the volatility kinds and a per-solver table of what each accepts, callable signatures, the solver method surface, arrays, grids and time, the measure, geometry and SDF polarity, component ownership, and names, with the retired and the deprecated.
+  - **How it was checked:** every claim was checked against the code before it landed. Five independent verifiers checked 159 claims of the earlier draft, and every statement that did not hold was rewritten to what the code does.
+  - **Gaps:** where the code does not yet meet a convention, the file says so and points at #2429 rather than stating a rule the code breaks.
+  - **`AGENTS.md` § *Physics conventions* is now a pointer to the file**, so it is no longer a second copy. Its documentation-tier table names `docs/user/`, the directory that exists.
+  - **Citations:** the twelve in-repo citations of the private `NAMING_CONVENTIONS.md` now cite this file by section name. Two of them pointed at sections that never existed.
+  - **Stale convention statements corrected:**
+    - `MFGProblem`'s `source_term_hjb` notes said only FDM solvers accept a source.
+    - The Lions-correction module wrote the source with the wrong sign.
+    - `SeparableLagrangian`'s class docstring signed V and f as rewards.
+    - `fp_drift_coefficient`'s docstring gave a `SeparableHamiltonian` subclass as its non-separable example.
+    - An HJB-FDM docstring named the wrong fallback for the drift coefficient.
+    - `types/arrays.py` wrote point counts as `Nx`.
+    - `LEGACY_PARAMETERS.md` presented the deprecated legacy constructor as the modern form; it now carries a status note.

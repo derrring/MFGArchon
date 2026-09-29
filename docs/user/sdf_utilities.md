@@ -16,7 +16,7 @@ SDF utilities provide simple function-based APIs for working with signed distanc
 
 These utilities wrap the full `mfgarchon.geometry.implicit` infrastructure with simpler function-based APIs for quick prototyping.
 
-**Convention**: `φ(x) < 0` inside, `φ(x) = 0` on boundary, `φ(x) > 0` outside
+**Convention**: `φ(x) < 0` inside, `φ(x) = 0` on boundary, `φ(x) > 0` outside — the domain polarity. An obstacle's SDF uses the opposite one; see [`CONVENTIONS.md`](CONVENTIONS.md) § *Geometry*.
 
 ---
 

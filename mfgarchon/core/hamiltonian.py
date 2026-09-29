@@ -1968,7 +1968,7 @@ class LagrangianBase(MFGOperatorBase):
 
 
 class SeparableLagrangian(LagrangianBase):
-    """Separable Lagrangian: L(t, x, alpha, m) = L_control(alpha) - V(t, x) - f(m).
+    """Separable Lagrangian: L(t, x, alpha, m) = L_control(alpha) + V(t, x) + f(m), V and f costs.
 
     The non-kinetic terms carry the OPPOSITE sign to the Hamiltonian's, so that this
     class is self-conjugate against its own ``evaluate_hamiltonian`` (Issue #1645).

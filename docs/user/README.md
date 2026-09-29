@@ -60,6 +60,7 @@ Step-by-step learning from basics to advanced:
 | Guide | Content |
 |:------|:--------|
 | [Quickstart](quickstart.md) | 5-minute setup |
+| [Conventions](CONVENTIONS.md) | Signs, volatility vs diffusion, callable signatures, array layout — the one place each convention is stated |
 | [Boundary Conditions](guides/boundary_conditions.md) | BC types, mixed BC, ghost cells, periodic compatibility |
 | [Advanced BC](advanced_boundary_conditions.md) | Variational inequalities, moving boundaries |
 | [Backend Usage](guides/backend_usage.md) | NumPy, JAX, PyTorch backends |

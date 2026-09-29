@@ -260,15 +260,15 @@ def test_construction_rejects_unknown_discretisation():
 def test_1d_lq_closed_form_riccati():
     """Pure LQ in 1D, mfgarchon convention.
 
-    HJB residual form is `-u_t + H - (σ²/2)Δu = 0` (archon-notes/development/guides/NAMING_CONVENTIONS.md (mfg-research, private)
-    § HJB Equation Conventions). With u(T, x) = 0.5(x - x_c)² (so terminal
+    HJB residual form is `-u_t + H - (σ²/2)Δu = 0` (docs/user/CONVENTIONS.md
+    § The HJB equation, and the sign of every term in it). With u(T, x) = 0.5(x - x_c)² (so terminal
     coefficient P(T) = 0.5), σ = 0, the Riccati ODE reads P'(t) = 2 P².
     Closed form for T = 1: P(t) = 1 / (4 - 2t), so P(0) = 0.25.
 
     Analytic ratio at off-centre probe ``|x - x_c| = 1``:
         u(0)/u(T) = P(0)/P(T) = 0.25 / 0.5 = 0.5
 
-    See archon-notes/development/guides/NAMING_CONVENTIONS.md (mfg-research, private) § HJB Equation Conventions § Worked example
+    See docs/user/CONVENTIONS.md § Worked example — 1-D LQ Riccati
     for the full derivation. Probe MUST be off-centre (at centre, the
     quadratic vanishes and the test is uninformative for any P(t)).
 
@@ -324,13 +324,13 @@ def test_1d_lq_closed_form_riccati():
     assert U_T_probe > 0.1, f"Test fixture broken: probe at x={x_pts[probe_idx]:.3f} sees U_T={U_T_probe:.4f}"
     # Analytical ratio P(0)/P(T) = 0.25 / 0.5 = 0.5 under mfgarchon's HJB
     # convention `-u_t + H - σ²Δu/2 = 0`. Probe at |x-x_c|=1, T=1, G_s=0.5.
-    # See archon-notes/development/guides/NAMING_CONVENTIONS.md (mfg-research, private) § HJB Equation Conventions § Worked example.
+    # See docs/user/CONVENTIONS.md § Worked example — 1-D LQ Riccati.
     # Loose bound 0.3-0.85: coarse 1D grid + Neumann-by-extension wall artifact.
     ratio = U_0_probe / U_T_probe
     assert 0.3 < ratio < 0.85, (
         f"Riccati ordering broken: U(0)/U(T) at probe x={x_pts[probe_idx]:.3f} = {ratio:.3f}, "
         f"expected ~0.5 for mfgarchon LQ convention (P(0)/P(T) = 0.25/0.5). "
-        f"See archon-notes/development/guides/NAMING_CONVENTIONS.md (mfg-research, private) § HJB Equation Conventions."
+        f"See docs/user/CONVENTIONS.md § Worked example — 1-D LQ Riccati."
     )
 
 

@@ -16,8 +16,7 @@ Issue #1093. Validated in:
     mfg-research/experiments/gfdm_monotonicity_audit/minors/
         exp09_obstacle_navigation_full/geodesic_distance.py
 
-SDF convention (mfgarchon, see archon-notes/development/guides/NAMING_CONVENTIONS.md (mfg-research, private) § Geometry SDF
-Convention): `obstacles_sdf(x) <= 0` means **inside obstacle**;
+SDF convention (docs/user/CONVENTIONS.md § Geometry): `obstacles_sdf(x) <= 0` means **inside obstacle**;
 `obstacles_sdf(x) > 0` means **outside obstacle (navigable)**.
 
 References

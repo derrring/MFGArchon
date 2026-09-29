@@ -95,8 +95,8 @@ def fp_drift_coefficient(problem: Any) -> float:
     (G-017; exp16 Tier-2 had the Towel equilibrium ~4-5x too wide).
 
     Falls back to the legacy ``coupling_coefficient`` attribute when there is no ``SeparableHamiltonian``
-    at all: a non-``SeparableHamiltonian`` Hamiltonian (e.g. ``QuadraticMFGHamiltonian``, which carries
-    its own ``coupling_coefficient``) or a non-Hamiltonian direct solve.
+    at all: a non-``SeparableHamiltonian`` Hamiltonian (e.g. ``DualHamiltonian`` or
+    ``CongestionHamiltonian``) or a non-Hamiltonian direct solve.
 
     Fail-loud on a *smooth-but-not-quadratic-MINIMIZE* ``SeparableHamiltonian`` (Issue #1542 / RFC #1574
     Phase 0): a ``SeparableHamiltonian`` whose control cost is non-quadratic
@@ -182,7 +182,7 @@ def diffusion_from_volatility(
     r"""Canonical PDE diffusion coefficient ``D`` from SDE volatility ``sigma`` (Issue #811).
 
     Single source of truth for the volatility -> diffusion conversion documented in
-    ``archon-notes/development/guides/NAMING_CONVENTIONS.md (mfg-research, private)`` "Volatility vs Diffusion". Volatility is a tensor in general
+    ``docs/user/CONVENTIONS.md`` § Volatility and diffusion. Volatility is a tensor in general
     (the noise matrix :math:`\Sigma`, shape ``(d, k)``); the scalar :math:`\sigma` is the
     isotropic special case. The diffusion coefficient is
 
@@ -488,7 +488,7 @@ def resolve_volatility(
     Resolution order (canonical first):
 
     1. ``problem_params["sigma"]`` -- the canonical SDE volatility key
-       (``archon-notes/development/guides/NAMING_CONVENTIONS.md (mfg-research, private)`` "Volatility vs Diffusion"). Returned verbatim; the caller
+       (``docs/user/CONVENTIONS.md`` § Volatility and diffusion). Returned verbatim; the caller
        computes ``D = sigma**2 / 2``. No warning.
     2. ``problem_params[legacy_key]`` -- the backend's historical key, when ``legacy_key`` is
        given and present. ``legacy_is_squared=True`` means the stored value is ``sigma**2``

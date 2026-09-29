@@ -87,12 +87,13 @@ from mfgarchon.utils.mfg_logging import get_logger, configure_research_logging
 ### Mathematical typesetting & emoji
 There is no local override to the host's cross-project typography rules. Project notation is `u(t,x)`, `m(t,x)`.
 
-### Physics conventions (single-source; #811/#1412/#1512)
-- `problem.volatility` = SDE volatility $\Sigma$, held as supplied (scalar, array with `volatility_kind`, or callable); `problem.diffusion` = PDE coefficient $A = \tfrac12\Sigma\Sigma^{\mathsf T}$ ($D = \sigma^2/2$ for a scalar). Never conflate. An array declares its kind, and nothing reads it from the shape: `"field"` is one $\sigma$ per grid point (isotropic, $A = \tfrac12\sigma(x)^2 I$), `"tensor"` is the noise matrix $\Sigma$, constant `(d, d)` or `(*grid, d, d)` per point ($A = \tfrac12\Sigma\Sigma^{\mathsf T}$). A scalar takes no kind; a callable is read per point unless declared `"tensor"`. One rule for a problem's volatility and a per-solve `volatility=` override, and one owner reads every override: `resolve_volatility_override` (#2378 part 2a). There is no scalar view of a non-scalar volatility: a consumer that needs one calls `scalar_volatility(problem.volatility, consumer=...)`, which refuses rather than averaging (#2376).
-- Resolve $\sigma \to D$ through the one converter `diffusion_from_volatility(sigma)`; never inline `0.5*sigma**2` in a solver.
-- FP drift scale comes from `fp_drift_coefficient(problem)` (= 1/control_cost), not a private per-solver copy.
-- The weak-form FP family receives the value function through `potential_field`; each backend differentiates it on its own FEM or MLS basis and obtains the velocity from `H.optimal_control`. Do not replace that path in isolation with a coupling-layer velocity computed on another basis.
-- Preserve the paired HJB--FP operator relation when changing weak-form advection. Test conservation and discrete adjointness separately; one does not imply the other.
+### Physics conventions → `docs/user/CONVENTIONS.md`
+The library's conventions are stated in `docs/user/CONVENTIONS.md` and only there; this file does not
+restate them. Cite a rule by its section name, never by line number. The sections a code change most
+often needs: *The HJB equation, and the sign of every term in it*; *Hamiltonian and Lagrangian* (one
+drift owner, and what the FP solver receives); *Volatility and diffusion* (the kinds, the per-solver
+table, the one converter); *Callable signatures*; *Arrays, grids and time*. Where the code does not yet
+meet a convention, the file says so and points at #2429.
 
 ### File-path anchoring ⚠️ CRITICAL
 Anchor output paths to **project root**, never CWD: ✅ `Path(__file__).resolve().parent.parent / "results"` or `${hydra:runtime.cwd}/results`; ❌ `Path("results")` / `os.getcwd()` (recursive nesting under `cd`).
@@ -475,7 +476,7 @@ but .pre-commit-config.yaml pins 0.16.0`. Treat that WARN as a refusal.
 
 | Content | Location |
 |---------|----------|
-| User docs (tutorials, guides, API) | `mfgarchon/docs/user/` (public, future book) |
+| User docs (tutorials, guides, API) | `docs/user/` (public, future book) |
 | Theory & design, architecture, roadmaps | **Joplin MFG notebook** (private) |
 | Development guides (coding style, CI/CD, tooling) | `mfg-research/docs/archon-notes/development/` |
 | Research notes (experiments, analysis) | `mfg-research/docs/`, `experiments/*/docs/` |

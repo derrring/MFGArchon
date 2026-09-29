@@ -5,9 +5,10 @@ Connects the functional calculus infrastructure (FunctionalDerivative)
 to the HJB source term pipeline (MFGProblem.source_term_hjb).
 
 For a coupling energy F[m], the Lions correction adds the first variation
-delta F / delta m[m](x) as a source term to the HJB equation:
+delta F / delta m[m](x) as a cost-signed source term S on the right-hand side of the HJB equation
+(docs/user/CONVENTIONS.md § The source term):
 
-    -du/dt + H(x, Du, m) - sigma^2/2 Du + delta F / delta m[m](x) = 0
+    -du/dt + H(t, x, Du, m) - (sigma^2/2) Laplacian(u) = delta F / delta m[m](x)
 
 This is the "measure-dependent" coupling that goes beyond local f(m(x))
 coupling (which is already handled by the Hamiltonian).
