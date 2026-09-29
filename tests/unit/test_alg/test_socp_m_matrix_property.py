@@ -275,7 +275,7 @@ def test_vectorized_jacobian_byte_identical_to_inline_lq_formula(sigma):
     n = solver.n_points
     dt = solver.problem.T / solver.problem.Nt
     lam = solver._control_cost_lambda()
-    D = diffusion_from_volatility(solver._get_sigma_value(None))
+    D = diffusion_from_volatility(solver._get_volatility_value(None))
     ref = (1.0 / dt) * eye(n, format="csr")
     for d in range(solver.dimension):
         ref = ref + diags(grad_u[:, d] / lam, format="csr") @ solver._D_grad[d]

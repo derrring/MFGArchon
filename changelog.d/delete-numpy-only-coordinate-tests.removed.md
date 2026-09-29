@@ -44,7 +44,7 @@
 
   Known false negative, left for #1800: `tests/unit/test_alg/test_bug15_sigma_fix.py` is the same
   construct as the file deleted above — it re-implements the production dispatch inline and asserts
-  on its own copy, and two mutations of the real `_get_sigma_value` leave all four of its tests
+  on its own copy, and two mutations of the real `_get_sigma_value` (renamed `_get_volatility_value` by #2378 phase 4 part 3) leave all four of its tests
   green. It survived the read-through because its docstring contains the literal string
   `mfgarchon/alg/numerical/hjb_solvers/hjb_gfdm.py:1573-1583`, so a substring grep matches it where
   an import-parse does not. Recorded rather than swept in, since the Bug #15 convention is genuinely

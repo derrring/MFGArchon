@@ -1,7 +1,7 @@
 # Deprecation Modernization Guide
 
 **Auto-generated** by `scripts/generate_deprecation_guide.py`
-**Total deprecated items**: 99
+**Total deprecated items**: 104
 **Versions covered**: v0.22.0, v0.21.0, v0.20.0, v0.19.2, v0.19.0, v0.18.6, v0.18.0, v0.17.6, v0.17.0, v0.16.11, v0.12.0
 
 ---
@@ -44,7 +44,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 ## Deprecated since v0.22.0
 
-*56 items*
+*61 items*
 
 ### Parameters
 
@@ -87,6 +87,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 - `sigma=` in `MeshlessGalerkinFPSolver.solve_fp_step_adjoint_mode()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `MeshlessGalerkinFPSolver.solve_fp_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0, once no longer blocked: the function takes **kwargs, which would accept a retired name and ignore it
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `MeshlessGalerkinHJBSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0, once no longer blocked: the function takes **kwargs, which would accept a retired name and ignore it
+- `sigma_function=` in `MonotonicityEnforcer.__init__()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `NetworkFPSolver.solve_fp_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `NetworkHJBSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `NetworkPolicyIterationHJBSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
@@ -102,14 +103,18 @@ It does mean a migration you read on one row **does not transfer** to another so
 - `sigma=` in `build_diffusion_matrix_2d()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma=` in `build_diffusion_matrix_from_geometry()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma=` in `check_adi_compatibility()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
+- `sigma_at_n=` in `compute_hjb_jacobian()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
+- `sigma_at_n=` in `compute_hjb_residual()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma=` in `create_obstacle_variational_mfg()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma=` in `create_quadratic_variational_mfg()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma=` in `diffusion_from_volatility()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma=` in `diffusion_from_volatility_torch()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma=`, `sigma_kind=` in `fp_source()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma=`, `sigma_kind=` in `hjb_source()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
+- `sigma_at_n=` in `newton_hjb_step()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `solve_fp_nd_full_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `solve_hjb_system_backward()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
+- `sigma_at_n=` in `solve_hjb_timestep_newton()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 
 ---
 

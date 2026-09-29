@@ -126,6 +126,29 @@ def test_the_renamed_public_api_refuses_sigma_by_name():
             func(sigma_kind="tensor")
 
 
+@pytest.mark.parametrize(
+    ("owner", "old", "new"),
+    [
+        ("mfgarchon.alg.numerical.hjb_solvers.base_hjb:compute_hjb_residual", "sigma_at_n", "volatility_at_n"),
+        ("mfgarchon.alg.numerical.hjb_solvers.base_hjb:compute_hjb_jacobian", "sigma_at_n", "volatility_at_n"),
+        ("mfgarchon.alg.numerical.hjb_solvers.base_hjb:newton_hjb_step", "sigma_at_n", "volatility_at_n"),
+        ("mfgarchon.alg.numerical.hjb_solvers.base_hjb:solve_hjb_timestep_newton", "sigma_at_n", "volatility_at_n"),
+        (
+            "mfgarchon.alg.numerical.gfdm_components.monotonicity_enforcer:MonotonicityEnforcer",
+            "sigma_function",
+            "volatility_function",
+        ),
+    ],
+)
+def test_the_part3_renames_refuse_the_old_keyword_by_name(owner, old, new):
+    """Ruling 20 (2026-09-28): the volatility's sigma-prefixed public keywords are renamed, and the old
+    spelling raises a TypeError naming the new one rather than failing on an unexpected keyword."""
+    module, name = owner.split(":")
+    func = getattr(importlib.import_module(module), name)
+    with pytest.raises(TypeError, match=rf"no longer takes {old}=; pass {new}="):
+        func(**{old: 0.3})
+
+
 def test_the_grid_config_refusal_names_volatility():
     """`extra="forbid"` already rejects `sigma=` as an unknown field; the refusal makes the error name
     `volatility=`."""

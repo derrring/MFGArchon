@@ -13,6 +13,7 @@ from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.pde_coefficients import (
+    diffusion_from_volatility,
     fp_drift_coefficient,
     resolve_volatility_override,
     retired_sigma_keyword,
@@ -819,8 +820,6 @@ class FPFDMSolver(BaseFPSolver):
             # Issue #1183: per-point variable-coefficient diffusion -- bake the field
             # D(x) = sigma(x)^2/2 into a conservative finite-volume Laplacian (face-averaged
             # D_{i+1/2}, mass-conserving) rather than collapsing sigma to its mean.
-            from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
-
             d_field = diffusion_from_volatility(sigma_arr, kind="field")
             diffusion_matrix = LaplacianOperator(
                 spacings=spacing, field_shape=shape, bc=bc, mass_conservative=True, coefficient_field=d_field
@@ -828,7 +827,7 @@ class FPFDMSolver(BaseFPSolver):
         else:
             # Scalar (or uniform-array) sigma: scalar D times the (existing) Laplacian.
             scalar_sigma = float(sigma_arr.reshape(-1)[0]) if sigma_arr.ndim > 0 else float(sigma_val)
-            D = 0.5 * scalar_sigma**2
+            D = diffusion_from_volatility(scalar_sigma)
             L_matrix = LaplacianOperator(spacings=spacing, field_shape=shape, bc=bc).as_scipy_sparse()
             diffusion_matrix = D * L_matrix
 

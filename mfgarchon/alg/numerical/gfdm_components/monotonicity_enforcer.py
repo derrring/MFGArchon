@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from mfgarchon.utils.deprecation import retired_parameters
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -60,7 +62,7 @@ class MonotonicityEnforcer:
         Domain bounds per dimension
     delta : float
         Neighborhood radius parameter
-    sigma_function : Callable[[int], float]
+    volatility_function : Callable[[int], float]
         Function to compute sigma value at point index
 
     Attributes
@@ -81,7 +83,7 @@ class MonotonicityEnforcer:
         Domain bounds
     delta : float
         Neighborhood radius
-    _sigma_function : Callable
+    _volatility_function : Callable
         Function to get sigma at point
     _current_density : np.ndarray | None
         Current density field (for MFG coupling)
@@ -99,7 +101,7 @@ class MonotonicityEnforcer:
     ...     multi_indices=multi_indices,
     ...     domain_bounds=[(0, 1), (0, 1)],
     ...     delta=0.1,
-    ...     sigma_function=lambda idx: 0.5,
+    ...     volatility_function=lambda idx: 0.5,
     ... )
     >>>
     >>> # Solve constrained QP for monotone coefficients
@@ -112,6 +114,11 @@ class MonotonicityEnforcer:
     >>> is_monotone, diagnostics = enforcer.check_m_matrix(weights, point_idx=0)
     """
 
+    @retired_parameters(
+        {"sigma_function": "volatility_function= -- it returns the SDE volatility at a point"},
+        issue="#2378",
+        since="v0.22.0",
+    )
     def __init__(
         self,
         qp_solver: Any,
@@ -121,7 +128,7 @@ class MonotonicityEnforcer:
         multi_indices: list[tuple[int, ...]],
         domain_bounds: list[tuple[float, float]],
         delta: float,
-        sigma_function: Callable[[int], float],
+        volatility_function: Callable[[int], float],
     ):
         """Initialize monotonicity enforcer."""
         self._qp_solver = qp_solver
@@ -131,7 +138,7 @@ class MonotonicityEnforcer:
         self.multi_indices = multi_indices
         self.domain_bounds = domain_bounds
         self.delta = delta
-        self._sigma_function = sigma_function
+        self._volatility_function = volatility_function
 
         # Statistics tracking
         self.stats = {
@@ -407,7 +414,7 @@ class MonotonicityEnforcer:
         violation_2 = False
         if gradient_idx is not None:
             D_gradient = D_coeffs[gradient_idx]
-            sigma = self._sigma_function(point_idx)
+            sigma = self._volatility_function(point_idx)
             scale_factor = 10.0 * max(sigma**2, 0.1)
             gradient_mag = abs(D_gradient)
             violation_2 = gradient_mag > scale_factor * laplacian_mag
@@ -439,7 +446,7 @@ class MonotonicityEnforcer:
 
         if violation_2:
             D_gradient = D_coeffs[gradient_idx]
-            sigma = self._sigma_function(point_idx)
+            sigma = self._volatility_function(point_idx)
             scale_factor = 10.0 * max(sigma**2, 0.1)
             gradient_mag = abs(D_gradient)
             excess_gradient = gradient_mag / laplacian_mag - scale_factor
@@ -582,7 +589,7 @@ class MonotonicityEnforcer:
 
         # Constraint 2: Gradient Boundedness
         if first_deriv_indices:
-            sigma = self._sigma_function(point_idx)
+            sigma = self._volatility_function(point_idx)
             sigma_sq = sigma**2
 
             def constraint_gradient_bounded(

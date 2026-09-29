@@ -38,6 +38,7 @@ from mfgarchon.operators.stencils.finite_difference import (
 from mfgarchon.utils.pde_coefficients import (
     get_spatial_grid,
     resolve_volatility_override,
+    retired_sigma_at_n_keyword,
     retired_volatility_keywords,
 )
 
@@ -698,22 +699,23 @@ def _clip_p_values(p_values: dict[str, float], clip_limit: float) -> dict[str, f
     return clipped_p_values
 
 
-def _volatility_at_n(problem: Any, sigma_at_n: float | np.ndarray | None) -> float | np.ndarray:
-    """The volatility an HJB assembly uses at t_n: ``sigma_at_n``, or the problem's own.
+def _volatility_at_n(problem: Any, volatility_at_n: float | np.ndarray | None) -> float | np.ndarray:
+    """The volatility an HJB assembly uses at t_n: ``volatility_at_n``, or the problem's own.
 
     A scalar or per-point array is used as is. A callable problem volatility needs a time and a
     density to evaluate, which only the per-timestep driver has, so it is refused here rather than
     replaced by a collapsed scalar (#2376).
     """
-    sigma = problem.volatility if sigma_at_n is None else sigma_at_n
+    sigma = problem.volatility if volatility_at_n is None else volatility_at_n
     if callable(sigma):
         raise NotImplementedError(
-            "The HJB assembly needs the volatility evaluated at t_n (sigma_at_n); the problem's "
+            "The HJB assembly needs the volatility evaluated at t_n (volatility_at_n); the problem's "
             "volatility is a callable, which the per-timestep driver evaluates and passes in (#2376)."
         )
     return sigma
 
 
+@retired_sigma_at_n_keyword
 def compute_hjb_residual(
     U_n_current_newton_iterate: np.ndarray,  # U_kp1_n in notebook's getFnU_withM
     U_n_plus_1_from_hjb_step: np.ndarray,  # U_kp1_np1 in notebook
@@ -721,7 +723,7 @@ def compute_hjb_residual(
     problem: MFGProblem,
     t_idx_n: int,  # Time index for U_n
     backend=None,  # Backend for MPS/CUDA support
-    sigma_at_n: float | np.ndarray | None = None,  # SDE volatility at t_n (not D = sigma^2/2)
+    volatility_at_n: float | np.ndarray | None = None,  # SDE volatility at t_n (not D = sigma^2/2)
     use_upwind: bool = True,  # Use the upwind momentum (True) or central (False)
     bc: BoundaryConditions | None = None,  # Boundary conditions (Issue #542 fix)
     domain_bounds: np.ndarray | None = None,  # Domain bounds for BC
@@ -736,7 +738,7 @@ def compute_hjb_residual(
     dt = problem.dt
 
     # The volatility at t_n; None is the problem's own. NumPy broadcasts a scalar automatically.
-    sigma = _volatility_at_n(problem, sigma_at_n)
+    sigma = _volatility_at_n(problem, volatility_at_n)
 
     if backend is not None:
         Phi_U = backend.zeros((Nx,))
@@ -1118,6 +1120,7 @@ def _advection_bands(
     return sub, diag, sup, extras
 
 
+@retired_sigma_at_n_keyword
 def compute_hjb_jacobian(
     U_n_current_newton_iterate: np.ndarray,  # U_new_n_tmp in notebook Newton step
     U_k_n_from_prev_picard: np.ndarray,  # U_k_n (or Uoldn) in notebook Jacobian
@@ -1125,7 +1128,7 @@ def compute_hjb_jacobian(
     problem: MFGProblem,
     t_idx_n: int,
     backend=None,  # Backend for MPS/CUDA support
-    sigma_at_n: float | np.ndarray | None = None,  # SDE volatility at t_n (not D = sigma^2/2)
+    volatility_at_n: float | np.ndarray | None = None,  # SDE volatility at t_n (not D = sigma^2/2)
     use_upwind: bool = True,  # Use the upwind momentum (True) or central (False)
     bc: BoundaryConditions | None = None,  # Boundary conditions (Issue #542 fix)
     domain_bounds: np.ndarray | None = None,  # Domain bounds for BC
@@ -1139,7 +1142,7 @@ def compute_hjb_jacobian(
     eps = 1e-7
 
     # The volatility at t_n; None is the problem's own. NumPy broadcasts a scalar automatically.
-    sigma = _volatility_at_n(problem, sigma_at_n)
+    sigma = _volatility_at_n(problem, volatility_at_n)
 
     # For Jacobian, we always need NumPy arrays for scipy.sparse
     # Convert backend arrays to NumPy if needed
@@ -1370,6 +1373,7 @@ def hjb_residual_norm(residual: np.ndarray, dx: float) -> float:
     return float(np.linalg.norm(residual) * np.sqrt(dx))
 
 
+@retired_sigma_at_n_keyword
 def newton_hjb_step(
     U_n_current_newton_iterate: np.ndarray,  # U_new_n_tmp in notebook
     U_n_plus_1_from_hjb_step: np.ndarray,  # U_new_np1 in notebook
@@ -1378,7 +1382,7 @@ def newton_hjb_step(
     problem: MFGProblem,
     t_idx_n: int,
     backend=None,  # Add backend parameter for MPS/CUDA support
-    sigma_at_n: float | np.ndarray | None = None,  # SDE volatility at t_n (not D = sigma^2/2)
+    volatility_at_n: float | np.ndarray | None = None,  # SDE volatility at t_n (not D = sigma^2/2)
     use_upwind: bool = True,  # Use the upwind momentum (True) or central (False)
     bc: BoundaryConditions | None = None,  # Boundary conditions (Issue #542 fix)
     domain_bounds: np.ndarray | None = None,  # Domain bounds for BC
@@ -1401,7 +1405,7 @@ def newton_hjb_step(
         problem,
         t_idx_n,
         backend,
-        sigma_at_n,
+        volatility_at_n,
         use_upwind,
         bc=bc,
         domain_bounds=domain_bounds,
@@ -1427,7 +1431,7 @@ def newton_hjb_step(
         problem,
         t_idx_n,
         backend,
-        sigma_at_n,
+        volatility_at_n,
         use_upwind,
         bc=bc,
         domain_bounds=domain_bounds,
@@ -1483,6 +1487,7 @@ def newton_hjb_step(
     return U_n_next_newton_iterate, l2_error_of_step, residual_norm
 
 
+@retired_sigma_at_n_keyword
 def solve_hjb_timestep_newton(
     U_n_plus_1_from_hjb_step: np.ndarray,  # U_new[n+1] in notebook
     U_k_n_from_prev_picard: np.ndarray,  # U_k[n] in notebook
@@ -1492,7 +1497,7 @@ def solve_hjb_timestep_newton(
     newton_tolerance: float | None = None,
     t_idx_n: int | None = None,  # time index for U_n being solved
     backend: BaseBackend | None = None,
-    sigma_at_n: float | np.ndarray | None = None,  # SDE volatility at t_n (not D = sigma^2/2)
+    volatility_at_n: float | np.ndarray | None = None,  # SDE volatility at t_n (not D = sigma^2/2)
     use_upwind: bool = True,  # Use the upwind momentum (True) or central (False)
     bc: BoundaryConditions | None = None,  # Boundary conditions (Issue #542 fix)
     domain_bounds: np.ndarray | None = None,  # Domain bounds for BC
@@ -1550,7 +1555,7 @@ def solve_hjb_timestep_newton(
             problem,
             t_idx_n,
             backend,  # Pass backend for MPS/CUDA support
-            sigma_at_n,  # the volatility at t_n
+            volatility_at_n,  # the volatility at t_n
             use_upwind,  # Pass advection scheme flag
             bc=bc,
             domain_bounds=domain_bounds,
@@ -1848,11 +1853,13 @@ def solve_hjb_system_backward(
         # volatility as supplied). dimension=1: 1D path.
         diffusion = problem.get_diffusion_coefficient_field(override=volatility, field_name="volatility", dimension=1)
         grid = get_spatial_grid(problem)
-        sigma_at_n = diffusion.evaluate_at(timestep_idx=n_idx_hjb, grid=grid, density=M_n_prev_picard, dt=problem.dt)
+        volatility_at_n = diffusion.evaluate_at(
+            timestep_idx=n_idx_hjb, grid=grid, density=M_n_prev_picard, dt=problem.dt
+        )
 
         # Handle backend compatibility for NaN/Inf checking in callable results
-        if diffusion.is_callable() and isinstance(sigma_at_n, np.ndarray):
-            if has_nan_or_inf(sigma_at_n, backend):
+        if diffusion.is_callable() and isinstance(volatility_at_n, np.ndarray):
+            if has_nan_or_inf(volatility_at_n, backend):
                 raise ValueError(f"Callable volatility returned NaN/Inf at timestep {n_idx_hjb}")
 
         # Compute current time for time-dependent BCs
@@ -1874,7 +1881,7 @@ def solve_hjb_system_backward(
             newton_tolerance=newton_tolerance,
             t_idx_n=n_idx_hjb,
             backend=backend,  # Pass backend for acceleration
-            sigma_at_n=sigma_at_n,  # the volatility at t_n
+            volatility_at_n=volatility_at_n,  # the volatility at t_n
             use_upwind=use_upwind,  # Pass advection scheme flag
             bc=bc,  # Pass BC for Issue #542 fix
             domain_bounds=domain_bounds,
