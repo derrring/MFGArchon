@@ -458,7 +458,8 @@ because both arguments are numeric. Three mechanisms stop it:
   `hamiltonian` / `running_cost`, is refused if its methods are out of order.
 - **Invocation by keyword.** A callable bound by name is called by keyword, so a correctly named one is
   safe. A nameless callable, a solver `source_term` and a variational Lagrangian are called
-  positionally in slot order.
+  positionally in slot order, except a `u_terminal` or `m_initial`: one that names nothing is read
+  only if `x` alone works, or, in 2-D and 3-D, as expanded coordinates if it is a bare `*args`.
 
 *Not yet met (#2429): volatility, drift and coupling callables are never bound or inspected.*
 

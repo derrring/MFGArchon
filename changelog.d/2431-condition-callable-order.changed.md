@@ -11,6 +11,6 @@
     - a `functools.partial` that fixes `t`;
     - a callable that takes time and no space (`lambda t: ...`);
     - a callable whose signature cannot be read (a C extension, `math.hypot`), if it needs more than `x`, in any dimension;
-    - a callable taking `*args, **kwargs` that needs more than `x`, in any dimension: an undecorated decorator, an `np.vectorize` object, `lambda *c, **kw`. It names nothing and cannot be told from a wrapper around another function (maintainer ruling on #2434). Decorate a wrapper with `functools.wraps`;
+    - a callable taking `*args, **kwargs` that needs more than `x`, in any dimension: an undecorated decorator, an `np.vectorize` object, `lambda *c, **kw`. It names nothing and cannot be told from a wrapper around another function (maintainer ruling, recorded on #2431). Decorate a wrapper with `functools.wraps`;
     - in 1-D, a bare `*args` that needs more than `x`.
   - `validate_components` and `validate_u_terminal` take a `terminal_time` keyword. It defaults to 0; pass $T$ to validate a time-first `u_terminal`.
