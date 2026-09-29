@@ -67,6 +67,8 @@ class Slots:
 # u-derivative family, then the measure, then further parameters (#2375 ruling 8, #2378 phase 5).
 # These are the one statement of it: every invocation goes through `bind_user_callable`.
 POTENTIAL_SLOTS = Slots(("t", "x"))
+# `u_terminal` / `m_initial`: read at T and at 0 when they declare time (#2431).
+CONDITION_SLOTS = Slots(("t", "x"))
 SOURCE_TERM_SLOTS = Slots(("t", "x", "v", "m"), aliases={"m_t": "m", "v_t": "v"}, unmoved=("v",), swapped=("v", "m"))
 MEASURE_FIELD_SLOTS = Slots(("t", "x", "mu"))
 HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m"), unmoved=("p",), swapped=("p", "m"), required=("t", "x", "p", "m"))

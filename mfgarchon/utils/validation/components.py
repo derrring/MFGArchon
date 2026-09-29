@@ -556,6 +556,7 @@ def _validate_callable_ic(
             func,
             dimension=dimension,
             sample_point=adapter_sample,
+            role=name,
         )
     except TypeError as e:
         result.add_error(

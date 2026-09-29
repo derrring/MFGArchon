@@ -7,14 +7,15 @@ so that different signature conventions work transparently.
 Supported signatures:
     - f(x) where x is scalar float (1D convention)
     - f(x) where x is ndarray of shape (d,)
-    - f(x, t) spatiotemporal with time as second argument
-    - f(t, x) spatiotemporal with time as first argument
+    - f(t, x) spatiotemporal, time first (#2375 ruling 8), read at T for u_terminal and 0 for m_initial
     - f(x, y) expanded 2D coordinates (deprecated)
     - f(x, y, z) expanded 3D coordinates (deprecated)
 
-The probing approach (try/except cascade) is preferred over inspect.signature()
-because it handles lambdas, functools.partial, C extensions, and decorated functions
-reliably. This follows the same pattern as validate_drift() in validation/functions.py.
+Whether a callable takes x alone, and as a float or an array, is found by probing: that handles
+lambdas, functools.partial, C extensions and decorated functions alike. Which argument of a
+two-argument callable is time cannot be found by probing, because both orders return a number. So
+the parameter names decide it, through ``bind_user_callable`` as for every other user callable, and
+the order before #2378 phase 5, ``f(x, t)``, is refused rather than read with x as time (#2431).
 
 Issue #684: Callable signature detection and adaptation.
 
@@ -30,11 +31,15 @@ Example:
 
 from __future__ import annotations
 
+import functools
+import inspect
 import warnings
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 
 import numpy as np
+
+from mfgarchon.types.callable_protocols import CONDITION_SLOTS, BoundCallable, bind_user_callable
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -45,7 +50,6 @@ class CallableSignature(Enum):
 
     SPATIAL_SCALAR = auto()  # f(x) where x is scalar float (1D)
     SPATIAL_ARRAY = auto()  # f(x) where x is ndarray (d,)
-    SPATIOTEMPORAL_XT = auto()  # f(x, t)
     SPATIOTEMPORAL_TX = auto()  # f(t, x)
     EXPANDED_2D = auto()  # f(x, y) -- deprecated
     EXPANDED_3D = auto()  # f(x, y, z) -- deprecated
@@ -58,6 +62,7 @@ def adapt_ic_callable(
     sample_point: float | np.ndarray,
     *,
     time_value: float = 0.0,
+    role: str = "initial/terminal condition",
 ) -> tuple[CallableSignature, Callable]:
     """
     Detect a callable's expected signature and return a normalized wrapper.
@@ -74,12 +79,15 @@ def adapt_ic_callable(
             In 1D this is a float; in nD an ndarray of shape (d,).
         time_value: Time value for spatiotemporal wrappers (0.0 for m_initial,
             T for u_terminal).
+        role: What the callable is, for the error message (``"u_terminal"``, ``"m_initial"``).
 
     Returns:
         Tuple of (detected_signature, wrapped_callable).
 
     Raises:
-        TypeError: If no supported signature convention works.
+        TypeError: If no supported signature convention works, or if a callable that needs more
+            than ``x`` is written in the order before #2378 phase 5 (``f(x, t)``) or leaves its order
+            unnamed.
     """
     attempts: list[tuple[str, str]] = []
 
@@ -103,28 +111,7 @@ def adapt_ic_callable(
 
             return CallableSignature.SPATIAL_ARRAY, _array_wrapper_1d
         attempts.append(("f(x) with x=ndarray([x])", _err_str(err, result)))
-
-        # Probe 3: f(scalar, t) -- spatiotemporal (x, t)
-        result, err = _try_call(func, scalar_sample, time_value)
-        if err is None and _is_valid_output(result):
-            tv = time_value
-
-            def _xt_wrapper_1d(x: float, _fn: Callable = func, _t: float = tv) -> float:
-                return float(_fn(x, _t))
-
-            return CallableSignature.SPATIOTEMPORAL_XT, _xt_wrapper_1d
-        attempts.append((f"f(x, t) with x=float, t={time_value}", _err_str(err, result)))
-
-        # Probe 4: f(t, scalar) -- spatiotemporal (t, x)
-        result, err = _try_call(func, time_value, scalar_sample)
-        if err is None and _is_valid_output(result):
-            tv = time_value
-
-            def _tx_wrapper_1d(x: float, _fn: Callable = func, _t: float = tv) -> float:
-                return float(_fn(_t, x))
-
-            return CallableSignature.SPATIOTEMPORAL_TX, _tx_wrapper_1d
-        attempts.append((f"f(t, x) with t={time_value}, x=float", _err_str(err, result)))
+        sample: float | np.ndarray = scalar_sample
 
     # --- nD probes ---
     else:
@@ -138,31 +125,12 @@ def adapt_ic_callable(
         if err is None and _is_valid_output(result):
             return CallableSignature.SPATIAL_ARRAY, func
         attempts.append(("f(x) with x=ndarray", _err_str(err, result)))
+        sample = array_sample
 
-        # Probe 2: f(ndarray, t) -- spatiotemporal (x, t)
-        result, err = _try_call(func, array_sample, time_value)
-        if err is None and _is_valid_output(result):
-            tv = time_value
-
-            def _xt_wrapper_nd(x: np.ndarray, _fn: Callable = func, _t: float = tv) -> float:
-                return float(_fn(x, _t))
-
-            return CallableSignature.SPATIOTEMPORAL_XT, _xt_wrapper_nd
-        attempts.append((f"f(x, t) with x=ndarray, t={time_value}", _err_str(err, result)))
-
-        # Probe 3: f(t, ndarray) -- spatiotemporal (t, x)
-        result, err = _try_call(func, time_value, array_sample)
-        if err is None and _is_valid_output(result):
-            tv = time_value
-
-            def _tx_wrapper_nd(x: np.ndarray, _fn: Callable = func, _t: float = tv) -> float:
-                return float(_fn(_t, x))
-
-            return CallableSignature.SPATIOTEMPORAL_TX, _tx_wrapper_nd
-        attempts.append((f"f(t, x) with t={time_value}, x=ndarray", _err_str(err, result)))
-
-        # Probe 4: f(*components) -- expanded coordinates (deprecated)
-        if dimension == 2 and array_sample.shape == (2,):
+        # f(*components) -- expanded coordinates (deprecated), for a callable that does not name
+        # time: one that does is a spatiotemporal callable, and its names decide its order below.
+        expanded = not _names_time(func)
+        if expanded and dimension == 2 and array_sample.shape == (2,):
             result, err = _try_call(func, float(array_sample[0]), float(array_sample[1]))
             if err is None and _is_valid_output(result):
                 warnings.warn(
@@ -178,7 +146,7 @@ def adapt_ic_callable(
                 return CallableSignature.EXPANDED_2D, _expanded_2d
             attempts.append(("f(x, y) with expanded coordinates", _err_str(err, result)))
 
-        elif dimension == 3 and array_sample.shape == (3,):
+        elif expanded and dimension == 3 and array_sample.shape == (3,):
             result, err = _try_call(func, float(array_sample[0]), float(array_sample[1]), float(array_sample[2]))
             if err is None and _is_valid_output(result):
                 warnings.warn(
@@ -194,6 +162,18 @@ def adapt_ic_callable(
                 return CallableSignature.EXPANDED_3D, _expanded_3d
             attempts.append(("f(x, y, z) with expanded coordinates", _err_str(err, result)))
 
+    # It needs more than x: time first, read by its parameter names (#2375 ruling 8, #2431).
+    bound = bind_user_callable(func, CONDITION_SLOTS, role=role)
+    if bound.passes != ("x",):
+        result, err = _try_call(functools.partial(bound, t=time_value), x=sample)
+        if err is None and _is_valid_output(result):
+
+            def _tx_wrapper(x: float | np.ndarray, _bound: BoundCallable = bound, _t: float = time_value) -> float:
+                return float(_bound(t=_t, x=x))
+
+            return CallableSignature.SPATIOTEMPORAL_TX, _tx_wrapper
+        attempts.append((f"f(t, x) with t={time_value}", _err_str(err, result)))
+
     # All probes failed
     msg = _format_signature_error(func, dimension, attempts)
     raise TypeError(msg)
@@ -204,12 +184,25 @@ def adapt_ic_callable(
 # ---------------------------------------------------------------------------
 
 
-def _try_call(func: Callable, *args: object) -> tuple[object, Exception | None]:
+def _try_call(func: Callable, *args: object, **kwargs: object) -> tuple[object, Exception | None]:
     """Try calling func with given args. Returns (result, None) or (None, exception)."""
     try:
-        return func(*args), None
+        return func(*args, **kwargs), None
     except Exception as e:
         return None, e
+
+
+def _names_time(func: Callable) -> bool:
+    """Whether ``func`` declares a positional parameter named for time (``t`` or ``time``)."""
+    try:
+        params = inspect.signature(func).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    slot_of = CONDITION_SLOTS.slot_of()
+    kinds = inspect.Parameter
+    return any(
+        slot_of.get(p.name) == "t" for p in params if p.kind in (kinds.POSITIONAL_ONLY, kinds.POSITIONAL_OR_KEYWORD)
+    )
 
 
 def _is_valid_output(value: object) -> bool:
@@ -258,14 +251,12 @@ def _format_signature_error(
             "Accepted signatures for 1D:\n"
             "  f(x)      -- x is a Python float\n"
             "  f(x)      -- x is ndarray of shape (1,)\n"
-            "  f(x, t)   -- spatiotemporal\n"
-            "  f(t, x)   -- spatiotemporal (reversed)"
+            "  f(t, x)   -- spatiotemporal, time first; the parameters must be named t and x"
         )
     else:
         lines.append(
             f"Accepted signatures for {dimension}D:\n"
             f"  f(x)      -- x is ndarray of shape ({dimension},)\n"
-            f"  f(x, t)   -- spatiotemporal\n"
-            f"  f(t, x)   -- spatiotemporal (reversed)"
+            f"  f(t, x)   -- spatiotemporal, time first; the parameters must be named t and x"
         )
     return "\n".join(lines)
