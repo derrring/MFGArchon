@@ -685,6 +685,20 @@ functions still take `control_cost` as a scalar.*
 `obstacles` (plural) are geometric regions; the retired `obstacle` was a penalty, now `state_penalty`
 or a `constraint=ObstacleConstraint(...)`.
 
+### Symbols or words
+
+A name is a mathematical symbol or a descriptive word according to what it stands for.
+
+- **A symbol where the name is the textbook symbol of a discretisation or a scalar in a formula**:
+  `T`, `Nt`, `Nt_points`, `dt` and `tSpace` on the problem, `Nx` and `Nx_points` on the grid, the
+  control-cost weight `lambda_`. Inside an algorithm, local names follow the formula being implemented
+  (`u`, `m`, `p`, `dx`).
+- **A word for configuration and for the model's terms**: `max_iterations`, `tolerance`, `relaxation`;
+  `potential`, `coupling`, `volatility`, `diffusion`.
+
+The volatility shows where the line falls: it is $\Sigma$ in every formula and `volatility` in every
+signature that takes it (#2375 ruling 6).
+
 ### Retired
 
 **Refused**, with an error naming the replacement:
@@ -729,5 +743,3 @@ Known to be unstated or open. A claim about these must not be read out of this f
   boundary conditions drops.
 - The sign and normalisation of the reported Nash gap.
 - The remaining boundary-condition family (§ *Geometry*).
-- Whether a naming policy for new code — mathematical symbols in algorithm bodies versus descriptive
-  English in configuration — is a convention this library states at all, or a matter left to review.
