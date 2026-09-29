@@ -2660,8 +2660,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         """
         Evaluate Hamiltonian H(x, p, m) at given point (supports 1D and nD).
 
-        Uses DerivativeTensors for consistency with all solvers.
-        See archon-notes/development/guides/NAMING_CONVENTIONS.md (mfg-research, private) "Derivative Tensor Standard" section.
+        Not called by the solve path, which evaluates the Hamiltonian class in batch. Without a
+        Hamiltonian class this helper builds a DerivativeTensors for the per-point adapter
+        ``problem.H``; see docs/user/CONVENTIONS.md § Derivatives.
 
         Args:
             x: Spatial position

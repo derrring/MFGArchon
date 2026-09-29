@@ -24,11 +24,12 @@ type SolutionArray = NDArray
 """
 2D spatio-temporal solution array.
 
-Shape: (Nt+1, Nx) for 1D problems
-       (Nt+1, Nx, Ny) for 2D problems
+Shape: (Nt+1, *Nx_points) -- (Nt+1, Nx_points[0]) for 1D problems,
+       (Nt+1, Nx_points[0], Nx_points[1]) for 2D problems
 
 Axis 0 is time; the spatial axes follow the library's `indexing="ij"` order, so axis 1
-is x. Nx and Ny are POINT counts (`TensorProductGrid.Nx_points`), not interval counts.
+is x. Shapes are written with the point counts, `TensorProductGrid.Nx_points`
+(docs/user/CONVENTIONS.md § Arrays, grids and time).
 Measured: `Nx_points=[13, 7], Nt=4` gives `(5, 13, 7)`, and `Nx_points=[21], Nt=4`
 gives `(5, 21)`.
 
@@ -47,7 +48,8 @@ type SpatialGrid = NDArray
 """
 Spatial coordinate array.
 
-Shape: (Nx,) for 1D, (Nx, Ny) for 2D -- `indexing="ij"`, axis 0 is x (#2235)
+Shape: (Nx_points[0],) for 1D, (Nx_points[0], Nx_points[1]) for 2D -- `indexing="ij"`, axis 0
+is x (#2235). `get_spatial_grid()` returns the points flattened instead, shape (N, d).
 
 Used for: x-coordinates, spatial mesh points
 """
@@ -116,7 +118,7 @@ type DensityArray = NDArray
 """
 Discretized density function array.
 
-Shape: (Nx,) for 1D, matches SpatialGrid shape
+Shape: (Nx_points[0],) for 1D, matches SpatialGrid shape
 
 ~~(Nx+1,)~~ [SUPERSEDED 2026-09-04 by #2235] It said `(Nx+1,)` AND "matches
 SpatialGrid", which stopped being satisfiable when `SpatialGrid` above was corrected to

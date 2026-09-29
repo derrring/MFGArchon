@@ -128,8 +128,9 @@ class MFGProblemProtocol(Protocol):
             ``source_term_hjb(t, x, v_t, m_t)``, which receives the full spatial array at the
             time slice. Two caveats worth knowing before you do:
 
-            - Only the FDM HJB solvers accept a ``source_term``. Setting ``source_term_hjb``
-              with any of the others raises rather than dropping it silently.
+            - Every HJB solver accepts a ``source_term`` except the two network HJB solvers and
+              ``HJBHowardSolver`` used directly; those raise rather than dropping it silently
+              (docs/user/CONVENTIONS.md § The source term).
             - The FP drift is derived from the Hamiltonian alone and never consults the source.
               A coupling with no ``p`` in it --
               the usual nonlocal case ``F(x, m)`` -- is fine there and is the canonical

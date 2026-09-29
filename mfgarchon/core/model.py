@@ -29,11 +29,13 @@ if TYPE_CHECKING:
 class Model:
     """The game rules -- agent dynamics and cost structure.
 
-    Provide EITHER hamiltonian OR lagrangian (dual descriptions of the same game).
-    The other is derived via Legendre transform.
+    Provide EITHER hamiltonian OR lagrangian (dual descriptions of the same game). Only the
+    Hamiltonian form can be solved today: the Legendre transform from a Lagrangian is not
+    implemented, and ``effective_hamiltonian`` raises for one (docs/user/CONVENTIONS.md
+    § Component ownership).
 
     The Hamiltonian formulation H(t, x, p, m) enters the HJB equation:
-        -du/dt + H(t, x, grad(u), m) = 0
+        -du/dt + H(t, x, grad(u), m) - tr(A D^2 u) = 0,  A = 1/2 Sigma Sigma^T
     The Lagrangian formulation L(t, x, alpha, m) enters the variational problem:
         min_alpha integral L(t, x, alpha, m) dt
 
@@ -44,10 +46,12 @@ class Model:
             (which needs ``volatility_kind``), or a callable. Not the PDE diffusion, which is
             A = 1/2 Sigma Sigma^T and is derived from it (#2375 ruling 6).
         volatility_kind: For an array volatility, ``"field"`` (isotropic per-point sigma) or
-            ``"tensor"`` (trailing ``(d, k)`` axes are the noise matrix). Required for an array.
+            ``"tensor"`` (a square ``(d, d)`` matrix, or ``(*grid, d, d)`` per point; a non-square
+            matrix is refused). Required for an array.
         drift_field: Prescribed drift for FP-only problems (no optimization).
-        coupling_cost: F(m) -- interaction cost (variational formulation).
-        terminal_coupling: G(x, m(T)) -- terminal cost in objective (variational).
+        coupling_cost: F(m) -- interaction cost (variational formulation). Read by nothing yet (#2429).
+        terminal_coupling: G(x, m(T)) -- terminal cost in objective (variational). Read by
+            nothing yet (#2429).
     """
 
     hamiltonian: HamiltonianBase | None = None
@@ -72,8 +76,7 @@ class Model:
             raise ValueError("Model requires at least one of: hamiltonian, lagrangian, or drift_field")
         if has_h and has_l:
             raise ValueError(
-                "Provide hamiltonian OR lagrangian, not both. "
-                "They are dual descriptions -- the other is derived via Legendre transform."
+                "Provide hamiltonian OR lagrangian, not both. They are dual descriptions of the same game; supply one."
             )
 
     @property
@@ -133,9 +136,9 @@ class Conditions:
     back. That gap is real and wants a constructor that ADMITS it is grid-bound,
     not a relaxation of this rule.
 
-    Callable signature:
-        1D: f(x) where x shape (N,), returns (N,)
-        nD: f(x) where x shape (N, d), returns (N,)
+    Callable signature: called once per grid point -- 1-D: ``f(x)`` with ``x`` a float; n-D:
+    ``f(x)`` with ``x`` an array of shape ``(d,)`` -- returning one number. Write it space-only;
+    a time-first ``f(t, x)`` is misread (#2431).
 
     Args:
         u_terminal: Terminal cost u_T(x). None for variational (u is derived).

@@ -1,0 +1,20 @@
+- **`docs/user/CONVENTIONS.md`: the library's conventions, stated in one place (#2378 phase 6).**
+  - **What it covers:** the minimisation convention, the HJB sign rule and the source term, Hamiltonian/Lagrangian duality and the one owner of the FP drift, what an FP solver receives (`potential_field` versus `drift_field`), derivatives, volatility versus diffusion with the volatility kinds and a per-solver table of what each accepts, callable signatures, the solver method surface, arrays, grids and time, the measure, geometry and SDF polarity, component ownership, and names, with the retired and the deprecated.
+  - **How it was checked:** five independent verifiers checked the 159 claims of the earlier draft against the code, and every statement that did not hold was rewritten from their evidence.
+  - **Gaps:** where the code does not yet meet a convention, the file says so and points at the tracking issue (#2429, which links the rest) rather than stating a rule the code breaks.
+  - **`AGENTS.md` § *Physics conventions* is now a pointer to the file**, so it is no longer a second copy. Its documentation-tier table names `docs/user/`, the directory that exists.
+  - **Citations:** the twelve in-repo citations of the private `NAMING_CONVENTIONS.md` now cite this file by section name. Two of them pointed at sections that never existed.
+  - **Stale convention statements corrected:**
+    - `MFGProblem`'s `source_term_hjb` notes said only FDM solvers accept a source.
+    - The Lions-correction module wrote the source with the wrong sign.
+    - `SeparableLagrangian`'s class docstring signed V and f as rewards.
+    - `fp_drift_coefficient`'s docstring gave a `SeparableHamiltonian` subclass as its non-separable example.
+    - An HJB-FDM docstring named the wrong fallback for the drift coefficient.
+    - `types/arrays.py` wrote point counts as `Nx`.
+    - `LEGACY_PARAMETERS.md` presented the deprecated legacy constructor as the modern form; it now carries a status note.
+    - `ControlCostBase.optimal_control` documented a "utility maximization" sign, and `Model` said a Lagrangian is turned into a Hamiltonian (it raises) and called a tensor volatility `(d, k)` (it must be square).
+    - The explicit tensor FP step called the volatility $\Sigma$ a diffusion coefficient; it converts $\Sigma$ to $D = \tfrac12\Sigma\Sigma^{\mathsf T}$.
+    - `StochasticMFGProblem`'s constructor docstring called `Nx` a point count; the constructor treats it as an interval count.
+    - `Conditions` documented its callables as vectorised over `(N,)` / `(N, d)`; the library calls them once per point, with a float in 1-D and a `(d,)` array otherwise.
+  - **The README and quickstart examples now use the v1 API and run.** Every code block of both was executed. Before, both used the deprecated legacy constructor and `QuadraticControlCost(control_cost=)`, and wrote shapes as `(Nt+1, Nx)`. The README imported `NumericalScheme` from a module that does not export it. The quickstart's 2-D example reused the 1-D conditions and raised, and its 1-D solve did not converge. The examples now set the volatility explicitly (0.2), where the legacy constructor defaulted to 0; at 0.2 both solves converge.
+  - **Three user guides that fail at their first code block** (`obstacle_problems.md`, `stochastic_mfg_guide.md`, `multidimensional_mfg_guide.md`) carry a status note pointing to #2432, and their shape statements are corrected. `obstacle_problems.md` allocated one column fewer than the grid has.

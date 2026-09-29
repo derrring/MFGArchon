@@ -1,5 +1,9 @@
 # Stochastic MFG User Guide
 
+> **Status (2026-09-29): stale against the current API** — the first code block raises (#2432).
+> Build problems as in the [Quickstart](quickstart.md); the conventions are in
+> [`CONVENTIONS.md`](CONVENTIONS.md).
+
 **Target Audience**: Researchers and practitioners using MFGArchon for stochastic problems
 **Prerequisites**: Basic understanding of Mean Field Games and HJB-FP systems
 **Related Documentation**: [High Dimensional MFG](../theory/high_dimensional_mfg.md)
@@ -291,8 +295,8 @@ solver = CommonNoiseMFGSolver(
 result = solver.solve()
 
 # Mean solutions (averaged over noise realizations)
-u_mean = result.u_mean  # Shape: (Nt+1, Nx)
-m_mean = result.m_mean  # Shape: (Nt+1, Nx)
+u_mean = result.u_mean  # Shape: (Nt+1, *Nx_points)
+m_mean = result.m_mean  # Shape: (Nt+1, *Nx_points)
 
 # Uncertainty quantification
 u_std = result.u_std    # Standard deviation

@@ -202,8 +202,8 @@ class ControlCostBase(ABC):
         """
         Compute optimal control alpha*(p). Single source of truth for drift.
 
-        For cost minimization: alpha* = -dH/dp
-        For utility maximization: alpha* = +dH/dp
+        alpha* = -dH/dp. The library only minimises, so there is no other sign
+        (docs/user/CONVENTIONS.md § The library minimises).
 
         Parameters
         ----------
@@ -1968,7 +1968,7 @@ class LagrangianBase(MFGOperatorBase):
 
 
 class SeparableLagrangian(LagrangianBase):
-    """Separable Lagrangian: L(t, x, alpha, m) = L_control(alpha) - V(t, x) - f(m).
+    """Separable Lagrangian: L(t, x, alpha, m) = L_control(alpha) + V(t, x) + f(m), V and f costs.
 
     The non-kinetic terms carry the OPPOSITE sign to the Hamiltonian's, so that this
     class is self-conjugate against its own ``evaluate_hamiltonian`` (Issue #1645).

@@ -27,21 +27,23 @@ pip install -e .
 
 ```python
 import numpy as np
-from mfgarchon import MFGComponents, MFGProblem
+from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import neumann_bc
 
-# 1. Define Hamiltonian: H(x, p, m) = |p|^2/2 - coupling(m); the coupling is a cost
+# 1. The game: H(t, x, p, m) = |p|^2/2 - f(m), where f(m) = 0.1 m is a congestion cost
 H = SeparableHamiltonian(
-    control_cost=QuadraticControlCost(control_cost=1.0),
+    control_cost=QuadraticControlCost(lambda_=1.0),
     coupling=lambda m: 0.1 * m,
     coupling_dm=lambda m: 0.1 * np.ones_like(m),
 )
+# At Model's default volatility 0.1 this problem does not converge under the default Picard
+# settings; MFGSolverConfig(picard=PicardConfig(relaxation=0.2)) makes it converge there.
+model = Model(hamiltonian=H, volatility=0.2)
 
-# 2. Define terminal/initial conditions
-components = MFGComponents(
-    hamiltonian=H,
+# 2. The data: terminal value, initial density and horizon
+conditions = Conditions(
     u_terminal=lambda x: np.zeros_like(x),
     # Integrates to 0.702328 on this grid, not 1. The library measures the mass, names the
     # measure, and warns -- but does not rescale your density (#1887): whether the initial
@@ -49,21 +51,22 @@ components = MFGComponents(
     # `domain.integrate(...)`, and note that this changes the problem -- the coupling f(m)
     # is then evaluated at 1.4238x these values.
     m_initial=lambda x: np.exp(-5 * (x - 0.5) ** 2),
+    T=1.0,
 )
 
-# 3. Create geometry with boundary conditions
+# 3. The domain, with its boundary conditions
 domain = TensorProductGrid(
     bounds=[(0.0, 1.0)], Nx_points=[51],
     boundary_conditions=neumann_bc(dimension=1),
 )
 
-# 4. Create and solve
-problem = MFGProblem(geometry=domain, T=1.0, Nt=20, components=components)
+# 4. Assemble and solve
+problem = MFGProblem(model=model, domain=domain, conditions=conditions, Nt=20)
 result = problem.solve()
 
 print(f"Converged: {result.converged} in {result.iterations} iterations")
-print(f"U shape: {result.U.shape}")  # Value function (Nt+1, Nx)
-print(f"M shape: {result.M.shape}")  # Density (Nt+1, Nx)
+print(f"U shape: {result.U.shape}")  # value function, (Nt+1, Nx_points) = (21, 51)
+print(f"M shape: {result.M.shape}")  # density, same shape
 ```
 
 ### Custom Solver Parameters
@@ -86,11 +89,18 @@ from mfgarchon.geometry.boundary import no_flux_bc
 # 2D domain with reflecting boundaries
 domain_2d = TensorProductGrid(
     bounds=[(0.0, 1.0), (0.0, 1.0)],
-    Nx_points=[51, 51],
+    Nx_points=[21, 21],
     boundary_conditions=no_flux_bc(dimension=2),
 )
 
-problem_2d = MFGProblem(geometry=domain_2d, T=1.0, Nt=20, components=components)
+# In 2D a point x is an array of shape (2,), and each condition returns one number per point
+conditions_2d = Conditions(
+    u_terminal=lambda x: 0.0,
+    m_initial=lambda x: np.exp(-5 * np.sum((np.asarray(x) - 0.5) ** 2)),
+    T=1.0,
+)
+
+problem_2d = MFGProblem(model=model, domain=domain_2d, conditions=conditions_2d, Nt=20)
 result_2d = problem_2d.solve()
 ```
 
@@ -139,7 +149,7 @@ A: By default, FDM upwind with Picard fixed-point coupling. Use `problem.solve(s
 if result.converged:
     print(f"Converged in {result.iterations} iterations")
 else:
-    print("Did not converge — increase max_iterations or adjust damping")
+    print("Did not converge — increase max_iterations, or pass config=MFGSolverConfig(picard=PicardConfig(relaxation=0.2)), both from mfgarchon.config")
 ```
 
 **Q: Where do I get help?**

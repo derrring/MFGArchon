@@ -1206,7 +1206,7 @@ def solve_timestep_tensor_explicit(
     """
     Solve one timestep with tensor diffusion using explicit Forward Euler.
 
-    Implements: m^{k+1} = m^k + dt * (div(Sigma * grad(m)) - div(alpha * m))
+    Implements: m^{k+1} = m^k + dt * (div(D * grad(m)) - div(alpha * m)), D = 1/2 Sigma Sigma^T
 
     Parameters
     ----------
@@ -1219,7 +1219,8 @@ def solve_timestep_tensor_explicit(
     dt : float
         Time step
     tensor_field : np.ndarray or callable
-        Tensor diffusion coefficient Sigma
+        The SDE volatility tensor Sigma, ``(d, d)`` or ``(*shape, d, d)``; converted here to the
+        diffusion D (docs/user/CONVENTIONS.md § Volatility and diffusion)
     coupling_coefficient : float
         Drift coupling coefficient
     spacing : tuple
@@ -1279,8 +1280,7 @@ def solve_timestep_tensor_explicit(
 
     # Compute tensor diffusion term: div(D * grad(m)).
     # Sigma is the SDE volatility; the diffusion operator needs the PDE diffusion tensor
-    # D = (1/2) Sigma Sigma^T (archon-notes/development/guides/NAMING_CONVENTIONS.md, mfg-research,
-    # private: "Volatility vs Diffusion"; Issue #811). The raw
+    # D = (1/2) Sigma Sigma^T (docs/user/CONVENTIONS.md § Volatility and diffusion; Issue #811). The raw
     # Sigma was applied as if it were D — e.g. isotropic Sigma = 0.3 I gave effective D = 0.3
     # instead of D = sigma^2/2 = 0.045 (~6.7x overdiffusion). Route through the single-source
     # converter so the tensor path matches the scalar path D = sigma^2/2 (2026-06-10 audit, #1249).

@@ -1,5 +1,9 @@
 # Tutorial: Obstacle Problems and Variational Inequalities
 
+> **Status (2026-09-29): stale against the current API** — the first code block raises (#2432).
+> Build problems as in the [Quickstart](quickstart.md); the conventions are in
+> [`CONVENTIONS.md`](CONVENTIONS.md).
+
 **Tutorial Level**: Advanced
 **Prerequisites**: Basic MFG concepts, familiarity with HJB equations
 **Estimated Time**: 45-60 minutes
@@ -218,14 +222,14 @@ The **active set** is where the constraint is binding ($u = \psi$).
 
 ```python
 # Extract solution
-U = result.U  # Shape: (Nt+1, Nx)
+U = result.U  # Shape: (Nt+1, Nx_points) -- Nx=[Nx] counts intervals, so Nx_points = Nx + 1
 u_final = U[0, :]  # Solution at t=0 (backward time)
 
 # Compute active set (where u ≈ ψ within tolerance)
 active_set = np.abs(u_final - psi) < 1e-3
 
 print(f"\nActive Set Analysis:")
-print(f"  Active points: {active_set.sum()} / {Nx} ({100*active_set.mean():.1f}%)")
+print(f"  Active points: {active_set.sum()} / {active_set.size} ({100*active_set.mean():.1f}%)")
 print(f"  Active region: x ∈ [{x[active_set].min():.3f}, {x[active_set].max():.3f}]")
 ```
 
@@ -266,7 +270,7 @@ axes[0, 1].legend()
 axes[0, 1].grid(True, alpha=0.3)
 
 # (c) Active set over time
-active_sets_over_time = np.zeros((Nt+1, Nx), dtype=bool)
+active_sets_over_time = np.zeros(U.shape, dtype=bool)
 for n in range(Nt+1):
     active_sets_over_time[n, :] = np.abs(U[n, :] - psi) < 1e-3
 

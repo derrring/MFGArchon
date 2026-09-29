@@ -1107,7 +1107,7 @@ class HJBFDMSolver(BaseHJBSolver):
         Args:
             U: Value function at current timestep, shape (*spatial_shape)
             coupling_coefficient: Drift coupling coefficient.
-                If None, uses problem.coupling_coefficient
+                If None, uses fp_drift_coefficient(problem)
             time: Current time for time-dependent BCs
 
         Returns:
