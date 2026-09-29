@@ -136,9 +136,9 @@ class Conditions:
     back. That gap is real and wants a constructor that ADMITS it is grid-bound,
     not a relaxation of this rule.
 
-    Callable signature:
-        1D: f(x) where x shape (N,), returns (N,)
-        nD: f(x) where x shape (N, d), returns (N,)
+    Callable signature: called once per grid point -- 1-D: ``f(x)`` with ``x`` a float; n-D:
+    ``f(x)`` with ``x`` an array of shape ``(d,)`` -- returning one number. Write it space-only;
+    a time-first ``f(t, x)`` is misread (#2431).
 
     Args:
         u_terminal: Terminal cost u_T(x). None for variational (u is derived).

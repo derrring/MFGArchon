@@ -9,8 +9,8 @@ history behind a rule — what was refuted, which incident produced it — lives
 settled it, not here.
 
 Where the code does not yet meet a convention, the section says so and points at the issue that
-tracks it — **#2429** collects them, and a gap with its own owner links there — rather than stating a
-rule the code breaks.
+tracks it — **#2429** lists them, linking each gap that has an issue of its own — rather than stating
+a rule the code breaks.
 
 ---
 
@@ -124,8 +124,9 @@ not claimed for them, and the library does not check it either way.
   $(N_t+1, N_x)$ trajectory. A callback that slices internally slices twice.
 - **Every HJB solver accepts a source and adds it, except three, and those raise
   `NotImplementedError` rather than drop it.** The two network HJB solvers do not name `source_term`.
-  `HJBHowardSolver` names it and refuses it: a source reaches Howard only through
-  `HJBGFDMSolver(inner_solver="howard")`, which converts it into the running cost.
+  `HJBHowardSolver` names it and refuses it: a source enters Howard through its constructor's
+  `running_cost`, and `HJBGFDMSolver(inner_solver="howard")` does that conversion for a composed
+  source.
 - **A $p$-dependent coupling must not be routed through the source.** The FP drift is derived from
   $D_pH$, and a $p$-dependence the Hamiltonian does not see cannot appear in it.
 - For a repulsive interaction energy $F[m]$, with its strength inside $F$, the source is
@@ -434,7 +435,9 @@ Time-first also agrees with § *Arrays, grids and time* and with `scipy.integrat
 *Not yet met (#2429): the per-point adapter `problem.H` / `problem.dH_dm` is not time-first and
 defaults its time to 0, and some per-point solver paths call it without one.
 `LagrangianBase.proximal(tau, z, *, t=0.0, x=None, m=None)` puts its step arguments first and defaults
-its time to 0, and the private finite-difference helpers take `(x, m, p, t)`.*
+its time to 0, and several private helpers put `t` last: the finite-difference ones and
+`DualHamiltonian._find_optimal_alpha` take `(x, m, p, t)`, `DualLagrangian._find_optimal_p` takes
+`(x, alpha, m, t)`, and `NetworkHamiltonian._default_hamiltonian` takes `(node, m, p, t)`.*
 
 *Not yet met (#2431): a `u_terminal` or `m_initial` written time-first, `lambda t, x: ...`, is read as
 `f(x, t)` — the coordinate as time and the time as the coordinate — with no error or warning. Write

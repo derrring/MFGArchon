@@ -38,6 +38,8 @@ H = SeparableHamiltonian(
     coupling=lambda m: 0.1 * m,
     coupling_dm=lambda m: 0.1 * np.ones_like(m),
 )
+# At Model's default volatility 0.1 this problem does not converge under the default Picard
+# settings; MFGSolverConfig(picard=PicardConfig(relaxation=0.2)) makes it converge there.
 model = Model(hamiltonian=H, volatility=0.2)
 
 # 2. The data: terminal value, initial density and horizon
@@ -147,7 +149,7 @@ A: By default, FDM upwind with Picard fixed-point coupling. Use `problem.solve(s
 if result.converged:
     print(f"Converged in {result.iterations} iterations")
 else:
-    print("Did not converge — increase max_iterations, or pass config=PicardConfig(relaxation=...)")
+    print("Did not converge — increase max_iterations, or pass config=MFGSolverConfig(picard=PicardConfig(relaxation=0.2)), both from mfgarchon.config")
 ```
 
 **Q: Where do I get help?**

@@ -222,7 +222,7 @@ The **active set** is where the constraint is binding ($u = \psi$).
 
 ```python
 # Extract solution
-U = result.U  # Shape: (Nt+1, Nx + 1) -- Nx=[Nx] counts intervals, so Nx + 1 points
+U = result.U  # Shape: (Nt+1, Nx_points) -- Nx=[Nx] counts intervals, so Nx_points = Nx + 1
 u_final = U[0, :]  # Solution at t=0 (backward time)
 
 # Compute active set (where u ≈ ψ within tolerance)

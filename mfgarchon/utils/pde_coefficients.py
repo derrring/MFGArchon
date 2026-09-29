@@ -46,8 +46,8 @@ def assert_quadratic_drift(problem: Any, *, context: str) -> None:
     control), and also for a non-separable Hamiltonian or no Hamiltonian at all (both outside this
     guard's quadratic-MINIMIZE-vs-not scope). What happens on that non-separable / no-Hamiltonian
     no-op depends on the caller: :func:`fp_drift_coefficient`'s own callers fall through to the legacy
-    scalar ``coupling_coefficient``; the FP solvers that form ``alpha*`` from ``H.optimal_control``
-    themselves (FVM, and the weak-form FEM / meshless-Galerkin family) do NOT fall through to a scalar -- they require a ``SeparableHamiltonian`` and reject a
+    scalar ``coupling_coefficient``; FVM and the weak-form FEM / meshless-Galerkin family, which form
+    ``alpha*`` from ``H.optimal_control`` themselves, do NOT fall through to a scalar -- they require a ``SeparableHamiltonian`` and reject a
     non-separable Hamiltonian with their own ``NotImplementedError`` at the ``H.optimal_control`` call
     site (Issue #1528).
 
