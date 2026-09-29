@@ -440,7 +440,9 @@ its time to 0, and several private helpers put `t` last: the finite-difference o
 `(x, alpha, m, t)`, and `NetworkHamiltonian._default_hamiltonian` takes `(node, m, p, t)`.*
 
 **`u_terminal` and `m_initial` are space-only or time-first.** `lambda x: ...` is read at each point;
-`lambda t, x: ...` is read at $t = T$ for `u_terminal` and $t = 0$ for `m_initial`.
+`lambda t, x: ...` is read at $t = T$ for `u_terminal` and $t = 0$ for `m_initial`. *Not yet met
+(#2429): `StochasticMFGProblem`'s conditional problems call `u_terminal(x)` directly, so a time-first
+one is refused there.*
 
 ### The library refuses the old order rather than misreading it
 
@@ -450,8 +452,8 @@ because both arguments are numeric. Three mechanisms stop it:
 - **When a callable is accepted**, its parameter names are read and an out-of-order signature is
   refused, with a message naming the expected order. This covers the potential, `source_term_hjb` /
   `source_term_fp`, measure fields, Hamiltonian and feedback callables, network callables, the
-  variational Lagrangian, and a `u_terminal` or `m_initial` that takes more than `x`. A solver's own
-  `source_term` is checked at its first evaluation.
+  variational Lagrangian, and `u_terminal` and `m_initial`. A solver's own `source_term` is checked at
+  its first evaluation.
 - **When a class is created**, a Hamiltonian or Lagrangian subclass, or an `MFGProblem` subclass's
   `hamiltonian` / `running_cost`, is refused if its methods are out of order.
 - **Invocation by keyword.** A callable bound by name is called by keyword, so a correctly named one is
