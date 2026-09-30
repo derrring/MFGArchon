@@ -32,7 +32,7 @@ import warnings
 import numpy as np
 from scipy.integrate import solve_ivp
 
-# How finely a semi-Lagrangian step is cut when its CFL number exceeds 1. Both halves of the SL pair
+# How finely a semi-Lagrangian step is cut when its CFL number exceeds max(1, cfl_target). Both halves of the SL pair
 # (HJBSemiLagrangianSolver and FPSLSolver) share this function; each measures the CFL number on its own
 # velocity and time level (#1880).
 DEFAULT_CFL_TARGET = 0.9
@@ -57,9 +57,8 @@ def check_substep_settings(cfl_target: float, max_substeps: int) -> None:
     cross that many cells: one at the default, ``cfl_target`` above 1.
 
     Above 1 the target is accepted with a warning, not refused (#2458): where the pair becomes
-    unstable is a measurement on one fixture, not a property of the scheme, and it moved where sigma
-    and the grid were varied (#2448: sigma = 0 against 0.2; a 2-D HJB half at 1.5 read 1.152 against
-    1-D's 2.190). On #1880's matrix fixture (sigma = 0.2), with the HJB half at c and the FP
+    unstable is a measurement on one fixture, not a property of the scheme, and the growth measured
+    above 1 changed with the grid (#2448: a 2-D HJB half at 1.5 read 1.152 against 1-D's 2.190). On #1880's matrix fixture (sigma = 0.2), with the HJB half at c and the FP
     half at its default, a seeded asymmetry changes per sweep by 0.984 at c = 1.0, 1.005 at 1.02,
     0.994 at 1.05, 1.121 at 1.1 and 2.190 at 1.5 (#2448). An FP half at up to 1.5 beside a default
     HJB half was stable; at 50 either half behaves as if it did not sub-step at all, which the pair's

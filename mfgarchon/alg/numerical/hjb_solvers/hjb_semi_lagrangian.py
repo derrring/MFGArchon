@@ -245,10 +245,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             use_jax: Whether to use JAX acceleration (auto-detect if None)
             tolerance: Convergence tolerance for optimization
             max_char_iterations: Maximum iterations for characteristic solving
-            check_cfl: Whether to check CFL condition and issue warnings (default: True).
-                CFL = max|dH/dp| * dt / dx, on the foot velocity (#2439). Warns if CFL > 1.0, on a
-                solver that does not sub-step; a sub-stepping one plans its own steps, and with
-                cfl_target above 1 it runs a step of CFL up to cfl_target whole, without this warning.
+            check_cfl: Whether to log a warning when a step's foot crosses more than one cell
+                (default: True), CFL = max|dH/dp| * dt / dx on the foot velocity (#2439). Which steps
+                are checked depends on the path; ``_warn_if_step_exceeds_one_cell`` lists them.
             enable_adaptive_substepping: Whether to automatically subdivide time steps
                 when CFL > max(1, cfl_target) to maintain stability (default: True). When enabled,
                 the solver will use smaller internal time steps while preserving the
@@ -847,7 +846,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Returns:
             Tuple of (cfl_number, n_substeps, dt_substep):
                 - cfl_number: The CFL number with the target dt
-                - n_substeps: Number of substeps needed (1 if CFL <= 1.0)
+                - n_substeps: Number of substeps needed (1 if CFL <= max(1, cfl_target))
                 - dt_substep: Time step to use for each substep
         """
         if self.dimension > 1 and np.ndim(u_values) == 1:
@@ -2334,9 +2333,14 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
     ) -> None:
         """The CFL warning, on ``_foot_cfl`` for the step actually taken (``dt``, default ``self.dt``).
 
-        The ADI paths ask for it only when the solver does not sub-step, since the schedule has already
-        bounded a sub-stepping solver's whole step. The stochastic path asks on every (sub-)step, with
-        its own ``dt``: measured on a full ``self.dt`` it fired on every sub-step it had taken (#2449).
+        Which steps ask for it, by path (all only with ``check_cfl`` on):
+        - the operator-splitting paths (adi / explicit / none) on a whole step, only when the solver
+          does not sub-step. A sub-stepping solver runs a step whole only while its CFL number is at
+          most ``max(1, cfl_target)``; above 1 the constructor warned instead (#2458). Never on a
+          sub-step;
+        - the stochastic path on every (sub-)step, with its own ``dt``: measured on a full ``self.dt``
+          it fired on every sub-step it had taken (#2449);
+        - the canonical-CS and DPP paths never.
         """
         if m_density is None or t_idx is None:
             raise TypeError("_compute_gradient(check_cfl=True) needs m_density and t_idx to measure the foot's CFL")

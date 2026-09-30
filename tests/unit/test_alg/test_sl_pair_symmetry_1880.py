@@ -1,7 +1,7 @@
 """The semi-Lagrangian pair structures a step alike on both sides (#1880).
 
-When a characteristic crosses more than one cell per step, the HJB half cuts the step into
-sub-steps. The FP half used to make one forward splat. The coupled Picard map then amplified an
+When a characteristic crosses more than one cell per step (at the default cfl_target), the HJB half
+cuts the step into sub-steps. The FP half used to make one forward splat. The coupled Picard map then amplified an
 antisymmetric perturbation ~3.3x per sweep on a reflection-symmetric problem, where upwind FD damps it
 at 0.89 and SL refined in dt at 0.2. The mirror mismatch, with FP sub-stepping while HJB does not, is
 unstable too. So the FP half sub-steps exactly when its HJB half does.
