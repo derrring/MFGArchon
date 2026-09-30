@@ -244,7 +244,7 @@ def _create_sl_pair(
     product, of backward interpolation (HJB) along the same characteristics. The two halves do not yet
     trace the same characteristics: the FP half uses the velocity of U at the start of a step with
     ``np.gradient``, the HJB half the gradient of the evolving U with the geometry's operator, which
-    differs at the walls (#1880 follow-up). The FP half is built to sub-step exactly when the HJB half
+    differs at the walls (#2439). The FP half is built to sub-step exactly when the HJB half
     does.
 
     Args:
