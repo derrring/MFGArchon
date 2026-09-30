@@ -45,7 +45,7 @@ def cfl_substeps(
     One when ``cfl <= 1``; otherwise ``ceil(cfl / cfl_target)``. A step that needs more than
     ``max_substeps`` is refused rather than capped (#2438). On the #1880 fixture at 41 points, a
     capped HJB step grew U smoothly while its sub-step CFL was 1.6-1.9. From 2.07 on, U grew faster
-    with each sub-step, 2.2 to 267 over ten of them, then roughly squared per sub-step, and the solve
+    than in that smooth phase, 2.2 to 267 over ten sub-steps, then roughly squared per sub-step, and the solve
     ended in NaN. With room for the 195 sub-steps it needed, it stayed finite and symmetric. The HJB
     half's pointwise update takes one foot from the node's own gradient; for the quadratic control
     cost that can only overestimate the Lax-Oleinik infimum, and does once the foot is cells away.
@@ -72,8 +72,8 @@ def cfl_substeps(
             f"cfl_target={cfl_target}, more than max_substeps={max_substeps} (capped, each sub-step "
             f"would have CFL number {cfl / max_substeps:.2f}). Neither half caps: a capped HJB step can "
             f"run away (#2438), and the FP half must sub-step as its HJB half does (#1880). Refine dt "
-            f"(a larger Nt), or raise max_substeps to at least {needed}; a later Picard sweep can need "
-            f"more as the density concentrates. In Expert Mode, create_paired_solvers(..., "
+            f"(a larger Nt, with the solvers rebuilt for it, #2446), or raise max_substeps to at least "
+            f"{needed}; a later Picard sweep can need more. In Expert Mode, create_paired_solvers(..., "
             f"hjb_config={{'max_substeps': n}}) hands the value to both halves."
         )
     return needed

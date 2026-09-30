@@ -118,7 +118,7 @@ def test_the_fp_half_relaxes_to_the_stationary_ou_density_at_cfl_above_one(dimen
 @pytest.mark.parametrize("half", ["hjb", "fp"])
 def test_a_step_needing_more_substeps_than_the_cap_is_refused(half):
     """A capped HJB step ran away on the #1880 fixture at 41 points: from a sub-step CFL of 2 on, U grew
-    faster with each sub-step until the solve ended in NaN after a warning. Both halves now refuse the
+    ever faster until the solve ended in NaN after a warning. Both halves now refuse the
     step (#2438)."""
     problem = _problem()
     x = np.linspace(0.0, 1.0, 21)
@@ -142,3 +142,5 @@ def test_the_cap_admits_a_step_that_needs_exactly_max_substeps():
     assert cfl_substeps(5.0, cfl_target=0.5, max_substeps=10) == 10
     with pytest.raises(ValueError, match=r"needs 10 sub-steps .*max_substeps=9\b"):
         cfl_substeps(5.0, cfl_target=0.5, max_substeps=9)
+    # A sub-step never exceeds cfl_target: 10.2 needed rounds up to 11, not down to 10.
+    assert 5.1 / cfl_substeps(5.1, cfl_target=0.5, max_substeps=11) <= 0.5
