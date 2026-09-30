@@ -132,7 +132,7 @@ class WeakFormFPSolver(BaseFPSolver):
         source_term: Callable | None = None,
         m_initial: NDArray | None = None,  # DEPRECATED alias for M_initial, the base's name (#2377)
         volatility_kind: str | None = None,
-        **kwargs,
+        show_progress: bool | None = None,
     ) -> NDArray:
         """Solve the FP equation forward in time on the weak-form operators.
 
@@ -140,6 +140,10 @@ class WeakFormFPSolver(BaseFPSolver):
         the advective velocity ``α = -coupling·∇U`` on its own quadrature/MLS basis. It was
         historically -- and misleadingly -- named ``drift_field``, but on this solver that input
         always meant ``U``, never the velocity; ``drift_field`` is kept as a deprecated alias.
+
+        ``show_progress`` is the base interface's display switch; this solver shows no progress. It does
+        not take the base's ``progress_callback``, which it would never call. A keyword this signature does
+        not name raises (#2419).
         """
         # Issue #1043: drift_field is the deprecated name for the U (potential) input here.
         if drift_field is not None:

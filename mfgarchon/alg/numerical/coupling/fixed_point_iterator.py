@@ -107,23 +107,6 @@ class FixedPointIterator(BaseCouplingIterator):
         "damping_schedule": "Use 'relaxation_schedule' instead (v0.25.0 removal, Issue #1070).",
         "damping_schedule_M": "Use 'relaxation_schedule_M' instead (v0.25.0 removal, Issue #1070).",
     }
-    _RECOGNIZED_KWARGS: ClassVar[set[str]] = {
-        "config",
-        "relaxation",
-        "relaxation_M",
-        "use_anderson",
-        "anderson_depth",
-        "anderson_beta",
-        "backend",
-        "volatility",
-        "volatility_kind",
-        "drift_field",
-        "adaptive_relaxation",
-        "adaptive_relaxation_decay",
-        "adaptive_relaxation_min",
-        "relaxation_schedule",
-        "relaxation_schedule_M",
-    }
 
     @retired_volatility_keywords
     def __init__(
@@ -156,17 +139,21 @@ class FixedPointIterator(BaseCouplingIterator):
                 Recommended for MFG: relaxation=1.0, relaxation_M=0.2 (U adapts fully,
                 M filters particle noise).
         """
-        # Reject removed kwargs with a curated migration message; warn on
-        # unrecognized kwargs that may be typos. See _REMOVED_KWARGS above.
+        # Reject removed kwargs with a curated migration message, and any other name: every name this
+        # constructor takes is a named parameter, so **kwargs only ever holds a removed name or a typo,
+        # and a typo accepted with a warning is a keyword silently dropped (#2419).
         if kwargs:
             validate_kwargs(
                 kwargs=kwargs,
                 deprecated_kwargs=self._REMOVED_KWARGS,
-                recognized_kwargs=self._RECOGNIZED_KWARGS,
+                recognized_kwargs=set(),
                 context="FixedPointIterator",
                 error_on_deprecated=True,
-                warn_on_unrecognized=True,
+                warn_on_unrecognized=False,
             )
+            unknown = sorted(set(kwargs) - set(self._REMOVED_KWARGS))
+            if unknown:
+                raise TypeError(f"FixedPointIterator.__init__() got unexpected keyword argument(s): {unknown}")
         super().__init__(problem)
         # #2250: resolved here for a fast failure on an obviously bad value; resolved
         # again in allocate_state_arrays, which also catches a name or bad type assigned

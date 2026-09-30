@@ -276,7 +276,7 @@ def resolve_volatility_kwarg(
     - **The solver does not name it, and the field is a hazard: raise.** Signature introspection
       answers "does this callable name the parameter", not "can this solver consume it", and a
       ``**kwargs`` override makes those two diverge. Measured on the meshless pair, whose HJB
-      wrapper delegates through ``(*args, use_newton=None, **kwargs)``: with a problem volatility of
+      wrapper then delegated through ``(*args, use_newton=None, **kwargs)`` (deleted in #2419): with a problem volatility of
       0.3 and an override field of mean 0.7, the HJB side ran at D = 0.045 while the paired FP side -- which does
       name the parameter -- ran at D = 0.245. A 5.4x mismatch, no warning, and a converged density
       for a problem nobody posed. Treating ``VAR_KEYWORD`` as accept-anything was the other
