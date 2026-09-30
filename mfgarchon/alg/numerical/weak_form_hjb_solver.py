@@ -53,6 +53,10 @@ class WeakFormHJBSolver(BaseHJBSolver):
     boundary nodes for point clouds).
     """
 
+    # The inner solver when solve_hjb_system is not told: Picard. MeshlessGalerkinHJBSolver sets its
+    # own from its constructor (#2419: the override that did this forwarded **kwargs).
+    _use_newton_default: bool = False
+
     def __init__(self, problem: MFGProblem, discretization: WeakFormDiscretization) -> None:
         super().__init__(problem)
         self._disc = discretization
@@ -275,7 +279,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
         U_coupling_prev: NDArray | None = None,
         volatility: float | NDArray | None = None,
         source_term: Callable | None = None,
-        use_newton: bool = False,
+        use_newton: bool | None = None,
         max_newton_iterations: int = 30,
         newton_tolerance: float = 1e-6,
         # Deprecated names
@@ -284,7 +288,6 @@ class WeakFormHJBSolver(BaseHJBSolver):
         U_from_prev_picard: NDArray | None = None,
         cross_density=None,
         volatility_kind: str | None = None,
-        **kwargs,
     ) -> NDArray:
         """Solve the HJB system backward in time on the weak-form operators.
 
@@ -295,10 +298,15 @@ class WeakFormHJBSolver(BaseHJBSolver):
 
         Before #2020 this parameter was swallowed by ``**kwargs``: passing it raised nothing, changed
         nothing, and a convergence order measured through here was an order for the sourceless PDE.
+        The ``**kwargs`` is gone (#2419), so a keyword this signature does not name raises.
+
+        ``use_newton=None`` takes the solver's default, ``_use_newton_default``: Picard here, and the
+        constructor's ``use_newton`` on the meshless-Galerkin solver.
         """
+        if use_newton is None:
+            use_newton = self._use_newton_default
         # Issue #1071: named explicitly (not swallowed by **kwargs) so a multi-population
-        # cross-density trajectory fails loud rather than silently decoupling. Covers the
-        # meshless-Galerkin solver, which forwards **kwargs here.
+        # cross-density trajectory fails loud rather than silently decoupling.
         if cross_density is not None:
             raise NotImplementedError(
                 "WeakFormHJBSolver does not support multi-population cross-density coupling "

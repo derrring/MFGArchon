@@ -25,7 +25,7 @@ import numpy as np
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
 from mfgarchon.alg.numerical.weak_form_hjb_solver import WeakFormHJBSolver
-from mfgarchon.utils.pde_coefficients import fp_drift_coefficient, retired_volatility_keywords
+from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -78,34 +78,6 @@ class MeshlessGalerkinHJBSolver(WeakFormHJBSolver):
                 "Streamline diffusion enters only the Newton Jacobian; with Picard the HJB block "
                 "omits S and the Type-A duality A_FP = A_HJB^T is lost."
             )
-
-    @retired_volatility_keywords
-    def solve_hjb_system(
-        self,
-        *args,
-        use_newton: bool | None = None,
-        volatility=None,
-        volatility_kind=None,
-        source_term=None,
-        **kwargs,
-    ):
-        """Default the inner solver to the constructor's ``use_newton`` (default False =
-        Picard, honouring the documented stiff-LQ finding); pass ``use_newton`` explicitly
-        to force a path. Newton iteration limits/tolerance pass through unchanged. Delegates
-        to ``WeakFormHJBSolver.solve_hjb_system``."""
-        if use_newton is None:
-            use_newton = self._use_newton_default
-        # `volatility` and `source_term` are named rather than left to **kwargs so that the
-        # signature states what this solver consumes. A bare `**kwargs` made both invisible to every
-        # signature-keyed gate while silently forwarding one and swallowing the other (#2020).
-        return super().solve_hjb_system(
-            *args,
-            use_newton=use_newton,
-            volatility=volatility,
-            volatility_kind=volatility_kind,
-            source_term=source_term,
-            **kwargs,
-        )
 
     def _stabilization_terms(self, u: NDArray, D: float):
         """Streamline-diffusion block ``S`` for the HJB Newton path (added to residual and

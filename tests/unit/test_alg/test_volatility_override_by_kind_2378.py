@@ -129,10 +129,17 @@ def test_the_refusal_is_scheduled_and_the_audit_reads_the_schedule():
     assert not retired(before, "not_ready")
 
     due = audit_all_deprecations(mfgarchon, current_version="v0.25.0")
-    assert "FPFDMSolver.solve_fp_system" in retired(due, "ready"), "a closed signature is removable at v0.25.0"
+    ready = retired(due, "ready")
+    assert "FPFDMSolver.solve_fp_system" in ready, "a closed signature is removable at v0.25.0"
+    # #2419 closed the weak-form **kwargs, so their refusal is removable on schedule too.
+    assert "WeakFormFPSolver.solve_fp_system" in ready
+    assert "WeakFormHJBSolver.solve_hjb_system" in ready
+    # The blocker is read from the signature, so a function that still takes **kwargs stays blocked.
+    # For FixedPointIterator that is a known false positive: its **kwargs now raises on an unknown
+    # name (#2419) rather than swallowing it. It is held until that **kwargs goes with the damping_*
+    # names it exists to explain, due at the same v0.25.0.
     blocked = retired(due, "not_ready")
-    assert "WeakFormFPSolver.solve_fp_system" in blocked, "its **kwargs would swallow the name (#2419)"
-    assert blocked["WeakFormFPSolver.solve_fp_system"]["remaining_blockers"] == ["var_keyword"]
+    assert blocked["FixedPointIterator.__init__"]["remaining_blockers"] == ["var_keyword"]
 
 
 _OWNER_PROBLEM = SimpleNamespace(volatility=0.3, volatility_kind=None, dimension=2)
