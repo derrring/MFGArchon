@@ -296,8 +296,6 @@ def _map_gfdm_to_hjb_kwargs(gfdm_cfg: Any, kwargs: dict[str, Any]) -> None:
 
 def _map_sl_to_hjb_kwargs(sl_cfg: Any, kwargs: dict[str, Any]) -> None:
     """Map explicitly-set SLConfig fields to HJBSemiLagrangianSolver kwargs (in-place)."""
-    from mfgarchon.config.mfg_methods import SLConfig as _SLDef
-
     _rk_map: dict[int, str] = {1: "explicit_euler", 2: "rk2", 4: "rk4"}
 
     if "interpolation_method" in sl_cfg.model_fields_set:
@@ -312,11 +310,9 @@ def _map_sl_to_hjb_kwargs(sl_cfg: Any, kwargs: dict[str, Any]) -> None:
                 f"values {list(_rk_map.keys())}. Refs #1155."
             )
 
-    if sl_cfg.cfl_number != _SLDef().cfl_number:
-        raise NotImplementedError(
-            f"config.hjb.sl.cfl_number={sl_cfg.cfl_number} is not yet mapped to "
-            "HJBSemiLagrangianSolver params. Refs #1155."
-        )
+    if "cfl_number" in sl_cfg.model_fields_set:
+        # The pair factory hands the HJB half's cfl_target to the FP half (#1880, #2448).
+        kwargs["cfl_target"] = sl_cfg.cfl_number
 
 
 # ---------------------------------------------------------------------------

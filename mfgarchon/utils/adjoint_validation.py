@@ -318,11 +318,10 @@ def _sl_substep_mismatch(hjb_solver: Any, fp_solver: Any) -> str | None:
     half at ``cfl_target=0.45`` took 1609 sub-steps against 825, and one at 1.5 took fewer, and both
     decayed the asymmetry at 0.978 per sweep, as the matched pair does (#2440).
 
-    Misjudged: a ``cfl_target`` far above 1, in both directions. A half at 50 sub-steps so coarsely
-    that it behaves as if off -- an FP half at 50 grew the asymmetry 3.308x per sweep, exactly as
-    with its sub-stepping off -- so a pair with one half at 50 is judged by the switch it declares,
-    not by what it does. An FP half at 4 grew it 2.462x and at 2 1.193x; an HJB half at 1.5 is
-    unstable on its own (2.190x per sweep with sigma = 0.2). No bound has been measured (#2448).
+    The switch is the whole of the schedule's structure because ``cfl_target`` is bounded to (0, 1]
+    (#2448). Above 1 a half sub-stepped so coarsely that it behaved as if off -- an FP half at 50
+    grew the asymmetry 3.308x per sweep, exactly as with its sub-stepping off -- and the declared
+    switch would have misled this check.
 
     Not compared, returning None:
     - an HJB half on the DPP or canonical-CS path, which never sub-steps. There is no oracle for

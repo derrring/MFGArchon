@@ -37,6 +37,24 @@ DEFAULT_CFL_TARGET = 0.9
 DEFAULT_MAX_SUBSTEPS = 100
 
 
+def check_substep_settings(cfl_target: float, max_substeps: int) -> None:
+    """Refuse a sub-step schedule neither half of the SL pair runs safely (#2448).
+
+    ``cfl_target`` is the number of cells a sub-step's foot may cross, so it lies in (0, 1]. Above 1
+    the halves fail in different ways: on #1880's fixture an HJB half at 1.5 grew a seeded
+    asymmetry 2.190x per sweep (sigma = 0.2), and at 50 either half behaves as if it did not
+    sub-step at all, which the duality check then misreads. ``SLConfig.cfl_number`` already caps
+    the same quantity at 1.
+    """
+    if not 0 < cfl_target <= 1:
+        raise ValueError(
+            f"cfl_target must lie in (0, 1], got {cfl_target}: it is the number of cells a sub-step's foot "
+            f"may cross, and above 1 the semi-Lagrangian halves are unstable or stop sub-stepping (#2448)"
+        )
+    if max_substeps < 1:
+        raise ValueError(f"max_substeps must be at least 1, got {max_substeps}")
+
+
 def cfl_substeps(
     cfl: float, *, cfl_target: float = DEFAULT_CFL_TARGET, max_substeps: int = DEFAULT_MAX_SUBSTEPS
 ) -> int:
@@ -60,8 +78,7 @@ def cfl_substeps(
     where upwind FD damps it at 0.89. The mirror mismatch -- FP sub-stepping while HJB does not --
     destabilises the pair as well.
     """
-    if not cfl_target > 0 or max_substeps < 1:
-        raise ValueError(f"cfl_substeps needs cfl_target > 0 and max_substeps >= 1; got {cfl_target}, {max_substeps}")
+    check_substep_settings(cfl_target, max_substeps)
     if not np.isfinite(cfl):
         raise ValueError(f"cfl_substeps got a non-finite CFL number ({cfl}): the velocity field is not finite")
     if cfl <= 1.0:

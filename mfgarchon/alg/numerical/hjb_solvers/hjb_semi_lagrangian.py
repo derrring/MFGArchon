@@ -57,6 +57,7 @@ from .hjb_sl_characteristics import (
     apply_boundary_conditions_1d,
     apply_boundary_conditions_nd,
     cfl_substeps,
+    check_substep_settings,
     fold_into_domain,
     trace_characteristic_backward_1d,
     trace_characteristic_backward_nd,
@@ -253,8 +254,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             max_substeps: Maximum number of substeps per time step when adaptive
                 substepping is enabled (default: 100). A step that needs more is refused
                 with a ValueError, since a capped schedule can run away (#2438).
-            cfl_target: Target CFL number for adaptive substepping (default: 0.9).
-                When CFL > 1.0, the time step is subdivided to achieve CFL ≤ cfl_target.
+            cfl_target: Target CFL number for adaptive substepping (default: 0.9), in (0, 1].
+                When CFL > 1.0, the time step is subdivided to achieve CFL ≤ cfl_target (#2448).
             gradient_clip_threshold: Safety threshold for gradient clipping (default: None).
                 If provided, gradients exceeding this threshold will be clipped to prevent
                 overflow in p² terms. Recommended: 1e6 for strong coupling problems.
@@ -281,6 +282,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         self.max_char_iterations = max_char_iterations
         self.check_cfl = check_cfl
         self.enable_adaptive_substepping = enable_adaptive_substepping
+        check_substep_settings(cfl_target, max_substeps)
         self.max_substeps = max_substeps
         self.cfl_target = cfl_target
         self.ode_rtol = ode_rtol

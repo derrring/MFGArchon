@@ -282,13 +282,14 @@ class SLConfig(BaseConfig):
         Interpolation method for foot-of-characteristic (default: cubic)
     rk_order : Literal[1, 2, 3, 4]
         Runge-Kutta order for characteristic tracing (default: 2)
-    cfl_number : float
-        CFL number for stability (default: 0.5)
+    cfl_number : float | None
+        Cells a sub-step's foot may cross, in (0, 1]; passed to both halves of the SL pair as
+        ``cfl_target``. None (the default) keeps the solver's own, 0.9 (#2448).
     """
 
     interpolation_method: Literal["linear", "slinear", "nearest", "cubic", "quintic"] = "cubic"
     rk_order: Literal[1, 2, 3, 4] = 2
-    cfl_number: float = Field(default=0.5, gt=0, le=1.0)
+    cfl_number: float | None = Field(default=None, gt=0, le=1.0)
 
 
 # =============================================================================
