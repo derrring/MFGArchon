@@ -30,8 +30,9 @@ from __future__ import annotations
 import numpy as np
 from scipy.integrate import solve_ivp
 
-# How finely a semi-Lagrangian step is cut when its CFL number exceeds 1: the one statement of the
-# rule, used by both halves of the SL pair (HJBSemiLagrangianSolver and FPSLSolver, #1880).
+# How finely a semi-Lagrangian step is cut when its CFL number exceeds 1. Both halves of the SL pair
+# (HJBSemiLagrangianSolver and FPSLSolver) share this function; each measures the CFL number on its own
+# velocity and time level (#1880).
 DEFAULT_CFL_TARGET = 0.9
 DEFAULT_MAX_SUBSTEPS = 100
 
@@ -44,11 +45,16 @@ def cfl_substeps(
     One when ``cfl <= 1``; otherwise ``ceil(cfl / cfl_target)`` needed, and at most ``max_substeps``
     used. The caller decides what to say when ``needed`` reaches the cap.
 
-    Both halves of the SL pair must cut a step the same way (#1880). The FP half used to make one
-    forward splat of up to ~10 cells where the HJB half took ~12 sub-steps. The coupled map then
-    amplified an antisymmetric perturbation 3.3x per Picard sweep on a symmetric fixture, where
-    upwind FD damps it at 0.89.
+    The two halves of the SL pair must structure a step alike: sub-stepped in both, or in neither
+    (#1880). When the HJB half sub-stepped and the FP half made one forward splat of ~10 cells, the
+    coupled Picard map amplified an antisymmetric perturbation ~3.3x per sweep on a symmetric fixture,
+    where upwind FD damps it at 0.89. The mirror mismatch -- FP sub-stepping while HJB does not --
+    destabilises the pair as well.
     """
+    if not cfl_target > 0 or max_substeps < 1:
+        raise ValueError(f"cfl_substeps needs cfl_target > 0 and max_substeps >= 1; got {cfl_target}, {max_substeps}")
+    if not np.isfinite(cfl):
+        raise ValueError(f"cfl_substeps got a non-finite CFL number ({cfl}): the velocity field is not finite")
     if cfl <= 1.0:
         return 1, 1
     needed = int(np.ceil(cfl / cfl_target))

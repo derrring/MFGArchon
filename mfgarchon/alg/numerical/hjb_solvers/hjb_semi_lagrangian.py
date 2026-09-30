@@ -1157,7 +1157,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             # optimization / DPP fixed point is unconditionally stable, Issue #1058), so CFL
             # substepping is neither needed nor applied -- this is what lets canonical_cs use
             # a large dt directly.
-            if self._use_dpp or self.diffusion_method == "canonical_cs":
+            if not self.substeps_characteristics:
                 cfl, n_substeps, dt_substep = 0.0, 1, self.dt
             else:
                 cfl, n_substeps, dt_substep = self._compute_cfl_and_substeps(U_solution[n + 1], self.dt)
@@ -2274,6 +2274,17 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         bc_op = bc_type_to_geometric_operation(bc_type)
 
         return apply_boundary_conditions_1d(x, xmin=xmin, xmax=xmax, bc_type=bc_op)
+
+    @property
+    def substeps_characteristics(self) -> bool:
+        """Whether this solver cuts a step whose CFL number exceeds 1 into sub-steps.
+
+        Not on the DPP and canonical-CS paths, which trace no explicit characteristics (the per-point
+        optimisation is unconditionally stable, Issue #1058), and not when
+        ``enable_adaptive_substepping`` is off. The paired ``FPSLSolver`` must match it (#1880):
+        ``_create_sl_pair`` reads it.
+        """
+        return self.enable_adaptive_substepping and not (self._use_dpp or self.diffusion_method == "canonical_cs")
 
     @property
     def _use_dpp(self) -> bool:

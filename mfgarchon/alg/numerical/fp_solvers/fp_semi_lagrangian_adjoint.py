@@ -130,6 +130,7 @@ class FPSLSolver(BaseFPSolver):
         interpolation_method: str = "linear",
         cfl_target: float = DEFAULT_CFL_TARGET,
         max_substeps: int = DEFAULT_MAX_SUBSTEPS,
+        enable_adaptive_substepping: bool = True,
     ):
         """
         Initialize Adjoint Semi-Lagrangian FP solver.
@@ -144,9 +145,12 @@ class FPSLSolver(BaseFPSolver):
                 - 'cubic': Cubic splatting (O(dx³), may produce negatives)
                 - 'quintic': Quintic splatting (O(dx⁵), may produce negatives)
                 Must match the HJB solver's interpolation_method for adjoint consistency.
-            cfl_target, max_substeps: How finely a step whose CFL number exceeds 1 is cut into
-                sub-steps, by the rule the HJB half uses (``cfl_substeps``). Match the HJB solver's
-                values; ``_create_sl_pair`` passes them across (#1880).
+            cfl_target, max_substeps, enable_adaptive_substepping: How a step whose CFL number
+                exceeds 1 is cut into sub-steps (``cfl_substeps``), measured on this solver's own
+                velocity. **Pair them with the HJB solver**: sub-step exactly when it does
+                (``HJBSemiLagrangianSolver.substeps_characteristics``), with its ``cfl_target`` and
+                ``max_substeps``. A pair that sub-steps on one side only is unstable either way round
+                (#1880). ``_create_sl_pair`` does this for you.
         """
         super().__init__(problem)
         self.fp_method_name = "Adjoint Semi-Lagrangian"
@@ -169,6 +173,7 @@ class FPSLSolver(BaseFPSolver):
         self.interpolation_method = interpolation_method
         self.cfl_target = cfl_target
         self.max_substeps = max_substeps
+        self.enable_adaptive_substepping = enable_adaptive_substepping
 
         # Precompute grid parameters (dimension-agnostic)
         self.dt = problem.dt
@@ -358,10 +363,10 @@ class FPSLSolver(BaseFPSolver):
                 )
             return values
 
-        # Forward time stepping (dimension-agnostic dispatch). A step whose CFL number exceeds 1 is
-        # cut into sub-steps by the rule the HJB half uses, with the step's velocity held fixed: one
-        # splat of many cells is not the transpose of the HJB half's sub-stepped interpolation, and
-        # the coupled map then amplified an antisymmetric mode 3.3x per Picard sweep (#1880).
+        # Forward time stepping (dimension-agnostic dispatch). When the paired HJB half sub-steps, a
+        # step whose CFL number exceeds 1 is cut into sub-steps here too, by the shared cfl_substeps,
+        # with the step's velocity held fixed. A pair structured differently on its two sides
+        # amplified an antisymmetric mode ~3.3x per Picard sweep (#1880).
         for n in timestep_range:
             if self.dimension == 1:
                 # 1D solve
@@ -391,6 +396,8 @@ class FPSLSolver(BaseFPSolver):
 
     def _substeps(self, cfl: float, n: int) -> tuple[int, float]:
         """Sub-steps for time step ``n`` of CFL number ``cfl``, and the sub-step length (#1880)."""
+        if not self.enable_adaptive_substepping:
+            return 1, self.dt
         n_sub, needed = cfl_substeps(cfl, cfl_target=self.cfl_target, max_substeps=self.max_substeps)
         if needed > n_sub:
             logger.warning(
