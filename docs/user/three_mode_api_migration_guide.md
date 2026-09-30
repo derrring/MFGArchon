@@ -217,8 +217,9 @@ result = solver.solve()
 > the FDM pair** the HJB side does not vary (#1866). It does vary elsewhere in the same enum:
 > `SL_LINEAR` and `SL_CUBIC` build an `HJBSemiLagrangianSolver` and differ in
 > `interpolation_method` (set in `_create_sl_pair`, `mfgarchon/factory/scheme_factory.py`), which
-> is why the table below can advertise "3rd order (HJB)" for one of them. So the pair Option 1 builds is the `FDM_UPWIND` pair; the enum
-> is kept here for the shape of the example, not because it buys HJB order.
+> is why the table below can advertise "3rd order (HJB)" for one of them. So the pair Option 1
+> builds is the `FDM_UPWIND` pair; the enum is kept here for the shape of the example, not because
+> it buys HJB order.
 
 **After** (Option 1 - Safe Mode with config):
 ```python
