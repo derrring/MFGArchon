@@ -137,8 +137,9 @@ class Conditions:
     not a relaxation of this rule.
 
     Callable signature: called once per grid point -- 1-D: ``f(x)`` with ``x`` a float; n-D:
-    ``f(x)`` with ``x`` an array of shape ``(d,)`` -- returning one number. Write it space-only;
-    a time-first ``f(t, x)`` is misread (#2431).
+    ``f(x)`` with ``x`` an array of shape ``(d,)`` -- returning one number. A time-first ``f(t, x)``
+    is read at ``T`` (``u_terminal``) or ``0`` (``m_initial``); ``f(x, t)`` is refused
+    (docs/user/CONVENTIONS.md § Callable signatures).
 
     Args:
         u_terminal: Terminal cost u_T(x). None for variational (u is derived).

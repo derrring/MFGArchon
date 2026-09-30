@@ -39,6 +39,7 @@ def validate_components(
     require_m_initial: bool = True,
     require_u_terminal: bool = True,
     check_mass_normalization: bool = False,
+    terminal_time: float = 0.0,
 ) -> ValidationResult:
     """
     Validate MFGComponents against geometry.
@@ -49,6 +50,8 @@ def validate_components(
         require_m_initial: Whether m_initial is required
         require_u_terminal: Whether u_terminal is required
         check_mass_normalization: Whether to verify integral of m_initial = 1
+        terminal_time: The horizon T, at which a time-first ``u_terminal(t, x)`` is read (#2431).
+            It defaults to 0, so a caller validating a time-first ``u_terminal`` passes T.
 
     Returns:
         ValidationResult with any issues found
@@ -78,7 +81,7 @@ def validate_components(
 
     # Validate u_terminal
     if require_u_terminal:
-        u_result = validate_u_terminal(components.u_terminal, geometry)
+        u_result = validate_u_terminal(components.u_terminal, geometry, terminal_time=terminal_time)
         result.issues.extend(u_result.issues)
         if not u_result.is_valid:
             result.is_valid = False
@@ -149,6 +152,8 @@ def validate_m_initial(
 def validate_u_terminal(
     u_terminal: Callable | NDArray[np.floating] | None,
     geometry: GeometryProtocol,
+    *,
+    terminal_time: float = 0.0,
 ) -> ValidationResult:
     """
     Validate terminal value function u_terminal.
@@ -162,6 +167,8 @@ def validate_u_terminal(
     Args:
         u_terminal: Terminal value function (callable or array)
         geometry: Geometry for shape validation
+        terminal_time: The horizon T, at which a time-first ``u_terminal(t, x)`` is read (#2431).
+            It defaults to 0, so a caller validating a time-first ``u_terminal`` passes T.
 
     Returns:
         ValidationResult
@@ -180,7 +187,7 @@ def validate_u_terminal(
 
     # Validate based on type
     if callable(u_terminal):
-        return _validate_callable_ic(u_terminal, geometry, "u_terminal")
+        return _validate_callable_ic(u_terminal, geometry, "u_terminal", time_value=terminal_time)
     elif isinstance(u_terminal, np.ndarray):
         return _validate_array_ic(u_terminal, geometry, "u_terminal")
     else:
@@ -516,6 +523,8 @@ def _validate_callable_ic(
     func: Callable,
     geometry: GeometryProtocol,
     name: str,
+    *,
+    time_value: float = 0.0,
 ) -> ValidationResult:
     """Validate a callable initial/terminal condition.
 
@@ -556,6 +565,8 @@ def _validate_callable_ic(
             func,
             dimension=dimension,
             sample_point=adapter_sample,
+            time_value=time_value,
+            role=name,
         )
     except TypeError as e:
         result.add_error(

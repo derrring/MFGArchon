@@ -439,9 +439,10 @@ its time to 0, and several private helpers put `t` last: the finite-difference o
 `DualHamiltonian._find_optimal_alpha` take `(x, m, p, t)`, `DualLagrangian._find_optimal_p` takes
 `(x, alpha, m, t)`, and `NetworkHamiltonian._default_hamiltonian` takes `(node, m, p, t)`.*
 
-*Not yet met (#2431): a `u_terminal` or `m_initial` written time-first, `lambda t, x: ...`, is read as
-`f(x, t)` — the coordinate as time and the time as the coordinate — with no error or warning. Write
-them space-only, `lambda x: ...`, until it is fixed.*
+**`u_terminal` and `m_initial` are space-only or time-first.** `lambda x: ...` is read at each point;
+`lambda t, x: ...` is read at $t = T$ for `u_terminal` and $t = 0$ for `m_initial`. *Not yet met
+(#2429): `StochasticMFGProblem`'s conditional problems call `u_terminal(x)` directly, so a time-first
+one is refused there.*
 
 ### The library refuses the old order rather than misreading it
 
@@ -450,13 +451,15 @@ because both arguments are numeric. Three mechanisms stop it:
 
 - **When a callable is accepted**, its parameter names are read and an out-of-order signature is
   refused, with a message naming the expected order. This covers the potential, `source_term_hjb` /
-  `source_term_fp`, measure fields, Hamiltonian and feedback callables, network callables and the
-  variational Lagrangian. A solver's own `source_term` is checked at its first evaluation.
+  `source_term_fp`, measure fields, Hamiltonian and feedback callables, network callables, the
+  variational Lagrangian, and `u_terminal` and `m_initial`. A solver's own `source_term` is checked at
+  its first evaluation.
 - **When a class is created**, a Hamiltonian or Lagrangian subclass, or an `MFGProblem` subclass's
   `hamiltonian` / `running_cost`, is refused if its methods are out of order.
 - **Invocation by keyword.** A callable bound by name is called by keyword, so a correctly named one is
   safe. A nameless callable, a solver `source_term` and a variational Lagrangian are called
-  positionally in slot order.
+  positionally in slot order, except a `u_terminal` or `m_initial`: one that names nothing is read
+  only if `x` alone works, or, in 2-D and 3-D, as expanded coordinates if it is a bare `*args`.
 
 *Not yet met (#2429): volatility, drift and coupling callables are never bound or inspected.*
 

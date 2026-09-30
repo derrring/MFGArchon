@@ -717,6 +717,7 @@ class ConditionsMixin:
                 dimension=self.dimension,
                 sample_point=sample_point,
                 time_value=0.0,
+                role="m_initial",
             )
 
             for i in range(num_intervals + 1):
@@ -739,6 +740,7 @@ class ConditionsMixin:
                 dimension=ndim,
                 sample_point=sample_point,
                 time_value=0.0,
+                role="m_initial",
             )
 
             for i in range(num_points):
@@ -789,6 +791,7 @@ class ConditionsMixin:
                 dimension=self.dimension,
                 sample_point=sample_point,
                 time_value=terminal_time,
+                role="u_terminal",
             )
             for i in range(num_intervals + 1):
                 x_i: float | np.ndarray = float(spatial_grid[i, 0])
@@ -808,6 +811,7 @@ class ConditionsMixin:
                 dimension=ndim,
                 sample_point=sample_point,
                 time_value=terminal_time,
+                role="u_terminal",
             )
 
             for i in range(num_points):

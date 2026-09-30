@@ -1973,6 +1973,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 self.geometry,
                 require_m_initial=True,
                 require_u_terminal=True,
+                terminal_time=float(self.tSpace[-1]),
             )
             if not result.is_valid:
                 raise ValidationError(result)

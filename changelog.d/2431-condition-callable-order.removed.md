@@ -1,0 +1,1 @@
+- **`CallableSignature.SPATIOTEMPORAL_XT` is removed (#2431).** It named the `f(x, t)` reading that the IC/BC adapter no longer performs.
