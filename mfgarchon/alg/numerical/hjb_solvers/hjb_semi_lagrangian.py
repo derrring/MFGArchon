@@ -246,9 +246,11 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             tolerance: Convergence tolerance for optimization
             max_char_iterations: Maximum iterations for characteristic solving
             check_cfl: Whether to check CFL condition and issue warnings (default: True).
-                CFL = max|dH/dp| * dt / dx, on the foot velocity (#2439). Warns if CFL > 1.0.
+                CFL = max|dH/dp| * dt / dx, on the foot velocity (#2439). Warns if CFL > 1.0, on a
+                solver that does not sub-step; a sub-stepping one plans its own steps, and with
+                cfl_target above 1 it runs a step of CFL up to cfl_target whole, without this warning.
             enable_adaptive_substepping: Whether to automatically subdivide time steps
-                when CFL > 1.0 to maintain stability (default: True). When enabled,
+                when CFL > max(1, cfl_target) to maintain stability (default: True). When enabled,
                 the solver will use smaller internal time steps while preserving the
                 overall time discretization.
             max_substeps: Maximum number of substeps per time step when adaptive
@@ -256,8 +258,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 with a ValueError, since a capped schedule can run away (#2438).
             cfl_target: Target CFL number for adaptive substepping (default: 0.9). Above 1 it is
                 accepted with a UserWarning that states where it was measured unstable (#2458).
-                When CFL > 1.0, the time step is subdivided so that the crossing *planned* at the
-                step's start is ≤ cfl_target (#2448); the traced feet can exceed it (#2439).
+                When CFL > max(1, cfl_target), the time step is subdivided so that the crossing
+                *planned* at the step's start is ≤ cfl_target (#2448); the traced feet can exceed it
+                (#2439).
             gradient_clip_threshold: Safety threshold for gradient clipping (default: None).
                 If provided, gradients exceeding this threshold will be clipped to prevent
                 overflow in p² terms. Recommended: 1e6 for strong coupling problems.
@@ -1304,7 +1307,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
             # Compute gradient for optimal control: α* = ∇u
             # Pass timestep and density for gradient clipping monitoring (Issue #583)
-            # A sub-stepping solver reaches this path only with a step the schedule found within one cell.
+            # A sub-stepping solver reaches this path only with a step whose CFL number is at most
+            # max(1, cfl_target), so it skips the per-step warning; above 1 the constructor warned (#2458).
             grad_u = self._compute_gradient(
                 U_next, check_cfl=not self.substeps_characteristics, t_idx=time_idx, m_density=M_next
             )
@@ -2273,7 +2277,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
     @property
     def substeps_characteristics(self) -> bool:
-        """Whether this solver cuts a step whose CFL number exceeds 1 into sub-steps.
+        """Whether this solver cuts a step whose CFL number exceeds max(1, cfl_target) into sub-steps.
 
         Only on a path that traces characteristics, and only when ``enable_adaptive_substepping`` is
         on. The paired ``FPSLSolver`` must match it (#1880): ``_create_sl_pair`` reads it.

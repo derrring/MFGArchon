@@ -285,8 +285,8 @@ class SLConfig(BaseConfig):
     cfl_number : float | None
         The crossing a sub-step is planned for; above 1 the solvers accept it with a warning (#2458).
         Passed to the HJB half as ``cfl_target``; the pair factory hands it to the FP half. A step
-        whose CFL number is at most 1 is not split, so its foot can cross up to one cell whatever
-        this is. None, whether left unset or set explicitly, keeps the solver's own, 0.9 (#2448).
+        is not split while its CFL number is at most max(1, this), so an unsplit foot can cross that
+        many cells. None, whether left unset or set explicitly, keeps the solver's own, 0.9 (#2448).
     """
 
     interpolation_method: Literal["linear", "slinear", "nearest", "cubic", "quintic"] = "cubic"

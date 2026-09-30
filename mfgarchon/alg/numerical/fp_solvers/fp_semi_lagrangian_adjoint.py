@@ -147,10 +147,11 @@ class FPSLSolver(BaseFPSolver):
                 - 'quintic': Quintic splatting (O(dx⁵), may produce negatives)
                 Must match the HJB solver's interpolation_method for adjoint consistency.
             cfl_target, max_substeps, enable_adaptive_substepping: How a step whose CFL number
-                exceeds 1 is cut into sub-steps (``cfl_substeps``), measured on this solver's own
-                velocity. **Pair them with the HJB solver**: sub-step exactly when it does
-                (``HJBSemiLagrangianSolver.substeps_characteristics``). A ``cfl_target`` above 1 is
-                accepted with a UserWarning (#2458). A pair that sub-steps on one side only is unstable either way round
+                exceeds max(1, cfl_target) is cut into sub-steps (``cfl_substeps``), measured on this
+                solver's own velocity. **Pair them with the HJB solver**: sub-step exactly when it
+                does (``HJBSemiLagrangianSolver.substeps_characteristics``). A ``cfl_target`` above 1
+                is accepted with a UserWarning (#2458). A pair that sub-steps on one side only is
+                unstable either way round
                 (#1880). ``_create_sl_pair`` does this for you. A step that needs more than
                 ``max_substeps`` is refused with a ValueError (#2438).
         """
@@ -367,7 +368,7 @@ class FPSLSolver(BaseFPSolver):
             return values
 
         # Forward time stepping (dimension-agnostic dispatch). When the paired HJB half sub-steps, a
-        # step whose CFL number exceeds 1 is cut into sub-steps here too, by the shared cfl_substeps,
+        # step whose CFL number exceeds max(1, cfl_target) is cut into sub-steps here too, by the shared cfl_substeps,
         # with the step's velocity held fixed. A pair structured differently on its two sides
         # amplified an antisymmetric mode ~3.3x per Picard sweep (#1880).
         for n in timestep_range:

@@ -53,12 +53,13 @@ def check_substep_settings(cfl_target: float, max_substeps: int) -> None:
     ``cfl_target`` is the *planned* crossing: the cells a sub-step's foot would cross at the velocity
     measured at the step's start. The HJB half's traced feet run past it, since the gradient steepens
     within the step (#2439); the FP half holds its velocity fixed within a step and does not. A step
-    whose CFL number is at most 1 is not split at all, so its foot can cross up to one cell whatever
-    ``cfl_target`` is.
+    is not split at all while its CFL number is at most ``max(1, cfl_target)``, so an unsplit foot can
+    cross that many cells: one at the default, ``cfl_target`` above 1.
 
     Above 1 the target is accepted with a warning, not refused (#2458): where the pair becomes
-    unstable is a measurement on one fixture, not a property of the scheme, and it moves with H,
-    sigma and the grid. On #1880's matrix fixture (sigma = 0.2), with the HJB half at c and the FP
+    unstable is a measurement on one fixture, not a property of the scheme, and it moved where sigma
+    and the grid were varied (#2448: sigma = 0 against 0.2; a 2-D HJB half at 1.5 read 1.152 against
+    1-D's 2.190). On #1880's matrix fixture (sigma = 0.2), with the HJB half at c and the FP
     half at its default, a seeded asymmetry changes per sweep by 0.984 at c = 1.0, 1.005 at 1.02,
     0.994 at 1.05, 1.121 at 1.1 and 2.190 at 1.5 (#2448). An FP half at up to 1.5 beside a default
     HJB half was stable; at 50 either half behaves as if it did not sub-step at all, which the pair's
@@ -68,11 +69,12 @@ def check_substep_settings(cfl_target: float, max_substeps: int) -> None:
     if cfl_target > 1:
         warnings.warn(
             f"cfl_target={cfl_target} is above 1: a sub-step's foot is planned to cross more than one "
-            f"cell. It is accepted, but measure it on your problem. On #1880's matrix fixture "
-            f"(sigma = 0.2) the HJB half grew a seeded asymmetry 1.005x per sweep at 1.02, 1.121x at "
-            f"1.1 and 2.190x at 1.5, and at 50 either half behaved as if it did not sub-step, which "
-            f"check_solver_duality does not detect. An FP half at up to 1.5 beside a default HJB half "
-            f"was stable. The default is 0.9 (#2448, #2458).",
+            f"cell, and a step whose CFL number is at most {cfl_target} is not split at all. It is "
+            f"accepted, but measure it on your problem. On #1880's matrix fixture (sigma = 0.2) the HJB "
+            f"half grew a seeded asymmetry 1.005x per sweep at 1.02, 1.121x at 1.1 and 2.190x at 1.5, "
+            f"and an FP half at up to 1.5 beside a default HJB half was stable. At 50 either half "
+            f"behaved as if it did not sub-step, which check_solver_duality does not detect. The "
+            f"default is 0.9 (#2448, #2458).",
             UserWarning,
             stacklevel=3,
         )

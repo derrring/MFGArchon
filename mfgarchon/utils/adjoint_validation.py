@@ -338,8 +338,8 @@ def _sl_substep_mismatch(hjb_solver: Any, fp_solver: Any) -> str | None:
     if hjb_substeps == bool(fp_substeps):
         return None
     return (
-        f"{type(hjb_solver).__name__} {'sub-steps' if hjb_substeps else 'does not sub-step'} a step whose CFL "
-        f"number exceeds 1, and {type(fp_solver).__name__} {'does' if fp_substeps else 'does not'}"
+        f"{type(hjb_solver).__name__} has adaptive sub-stepping {'on' if hjb_substeps else 'off'}, and "
+        f"{type(fp_solver).__name__} has it {'on' if fp_substeps else 'off'}"
     )
 
 
