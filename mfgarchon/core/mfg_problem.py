@@ -2631,6 +2631,7 @@ See: docs/migration/HAMILTONIAN_API.md"""
                     f"  HJB: {type(hjb_solver).__name__} ({result.hjb_family})\n"
                     f"  FP: {type(fp_solver).__name__} ({result.fp_family})\n"
                     f"  Status: {result.status.value}\n"
+                    f"  Why: {result.message}\n"
                     f"This may lead to poor convergence or Nash gap issues.\n"
                     f"Consider using Safe Mode for guaranteed duality."
                 )

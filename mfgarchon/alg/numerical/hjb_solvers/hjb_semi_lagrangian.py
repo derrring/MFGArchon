@@ -2278,15 +2278,22 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         return apply_boundary_conditions_1d(x, xmin=xmin, xmax=xmax, bc_type=bc_op)
 
     @property
+    def traces_characteristics(self) -> bool:
+        """Whether this solver's step traces explicit characteristics.
+
+        Not on the DPP and canonical-CS paths: their per-point optimisation is unconditionally stable
+        (Issue #1058), so they never sub-step.
+        """
+        return not (self._use_dpp or self.diffusion_method == "canonical_cs")
+
+    @property
     def substeps_characteristics(self) -> bool:
         """Whether this solver cuts a step whose CFL number exceeds 1 into sub-steps.
 
-        Not on the DPP and canonical-CS paths, which trace no explicit characteristics (the per-point
-        optimisation is unconditionally stable, Issue #1058), and not when
-        ``enable_adaptive_substepping`` is off. The paired ``FPSLSolver`` must match it (#1880):
-        ``_create_sl_pair`` reads it.
+        Only on a path that traces characteristics, and only when ``enable_adaptive_substepping`` is
+        on. The paired ``FPSLSolver`` must match it (#1880): ``_create_sl_pair`` reads it.
         """
-        return self.enable_adaptive_substepping and not (self._use_dpp or self.diffusion_method == "canonical_cs")
+        return self.enable_adaptive_substepping and self.traces_characteristics
 
     @property
     def _use_dpp(self) -> bool:

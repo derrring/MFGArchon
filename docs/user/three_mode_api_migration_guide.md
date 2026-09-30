@@ -216,7 +216,7 @@ result = solver.solve()
 > `FDM_UPWIND`, under `FDM_CENTERED`, and under `FDM_CENTERED` with this override alike — **within
 > the FDM pair** the HJB side does not vary (#1866). It does vary elsewhere in the same enum:
 > `SL_LINEAR` and `SL_CUBIC` build an `HJBSemiLagrangianSolver` and differ in
-> `interpolation_method` (`scheme_factory.py:264,269`), which is why the table below can advertise
+> `interpolation_method` (`scheme_factory.py:276,281`), which is why the table below can advertise
 > "3rd order (HJB)" for one of them. So the pair Option 1 builds is the `FDM_UPWIND` pair; the enum
 > is kept here for the shape of the example, not because it buys HJB order.
 
