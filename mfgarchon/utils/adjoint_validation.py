@@ -313,15 +313,16 @@ def check_solver_duality(
 def _sl_substep_mismatch(hjb_solver: Any, fp_solver: Any) -> str | None:
     """How the two halves of an SL pair differ in whether they sub-step, or None when they agree.
 
-    The switch is what #1880 turned on: one half sub-stepping and the other not amplified a seeded
-    asymmetry ~3.3x per sweep, either way round. The count is not compared: on #1880's fixture an FP
+    The switch is what #1880 turned on: with the FP half's sub-stepping off, a seeded asymmetry grew
+    ~3.3x per sweep on its fixture, and the mirror pair diverges too. The count is not compared: on #1880's fixture an FP
     half at ``cfl_target=0.45`` took 1609 sub-steps against 825, and one at 1.5 took fewer, and both
     decayed the asymmetry at 0.978 per sweep, as the matched pair does (#2440).
 
-    Not seen: a ``cfl_target`` far above 1. An FP half at 4 grew the asymmetry 2.462x per sweep and
-    one at 50 3.308x, exactly as with its sub-stepping off, while 2 grew it 1.193x; and an HJB half
-    above 1 is unstable on its own (at 1.5, 2.190x per sweep with sigma = 0.2). No bound separating them has been
-    measured (#2448).
+    Misjudged: a ``cfl_target`` far above 1, in both directions. A half at 50 sub-steps so coarsely
+    that it behaves as if off -- an FP half at 50 grew the asymmetry 3.308x per sweep, exactly as
+    with its sub-stepping off -- so a pair with one half at 50 is judged by the switch it declares,
+    not by what it does. An FP half at 4 grew it 2.462x and at 2 1.193x; an HJB half at 1.5 is
+    unstable on its own (2.190x per sweep with sigma = 0.2). No bound has been measured (#2448).
 
     Not compared, returning None:
     - an HJB half on the DPP or canonical-CS path, which never sub-steps. There is no oracle for
@@ -330,10 +331,11 @@ def _sl_substep_mismatch(hjb_solver: Any, fp_solver: Any) -> str | None:
     - a half that declares no schedule, such as the deprecated ``FPSLJacobianSolver``.
     """
     traces = getattr(hjb_solver, "traces_characteristics", None)
+    hjb_switch = getattr(hjb_solver, "enable_adaptive_substepping", None)
     fp_substeps = getattr(fp_solver, "enable_adaptive_substepping", None)
-    if traces is not True or fp_substeps is None:
+    if traces is not True or hjb_switch is None or fp_substeps is None:
         return None
-    hjb_substeps = bool(hjb_solver.enable_adaptive_substepping)
+    hjb_substeps = bool(hjb_switch)
     if hjb_substeps == bool(fp_substeps):
         return None
     return (

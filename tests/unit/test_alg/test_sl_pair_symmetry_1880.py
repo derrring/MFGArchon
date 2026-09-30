@@ -84,12 +84,14 @@ def test_the_pair_stays_stable_when_its_hjb_half_does_not_substep():
     [
         ({"enable_adaptive_substepping": False}, {}),
         ({}, {"enable_adaptive_substepping": False}),
+        ({"enable_adaptive_substepping": False}, {"cfl_target": 2.0}),
     ],
 )
 def test_the_duality_check_flags_a_hand_built_pair_that_does_not_substep_alike(hjb_config, fp_config):
     """The first pair converges in 60 sweeps before #1880's fix and not after (asymmetry 0.95 after 200);
-    the second is #1880 itself. check_solver_duality called both DISCRETE_DUAL, so Expert Mode was
-    silent (#2440)."""
+    the second is #1880 itself; the third does not converge either (asymmetry 1.22 after 200), though
+    no half of it keeps a sub-step within one cell. check_solver_duality called all three
+    DISCRETE_DUAL, so Expert Mode was silent (#2440)."""
     problem = _problem(volatility=0.2)
     hjb, fp = HJBSemiLagrangianSolver(problem, **hjb_config), FPSLSolver(problem, **fp_config)
     with pytest.warns(UserWarning, match="does not sub-step alike"):
@@ -97,7 +99,7 @@ def test_the_duality_check_flags_a_hand_built_pair_that_does_not_substep_alike(h
     # Control: the factory hands the FP half the HJB half's schedule.
     matched = create_paired_solvers(problem, NumericalScheme.SL_LINEAR, hjb_config=hjb_config)
     assert check_solver_duality(*matched, warn_on_mismatch=False).status == DualityStatus.DISCRETE_DUAL
-    if fp_config:  # and it refuses a caller's fp_config that undoes that, without calling it a bug
+    if "enable_adaptive_substepping" in fp_config:  # and refuses an fp_config that undoes that, not as a bug
         with (
             pytest.raises(ValueError, match="hjb_config and fp_config"),
             pytest.warns(UserWarning, match="does not sub-step alike"),
