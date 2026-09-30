@@ -38,18 +38,22 @@ DEFAULT_MAX_SUBSTEPS = 100
 
 
 def check_substep_settings(cfl_target: float, max_substeps: int) -> None:
-    """Refuse a sub-step schedule neither half of the SL pair runs safely (#2448).
+    """Refuse a sub-step schedule outside the range both halves of the SL pair share (#2448).
 
-    ``cfl_target`` is the number of cells a sub-step's foot may cross, so it lies in (0, 1]. Above 1
-    the halves fail in different ways: on #1880's fixture an HJB half at 1.5 grew a seeded
-    asymmetry 2.190x per sweep (sigma = 0.2), and at 50 either half behaves as if it did not
-    sub-step at all, which the duality check then misreads. ``SLConfig.cfl_number`` already caps
-    the same quantity at 1.
+    ``cfl_target`` is the *planned* crossing: the cells a sub-step's foot would cross at the velocity
+    measured at the step's start. The traced feet run past it, since the gradient steepens within
+    the step (#2439). One range serves both halves because the pair factory hands the HJB half's
+    value to the FP half.
+
+    The bound is the HJB half's. On #1880's matrix fixture (sigma = 0.2) a seeded asymmetry decays
+    at 0.984 per sweep with an HJB half at 1.0, and grows at 1.005 at 1.02, 1.121 at 1.1 and 2.190
+    at 1.5: the margin at 1 is thin, not generous. An FP half alone was stable to 1.5; at 50
+    either half behaves as if it did not sub-step at all.
     """
     if not 0 < cfl_target <= 1:
         raise ValueError(
-            f"cfl_target must lie in (0, 1], got {cfl_target}: it is the number of cells a sub-step's foot "
-            f"may cross, and above 1 the semi-Lagrangian halves are unstable or stop sub-stepping (#2448)"
+            f"cfl_target must lie in (0, 1], got {cfl_target}: it is the planned number of cells a "
+            f"sub-step's foot crosses, and the HJB half grows a perturbation just above 1 (#2448)"
         )
     if max_substeps < 1:
         raise ValueError(f"max_substeps must be at least 1, got {max_substeps}")

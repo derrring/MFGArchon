@@ -255,7 +255,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 substepping is enabled (default: 100). A step that needs more is refused
                 with a ValueError, since a capped schedule can run away (#2438).
             cfl_target: Target CFL number for adaptive substepping (default: 0.9), in (0, 1].
-                When CFL > 1.0, the time step is subdivided to achieve CFL ≤ cfl_target (#2448).
+                When CFL > 1.0, the time step is subdivided so that the crossing *planned* at the
+                step's start is ≤ cfl_target (#2448); the traced feet can exceed it (#2439).
             gradient_clip_threshold: Safety threshold for gradient clipping (default: None).
                 If provided, gradients exceeding this threshold will be clipped to prevent
                 overflow in p² terms. Recommended: 1e6 for strong coupling problems.

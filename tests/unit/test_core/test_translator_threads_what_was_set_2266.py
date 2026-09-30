@@ -107,15 +107,18 @@ class TestAnExplicitlySetFieldReachesTheSolver:
         kwargs = hjb_config_to_kwargs(cfg.hjb, NumericalScheme.SL_CUBIC)
         assert kwargs.get("interpolation_method") == value
 
-    @pytest.mark.parametrize("value", [0.5, 1.0])
-    def test_the_sl_cfl_number_asked_for_is_the_one_threaded(self, value):
+    @pytest.mark.parametrize("value", [0.5, 1.0, None])
+    def test_the_sl_cfl_number_asked_for_reaches_both_halves(self, value):
         """It raised NotImplementedError for any non-default value, while its documented default of 0.5
-        was never the solver's 0.9 (#2448). It now reaches the HJB half as cfl_target, and the pair
-        factory hands that to the FP half."""
+        was never the solver's 0.9 (#2448). A value now reaches the HJB half as cfl_target and the pair
+        factory hands it to the FP half; None, even set explicitly, keeps the solver's own."""
+        from mfgarchon.factory.scheme_factory import create_paired_solvers
+
         cfg = MFGSolverConfig()
         cfg.hjb.sl = SLConfig(cfl_number=value)
         kwargs = hjb_config_to_kwargs(cfg.hjb, NumericalScheme.SL_LINEAR)
-        assert kwargs.get("cfl_target") == value
+        hjb, fp = create_paired_solvers(_problem(), NumericalScheme.SL_LINEAR, hjb_config=kwargs)
+        assert hjb.cfl_target == fp.cfl_target == (0.9 if value is None else value)
 
     @pytest.mark.parametrize("scheme", [NumericalScheme.FDM_UPWIND, NumericalScheme.SL_LINEAR, NumericalScheme.GFDM])
     def test_an_untouched_config_still_threads_nothing(self, scheme):

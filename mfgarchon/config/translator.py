@@ -310,7 +310,7 @@ def _map_sl_to_hjb_kwargs(sl_cfg: Any, kwargs: dict[str, Any]) -> None:
                 f"values {list(_rk_map.keys())}. Refs #1155."
             )
 
-    if "cfl_number" in sl_cfg.model_fields_set:
+    if "cfl_number" in sl_cfg.model_fields_set and sl_cfg.cfl_number is not None:
         # The pair factory hands the HJB half's cfl_target to the FP half (#1880, #2448).
         kwargs["cfl_target"] = sl_cfg.cfl_number
 

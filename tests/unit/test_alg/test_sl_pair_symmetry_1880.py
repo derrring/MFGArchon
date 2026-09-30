@@ -195,3 +195,10 @@ def test_both_halves_refuse_a_cfl_target_above_one(half):
     assert half(problem, cfl_target=1.0).cfl_target == 1.0
     with pytest.raises(ValueError, match=r"cfl_target must lie in \(0, 1\], got 1.01"):
         half(problem, cfl_target=1.01)
+    with pytest.raises(ValueError, match=r"cfl_target must lie in \(0, 1\], got 0"):
+        half(problem, cfl_target=0.0)
+    with pytest.raises(ValueError, match="max_substeps must be at least 1, got 0"):
+        half(problem, max_substeps=0)
+    # The sub-step rule itself refuses too, not only the constructors in front of it.
+    with pytest.raises(ValueError, match=r"cfl_target must lie in \(0, 1\], got 1.5"):
+        cfl_substeps(2.0, cfl_target=1.5)
