@@ -7,6 +7,7 @@ extracts metadata, and generates a user-facing migration guide.
 Usage:
     python scripts/generate_deprecation_guide.py           # Generate
     python scripts/generate_deprecation_guide.py --check   # Check if up-to-date
+    python scripts/generate_deprecation_guide.py --self-test  # --check can see a stale guide
 
 Issue #989: Auto-generate deprecation guide.
 """
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import tempfile
 from collections import defaultdict
 from pathlib import Path
 
@@ -284,15 +286,60 @@ def generate_guide(items: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def guide_is_current(path: Path, guide: str) -> bool:
+    """Whether the guide at ``path`` is the one the code generates now."""
+    return path.exists() and path.read_text().strip() == guide.strip()
+
+
+def _self_test() -> int:
+    """``--check`` must pass a fresh guide and fail a stale or missing one (#2436).
+
+    Synthetic items, so no package import: the comparison is the instrument here, and the scan
+    already refuses a partial walk (#1713). Stale both ways the gate meets it: the code gained a
+    deprecation the guide lacks, and a row's text moved -- #2435 cleared a removal blocker and six
+    rows went stale with the gate green.
+    """
+    items = [
+        {"name": "pkg.old_function", "type": "function", "since": "v0.1.0", "replacement": "new_function"},
+        {"name": "Solver.solve.old_param", "type": "parameter", "since": "v0.2.0", "replacement": "new_param"},
+    ]
+    guide = generate_guide(items)
+    failures = []
+    if "old_param" not in guide or "old_function" not in guide:
+        failures.append("the synthetic guide does not list its own items, so nothing below can differ")
+    with tempfile.TemporaryDirectory() as tmp:
+        fresh, gained, moved = (Path(tmp) / f"{n}.md" for n in ("fresh", "gained", "moved"))
+        fresh.write_text(guide)
+        gained.write_text(generate_guide(items[:1]))
+        moved.write_text(generate_guide([items[0], {**items[1], "replacement": "other_param"}]))
+        if not guide_is_current(fresh, guide):
+            failures.append("a guide generated from the same items reads as out-of-date")
+        if guide_is_current(gained, guide):
+            failures.append("a guide missing a deprecation the code has reads as up-to-date")
+        if guide_is_current(moved, guide):
+            failures.append("a guide whose row text moved reads as up-to-date")
+        if guide_is_current(Path(tmp) / "absent.md", guide):
+            failures.append("a missing guide reads as up-to-date")
+    for line in failures:
+        print(f"self-test FAILED: {line}", file=sys.stderr)
+    if failures:
+        return 1
+    print("self-test OK: --check passes a fresh guide and fails a stale or missing one")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate deprecation guide")
     parser.add_argument("--check", action="store_true", help="Check if guide is up-to-date")
+    parser.add_argument("--self-test", action="store_true", help="Prove --check can see a stale guide")
     parser.add_argument(
         "--output",
         default="docs/user/DEPRECATION_MODERNIZATION_GUIDE.md",
         help="Output file path",
     )
     args = parser.parse_args()
+    if args.self_test:
+        return _self_test()
 
     from mfgarchon.utils.deprecation import IncompleteScanError
 
@@ -312,8 +359,7 @@ def main():
         if not output_path.exists():
             print(f"FAIL: {output_path} does not exist")
             sys.exit(1)
-        existing = output_path.read_text()
-        if existing.strip() == guide.strip():
+        if guide_is_current(output_path, guide):
             print(f"OK: {output_path} is up-to-date ({len(deduplicate(items))} items)")
             sys.exit(0)
         else:

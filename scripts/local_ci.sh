@@ -549,7 +549,7 @@ step "Ratchet self-tests (the instruments, before their numbers)"
 # arm runs in `.github/workflows/family-emptied.yml`, which has a token anyway. Proven rather than
 # assumed: with a `gh` on PATH that exits 127 and says so, `--self-test` passes and
 # `--self-test --online` fails, so the offline pass is not an artefact of the stub being missed.
-for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation check_citations check_warnings check_manifests check_mypy_scope check_docstring_kwargs family_queue; do
+for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation check_citations check_warnings check_manifests check_mypy_scope check_docstring_kwargs family_queue generate_deprecation_guide; do
   "${PYS[@]}" "scripts/${_selftest}.py" --self-test || { check 1 "ratchet self-tests: ${_selftest} cannot see what it counts"; }
 done
 check 0 "every fast ratchet still detects what it claims to detect"
@@ -625,6 +625,14 @@ check $? "no docstring example newly passes a keyword its callee does not have"
 step "Deprecation ratchet"
 "${PYS[@]}" scripts/check_internal_deprecation.py
 check $? "no deprecation count moved, and no cleared symbol is still called in production"
+
+# The user guide to those deprecations is generated from the same decorators, and nothing ran its
+# --check: #2435's first head cleared a removal blocker, six guide rows went stale, and this gate was
+# green -- the independent review caught it (#2436). It imports the package to scan it, and refuses
+# (exit 2) where an optional extra is missing rather than comparing a partial guide.
+step "Deprecation guide"
+"${PYS[@]}" scripts/generate_deprecation_guide.py --check
+check $? "docs/user/DEPRECATION_MODERNIZATION_GUIDE.md is the guide the code generates"
 
 step "Single-source ratchet"
 "${PYS[@]}" scripts/check_single_source.py --baseline scripts/single_source_baseline.json
