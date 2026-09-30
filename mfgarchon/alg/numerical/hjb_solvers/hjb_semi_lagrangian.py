@@ -1779,7 +1779,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         p_flat = np.stack([grad_components[ax].ravel() for ax in range(d)], axis=1)
         # Issue #1413: drift along the characteristic velocity ∂H/∂p (not raw p).
         # Issue #1547: ∂H/∂p comes from the Hamiltonian, not a hardcoded p/λ.
-        vel_flat = self._characteristic_foot_velocity(x_positions_flat, M_shaped.ravel(), p_flat, time_idx * dt)
+        # The step's time, time_idx * self.dt, as the pointwise path and the sub-step schedule use. With
+        # the sub-step's dt this read n * dt_sub, which is neither the step's time nor the sub-step's (#2450).
+        t_step = time_idx * self.dt
+        vel_flat = self._characteristic_foot_velocity(x_positions_flat, M_shaped.ravel(), p_flat, t_step)
         x_drift_flat = x_positions_flat - vel_flat * dt
 
         all_departures = np.empty((2 * d * n_total, d), dtype=float)
@@ -1825,7 +1828,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 "HJBSemiLagrangianSolver (stochastic CS): problem.hamiltonian_class is None. "
                 "Specify a Hamiltonian explicitly (Issue #1071, fail-fast)."
             )
-        U_current = self._sl_value_update(u_avg.ravel(), x_batch, M_shaped.ravel(), p_batch, time_idx * dt, dt).reshape(
+        U_current = self._sl_value_update(u_avg.ravel(), x_batch, M_shaped.ravel(), p_batch, t_step, dt).reshape(
             grid_shape
         )
 
@@ -1833,7 +1836,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         if d == 1:
             if bc:
                 U_current = self.bc_applicator.enforce_values(
-                    U_current, boundary_conditions=bc, spacing=(self.dx,), time=time_idx * dt
+                    U_current, boundary_conditions=bc, spacing=(self.dx,), time=t_step
                 )
             return U_current
 
@@ -1927,7 +1930,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         d = self.dimension
         sqrt_dt = float(np.sqrt(dt))
-        t_n = time_idx * dt
+        t_n = time_idx * self.dt  # the step's time, not n * dt_sub (#2450)
 
         # Boundary fold for the stochastic departures (reflect = no-flux/Neumann, the CS
         # setting; wrap = periodic; clamp otherwise). Shared with the stochastic SL path.
