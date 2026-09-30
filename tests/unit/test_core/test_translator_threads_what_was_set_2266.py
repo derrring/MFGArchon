@@ -26,6 +26,8 @@ threaded field's two defaults are allowed to diverge again.
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 import numpy as np
@@ -106,6 +108,26 @@ class TestAnExplicitlySetFieldReachesTheSolver:
         cfg.hjb.sl = SLConfig(interpolation_method=value)
         kwargs = hjb_config_to_kwargs(cfg.hjb, NumericalScheme.SL_CUBIC)
         assert kwargs.get("interpolation_method") == value
+
+    @pytest.mark.parametrize("value", [0.5, 1.0, None])
+    def test_the_sl_cfl_number_asked_for_reaches_both_halves(self, value):
+        """It raised NotImplementedError for any non-default value, while its documented default of 0.5
+        was never the solver's 0.9 (#2448). A value now reaches the HJB half as cfl_target and the pair
+        factory hands it to the FP half; None, even set explicitly, keeps the solver's own."""
+        from mfgarchon.factory.scheme_factory import create_paired_solvers
+
+        cfg = MFGSolverConfig()
+        cfg.hjb.sl = SLConfig(cfl_number=value)
+        kwargs = hjb_config_to_kwargs(cfg.hjb, NumericalScheme.SL_LINEAR)
+        hjb, fp = create_paired_solvers(_problem(), NumericalScheme.SL_LINEAR, hjb_config=kwargs)
+        target = 0.9 if value is None else value
+        assert hjb.cfl_target == fp.cfl_target == target
+        # And both schedules read it, not only the attribute.
+        x = np.linspace(0.0, 1.0, 21)
+        cfl, n_hjb, _ = hjb._compute_cfl_and_substeps(10.0 * x, hjb.dt, np.ones(21), 0.0)
+        assert cfl > 1
+        assert n_hjb == math.ceil(cfl / target)
+        assert fp._substeps(2.0)[0] == math.ceil(2.0 / target)
 
     @pytest.mark.parametrize("scheme", [NumericalScheme.FDM_UPWIND, NumericalScheme.SL_LINEAR, NumericalScheme.GFDM])
     def test_an_untouched_config_still_threads_nothing(self, scheme):

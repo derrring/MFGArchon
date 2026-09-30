@@ -84,14 +84,12 @@ def test_the_pair_stays_stable_when_its_hjb_half_does_not_substep():
     [
         ({"enable_adaptive_substepping": False}, {}),
         ({}, {"enable_adaptive_substepping": False}),
-        ({"enable_adaptive_substepping": False}, {"cfl_target": 2.0}),
     ],
 )
 def test_the_duality_check_flags_a_hand_built_pair_that_does_not_substep_alike(hjb_config, fp_config):
     """The first pair converges in 60 sweeps before #1880's fix and not after (asymmetry 0.95 after 200);
-    the second is #1880 itself; the third does not converge either (asymmetry 1.22 after 200), though
-    no half of it keeps a sub-step within one cell. check_solver_duality called all three
-    DISCRETE_DUAL, so Expert Mode was silent (#2440)."""
+    the second is #1880 itself. check_solver_duality called both DISCRETE_DUAL, so Expert Mode was
+    silent (#2440)."""
     problem = _problem(volatility=0.2)
     hjb, fp = HJBSemiLagrangianSolver(problem, **hjb_config), FPSLSolver(problem, **fp_config)
     with pytest.warns(UserWarning, match="does not sub-step alike"):
@@ -99,12 +97,12 @@ def test_the_duality_check_flags_a_hand_built_pair_that_does_not_substep_alike(h
     # Control: the factory hands the FP half the HJB half's schedule.
     matched = create_paired_solvers(problem, NumericalScheme.SL_LINEAR, hjb_config=hjb_config)
     assert check_solver_duality(*matched, warn_on_mismatch=False).status == DualityStatus.DISCRETE_DUAL
-    if "enable_adaptive_substepping" in fp_config:  # and refuses an fp_config that undoes that, not as a bug
-        with (
-            pytest.raises(ValueError, match="hjb_config and fp_config"),
-            pytest.warns(UserWarning, match="does not sub-step alike"),
-        ):
-            create_paired_solvers(problem, NumericalScheme.SL_LINEAR, fp_config=fp_config)
+    if fp_config:
+        # A caller's fp_config that undoes the match is reported and built as asked, not refused:
+        # adjointness is a property to report, not a gate (#2448 reverted #2443's refusal).
+        with pytest.warns(UserWarning, match="does not sub-step alike"):
+            built = create_paired_solvers(problem, NumericalScheme.SL_LINEAR, fp_config=fp_config)
+        assert check_solver_duality(*built, warn_on_mismatch=False).status == DualityStatus.NOT_DUAL
 
 
 def test_the_duality_check_ignores_how_many_substeps_a_half_takes():
@@ -187,3 +185,23 @@ def test_the_cap_admits_a_step_that_needs_exactly_max_substeps():
         cfl_substeps(5.0, cfl_target=0.5, max_substeps=9)
     # A sub-step never exceeds cfl_target: 10.2 needed rounds up to 11, not down to 10.
     assert 5.1 / cfl_substeps(5.1, cfl_target=0.5, max_substeps=11) <= 0.5
+
+
+@pytest.mark.parametrize("half", [HJBSemiLagrangianSolver, FPSLSolver])
+def test_both_halves_refuse_a_cfl_target_above_one(half):
+    """cfl_target is the crossing a sub-step is planned for. Just above 1 the HJB half starts to grow a
+    seeded asymmetry (1.005 per sweep at 1.02, 2.190 at 1.5), and at 50 either half behaves as if it
+    did not sub-step (#2448)."""
+    problem = _problem()
+    assert half(problem, cfl_target=1.0).cfl_target == 1.0
+    with pytest.raises(ValueError, match=r"cfl_target must lie in \(0, 1\], got 1.01"):
+        half(problem, cfl_target=1.01)
+    with pytest.raises(ValueError, match=r"cfl_target must lie in \(0, 1\], got 0"):
+        half(problem, cfl_target=0.0)
+    with pytest.raises(ValueError, match="max_substeps must be at least 1, got 0"):
+        half(problem, max_substeps=0)
+    with pytest.raises(ValueError, match="max_substeps must be at least 1, got nan"):
+        half(problem, max_substeps=float("nan"))
+    # The sub-step rule itself refuses too, not only the constructors in front of it.
+    with pytest.raises(ValueError, match=r"cfl_target must lie in \(0, 1\], got 1.5"):
+        cfl_substeps(2.0, cfl_target=1.5)

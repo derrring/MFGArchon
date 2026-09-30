@@ -11,7 +11,8 @@ Usage (Safe Mode - Phase 3):
     >>>
     >>> problem = MFGProblem(...)
     >>> hjb, fp = create_paired_solvers(problem, NumericalScheme.FDM_UPWIND)
-    >>> # hjb and fp are guaranteed to be dual by construction
+    >>> # hjb and fp are built as a dual pair; with validate_duality on, a caller's hjb_config / fp_config
+    >>> # that undoes it is reported (canonical-CS / DPP HJB halves are not compared, #2441)
 
 Benefits over Manual Solver Selection:
     - Automatic duality guarantee (no mixing FDM with GFDM)
@@ -62,11 +63,12 @@ def create_paired_solvers(
         validate_duality: If True, validate solver duality (recommended)
 
     Returns:
-        Tuple of (hjb_solver, fp_solver) instances that form a dual pair
+        Tuple of (hjb_solver, fp_solver) instances that form a dual pair, unless the caller's configs undo
+        it -- then built as asked, with check_solver_duality's warning (#2448)
 
     Raises:
-        ValueError: If scheme is not recognized or solvers are not dual
-        NotImplementedError: If scheme is defined but not yet implemented
+        ValueError: If the factory itself built solvers of different families (a bug)
+        NotImplementedError: If the scheme is not implemented in the factory
 
     Examples:
         >>> # Safe Mode: Automatic dual pairing
@@ -129,13 +131,11 @@ def create_paired_solvers(
     if validate_duality:
         result = check_solver_duality(hjb_solver, fp_solver, warn_on_mismatch=True)
 
-        if result.status == DualityStatus.NOT_DUAL and result.hjb_family == result.fp_family:
-            # Same family: the factory chose the classes right, and the caller's configs disagree.
-            raise ValueError(
-                f"hjb_config and fp_config build a pair that is not dual: {result.message}. Leave the FP "
-                f"half's sub-stepping out of fp_config; the factory hands it the HJB half's (#1880, #2440)."
-            )
-        if result.status == DualityStatus.NOT_DUAL:
+        # A same-family NOT_DUAL means the caller's own hjb_config / fp_config undid the match the
+        # factory hands across (#2440). check_solver_duality has just warned, naming the cost. It is
+        # built as asked: adjointness is reported, not gated (the owner's ruling, recorded in the
+        # time-discretization design note).
+        if result.status == DualityStatus.NOT_DUAL and result.hjb_family != result.fp_family:
             raise ValueError(
                 f"Factory created non-dual solver pair (this is a bug!):\n"
                 f"  HJB: {type(hjb_solver).__name__} ({result.hjb_family})\n"

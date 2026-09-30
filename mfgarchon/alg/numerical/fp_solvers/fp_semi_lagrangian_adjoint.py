@@ -38,6 +38,7 @@ from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import (
     DEFAULT_MAX_SUBSTEPS,
     apply_boundary_conditions_1d,
     cfl_substeps,
+    check_substep_settings,
 )
 from mfgarchon.geometry.boundary.bc_utils import (
     bc_type_to_geometric_operation,
@@ -148,8 +149,8 @@ class FPSLSolver(BaseFPSolver):
             cfl_target, max_substeps, enable_adaptive_substepping: How a step whose CFL number
                 exceeds 1 is cut into sub-steps (``cfl_substeps``), measured on this solver's own
                 velocity. **Pair them with the HJB solver**: sub-step exactly when it does
-                (``HJBSemiLagrangianSolver.substeps_characteristics``). A ``cfl_target`` far above 1
-                behaves as if sub-stepping were off, and is not detected (#2448). A pair that sub-steps on one side only is unstable either way round
+                (``HJBSemiLagrangianSolver.substeps_characteristics``). ``cfl_target`` lies in (0, 1]
+                (#2448). A pair that sub-steps on one side only is unstable either way round
                 (#1880). ``_create_sl_pair`` does this for you. A step that needs more than
                 ``max_substeps`` is refused with a ValueError (#2438).
         """
@@ -172,6 +173,7 @@ class FPSLSolver(BaseFPSolver):
             if interpolation_method not in valid_methods_nd:
                 raise ValueError(f"For nD problems, only 'linear' splatting is supported. Got: {interpolation_method}.")
         self.interpolation_method = interpolation_method
+        check_substep_settings(cfl_target, max_substeps)
         self.cfl_target = cfl_target
         self.max_substeps = max_substeps
         self.enable_adaptive_substepping = enable_adaptive_substepping
