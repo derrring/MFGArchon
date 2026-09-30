@@ -150,7 +150,8 @@ class FPSLSolver(BaseFPSolver):
                 velocity. **Pair them with the HJB solver**: sub-step exactly when it does
                 (``HJBSemiLagrangianSolver.substeps_characteristics``), with its ``cfl_target`` and
                 ``max_substeps``. A pair that sub-steps on one side only is unstable either way round
-                (#1880). ``_create_sl_pair`` does this for you.
+                (#1880). ``_create_sl_pair`` does this for you. A step that needs more than
+                ``max_substeps`` is refused with a ValueError (#2438).
         """
         super().__init__(problem)
         self.fp_method_name = "Adjoint Semi-Lagrangian"
@@ -372,7 +373,7 @@ class FPSLSolver(BaseFPSolver):
                 # 1D solve
                 U_n = potential_field[n, :]
                 alpha = self._compute_velocity_1d(U_n)
-                n_sub, dt_sub = self._substeps(float(np.max(np.abs(alpha)) * self.dt / self.dx), n)
+                n_sub, dt_sub = self._substeps(float(np.max(np.abs(alpha)) * self.dt / self.dx))
                 m = M[n, :]
                 for _ in range(n_sub):
                     m = self._adjoint_sl_step_1d(m, alpha, dt_sub, sigma)
@@ -384,7 +385,7 @@ class FPSLSolver(BaseFPSolver):
                 U_n = potential_field[n].reshape(self.grid_shape)
                 alpha = self._compute_velocity_nd(U_n)
                 cfl = max(float(np.max(np.abs(a))) / self.spacing[d] for d, a in enumerate(alpha)) * self.dt
-                n_sub, dt_sub = self._substeps(cfl, n)
+                n_sub, dt_sub = self._substeps(cfl)
                 m = M[n].reshape(self.grid_shape)
                 for _ in range(n_sub):
                     m = self._adjoint_sl_step_nd(m, alpha, dt_sub, sigma)
@@ -394,16 +395,11 @@ class FPSLSolver(BaseFPSolver):
 
         return M
 
-    def _substeps(self, cfl: float, n: int) -> tuple[int, float]:
-        """Sub-steps for time step ``n`` of CFL number ``cfl``, and the sub-step length (#1880)."""
+    def _substeps(self, cfl: float) -> tuple[int, float]:
+        """Sub-steps for a step of CFL number ``cfl``, and the sub-step length (#1880)."""
         if not self.enable_adaptive_substepping:
             return 1, self.dt
-        n_sub, needed = cfl_substeps(cfl, cfl_target=self.cfl_target, max_substeps=self.max_substeps)
-        if needed > n_sub:
-            logger.warning(
-                f"FPSLSolver: step {n} has CFL = {cfl:.2f}, which needs {needed} substeps; capped at "
-                f"max_substeps={self.max_substeps}, so each substep still moves mass more than one cell."
-            )
+        n_sub = cfl_substeps(cfl, cfl_target=self.cfl_target, max_substeps=self.max_substeps)
         return n_sub, self.dt / n_sub
 
     def _compute_velocity_1d(self, U: np.ndarray) -> np.ndarray:

@@ -39,11 +39,19 @@ DEFAULT_MAX_SUBSTEPS = 100
 
 def cfl_substeps(
     cfl: float, *, cfl_target: float = DEFAULT_CFL_TARGET, max_substeps: int = DEFAULT_MAX_SUBSTEPS
-) -> tuple[int, int]:
-    """Sub-steps for one semi-Lagrangian step of CFL number ``cfl``, as ``(used, needed)``.
+) -> int:
+    """Sub-steps for one semi-Lagrangian step of CFL number ``cfl``.
 
-    One when ``cfl <= 1``; otherwise ``ceil(cfl / cfl_target)`` needed, and at most ``max_substeps``
-    used. The caller decides what to say when ``needed`` reaches the cap.
+    One when ``cfl <= 1``; otherwise ``ceil(cfl / cfl_target)``. A step that needs more than
+    ``max_substeps`` is refused rather than capped (#2438). On the #1880 fixture at 41 points, a
+    capped HJB step grew U smoothly while its sub-step CFL was 1.6-1.9. From 2.07 on, U grew faster
+    than in that smooth phase, 2.2 to 267 over ten sub-steps, then roughly squared per sub-step, and the solve
+    ended in NaN. With room for the 195 sub-steps it needed, it stayed finite and symmetric. The HJB
+    half's pointwise update takes one foot from the node's own gradient; for the quadratic control
+    cost that can only overestimate the Lax-Oleinik infimum, and does once the foot is cells away.
+
+    The HJB half measures its CFL number without the 1/lambda of its foot velocity (#2439), so for a
+    control cost lambda != 1 the count is not the number of cells a sub-step crosses.
 
     The two halves of the SL pair must structure a step alike: sub-stepped in both, or in neither
     (#1880). When the HJB half sub-stepped and the FP half made one forward splat of ~10 cells, the
@@ -56,9 +64,19 @@ def cfl_substeps(
     if not np.isfinite(cfl):
         raise ValueError(f"cfl_substeps got a non-finite CFL number ({cfl}): the velocity field is not finite")
     if cfl <= 1.0:
-        return 1, 1
+        return 1
     needed = int(np.ceil(cfl / cfl_target))
-    return min(needed, max_substeps), needed
+    if needed > max_substeps:
+        raise ValueError(
+            f"A semi-Lagrangian step of CFL number {cfl:.2f} needs {needed} sub-steps at "
+            f"cfl_target={cfl_target}, more than max_substeps={max_substeps} (capped, each sub-step "
+            f"would have CFL number {cfl / max_substeps:.2f}). Neither half caps: a capped HJB step can "
+            f"run away (#2438), and the FP half must sub-step as its HJB half does (#1880). Refine dt "
+            f"(a larger Nt, with the solvers rebuilt for it, #2446), or raise max_substeps to at least "
+            f"{needed}; a later Picard sweep can need more. In Expert Mode, create_paired_solvers(..., "
+            f"hjb_config={{'max_substeps': n}}) hands the value to both halves."
+        )
+    return needed
 
 
 def trace_characteristic_backward_1d(
