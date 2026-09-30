@@ -251,8 +251,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 the solver will use smaller internal time steps while preserving the
                 overall time discretization.
             max_substeps: Maximum number of substeps per time step when adaptive
-                substepping is enabled (default: 100). If more substeps are needed,
-                a warning is issued and the solver proceeds with max_substeps.
+                substepping is enabled (default: 100). A step that needs more is refused
+                with a ValueError, since a capped schedule can run away (#2438).
             cfl_target: Target CFL number for adaptive substepping (default: 0.9).
                 When CFL > 1.0, the time step is subdivided to achieve CFL ≤ cfl_target.
             gradient_clip_threshold: Safety threshold for gradient clipping (default: None).
@@ -874,14 +874,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             return cfl, 1, dt_target
 
         # Compute substeps to achieve CFL <= cfl_target: the rule the FP half shares (#1880)
-        n_substeps, needed = cfl_substeps(cfl, cfl_target=self.cfl_target, max_substeps=self.max_substeps)
-
-        if n_substeps >= self.max_substeps:
-            logger.warning(
-                f"CFL = {cfl:.2f} requires {needed} substeps, "
-                f"capped at max_substeps={self.max_substeps}. "
-                f"Stability may be compromised. Consider reducing dt or increasing grid resolution."
-            )
+        n_substeps = cfl_substeps(cfl, cfl_target=self.cfl_target, max_substeps=self.max_substeps)
 
         dt_substep = dt_target / n_substeps
         actual_cfl = max_grad * dt_substep / dx_eff

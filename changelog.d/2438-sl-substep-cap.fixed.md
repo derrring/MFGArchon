@@ -1,0 +1,4 @@
+- **A semi-Lagrangian step that needs more sub-steps than `max_substeps` is refused, not capped (#2438).**
+  - **Before:** both halves of the SL pair warned and ran the step with `max_substeps` sub-steps, so each still crossed more than one cell. The HJB half's pointwise Lax-Oleinik update then evaluates its infimum at a foot that the node's own gradient no longer predicts, which can only overestimate. On the #1880 fixture at 41 points, U roughly squared with each sub-step once the sub-step CFL passed 2, and the solve ended in `ValueError: array must not contain infs or NaNs` from the diffusion step.
+  - **Now:** `cfl_substeps`, which both halves call, raises a `ValueError` naming the CFL number, the sub-steps needed and the cap. Raise `max_substeps` to at least that many, or refine dt. With room for the 195 sub-steps it needed, the same fixture stays finite and symmetric to round-off.
+  - A run that used to complete with a capped step and a warning now raises.

@@ -39,11 +39,15 @@ DEFAULT_MAX_SUBSTEPS = 100
 
 def cfl_substeps(
     cfl: float, *, cfl_target: float = DEFAULT_CFL_TARGET, max_substeps: int = DEFAULT_MAX_SUBSTEPS
-) -> tuple[int, int]:
-    """Sub-steps for one semi-Lagrangian step of CFL number ``cfl``, as ``(used, needed)``.
+) -> int:
+    """Sub-steps for one semi-Lagrangian step of CFL number ``cfl``.
 
-    One when ``cfl <= 1``; otherwise ``ceil(cfl / cfl_target)`` needed, and at most ``max_substeps``
-    used. The caller decides what to say when ``needed`` reaches the cap.
+    One when ``cfl <= 1``; otherwise ``ceil(cfl / cfl_target)``. A step that needs more than
+    ``max_substeps`` is refused rather than capped (#2438). Capped, each sub-step crosses more than
+    ``cfl_target`` cells, and the HJB half's pointwise Lax-Oleinik update evaluates its infimum at a
+    foot that the node's own gradient no longer predicts, which can only overestimate. On the #1880
+    fixture at 41 points, U roughly squared with each sub-step once the sub-step CFL passed 2, and the
+    solve ended in NaN; with room for the 195 sub-steps it needed, it stayed finite and symmetric.
 
     The two halves of the SL pair must structure a step alike: sub-stepped in both, or in neither
     (#1880). When the HJB half sub-stepped and the FP half made one forward splat of ~10 cells, the
@@ -56,9 +60,17 @@ def cfl_substeps(
     if not np.isfinite(cfl):
         raise ValueError(f"cfl_substeps got a non-finite CFL number ({cfl}): the velocity field is not finite")
     if cfl <= 1.0:
-        return 1, 1
+        return 1
     needed = int(np.ceil(cfl / cfl_target))
-    return min(needed, max_substeps), needed
+    if needed > max_substeps:
+        raise ValueError(
+            f"A semi-Lagrangian step of CFL number {cfl:.2f} needs {needed} sub-steps at "
+            f"cfl_target={cfl_target}, more than max_substeps={max_substeps}. Capping them leaves each "
+            f"sub-step crossing more than one cell, which the HJB half cannot absorb (#2438). Raise "
+            f"max_substeps to at least {needed}, or refine dt. The pair factory hands the HJB half's "
+            f"value to the FP half."
+        )
+    return needed
 
 
 def trace_characteristic_backward_1d(

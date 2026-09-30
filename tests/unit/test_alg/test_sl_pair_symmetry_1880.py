@@ -8,7 +8,7 @@ unstable too. So the FP half sub-steps exactly when its HJB half does.
 
 The first two tests are mutation-verified pins of Picard stability, a property two independent schemes
 agree on for this fixture; they are not a law of the problem. The third is an external oracle for the
-FP half alone: the stationary Ornstein-Uhlenbeck density.
+FP half alone: the stationary Ornstein-Uhlenbeck density. The last pins the schedule's cap (#2438).
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ import numpy as np
 
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
+from mfgarchon.alg.numerical.hjb_solvers import HJBSemiLagrangianSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.factory.scheme_factory import create_paired_solvers
 from mfgarchon.geometry import TensorProductGrid
@@ -111,3 +112,24 @@ def test_the_fp_half_relaxes_to_the_stationary_ou_density_at_cfl_above_one(dimen
     # 0.078 / 0.111, diffusion x0.75 0.108 / 0.154. Not pinned here: the sub-step count. Half as many,
     # or at most 3, stay inside the bound.
     assert _ou_error(dimension, cfl) < bound
+
+
+@pytest.mark.parametrize("half", ["hjb", "fp"])
+def test_a_step_needing_more_substeps_than_the_cap_is_refused(half):
+    """Capped, each sub-step crosses more than one cell. On the #1880 fixture at 41 points the HJB half
+    then ran away, U roughly squaring per sub-step once the sub-step CFL passed 2, and the solve ended
+    in NaN after a warning. Both halves now refuse the step (#2438)."""
+    problem = _problem()
+    x = np.linspace(0.0, 1.0, 21)
+    U = np.tile(5.0 * (x - 0.5) ** 2, (11, 1))  # max|U_x| ~5: CFL ~10 at dt = 0.1, dx = 0.05
+    M = np.ones_like(U)
+
+    def solve(cap):
+        if half == "hjb":
+            return HJBSemiLagrangianSolver(problem, max_substeps=cap).solve_hjb_system(M, U[-1], U)
+        return FPSLSolver(problem, max_substeps=cap).solve_fp_system(M[0], potential_field=U)
+
+    with pytest.raises(ValueError, match=r"needs \d+ sub-steps .*max_substeps=3\b"):
+        solve(3)
+    # Control: with room for the schedule, the same solve completes.
+    assert np.isfinite(solve(100)).all()
