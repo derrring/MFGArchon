@@ -49,7 +49,8 @@ def _asymmetry(M):
 
 
 def test_a_seeded_asymmetry_decays_under_the_sl_pair():
-    """CFL ~13 on this fixture. With the FP half unsub-stepped the asymmetry grew ~3.3x per sweep."""
+    """CFL ~13 on this fixture. With the FP half unsub-stepped the asymmetry grew 5.5x per sweep here
+    (3.3x on the capability matrix's unnormalised copy of it)."""
 
     def asym_after(sweeps):
         result = _problem(eps=1e-6).solve(
@@ -104,5 +105,6 @@ def _ou_error(dimension, cfl):
 
 @pytest.mark.parametrize(("dimension", "cfl"), [(1, 10.0), (2, 8.0)])
 def test_the_fp_half_relaxes_to_the_stationary_ou_density_at_cfl_above_one(dimension, cfl):
-    # Measured relative L1: 1-D 0.07 and 2-D 0.11 sub-stepped, against 0.30 and 0.47 as one splat.
+    # Measured relative L1 sub-stepped: 1-D 0.07, 2-D 0.11. As one splat, 2-D gives 0.47 and 1-D
+    # stops on the positivity clip.
     assert _ou_error(dimension, cfl) < 0.2
