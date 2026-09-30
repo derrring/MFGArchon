@@ -2,8 +2,11 @@
 Scheme-Based Solver Factory for MFG Problems.
 
 This module provides automatic creation of validated HJB-FP solver pairs based
-on NumericalScheme selection (Issue #580). It ensures adjoint duality by using
-_scheme_family trait matching and provides educational feedback for users.
+on NumericalScheme selection (Issue #580). Both halves come from one scheme family
+(_scheme_family trait matching), except under FVM_UPWIND / FVM_MUSCL, which pair the upwind
+HJB-FDM half with an FVM FP half and skip the duality check (Issue #422). One family is not
+the same as exact discrete adjointness: SL_CUBIC pairs a cubic HJB half with a linear FP
+half. It also provides educational feedback for users.
 
 Usage (Safe Mode - Phase 3):
     >>> from mfgarchon import MFGProblem, NumericalScheme
@@ -11,8 +14,8 @@ Usage (Safe Mode - Phase 3):
     >>>
     >>> problem = MFGProblem(...)
     >>> hjb, fp = create_paired_solvers(problem, NumericalScheme.FDM_UPWIND)
-    >>> # hjb and fp are built as a dual pair; with validate_duality on, a caller's hjb_config / fp_config
-    >>> # that undoes it is reported (canonical-CS / DPP HJB halves are not compared, #2441)
+    >>> # hjb and fp come from one scheme family; create_paired_solvers' Returns and Raises say
+    >>> # which config mismatches are reported or refused
 
 Benefits over Manual Solver Selection:
     - Automatic duality guarantee (no mixing FDM with GFDM)
@@ -52,7 +55,7 @@ def create_paired_solvers(
     Create a validated HJB-FP solver pair for a given numerical scheme.
 
     This factory function automatically selects the correct solver classes based
-    on the specified NumericalScheme, ensuring they form a valid adjoint pair.
+    on the specified NumericalScheme: from one scheme family, except for FVM (see the module docstring).
     Configuration parameters are threaded to both solvers.
 
     Args:
@@ -63,11 +66,19 @@ def create_paired_solvers(
         validate_duality: If True, validate solver duality (recommended)
 
     Returns:
-        Tuple of (hjb_solver, fp_solver) instances that form a dual pair, unless the caller's configs undo
-        it -- then built as asked, with check_solver_duality's warning (#2448)
+        Tuple of (hjb_solver, fp_solver), from one scheme family except under FVM_UPWIND / FVM_MUSCL,
+        where validate_duality has no effect (#422). With validate_duality on, an SL pair
+        whose halves disagree on sub-stepping is built as asked, with check_solver_duality's warning
+        (#2448; canonical-CS / DPP HJB halves are not compared, #2441). check_solver_duality compares no
+        other config key, so another same-family mismatch -- an FDM FP half given
+        advection_scheme="gradient_centered", for one -- is built without a duality report.
 
     Raises:
-        ValueError: If the factory itself built solvers of different families (a bug)
+        ValueError: If MESHLESS_GALERKIN gets different values for one of its duality-critical keys
+            in hjb_config and fp_config (#1489)
+        ValueError: If, with validate_duality on, the factory itself built solvers of different
+            families outside FVM, or a pair check_solver_duality cannot classify
+            (VALIDATION_SKIPPED) -- a bug in either case
         NotImplementedError: If the scheme is not implemented in the factory
 
     Examples:
