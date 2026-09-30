@@ -629,7 +629,7 @@ check $? "no deprecation count moved, and no cleared symbol is still called in p
 # The user guide to those deprecations is generated from the same decorators, and nothing ran its
 # --check: #2435's first head cleared a removal blocker, six guide rows went stale, and this gate was
 # green -- the independent review caught it (#2436). It imports the package to scan it, and refuses
-# (exit 2) where an optional extra is missing rather than comparing a partial guide.
+# (exit 2) where the package cannot be imported in full rather than comparing a partial guide.
 step "Deprecation guide"
 "${PYS[@]}" scripts/generate_deprecation_guide.py --check
 check $? "docs/user/DEPRECATION_MODERNIZATION_GUIDE.md is the guide the code generates"
