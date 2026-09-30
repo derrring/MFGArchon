@@ -20,6 +20,7 @@ import numpy as np
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBSemiLagrangianSolver
+from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import cfl_substeps
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.factory.scheme_factory import create_paired_solvers
 from mfgarchon.geometry import TensorProductGrid
@@ -116,9 +117,9 @@ def test_the_fp_half_relaxes_to_the_stationary_ou_density_at_cfl_above_one(dimen
 
 @pytest.mark.parametrize("half", ["hjb", "fp"])
 def test_a_step_needing_more_substeps_than_the_cap_is_refused(half):
-    """Capped, each sub-step crosses more than one cell. On the #1880 fixture at 41 points the HJB half
-    then ran away, U roughly squaring per sub-step once the sub-step CFL passed 2, and the solve ended
-    in NaN after a warning. Both halves now refuse the step (#2438)."""
+    """A capped HJB step ran away on the #1880 fixture at 41 points: from a sub-step CFL of 2 on, U grew
+    faster with each sub-step until the solve ended in NaN after a warning. Both halves now refuse the
+    step (#2438)."""
     problem = _problem()
     x = np.linspace(0.0, 1.0, 21)
     U = np.tile(5.0 * (x - 0.5) ** 2, (11, 1))  # max|U_x| ~5: CFL ~10 at dt = 0.1, dx = 0.05
@@ -133,3 +134,11 @@ def test_a_step_needing_more_substeps_than_the_cap_is_refused(half):
         solve(3)
     # Control: with room for the schedule, the same solve completes.
     assert np.isfinite(solve(100)).all()
+
+
+def test_the_cap_admits_a_step_that_needs_exactly_max_substeps():
+    """The refusal is at needs > max_substeps: not at >=, and not on the capped sub-step's CFL number,
+    which here would be 0.56 (#2438)."""
+    assert cfl_substeps(5.0, cfl_target=0.5, max_substeps=10) == 10
+    with pytest.raises(ValueError, match=r"needs 10 sub-steps .*max_substeps=9\b"):
+        cfl_substeps(5.0, cfl_target=0.5, max_substeps=9)
