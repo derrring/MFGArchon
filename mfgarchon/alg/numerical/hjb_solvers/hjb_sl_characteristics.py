@@ -30,6 +30,30 @@ from __future__ import annotations
 import numpy as np
 from scipy.integrate import solve_ivp
 
+# How finely a semi-Lagrangian step is cut when its CFL number exceeds 1: the one statement of the
+# rule, used by both halves of the SL pair (HJBSemiLagrangianSolver and FPSLSolver, #1880).
+DEFAULT_CFL_TARGET = 0.9
+DEFAULT_MAX_SUBSTEPS = 100
+
+
+def cfl_substeps(
+    cfl: float, *, cfl_target: float = DEFAULT_CFL_TARGET, max_substeps: int = DEFAULT_MAX_SUBSTEPS
+) -> tuple[int, int]:
+    """Sub-steps for one semi-Lagrangian step of CFL number ``cfl``, as ``(used, needed)``.
+
+    One when ``cfl <= 1``; otherwise ``ceil(cfl / cfl_target)`` needed, and at most ``max_substeps``
+    used. The caller decides what to say when ``needed`` reaches the cap.
+
+    Both halves of the SL pair must cut a step the same way (#1880). The FP half used to make one
+    forward splat of up to ~10 cells where the HJB half took ~12 sub-steps. The coupled map then
+    amplified an antisymmetric perturbation 3.3x per Picard sweep on a symmetric fixture, where
+    upwind FD damps it at 0.89.
+    """
+    if cfl <= 1.0:
+        return 1, 1
+    needed = int(np.ceil(cfl / cfl_target))
+    return min(needed, max_substeps), needed
+
 
 def trace_characteristic_backward_1d(
     x_current: float,

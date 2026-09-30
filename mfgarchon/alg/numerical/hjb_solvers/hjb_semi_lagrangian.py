@@ -52,8 +52,11 @@ from .hjb_sl_adi import (
     solve_crank_nicolson_diffusion_1d,
 )
 from .hjb_sl_characteristics import (
+    DEFAULT_CFL_TARGET,
+    DEFAULT_MAX_SUBSTEPS,
     apply_boundary_conditions_1d,
     apply_boundary_conditions_nd,
+    cfl_substeps,
     fold_into_domain,
     trace_characteristic_backward_1d,
     trace_characteristic_backward_nd,
@@ -196,8 +199,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         max_char_iterations: int = 100,
         check_cfl: bool = True,
         enable_adaptive_substepping: bool = True,
-        max_substeps: int = 100,
-        cfl_target: float = 0.9,
+        max_substeps: int = DEFAULT_MAX_SUBSTEPS,
+        cfl_target: float = DEFAULT_CFL_TARGET,
         gradient_clip_threshold: float | None = None,
         enable_gradient_monitoring: bool = True,
         ode_rtol: float = 1e-6,
@@ -870,13 +873,12 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         if cfl <= 1.0 or not self.enable_adaptive_substepping:
             return cfl, 1, dt_target
 
-        # Compute substeps to achieve CFL <= cfl_target
-        n_substeps = int(np.ceil(cfl / self.cfl_target))
-        n_substeps = min(n_substeps, self.max_substeps)
+        # Compute substeps to achieve CFL <= cfl_target: the rule the FP half shares (#1880)
+        n_substeps, needed = cfl_substeps(cfl, cfl_target=self.cfl_target, max_substeps=self.max_substeps)
 
         if n_substeps >= self.max_substeps:
             logger.warning(
-                f"CFL = {cfl:.2f} requires {int(np.ceil(cfl / self.cfl_target))} substeps, "
+                f"CFL = {cfl:.2f} requires {needed} substeps, "
                 f"capped at max_substeps={self.max_substeps}. "
                 f"Stability may be compromised. Consider reducing dt or increasing grid resolution."
             )

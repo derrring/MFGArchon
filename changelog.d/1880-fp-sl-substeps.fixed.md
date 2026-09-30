@@ -1,0 +1,5 @@
+- **The semi-Lagrangian pair no longer amplifies asymmetry when a step's CFL number exceeds 1 (#1880).**
+  - **The symptom:** on a reflection-symmetric problem at CFL ~10 (the capability matrix's smoke fixture), SL_LINEAR's coupled Picard map amplified round-off asymmetry ~6.6x per sweep. The density ended piled against one wall, and Picard did not converge.
+  - **The cause:** the HJB half cut such a step into sub-steps, while `FPSLSolver` made one forward splat of up to ~10 cells. That splat is not the transpose of the sub-stepped interpolation the pair's duality rests on.
+  - **The fix:** both halves now cut a step by one rule, `cfl_substeps` (`hjb_sl_characteristics`), with the step's velocity held fixed on the FP side. On the fixture a seeded perturbation now decays at 0.98 per sweep (was 3.31; upwind FD 0.89). SL_LINEAR converges in 43 sweeps, symmetric to round-off.
+  - **Configuration:** `FPSLSolver` takes `cfl_target` and `max_substeps`, and `_create_sl_pair` passes the HJB half's values across.

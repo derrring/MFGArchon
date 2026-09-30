@@ -271,6 +271,11 @@ def _create_sl_pair(
         # For now, use linear splatting even with cubic HJB interpolation
         # This breaks exact duality but maintains O(h^2) convergence
 
+    # Both halves cut a step whose CFL number exceeds 1 the same way (#1880).
+    for key in ("cfl_target", "max_substeps"):
+        if key in hjb_config:
+            fp_config.setdefault(key, hjb_config[key])
+
     # Create solvers
     hjb_solver = HJBSemiLagrangianSolver(problem, **hjb_config)
     fp_solver = FPSLSolver(problem, **fp_config)

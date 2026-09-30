@@ -34,7 +34,10 @@ from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import (
     solve_crank_nicolson_diffusion_1d,
 )
 from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import (
+    DEFAULT_CFL_TARGET,
+    DEFAULT_MAX_SUBSTEPS,
     apply_boundary_conditions_1d,
+    cfl_substeps,
 )
 from mfgarchon.geometry.boundary.bc_utils import (
     bc_type_to_geometric_operation,
@@ -125,6 +128,8 @@ class FPSLSolver(BaseFPSolver):
         problem: MFGProblem,
         boundary_conditions: BoundaryConditions | None = None,
         interpolation_method: str = "linear",
+        cfl_target: float = DEFAULT_CFL_TARGET,
+        max_substeps: int = DEFAULT_MAX_SUBSTEPS,
     ):
         """
         Initialize Adjoint Semi-Lagrangian FP solver.
@@ -139,6 +144,9 @@ class FPSLSolver(BaseFPSolver):
                 - 'cubic': Cubic splatting (O(dx³), may produce negatives)
                 - 'quintic': Quintic splatting (O(dx⁵), may produce negatives)
                 Must match the HJB solver's interpolation_method for adjoint consistency.
+            cfl_target, max_substeps: How finely a step whose CFL number exceeds 1 is cut into
+                sub-steps, by the rule the HJB half uses (``cfl_substeps``). Match the HJB solver's
+                values; ``_create_sl_pair`` passes them across (#1880).
         """
         super().__init__(problem)
         self.fp_method_name = "Adjoint Semi-Lagrangian"
@@ -159,6 +167,8 @@ class FPSLSolver(BaseFPSolver):
             if interpolation_method not in valid_methods_nd:
                 raise ValueError(f"For nD problems, only 'linear' splatting is supported. Got: {interpolation_method}.")
         self.interpolation_method = interpolation_method
+        self.cfl_target = cfl_target
+        self.max_substeps = max_substeps
 
         # Precompute grid parameters (dimension-agnostic)
         self.dt = problem.dt
@@ -348,24 +358,46 @@ class FPSLSolver(BaseFPSolver):
                 )
             return values
 
-        # Forward time stepping (dimension-agnostic dispatch)
+        # Forward time stepping (dimension-agnostic dispatch). A step whose CFL number exceeds 1 is
+        # cut into sub-steps by the rule the HJB half uses, with the step's velocity held fixed: one
+        # splat of many cells is not the transpose of the HJB half's sub-stepped interpolation, and
+        # the coupled map then amplified an antisymmetric mode 3.3x per Picard sweep (#1880).
         for n in timestep_range:
             if self.dimension == 1:
                 # 1D solve
                 U_n = potential_field[n, :]
                 alpha = self._compute_velocity_1d(U_n)
-                M[n + 1, :] = self._adjoint_sl_step_1d(M[n, :], alpha, self.dt, sigma)
+                n_sub, dt_sub = self._substeps(float(np.max(np.abs(alpha)) * self.dt / self.dx), n)
+                m = M[n, :]
+                for _ in range(n_sub):
+                    m = self._adjoint_sl_step_1d(m, alpha, dt_sub, sigma)
+                M[n + 1, :] = m
                 if source_term is not None:
                     M[n + 1, :] += self.dt * _source_increment((n + 1) * self.dt)
             else:
                 # nD solve
                 U_n = potential_field[n].reshape(self.grid_shape)
                 alpha = self._compute_velocity_nd(U_n)
-                M[n + 1] = self._adjoint_sl_step_nd(M[n].reshape(self.grid_shape), alpha, self.dt, sigma)
+                cfl = max(float(np.max(np.abs(a))) / self.spacing[d] for d, a in enumerate(alpha)) * self.dt
+                n_sub, dt_sub = self._substeps(cfl, n)
+                m = M[n].reshape(self.grid_shape)
+                for _ in range(n_sub):
+                    m = self._adjoint_sl_step_nd(m, alpha, dt_sub, sigma)
+                M[n + 1] = m
                 if source_term is not None:
                     M[n + 1] += self.dt * _source_increment((n + 1) * self.dt).reshape(M[n + 1].shape)
 
         return M
+
+    def _substeps(self, cfl: float, n: int) -> tuple[int, float]:
+        """Sub-steps for time step ``n`` of CFL number ``cfl``, and the sub-step length (#1880)."""
+        n_sub, needed = cfl_substeps(cfl, cfl_target=self.cfl_target, max_substeps=self.max_substeps)
+        if needed > n_sub:
+            logger.warning(
+                f"FPSLSolver: step {n} has CFL = {cfl:.2f}, which needs {needed} substeps; capped at "
+                f"max_substeps={self.max_substeps}, so each substep still moves mass more than one cell."
+            )
+        return n_sub, self.dt / n_sub
 
     def _compute_velocity_1d(self, U: np.ndarray) -> np.ndarray:
         """Compute the optimal-control drift alpha* = -grad(U) / control_cost for 1D.
