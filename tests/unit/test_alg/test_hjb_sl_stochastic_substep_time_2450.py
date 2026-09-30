@@ -2,9 +2,14 @@
 
 When it sub-stepped, the stochastic path evaluated dH/dp, the value update and the boundary data at
 time_idx times the SUB-step's dt: neither the step's time nor the sub-step's. For a Hamiltonian that
-depends on t that is a different equation. The oracle is the ADI path refined to cfl_target = 0.05,
-an independent discretisation of the same HJB: it does not share the stochastic path's foot or its
-time bookkeeping.
+depends on t that is a different equation.
+
+A mutation-verified pin, not an external oracle. The reference is the ADI path refined in CFL only
+(cfl_target = 0.05); it shares _characteristic_foot_velocity, _sl_value_update and the step-time
+convention with the path under test. Measured, the check fails when the fix is reverted (2.6e-2),
+when only the foot's time is reverted (5.7e-2), when only the value update's is (1.6e-2), and when
+the step's time is replaced by 0 (3.0e-2). It cannot see the boundary data's time (no-flux here;
+#2453), a time defect inside the shared helpers, or the n-D path.
 """
 
 from __future__ import annotations
