@@ -7,6 +7,7 @@ extracts metadata, and generates a user-facing migration guide.
 Usage:
     python scripts/generate_deprecation_guide.py           # Generate
     python scripts/generate_deprecation_guide.py --check   # Check if up-to-date
+    python scripts/generate_deprecation_guide.py --self-test  # --check can see a stale guide
 
 Issue #989: Auto-generate deprecation guide.
 """
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import tempfile
 from collections import defaultdict
 from pathlib import Path
 
@@ -284,45 +286,105 @@ def generate_guide(items: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def main():
+def guide_is_current(path: Path, guide: str) -> bool:
+    """Whether the guide at ``path`` is the one the code generates now."""
+    return path.exists() and path.read_text().strip() == guide.strip()
+
+
+def _self_test() -> int:
+    """``--check`` must pass a fresh guide and fail a stale or missing one, run through ``main()`` (#2436).
+
+    The gate reads ``--check``'s exit code, so the cases drive ``main(["--check", ...])`` and assert
+    the code and the verdict it prints, as ``check_warnings.py``'s self-test does: a control that
+    stops at the comparison stayed green with the out-of-date branch returning 0, and the gate then
+    printed the FAIL and went green. The scan is replaced by synthetic items, so there is no package
+    import; the real scan already refuses a partial walk (#1713). Stale both ways the gate meets it:
+    the code gained a deprecation the guide lacks, and a row's text moved -- #2435 cleared a removal
+    blocker and six rows went stale with the gate green.
+    """
+    import contextlib
+    import io
+
+    items = [
+        {"name": "pkg.old_function", "type": "function", "since": "v0.1.0", "replacement": "new_function"},
+        {"name": "Solver.solve.old_param", "type": "parameter", "since": "v0.2.0", "replacement": "new_param"},
+    ]
+    failures = []
+    guide = generate_guide(items)
+    if "old_param" not in guide or "old_function" not in guide:
+        failures.append("the synthetic guide does not list its own items, so nothing below can differ")
+    with tempfile.TemporaryDirectory() as tmp:
+        fresh, gained, moved = (Path(tmp) / f"{n}.md" for n in ("fresh", "gained", "moved"))
+        fresh.write_text(guide)
+        gained.write_text(generate_guide(items[:1]))
+        moved.write_text(generate_guide([items[0], {**items[1], "replacement": "other_param"}]))
+        cases = [
+            ("a fresh guide", fresh, 0, "is up-to-date"),
+            ("a guide missing a deprecation the code has", gained, 1, "is out-of-date"),
+            ("a guide whose row text moved", moved, 1, "is out-of-date"),
+            ("a missing guide", Path(tmp) / "absent.md", 1, "does not exist"),
+        ]
+        for label, path, want_code, want_text in cases:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = main(["--check", "--output", str(path)], scan=lambda: items)
+            if code != want_code or want_text not in out.getvalue():
+                failures.append(f"{label}: exit {code}, printed {out.getvalue().strip()!r}; wanted exit {want_code}")
+    for line in failures:
+        print(f"self-test FAILED: {line}", file=sys.stderr)
+    if failures:
+        return 1
+    print("self-test OK: --check exits 0 on a fresh guide and 1 on a stale or missing one")
+    return 0
+
+
+def check(output_path: Path, guide: str, n_items: int) -> int:
+    """The ``--check`` verdict, returned as the exit code the gate reads."""
+    if not output_path.exists():
+        print(f"FAIL: {output_path} does not exist")
+        return 1
+    if guide_is_current(output_path, guide):
+        print(f"OK: {output_path} is up-to-date ({n_items} items)")
+        return 0
+    print(f"FAIL: {output_path} is out-of-date. Run: python scripts/generate_deprecation_guide.py")
+    return 1
+
+
+def main(argv: list[str] | None = None, scan=scan_all_deprecations) -> int:
     parser = argparse.ArgumentParser(description="Generate deprecation guide")
     parser.add_argument("--check", action="store_true", help="Check if guide is up-to-date")
+    parser.add_argument("--self-test", action="store_true", help="Prove --check's exit code sees a stale guide")
     parser.add_argument(
         "--output",
         default="docs/user/DEPRECATION_MODERNIZATION_GUIDE.md",
         help="Output file path",
     )
-    args = parser.parse_args()
-
-    from mfgarchon.utils.deprecation import IncompleteScanError
+    args = parser.parse_args(argv)
+    if args.self_test:
+        return _self_test()
 
     try:
-        items = scan_all_deprecations()
-    except IncompleteScanError as exc:
+        items = scan()
+    except Exception as exc:
+        # Imported only on failure, so a scan that succeeds -- --self-test's synthetic one included --
+        # imports no package here; importing it up front cost the self-test ~2.8 s.
+        from mfgarchon.utils.deprecation import IncompleteScanError
+
+        if not isinstance(exc, IncompleteScanError):
+            raise
         print(f"FAIL: cannot read the whole package here, so the guide would be wrong: {exc}", file=sys.stderr)
         for module, why in sorted(exc.unimportable.items()):
             print(f"  {module}: {why}", file=sys.stderr)
         return 2
 
     guide = generate_guide(items)
-
     output_path = Path(args.output)
-
     if args.check:
-        if not output_path.exists():
-            print(f"FAIL: {output_path} does not exist")
-            sys.exit(1)
-        existing = output_path.read_text()
-        if existing.strip() == guide.strip():
-            print(f"OK: {output_path} is up-to-date ({len(deduplicate(items))} items)")
-            sys.exit(0)
-        else:
-            print(f"FAIL: {output_path} is out-of-date. Run: python scripts/generate_deprecation_guide.py")
-            sys.exit(1)
-    else:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(guide)
-        print(f"Generated {output_path} ({len(deduplicate(items))} items, {len(guide)} chars)")
+        return check(output_path, guide, len(deduplicate(items)))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(guide)
+    print(f"Generated {output_path} ({len(deduplicate(items))} items, {len(guide)} chars)")
+    return 0
 
 
 if __name__ == "__main__":
