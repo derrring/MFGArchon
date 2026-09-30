@@ -240,8 +240,12 @@ def _create_sl_pair(
     """
     Create Semi-Lagrangian HJB-FP solver pair.
 
-    Discrete duality (Type A): Forward splatting (FP) is transpose of backward
-    interpolation (HJB). Uses FPSLSolver (forward SL) for proper duality.
+    Discrete duality (Type A): forward splatting (FP) is the transpose, in the grid's trapezoid inner
+    product, of backward interpolation (HJB) along the same characteristics. The two halves do not yet
+    trace the same characteristics: the FP half uses the velocity of U at the start of a step with
+    ``np.gradient``, the HJB half the gradient of the evolving U with the geometry's operator, which
+    differs at the walls (#2439). The FP half is built to sub-step exactly when the HJB half
+    does.
 
     Args:
         problem: MFG problem
@@ -271,8 +275,12 @@ def _create_sl_pair(
         # For now, use linear splatting even with cubic HJB interpolation
         # This breaks exact duality but maintains O(h^2) convergence
 
-    # Create solvers
     hjb_solver = HJBSemiLagrangianSolver(problem, **hjb_config)
+    # The FP half sub-steps exactly when the HJB half does, with its settings: a pair structured
+    # differently on its two sides is unstable either way round (#1880).
+    fp_config.setdefault("enable_adaptive_substepping", hjb_solver.substeps_characteristics)
+    fp_config.setdefault("cfl_target", hjb_solver.cfl_target)
+    fp_config.setdefault("max_substeps", hjb_solver.max_substeps)
     fp_solver = FPSLSolver(problem, **fp_config)
 
     return hjb_solver, fp_solver
