@@ -8,7 +8,8 @@ unstable too. So the FP half sub-steps exactly when its HJB half does.
 
 The first two tests are mutation-verified pins of Picard stability, a property two independent schemes
 agree on for this fixture; they are not a law of the problem. The third is an external oracle for the
-FP half alone: the stationary Ornstein-Uhlenbeck density.
+FP half alone: the stationary Ornstein-Uhlenbeck density. One more checks that the duality check sees a
+pair that does not sub-step alike (#2440).
 """
 
 from __future__ import annotations
@@ -19,11 +20,13 @@ import numpy as np
 
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
+from mfgarchon.alg.numerical.hjb_solvers import HJBSemiLagrangianSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.factory.scheme_factory import create_paired_solvers
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.types import NumericalScheme
+from mfgarchon.utils import DualityStatus, check_solver_duality
 
 _H = SeparableHamiltonian(
     control_cost=QuadraticControlCost(lambda_=1.0), coupling=lambda m: -m, coupling_dm=lambda m: -1.0
@@ -73,6 +76,27 @@ def test_the_pair_stays_stable_when_its_hjb_half_does_not_substep():
     result = problem.solve(hjb_solver=hjb, fp_solver=fp, max_iterations=100, tolerance=1e-8, verbose=False)
     assert result.converged
     assert _asymmetry(result.M) < 1e-10
+
+
+@pytest.mark.parametrize(
+    ("hjb_config", "fp_config"),
+    [
+        ({"enable_adaptive_substepping": False}, {}),
+        ({}, {"enable_adaptive_substepping": False}),
+        ({"diffusion_method": "canonical_cs"}, {}),
+    ],
+)
+def test_the_duality_check_flags_a_hand_built_pair_that_does_not_substep_alike(hjb_config, fp_config):
+    """The first pair converges in 60 sweeps before #1880's fix and not after (asymmetry 0.95 after 200);
+    the second is #1880 itself. check_solver_duality called both DISCRETE_DUAL, so Expert Mode was silent
+    (#2440). The third turns on the HJB half's path, not its switch."""
+    problem = _problem(volatility=0.2)
+    hjb, fp = HJBSemiLagrangianSolver(problem, **hjb_config), FPSLSolver(problem, **fp_config)
+    with pytest.warns(UserWarning, match="does not sub-step alike"):
+        assert check_solver_duality(hjb, fp).status == DualityStatus.NOT_DUAL
+    # Control: the factory's pair for the same HJB half passes.
+    matched = create_paired_solvers(problem, NumericalScheme.SL_LINEAR, hjb_config=hjb_config)
+    assert check_solver_duality(*matched, warn_on_mismatch=False).status == DualityStatus.DISCRETE_DUAL
 
 
 def _ou_error(dimension, cfl):
