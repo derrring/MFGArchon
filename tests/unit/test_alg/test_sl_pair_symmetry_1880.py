@@ -189,8 +189,9 @@ def test_the_cap_admits_a_step_that_needs_exactly_max_substeps():
 
 @pytest.mark.parametrize("half", [HJBSemiLagrangianSolver, FPSLSolver])
 def test_both_halves_refuse_a_cfl_target_above_one(half):
-    """cfl_target is the cells a sub-step's foot may cross. Above 1 the HJB half grew a seeded asymmetry
-    2.190x per sweep at 1.5, and at 50 either half behaved as if it did not sub-step (#2448)."""
+    """cfl_target is the crossing a sub-step is planned for. Just above 1 the HJB half starts to grow a
+    seeded asymmetry (1.005 per sweep at 1.02, 2.190 at 1.5), and at 50 either half behaves as if it
+    did not sub-step (#2448)."""
     problem = _problem()
     assert half(problem, cfl_target=1.0).cfl_target == 1.0
     with pytest.raises(ValueError, match=r"cfl_target must lie in \(0, 1\], got 1.01"):
@@ -199,6 +200,8 @@ def test_both_halves_refuse_a_cfl_target_above_one(half):
         half(problem, cfl_target=0.0)
     with pytest.raises(ValueError, match="max_substeps must be at least 1, got 0"):
         half(problem, max_substeps=0)
+    with pytest.raises(ValueError, match="max_substeps must be at least 1, got nan"):
+        half(problem, max_substeps=float("nan"))
     # The sub-step rule itself refuses too, not only the constructors in front of it.
     with pytest.raises(ValueError, match=r"cfl_target must lie in \(0, 1\], got 1.5"):
         cfl_substeps(2.0, cfl_target=1.5)

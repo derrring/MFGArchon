@@ -26,6 +26,8 @@ threaded field's two defaults are allowed to diverge again.
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 import numpy as np
@@ -118,7 +120,14 @@ class TestAnExplicitlySetFieldReachesTheSolver:
         cfg.hjb.sl = SLConfig(cfl_number=value)
         kwargs = hjb_config_to_kwargs(cfg.hjb, NumericalScheme.SL_LINEAR)
         hjb, fp = create_paired_solvers(_problem(), NumericalScheme.SL_LINEAR, hjb_config=kwargs)
-        assert hjb.cfl_target == fp.cfl_target == (0.9 if value is None else value)
+        target = 0.9 if value is None else value
+        assert hjb.cfl_target == fp.cfl_target == target
+        # And both schedules read it, not only the attribute.
+        x = np.linspace(0.0, 1.0, 21)
+        cfl, n_hjb, _ = hjb._compute_cfl_and_substeps(10.0 * x, hjb.dt, np.ones(21), 0.0)
+        assert cfl > 1
+        assert n_hjb == math.ceil(cfl / target)
+        assert fp._substeps(2.0)[0] == math.ceil(2.0 / target)
 
     @pytest.mark.parametrize("scheme", [NumericalScheme.FDM_UPWIND, NumericalScheme.SL_LINEAR, NumericalScheme.GFDM])
     def test_an_untouched_config_still_threads_nothing(self, scheme):

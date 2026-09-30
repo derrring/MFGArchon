@@ -11,7 +11,8 @@ Usage (Safe Mode - Phase 3):
     >>>
     >>> problem = MFGProblem(...)
     >>> hjb, fp = create_paired_solvers(problem, NumericalScheme.FDM_UPWIND)
-    >>> # hjb and fp are built as a dual pair; a caller's hjb_config / fp_config that undoes it is reported
+    >>> # hjb and fp are built as a dual pair; with validate_duality on, a caller's hjb_config / fp_config
+    >>> # that undoes it is reported (canonical-CS / DPP HJB halves are not compared, #2441)
 
 Benefits over Manual Solver Selection:
     - Automatic duality guarantee (no mixing FDM with GFDM)
@@ -66,8 +67,8 @@ def create_paired_solvers(
         it -- then built as asked, with check_solver_duality's warning (#2448)
 
     Raises:
-        ValueError: If scheme is not recognized, or the factory itself built solvers of different families
-        NotImplementedError: If scheme is defined but not yet implemented
+        ValueError: If the factory itself built solvers of different families (a bug)
+        NotImplementedError: If the scheme is not implemented in the factory
 
     Examples:
         >>> # Safe Mode: Automatic dual pairing
