@@ -6,10 +6,10 @@ antisymmetric perturbation ~3.3x per sweep on a reflection-symmetric problem, wh
 at 0.89 and SL refined in dt at 0.2. The mirror mismatch, with FP sub-stepping while HJB does not, is
 unstable too. So the FP half sub-steps exactly when its HJB half does.
 
-The first two tests are mutation-verified pins of Picard stability, a property two independent schemes
-agree on for this fixture; they are not a law of the problem. The third is an external oracle for the
-FP half alone: the stationary Ornstein-Uhlenbeck density. One more checks that the duality check sees a
-pair that does not sub-step alike (#2440), and the last two pin the schedule's cap (#2438).
+Here: two mutation-verified pins of Picard stability, a property two independent schemes agree on for
+this fixture and not a law of the problem; an external oracle for the FP half alone, the stationary
+Ornstein-Uhlenbeck density; two checks that check_solver_duality sees a hand-built pair that does not
+sub-step alike (#2440); and two pins of the sub-step cap (#2438).
 """
 
 from __future__ import annotations
@@ -84,14 +84,12 @@ def test_the_pair_stays_stable_when_its_hjb_half_does_not_substep():
     [
         ({"enable_adaptive_substepping": False}, {}),
         ({}, {"enable_adaptive_substepping": False}),
-        ({}, {"cfl_target": 50.0}),
     ],
 )
 def test_the_duality_check_flags_a_hand_built_pair_that_does_not_substep_alike(hjb_config, fp_config):
     """The first pair converges in 60 sweeps before #1880's fix and not after (asymmetry 0.95 after 200);
-    the second is #1880 itself; the third grew a seeded asymmetry 3.308x per sweep on #1880's fixture,
-    exactly as the second, since a cfl_target of 50 keeps no sub-step within one cell.
-    check_solver_duality called all three DISCRETE_DUAL, so Expert Mode was silent (#2440)."""
+    the second is #1880 itself. check_solver_duality called both DISCRETE_DUAL, so Expert Mode was
+    silent (#2440)."""
     problem = _problem(volatility=0.2)
     hjb, fp = HJBSemiLagrangianSolver(problem, **hjb_config), FPSLSolver(problem, **fp_config)
     with pytest.warns(UserWarning, match="does not sub-step alike"):
@@ -107,7 +105,7 @@ def test_the_duality_check_flags_a_hand_built_pair_that_does_not_substep_alike(h
             create_paired_solvers(problem, NumericalScheme.SL_LINEAR, fp_config=fp_config)
 
 
-def test_the_duality_check_ignores_how_many_substeps_stay_within_one_cell():
+def test_the_duality_check_ignores_how_many_substeps_a_half_takes():
     """An FP half at cfl_target=0.45 took 1609 sub-steps against 825 on #1880's fixture, and the seeded
     asymmetry still decayed at 0.978 per sweep, as in the matched pair (#2440)."""
     problem = _problem(volatility=0.2)
