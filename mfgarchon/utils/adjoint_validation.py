@@ -62,13 +62,13 @@ class DualityStatus(Enum):
     Values:
         DISCRETE_DUAL: Exact discrete transpose (L_FP = L_HJB^T)
         CONTINUOUS_DUAL: Asymptotic transpose (L_FP = L_HJB^T + O(h))
-        NOT_DUAL: Different scheme families (duality broken)
+        NOT_DUAL: Different scheme families, or an SL pair whose halves do not sub-step alike (duality broken)
         VALIDATION_SKIPPED: Cannot validate (missing traits)
     """
 
     DISCRETE_DUAL = "discrete_dual"  # Type A: FDM, SL, FVM
     CONTINUOUS_DUAL = "continuous_dual"  # Type B: GFDM, PINN
-    NOT_DUAL = "not_dual"  # Mixed families
+    NOT_DUAL = "not_dual"  # Mixed families, or an SL pair sub-stepping on one side only (#2440)
     VALIDATION_SKIPPED = "validation_skipped"  # Missing _scheme_family
 
 
@@ -226,6 +226,30 @@ def check_solver_duality(
             recommendation="Use solvers from the same scheme family for proper duality",
         )
 
+    # Case 3b: an SL pair of instances of which one half sub-steps and the other does not. The pair
+    # is stable only when they cut a step alike (#1880), and a hand-built pair gets FPSLSolver's own
+    # default whatever the HJB half does (#2440).
+    if hjb_family == SchemeFamily.SL and not isinstance(hjb_solver, type) and not isinstance(fp_solver, type):
+        mismatch = _sl_substep_mismatch(hjb_solver, fp_solver)
+        if mismatch is not None:
+            msg = f"SL pair does not sub-step alike on its two sides: {mismatch}"
+            if warn_on_mismatch:
+                warnings.warn(
+                    f"{msg}. Picard on such a pair can diverge where the matched pair converges (#1880, #2440).",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            return DualityValidationResult(
+                status=DualityStatus.NOT_DUAL,
+                hjb_family=hjb_family,
+                fp_family=fp_family,
+                message=msg,
+                recommendation=(
+                    "Give both halves the same enable_adaptive_substepping, or build the pair with "
+                    "create_paired_solvers(problem, NumericalScheme.SL_LINEAR), which does"
+                ),
+            )
+
     # Case 4: Same family → Check duality type
     # Type A families: Discrete transpose (exact). MESHLESS_GALERKIN is the meshfree Type-A
     # member (Galerkin MLS, A_FP = A_HJB^T exact; Issue #1131); FEM is its mesh-based sibling
@@ -246,8 +270,9 @@ def check_solver_duality(
         # L_FP = L_HJB^T is opt-in via the iterator's adjoint_mode="jacobian_transpose".
         # SL (splatting = transpose of interpolation, #708) and MESHLESS_GALERKIN (Galerkin
         # MLS, #1131) are exact transposes by construction.
-        # NOTE: this check matches only the _scheme_family enum, not the actual advection
-        # scheme pairing, so it does not detect a mismatched same-family pair.
+        # NOTE: apart from the SL sub-step switch (Case 3b), this check matches only the
+        # _scheme_family enum, not the actual scheme pairing, so it does not detect a mismatched
+        # same-family pair -- a different interpolation_method, for one (#1812).
         if hjb_family == SchemeFamily.FDM:
             message = (
                 "Valid discrete dual pair: FDM schemes (structure-preserving; exact "
@@ -282,6 +307,40 @@ def check_solver_duality(
         fp_family=fp_family,
         message=f"Unknown scheme family: {hjb_family.value}",
         recommendation="Report this as a bug (Issue #580)",
+    )
+
+
+def _sl_substep_mismatch(hjb_solver: Any, fp_solver: Any) -> str | None:
+    """How the two halves of an SL pair differ in whether they sub-step, or None when they agree.
+
+    The switch is what #1880 turned on: with the FP half's sub-stepping off, a seeded asymmetry grew
+    ~3.3x per sweep on its fixture, and the mirror pair diverges too. The count is not compared: on #1880's fixture an FP
+    half at ``cfl_target=0.45`` took 1609 sub-steps against 825, and one at 1.5 took fewer, and both
+    decayed the asymmetry at 0.978 per sweep, as the matched pair does (#2440).
+
+    Misjudged: a ``cfl_target`` far above 1, in both directions. A half at 50 sub-steps so coarsely
+    that it behaves as if off -- an FP half at 50 grew the asymmetry 3.308x per sweep, exactly as
+    with its sub-stepping off -- so a pair with one half at 50 is judged by the switch it declares,
+    not by what it does. An FP half at 4 grew it 2.462x and at 2 1.193x; an HJB half at 1.5 is
+    unstable on its own (2.190x per sweep with sigma = 0.2). No bound has been measured (#2448).
+
+    Not compared, returning None:
+    - an HJB half on the DPP or canonical-CS path, which never sub-steps. There is no oracle for
+      which FP schedule pairs with it: the factory's pair and a sub-stepping FP half each converge
+      on some fixtures and not others (#2441);
+    - a half that declares no schedule, such as the deprecated ``FPSLJacobianSolver``.
+    """
+    traces = getattr(hjb_solver, "traces_characteristics", None)
+    hjb_switch = getattr(hjb_solver, "enable_adaptive_substepping", None)
+    fp_substeps = getattr(fp_solver, "enable_adaptive_substepping", None)
+    if traces is not True or hjb_switch is None or fp_substeps is None:
+        return None
+    hjb_substeps = bool(hjb_switch)
+    if hjb_substeps == bool(fp_substeps):
+        return None
+    return (
+        f"{type(hjb_solver).__name__} {'sub-steps' if hjb_substeps else 'does not sub-step'} a step whose CFL "
+        f"number exceeds 1, and {type(fp_solver).__name__} {'does' if fp_substeps else 'does not'}"
     )
 
 
@@ -332,8 +391,9 @@ def validate_scheme_config(
     # Check solver pair duality
     result = check_solver_duality(hjb_solver, fp_solver, warn_on_mismatch=False)
 
-    # If not dual, add scheme context to message
-    if result.status == DualityStatus.NOT_DUAL:
+    # If not dual, add scheme context to message. A same-family pair is not dual for its own reason
+    # (Case 3b), which the family names would contradict.
+    if result.status == DualityStatus.NOT_DUAL and result.hjb_family != result.fp_family:
         result.message = (
             f"Scheme {scheme.value} expects matching families, but solvers are "
             f"{result.hjb_family.value} (HJB) and {result.fp_family.value} (FP)"

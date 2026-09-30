@@ -86,8 +86,10 @@ def create_paired_solvers(
         >>> assert result.requires_renormalization()  # Type B scheme
     """
     # Initialize configs
-    hjb_config = hjb_config or {}
-    fp_config = fp_config or {}
+    # Copies: the pair builders fill in defaults with setdefault, and writing them into the caller's
+    # dict made a reused fp_config carry one HJB half's sub-step schedule into the next pair (#2440).
+    hjb_config = dict(hjb_config or {})
+    fp_config = dict(fp_config or {})
 
     # Route to scheme-specific factory
     if scheme in (NumericalScheme.FDM_UPWIND, NumericalScheme.FDM_CENTERED):
@@ -127,6 +129,12 @@ def create_paired_solvers(
     if validate_duality:
         result = check_solver_duality(hjb_solver, fp_solver, warn_on_mismatch=True)
 
+        if result.status == DualityStatus.NOT_DUAL and result.hjb_family == result.fp_family:
+            # Same family: the factory chose the classes right, and the caller's configs disagree.
+            raise ValueError(
+                f"hjb_config and fp_config build a pair that is not dual: {result.message}. Leave the FP "
+                f"half's sub-stepping out of fp_config; the factory hands it the HJB half's (#1880, #2440)."
+            )
         if result.status == DualityStatus.NOT_DUAL:
             raise ValueError(
                 f"Factory created non-dual solver pair (this is a bug!):\n"
