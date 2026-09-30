@@ -44,5 +44,5 @@ def test_sl_linear_keeps_a_symmetric_problem_symmetric():
     )
     M = np.asarray(result.M)
     asymmetry = np.linalg.norm(M - M[:, ::-1]) / np.linalg.norm(M)
-    # Round-off level. With the FP half unsub-stepped it measured 1.2e-9 after 12 sweeps (#1880).
+    # Round-off level. With the FP half unsub-stepped it measured 6.8e-9 after 12 sweeps (#1880).
     assert asymmetry < 1e-12, f"relative asymmetry {asymmetry:.3e} after 12 sweeps"
