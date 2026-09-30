@@ -363,11 +363,15 @@ def main(argv: list[str] | None = None, scan=scan_all_deprecations) -> int:
     if args.self_test:
         return _self_test()
 
-    from mfgarchon.utils.deprecation import IncompleteScanError
-
     try:
         items = scan()
-    except IncompleteScanError as exc:
+    except Exception as exc:
+        # Imported only on failure, so a scan that succeeds -- --self-test's synthetic one included --
+        # imports no package here; importing it up front cost the self-test ~2.8 s.
+        from mfgarchon.utils.deprecation import IncompleteScanError
+
+        if not isinstance(exc, IncompleteScanError):
+            raise
         print(f"FAIL: cannot read the whole package here, so the guide would be wrong: {exc}", file=sys.stderr)
         for module, why in sorted(exc.unimportable.items()):
             print(f"  {module}: {why}", file=sys.stderr)
