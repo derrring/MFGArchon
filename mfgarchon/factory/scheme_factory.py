@@ -11,8 +11,9 @@ Usage (Safe Mode - Phase 3):
     >>>
     >>> problem = MFGProblem(...)
     >>> hjb, fp = create_paired_solvers(problem, NumericalScheme.FDM_UPWIND)
-    >>> # hjb and fp are built as a dual pair; with validate_duality on, a caller's hjb_config / fp_config
-    >>> # that undoes it is reported (canonical-CS / DPP HJB halves are not compared, #2441)
+    >>> # hjb and fp are built as a dual pair. A caller's hjb_config / fp_config can undo that, and only
+    >>> # one such undoing is reported (validate_duality on): an SL pair whose halves disagree on
+    >>> # sub-stepping. No other config key is compared, nor canonical-CS / DPP HJB halves (#2441).
 
 Benefits over Manual Solver Selection:
     - Automatic duality guarantee (no mixing FDM with GFDM)
@@ -63,11 +64,13 @@ def create_paired_solvers(
         validate_duality: If True, validate solver duality (recommended)
 
     Returns:
-        Tuple of (hjb_solver, fp_solver) instances that form a dual pair, unless the caller's configs undo
-        it -- then built as asked, with check_solver_duality's warning (#2448)
+        Tuple of (hjb_solver, fp_solver) built as a dual pair. The caller's configs can undo that; only an
+        SL pair whose halves disagree on sub-stepping is detected, and it is built as asked, with
+        check_solver_duality's warning (#2448). Any other config that undoes the pairing is not reported.
 
     Raises:
-        ValueError: If the factory itself built solvers of different families (a bug)
+        ValueError: If the factory itself built solvers of different families, or solvers without
+            _scheme_family traits (a bug in either case)
         NotImplementedError: If the scheme is not implemented in the factory
 
     Examples:
