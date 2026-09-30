@@ -744,9 +744,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
     def _compute_gradient(
         self,
         u_values: np.ndarray,
-        check_cfl: bool = True,
+        check_cfl: bool = False,
         t_idx: int | None = None,
         m_density: np.ndarray | None = None,
+        dt: float | None = None,
     ) -> np.ndarray | tuple[np.ndarray, ...]:
         """
         Compute gradient ∇u for optimal control using trait-based geometry operators (Issue #596 Phase 2.1).
@@ -763,7 +764,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             u_values: Value function array
                 - 1D: shape (Nx+1,)
                 - nD: shape (Nx1+1, Nx2+1, ..., Nxd+1)
-            check_cfl: Whether to check CFL condition (default: True)
+            check_cfl: Whether to warn when the step's foot crosses more than one cell (default: False)
+            dt: Length of the step the warning measures (default: ``self.dt``)
             t_idx: Current timestep index for gradient clipping monitoring (optional, Issue #583)
             m_density: Density values for gradient clipping correlation analysis (optional, Issue #583)
 
@@ -791,7 +793,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
             # CFL check (after clipping to get realistic CFL with clipped gradients)
             if check_cfl and self.check_cfl:
-                self._warn_if_step_exceeds_one_cell(grad_u_clipped, m_density, t_idx)
+                self._warn_if_step_exceeds_one_cell(grad_u_clipped, m_density, t_idx, dt)
 
             return grad_u_clipped
 
@@ -809,7 +811,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
             # CFL check (after clipping)
             if check_cfl and self.check_cfl:
-                self._warn_if_step_exceeds_one_cell(grad_components_clipped, m_density, t_idx)
+                self._warn_if_step_exceeds_one_cell(grad_components_clipped, m_density, t_idx, dt)
 
             # Return as tuple of arrays (one per dimension)
             return grad_components_clipped
@@ -1298,7 +1300,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
             # Compute gradient for optimal control: α* = ∇u
             # Pass timestep and density for gradient clipping monitoring (Issue #583)
-            grad_u = self._compute_gradient(U_next, check_cfl=True, t_idx=time_idx, m_density=M_next)
+            # A sub-stepping solver reaches this path only with a step the schedule found within one cell.
+            grad_u = self._compute_gradient(
+                U_next, check_cfl=not self.substeps_characteristics, t_idx=time_idx, m_density=M_next
+            )
 
             # Issue #930: Vectorized advection — batch characteristic tracing + interpolation
             # For explicit_euler/rk2, characteristic is x_departure = x - p*dt (vectorizable)
@@ -1399,7 +1404,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             # Returns tuple of gradient components, each with shape grid_shape
             # Pass timestep and density for gradient clipping monitoring (Issue #583)
             grad_components = self._compute_gradient(
-                U_next_shaped, check_cfl=True, t_idx=time_idx, m_density=M_next_shaped
+                U_next_shaped, check_cfl=not self.substeps_characteristics, t_idx=time_idx, m_density=M_next_shaped
             )
 
             # Track errors for diagnostics
@@ -1753,7 +1758,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         foot_offset = self._brownian_foot_offset(sqrt_dt)
 
         # Optimal control α* = -p where p = ∇u^{n+1}; drift foot x_drift = x − p·dt.
-        grad = self._compute_gradient(U_shaped, check_cfl=True, t_idx=time_idx, m_density=M_shaped)
+        grad = self._compute_gradient(U_shaped, check_cfl=True, t_idx=time_idx, m_density=M_shaped, dt=dt)
         grad_components = (grad,) if d == 1 else grad
 
         # --- Boundary fold for the Brownian feet ---
@@ -2310,13 +2315,22 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         return float(np.max(np.sqrt(np.sum(vel**2, axis=-1)))) * dt / float(np.min(self.dx))
 
     def _warn_if_step_exceeds_one_cell(
-        self, grad: np.ndarray | tuple[np.ndarray, ...], m_density: np.ndarray | None, t_idx: int | None
+        self,
+        grad: np.ndarray | tuple[np.ndarray, ...],
+        m_density: np.ndarray | None,
+        t_idx: int | None,
+        dt: float | None = None,
     ) -> None:
-        """The CFL warning, on ``_foot_cfl`` for a full step: sub-stepping handles such a step, so it
-        fires in practice only where the step is not sub-stepped."""
+        """The CFL warning, on ``_foot_cfl`` for the step actually taken (``dt``, default ``self.dt``).
+
+        The ADI paths ask for it only when the solver does not sub-step, since the schedule has already
+        bounded a sub-stepping solver's whole step. The stochastic path asks on every (sub-)step, with
+        its own ``dt``: measured on a full ``self.dt`` it fired on every sub-step it had taken (#2449).
+        """
         if m_density is None or t_idx is None:
             raise TypeError("_compute_gradient(check_cfl=True) needs m_density and t_idx to measure the foot's CFL")
-        cfl = self._foot_cfl(grad, m_density, t_idx * self.dt, self.dt)
+        step = self.dt if dt is None else dt
+        cfl = self._foot_cfl(grad, m_density, t_idx * self.dt, step)
         if cfl > 1.0:
             logger.warning(
                 f"CFL condition violated: max|dH/dp|*dt/dx = {cfl:.3f} > 1.0 (the foot of one step crosses "

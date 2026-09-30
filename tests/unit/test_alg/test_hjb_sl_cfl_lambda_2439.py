@@ -5,10 +5,10 @@ congestion Hamiltonian. The CFL number used to be max|grad u| * dt / dx, which i
 the quadratic cost at lambda = 1. At lambda = 0.25 a sub-step crossed about 3.3 cells, and on #1880's
 fixture the coupled solve ended in the NaN #2438 describes, with no cap involved.
 
-The property is read off the feet the solver traces, not off the schedule. It is "about one cell,
-not 1/lambda": the schedule plans at most cfl_target = 0.9 cells, but the gradient steepens within a
-step, and in a coupled solve the feet reach ~1.15-1.22 cells (#2439's velocity time level), so the
-bound is 1.5 rather than 1.
+The property is read off the feet the solver traces, not off the schedule. The schedule plans at most
+cfl_target = 0.9 cells; these single HJB solves trace 0.888-0.975, so the bound is 1.1. (In a coupled
+Picard solve the feet reach 1.15-1.22 cells, because the gradient steepens within a step -- #2439's
+velocity time level -- which these fixtures do not exercise.)
 """
 
 from __future__ import annotations
@@ -92,9 +92,10 @@ def _falling(axes):
 )
 def test_an_hjb_substep_crosses_about_one_cell_whatever_the_foot_speed(hamiltonian, shape, u_terminal, density):
     # Measured, fixed / not: 1-D 0.888 / 3.300 (|grad u| measure), 2-D 0.952 / 3.441 (the nD measure),
-    # congestion 0.893 / 1.773 (|grad u|) and 4.389 (the schedule reading step 0's density and time).
-    # The lower bound is the control that the recorder saw the sub-stepped feet at all.
-    assert 0.5 < _largest_crossing(hamiltonian, shape, u_terminal, density) <= 1.5
+    # congestion 0.893 / 3.292 (|grad u|), 4.389 (the schedule reading step 0's density and time) and
+    # 1.254 (reading the density one step early). The lower bound is the control that the recorder saw
+    # the sub-stepped feet at all.
+    assert 0.5 < _largest_crossing(hamiltonian, shape, u_terminal, density) <= 1.1
 
 
 def test_the_cfl_warning_reads_the_same_foot_speed_as_the_schedule(mfg_caplog):
