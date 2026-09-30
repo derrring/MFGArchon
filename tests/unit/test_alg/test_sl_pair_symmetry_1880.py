@@ -84,20 +84,40 @@ def test_the_pair_stays_stable_when_its_hjb_half_does_not_substep():
     [
         ({"enable_adaptive_substepping": False}, {}),
         ({}, {"enable_adaptive_substepping": False}),
-        ({"diffusion_method": "canonical_cs"}, {}),
+        ({}, {"cfl_target": 50.0}),
     ],
 )
 def test_the_duality_check_flags_a_hand_built_pair_that_does_not_substep_alike(hjb_config, fp_config):
     """The first pair converges in 60 sweeps before #1880's fix and not after (asymmetry 0.95 after 200);
-    the second is #1880 itself. check_solver_duality called both DISCRETE_DUAL, so Expert Mode was silent
-    (#2440). The third turns on the HJB half's path, not its switch."""
+    the second is #1880 itself; the third grew a seeded asymmetry 3.308x per sweep on #1880's fixture,
+    exactly as the second, since a cfl_target of 50 keeps no sub-step within one cell.
+    check_solver_duality called all three DISCRETE_DUAL, so Expert Mode was silent (#2440)."""
     problem = _problem(volatility=0.2)
     hjb, fp = HJBSemiLagrangianSolver(problem, **hjb_config), FPSLSolver(problem, **fp_config)
     with pytest.warns(UserWarning, match="does not sub-step alike"):
         assert check_solver_duality(hjb, fp).status == DualityStatus.NOT_DUAL
-    # Control: the factory's pair for the same HJB half passes.
+    # Control: the factory hands the FP half the HJB half's schedule.
     matched = create_paired_solvers(problem, NumericalScheme.SL_LINEAR, hjb_config=hjb_config)
     assert check_solver_duality(*matched, warn_on_mismatch=False).status == DualityStatus.DISCRETE_DUAL
+    if fp_config:  # and it refuses a caller's fp_config that undoes that, without calling it a bug
+        with (
+            pytest.raises(ValueError, match="hjb_config and fp_config"),
+            pytest.warns(UserWarning, match="does not sub-step alike"),
+        ):
+            create_paired_solvers(problem, NumericalScheme.SL_LINEAR, fp_config=fp_config)
+
+
+def test_the_duality_check_ignores_how_many_substeps_stay_within_one_cell():
+    """An FP half at cfl_target=0.45 took 1609 sub-steps against 825 on #1880's fixture, and the seeded
+    asymmetry still decayed at 0.978 per sweep, as in the matched pair (#2440)."""
+    problem = _problem(volatility=0.2)
+    pair = HJBSemiLagrangianSolver(problem), FPSLSolver(problem, cfl_target=0.45)
+    assert check_solver_duality(*pair, warn_on_mismatch=False).status == DualityStatus.DISCRETE_DUAL
+    # The factory copies the caller's config: writing the HJB schedule into it made the next pair built
+    # from the same dict with a different HJB half a mismatch the caller never asked for.
+    config = {"cfl_target": 0.45}
+    create_paired_solvers(problem, NumericalScheme.SL_LINEAR, fp_config=config)
+    assert config == {"cfl_target": 0.45}
 
 
 def _ou_error(dimension, cfl):

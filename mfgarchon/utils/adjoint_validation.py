@@ -226,9 +226,9 @@ def check_solver_duality(
             recommendation="Use solvers from the same scheme family for proper duality",
         )
 
-    # Case 3b: an SL pair of instances whose halves do not both sub-step, or both not. The pair is
-    # stable only when they cut a step alike (#1880), and a hand-built pair gets FPSLSolver's own
-    # default whatever the HJB half does (#2440).
+    # Case 3b: an SL pair of instances whose halves do not both keep a sub-step within one cell. The
+    # pair is stable only when they cut a step alike (#1880), and a hand-built pair gets FPSLSolver's
+    # own default whatever the HJB half does (#2440).
     if hjb_family == SchemeFamily.SL and not isinstance(hjb_solver, type) and not isinstance(fp_solver, type):
         mismatch = _sl_substep_mismatch(hjb_solver, fp_solver)
         if mismatch is not None:
@@ -245,8 +245,8 @@ def check_solver_duality(
                 fp_family=fp_family,
                 message=msg,
                 recommendation=(
-                    "Build the pair with create_paired_solvers(problem, NumericalScheme.SL_LINEAR), or pass "
-                    "FPSLSolver(problem, enable_adaptive_substepping=hjb_solver.substeps_characteristics)"
+                    "Give both halves enable_adaptive_substepping=True and a cfl_target of at most 1, or build "
+                    "the pair with create_paired_solvers(problem, NumericalScheme.SL_LINEAR), which does"
                 ),
             )
 
@@ -270,7 +270,7 @@ def check_solver_duality(
         # L_FP = L_HJB^T is opt-in via the iterator's adjoint_mode="jacobian_transpose".
         # SL (splatting = transpose of interpolation, #708) and MESHLESS_GALERKIN (Galerkin
         # MLS, #1131) are exact transposes by construction.
-        # NOTE: apart from the SL sub-step switch (Case 3b), this check matches only the
+        # NOTE: apart from the SL sub-step schedule (Case 3b), this check matches only the
         # _scheme_family enum, not the actual scheme pairing, so it does not detect a mismatched
         # same-family pair -- a different interpolation_method, for one (#1812).
         if hjb_family == SchemeFamily.FDM:
@@ -310,25 +310,40 @@ def check_solver_duality(
     )
 
 
-def _sl_substep_mismatch(hjb_solver: Any, fp_solver: Any) -> str | None:
-    """How the two halves of an SL pair differ in whether they sub-step, or None when they agree.
+def _within_one_cell(solver: Any) -> bool:
+    """Whether an SL half keeps each sub-step within one cell: sub-stepping on, ``cfl_target`` <= 1."""
+    return bool(solver.enable_adaptive_substepping) and solver.cfl_target <= 1
 
-    Only the switch is compared. A different ``cfl_target`` changes the sub-step count and the
-    density, but not the stability #1880 was about: on its fixture, an FP half at ``cfl_target=0.45``
-    took 1609 sub-steps against 825 and moved M by up to 0.22, and the seeded asymmetry still decayed
-    at 0.978 per sweep, as in the matched pair (#2440). An FP half that declares no schedule (the
-    deprecated ``FPSLJacobianSolver``) is not compared.
+
+def _sl_substep_mismatch(hjb_solver: Any, fp_solver: Any) -> str | None:
+    """How the two halves of an SL pair differ in keeping a sub-step within one cell, or None.
+
+    What matters is whether each half's sub-steps stay within one cell, not how many it takes. On
+    #1880's fixture (sigma = 0) an FP half at ``cfl_target=0.45`` took 1609 sub-steps against 825
+    and the seeded asymmetry still decayed at 0.978 per sweep, as in the matched pair, while an FP
+    half at ``cfl_target=4`` grew it at 2.462 and one at 50 at 3.308, exactly as with its
+    sub-stepping off (#2440). ``max_substeps`` does not enter: a step that needs more is refused
+    (#2438), so it never shapes a schedule.
+
+    Not compared, returning None:
+    - an HJB half on the DPP or canonical-CS path, which never sub-steps. There is no oracle for
+      which FP schedule pairs with it: the factory's pair and a sub-stepping FP half each converge
+      on some fixtures and not others (#2441);
+    - a half that declares no schedule, such as the deprecated ``FPSLJacobianSolver``.
     """
-    fp_substeps = getattr(fp_solver, "enable_adaptive_substepping", None)
-    if fp_substeps is None:
+    traces = getattr(hjb_solver, "traces_characteristics", None)
+    if traces is not True or getattr(fp_solver, "enable_adaptive_substepping", None) is None:
         return None
-    hjb_substeps = hjb_solver.substeps_characteristics
-    if hjb_substeps == fp_substeps:
+    hjb_cell, fp_cell = _within_one_cell(hjb_solver), _within_one_cell(fp_solver)
+    if hjb_cell == fp_cell:
         return None
-    return (
-        f"{type(hjb_solver).__name__} {'sub-steps' if hjb_substeps else 'does not sub-step'} a step whose CFL "
-        f"number exceeds 1, and {type(fp_solver).__name__} {'does' if fp_substeps else 'does not'}"
-    )
+
+    def says(solver: Any, within: bool) -> str:
+        settings = f"enable_adaptive_substepping={solver.enable_adaptive_substepping}, cfl_target={solver.cfl_target}"
+        verb = "keeps each sub-step within one cell" if within else "does not keep a sub-step within one cell"
+        return f"{type(solver).__name__} {verb} ({settings})"
+
+    return f"{says(hjb_solver, hjb_cell)}, and {says(fp_solver, fp_cell)}"
 
 
 def validate_scheme_config(
@@ -378,8 +393,9 @@ def validate_scheme_config(
     # Check solver pair duality
     result = check_solver_duality(hjb_solver, fp_solver, warn_on_mismatch=False)
 
-    # If not dual, add scheme context to message
-    if result.status == DualityStatus.NOT_DUAL:
+    # If not dual, add scheme context to message. A same-family pair is not dual for its own reason
+    # (Case 3b), which the family names would contradict.
+    if result.status == DualityStatus.NOT_DUAL and result.hjb_family != result.fp_family:
         result.message = (
             f"Scheme {scheme.value} expects matching families, but solvers are "
             f"{result.hjb_family.value} (HJB) and {result.fp_family.value} (FP)"
