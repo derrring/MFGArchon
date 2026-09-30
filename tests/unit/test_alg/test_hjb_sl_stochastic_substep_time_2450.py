@@ -1,6 +1,6 @@
 """The stochastic SL path evaluates a sub-step at the step's time, not at time_idx * dt_sub (#2450).
 
-When it sub-stepped, the stochastic path evaluated dH/dp, the value update and the boundary data at
+When it sub-stepped, the stochastic path evaluated dH/dp, the value update and (1-D) the post-step BC at
 time_idx times the SUB-step's dt: neither the step's time nor the sub-step's. For a Hamiltonian that
 depends on t that is a different equation.
 
