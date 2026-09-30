@@ -50,8 +50,9 @@ def cfl_substeps(
     half's pointwise update takes one foot from the node's own gradient; for the quadratic control
     cost that can only overestimate the Lax-Oleinik infimum, and does once the foot is cells away.
 
-    The HJB half measures its CFL number without the 1/lambda of its foot velocity (#2439), so for a
-    control cost lambda != 1 the count is not the number of cells a sub-step crosses.
+    Both halves measure the CFL number on the velocity their foot moves at: the HJB half on dH/dp,
+    the FP half on its drift. The HJB half used max|grad u| until #2439, which is that speed only at
+    lambda = 1.
 
     The two halves of the SL pair must structure a step alike: sub-stepped in both, or in neither
     (#1880). When the HJB half sub-stepped and the FP half made one forward splat of ~10 cells, the

@@ -831,19 +831,26 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             # Return as tuple of arrays (one per dimension)
             return grad_components_clipped
 
-    def _compute_cfl_and_substeps(self, u_values: np.ndarray, dt_target: float) -> tuple[float, int, float]:
+    def _compute_cfl_and_substeps(
+        self, u_values: np.ndarray, dt_target: float, m_values: np.ndarray, t: float
+    ) -> tuple[float, int, float]:
         """
         Compute CFL number and determine optimal number of substeps.
 
-        When the CFL condition (CFL = max|grad(u)| * dt / dx) exceeds 1.0,
-        this method computes how many substeps are needed to maintain
-        CFL <= cfl_target (default 0.9).
+        The CFL number is ``max|dH/dp| * dt / dx``, on the velocity the departure foot actually moves
+        at (``_characteristic_foot_velocity``, which needs the step's density and time). It was
+        ``max|grad(u)| * dt / dx``, which is the foot speed only at lambda = 1: for lambda < 1 a
+        sub-step crossed 1/lambda times more cells than the schedule allowed, and at lambda = 0.25 the
+        solve reached the #2438 runaway with no cap involved (#2439). When it exceeds 1.0, this
+        method computes how many substeps are needed to maintain CFL <= cfl_target (default 0.9).
 
         Uses trait-based gradient operators for consistent computation (Issue #596 Phase 2.1).
 
         Args:
             u_values: Current value function array
             dt_target: Target time step (full time step to subdivide)
+            m_values: Density the step's characteristic velocity is evaluated with
+            t: Time the step's characteristic velocity is evaluated at
 
         Returns:
             Tuple of (cfl_number, n_substeps, dt_substep):
@@ -855,19 +862,19 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         grad_result = self._compute_gradient(u_values, check_cfl=False)
 
         if self.dimension == 1:
-            # 1D CFL computation
-            grad_u = grad_result
-            max_grad = np.max(np.abs(grad_u))
-            cfl = max_grad * dt_target / self.dx
+            grad_u = np.asarray(grad_result, dtype=float)
+            speed = self._characteristic_foot_velocity(
+                self.x_grid.reshape(-1, 1), np.asarray(m_values).ravel(), grad_u.reshape(-1, 1), t
+            )
+            max_speed = np.max(np.abs(speed))
             dx_eff = self.dx
         else:
-            # nD CFL computation
-            grad_components = grad_result  # Tuple of gradient arrays
-            grad = np.stack(grad_components, axis=0)
-            magnitude = np.sqrt(np.sum(grad**2, axis=0))
-            max_grad = np.max(magnitude)
+            grad_components = tuple(np.asarray(g, dtype=float) for g in grad_result)
+            shape = grad_components[0].shape
+            vel = self._nd_foot_velocity_field(shape, grad_components, np.asarray(m_values).reshape(shape), t)
+            max_speed = np.max(np.sqrt(np.sum(vel**2, axis=-1)))
             dx_eff = np.min(self.dx)
-            cfl = max_grad * dt_target / dx_eff
+        cfl = max_speed * dt_target / dx_eff
 
         # Determine substeps needed
         if cfl <= 1.0 or not self.enable_adaptive_substepping:
@@ -877,7 +884,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         n_substeps = cfl_substeps(cfl, cfl_target=self.cfl_target, max_substeps=self.max_substeps)
 
         dt_substep = dt_target / n_substeps
-        actual_cfl = max_grad * dt_substep / dx_eff
+        actual_cfl = max_speed * dt_substep / dx_eff
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
@@ -1153,7 +1160,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             if not self.substeps_characteristics:
                 cfl, n_substeps, dt_substep = 0.0, 1, self.dt
             else:
-                cfl, n_substeps, dt_substep = self._compute_cfl_and_substeps(U_solution[n + 1], self.dt)
+                cfl, n_substeps, dt_substep = self._compute_cfl_and_substeps(
+                    U_solution[n + 1], self.dt, M_density[m_idx], n * self.dt
+                )
             total_substeps_used += n_substeps
 
             if n_substeps == 1:
