@@ -254,7 +254,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             max_substeps: Maximum number of substeps per time step when adaptive
                 substepping is enabled (default: 100). A step that needs more is refused
                 with a ValueError, since a capped schedule can run away (#2438).
-            cfl_target: Target CFL number for adaptive substepping (default: 0.9), in (0, 1].
+            cfl_target: Target CFL number for adaptive substepping (default: 0.9). Above 1 it is
+                accepted with a UserWarning that states where it was measured unstable (#2458).
                 When CFL > 1.0, the time step is subdivided so that the crossing *planned* at the
                 step's start is ≤ cfl_target (#2448); the traced feet can exceed it (#2439).
             gradient_clip_threshold: Safety threshold for gradient clipping (default: None).

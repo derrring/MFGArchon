@@ -27,6 +27,8 @@ Functions:
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 from scipy.integrate import solve_ivp
 
@@ -37,29 +39,43 @@ DEFAULT_CFL_TARGET = 0.9
 DEFAULT_MAX_SUBSTEPS = 100
 
 
+def _refuse_meaningless_substep_settings(cfl_target: float, max_substeps: int) -> None:
+    """Refuse a sub-step schedule that means nothing: no positive, finite target, or no cap of at least 1."""
+    if not 0 < cfl_target < np.inf:  # also refuses NaN
+        raise ValueError(f"cfl_target must be positive and finite, got {cfl_target}")
+    if not max_substeps >= 1:  # also refuses NaN, which would switch the cap off
+        raise ValueError(f"max_substeps must be at least 1, got {max_substeps}")
+
+
 def check_substep_settings(cfl_target: float, max_substeps: int) -> None:
-    """Refuse a sub-step schedule outside the range both halves of the SL pair share (#2448).
+    """Check a half's sub-step schedule when it is built: refuse one that means nothing, warn above 1.
 
     ``cfl_target`` is the *planned* crossing: the cells a sub-step's foot would cross at the velocity
     measured at the step's start. The HJB half's traced feet run past it, since the gradient steepens
     within the step (#2439); the FP half holds its velocity fixed within a step and does not. A step
     whose CFL number is at most 1 is not split at all, so its foot can cross up to one cell whatever
-    ``cfl_target`` is. One range serves both halves because the pair factory hands the HJB half's
-    value to the FP half.
+    ``cfl_target`` is.
 
-    The bound is the HJB half's. On #1880's matrix fixture (sigma = 0.2), with the HJB half at c and
-    the FP half at its default, a seeded asymmetry changes per sweep by 0.984 at c = 1.0, 1.005 at
-    1.02, 0.994 at 1.05, 1.121 at 1.1 and 2.190 at 1.5: growth starts just above 1, not
-    monotonically, and the margin at 1 is thin. An FP half at up to 1.5 beside a default HJB half
-    was stable; at 50 either half behaves as if it did not sub-step at all.
+    Above 1 the target is accepted with a warning, not refused (#2458): where the pair becomes
+    unstable is a measurement on one fixture, not a property of the scheme, and it moves with H,
+    sigma and the grid. On #1880's matrix fixture (sigma = 0.2), with the HJB half at c and the FP
+    half at its default, a seeded asymmetry changes per sweep by 0.984 at c = 1.0, 1.005 at 1.02,
+    0.994 at 1.05, 1.121 at 1.1 and 2.190 at 1.5 (#2448). An FP half at up to 1.5 beside a default
+    HJB half was stable; at 50 either half behaves as if it did not sub-step at all, which the pair's
+    duality check does not see, since it compares the declared switch (#2443).
     """
-    if not 0 < cfl_target <= 1:
-        raise ValueError(
-            f"cfl_target must lie in (0, 1], got {cfl_target}: it is the planned number of cells a "
-            f"sub-step's foot crosses, and the HJB half can grow a perturbation just above 1 (#2448)"
+    _refuse_meaningless_substep_settings(cfl_target, max_substeps)
+    if cfl_target > 1:
+        warnings.warn(
+            f"cfl_target={cfl_target} is above 1: a sub-step's foot is planned to cross more than one "
+            f"cell. It is accepted, but measure it on your problem. On #1880's matrix fixture "
+            f"(sigma = 0.2) the HJB half grew a seeded asymmetry 1.005x per sweep at 1.02, 1.121x at "
+            f"1.1 and 2.190x at 1.5, and at 50 either half behaved as if it did not sub-step, which "
+            f"check_solver_duality does not detect. An FP half at up to 1.5 beside a default HJB half "
+            f"was stable. The default is 0.9 (#2448, #2458).",
+            UserWarning,
+            stacklevel=3,
         )
-    if not max_substeps >= 1:  # also refuses NaN, which would switch the cap off
-        raise ValueError(f"max_substeps must be at least 1, got {max_substeps}")
 
 
 def cfl_substeps(
@@ -85,7 +101,7 @@ def cfl_substeps(
     where upwind FD damps it at 0.89. The mirror mismatch -- FP sub-stepping while HJB does not --
     destabilises the pair as well.
     """
-    check_substep_settings(cfl_target, max_substeps)
+    _refuse_meaningless_substep_settings(cfl_target, max_substeps)
     if not np.isfinite(cfl):
         raise ValueError(f"cfl_substeps got a non-finite CFL number ({cfl}): the velocity field is not finite")
     if cfl <= 1.0:

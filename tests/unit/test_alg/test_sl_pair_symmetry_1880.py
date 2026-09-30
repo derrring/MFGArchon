@@ -14,6 +14,8 @@ sub-step alike (#2440); and two pins of the sub-step cap (#2438).
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
 import numpy as np
@@ -187,21 +189,37 @@ def test_the_cap_admits_a_step_that_needs_exactly_max_substeps():
     assert 5.1 / cfl_substeps(5.1, cfl_target=0.5, max_substeps=11) <= 0.5
 
 
+def _cfl_target_warnings(build):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = build()
+    return result, [w for w in caught if "is above 1: a sub-step's foot" in str(w.message)]
+
+
 @pytest.mark.parametrize("half", [HJBSemiLagrangianSolver, FPSLSolver])
-def test_both_halves_refuse_a_cfl_target_above_one(half):
-    """cfl_target is the crossing a sub-step is planned for. Just above 1 the HJB half starts to grow a
-    seeded asymmetry (1.005 per sweep at 1.02, 2.190 at 1.5), and at 50 either half behaves as if it
-    did not sub-step (#2448)."""
+def test_both_halves_warn_above_one_and_refuse_a_meaningless_schedule(half):
+    """cfl_target is the crossing a sub-step is planned for. Above 1 it is accepted with a warning: where
+    the pair turns unstable is one fixture's measurement (the HJB half grew a seeded asymmetry 1.005 per
+    sweep at 1.02 and 2.190 at 1.5, #2448), not a property of the scheme (#2458). A target that is not
+    positive and finite, or a cap below 1, means nothing and is refused."""
     problem = _problem()
-    assert half(problem, cfl_target=1.0).cfl_target == 1.0
-    with pytest.raises(ValueError, match=r"cfl_target must lie in \(0, 1\], got 1.01"):
-        half(problem, cfl_target=1.01)
-    with pytest.raises(ValueError, match=r"cfl_target must lie in \(0, 1\], got 0"):
-        half(problem, cfl_target=0.0)
+    solver, caught = _cfl_target_warnings(lambda: half(problem, cfl_target=1.0))
+    assert solver.cfl_target == 1.0
+    assert not caught
+    solver, caught = _cfl_target_warnings(lambda: half(problem, cfl_target=1.5))
+    assert solver.cfl_target == 1.5
+    assert len(caught) == 1
+    assert caught[0].category is UserWarning
+    for bad in (0.0, -1.0, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="cfl_target must be positive and finite"):
+            half(problem, cfl_target=bad)
     with pytest.raises(ValueError, match="max_substeps must be at least 1, got 0"):
         half(problem, max_substeps=0)
     with pytest.raises(ValueError, match="max_substeps must be at least 1, got nan"):
         half(problem, max_substeps=float("nan"))
-    # The sub-step rule itself refuses too, not only the constructors in front of it.
-    with pytest.raises(ValueError, match=r"cfl_target must lie in \(0, 1\], got 1.5"):
-        cfl_substeps(2.0, cfl_target=1.5)
+    # The per-step rule refuses a meaningless target too, and does not repeat the warning every step.
+    n, caught = _cfl_target_warnings(lambda: cfl_substeps(2.0, cfl_target=1.5))
+    assert n == 2
+    assert not caught
+    with pytest.raises(ValueError, match="cfl_target must be positive and finite"):
+        cfl_substeps(2.0, cfl_target=float("nan"))

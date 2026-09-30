@@ -283,15 +283,15 @@ class SLConfig(BaseConfig):
     rk_order : Literal[1, 2, 3, 4]
         Runge-Kutta order for characteristic tracing (default: 2)
     cfl_number : float | None
-        The crossing a sub-step is planned for, in (0, 1]. Passed to the HJB half as ``cfl_target``;
-        the pair factory hands it to the FP half. A step whose CFL number is at most 1 is not split,
-        so its foot can cross up to one cell whatever this is. None, whether left unset or set
-        explicitly, keeps the solver's own, 0.9 (#2448).
+        The crossing a sub-step is planned for; above 1 the solvers accept it with a warning (#2458).
+        Passed to the HJB half as ``cfl_target``; the pair factory hands it to the FP half. A step
+        whose CFL number is at most 1 is not split, so its foot can cross up to one cell whatever
+        this is. None, whether left unset or set explicitly, keeps the solver's own, 0.9 (#2448).
     """
 
     interpolation_method: Literal["linear", "slinear", "nearest", "cubic", "quintic"] = "cubic"
     rk_order: Literal[1, 2, 3, 4] = 2
-    cfl_number: float | None = Field(default=None, gt=0, le=1.0)
+    cfl_number: float | None = Field(default=None, gt=0)
 
 
 # =============================================================================
