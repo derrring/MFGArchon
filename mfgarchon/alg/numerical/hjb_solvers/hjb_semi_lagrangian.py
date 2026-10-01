@@ -186,17 +186,18 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
     # absorbing are silently collapsed to Neumann on the default path, so they fail loud here.
     _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN, BCType.PERIODIC})
 
-    #: A Neumann value g reaches four places at a wall, and only two of them carry it: the gradient's
-    #: ghost cells and one of the two post-step enforcements. The reflected characteristic feet and the
-    #: diffusion step impose a zero normal derivative. On an exact solution with g = 0.3 a nonzero g gave
-    #: errors of 0.19-1.20, and on the default path supplying the right g was worse than g = 0 (#1936).
-    #: Flip this to True in the same change that makes all four carry g.
+    #: On no path does a Neumann value g reach every place this solver touches a wall. Depending on the
+    #: path it reaches the gradient's ghost cells, an FDMApplicator enforcement, both, or neither
+    #: (canonical-CS and n-D DPP solve the no-flux problem); the boundary handling of the departure feet
+    #: and the diffusion step carry no g. On an exact solution with g = 0.3, none of the four paths
+    #: measured (ADI, explicit, stochastic, canonical-CS) solved with g, and ADI's error, 1.20, was worse
+    #: than with g = 0 (#1936). Flip this to True in the same change that makes every path carry g.
     honors_inhomogeneous_neumann: bool = False
     _inhomogeneous_neumann_gap: str = (
-        "The semi-Lagrangian HJB solver applies a Neumann value at its gradient's ghost cells and in one of "
-        "its two post-step enforcements, while its reflected characteristic feet and its diffusion step "
-        "impose a zero normal derivative, so it would solve with neither g nor 0 (#1936). Use g = 0 "
-        "(equivalently no_flux_bc())."
+        "The semi-Lagrangian HJB solver does not carry a Neumann value everywhere it touches a wall, on any "
+        "path: depending on the path the value reaches the gradient's ghost cells, one post-step "
+        "enforcement, both, or neither, and on the paths measured against an exact solution none solved "
+        "with it (#1936). Use g = 0 (equivalently no_flux_bc())."
     )
 
     def __init__(

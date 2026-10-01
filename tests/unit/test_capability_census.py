@@ -85,7 +85,7 @@ _DECLARES_NOTHING = {
 }
 
 
-#: Every solver that OWNS `honors_inhomogeneous_neumann` refuses an inhomogeneous flux. A `True`
+#: Every solver that OWNS `honors_inhomogeneous_neumann` refuses an inhomogeneous Neumann value. A `True`
 #: here is a live claim the #1686 gate stops enforcing, and nothing else in the tree pins it.
 _HONORS_INHOMOGENEOUS_NEUMANN_OWN = {
     "FPFDMSolver": "False",
@@ -100,10 +100,9 @@ _HONORS_INHOMOGENEOUS_NEUMANN_OWN = {
     "FPParticleSolver": "False",
     "FPSLJacobianSolver": "False",
     "FPSLSolver": "False",
-    # Joined 2026-10-01 (#1936), the first HJB solver to. A Neumann value reaches four places at its
-    # wall and two carry it (the ghost cells, one of two enforcements); the reflected feet and the
-    # diffusion step impose zero. On an exact solution with g = 0.3 the error was 1.20 on the default
-    # path, worse than g = 0, so it refuses the value rather than solve with neither g nor 0.
+    # Joined 2026-10-01 (#1936), the first HJB solver to. On no path does a Neumann value reach every
+    # place it touches a wall, and on an exact solution with g = 0.3 none of the four paths measured
+    # solved with g (the default path's error, 1.20, was worse than with g = 0), so it refuses the value.
     "HJBSemiLagrangianSolver": "False",
 }
 

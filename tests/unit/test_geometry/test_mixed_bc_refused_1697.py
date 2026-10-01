@@ -341,7 +341,7 @@ def test_the_guard_and_the_lookup_are_separable_2284(still_refused):
         checked_bc_type_string(segment_free, **CONSUMER)
 
 
-def test_hjb_sl_refuses_the_rename_signature_at_construction_2284():
+def test_hjb_sl_refuses_the_rename_signature_at_construction_2284(monkeypatch):
     """The wiring, not the helper -- and the defect the consolidation actually closed.
 
     `HJBSemiLagrangianSolver.__init__` carried its own copy of the collapse predicate until #2284.
@@ -354,6 +354,10 @@ def test_hjb_sl_refuses_the_rename_signature_at_construction_2284():
     over `segments` plus `getattr(bc, "default_bc", None)`) kills this test and only this test.
     Asserting on `refuse_mixed_per_axis` alone would not -- those assertions stay green with the
     constructor reverted, which is why this one builds the solver.
+
+    The #1936 refusal of a Neumann value is lifted here: it runs first, and on this malformed BC its
+    predicate raises the same AttributeError, which satisfied this test with `_refuse_mixed_per_axis`
+    removed (measured in #2461's review).
     """
     from mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian import HJBSemiLagrangianSolver
     from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
@@ -392,6 +396,8 @@ def test_hjb_sl_refuses_the_rename_signature_at_construction_2284():
         volatility=0.1,
         components=MFGComponents(hamiltonian=H, u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0),
     )
+
+    monkeypatch.setattr(HJBSemiLagrangianSolver, "honors_inhomogeneous_neumann", True)
 
     class _WithRenamedBC(HJBSemiLagrangianSolver):
         def get_boundary_conditions(self):
