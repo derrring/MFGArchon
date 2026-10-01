@@ -30,6 +30,8 @@ Functions:
 
 from __future__ import annotations
 
+import numbers
+
 import numpy as np
 from scipy.linalg import solve_banded
 
@@ -38,7 +40,7 @@ from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, validate
 
 #: The theta both halves of the SL pair take unless asked otherwise: Crank-Nicolson. It is second order in
 #: time, and keeps a non-negative field non-negative only up to a diffusion number (``positivity_edge``,
-#: 3/2 here). Backward Euler, theta = 1, keeps it at every step and is first order. No linear scheme does
+#: 3/2 here, further on small grids). Backward Euler, theta = 1, keeps it at every step and is first order. No linear scheme does
 #: both (Bolley & Crouzeix, RAIRO Anal. Numer. 12(3), 1978, Theorems 1 and 3). Which matters more is the
 #: user's choice (#2463): ``HJBSemiLagrangianSolver(diffusion_theta=...)`` or ``SLConfig.diffusion_theta``,
 #: which the pair factory hands to the FP half.
@@ -50,8 +52,10 @@ def positivity_edge(theta: float) -> float:
 
     On an infinite grid the step's interior diagonal entry is non-negative exactly when
     sqrt(1 + 4 theta alpha) <= 1 / (1 - theta), so the edge is (2 - theta) / (4 (1 - theta)^2): 3/2 for
-    Crank-Nicolson, none for backward Euler. Bisected on the mirror-wall and periodic stencils at N = 21
-    and 81, the edge is that value (#2463); smaller grids hold a little longer (1.511 at N = 7 periodic).
+    Crank-Nicolson, none for backward Euler. Bisected on the mirror-wall and periodic stencils at N = 81,
+    the edge is that value at theta = 0.5, 0.6, 0.75 and 0.9 (#2463). Smaller grids hold longer, the more so
+    as theta approaches 1: at N = 21 the edge is that value up to theta = 0.75, but at 0.9 it is 27.54
+    (mirror) and 29.98 (periodic) against 27.5; at N = 7, theta = 0.75, periodic holds to 6.76 against 5.
     Bolley & Crouzeix's Theorem 2 guarantees 1 / (2 (1 - theta)), a sufficient bound for every M-matrix.
     """
     if theta >= 1.0:
@@ -61,7 +65,7 @@ def positivity_edge(theta: float) -> float:
 
 def check_diffusion_theta(theta: float) -> float:
     """Return ``theta`` if it is in [1/2, 1]; below 1/2 the theta-step is not unconditionally stable."""
-    if isinstance(theta, bool) or not isinstance(theta, (int, float, np.integer, np.floating)):
+    if isinstance(theta, bool) or not isinstance(theta, numbers.Real):
         raise TypeError(f"diffusion_theta must be a real number in [0.5, 1]; got {theta!r}")
     theta = float(theta)
     if not 0.5 <= theta <= 1.0:

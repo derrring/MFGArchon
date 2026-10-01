@@ -142,11 +142,12 @@ def test_the_periodic_fp_step_stops_on_a_negative_density_rather_than_returning_
         fp._adjoint_sl_step_1d(e, np.zeros(shape), dt, SIGMA)
 
 
-@pytest.mark.parametrize(("number", "named"), [(1.25, False), (2.0, True)])
-def test_the_clip_blames_the_diffusion_step_only_past_its_edge(number, named):
+@pytest.mark.parametrize(("theta", "number", "named"), [(0.5, 1.25, False), (0.5, 2.0, True), (1.0, 10.0, False)])
+def test_the_clip_blames_the_diffusion_step_only_past_its_edge(theta, number, named):
     """A negative density at diffusion number 1.25 is not Crank-Nicolson's doing: its edge is 3/2. Naming
-    diffusion_theta there would send the user to a remedy that does not help (a source_term measured it)."""
-    _, fp, shape, _ = _pair(1, "no_flux", 0.5, 1.0)
+    diffusion_theta there would send the user to a remedy that does not help (a source_term measured it).
+    At backward Euler the diffusion step is never the cause, so it is never named."""
+    _, fp, shape, _ = _pair(1, "no_flux", theta, 1.0)
     m = np.ones(shape)
     m[3] = -0.5
     with pytest.raises(ValueError) as raised:

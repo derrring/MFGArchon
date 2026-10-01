@@ -298,7 +298,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 Default 1e-8.
             diffusion_theta: The theta of the implicit diffusion step on the ``adi`` path, in [0.5, 1]:
                 0.5, Crank-Nicolson (default), is second order in time and keeps a non-negative field
-                non-negative only up to diffusion number D dt / dx^2 = 3/2 (``positivity_edge``); 1,
+                non-negative up to diffusion number D dt / dx^2 = 3/2 (``positivity_edge``; further on small grids); 1,
                 backward Euler, keeps it at every step and is first order (#2463). The pair factory hands
                 it to the FP half, whose density needs it most.
         """

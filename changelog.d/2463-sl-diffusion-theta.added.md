@@ -1,6 +1,6 @@
 - **`diffusion_theta`: the SL pair's diffusion step is a θ-scheme you choose (#2463).** Set it with `HJBSemiLagrangianSolver(diffusion_theta=...)`, `FPSLSolver(diffusion_theta=...)` or `SLConfig(diffusion_theta=...)`, in [0.5, 1]. `create_paired_solvers` hands the HJB half's value to the FP half. The default stays Crank–Nicolson (0.5).
   - **Why it is a choice and not a fix.**
-    - Crank–Nicolson is second order in time, and keeps a density non-negative only up to diffusion number D·dt/dx² = 3/2 on these stencils (`positivity_edge`). Bolley & Crouzeix's Theorem 2 guarantees 1 for any M-matrix.
+    - Crank–Nicolson is second order in time, and keeps a density non-negative up to diffusion number D·dt/dx² = 3/2 on these stencils (`positivity_edge`), and further on small grids. Bolley & Crouzeix's Theorem 2 guarantees 1 for any M-matrix.
     - Backward Euler (1.0) keeps it non-negative at every step, and is first order.
     - No linear scheme does both (Bolley & Crouzeix, *RAIRO Anal. Numér.* 12(3), 1978, Theorems 1 and 3).
   - **Measured, FP half alone, drift-free,** 801 points, against 2 + e^(−Dπ²t)·cos πx. At Nt = 40 the error is 2.8e-5 for Crank–Nicolson and 5.5e-3 for backward Euler (EOC 2.0 and 1.0).

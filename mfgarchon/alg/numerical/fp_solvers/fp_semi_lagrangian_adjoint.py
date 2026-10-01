@@ -161,7 +161,7 @@ class FPSLSolver(BaseFPSolver):
                 ``max_substeps`` is refused with a ValueError (#2438).
             diffusion_theta: The theta of the implicit diffusion step, in [0.5, 1]. **Pair it with the
                 HJB solver's**; ``_create_sl_pair`` does. 0.5, Crank-Nicolson (default), keeps a density
-                non-negative only up to diffusion number D dt / dx^2 = 3/2 (``positivity_edge``); 1,
+                non-negative up to diffusion number D dt / dx^2 = 3/2 (``positivity_edge``; further on small grids); 1,
                 backward Euler, at every step, at first order in time (#2463).
         """
         super().__init__(problem)
