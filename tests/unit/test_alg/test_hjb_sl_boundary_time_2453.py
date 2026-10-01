@@ -8,8 +8,9 @@ all of theirs.
 
 The clock is one time per step, the step's ``time_idx * dt``, for every read the step makes: the same
 clock #2452 gave H, the foot and the value update. It is a decision, not a measured optimum: the step
-differentiates U^{n+1}, whose own time is t_{n+1}, and no oracle here separates the two, since the solver
-does not yet hold even constant inhomogeneous Neumann data (#2141). #2453 records the alternative.
+differentiates U^{n+1}, whose own time is t_{n+1}, and no oracle here separates the two: the solver refuses
+inhomogeneous Neumann data (#1936), and with diffusion it did not hold even a constant value. #2453
+records the alternative.
 
 The solver refuses a time-dependent Neumann value (#1936: on no path does it reach every place it must),
 so no accepted boundary condition reaches these reads today. The pin holds the clock an implementation of
@@ -143,9 +144,9 @@ def test_boundary_data_is_read_at_the_steps_own_time(case, monkeypatch):
 @pytest.mark.parametrize("value", [0.3, lambda t: 0.05 * t])
 def test_a_neumann_value_the_solver_does_not_apply_is_refused(value):
     """RECORDED DEFECT, not a contract (#1936). On no path does the solver carry a Neumann value
-    everywhere it touches a wall, and on an exact solution with g = 0.3 and sigma = 0.2 none of the four paths measured
-    solved with g (the default path's error, 1.20, was worse than with g = 0). Carrying g on every path
-    retires this test: set ``honors_inhomogeneous_neumann = True`` on HJBSemiLagrangianSolver and delete it."""
+    everywhere it touches a wall, and on an exact solution with sigma = 0.2 no path measured converged
+    with g. Carrying g on every path retires this test: set ``honors_inhomogeneous_neumann = True`` on
+    HJBSemiLagrangianSolver and delete it."""
     grid = TensorProductGrid(
         bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=neumann_bc(value=value, dimension=1)
     )

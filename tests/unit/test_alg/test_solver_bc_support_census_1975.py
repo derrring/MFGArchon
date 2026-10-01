@@ -185,7 +185,7 @@ def test_the_permissive_default_is_claimed_by_inheritance():
         "FPSLJacobianSolver",
         "FPSLSolver",
         # Issue #1936: the first HJB solver to state it, False. On no path does a Neumann value reach
-        # every place it touches a wall, and with diffusion none of the paths measured solved with g.
+        # every place it touches a wall, and with diffusion no path measured converged with g.
         "HJBSemiLagrangianSolver",
     }
     # `FPSLSolver` was here as the parent of `FPSLAdjointSolver`, the one solver that inherited

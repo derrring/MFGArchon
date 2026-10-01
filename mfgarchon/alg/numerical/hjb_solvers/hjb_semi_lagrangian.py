@@ -189,19 +189,20 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
     #: On no path does a Neumann value g reach every place this solver touches a wall. Depending on the
     #: path it reaches the gradient's ghost cells, an FDMApplicator enforcement, both, or neither
     #: (canonical-CS and n-D DPP solve the no-flux problem); the boundary handling of the departure feet
-    #: and the diffusion step carry no g. On an exact solution with g = 0.3 and sigma = 0.2, none of the
-    #: four paths measured (ADI, explicit, stochastic, canonical-CS) solved with g, and ADI's error, 1.20,
-    #: was worse than with g = 0. At sigma = 0, where characteristics leave the domain, some paths do
-    #: solve with g at first order (1-D ADI without sub-stepping, 1-D stochastic, `none`, 1-D DPP) and
-    #: no_flux_bc() does not; the default sub-stepping path does not either way. The refusal gives those
-    #: results up (#1936). Flip this to True in the same change that makes every path carry g.
+    #: and the diffusion step carry no g, and a sub-step's enforcement goes through InterpolationApplicator,
+    #: which drops it (#2141). On u = A (x - 1/2)^2 with its exact data g = A and sigma = 0.2, no path
+    #: measured converged with g under refinement. At sigma = 0 and foot CFL 0.3, the 1-D step converged
+    #: with g at first order under adi, explicit, stochastic and none, and where characteristics leave the
+    #: domain no_flux_bc() did not converge. The refusal gives that result up; it is the first one an
+    #: implementation of #1936 must bring back. Flip this to True in the same change that makes every path
+    #: carry g.
     honors_inhomogeneous_neumann: bool = False
     _inhomogeneous_neumann_gap: str = (
         "The semi-Lagrangian HJB solver does not carry a Neumann value everywhere it touches a wall, on any "
         "path: depending on the path the value reaches the gradient's ghost cells, the FDMApplicator "
-        "post-step enforcement, both, or neither. With diffusion, none of the paths measured against an exact "
-        "solution solved with it; without diffusion some paths did, where characteristics leave the domain "
-        "(#1936). Passing g = 0 (no_flux_bc()) solves a different problem wherever the value matters."
+        "post-step enforcement, both, or neither. With diffusion, no path measured against an exact solution "
+        "converged with it; without diffusion, a 1-D step with no sub-step did (#1936). Passing g = 0 "
+        "(no_flux_bc()) solves a different problem wherever the value matters."
     )
 
     def __init__(
