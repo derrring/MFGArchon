@@ -1,4 +1,4 @@
-- **`pad_array_with_ghosts` no longer builds ghost cells at an assumed spacing of 1.0 (#2140).** Given neither `spacing=` nor a geometry whose `get_grid_spacing()` returns it, it now raises `TypeError`. Before, every ghost formula that reads a boundary value ran at dx = 1.0, so a Neumann or Robin value g was applied as g/h.
+- **`pad_array_with_ghosts` no longer builds ghost cells at an assumed spacing of 1.0 (#2140).** Given neither `spacing=` nor a geometry whose `get_grid_spacing()` returns it, it now raises `TypeError`. Before, the Neumann and Robin ghost formulas ran at dx = 1.0, so a Neumann or Robin value g was applied as g/h; Dirichlet does not use the spacing.
   - **13 calls in the package passed no spacing** (AST census): 3 in `applicator_fdm`'s `__main__` smoke block and 10 in production code.
     - Eight of the ten now pass the grid's spacing:
       - the gradient, divergence and advection operators (`TensorProductGrid.get_gradient_operator` among them);
