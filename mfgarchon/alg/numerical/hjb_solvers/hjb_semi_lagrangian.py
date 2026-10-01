@@ -191,10 +191,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
     #: (canonical-CS and n-D DPP solve the no-flux problem); the boundary handling of the departure feet
     #: and the diffusion step carry no g, and an operator-splitting sub-step's enforcement goes through
     #: InterpolationApplicator, which drops it (#2141). On u = A (x - 1/2)^2 with its exact data g = A and
-    #: sigma = 0.2, no path measured converged with g under refinement. At sigma = 0 the 1-D step converged
-    #: with g at first order in two cases measured: the whole step at foot CFL 0.3, and the stochastic
-    #: path's sub-steps, which enforce through FDMApplicator, at foot CFL up to 2.8. Where characteristics
-    #: leave the domain no_flux_bc() did not converge. The refusal gives those results up; they are the
+    #: sigma = 0.2, no path measured converged with g under refinement. At sigma = 0, where characteristics
+    #: leave the domain, the 1-D step converged with g at first order in two cases measured, and
+    #: no_flux_bc() did not: the whole step at foot CFL 0.3, and the stochastic path's sub-steps, which
+    #: enforce through FDMApplicator, at foot CFL up to 2.8. The refusal gives those results up; they are the
     #: first an implementation of #1936 must bring back. Flip this to True in the same change that makes
     #: every path carry g.
     honors_inhomogeneous_neumann: bool = False
