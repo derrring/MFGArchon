@@ -1,0 +1,7 @@
+- **The semi-Lagrangian FP half differentiates U with the HJB half's gradient operator (#2439).** `FPSLSolver` used `np.gradient`. That differs at the walls from the operator the HJB half's operator-splitting and stochastic paths use: for U = (x − 1/2)² on 21 points it gave ±0.95 there, against the HJB half's ±0.475. It now uses the geometry's central operator and its boundary ghosts, which carry U's boundary conditions (the geometry's), not an FP `boundary_conditions` override. The canonical-CS and DPP HJB paths do not differentiate U at all.
+  - **What moves**, on `test_sl_pair_symmetry_1880._problem(volatility=0.2)` (`SL_LINEAR`, 10 sweeps):
+    - the density at the wall nodes early in the horizon: ×4.46 at time index 1, ×3.55 at 2 and ×1.18 at 3, and unchanged (×1.00) from index 5;
+    - the largest absolute change, 1.3e-2, at the centre (x = 0.5) at time index 1, against a maximum M of 17.
+  - **What does not, at the digits reported:** the OU oracle (1-D 0.0357; 2-D 0.0598 → 0.0599), seeded growth per sweep (0.9821 at σ = 0, 0.9353 at σ = 0.2), and mass drift (round-off).
+  - **The 1-D FP half now needs a `TensorProductGrid`, as the n-D half already did.** In the package it is the only concrete `CartesianGrid`, the class that carries the grid spacing the 1-D half reads.
+  - The halves still differ in the velocity's time level within a step. That is option B, kept by the owner's decision on #2439.

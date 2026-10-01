@@ -58,12 +58,18 @@ def test_sl_velocity_uses_control_cost(solver_cls, vel_method, control_cost):
         warnings.simplefilter("ignore")
         solver = solver_cls(problem)
     u = _U()
-    alpha = np.asarray(getattr(solver, vel_method)(u)).ravel()
-    expected = (-np.gradient(u, solver.dx) / control_cost).ravel()
-    np.testing.assert_allclose(alpha, expected, rtol=0, atol=1e-12, err_msg="SL drift must be -∇U/control_cost (S0-03)")
+    kwargs = {"time": 0.0} if solver_cls is FPSLSolver else {}
+    # This pins the coefficient. FPSLSolver is compared on interior nodes only: at the walls it takes the
+    # HJB half's gradient operator, with its boundary ghosts (#2439), where np.gradient is one-sided.
+    nodes = slice(1, -1) if solver_cls is FPSLSolver else slice(None)
+    alpha = np.asarray(getattr(solver, vel_method)(u, **kwargs)).ravel()[nodes]
+    unit = -np.gradient(u, solver.dx).ravel()[nodes]
+    np.testing.assert_allclose(
+        alpha, unit / control_cost, rtol=0, atol=1e-12, err_msg="SL drift must be -∇U/control_cost (S0-03)"
+    )
     if control_cost != 1.0:
         # Relevance guard: distinct from the pre-fix -∇U (the dropped-1/λ bug)
-        assert not np.allclose(alpha, -np.gradient(u, solver.dx), atol=1e-9), (
+        assert not np.allclose(alpha, unit, atol=1e-9), (
             "SL drift is still -∇U (missing 1/control_cost) for control_cost != 1 (S0-03 not fixed)"
         )
 

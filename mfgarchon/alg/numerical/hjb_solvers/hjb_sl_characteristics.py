@@ -58,8 +58,9 @@ def check_substep_settings(cfl_target: float, max_substeps: int) -> None:
 
     Above 1 the target is accepted with a warning, not refused (#2458): where the pair becomes
     unstable is a measurement on one fixture, not a property of the scheme, and the growth measured
-    above 1 changed with the grid (#2448: a 2-D HJB half at 1.5 read 1.152 against 1-D's 2.190). On #1880's matrix fixture (sigma = 0.2), with the HJB half at c and the FP
-    half at its default, a seeded asymmetry changes per sweep by 0.984 at c = 1.0, 1.005 at 1.02,
+    above 1 changed with the grid (#2448: a 2-D HJB half at 1.5 read 1.152 against 1-D's 2.190). On
+    #1880's matrix fixture (sigma = 0.2), with the HJB half at c and the FP half at its default, a
+    seeded asymmetry changes per sweep by 0.984 at c = 1.0, 1.005 at 1.02,
     0.994 at 1.05, 1.121 at 1.1 and 2.190 at 1.5 (#2448). An FP half at up to 1.5 beside a default
     HJB half was stable; at 50 either half behaves as if it did not sub-step at all, which the pair's
     duality check does not see, since it compares the declared switch (#2443).
@@ -67,9 +68,10 @@ def check_substep_settings(cfl_target: float, max_substeps: int) -> None:
     _refuse_meaningless_substep_settings(cfl_target, max_substeps)
     if cfl_target > 1:
         warnings.warn(
-            f"cfl_target={cfl_target} is above 1: a sub-step's foot is planned to cross more than one "
-            f"cell, and a step whose CFL number is at most {cfl_target} is not split at all. It is "
-            f"accepted, but measure it on your problem. On #1880's matrix fixture (sigma = 0.2) the HJB "
+            f"cfl_target={cfl_target} is above 1: a sub-step's foot may be planned to cross up to "
+            f"{cfl_target} cells, on a half that sub-steps, and a step whose CFL number is at most "
+            f"{cfl_target} is not split at all. It is accepted, but measure it on your problem. On "
+            f"#1880's matrix fixture (sigma = 0.2) the HJB "
             f"half grew a seeded asymmetry 1.005x per sweep at 1.02, 1.121x at 1.1 and 2.190x at 1.5, "
             f"and an FP half at up to 1.5 beside a default HJB half was stable. At 50 either half "
             f"behaved as if it did not sub-step, which check_solver_duality does not detect. The "

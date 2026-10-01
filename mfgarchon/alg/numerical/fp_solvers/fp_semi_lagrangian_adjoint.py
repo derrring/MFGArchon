@@ -375,7 +375,7 @@ class FPSLSolver(BaseFPSolver):
             if self.dimension == 1:
                 # 1D solve
                 U_n = potential_field[n, :]
-                alpha = self._compute_velocity_1d(U_n)
+                alpha = self._compute_velocity_1d(U_n, time=n * self.dt)
                 n_sub, dt_sub = self._substeps(float(np.max(np.abs(alpha)) * self.dt / self.dx))
                 m = M[n, :]
                 for _ in range(n_sub):
@@ -386,7 +386,7 @@ class FPSLSolver(BaseFPSolver):
             else:
                 # nD solve
                 U_n = potential_field[n].reshape(self.grid_shape)
-                alpha = self._compute_velocity_nd(U_n)
+                alpha = self._compute_velocity_nd(U_n, time=n * self.dt)
                 cfl = max(float(np.max(np.abs(a))) / self.spacing[d] for d, a in enumerate(alpha)) * self.dt
                 n_sub, dt_sub = self._substeps(cfl)
                 m = M[n].reshape(self.grid_shape)
@@ -405,27 +405,45 @@ class FPSLSolver(BaseFPSolver):
         n_sub = cfl_substeps(cfl, cfl_target=self.cfl_target, max_substeps=self.max_substeps)
         return n_sub, self.dt / n_sub
 
-    def _compute_velocity_1d(self, U: np.ndarray) -> np.ndarray:
+    def _compute_velocity_1d(self, U: np.ndarray, time: float) -> np.ndarray:
         """Compute the optimal-control drift alpha* = -grad(U) / control_cost for 1D.
 
-        Issue #1420 / G-017 / S0-03: coefficient single-sourced via ``fp_drift_coefficient``
-        (= 1/control_cost), not hardcoded to 1. Byte-identical when control_cost == 1.
-        """
-        return -fp_drift_coefficient(self.problem) * np.gradient(U, self.dx)
+        ``grad(U)`` is the geometry's central gradient operator with its boundary ghosts at ``time``, the
+        operator the HJB half's operator-splitting and stochastic paths differentiate U with (#2439).
+        ``np.gradient`` differed at the walls: for U = (x - 1/2)^2 on 21 points it gave +-0.95 there, the
+        HJB half +-0.475.
 
-    def _compute_velocity_nd(self, U: np.ndarray) -> tuple[np.ndarray, ...]:
+        Issue #1420 / G-017 / S0-03: coefficient single-sourced via ``fp_drift_coefficient``
+        (= 1/control_cost), not hardcoded to 1.
         """
-        Compute the optimal-control drift alpha* = -grad(U) / control_cost for nD.
+        return -fp_drift_coefficient(self.problem) * self._gradient_operators(time)[0](U)
+
+    def _compute_velocity_nd(self, U: np.ndarray, time: float) -> tuple[np.ndarray, ...]:
+        """
+        Compute the optimal-control drift alpha* = -grad(U) / control_cost for nD, with the gradient
+        operator and boundary ghosts the HJB half uses (see ``_compute_velocity_1d``, #2439).
 
         Issue #1420 / G-017 / S0-03: coefficient single-sourced via ``fp_drift_coefficient``
         (= 1/control_cost), not hardcoded to 1. Returns a tuple, one array per dimension.
         """
-        # Use np.gradient with spacing for each dimension
         c = fp_drift_coefficient(self.problem)
-        gradients = np.gradient(U, *[self.spacing[d] for d in range(self.dimension)])
-        if self.dimension == 1:
-            return (-c * gradients,)
-        return tuple(-c * g for g in gradients)
+        return tuple(-c * g(U) for g in self._gradient_operators(time))
+
+    def _gradient_operators(self, time: float) -> tuple:
+        """The geometry's central gradient operator, with its boundary ghosts at ``time`` (#2439).
+
+        The ghosts carry U's boundary conditions, the geometry's, and not this solver's
+        ``boundary_conditions`` override, which is m's.
+        """
+        from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid
+
+        geometry = self.problem.geometry
+        if not isinstance(geometry, TensorProductGrid):
+            raise TypeError(
+                f"FPSLSolver differentiates U with TensorProductGrid's gradient operator (#2439); got "
+                f"{type(geometry).__name__}"
+            )
+        return tuple(geometry.get_gradient_operator(scheme="central", time=time))
 
     def _adjoint_sl_step_1d(
         self,
