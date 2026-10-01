@@ -415,8 +415,7 @@ class FPSLSolver(BaseFPSolver):
         Issue #1420 / G-017 / S0-03: coefficient single-sourced via ``fp_drift_coefficient``
         (= 1/control_cost), not hardcoded to 1.
         """
-        grad = self.problem.geometry.get_gradient_operator(scheme="central", time=time)[0]
-        return -fp_drift_coefficient(self.problem) * grad(U)
+        return -fp_drift_coefficient(self.problem) * self._gradient_operators(time)[0](U)
 
     def _compute_velocity_nd(self, U: np.ndarray, time: float) -> tuple[np.ndarray, ...]:
         """
@@ -427,7 +426,20 @@ class FPSLSolver(BaseFPSolver):
         (= 1/control_cost), not hardcoded to 1. Returns a tuple, one array per dimension.
         """
         c = fp_drift_coefficient(self.problem)
-        return tuple(-c * g(U) for g in self.problem.geometry.get_gradient_operator(scheme="central", time=time))
+        return tuple(-c * g(U) for g in self._gradient_operators(time))
+
+    def _gradient_operators(self, time: float) -> tuple:
+        """The geometry's central gradient operator, with its boundary ghosts at ``time``: the one the HJB
+        half differentiates U with (#2439)."""
+        from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid
+
+        geometry = self.problem.geometry
+        if not isinstance(geometry, TensorProductGrid):
+            raise TypeError(
+                f"FPSLSolver differentiates U with TensorProductGrid's gradient operator, as the HJB half "
+                f"does (#2439); got {type(geometry).__name__}"
+            )
+        return tuple(geometry.get_gradient_operator(scheme="central", time=time))
 
     def _adjoint_sl_step_1d(
         self,
