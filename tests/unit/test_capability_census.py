@@ -101,8 +101,8 @@ _HONORS_INHOMOGENEOUS_NEUMANN_OWN = {
     "FPSLJacobianSolver": "False",
     "FPSLSolver": "False",
     # Joined 2026-10-01 (#1936), the first HJB solver to. On no path does a Neumann value reach every
-    # place it touches a wall, and on an exact solution with g = 0.3 none of the four paths measured
-    # solved with g (the default path's error, 1.20, was worse than with g = 0), so it refuses the value.
+    # place it touches a wall, and on an exact solution with g = 0.3 and sigma = 0.2 none of the four
+    # paths measured solved with g (the default path's error, 1.20, was worse than with g = 0), so it refuses the value.
     "HJBSemiLagrangianSolver": "False",
 }
 

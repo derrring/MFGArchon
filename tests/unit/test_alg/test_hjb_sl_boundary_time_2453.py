@@ -143,7 +143,7 @@ def test_boundary_data_is_read_at_the_steps_own_time(case, monkeypatch):
 @pytest.mark.parametrize("value", [0.3, lambda t: 0.05 * t])
 def test_a_neumann_value_the_solver_does_not_apply_is_refused(value):
     """RECORDED DEFECT, not a contract (#1936). On no path does the solver carry a Neumann value
-    everywhere it touches a wall, and on an exact solution with g = 0.3 none of the four paths measured
+    everywhere it touches a wall, and on an exact solution with g = 0.3 and sigma = 0.2 none of the four paths measured
     solved with g (the default path's error, 1.20, was worse than with g = 0). Carrying g on every path
     retires this test: set ``honors_inhomogeneous_neumann = True`` on HJBSemiLagrangianSolver and delete it."""
     grid = TensorProductGrid(

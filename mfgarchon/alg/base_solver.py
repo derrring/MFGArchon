@@ -270,7 +270,8 @@ class BaseMFGSolver(ABC):
 
     #: Issue #1686: does this solver apply the *value* attached to a NEUMANN segment, or only
     #: its type? Every FP family currently reads the type and drops the value, so they override
-    #: this to False, and so does HJBSemiLagrangianSolver, which carries it on no path everywhere (#1936). Declaring the type without honouring the value is the RFC #1574 class:
+    #: this to False, and so does HJBSemiLagrangianSolver, which on no path carries it everywhere
+    #: (#1936). Declaring the type without honouring the value is the RFC #1574 class:
     #: a declared surface broader than the honoured code, silent in the gap.
     honors_inhomogeneous_neumann: bool = True
 

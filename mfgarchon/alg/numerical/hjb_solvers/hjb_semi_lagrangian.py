@@ -189,15 +189,18 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
     #: On no path does a Neumann value g reach every place this solver touches a wall. Depending on the
     #: path it reaches the gradient's ghost cells, an FDMApplicator enforcement, both, or neither
     #: (canonical-CS and n-D DPP solve the no-flux problem); the boundary handling of the departure feet
-    #: and the diffusion step carry no g. On an exact solution with g = 0.3, none of the four paths
-    #: measured (ADI, explicit, stochastic, canonical-CS) solved with g, and ADI's error, 1.20, was worse
-    #: than with g = 0 (#1936). Flip this to True in the same change that makes every path carry g.
+    #: and the diffusion step carry no g. On an exact solution with g = 0.3 and sigma = 0.2, none of the
+    #: four paths measured (ADI, explicit, stochastic, canonical-CS) solved with g, and ADI's error, 1.20,
+    #: was worse than with g = 0. At sigma = 0 the value does not change the solution, so no_flux_bc()
+    #: answers those problems the same (#1936). Flip this to True in the same change that makes every
+    #: path carry g.
     honors_inhomogeneous_neumann: bool = False
     _inhomogeneous_neumann_gap: str = (
         "The semi-Lagrangian HJB solver does not carry a Neumann value everywhere it touches a wall, on any "
-        "path: depending on the path the value reaches the gradient's ghost cells, one post-step "
-        "enforcement, both, or neither, and on the paths measured against an exact solution none solved "
-        "with it (#1936). Use g = 0 (equivalently no_flux_bc())."
+        "path: depending on the path the value reaches the gradient's ghost cells, the FDMApplicator "
+        "post-step enforcement, both, or neither; with diffusion, none of the paths measured against an exact "
+        "solution solved with it, and without diffusion it does not change the solution (#1936). Use g = 0 "
+        "(equivalently no_flux_bc())."
     )
 
     def __init__(
