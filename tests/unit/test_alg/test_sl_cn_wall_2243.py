@@ -25,7 +25,7 @@ import numpy as np
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.adjoint.operators import build_diffusion_matrix, build_diffusion_matrix_2d
 from mfgarchon.alg.numerical.fp_solvers import FPSLSolver
-from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import adi_diffusion_step, solve_crank_nicolson_diffusion_1d
+from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import adi_diffusion_step, solve_implicit_diffusion_1d
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
@@ -75,9 +75,9 @@ def test_the_1d_crank_nicolson_call_site_is_second_order_at_the_wall():
     half wall's numbers are in the message: at nx=161 it errs by 2.05e-03 against 1.22e-06 here,
     a factor of 1.7e3.
     """
-    errors, eoc = _heat_eoc(lambda u, dt, x: solve_crank_nicolson_diffusion_1d(u.copy(), dt, SIGMA, x, "neumann"))
+    errors, eoc = _heat_eoc(lambda u, dt, x: solve_implicit_diffusion_1d(u.copy(), dt, SIGMA, x, "neumann"))
     assert all(o == pytest.approx(2.0, abs=0.15) for o in eoc), (
-        f"solve_crank_nicolson_diffusion_1d is not second order at the wall: EOC {eoc} from "
+        f"solve_implicit_diffusion_1d is not second order at the wall: EOC {eoc} from "
         f"{errors}. The pre-#2243 half wall gave 0.73 / 0.87 / 0.94 from 2.05e-03 at nx=161."
     )
 

@@ -287,11 +287,17 @@ class SLConfig(BaseConfig):
         Passed to the HJB half as ``cfl_target``; the pair factory hands it to the FP half. A step
         is not split while its CFL number is at most max(1, this), so an unsplit foot can cross that
         many cells. None, whether left unset or set explicitly, keeps the solver's own, 0.9 (#2448).
+    diffusion_theta : float | None
+        The theta of the diffusion step, in [0.5, 1], passed to the HJB half; the pair factory hands it
+        to the FP half. 0.5, Crank-Nicolson, is second order in time and keeps a density non-negative
+        up to diffusion number D dt / dx^2 = 3/2 (further on small grids); 1, backward Euler, keeps it at every step and is
+        first order (#2463). None keeps the solver's own, 0.5.
     """
 
     interpolation_method: Literal["linear", "slinear", "nearest", "cubic", "quintic"] = "cubic"
     rk_order: Literal[1, 2, 3, 4] = 2
     cfl_number: float | None = Field(default=None, gt=0)
+    diffusion_theta: float | None = Field(default=None, ge=0.5, le=1.0)
 
 
 # =============================================================================

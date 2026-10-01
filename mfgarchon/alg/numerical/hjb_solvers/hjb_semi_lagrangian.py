@@ -48,8 +48,10 @@ from mfgarchon.utils.pde_coefficients import (
 
 from .base_hjb import BaseHJBSolver
 from .hjb_sl_adi import (
+    DEFAULT_DIFFUSION_THETA,
     adi_diffusion_step,
-    solve_crank_nicolson_diffusion_1d,
+    check_diffusion_theta,
+    solve_implicit_diffusion_1d,
 )
 from .hjb_sl_characteristics import (
     DEFAULT_CFL_TARGET,
@@ -181,7 +183,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
     _scheme_family = SchemeFamily.SL
 
-    # BoundaryCapable protocol (Issue #1456): the SL diffusion sub-step (CN/ADI) is zero-flux
+    # BoundaryCapable protocol (Issue #1456): the SL diffusion sub-step (implicit, ADI in nD) is zero-flux
     # (no-flux / Neumann g=0) and the characteristic foot wraps for periodic; Dirichlet / Robin /
     # absorbing are silently collapsed to Neumann on the default path, so they fail loud here.
     _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN, BCType.PERIODIC})
@@ -226,6 +228,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         enable_gradient_monitoring: bool = True,
         ode_rtol: float = 1e-6,
         ode_atol: float = 1e-8,
+        diffusion_theta: float = DEFAULT_DIFFUSION_THETA,
     ):
         """
         Initialize semi-Lagrangian HJB solver.
@@ -293,6 +296,11 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 Default 1e-6.
             ode_atol: Absolute tolerance for scipy.solve_ivp when characteristic_solver='rk4'.
                 Default 1e-8.
+            diffusion_theta: The theta of the implicit diffusion step on the ``adi`` path, in [0.5, 1]:
+                0.5, Crank-Nicolson (default), is second order in time and keeps a non-negative field
+                non-negative up to diffusion number D dt / dx^2 = 3/2 (``positivity_edge``; further on small grids); 1,
+                backward Euler, keeps it at every step and is first order (#2463). The pair factory hands
+                it to the FP half, whose density needs it most.
         """
         super().__init__(problem)
         self.hjb_method_name = "Semi-Lagrangian"
@@ -311,6 +319,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         check_substep_settings(cfl_target, max_substeps)
         self.max_substeps = max_substeps
         self.cfl_target = cfl_target
+        self.diffusion_theta = check_diffusion_theta(diffusion_theta)
         self.ode_rtol = ode_rtol
         self.ode_atol = ode_atol
 
@@ -1038,8 +1047,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             (Nt, *grid_shape) solution array for value function
         """
         # Issue #1316: this solver takes its volatility from the problem, once, at construction
-        # (self._volatility), and threads it to the advection-diffusion split, ADI and
-        # Crank-Nicolson. A volatility it cannot thread there is refused, not accepted and
+        # (self._volatility), and threads it to the advection-diffusion split and its implicit
+        # diffusion solves. A volatility it cannot thread there is refused, not accepted and
         # ignored, which would solve HJB with one diffusion while FP uses another. An override equal
         # to that volatility, with the same kind, is a no-op; equality is by value and kind, never by
         # identity with problem.volatility (#2378 part 2a).
@@ -1329,7 +1338,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             return self._solve_timestep_stochastic_sl(U_next, M_next, time_idx, dt=self.dt)
 
         if self.dimension == 1:
-            # 1D solve with operator splitting: characteristics + Crank-Nicolson diffusion
+            # 1D solve with operator splitting: characteristics + implicit diffusion
 
             # Compute gradient for optimal control: α* = ∇u
             # Pass timestep and density for gradient clipping monitoring (Issue #583)
@@ -2872,11 +2881,11 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 indices.append(int(np.clip(idx, 0, Nx_i)))
             return tuple(indices)
 
-    def _solve_crank_nicolson_diffusion(self, U_star: np.ndarray, dt: float, volatility: float) -> np.ndarray:
+    def _solve_implicit_diffusion_1d(self, U_star: np.ndarray, dt: float, volatility: float) -> np.ndarray:
         """
-        Solve diffusion step using Crank-Nicolson (unconditionally stable).
+        Solve the diffusion step implicitly, at this solver's ``diffusion_theta``.
 
-        Delegates to hjb_sl_adi.solve_crank_nicolson_diffusion_1d.
+        Delegates to hjb_sl_adi.solve_implicit_diffusion_1d.
 
         Args:
             U_star: Intermediate solution after advection step
@@ -2889,12 +2898,14 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         bc_op = self._get_diffusion_bc_type()
         if bc_op == "periodic":
             # The advection step leaves the two coincident endpoints holding independently
-            # interpolated values, so the field is not yet periodic when it reaches the CN, which
+            # interpolated values, so the field is not yet periodic when it reaches the solve, which
             # refuses that (Issue #1820). u is a value function: the two entries are one quantity
             # computed twice, so the mean is the identification.
             U_star = U_star.copy()
             enforce_periodic_value_nd(U_star, axis=0)
-        return solve_crank_nicolson_diffusion_1d(U_star, dt, volatility, self.x_grid, bc_type=bc_op)
+        return solve_implicit_diffusion_1d(
+            U_star, dt, volatility, self.x_grid, bc_type=bc_op, theta=self.diffusion_theta
+        )
 
     def _source_increment(self, source_term, points, t: float, grid_shape) -> np.ndarray:
         """Evaluate the MMS forcing ``S(t, x)`` on the grid and shape it like the value array.
@@ -2936,8 +2947,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             Solution after ADI diffusion step, same shape as U_star
         """
         if self.dimension == 1:
-            # For 1D, use standard Crank-Nicolson
-            return self._solve_crank_nicolson_diffusion(U_star, dt, self._volatility)
+            return self._solve_implicit_diffusion_1d(U_star, dt, self._volatility)
 
         bc_op = self._get_diffusion_bc_type()
         if bc_op == "periodic":
@@ -2954,6 +2964,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             self.dx,
             tuple(self._grid_shape),
             bc_type=bc_op,
+            theta=self.diffusion_theta,
         )
 
     def _apply_diffusion(self, U_star: np.ndarray, dt: float) -> np.ndarray:
@@ -3001,7 +3012,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         else:  # "adi" (default)
             if self.dimension == 1:
-                return self._solve_crank_nicolson_diffusion(U_star, dt, self._volatility)
+                return self._solve_implicit_diffusion_1d(U_star, dt, self._volatility)
             else:
                 return self._adi_diffusion_step(U_star, dt)
 
@@ -3159,6 +3170,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             "adaptive_substepping": self.enable_adaptive_substepping,
             "max_substeps": self.max_substeps,
             "cfl_target": self.cfl_target,
+            "diffusion_theta": self.diffusion_theta,
         }
 
 
@@ -3217,8 +3229,8 @@ if __name__ == "__main__":
     assert solver.interpolation_method == "linear"
     print("   1D solver initialization: OK")
 
-    # Test 2: 1D Crank-Nicolson diffusion (used by 1D solver)
-    print("\n2. Testing 1D Crank-Nicolson diffusion...")
+    # Test 2: 1D implicit diffusion (used by 1D solver)
+    print("\n2. Testing 1D implicit diffusion...")
     # Create a smooth test function (Gaussian)
     x = np.linspace(0, 1, 51)
     U_test = np.exp(-50 * (x - 0.5) ** 2)
@@ -3226,7 +3238,7 @@ if __name__ == "__main__":
     # Apply diffusion for one timestep
     dt = 0.01
     sigma = 0.1
-    U_diffused = solver._solve_crank_nicolson_diffusion(U_test, dt, sigma)
+    U_diffused = solver._solve_implicit_diffusion_1d(U_test, dt, sigma)
 
     assert U_diffused.shape == U_test.shape
     assert not np.any(np.isnan(U_diffused))
@@ -3235,7 +3247,7 @@ if __name__ == "__main__":
     assert U_diffused.max() < U_test.max()
     print(f"   Peak before diffusion: {U_test.max():.4f}")
     print(f"   Peak after diffusion: {U_diffused.max():.4f}")
-    print("   1D Crank-Nicolson: OK")
+    print("   1D implicit diffusion: OK")
 
     # Test 3: 2D solver initialization with ADI compatibility check
     print("\n3. Testing 2D solver with ADI...")

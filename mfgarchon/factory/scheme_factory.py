@@ -301,6 +301,8 @@ def _create_sl_pair(
     fp_config.setdefault("enable_adaptive_substepping", hjb_solver.substeps_characteristics)
     fp_config.setdefault("cfl_target", hjb_solver.cfl_target)
     fp_config.setdefault("max_substeps", hjb_solver.max_substeps)
+    # And with its diffusion theta, so the two halves' diffusion steps stay one scheme (#2463).
+    fp_config.setdefault("diffusion_theta", hjb_solver.diffusion_theta)
     fp_solver = FPSLSolver(problem, **fp_config)
 
     return hjb_solver, fp_solver
