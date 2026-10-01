@@ -290,7 +290,7 @@ class SLConfig(BaseConfig):
     diffusion_theta : float | None
         The theta of the diffusion step, in [0.5, 1], passed to the HJB half; the pair factory hands it
         to the FP half. 0.5, Crank-Nicolson, is second order in time and keeps a density non-negative
-        only up to diffusion number D dt / dx^2 = 1; 1, backward Euler, keeps it at every step and is
+        only up to diffusion number D dt / dx^2 = 3/2; 1, backward Euler, keeps it at every step and is
         first order (#2463). None keeps the solver's own, 0.5.
     """
 

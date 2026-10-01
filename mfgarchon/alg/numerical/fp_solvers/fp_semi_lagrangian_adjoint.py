@@ -33,6 +33,7 @@ from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import (
     DEFAULT_DIFFUSION_THETA,
     adi_diffusion_step,
     check_diffusion_theta,
+    positivity_edge,
     solve_implicit_diffusion_1d,
 )
 from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import (
@@ -160,8 +161,8 @@ class FPSLSolver(BaseFPSolver):
                 ``max_substeps`` is refused with a ValueError (#2438).
             diffusion_theta: The theta of the implicit diffusion step, in [0.5, 1]. **Pair it with the
                 HJB solver's**; ``_create_sl_pair`` does. 0.5, Crank-Nicolson (default), keeps a density
-                non-negative only up to diffusion number D dt / dx^2 = 1; 1, backward Euler, at every
-                step, at first order in time (#2463).
+                non-negative only up to diffusion number D dt / dx^2 = 3/2 (``positivity_edge``); 1,
+                backward Euler, at every step, at first order in time (#2463).
         """
         super().__init__(problem)
         self.fp_method_name = "Adjoint Semi-Lagrangian"
@@ -676,10 +677,10 @@ class FPSLSolver(BaseFPSolver):
         non-trivial mass.
 
         Cubic/quintic splatting is not monotone, a ``source_term`` can remove more mass than a node
-        holds, and a theta-step keeps a density non-negative only up to diffusion number
-        1 / (2 (1 - theta)) -- 1 for Crank-Nicolson, every step for backward Euler. ``diffusion_number``
-        is the step's own, given after a diffusion step, so the message can name it and the parameter
-        that changes it (#2463).
+        holds, and a theta-step keeps a density non-negative only up to ``positivity_edge(theta)`` -- 3/2
+        for Crank-Nicolson, every step for backward Euler. ``diffusion_number`` is the step's own, given
+        after a diffusion step. The message names the diffusion step only past that edge, so a negative
+        from another cause is not blamed on theta (#2463).
 
         Issue #1683: this warned once per ``solve_fp_system`` and returned the clipped
         density either way, so a diverging solve came back looking healthy -- finite,
@@ -693,11 +694,12 @@ class FPSLSolver(BaseFPSolver):
         """
         causes = []
         theta = self.diffusion_theta
-        if diffusion_number is not None and theta < 1.0 and diffusion_number > 1.0 / (2.0 * (1.0 - theta)):
+        edge = positivity_edge(theta)
+        if diffusion_number is not None and diffusion_number > edge:
             causes.append(
-                f"the diffusion step ran at diffusion number D dt / dx^2 = {diffusion_number:.3g}, above the "
-                f"{1.0 / (2.0 * (1.0 - theta)):.3g} up to which a theta-step at diffusion_theta={theta} keeps a "
-                "density non-negative. diffusion_theta=1.0 (backward Euler) keeps it at every step but is first "
+                f"the diffusion step ran at diffusion number D dt / dx^2 = {diffusion_number:.3g}, past "
+                f"{edge:.3g}, beyond which a theta-step at diffusion_theta={theta} can turn a non-negative "
+                "density negative. diffusion_theta=1.0 (backward Euler) keeps it at every step but is first "
                 "order in time; a smaller dt keeps this theta's order (#2463). Set it with "
                 "HJBSemiLagrangianSolver(diffusion_theta=...) or SLConfig(diffusion_theta=...); the pair "
                 "factory hands it to this half"

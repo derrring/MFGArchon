@@ -37,16 +37,32 @@ from mfgarchon.utils.numerical.implicit_diffusion import NeumannCNStencil, neuma
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, validate_symmetric_psd
 
 #: The theta both halves of the SL pair take unless asked otherwise: Crank-Nicolson. It is second order in
-#: time, and keeps a non-negative field non-negative only up to diffusion number D dt / dx^2 = 1 (Bolley &
-#: Crouzeix, RAIRO Anal. Numer. 12(3), 1978, Theorem 2). Backward Euler, theta = 1, keeps it at every step
-#: and is first order; no linear scheme does both (their Theorems 1 and 3). Which matters more is the
+#: time, and keeps a non-negative field non-negative only up to a diffusion number (``positivity_edge``,
+#: 3/2 here). Backward Euler, theta = 1, keeps it at every step and is first order. No linear scheme does
+#: both (Bolley & Crouzeix, RAIRO Anal. Numer. 12(3), 1978, Theorems 1 and 3). Which matters more is the
 #: user's choice (#2463): ``HJBSemiLagrangianSolver(diffusion_theta=...)`` or ``SLConfig.diffusion_theta``,
 #: which the pair factory hands to the FP half.
 DEFAULT_DIFFUSION_THETA = 0.5
 
 
+def positivity_edge(theta: float) -> float:
+    """The diffusion number D dt / dx^2 up to which a theta-step keeps every non-negative field non-negative.
+
+    On an infinite grid the step's interior diagonal entry is non-negative exactly when
+    sqrt(1 + 4 theta alpha) <= 1 / (1 - theta), so the edge is (2 - theta) / (4 (1 - theta)^2): 3/2 for
+    Crank-Nicolson, none for backward Euler. Bisected on the mirror-wall and periodic stencils at N = 21
+    and 81, the edge is that value (#2463); smaller grids hold a little longer (1.511 at N = 7 periodic).
+    Bolley & Crouzeix's Theorem 2 guarantees 1 / (2 (1 - theta)), a sufficient bound for every M-matrix.
+    """
+    if theta >= 1.0:
+        return float("inf")
+    return (2.0 - theta) / (4.0 * (1.0 - theta) ** 2)
+
+
 def check_diffusion_theta(theta: float) -> float:
     """Return ``theta`` if it is in [1/2, 1]; below 1/2 the theta-step is not unconditionally stable."""
+    if isinstance(theta, bool) or not isinstance(theta, (int, float, np.integer, np.floating)):
+        raise TypeError(f"diffusion_theta must be a real number in [0.5, 1]; got {theta!r}")
     theta = float(theta)
     if not 0.5 <= theta <= 1.0:
         raise ValueError(

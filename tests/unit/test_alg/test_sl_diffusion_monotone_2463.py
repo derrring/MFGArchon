@@ -1,10 +1,9 @@
 """The SL pair's diffusion theta reaches every diffusion step in both halves, and the clip says how to set it (#2463).
 
 A theta-step is linear, so it keeps every non-negative field non-negative exactly when it maps each unit
-vector to one. Its explicit half has diagonal 1 - 2 (1 - theta) D dt / dx^2 and its implicit half is an
-M-matrix, so that holds exactly up to diffusion number 1 / (2 (1 - theta)): 1 for Crank-Nicolson, every
-step for backward Euler (Bolley & Crouzeix 1978, Theorem 2). Each case runs at the edge of its theta's
-guarantee, so a call site that ignores the theta it was given fails the backward-Euler case.
+vector to one. It does so up to diffusion number ``positivity_edge(theta)`` = (2 - theta) / (4 (1 - theta)^2):
+3/2 for Crank-Nicolson, every step for backward Euler. Each case runs at its theta's edge, or at 5 for
+backward Euler, so a call site that ignores the theta it was given fails the backward-Euler case.
 
 The theta enters through `SLConfig.diffusion_theta`, as a Safe-Mode user sets it, and reaches the FP half
 only through the pair factory -- so the FP cases also read the hand-off.
@@ -28,9 +27,9 @@ from mfgarchon.types import NumericalScheme
 
 SIGMA = 1.0
 
-#: (theta, diffusion number): each at the edge of what its theta keeps non-negative.
-EDGES = [(1.0, 5.0), (0.5, 1.0)]
-GEOMETRIES = [(1, "no_flux"), (1, "periodic"), (2, "no_flux")]
+#: (theta, diffusion number): Crank-Nicolson at its edge, 3/2; backward Euler, which has none, at 5.
+EDGES = [(1.0, 5.0), (0.5, 1.5)]
+GEOMETRIES = [(1, "no_flux"), (1, "periodic"), (2, "no_flux"), (2, "periodic")]
 
 
 def _config(theta: float) -> MFGSolverConfig:
@@ -131,3 +130,25 @@ def test_the_clip_names_a_theta_that_lets_the_solve_through():
     )
     assert result.converged
     assert np.asarray(result.M).min() >= 0.0
+
+
+def test_the_periodic_fp_step_stops_on_a_negative_density_rather_than_returning_it():
+    """The FP half's periodic 1-D path returned its diffusion result unchecked until #2463, the only path
+    that did. Crank-Nicolson at diffusion number 5 turns a unit vector negative there; the step must stop."""
+    _, fp, shape, dt = _pair(1, "periodic", 0.5, 5.0)
+    e = np.zeros(shape)
+    e[5] = 1.0
+    with pytest.raises(ValueError, match="FP-SL positivity clip"):
+        fp._adjoint_sl_step_1d(e, np.zeros(shape), dt, SIGMA)
+
+
+@pytest.mark.parametrize(("number", "named"), [(1.25, False), (2.0, True)])
+def test_the_clip_blames_the_diffusion_step_only_past_its_edge(number, named):
+    """A negative density at diffusion number 1.25 is not Crank-Nicolson's doing: its edge is 3/2. Naming
+    diffusion_theta there would send the user to a remedy that does not help (a source_term measured it)."""
+    _, fp, shape, _ = _pair(1, "no_flux", 0.5, 1.0)
+    m = np.ones(shape)
+    m[3] = -0.5
+    with pytest.raises(ValueError) as raised:
+        fp._clip_nonneg(m, diffusion_number=number)
+    assert ("diffusion_theta=1.0" in str(raised.value)) is named

@@ -298,9 +298,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 Default 1e-8.
             diffusion_theta: The theta of the implicit diffusion step on the ``adi`` path, in [0.5, 1]:
                 0.5, Crank-Nicolson (default), is second order in time and keeps a non-negative field
-                non-negative only up to diffusion number D dt / dx^2 = 1; 1, backward Euler, keeps it at
-                every step and is first order (#2463). The pair factory hands it to the FP half, whose
-                density needs it most.
+                non-negative only up to diffusion number D dt / dx^2 = 3/2 (``positivity_edge``); 1,
+                backward Euler, keeps it at every step and is first order (#2463). The pair factory hands
+                it to the FP half, whose density needs it most.
         """
         super().__init__(problem)
         self.hjb_method_name = "Semi-Lagrangian"
@@ -3170,6 +3170,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             "adaptive_substepping": self.enable_adaptive_substepping,
             "max_substeps": self.max_substeps,
             "cfl_target": self.cfl_target,
+            "diffusion_theta": self.diffusion_theta,
         }
 
 
