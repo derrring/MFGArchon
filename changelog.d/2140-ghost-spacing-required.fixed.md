@@ -6,9 +6,11 @@
       - level-set reinitialisation.
     - **The other two passed a geometry:** `FDMApplicator.apply` and `dispatch.apply_bc`. `TensorProductGrid` has no `domain_bounds` attribute, so that supplied no spacing either. The function now reads `geometry.get_grid_spacing()`.
     - `FDMApplicator.apply` also accepted `grid_spacing` and `domain_bounds` and discarded both; it now forwards them.
-  - **What it fixes, measured on the semi-Lagrangian HJB** (exact u = A(x − ½)² with its exact Neumann data A, at 21 / 41 / 81 points; error relative to max|u|):
-    - On u = −0.3(x − ½)², the wall gradient read −1.37 / −2.86 / −5.85 against an exact +0.3.
-    - At σ = 0 with characteristics leaving the domain (A = −0.3), every path other than canonical-CS now converges with the exact g: 0.120 → 0.060 → 0.030. The default path read 0.67 → 0.62.
-    - With diffusion (σ = 0.2) the error falls at coarse grids (default path, A = +0.3: 0.68 → 0.04 at 21 points), but it still grows with refinement (0.04 → 0.12 → 0.19). The diffusion step and the reflected feet still impose zero there (#1936).
-  - **Homogeneous conditions do not change:** a zero Neumann value or no-flux multiplies the spacing by zero. The CI-marker suite passes, 4332 tests.
+  - **The wall gradient, on the semi-Lagrangian HJB's gradient operator.** For u = −0.3(x − ½)² with its exact Neumann data −0.3, it read +1.64 / +3.14 / +6.15 at 11 / 21 / 41 points, against an exact +0.300. It now reads +0.285 / +0.292 / +0.296.
+  - **The SL HJB with exact Neumann data.** Exact u = A(x − ½)² with data A, T = 1, at 21 / 41 / 81 points, on the four 1-D paths measured (ADI default, ADI without sub-stepping, explicit, stochastic); error relative to max|u|:
+    - **At σ = 0 with characteristics leaving the domain (A = −0.3)**, all four now converge with the exact data: 0.120 → 0.060 → 0.030. The default path read 0.67 → 0.62.
+    - **canonical-CS** does not read g at all, and **2-D DPP** drops it (U equal to the no-flux U, #2462's review).
+    - **With diffusion (σ = 0.2)**, the default path falls at coarse grids (A = +0.3: 0.68 → 0.04 at 21 points), but it still grows with refinement (0.04 → 0.12 → 0.19).
+    - **The stochastic path is worse at finer grids than before** (A = −0.3: 0.280 / 0.214 / 0.194 before, 0.203 / 0.559 / 0.819 now). With diffusion the diffusion step and the reflected feet impose zero, so no path solves with g there (#1936).
+  - **Homogeneous Neumann and no-flux do not change:** a zero value multiplies the spacing by zero. A homogeneous **Robin** ghost does change, but neither HJB solver accepts Robin.
   - The docstring example's stated output, `[2.0, 1.0, 2.0, 3.0, 2.0]`, was not what the function returns: it returns `[1.0, 1.0, 2.0, 3.0, 3.0]`, a ghost that copies the wall node (#1935).

@@ -255,8 +255,9 @@ class FDMApplicator(BaseStructuredApplicator):
             grid_spacing: Forwarded to `pad_array_with_ghosts` as `spacing=` (#2140). Until #2140
                      this method discarded it, so an inhomogeneous Neumann or Robin condition applied
                      through here ran at dx = 1.0.
-            domain_bounds: Used for the spacing when ``grid_spacing`` is not given: one interval
-                     per axis over the field's node count (#2140).
+            domain_bounds: Used for the spacing when ``grid_spacing`` is not given: n - 1 intervals
+                     per axis over the field's n nodes, a node-centred grid (#2140). ``grid_spacing``
+                     wins when both are given.
             time: Current time for time-dependent BCs
             geometry: Geometry object with marked regions (Issue #596 Phase 2.5).
                      Required if boundary_conditions uses region_name.
@@ -2036,14 +2037,16 @@ def pad_array_with_ghosts(
                  ``PeriodicGridConvention``). Normally unnecessary: a grid binds the right one onto
                  the BC, and unstated means the historical layout.
         spacing: Grid spacing, a scalar or one value per axis. Required unless ``geometry`` gives it
-                 through ``get_grid_spacing()``: the ghost formulas that read a boundary value use it,
-                 and the former fallback, dx = 1.0, applied a Neumann value g as g/h (#2140, #1904).
+                 through ``get_grid_spacing()``: the Neumann and Robin ghost formulas use it, and the
+                 former fallback, dx = 1.0, applied a Neumann value g as g/h (#2140, #1904).
 
     Returns:
         New array with ghost cells added on all boundaries
 
     Raises:
         TypeError: If neither ``spacing`` nor ``geometry.get_grid_spacing()`` gives the spacing.
+        ValueError: From ``geometry.get_grid_spacing()`` on a non-uniform grid, when no ``spacing`` is
+            passed; the ghost formulas assume one spacing per axis.
 
     Example:
         >>> from mfgarchon.geometry.boundary import neumann_bc, pad_array_with_ghosts

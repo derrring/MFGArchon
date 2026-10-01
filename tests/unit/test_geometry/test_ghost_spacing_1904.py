@@ -52,7 +52,7 @@ def test_inhomogeneous_neumann_recovers_the_requested_flux_at_every_resolution(n
 
 
 def test_the_fallback_would_diverge_which_is_why_the_spacing_is_threaded():
-    """The un-threaded call used to fall back to dx = 1.0, so the flux scaled as 1/h, and eight
+    """The un-threaded call used to fall back to dx = 1.0, so the flux scaled as 1/h, and ten
     production call sites took it (#2140). It is refused now. The control keeps the test above honest:
     an explicit spacing of 1.0 reproduces the old fallback's ghost and 0.05 does not, so the threading
     is what the law above measures rather than something that was always true.
@@ -178,8 +178,8 @@ def test_the_gradient_operator_reproduces_a_linear_slope_at_the_wall(nx):
     For u = a x the central difference through the ghost is exact once the ghost carries the outward
     derivative at the grid's spacing: ghost = u_0 + h g with g = -a at the low wall gives
     (u_1 - ghost) / (2h) = a, and likewise at the high wall. Until #2140 the operator built the ghost at
-    h = 1.0; on u = -0.3 (x - 1/2)^2 its wall gradient was -1.365 at 11 points against an exact +0.3,
-    growing as 1/h.
+    h = 1.0; on u = -0.3 (x - 1/2)^2 with its exact data -0.3, its wall gradient was +1.635 / +3.143 /
+    +6.146 at 11 / 21 / 41 points against an exact +0.300, growing as 1/h.
     """
     a = 0.7
     grid = TensorProductGrid(
@@ -196,3 +196,37 @@ def test_the_gradient_operator_reproduces_a_linear_slope_at_the_wall(nx):
     )
     slope = grid.get_gradient_operator(scheme="central", bc=bc_low_high)[0](a * x)
     np.testing.assert_allclose(slope, a, rtol=0, atol=1e-12)
+
+
+def test_a_linear_field_on_an_anisotropic_grid_is_exact_on_every_axis():
+    """External oracle in 2-D, so axis order is observable (#2140): dx = 0.1, dy = 0.4.
+
+    For u = a x + b y with outward Neumann data -a, +a, -b, +b on the four faces, a ghost built at each
+    axis's own spacing makes the central gradient exactly (a, b) and the Laplacian exactly 0 at every
+    node, walls included. A spacing of 1.0, or the two spacings swapped, moves the wall values. Checked
+    through the operator and through `tensor_calculus`, which threads the spacing separately.
+    """
+    from mfgarchon.utils.numerical.tensor_calculus import gradient, laplacian
+
+    a, b = 0.7, -0.4
+    bc = BoundaryConditions(
+        segments=[
+            BCSegment(name="xl", bc_type=BCType.NEUMANN, value=-a, boundary="x_min"),
+            BCSegment(name="xh", bc_type=BCType.NEUMANN, value=a, boundary="x_max"),
+            BCSegment(name="yl", bc_type=BCType.NEUMANN, value=-b, boundary="y_min"),
+            BCSegment(name="yh", bc_type=BCType.NEUMANN, value=b, boundary="y_max"),
+        ],
+        dimension=2,
+    )
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0), (0.0, 2.0)], Nx_points=[11, 6], boundary_conditions=neumann_bc(dimension=2, value=0.0)
+    )
+    X, Y = np.meshgrid(*grid.coordinates, indexing="ij")
+    u = a * X + b * Y
+    ops = grid.get_gradient_operator(scheme="central", bc=bc)
+    np.testing.assert_allclose(ops[0](u), a, rtol=0, atol=1e-12)
+    np.testing.assert_allclose(ops[1](u), b, rtol=0, atol=1e-12)
+    du = gradient(u, spacings=grid.get_grid_spacing(), bc=bc)
+    np.testing.assert_allclose(du[0], a, rtol=0, atol=1e-12)
+    np.testing.assert_allclose(du[1], b, rtol=0, atol=1e-12)
+    np.testing.assert_allclose(laplacian(u, spacings=grid.get_grid_spacing(), bc=bc), 0.0, rtol=0, atol=1e-10)
