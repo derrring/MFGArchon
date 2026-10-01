@@ -191,16 +191,17 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
     #: (canonical-CS and n-D DPP solve the no-flux problem); the boundary handling of the departure feet
     #: and the diffusion step carry no g. On an exact solution with g = 0.3 and sigma = 0.2, none of the
     #: four paths measured (ADI, explicit, stochastic, canonical-CS) solved with g, and ADI's error, 1.20,
-    #: was worse than with g = 0. At sigma = 0 the value does not change the solution, so no_flux_bc()
-    #: answers those problems the same (#1936). Flip this to True in the same change that makes every
-    #: path carry g.
+    #: was worse than with g = 0. At sigma = 0, where characteristics leave the domain, some paths do
+    #: solve with g at first order (1-D ADI without sub-stepping, 1-D stochastic, `none`, 1-D DPP) and
+    #: no_flux_bc() does not; the default sub-stepping path does not either way. The refusal gives those
+    #: results up (#1936). Flip this to True in the same change that makes every path carry g.
     honors_inhomogeneous_neumann: bool = False
     _inhomogeneous_neumann_gap: str = (
         "The semi-Lagrangian HJB solver does not carry a Neumann value everywhere it touches a wall, on any "
         "path: depending on the path the value reaches the gradient's ghost cells, the FDMApplicator "
-        "post-step enforcement, both, or neither; with diffusion, none of the paths measured against an exact "
-        "solution solved with it, and without diffusion it does not change the solution (#1936). Use g = 0 "
-        "(equivalently no_flux_bc())."
+        "post-step enforcement, both, or neither. With diffusion, none of the paths measured against an exact "
+        "solution solved with it; without diffusion some paths did, where characteristics leave the domain "
+        "(#1936). Passing g = 0 (no_flux_bc()) solves a different problem wherever the value matters."
     )
 
     def __init__(
