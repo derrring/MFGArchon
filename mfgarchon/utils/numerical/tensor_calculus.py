@@ -145,7 +145,7 @@ def gradient(
 
     # Apply ghost cells if BC provided
     if bc is not None:
-        u_work = _apply_ghost_cells_nd(u, bc, time)
+        u_work = _apply_ghost_cells_nd(u, bc, time, spacings)
     else:
         u_work = u
 
@@ -273,7 +273,7 @@ def divergence(
 
         # Apply ghost cells if BC provided
         if bc is not None:
-            F_d_work = _apply_ghost_cells_nd(F_d, bc, time)
+            F_d_work = _apply_ghost_cells_nd(F_d, bc, time, spacings)
         else:
             F_d_work = F_d
 
@@ -335,7 +335,7 @@ def laplacian(
 
     # Apply ghost cells if BC provided
     if bc is not None:
-        u_work = _apply_ghost_cells_nd(u, bc, time)
+        u_work = _apply_ghost_cells_nd(u, bc, time, spacings)
     else:
         u_work = u
 
@@ -399,7 +399,7 @@ def hessian(
 
     # Apply ghost cells if BC provided
     if bc is not None:
-        u_work = _apply_ghost_cells_nd(u, bc, time)
+        u_work = _apply_ghost_cells_nd(u, bc, time, spacings)
     else:
         u_work = u
 
@@ -663,12 +663,16 @@ def advection(
         if method == "upwind":
             # By the sign of the velocity (#2309): `gradient(scheme="upwind")` is the HJB momentum rule,
             # which selects on the sign of the field and is non-monotone for transport.
-            m_work = _apply_ghost_cells_nd(m, bc, time) if bc is not None else m
+            m_work = _apply_ghost_cells_nd(m, bc, time, spacings) if bc is not None else m
             result = xp.zeros_like(m_work)
             for d in range(dimension):
                 if spacings[d] < 1e-14:
                     continue
-                v_d = _apply_ghost_cells_nd(v[d], velocity_boundary_conditions(bc), time) if bc is not None else v[d]
+                v_d = (
+                    _apply_ghost_cells_nd(v[d], velocity_boundary_conditions(bc), time, spacings)
+                    if bc is not None
+                    else v[d]
+                )
                 result += v_d * gradient_upwind_by_velocity(m_work, v_d, d, spacings[d], xp)
             return _extract_interior(result, dimension) if bc is not None else result
 
@@ -693,11 +697,13 @@ def advection(
 # =============================================================================
 
 
-def _apply_ghost_cells_nd(u: NDArray, bc: BoundaryConditions, time: float) -> NDArray:
-    """Apply ghost cells using boundary conditions."""
+def _apply_ghost_cells_nd(
+    u: NDArray, bc: BoundaryConditions, time: float, spacings: list[float] | tuple[float, ...]
+) -> NDArray:
+    """Apply ghost cells using boundary conditions, at the grid's spacing (#2140)."""
     from mfgarchon.geometry.boundary import pad_array_with_ghosts
 
-    return pad_array_with_ghosts(u, bc, ghost_depth=1, time=time)
+    return pad_array_with_ghosts(u, bc, ghost_depth=1, time=time, spacing=spacings)
 
 
 def _extract_interior(u_padded: NDArray, dimension: int) -> NDArray:
@@ -719,14 +725,16 @@ def _divergence_upwind(
     dimension = len(v)
 
     div = xp.zeros_like(m)
-    m_work = _apply_ghost_cells_nd(m, bc, time) if bc is not None else m
+    m_work = _apply_ghost_cells_nd(m, bc, time, spacings) if bc is not None else m
 
     for d in range(dimension):
         h = spacings[d]
         if h < 1e-14:
             continue
 
-        v_d_work = _apply_ghost_cells_nd(v[d], velocity_boundary_conditions(bc), time) if bc is not None else v[d]
+        v_d_work = (
+            _apply_ghost_cells_nd(v[d], velocity_boundary_conditions(bc), time, spacings) if bc is not None else v[d]
+        )
         dF_d = divergence_upwind_by_velocity(m_work, v_d_work, d, h, xp)
 
         # Extract interior if ghost cells were added
@@ -928,7 +936,7 @@ def _tensor_diffusion_1d(
             u_padded = np.pad(u, 1, mode="edge")
         else:
             # Use unified interface for other BC types
-            u_padded = _apply_ghost_cells_nd(u, bc, 0.0)
+            u_padded = _apply_ghost_cells_nd(u, bc, 0.0, (dx,))
     else:
         u_padded = np.pad(u, 1, mode="wrap")
 
@@ -1011,7 +1019,7 @@ def _tensor_diffusion_2d(
         is_noflux = False
         if isinstance(bc, BoundaryConditions):
             # Mixed BC - use unified interface (may not be uniform no-flux)
-            u_padded = pad_array_with_ghosts(u, bc, ghost_depth=1, time=time)
+            u_padded = pad_array_with_ghosts(u, bc, ghost_depth=1, time=time, spacing=(dx, dy))
         else:
             # Legacy or unified uniform BC - check type
             try:
@@ -1030,7 +1038,7 @@ def _tensor_diffusion_2d(
                 u_padded = np.pad(u, 1, mode="edge")
             else:
                 # Use unified interface for other BC types
-                u_padded = pad_array_with_ghosts(u, bc, ghost_depth=1, time=time)
+                u_padded = pad_array_with_ghosts(u, bc, ghost_depth=1, time=time, spacing=(dx, dy))
     else:
         # Default to periodic if no BC specified
         u_padded = np.pad(u, 1, mode="wrap")

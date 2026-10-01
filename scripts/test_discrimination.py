@@ -330,7 +330,7 @@ MUTATIONS: list[Mutation] = [
         old="    return 1 if convention is PeriodicGridConvention.ENDPOINT_INCLUSIVE else 0",
         new="    return 0 if convention is PeriodicGridConvention.ENDPOINT_INCLUSIVE else 1  # MUTATED: wrap convention swapped",
         owner='how many trailing nodes of a periodic axis repeat a node the array already holds -- the ONE number both the ghost skip and the modular span derive from (#1822). types.py:126-130 states the ownership verbatim: "Every periodic wrap in the package is one of two expressions of this single number, which ',
-        verify="pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), periodic_bc(dimension=1), ghost_depth=1)[0] == 2.0",
+        verify="pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), periodic_bc(dimension=1), ghost_depth=1, spacing=1.0)[0] == 2.0",
     ),
     Mutation(
         name="bc_uniform_dispatch_reads_as_mixed",

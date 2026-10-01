@@ -96,7 +96,7 @@ _APPLICATORS = [
     (
         "FDMApplicator",
         FDMApplicator,
-        lambda t: FDMApplicator(dimension=1).apply(_LINE.copy(), _uniform_bc(t, 1)),
+        lambda t: FDMApplicator(dimension=1).apply(_LINE.copy(), _uniform_bc(t, 1), grid_spacing=0.25),
         _LINE,
     ),
     (
@@ -519,7 +519,7 @@ def test_a_declaration_that_is_absent_disables_the_gate_rather_than_failing_clos
         _SUPPORTED_BC_TYPES = None
 
     assert _Undeclared(dimension=1).supported_bc_types is None
-    _Undeclared(dimension=1).apply(_LINE.copy(), _uniform_bc(BCType.PERIODIC, 1))
+    _Undeclared(dimension=1).apply(_LINE.copy(), _uniform_bc(BCType.PERIODIC, 1), grid_spacing=0.25)
 
 
 def test_the_gate_reads_default_bc_and_not_only_the_segments():

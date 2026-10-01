@@ -174,7 +174,10 @@ class DivergenceOperator(LinearOperator):
 
             # Pad each component separately
             F_work = np.stack(
-                [pad_array_with_ghosts(F[d], self.bc, ghost_depth=1, time=self.time) for d in range(self.dimension)],
+                [
+                    pad_array_with_ghosts(F[d], self.bc, ghost_depth=1, time=self.time, spacing=self.spacings)
+                    for d in range(self.dimension)
+                ],
                 axis=0,
             )
         else:

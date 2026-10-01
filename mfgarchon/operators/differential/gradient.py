@@ -180,7 +180,7 @@ class PartialDerivOperator(LinearOperator):
         if self.bc is not None:
             from mfgarchon.geometry.boundary import pad_array_with_ghosts
 
-            u_work = pad_array_with_ghosts(u, self.bc, ghost_depth=1, time=self.time)
+            u_work = pad_array_with_ghosts(u, self.bc, ghost_depth=1, time=self.time, spacing=self.spacings)
         else:
             u_work = u
 
