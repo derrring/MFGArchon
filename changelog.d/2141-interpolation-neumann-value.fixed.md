@@ -1,0 +1,11 @@
+- **`InterpolationApplicator` imposes a Neumann value (#2141).** It read the segment's value g and then dropped it, so g = 0 and g = 0.7 gave bit-identical fields. It now imposes du/dn = g against the outward normal at both walls, at the spacing it is given, as `FDMApplicator` does. The semi-Lagrangian HJB passes its grid spacing at the call site, `_enforce_boundary_conditions`.
+  - **`enforce_neumann_value_nd` refuses a non-zero value without a spacing.** Its default, h = 1.0, applied g as g/h, the defect #2140 removed from the ghost path. `enforce_robin_value_nd` now forwards `None` instead of 1.0. The package's two callers that pass a non-zero value pass a spacing: `FDMApplicator`, and `InterpolationApplicator` from the SL HJB.
+  - **No-flux, reflecting and a zero Neumann value take the branch they always took,** so they are unchanged.
+  - **What it changes in the SL HJB.** The solver still refuses an inhomogeneous Neumann value (#1936). With that refusal lifted, at σ = 0 on the exact u = A|x − ½|² with data A, every grid has 21/41/81 points in 1-D and 11/21 in 2-D, against `no_flux_bc()` on the same grids:
+    - **The 1-D sub-stepped path** (A = −2, up to four sub-steps per step) now converges at first order: 0.755 → 0.389 → 0.197. Before, its error with g matched no-flux's, about 1.9.
+    - **The 2-D stochastic path** converges: 0.238 → 0.120, against no-flux's 0.683 → 0.651.
+    - **The 2-D sub-stepped path** goes 1.43 → 0.76 at A = −2.
+    - **Still not carrying g:** canonical-CS, which enforces nothing, and the n-D whole step, which has no post-step enforcement (0.85 → 0.74 with g, worse than no-flux).
+  - **Tests.**
+    - `test_neumann_wall_sign_2141.py` retired its value arm through its own mechanism: the strict xfails reported XPASS and the recorded-defect tests failed with their delete instructions. Both applicators are now live cells of its contract.
+    - New `test_hjb_sl_neumann_substep_2141.py` holds the call-site half the applicator test cannot see. On the oracle above, the default path must sub-step and converge at first order. Removing the call site's spacing, or restoring the dropped value, fails it.

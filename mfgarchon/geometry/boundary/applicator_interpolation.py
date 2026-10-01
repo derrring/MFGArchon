@@ -124,7 +124,9 @@ class InterpolationApplicator(BaseBCApplicator):
         Args:
             field: Solution array to enforce BC on (shape: any dimension)
             boundary_conditions: BC specification
-            spacing: Grid spacing (needed for higher-order corrections, optional)
+            spacing: Grid spacing, a scalar or one value per axis. Required for a non-zero Neumann
+                value g, which is imposed as du/dn = g against the outward normal; refused without
+                it (#2141).
             time: Current time for time-dependent BC values
 
         Returns:
@@ -134,6 +136,10 @@ class InterpolationApplicator(BaseBCApplicator):
         - **Neumann/no_flux** (du/dn = 0): 2nd-order extrapolation
           - Left: U[0] = (4*U[1] - U[2]) / 3
           - Right: U[-1] = (4*U[-2] - U[-3]) / 3
+
+        - **Neumann** (du/dn = g, g != 0, outward normal): U[boundary] = U[neighbour] + g*h at
+          both walls. Until #2141 the segment's g was read and then dropped here, so g = 0 and
+          g = 0.7 gave bit-identical fields.
 
         - **Dirichlet** (u = g): Direct assignment
           - U[boundary] = g
@@ -152,19 +158,22 @@ class InterpolationApplicator(BaseBCApplicator):
         # Get BC types for each boundary
         bc_types = self._get_bc_types_per_boundary(boundary_conditions, ndim)
 
+        h_per_axis = None if spacing is None else np.broadcast_to(np.asarray(spacing, dtype=float).ravel(), (ndim,))
+
         # Enforce BC along each dimension
         for axis in range(ndim):
             bc_type_min, bc_type_max = bc_types[axis]
+            h = None if h_per_axis is None else float(h_per_axis[axis])
 
-            # Get BC values if Dirichlet
+            # The segment's value: Dirichlet's u, or Neumann's du/dn
             g_min = self._get_bc_value(boundary_conditions, axis, "min", time)
             g_max = self._get_bc_value(boundary_conditions, axis, "max", time)
 
             # Enforce BC at min boundary (index 0 along this axis)
-            self._enforce_boundary_1d(field, axis, "min", bc_type_min, g_min, self._extrapolation_order)
+            self._enforce_boundary_1d(field, axis, "min", bc_type_min, g_min, self._extrapolation_order, h)
 
             # Enforce BC at max boundary (index -1 along this axis)
-            self._enforce_boundary_1d(field, axis, "max", bc_type_max, g_max, self._extrapolation_order)
+            self._enforce_boundary_1d(field, axis, "max", bc_type_max, g_max, self._extrapolation_order, h)
 
         return field
 
@@ -176,6 +185,7 @@ class InterpolationApplicator(BaseBCApplicator):
         bc_type: str,
         bc_value: float | None,
         order: int,
+        spacing: float | None = None,
     ) -> None:
         """
         Enforce BC along one axis at one boundary (dimension-agnostic helper).
@@ -187,11 +197,17 @@ class InterpolationApplicator(BaseBCApplicator):
             axis: Dimension index (0, 1, 2, ...)
             side: "min" or "max" boundary
             bc_type: BC type string ("neumann", "no_flux", "dirichlet", etc.)
-            bc_value: Value for Dirichlet BC (ignored for Neumann)
-            order: Extrapolation order for Neumann (1 or 2)
+            bc_value: The segment's value: u for Dirichlet, du/dn (outward) for Neumann
+            order: Extrapolation order for a zero Neumann value (1 or 2)
+            spacing: Grid spacing along ``axis``, required for a non-zero Neumann value
         """
         # Dispatch to shared utilities based on BC type
-        if bc_type in ("neumann", "no_flux", "reflecting"):
+        if bc_type == "neumann":
+            # g was read and then dropped here until #2141, so a Neumann value never reached U.
+            grad = 0.0 if bc_value is None else float(bc_value)
+            enforce_neumann_value_nd(field, axis, side, grad_value=grad, spacing=spacing, order=order)
+
+        elif bc_type in ("no_flux", "reflecting"):
             enforce_neumann_value_nd(field, axis, side, grad_value=0.0, order=order)
 
         elif bc_type == "dirichlet":

@@ -1,20 +1,22 @@
-"""The two applicators the SL solver holds disagree about an inhomogeneous Neumann value. #2141
+"""The two applicators the SL solver holds impose the same inhomogeneous Neumann value. #2141
 
-HALF FIXED. `HJBSemiLagrangianSolver.__init__` builds two of them and uses each at a different
+FIXED. `HJBSemiLagrangianSolver.__init__` builds two of them and uses each at a different
 point: `bc_applicator = FDMApplicator(...)` for the ghost-cell work, and
 `interp_bc_applicator = InterpolationApplicator(...)` for post-interpolation enforcement (#636).
-Handed the same `neumann_bc(value=g)`:
+Handed the same `neumann_bc(value=g)`, before #2141:
 
-    FDMApplicator             imposes du/dn = +g at BOTH walls          <- FIXED, #2141
-    InterpolationApplicator   ignores g entirely: g=0 and g=0.7 are BIT-IDENTICAL   <- still open
+    FDMApplicator             imposed du/dn = -g at the low wall        <- the sign arm, fixed first
+    InterpolationApplicator   ignored g entirely: g=0 and g=0.7 BIT-IDENTICAL   <- the value arm, fixed second
 
 The sign arm was a one-character defect in `enforcement.py`'s non-zero-gradient branch, which wrote
 the min wall as `u[1] - g*h` (du/dx = +g, hence du/dn = -g against the outward normal -x) where
 both walls want `neighbour + g*h`. It is the same decision #1265 had already fixed on the sibling
 ghost path in `a0f40fe1`; this file's two implementations had drifted apart.
 
-The value-drop arm is untouched and is the same defect #2294 records for the FEM natural-BC arm,
-in a second place.
+The value-drop arm read the segment's value in `enforce_values` and dropped it at the
+`_enforce_boundary_1d` dispatch, which called `enforce_neumann_value_nd` with a literal 0.0; it now
+passes g and the spacing, and the SL call site passes its grid spacing (which this file cannot see:
+`tests/unit/test_alg/test_hjb_sl_neumann_substep_2141.py` holds that half).
 
 The sign arm was reached through the public API before the fix -- not only in this file. Measured
 at `aad4aecd` on a 9-point 2-D grid, `HJBFDMSolver.solve_hjb_system` with `neumann_bc(value=0.7)`
@@ -40,9 +42,9 @@ reason this file does not measure that way, and they are NOT a current descripti
 assertions below are a property of the applicators, hold for every field tried, and involve no dt,
 no CFL and no mesh.
 
-Retirement: the `xfail(strict=True)` cells in `_STILL_WRONG_AT_THE_LEFT_WALL` report XPASS the
-moment their applicator imposes the requested derivative, and each recorded-defect test fails
-carrying the instruction to delete itself. The FDM half has already retired this way.
+Both halves retired through this file's own mechanism: the `xfail(strict=True)` cells reported
+XPASS once their applicator imposed the requested derivative, and each recorded-defect test failed
+carrying the instruction to delete itself.
 """
 
 from __future__ import annotations
@@ -105,84 +107,17 @@ def test_the_right_wall_of_the_fdm_applicator_is_correct(field_name):
     )
 
 
-#: Applicators still failing the contract below. `FDMApplicator` left this list when #2141's sign
-#: arm was fixed; `InterpolationApplicator` stays until its value-drop is. Each entry retires by
-#: XPASS(strict) -- fixing one makes its cell fail and the message says to remove it from here.
-_STILL_WRONG_AT_THE_LEFT_WALL = {"InterpolationApplicator"}
-
-
 @pytest.mark.parametrize("field_name", sorted(_FIELDS))
-@pytest.mark.parametrize(
-    "applicator_name",
-    [
-        pytest.param(
-            name,
-            marks=pytest.mark.xfail(strict=True, reason=f"#2141: {name} does not impose du/dn = g at the left"),
-        )
-        if name in _STILL_WRONG_AT_THE_LEFT_WALL
-        else pytest.param(name)
-        for name in sorted(_APPLICATORS)
-    ],
-)
+@pytest.mark.parametrize("applicator_name", sorted(_APPLICATORS))
 def test_every_applicator_imposes_the_requested_derivative_at_the_left_wall(applicator_name, field_name):
     """THE CONTRACT. `du/dn = g` is a statement about the OUTWARD normal, so it does not change sign
-    with the wall. Retires by XPASS(strict) per applicator.
-
-    `FDMApplicator` is now a live assertion rather than an xfail: it is the half of #2141 that was
-    fixed, so this cell is what would catch the sign coming back.
+    with the wall. Both applicators were xfails here until their half of #2141 was fixed; each cell is
+    now what catches its defect coming back -- the sign for `FDMApplicator`, the dropped value for
+    `InterpolationApplicator`.
     """
     enforced = _enforced(applicator_name, field_name, _G)
 
     assert _normal_derivative(enforced, "left") == pytest.approx(_G, abs=1e-9), (
         f"{applicator_name} imposed du/dn = {_normal_derivative(enforced, 'left'):+.4f} at the left "
         f"wall for a requested {_G:+.4f}."
-    )
-
-
-@pytest.mark.parametrize("field_name", sorted(_FIELDS))
-def test_the_interpolation_applicator_still_drops_the_value_entirely(field_name):
-    """RECORDED DEFECT (#2141, second half). Bit-identity is the discriminator.
-
-    The value is not applied with the wrong sign here and not applied approximately; it never
-    reaches an arithmetic operation, so enforcing `g = 0` and `g = 0.7` are the same computation.
-    `enforce_neumann_value_nd(..., grad_value=0.0, ...)` is called with the literal, and the
-    segment's own value is never read.
-    """
-    zero = _enforced("InterpolationApplicator", field_name, 0.0)
-    requested = _enforced("InterpolationApplicator", field_name, _G)
-
-    if not np.array_equal(zero, requested):
-        pytest.fail(
-            f"InterpolationApplicator now responds to the Neumann value: max|diff| = "
-            f"{np.max(np.abs(zero - requested)):.6e}. Delete this test, and remove "
-            f"InterpolationApplicator from the xfail list above."
-        )
-
-
-def test_the_two_applicators_still_disagree_and_that_is_the_remaining_defect():
-    """The pair, asserted together, because the SL solver holds BOTH and uses each in turn.
-
-    The disagreement has changed shape rather than closed. `FDMApplicator` now honours the datum;
-    `InterpolationApplicator` still discards it. `HJBSemiLagrangianSolver` builds both in
-    `__init__` and calls them at different points of one step, so the field it returns has still
-    been through two conventions -- one correct, one homogeneous -- with nothing recording which
-    wall a given value came from.
-
-    Retires when the interpolation half lands: the first assertion then fails.
-    """
-    fdm = _normal_derivative(_enforced("FDMApplicator", "quadratic", _G), "left")
-    interp_zero = _enforced("InterpolationApplicator", "quadratic", 0.0)
-    interp_g = _enforced("InterpolationApplicator", "quadratic", _G)
-
-    assert fdm == pytest.approx(_G, abs=1e-12), (
-        f"FDMApplicator's left wall imposes du/dn = {fdm:+.6f}, not the requested {_G:+.6f}. The "
-        f"#2141 sign fix has regressed; see enforcement.py's non-zero-gradient branch."
-    )
-    # Bit-identity, NOT `!= g`. The docstring above says why: what is true of every field is that
-    # the result does not depend on `g` at all, and `!= g` also passes while the value is applied
-    # wrongly. Keeping the weaker form here would contradict this file's own stated target.
-    assert np.array_equal(interp_zero, interp_g), (
-        f"InterpolationApplicator now responds to the Neumann value: max|diff| = "
-        f"{np.max(np.abs(interp_zero - interp_g)):.6e}. The second half of #2141 is fixed: delete "
-        f"this test and remove InterpolationApplicator from _STILL_WRONG_AT_THE_LEFT_WALL."
     )
