@@ -175,7 +175,11 @@ def _godunov_gradient_magnitude(
     from mfgarchon.operators.stencils.finite_difference import gradient_upwind
 
     bc = geometry.get_boundary_conditions()
-    padded = pad_array_with_ghosts(phi, bc, ghost_depth=1, time=0.0) if bc is not None else phi
+    padded = (
+        pad_array_with_ghosts(phi, bc, ghost_depth=1, time=0.0, spacing=geometry.get_grid_spacing())
+        if bc is not None
+        else phi
+    )
     interior = tuple(slice(1, -1) if bc is not None else slice(None) for _ in range(phi.ndim))
     positive = sign_phi0 > 0
     squared = np.zeros(phi.shape, dtype=np.float64)
