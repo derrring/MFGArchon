@@ -184,6 +184,9 @@ def test_the_permissive_default_is_claimed_by_inheritance():
         "FPParticleSolver",
         "FPSLJacobianSolver",
         "FPSLSolver",
+        # Issue #1936: the first HJB solver to state it, False. Two of the four places a Neumann value
+        # reaches at its wall carry it, and the reflected feet and the diffusion step impose zero.
+        "HJBSemiLagrangianSolver",
     }
     # `FPSLSolver` was here as the parent of `FPSLAdjointSolver`, the one solver that inherited
     # this from a sibling rather than the base. #2343 removed that alias, so every remaining

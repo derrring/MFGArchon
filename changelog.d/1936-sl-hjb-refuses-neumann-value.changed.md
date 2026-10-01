@@ -1,0 +1,5 @@
+- **`HJBSemiLagrangianSolver` refuses a nonzero or time-dependent Neumann value (#1936).** It accepted one and did not implement it. Of the four places the value reaches at a wall, two carry it: the gradient's ghost cells and one of the two post-step enforcements. The reflected characteristic feet and the diffusion step impose a zero normal derivative.
+  - On an exact stationary solution with Neumann value 0.3 (41 points), the error relative to max|u| was 1.20 on the default path and 0.19 on the stochastic one. On the default path that is worse than solving with g = 0 (0.40).
+  - It now raises `NotImplementedError` through the same `honors_inhomogeneous_neumann` gate `FPSLSolver` already used (#1686), so a semi-Lagrangian pair was already refused there.
+  - `no_flux_bc()` and `neumann_bc(value=0.0)` are unaffected.
+  - The gate's message names each solver's own reason (`_inhomogeneous_neumann_gap`). For a constant value it now says the value "would not be honoured" rather than "would be silently discarded", which is true of both families.

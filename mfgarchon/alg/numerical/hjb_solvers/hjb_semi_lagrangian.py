@@ -186,6 +186,19 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
     # absorbing are silently collapsed to Neumann on the default path, so they fail loud here.
     _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN, BCType.PERIODIC})
 
+    #: A Neumann value g reaches four places at a wall, and only two of them carry it: the gradient's
+    #: ghost cells and one of the two post-step enforcements. The reflected characteristic feet and the
+    #: diffusion step impose a zero normal derivative. On an exact solution with g = 0.3 a nonzero g gave
+    #: errors of 0.19-1.20, and on the default path supplying the right g was worse than g = 0 (#1936).
+    #: Flip this to True in the same change that makes all four carry g.
+    honors_inhomogeneous_neumann: bool = False
+    _inhomogeneous_neumann_gap: str = (
+        "The semi-Lagrangian HJB solver applies a Neumann value at its gradient's ghost cells and in one of "
+        "its two post-step enforcements, while its reflected characteristic feet and its diffusion step "
+        "impose a zero normal derivative, so it would solve with neither g nor 0 (#1936). Use g = 0 "
+        "(equivalently no_flux_bc())."
+    )
+
     def __init__(
         self,
         problem: MFGProblem,

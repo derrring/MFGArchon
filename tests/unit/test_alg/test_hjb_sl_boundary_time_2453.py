@@ -11,6 +11,10 @@ clock #2452 gave H, the foot and the value update. It is a decision, not a measu
 differentiates U^{n+1}, whose own time is t_{n+1}, and no oracle here separates the two, since the solver
 does not yet hold even constant inhomogeneous Neumann data (#2141). #2453 records the alternative.
 
+The solver refuses a time-dependent Neumann value (#1936: two of the four places it reaches carry it),
+so no accepted boundary condition reaches these reads today. The pin holds the clock an implementation of
+that data will use, with the refusal lifted for the test; the second test pins the refusal itself.
+
 The pin is an invariant of that clock, not a value. Each read is tagged with the step it belongs to: the
 step functions receive their index, and the CFL schedule, which runs just before step n, takes the index
 of the next step entered. Every read must be at its tag's time. Mutation-verified: each call site
@@ -99,6 +103,7 @@ def _reads_with_their_step(events):
 @pytest.mark.parametrize("case", list(CASES))
 def test_boundary_data_is_read_at_the_steps_own_time(case, monkeypatch):
     dim, hamiltonian, kwargs, amp = CASES[case]
+    monkeypatch.setattr(HJBSemiLagrangianSolver, "honors_inhomogeneous_neumann", True)  # refused since #1936
     events = []
     _tag_by_step(monkeypatch, events)
 
@@ -133,3 +138,22 @@ def test_boundary_data_is_read_at_the_steps_own_time(case, monkeypatch):
         f"{len(wrong)} of {len(tagged)} boundary reads are not at their step's time; first: read at "
         f"t = {wrong[0][0]:.6g} in step {wrong[0][1]} (t = {wrong[0][1] * problem.dt:.6g}) (#2453)"
     )
+
+
+@pytest.mark.parametrize("value", [0.3, lambda t: 0.05 * t])
+def test_a_neumann_value_the_solver_does_not_apply_is_refused(value):
+    """RECORDED DEFECT, not a contract (#1936). A Neumann value reaches four places at a wall, and the
+    reflected feet and the diffusion step impose zero there; on an exact solution with g = 0.3 the error
+    was 1.20 on the default path, worse than g = 0. Implementing g in all four retires this test: set
+    ``honors_inhomogeneous_neumann = True`` on HJBSemiLagrangianSolver and delete it."""
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=neumann_bc(value=value, dimension=1)
+    )
+    problem = MFGProblem(
+        model=Model(hamiltonian=_TimeDependentH(), volatility=0.2),
+        domain=grid,
+        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=1.0),
+        Nt=NT,
+    )
+    with pytest.raises(NotImplementedError, match="#1936"):
+        HJBSemiLagrangianSolver(problem)
