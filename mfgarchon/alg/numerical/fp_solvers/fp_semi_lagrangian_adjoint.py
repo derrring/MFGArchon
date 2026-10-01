@@ -30,8 +30,9 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import (
+    SL_DIFFUSION_THETA,
     adi_diffusion_step,
-    solve_crank_nicolson_diffusion_1d,
+    solve_implicit_diffusion_1d,
 )
 from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import (
     DEFAULT_CFL_TARGET,
@@ -82,7 +83,7 @@ class FPSLSolver(BaseFPSolver):
 
     Algorithm (operator splitting):
         1. Advection: Forward trace x_dest = x + α*dt, scatter mass via splatting
-        2. Diffusion: Crank-Nicolson implicit solve
+        2. Diffusion: implicit solve, backward Euler (#2463)
 
     Key Properties:
         - Mass conservation is exact (scatter weights sum to 1)
@@ -113,7 +114,7 @@ class FPSLSolver(BaseFPSolver):
     _scheme_family = SchemeFamily.SL  # Forward SL (adjoint of HJB Backward SL)
     _drift_convention = DriftConvention.VALUE_FUNCTION  # Issue #1043: takes U via potential_field
 
-    # BoundaryCapable protocol (Issue #1456): the CN/ADI diffusion sub-step is zero-flux
+    # BoundaryCapable protocol (Issue #1456): the implicit diffusion sub-step is zero-flux
     # (no-flux / Neumann g=0) and the advection wraps for periodic; Dirichlet / Robin / absorbing
     # are silently collapsed to Neumann downstream, so they fail loud here instead.
     _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN, BCType.PERIODIC})
@@ -258,7 +259,7 @@ class FPSLSolver(BaseFPSolver):
         return bc_type_to_geometric_operation(bc_type)
 
     def _get_diffusion_bc_type(self) -> str:
-        """Return diffusion BC type for CN/ADI: 'periodic' or 'neumann'.
+        """Return diffusion BC type for the implicit diffusion step: 'periodic' or 'neumann'.
 
         Issue #1257, 2026-06-10 audit: FP-SL diffusion sub-step must use the
         same BC type as the advection sub-step so a periodic domain does not
@@ -288,7 +289,7 @@ class FPSLSolver(BaseFPSolver):
         The Forward SL discretization uses mass splatting instead of interpolation:
             1. Forward trace: x_dest = x + α*dt
             2. Scatter mass to destination cells with linear weights
-            3. Apply diffusion via Crank-Nicolson
+            3. Apply diffusion implicitly, backward Euler (#2463)
 
         Args:
             M_initial: Initial density m0(x). Shape: (Nx,)
@@ -457,7 +458,7 @@ class FPSLSolver(BaseFPSolver):
 
         Operator splitting:
             1. Forward advection with splatting (mass-conservative)
-            2. Diffusion via Crank-Nicolson with zero-flux BC
+            2. Diffusion, backward Euler with zero-flux BC (#2463)
 
         Args:
             m: Current density, shape (Nx,)
@@ -499,14 +500,14 @@ class FPSLSolver(BaseFPSolver):
         if self.interpolation_method != "linear":
             m_star = self._clip_nonneg(m_star)
 
-        # Step 2: Diffusion via Crank-Nicolson
+        # Step 2: Diffusion, backward Euler (SL_DIFFUSION_THETA, #2463)
         # =====================================
         # Issue #1257, 2026-06-10 audit: the diffusion BC must match the advection BC.
         # On a periodic domain the advection step already wraps mass across the seam;
         # pairing it with a Neumann/zero-flux diffusion sub-step produces an O(1) seam
         # flux error every step and breaks adjoint consistency with HJB-SL (which
         # threads _get_diffusion_bc_type into both its CN and ADI).  Use
-        # solve_crank_nicolson_diffusion_1d from hjb_sl_adi (which has both
+        # solve_implicit_diffusion_1d from hjb_sl_adi (which has both
         # 'periodic' and 'neumann' branches) so the periodic case gets the
         # Sherman-Morrison circulant solve instead of the zero-flux stencil.
         diff_bc = self._get_diffusion_bc_type()
@@ -519,7 +520,7 @@ class FPSLSolver(BaseFPSolver):
             # carry a half weight, so summing would double-count them (Issue #1820).
             m_star = m_star.copy()
             enforce_periodic_value_nd(m_star, axis=0)
-            return solve_crank_nicolson_diffusion_1d(m_star, dt, volatility, self.x_grid, bc_type="periodic")
+            return solve_implicit_diffusion_1d(m_star, dt, volatility, self.x_grid, bc_type="periodic")
 
         # Zero-flux path. Issue #708 recorded this stencil as an FV choice specific to this
         # solver -- "the standard ghost-point strong-form method breaks the integral of m". #2237
@@ -539,7 +540,7 @@ class FPSLSolver(BaseFPSolver):
         # #2243 applied the correction. On #2237's own MMS this one parameter was the whole gap:
         # 1.989e-03 -> 2.806e-05, landing exactly on `FPSLJacobianSolver`, which has had `mirror`
         # all along. The sigma=0 control is unchanged at 6.458e-13, so the transport is untouched.
-        m_new = neumann_cn_step(m_star, dt, volatility, self.dx, treatment="mirror")
+        m_new = neumann_cn_step(m_star, dt, volatility, self.dx, treatment="mirror", theta=SL_DIFFUSION_THETA)
 
         # Ensure non-negativity
         m_new = self._clip_nonneg(m_new)
@@ -656,9 +657,11 @@ class FPSLSolver(BaseFPSolver):
         """Clip negative density to zero, warning once per solve if the clip injects
         non-trivial mass.
 
-        Cubic/quintic splatting and the CN/ADI diffusion step are not monotone, so the
-        density can undershoot below zero; deleting those undershoots injects positive
-        mass and violates conservation.
+        Cubic/quintic splatting and the explicit cross terms of a full volatility tensor are not
+        monotone, so the density can undershoot below zero; deleting those undershoots injects
+        positive mass and violates conservation. The diffusion step is backward Euler, whose
+        matrix is an M-matrix for every step (#2463); until #2463 it was Crank-Nicolson, which is
+        not, and went negative from diffusion number 2.5 on an attractive problem.
 
         Issue #1683: this warned once per ``solve_fp_system`` and returned the clipped
         density either way, so a diverging solve came back looking healthy -- finite,
@@ -674,9 +677,10 @@ class FPSLSolver(BaseFPSolver):
             m,
             context="FP-SL positivity clip",
             remedy=(
-                "Cubic/quintic splatting and CN/ADI diffusion are not monotone. Use "
-                "linear interpolation, reduce dt, or coarsen the grid -- on this scheme "
-                "refining can make the departure point span more cells and worsen it."
+                "Cubic/quintic splatting and the explicit cross terms of a full volatility "
+                "tensor are not monotone. Use linear interpolation, reduce dt, or coarsen the "
+                "grid -- on this scheme refining can make the departure point span more cells "
+                "and worsen it."
             ),
         )
 

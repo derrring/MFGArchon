@@ -1,0 +1,11 @@
+- **The semi-Lagrangian pair's diffusion step is backward Euler in both halves (#2463).** It was Crank–Nicolson, which keeps a density non-negative only up to diffusion number D·dt/dx² = 1. On an attractive problem at σ = 0.5, the default `SL_LINEAR` pair's FP density went negative from diffusion number 2.5 on, and the solve stopped on the positivity clip.
+  - **Measured.** Over 15 configurations (κ ∈ {0, 0.25, 1}, five (Nx, Nt) pairs), 6 stopped before and all 15 converge now, with no negative output from any diffusion step.
+  - **Why not sub-step to diffusion number 1.** Along the SL refinement path dt ∝ dx, that number grows like 1/dx, so the sub-step count would grow too (5, 10, 20, 40 at 21, 41, 81, 161 points with σ = 0.5). Backward Euler's matrix is an M-matrix at every step size, and the SL step is Lie-split with Euler feet, so it was first order in time either way.
+  - **Accuracy.** On κ = 1, σ = 0.5, against FDM at (81, 40): where Crank–Nicolson ran, backward Euler was no further from that reference. For example, the L1 error of m(T) is 0.280 against 0.169 at (21, 40). The grids that clipped now run: 0.054 at (41, 20).
+  - **What changes.** Every HJB solve with `diffusion_method="adi"` (the default), and every `FPSLSolver` solve with σ > 0, changes at first order in dt. One owner, `hjb_sl_adi.SL_DIFFUSION_THETA`, sets θ for both halves, in 1-D (no-flux and periodic) and n-D. The HJB `stochastic`, `canonical_cs`, `none` and `explicit` paths do not use this step. The explicit cross terms of a full volatility tensor are unchanged. The deprecated `FPSLJacobianSolver` (#1756) keeps Crank–Nicolson.
+  - **Renamed, none of them exported:**
+    - `solve_crank_nicolson_diffusion_1d` → `solve_implicit_diffusion_1d`
+    - `_crank_nicolson_periodic_1d` → `_implicit_diffusion_periodic_1d`
+    - `_crank_nicolson_periodic_distinct` → `_implicit_diffusion_periodic_distinct`
+    - `HJBSemiLagrangianSolver._solve_crank_nicolson_diffusion` → `_solve_implicit_diffusion_1d`
+  - **The FP positivity clip's message** no longer blames the diffusion step.

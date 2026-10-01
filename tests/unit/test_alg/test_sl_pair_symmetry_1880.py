@@ -36,8 +36,10 @@ _H = SeparableHamiltonian(
 )
 
 
-def _problem(volatility=0.0, eps=0.0):
-    """Invariant under x -> 1 - x when eps = 0; eps seeds an antisymmetric perturbation of m0."""
+def _problem(volatility=0.0, eps=0.0, kappa=1.0):
+    """Invariant under x -> 1 - x when eps = 0; eps seeds an antisymmetric perturbation of m0.
+
+    ``kappa`` scales the coupling f(m) = -kappa m; every test but one uses kappa = 1."""
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
     mass = grid.integrate(np.exp(-10 * (grid.coordinates[0] - 0.5) ** 2))
 
@@ -46,7 +48,14 @@ def _problem(volatility=0.0, eps=0.0):
         return np.exp(-10 * (x - 0.5) ** 2) * (1 + eps * (x - 0.5)) / mass
 
     conditions = Conditions(m_initial=m0, u_terminal=lambda x: 0.0, T=1.0)
-    return MFGProblem(model=Model(hamiltonian=_H, volatility=volatility), domain=grid, conditions=conditions, Nt=10)
+    H = (
+        _H
+        if kappa == 1.0
+        else SeparableHamiltonian(
+            control_cost=QuadraticControlCost(lambda_=1.0), coupling=lambda m: -kappa * m, coupling_dm=lambda m: -kappa
+        )
+    )
+    return MFGProblem(model=Model(hamiltonian=H, volatility=volatility), domain=grid, conditions=conditions, Nt=10)
 
 
 def _asymmetry(M):
@@ -69,16 +78,22 @@ def test_a_seeded_asymmetry_decays_under_the_sl_pair():
 
 
 def test_the_pair_stays_stable_when_its_hjb_half_does_not_substep():
-    """The mirror mismatch: FP sub-stepping while HJB does not. This pair converges in 60 sweeps, before
-    #1880 and after; forcing the FP half to sub-step regardless leaves it unconverged with asymmetry ~1
-    after 200. The budget is not the claim, so it has room."""
-    problem = _problem(volatility=0.2)
+    """The mirror mismatch: FP sub-stepping while HJB does not. With neither half sub-stepping this pair
+    converges, and forcing the FP half to sub-step regardless leaves it unconverged. From a 1e-6 seed:
+    78 sweeps and asymmetry 1e-7, against asymmetry 0.8 after 200 with the FP half forced. Unseeded,
+    the forced pair still passed: round-off does not grow that far in 200 sweeps at this coupling.
+    That is this fixture's behaviour, not a law: its equilibrium is under-resolved at 21 points (#2441).
+
+    kappa = 0.25 since #2463. At kappa = 1, with backward-Euler diffusion, the unsplit pair no longer
+    converges, so that fixture could not tell the factory's pairing from a broken one. It was fragile
+    under Crank-Nicolson too, which converged at Nt = 10 and 20 and not at 40."""
+    problem = _problem(volatility=0.2, kappa=0.25, eps=1e-6)
     hjb, fp = create_paired_solvers(
         problem, NumericalScheme.SL_LINEAR, hjb_config={"enable_adaptive_substepping": False}
     )
-    result = problem.solve(hjb_solver=hjb, fp_solver=fp, max_iterations=100, tolerance=1e-8, verbose=False)
+    result = problem.solve(hjb_solver=hjb, fp_solver=fp, max_iterations=200, tolerance=1e-8, verbose=False)
     assert result.converged
-    assert _asymmetry(result.M) < 1e-10
+    assert _asymmetry(result.M) < 1e-5, "the 1e-6 seed grew: the pair amplifies an antisymmetric mode"
 
 
 @pytest.mark.parametrize(

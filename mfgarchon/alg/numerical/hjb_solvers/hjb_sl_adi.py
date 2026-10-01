@@ -8,8 +8,9 @@ The diffusion equation solved is:
     ∂u/∂t = σ²/2 Δu
 
 Methods:
-- 1D: Crank-Nicolson (unconditionally stable)
-- nD: Peaceman-Rachford ADI splitting with optional full tensor support
+- 1D: an implicit theta-scheme at ``SL_DIFFUSION_THETA``, backward Euler (#2463)
+- nD: sequential (Lie) splitting, the same implicit solve along each axis over the full dt, with
+  optional full tensor support
 
 For full tensor diffusion (non-diagonal σ_ij, with D_ij = σ_ij/2):
     ADI handles diagonal terms implicitly, cross terms explicitly:
@@ -19,8 +20,8 @@ Module structure per issue #392:
     hjb_sl_adi.py - ADI diffusion methods for semi-Lagrangian solver
 
 Functions:
-    solve_crank_nicolson_diffusion_1d: 1D Crank-Nicolson diffusion solve
-    adi_diffusion_step: nD ADI diffusion solve (Peaceman-Rachford)
+    solve_implicit_diffusion_1d: 1D implicit diffusion solve
+    adi_diffusion_step: nD implicit diffusion solve, one axis at a time
     apply_cross_diffusion_explicit: Explicit cross-derivative terms for full tensor
     compute_mixed_derivative: Mixed partial derivative computation
     solve_1d_diffusion_along_axis: Single-axis implicit diffusion solve
@@ -35,8 +36,15 @@ from scipy.linalg import solve_banded
 from mfgarchon.utils.numerical.implicit_diffusion import NeumannCNStencil, neumann_cn_stencil, neumann_cn_step
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, validate_symmetric_psd
 
+#: The theta of every semi-Lagrangian diffusion step, in both halves of the pair: 1, backward Euler
+#: (#2463). Crank-Nicolson (0.5) keeps a density non-negative only up to diffusion number
+#: D dt / dx^2 = 1, and the SL refinement path dt ~ dx raises that number like 1/dx. On an attractive
+#: problem at sigma = 0.5 the FP half's density went negative from 2.5 on. Backward Euler's matrix is
+#: an M-matrix for every step. The SL step is Lie-split with Euler feet, first order in time either way.
+SL_DIFFUSION_THETA = 1.0
 
-def solve_crank_nicolson_diffusion_1d(
+
+def solve_implicit_diffusion_1d(
     U_star: np.ndarray,
     dt: float,
     volatility: float,
@@ -44,10 +52,10 @@ def solve_crank_nicolson_diffusion_1d(
     bc_type: str = "neumann",
 ) -> np.ndarray:
     """
-    Solve 1D diffusion step using Crank-Nicolson (unconditionally stable).
+    Solve the 1D diffusion step implicitly, at ``SL_DIFFUSION_THETA`` (backward Euler, #2463).
 
-    Solves: (I - theta*dt*sigma^2/2*L) u^n = (I + theta*dt*sigma^2/2*L) u*
-    where theta = 0.5 for Crank-Nicolson, L is the 1D Laplacian operator.
+    Solves: (I - theta*alpha*L) u^n = (I + (1-theta)*alpha*L) u*, alpha = (sigma^2/2) dt / dx^2,
+    with L the 1D Laplacian operator.
 
     Args:
         U_star: Intermediate solution after advection step, shape (Nx,)
@@ -65,10 +73,10 @@ def solve_crank_nicolson_diffusion_1d(
 
     # Diffusion coefficient: alpha = D * dt/dx^2, D = sigma^2/2 (Issue #811, single source).
     alpha = diffusion_from_volatility(volatility) * dt / dx**2
-    theta = 0.5  # Crank-Nicolson parameter
+    theta = SL_DIFFUSION_THETA
 
     if bc_type == "periodic":
-        return _crank_nicolson_periodic_1d(U_star, alpha, theta)
+        return _implicit_diffusion_periodic_1d(U_star, alpha, theta)
 
     # --- Neumann BC (default) ---
     #
@@ -90,12 +98,12 @@ def solve_crank_nicolson_diffusion_1d(
     return neumann_cn_step(U_star, dt, volatility, dx, treatment="mirror", theta=theta)
 
 
-def _crank_nicolson_periodic_1d(
+def _implicit_diffusion_periodic_1d(
     U_star: np.ndarray,
     alpha: float,
     theta: float,
 ) -> np.ndarray:
-    """Crank-Nicolson diffusion with periodic BC using Sherman-Morrison.
+    """Theta-scheme diffusion with periodic BC using Sherman-Morrison.
 
     The periodic Laplacian makes the system nearly tridiagonal plus rank-1
     corner entries (A[0, N-1] and A[N-1, 0]). Sherman-Morrison converts
@@ -114,7 +122,7 @@ def _crank_nicolson_periodic_1d(
     divergence (Issue #1820).
     """
     if len(U_star) < 3:
-        raise ValueError(f"periodic Crank-Nicolson needs at least 3 nodes, got {len(U_star)}")
+        raise ValueError(f"periodic implicit diffusion needs at least 3 nodes, got {len(U_star)}")
 
     # The last entry is dropped as a duplicate, so REFUSE to run when it is not one. Discarding it
     # silently deletes whatever it carried: a splatting FP step deposits mass into both coincident
@@ -125,24 +133,24 @@ def _crank_nicolson_periodic_1d(
     scale = max(1.0, float(np.max(np.abs(U_star))))
     if gap > 1e-12 * scale:
         raise ValueError(
-            f"periodic Crank-Nicolson received a field whose endpoints differ by {gap:.3e} "
+            f"periodic implicit diffusion received a field whose endpoints differ by {gap:.3e} "
             f"(relative {gap / scale:.3e}). On an endpoint-inclusive grid those entries are the "
             "same physical point; identify them before calling (enforce_periodic_value_nd folds "
             "a density by the mean, which is what preserves its trapezoid mass)."
         )
 
-    interior = _crank_nicolson_periodic_distinct(U_star[:-1], alpha, theta)
+    interior = _implicit_diffusion_periodic_distinct(U_star[:-1], alpha, theta)
     return np.append(interior, interior[0])
 
 
-def _crank_nicolson_periodic_distinct(
+def _implicit_diffusion_periodic_distinct(
     U_star: np.ndarray,
     alpha: float,
     theta: float,
 ) -> np.ndarray:
     """The Sherman-Morrison solve itself, on ``N`` genuinely distinct periodic DOFs.
 
-    Split out from :func:`_crank_nicolson_periodic_1d` so the grid convention (which node
+    Split out from :func:`_implicit_diffusion_periodic_1d` so the grid convention (which node
     duplicates which) lives in exactly one place, above, rather than inside the linear algebra.
     """
     N = len(U_star)
@@ -208,16 +216,16 @@ def adi_diffusion_step(
     """
     Apply ADI (Alternating Direction Implicit) diffusion for nD grids.
 
-    Uses sequential (Lie) dimensional splitting with an implicit Crank-Nicolson
-    solve in each direction, each over the FULL dt:
+    Uses sequential (Lie) dimensional splitting with an implicit solve at ``SL_DIFFUSION_THETA``
+    (backward Euler, #2463) in each direction, each over the FULL dt:
     - For each dimension d, solve implicit 1D diffusion in that direction over dt
     - Each direction is a set of independent 1D tridiagonal solves (unconditionally
       stable)
     - For full tensor diffusion, cross-derivative terms are added explicitly
 
     The per-direction Laplacians commute on a tensor grid (constant-coefficient,
-    separable), so for isotropic diffusion the split is exact up to CN time
-    truncation; each directional solve must carry the full dt (NOT dt/dimension,
+    separable), so for isotropic diffusion the split is exact up to the time truncation of the
+    implicit solve; each directional solve must carry the full dt (NOT dt/dimension,
     which would apply only 1/dimension of the prescribed diffusion).
 
     For 2D with isotropic σ² (α = (σ²/2) dt / dx²):
@@ -301,7 +309,7 @@ def adi_diffusion_step(
         # α_d = D_d * dt / dx_d², D_d = σ_d²/2 (Issue #811, single source).
         dx_d = spacing[d]
         alpha_d = diffusion_from_volatility(sigma_vec[d]) * dt / dx_d**2
-        theta = 0.5  # Crank-Nicolson parameter
+        theta = SL_DIFFUSION_THETA
 
         # Apply implicit solve along dimension d
         U_current = solve_1d_diffusion_along_axis(U_current, d, alpha_d, theta, bc_type)
@@ -457,7 +465,7 @@ def solve_1d_diffusion_along_axis(
         U: Solution array, shape (N1, N2, ..., Nd)
         axis: Dimension along which to apply diffusion (0, 1, ..., d-1)
         alpha: Diffusion parameter alpha = (sigma^2/2) * dt / dx^2
-        theta: Implicitness parameter (0.5 = Crank-Nicolson)
+        theta: Implicitness parameter (0.5 = Crank-Nicolson, 1 = backward Euler)
         bc_type: 'neumann' (default) or 'periodic'
 
     Returns:
@@ -502,7 +510,7 @@ def solve_1d_diffusion_along_axis(
     #
     # The two must not diverge, and the reason is the CALLER, not this module: `adi_diffusion_step`
     # below sweeps every axis through here unconditionally and never reaches
-    # `solve_crank_nicolson_diffusion_1d`, while `HJBSemiLagrangianSolver._adi_diffusion_step`
+    # `solve_implicit_diffusion_1d`, while `HJBSemiLagrangianSolver._adi_diffusion_step`
     # routes d == 1 to that routine and d >= 2 to this one. So one solver reaches both walls
     # depending only on the dimension of the problem it was handed.
     st = neumann_cn_stencil(alpha, treatment="mirror", theta=theta)
@@ -598,9 +606,9 @@ def _solve_periodic_lines(
     theta: float,
     alpha: float,
 ) -> np.ndarray:
-    """Crank-Nicolson along the last axis of ``U_lines``, over genuinely distinct periodic DOFs.
+    """The theta-scheme along the last axis of ``U_lines``, over genuinely distinct periodic DOFs.
 
-    The nD twin of :func:`_crank_nicolson_periodic_distinct`: every entry here is its own degree
+    The nD twin of :func:`_implicit_diffusion_periodic_distinct`: every entry here is its own degree
     of freedom and the wrap between the first and last is real, because the caller has already
     removed the duplicated endpoint (Issue #1820).
     """
@@ -699,18 +707,18 @@ if __name__ == "__main__":
     """Smoke test for ADI diffusion methods."""
     print("Testing ADI diffusion methods...")
 
-    # Test 1: 1D Crank-Nicolson
-    print("\n1. Testing 1D Crank-Nicolson diffusion...")
+    # Test 1: 1D implicit diffusion
+    print("\n1. Testing 1D implicit diffusion...")
     x_grid = np.linspace(0, 1, 51)
     U_test = np.exp(-50 * (x_grid - 0.5) ** 2)
 
-    U_diffused = solve_crank_nicolson_diffusion_1d(U_test, dt=0.01, volatility=0.1, x_grid=x_grid)
+    U_diffused = solve_implicit_diffusion_1d(U_test, dt=0.01, volatility=0.1, x_grid=x_grid)
 
     assert U_diffused.shape == U_test.shape
     assert not np.any(np.isnan(U_diffused))
     assert U_diffused.max() < U_test.max()  # Diffusion smooths peak
     print(f"   Peak: {U_test.max():.4f} -> {U_diffused.max():.4f}")
-    print("   1D Crank-Nicolson: OK")
+    print("   1D implicit diffusion: OK")
 
     # Test 2: 2D ADI diffusion (isotropic)
     print("\n2. Testing 2D ADI diffusion (isotropic)...")
@@ -786,9 +794,7 @@ if __name__ == "__main__":
     x_periodic = np.linspace(0, 1, 51)
     # Sinusoidal initial condition (compatible with periodic BC)
     U_sin = np.sin(2 * np.pi * x_periodic)
-    U_sin_diffused = solve_crank_nicolson_diffusion_1d(
-        U_sin, dt=0.01, volatility=0.1, x_grid=x_periodic, bc_type="periodic"
-    )
+    U_sin_diffused = solve_implicit_diffusion_1d(U_sin, dt=0.01, volatility=0.1, x_grid=x_periodic, bc_type="periodic")
     assert U_sin_diffused.shape == U_sin.shape
     assert not np.any(np.isnan(U_sin_diffused))
     # Diffusion should reduce amplitude of sinusoidal

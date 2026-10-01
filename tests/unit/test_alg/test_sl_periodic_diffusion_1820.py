@@ -4,7 +4,7 @@ Oracle: for `u(0, x) = sin(k x)` on a periodic domain, diffusion with coefficien
 `u(t, x) = exp(-D k^2 t) sin(k x)` exactly. Computed independently of the scheme, so it stays
 discriminating no matter how the SL family is later consolidated.
 
-This is here because the **seam alone was not enough**. `_crank_nicolson_periodic_1d` wrapped all
+This is here because the **seam alone was not enough**. `_implicit_diffusion_periodic_1d` wrapped all
 `N` nodes -- taking `U[N-1]` as node 0's left neighbour -- while `TensorProductGrid` is
 endpoint-inclusive, so those two entries are the same physical point and the stencil reached a
 neighbour at distance 0 instead of `dx`. The symptom is a lost order, not divergence: max error against the kernel was `1.19e-01` at
@@ -21,7 +21,7 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import solve_crank_nicolson_diffusion_1d
+from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import SL_DIFFUSION_THETA, solve_implicit_diffusion_1d
 from mfgarchon.geometry.boundary.invariants import seam
 
 SIGMA = 0.3
@@ -33,7 +33,7 @@ K = 2 * np.pi
 def _run(nx: int):
     x = np.linspace(0.0, 1.0, nx)
     u0 = np.sin(K * x)
-    out = solve_crank_nicolson_diffusion_1d(u0.copy(), DT, SIGMA, x, bc_type="periodic")
+    out = solve_implicit_diffusion_1d(u0.copy(), DT, SIGMA, x, bc_type="periodic")
     exact = np.exp(-D * K * K * DT) * u0
     return out, exact
 
@@ -42,7 +42,7 @@ def test_the_periodic_step_matches_the_analytic_heat_kernel():
     """The mode decays by exp(-D k^2 t), and nothing else about it changes."""
     out, exact = _run(21)
     assert np.abs(out - exact).max() < 5e-3, (
-        "periodic Crank-Nicolson does not reproduce the analytic decay of a single Fourier mode"
+        "periodic implicit diffusion does not reproduce the analytic decay of a single Fourier mode"
     )
 
 
@@ -53,14 +53,18 @@ def test_the_spatial_order_is_second_not_first():
     first version of this test did, and it is why reverting the fix did not fire it. The observed
     rate separates them: wrapped-N measures ~1.0, the correct DOF count ~2.0.
     """
-    dt_small = 1e-4  # push temporal error below the spatial one so the rate is the spatial rate
+    # Against the mode's factor under one theta-step with the Laplacian taken exactly, so the error is
+    # spatial alone. Against exp(-D k^2 dt), backward Euler's time error measured 1.83 / 1.47 here (#2463).
+    dt_small = 1e-4
+    z = D * K * K * dt_small
+    g = (1.0 - (1.0 - SL_DIFFUSION_THETA) * z) / (1.0 + SL_DIFFUSION_THETA * z)
     rates = []
     prev = None
     for n in (41, 81, 161):
         x = np.linspace(0.0, 1.0, n)
         u0 = np.sin(K * x)
-        out = solve_crank_nicolson_diffusion_1d(u0.copy(), dt_small, SIGMA, x, bc_type="periodic")
-        err = float(np.abs(out - np.exp(-D * K * K * dt_small) * u0).max())
+        out = solve_implicit_diffusion_1d(u0.copy(), dt_small, SIGMA, x, bc_type="periodic")
+        err = float(np.abs(out - g * u0).max())
         if prev is not None:
             rates.append(np.log2(prev / err))
         prev = err
@@ -78,11 +82,11 @@ def test_a_constant_is_unchanged():
     reaches the wrong neighbour, since every interior row must sum its off-diagonals to the
     diagonal for this to hold."""
     x = np.linspace(0.0, 1.0, 21)
-    out = solve_crank_nicolson_diffusion_1d(np.full(21, 2.5), DT, SIGMA, x, bc_type="periodic")
+    out = solve_implicit_diffusion_1d(np.full(21, 2.5), DT, SIGMA, x, bc_type="periodic")
     np.testing.assert_allclose(out, 2.5, atol=1e-12)
 
 
 def test_too_few_nodes_is_refused():
     """Two nodes on an endpoint-inclusive periodic grid is one degree of freedom, not a domain."""
     with pytest.raises(ValueError, match="at least 3 nodes"):
-        solve_crank_nicolson_diffusion_1d(np.array([1.0, 1.0]), DT, SIGMA, np.array([0.0, 1.0]), bc_type="periodic")
+        solve_implicit_diffusion_1d(np.array([1.0, 1.0]), DT, SIGMA, np.array([0.0, 1.0]), bc_type="periodic")
