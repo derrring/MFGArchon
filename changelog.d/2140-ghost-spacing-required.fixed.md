@@ -11,6 +11,6 @@
     - **At σ = 0 with characteristics leaving the domain (A = −0.3)**, all four now converge with the exact data: 0.120 → 0.060 → 0.030. The default path read 0.67 → 0.62.
     - **canonical-CS** does not read g at all, and **2-D DPP** drops it (U equal to the no-flux U, #2462's review).
     - **With diffusion (σ = 0.2)**, the default path falls at coarse grids (A = +0.3: 0.68 → 0.04 at 21 points), but it still grows with refinement (0.04 → 0.12 → 0.19).
-    - **The stochastic path is worse at finer grids than before** (A = −0.3: 0.280 / 0.214 / 0.194 before, 0.203 / 0.559 / 0.819 now). With diffusion the diffusion step and the reflected feet impose zero, so no path solves with g there (#1936).
-  - **Homogeneous Neumann and no-flux do not change:** a zero value multiplies the spacing by zero. A homogeneous **Robin** ghost does change, but neither HJB solver accepts Robin.
+    - **The stochastic path is worse at finer grids than before** (A = −0.3: 0.280 / 0.214 / 0.194 before, 0.203 / 0.559 / 0.819 now). With diffusion the diffusion step and the reflected feet impose zero, and none of the four paths measured solves with g there (#1936).
+  - **Homogeneous Neumann and no-flux do not change:** a zero value multiplies the spacing by zero. A homogeneous **Robin** ghost does change, but no solver that reaches these call sites accepts Robin.
   - The docstring example's stated output, `[2.0, 1.0, 2.0, 3.0, 2.0]`, was not what the function returns: it returns `[1.0, 1.0, 2.0, 3.0, 3.0]`, a ghost that copies the wall node (#1935).
