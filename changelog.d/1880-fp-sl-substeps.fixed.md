@@ -1,4 +1,4 @@
-- **The semi-Lagrangian pair no longer amplifies asymmetry when a step's CFL number exceeds 1 (#1880).**
+- **The semi-Lagrangian pair no longer amplifies asymmetry when a step's CFL number exceeds 1 (#1880)**, at the default `cfl_target`.
   - **The symptom:** on a reflection-symmetric problem (the capability matrix's smoke fixture, where the FP half's CFL number per step has a median of 5 and a maximum of 11), SL_LINEAR's coupled Picard map amplified a seeded antisymmetric perturbation ~3.3x per sweep, where upwind FD damps it at 0.89. Picard did not converge, and the density ended against one wall.
   - **The cause:** the two halves structured a step differently. The HJB half cut it into sub-steps; `FPSLSolver` made one forward splat of many cells.
   - **The fix:** `FPSLSolver` now sub-steps exactly when its HJB half does (`HJBSemiLagrangianSolver.substeps_characteristics`), through the function both share, `cfl_substeps`. Each half measures the CFL number on its own velocity and time level. On the fixture the perturbation now decays at 0.98 per sweep, and SL_LINEAR converges in 43 sweeps, symmetric to round-off.

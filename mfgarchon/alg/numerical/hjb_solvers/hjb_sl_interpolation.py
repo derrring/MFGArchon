@@ -201,8 +201,8 @@ def sl_backend(method: str, dimension: int, *, monotone_required: bool) -> str:
     ``U = [0, 10, 0, 10, 0]`` at ``x = 0.30``, ``interpolation_method="cubic"`` produced
     ``7.68`` through ``CubicSpline(bc_type="not-a-knot")`` and ``8.96`` through
     ``PchipInterpolator`` -- and which one ran was decided **per timestep**, because
-    ``_compute_cfl_and_substeps`` sends a CFL<=1 step down the batch path and a CFL>1 step down
-    the pointwise path. One solve at Nx=41, Nt=8 built 7 of the first and 81 of the second.
+    ``_compute_cfl_and_substeps`` sends an unsplit step down the batch path and a sub-stepped one
+    down the pointwise path. One solve at Nx=41, Nt=8 built 7 of the first and 81 of the second.
 
     ``monotone_required`` is a real distinction, not a fork, and is why this takes a policy
     rather than hardcoding a ladder. The Carlini-Silva 2014 stability proof covers monotone

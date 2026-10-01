@@ -245,18 +245,21 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             use_jax: Whether to use JAX acceleration (auto-detect if None)
             tolerance: Convergence tolerance for optimization
             max_char_iterations: Maximum iterations for characteristic solving
-            check_cfl: Whether to check CFL condition and issue warnings (default: True).
-                CFL = max|dH/dp| * dt / dx, on the foot velocity (#2439). Warns if CFL > 1.0.
+            check_cfl: Whether to log a warning when a step's foot crosses more than one cell
+                (default: True), CFL = max|dH/dp| * dt / dx on the foot velocity (#2439). Which steps
+                are checked depends on the path; ``_warn_if_step_exceeds_one_cell`` lists them.
             enable_adaptive_substepping: Whether to automatically subdivide time steps
-                when CFL > 1.0 to maintain stability (default: True). When enabled,
+                when CFL > max(1, cfl_target) to maintain stability (default: True). When enabled,
                 the solver will use smaller internal time steps while preserving the
                 overall time discretization.
             max_substeps: Maximum number of substeps per time step when adaptive
                 substepping is enabled (default: 100). A step that needs more is refused
                 with a ValueError, since a capped schedule can run away (#2438).
-            cfl_target: Target CFL number for adaptive substepping (default: 0.9), in (0, 1].
-                When CFL > 1.0, the time step is subdivided so that the crossing *planned* at the
-                step's start is ≤ cfl_target (#2448); the traced feet can exceed it (#2439).
+            cfl_target: Target CFL number for adaptive substepping (default: 0.9). Above 1 it is
+                accepted with a UserWarning that states where it was measured unstable (#2458).
+                When CFL > max(1, cfl_target), the time step is subdivided so that the crossing
+                *planned* at the step's start is ≤ cfl_target (#2448); the traced feet can exceed it
+                (#2439).
             gradient_clip_threshold: Safety threshold for gradient clipping (default: None).
                 If provided, gradients exceeding this threshold will be clipped to prevent
                 overflow in p² terms. Recommended: 1e6 for strong coupling problems.
@@ -843,7 +846,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Returns:
             Tuple of (cfl_number, n_substeps, dt_substep):
                 - cfl_number: The CFL number with the target dt
-                - n_substeps: Number of substeps needed (1 if CFL <= 1.0)
+                - n_substeps: Number of substeps needed (1 if CFL <= max(1, cfl_target))
                 - dt_substep: Time step to use for each substep
         """
         if self.dimension > 1 and np.ndim(u_values) == 1:
@@ -1303,7 +1306,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
             # Compute gradient for optimal control: α* = ∇u
             # Pass timestep and density for gradient clipping monitoring (Issue #583)
-            # A sub-stepping solver reaches this path only with a step the schedule found within one cell.
+            # A sub-stepping solver reaches this path only with a step whose CFL number is at most
+            # max(1, cfl_target), so it skips the per-step warning; above 1 the constructor warned (#2458).
             grad_u = self._compute_gradient(
                 U_next, check_cfl=not self.substeps_characteristics, t_idx=time_idx, m_density=M_next
             )
@@ -2272,7 +2276,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
     @property
     def substeps_characteristics(self) -> bool:
-        """Whether this solver cuts a step whose CFL number exceeds 1 into sub-steps.
+        """Whether this solver cuts a step whose CFL number exceeds max(1, cfl_target) into sub-steps.
 
         Only on a path that traces characteristics, and only when ``enable_adaptive_substepping`` is
         on. The paired ``FPSLSolver`` must match it (#1880): ``_create_sl_pair`` reads it.
@@ -2329,9 +2333,14 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
     ) -> None:
         """The CFL warning, on ``_foot_cfl`` for the step actually taken (``dt``, default ``self.dt``).
 
-        The ADI paths ask for it only when the solver does not sub-step, since the schedule has already
-        bounded a sub-stepping solver's whole step. The stochastic path asks on every (sub-)step, with
-        its own ``dt``: measured on a full ``self.dt`` it fired on every sub-step it had taken (#2449).
+        Which steps ask for it, by path (all only with ``check_cfl`` on):
+        - the operator-splitting paths (adi / explicit / none) on a whole step, only when the solver
+          does not sub-step. A sub-stepping solver runs a step whole only while its CFL number is at
+          most ``max(1, cfl_target)``; above 1 the constructor warned instead (#2458). Never on a
+          sub-step;
+        - the stochastic path on every (sub-)step, with its own ``dt``: measured on a full ``self.dt``
+          it fired on every sub-step it had taken (#2449);
+        - the canonical-CS and DPP paths never.
         """
         if m_density is None or t_idx is None:
             raise TypeError("_compute_gradient(check_cfl=True) needs m_density and t_idx to measure the foot's CFL")

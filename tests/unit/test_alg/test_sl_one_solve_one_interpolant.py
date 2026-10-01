@@ -2,7 +2,7 @@
 
 `interpolation_method="cubic"` names four different interpolants across the SL family, and
 which one runs is decided **per timestep**, not per configuration: `_compute_cfl_and_substeps`
-routes a CFL<=1 timestep to the batch path and a CFL>1 timestep to the pointwise path, and
+routes an unsplit timestep to the batch path and a sub-stepped one to the pointwise path, and
 those two paths build different cubics. Measured on `main` before the consolidation, one solve
 at `Nx=41, Nt=8`, terminal `0.05*exp(-300(x-0.5)^2)`:
 

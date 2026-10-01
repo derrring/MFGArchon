@@ -109,11 +109,12 @@ class TestAnExplicitlySetFieldReachesTheSolver:
         kwargs = hjb_config_to_kwargs(cfg.hjb, NumericalScheme.SL_CUBIC)
         assert kwargs.get("interpolation_method") == value
 
-    @pytest.mark.parametrize("value", [0.5, 1.0, None])
+    @pytest.mark.parametrize("value", [0.5, 1.0, 1.5, None])
     def test_the_sl_cfl_number_asked_for_reaches_both_halves(self, value):
         """It raised NotImplementedError for any non-default value, while its documented default of 0.5
         was never the solver's 0.9 (#2448). A value now reaches the HJB half as cfl_target and the pair
-        factory hands it to the FP half; None, even set explicitly, keeps the solver's own."""
+        factory hands it to the FP half; None, even set explicitly, keeps the solver's own. Above 1 is
+        accepted, with the solvers' warning (#2458)."""
         from mfgarchon.factory.scheme_factory import create_paired_solvers
 
         cfg = MFGSolverConfig()
