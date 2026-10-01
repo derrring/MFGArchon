@@ -13,7 +13,8 @@ inhomogeneous Neumann data (#1936), and with diffusion it did not hold even a co
 records the alternative.
 
 The solver refuses a time-dependent Neumann value (#1936: on no path does it reach every place it must),
-so no accepted boundary condition reaches these reads today. The pin holds the clock an implementation of
+so no boundary condition accepted at construction reaches these reads today; one set on the geometry
+afterwards is not checked again. The pin holds the clock an implementation of
 that data will use, with the refusal lifted for the test; the second test pins the refusal itself.
 
 The pin is an invariant of that clock, not a value. Each read is tagged with the step it belongs to: the

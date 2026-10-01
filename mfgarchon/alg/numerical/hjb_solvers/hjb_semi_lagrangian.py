@@ -189,19 +189,20 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
     #: On no path does a Neumann value g reach every place this solver touches a wall. Depending on the
     #: path it reaches the gradient's ghost cells, an FDMApplicator enforcement, both, or neither
     #: (canonical-CS and n-D DPP solve the no-flux problem); the boundary handling of the departure feet
-    #: and the diffusion step carry no g, and a sub-step's enforcement goes through InterpolationApplicator,
-    #: which drops it (#2141). On u = A (x - 1/2)^2 with its exact data g = A and sigma = 0.2, no path
-    #: measured converged with g under refinement. At sigma = 0 and foot CFL 0.3, the 1-D step converged
-    #: with g at first order under adi, explicit, stochastic and none, and where characteristics leave the
-    #: domain no_flux_bc() did not converge. The refusal gives that result up; it is the first one an
-    #: implementation of #1936 must bring back. Flip this to True in the same change that makes every path
-    #: carry g.
+    #: and the diffusion step carry no g, and an operator-splitting sub-step's enforcement goes through
+    #: InterpolationApplicator, which drops it (#2141). On u = A (x - 1/2)^2 with its exact data g = A and
+    #: sigma = 0.2, no path measured converged with g under refinement. At sigma = 0 the 1-D step converged
+    #: with g at first order in two cases measured: the whole step at foot CFL 0.3, and the stochastic
+    #: path's sub-steps, which enforce through FDMApplicator, at foot CFL up to 2.8. Where characteristics
+    #: leave the domain no_flux_bc() did not converge. The refusal gives those results up; they are the
+    #: first an implementation of #1936 must bring back. Flip this to True in the same change that makes
+    #: every path carry g.
     honors_inhomogeneous_neumann: bool = False
     _inhomogeneous_neumann_gap: str = (
         "The semi-Lagrangian HJB solver does not carry a Neumann value everywhere it touches a wall, on any "
         "path: depending on the path the value reaches the gradient's ghost cells, the FDMApplicator "
         "post-step enforcement, both, or neither. With diffusion, no path measured against an exact solution "
-        "converged with it; without diffusion, a 1-D step with no sub-step did (#1936). Passing g = 0 "
+        "converged with it; without diffusion, some 1-D paths did (#1936). Passing g = 0 "
         "(no_flux_bc()) solves a different problem wherever the value matters."
     )
 
