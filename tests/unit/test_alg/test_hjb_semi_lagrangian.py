@@ -1003,7 +1003,9 @@ class TestStochasticSLUnificationPinning:
         sigma = solver.problem.volatility
         sqrt_dt = float(np.sqrt(dt))
         diffusion_offset = sigma * sqrt_dt
-        grad_u = solver._compute_gradient(U_next, check_cfl=True, t_idx=time_idx, m_density=M_next)
+        grad_u = solver._compute_gradient(
+            U_next, check_cfl=True, t_idx=time_idx, m_density=M_next, time=time_idx * solver.dt
+        )
         # Issue #1413: drift along the characteristic velocity dH/dp = p/lambda (not raw p).
         lam = solver._control_cost_lambda()
         x_drift = solver.x_grid - (grad_u / lam) * dt

@@ -249,7 +249,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 (default: True), CFL = max|dH/dp| * dt / dx on the foot velocity (#2439). Which steps
                 are checked depends on the path; ``_warn_if_step_exceeds_one_cell`` lists them.
             enable_adaptive_substepping: Whether to automatically subdivide time steps
-                when CFL > max(1, cfl_target) to maintain stability (default: True). When enabled,
+                when CFL > max(1, cfl_target) to maintain stability (default: True), on a path that
+                traces characteristics: canonical-CS and DPP never sub-step (``substeps_characteristics``).
+                When enabled,
                 the solver will use smaller internal time steps while preserving the
                 overall time discretization.
             max_substeps: Maximum number of substeps per time step when adaptive
@@ -257,7 +259,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 with a ValueError, since a capped schedule can run away (#2438).
             cfl_target: Target CFL number for adaptive substepping (default: 0.9). Above 1 it is
                 accepted with a UserWarning that states where it was measured unstable (#2458).
-                When CFL > max(1, cfl_target), the time step is subdivided so that the crossing
+                When CFL > max(1, cfl_target) on a sub-stepping path, the time step is subdivided so that the crossing
                 *planned* at the step's start is ≤ cfl_target (#2448); the traced feet can exceed it
                 (#2439).
             gradient_clip_threshold: Safety threshold for gradient clipping (default: None).
@@ -754,6 +756,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         t_idx: int | None = None,
         m_density: np.ndarray | None = None,
         dt: float | None = None,
+        *,
+        time: float,
     ) -> np.ndarray | tuple[np.ndarray, ...]:
         """
         Compute gradient ∇u for optimal control using trait-based geometry operators (Issue #596 Phase 2.1).
@@ -774,6 +778,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             dt: Length of the step the warning measures (default: ``self.dt``)
             t_idx: Current timestep index for gradient clipping monitoring (optional, Issue #583)
             m_density: Density values for gradient clipping correlation analysis (optional, Issue #583)
+            time: The step's time, at which the ghost cells read a time-dependent boundary value. It
+                has no default: the operator's own default is t = 0, which every path used (#2453).
 
         Returns:
             gradient: Gradient array(s), optionally clipped if gradient_clip_threshold is set
@@ -788,7 +794,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         """
         # Get gradient operators from geometry (Issue #596 Phase 2.1)
         # Semi-Lagrangian uses central differences for gradient computation
-        grad_ops = self.problem.geometry.get_gradient_operator(scheme="central")
+        grad_ops = self.problem.geometry.get_gradient_operator(scheme="central", time=time)
 
         if self.dimension == 1:
             # 1D gradient computation via operator
@@ -854,7 +860,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             full = tuple(self._grid_shape)
             shape = full if u_values.size == int(np.prod(full)) else tuple(n - 1 for n in full)
             u_values = u_values.reshape(shape)
-        grad_result = self._compute_gradient(u_values, check_cfl=False)
+        grad_result = self._compute_gradient(u_values, check_cfl=False, time=t)
         cfl = self._foot_cfl(grad_result, m_values, t, dt_target)
 
         # Determine substeps needed
@@ -947,7 +953,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         bc_type = self._get_bc_type_string(bc)
         return (bc_type, bc_type)
 
-    def _enforce_boundary_conditions(self, U: np.ndarray, time: float = 0.0) -> np.ndarray:
+    def _enforce_boundary_conditions(self, U: np.ndarray, time: float) -> np.ndarray:
         """
         Enforce boundary conditions on solution array (dimension-agnostic).
 
@@ -964,7 +970,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Args:
             U: Solution array of shape (Nx,) for 1D, (Nx, Ny) for 2D, etc. Axis 0 is x;
                 measured (5, 13, 7) for Nx_points=[13, 7] (#2235)
-            time: Current time for time-dependent BC values
+            time: The step's time, for a time-dependent boundary value. No default: t = 0 was what
+                every caller that omitted it got (#2453).
 
         Returns:
             Solution with BCs enforced (modified in-place)
@@ -1309,7 +1316,11 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             # A sub-stepping solver reaches this path only with a step whose CFL number is at most
             # max(1, cfl_target), so it skips the per-step warning; above 1 the constructor warned (#2458).
             grad_u = self._compute_gradient(
-                U_next, check_cfl=not self.substeps_characteristics, t_idx=time_idx, m_density=M_next
+                U_next,
+                check_cfl=not self.substeps_characteristics,
+                t_idx=time_idx,
+                m_density=M_next,
+                time=time_idx * self.dt,
             )
 
             # Issue #930: Vectorized advection — batch characteristic tracing + interpolation
@@ -1411,7 +1422,11 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             # Returns tuple of gradient components, each with shape grid_shape
             # Pass timestep and density for gradient clipping monitoring (Issue #583)
             grad_components = self._compute_gradient(
-                U_next_shaped, check_cfl=not self.substeps_characteristics, t_idx=time_idx, m_density=M_next_shaped
+                U_next_shaped,
+                check_cfl=not self.substeps_characteristics,
+                t_idx=time_idx,
+                m_density=M_next_shaped,
+                time=time_idx * self.dt,
             )
 
             # Track errors for diagnostics
@@ -1514,7 +1529,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
             # Compute gradient for optimal control
             # Pass timestep and density for gradient clipping monitoring (Issue #583)
-            grad_u = self._compute_gradient(U_next, check_cfl=False, t_idx=time_idx, m_density=M_next)
+            grad_u = self._compute_gradient(
+                U_next, check_cfl=False, t_idx=time_idx, m_density=M_next, time=time_idx * self.dt
+            )
 
             # Step 1: Advection along characteristics (Issue #1413: λ-scaled foot + Lax-Oleinik)
             U_star = self._advect_pointwise(U_next, M_next, grad_u, time_idx * self.dt, dt)
@@ -1523,7 +1540,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             U_current = self._apply_diffusion(U_star, dt)
 
             # Step 3: Enforce boundary conditions on solution
-            U_current = self._enforce_boundary_conditions(U_current)
+            U_current = self._enforce_boundary_conditions(U_current, time=time_idx * self.dt)
 
             return U_current
 
@@ -1548,7 +1565,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             U_star = np.zeros_like(U_next_shaped)
             # Pass timestep and density for gradient clipping monitoring (Issue #583)
             grad_components = self._compute_gradient(
-                U_next_shaped, check_cfl=False, t_idx=time_idx, m_density=M_next_shaped
+                U_next_shaped, check_cfl=False, t_idx=time_idx, m_density=M_next_shaped, time=time_idx * self.dt
             )
 
             error_count = 0
@@ -1586,7 +1603,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             U_current_shaped = self._apply_diffusion(U_star, dt)
 
             # Enforce boundary conditions (Issue #636 - nD support)
-            U_current_shaped = self._enforce_boundary_conditions(U_current_shaped)
+            U_current_shaped = self._enforce_boundary_conditions(U_current_shaped, time=time_idx * self.dt)
 
             if U_next.ndim == 1:
                 return U_current_shaped.ravel()
@@ -1764,8 +1781,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # --- Per-axis Brownian foot offset c_ax = √d·σ_ax·√dt (Issue #1543, single source) ---
         foot_offset = self._brownian_foot_offset(sqrt_dt)
 
+        t_step = time_idx * self.dt  # the step's time, not n * dt_sub (#2450)
+
         # Optimal control α* = -p where p = ∇u^{n+1}; drift foot x_drift = x − p·dt.
-        grad = self._compute_gradient(U_shaped, check_cfl=True, t_idx=time_idx, m_density=M_shaped, dt=dt)
+        grad = self._compute_gradient(U_shaped, check_cfl=True, t_idx=time_idx, m_density=M_shaped, dt=dt, time=t_step)
         grad_components = (grad,) if d == 1 else grad
 
         # --- Boundary fold for the Brownian feet ---
@@ -1788,7 +1807,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # Issue #1547: ∂H/∂p comes from the Hamiltonian, not a hardcoded p/λ.
         # The step's time, time_idx * self.dt, as the pointwise path and the sub-step schedule use. With
         # the sub-step's dt this read n * dt_sub, which is neither the step's time nor the sub-step's (#2450).
-        t_step = time_idx * self.dt
         vel_flat = self._characteristic_foot_velocity(x_positions_flat, M_shaped.ravel(), p_flat, t_step)
         x_drift_flat = x_positions_flat - vel_flat * dt
 
@@ -1847,7 +1865,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 )
             return U_current
 
-        U_current = self._enforce_boundary_conditions(U_current)
+        U_current = self._enforce_boundary_conditions(U_current, time=t_step)
         return U_current.ravel() if flat_input else U_current
 
     # === Canonical Carlini-Silva SL with implicit-alpha* DPP (Issue #1058) ===
@@ -2250,7 +2268,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 U_star[multi_idx] = result.fun if result.success else self._interpolate_value(U_next_shaped, x_current)
 
             U_current_shaped = self._apply_diffusion(U_star, dt)
-            U_current_shaped = self._enforce_boundary_conditions(U_current_shaped)
+            U_current_shaped = self._enforce_boundary_conditions(U_current_shaped, time=time_idx * self.dt)
 
             return U_current_shaped.ravel() if U_next.ndim == 1 else U_current_shaped
 

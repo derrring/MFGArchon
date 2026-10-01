@@ -1,0 +1,4 @@
+- **The semi-Lagrangian FP half differentiates U with the HJB half's gradient operator (#2439).** `FPSLSolver` used `np.gradient`, which differs at the walls: for U = (x − 1/2)² on 21 points it gave ±0.95 there, against the HJB half's ±0.475. It now uses the geometry's central operator and its boundary ghosts, at the step's time, as the HJB half does.
+  - **What moves:** pair output near the walls. On #1880's fixture (σ = 0.2, 10 sweeps), the largest change in M is 1.3e-2, against a maximum M of 17.
+  - **What does not, at the digits reported:** the OU oracle (1-D 0.0357; 2-D 0.0598 → 0.0599), seeded growth per sweep (0.9821 at σ = 0, 0.9353 at σ = 0.2), and mass drift (round-off).
+  - The halves still differ in the velocity's time level within a step (#2439).

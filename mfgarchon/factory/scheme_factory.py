@@ -260,11 +260,11 @@ def _create_sl_pair(
     Create Semi-Lagrangian HJB-FP solver pair.
 
     Discrete duality (Type A): forward splatting (FP) is the transpose, in the grid's trapezoid inner
-    product, of backward interpolation (HJB) along the same characteristics. The two halves do not yet
-    trace the same characteristics: the FP half uses the velocity of U at the start of a step with
-    ``np.gradient``, the HJB half the gradient of the evolving U with the geometry's operator, which
-    differs at the walls (#2439). The FP half is built to sub-step exactly when the HJB half
-    does.
+    product, of backward interpolation (HJB) along the same characteristics. Both halves differentiate
+    U with the geometry's gradient operator and its boundary ghosts (#2439), but they do not yet trace
+    the same characteristics: the FP half holds the velocity of U at the start of a step over its
+    sub-steps, while the HJB half's sub-steps take theirs from the evolving U (#2439). The FP half is
+    built to sub-step exactly when the HJB half does.
 
     Args:
         problem: MFG problem
