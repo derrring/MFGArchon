@@ -270,9 +270,18 @@ class BaseMFGSolver(ABC):
 
     #: Issue #1686: does this solver apply the *value* attached to a NEUMANN segment, or only
     #: its type? Every FP family currently reads the type and drops the value, so they override
-    #: this to False. Declaring the type without honouring the value is the RFC #1574 class:
+    #: this to False, and so does HJBSemiLagrangianSolver, which on no path carries it everywhere
+    #: (#1936). Declaring the type without honouring the value is the RFC #1574 class:
     #: a declared surface broader than the honoured code, silent in the gap.
     honors_inhomogeneous_neumann: bool = True
+
+    #: Why a solver that sets ``honors_inhomogeneous_neumann = False`` refuses a Neumann value; the gate
+    #: below appends it. Every FP family shares this reason; a solver refusing for another one overrides it.
+    _inhomogeneous_neumann_gap: str = (
+        "On the FP side a Neumann value is a prescribed flux J.n = g, and no FP solver implements an "
+        "inhomogeneous flux wall yet. Use g = 0 (equivalently no_flux_bc()), or a Dirichlet segment if you "
+        "meant a prescribed density."
+    )
 
     #: Declared per solver. `None` means "un-migrated": the gate below no-ops rather than refusing
     #: everything.
@@ -316,8 +325,8 @@ class BaseMFGSolver(ABC):
 
             # Issue #1686: declaring BCType.NEUMANN is not the same as honouring the value
             # attached to it. Every FP solver declares NEUMANN and then reads only the type --
-            # `neumann_bc(value=g)` with g != 0 is applied by the HJB side and silently dropped
-            # by the FP side, so the coupled solve integrates a pair that is not adjoint and
+            # `neumann_bc(value=g)` with g != 0 is applied by an HJB solver that honours it and silently
+            # dropped by the FP side, so the coupled solve integrates a pair that is not adjoint and
             # still reports converged=True. Until the inhomogeneous flux wall exists, refuse the
             # problem rather than solve a different one.
             #
@@ -332,14 +341,11 @@ class BaseMFGSolver(ABC):
                     "a time-dependent value cannot be checked for being identically zero here, "
                     "so it is refused rather than assumed homogeneous; pass 0.0 if it is"
                     if timed
-                    else f"the value(s) {ignored} would be silently discarded"
+                    else f"the value(s) {ignored} would not be honoured"
                 )
                 raise NotImplementedError(
                     f"{type(self).__name__} declares BCType.NEUMANN but honours only the "
-                    f"homogeneous case: {detail} (Issue #1686). On the FP side a Neumann value "
-                    "is a prescribed flux J.n = g, and no FP solver implements an inhomogeneous "
-                    "flux wall yet. Use g = 0 (equivalently no_flux_bc()), or a Dirichlet "
-                    "segment if you meant a prescribed density."
+                    f"homogeneous case: {detail} (Issue #1686). {self._inhomogeneous_neumann_gap}"
                 )
 
         unsupported = requested - set(supported)

@@ -85,7 +85,7 @@ _DECLARES_NOTHING = {
 }
 
 
-#: Every solver that OWNS `honors_inhomogeneous_neumann` refuses an inhomogeneous flux. A `True`
+#: Every solver that OWNS `honors_inhomogeneous_neumann` refuses an inhomogeneous Neumann value. A `True`
 #: here is a live claim the #1686 gate stops enforcing, and nothing else in the tree pins it.
 _HONORS_INHOMOGENEOUS_NEUMANN_OWN = {
     "FPFDMSolver": "False",
@@ -100,6 +100,10 @@ _HONORS_INHOMOGENEOUS_NEUMANN_OWN = {
     "FPParticleSolver": "False",
     "FPSLJacobianSolver": "False",
     "FPSLSolver": "False",
+    # Joined 2026-10-01 (#1936), the first HJB solver to. On no path does a Neumann value reach every
+    # place it touches a wall, and on an exact solution with sigma = 0.2 no path measured converged with
+    # g, so it refuses the value.
+    "HJBSemiLagrangianSolver": "False",
 }
 
 
@@ -203,12 +207,13 @@ def test_the_permissive_default_is_still_claimed_by_inheritance(declarations):
         if field in r["inherited"] and r["inherited"][field]["from"] != "BaseMFGSolver"
     }
 
-    # 7 since #2294 moved FPFEMSolver from inherited-True to own-False; see the comment on
-    # _HONORS_INHOMOGENEOUS_NEUMANN_OWN above, which is where the reason lives.
-    assert len(owners) == 7, f"solvers stating it themselves: {sorted(owners)}"
-    # 17, the exact complement of the 7 above: FPFEMSolver left the inherited set in the same
-    # change that added it to the owned one (#2294). These two counts must move together.
-    assert len(from_base) == 17, f"solvers claiming True by the permissive default: {sorted(from_base)}"
+    # 8 since #1936 moved HJBSemiLagrangianSolver from inherited-True to own-False (7 since #2294
+    # moved FPFEMSolver); see the comment on _HONORS_INHOMOGENEOUS_NEUMANN_OWN above, which is where
+    # the reasons live.
+    assert len(owners) == 8, f"solvers stating it themselves: {sorted(owners)}"
+    # 16, the exact complement of the 8 above: each solver left the inherited set in the same change
+    # that added it to the owned one (#2294, #1936). These two counts must move together.
+    assert len(from_base) == 16, f"solvers claiming True by the permissive default: {sorted(from_base)}"
     assert set(from_base.values()) == {"True"}
     assert from_sibling == {}, (
         f"a solver now inherits {field} from a non-base parent: {from_sibling}. That is the second "

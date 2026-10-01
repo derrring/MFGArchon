@@ -186,6 +186,26 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
     # absorbing are silently collapsed to Neumann on the default path, so they fail loud here.
     _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN, BCType.PERIODIC})
 
+    #: On no path does a Neumann value g reach every place this solver touches a wall. Depending on the
+    #: path it reaches the gradient's ghost cells, an FDMApplicator enforcement, both, or neither
+    #: (canonical-CS and n-D DPP solve the no-flux problem); the boundary handling of the departure feet
+    #: and the diffusion step carry no g, and an operator-splitting sub-step's enforcement goes through
+    #: InterpolationApplicator, which drops it (#2141). On u = A (x - 1/2)^2 with its exact data g = A and
+    #: sigma = 0.2, no path measured converged with g under refinement. At sigma = 0, where characteristics
+    #: leave the domain, the 1-D step converged with g at first order in two cases measured, and
+    #: no_flux_bc() did not: the whole step at foot CFL 0.3, and the stochastic path's sub-steps, which
+    #: enforce through FDMApplicator, at foot CFL up to 2.8. The refusal gives those results up; they are the
+    #: first an implementation of #1936 must bring back. Flip this to True in the same change that makes
+    #: every path carry g.
+    honors_inhomogeneous_neumann: bool = False
+    _inhomogeneous_neumann_gap: str = (
+        "The semi-Lagrangian HJB solver does not carry a Neumann value everywhere it touches a wall, on any "
+        "path: depending on the path the value reaches the gradient's ghost cells, the FDMApplicator "
+        "post-step enforcement, both, or neither. With diffusion, no path measured against an exact solution "
+        "converged with it; without diffusion, some 1-D paths did (#1936). Passing g = 0 "
+        "(no_flux_bc()) solves a different problem wherever the value matters."
+    )
+
     def __init__(
         self,
         problem: MFGProblem,

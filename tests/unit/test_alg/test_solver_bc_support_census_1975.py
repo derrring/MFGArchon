@@ -68,7 +68,7 @@ _GATED = {
     "HJBWENOSolver": {"NEUMANN", "NO_FLUX", "PERIODIC"},
 }
 
-#: Declares nothing, so `_validate_bc_support` no-ops on it (`base_solver.py:282`). #1977.
+#: Declares nothing, so `BaseMFGSolver._validate_bc_support` (`mfgarchon/alg/base_solver.py`) no-ops on it. #1977.
 _UNGATED = {
     "FPNetworkSolver",
     "MeshlessGalerkinFPSolver",
@@ -184,6 +184,9 @@ def test_the_permissive_default_is_claimed_by_inheritance():
         "FPParticleSolver",
         "FPSLJacobianSolver",
         "FPSLSolver",
+        # Issue #1936: the first HJB solver to state it, False. On no path does a Neumann value reach
+        # every place it touches a wall, and with diffusion no path measured converged with g.
+        "HJBSemiLagrangianSolver",
     }
     # `FPSLSolver` was here as the parent of `FPSLAdjointSolver`, the one solver that inherited
     # this from a sibling rather than the base. #2343 removed that alias, so every remaining
