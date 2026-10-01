@@ -48,7 +48,9 @@ from mfgarchon.utils.pde_coefficients import (
 
 from .base_hjb import BaseHJBSolver
 from .hjb_sl_adi import (
+    DEFAULT_DIFFUSION_THETA,
     adi_diffusion_step,
+    check_diffusion_theta,
     solve_implicit_diffusion_1d,
 )
 from .hjb_sl_characteristics import (
@@ -226,6 +228,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         enable_gradient_monitoring: bool = True,
         ode_rtol: float = 1e-6,
         ode_atol: float = 1e-8,
+        diffusion_theta: float = DEFAULT_DIFFUSION_THETA,
     ):
         """
         Initialize semi-Lagrangian HJB solver.
@@ -293,6 +296,11 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 Default 1e-6.
             ode_atol: Absolute tolerance for scipy.solve_ivp when characteristic_solver='rk4'.
                 Default 1e-8.
+            diffusion_theta: The theta of the implicit diffusion step on the ``adi`` path, in [0.5, 1]:
+                0.5, Crank-Nicolson (default), is second order in time and keeps a non-negative field
+                non-negative only up to diffusion number D dt / dx^2 = 1; 1, backward Euler, keeps it at
+                every step and is first order (#2463). The pair factory hands it to the FP half, whose
+                density needs it most.
         """
         super().__init__(problem)
         self.hjb_method_name = "Semi-Lagrangian"
@@ -311,6 +319,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         check_substep_settings(cfl_target, max_substeps)
         self.max_substeps = max_substeps
         self.cfl_target = cfl_target
+        self.diffusion_theta = check_diffusion_theta(diffusion_theta)
         self.ode_rtol = ode_rtol
         self.ode_atol = ode_atol
 
@@ -2874,7 +2883,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
     def _solve_implicit_diffusion_1d(self, U_star: np.ndarray, dt: float, volatility: float) -> np.ndarray:
         """
-        Solve the diffusion step implicitly, backward Euler (#2463).
+        Solve the diffusion step implicitly, at this solver's ``diffusion_theta``.
 
         Delegates to hjb_sl_adi.solve_implicit_diffusion_1d.
 
@@ -2894,7 +2903,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             # computed twice, so the mean is the identification.
             U_star = U_star.copy()
             enforce_periodic_value_nd(U_star, axis=0)
-        return solve_implicit_diffusion_1d(U_star, dt, volatility, self.x_grid, bc_type=bc_op)
+        return solve_implicit_diffusion_1d(
+            U_star, dt, volatility, self.x_grid, bc_type=bc_op, theta=self.diffusion_theta
+        )
 
     def _source_increment(self, source_term, points, t: float, grid_shape) -> np.ndarray:
         """Evaluate the MMS forcing ``S(t, x)`` on the grid and shape it like the value array.
@@ -2953,6 +2964,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             self.dx,
             tuple(self._grid_shape),
             bc_type=bc_op,
+            theta=self.diffusion_theta,
         )
 
     def _apply_diffusion(self, U_star: np.ndarray, dt: float) -> np.ndarray:

@@ -13,7 +13,7 @@ reading the code, which had already produced three wrong conclusions:
     fp_semi_lagrangian (FPSLJacobianSolver, inline)       2.72e-02     no  (0.972 to 1.027)
 
 at N = 7, sigma = 0.4, dt = 0.01, alpha = 0.0288, all at theta = 0.5. The first row was named
-`solve_crank_nicolson_diffusion_1d` until #2463 moved the SL pair to theta = 1. `adjoint.operators.build_diffusion_matrix_2d` is
+`solve_crank_nicolson_diffusion_1d` until #2463 made theta a parameter of the SL pair. `adjoint.operators.build_diffusion_matrix_2d` is
 the sixth and is not in that table: the census probed the 1D path, so a 2D assembly carrying its
 own copy of the same wall was invisible to it. It was found afterwards by sweeping the tree for a
 `dt/dx^2` expression beside a tridiagonal assembly, with the five above as the control.

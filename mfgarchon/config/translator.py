@@ -314,6 +314,10 @@ def _map_sl_to_hjb_kwargs(sl_cfg: Any, kwargs: dict[str, Any]) -> None:
         # The pair factory hands the HJB half's cfl_target to the FP half (#1880, #2448).
         kwargs["cfl_target"] = sl_cfg.cfl_number
 
+    if "diffusion_theta" in sl_cfg.model_fields_set and sl_cfg.diffusion_theta is not None:
+        # The pair factory hands the HJB half's diffusion_theta to the FP half (#2463).
+        kwargs["diffusion_theta"] = sl_cfg.diffusion_theta
+
 
 # ---------------------------------------------------------------------------
 # FP translator

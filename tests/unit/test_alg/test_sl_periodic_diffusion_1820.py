@@ -21,7 +21,7 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import SL_DIFFUSION_THETA, solve_implicit_diffusion_1d
+from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import solve_implicit_diffusion_1d
 from mfgarchon.geometry.boundary.invariants import seam
 
 SIGMA = 0.3
@@ -42,7 +42,7 @@ def test_the_periodic_step_matches_the_analytic_heat_kernel():
     """The mode decays by exp(-D k^2 t), and nothing else about it changes."""
     out, exact = _run(21)
     assert np.abs(out - exact).max() < 5e-3, (
-        "periodic implicit diffusion does not reproduce the analytic decay of a single Fourier mode"
+        "periodic Crank-Nicolson does not reproduce the analytic decay of a single Fourier mode"
     )
 
 
@@ -53,18 +53,14 @@ def test_the_spatial_order_is_second_not_first():
     first version of this test did, and it is why reverting the fix did not fire it. The observed
     rate separates them: wrapped-N measures ~1.0, the correct DOF count ~2.0.
     """
-    # Against the mode's factor under one theta-step with the Laplacian taken exactly, so the error is
-    # spatial alone. Against exp(-D k^2 dt), backward Euler's time error measured 1.83 / 1.47 here (#2463).
-    dt_small = 1e-4
-    z = D * K * K * dt_small
-    g = (1.0 - (1.0 - SL_DIFFUSION_THETA) * z) / (1.0 + SL_DIFFUSION_THETA * z)
+    dt_small = 1e-4  # push temporal error below the spatial one so the rate is the spatial rate
     rates = []
     prev = None
     for n in (41, 81, 161):
         x = np.linspace(0.0, 1.0, n)
         u0 = np.sin(K * x)
         out = solve_implicit_diffusion_1d(u0.copy(), dt_small, SIGMA, x, bc_type="periodic")
-        err = float(np.abs(out - g * u0).max())
+        err = float(np.abs(out - np.exp(-D * K * K * dt_small) * u0).max())
         if prev is not None:
             rates.append(np.log2(prev / err))
         prev = err

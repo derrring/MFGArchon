@@ -1,0 +1,17 @@
+- **`diffusion_theta`: the SL pair's diffusion step is a θ-scheme you choose (#2463).** Set it with `HJBSemiLagrangianSolver(diffusion_theta=...)`, `FPSLSolver(diffusion_theta=...)` or `SLConfig(diffusion_theta=...)`, in [0.5, 1]. `create_paired_solvers` hands the HJB half's value to the FP half. The default stays Crank–Nicolson (0.5).
+  - **Why it is a choice and not a fix.**
+    - Crank–Nicolson is second order in time, and keeps a density non-negative only up to diffusion number D·dt/dx² = 1.
+    - Backward Euler (1.0) keeps it non-negative at every step, and is first order.
+    - No linear scheme does both (Bolley & Crouzeix, *RAIRO Anal. Numér.* 12(3), 1978, Theorems 1–3).
+  - **Measured, FP half alone, drift-free,** 801 points, against 2 + e^(−Dπ²t)·cos πx. At Nt = 40 the error is 2.8e-5 for Crank–Nicolson and 5.5e-3 for backward Euler (EOC 2.0 and 1.0).
+  - **Measured, #2463's attractive problem at σ = 0.5,** over 15 configurations (κ ∈ {0, 0.25, 1}, five (Nx, Nt) pairs). At the default, 5 stop on the FP positivity clip, at diffusion numbers from 2.5 up. At `diffusion_theta=1.0`, all 15 converge and the FP density never goes negative.
+  - **The positivity clip names the parameter.** When a diffusion step is what went negative, the message gives that step's diffusion number and `diffusion_theta=1.0`. It also lists the other causes it can have: cubic/quintic splatting, and a `source_term` that removes more mass than a node holds.
+  - **The FP half's periodic 1-D path now passes its result through that clip,** as its no-flux and n-D paths already did. It zeroes round-off negatives and stops on larger ones, which it used to return. Every other path computes at the default exactly what it did.
+  - **Renamed, none of them exported:**
+    - `solve_crank_nicolson_diffusion_1d` → `solve_implicit_diffusion_1d`
+    - `_crank_nicolson_periodic_1d` → `_implicit_diffusion_periodic_1d`
+    - `_crank_nicolson_periodic_distinct` → `_implicit_diffusion_periodic_distinct`
+    - `HJBSemiLagrangianSolver._solve_crank_nicolson_diffusion` → `_solve_implicit_diffusion_1d`
+  - **Not changed:**
+    - The deprecated `FPSLJacobianSolver` (#1756) keeps Crank–Nicolson and takes no θ.
+    - The HJB `stochastic`, `canonical_cs`, `none` and `explicit` paths do not use this step.

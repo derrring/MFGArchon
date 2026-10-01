@@ -25,11 +25,7 @@ import numpy as np
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.adjoint.operators import build_diffusion_matrix, build_diffusion_matrix_2d
 from mfgarchon.alg.numerical.fp_solvers import FPSLSolver
-from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import (
-    SL_DIFFUSION_THETA,
-    adi_diffusion_step,
-    solve_implicit_diffusion_1d,
-)
+from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import adi_diffusion_step, solve_implicit_diffusion_1d
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
@@ -51,16 +47,11 @@ _ZERO_COUPLING_HAMILTONIAN = SeparableHamiltonian(
 
 
 def _heat_eoc(stepper, levels=(21, 41, 81, 161), dims: int = 1) -> tuple[list[float], list[float]]:
-    """L-inf error and EOC against ``g(D pi^2 dt)^(dims * NSTEP) prod cos(pi x_k)``, computed analytically.
+    """L-inf error and EOC against ``exp(-D k^2 pi^2 t) prod cos(pi x_k)``, computed analytically.
 
     That mode has zero normal derivative on every wall, so it is admissible under no-flux and the
     scheme is measured against a solution it should reproduce exactly in the limit -- no reference
     run, no other solver, nothing that moves when the SL family is reorganised (#2238).
-
-    ``g(z) = (1 - (1 - theta) z) / (1 + theta z)`` is what one theta-step does to that mode with the
-    Laplacian taken exactly, once per axis under the Lie split. Comparing against it rather than
-    ``exp(-D k^2 pi^2 t)`` leaves the spatial error alone, which is what these tests read. Against the
-    exponential, backward Euler's O(dt) floor at a fixed 200 steps read as EOC 1.81 / 1.43 / 0.80 (#2463).
     """
     errors = []
     for n in levels:
@@ -69,9 +60,7 @@ def _heat_eoc(stepper, levels=(21, 41, 81, 161), dims: int = 1) -> tuple[list[fl
         u = np.ones_like(mesh[0])
         for g in mesh:
             u = u * np.cos(np.pi * g)
-        z = D * np.pi**2 * (T_END / NSTEP)
-        g = (1.0 - (1.0 - SL_DIFFUSION_THETA) * z) / (1.0 + SL_DIFFUSION_THETA * z)
-        exact = g ** (dims * NSTEP) * u.copy()
+        exact = np.exp(-D * dims * np.pi**2 * T_END) * u.copy()
         for _ in range(NSTEP):
             u = stepper(u, T_END / NSTEP, x)
         errors.append(float(np.max(np.abs(u - exact))))

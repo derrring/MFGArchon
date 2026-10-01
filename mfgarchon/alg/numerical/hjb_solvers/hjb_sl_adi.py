@@ -8,7 +8,7 @@ The diffusion equation solved is:
     ∂u/∂t = σ²/2 Δu
 
 Methods:
-- 1D: an implicit theta-scheme at ``SL_DIFFUSION_THETA``, backward Euler (#2463)
+- 1D: an implicit theta-scheme, Crank-Nicolson unless the solver's ``diffusion_theta`` says otherwise
 - nD: sequential (Lie) splitting, the same implicit solve along each axis over the full dt, with
   optional full tensor support
 
@@ -36,12 +36,24 @@ from scipy.linalg import solve_banded
 from mfgarchon.utils.numerical.implicit_diffusion import NeumannCNStencil, neumann_cn_stencil, neumann_cn_step
 from mfgarchon.utils.pde_coefficients import diffusion_from_volatility, validate_symmetric_psd
 
-#: The theta of every semi-Lagrangian diffusion step, in both halves of the pair: 1, backward Euler
-#: (#2463). Crank-Nicolson (0.5) keeps a density non-negative only up to diffusion number
-#: D dt / dx^2 = 1, and the SL refinement path dt ~ dx raises that number like 1/dx. On an attractive
-#: problem at sigma = 0.5 the FP half's density went negative from 2.5 on. Backward Euler's matrix is
-#: an M-matrix for every step. The SL step is Lie-split with Euler feet, first order in time either way.
-SL_DIFFUSION_THETA = 1.0
+#: The theta both halves of the SL pair take unless asked otherwise: Crank-Nicolson. It is second order in
+#: time, and keeps a non-negative field non-negative only up to diffusion number D dt / dx^2 = 1 (Bolley &
+#: Crouzeix, RAIRO Anal. Numer. 12(3), 1978, Theorem 2). Backward Euler, theta = 1, keeps it at every step
+#: and is first order; no linear scheme does both (their Theorems 1 and 3). Which matters more is the
+#: user's choice (#2463): ``HJBSemiLagrangianSolver(diffusion_theta=...)`` or ``SLConfig.diffusion_theta``,
+#: which the pair factory hands to the FP half.
+DEFAULT_DIFFUSION_THETA = 0.5
+
+
+def check_diffusion_theta(theta: float) -> float:
+    """Return ``theta`` if it is in [1/2, 1]; below 1/2 the theta-step is not unconditionally stable."""
+    theta = float(theta)
+    if not 0.5 <= theta <= 1.0:
+        raise ValueError(
+            f"diffusion_theta must be in [0.5, 1] (0.5 Crank-Nicolson, 1 backward Euler); got {theta}. Below 0.5 "
+            "the diffusion step is not unconditionally stable."
+        )
+    return theta
 
 
 def solve_implicit_diffusion_1d(
@@ -50,9 +62,10 @@ def solve_implicit_diffusion_1d(
     volatility: float,
     x_grid: np.ndarray,
     bc_type: str = "neumann",
+    theta: float = DEFAULT_DIFFUSION_THETA,
 ) -> np.ndarray:
     """
-    Solve the 1D diffusion step implicitly, at ``SL_DIFFUSION_THETA`` (backward Euler, #2463).
+    Solve the 1D diffusion step with an implicit theta-scheme, Crank-Nicolson by default.
 
     Solves: (I - theta*alpha*L) u^n = (I + (1-theta)*alpha*L) u*, alpha = (sigma^2/2) dt / dx^2,
     with L the 1D Laplacian operator.
@@ -65,6 +78,7 @@ def solve_implicit_diffusion_1d(
         bc_type: Boundary condition type for diffusion step.
             'neumann' (default): du/dx = 0 at boundaries.
             'periodic': u(x_min) = u(x_max), wrap-around Laplacian.
+        theta: 0.5 Crank-Nicolson, 1 backward Euler (see ``DEFAULT_DIFFUSION_THETA``).
 
     Returns:
         Solution after implicit diffusion step, shape (Nx,)
@@ -73,7 +87,6 @@ def solve_implicit_diffusion_1d(
 
     # Diffusion coefficient: alpha = D * dt/dx^2, D = sigma^2/2 (Issue #811, single source).
     alpha = diffusion_from_volatility(volatility) * dt / dx**2
-    theta = SL_DIFFUSION_THETA
 
     if bc_type == "periodic":
         return _implicit_diffusion_periodic_1d(U_star, alpha, theta)
@@ -212,12 +225,13 @@ def adi_diffusion_step(
     spacing: np.ndarray,
     grid_shape: tuple[int, ...],
     bc_type: str = "neumann",
+    theta: float = DEFAULT_DIFFUSION_THETA,
 ) -> np.ndarray:
     """
     Apply ADI (Alternating Direction Implicit) diffusion for nD grids.
 
-    Uses sequential (Lie) dimensional splitting with an implicit solve at ``SL_DIFFUSION_THETA``
-    (backward Euler, #2463) in each direction, each over the FULL dt:
+    Uses sequential (Lie) dimensional splitting with an implicit theta-step (``theta``, Crank-Nicolson by
+    default) in each direction, each over the FULL dt:
     - For each dimension d, solve implicit 1D diffusion in that direction over dt
     - Each direction is a set of independent 1D tridiagonal solves (unconditionally
       stable)
@@ -242,6 +256,8 @@ def adi_diffusion_step(
         volatility: SDE volatility σ (the diffusion is D = σ²/2) - scalar, 1D array (diagonal), or 2D array (full tensor)
         spacing: Grid spacing in each dimension, shape (d,)
         grid_shape: Shape of the grid (N1, N2, ..., Nd)
+        bc_type: 'neumann' (default) or 'periodic'
+        theta: 0.5 Crank-Nicolson, 1 backward Euler (see ``DEFAULT_DIFFUSION_THETA``)
 
     Returns:
         Solution after ADI diffusion step, same shape as U_star
@@ -309,8 +325,6 @@ def adi_diffusion_step(
         # α_d = D_d * dt / dx_d², D_d = σ_d²/2 (Issue #811, single source).
         dx_d = spacing[d]
         alpha_d = diffusion_from_volatility(sigma_vec[d]) * dt / dx_d**2
-        theta = SL_DIFFUSION_THETA
-
         # Apply implicit solve along dimension d
         U_current = solve_1d_diffusion_along_axis(U_current, d, alpha_d, theta, bc_type)
 
@@ -447,7 +461,7 @@ def solve_1d_diffusion_along_axis(
     U: np.ndarray,
     axis: int,
     alpha: float,
-    theta: float = 0.5,
+    theta: float,
     bc_type: str = "neumann",
 ) -> np.ndarray:
     """

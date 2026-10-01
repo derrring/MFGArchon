@@ -30,8 +30,9 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_adi import (
-    SL_DIFFUSION_THETA,
+    DEFAULT_DIFFUSION_THETA,
     adi_diffusion_step,
+    check_diffusion_theta,
     solve_implicit_diffusion_1d,
 )
 from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import (
@@ -53,6 +54,7 @@ from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
 from mfgarchon.utils.numerical.implicit_diffusion import neumann_cn_step
 from mfgarchon.utils.pde_coefficients import (
+    diffusion_from_volatility,
     fp_drift_coefficient,
     resolve_volatility_override,
     retired_volatility_keywords,
@@ -83,7 +85,7 @@ class FPSLSolver(BaseFPSolver):
 
     Algorithm (operator splitting):
         1. Advection: Forward trace x_dest = x + α*dt, scatter mass via splatting
-        2. Diffusion: implicit solve, backward Euler (#2463)
+        2. Diffusion: implicit theta-step, Crank-Nicolson unless ``diffusion_theta`` says otherwise
 
     Key Properties:
         - Mass conservation is exact (scatter weights sum to 1)
@@ -133,6 +135,7 @@ class FPSLSolver(BaseFPSolver):
         cfl_target: float = DEFAULT_CFL_TARGET,
         max_substeps: int = DEFAULT_MAX_SUBSTEPS,
         enable_adaptive_substepping: bool = True,
+        diffusion_theta: float = DEFAULT_DIFFUSION_THETA,
     ):
         """
         Initialize Adjoint Semi-Lagrangian FP solver.
@@ -155,6 +158,10 @@ class FPSLSolver(BaseFPSolver):
                 unstable either way round
                 (#1880). ``_create_sl_pair`` does this for you. A step that needs more than
                 ``max_substeps`` is refused with a ValueError (#2438).
+            diffusion_theta: The theta of the implicit diffusion step, in [0.5, 1]. **Pair it with the
+                HJB solver's**; ``_create_sl_pair`` does. 0.5, Crank-Nicolson (default), keeps a density
+                non-negative only up to diffusion number D dt / dx^2 = 1; 1, backward Euler, at every
+                step, at first order in time (#2463).
         """
         super().__init__(problem)
         self.fp_method_name = "Adjoint Semi-Lagrangian"
@@ -179,6 +186,7 @@ class FPSLSolver(BaseFPSolver):
         self.cfl_target = cfl_target
         self.max_substeps = max_substeps
         self.enable_adaptive_substepping = enable_adaptive_substepping
+        self.diffusion_theta = check_diffusion_theta(diffusion_theta)
 
         # Precompute grid parameters (dimension-agnostic)
         self.dt = problem.dt
@@ -289,7 +297,7 @@ class FPSLSolver(BaseFPSolver):
         The Forward SL discretization uses mass splatting instead of interpolation:
             1. Forward trace: x_dest = x + α*dt
             2. Scatter mass to destination cells with linear weights
-            3. Apply diffusion implicitly, backward Euler (#2463)
+            3. Apply diffusion with an implicit theta-step
 
         Args:
             M_initial: Initial density m0(x). Shape: (Nx,)
@@ -458,7 +466,7 @@ class FPSLSolver(BaseFPSolver):
 
         Operator splitting:
             1. Forward advection with splatting (mass-conservative)
-            2. Diffusion, backward Euler with zero-flux BC (#2463)
+            2. Diffusion, an implicit theta-step with zero-flux BC
 
         Args:
             m: Current density, shape (Nx,)
@@ -500,7 +508,7 @@ class FPSLSolver(BaseFPSolver):
         if self.interpolation_method != "linear":
             m_star = self._clip_nonneg(m_star)
 
-        # Step 2: Diffusion, backward Euler (SL_DIFFUSION_THETA, #2463)
+        # Step 2: Diffusion, an implicit theta-step at self.diffusion_theta (#2463)
         # =====================================
         # Issue #1257, 2026-06-10 audit: the diffusion BC must match the advection BC.
         # On a periodic domain the advection step already wraps mass across the seam;
@@ -520,7 +528,11 @@ class FPSLSolver(BaseFPSolver):
             # carry a half weight, so summing would double-count them (Issue #1820).
             m_star = m_star.copy()
             enforce_periodic_value_nd(m_star, axis=0)
-            return solve_implicit_diffusion_1d(m_star, dt, volatility, self.x_grid, bc_type="periodic")
+            m_new = solve_implicit_diffusion_1d(
+                m_star, dt, volatility, self.x_grid, bc_type="periodic", theta=self.diffusion_theta
+            )
+            # The other paths clip after diffusing; this one returned unchecked until #2463.
+            return self._clip_nonneg(m_new, diffusion_number=self._diffusion_number(volatility, dt, self.dx))
 
         # Zero-flux path. Issue #708 recorded this stencil as an FV choice specific to this
         # solver -- "the standard ghost-point strong-form method breaks the integral of m". #2237
@@ -540,10 +552,10 @@ class FPSLSolver(BaseFPSolver):
         # #2243 applied the correction. On #2237's own MMS this one parameter was the whole gap:
         # 1.989e-03 -> 2.806e-05, landing exactly on `FPSLJacobianSolver`, which has had `mirror`
         # all along. The sigma=0 control is unchanged at 6.458e-13, so the transport is untouched.
-        m_new = neumann_cn_step(m_star, dt, volatility, self.dx, treatment="mirror", theta=SL_DIFFUSION_THETA)
+        m_new = neumann_cn_step(m_star, dt, volatility, self.dx, treatment="mirror", theta=self.diffusion_theta)
 
         # Ensure non-negativity
-        m_new = self._clip_nonneg(m_new)
+        m_new = self._clip_nonneg(m_new, diffusion_number=self._diffusion_number(volatility, dt, self.dx))
 
         return m_new
 
@@ -646,22 +658,28 @@ class FPSLSolver(BaseFPSolver):
             spacing=self.spacing,
             grid_shape=self.grid_shape,
             bc_type=self._get_diffusion_bc_type(),
+            theta=self.diffusion_theta,
         )
 
         # Ensure non-negativity
-        m_new = self._clip_nonneg(m_new)
+        m_new = self._clip_nonneg(m_new, diffusion_number=self._diffusion_number(volatility, dt, min(self.spacing)))
 
         return m_new
 
-    def _clip_nonneg(self, m: np.ndarray) -> np.ndarray:
+    @staticmethod
+    def _diffusion_number(volatility: float, dt: float, dx: float) -> float:
+        """D dt / dx^2 of a diffusion step, D = sigma^2 / 2 from the single owner (#811)."""
+        return float(diffusion_from_volatility(float(volatility))) * dt / dx**2
+
+    def _clip_nonneg(self, m: np.ndarray, diffusion_number: float | None = None) -> np.ndarray:
         """Clip negative density to zero, warning once per solve if the clip injects
         non-trivial mass.
 
-        Cubic/quintic splatting and the explicit cross terms of a full volatility tensor are not
-        monotone, so the density can undershoot below zero; deleting those undershoots injects
-        positive mass and violates conservation. The diffusion step is backward Euler, whose
-        matrix is an M-matrix for every step (#2463); until #2463 it was Crank-Nicolson, which is
-        not, and went negative from diffusion number 2.5 on an attractive problem.
+        Cubic/quintic splatting is not monotone, a ``source_term`` can remove more mass than a node
+        holds, and a theta-step keeps a density non-negative only up to diffusion number
+        1 / (2 (1 - theta)) -- 1 for Crank-Nicolson, every step for backward Euler. ``diffusion_number``
+        is the step's own, given after a diffusion step, so the message can name it and the parameter
+        that changes it (#2463).
 
         Issue #1683: this warned once per ``solve_fp_system`` and returned the clipped
         density either way, so a diverging solve came back looking healthy -- finite,
@@ -673,15 +691,26 @@ class FPSLSolver(BaseFPSolver):
         The injected/total ratio is grid-quadrature-invariant on a uniform grid, so raw
         sums give the correct fraction -- which is what ``mass_of=None`` asserts.
         """
+        causes = []
+        theta = self.diffusion_theta
+        if diffusion_number is not None and theta < 1.0 and diffusion_number > 1.0 / (2.0 * (1.0 - theta)):
+            causes.append(
+                f"the diffusion step ran at diffusion number D dt / dx^2 = {diffusion_number:.3g}, above the "
+                f"{1.0 / (2.0 * (1.0 - theta)):.3g} up to which a theta-step at diffusion_theta={theta} keeps a "
+                "density non-negative. diffusion_theta=1.0 (backward Euler) keeps it at every step but is first "
+                "order in time; a smaller dt keeps this theta's order (#2463). Set it with "
+                "HJBSemiLagrangianSolver(diffusion_theta=...) or SLConfig(diffusion_theta=...); the pair "
+                "factory hands it to this half"
+            )
+        causes.append(
+            "cubic/quintic splatting is not monotone: use linear interpolation, reduce dt, or coarsen the "
+            "grid -- on this scheme refining can make the departure point span more cells and worsen it"
+        )
+        causes.append("a source_term can remove more mass than a node holds")
         return clip_nonnegative_or_raise(
             m,
             context="FP-SL positivity clip",
-            remedy=(
-                "Cubic/quintic splatting and the explicit cross terms of a full volatility "
-                "tensor are not monotone. Use linear interpolation, reduce dt, or coarsen the "
-                "grid -- on this scheme refining can make the departure point span more cells "
-                "and worsen it."
-            ),
+            remedy="Possible causes: " + "; ".join(causes) + ".",
         )
 
     def _get_solver_type_id(self) -> str | None:
