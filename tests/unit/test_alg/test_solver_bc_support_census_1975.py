@@ -68,7 +68,7 @@ _GATED = {
     "HJBWENOSolver": {"NEUMANN", "NO_FLUX", "PERIODIC"},
 }
 
-#: Declares nothing, so `_validate_bc_support` no-ops on it (`base_solver.py:282`). #1977.
+#: Declares nothing, so `BaseMFGSolver._validate_bc_support` (`mfgarchon/alg/base_solver.py`) no-ops on it. #1977.
 _UNGATED = {
     "FPNetworkSolver",
     "MeshlessGalerkinFPSolver",
