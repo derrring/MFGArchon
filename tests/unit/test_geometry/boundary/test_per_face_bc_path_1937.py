@@ -94,7 +94,7 @@ def _mixed_exit_and_walls(exit_priority: int) -> BoundaryConditions:
 def _walls_carrying_the_dirichlet_ghost(bc: BoundaryConditions) -> int:
     """How many of the four walls came back with `2*7 - 1 = 13`, the Dirichlet ghost."""
     field = np.ones((4, 11))
-    out = np.asarray(FDMApplicator(dimension=2).apply(field, bc))
+    out = np.asarray(FDMApplicator(dimension=2).apply(field, bc, grid_spacing=(0.25, 0.1)))
     walls = [out[0, 1:-1], out[-1, 1:-1], out[1:-1, 0], out[1:-1, -1]]
     return sum(1 for w in walls if np.allclose(w, 13.0))
 
@@ -137,7 +137,7 @@ def test_an_uncovered_face_with_no_default_bc_raises_rather_than_guessing():
     )
 
     with pytest.raises(ValueError, match="default_bc was not"):
-        FDMApplicator(dimension=2).apply(np.ones((4, 11)), bc)
+        FDMApplicator(dimension=2).apply(np.ones((4, 11)), bc, grid_spacing=(0.25, 0.1))
 
 
 @pytest.mark.parametrize(

@@ -284,12 +284,14 @@ class AdvectionOperator(LinearOperator):
         if self.bc is not None:
             from mfgarchon.geometry.boundary import pad_array_with_ghosts
 
-            m_work = pad_array_with_ghosts(m, self.bc, ghost_depth=1, time=self.time)
+            m_work = pad_array_with_ghosts(m, self.bc, ghost_depth=1, time=self.time, spacing=self.spacings)
             # Only the upwind selection reads the ghost velocity's sign; centered keeps the padding it had.
             v_bc = velocity_boundary_conditions(self.bc) if self.scheme == "upwind" else self.bc
             v_work = np.stack(
                 [
-                    pad_array_with_ghosts(self.velocity_field[d], v_bc, ghost_depth=1, time=self.time)
+                    pad_array_with_ghosts(
+                        self.velocity_field[d], v_bc, ghost_depth=1, time=self.time, spacing=self.spacings
+                    )
                     for d in range(self.dimension)
                 ],
                 axis=0,

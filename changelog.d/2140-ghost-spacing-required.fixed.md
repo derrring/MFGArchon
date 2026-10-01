@@ -1,0 +1,13 @@
+- **`pad_array_with_ghosts` no longer builds ghost cells at an assumed spacing of 1.0 (#2140).** Given neither `spacing=` nor a geometry whose `get_grid_spacing()` returns it, it now raises `TypeError`. Before, every ghost formula that reads a boundary value ran at dx = 1.0, so a Neumann or Robin value g was applied as g/h.
+  - **13 production call sites passed neither**, and all now pass the grid's spacing:
+    - the gradient, divergence and advection operators (`TensorProductGrid.get_gradient_operator` among them);
+    - the `tensor_calculus` gradient, divergence, Laplacian, Hessian, advection and tensor-diffusion helpers;
+    - level-set reinitialisation;
+    - `FDMApplicator.apply`, which accepted `grid_spacing` and `domain_bounds` and discarded both. It now forwards them.
+  - `TensorProductGrid` has no `domain_bounds` attribute, so a geometry passed in did not supply a spacing either. The function now reads `geometry.get_grid_spacing()`.
+  - **What it fixes, measured on the semi-Lagrangian HJB** (exact u = A(x − ½)² with its exact Neumann data A, at 21 / 41 / 81 points; error relative to max|u|):
+    - On u = −0.3(x − ½)², the wall gradient read −1.37 / −2.86 / −5.85 against an exact +0.3.
+    - At σ = 0 with characteristics leaving the domain (A = −0.3), every path other than canonical-CS now converges with the exact g: 0.120 → 0.060 → 0.030. The default path read 0.67 → 0.62.
+    - With diffusion (σ = 0.2) the error falls at coarse grids (default path, A = +0.3: 0.68 → 0.04 at 21 points), but it still grows with refinement (0.04 → 0.12 → 0.19). The diffusion step and the reflected feet still impose zero there (#1936).
+  - **Homogeneous conditions do not change:** a zero Neumann value or no-flux multiplies the spacing by zero. The CI-marker suite passes, 4332 tests.
+  - The docstring example's stated output, `[2.0, 1.0, 2.0, 3.0, 2.0]`, was not what the function returns: it returns `[1.0, 1.0, 2.0, 3.0, 3.0]`, a ghost that copies the wall node (#1935).

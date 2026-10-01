@@ -31,7 +31,8 @@ import pytest
 import numpy as np
 
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _compute_gradient_array_1d, _compute_laplacian_1d
-from mfgarchon.geometry.boundary import neumann_bc, no_flux_bc, robin_bc
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, neumann_bc, no_flux_bc, robin_bc
 from mfgarchon.geometry.boundary.applicator_fdm import pad_array_with_ghosts
 
 
@@ -51,18 +52,20 @@ def test_inhomogeneous_neumann_recovers_the_requested_flux_at_every_resolution(n
 
 
 def test_the_fallback_would_diverge_which_is_why_the_spacing_is_threaded():
-    """Control: without spacing the ghost is spacing-independent, so the flux scales as 1/h.
-
-    Asserts the DEFECT is still reachable through the un-threaded call, so the test above is
-    measuring the threading rather than something that was always true.
+    """The un-threaded call used to fall back to dx = 1.0, so the flux scaled as 1/h, and eight
+    production call sites took it (#2140). It is refused now. The control keeps the test above honest:
+    an explicit spacing of 1.0 reproduces the old fallback's ghost and 0.05 does not, so the threading
+    is what the law above measures rather than something that was always true.
     """
     u = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
     bc = neumann_bc(dimension=1, value=2.0)
-    without = pad_array_with_ghosts(u, bc, ghost_depth=1, time=0.0)
+    with pytest.raises(TypeError, match="#2140"):
+        pad_array_with_ghosts(u, bc, ghost_depth=1, time=0.0)
+    at_one = pad_array_with_ghosts(u, bc, ghost_depth=1, time=0.0, spacing=1.0)
     with_small = pad_array_with_ghosts(u, bc, ghost_depth=1, time=0.0, spacing=0.05)
-    assert without[0] == pytest.approx(3.0), "the un-threaded fallback is no longer dx = 1.0"
+    assert at_one[0] == pytest.approx(3.0), "spacing 1.0 no longer gives the old fallback's ghost"
     assert with_small[0] == pytest.approx(1.1), "the threaded call does not use the spacing given"
-    assert without[0] != with_small[0], "spacing makes no difference; the threading is inert"
+    assert at_one[0] != with_small[0], "spacing makes no difference; the threading is inert"
 
 
 @pytest.mark.parametrize("scalar_or_sequence", [0.05, [0.05], (0.05,)])
@@ -88,7 +91,7 @@ def test_zero_flux_is_unaffected_because_it_multiplies_the_spacing_by_zero():
     """
     u = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
     for bc in (no_flux_bc(dimension=1), neumann_bc(dimension=1, value=0.0)):
-        a = pad_array_with_ghosts(u, bc, ghost_depth=1, time=0.0)
+        a = pad_array_with_ghosts(u, bc, ghost_depth=1, time=0.0, spacing=1.0)
         b = pad_array_with_ghosts(u, bc, ghost_depth=1, time=0.0, spacing=0.05)
         np.testing.assert_array_equal(a, b)
 
@@ -166,3 +169,30 @@ def test_the_laplacian_path_threads_its_own_spacings_parameter(h: float, g: floa
     u = np.random.default_rng(7).normal(size=6)
     lap = _compute_laplacian_1d(u, h, bc=neumann_bc(dimension=1, value=g), time=0.0)
     assert lap[0] * h * h - (u[1] - u[0]) == pytest.approx(h * g, abs=1e-12), f"h={h}, g={g}: wall row"
+
+
+@pytest.mark.parametrize("nx", [11, 41])
+def test_the_gradient_operator_reproduces_a_linear_slope_at_the_wall(nx):
+    """External oracle through the production path (#2140): `TensorProductGrid.get_gradient_operator`.
+
+    For u = a x the central difference through the ghost is exact once the ghost carries the outward
+    derivative at the grid's spacing: ghost = u_0 + h g with g = -a at the low wall gives
+    (u_1 - ghost) / (2h) = a, and likewise at the high wall. Until #2140 the operator built the ghost at
+    h = 1.0; on u = -0.3 (x - 1/2)^2 its wall gradient was -1.365 at 11 points against an exact +0.3,
+    growing as 1/h.
+    """
+    a = 0.7
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=neumann_bc(dimension=1, value=0.0)
+    )
+    x = grid.coordinates[0]
+    # Outward normal is -x at the low wall and +x at the high wall: du/dn = -a there and +a here.
+    bc_low_high = BoundaryConditions(
+        segments=[
+            BCSegment(name="low", bc_type=BCType.NEUMANN, value=-a, boundary="x_min"),
+            BCSegment(name="high", bc_type=BCType.NEUMANN, value=a, boundary="x_max"),
+        ],
+        dimension=1,
+    )
+    slope = grid.get_gradient_operator(scheme="central", bc=bc_low_high)[0](a * x)
+    np.testing.assert_allclose(slope, a, rtol=0, atol=1e-12)

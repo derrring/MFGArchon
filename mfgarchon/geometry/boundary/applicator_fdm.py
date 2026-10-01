@@ -252,15 +252,11 @@ class FDMApplicator(BaseStructuredApplicator):
         Args:
             field: Interior field values
             boundary_conditions: BC specification
-            grid_spacing: ACCEPTED AND DISCARDED. Since #1904 the ghost formulas do use the
-                     spacing -- `pad_array_with_ghosts` takes it as `spacing=` -- and this method
-                     does not forward it, so an inhomogeneous Neumann or Robin condition applied
-                     through here still falls back to dx = 1.0. Threading it changes the values
-                     this public entry point returns, so it is deferred to #1904 with the other
-                     un-threaded call sites rather than done here.
-            domain_bounds: ACCEPTED AND DISCARDED, same as above and for the same reason: the
-                     buffer would honour it (`elif domain_bounds is not None`), and this method
-                     does not pass it on.
+            grid_spacing: Forwarded to `pad_array_with_ghosts` as `spacing=` (#2140). Until #2140
+                     this method discarded it, so an inhomogeneous Neumann or Robin condition applied
+                     through here ran at dx = 1.0.
+            domain_bounds: Used for the spacing when ``grid_spacing`` is not given: one interval
+                     per axis over the field's node count (#2140).
             time: Current time for time-dependent BCs
             geometry: Geometry object with marked regions (Issue #596 Phase 2.5).
                      Required if boundary_conditions uses region_name.
@@ -271,7 +267,13 @@ class FDMApplicator(BaseStructuredApplicator):
         self._validate_bc_support(boundary_conditions)  # #1948
         # Issue #577 Phase 3: Use pad_array_with_ghosts() for all BCs
         # Geometry parameter enables region_name resolution for mixed BCs
-        return pad_array_with_ghosts(field, boundary_conditions, ghost_depth=1, time=time, geometry=geometry)
+        spacing = grid_spacing
+        if spacing is None and domain_bounds is not None:
+            bounds = np.atleast_2d(np.asarray(domain_bounds, dtype=float))
+            spacing = tuple((hi - lo) / (n - 1) for (lo, hi), n in zip(bounds, np.shape(field), strict=True))
+        return pad_array_with_ghosts(
+            field, boundary_conditions, ghost_depth=1, time=time, geometry=geometry, spacing=spacing
+        )
 
     def enforce_values(
         self,
@@ -2033,17 +2035,32 @@ def pad_array_with_ghosts(
         periodic_convention: Overrides the convention carried on ``bc`` (see
                  ``PeriodicGridConvention``). Normally unnecessary: a grid binds the right one onto
                  the BC, and unstated means the historical layout.
+        spacing: Grid spacing, a scalar or one value per axis. Required unless ``geometry`` gives it
+                 through ``get_grid_spacing()``: the ghost formulas that read a boundary value use it,
+                 and the former fallback, dx = 1.0, applied a Neumann value g as g/h (#2140, #1904).
 
     Returns:
         New array with ghost cells added on all boundaries
+
+    Raises:
+        TypeError: If neither ``spacing`` nor ``geometry.get_grid_spacing()`` gives the spacing.
 
     Example:
         >>> from mfgarchon.geometry.boundary import neumann_bc, pad_array_with_ghosts
         >>> u = np.array([1.0, 2.0, 3.0])
         >>> bc = neumann_bc(dimension=1)
-        >>> u_padded = pad_array_with_ghosts(u, bc)
-        >>> # u_padded is [2.0, 1.0, 2.0, 3.0, 2.0] for Neumann BC
+        >>> u_padded = pad_array_with_ghosts(u, bc, spacing=0.5)
+        >>> # u_padded is [1.0, 1.0, 2.0, 3.0, 3.0]: the zero-gradient ghost copies the wall node (#1935)
     """
+    if spacing is None and geometry is not None:
+        get_spacing = getattr(geometry, "get_grid_spacing", None)
+        spacing = get_spacing() if get_spacing is not None else None
+    if spacing is None:
+        raise TypeError(
+            "pad_array_with_ghosts needs the grid spacing: pass spacing= (a scalar or one value per axis) "
+            "or a geometry whose get_grid_spacing() returns it. The former fallback, dx = 1.0, applied a "
+            "Neumann value g as g/h (#2140)."
+        )
     # Extract domain_bounds from geometry if available (needed for Robin BC)
     domain_bounds = None
     if geometry is not None:
@@ -2087,7 +2104,7 @@ if __name__ == "__main__":
 
     field_2d = np.ones((5, 5))
     bc = neumann_bc(dimension=2)
-    padded = pad_array_with_ghosts(field_2d, bc)
+    padded = pad_array_with_ghosts(field_2d, bc, spacing=0.25)
     assert padded.shape == (7, 7), f"Expected (7,7), got {padded.shape}"
     # Neumann with zero flux: ghost = interior
     assert np.allclose(padded[0, 1:-1], padded[1, 1:-1]), "Neumann BC failed"
@@ -2155,7 +2172,7 @@ if __name__ == "__main__":
     print("\n5. Testing 3D face ghost handling (Dirichlet)...")
     field_3d = np.ones((3, 3, 3))
     bc_3d_dir = dirichlet_bc(dimension=3, value=0.0)
-    padded_3d_dir = pad_array_with_ghosts(field_3d, bc_3d_dir)
+    padded_3d_dir = pad_array_with_ghosts(field_3d, bc_3d_dir, spacing=0.25)
     # For Dirichlet g=0 with interior=1: ghost = 2*0 - 1 = -1
     # Face ghosts should be -1 (these are the important ones for derivatives)
     assert np.allclose(padded_3d_dir[0, 2, 2], -1.0), "3D face ghost failed"
@@ -2170,7 +2187,7 @@ if __name__ == "__main__":
     print("\n6. Testing 4D face ghost handling (Dirichlet)...")
     field_4d = np.ones((2, 2, 2, 2))
     bc_4d = dirichlet_bc(dimension=4, value=0.0)
-    padded_4d = pad_array_with_ghosts(field_4d, bc_4d)
+    padded_4d = pad_array_with_ghosts(field_4d, bc_4d, spacing=0.25)
     # For Dirichlet g=0 with interior=1: ghost = 2*0 - 1 = -1
     # Face ghosts should be -1
     assert np.allclose(padded_4d[0, 1, 1, 1], -1.0), "4D face ghost failed"
