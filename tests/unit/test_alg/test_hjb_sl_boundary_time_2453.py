@@ -1,19 +1,24 @@
 """A semi-Lagrangian HJB step reads time-dependent boundary data at the step's own time (#2453).
 
 The gradient's ghost cells (``geometry.get_gradient_operator``, whose ``time`` defaults to 0) and the
-post-step enforcement of sub-steps, of every n-D stochastic step and of the n-D DPP step all read a
-time-dependent boundary value at t = 0, whatever the step. Measured on these fixtures before the fix:
-1-D ADI read 54 of its 64 values at t = 0, 2-D ADI and 2-D DPP all of theirs.
+post-step enforcement of operator-splitting sub-steps, of every n-D stochastic step and of the n-D DPP
+step read a time-dependent boundary value at t = 0, whatever the step. Measured on these cases before
+the fix: ``1d-adi`` read 146 of its 154 values at t = 0, ``1d-stochastic`` 30 of 64, and the 2-D cases
+all of theirs.
 
-The pin is an invariant of the clock, not a value. The solver marches backward, one step at a time,
-so the times at which the boundary value is read, in call order, never increase: a site that reads
-at t = 0 inside an earlier step puts a 0 before a later positive time. Mutation-verified: each of the
-call sites, reverted alone to the default time, fails its path's case.
+The clock is one time per step, the step's ``time_idx * dt``, for every read the step makes: the same
+clock #2452 gave H, the foot and the value update. It is a decision, not a measured optimum: the step
+differentiates U^{n+1}, whose own time is t_{n+1}, and no oracle here separates the two, since the solver
+does not yet hold even constant inhomogeneous Neumann data (#2141). #2453 records the alternative.
+
+The pin is an invariant of that clock, not a value. Each read is tagged with the step it belongs to: the
+step functions receive their index, and the CFL schedule, which runs just before step n, takes the index
+of the next step entered. Every read must be at its tag's time. Mutation-verified: each call site
+reverted alone to t = 0, or moved to the next or the previous step's time, fails its path's case.
 """
 
 from __future__ import annotations
 
-import itertools
 import warnings
 
 import pytest
@@ -49,18 +54,57 @@ CASES = {
     "2d-adi-substep": (2, _TimeDependentH, {"cfl_target": 0.3}, 3.0),
     "1d-stochastic": (1, _TimeDependentH, {"diffusion_method": "stochastic"}, 0.4),
     "2d-stochastic": (2, _TimeDependentH, {"diffusion_method": "stochastic"}, 0.4),
+    "1d-dpp": (1, _l1, {}, 0.4),
     "2d-dpp": (2, _l1, {}, 0.4),
 }
 
 
+def _tag_by_step(monkeypatch, events):
+    """Log, in call order, entry to each step function (with its index) and to the CFL schedule."""
+    for name in ("_solve_timestep_semi_lagrangian", "_solve_timestep_semi_lagrangian_with_dt"):
+        original = getattr(HJBSemiLagrangianSolver, name)
+
+        def entered(self, U_next, M_next, U_coupling, time_idx, *rest, _original=original):
+            events.append(("step", time_idx))
+            return _original(self, U_next, M_next, U_coupling, time_idx, *rest)
+
+        monkeypatch.setattr(HJBSemiLagrangianSolver, name, entered)
+    schedule = HJBSemiLagrangianSolver._compute_cfl_and_substeps
+
+    def scheduled(self, *args):
+        events.append(("schedule", None))
+        return schedule(self, *args)
+
+    monkeypatch.setattr(HJBSemiLagrangianSolver, "_compute_cfl_and_substeps", scheduled)
+
+
+def _reads_with_their_step(events):
+    """(time read, index of the step it belongs to): a schedule's reads belong to the next step entered."""
+    tagged, pending, current = [], [], None
+    for kind, value in events:
+        if kind == "step":
+            current = value
+            tagged.extend((t, current) for t in pending)
+            pending = []
+        elif kind == "schedule":
+            current = None
+        elif current is None:
+            pending.append(value)
+        else:
+            tagged.append((value, current))
+    assert not pending, f"{len(pending)} reads after the last step"
+    return tagged
+
+
 @pytest.mark.parametrize("case", list(CASES))
-def test_boundary_data_is_read_at_the_steps_own_time(case):
+def test_boundary_data_is_read_at_the_steps_own_time(case, monkeypatch):
     dim, hamiltonian, kwargs, amp = CASES[case]
-    reads = []
+    events = []
+    _tag_by_step(monkeypatch, events)
 
     def value(*args, **kw):
         t = float(kw.get("time", args[-1] if args else 0.0))
-        reads.append(round(t, 9))
+        events.append(("read", t))
         return 0.05 * t
 
     n = {1: 21, 2: 9}[dim]
@@ -82,10 +126,10 @@ def test_boundary_data_is_read_at_the_steps_own_time(case):
             m, u_terminal, np.broadcast_to(u_terminal, m.shape).copy()
         )
 
-    step_times = {round(k * problem.dt, 9) for k in range(NT)}
-    assert set(reads) == step_times, f"read at {sorted(set(reads))}, steps at {sorted(step_times)}"
-    rises = [(i, a, b) for i, (a, b) in enumerate(itertools.pairwise(reads)) if b > a]
-    assert not rises, (
-        f"the read time rose {len(rises)} times, first at read {rises[0][0]}: {rises[0][1]} then {rises[0][2]}. "
-        f"A site read the boundary value at a time other than its step's (#2453)."
+    tagged = _reads_with_their_step(events)
+    assert {n for _, n in tagged} == set(range(NT)), "some step read no boundary value"
+    wrong = [(t, n) for t, n in tagged if not np.isclose(t, n * problem.dt, rtol=0, atol=1e-12)]
+    assert not wrong, (
+        f"{len(wrong)} of {len(tagged)} boundary reads are not at their step's time; first: read at "
+        f"t = {wrong[0][0]:.6g} in step {wrong[0][1]} (t = {wrong[0][1] * problem.dt:.6g}) (#2453)"
     )

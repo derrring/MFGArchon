@@ -409,8 +409,9 @@ class FPSLSolver(BaseFPSolver):
         """Compute the optimal-control drift alpha* = -grad(U) / control_cost for 1D.
 
         ``grad(U)`` is the geometry's central gradient operator with its boundary ghosts at ``time``, the
-        operator the HJB half differentiates U with (#2439). ``np.gradient`` differed at the walls: for
-        U = (x - 1/2)^2 on 21 points it gave +-0.95 there, the HJB half +-0.475.
+        operator the HJB half's operator-splitting and stochastic paths differentiate U with (#2439).
+        ``np.gradient`` differed at the walls: for U = (x - 1/2)^2 on 21 points it gave +-0.95 there, the
+        HJB half +-0.475.
 
         Issue #1420 / G-017 / S0-03: coefficient single-sourced via ``fp_drift_coefficient``
         (= 1/control_cost), not hardcoded to 1.
@@ -429,15 +430,18 @@ class FPSLSolver(BaseFPSolver):
         return tuple(-c * g(U) for g in self._gradient_operators(time))
 
     def _gradient_operators(self, time: float) -> tuple:
-        """The geometry's central gradient operator, with its boundary ghosts at ``time``: the one the HJB
-        half differentiates U with (#2439)."""
+        """The geometry's central gradient operator, with its boundary ghosts at ``time`` (#2439).
+
+        The ghosts carry U's boundary conditions, the geometry's, and not this solver's
+        ``boundary_conditions`` override, which is m's.
+        """
         from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid
 
         geometry = self.problem.geometry
         if not isinstance(geometry, TensorProductGrid):
             raise TypeError(
-                f"FPSLSolver differentiates U with TensorProductGrid's gradient operator, as the HJB half "
-                f"does (#2439); got {type(geometry).__name__}"
+                f"FPSLSolver differentiates U with TensorProductGrid's gradient operator (#2439); got "
+                f"{type(geometry).__name__}"
             )
         return tuple(geometry.get_gradient_operator(scheme="central", time=time))
 

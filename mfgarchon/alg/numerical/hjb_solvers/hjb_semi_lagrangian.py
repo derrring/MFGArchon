@@ -779,7 +779,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             t_idx: Current timestep index for gradient clipping monitoring (optional, Issue #583)
             m_density: Density values for gradient clipping correlation analysis (optional, Issue #583)
             time: The step's time, at which the ghost cells read a time-dependent boundary value. It
-                has no default: the operator's own default is t = 0, which every path used (#2453).
+                has no default: the operator's own default is t = 0, which every caller used (#2453).
 
         Returns:
             gradient: Gradient array(s), optionally clipped if gradient_clip_threshold is set

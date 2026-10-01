@@ -59,10 +59,11 @@ def test_sl_velocity_uses_control_cost(solver_cls, vel_method, control_cost):
         solver = solver_cls(problem)
     u = _U()
     kwargs = {"time": 0.0} if solver_cls is FPSLSolver else {}
-    alpha = np.asarray(getattr(solver, vel_method)(u, **kwargs)).ravel()[1:-1]
-    # Interior only: this pins the coefficient. At the walls FPSLSolver takes the HJB half's gradient
-    # operator, with its boundary ghosts (#2439), and np.gradient is one-sided there.
-    unit = -np.gradient(u, solver.dx).ravel()[1:-1]
+    # This pins the coefficient. FPSLSolver is compared on interior nodes only: at the walls it takes the
+    # HJB half's gradient operator, with its boundary ghosts (#2439), where np.gradient is one-sided.
+    nodes = slice(1, -1) if solver_cls is FPSLSolver else slice(None)
+    alpha = np.asarray(getattr(solver, vel_method)(u, **kwargs)).ravel()[nodes]
+    unit = -np.gradient(u, solver.dx).ravel()[nodes]
     np.testing.assert_allclose(
         alpha, unit / control_cost, rtol=0, atol=1e-12, err_msg="SL drift must be -∇U/control_cost (S0-03)"
     )
