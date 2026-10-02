@@ -21,6 +21,10 @@ The pin is an invariant of that clock, not a value. Each read is tagged with the
 step functions receive their index, and the CFL schedule, which runs just before step n, takes the index
 of the next step entered. Every read must be at its tag's time. Mutation-verified: each call site
 reverted alone to t = 0, or moved to the next or the previous step's time, fails its path's case.
+
+Since #2467 the gradient discards what its ghosts hold at a non-periodic wall: its reads still happen, on
+this clock, and reach nothing. The post-step enforcement's reads still reach U. The 2-D whole step has no
+post-step enforcement, so its case now pins only reads whose values are discarded.
 """
 
 from __future__ import annotations

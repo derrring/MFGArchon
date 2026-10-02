@@ -378,6 +378,11 @@ class FPSLSolver(BaseFPSolver):
                 )
             return values
 
+        # The solver's own refusal of a mixed BC (#1697) at its point of use, ahead of the first velocity:
+        # `value_gradient` refuses a half-periodic geometry too, but its message is about an axis, not about
+        # which BC this solver can honour.
+        self._get_bc_operation_type()
+
         # Forward time stepping (dimension-agnostic dispatch). When the paired HJB half sub-steps, a
         # step whose CFL number exceeds max(1, cfl_target) is cut into sub-steps here too, by the shared cfl_substeps,
         # with the step's velocity held fixed. A pair structured differently on its two sides

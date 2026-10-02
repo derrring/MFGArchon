@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from scipy.integrate import solve_ivp
 
-from mfgarchon.geometry.boundary.bc_utils import get_bc_type_string
+from mfgarchon.geometry.boundary.types import BCType
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -130,9 +130,9 @@ def cfl_substeps(
 
 
 def wall_gradient_from_values(
-    values: np.ndarray, gradient: Sequence[np.ndarray], spacings: Sequence[float]
+    values: np.ndarray, gradient: Sequence[np.ndarray], spacings: Sequence[float], axes: Sequence[int]
 ) -> tuple[np.ndarray, ...]:
-    """``gradient`` with every wall slice replaced by the second-order one-sided difference of ``values``.
+    """``gradient`` with the wall slices of each axis in ``axes`` replaced by a one-sided difference of ``values``.
 
     Both halves of the SL pair differentiate U with the geometry's central operator, whose value at a wall
     node is read from the FDM ghost: the control there was whatever the ghost encoded, not a property of
@@ -144,16 +144,15 @@ def wall_gradient_from_values(
     error is 5.3e-04 from the ghost's half slope, wall/interior 1.60, and 3.3e-04 from this, wall/interior
     1.007. A gradient forced to the datum gives 7.7e-03.
 
-    Interior values are returned unchanged. The caller decides when this applies: never on a periodic axis,
-    whose wrap is the right neighbour.
+    The difference is second order on an axis of 3 or more points. A 2-point axis holds one difference,
+    (u_1 - u_0) / h, and both walls take it. A 1-point axis holds none and is left as the operator gave it.
+    Interior values, and every axis not in ``axes``, are returned unchanged.
     """
-    closed = []
-    for axis, (component, h) in enumerate(zip(gradient, spacings, strict=True)):
-        if values.shape[axis] < 3:
-            raise ValueError(
-                f"the one-sided wall gradient needs 3 points along axis {axis}; this grid has {values.shape[axis]}"
-            )
-        out = np.array(component, dtype=float)
+    closed = [np.array(component, dtype=float) for component in gradient]
+    for axis in axes:
+        n, h = values.shape[axis], spacings[axis]
+        if n < 2:
+            continue
         low = [slice(None)] * values.ndim
         high = [slice(None)] * values.ndim
         low[axis], high[axis] = 0, -1
@@ -161,24 +160,41 @@ def wall_gradient_from_values(
         def at(i: int, ax: int = axis) -> np.ndarray:
             return np.take(values, i, axis=ax)
 
-        out[tuple(low)] = (-3.0 * at(0) + 4.0 * at(1) - at(2)) / (2.0 * h)
-        out[tuple(high)] = (3.0 * at(-1) - 4.0 * at(-2) + at(-3)) / (2.0 * h)
-        closed.append(out)
+        if n == 2:
+            closed[axis][tuple(low)] = closed[axis][tuple(high)] = (at(1) - at(0)) / h
+        else:
+            closed[axis][tuple(low)] = (-3.0 * at(0) + 4.0 * at(1) - at(2)) / (2.0 * h)
+            closed[axis][tuple(high)] = (3.0 * at(-1) - 4.0 * at(-2) + at(-3)) / (2.0 * h)
     return tuple(closed)
 
 
 def value_gradient(geometry: Any, values: np.ndarray, time: float) -> tuple[np.ndarray, ...]:
     """grad(U) as both halves of the SL pair take it: the HJB half for its control, the FP half for its drift.
 
-    The geometry's central operator, whose ghosts at ``time`` carry the geometry's boundary conditions; on a
-    domain those conditions do not make periodic, every wall node then takes the one-sided difference of
-    ``values`` (`wall_gradient_from_values`, #2467). Periodicity is read from the same conditions the ghosts
-    use, so the two cannot disagree about which neighbour a wall node has.
+    The geometry's central operator, whose ghosts carry the geometry's boundary conditions; then every
+    axis whose two faces are not periodic has its wall nodes replaced by the one-sided difference of
+    ``values`` (`wall_gradient_from_values`, #2467). A periodic axis keeps the operator's wrap. Each axis is
+    asked separately, through the same face resolver the ghosts use: reading one type for the whole
+    boundary takes the first segment's, so on a mixed geometry -- reachable through ``FPSLSolver``'s own
+    ``boundary_conditions``, which is m's and is what that solver validates -- the answer depended on the
+    segments' order. An axis periodic on one face only is refused.
+
+    On a closed axis the wall values the ghosts produced are discarded, so ``time`` reaches nothing there;
+    it is passed for the operator's reads, whose clock #2453 pins.
     """
+    bc = geometry.get_boundary_conditions()
+    closed_axes = []
+    for axis in range(values.ndim):
+        periodic = [bc.get_bc_type_at_boundary(f"axis{axis}_{side}") == BCType.PERIODIC for side in ("min", "max")]
+        if periodic[0] != periodic[1]:
+            raise NotImplementedError(
+                f"axis {axis} is periodic on one face only; a periodic axis needs both, so the semi-Lagrangian "
+                f"pair cannot tell which neighbour its wall nodes have"
+            )
+        if not periodic[0]:
+            closed_axes.append(axis)
     components = tuple(op(values) for op in geometry.get_gradient_operator(scheme="central", time=time))
-    if get_bc_type_string(geometry.get_boundary_conditions()) == "periodic":
-        return components
-    return wall_gradient_from_values(values, components, geometry.get_grid_spacing())
+    return wall_gradient_from_values(values, components, geometry.get_grid_spacing(), closed_axes)
 
 
 def trace_characteristic_backward_1d(

@@ -809,8 +809,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             dt: Length of the step the warning measures (default: ``self.dt``)
             t_idx: Current timestep index for gradient clipping monitoring (optional, Issue #583)
             m_density: Density values for gradient clipping correlation analysis (optional, Issue #583)
-            time: The step's time, at which the ghost cells read a time-dependent boundary value. It
-                has no default: the operator's own default is t = 0, which every caller used (#2453).
+            time: The step's time, at which the operator's ghost cells read a time-dependent boundary value.
+                It has no default: the operator's own default is t = 0, which every caller used (#2453).
+                On a non-periodic axis the wall values those reads give are discarded (#2467), so there it
+                changes nothing in the result.
 
         Returns:
             gradient: Gradient array(s), optionally clipped if gradient_clip_threshold is set
