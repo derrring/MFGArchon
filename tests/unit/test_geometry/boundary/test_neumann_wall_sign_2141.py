@@ -1,20 +1,22 @@
-"""The two applicators the SL solver holds disagree about an inhomogeneous Neumann value. #2141
+"""The two applicators the SL solver holds impose the same inhomogeneous Neumann value. #2141
 
-HALF FIXED. `HJBSemiLagrangianSolver.__init__` builds two of them and uses each at a different
+FIXED. `HJBSemiLagrangianSolver.__init__` builds two of them and uses each at a different
 point: `bc_applicator = FDMApplicator(...)` for the ghost-cell work, and
 `interp_bc_applicator = InterpolationApplicator(...)` for post-interpolation enforcement (#636).
-Handed the same `neumann_bc(value=g)`:
+Handed the same `neumann_bc(value=g)`, before #2141:
 
-    FDMApplicator             imposes du/dn = +g at BOTH walls          <- FIXED, #2141
-    InterpolationApplicator   ignores g entirely: g=0 and g=0.7 are BIT-IDENTICAL   <- still open
+    FDMApplicator             imposed du/dn = -g at the low wall        <- the sign arm, fixed first
+    InterpolationApplicator   ignored g entirely: g=0 and g=0.7 BIT-IDENTICAL   <- the value arm, fixed second
 
 The sign arm was a one-character defect in `enforcement.py`'s non-zero-gradient branch, which wrote
 the min wall as `u[1] - g*h` (du/dx = +g, hence du/dn = -g against the outward normal -x) where
 both walls want `neighbour + g*h`. It is the same decision #1265 had already fixed on the sibling
 ghost path in `a0f40fe1`; this file's two implementations had drifted apart.
 
-The value-drop arm is untouched and is the same defect #2294 records for the FEM natural-BC arm,
-in a second place.
+The value-drop arm read the segment's value in `enforce_values` and dropped it at the
+`_enforce_boundary_1d` dispatch, which called `enforce_neumann_value_nd` with a literal 0.0; it now
+passes g and the spacing, and the SL call site passes its grid spacing (which this file cannot see:
+`tests/unit/test_alg/test_hjb_sl_neumann_substep_2141.py` holds that half).
 
 The sign arm was reached through the public API before the fix -- not only in this file. Measured
 at `aad4aecd` on a 9-point 2-D grid, `HJBFDMSolver.solve_hjb_system` with `neumann_bc(value=0.7)`
@@ -22,14 +24,11 @@ returned du/dn = -0.700000 at the low wall and +0.700000 at the high. `problem.s
 reach it, because `FPFDMSolver` refuses an inhomogeneous Neumann value first (#1686), and a 1-D
 population therefore measures zero calls and misses the defect entirely.
 
-Do not read the second row as "it imposes du/dn = 0". It does not, and the file's own xfail cell
-prints the contradicting number. `InterpolationApplicator` defaults to `extrapolation_order=2`, so
-the Neumann path takes `enforce_neumann_value_nd`'s zero-flux branch, `u[0] = (4*u[1] - u[2])/3` --
-a vanishing SECOND derivative, not a vanishing normal one. What it actually imposes therefore depends
-on the field: measured, -0.100000 / +0.566667 on this file's `quadratic`, -1.0 / +1.0 on a linear
-ramp, and 0 only on a constant. The invariant that IS true of every field, and the one the test
-asserts, is that the result does not depend on `g` at all. Getting this wrong points whoever retires
-#2141 at the wrong target -- "make it impose du/dn = 0" is not the fix.
+Before the fix, every Neumann face of the second row took `enforce_neumann_value_nd`'s zero-value
+branch (`InterpolationApplicator` defaults to `extrapolation_order=2`): `u[0] = (4*u[1] - u[2])/3`,
+the point where the second-order one-sided difference of du/dn vanishes, so it imposed du/dn = 0 at
+second order whatever g was asked for. A zero value still takes that branch; a non-zero one now
+imposes u[wall] = u[neighbour] + g*h, at first order.
 
 MEASURED AT THE APPLICATOR, NOT THROUGH A SOLVE, and that is the point of this file. Driving the
 pre-fix tree through `HJBSemiLagrangianSolver` reproduced `du/dn = -0.7` at N = 11 and then drifted
@@ -40,9 +39,9 @@ reason this file does not measure that way, and they are NOT a current descripti
 assertions below are a property of the applicators, hold for every field tried, and involve no dt,
 no CFL and no mesh.
 
-Retirement: the `xfail(strict=True)` cells in `_STILL_WRONG_AT_THE_LEFT_WALL` report XPASS the
-moment their applicator imposes the requested derivative, and each recorded-defect test fails
-carrying the instruction to delete itself. The FDM half has already retired this way.
+Both halves retired through this file's own mechanism: the `xfail(strict=True)` cells reported
+XPASS once their applicator imposed the requested derivative, and each recorded-defect test failed
+carrying the instruction to delete itself.
 """
 
 from __future__ import annotations
@@ -51,7 +50,7 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.geometry.boundary import neumann_bc
+from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, neumann_bc
 from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator
 from mfgarchon.geometry.boundary.applicator_interpolation import InterpolationApplicator
 
@@ -105,31 +104,13 @@ def test_the_right_wall_of_the_fdm_applicator_is_correct(field_name):
     )
 
 
-#: Applicators still failing the contract below. `FDMApplicator` left this list when #2141's sign
-#: arm was fixed; `InterpolationApplicator` stays until its value-drop is. Each entry retires by
-#: XPASS(strict) -- fixing one makes its cell fail and the message says to remove it from here.
-_STILL_WRONG_AT_THE_LEFT_WALL = {"InterpolationApplicator"}
-
-
 @pytest.mark.parametrize("field_name", sorted(_FIELDS))
-@pytest.mark.parametrize(
-    "applicator_name",
-    [
-        pytest.param(
-            name,
-            marks=pytest.mark.xfail(strict=True, reason=f"#2141: {name} does not impose du/dn = g at the left"),
-        )
-        if name in _STILL_WRONG_AT_THE_LEFT_WALL
-        else pytest.param(name)
-        for name in sorted(_APPLICATORS)
-    ],
-)
+@pytest.mark.parametrize("applicator_name", sorted(_APPLICATORS))
 def test_every_applicator_imposes_the_requested_derivative_at_the_left_wall(applicator_name, field_name):
     """THE CONTRACT. `du/dn = g` is a statement about the OUTWARD normal, so it does not change sign
-    with the wall. Retires by XPASS(strict) per applicator.
-
-    `FDMApplicator` is now a live assertion rather than an xfail: it is the half of #2141 that was
-    fixed, so this cell is what would catch the sign coming back.
+    with the wall. Both applicators were xfails here until their half of #2141 was fixed; each cell is
+    now what catches its defect coming back -- the sign for `FDMApplicator`, the dropped value for
+    `InterpolationApplicator`.
     """
     enforced = _enforced(applicator_name, field_name, _G)
 
@@ -139,50 +120,90 @@ def test_every_applicator_imposes_the_requested_derivative_at_the_left_wall(appl
     )
 
 
-@pytest.mark.parametrize("field_name", sorted(_FIELDS))
-def test_the_interpolation_applicator_still_drops_the_value_entirely(field_name):
-    """RECORDED DEFECT (#2141, second half). Bit-identity is the discriminator.
+def test_each_axis_imposes_the_value_at_its_own_spacing():
+    """Per axis, on an anisotropic grid: hx = 0.1, hy = 0.5. Handing every axis the first axis's spacing
+    would impose du/dn = g * hx / hy on the y faces (0.14 for g = 0.7)."""
+    hx, hy = 0.1, 0.5
+    field = np.random.default_rng(0).standard_normal((11, 5))
+    out = InterpolationApplicator(dimension=2).enforce_values(
+        field.copy(), neumann_bc(value=_G, dimension=2), spacing=np.array([hx, hy])
+    )
+    interior_x, interior_y = slice(1, -1), slice(1, -1)
+    faces = {
+        "x_min": -(out[1, interior_y] - out[0, interior_y]) / hx,
+        "x_max": (out[-1, interior_y] - out[-2, interior_y]) / hx,
+        "y_min": -(out[interior_x, 1] - out[interior_x, 0]) / hy,
+        "y_max": (out[interior_x, -1] - out[interior_x, -2]) / hy,
+    }
+    for face, dudn in faces.items():
+        assert np.allclose(dudn, _G, atol=1e-12), f"{face}: du/dn = {dudn} for a requested {_G}"
 
-    The value is not applied with the wrong sign here and not applied approximately; it never
-    reaches an arithmetic operation, so enforcing `g = 0` and `g = 0.7` are the same computation.
-    `enforce_neumann_value_nd(..., grad_value=0.0, ...)` is called with the literal, and the
-    segment's own value is never read.
-    """
-    zero = _enforced("InterpolationApplicator", field_name, 0.0)
-    requested = _enforced("InterpolationApplicator", field_name, _G)
 
-    if not np.array_equal(zero, requested):
-        pytest.fail(
-            f"InterpolationApplicator now responds to the Neumann value: max|diff| = "
-            f"{np.max(np.abs(zero - requested)):.6e}. Delete this test, and remove "
-            f"InterpolationApplicator from the xfail list above."
+@pytest.mark.parametrize("spelling", ["alias", "default"])
+def test_a_no_flux_face_ignores_a_value_it_carries(spelling):
+    """A NO_FLUX face imposes nothing from a value attached to it, however the face is reached: by an
+    alias ("right") or as the uncovered faces' default. The applicator typed those faces with its own
+    string match, which resolved neither and called them "neumann", while its value read resolved
+    both; imposing the value (#2141) made a NO_FLUX value leak in as du/dn until both reads went
+    through `get_bc_type_at_boundary`."""
+    bounds = np.array([[0.0, 1.0], [0.0, 1.0]])
+
+    def bc(value: float):
+        if spelling == "alias":
+            segments = [
+                BCSegment(name="l", bc_type=BCType.NEUMANN, value=0.0, boundary="left"),
+                BCSegment(name="r", bc_type=BCType.NO_FLUX, value=value, boundary="right"),
+            ]
+            return BoundaryConditions(segments=segments, dimension=2, domain_bounds=bounds, default_bc=BCType.NO_FLUX)
+        segments = [BCSegment(name="l", bc_type=BCType.NEUMANN, value=0.0, boundary="x_min")]
+        return BoundaryConditions(
+            segments=segments, dimension=2, domain_bounds=bounds, default_bc=BCType.NO_FLUX, default_value=value
         )
 
-
-def test_the_two_applicators_still_disagree_and_that_is_the_remaining_defect():
-    """The pair, asserted together, because the SL solver holds BOTH and uses each in turn.
-
-    The disagreement has changed shape rather than closed. `FDMApplicator` now honours the datum;
-    `InterpolationApplicator` still discards it. `HJBSemiLagrangianSolver` builds both in
-    `__init__` and calls them at different points of one step, so the field it returns has still
-    been through two conventions -- one correct, one homogeneous -- with nothing recording which
-    wall a given value came from.
-
-    Retires when the interpolation half lands: the first assertion then fails.
-    """
-    fdm = _normal_derivative(_enforced("FDMApplicator", "quadratic", _G), "left")
-    interp_zero = _enforced("InterpolationApplicator", "quadratic", 0.0)
-    interp_g = _enforced("InterpolationApplicator", "quadratic", _G)
-
-    assert fdm == pytest.approx(_G, abs=1e-12), (
-        f"FDMApplicator's left wall imposes du/dn = {fdm:+.6f}, not the requested {_G:+.6f}. The "
-        f"#2141 sign fix has regressed; see enforcement.py's non-zero-gradient branch."
+    field = np.random.default_rng(1).standard_normal((9, 9))
+    spacing = np.array([0.125, 0.125])
+    zero = InterpolationApplicator(dimension=2).enforce_values(field.copy(), bc(0.0), spacing=spacing)
+    carried = InterpolationApplicator(dimension=2).enforce_values(field.copy(), bc(_G), spacing=spacing)
+    assert np.array_equal(zero, carried), (
+        f"a NO_FLUX value reached the field: max|diff| = {np.abs(zero - carried).max():.3e}"
     )
-    # Bit-identity, NOT `!= g`. The docstring above says why: what is true of every field is that
-    # the result does not depend on `g` at all, and `!= g` also passes while the value is applied
-    # wrongly. Keeping the weaker form here would contradict this file's own stated target.
-    assert np.array_equal(interp_zero, interp_g), (
-        f"InterpolationApplicator now responds to the Neumann value: max|diff| = "
-        f"{np.max(np.abs(interp_zero - interp_g)):.6e}. The second half of #2141 is fixed: delete "
-        f"this test and remove InterpolationApplicator from _STILL_WRONG_AT_THE_LEFT_WALL."
+
+
+def test_a_segment_on_part_of_the_boundary_is_refused_not_spread():
+    """The applicator imposes one condition per face, and the shared face resolver gives a segment with no
+    face string every face it is asked about. So a Dirichlet outlet patch over Neumann walls would have
+    been imposed on the whole boundary (measured in #2466's review: 32 of 32 boundary nodes set to the
+    outlet value). It is refused instead."""
+    outlet = BCSegment(
+        name="outlet", bc_type=BCType.DIRICHLET, value=0.0, region={"x": (0.9, 1.0), "y": (0.4, 0.6)}, priority=1
     )
+    walls = BCSegment(name="walls", bc_type=BCType.NEUMANN, value=0.0, priority=0)
+    bc = BoundaryConditions(segments=[outlet, walls], dimension=2, domain_bounds=np.array([[0.0, 1.0], [0.0, 1.0]]))
+    with pytest.raises(NotImplementedError, match="part of the boundary"):
+        InterpolationApplicator(dimension=2).enforce_values(np.ones((9, 9)), bc, spacing=np.array([0.125, 0.125]))
+
+
+def test_the_package_region_route_with_zero_flux_only_is_imposed_not_refused():
+    """The refusal above must not reach a boundary that is zero flux everywhere. `mixed_bc_from_regions`
+    sets `region_name` on every segment it builds, whole faces included, so refusing every such segment
+    broke `problem.solve(scheme=SL_LINEAR)` on this route, which solves on main (#2466's third review).
+    Neumann with g = 0 and NO_FLUX take one branch, so the field must equal plain no-flux's."""
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import mixed_bc_from_regions, no_flux_bc
+
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[9, 9], boundary_conditions=no_flux_bc(dimension=2)
+    )
+    grid.mark_region("outlet", boundary="x_max")
+    bc = mixed_bc_from_regions(
+        grid,
+        {
+            "outlet": BCSegment(name="o", bc_type=BCType.NEUMANN, value=0.0),
+            "default": BCSegment(name="d", bc_type=BCType.NO_FLUX),
+        },
+    )
+    field = np.random.default_rng(2).standard_normal((9, 9))
+    spacing = np.array([0.125, 0.125])
+    region = InterpolationApplicator(dimension=2).enforce_values(field.copy(), bc, spacing=spacing)
+    plain = InterpolationApplicator(dimension=2).enforce_values(field.copy(), no_flux_bc(dimension=2), spacing=spacing)
+    assert np.array_equal(region, plain)

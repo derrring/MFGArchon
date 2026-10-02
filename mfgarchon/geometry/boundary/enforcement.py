@@ -43,7 +43,7 @@ def enforce_neumann_value_nd(
     axis: int,
     side: Literal["min", "max"],
     grad_value: float = 0.0,
-    spacing: float = 1.0,
+    spacing: float | None = None,
     order: int = 2,
 ) -> None:
     """
@@ -56,7 +56,8 @@ def enforce_neumann_value_nd(
         axis: Dimension index (0, 1, 2, ...)
         side: "min" or "max" boundary
         grad_value: Neumann BC gradient value (default: 0.0 for zero-flux)
-        spacing: Grid spacing h (needed for non-zero gradient)
+        spacing: Grid spacing h. Required for a non-zero gradient, and refused when missing: the
+            former default, 1.0, applied g as g/h (#2141, as #2140 on the ghost path).
         order: Extrapolation order for zero-flux case
             - order=1: u[0] = u[1] (O(h) accurate, simple copy)
             - order=2: u[0] = (4*u[1] - u[2])/3 (O(h²) accurate)
@@ -116,6 +117,11 @@ def enforce_neumann_value_nd(
         # HJBFDMSolver.solve_hjb_system with neumann_bc(value=0.7): low wall -0.700000, high wall
         # +0.700000. The high arm was already correct -- flipping both is the wrong fix, and the
         # high-wall reading is what catches it.
+        if spacing is None:
+            raise TypeError(
+                "enforce_neumann_value_nd needs spacing= to impose a non-zero Neumann value: with no "
+                "spacing it used h = 1.0 and applied g as g/h (#2141)."
+            )
         field[boundary_slicer] = field[neighbor_slicer] + grad_value * spacing
 
 
@@ -199,7 +205,7 @@ def enforce_robin_value_nd(
     alpha: float,
     beta: float,
     rhs_value: float,
-    spacing: float = 1.0,
+    spacing: float | None = None,
 ) -> None:
     """
     Enforce Robin BC value along specified axis (in-place).
@@ -218,7 +224,8 @@ def enforce_robin_value_nd(
         alpha: Coefficient on u
         beta: Coefficient on du/dn
         rhs_value: Right-hand side value g
-        spacing: Grid spacing h
+        spacing: Grid spacing h, forwarded to ``enforce_neumann_value_nd`` in the pure-Neumann case,
+            which refuses a non-zero value without it (#2141)
 
     Example:
         >>> # Robin BC: u + 0.5*du/dn = 1.0
