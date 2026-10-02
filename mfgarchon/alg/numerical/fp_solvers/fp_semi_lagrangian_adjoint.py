@@ -42,6 +42,7 @@ from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import (
     apply_boundary_conditions_1d,
     cfl_substeps,
     check_substep_settings,
+    value_gradient,
 )
 from mfgarchon.geometry.boundary.bc_utils import (
     bc_type_to_geometric_operation,
@@ -418,32 +419,32 @@ class FPSLSolver(BaseFPSolver):
     def _compute_velocity_1d(self, U: np.ndarray, time: float) -> np.ndarray:
         """Compute the optimal-control drift alpha* = -grad(U) / control_cost for 1D.
 
-        ``grad(U)`` is the geometry's central gradient operator with its boundary ghosts at ``time``, the
-        operator the HJB half's operator-splitting and stochastic paths differentiate U with (#2439).
-        ``np.gradient`` differed at the walls: for U = (x - 1/2)^2 on 21 points it gave +-0.95 there, the
-        HJB half +-0.475.
+        ``grad(U)`` is the HJB half's: the geometry's central operator, and at a non-periodic wall the
+        second-order one-sided difference of U (#2439, #2467). The two halves must agree there or the pair's
+        feet differ at the wall.
 
         Issue #1420 / G-017 / S0-03: coefficient single-sourced via ``fp_drift_coefficient``
         (= 1/control_cost), not hardcoded to 1.
         """
-        return -fp_drift_coefficient(self.problem) * self._gradient_operators(time)[0](U)
+        return -fp_drift_coefficient(self.problem) * self._gradient(U, time)[0]
 
     def _compute_velocity_nd(self, U: np.ndarray, time: float) -> tuple[np.ndarray, ...]:
         """
-        Compute the optimal-control drift alpha* = -grad(U) / control_cost for nD, with the gradient
-        operator and boundary ghosts the HJB half uses (see ``_compute_velocity_1d``, #2439).
+        Compute the optimal-control drift alpha* = -grad(U) / control_cost for nD, with the gradient the
+        HJB half uses (see ``_compute_velocity_1d``, #2439, #2467).
 
         Issue #1420 / G-017 / S0-03: coefficient single-sourced via ``fp_drift_coefficient``
         (= 1/control_cost), not hardcoded to 1. Returns a tuple, one array per dimension.
         """
         c = fp_drift_coefficient(self.problem)
-        return tuple(-c * g(U) for g in self._gradient_operators(time))
+        return tuple(-c * g for g in self._gradient(U, time))
 
-    def _gradient_operators(self, time: float) -> tuple:
-        """The geometry's central gradient operator, with its boundary ghosts at ``time`` (#2439).
+    def _gradient(self, U: np.ndarray, time: float) -> tuple[np.ndarray, ...]:
+        """grad(U) as the HJB half computes it (#2439, #2467).
 
-        The ghosts carry U's boundary conditions, the geometry's, and not this solver's
-        ``boundary_conditions`` override, which is m's.
+        The geometry's central operator, whose ghosts at ``time`` carry U's boundary conditions -- the
+        geometry's, not this solver's ``boundary_conditions`` override, which is m's. On a non-periodic
+        domain every wall node then takes the one-sided difference of U, as the HJB half's control does.
         """
         from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid
 
@@ -453,7 +454,7 @@ class FPSLSolver(BaseFPSolver):
                 f"FPSLSolver differentiates U with TensorProductGrid's gradient operator (#2439); got "
                 f"{type(geometry).__name__}"
             )
-        return tuple(geometry.get_gradient_operator(scheme="central", time=time))
+        return value_gradient(geometry, U, time)
 
     def _adjoint_sl_step_1d(
         self,

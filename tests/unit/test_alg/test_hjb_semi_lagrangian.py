@@ -220,20 +220,22 @@ class TestHJBSemiLagrangianNumericalProperties:
         # The solution should be no rougher than the terminal data it propagates back from.
         # A hardcoded bound does not express this: the previous 100.0 sat 9626x above the
         # measured value, so the solve had to degrade by four orders of magnitude to fail it.
-        # Scaling to the terminal condition tracks the grid: the ratio stays in 1.03-1.09 over
-        # Nx 31-101 with Nt = Nx-1, so 2x leaves ~1.85x headroom. It catches a linear-to-
-        # nearest interpolation regression (hjb_semi_lagrangian.py:1149) at every one of those
-        # grids: 2.62, 2.76, 3.12, 3.17. That holds under this file's Nt = Nx-1 convention,
-        # which every sibling test at T = 1.0 uses (27 of 27; the 16 that do not are all at
-        # T < 1.0 and pin Nt at 20). Pinning Nt at 50 while varying Nx breaks the
-        # correspondence and the catch becomes intermittent -- a property of that sweep,
-        # not of the bound.
+        # Scaling to the terminal condition tracks the grid: the ratio is 1.000 over Nx 31-101
+        # with Nt = Nx-1, the terminal row itself being the roughest, so 2x leaves 2x headroom.
+        # It was 1.03-1.09 until #2467, from a wall row the ghost's half-slope control left
+        # behind; the datum the node-centred ghost gives there made it 3.0-3.1 (#1935). It catches a
+        # linear-to-nearest regression of the 1-D departure interpolation (`interp1d`'s kind) at
+        # every one of those grids: 2.64, 2.76, 3.17 at Nx 31, 51, 101. That holds under this
+        # file's Nt = Nx-1 convention, which every sibling test at T = 1.0 uses (27 of 27; the 16
+        # that do not are all at T < 1.0 and pin Nt at 20). Pinning Nt at 50 while varying Nx
+        # breaks the correspondence and the catch becomes intermittent -- a property of that
+        # sweep, not of the bound.
         terminal_roughness = np.max(np.abs(np.diff(U_final)))
         solution_roughness = np.max(np.abs(np.diff(U_solution, axis=1)))
         assert solution_roughness < 2 * terminal_roughness, (
             f"solution roughness {solution_roughness:.3e} exceeds 2x the terminal data's "
-            f"{terminal_roughness:.3e}; healthy ratio is 1.03-1.09 over Nx 31-101, and a "
-            f"linear-to-nearest interpolation regression reaches 2.62-3.17 over that range"
+            f"{terminal_roughness:.3e}; healthy ratio is 1.000 over Nx 31-101, and a "
+            f"linear-to-nearest interpolation regression reaches 2.64-3.17 over that range"
         )
 
 

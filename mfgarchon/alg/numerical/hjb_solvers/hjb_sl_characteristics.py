@@ -28,9 +28,15 @@ Functions:
 from __future__ import annotations
 
 import warnings
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from scipy.integrate import solve_ivp
+
+from mfgarchon.geometry.boundary.bc_utils import get_bc_type_string
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 # How finely a semi-Lagrangian step is cut when its CFL number exceeds max(1, cfl_target). Both halves of the SL pair
 # (HJBSemiLagrangianSolver and FPSLSolver) share this function; each measures the CFL number on its own
@@ -121,6 +127,58 @@ def cfl_substeps(
             f"hjb_config={{'max_substeps': n}}) hands the value to both halves."
         )
     return needed
+
+
+def wall_gradient_from_values(
+    values: np.ndarray, gradient: Sequence[np.ndarray], spacings: Sequence[float]
+) -> tuple[np.ndarray, ...]:
+    """``gradient`` with every wall slice replaced by the second-order one-sided difference of ``values``.
+
+    Both halves of the SL pair differentiate U with the geometry's central operator, whose value at a wall
+    node is read from the FDM ghost: the control there was whatever the ghost encoded, not a property of
+    U (#2467). The cell-centred no-flux ghost gives half the one-sided slope; the node-centred mirror #1935
+    needs gives the boundary datum whatever U is, which freezes the wall characteristic.
+
+    Measured on `test_hjb_semi_lagrangian.py`'s sigma = 0 fixture, whose exact solution is the Hopf-Lax
+    closed form (x - 1/2)^2 / (2 (1 + tau)) + tau with wall slope -1 / (2 (1 + tau)): at 201 points the max
+    error is 5.3e-04 from the ghost's half slope, wall/interior 1.60, and 3.3e-04 from this, wall/interior
+    1.007. A gradient forced to the datum gives 7.7e-03.
+
+    Interior values are returned unchanged. The caller decides when this applies: never on a periodic axis,
+    whose wrap is the right neighbour.
+    """
+    closed = []
+    for axis, (component, h) in enumerate(zip(gradient, spacings, strict=True)):
+        if values.shape[axis] < 3:
+            raise ValueError(
+                f"the one-sided wall gradient needs 3 points along axis {axis}; this grid has {values.shape[axis]}"
+            )
+        out = np.array(component, dtype=float)
+        low = [slice(None)] * values.ndim
+        high = [slice(None)] * values.ndim
+        low[axis], high[axis] = 0, -1
+
+        def at(i: int, ax: int = axis) -> np.ndarray:
+            return np.take(values, i, axis=ax)
+
+        out[tuple(low)] = (-3.0 * at(0) + 4.0 * at(1) - at(2)) / (2.0 * h)
+        out[tuple(high)] = (3.0 * at(-1) - 4.0 * at(-2) + at(-3)) / (2.0 * h)
+        closed.append(out)
+    return tuple(closed)
+
+
+def value_gradient(geometry: Any, values: np.ndarray, time: float) -> tuple[np.ndarray, ...]:
+    """grad(U) as both halves of the SL pair take it: the HJB half for its control, the FP half for its drift.
+
+    The geometry's central operator, whose ghosts at ``time`` carry the geometry's boundary conditions; on a
+    domain those conditions do not make periodic, every wall node then takes the one-sided difference of
+    ``values`` (`wall_gradient_from_values`, #2467). Periodicity is read from the same conditions the ghosts
+    use, so the two cannot disagree about which neighbour a wall node has.
+    """
+    components = tuple(op(values) for op in geometry.get_gradient_operator(scheme="central", time=time))
+    if get_bc_type_string(geometry.get_boundary_conditions()) == "periodic":
+        return components
+    return wall_gradient_from_values(values, components, geometry.get_grid_spacing())
 
 
 def trace_characteristic_backward_1d(
