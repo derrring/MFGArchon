@@ -492,9 +492,9 @@ class FPParticleSolver(BaseFPSolver):
         For TensorProductGrid geometries, routes through ``value_gradient`` — the geometry's
         central operator with ``bc=<solver-BCs>``, whose wall nodes on a non-periodic axis then
         take U's one-sided difference rather than what the ghost imposes. A drift is a velocity
-        taken from U; the ghost's wall value is the boundary datum, half U's slope from the
-        cell-centred no-flux ghost and 0 from the node-centred mirror #1935 needs, at which wall
-        particles stall (#2470).  The solver's own ``self.boundary_conditions`` (priority-1 BC
+        taken from U, and the ghost's wall value is not U's slope: half of it from the cell-centred
+        no-flux ghost, and the boundary datum, 0, from the node-centred mirror #1935 needs, at which
+        wall particles stall (#2470).  The solver's own ``self.boundary_conditions`` (priority-1 BC
         source) is threaded into the operator so an override that differs from the
         geometry's default BCs is respected.  Previously the geometry's built-in BCs were
         always used, re-introducing the O(1/h) wall-drift error when the solver BCs

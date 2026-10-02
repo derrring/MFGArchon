@@ -440,8 +440,8 @@ class TestFPParticleSolverHelperMethods:
         slope from the cell-centred no-flux ghost, and the boundary datum 0 from the node-centred
         mirror #1935 needs, at which wall particles stall (#2470). Since #2470 the wall nodes take
         U's second-order one-sided difference, exact on a quadratic: for U = x², 2x at every node,
-        walls included. The periodic wrap gives about -25 at x = 0, the half slope 1.0 at x = 1, and
-        the datum 0.0 at x = 1.
+        walls included. At N = 51 the periodic wrap gives -25.0 at x = 0, the half slope 1 - h/2 = 0.99
+        at x = 1, and the datum 0.0 at x = 1.
         """
         for n_x in (26, 51, 101):
             geometry = TensorProductGrid(

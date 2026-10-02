@@ -97,8 +97,9 @@ def test_the_fp_drift_moves_wall_mass_at_the_velocity_of_u():
     )
 
 
+@pytest.mark.parametrize("door", [False, True], ids=["whole-faces", "door-on-x_max"])
 @pytest.mark.parametrize("periodic_first", [False, True])
-def test_a_periodic_axis_keeps_its_wrap_beside_a_closed_one(periodic_first):
+def test_a_periodic_axis_keeps_its_wrap_beside_a_closed_one(periodic_first, door):
     """Periodicity is decided per axis, whatever order the segments come in.
 
     x is no-flux and y periodic. On x the closure is exact on a quadratic, walls included. On y the seam has
@@ -108,13 +109,18 @@ def test_a_periodic_axis_keeps_its_wrap_beside_a_closed_one(periodic_first):
     periodic first leaves the x walls on the ghost. Reachable through `FPSLSolver`'s own
     ``boundary_conditions``, which is m's and is what that solver validates. Closing the seam is still
     consistent, which is why no periodic solve in the suite noticed it.
+
+    The door is a Dirichlet segment on part of x_max, named by its face and restricted by a region. Both
+    resolvers match it by its face, so it changes no axis's periodicity and must not be refused (#2471).
     """
     from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
     from mfgarchon.operators.differential.gradient import value_gradient
 
     walls = [BCSegment(name=f"x{s}", boundary=f"x_{s}", bc_type=BCType.NO_FLUX) for s in ("min", "max")]
     seam = [BCSegment(name=f"y{s}", boundary=f"y_{s}", bc_type=BCType.PERIODIC) for s in ("min", "max")]
-    bc = BoundaryConditions(dimension=2, segments=seam + walls if periodic_first else walls + seam)
+    doors = [BCSegment(name="door", boundary="x_max", bc_type=BCType.DIRICHLET, region={"y": (0.3, 0.7)}, priority=5)]
+    segments = (seam + walls if periodic_first else walls + seam) + (doors if door else [])
+    bc = BoundaryConditions(dimension=2, segments=segments)
     grid = TensorProductGrid(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[9, 41], boundary_conditions=bc)
     x, y = np.meshgrid(*grid.coordinates, indexing="ij")
     h = float(grid.get_grid_spacing()[1])
@@ -150,16 +156,16 @@ def _region_named_mix():
 
 @pytest.mark.parametrize(
     ("make_bc", "message"),
-    [(_half_periodic, "periodic on one face only"), (_region_named_mix, "without naming a face")],
+    [(_half_periodic, "periodic on one face only"), (_region_named_mix, "have no `boundary`")],
     ids=["half-periodic-axis", "region-named-mix"],
 )
 def test_a_boundary_whose_axes_cannot_be_read_per_face_is_refused(make_bc, message):
     """Two shapes the per-face reading cannot settle, refused rather than guessed.
 
     An axis periodic on one face has no answer: the ghosts would wrap one wall and mirror the other. A
-    segment addressed by region name covers every face for `get_bc_type_at_boundary`, while the ghosts'
-    resolver matches it to one face, so in a periodic mix the two disagree: this BC, read in segment order,
-    closed the periodic seam or left the walls on the ghost, a drift difference of 0.36.
+    segment with no ``boundary`` covers every face for `get_bc_type_at_boundary`, while the ghosts' resolver
+    matches it to a face only through its region name, so in a periodic mix the two disagree: this BC, read
+    in segment order, closed the periodic seam or left the walls on the ghost, a drift difference of 0.36.
     """
     from mfgarchon.operators.differential.gradient import value_gradient
 
