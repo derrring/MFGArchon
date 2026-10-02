@@ -255,7 +255,9 @@ class InterpolationApplicator(BaseBCApplicator):
             kind = as_str(bc_type)
             if kind in ("no_flux", "reflecting"):
                 return True
-            return kind == "neumann" and (value is None or (not callable(value) and np.all(np.asarray(value) == 0)))
+            return kind == "neumann" and (
+                value is None or (not callable(value) and bool(np.all(np.asarray(value) == 0)))
+            )
 
         partial = [
             seg.name
