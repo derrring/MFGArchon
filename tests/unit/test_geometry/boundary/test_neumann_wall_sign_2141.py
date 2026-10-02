@@ -24,14 +24,12 @@ returned du/dn = -0.700000 at the low wall and +0.700000 at the high. `problem.s
 reach it, because `FPFDMSolver` refuses an inhomogeneous Neumann value first (#1686), and a 1-D
 population therefore measures zero calls and misses the defect entirely.
 
-Do not read the second row as "it imposes du/dn = 0". It does not, and the file's own xfail cell
-prints the contradicting number. `InterpolationApplicator` defaults to `extrapolation_order=2`, so
-the Neumann path takes `enforce_neumann_value_nd`'s zero-flux branch, `u[0] = (4*u[1] - u[2])/3` --
-a vanishing SECOND derivative, not a vanishing normal one. What it actually imposes therefore depends
-on the field: measured, -0.100000 / +0.566667 on this file's `quadratic`, -1.0 / +1.0 on a linear
-ramp, and 0 only on a constant. The invariant that IS true of every field, and the one the test
-asserts, is that the result does not depend on `g` at all. Getting this wrong points whoever retires
-#2141 at the wrong target -- "make it impose du/dn = 0" is not the fix.
+Before the fix, the second row did not impose du/dn = 0 either. `InterpolationApplicator` defaults to
+`extrapolation_order=2`, so every Neumann face took `enforce_neumann_value_nd`'s zero-value branch,
+`u[0] = (4*u[1] - u[2])/3` -- a vanishing SECOND derivative, not a vanishing normal one. What it
+imposed depended on the field: measured, -0.100000 / +0.566667 on this file's `quadratic`, -1.0 /
++1.0 on a linear ramp, 0 only on a constant. A zero value still takes that branch; a non-zero one now
+imposes u[wall] = u[neighbour] + g*h.
 
 MEASURED AT THE APPLICATOR, NOT THROUGH A SOLVE, and that is the point of this file. Driving the
 pre-fix tree through `HJBSemiLagrangianSolver` reproduced `du/dn = -0.7` at N = 11 and then drifted
@@ -53,7 +51,7 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.geometry.boundary import neumann_bc
+from mfgarchon.geometry.boundary import BCSegment, BCType, mixed_bc, neumann_bc
 from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator
 from mfgarchon.geometry.boundary.applicator_interpolation import InterpolationApplicator
 
@@ -120,4 +118,51 @@ def test_every_applicator_imposes_the_requested_derivative_at_the_left_wall(appl
     assert _normal_derivative(enforced, "left") == pytest.approx(_G, abs=1e-9), (
         f"{applicator_name} imposed du/dn = {_normal_derivative(enforced, 'left'):+.4f} at the left "
         f"wall for a requested {_G:+.4f}."
+    )
+
+
+def test_each_axis_imposes_the_value_at_its_own_spacing():
+    """Per axis, on an anisotropic grid: hx = 0.1, hy = 0.5. Handing every axis the first axis's spacing
+    would impose du/dn = g * hx / hy on the y faces (0.14 for g = 0.7)."""
+    hx, hy = 0.1, 0.5
+    field = np.random.default_rng(0).standard_normal((11, 5))
+    out = InterpolationApplicator(dimension=2).enforce_values(
+        field.copy(), neumann_bc(value=_G, dimension=2), spacing=np.array([hx, hy])
+    )
+    interior_x, interior_y = slice(1, -1), slice(1, -1)
+    faces = {
+        "x_min": -(out[1, interior_y] - out[0, interior_y]) / hx,
+        "x_max": (out[-1, interior_y] - out[-2, interior_y]) / hx,
+        "y_min": -(out[interior_x, 1] - out[interior_x, 0]) / hy,
+        "y_max": (out[interior_x, -1] - out[interior_x, -2]) / hy,
+    }
+    for face, dudn in faces.items():
+        assert np.allclose(dudn, _G, atol=1e-12), f"{face}: du/dn = {dudn} for a requested {_G}"
+
+
+@pytest.mark.parametrize("spelling", ["alias", "default"])
+def test_a_no_flux_face_ignores_a_value_it_carries(spelling):
+    """A NO_FLUX face imposes nothing from a value attached to it, however the face is reached: by an
+    alias ("right") or as the uncovered faces' default. The applicator typed those faces with its own
+    string match, which resolved neither and called them "neumann", while its value read resolved
+    both; imposing the value (#2141) made a NO_FLUX value leak in as du/dn until both reads went
+    through `get_bc_type_at_boundary`."""
+    bounds = np.array([[0.0, 1.0], [0.0, 1.0]])
+
+    def bc(value: float):
+        if spelling == "alias":
+            segments = [
+                BCSegment(name="l", bc_type=BCType.NEUMANN, value=0.0, boundary="left"),
+                BCSegment(name="r", bc_type=BCType.NO_FLUX, value=value, boundary="right"),
+            ]
+            return mixed_bc(segments, dimension=2, domain_bounds=bounds, default_bc=BCType.NO_FLUX)
+        segments = [BCSegment(name="l", bc_type=BCType.NEUMANN, value=0.0, boundary="x_min")]
+        return mixed_bc(segments, dimension=2, domain_bounds=bounds, default_bc=BCType.NO_FLUX, default_value=value)
+
+    field = np.random.default_rng(1).standard_normal((9, 9))
+    spacing = np.array([0.125, 0.125])
+    zero = InterpolationApplicator(dimension=2).enforce_values(field.copy(), bc(0.0), spacing=spacing)
+    carried = InterpolationApplicator(dimension=2).enforce_values(field.copy(), bc(_G), spacing=spacing)
+    assert np.array_equal(zero, carried), (
+        f"a NO_FLUX value reached the field: max|diff| = {np.abs(zero - carried).max():.3e}"
     )

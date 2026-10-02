@@ -237,42 +237,24 @@ class InterpolationApplicator(BaseBCApplicator):
             bc_type = getattr(bc, "type", "neumann").lower()
             return [(bc_type, bc_type)] * ndim
 
-        # Unified BoundaryConditions - check if uniform
-        if bc.is_uniform:
-            seg = bc.segments[0]
-            bc_type_str = seg.bc_type.value.lower() if isinstance(seg.bc_type, BCType) else str(seg.bc_type).lower()
-            return [(bc_type_str, bc_type_str)] * ndim
+        # One resolver for the type and the value. `get_bc_type_at_boundary` resolves an alias
+        # ("left") and an uncovered face's default_bc exactly as `_get_bc_value`'s
+        # `get_bc_value_at_boundary` does. This class used its own string match, which did neither and
+        # typed such a face "neumann"; once the Neumann value was imposed (#2141), a value carried by a
+        # NO_FLUX segment or default leaked into that face as du/dn.
+        def as_str(bc_type: BCType | str) -> str:
+            return bc_type.value.lower() if isinstance(bc_type, BCType) else str(bc_type).lower()
 
-        # Mixed BC - need to parse per-boundary
         axis_names = ["x", "y", "z", "w"]  # Extend for higher dimensions
         result = []
-
         for d in range(ndim):
             axis_name = axis_names[d] if d < len(axis_names) else f"d{d}"
-            bc_type_min = "neumann"  # Default
-            bc_type_max = "neumann"
-
-            for seg in bc.segments:
-                boundary = seg.boundary
-                if boundary is None:
-                    # Uniform segment - applies to all
-                    bc_type_str = (
-                        seg.bc_type.value.lower() if isinstance(seg.bc_type, BCType) else str(seg.bc_type).lower()
-                    )
-                    bc_type_min = bc_type_str
-                    bc_type_max = bc_type_str
-                elif isinstance(boundary, str):
-                    boundary_lower = boundary.lower()
-                    bc_type_str = (
-                        seg.bc_type.value.lower() if isinstance(seg.bc_type, BCType) else str(seg.bc_type).lower()
-                    )
-                    if boundary_lower == f"{axis_name}_min":
-                        bc_type_min = bc_type_str
-                    elif boundary_lower == f"{axis_name}_max":
-                        bc_type_max = bc_type_str
-
-            result.append((bc_type_min, bc_type_max))
-
+            result.append(
+                (
+                    as_str(bc.get_bc_type_at_boundary(f"{axis_name}_min")),
+                    as_str(bc.get_bc_type_at_boundary(f"{axis_name}_max")),
+                )
+            )
         return result
 
     def _get_bc_value(

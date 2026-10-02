@@ -190,10 +190,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
     #: On no path does a Neumann value g reach every place this solver touches a wall: the boundary
     #: handling of the departure feet and the diffusion step carry none. Where g does reach U is the
-    #: gradient's ghost cells and the post-step enforcement (FDMApplicator on a 1-D whole or stochastic
-    #: step; InterpolationApplicator on sub-steps and n-D stochastic and DPP steps, since #2141).
-    #: canonical-CS enforces nothing and solves the no-flux problem, and an n-D whole step has no post-step
-    #: enforcement. On u = A |x - 1/2|^2 with its exact data g = A and sigma = 0.2, no path measured
+    #: gradient's ghost cells and the post-step enforcement (FDMApplicator on a 1-D whole step, 1-D DPP and
+    #: the 1-D stochastic step and its sub-steps; InterpolationApplicator on operator-splitting sub-steps
+    #: and on n-D stochastic and DPP steps, since #2141). canonical-CS enforces nothing and solves the
+    #: no-flux problem, and an n-D operator-splitting whole step has no post-step enforcement. On u = A |x - 1/2|^2 with its exact data g = A and sigma = 0.2, no path measured
     #: converged with g under refinement. At sigma = 0, where characteristics leave the domain, these
     #: converged with g at first order and no_flux_bc() did not: the 1-D whole step at foot CFL 0.3, the
     #: 1-D sub-steps and stochastic step at foot CFL up to 2.8, and the 2-D stochastic step; the 2-D whole
@@ -204,7 +204,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         "The semi-Lagrangian HJB solver does not carry a Neumann value everywhere it touches a wall, on any "
         "path: depending on the path the value reaches the gradient's ghost cells, the post-step "
         "enforcement, both, or neither. With diffusion, no path measured against an exact solution "
-        "converged with it; without diffusion, some 1-D paths did (#1936). Passing g = 0 "
+        "converged with it; without diffusion, some paths did (#1936). Passing g = 0 "
         "(no_flux_bc()) solves a different problem wherever the value matters."
     )
 
