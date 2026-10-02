@@ -24,12 +24,11 @@ returned du/dn = -0.700000 at the low wall and +0.700000 at the high. `problem.s
 reach it, because `FPFDMSolver` refuses an inhomogeneous Neumann value first (#1686), and a 1-D
 population therefore measures zero calls and misses the defect entirely.
 
-Before the fix, the second row did not impose du/dn = 0 either. `InterpolationApplicator` defaults to
-`extrapolation_order=2`, so every Neumann face took `enforce_neumann_value_nd`'s zero-value branch,
-`u[0] = (4*u[1] - u[2])/3` -- a vanishing SECOND derivative, not a vanishing normal one. What it
-imposed depended on the field: measured, -0.100000 / +0.566667 on this file's `quadratic`, -1.0 /
-+1.0 on a linear ramp, 0 only on a constant. A zero value still takes that branch; a non-zero one now
-imposes u[wall] = u[neighbour] + g*h.
+Before the fix, every Neumann face of the second row took `enforce_neumann_value_nd`'s zero-value
+branch (`InterpolationApplicator` defaults to `extrapolation_order=2`): `u[0] = (4*u[1] - u[2])/3`,
+the point where the second-order one-sided difference of du/dn vanishes, so it imposed du/dn = 0 at
+second order whatever g was asked for. A zero value still takes that branch; a non-zero one now
+imposes u[wall] = u[neighbour] + g*h, at first order.
 
 MEASURED AT THE APPLICATOR, NOT THROUGH A SOLVE, and that is the point of this file. Driving the
 pre-fix tree through `HJBSemiLagrangianSolver` reproduced `du/dn = -0.7` at N = 11 and then drifted
@@ -168,3 +167,17 @@ def test_a_no_flux_face_ignores_a_value_it_carries(spelling):
     assert np.array_equal(zero, carried), (
         f"a NO_FLUX value reached the field: max|diff| = {np.abs(zero - carried).max():.3e}"
     )
+
+
+def test_a_segment_on_part_of_the_boundary_is_refused_not_spread():
+    """The applicator imposes one condition per face, and the shared face resolver gives a segment with no
+    face string every face it is asked about. So a Dirichlet outlet patch over Neumann walls would have
+    been imposed on the whole boundary (measured in #2466's review: 32 of 32 boundary nodes set to the
+    outlet value). It is refused instead."""
+    outlet = BCSegment(
+        name="outlet", bc_type=BCType.DIRICHLET, value=0.0, region={"x": (0.9, 1.0), "y": (0.4, 0.6)}, priority=1
+    )
+    walls = BCSegment(name="walls", bc_type=BCType.NEUMANN, value=0.0, priority=0)
+    bc = BoundaryConditions(segments=[outlet, walls], dimension=2, domain_bounds=np.array([[0.0, 1.0], [0.0, 1.0]]))
+    with pytest.raises(NotImplementedError, match="part of the boundary"):
+        InterpolationApplicator(dimension=2).enforce_values(np.ones((9, 9)), bc, spacing=np.array([0.125, 0.125]))

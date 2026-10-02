@@ -245,6 +245,24 @@ class InterpolationApplicator(BaseBCApplicator):
         def as_str(bc_type: BCType | str) -> str:
             return bc_type.value.lower() if isinstance(bc_type, BCType) else str(bc_type).lower()
 
+        # This applicator imposes one condition per face. A segment restricted to part of the boundary
+        # cannot be honoured, and the shared resolver would give it the whole face -- every face, for a
+        # segment with no face string -- so it is refused rather than spread.
+        partial = [
+            seg.name
+            for seg in bc.segments
+            if seg.region is not None
+            or seg.sdf_region is not None
+            or seg.normal_direction is not None
+            or seg.region_name is not None
+        ]
+        if partial:
+            raise NotImplementedError(
+                f"InterpolationApplicator imposes one condition per face and cannot honour segment(s) {partial} "
+                "restricted to part of the boundary (region, sdf_region, normal_direction or region_name); "
+                "it would apply them to whole faces. Give each face one segment by its face name."
+            )
+
         axis_names = ["x", "y", "z", "w"]  # Extend for higher dimensions
         result = []
         for d in range(ndim):
