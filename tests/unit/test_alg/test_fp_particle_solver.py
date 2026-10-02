@@ -431,15 +431,18 @@ class TestFPParticleSolverHelperMethods:
         np.testing.assert_allclose(gradient[1:-1], 2.0 * x_coords[1:-1], rtol=0, atol=1e-10)
 
     def test_compute_gradient_bc_aware_at_boundary(self):
-        """The drift gradient must be BC-aware at non-periodic walls (silent-divergence bug-hunt).
+        """The drift gradient is U's own gradient at non-periodic walls, exactly where the stencil is exact.
 
         Previously ``_compute_gradient_nd`` used a periodic-wrap central difference regardless of
         BC: at a no-flux wall it took ``(U[1] - U[N-1])/(2h)``, wrapping to the far wall — an
-        O(1/h) wrong-sign drift (e.g. ~-25 for U=x² at N=51, blowing up under refinement). It now
-        routes through the geometry's BC-aware operator (the same one the HJB uses), so the
-        boundary gradient is O(1)-bounded and shrinks under refinement, not the periodic garbage.
+        O(1/h) wrong-sign drift (e.g. ~-25 for U=x² at N=51, blowing up under refinement). It then
+        routed through the geometry's BC-aware operator, whose wall value is the ghost's: half U's
+        slope from the cell-centred no-flux ghost, and the boundary datum 0 from the node-centred
+        mirror #1935 needs, at which wall particles stall (#2470). Since #2470 the wall nodes take
+        U's second-order one-sided difference, exact on a quadratic: for U = x², 2x at every node,
+        walls included. The periodic wrap gives about -25 at x = 0, the half slope 1.0 at x = 1, and
+        the datum 0.0 at x = 1.
         """
-        bounds_diff = []
         for n_x in (26, 51, 101):
             geometry = TensorProductGrid(
                 bounds=[(0.0, 1.0)], Nx_points=[n_x], boundary_conditions=no_flux_bc(dimension=1)
@@ -449,12 +452,9 @@ class TestFPParticleSolverHelperMethods:
             dx = problem.geometry.get_grid_spacing()[0]
             x_coords = np.linspace(0.0, 1.0, n_x)
             g = solver._compute_gradient_nd(x_coords**2, [dx], use_backend=False)[0]
-            # O(1)-bounded at the wall (the periodic-wrap bug gave |g[0]| ~ 1/(2dx) -> blows up).
-            assert abs(g[0]) < 1.0, f"N={n_x}: |g[0]|={abs(g[0]):.2f} — periodic-wrap O(1/h) drift not fixed?"
-            assert np.all(np.isfinite(g))
-            bounds_diff.append(abs(g[0]))
-        # Boundary error shrinks under refinement (it would GROW ~1/h with the periodic-wrap bug).
-        assert bounds_diff[-1] < bounds_diff[0], f"boundary gradient not converging: {bounds_diff}"
+            np.testing.assert_allclose(
+                g, 2 * x_coords, rtol=0, atol=1e-10, err_msg=f"N={n_x}: the drift gradient is not U's (#2470)"
+            )
 
     def test_normalize_density_none(self):
         """Test density normalization with NONE strategy."""

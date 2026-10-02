@@ -489,10 +489,12 @@ class FPParticleSolver(BaseFPSolver):
         """
         Compute the spatial gradient of the value function for the FP drift, BC-aware.
 
-        For TensorProductGrid geometries, routes through
-        ``geometry.get_gradient_operator(scheme="central", bc=<solver-BCs>)`` — the SAME
-        BC-aware operator the HJB uses — so non-periodic boundaries get ghost-padded /
-        one-sided stencils.  The solver's own ``self.boundary_conditions`` (priority-1 BC
+        For TensorProductGrid geometries, routes through ``value_gradient`` — the geometry's
+        central operator with ``bc=<solver-BCs>``, whose wall nodes on a non-periodic axis then
+        take U's one-sided difference rather than what the ghost imposes. A drift is a velocity
+        taken from U; the ghost's wall value is the boundary datum, half U's slope from the
+        cell-centred no-flux ghost and 0 from the node-centred mirror #1935 needs, at which wall
+        particles stall (#2470).  The solver's own ``self.boundary_conditions`` (priority-1 BC
         source) is threaded into the operator so an override that differs from the
         geometry's default BCs is respected.  Previously the geometry's built-in BCs were
         always used, re-introducing the O(1/h) wall-drift error when the solver BCs
@@ -519,7 +521,6 @@ class FPParticleSolver(BaseFPSolver):
         """
         from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid
 
-        ndim = len(spacings)
         on_backend = use_backend and self.backend is not None
         # The geometry operator is numpy; round-trip through host for the backend/GPU path.
         u_host = self.backend.to_numpy(U_array) if on_backend else np.asarray(U_array)
@@ -530,10 +531,10 @@ class FPParticleSolver(BaseFPSolver):
             # override that differs from geometry's default BCs is respected.
             # Issue #1255 (A), 2026-06-10 audit.
             from mfgarchon.geometry.boundary.conditions import BoundaryConditions
+            from mfgarchon.operators.differential.gradient import value_gradient
 
             bc_override = self.boundary_conditions if isinstance(self.boundary_conditions, BoundaryConditions) else None
-            grad_ops = geom.get_gradient_operator(scheme="central", bc=bc_override)
-            grads = [grad_ops[d](u_host) for d in range(ndim)]
+            grads = list(value_gradient(geom, u_host, time=0.0, bc=bc_override))
         else:
             # Implicit / meshfree geometry: get_gradient_operator may not accept
             # scheme= and its placeholder raises NotImplementedError anyway.  Fall back

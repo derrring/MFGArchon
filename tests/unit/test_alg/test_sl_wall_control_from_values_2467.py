@@ -109,8 +109,8 @@ def test_a_periodic_axis_keeps_its_wrap_beside_a_closed_one(periodic_first):
     ``boundary_conditions``, which is m's and is what that solver validates. Closing the seam is still
     consistent, which is why no periodic solve in the suite noticed it.
     """
-    from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import value_gradient
     from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
+    from mfgarchon.operators.differential.gradient import value_gradient
 
     walls = [BCSegment(name=f"x{s}", boundary=f"x_{s}", bc_type=BCType.NO_FLUX) for s in ("min", "max")]
     seam = [BCSegment(name=f"y{s}", boundary=f"y_{s}", bc_type=BCType.PERIODIC) for s in ("min", "max")]
@@ -161,7 +161,7 @@ def test_a_boundary_whose_axes_cannot_be_read_per_face_is_refused(make_bc, messa
     resolver matches it to one face, so in a periodic mix the two disagree: this BC, read in segment order,
     closed the periodic seam or left the walls on the ghost, a drift difference of 0.36.
     """
-    from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import value_gradient
+    from mfgarchon.operators.differential.gradient import value_gradient
 
     grid = TensorProductGrid(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[9, 9], boundary_conditions=make_bc())
     x, _ = np.meshgrid(*grid.coordinates, indexing="ij")
@@ -178,7 +178,7 @@ def test_the_closure_is_exact_where_its_stencil_is(shape):
     wrong wall, the wrong sign or a first-order stencil fails here, where the solver-level oracles above
     pass several of those (a first-order closure: 1.01 / 1.03 / 1.06).
     """
-    from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import value_gradient
+    from mfgarchon.operators.differential.gradient import value_gradient
 
     grid = TensorProductGrid(
         bounds=[(0.0, 1.0), (-0.5, 1.5)], Nx_points=list(shape), boundary_conditions=no_flux_bc(dimension=2)

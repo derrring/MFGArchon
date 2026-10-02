@@ -28,16 +28,9 @@ Functions:
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from scipy.integrate import solve_ivp
-
-from mfgarchon.geometry.boundary.bc_utils import geometric_operations
-from mfgarchon.geometry.boundary.types import BCType
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 # How finely a semi-Lagrangian step is cut when its CFL number exceeds max(1, cfl_target). Both halves of the SL pair
 # (HJBSemiLagrangianSolver and FPSLSolver) share this function; each measures the CFL number on its own
@@ -128,94 +121,6 @@ def cfl_substeps(
             f"hjb_config={{'max_substeps': n}}) hands the value to both halves."
         )
     return needed
-
-
-def wall_gradient_from_values(
-    values: np.ndarray, gradient: Sequence[np.ndarray], spacings: Sequence[float], axes: Sequence[int]
-) -> tuple[np.ndarray, ...]:
-    """``gradient`` with the wall slices of each axis in ``axes`` replaced by a one-sided difference of ``values``.
-
-    Both halves of the SL pair differentiate U with the geometry's central operator, whose value at a wall
-    node is read from the FDM ghost: the control there was whatever the ghost encoded, not a property of
-    U (#2467). The cell-centred no-flux ghost gives half the one-sided slope; the node-centred mirror #1935
-    needs gives the boundary datum whatever U is, which freezes the wall characteristic.
-
-    Measured on `test_hjb_semi_lagrangian.py`'s sigma = 0 fixture, whose exact solution is the Hopf-Lax
-    closed form (x - 1/2)^2 / (2 (1 + tau)) + tau with wall slope -1 / (2 (1 + tau)): at 201 points the max
-    error is 5.3e-04 from the ghost's half slope, wall/interior 1.60, and 3.3e-04 from this, wall/interior
-    1.007. A gradient forced to the datum gives 7.7e-03.
-
-    The difference is second order on an axis of 3 or more points. A 2-point axis holds one difference,
-    (u_1 - u_0) / h, and both walls take it. A 1-point axis holds none and is left as the operator gave it.
-    Interior values, and every axis not in ``axes``, are returned unchanged.
-    """
-    closed = [np.array(component, dtype=float) for component in gradient]
-    for axis in axes:
-        n, h = values.shape[axis], spacings[axis]
-        if n < 2:
-            continue
-        low = [slice(None)] * values.ndim
-        high = [slice(None)] * values.ndim
-        low[axis], high[axis] = 0, -1
-
-        def at(i: int, ax: int = axis) -> np.ndarray:
-            return np.take(values, i, axis=ax)
-
-        if n == 2:
-            closed[axis][tuple(low)] = closed[axis][tuple(high)] = (at(1) - at(0)) / h
-        else:
-            closed[axis][tuple(low)] = (-3.0 * at(0) + 4.0 * at(1) - at(2)) / (2.0 * h)
-            closed[axis][tuple(high)] = (3.0 * at(-1) - 4.0 * at(-2) + at(-3)) / (2.0 * h)
-    return tuple(closed)
-
-
-#: Ways a segment can address the boundary other than by naming a face.
-_NOT_A_FACE = ("region", "region_name", "sdf_region", "normal_direction")
-
-
-def value_gradient(geometry: Any, values: np.ndarray, time: float) -> tuple[np.ndarray, ...]:
-    """grad(U) as both halves of the SL pair take it: the HJB half for its control, the FP half for its drift.
-
-    The geometry's central operator, whose ghosts carry the geometry's boundary conditions; then every
-    axis whose two faces are not periodic has its wall nodes replaced by the one-sided difference of
-    ``values`` (`wall_gradient_from_values`, #2467). A periodic axis keeps the operator's wrap.
-
-    Each axis is asked separately, through ``get_bc_type_at_boundary``. Reading one type for the whole
-    boundary takes the first segment's, so on a geometry mixing periodic and non-periodic faces --
-    reachable through ``FPSLSolver``'s own ``boundary_conditions``, which is m's and is what that solver
-    validates -- the answer depended on the segments' order. That accessor and the ghosts' resolver
-    (``PreallocatedGhostBuffer._find_segment_for_face``) agree on a segment named by its face; on one
-    addressed otherwise (no face, or a region, region name, signed-distance region or normal direction)
-    they can disagree, the accessor letting it cover every face. Such a segment in a periodic mix is
-    refused, as is an axis periodic on one face only.
-
-    On a closed axis the wall values the ghosts produced are discarded, so ``time`` reaches nothing there;
-    it is passed for the operator's reads, whose clock #2453 pins.
-    """
-    bc = geometry.get_boundary_conditions()
-    operations = geometric_operations(bc)
-    if "periodic" in operations and len(operations) > 1:
-        unnamed = [
-            seg.name for seg in bc.segments if seg.face is None or any(getattr(seg, f) is not None for f in _NOT_A_FACE)
-        ]
-        if unnamed:
-            raise NotImplementedError(
-                f"segments {unnamed} mix periodic and non-periodic faces without naming a face; the semi-Lagrangian "
-                f"pair reads periodicity per face and cannot tell which axes they make periodic. Give each face "
-                f"its own segment by face name (#2467)."
-            )
-    closed_axes = []
-    for axis in range(values.ndim):
-        periodic = [bc.get_bc_type_at_boundary(f"axis{axis}_{side}") == BCType.PERIODIC for side in ("min", "max")]
-        if periodic[0] != periodic[1]:
-            raise NotImplementedError(
-                f"axis {axis} is periodic on one face only; a periodic axis needs both, so the semi-Lagrangian "
-                f"pair cannot tell which neighbour its wall nodes have"
-            )
-        if not periodic[0]:
-            closed_axes.append(axis)
-    components = tuple(op(values) for op in geometry.get_gradient_operator(scheme="central", time=time))
-    return wall_gradient_from_values(values, components, geometry.get_grid_spacing(), closed_axes)
 
 
 def trace_characteristic_backward_1d(
