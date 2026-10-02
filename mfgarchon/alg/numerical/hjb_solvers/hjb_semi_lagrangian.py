@@ -36,6 +36,7 @@ from mfgarchon.geometry.boundary.bc_utils import (
 )
 from mfgarchon.geometry.boundary.enforcement import enforce_periodic_value_nd
 from mfgarchon.geometry.boundary.types import BCType
+from mfgarchon.operators.differential.gradient import value_gradient
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import (
@@ -63,7 +64,6 @@ from .hjb_sl_characteristics import (
     fold_into_domain,
     trace_characteristic_backward_1d,
     trace_characteristic_backward_nd,
-    value_gradient,
 )
 from .hjb_sl_interpolation import (
     interpolate_nearest_neighbor,
@@ -796,7 +796,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         For standard MFG with quadratic control cost, the optimal control is:
             α*(x,t) = ∇u(x,t)
 
-        Uses ``value_gradient``, the SL pair's one owner for grad(U), over geometry.get_gradient_operator():
+        Uses ``value_gradient``, the one owner of the gradient of data, over geometry.get_gradient_operator():
         - Periodic wrap via ghost cells; a non-periodic wall node reads U, not the ghost (#2467)
         - Scheme selection (central differences for Semi-Lagrangian)
         - Multi-dimensional stencils

@@ -97,8 +97,9 @@ def test_the_fp_drift_moves_wall_mass_at_the_velocity_of_u():
     )
 
 
+@pytest.mark.parametrize("door", [False, True], ids=["whole-faces", "door-on-x_max"])
 @pytest.mark.parametrize("periodic_first", [False, True])
-def test_a_periodic_axis_keeps_its_wrap_beside_a_closed_one(periodic_first):
+def test_a_periodic_axis_keeps_its_wrap_beside_a_closed_one(periodic_first, door):
     """Periodicity is decided per axis, whatever order the segments come in.
 
     x is no-flux and y periodic. On x the closure is exact on a quadratic, walls included. On y the seam has
@@ -108,13 +109,18 @@ def test_a_periodic_axis_keeps_its_wrap_beside_a_closed_one(periodic_first):
     periodic first leaves the x walls on the ghost. Reachable through `FPSLSolver`'s own
     ``boundary_conditions``, which is m's and is what that solver validates. Closing the seam is still
     consistent, which is why no periodic solve in the suite noticed it.
+
+    The door is a Dirichlet segment on part of x_max, named by its face and restricted by a region. Both
+    resolvers match it by its face, so it changes no axis's periodicity and must not be refused (#2471).
     """
-    from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import value_gradient
     from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
+    from mfgarchon.operators.differential.gradient import value_gradient
 
     walls = [BCSegment(name=f"x{s}", boundary=f"x_{s}", bc_type=BCType.NO_FLUX) for s in ("min", "max")]
     seam = [BCSegment(name=f"y{s}", boundary=f"y_{s}", bc_type=BCType.PERIODIC) for s in ("min", "max")]
-    bc = BoundaryConditions(dimension=2, segments=seam + walls if periodic_first else walls + seam)
+    doors = [BCSegment(name="door", boundary="x_max", bc_type=BCType.DIRICHLET, region={"y": (0.3, 0.7)}, priority=5)]
+    segments = (seam + walls if periodic_first else walls + seam) + (doors if door else [])
+    bc = BoundaryConditions(dimension=2, segments=segments)
     grid = TensorProductGrid(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[9, 41], boundary_conditions=bc)
     x, y = np.meshgrid(*grid.coordinates, indexing="ij")
     h = float(grid.get_grid_spacing()[1])
@@ -148,25 +154,61 @@ def _region_named_mix():
     return BoundaryConditions(dimension=2, default_bc=BCType.NO_FLUX, segments=walls + seam)
 
 
+def _region_only_exit():
+    from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
+
+    exit_ = BCSegment(name="exit", bc_type=BCType.DIRICHLET, region={"x": (0.95, 1.0), "y": (0.3, 0.7)})
+    return BoundaryConditions(dimension=2, default_bc=BCType.PERIODIC, segments=[exit_])
+
+
 @pytest.mark.parametrize(
     ("make_bc", "message"),
-    [(_half_periodic, "periodic on one face only"), (_region_named_mix, "without naming a face")],
-    ids=["half-periodic-axis", "region-named-mix"],
+    [
+        (_half_periodic, "periodic on one face only"),
+        (_region_named_mix, "have no `boundary`"),
+        (_region_only_exit, "have no `boundary`"),
+    ],
+    ids=["half-periodic-axis", "region-named-mix", "region-only-exit"],
 )
 def test_a_boundary_whose_axes_cannot_be_read_per_face_is_refused(make_bc, message):
     """Two shapes the per-face reading cannot settle, refused rather than guessed.
 
     An axis periodic on one face has no answer: the ghosts would wrap one wall and mirror the other. A
-    segment addressed by region name covers every face for `get_bc_type_at_boundary`, while the ghosts'
-    resolver matches it to one face, so in a periodic mix the two disagree: this BC, read in segment order,
-    closed the periodic seam or left the walls on the ghost, a drift difference of 0.36.
+    segment with no ``boundary`` covers every face for `get_bc_type_at_boundary`, while the ghosts' resolver
+    matches it to a face only through its region name, so in a periodic mix the two disagree: this BC, read
+    in segment order, closed the periodic seam or left the walls on the ghost, a drift difference of 0.36.
+    The exit, given only a region, is read by the ghosts as nowhere -- every face periodic -- and by the
+    accessor as every face.
     """
-    from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import value_gradient
+    from mfgarchon.operators.differential.gradient import value_gradient
 
     grid = TensorProductGrid(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[9, 9], boundary_conditions=make_bc())
     x, _ = np.meshgrid(*grid.coordinates, indexing="ij")
     with pytest.raises(NotImplementedError, match=message):
         value_gradient(grid, x**2, time=0.0)
+
+
+def test_a_uniform_periodic_boundary_is_periodic_whatever_its_default():
+    """One unrestricted periodic segment covers every face for both resolvers, and neither reads the default.
+
+    `geometric_operations` counts the default all the same, so a no-flux default made this look like a mix
+    of periodic and non-periodic faces and its segment, having no ``boundary``, was refused (#2471). The
+    shape comes from ``mixed_bc`` with one periodic segment and from ``resolution.to_boundary_conditions``.
+    Both axes must keep the wrap: the central stencil on a sinusoid is exact up to its own factor
+    sin(2 pi h) / h at every node, seams included.
+    """
+    from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
+    from mfgarchon.operators.differential.gradient import value_gradient
+
+    bc = BoundaryConditions(
+        dimension=2, default_bc=BCType.NO_FLUX, segments=[BCSegment(name="all", bc_type=BCType.PERIODIC)]
+    )
+    grid = TensorProductGrid(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[21, 31], boundary_conditions=bc)
+    x, y = np.meshgrid(*grid.coordinates, indexing="ij")
+    hx, hy = (float(h) for h in grid.get_grid_spacing())
+    gx, gy = value_gradient(grid, np.sin(2 * np.pi * (x - 0.137)) + np.sin(2 * np.pi * (y - 0.41)), time=0.0)
+    np.testing.assert_allclose(gx, np.cos(2 * np.pi * (x - 0.137)) * np.sin(2 * np.pi * hx) / hx, rtol=0, atol=1e-11)
+    np.testing.assert_allclose(gy, np.cos(2 * np.pi * (y - 0.41)) * np.sin(2 * np.pi * hy) / hy, rtol=0, atol=1e-11)
 
 
 @pytest.mark.parametrize("shape", [(7, 11), (9, 2)])
@@ -178,7 +220,7 @@ def test_the_closure_is_exact_where_its_stencil_is(shape):
     wrong wall, the wrong sign or a first-order stencil fails here, where the solver-level oracles above
     pass several of those (a first-order closure: 1.01 / 1.03 / 1.06).
     """
-    from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import value_gradient
+    from mfgarchon.operators.differential.gradient import value_gradient
 
     grid = TensorProductGrid(
         bounds=[(0.0, 1.0), (-0.5, 1.5)], Nx_points=list(shape), boundary_conditions=no_flux_bc(dimension=2)

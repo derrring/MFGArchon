@@ -42,7 +42,6 @@ from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import (
     apply_boundary_conditions_1d,
     cfl_substeps,
     check_substep_settings,
-    value_gradient,
 )
 from mfgarchon.geometry.boundary.bc_utils import (
     bc_type_to_geometric_operation,
@@ -50,6 +49,7 @@ from mfgarchon.geometry.boundary.bc_utils import (
 )
 from mfgarchon.geometry.boundary.enforcement import enforce_periodic_value_nd
 from mfgarchon.geometry.boundary.types import BCType
+from mfgarchon.operators.differential.gradient import value_gradient
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
