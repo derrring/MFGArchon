@@ -438,15 +438,16 @@ def value_gradient(
     axis whose two faces are not periodic has its wall nodes replaced by the one-sided difference of
     ``values`` (`wall_gradient_from_values`). A periodic axis keeps the operator's wrap.
 
-    Each axis is asked separately, through ``get_bc_type_at_boundary``. Reading one type for the whole
-    boundary takes the first segment's, so on a geometry mixing periodic and non-periodic faces --
-    reachable wherever the solver does not refuse such a BC itself: ``FPParticleSolver``, and ``FPSLSolver``
-    given its own ``boundary_conditions`` -- the answer depended on the segments' order. That accessor and the ghosts' resolver
-    (``PreallocatedGhostBuffer._find_segment_for_face``) both match a segment with a ``boundary`` by its
-    face, whatever region it is restricted to within that face. A segment with no ``boundary`` covers every
-    face for the accessor, while the ghosts match it to a face only through its region name, or not at all;
-    in a periodic mix that disagreement decides which axes are periodic, so such a segment is refused there,
-    as is an axis periodic on one face only.
+    Each axis is asked separately, through ``get_bc_type_at_boundary``. Reading one type for the whole boundary
+    takes the first segment's, so on a geometry mixing periodic and non-periodic faces -- reachable wherever the
+    solver does not refuse such a BC itself: ``FPParticleSolver``, and ``FPSLSolver`` given its own
+    ``boundary_conditions`` -- the answer depended on the segments' order. That accessor and the ghosts'
+    resolver (``PreallocatedGhostBuffer._find_segment_for_face``) both match a segment with a ``boundary`` by
+    its face, whatever region it is restricted to within that face. A segment with no ``boundary`` covers every
+    face for the accessor, while the ghosts match it to a face only through its region name, or not at all; in a
+    periodic mix that disagreement can decide which axes are periodic, so such a segment is refused there, as is
+    an axis periodic on one face only. A uniform BC is not a mix: its one segment covers every face for both,
+    and neither reads its ``default_bc``, which ``geometric_operations`` still counts.
 
     On a closed axis the wall values the ghosts produced are discarded, so ``time`` reaches nothing there;
     it is passed for the operator's reads, whose clock #2453 pins.
@@ -457,7 +458,7 @@ def value_gradient(
     given = bc
     bc = geometry.get_boundary_conditions() if given is None else given
     operations = geometric_operations(bc)
-    if "periodic" in operations and len(operations) > 1:
+    if "periodic" in operations and len(operations) > 1 and not bc.is_uniform:
         unbounded = [seg.name for seg in bc.segments if seg.boundary is None]
         if unbounded:
             raise NotImplementedError(

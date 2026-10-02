@@ -15,6 +15,12 @@ The non-tensor-grid path is unchanged.
 - a geometry mixing periodic and non-periodic faces with a segment that has no `boundary`, for example a region-only exit with a periodic default;
 - an axis periodic on one face only.
 
-For the region-only exit, the two face resolvers disagree about which faces the segment covers, so its periodicity cannot be read. A segment named by its face and restricted to part of it, such as a door, is accepted.
+For the region-only exit, the two face resolvers disagree about which faces the segment covers, so its periodicity cannot be read. Two shapes are accepted:
 
-**Also narrowed.** The #2467 refusal itself is narrowed to segments with no `boundary`: it had also refused face-named segments carrying a region, which both resolvers read the same way.
+- a segment named by its face and restricted to part of it, such as a door;
+- a uniform BC, whatever its unused `default_bc`.
+
+**Also narrowed.** The #2467 refusal itself is narrowed to segments with no `boundary` in a BC that is not uniform. It had also refused two shapes that both resolvers read the same way:
+
+- face-named segments carrying a region;
+- one periodic segment beside a non-periodic default, the shape `mixed_bc` and `resolution.to_boundary_conditions` produce.

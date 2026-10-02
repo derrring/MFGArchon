@@ -154,10 +154,21 @@ def _region_named_mix():
     return BoundaryConditions(dimension=2, default_bc=BCType.NO_FLUX, segments=walls + seam)
 
 
+def _region_only_exit():
+    from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
+
+    exit_ = BCSegment(name="exit", bc_type=BCType.DIRICHLET, region={"x": (0.95, 1.0), "y": (0.3, 0.7)})
+    return BoundaryConditions(dimension=2, default_bc=BCType.PERIODIC, segments=[exit_])
+
+
 @pytest.mark.parametrize(
     ("make_bc", "message"),
-    [(_half_periodic, "periodic on one face only"), (_region_named_mix, "have no `boundary`")],
-    ids=["half-periodic-axis", "region-named-mix"],
+    [
+        (_half_periodic, "periodic on one face only"),
+        (_region_named_mix, "have no `boundary`"),
+        (_region_only_exit, "have no `boundary`"),
+    ],
+    ids=["half-periodic-axis", "region-named-mix", "region-only-exit"],
 )
 def test_a_boundary_whose_axes_cannot_be_read_per_face_is_refused(make_bc, message):
     """Two shapes the per-face reading cannot settle, refused rather than guessed.
@@ -166,6 +177,8 @@ def test_a_boundary_whose_axes_cannot_be_read_per_face_is_refused(make_bc, messa
     segment with no ``boundary`` covers every face for `get_bc_type_at_boundary`, while the ghosts' resolver
     matches it to a face only through its region name, so in a periodic mix the two disagree: this BC, read
     in segment order, closed the periodic seam or left the walls on the ghost, a drift difference of 0.36.
+    The exit, given only a region, is read by the ghosts as nowhere -- every face periodic -- and by the
+    accessor as every face.
     """
     from mfgarchon.operators.differential.gradient import value_gradient
 
@@ -173,6 +186,29 @@ def test_a_boundary_whose_axes_cannot_be_read_per_face_is_refused(make_bc, messa
     x, _ = np.meshgrid(*grid.coordinates, indexing="ij")
     with pytest.raises(NotImplementedError, match=message):
         value_gradient(grid, x**2, time=0.0)
+
+
+def test_a_uniform_periodic_boundary_is_periodic_whatever_its_default():
+    """One unrestricted periodic segment covers every face for both resolvers, and neither reads the default.
+
+    `geometric_operations` counts the default all the same, so a no-flux default made this look like a mix
+    of periodic and non-periodic faces and its segment, having no ``boundary``, was refused (#2471). The
+    shape comes from ``mixed_bc`` with one periodic segment and from ``resolution.to_boundary_conditions``.
+    Both axes must keep the wrap: the central stencil on a sinusoid is exact up to its own factor
+    sin(2 pi h) / h at every node, seams included.
+    """
+    from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
+    from mfgarchon.operators.differential.gradient import value_gradient
+
+    bc = BoundaryConditions(
+        dimension=2, default_bc=BCType.NO_FLUX, segments=[BCSegment(name="all", bc_type=BCType.PERIODIC)]
+    )
+    grid = TensorProductGrid(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[21, 31], boundary_conditions=bc)
+    x, y = np.meshgrid(*grid.coordinates, indexing="ij")
+    hx, hy = (float(h) for h in grid.get_grid_spacing())
+    gx, gy = value_gradient(grid, np.sin(2 * np.pi * (x - 0.137)) + np.sin(2 * np.pi * (y - 0.41)), time=0.0)
+    np.testing.assert_allclose(gx, np.cos(2 * np.pi * (x - 0.137)) * np.sin(2 * np.pi * hx) / hx, rtol=0, atol=1e-11)
+    np.testing.assert_allclose(gy, np.cos(2 * np.pi * (y - 0.41)) * np.sin(2 * np.pi * hy) / hy, rtol=0, atol=1e-11)
 
 
 @pytest.mark.parametrize("shape", [(7, 11), (9, 2)])
