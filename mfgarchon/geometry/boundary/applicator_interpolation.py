@@ -247,7 +247,16 @@ class InterpolationApplicator(BaseBCApplicator):
 
         # This applicator imposes one condition per face. A segment restricted to part of the boundary
         # cannot be honoured, and the shared resolver would give it the whole face -- every face, for a
-        # segment with no face string -- so it is refused rather than spread.
+        # segment with no face string. That matters only when the boundary carries some condition other
+        # than zero flux: Neumann with g = 0, NO_FLUX and REFLECTING take one branch below, so a
+        # zero-flux-only BC -- the package's region route `mixed_bc_from_regions` sets `region_name` on
+        # whole-face segments too -- is imposed exactly whatever the typing.
+        def zero_flux(bc_type: BCType | str, value: object) -> bool:
+            kind = as_str(bc_type)
+            if kind in ("no_flux", "reflecting"):
+                return True
+            return kind == "neumann" and (value is None or (not callable(value) and np.all(np.asarray(value) == 0)))
+
         partial = [
             seg.name
             for seg in bc.segments
@@ -256,7 +265,10 @@ class InterpolationApplicator(BaseBCApplicator):
             or seg.normal_direction is not None
             or seg.region_name is not None
         ]
-        if partial:
+        conditions = [(seg.bc_type, seg.value) for seg in bc.segments]
+        if bc.default_bc is not None:
+            conditions.append((bc.default_bc, bc.default_value))
+        if partial and not all(zero_flux(kind, value) for kind, value in conditions):
             raise NotImplementedError(
                 f"InterpolationApplicator imposes one condition per face and cannot honour segment(s) {partial} "
                 "restricted to part of the boundary (region, sdf_region, normal_direction or region_name); "

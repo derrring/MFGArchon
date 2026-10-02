@@ -181,3 +181,29 @@ def test_a_segment_on_part_of_the_boundary_is_refused_not_spread():
     bc = BoundaryConditions(segments=[outlet, walls], dimension=2, domain_bounds=np.array([[0.0, 1.0], [0.0, 1.0]]))
     with pytest.raises(NotImplementedError, match="part of the boundary"):
         InterpolationApplicator(dimension=2).enforce_values(np.ones((9, 9)), bc, spacing=np.array([0.125, 0.125]))
+
+
+def test_the_package_region_route_with_zero_flux_only_is_imposed_not_refused():
+    """The refusal above must not reach a boundary that is zero flux everywhere. `mixed_bc_from_regions`
+    sets `region_name` on every segment it builds, whole faces included, so refusing every such segment
+    broke `problem.solve(scheme=SL_LINEAR)` on this route, which solves on main (#2466's third review).
+    Neumann with g = 0 and NO_FLUX take one branch, so the field must equal plain no-flux's."""
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import mixed_bc_from_regions, no_flux_bc
+
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[9, 9], boundary_conditions=no_flux_bc(dimension=2)
+    )
+    grid.mark_region("outlet", boundary="x_max")
+    bc = mixed_bc_from_regions(
+        grid,
+        {
+            "outlet": BCSegment(name="o", bc_type=BCType.NEUMANN, value=0.0),
+            "default": BCSegment(name="d", bc_type=BCType.NO_FLUX),
+        },
+    )
+    field = np.random.default_rng(2).standard_normal((9, 9))
+    spacing = np.array([0.125, 0.125])
+    region = InterpolationApplicator(dimension=2).enforce_values(field.copy(), bc, spacing=spacing)
+    plain = InterpolationApplicator(dimension=2).enforce_values(field.copy(), no_flux_bc(dimension=2), spacing=spacing)
+    assert np.array_equal(region, plain)
