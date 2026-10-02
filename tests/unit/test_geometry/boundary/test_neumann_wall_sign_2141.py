@@ -51,7 +51,7 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.geometry.boundary import BCSegment, BCType, mixed_bc, neumann_bc
+from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, neumann_bc
 from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator
 from mfgarchon.geometry.boundary.applicator_interpolation import InterpolationApplicator
 
@@ -155,9 +155,11 @@ def test_a_no_flux_face_ignores_a_value_it_carries(spelling):
                 BCSegment(name="l", bc_type=BCType.NEUMANN, value=0.0, boundary="left"),
                 BCSegment(name="r", bc_type=BCType.NO_FLUX, value=value, boundary="right"),
             ]
-            return mixed_bc(segments, dimension=2, domain_bounds=bounds, default_bc=BCType.NO_FLUX)
+            return BoundaryConditions(segments=segments, dimension=2, domain_bounds=bounds, default_bc=BCType.NO_FLUX)
         segments = [BCSegment(name="l", bc_type=BCType.NEUMANN, value=0.0, boundary="x_min")]
-        return mixed_bc(segments, dimension=2, domain_bounds=bounds, default_bc=BCType.NO_FLUX, default_value=value)
+        return BoundaryConditions(
+            segments=segments, dimension=2, domain_bounds=bounds, default_bc=BCType.NO_FLUX, default_value=value
+        )
 
     field = np.random.default_rng(1).standard_normal((9, 9))
     spacing = np.array([0.125, 0.125])

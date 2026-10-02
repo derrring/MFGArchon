@@ -26,7 +26,7 @@ from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.hjb_solvers import HJBSemiLagrangianSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import BCSegment, BCType, mixed_bc, neumann_bc
+from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, neumann_bc
 
 A = -2.0
 
@@ -84,8 +84,8 @@ def test_each_wall_carries_its_own_value(monkeypatch):
     swapped it does not converge (4.6 -> 4.1), and before #2141 it matched no-flux (2.9 -> 3.0)."""
     counts = _sub_step_counter(monkeypatch)
     a, b = 1.5, -2.0
-    bc = mixed_bc(
-        [
+    bc = BoundaryConditions(
+        segments=[
             BCSegment(name="left", bc_type=BCType.NEUMANN, value=-a, boundary="x_min"),
             BCSegment(name="right", bc_type=BCType.NEUMANN, value=a + 2 * b, boundary="x_max"),
         ],
