@@ -323,8 +323,9 @@ class TestConservativeAdvection:
 
         With a uniform drift ``v = 0.4 > 0`` every face takes its flux from the left, so the result is
         the donor-cell (backward) difference of ``v * m`` at every node, walls included: the no-flux ghost
-        equals the boundary value, so the low wall reads 0 and the high wall reads ``v (m_10 - m_9) / h``.
-        Computed here from ``m`` by that formula, not by the scheme, and not frozen.
+        mirrors the node beside the wall (#1935; it copied the wall node, and the low wall read 0, before),
+        so the low wall reads ``v (m_0 - m_1) / h`` and the high wall ``v (m_10 - m_9) / h``. Computed here
+        from ``m`` by that formula, not by the scheme, and not frozen.
 
         This pinned frozen values until #2309, and they were ``[0, .819, .938, -.938, -.819, 0]`` at every
         second node -- symmetric about the peak under a drift that is not, which is the signature of
@@ -337,7 +338,7 @@ class TestConservativeAdvection:
         m = np.exp(-10.0 * (x - 0.5) ** 2)
         drift = np.full(11, 0.4)
         r = compute_advection_from_drift_nd(m, drift, (h,), 1, bc=no_flux_bc(dimension=1))
-        expected = 0.4 * (m - np.concatenate([m[:1], m[:-1]])) / h
+        expected = 0.4 * (m - np.concatenate([m[1:2], m[:-1]])) / h
         np.testing.assert_allclose(r, expected, rtol=1e-12, atol=1e-12)
 
     def test_tensor_explicit_path_records_its_wall_drift(self):

@@ -31,9 +31,9 @@ def test_default_order():
     # Update ghosts (should use linear reflection)
     buffer.update_ghosts(time=0.0)
 
-    # For Neumann BC with g=0, ghost reflects interior boundary value
-    assert buffer.padded[0] == buffer.interior[0]  # Left ghost reflects interior[0]
-    assert buffer.padded[-1] == buffer.interior[-1]  # Right ghost reflects interior[-1]
+    # For Neumann BC with g=0 the ghost mirrors the node beside the wall node (#1935)
+    assert buffer.padded[0] == buffer.interior[1]
+    assert buffer.padded[-1] == buffer.interior[-2]
 
 
 def test_explicit_order_2():
@@ -52,9 +52,8 @@ def test_explicit_order_2():
     buffer.interior[:] = np.arange(1, 11, dtype=np.float64)
     buffer.update_ghosts(time=0.0)
 
-    # Verify Neumann BC: ghost should equal reflected interior boundary value
-    # For Neumann with g=0: ghost[0] should equal interior[0]
-    assert buffer.padded[0] == buffer.interior[0]  # Reflection of boundary value
+    # Verify Neumann BC: with g=0 the ghost mirrors the node beside the wall node (#1935)
+    assert buffer.padded[0] == buffer.interior[1]
 
 
 def test_order_validation():

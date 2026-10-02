@@ -373,10 +373,10 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         name="neumann_low_wall_flux_sign",
         path="mfgarchon/geometry/boundary/applicator_fdm.py",
-        old="                        buf[tuple(lo_ghost)] += (2 * (k + 1) - 1) * dx * v",
-        new="                        buf[tuple(lo_ghost)] -= (2 * (k + 1) - 1) * dx * v  # MUTATED: low wall reads du/dx instead of du/dn",
+        old="        node = buf[tuple(mirror)] + 2 * (k + 1) * dx * (value - alpha * u_wall) / np.where(dirichlet, 1.0, beta)",
+        new="        node = buf[tuple(mirror)] + (1 if side == 'max' else -1) * 2 * (k + 1) * dx * (value - alpha * u_wall) / np.where(dirichlet, 1.0, beta)  # MUTATED: low wall reads du/dx instead of du/dn",
         owner="inhomogeneous Neumann is prescribed on the OUTWARD normal, so at the low wall (outward normal -x) du/dx = -v and the offset is ADDED, the same sign as the high wall (#1262). Since #1967 the magnitude is (2k-1)*dx*v rather than dx*v -- ghost layer k sits that far from its mirror -- so the k=1 case is the historical dx*v and the deeper layers scale.",
-        verify="pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0), ghost_depth=1, spacing=0.05)[0] == 0.9",
+        verify="pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0), ghost_depth=1, spacing=0.05)[0] == 1.8",
     ),
     Mutation(
         name="terminal_condition_pinned_at_initial_index",

@@ -133,7 +133,14 @@ def test_congestion_solve_tracks_an_independent_fdm_reference():
 
 def test_congestion_error_actually_decreases_under_refinement():
     """Convergence, not just closeness: the pre-fix error was flat in h, which a single
-    tolerance at one resolution cannot distinguish from a merely-small wrong limit."""
+    tolerance at one resolution cannot distinguish from a merely-small wrong limit.
+
+    A plateau has ratio 1 per refinement. This asked for 1.5 per refinement until #1935, when the FDM
+    reference's wall stopped dominating the difference: |SL - FDM| fell from 7.5e-03 / 4.0e-03 / 2.0e-03
+    to 4.6e-04 / 3.2e-04 / 1.8e-04, where the two schemes' first-order errors, each about 1e-03 here,
+    partly cancel and the steps are 1.43 and 1.75. So: every refinement cuts it, and the two together
+    by more than 2.
+    """
     hamiltonian = _congestion()
     errors = []
     for nx, nt in ((51, 40), (101, 80), (201, 160)):
@@ -141,8 +148,9 @@ def test_congestion_error_actually_decreases_under_refinement():
         fdm = _solve(HJBFDMSolver, hamiltonian, nx, nt)[0]
         errors.append(float(np.abs(sl - fdm).max()))
 
-    assert errors[1] < errors[0] / 1.5, f"error did not fall on the first refinement: {errors}"
-    assert errors[2] < errors[1] / 1.5, f"error did not fall on the second refinement: {errors}"
+    assert errors[1] < errors[0], f"error did not fall on the first refinement: {errors}"
+    assert errors[2] < errors[1], f"error did not fall on the second refinement: {errors}"
+    assert errors[2] < errors[0] / 2, f"error did not halve over two refinements: {errors}"
 
 
 # --- the owner is shared, not re-forked ------------------------------------------------

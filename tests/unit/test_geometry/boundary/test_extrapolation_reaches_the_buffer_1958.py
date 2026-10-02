@@ -152,19 +152,22 @@ def test_a_grid_too_small_for_the_stencil_refuses():
 def test_every_other_member_is_untouched(build, bc_type):
     """Twelve of the sixteen probed cells are byte-identical across this change. Only the two
     extrapolation members on the two chains moved; a fix that disturbed anything else would be a
-    regression wearing this commit's message."""
+    regression wearing this commit's message.
+
+    #1935 later moved the mirror family -- NEUMANN(0), NO_FLUX, REFLECTING -- on purpose, from the
+    wall node to the node beside it, (2.5, 6.6) to (3.1, 5.2); every other row is as #1958 left it."""
     _BEFORE = {
         ("mixed", "DIRICHLET"): (-2.5, -6.6),
-        ("mixed", "NEUMANN"): (2.5, 6.6),
-        ("mixed", "NO_FLUX"): (2.5, 6.6),
+        ("mixed", "NEUMANN"): (3.1, 5.2),
+        ("mixed", "NO_FLUX"): (3.1, 5.2),
         ("mixed", "PERIODIC"): (6.6, 2.5),
-        ("mixed", "REFLECTING"): (2.5, 6.6),
+        ("mixed", "REFLECTING"): (3.1, 5.2),
         ("mixed", "ROBIN"): (-2.5, -6.6),
         ("uniform", "DIRICHLET"): (-2.5, -6.6),
-        ("uniform", "NEUMANN"): (2.5, 6.6),
-        ("uniform", "NO_FLUX"): (2.5, 6.6),
+        ("uniform", "NEUMANN"): (3.1, 5.2),
+        ("uniform", "NO_FLUX"): (3.1, 5.2),
         ("uniform", "PERIODIC"): (6.6, 2.5),
-        ("uniform", "REFLECTING"): (2.5, 6.6),
+        ("uniform", "REFLECTING"): (3.1, 5.2),
         ("uniform", "ROBIN"): (-2.5, -6.6),
     }
     kind = "mixed" if build is _mixed else "uniform"

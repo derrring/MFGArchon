@@ -611,11 +611,15 @@ class TestCalculatorClasses:
             ghost_cell_fp_no_flux(rho_interior, 0.5, D, dx)
 
     def test_neumann_calculator_agrees_with_the_live_applicator_path(self):
-        """The two implementations of this ghost disagreed by a factor of 2 and a sign until #1972.
+        """RECORDED DEFECT, not a contract: the calculator path is cell-centred, the live ghost is not.
 
-        Not a tautology: they are still separate call paths -- `pad_array_with_ghosts` reaches
-        `ghost_cell_neumann` through the applicator, this reaches it through the calculator -- and
-        nothing but this test compares them.
+        The two implementations of this ghost disagreed by a factor of 2 and a sign until #1972, and this
+        test held them together. #1935 made the live ghost (`pad_array_with_ghosts`) node-centred,
+        `u_1 + 2*dx*g`. `NeumannCalculator.compute(interior_value, dx, side)` takes one value and returns
+        `interior + dx*g`, the cell-centred form, and cannot express the node mirror. Its path,
+        `create_ghost_buffer_from_bc` -> `GhostBuffer`, has no production caller; deprecating or
+        re-centring it is #1919's. This pins the disagreement so that fixing it trips here: the assertions
+        below hold the calculator to the cell form and the live path to the node form.
         """
         from mfgarchon.geometry.boundary import NeumannCalculator, neumann_bc
         from mfgarchon.geometry.boundary.applicator_fdm import pad_array_with_ghosts
@@ -625,8 +629,11 @@ class TestCalculatorClasses:
             for dx in (0.05, 0.25):
                 padded = pad_array_with_ghosts(u, neumann_bc(g, dimension=1), ghost_depth=1, spacing=dx)
                 calc = NeumannCalculator(flux_value=g)
-                assert np.isclose(padded[0], calc.compute(interior_value=u[0], dx=dx, side="min"))
-                assert np.isclose(padded[-1], calc.compute(interior_value=u[-1], dx=dx, side="max"))
+                assert np.isclose(padded[0], u[1] + 2 * dx * g), "the live ghost is not node-centred (#1935)"
+                assert np.isclose(calc.compute(interior_value=u[0], dx=dx, side="min"), u[0] + dx * g), (
+                    "NeumannCalculator is no longer cell-centred: if it now agrees with the live ghost, "
+                    "retire this defect pin and restore the agreement assertion (#1919, #1935)"
+                )
 
     @pytest.mark.parametrize(
         ("name", "args", "replacement"),
@@ -888,8 +895,8 @@ class TestLinearReflectionNeumannFlux:
         np.testing.assert_array_equal(g_neumann0, g_noflux)
 
     def test_nonzero_neumann_flux_recovered(self):
-        """A nonzero neumann_bc(value=v) is applied (not dropped): the cell-centered ghost
-        encodes du/dn = v at both walls (was silently 0)."""
+        """A nonzero neumann_bc(value=v) is applied (not dropped): the ghost encodes du/dn = v at
+        both walls (was silently 0), about the wall node since #1935."""
         dx = 0.1
         u = np.sin(np.linspace(0.0, 1.0, 11))
         for v in (0.5, -1.3):
@@ -899,8 +906,9 @@ class TestLinearReflectionNeumannFlux:
             # (u_interior - u_ghost)/dx computed -du/dn; that sign error cancelled the old
             # ghost-sign bug (u_g = u_i - dx*v), so this test passed against incorrect ghosts.
             # With the corrected ghost (u_g = u_i + dx*v) the low-wall du/dn is +v.
-            dudn_low = (gh[0] - gh[1]) / dx  # (u_ghost - u_interior)/dx, low outward = -x
-            dudn_high = (gh[-1] - gh[-2]) / dx  # (u_ghost - u_interior)/dx, high outward = +x
+            # About the wall node (#1935): ghost and mirror are 2*dx apart; padded = [ghost, u_0, u_1, ...].
+            dudn_low = (gh[0] - gh[2]) / (2 * dx)  # low outward = -x
+            dudn_high = (gh[-1] - gh[-3]) / (2 * dx)  # high outward = +x
             assert abs(dudn_low - v) < 1e-12, f"low du/dn={dudn_low} != {v}"
             assert abs(dudn_high - v) < 1e-12, f"high du/dn={dudn_high} != {v}"
 

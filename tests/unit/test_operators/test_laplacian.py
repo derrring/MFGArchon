@@ -204,10 +204,11 @@ class TestLaplacianSparse:
 
     @pytest.mark.unit
     def test_sparse_matches_matvec_neumann(self):
-        """Sparse matrix and matvec should agree at interior for Neumann BC.
+        """Sparse matrix and matvec agree at every point for Neumann BC, walls included.
 
-        Note: Ghost cell (matvec) uses copy, sparse uses mirror doubling.
-        These differ at boundary points but agree in the interior.
+        They agreed only in the interior until #1935: the matvec's ghost copied the wall node while the
+        sparse assembly folded in the mirror about it, 4.9 apart at the wall on u = cos(pi x). Both now use
+        the node mirror. Two independent assemblies of one operator, so agreement is evidence here.
         """
         x, dx = _1d_grid(30)
         u = x**3
@@ -219,8 +220,7 @@ class TestLaplacianSparse:
         Lu_matvec = L @ u.ravel()
         Lu_sparse = L_sparse @ u.ravel()
 
-        # Interior points should match
-        np.testing.assert_allclose(Lu_sparse[2:-2], Lu_matvec[2:-2], atol=1e-10)
+        np.testing.assert_allclose(Lu_sparse, Lu_matvec, rtol=1e-12, atol=1e-8)
 
     @pytest.mark.unit
     def test_sparse_matches_matvec_periodic(self):

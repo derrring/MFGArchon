@@ -264,6 +264,11 @@ class TestUniformRobinGhostAlphaBeta:
     Buggy code (alpha=0, beta=1):
         Low:  u_ghost_lo = u_i - dx*g = 1 - 5 = -4.0
         High: u_ghost_hi = u_i + dx*g = 1 + 5 = 6.0
+
+    RE-POINTED for #1935: the ghost is node-centred. The wall is the node u_b = 1.0, its mirror the
+    node beside it, u_m = 2.0, and the condition is imposed about the wall node:
+        u_g = u_m + 2*dx*(g - alpha*u_b)/beta = 2 + 2*(5 - 1)/2 = 6.0   at both walls,
+    while the pure-Neumann defect (alpha=0, beta=1) gives u_m + 2*dx*g = 12.0.
     """
 
     @pytest.fixture
@@ -295,12 +300,12 @@ class TestUniformRobinGhostAlphaBeta:
         what the condition says. #1255 was fixing a different defect (a hardcoded pure-Neumann
         special case) and carried the low-wall sign along untouched.
 
-        The outward condition is side-free on a cell-centred grid, so the expected value is now
-        the same expression as the high wall's, and the two walls agree because this fixture's
-        adjacent interior cell is 1.0 at both ends.
+        The outward condition is side-free, so the expected value is the same expression as the high
+        wall's, and the two walls agree because this fixture's wall node is 1.0 and its mirror 2.0 at
+        both ends. Node-centred since #1935 (the cell-centred value was 2.6).
         """
         u_ghost_lo = ghost_buffer.padded[0]  # index 0 = low ghost
-        expected = (5.0 - 1.0 * (-1.5)) / 2.5  # = 2.6, identical to the high wall
+        expected = 2.0 + 2 * 1.0 * (5.0 - 1.0 * 1.0) / 2.0  # = 6.0, identical to the high wall
         assert abs(u_ghost_lo - expected) < 1e-9, (
             f"Low ghost: expected {expected:.4f} (general Robin), "
             f"got {u_ghost_lo:.4f}. "
@@ -310,11 +315,11 @@ class TestUniformRobinGhostAlphaBeta:
     def test_high_wall_ghost_uses_general_robin_not_neumann(self, ghost_buffer):
         """
         High-wall ghost must use the general Robin formula, not pure Neumann.
-        Buggy value: 6.0 (pure Neumann).
-        Fixed value: (5 + 1*1.5)/2.5 = 2.6.
+        Buggy value: 12.0 (pure Neumann, node-centred).
+        Fixed value: 2 + 2*(5 - 1)/2 = 6.0 (#1935; 2.6 cell-centred).
         """
         u_ghost_hi = ghost_buffer.padded[-1]  # index -1 = high ghost
-        expected = (5.0 - 1.0 * (-1.5)) / 2.5  # = 6.5/2.5 = 2.6
+        expected = 2.0 + 2 * 1.0 * (5.0 - 1.0 * 1.0) / 2.0  # = 6.0
         assert abs(u_ghost_hi - expected) < 1e-9, (
             f"High ghost: expected {expected:.4f} (general Robin), "
             f"got {u_ghost_hi:.4f}. "
