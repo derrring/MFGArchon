@@ -221,7 +221,15 @@ def _fp_problem(bc, dim=2, n=9, nt=4):
     return grid, MFGProblem(geometry=grid, Nt=nt, T=0.5, components=components)
 
 
-def test_fp_sl_solver_refuses_a_mixed_bc_at_solve_time():
+def _x_walls_y_periodic():
+    """Every face named, each axis whole: one geometric operation per axis, two across the boundary."""
+    walls = [_seg(f"x{s}", BCType.NO_FLUX, f"x_{s}") for s in ("min", "max")]
+    seam = [_seg(f"y{s}", BCType.PERIODIC, f"y_{s}") for s in ("min", "max")]
+    return BoundaryConditions(dimension=2, default_bc=BCType.NO_FLUX, segments=walls + seam)
+
+
+@pytest.mark.parametrize("mixed", [_two_segments, _x_walls_y_periodic], ids=["half-periodic", "whole-axes"])
+def test_fp_sl_solver_refuses_a_mixed_bc_at_solve_time(mixed):
     """The wiring, not the helper.
 
     Asserting on ``checked_bc_type_string`` alone does not pin that FPSLSolver *calls* it -- those
@@ -232,6 +240,10 @@ def test_fp_sl_solver_refuses_a_mixed_bc_at_solve_time():
     The BC is swapped in on the geometry after construction on purpose: FPSLSolver caches only an
     explicitly-passed BC and otherwise resolves the geometry live at each point of use, so a
     construction-time check alone would be bypassed here exactly as on the HJB side (#1560).
+
+    Two BCs, because since #2467 the velocity reads U's BC per face and refuses a half-periodic axis on its
+    own: under the mutation above the half-periodic case still raises, only with another message, while the
+    whole-axes case solves.
     """
     from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
 
@@ -241,7 +253,7 @@ def test_fp_sl_solver_refuses_a_mixed_bc_at_solve_time():
     # ONLY the geometry's BC is replaced. Writing solver.boundary_conditions as well would pass
     # even if the solver never re-read anything -- review of #1702 found exactly that: the test
     # asserted a re-read mechanism the FP solver did not have, and passed by poking the cache.
-    grid._boundary_conditions = _two_segments()
+    grid._boundary_conditions = mixed()
 
     m0 = np.ones((9, 9)) / 81.0
     u = np.zeros((5, 9, 9))

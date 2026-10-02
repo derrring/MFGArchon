@@ -1042,6 +1042,11 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Returns:
             (Nt, *grid_shape) solution array for value function
         """
+        # The refusal of a mixed BC (#1560) at its point of use, ahead of the first gradient: a BC set on the
+        # geometry after construction otherwise meets `value_gradient`'s refusal first, whose message is about
+        # an axis, not about which BC this solver can honour (#2467).
+        _refuse_mixed_per_axis(self.get_boundary_conditions())
+
         # Issue #1316: this solver takes its volatility from the problem, once, at construction
         # (self._volatility), and threads it to the advection-diffusion split and its implicit
         # diffusion solves. A volatility it cannot thread there is refused, not accepted and

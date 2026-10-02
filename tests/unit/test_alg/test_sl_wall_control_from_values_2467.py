@@ -130,6 +130,45 @@ def test_a_periodic_axis_keeps_its_wrap_beside_a_closed_one(periodic_first):
     )
 
 
+def _half_periodic():
+    from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
+
+    return BoundaryConditions(
+        dimension=2,
+        default_bc=BCType.NO_FLUX,
+        segments=[BCSegment(name="seam", boundary="x_min", bc_type=BCType.PERIODIC)],
+    )
+
+
+def _region_named_mix():
+    from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
+
+    walls = [BCSegment(name=f"x{s}", region_name=f"x_{s}", bc_type=BCType.NO_FLUX) for s in ("min", "max")]
+    seam = [BCSegment(name=f"y{s}", region_name=f"y_{s}", bc_type=BCType.PERIODIC) for s in ("min", "max")]
+    return BoundaryConditions(dimension=2, default_bc=BCType.NO_FLUX, segments=walls + seam)
+
+
+@pytest.mark.parametrize(
+    ("make_bc", "message"),
+    [(_half_periodic, "periodic on one face only"), (_region_named_mix, "without naming a face")],
+    ids=["half-periodic-axis", "region-named-mix"],
+)
+def test_a_boundary_whose_axes_cannot_be_read_per_face_is_refused(make_bc, message):
+    """Two shapes the per-face reading cannot settle, refused rather than guessed.
+
+    An axis periodic on one face has no answer: the ghosts would wrap one wall and mirror the other. A
+    segment addressed by region name covers every face for `get_bc_type_at_boundary`, while the ghosts'
+    resolver matches it to one face, so in a periodic mix the two disagree: this BC, read in segment order,
+    closed the periodic seam or left the walls on the ghost, a drift difference of 0.36.
+    """
+    from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import value_gradient
+
+    grid = TensorProductGrid(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[9, 9], boundary_conditions=make_bc())
+    x, _ = np.meshgrid(*grid.coordinates, indexing="ij")
+    with pytest.raises(NotImplementedError, match=message):
+        value_gradient(grid, x**2, time=0.0)
+
+
 @pytest.mark.parametrize("shape", [(7, 11), (9, 2)])
 def test_the_closure_is_exact_where_its_stencil_is(shape):
     """Both second-order stencils are exact on a quadratic, and on a 2-point axis the one difference is exact
