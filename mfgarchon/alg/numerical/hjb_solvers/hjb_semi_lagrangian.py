@@ -63,6 +63,7 @@ from .hjb_sl_characteristics import (
     fold_into_domain,
     trace_characteristic_backward_1d,
     trace_characteristic_backward_nd,
+    value_gradient,
 )
 from .hjb_sl_interpolation import (
     interpolate_nearest_neighbor,
@@ -189,23 +190,23 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
     _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN, BCType.PERIODIC})
 
     #: On no path does a Neumann value g reach every place this solver touches a wall: the boundary handling of
-    #: the departure feet and the diffusion step carry none. Where g does reach U is the gradient's ghost cells
-    #: and the post-step enforcement (FDMApplicator on a 1-D whole step, 1-D DPP and the 1-D stochastic step and
-    #: its sub-steps; InterpolationApplicator on operator-splitting sub-steps and on n-D stochastic and DPP
-    #: steps, since #2141). canonical-CS enforces nothing and solves the no-flux problem, and an n-D
-    #: operator-splitting whole step has no post-step enforcement. On u = A |x - 1/2|^2 with its exact data g =
-    #: A and sigma = 0.2, no path measured converged with g under refinement. At sigma = 0, where
-    #: characteristics leave the domain, these converged with g at first order and no_flux_bc() did not: the 1-D
-    #: whole step at foot CFL 0.3, the 1-D sub-steps and stochastic step at foot CFL up to 2.8, and the 2-D
-    #: stochastic step; the 2-D whole step did not. The refusal gives those results up; they are the first an
-    #: implementation of #1936 must bring back. Flip this to True in the same change that makes every path carry
-    #: g.
+    #: the departure feet and the diffusion step carry none, and since #2467 neither does the gradient, whose
+    #: wall nodes read U rather than the ghost. Where g does reach U is the post-step enforcement (FDMApplicator
+    #: on a 1-D whole step, 1-D DPP and the 1-D stochastic step and its sub-steps; InterpolationApplicator on
+    #: operator-splitting sub-steps and on n-D stochastic and DPP steps, since #2141). canonical-CS enforces
+    #: nothing and solves the no-flux problem, and an n-D operator-splitting whole step has no post-step
+    #: enforcement. On u = A |x - 1/2|^2 with its exact data g = A and sigma = 0.2, no path measured converged
+    #: with g under refinement. At sigma = 0, where characteristics leave the domain, these converged with g at
+    #: first order and no_flux_bc() did not: the 1-D whole step at foot CFL 0.3, the 1-D sub-steps and
+    #: stochastic step at foot CFL up to 2.8, and the 2-D stochastic step; the 2-D whole step did not. The
+    #: refusal gives those results up; they are the first an implementation of #1936 must bring back. Flip this
+    #: to True in the same change that makes every path carry g.
     honors_inhomogeneous_neumann: bool = False
     _inhomogeneous_neumann_gap: str = (
         "The semi-Lagrangian HJB solver does not carry a Neumann value everywhere it touches a wall, on any "
-        "path: depending on the path the value reaches the gradient's ghost cells, the post-step "
-        "enforcement, both, or neither. With diffusion, no path measured against an exact solution "
-        "converged with it; without diffusion, some paths did (#1936). Passing g = 0 "
+        "path: depending on the path the value reaches the post-step enforcement or nothing. With diffusion, "
+        "no path measured against an exact solution converged with it; without diffusion, some paths did "
+        "(#1936). Passing g = 0 "
         "(no_flux_bc()) solves a different problem wherever the value matters."
     )
 
@@ -795,8 +796,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         For standard MFG with quadratic control cost, the optimal control is:
             α*(x,t) = ∇u(x,t)
 
-        Uses geometry.get_gradient_operator() which automatically handles:
-        - Boundary conditions via ghost cells
+        Uses ``value_gradient``, the SL pair's one owner for grad(U), over geometry.get_gradient_operator():
+        - Periodic wrap via ghost cells; a non-periodic wall node reads U, not the ghost (#2467)
         - Scheme selection (central differences for Semi-Lagrangian)
         - Multi-dimensional stencils
 
@@ -808,8 +809,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             dt: Length of the step the warning measures (default: ``self.dt``)
             t_idx: Current timestep index for gradient clipping monitoring (optional, Issue #583)
             m_density: Density values for gradient clipping correlation analysis (optional, Issue #583)
-            time: The step's time, at which the ghost cells read a time-dependent boundary value. It
-                has no default: the operator's own default is t = 0, which every caller used (#2453).
+            time: The step's time, at which the operator's ghost cells read a time-dependent boundary value.
+                It has no default: the operator's own default is t = 0, which every caller used (#2453).
+                On a non-periodic axis the wall values those reads give are discarded (#2467), so there it
+                changes nothing in the result.
 
         Returns:
             gradient: Gradient array(s), optionally clipped if gradient_clip_threshold is set
@@ -817,18 +820,17 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 - nD: tuple of d arrays, each shape (Nx1+1, ..., Nxd+1)
 
         Note:
-            Uses central differences for characteristic tracing (Semi-Lagrangian scheme).
-            Boundary conditions are automatically enforced by gradient operators.
+            Uses central differences for characteristic tracing (Semi-Lagrangian scheme). On a periodic
+            domain the operator's ghost wrap supplies the wall neighbours; otherwise every wall node takes
+            the second-order one-sided difference of U, which the FP half's drift shares (#2467).
             Issues a CFL warning if the foot of a full step crosses more than one cell (``_foot_cfl``).
             Gradient clipping (Issue #583): Clips gradients > gradient_clip_threshold to prevent overflow.
         """
-        # Get gradient operators from geometry (Issue #596 Phase 2.1)
-        # Semi-Lagrangian uses central differences for gradient computation
-        grad_ops = self.problem.geometry.get_gradient_operator(scheme="central", time=time)
+        components = value_gradient(self.problem.geometry, u_values, time)
 
         if self.dimension == 1:
             # 1D gradient computation via operator
-            grad_u = grad_ops[0](u_values)
+            grad_u = components[0]
 
             # Apply gradient clipping (Issue #583)
             grad_u_clipped = self._clip_gradient_with_monitoring(grad_u, t_idx=t_idx, m_density=m_density)
@@ -840,16 +842,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             return grad_u_clipped
 
         else:
-            # nD gradient computation via operators
-            grad_components = []
-            for d in range(self.dimension):
-                grad_axis = grad_ops[d](u_values)
-                grad_components.append(grad_axis)
-
             # Apply gradient clipping (Issue #583)
-            grad_components_clipped = self._clip_gradient_with_monitoring(
-                tuple(grad_components), t_idx=t_idx, m_density=m_density
-            )
+            grad_components_clipped = self._clip_gradient_with_monitoring(components, t_idx=t_idx, m_density=m_density)
 
             # CFL check (after clipping)
             if check_cfl and self.check_cfl:
@@ -1048,6 +1042,11 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Returns:
             (Nt, *grid_shape) solution array for value function
         """
+        # The refusal of a mixed BC (#1560) at its point of use, ahead of the first gradient: a BC set on the
+        # geometry after construction otherwise meets `value_gradient`'s refusal first, whose message is about
+        # an axis, not about which BC this solver can honour (#2467).
+        _refuse_mixed_per_axis(self.get_boundary_conditions())
+
         # Issue #1316: this solver takes its volatility from the problem, once, at construction
         # (self._volatility), and threads it to the advection-diffusion split and its implicit
         # diffusion solves. A volatility it cannot thread there is refused, not accepted and

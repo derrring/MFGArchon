@@ -60,7 +60,8 @@ def test_sl_velocity_uses_control_cost(solver_cls, vel_method, control_cost):
     u = _U()
     kwargs = {"time": 0.0} if solver_cls is FPSLSolver else {}
     # This pins the coefficient. FPSLSolver is compared on interior nodes only: at the walls it takes the
-    # HJB half's gradient operator, with its boundary ghosts (#2439), where np.gradient is one-sided.
+    # HJB half's gradient (#2439), a second-order one-sided difference (#2467), where np.gradient's is first
+    # order.
     nodes = slice(1, -1) if solver_cls is FPSLSolver else slice(None)
     alpha = np.asarray(getattr(solver, vel_method)(u, **kwargs)).ravel()[nodes]
     unit = -np.gradient(u, solver.dx).ravel()[nodes]
