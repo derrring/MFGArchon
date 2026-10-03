@@ -1150,7 +1150,7 @@ def robin_bc(
       raising from ``BaseMFGSolver``), uniform and mixed alike. The refusal is load-bearing:
       the FDM boundary handlers are not passed ``boundary_conditions``, so they read none of
       ``alpha``/``beta``/``value``. Below the gate -- calling ``solve_timestep_full_nd`` directly,
-      or mutating ``solver.boundary_conditions`` after construction (#1699) -- a ROBIN segment is
+      or mutating ``solver.boundary_conditions`` after construction (#2475) -- a ROBIN segment is
       byte-identical to no-flux, and a provider-valued coefficient is accepted silently (#1979).
 
     The perturbation a Robin segment adds to an already-reflecting wall:

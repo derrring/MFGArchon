@@ -410,7 +410,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         #     past the horizon guard: built at q_k*T = 0, solved at 200 against a limit of 50.
         # The repo already treats a construction-time BC snapshot as a defect class:
         # fp_semi_lagrangian_adjoint.py declines to cache the geometry's BC for this reason,
-        # and #1699 records the same bypass for _validate_bc_support.
+        # and #2475 records the same bypass for _validate_bc_support.
         # validate() first: both asserts below document the generator structure it establishes
         # (non-negative off-diagonals, zero row sums) as their precondition, and Q is the same
         # mutable array they re-read.
