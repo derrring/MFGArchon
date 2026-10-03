@@ -78,7 +78,9 @@ def test_the_default_is_analytic_on_numpy_and_does_not_refuse_another_backend(mo
         """A non-NumPyBackend."""
 
     monkeypatch.setattr("mfgarchon.backends.create_backend", lambda *a, **k: _StubBackend())
-    HJBFDMSolver(_tiny_problem())
+    assert HJBFDMSolver(_tiny_problem())._analytic_jacobian is False, (
+        "the default must keep the finite-difference Jacobian on a non-NumPy backend"
+    )
 
 
 def test_analytic_jacobian_routes_backend_none(monkeypatch):

@@ -282,8 +282,10 @@ Who builds one:
 - **HJB-FDM** never builds one. It evaluates $H$ in one batch on gradient arrays: in every dimension on
   the NumPy backend, and in $d \ge 2$ on any backend. Its 1-D residual and Jacobian call `problem.H()`
   per point, with the legacy dict `{(0,): u, (1,): p}`, only on another backend or with
-  `analytic_jacobian=False` (#1884). A Hamiltonian or coupling written for scalars only fails in batch:
-  reduce over the control axis, as in `0.5*np.sum(p**2, axis=-1)`.
+  `analytic_jacobian=False` (#1884). A Hamiltonian evaluated in batch must give, at every node, what it
+  gives at that node alone; `0.5*p[0]**2` does not, since in batch `p[0]` is node 0's momentum. The 1-D
+  default checks this once per solver (`require_batch_safe_hamiltonian`) and refuses such a Hamiltonian;
+  the $d \ge 2$ batch path does not check yet (#2481). Write it row-wise, as in `0.5*np.sum(p**2, axis=-1)`.
 - **HJB semi-Lagrangian** passes arrays and does not use them. No FP solver uses them.
 
 ---
