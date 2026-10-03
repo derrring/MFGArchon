@@ -7,12 +7,12 @@ ROBIN moved HJB-FDM's answer by 4.27e-01 and a Dirichlet moved HJB-SL's by 4.00e
 moved FP-SL's by 0: FP-SL drops it.
 
 The check now sits in `get_boundary_conditions`, so it runs at every read. HJB-FDM also reads the accessor
-once at its solve entry. Otherwise the n-D path's first read is inside the Newton residual, whose handler
-retypes the refusal as a ConvergenceError. The 2-D case swaps before the first solve, which is the order
-that reaches that read.
+once at its solve entry. Otherwise, on a first solve, the n-D path's first read is inside the Newton
+residual, whose handler retypes the refusal as a ConvergenceError (#2477).
 
-After the refusal, each case swaps to a SUPPORTED BC that changes the answer. This confirms the solver reads
-the geometry's BC live, and it rules out a refusal that fires on every swap.
+Each case is refused twice: once before the first solve, which is the order that reaches that residual
+read, and once after solves have succeeded. In between, it swaps to a SUPPORTED BC that changes the answer.
+This confirms the solver reads the geometry's BC live, and it rules out a refusal that fires on every swap.
 """
 
 from __future__ import annotations
@@ -92,5 +92,10 @@ def test_a_bc_swapped_onto_the_geometry_is_checked_before_it_is_solved(cls, dim,
                 f"{cls.__name__} did not move under a supported swap: it no longer reads the geometry's BC at "
                 "solve time, so the refusal above does not show that a swapped BC is checked"
             )
+
+            # And after solves have succeeded: a check that lapses once the solver has run is also a bypass.
+            grid.set_boundary_conditions(unsupported)
+            with pytest.raises(NotImplementedError, match=refusal):
+                _solve(solver, dim)
         finally:
             logging.disable(logging.NOTSET)

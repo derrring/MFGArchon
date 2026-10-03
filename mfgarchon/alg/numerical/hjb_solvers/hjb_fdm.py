@@ -546,11 +546,11 @@ class HJBFDMSolver(BaseHJBSolver):
             raise ValueError("U_terminal is required")
         if U_coupling_prev is None:
             raise ValueError("U_coupling_prev is required")
-        # The accessor refuses a BC this solver cannot honour (#1699). Read it here, before any work: the nD
-        # path first reads it inside the Newton residual, whose handler retypes a NotImplementedError as a
-        # ConvergenceError, or falls back to value iteration under on_newton_failure="warn_and_fallback".
-        self.get_boundary_conditions()
         self._inner_solve_failures = []
+        # The accessor refuses a BC this solver cannot honour (#1699). Read it here, before any work: on a first
+        # solve, or with a tensor volatility, the nD path first reads it inside the Newton residual, whose
+        # handler retypes a NotImplementedError as a ConvergenceError (#2477).
+        self.get_boundary_conditions()
         # Issue #1071: the multi-population cross-density trajectory is consumed only by the batch
         # Hamiltonian path (compute_hjb_residual at backend=None); the nD path's per-timestep
         # evaluation is not yet validated for it, so restrict to 1D.

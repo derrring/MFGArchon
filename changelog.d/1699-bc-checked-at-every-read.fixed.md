@@ -7,7 +7,7 @@ A boundary condition set on the geometry after a solver is constructed is now ch
 
 So a BC set afterwards was solved without being checked, including a type the constructor refuses. A Neumann value was no exception: FP-SL drops one, and HJB-SL applies it only in part, which is why both constructors refuse it.
 
-`get_boundary_conditions` now runs the check on every read, and raises `NotImplementedError` as the constructor would. HJB-FDM also reads it at the start of `solve_hjb_system`. Without that, its n-D path would first meet the refusal inside the Newton residual, where it was reported as a `ConvergenceError`.
+`get_boundary_conditions` now runs the check on every read, and raises `NotImplementedError` as the constructor would. HJB-FDM also reads it at the start of `solve_hjb_system`. Without that, its n-D path, on a first solve or with a tensor volatility, met the refusal inside the Newton residual, where it was reported as a `ConvergenceError`.
 
 **What moves.**
 
