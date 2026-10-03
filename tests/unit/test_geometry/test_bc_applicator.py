@@ -620,6 +620,8 @@ class TestCalculatorClasses:
         `create_ghost_buffer_from_bc` -> `GhostBuffer`, has no production caller; deprecating or
         re-centring it is #1919's. This pins the disagreement so that fixing it trips here: the assertions
         below hold the calculator to the cell form and the live path to the node form.
+
+        Named as the discrimination kill matrix records it; the name follows the assertion at the next sweep re-record.
         """
         from mfgarchon.geometry.boundary import NeumannCalculator, neumann_bc
         from mfgarchon.geometry.boundary.applicator_fdm import pad_array_with_ghosts

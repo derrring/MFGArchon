@@ -68,6 +68,7 @@ Usage:
 
 from __future__ import annotations
 
+import functools
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -906,11 +907,26 @@ def _periodic_ghost_slices(
     return tuple(ghost), tuple(source)
 
 
+@functools.lru_cache(maxsize=256)
+def _wall_layer_indices(axis: int, side: str, g: int) -> tuple[tuple, tuple[tuple[tuple, tuple], ...]]:
+    """The wall node's index and each ghost layer's (ghost, mirror) indices along ``axis``. #1935.
+
+    Cached: they depend only on these three, and building them on every call was a measurable part of a
+    2-D HJB-FDM solve, which pads its arrays some 10^5 times.
+    """
+    head = (slice(None),) * axis
+    wall = (*head, g if side == "min" else -(g + 1))
+    if side == "min":
+        layers = tuple(((*head, g - 1 - k), (*head, g + 1 + k)) for k in range(g))
+    else:
+        layers = tuple(((*head, -(g - k)), (*head, -(g + 2) - k)) for k in range(g))
+    return wall, layers
+
+
 def _write_wall_ghosts(
     buf: np.ndarray,
     axis: int,
     side: str,
-    d: int,
     g: int,
     dx: float,
     value: float | np.ndarray,
@@ -936,23 +952,45 @@ def _write_wall_ghosts(
 
     Layout along ``axis``: [ghost_lo (g) | interior (N) | ghost_hi (g)].
     """
-    wall: list[slice | int] = [slice(None)] * d
-    wall[axis] = g if side == "min" else -(g + 1)
-    u_wall = buf[tuple(wall)]
+    nodes = buf.shape[axis] - 2 * g
+    if nodes < g + 1:
+        raise ValueError(
+            f"the node-centred ghost mirrors {g} layer(s) across the wall node, which needs {g + 1} nodes along "
+            f"axis {axis}; this grid has {nodes}. Refuse rather than read a ghost layer as the mirror (#1935)."
+        )
+    wall, layers = _wall_layer_indices(axis, side, g)
+
+    # Scalar coefficients, the common case: one step for the face, and a pure mirror is a copy. The field path
+    # below costs a few array operations per call, which made a 2-D HJB-FDM solve 1.7x slower (#2473 review).
+    # `np.float64` is a `float`, so a value evaluated from a callable takes this path too.
+    if (
+        isinstance(alpha, (int, float))
+        and isinstance(beta, (int, float))
+        and isinstance(value, (int, float))
+        and beta != 0
+    ):
+        if alpha == 0 and value == 0:
+            for ghost_index, mirror_index in layers:
+                buf[ghost_index] = buf[mirror_index]
+            return
+        step = 2 * dx * value / beta if alpha == 0 else 2 * dx * (value - alpha * buf[wall]) / beta
+        for k, (ghost_index, mirror_index) in enumerate(layers):
+            buf[ghost_index] = buf[mirror_index] + (k + 1) * step
+        return
+
+    u_wall = buf[wall]
     dirichlet = np.abs(np.asarray(beta, dtype=float)) == 0.0
-    cell = ghost_cell_robin(u_wall, value, alpha, beta, dx) if np.any(dirichlet) else None
-    for k in range(g):
-        ghost: list[slice | int] = [slice(None)] * d
-        mirror: list[slice | int] = [slice(None)] * d
-        if side == "min":
-            ghost[axis], mirror[axis] = g - 1 - k, g + 1 + k
-        else:
-            ghost[axis], mirror[axis] = -(g - k), -(g + 2) - k
+    cell = None
+    if np.any(dirichlet):
+        # Wanted only where beta = 0. Elsewhere the cell form's own singularity, alpha/2 + beta/dx = 0, does not
+        # apply to the node form, so those points get placeholder coefficients whose value is discarded.
+        cell = ghost_cell_robin(u_wall, value, np.where(dirichlet, alpha, 1.0), np.where(dirichlet, beta, 0.0), dx)
+    for k, (ghost_index, mirror_index) in enumerate(layers):
         if np.all(dirichlet):
-            buf[tuple(ghost)] = cell
+            buf[ghost_index] = cell
             continue
-        node = buf[tuple(mirror)] + 2 * (k + 1) * dx * (value - alpha * u_wall) / np.where(dirichlet, 1.0, beta)
-        buf[tuple(ghost)] = node if cell is None else np.where(dirichlet, cell, node)
+        node = buf[mirror_index] + 2 * (k + 1) * dx * (value - alpha * u_wall) / np.where(dirichlet, 1.0, beta)
+        buf[ghost_index] = node if cell is None else np.where(dirichlet, cell, node)
 
 
 # =============================================================================
@@ -1251,7 +1289,7 @@ class PreallocatedGhostBuffer:
             for axis in range(d):
                 dx = self._grid_spacing[axis] if self._grid_spacing is not None else 1.0
                 for side in ("min", "max"):
-                    _write_wall_ghosts(buf, axis, side, d, g, dx, flux)
+                    _write_wall_ghosts(buf, axis, side, g, dx, flux)
 
         elif bc_type == BCType.ROBIN:
             # alpha*u + beta*du/dn = v with du/dn the OUTWARD normal derivative, which is what
@@ -1259,7 +1297,7 @@ class PreallocatedGhostBuffer:
             for axis in range(d):
                 dx = self._grid_spacing[axis] if self._grid_spacing is not None else 1.0
                 for side in ("min", "max"):
-                    _write_wall_ghosts(buf, axis, side, d, g, dx, v, alpha, beta)
+                    _write_wall_ghosts(buf, axis, side, g, dx, v, alpha, beta)
 
         elif bc_type in (BCType.EXTRAPOLATION_LINEAR, BCType.EXTRAPOLATION_QUADRATIC):
             # #1958: this chain had no branch for either member AND no terminal `else`, so the
@@ -1767,7 +1805,7 @@ class PreallocatedGhostBuffer:
             # (#1967) -- one copy each time.
             flux = v if bc_type == BCType.NEUMANN else 0.0
             dx = self._grid_spacing[axis] if self._grid_spacing is not None else 1.0
-            _write_wall_ghosts(buf, axis, side, d, g, dx, flux)
+            _write_wall_ghosts(buf, axis, side, g, dx, flux)
 
         elif bc_type == BCType.ROBIN:
             # alpha*u + beta*du/dn = g, du/dn outward (#625, #2063), about the wall node (#1935).
@@ -1777,7 +1815,7 @@ class PreallocatedGhostBuffer:
                 dx = self._grid_spacing[axis]
             else:
                 dx = 1.0  # Fallback (may give incorrect results without proper dx)
-            _write_wall_ghosts(buf, axis, side, d, g, dx, v, alpha, beta)
+            _write_wall_ghosts(buf, axis, side, g, dx, v, alpha, beta)
 
         elif bc_type in (BCType.EXTRAPOLATION_LINEAR, BCType.EXTRAPOLATION_QUADRATIC):
             # #1958: this chain had no branch for either member, so both fell to the reflection

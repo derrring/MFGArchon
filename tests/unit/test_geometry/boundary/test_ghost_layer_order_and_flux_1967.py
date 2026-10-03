@@ -241,7 +241,9 @@ def test_depth_one_is_byte_identical(bc_type, value):
 
     #1935 changed it on purpose for the mirror family: the ghost mirrors the node beside the wall,
     `u[1] + 2h v`, where it copied the wall node, `u[0] + h v`. Dirichlet and periodic did not move,
-    and those two rows are the part of the original invariance claim that still holds."""
+    and those two rows are the part of the original invariance claim that still holds.
+
+    Named as the discrimination kill matrix records it; the name follows the assertion at the next sweep re-record."""
     field = np.cos(2 * np.pi * _XC)
     padded = pad_array_with_ghosts(field, _uniform(bc_type, value), ghost_depth=1, spacing=_H)
 

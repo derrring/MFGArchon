@@ -39,7 +39,7 @@ from mfgarchon.geometry.boundary import no_flux_bc
 # (order 0.00 on u = cos(pi x), now 2.00). max|dU| 3.784e-04 (rel 9.5e-03) at (t=0, col 0), wall columns
 # 3.784e-04 against 1.865e-04 inside; max|dM| 2.130e-04 (rel 6.9e-05) at (t=7, col 0), 8.2e-05 inside.
 # The control: the GFDM fixture solves byte-identical (max|dU| 0.0). This fixture has no exact solution;
-# on four exact zero-flux stationary solutions HJB-FDM's max error moved by factors 0.74 / 1.10 / 3.1 / 32
+# on four exact zero-flux stationary solutions HJB-FDM's max relative error moved by factors 0.74 / 1.10 / 3.1 / 32
 # (one worse), first order on both sides -- the wall row is now consistent, the upwind scheme is still
 # first order, and the constant can go either way.
 #

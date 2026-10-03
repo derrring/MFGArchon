@@ -47,6 +47,14 @@ def test_the_no_flux_wall_row_converges_at_second_order():
     assert np.log2(coarse / wall) > 1.9, f"wall order {np.log2(coarse / wall):.2f} (0.00 with the cell mirror)"
     assert wall < 1.1 * interior, f"wall error {wall:.3e} against interior {interior:.3e}"
 
+    # Control: the ghost path is what the wall row reads. Without a BC the operator wraps, and the wall row of
+    # this non-periodic field is wrong by O(1/h^2) -- 795 at 21 points in #1935's measurement.
+    from mfgarchon.operators.differential.laplacian import LaplacianOperator
+
+    x = np.linspace(0.0, 1.0, 81)
+    bare = np.asarray(LaplacianOperator(spacings=[x[1] - x[0]], field_shape=(81,), bc=None) @ u(x)).ravel()
+    assert abs(bare[0] - lap_true(x)[0]) > 100 * wall, "without a BC the wall row did not move: the ghost is not read"
+
 
 @pytest.mark.parametrize(("alpha", "beta"), [(0.0, 1.0), (1.0, 1.0), (2.0, 0.5), (-0.5, 2.0)])
 def test_a_robin_wall_with_a_slope_converges_at_second_order(alpha, beta):
@@ -108,3 +116,31 @@ def test_the_documented_example_is_what_the_function_returns():
     result = runner.summarize(verbose=False)
     assert result.attempted > 0, "the example was not found"
     assert result.failed == 0, "the documented example is not what pad_array_with_ghosts returns"
+
+
+def test_a_robin_wall_whose_beta_vanishes_on_part_of_the_face():
+    """Field coefficients, as an FP wall carries them: per point on the face. Where beta = 0 the condition is
+    Dirichlet, u = g/alpha, and takes the cell ghost 2 g/alpha - u_b as the Dirichlet branch does; elsewhere
+    the node form. The third point has alpha/2 + beta/dx = 0, the CELL form's singularity, which must not
+    reach a point that uses the node form."""
+    from mfgarchon.geometry.boundary.applicator_fdm import _write_wall_ghosts
+
+    rng = np.random.default_rng(1935)
+    buf = rng.normal(size=(6, 3))  # one ghost layer each side of 4 nodes along axis 0, 3 points along the face
+    alpha, beta, value, dx = np.array([2.0, 1.0, 2.0]), np.array([0.0, 1.0, -0.1]), np.array([3.0, 0.5, -1.0]), 0.1
+    wall, mirror = buf[1].copy(), buf[2].copy()
+    _write_wall_ghosts(buf, 0, "min", 1, dx, value, alpha, beta)
+    expected = mirror + 2 * dx * (value - alpha * wall) / np.where(beta == 0, 1.0, beta)
+    expected[0] = 2 * value[0] / alpha[0] - wall[0]
+    np.testing.assert_allclose(buf[0], expected, rtol=0, atol=1e-12)
+
+
+def test_an_axis_too_short_for_the_mirror_raises():
+    """The mirror of ghost layer k is node k+1, so g layers need g+1 nodes. With fewer, the mirror index lands
+    in the opposite ghost layer and the ghost is silently stale; the extrapolation branch refuses the same way."""
+    from mfgarchon.geometry.boundary import pad_array_with_ghosts
+
+    with pytest.raises(ValueError, match="needs 2 nodes"):
+        pad_array_with_ghosts(np.array([1.0]), no_flux_bc(dimension=1), ghost_depth=1, spacing=0.1)
+    with pytest.raises(ValueError, match="needs 4 nodes"):
+        pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), no_flux_bc(dimension=1), ghost_depth=3, spacing=0.1)

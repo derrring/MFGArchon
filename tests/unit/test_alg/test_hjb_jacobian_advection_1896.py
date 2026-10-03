@@ -172,7 +172,7 @@ def _switching_nodes(u, bc, upwind: bool):
         return np.zeros(NX, dtype=bool)
     g_c = _compute_gradient_array_1d(np.asarray(u, dtype=float), DX, bc=bc, upwind=False, time=0.0)
     tied = np.abs(g_c) < 1e-9
-    generic = np.sin(3.0 * X) + 0.37 * X
+    generic = np.sin(3.0 * X) + 0.37 * X + 0.2  # nonzero at both walls, so a Robin wall with alpha != 0 is not tied
     structural = np.abs(_compute_gradient_array_1d(generic, DX, bc=bc, upwind=False, time=0.0)) < 1e-9
     structural[1:-1] = False
     return tied & ~structural

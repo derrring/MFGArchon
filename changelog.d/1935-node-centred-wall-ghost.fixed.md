@@ -11,6 +11,6 @@ Dirichlet, and Robin with beta = 0, keep their ghost.
 
 **What moves.** Every consumer of the ghost: the FDM gradient, Laplacian, divergence and advection, so HJB-FDM's residual and its coupled solve. The regression golden moved at the wall: max|dU| 3.8e-04 at the wall node, 1.9e-04 inside. The semi-Lagrangian pair and particle FP read U's slope at the wall rather than the ghost since #2467 and #2470, and do not move.
 
-**Not uniformly better.** HJB-FDM stays first order, the order of its upwind gradient. On four exact zero-flux stationary solutions its error changed by factors 0.74 to 32: three better, one 1.35x worse.
+**Not uniformly better.** HJB-FDM stays first order, the order of its upwind gradient. On four exact zero-flux stationary solutions its max relative error changed by factors 0.74 to 32: three better, one 1.35x worse.
 
 **Not changed.** `NeumannCalculator` / `RobinCalculator` (the `create_ghost_buffer_from_bc` path, no production caller) stay cell-centred and now disagree with the live ghost; a labelled test records that. The `grid_type` a `GhostCellConfig` carries is still not read. Both are #1919's.

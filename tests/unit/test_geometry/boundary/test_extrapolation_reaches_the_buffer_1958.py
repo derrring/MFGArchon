@@ -155,7 +155,8 @@ def test_every_other_member_is_untouched(build, bc_type):
     regression wearing this commit's message.
 
     #1935 later moved the mirror family -- NEUMANN(0), NO_FLUX, REFLECTING -- on purpose, from the
-    wall node to the node beside it, (2.5, 6.6) to (3.1, 5.2); every other row is as #1958 left it."""
+    wall node to the node beside it, (2.5, 6.6) to (3.1, 5.2); every other row is as #1958 left it.
+    Named as the discrimination kill matrix records it; the name follows the assertion at the next sweep re-record."""
     _BEFORE = {
         ("mixed", "DIRICHLET"): (-2.5, -6.6),
         ("mixed", "NEUMANN"): (3.1, 5.2),
