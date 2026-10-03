@@ -15,8 +15,8 @@ Why it hid, beyond that: `use_upwind=True` is the default, and under no-flux upw
 row is EMPTY while the BC forces p=0 there, so `dH/dp` multiplies the spurious diagonal away. The
 one configuration the capability fixture runs is the one configuration that masks the defect.
 
-The analytic block is reached only when `backend is None` (`HJBFDMSolver(analytic_jacobian=True)`,
-#1607). Passing a NumPy backend routes to the per-point FD fallback instead -- a different code
+The analytic block is reached only when `backend is None`, which `HJBFDMSolver` passes on NumPy by
+default since #1884 (`analytic_jacobian`, #1607). Passing a NumPy backend routes to the per-point FD fallback instead -- a different code
 path, whose agreement says nothing about this one. Every test here passes `backend=None`.
 """
 

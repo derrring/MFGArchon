@@ -279,8 +279,11 @@ Who builds one:
 - **HJB-WENO** builds one per point per Hamiltonian evaluation on its default path.
 - **HJB-GFDM** builds them only with `monotonicity_scheme="qp_m_matrix"` or `"joint_socp"`; its
   default batch path passes gradient arrays of shape `(N, d)`.
-- **HJB-FDM** never builds one. In $d \ge 2$ it evaluates $H$ in one batch on gradient arrays; in 1-D
-  its residual and Jacobian call `problem.H()` per point with the legacy dict `{(0,): u, (1,): p}`.
+- **HJB-FDM** never builds one. It evaluates $H$ in one batch on gradient arrays: in every dimension on
+  the NumPy backend, and in $d \ge 2$ on any backend. Its 1-D residual and Jacobian call `problem.H()`
+  per point, with the legacy dict `{(0,): u, (1,): p}`, only on another backend or with
+  `analytic_jacobian=False` (#1884). A Hamiltonian or coupling written for scalars only fails in batch:
+  reduce over the control axis, as in `0.5*np.sum(p**2, axis=-1)`.
 - **HJB semi-Lagrangian** passes arrays and does not use them. No FP solver uses them.
 
 ---

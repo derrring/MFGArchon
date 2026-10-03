@@ -22,7 +22,7 @@ path for ten months.
 
 WHAT THESE CATCH, and why the second test is the load-bearing one. A test that only asserted
 `solve()` returns would pass on a conditional problem whose Hamiltonian ignores the noise entirely
--- and that is not hypothetical: the obvious fixture, `lambda x, p, m, theta: 0.5 * p**2 + 0.1 * m`,
+-- and that is not hypothetical: the obvious fixture, `lambda x, p, m, theta: 0.5 * np.sum(p**2, axis=-1) + 0.1 * m`,
 has no theta in it, runs clean, and reports an `mc_error_u` indistinguishable from zero (exactly
 0.0 for some (K, values) pairs and below 1.2e-18 for the rest -- mc_error_u averages over the grid
 and divides by sqrt(K), so it sits two orders under the per-point std the ~1e-17 figure belongs to;
@@ -68,7 +68,7 @@ def _problem(conditional_hamiltonian, u_terminal=None):
 
 def test_solve_completes_and_returns_a_usable_result():
     """The plain fact the class could not deliver: a solve that finishes."""
-    problem = _problem(lambda x, p, m, theta: 0.5 * p**2 + 0.1 * m)
+    problem = _problem(lambda x, p, m, theta: 0.5 * np.sum(p**2, axis=-1) + 0.1 * m)
     result = CommonNoiseMFGSolver(problem, num_noise_samples=2, variance_reduction=False, parallel=False, seed=7).solve(
         verbose=False
     )
@@ -88,7 +88,7 @@ def test_the_noise_actually_reaches_the_conditional_solve():
     dead `hamiltonian_func` assignment did -- every sample would coincide and `mc_error_u` would be
     0.0 while every other assertion in this file still passed.
     """
-    problem = _problem(lambda x, p, m, theta: 0.5 * p**2 + theta * m)
+    problem = _problem(lambda x, p, m, theta: 0.5 * np.sum(p**2, axis=-1) + theta * m)
     result = CommonNoiseMFGSolver(
         problem, num_noise_samples=4, variance_reduction=False, parallel=False, seed=11
     ).solve(verbose=False)

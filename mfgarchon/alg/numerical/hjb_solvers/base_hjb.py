@@ -50,9 +50,6 @@ if TYPE_CHECKING:
 
     # from mfgarchon.utils.aux_func import npart, ppart # Not needed here if problem provides jacobian parts
 
-# Clipping limit for p_values ONLY when using numerical FD for Jacobian H-part (fallback)
-P_VALUE_CLIP_LIMIT_FD_JAC = 1e6
-
 # Default Newton solver parameters shared across HJB solvers (Issue #966)
 DEFAULT_NEWTON_MAX_ITERATIONS: int = 30
 DEFAULT_NEWTON_TOLERANCE: float = 1e-6
@@ -551,8 +548,6 @@ def _calculate_derivatives(
     i: int,
     Dx: float,
     Nx: int,
-    clip: bool = False,
-    clip_limit: float = P_VALUE_CLIP_LIMIT_FD_JAC,
     upwind: bool = False,
     precomputed_gradient: np.ndarray | None = None,
     numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,
@@ -573,8 +568,6 @@ def _calculate_derivatives(
         i: Spatial index
         Dx: Spatial grid spacing
         Nx: Number of spatial points
-        clip: Whether to clip derivative values
-        clip_limit: Maximum absolute value for clipping
         upwind: If True, the upwind momentum of ``numerical_hamiltonian`` (#2313)
         precomputed_gradient: Optional precomputed gradient array from _compute_gradient_array_1d.
                               If provided, uses this instead of local computation.
@@ -609,8 +602,6 @@ def _calculate_derivatives(
         p_value = float(precomputed_gradient[i])
         if np.isnan(p_value) or np.isinf(p_value):
             return {(0,): u_i, (1,): np.nan}
-        if clip:
-            p_value = np.clip(p_value, -clip_limit, clip_limit)
         return {(0,): u_i, (1,): p_value}
 
     # Legacy path: compute derivatives locally with periodic BC (% Nx indexing)
@@ -651,52 +642,7 @@ def _calculate_derivatives(
         # Central difference (default, second-order accurate)
         p_value = (p_forward + p_backward) / 2.0
 
-    # Clip if requested
-    if clip and not np.isnan(p_value):
-        p_value = np.clip(p_value, -clip_limit, clip_limit)
-
     return {(0,): u_i, (1,): p_value}
-
-
-def _calculate_p_values(
-    U_array: np.ndarray,
-    i: int,
-    Dx: float,
-    Nx: int,
-    clip: bool = False,
-    clip_limit: float = P_VALUE_CLIP_LIMIT_FD_JAC,
-) -> dict[str, float]:
-    """
-    Legacy wrapper for _calculate_derivatives() using string keys.
-
-    DEPRECATED: Use _calculate_derivatives() with tuple notation instead.
-
-    This function maintains backward compatibility for code expecting
-    string keys {"forward": ..., "backward": ...}.
-
-    Returns:
-        Dictionary with string keys {" forward": p, "backward": p}
-
-    See:
-        - _calculate_derivatives() for tuple notation
-        - mfgarchon.core.DerivativeTensors for modern derivative representation
-    """
-    # Call new tuple-based function
-    derivs = _calculate_derivatives(U_array, i, Dx, Nx, clip=clip, clip_limit=clip_limit)
-
-    # Convert to legacy string-keyed format: {(1,): p} -> {"forward": p, "backward": p}
-    p = derivs.get((1,), 0.0)
-    return {"forward": p, "backward": p}
-
-
-def _clip_p_values(p_values: dict[str, float], clip_limit: float) -> dict[str, float]:  # Helper for FD Jac
-    clipped_p_values = {}
-    for key, p_val in p_values.items():
-        if np.isnan(p_val) or np.isinf(p_val):
-            clipped_p_values[key] = np.nan
-        else:
-            clipped_p_values[key] = np.clip(p_val, -clip_limit, clip_limit)
-    return clipped_p_values
 
 
 def _volatility_at_n(problem: Any, volatility_at_n: float | np.ndarray | None) -> float | np.ndarray:
@@ -878,7 +824,6 @@ def compute_hjb_residual(
             i,
             dx,
             Nx,
-            clip=False,
             upwind=use_upwind,
             precomputed_gradient=precomputed_grad,
             numerical_hamiltonian=numerical_hamiltonian,
@@ -1296,8 +1241,6 @@ def compute_hjb_jacobian(
                     i,
                     dx,
                     Nx,
-                    clip=True,
-                    clip_limit=P_VALUE_CLIP_LIMIT_FD_JAC,
                     upwind=use_upwind,
                     precomputed_gradient=_bc_grad(U_perturbed),
                     numerical_hamiltonian=numerical_hamiltonian,

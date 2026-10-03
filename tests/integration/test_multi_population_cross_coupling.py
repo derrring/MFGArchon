@@ -45,7 +45,7 @@ def _make_problem(k, cross, K):
 
     def coupling(m, pop_idx=k, cross=cross, K=K):
         m = np.asarray(m, float)
-        if m.ndim >= 1 and m.shape[-1] % K == 0 and m.shape[-1] >= 2 * K:
+        if K >= 2 and m.ndim >= 1 and m.shape[-1] % K == 0 and m.shape[-1] >= 2 * K:
             grid = m.shape[-1] // K
             return cross * m.reshape(*m.shape[:-1], K, grid)[..., 1 - pop_idx, :]
         return np.zeros_like(m)
