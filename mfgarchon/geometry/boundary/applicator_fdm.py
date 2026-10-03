@@ -30,8 +30,8 @@ by 4.9 at the wall; it now agrees to 1e-11. Their derivations, with the correcti
 to them, are in `git show acb13627:mfgarchon/geometry/boundary/applicator_fdm.py`.
 
 Dirichlet (u = g at the wall) keeps the cell-centred u_g = 2*g - u_i, and Robin with beta = 0, which is
-Dirichlet with g/alpha, takes the same. A solver prescribes the wall node's value there instead of solving
-its row, and the near-wall node's row reads only nodes, so #1935 left this branch alone.
+Dirichlet with g/alpha, takes the same. It is out of #1935's scope, which is the derivative conditions, and
+it is not inert: HJB-FDM's Newton solves the wall row with this ghost before overwriting u_0.
 
 Corner Handling (Issue #521):
 -----------------------------
