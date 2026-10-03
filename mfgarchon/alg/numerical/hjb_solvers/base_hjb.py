@@ -667,28 +667,32 @@ def require_batch_safe_hamiltonian(problem: Any, t: float = 0.0) -> None:
     The batch residual and the analytic Jacobian call ``evaluate_H`` and ``evaluate_dp`` once on every node.
     A Hamiltonian written for one point gives a wrong solve there, and not always an error: ``0.5*p[0]**2``
     reads node 0's momentum at every node, and Newton converges cleanly to that wrong equation (measured
-    0.962 off the per-point solve, with no inner failure). Three nodes with distinct x, p and m are
-    evaluated together and one at a time, through the same entry points; a difference, or a batch call
-    that raises, is refused.
+    0.962 off the per-point solve, with no inner failure). The same happens for x or m read as ``x[0]`` or
+    ``m[0]``. Three nodes with distinct x, p and m are evaluated one at a time and then together, through the
+    same entry points; a difference, or a batch call that raises, is refused.
+
+    The probe momenta are small (|p| <= 0.3), so a Hamiltonian with a bounded domain in p is not refused for
+    being evaluated outside it. A value that is NaN or infinite alone must be the same together, and the
+    tolerance is scaled by the finite values only, so one infinite value cannot make the comparison vacuous.
     """
     H = problem.hamiltonian_class
     x_all = np.asarray(problem.geometry.get_spatial_grid(), dtype=float).reshape(-1, 1)
     idx = np.unique([0, len(x_all) // 2, len(x_all) - 1])
     k = len(idx)
     x = x_all[idx]
-    p = np.linspace(-1.3, 2.1, k).reshape(-1, 1)
+    p = np.linspace(-0.3, 0.25, k).reshape(-1, 1)
     m = np.linspace(0.5, 1.7, k)
     guidance = (
-        "Write it to act row-wise on p of shape (N, d) and m of shape (N,), e.g. 0.5*np.sum(p**2, axis=-1), "
-        "or pass HJBFDMSolver(analytic_jacobian=False) for the per-point Jacobian, which evaluates it one "
-        "node at a time."
+        "Write it to act row-wise on x and p of shape (N, d) and m of shape (N,), e.g. "
+        "0.5*np.sum(p**2, axis=-1), or pass HJBFDMSolver(analytic_jacobian=False) for the per-point Jacobian, "
+        "which evaluates it one node at a time."
     )
+    # The errors a point-only Hamiltonian raises on arrays: float() of an array (TypeError), scipy refusing a 2-D x0
+    # (ValueError), indexing past a point's components (IndexError). Re-raised with the reason and the way out,
+    # chained to the original; anything else propagates as it is.
+    expected = (TypeError, ValueError, IndexError, ArithmeticError)
     for name, evaluate in (("evaluate_H", H.evaluate_H), ("evaluate_dp", H.evaluate_dp)):
-        # The errors a point-only Hamiltonian raises on arrays: float() of an array (TypeError), scipy refusing a 2-D
-        # x0 (ValueError), indexing past a point's components (IndexError). Re-raised with the reason and the way
-        # out, chained to the original; anything else propagates as it is.
         try:
-            together = np.asarray(evaluate(HEvalState(x=x, p=p, m=m, t=t)), dtype=float).reshape(k, -1)
             alone = np.vstack(
                 [
                     np.asarray(
@@ -697,14 +701,25 @@ def require_batch_safe_hamiltonian(problem: Any, t: float = 0.0) -> None:
                     for i in range(k)
                 ]
             )
-        except (TypeError, ValueError, IndexError, ArithmeticError) as e:
+        except expected as e:
+            raise ValueError(
+                f"{type(H).__name__}.{name} could not be evaluated one node at a time at the batch-safety probe "
+                f"(x {x.ravel()}, p {p.ravel()}, m {m}; {type(e).__name__}: {e}), so whether it may be evaluated on "
+                f"every node together cannot be checked. {guidance}"
+            ) from e
+        try:
+            together = np.asarray(evaluate(HEvalState(x=x, p=p, m=m, t=t)), dtype=float).reshape(k, -1)
+        except expected as e:
             raise ValueError(
                 f"{type(H).__name__}.{name} cannot be evaluated on {k} nodes at once ({type(e).__name__}: {e}). "
                 f"HJBFDMSolver's 1-D analytic Jacobian, the NumPy default since #1884, evaluates it on every node "
                 f"together. {guidance}"
             ) from e
-        scale = max(1.0, float(np.max(np.abs(alone))))
-        if together.shape != alone.shape or not np.allclose(together, alone, rtol=1e-10, atol=1e-12 * scale):
+        finite = np.abs(alone[np.isfinite(alone)])
+        scale = max(1.0, float(finite.max())) if finite.size else 1.0
+        if together.shape != alone.shape or not np.allclose(
+            together, alone, rtol=1e-10, atol=1e-12 * scale, equal_nan=True
+        ):
             raise ValueError(
                 f"{type(H).__name__}.{name} on {k} nodes together differs from each node alone "
                 f"(together {together.ravel()}, alone {alone.ravel()}). HJBFDMSolver's 1-D analytic Jacobian, the "

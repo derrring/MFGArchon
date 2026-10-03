@@ -6,6 +6,10 @@ check, the solve converged cleanly to that wrong equation, 0.962 away from the p
 inner failure. `require_batch_safe_hamiltonian` compares three nodes evaluated together with each evaluated
 alone, and refuses a difference.
 
+One case per argument, because the probe has to vary each one: a point-only read of p, of x and of m.
+Collapsing the probe's x to one node or holding its m constant left the x and m cases solving wrongly with
+no error (0.202 and 0.057 off, review 2 of #2479), and a p-only pin passed both.
+
 Oracle: the same Hamiltonian on the per-point path (`analytic_jacobian=False`) must reproduce the solve of
 its row-wise twin on the default path, so the refusal is about batch evaluation and not about the
 Hamiltonian. Deleting the check's call in `HJBFDMSolver.solve_hjb_system` makes the refusal not happen.
@@ -30,18 +34,29 @@ NX, NT = 41, 10
 X = np.linspace(0.0, 1.0, NX)
 
 
-class _PointOnly(HamiltonianBase):
-    """Correct at one point; in batch, p[0] is node 0's momentum row."""
+def _row_wise(t, x, p, m):
+    return 0.5 * np.sum(np.asarray(p) ** 2, axis=-1) + 0.3 * np.asarray(m) + 0.5 * np.asarray(x)[..., 0]
+
+
+# Each is correct at one point and reads node 0's value for every node in batch.
+_POINT_ONLY = {
+    "p": lambda t, x, p, m: 0.5 * np.asarray(p)[0] ** 2 + 0.3 * np.asarray(m) + 0.5 * np.asarray(x)[..., 0],
+    "x": lambda t, x, p, m: (
+        0.5 * np.sum(np.asarray(p) ** 2, axis=-1) + 0.3 * np.asarray(m) + 0.5 * float(np.ravel(x)[0])
+    ),
+    "m": lambda t, x, p, m: (
+        0.5 * np.sum(np.asarray(p) ** 2, axis=-1) + 0.3 * float(np.ravel(m)[0]) + 0.5 * np.asarray(x)[..., 0]
+    ),
+}
+
+
+class _H(HamiltonianBase):
+    def __init__(self, formula):
+        super().__init__()
+        self._formula = formula
 
     def __call__(self, t, x, p, m):
-        return 0.5 * np.asarray(p)[0] ** 2 + 0.3 * np.asarray(m)
-
-
-class _RowWise(HamiltonianBase):
-    """The same Hamiltonian, written row-wise."""
-
-    def __call__(self, t, x, p, m):
-        return 0.5 * np.sum(np.asarray(p) ** 2, axis=-1) + 0.3 * np.asarray(m)
+        return self._formula(t, x, p, m)
 
 
 def _solve(hamiltonian, **solver_kwargs):
@@ -66,10 +81,13 @@ def _solve(hamiltonian, **solver_kwargs):
             logging.disable(logging.NOTSET)
 
 
-def test_a_hamiltonian_written_for_one_point_is_refused_on_the_batch_path():
-    reference = _solve(_RowWise())
+@pytest.mark.parametrize("argument", sorted(_POINT_ONLY))
+def test_a_hamiltonian_written_for_one_point_is_refused_on_the_batch_path(argument):
+    reference = _solve(_H(_row_wise))
 
     with pytest.raises(ValueError, match="differs from each node alone"):
-        _solve(_PointOnly())
+        _solve(_H(_POINT_ONLY[argument]))
 
-    np.testing.assert_allclose(_solve(_PointOnly(), analytic_jacobian=False), reference, rtol=0, atol=1e-10)
+    np.testing.assert_allclose(
+        _solve(_H(_POINT_ONLY[argument]), analytic_jacobian=False), reference, rtol=0, atol=1e-10
+    )

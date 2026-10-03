@@ -16,8 +16,8 @@ Pinned invariants:
      test fail while leaving the equivalence test green.
   3. The flag is NumPy-only and fails loud on any other backend (the analytic assembly is a NumPy
      kernel; silently ignoring it would train a false "it's faster" belief).
-  4. The analytic path converges to the SAME fixed point as the FD path (to tolerance): opt-in speed
-     must not buy a different solution.
+  4. The analytic path converges to the SAME fixed point as the FD path (to tolerance): the default's
+     speed must not buy a different solution.
 """
 
 from __future__ import annotations

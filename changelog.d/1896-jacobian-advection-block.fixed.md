@@ -14,8 +14,9 @@
   Clarke generalised Jacobian exists. Probing it does not lose accuracy, it disagrees with itself,
   which is why the bands are assembled from linear operators rather than extracted.
 
-  **Unchanged and still wrong: the default path.** The analytic block is reached only under
-  `HJBFDMSolver(analytic_jacobian=True)`; the default per-point finite-difference fallback remains
+  **Unchanged and still wrong: the per-point finite-difference fallback.** When this was written, the
+  analytic block was reached only under `HJBFDMSolver(analytic_jacobian=True)`; since #1884 it is the
+  NumPy default. The fallback, which non-NumPy backends and `analytic_jacobian=False` still take, remains
   wrong at periodic row 0 and on upwind interior rows. Pre-existing, measured, not addressed here.
 
   Also corrected: `_extract_bands`' docstring claimed its O(Nx²) tier was reached in practice. It is

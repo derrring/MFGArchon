@@ -3,8 +3,8 @@
 The per-point FD fallback of `compute_hjb_jacobian` used to clip every probed momentum to |p| <= 1e6. Where
 the gradient exceeds that, both probes U +/- eps clip to the same value, so the Hamiltonian part of the
 row comes out zero: the Jacobian of a different operator, exactly where the HJB is steepest. Nothing said
-so. Measured on this file's state, where |p| reaches 3.6e6 and exceeds 1e6 at 13 of the 19 interior nodes
-by central difference, worst relative error over all rows, in all four cases: 1.00 with the clip, i.e. a
+so. Measured on this file's state, where |p| reaches 3.6e6 (upwind; 3.3e6 central) and exceeds 1e6 at 11
+(upwind) to 13 (central) of the 19 interior nodes, worst relative error over all rows, in all four cases: 1.00 with the clip, i.e. a
 Hamiltonian block lost entirely; 3.9e-5 to 4.9e-5 without it, the round-off of the fallback's own
 eps = 1e-7 at |U| about 2e6. The threshold sits between the two.
 

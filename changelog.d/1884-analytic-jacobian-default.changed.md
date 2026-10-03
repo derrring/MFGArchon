@@ -10,9 +10,9 @@ Measured at 5a16d60f across 27 coupled LQ configurations (Nx 31–81, coupling 0
 
 **What moves.**
 
-- Converged results move within the Newton tolerance: by at most 1.2e-12 on the configurations above, and by 1.3e-8 (relative 4e-10) on the towel-beach example.
+- Converged results move within the Newton tolerance: by at most 1.2e-12 on the configurations above.
 - A solve that does not converge returns a different unconverged iterate.
 - **A Hamiltonian that is not batch-safe is refused.** In batch, every node's value must equal that node evaluated alone. `0.5*p[0]**2` fails this: in batch it reads node 0's momentum at every node, and without the check it solved the wrong equation with no error (0.962 off on one fixture). A Hamiltonian whose batch call raises is refused the same way, with the reason. This includes the library's own `DualHamiltonian` from `legendre_transform()` (#2480). Write the Hamiltonian row-wise, as in `0.5*np.sum(p**2, axis=-1) + theta*m`, or pass `analytic_jacobian=False`.
-- Couplings inside a `SeparableHamiltonian` are still evaluated point by point where they need it, and solve identically on both paths.
+- Couplings and potentials inside a `SeparableHamiltonian` that accept only scalars (`float(m)`, `math.log`, an if-branch, `x[0]`) still solve: they are evaluated point by point where they need it, and the two paths agree within 3e-13 on two fixtures.
 - `examples/applications/economics/towel_beach_demo.py` now writes its Hamiltonian row-wise.
 - To restore the previous behaviour, pass `analytic_jacobian=False`.
