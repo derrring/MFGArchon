@@ -1,4 +1,4 @@
-"""Issue #1607: opt-in analytic inner-Newton Jacobian for HJBFDMSolver.
+"""Issue #1607: the analytic inner-Newton Jacobian for HJBFDMSolver, the NumPy default since #1884.
 
 ``HJBFDMSolver.__init__`` always injects a NumPy backend, so ``compute_hjb_jacobian``'s fast
 analytic chain-rule path (gated on ``backend is None``) never fires for a single-population solve --
@@ -7,7 +7,8 @@ every inner Newton step falls back to the O(Nx^2) per-point finite-difference Ja
 multi-population branch already uses (batch residual + analytic Jacobian), ~17x faster per solve.
 
 Pinned invariants:
-  1. Default is unchanged (flag defaults False -> FD path; the flag is off unless explicitly set).
+  1. The default (``analytic_jacobian=None``) is the analytic path on the NumPy backend (#1884), and the FD path
+     on any other backend, where an explicit True raises.
   2. The flag actually ROUTES: True -> the solver calls solve_hjb_system_backward with backend=None
      (analytic path); False -> backend is the NumPy backend (FD path). This discriminates the flag
      being a silent no-op -- the equivalence test below cannot (both paths agree, so a dead flag
@@ -15,8 +16,8 @@ Pinned invariants:
      test fail while leaving the equivalence test green.
   3. The flag is NumPy-only and fails loud on any other backend (the analytic assembly is a NumPy
      kernel; silently ignoring it would train a false "it's faster" belief).
-  4. The analytic path converges to the SAME fixed point as the FD path (to tolerance): opt-in speed
-     must not buy a different solution.
+  4. The analytic path converges to the SAME fixed point as the FD path (to tolerance): the default's
+     speed must not buy a different solution.
 """
 
 from __future__ import annotations
@@ -54,10 +55,32 @@ def _tiny_problem(Nx: int = 13, Nt: int = 6) -> MFGProblem:
     )
 
 
-def test_analytic_jacobian_defaults_off():
-    """Default construction leaves the flag off -> the existing FD-Jacobian path (unchanged behavior)."""
-    solver = HJBFDMSolver(_tiny_problem())
-    assert solver._analytic_jacobian is False
+def test_the_default_is_analytic_on_numpy_and_does_not_refuse_another_backend(monkeypatch):
+    """#1884: the default routes a NumPy solve through backend=None (the analytic Jacobian). On a non-NumPy
+    backend the same default must construct, not raise as an explicit True does: the default picks the
+    analytic path only where it exists."""
+    import mfgarchon.alg.numerical.hjb_solvers.base_hjb as base_hjb
+
+    seen: list = []
+    original = base_hjb.solve_hjb_system_backward
+
+    def _spy(*args, **kwargs):
+        seen.append(kwargs.get("backend"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(base_hjb, "solve_hjb_system_backward", _spy)
+    p = _tiny_problem()
+    FixedPointIterator(p, HJBFDMSolver(p), FPFDMSolver(p)).solve(max_iterations=1, tolerance=1e-6, verbose=False)
+    assert seen, "the HJB backward solver must be called at least once"
+    assert all(b is None for b in seen), f"the default must route backend=None on NumPy, saw {seen}"
+
+    class _StubBackend:
+        """A non-NumPyBackend."""
+
+    monkeypatch.setattr("mfgarchon.backends.create_backend", lambda *a, **k: _StubBackend())
+    assert HJBFDMSolver(_tiny_problem())._analytic_jacobian is False, (
+        "the default must keep the finite-difference Jacobian on a non-NumPy backend"
+    )
 
 
 def test_analytic_jacobian_routes_backend_none(monkeypatch):
@@ -115,12 +138,12 @@ def test_analytic_jacobian_rejects_non_numpy_backend(monkeypatch):
 
 
 def test_analytic_jacobian_matches_fd_solution():
-    """The opt-in analytic Jacobian must reach the SAME fixed point as the default FD Jacobian (both
+    """The analytic Jacobian (the NumPy default) must reach the SAME fixed point as the FD Jacobian (both
     solve the identical residual; only the Newton Jacobian approximation differs, so they share the
     root). Guards the numerics (invariant 4), NOT the flag wiring -- a silent no-op also passes this
     (both run FD -> trivially agree); the routing test above pins the wiring. (Observed on this
-    problem: max|dU|~7e-8, max|dM|~2e-6; bounds are generous headroom, tight enough to catch a real
-    divergence.)"""
+    problem at #1884: both converge in 20 iterations, max|dU| 1.3e-15, max|dM| 8.9e-16. At #1607 it was
+    7e-8 and 2e-6. The bounds below are generous headroom.)"""
     p_fd, p_an = _tiny_problem(), _tiny_problem()
 
     res_fd = FixedPointIterator(p_fd, HJBFDMSolver(p_fd, analytic_jacobian=False), FPFDMSolver(p_fd)).solve(

@@ -76,27 +76,30 @@ class TowelBeachHamiltonian(HamiltonianBase):
         self.stall_position = stall_position
         self.crowd_aversion = crowd_aversion
 
-    def __call__(self, t: float, x: np.ndarray, p: np.ndarray, m: float) -> float:
-        """Evaluate Hamiltonian H(t, x, p, m)."""
-        # Extract scalar position
-        x_scalar = float(x[0]) if hasattr(x, "__len__") else float(x)
+    def __call__(self, t: float, x: np.ndarray, p: np.ndarray, m: float | np.ndarray) -> float | np.ndarray:
+        """Evaluate Hamiltonian H(t, x, p, m) at one point or at N points at once.
+
+        Row-wise: x and p of shape (d,) or (N, d), m a scalar or of shape (N,). A solver may evaluate every
+        node in one call (HJBFDMSolver's 1-D default does), so nothing here may collapse an array to a float.
+        """
+        x = np.asarray(x, dtype=float)
+        p = np.asarray(p, dtype=float)
 
         # Kinetic energy (quadratic control cost)
-        p_norm_sq = float(np.sum(p**2))
-        kinetic = 0.5 * p_norm_sq
+        kinetic = 0.5 * np.sum(p**2, axis=-1)
 
         # Proximity cost to stall (negative = benefit)
-        proximity = -abs(x_scalar - self.stall_position)
+        proximity = -np.abs(x[..., 0] - self.stall_position)
 
         # Congestion cost (log-barrier)
-        m_reg = max(float(m), 1e-10)  # Regularization to avoid log(0)
+        m_reg = np.maximum(np.asarray(m, dtype=float), 1e-10)  # Regularization to avoid log(0)
         congestion = -self.crowd_aversion * np.log(m_reg)
 
         return kinetic + proximity + congestion
 
-    def dm(self, t: float, x: np.ndarray, p: np.ndarray, m: float) -> float:
+    def dm(self, t: float, x: np.ndarray, p: np.ndarray, m: float | np.ndarray) -> float | np.ndarray:
         """Derivative of Hamiltonian with respect to density: dH/dm = -lambda / m."""
-        m_reg = max(float(m), 1e-10)
+        m_reg = np.maximum(np.asarray(m, dtype=float), 1e-10)
         return -self.crowd_aversion / m_reg
 
     def dp(self, t: float, x: np.ndarray, p: np.ndarray, m: float) -> np.ndarray:

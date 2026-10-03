@@ -50,9 +50,6 @@ if TYPE_CHECKING:
 
     # from mfgarchon.utils.aux_func import npart, ppart # Not needed here if problem provides jacobian parts
 
-# Clipping limit for p_values ONLY when using numerical FD for Jacobian H-part (fallback)
-P_VALUE_CLIP_LIMIT_FD_JAC = 1e6
-
 # Default Newton solver parameters shared across HJB solvers (Issue #966)
 DEFAULT_NEWTON_MAX_ITERATIONS: int = 30
 DEFAULT_NEWTON_TOLERANCE: float = 1e-6
@@ -551,8 +548,6 @@ def _calculate_derivatives(
     i: int,
     Dx: float,
     Nx: int,
-    clip: bool = False,
-    clip_limit: float = P_VALUE_CLIP_LIMIT_FD_JAC,
     upwind: bool = False,
     precomputed_gradient: np.ndarray | None = None,
     numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,
@@ -573,8 +568,6 @@ def _calculate_derivatives(
         i: Spatial index
         Dx: Spatial grid spacing
         Nx: Number of spatial points
-        clip: Whether to clip derivative values
-        clip_limit: Maximum absolute value for clipping
         upwind: If True, the upwind momentum of ``numerical_hamiltonian`` (#2313)
         precomputed_gradient: Optional precomputed gradient array from _compute_gradient_array_1d.
                               If provided, uses this instead of local computation.
@@ -609,8 +602,6 @@ def _calculate_derivatives(
         p_value = float(precomputed_gradient[i])
         if np.isnan(p_value) or np.isinf(p_value):
             return {(0,): u_i, (1,): np.nan}
-        if clip:
-            p_value = np.clip(p_value, -clip_limit, clip_limit)
         return {(0,): u_i, (1,): p_value}
 
     # Legacy path: compute derivatives locally with periodic BC (% Nx indexing)
@@ -651,52 +642,7 @@ def _calculate_derivatives(
         # Central difference (default, second-order accurate)
         p_value = (p_forward + p_backward) / 2.0
 
-    # Clip if requested
-    if clip and not np.isnan(p_value):
-        p_value = np.clip(p_value, -clip_limit, clip_limit)
-
     return {(0,): u_i, (1,): p_value}
-
-
-def _calculate_p_values(
-    U_array: np.ndarray,
-    i: int,
-    Dx: float,
-    Nx: int,
-    clip: bool = False,
-    clip_limit: float = P_VALUE_CLIP_LIMIT_FD_JAC,
-) -> dict[str, float]:
-    """
-    Legacy wrapper for _calculate_derivatives() using string keys.
-
-    DEPRECATED: Use _calculate_derivatives() with tuple notation instead.
-
-    This function maintains backward compatibility for code expecting
-    string keys {"forward": ..., "backward": ...}.
-
-    Returns:
-        Dictionary with string keys {" forward": p, "backward": p}
-
-    See:
-        - _calculate_derivatives() for tuple notation
-        - mfgarchon.core.DerivativeTensors for modern derivative representation
-    """
-    # Call new tuple-based function
-    derivs = _calculate_derivatives(U_array, i, Dx, Nx, clip=clip, clip_limit=clip_limit)
-
-    # Convert to legacy string-keyed format: {(1,): p} -> {"forward": p, "backward": p}
-    p = derivs.get((1,), 0.0)
-    return {"forward": p, "backward": p}
-
-
-def _clip_p_values(p_values: dict[str, float], clip_limit: float) -> dict[str, float]:  # Helper for FD Jac
-    clipped_p_values = {}
-    for key, p_val in p_values.items():
-        if np.isnan(p_val) or np.isinf(p_val):
-            clipped_p_values[key] = np.nan
-        else:
-            clipped_p_values[key] = np.clip(p_val, -clip_limit, clip_limit)
-    return clipped_p_values
 
 
 def _volatility_at_n(problem: Any, volatility_at_n: float | np.ndarray | None) -> float | np.ndarray:
@@ -713,6 +659,83 @@ def _volatility_at_n(problem: Any, volatility_at_n: float | np.ndarray | None) -
             "volatility is a callable, which the per-timestep driver evaluates and passes in (#2376)."
         )
     return sigma
+
+
+def require_batch_safe_hamiltonian(problem: Any, t: float = 0.0) -> None:
+    """Refuse a Hamiltonian whose batch evaluation differs from evaluating each node alone (#1884).
+
+    The batch residual and the analytic Jacobian call ``evaluate_H`` and ``evaluate_dp`` once on every node.
+    A Hamiltonian written for one point gives a wrong solve there, and not always an error: ``0.5*p[0]**2``
+    reads node 0's momentum at every node, and Newton converges cleanly to that wrong equation (measured
+    0.962 off the per-point solve, with no inner failure). The same happens for x or m read as ``x[0]`` or
+    ``m[0]``. Three nodes with distinct x, p and m are evaluated together and then one at a time, through the
+    same entry points; a difference, or a batch call that raises, is refused.
+
+    The probe momenta are wide (p from -1.3 to 2.1): a narrow probe passed a point-only dead-zone cost
+    ``max(|p[0]| - 0.5, 0)``, which then solved 1.894 off (review 3 of #2479). A Hamiltonian that returns NaN
+    outside a bounded domain in p still passes, because NaN must only match NaN; one that raises there is
+    refused with the reason. The tolerance is scaled by the finite values only, so one infinite value cannot
+    make the comparison vacuous.
+
+    The batch call comes first: ``SeparableHamiltonian`` decides once, on its first batch, whether its
+    potential is vectorised, and a one-row first call would decide no.
+    """
+    H = problem.hamiltonian_class
+    x_all = np.asarray(problem.geometry.get_spatial_grid(), dtype=float).reshape(-1, 1)
+    idx = np.unique([0, len(x_all) // 2, len(x_all) - 1])
+    k = len(idx)
+    x = x_all[idx]
+    p = np.linspace(-1.3, 2.1, k).reshape(-1, 1)
+    m = np.linspace(0.5, 1.7, k)
+    guidance = (
+        "Write it to act row-wise on x and p of shape (N, d) and m of shape (N,), e.g. "
+        "0.5*np.sum(p**2, axis=-1), or pass HJBFDMSolver(analytic_jacobian=False) for the per-point Jacobian, "
+        "which evaluates it one node at a time."
+    )
+    # The errors a point-only Hamiltonian raises on arrays: float() of an array (TypeError), scipy refusing a 2-D x0
+    # (ValueError), indexing past a point's components (IndexError). Re-raised with the reason and the way out,
+    # chained to the original; anything else propagates as it is.
+    expected = (TypeError, ValueError, IndexError, ArithmeticError)
+
+    def one_at_a_time(evaluate: Any, name: str) -> np.ndarray:
+        try:
+            return np.vstack(
+                [
+                    np.asarray(
+                        evaluate(HEvalState(x=x[i : i + 1], p=p[i : i + 1], m=m[i : i + 1], t=t)), dtype=float
+                    ).reshape(1, -1)
+                    for i in range(k)
+                ]
+            )
+        except expected as e:
+            raise ValueError(
+                f"{type(H).__name__}.{name} could not be evaluated one node at a time at the batch-safety probe "
+                f"(x {x.ravel()}, p {p.ravel()}, m {m}; {type(e).__name__}: {e}), so whether it may be evaluated on "
+                f"every node together cannot be checked. {guidance}"
+            ) from e
+
+    for name, evaluate in (("evaluate_H", H.evaluate_H), ("evaluate_dp", H.evaluate_dp)):
+        try:
+            together = np.asarray(evaluate(HEvalState(x=x, p=p, m=m, t=t)), dtype=float).reshape(k, -1)
+        except expected as e:
+            one_at_a_time(evaluate, name)
+            raise ValueError(
+                f"{type(H).__name__}.{name} cannot be evaluated on {k} nodes at once ({type(e).__name__}: {e}). "
+                f"HJBFDMSolver's 1-D analytic Jacobian, the NumPy default since #1884, evaluates it on every node "
+                f"together. {guidance}"
+            ) from e
+        alone = one_at_a_time(evaluate, name)
+        finite = np.abs(alone[np.isfinite(alone)])
+        scale = max(1.0, float(finite.max())) if finite.size else 1.0
+        if together.shape != alone.shape or not np.allclose(
+            together, alone, rtol=1e-10, atol=1e-12 * scale, equal_nan=True
+        ):
+            raise ValueError(
+                f"{type(H).__name__}.{name} on {k} nodes together differs from each node alone "
+                f"(together {together.ravel()}, alone {alone.ravel()}). HJBFDMSolver's 1-D analytic Jacobian, the "
+                f"NumPy default since #1884, evaluates it on every node together, and would solve a different "
+                f"equation without an error. {guidance}"
+            )
 
 
 @retired_sigma_at_n_keyword
@@ -803,8 +826,8 @@ def compute_hjb_residual(
     # term was already BC-aware for this path via the non-torch Laplacian gate (above);
     # the gradient was not. Mirror that gate: use the BC-aware gradient for any non-torch
     # (NumPy-like) array, not only backend is None. The batch Hamiltonian path below keeps
-    # its `backend is None` gate, so NumPy single-population still uses the per-point loop —
-    # now fed the BC-aware gradient. Interior momenta are unchanged to ≤1 ULP; only the two
+    # its `backend is None` gate; the per-point loop, now fed the BC-aware gradient, serves a
+    # NumPy single-population solve only with analytic_jacobian=False since #1884. Interior momenta are unchanged to ≤1 ULP; only the two
     # boundary points move, and only for non-periodic BC (periodic ≤1 ULP everywhere).
     # Validated in: scripts/validation/hjb_1d_bc_gradient.py
     precomputed_grad = None
@@ -878,7 +901,6 @@ def compute_hjb_residual(
             i,
             dx,
             Nx,
-            clip=False,
             upwind=use_upwind,
             precomputed_gradient=precomputed_grad,
             numerical_hamiltonian=numerical_hamiltonian,
@@ -1296,8 +1318,6 @@ def compute_hjb_jacobian(
                     i,
                     dx,
                     Nx,
-                    clip=True,
-                    clip_limit=P_VALUE_CLIP_LIMIT_FD_JAC,
                     upwind=use_upwind,
                     precomputed_gradient=_bc_grad(U_perturbed),
                     numerical_hamiltonian=numerical_hamiltonian,
