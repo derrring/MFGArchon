@@ -600,7 +600,7 @@ class TestGuardsAreRecheckedAtSolveTime:
     escapes; these are temporal, and they survived both fixes.
 
     ``fp_semi_lagrangian_adjoint.py`` already declines to cache the geometry's BC for this
-    reason, and #1699 records the same bypass for ``_validate_bc_support``.
+    reason, and #2475 records the same bypass for ``_validate_bc_support``.
     """
 
     def _system(self, Q):

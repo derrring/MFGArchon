@@ -193,7 +193,19 @@ class BaseMFGSolver(ABC):
             3. `geometry.get_boundary_conditions()` (method accessor)
             4. `problem.boundary_conditions` (direct on problem)
             5. `problem.get_boundary_conditions()` (method on problem)
+
+        Raises:
+            NotImplementedError: the resolved BC is one this solver cannot honour
+                (`_validate_bc_support`). Checked here, at every read, and not only at construction:
+                a solver that reads the geometry's BC live would otherwise solve a BC set on the
+                geometry after construction without ever checking it (Issue #1699).
         """
+        bc = self._lookup_boundary_conditions()
+        self._validate_bc_support(bc)
+        return bc
+
+    def _lookup_boundary_conditions(self) -> BoundaryConditions | None:
+        """The resolution chain of `get_boundary_conditions`, without its support check."""
         # Priority 1: an explicitly-passed BC, cached by the solver under this name.
         #
         # Deliberately NOT `self.boundary_conditions`. That attribute carries two meanings in the
