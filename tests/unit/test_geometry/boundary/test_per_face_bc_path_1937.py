@@ -65,8 +65,9 @@ def test_the_per_face_path_imposes_the_flux_that_was_asked_for(flux):
     """
     padded = pad_array_with_ghosts(_RAMP, _per_face_neumann(flux), spacing=_DX)
 
-    du_dn_low = -(_RAMP[0] - padded[0]) / _DX
-    du_dn_high = (padded[-1] - _RAMP[-1]) / _DX
+    # About the wall node (#1935): the ghost and the node beside the wall are 2*dx apart.
+    du_dn_low = (padded[0] - _RAMP[1]) / (2 * _DX)
+    du_dn_high = (padded[-1] - _RAMP[-2]) / (2 * _DX)
 
     assert du_dn_low == pytest.approx(flux, abs=1e-12)
     assert du_dn_high == pytest.approx(flux, abs=1e-12)
@@ -143,8 +144,8 @@ def test_an_uncovered_face_with_no_default_bc_raises_rather_than_guessing():
 @pytest.mark.parametrize(
     ("default_bc", "default_value", "expected_hi_ghost"),
     [
-        (BCType.NO_FLUX, 0.0, 13.0),  # mirror: u[-1]
-        (BCType.NEUMANN, 3.0, 13.75),  # u[-1] + dx*v = 13.0 + 0.25*3
+        (BCType.NO_FLUX, 0.0, 12.25),  # mirror about the wall node: u[-2] (#1935)
+        (BCType.NEUMANN, 3.0, 13.75),  # u[-2] + 2*dx*v = 12.25 + 2*0.25*3
         (BCType.DIRICHLET, 5.0, -3.0),  # 2*g - u[-1] = 10 - 13
         (BCType.PERIODIC, 0.0, 10.0),  # wraps to u[0]
     ],
@@ -210,11 +211,11 @@ def test_each_axis_uses_its_own_spacing():
     )
     padded = pad_array_with_ghosts(field, bc, spacing=spacing)
 
-    # Interior is all zeros, so each ghost is exactly its own axis's dx * flux.
+    # Interior is all zeros, so each ghost is exactly 2 * its own axis's dx * flux (#1935).
     for axis, dx in enumerate(spacing):
         lo = padded[(0, slice(1, -1)) if axis == 0 else (slice(1, -1), 0)]
         hi = padded[(-1, slice(1, -1)) if axis == 0 else (slice(1, -1), -1)]
-        np.testing.assert_allclose(lo, dx * flux, atol=1e-12, err_msg=f"axis {axis} low wall used the wrong dx")
-        np.testing.assert_allclose(hi, dx * flux, atol=1e-12, err_msg=f"axis {axis} high wall used the wrong dx")
+        np.testing.assert_allclose(lo, 2 * dx * flux, atol=1e-12, err_msg=f"axis {axis} low wall used the wrong dx")
+        np.testing.assert_allclose(hi, 2 * dx * flux, atol=1e-12, err_msg=f"axis {axis} high wall used the wrong dx")
 
     assert spacing[0] != spacing[1], "the spacings must differ or this test cannot detect a swap"

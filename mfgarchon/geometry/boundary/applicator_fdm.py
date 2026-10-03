@@ -8,63 +8,30 @@ fields. Supports:
 2. Mixed BCs (different types on different boundary segments)
 3. Multiple BC types: Dirichlet, Neumann, Robin, Periodic
 4. Time-dependent boundary values
-5. Cell-centered and vertex-centered grids
+5. Node-centred grids: the wall is a grid node (#1935)
 
 The ghost cell formulas are derived for standard 3-point FD stencils.
 
-Ghost Cell Formulas (cell-centered grid, boundary at cell face):
---------------------------------------------------------------
-Let u_i = interior point, u_g = ghost point, u_b = boundary value
-Boundary is located at midpoint: x_b = (x_g + x_i) / 2
+Ghost Cell Formulas (node-centred grid, the wall is a node):
+-----------------------------------------------------------
+`TensorProductGrid` puts x_0 on the wall, h = span/(N-1). Ghost layer k (k = 0 nearest) sits (k+1) h
+outside the wall node u_b, and its mirror u_m the same distance inside. One formula serves the four
+derivative conditions, in both ghost paths (`_write_wall_ghosts`):
 
-Dirichlet (u = g at boundary):
-    u_b = (u_g + u_i) / 2 = g
-    => u_g = 2*g - u_i
+Robin (alpha*u + beta*du/dn = g, du/dn outward), by central difference about the wall node:
+    beta * (u_g - u_m) / (2 (k+1) h) = g - alpha*u_b
+    => u_g = u_m + 2 (k+1) h (g - alpha*u_b) / beta
+Neumann (du/dn = g), no-flux and reflecting (g = 0): alpha = 0, beta = 1.
 
-Neumann (du/dn = g at boundary, outward normal):
-    (u_g - u_i) / dx = g   at BOTH walls
-    => u_g = u_i + dx*g
+Until #1935 these were the cell-centred forms -- the ghost dx from the wall node, u_g = u_b + dx*g --
+which on this grid return u''/2 in the 3-point Laplacian's wall row at every h: order 0.00 on
+u = cos(pi x), against 2.00 now, and the sparse assembly, node-centred already, disagreed with the matvec
+by 4.9 at the wall; it now agrees to 1e-11. Their derivations, with the corrections #2057 and #1350 made
+to them, are in `git show acb13627:mfgarchon/geometry/boundary/applicator_fdm.py`.
 
-    One formula, both walls, AND both centrings -- measured, not asserted: on u = 3x with dx = 0.1
-    the vertex layout (wall at the node, ghost one dx outside) gives -0.300000 and +3.300000
-    against exact -0.3 and +3.3. The separation is dx either way, and du/dn already carries the
-    wall's direction, so there is no per-wall sign and no centring branch.
-
-    THE THREE FORMULAS IN THIS BLOCK DO NOT SHARE THAT PROPERTY, and the header's blanket
-    "cell-centered" is imprecise rather than uniformly true:
-
-      - Neumann  : centring-free, as measured above.
-      - Dirichlet: cell-centred only. `ghost_cell_dirichlet` returns the boundary value itself on
-                   a vertex layout (u_g = g), not 2*g - u_i -- because there the wall IS the node.
-      - Robin    : cell-centred only, and its vertex arm was wrong until #2064.
-
-    An intermediate revision of this comment removed the centring claim from the Neumann line
-    instead of scoping the other two, which demoted a statement that is true.
-
-    This block said `u_g = u_i -+ 2*dx*g` until #2057: the one-cell form with a two-cell step, the
-    exact defect #1972 removed from `ghost_cell_neumann`. Measured on `u = 3x`, dx = 0.1, on the
-    geometry stated above -- wrong at BOTH walls under BOTH readings of g: left gave +0.75 (as
-    du/dn) or -0.45 (as du/dx) against an exact -0.15, right gave +3.45 against +3.15. Its
-    defining relation was wrong too: `(u_i - u_g)/(2*dx)` returns 1.5 on a field whose du/dx is 3.
-
-Robin (alpha*u + beta*du/dn = g at boundary):
-    alpha * (u_g + u_i)/2 + beta * (u_g - u_i)/dx = g
-    => u_g * (alpha/2 + beta/dx) = g - u_i * (alpha/2 - beta/dx)
-    => u_g = (g - u_i * (alpha/2 - beta/dx)) / (alpha/2 + beta/dx)
-
-    The step is dx, not 2*dx. This block said 2*dx until now, four lines below the Neumann block
-    #2057 corrected for the same factor -- and the branch at the bottom of this file delegates to
-    `ghost_cell_robin`, which uses beta/dx. Measured (alpha=1, beta=0.3, g=0.7, dx=0.1, u_i=0.5):
-    this block's old form gave 0.600000 with a residual of +0.15 against the Robin condition; the
-    live path gives 0.557143 with residual 0. It was also internally inconsistent -- the value term
-    (u_g + u_i)/2 commits to the face-midpoint geometry, where the separation is dx.
-
-    The only text in the repo naming this factor as stale was a `test_robin` docstring, and #2057
-    deleted that test along with the orphaned method it covered -- so the correction and its only
-    signpost went in the same change. The correcting work is #1350, "fix Robin ghost-cell expected
-    formula, remove xfail", with the production change at `0ae5515a`. (Do not cite #1237 for this: it is the FEM
-    weak-form Robin/Periodic issue and says nothing about an FDM ghost factor. #1350 references it,
-    which is how that citation spreads.)
+Dirichlet (u = g at the wall) keeps the cell-centred u_g = 2*g - u_i, and Robin with beta = 0, which is
+Dirichlet with g/alpha, takes the same. It is out of #1935's scope, which is the derivative conditions, and
+it is not inert: HJB-FDM's Newton solves the wall row with this ghost before overwriting u_0.
 
 Corner Handling (Issue #521):
 -----------------------------
@@ -101,6 +68,7 @@ Usage:
 
 from __future__ import annotations
 
+import functools
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -939,6 +907,92 @@ def _periodic_ghost_slices(
     return tuple(ghost), tuple(source)
 
 
+@functools.lru_cache(maxsize=256)
+def _wall_layer_indices(axis: int, side: str, g: int) -> tuple[tuple, tuple[tuple[tuple, tuple], ...]]:
+    """The wall node's index and each ghost layer's (ghost, mirror) indices along ``axis``. #1935.
+
+    Cached: they depend only on these three, and building them on every call was a measurable part of a
+    2-D HJB-FDM solve, which pads its arrays some 10^5 times.
+    """
+    head = (slice(None),) * axis
+    wall = (*head, g if side == "min" else -(g + 1))
+    if side == "min":
+        layers = tuple(((*head, g - 1 - k), (*head, g + 1 + k)) for k in range(g))
+    else:
+        layers = tuple(((*head, -(g - k)), (*head, -(g + 2) - k)) for k in range(g))
+    return wall, layers
+
+
+def _write_wall_ghosts(
+    buf: np.ndarray,
+    axis: int,
+    side: str,
+    g: int,
+    dx: float,
+    value: float | np.ndarray,
+    alpha: float | np.ndarray = 0.0,
+    beta: float | np.ndarray = 1.0,
+) -> None:
+    """Fill the ``g`` ghost layers beyond one wall from ``alpha*u + beta*du/dn = value``, du/dn outward. #1935.
+
+    The grid is node-centred -- ``TensorProductGrid`` puts a node on the wall, h = span/(N-1). Ghost layer k
+    (k = 0 nearest) sits (k+1) h outside the wall node and its mirror (k+1) h inside, so the central
+    difference about the wall node reads du/dn = (ghost - mirror) / (2 (k+1) h) at both walls, outward being
+    from the mirror toward the ghost, and the condition gives
+
+        ghost = mirror + 2 (k+1) h (value - alpha * wall) / beta.
+
+    Neumann, no-flux and reflecting are alpha = 0, beta = 1. The cell-centred mirror this replaced, ghost =
+    wall + h value, returned u''/2 in the 3-point Laplacian's wall row at every h on this grid: order 0.00 on
+    u = cos(pi x), where this gives 2.00 and agrees with the sparse assembly, which was node-centred already.
+
+    beta = 0 is the Dirichlet condition u = value/alpha on the wall node, for which the condition gives no
+    ghost; it takes `ghost_cell_robin`'s, 2 value/alpha - wall, which is the Dirichlet branch's. alpha = beta
+    = 0 constrains nothing, and that owner raises.
+
+    Layout along ``axis``: [ghost_lo (g) | interior (N) | ghost_hi (g)].
+    """
+    nodes = buf.shape[axis] - 2 * g
+    if nodes < g + 1:
+        raise ValueError(
+            f"the node-centred ghost mirrors {g} layer(s) across the wall node, which needs {g + 1} nodes along "
+            f"axis {axis}; this grid has {nodes}. Refuse rather than read a ghost layer as the mirror (#1935)."
+        )
+    wall, layers = _wall_layer_indices(axis, side, g)
+
+    # Scalar coefficients, the common case: one step for the face, and a pure mirror is a copy. The field path
+    # below costs a few array operations per call, which made a 2-D HJB-FDM solve 1.7x slower (#2473 review).
+    # `np.float64` is a `float`, so a value evaluated from a callable takes this path too.
+    if (
+        isinstance(alpha, (int, float))
+        and isinstance(beta, (int, float))
+        and isinstance(value, (int, float))
+        and beta != 0
+    ):
+        if alpha == 0 and value == 0:
+            for ghost_index, mirror_index in layers:
+                buf[ghost_index] = buf[mirror_index]
+            return
+        step = 2 * dx * value / beta if alpha == 0 else 2 * dx * (value - alpha * buf[wall]) / beta
+        for k, (ghost_index, mirror_index) in enumerate(layers):
+            buf[ghost_index] = buf[mirror_index] + (k + 1) * step
+        return
+
+    u_wall = buf[wall]
+    dirichlet = np.abs(np.asarray(beta, dtype=float)) == 0.0
+    cell = None
+    if np.any(dirichlet):
+        # Wanted only where beta = 0. Elsewhere the cell form's own singularity, alpha/2 + beta/dx = 0, does not
+        # apply to the node form, so those points get placeholder coefficients whose value is discarded.
+        cell = ghost_cell_robin(u_wall, value, np.where(dirichlet, alpha, 1.0), np.where(dirichlet, beta, 0.0), dx)
+    for k, (ghost_index, mirror_index) in enumerate(layers):
+        if np.all(dirichlet):
+            buf[ghost_index] = cell
+            continue
+        node = buf[mirror_index] + 2 * (k + 1) * dx * (value - alpha * u_wall) / np.where(dirichlet, 1.0, beta)
+        buf[ghost_index] = node if cell is None else np.where(dirichlet, cell, node)
+
+
 # =============================================================================
 # Pre-allocated Ghost Cell Buffer (Legacy Interface - Zero-Copy Design)
 # =============================================================================
@@ -1228,106 +1282,22 @@ class PreallocatedGhostBuffer:
                 buf[tuple(hi_ghost)] = 2 * v - buf[tuple(hi_interior)]
 
         elif bc_type in [BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING]:
-            # Zero-gradient Neumann: ghost = adjacent interior (simple reflection).
-            # For cell-centered grids with boundary at cell face:
-            #   du/dn|_{boundary} = (u_ghost - u_interior)/dx = 0
-            #   => u_ghost = u_interior (adjacent interior cell)
-            #
-            # The quotient is (ghost - interior), not (interior - ghost): interior -> ghost IS the
-            # outward direction at either wall, which is what makes this file's header formula
-            # sign-free. Written the other way round it is -du/dn, inert at zero flux and
-            # contradicting the header twenty lines up.
-            #
-            # Padded array structure: [ghost_0, ..., ghost_{g-1}, interior_0, interior_1, ...]
-            # For g=1: ghost at idx 0 should equal interior at idx 1 (adjacent).
-            #
-            # Issue #1186 sibling: for BCType.NEUMANN with a NONZERO prescribed flux du/dn = v,
-            # add the linear flux offset on top of the mirror (the mirror alone silently dropped
-            # it). du/dn = v means du/dx = -v at the low wall (outward normal -x) and du/dx = +v
-            # at the high wall (outward normal +x). Both walls: ghost = interior + dx*v.
-            # Derivation (cell-centred, boundary at x=0):
-            #   du/dx|_0 approx (u_interior - u_ghost)/dx, so ghost = interior - dx*(du/dx)
-            #   Low wall: ghost = interior - dx*(-v) = interior + dx*v  [Issue #1262, 2026-06-10 audit]
-            #   High wall: ghost = interior + dx*v  (outward normal +x, du/dx = v)
-            # v == 0 (and NO_FLUX / REFLECTING, definitionally zero-flux) leaves the pure
-            # mirror -> byte-identical.
-            apply_flux = bc_type == BCType.NEUMANN and v != 0.0
+            # du/dn = v for NEUMANN, 0 for NO_FLUX and REFLECTING, about the wall node (#1935). The outward sign
+            # (#1262), the layer order and the separation growing with the layer (#1967) live in
+            # `_write_wall_ghosts`, shared with the per-face path and with ROBIN.
+            flux = v if bc_type == BCType.NEUMANN else 0.0
             for axis in range(d):
                 dx = self._grid_spacing[axis] if self._grid_spacing is not None else 1.0
-                # Low boundary: ghost mirrors adjacent interior
-                for k in range(g):
-                    lo_ghost = [slice(None)] * d
-                    lo_ghost[axis] = g - 1 - k  # Ghost cells from g-1 down to 0
-                    lo_interior = [slice(None)] * d
-                    lo_interior[axis] = g + k  # Adjacent interior cells from g up
-                    buf[tuple(lo_ghost)] = buf[tuple(lo_interior)]
-                    if apply_flux:
-                        # #1967: the offset is the mirror SEPARATION times the flux, and that
-                        # separation grows with the layer. Ghost layer k and its mirror interior
-                        # are (2k-1)*dx apart on a cell-centred grid -- 1*dx for the pair adjacent
-                        # to the wall, 3*dx for the next, and so on. `dx * v` on every layer is the
-                        # k=1 value applied throughout, so g=1 was exact and g>=2 drifted by
-                        # (2k-2)*dx*v. Measured on f = -2x+1 with du/dn = 2: 0 at g=1, 5.0e-01 at
-                        # g=2, 1.0e+00 at g=3. v == 0 leaves the pure mirror, byte-identical.
-                        buf[tuple(lo_ghost)] += (2 * (k + 1) - 1) * dx * v
-
-                # High boundary: ghost mirrors adjacent interior.
-                #
-                # #1967: both indices must walk in the SAME direction, and they did not. The low
-                # loop above pairs `g-1-k` with `g+k` -- ghost nearest the wall with interior
-                # nearest the wall, k advancing outward on both sides. This loop paired `-(k+1)`,
-                # which also starts nearest the wall, with `-(g+k+1)`, which starts at the
-                # FARTHEST interior cell of the stencil and moves further in. At g=1 the two
-                # expressions coincide, which is why every caller in the library saw the right
-                # answer; at g>=2 the layers arrive reversed.
-                #
-                # Measured on u = cos(2*pi*x), even about both walls so Neumann(0) is exact at
-                # both: low wall machine-zero at g=1,2,3 while the high wall was 5.4e-01 at g=2
-                # and 1.3e+00 at g=3, with reversed(got) == want at every depth -- the values were
-                # right and the slots were wrong.
-                for k in range(g):
-                    hi_ghost = [slice(None)] * d
-                    # The high ghosts occupy -g .. -1, and -g is the one ADJACENT to the wall.
-                    hi_ghost[axis] = -(g - k)  # -g, -(g-1), ... -1  : nearest the wall first
-                    hi_interior = [slice(None)] * d
-                    hi_interior[axis] = -(g + 1) - k  # -(g+1), -(g+2), ... : nearest first too
-                    buf[tuple(hi_ghost)] = buf[tuple(hi_interior)]
-                    if apply_flux:
-                        buf[tuple(hi_ghost)] += (2 * (k + 1) - 1) * dx * v
+                for side in ("min", "max"):
+                    _write_wall_ghosts(buf, axis, side, g, dx, flux)
 
         elif bc_type == BCType.ROBIN:
-            # Robin: alpha*u + beta*du/dn = g, du/dn the OUTWARD normal derivative, which is
-            # what `BCSegment.beta` and `BCType.ROBIN` both declare.
-            #
-            # This used to carry its own arithmetic with an `outward_sign` factor on beta,
-            # which is the axis convention alpha*u + beta*du/dx = g -- a physically different
-            # condition at the low wall. Measured before the fix, on alpha=1, beta=0.3, g=0.7:
-            # the declared condition's residual was 6.17 at the min wall and 0 at the max.
-            # The sibling NEUMANN branch above already carries the outward convention, fixed
-            # for exactly this reason in #1262; this branch kept the pre-fix sign.
-            #
-            # For a cell-centred grid the ghost sits outside at both walls, so the quotient
-            # toward the ghost IS the outward derivative and the formula is side-free. That
-            # derivation lives in `ghost_cell_robin`, which now owns it.
+            # alpha*u + beta*du/dn = v with du/dn the OUTWARD normal derivative, which is what
+            # `BCSegment.beta` and `BCType.ROBIN` declare (#1262, #2063), about the wall node (#1935).
             for axis in range(d):
                 dx = self._grid_spacing[axis] if self._grid_spacing is not None else 1.0
-
-                lo_int_sl = [slice(None)] * d
-                lo_int_sl[axis] = g
-                u_lo_interior = buf[tuple(lo_int_sl)]
-
-                hi_int_sl = [slice(None)] * d
-                hi_int_sl[axis] = -g - 1
-                u_hi_interior = buf[tuple(hi_int_sl)]
-
-                for k in range(g):
-                    lo_ghost = [slice(None)] * d
-                    lo_ghost[axis] = g - 1 - k
-                    buf[tuple(lo_ghost)] = ghost_cell_robin(u_lo_interior, v, alpha, beta, dx)
-
-                    hi_ghost = [slice(None)] * d
-                    hi_ghost[axis] = -(g - k)
-                    buf[tuple(hi_ghost)] = ghost_cell_robin(u_hi_interior, v, alpha, beta, dx)
+                for side in ("min", "max"):
+                    _write_wall_ghosts(buf, axis, side, g, dx, v, alpha, beta)
 
         elif bc_type in (BCType.EXTRAPOLATION_LINEAR, BCType.EXTRAPOLATION_QUADRATIC):
             # #1958: this chain had no branch for either member AND no terminal `else`, so the
@@ -1830,75 +1800,22 @@ class PreallocatedGhostBuffer:
             buf[tuple(ghost_slices)] = 2 * v - buf[tuple(interior_slices)]
 
         elif bc_type in [BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING]:
-            # ghost = adjacent interior, PLUS dx*v for an inhomogeneous Neumann flux.
-            #
-            # The flux term was missing here while `_apply_linear_reflection` (the uniform-BC path)
-            # has carried it since #1262. Named, not cited by line: an edit to this same file moved
-            # the target and left the number pointing at an unrelated statement. Both paths are live and which one runs is decided
-            # by `bc.is_uniform` -- i.e. by whether the caller wrote one unrestricted segment or one
-            # per face, which the docs present as equivalent ways of saying the same thing. Measured
-            # on du/dn = 2, dx = 0.25: uniform gave an implied du/dn of +/-2.0, per-face gave 0.0,
-            # differing by exactly dx*v. A caller stating a per-face Neumann flux silently got
-            # zero-flux. #1937
-            #
-            # Same sign at both walls, matching the uniform path: at the low wall the outward normal
-            # is -x, so ghost = u_i + dx*v gives du/dx = -v and du/dn = +v; at the high wall
-            # du/dx = +v and du/dn = +v. That is the du/dn convention #1262 established, and the
-            # agreement between the two paths is what the pin asserts.
-            apply_flux = bc_type == BCType.NEUMANN and v != 0.0
+            # The uniform path's arithmetic, through the same `_write_wall_ghosts`: a per-face Neumann flux was
+            # once dropped here while the uniform path carried it (#1937), and the layers were reversed in both
+            # (#1967) -- one copy each time.
+            flux = v if bc_type == BCType.NEUMANN else 0.0
             dx = self._grid_spacing[axis] if self._grid_spacing is not None else 1.0
-            # #1967, both halves, the same two as the uniform path above -- this is the second
-            # copy of that arithmetic and it carried the same errors.
-            for k in range(g):
-                single_ghost = [slice(None)] * d
-                single_interior = [slice(None)] * d
-                if side == "min":
-                    single_ghost[axis] = g - 1 - k  # g-1 .. 0    : nearest the wall first
-                    single_interior[axis] = g + k  # g, g+1, ...  : nearest first
-                else:
-                    # The high ghosts occupy -g .. -1, and -g is the one ADJACENT to the wall,
-                    # so both walks must start there. `-(k+1)` started at the far end while the
-                    # interior walk started near, which pairs the layers backwards for g >= 2.
-                    single_ghost[axis] = -(g - k)  # -g .. -1     : nearest the wall first
-                    single_interior[axis] = -(g + 1) - k  # -(g+1), -(g+2), ... : nearest first
-                buf[tuple(single_ghost)] = buf[tuple(single_interior)]
-                if apply_flux:
-                    # Layer k sits (2k-1)*dx from its mirror, so the offset grows with the layer.
-                    buf[tuple(single_ghost)] += (2 * (k + 1) - 1) * dx * v
+            _write_wall_ghosts(buf, axis, side, g, dx, flux)
 
         elif bc_type == BCType.ROBIN:
-            # Robin: alpha*u + beta*du/dn = g
-            # Issue #625 fix: Use correct ghost cell formula instead of reflection
+            # alpha*u + beta*du/dn = g, du/dn outward (#625, #2063), about the wall node (#1935).
             alpha = getattr(segment, "alpha", 0.0)
             beta = getattr(segment, "beta", 1.0)
-
-            # Get grid spacing for this axis
             if self._grid_spacing is not None:
                 dx = self._grid_spacing[axis]
             else:
                 dx = 1.0  # Fallback (may give incorrect results without proper dx)
-
-            # `du/dn` is the OUTWARD normal derivative, as `BCSegment.beta` declares. The
-            # arithmetic that stood here multiplied beta by an outward sign, which imposes
-            # alpha*u + beta*du/dx = g instead -- a different physical condition at the low
-            # wall. `ghost_cell_robin` owns the derivation, including why the cell-centred
-            # formula is side-free: the ghost is outside at both walls, so the quotient
-            # toward it is already the outward derivative.
-            #
-            # The degenerate branch went with it. A singular coefficient means the condition
-            # does not determine the ghost, and mirroring invents an answer the caller never
-            # asked for; the owner raises instead.
-            for k in range(g):
-                single_ghost = [slice(None)] * d
-                single_interior = [slice(None)] * d
-                if side == "min":
-                    single_ghost[axis] = g - 1 - k  # Ghost cells from g-1 down to 0
-                    single_interior[axis] = g  # Adjacent interior at index g
-                else:
-                    single_ghost[axis] = -(g - k)  # Ghost cells from -g up to -1
-                    single_interior[axis] = -g - 1  # Adjacent interior at index -g-1
-                u_interior = buf[tuple(single_interior)]
-                buf[tuple(single_ghost)] = ghost_cell_robin(u_interior, v, alpha, beta, dx)
+            _write_wall_ghosts(buf, axis, side, g, dx, v, alpha, beta)
 
         elif bc_type in (BCType.EXTRAPOLATION_LINEAR, BCType.EXTRAPOLATION_QUADRATIC):
             # #1958: this chain had no branch for either member, so both fell to the reflection
@@ -2049,11 +1966,12 @@ def pad_array_with_ghosts(
             passed; the ghost formulas assume one spacing per axis.
 
     Example:
+        The zero-gradient ghost mirrors the node beside the wall, because the wall is a node (#1935):
+
+        >>> import numpy as np
         >>> from mfgarchon.geometry.boundary import neumann_bc, pad_array_with_ghosts
-        >>> u = np.array([1.0, 2.0, 3.0])
-        >>> bc = neumann_bc(dimension=1)
-        >>> u_padded = pad_array_with_ghosts(u, bc, spacing=0.5)
-        >>> # u_padded is [1.0, 1.0, 2.0, 3.0, 3.0]: the zero-gradient ghost copies the wall node (#1935)
+        >>> pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1), spacing=0.5)
+        array([2., 1., 2., 3., 2.])
     """
     if spacing is None and geometry is not None:
         get_spacing = getattr(geometry, "get_grid_spacing", None)

@@ -1683,6 +1683,9 @@ def solve_hjb_timestep_newton(
             # `u[-1] = u[1]`. The wall equation is inconsistent, and this overwrite was compensating
             # for it: deleting it destroys a first-order boundary correction and makes the answer
             # measurably worse (L2 6-24%, wall node 1.1-3.2x). Fix #1904 first.
+            # [RESOLVED 2026-10-03 -- #1935] The ghost now mirrors about the wall node, `u[-1] = u[1] + 2h g`, and
+            # the wall Laplacian converges to the true value at order 2.00, so the residual's wall row carries
+            # the condition consistently. The overwrite stays deleted (#1902).
             #
             # Issue #1685's point survives: on the HJB side NO_FLUX *is* du/dn = 0, so it must not
             # fall through to the `else` and raise. It is a distinct condition only on the FP side.

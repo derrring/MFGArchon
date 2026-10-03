@@ -159,11 +159,23 @@ def _switching_nodes(u, bc, upwind: bool):
     the rule's other kink, a one-sided difference exactly 0 at the edge of the zero branch, which is
     C1 and not C2 and leaves an O(eps) FD tail rather than an O(1) one. Central differencing has no
     branch, hence no switching nodes.
+
+    A wall row whose ghost is the pure mirror about the wall node -- no-flux, or Neumann/Robin with
+    alpha = 0 and g = 0 (#1935) -- has `central == 0` for EVERY state: the ghost is `u[1]`, so the
+    backward difference is minus the forward one and the row depends on their common magnitude only,
+    smoothly (`min(s, 0)**2 / 2` for the quadratic H, s the forward difference). That tie is structural
+    and not a switching node; it is recognised by the wall's central difference vanishing on a generic
+    field too, and left out. A Robin wall with alpha != 0 or a Neumann wall with g != 0 ties only at
+    particular states, and those still count.
     """
     if not upwind:
         return np.zeros(NX, dtype=bool)
     g_c = _compute_gradient_array_1d(np.asarray(u, dtype=float), DX, bc=bc, upwind=False, time=0.0)
-    return np.abs(g_c) < 1e-9
+    tied = np.abs(g_c) < 1e-9
+    generic = np.sin(3.0 * X) + 0.37 * X + 0.2  # nonzero at both walls, so a Robin wall with alpha != 0 is not tied
+    structural = np.abs(_compute_gradient_array_1d(generic, DX, bc=bc, upwind=False, time=0.0)) < 1e-9
+    structural[1:-1] = False
+    return tied & ~structural
 
 
 # States with no switching node under any BC above; `test_no_switching_states_are_actually_smooth`

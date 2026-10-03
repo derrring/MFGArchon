@@ -7,13 +7,19 @@ Two defects in the same loop, in two copies of it:
    to the wall, so both the ghost walk and the interior walk must start there. The high-wall loop
    started its ghost walk at `-1`, the far end, while its interior walk started near — pairing the
    layers backwards for `g >= 2`. The low wall was already correct.
-2. **Flux offset.** Ghost layer `k` sits `(2k-1)*dx` from its mirror on a cell-centred grid, so an
-   inhomogeneous Neumann offset must scale with the layer. `dx * v` was applied to every layer —
-   the `k = 1` value used throughout.
+2. **Flux offset.** A ghost layer's separation from its mirror grows with the layer, so an
+   inhomogeneous Neumann offset must scale with it. `dx * v` was applied to every layer — the
+   first layer's value used throughout.
 
-**Both are invisible at `ghost_depth = 1`**, where a single layer has no order to reverse and
-`(2·1-1)·dx = dx`. Every caller in the library passes 1 or omits it, which is why a suite of 6147
-was green with both present.
+**Both were invisible at `ghost_depth = 1`**, where a single layer has no order to reverse and the
+first layer's offset is the only one. Every caller in the library passes 1 or omits it, which is
+why a suite of 6147 was green with both present.
+
+**The grid is node-centred (#1935).** This file was written against cell centres, where ghost layer
+`k` sits `(k - 1/2) h` outside the wall and `(2k - 1) h` from its mirror. The live ghost mirrors about
+the wall node: layer `k` sits `k h` outside it and `2k h` from its mirror, `h = 1/(N - 1)`. The
+oracles below sample at the nodes; the laws they hold — even continuation, linear continuation, an
+offset growing with the layer — are the ones #1967 pinned.
 
 ~~The one production consumer at depth 3 is `hjb_weno.py`, whose `_SUPPORTED_BC_TYPES` is
 `{NEUMANN, NO_FLUX, PERIODIC}` — exactly the family defect 1 hits.~~ [CORRECTED] The supported set
@@ -56,19 +62,19 @@ from mfgarchon.geometry.boundary import (
 )
 
 _N = 8
-_H = 1.0 / _N
-_XC = (np.arange(_N) + 0.5) * _H  # cell centres, the geometry this branch uses (#1968)
+_H = 1.0 / (_N - 1)
+_XC = np.linspace(0.0, 1.0, _N)  # the nodes: the wall is one (#1935)
 
 _MIRROR_FAMILY = ["neumann", "no_flux", "reflecting"]
 
 
 def _low_centres(g: int) -> np.ndarray:
-    """Ghost layer k has centre at -(k - 1/2)h; returned outermost-first to match the buffer."""
-    return np.array([-(k - 0.5) * _H for k in range(1, g + 1)])[::-1]
+    """Ghost layer k sits at -k h; returned outermost-first to match the buffer."""
+    return np.array([-k * _H for k in range(1, g + 1)])[::-1]
 
 
 def _high_centres(g: int) -> np.ndarray:
-    return np.array([1.0 + (k - 0.5) * _H for k in range(1, g + 1)])
+    return np.array([1.0 + k * _H for k in range(1, g + 1)])
 
 
 def _uniform(bc_type: str, value: float = 0.0) -> BoundaryConditions:
@@ -167,7 +173,8 @@ def test_an_inhomogeneous_flux_is_exact_at_every_layer(wall, ghost_depth):
 @pytest.mark.parametrize("wall", ["low", "high"])
 def test_the_flux_offset_actually_scales_with_the_layer(wall):
     """Directly, without an exact solution: the gap between a `v = 0` wall and a `v != 0` one must
-    be `(2k-1)·dx·v` per layer. A fix that applied a constant offset would satisfy the exactness
+    be `2k·h·v` per layer, layer `k` lying `2k h` from its mirror (`(2k-1)·dx·v` on the cell-centred
+    grid this was written against, #1935). A fix that applied a constant offset would satisfy the exactness
     test above only for the field that happens to make it exact; this holds for any field.
 
     Parametrised over both walls for the reason recorded above — the high wall's copy of this
@@ -180,11 +187,11 @@ def test_the_flux_offset_actually_scales_with_the_layer(wall):
 
     if wall == "low":
         # outermost-first in the array, so layer k = g, g-1, ... 1
-        expected = np.array([(2 * k - 1) * _H * v for k in range(g, 0, -1)])
+        expected = np.array([2 * k * _H * v for k in range(g, 0, -1)])
         got = hot[:g] - cold[:g]
     else:
         # the high ghosts run nearest-first, so layer k = 1 .. g
-        expected = np.array([(2 * k - 1) * _H * v for k in range(1, g + 1)])
+        expected = np.array([2 * k * _H * v for k in range(1, g + 1)])
         got = hot[-g:] - cold[-g:]
 
     np.testing.assert_allclose(got, expected, atol=1e-12)
@@ -230,10 +237,13 @@ def test_the_two_paths_agree_on_an_inhomogeneous_flux_at_depth():
     [("neumann", 0.0), ("neumann", 2.0), ("no_flux", 0.0), ("reflecting", 0.0), ("dirichlet", 1.0), ("periodic", 0.0)],
 )
 def test_depth_one_is_byte_identical(bc_type, value):
-    """Eighteen of the twenty-four probed cells were unchanged by this fix; every `ghost_depth = 1`
-    cell is among them, because that is where the two expressions coincide. Since every caller in
-    the library uses depth 1, a change here would be a regression in everything that currently
-    works, and nothing else in this file would see it."""
+    """Depth 1, which every caller in the library uses and which #1967 left unchanged.
+
+    #1935 changed it on purpose for the mirror family: the ghost mirrors the node beside the wall,
+    `u[1] + 2h v`, where it copied the wall node, `u[0] + h v`. Dirichlet and periodic did not move,
+    and those two rows are the part of the original invariance claim that still holds.
+
+    Named as the discrimination kill matrix records it; the name follows the assertion at the next sweep re-record."""
     field = np.cos(2 * np.pi * _XC)
     padded = pad_array_with_ghosts(field, _uniform(bc_type, value), ghost_depth=1, spacing=_H)
 
@@ -244,10 +254,10 @@ def test_depth_one_is_byte_identical(bc_type, value):
         assert padded[0] == pytest.approx(2 * value - field[0])
         assert padded[-1] == pytest.approx(2 * value - field[-1])
     else:
-        # BOTH walls: the high wall is the half that moved at g >= 2, so asserting only the low
-        # one would leave the invariance claim resting on the side that never changed.
-        assert padded[0] == pytest.approx(field[0] + _H * value)
-        assert padded[-1] == pytest.approx(field[-1] + _H * value)
+        # BOTH walls: the high wall is the half that moved at g >= 2 in #1967, so asserting only
+        # the low one would leave the claim resting on the side that never changed.
+        assert padded[0] == pytest.approx(field[1] + 2 * _H * value)
+        assert padded[-1] == pytest.approx(field[-2] + 2 * _H * value)
 
 
 @pytest.mark.parametrize("ghost_depth", [1, 2, 3])
@@ -259,8 +269,8 @@ def test_the_fix_holds_in_two_dimensions_including_the_corner(ghost_depth):
     Measured before the fix: edge `5.0e-01` and corner `7.1e-01` at `g=2`, both `1.21e+00` at
     `g=3`. Nothing in the rest of this file is 2-D."""
     n = 8
-    h = 1.0 / n
-    c = (np.arange(n) + 0.5) * h
+    h = 1.0 / (n - 1)
+    c = np.linspace(0.0, 1.0, n)
     xx, yy = np.meshgrid(c, c, indexing="ij")
     field = np.cos(2 * np.pi * xx) * np.cos(2 * np.pi * yy)
 
@@ -271,9 +281,9 @@ def test_the_fix_holds_in_two_dimensions_including_the_corner(ghost_depth):
     g = ghost_depth
     gc = np.concatenate(
         [
-            np.array([-(k - 0.5) * h for k in range(1, g + 1)])[::-1],
+            np.array([-k * h for k in range(1, g + 1)])[::-1],
             c,
-            np.array([1.0 + (k - 0.5) * h for k in range(1, g + 1)]),
+            np.array([1.0 + k * h for k in range(1, g + 1)]),
         ]
     )
     gx, gy = np.meshgrid(gc, gc, indexing="ij")

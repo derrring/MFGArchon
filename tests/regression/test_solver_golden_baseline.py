@@ -34,6 +34,15 @@ from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
+# NOTE: solver_golden_lq_fdm.npz was regenerated 2026-10-03 for #1935: the FDM ghost mirrors about the
+# wall node, where it copied the wall node and so returned u''/2 in the Laplacian's wall row at every h
+# (order 0.00 on u = cos(pi x), now 2.00). max|dU| 3.784e-04 (rel 9.5e-03) at (t=0, col 0), wall columns
+# 3.784e-04 against 1.865e-04 inside; max|dM| 2.130e-04 (rel 6.9e-05) at (t=7, col 0), 8.2e-05 inside.
+# The control: the GFDM fixture solves byte-identical (max|dU| 0.0). This fixture has no exact solution;
+# on four exact zero-flux stationary solutions HJB-FDM's max relative error moved by factors 0.74 / 1.10 / 3.1 / 32
+# (one worse), first order on both sides -- the wall row is now consistent, the upwind scheme is still
+# first order, and the constant can go either way.
+#
 # NOTE: solver_golden_lq_fdm.npz was regenerated 2026-09-23 for #2378 phase 2 (#2375 ruling 3): the
 # coupling f(m) = 0.1 m is now a cost, entering H with a minus sign, where it used to be a reward.
 # max|dU| 8.231e-02 (rel 1.94) at (t=0, col 10), max|dM| 4.003e-01 (rel 1.30e-01) at (t=7, col 10),

@@ -12,6 +12,11 @@ was **6.17 at the min wall** and 0 at the max.
 formula; the fix routes all of them through `ghost_cell_robin`, after which comparing any two is
 tautological and would pass over a broken owner. So every assertion below evaluates
 `alpha*u_b + beta*du/dn - g` on the ghost the shipped API returned.
+
+**Since #1935 the ghost is node-centred**: the wall is a node `u_b`, ghost and mirror `u_m` lie `dx`
+outside and inside it, and the condition is imposed by the central difference about the node,
+`du/dn = (u_g - u_m)/(2 dx)`. The outward-normal argument above is unchanged -- the ghost is outside at
+both walls -- and the residual below is taken at the node accordingly.
 """
 
 from __future__ import annotations
@@ -33,14 +38,14 @@ _U = np.array([2.5, 3.1, 4.0, 5.2, 6.6])
 _DX = 0.25
 
 
-def _residual(ghost: float, interior: float, alpha: float, beta: float, g: float, dx: float) -> float:
-    """`alpha*u_b + beta*du/dn - g`, with `du/dn` the quotient toward the ghost.
+def _residual(ghost: float, wall: float, mirror: float, alpha: float, beta: float, g: float, dx: float) -> float:
+    """`alpha*u_b + beta*du/dn - g` at the wall node, with `du/dn` the central quotient toward the ghost.
 
     Side-free by construction: at the low wall the outward normal is $-x$ and the ghost sits at
-    lower $x$, so $\\partial_n u = -\\partial_x u = (u_g - u_i)/dx$; at the high wall the outward
-    normal is $+x$ and the ghost sits at higher $x$, giving the same expression.
+    lower $x$, so $\\partial_n u = -\\partial_x u = (u_g - u_m)/(2\\,dx)$; at the high wall the outward
+    normal is $+x$ and the ghost sits at higher $x$, giving the same expression (#1935).
     """
-    return alpha * (ghost + interior) / 2 + beta * (ghost - interior) / dx - g
+    return alpha * wall + beta * (ghost - mirror) / (2 * dx) - g
 
 
 def _uniform_robin(alpha: float, beta: float, g: float) -> BoundaryConditions:
@@ -73,9 +78,9 @@ def test_the_ghost_satisfies_the_declared_condition_at_both_walls(alpha, beta, g
     a one-wall test would have been green throughout and pinned nothing.
     """
     padded = pad_array_with_ghosts(_U, _uniform_robin(alpha, beta, g), spacing=_DX)
-    ghost, interior = (padded[0], _U[0]) if wall == "min" else (padded[-1], _U[-1])
+    ghost, node, mirror = (padded[0], _U[0], _U[1]) if wall == "min" else (padded[-1], _U[-1], _U[-2])
 
-    assert _residual(ghost, interior, alpha, beta, g, _DX) == pytest.approx(0.0, abs=1e-12)
+    assert _residual(ghost, node, mirror, alpha, beta, g, _DX) == pytest.approx(0.0, abs=1e-12)
 
 
 @pytest.mark.parametrize("g", [0.0, 2.0, -1.5])
@@ -134,14 +139,18 @@ def test_the_fixture_would_expose_an_asymmetry():
 
 
 def test_a_singular_coefficient_raises_rather_than_mirroring():
-    """`alpha/2 + beta/dx == 0` leaves the ghost undetermined by the condition. Two of the four
-    deleted implementations silently mirrored the interior cell there, which answers a question
-    the caller did not ask; the surviving owner raises.
+    """A coefficient pair that leaves the ghost undetermined raises; mirroring the interior there,
+    as two of the four deleted implementations did, answers a question the caller did not ask.
 
-    With `dx = 0.25`, `alpha = 2` and `beta = -0.25` give `1 + (-1) = 0` exactly.
+    Which pair that is depends on the centring. The cell-centred form was singular at
+    `alpha/2 + beta/dx = 0` -- `alpha = 2, beta = -0.25` at `dx = 0.25`, which the node-centred form
+    of #1935 determines. There the only undetermined case is `alpha = beta = 0`, a condition that
+    constrains nothing; `beta = 0` alone is Dirichlet and is computed.
     """
+    padded = pad_array_with_ghosts(_U, _uniform_robin(2.0, -0.25, 0.5), spacing=_DX)
+    assert _residual(padded[0], _U[0], _U[1], 2.0, -0.25, 0.5, _DX) == pytest.approx(0.0, abs=1e-12)
     with pytest.raises(ValueError, match="singular"):
-        pad_array_with_ghosts(_U, _uniform_robin(2.0, -0.25, 0.5), spacing=_DX)
+        pad_array_with_ghosts(_U, _uniform_robin(0.0, 0.0, 0.5), spacing=_DX)
 
 
 @pytest.mark.parametrize(
@@ -152,14 +161,17 @@ def test_a_singular_coefficient_raises_rather_than_mirroring():
     ],
 )
 def test_the_cells_that_must_not_have_moved(bc_factory, label):
-    """Nine of the thirteen probed cells were byte-identical across this change; these are the
-    two that could plausibly have been disturbed. `beta = 0` removes the derivative term, so the
-    conventions coincide there -- a fix that changed it would be a regression."""
+    """Nine of the thirteen probed cells were byte-identical across #1907; these are the two that
+    could plausibly have been disturbed. `beta = 0` removes the derivative term, so the conventions
+    coincide there -- a fix that changed it would be a regression, and #1935 did not.
+
+    Homogeneous Neumann did move in #1935, on purpose: its ghost mirrors the node beside the wall,
+    `u_1`, where it copied the wall node `u_0`."""
     padded = pad_array_with_ghosts(_U, bc_factory(), spacing=_DX)
 
     if label == "NEUMANN":
-        assert padded[0] == pytest.approx(_U[0])
-        assert padded[-1] == pytest.approx(_U[-1])
+        assert padded[0] == pytest.approx(_U[1])
+        assert padded[-1] == pytest.approx(_U[-2])
     else:
         assert padded[0] == pytest.approx(2 * 0.7 - _U[0])
         assert padded[-1] == pytest.approx(2 * 0.7 - _U[-1])
