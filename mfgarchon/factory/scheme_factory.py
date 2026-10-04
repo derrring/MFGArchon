@@ -279,7 +279,6 @@ def _create_sl_pair(
 
     Note:
         FPSLSolver (forward SL, splatting) is the adjoint of HJB backward SL.
-        FPSLJacobianSolver (backward SL with Jacobian) is deprecated.
     """
     from mfgarchon.alg.numerical.fp_solvers import FPSLSolver
     from mfgarchon.alg.numerical.hjb_solvers import HJBSemiLagrangianSolver

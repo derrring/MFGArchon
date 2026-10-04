@@ -12,7 +12,8 @@ reading the code, which had already produced three wrong conclusions:
     adjoint.operators.build_diffusion_matrix_1d           2.22e-16     yes (1.1e-16)
     fp_semi_lagrangian (FPSLJacobianSolver, inline)       2.72e-02     no  (0.972 to 1.027)
 
-at N = 7, sigma = 0.4, dt = 0.01, alpha = 0.0288, all at theta = 0.5. The first row was named
+at N = 7, sigma = 0.4, dt = 0.01, alpha = 0.0288, all at theta = 0.5. The last row's solver was
+removed in #1756. The first row was named
 `solve_crank_nicolson_diffusion_1d` until #2463 made theta a parameter of the SL pair. `adjoint.operators.build_diffusion_matrix_2d` is
 the sixth and is not in that table: the census probed the 1D path, so a 2D assembly carrying its
 own copy of the same wall was invisible to it. It was found afterwards by sweeping the tree for a
@@ -41,7 +42,7 @@ onto the mirror stencil.
 #2243 MOVED THE REST. Every call site OF THIS MODULE now names ``mirror``; ``half_wall`` has none.
 Measured in the PR that closed #2243 -- the wall EOC 0.73/0.87/0.94 -> 2.00/2.00/2.00 through the
 shipped routines, and `FPSLSolver` landing exactly on `FPSLJacobianSolver`, which had ``mirror``
-from the start.
+from the start (that solver was removed in #1756).
 
 **That is a statement about this module's consumers and NOT about the library.** A separate family
 implements the same wall through ghost padding rather than through a stencil, and is still on the

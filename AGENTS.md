@@ -141,8 +141,8 @@ unauditable; adding to it casually is how it got there.
 
    **Kill count is a property column, not a criterion** — neither sufficient nor necessary, which is
    the same shape this repo already found in mass conservation (`feedback_mutation_testing_calibration`;
-   a scheme can conserve to 1e-12 with a decaying wall-gradient ratio, and `FPSLJacobianSolver` is
-   non-conservative by construction and correct). Not sufficient: a test can kill `optimal_control_sign`
+   a scheme can conserve to 1e-12 with a decaying wall-gradient ratio, and `FPSLJacobianSolver`, removed
+   in #1756, was non-conservative by construction and correct). Not sufficient: a test can kill `optimal_control_sign`
    incidentally while pinning nothing it claims. Not necessary, and this is the direction that is
    invisible: the mutations are a **fixed, small alphabet** — `MUTATIONS` declares them and
    `test_the_mutation_list_matches_the_parametrisation` owns the count — so a test pinning a convention outside it

@@ -93,7 +93,6 @@ _SEARCHED = (
     "mfgarchon.alg.numerical.fp_solvers.fp_fvm",
     "mfgarchon.alg.numerical.fp_solvers.fp_gfdm",
     "mfgarchon.alg.numerical.fp_solvers.fp_particle",
-    "mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian",
     "mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint",
 )
 
@@ -102,7 +101,7 @@ _SEARCHED = (
 # differently, is caught rather than xfailing identically to one that merely returns a bad seam.
 #
 #   HJBFDMSolver    7.42e-01 (#1834, fixed)  FPParticleSolver  4.95e-01 (seed=1822, repeatable; floor ~2.7e-01)
-#   HJBWENOSolver   2.64e-01     FPSLJacobianSolver  1.58e+00
+#   HJBWENOSolver   2.64e-01     FPSLJacobianSolver  1.58e+00 (retired in #1756)
 #   FPFVMSolver     1.79e-01     FPFDMSolver         1.29e-01
 #   HJBGFDMSolver   raises NotImplementedError for PERIODIC
 #   FPGFDMSolver    raises ValueError (density goes invalid mid-solve)
@@ -153,35 +152,37 @@ KNOWN_NOT_HONOURED = {
     # About half of it is the Issue #709 boundary smoothing, which is applied unconditionally:
     # with kde_boundary_smoothing=False the seam drops 3.29e-01 -> 1.48e-01 at N=2e5.
     "FPParticleSolver": ("#1822 fixed-grid KDE seam floor ~2.7e-01; SEAM_TOL=1e-9 is unreachable", AssertionError),
-    "FPSLJacobianSolver": ("#1822 deprecated, retirement in #1756", AssertionError),
+    # FPSLJacobianSolver is GONE from this roster (#1756): the class was retired, not repaired.
 }
 
 # Mass is the second invariant and it is INDEPENDENT of the seam. But the assertion is
 # CONVERGENCE, not exact conservation, and getting that wrong is what the first version of this
 # file did: it asserted `drift < 1e-9` and reported six solvers as failing to honour PERIODIC.
 #
-# Measured drift against refinement (Nx=21/41/81, Nt scaled with it), on THIS commit -- seeded,
-# and with the particle count scaled as Nx^2:
+# Measured drift against refinement (Nx=21/41/81, Nt scaled with it) at `d6a8b2c7` -- seeded, and
+# with the particle count scaled as Nx^2:
 #
-#   FPSLSolver         1.342e-01  4.910e-02  2.618e-02     converges, ratio 0.366
-#   FPSLAdjointSolver  1.342e-01  4.910e-02  2.618e-02     converges, ratio 0.366
 #   FPParticleSolver   5.480e-02  3.429e-02  1.707e-02     converges, ratio 0.626
 #   FPFDMSolver        2.220e-16  9.992e-16  4.885e-15     at round-off: EARLY RETURN
 #   FPFVMSolver        2.665e-15  7.772e-15  3.841e-14     at round-off: EARLY RETURN
-#   FPSLJacobianSolver 8.882e-16  2.776e-15  1.332e-15     at round-off: EARLY RETURN
+#   FPSLSolver         1.865e-14  1.776e-15  5.462e-14     at round-off: EARLY RETURN
+#
+# The table this replaces still listed FPSLSolver at 1.342e-01 and FPSLAdjointSolver, an alias #2343
+# removed; both rows were stale.
 #
 # Where it converges, that is O(h) discretisation error in a non-conservative scheme, not a
 # capability defect -- these solvers do not claim conservation by construction, and an absolute
 # tolerance on a convergent quantity is a tolerance chosen to make a point.
 #
-# READ THE SECOND COLUMN OF THAT LIST. Half these rows no longer reach the assertion at all: the
-# `drifts[0] < 1e-12` early return fires and the test passes without measuring convergence. For
-# FPSLJacobianSolver that is the long-standing case (exact by renormalisation rather than by
-# conservation -- RFC #1456 class (b), #1429 S0-11). FPFDMSolver and FPFVMSolver joined it in
-# #1837, which put their periodic wrap on the right torus and took their drift from ~5.6e-02 to
-# round-off. That is a real improvement and it makes this oracle vacuous for them, which is worth
-# saying out loud: three green rows here now assert nothing, and a green row that measured nothing
-# reads exactly like a green row that measured something.
+# READ THE SECOND COLUMN OF THAT LIST. Three of these four rows no longer reach the assertion at all:
+# the `drifts[0] < 1e-12` early return fires and the test passes without measuring convergence.
+# FPSLJacobianSolver was the long-standing case (exact by renormalisation rather than by
+# conservation -- RFC #1456 class (b), #1429 S0-11) until #1756 retired it. FPFDMSolver and
+# FPFVMSolver joined it in #1837, which put their periodic wrap on the right torus and took their
+# drift from ~5.6e-02 to round-off. That is a real improvement and it makes this oracle vacuous for
+# them, which is worth saying out loud. FPSLSolver is at round-off too, so three green rows here now
+# assert nothing and FPParticleSolver is the only row this oracle measures -- and a green row that
+# measured nothing reads exactly like a green row that measured something.
 MASS_NON_CONVERGENT: dict[str, tuple[str, type[Exception]]] = {
     # Empty, and honestly so: no FP solver declaring PERIODIC has a mass error that fails to
     # converge. The one entry that used to sit here, FPGFDMSolver, never produced a number to
@@ -507,7 +508,7 @@ BC_FACTORIES = {
 #               FPFVMSolver and FPFDMSolver (were 1.79e-01 9.00e-02 4.25e-02 and the same shape,
 #               before the wrap was put on the right torus -- #1822)
 #   NOT:        FPParticleSolver 5.64e-01 2.08e-01 2.63e-01 (up at 81)
-#               FPSLJacobianSolver 1.58e+00 7.64e-03 1.16e-02 (up at 81)
+#               FPSLJacobianSolver 1.58e+00 7.64e-03 1.16e-02 (up at 81; retired in #1756)
 # Unseeded solvers cannot be classified here at all: measured over three trials, FPParticleSolver
 # returned monotone=False, False, True on the identical configuration. Marking it xfail asserts a
 # failure it does not reliably have; marking it pass asserts the opposite. It is skipped, named,
@@ -544,7 +545,8 @@ SURFACE_NOT_HONOURED = {
     #
     # So this is a pin retired because the property it guarded is now met by a different route, and
     # the raise it named is unreached rather than fixed. #2243's PR carries both measurements.
-    ("FPSLJacobianSolver", "PERIODIC"): ("#1822 deprecated, retirement in #1756", AssertionError),
+    #
+    # ("FPSLJacobianSolver", "PERIODIC") is GONE (#1756): the class was retired, not repaired.
 }
 
 
@@ -589,13 +591,18 @@ def test_a_declared_bc_type_is_honoured(name, cls, bc_type):
         if len(residuals) == 1 and r < EXACT:
             return  # exact at the coarse grid: the strong form, no refinement needed
 
-    # THREE points, monotone. Two are not a trend: on 21->41 alone FPSLJacobianSolver improves
-    # 1.58e+00 -> 7.64e-03 and then gets WORSE at 81 (1.16e-02), and a two-point check certifies
-    # it. ~~HJBFDMSolver is the opposite case -- 7.42e-01, 6.51e-01, 4.72e-01 is genuine, slow
+    # THREE points, monotone. Two are not a trend: on 21->41 alone FPSLJacobianSolver (retired in
+    # #1756) improved 1.58e+00 -> 7.64e-03 and then got WORSE at 81 (1.16e-02), and a two-point check
+    # certified it. ~~HJBFDMSolver is the opposite case -- 7.42e-01, 6.51e-01, 4.72e-01 is genuine, slow
     # convergence that a ratio threshold tuned for the fast cases would have failed.~~ [SUPERSEDED
     # 2026-09-15 by #1878 and #1834: that trend was a stalled Newton on a Jacobian missing its wrap
     # entries, and the solver is now exact at Nx=21. The three-point rule still stands on
-    # FPSLJacobianSolver's non-monotone case.]
+    # FPSLJacobianSolver's non-monotone case.] No declared pair grows any more, so that recorded sequence
+    # is planted directly in `test_the_three_point_check_can_fail` (#1756).
+    _assert_refinement_converges(name, bc_type, residuals)
+
+
+def _assert_refinement_converges(name, bc_type, residuals):
     trend = f"{residuals[0]:.3e}, {residuals[1]:.3e}, {residuals[2]:.3e} at Nx=21/41/81"
     # `or < EXACT`: a residual that has REACHED round-off has converged, and cannot keep halving
     # below machine epsilon -- demanding it would fail a solver for being exact. The early return
@@ -609,6 +616,31 @@ def test_a_declared_bc_type_is_honoured(name, cls, bc_type):
     assert residuals[2] < residuals[1] or residuals[2] < EXACT, (
         f"{name} declares {bc_type.name} but its boundary residual grew from Nx=41 to 81: {trend}"
     )
+
+
+@pytest.mark.parametrize(
+    ("residuals", "refusal"),
+    [
+        ((1.58e00, 7.64e-03, 1.16e-02), "grew from Nx=41 to 81"),
+        ((7.64e-03, 1.58e00, 1.0e-03), "grew from Nx=21 to 41"),
+        ((1.0e-01, 5.0e-02, 2.5e-02), None),
+        ((3.268e-11, 6.661e-16, 6.661e-16), None),
+    ],
+    ids=["grows_at_81", "grows_at_41", "converges", "reaches_round_off"],
+)
+def test_the_three_point_check_can_fail(residuals, refusal):
+    """The control `test_a_declared_bc_type_is_honoured` lost when #1756 retired FPSLJacobianSolver.
+
+    Its PERIODIC strict-xfail was the only declared pair whose residual grew under refinement, so it was
+    the only evidence that the three-point check can fail at all. The first row is its recorded
+    sequence. The second grows on the other arm, which no declared pair has ever exercised. The last two
+    must pass: a converging sequence, and HJBGFDMSolver's (#1841), which reaches round-off and stops.
+    """
+    if refusal is None:
+        _assert_refinement_converges("Planted", BCType.PERIODIC, residuals)
+    else:
+        with pytest.raises(AssertionError, match=refusal):
+            _assert_refinement_converges("Planted", BCType.PERIODIC, residuals)
 
 
 def test_every_declared_pair_is_either_measured_or_named_uncovered():

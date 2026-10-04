@@ -17,7 +17,6 @@ from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_gfdm import FPGFDMSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
-from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian import FPSLJacobianSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
 from mfgarchon.alg.numerical.meshless_galerkin.fp_solver import MeshlessGalerkinFPSolver
 from mfgarchon.alg.numerical.network_solvers.fp_network import FPNetworkSolver
@@ -42,7 +41,6 @@ def test_drift_convention_trait_values():
     for cls in (
         WeakFormFPSolver,
         MeshlessGalerkinFPSolver,
-        FPSLJacobianSolver,
         FPSLSolver,
         FPNetworkSolver,
         FPParticleSolver,

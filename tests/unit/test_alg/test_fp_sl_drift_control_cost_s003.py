@@ -7,11 +7,11 @@
 The fix single-sources the drift coefficient from the Hamiltonian's ``control_cost`` via
 ``pde_coefficients.fp_drift_coefficient`` (= ``1/control_cost`` for a quadratic-MINIMIZE
 ``SeparableHamiltonian``), so ``alpha* = -grad(U)/control_cost``. This is **byte-identical when
-``control_cost == 1``** and corrects the magnitude otherwise. The divergence shortcut stays
-consistent: ``div(alpha) = -c * Laplacian(U)``.
+``control_cost == 1``** and corrects the magnitude otherwise.
 
 This is a behaviour change for ``control_cost != 1`` (the S0-03 bug). These pins assert the corrected
-drift and that it is distinct from the old ``-grad(U)`` (the relevance guard).
+drift and that it is distinct from the old ``-grad(U)`` (the relevance guard). The Jacobian SL solver
+these pins also covered, and its divergence pin, were removed with the solver in #1756.
 
 Refs #1420, #1430. Audit finding S0-03.
 """
@@ -22,7 +22,6 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian import FPSLJacobianSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_problem import MFGComponents, MFGProblem
@@ -48,9 +47,7 @@ def _U() -> np.ndarray:
 
 
 @pytest.mark.parametrize("control_cost", [0.5, 1.0, 2.0])
-@pytest.mark.parametrize(
-    ("solver_cls", "vel_method"), [(FPSLJacobianSolver, "_compute_velocity"), (FPSLSolver, "_compute_velocity_1d")]
-)
+@pytest.mark.parametrize(("solver_cls", "vel_method"), [(FPSLSolver, "_compute_velocity_1d")])
 def test_sl_velocity_uses_control_cost(solver_cls, vel_method, control_cost):
     """SL drift must be α* = -∇U/control_cost (S0-03), not -∇U."""
     problem = _problem(control_cost)
@@ -58,12 +55,11 @@ def test_sl_velocity_uses_control_cost(solver_cls, vel_method, control_cost):
         warnings.simplefilter("ignore")
         solver = solver_cls(problem)
     u = _U()
-    kwargs = {"time": 0.0} if solver_cls is FPSLSolver else {}
     # This pins the coefficient. FPSLSolver is compared on interior nodes only: at the walls it takes the
     # HJB half's gradient (#2439), a second-order one-sided difference (#2467), where np.gradient's is first
     # order.
-    nodes = slice(1, -1) if solver_cls is FPSLSolver else slice(None)
-    alpha = np.asarray(getattr(solver, vel_method)(u, **kwargs)).ravel()[nodes]
+    nodes = slice(1, -1)
+    alpha = np.asarray(getattr(solver, vel_method)(u, time=0.0)).ravel()[nodes]
     unit = -np.gradient(u, solver.dx).ravel()[nodes]
     np.testing.assert_allclose(
         alpha, unit / control_cost, rtol=0, atol=1e-12, err_msg="SL drift must be -∇U/control_cost (S0-03)"
@@ -73,20 +69,6 @@ def test_sl_velocity_uses_control_cost(solver_cls, vel_method, control_cost):
         assert not np.allclose(alpha, unit, atol=1e-9), (
             "SL drift is still -∇U (missing 1/control_cost) for control_cost != 1 (S0-03 not fixed)"
         )
-
-
-@pytest.mark.parametrize("control_cost", [0.5, 1.0, 2.0])
-def test_sl_jacobian_divergence_uses_control_cost(control_cost):
-    """The Jacobian-SL div(α) = div(-c·∇U) = -c·ΔU must carry the same control_cost factor."""
-    problem = _problem(control_cost)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        solver = FPSLJacobianSolver(problem)
-    u = _U()
-    div_alpha = np.asarray(solver._compute_divergence_from_U(u)).ravel()
-    div_unit = np.asarray(FPSLJacobianSolver(_problem(1.0))._compute_divergence_from_U(u)).ravel()
-    # div scales linearly with c = 1/control_cost
-    np.testing.assert_allclose(div_alpha, div_unit / control_cost, rtol=0, atol=1e-12)
 
 
 if __name__ == "__main__":

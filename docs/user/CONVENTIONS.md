@@ -589,9 +589,8 @@ axes and refused. The sequence form is the convention, and library code uses it.
   and can lose most of it. Under absorbing boundaries the invariant is that the mass lost equals the
   accumulated boundary flux. Conservation and discrete adjointness are separate properties, tested
   separately.
-- **Renormalisation is a per-solver property, not a convention.** The deprecated `FPSLJacobianSolver`
-  rescales to the pre-step mass at every step; `FPSLSolver` does not, because its splatting conserves;
-  `FPParticleSolver` pins every slice to the caller's mass under `kde_normalization="all"`. Comparing
+- **Renormalisation is a per-solver property, not a convention.** `FPSLSolver` does not rescale,
+  because its splatting conserves; `FPParticleSolver` pins every slice to the caller's mass under `kde_normalization="all"`. Comparing
   $\int m$ across solvers therefore measures the solver as well as the physics.
 
 ---

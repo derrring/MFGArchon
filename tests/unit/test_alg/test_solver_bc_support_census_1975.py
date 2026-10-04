@@ -60,7 +60,6 @@ _GATED = {
     "FPFVMSolver": {"NEUMANN", "NO_FLUX", "PERIODIC"},
     "FPGFDMSolver": {"NEUMANN", "NO_FLUX"},
     "FPParticleSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "PERIODIC", "REFLECTING"},
-    "FPSLJacobianSolver": {"NEUMANN", "NO_FLUX", "PERIODIC"},
     "FPSLSolver": {"NEUMANN", "NO_FLUX", "PERIODIC"},
     "HJBFDMSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "PERIODIC"},
     "HJBGFDMSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "PERIODIC", "ROBIN"},
@@ -182,7 +181,6 @@ def test_the_permissive_default_is_claimed_by_inheritance():
         "FPFVMSolver",
         "FPGFDMSolver",
         "FPParticleSolver",
-        "FPSLJacobianSolver",
         "FPSLSolver",
         # Issue #1936: the first HJB solver to state it, False. On no path does a Neumann value reach
         # every place it touches a wall, and with diffusion no path measured converged with g.
@@ -225,7 +223,6 @@ def test_no_solver_inherits_its_bc_declaration_from_a_sibling():
         "FPFVMSolver",
         "FPGFDMSolver",
         "FPParticleSolver",
-        "FPSLJacobianSolver",
         "FPSLSolver",
         "HJBFDMSolver",
         "HJBFEMSolver",

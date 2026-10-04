@@ -449,7 +449,7 @@ For most problems, start with FDM_UPWIND.
 
 ### What about Semi-Lagrangian?
 
-Use `SL_LINEAR` or `SL_CUBIC` in Safe Mode. The factory automatically pairs with `FPSLSolver` (forward SL, splatting), not `FPSLJacobianSolver` (backward SL with Jacobian correction), to maintain duality — see `scheme_factory.py`'s `_create_sl_pair`.
+Use `SL_LINEAR` or `SL_CUBIC` in Safe Mode. The factory automatically pairs with `FPSLSolver` (forward SL, splatting) to maintain duality — see `scheme_factory.py`'s `_create_sl_pair`.
 
 ---
 

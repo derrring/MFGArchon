@@ -1,6 +1,6 @@
 {
   "_comment": "Warning identities the suite emits (#2119). Keyed (file, kind, digits-normalised text[:40]) -- NOT line numbers, which move under any edit, and NOT occurrence counts, which jitter run to run. Bidirectional: a new identity is a regression, a removed one is progress that must be recorded here. `occurrences` is reported, never gated. `toolchain_when_written` is attribution for a later diff (#2158), also never gated; a value of `ambiguous:a|b` or `unreadable` cannot be written here, because it would name a broken environment rather than a version. Regenerate with --write-baseline.",
-  "occurrences_when_written": 3709,
+  "occurrences_when_written": 3728,
   "toolchain_when_written": {
     "python": "3.12.13",
     "pytest": "9.1.1",
@@ -118,7 +118,6 @@
     "tests/unit/test_alg/test_fp_particle_time_level_1792.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
     "tests/unit/test_alg/test_fp_particle_time_level_1792.py\tUserWarning\tinitial density mass N.N on the grid mea",
     "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
-    "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py\tDeprecationWarning\t__init__ is deprecated since vN.N.N. FPS",
     "tests/unit/test_alg/test_gfdm_batch_spatial_volatility_1725.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
     "tests/unit/test_alg/test_gfdm_batch_spatial_volatility_1725.py\tUserWarning\tinitial density mass N.N on the grid mea",
     "tests/unit/test_alg/test_gfdm_batch_spatial_volatility_1725.py\tUserWarning\tinitial density mass N.N on the uniform-",
@@ -173,7 +172,6 @@
     "tests/unit/test_alg/test_particle_multi_exit.py\tDeprecationWarning\tmixed_bc is deprecated since vN.N.N. Use",
     "tests/unit/test_alg/test_particle_multi_exit.py\tUserWarning\tinitial density mass N.N on the grid mea",
     "tests/unit/test_alg/test_periodic_capability_invariant_1822.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
-    "tests/unit/test_alg/test_periodic_capability_invariant_1822.py\tDeprecationWarning\t__init__ is deprecated since vN.N.N. FPS",
     "tests/unit/test_alg/test_periodic_capability_invariant_1822.py\tUserWarning\tHJBGFDMSolver: no `monotonicity_scheme` ",
     "tests/unit/test_alg/test_periodic_torus_oracle_1822.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
     "tests/unit/test_alg/test_regime_switching_iterator.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
@@ -189,7 +187,6 @@
     "tests/unit/test_alg/test_socp_m_matrix_property.py\tUserWarning\tinitial density mass N.N on the grid mea",
     "tests/unit/test_alg/test_solver_bc_support_census_1975.py\tUserWarning\tinitial density mass N.N on the grid mea",
     "tests/unit/test_alg/test_source_term_channel_2020.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
-    "tests/unit/test_alg/test_source_term_channel_2020.py\tDeprecationWarning\t__init__ is deprecated since vN.N.N. FPS",
     "tests/unit/test_alg/test_source_term_channel_2020.py\tUserWarning\tHJBGFDMSolver: no `monotonicity_scheme` ",
     "tests/unit/test_alg/test_source_term_channel_2020.py\tUserWarning\tinitial density mass N.N on the grid mea",
     "tests/unit/test_alg/test_source_term_channel_2020.py\tUserWarning\tinitial density mass N.N on the uniform-",

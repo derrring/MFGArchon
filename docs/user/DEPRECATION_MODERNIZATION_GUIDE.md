@@ -1,8 +1,8 @@
 # Deprecation Modernization Guide
 
 **Auto-generated** by `scripts/generate_deprecation_guide.py`
-**Total deprecated items**: 104
-**Versions covered**: v0.22.0, v0.21.0, v0.20.0, v0.19.2, v0.19.0, v0.18.6, v0.18.0, v0.17.6, v0.17.0, v0.16.11, v0.12.0
+**Total deprecated items**: 101
+**Versions covered**: v0.22.0, v0.21.0, v0.20.0, v0.19.2, v0.19.0, v0.18.6, v0.18.0, v0.17.0, v0.16.11, v0.12.0
 
 ---
 
@@ -34,7 +34,6 @@ It does mean a migration you read on one row **does not transfer** to another so
 | `FPFDMSolver.solve_fp_system()` | the destination | `velocity_field` -> `drift_field` |
 | `FPFEMSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
 | `FPNetworkSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
-| `FPSLJacobianSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
 | `FPSLSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
 | `MeshlessGalerkinFPSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
 | `NetworkFPSolver.solve_fp_system()` | itself deprecated | `drift_field` -> `potential_field` |
@@ -44,7 +43,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 ## Deprecated since v0.22.0
 
-*61 items*
+*60 items*
 
 ### Parameters
 
@@ -71,7 +70,6 @@ It does mean a migration you read on one row **does not transfer** to another so
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `FPGFDMSolver.solve_fp_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `FPNetworkSolver.solve_fp_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `FPParticleSolver.solve_fp_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
-- `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `FPSLJacobianSolver.solve_fp_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `FPSLSolver.solve_fp_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `FictitiousPlayIterator.__init__()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `FixedPointIterator.__init__()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0, once no longer blocked: the function takes **kwargs, which would accept a retired name and ignore it
@@ -171,12 +169,11 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 ## Deprecated since v0.18.6
 
-*3 items*
+*2 items*
 
 ### Parameters
 
 - **`velocity_field`** in `FPFDMSolver.solve_fp_system()` — use `drift_field` instead (remove by v0.25.0) [see *Do not migrate these across solvers*: `drift_field`]
-- **`drift_field`** in `FPSLJacobianSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0) [see *Do not migrate these across solvers*: `drift_field`]
 - **`drift_field`** in `FPSLSolver.solve_fp_system()` — use `potential_field` instead (remove by v0.25.0) [see *Do not migrate these across solvers*: `drift_field`]
 
 ---
@@ -189,16 +186,6 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 - **`_compute_sdf_gradient()`** — use `use mfgarchon.operators.differential.function_gradient() instead` instead (remove by v0.25.0)
 - **`mixed_bc()`** — use `Use BoundaryConditions(segments=[...]) directly` instead (remove by v0.25.0)
-
----
-
-## Deprecated since v0.17.6
-
-*1 items*
-
-### Functions / Classes
-
-- **`__init__()`** — use `FPSLSolver` instead (remove by v0.25.0)
 
 ---
 

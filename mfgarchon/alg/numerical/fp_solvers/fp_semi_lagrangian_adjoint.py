@@ -557,8 +557,8 @@ class FPSLSolver(BaseFPSolver):
         # the ghost-point stencil; this family did not follow until #2243.
         #
         # #2243 applied the correction. On #2237's own MMS this one parameter was the whole gap:
-        # 1.989e-03 -> 2.806e-05, landing exactly on `FPSLJacobianSolver`, which has had `mirror`
-        # all along. The sigma=0 control is unchanged at 6.458e-13, so the transport is untouched.
+        # 1.989e-03 -> 2.806e-05, landing exactly on `FPSLJacobianSolver` (removed in #1756), which
+        # had `mirror` all along. The sigma=0 control is unchanged at 6.458e-13, so the transport is untouched.
         m_new = neumann_cn_step(m_star, dt, volatility, self.dx, treatment="mirror", theta=self.diffusion_theta)
 
         # Ensure non-negativity
@@ -846,26 +846,8 @@ if __name__ == "__main__":
     print(f"   sum(m) error:         {sum_m_error:.2e}  (expected NON-zero since #2243)")
     assert sum_m_error > 1e-6, "sum(m) was also conserved -- that is the `half_wall` pairing"
 
-    # Test 4: Compare with Backward SL
-    print("\n4. Comparing with Backward SL (deprecated FPSLJacobianSolver)...")
-    import warnings
-
-    from mfgarchon.alg.numerical.fp_solvers import FPSLJacobianSolver
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        backward_solver = FPSLJacobianSolver(problem)
-    M_backward = backward_solver.solve_fp_system(M_initial=m_uniform.copy(), drift_field=U_well, show_progress=False)
-
-    m_backward_final = M_backward[-1, :]
-    m_backward_norm = m_backward_final / np.trapezoid(m_backward_final, x)
-    l2_backward = np.sqrt(np.trapezoid((m_backward_norm - m_gibbs) ** 2, x))
-
-    print(f"   Adjoint SL peak: {m_final.max():.4f}, L2 to Gibbs: {l2_to_gibbs:.4e}")
-    print(f"   Backward SL peak: {m_backward_final.max():.4f}, L2 to Gibbs: {l2_backward:.4e}")
-
-    # Test 5: 2D solver test
-    print("\n5. Testing 2D FP SL Adjoint solver...")
+    # Test 4: 2D solver test
+    print("\n4. Testing 2D FP SL Adjoint solver...")
 
     from mfgarchon.geometry.boundary import no_flux_bc
 

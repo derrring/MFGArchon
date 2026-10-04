@@ -55,13 +55,14 @@ _CAUSES_1700B = {
     # that cause -- and naming a cause the pin cannot observe is what this fixture exists to prevent,
     # caught in the #2290 review inside the diff that introduced the fixture (#2288).
     #
-    # The chain is an EAGER import, not the boundary package's re-export: `boundary/__init__.py:163`
-    # is a lazy `__getattr__` (dict at :236) and is never consulted. Traced by applying the rename
-    # and reading the traceback, which is the only way any version of this comment has been right:
+    # What aborts is this module's own `from mfgarchon.geometry.boundary.bc_utils import (...)`, not
+    # the boundary package's re-export: `boundary/__init__.py` resolves it through a lazy
+    # `__getattr__` that is never consulted. Traced by applying the rename and reading the traceback,
+    # which is the only way any version of this comment has been right: the one frame is that import
+    # statement, and conftest loads.
     #
-    #   tests/conftest.py:59 -> mfgarchon/__init__.py:10 -> utils/__init__.py:30
-    #     -> utils/adjoint_validation.py:55 -> alg/__init__.py:15 -> alg/numerical/__init__.py:24
-    #     -> alg/numerical/fp_solvers/__init__.py:35 -> fp_semi_lagrangian.py:37
+    # Until #1756 the abort came earlier and took the whole session with it: conftest's import of
+    # `mfgarchon` reached the name eagerly through `fp_semi_lagrangian.py`, which #1756 deleted.
     #
     # Two earlier versions of this comment named chains with hops that do not exist -- one of them
     # written to correct the other, and taken from a review rather than re-run. Both got the

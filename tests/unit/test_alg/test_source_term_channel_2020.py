@@ -290,15 +290,6 @@ def _fp_sl():
     return lambda f: s.solve_fp_system(np.ones(_N) / _N, potential_field=u, **({"source_term": f} if f else {}))
 
 
-def _fp_sl_jacobian():
-    from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian import FPSLJacobianSolver
-
-    p = _grid_problem()
-    u = np.zeros((p.Nt + 1, _N))
-    s = FPSLJacobianSolver(p)
-    return lambda f: s.solve_fp_system(np.ones(_N) / _N, potential_field=u, **({"source_term": f} if f else {}))
-
-
 # (label, factory, expected). "honours" rows are the positive control WITHOUT which the
 # "swallows" rows prove nothing -- a harness that never delivers a source would report every
 # solver as swallowing it.
@@ -376,8 +367,8 @@ _CASES = [
     # `operators/interpolation/projection.py:669`. So it is a hole with a named cost, not an
     # impossibility, and it belongs in the denominator where the cost stays visible.
     ("FPParticleSolver", _fp_particle, "refuses"),
+    # FPSLJacobianSolver's row went with the class in #1756; the measurements above are its record.
     ("FPSLSolver", _fp_sl, "honours"),
-    ("FPSLJacobianSolver", _fp_sl_jacobian, "honours"),
 ]
 
 
@@ -457,10 +448,11 @@ def test_every_concrete_solver_is_covered_or_named():
         f"Add a row if the fixture can drive it, or name the reason it cannot."
     )
 
-    # 21 since #2343 removed the `FPSLAdjointSolver` alias, which was a concrete subclass and so
-    # counted here. The number is a function of the package, not of this file: it moves whenever a
-    # concrete solver is added or removed, and the assertion above says which.
-    assert len(population) == 21, sorted(population)
+    # 20 since #1756 removed `FPSLJacobianSolver` (21 since #2343 removed the `FPSLAdjointSolver`
+    # alias, which was a concrete subclass and so counted here). The number is a function of the
+    # package, not of this file: it moves whenever a concrete solver is added or removed, and the
+    # assertion above says which.
+    assert len(population) == 20, sorted(population)
     assert covered - population == set(), f"rows for classes that are not in the population: {covered - population}"
 
     stale = set(_UNCOVERED) - population
