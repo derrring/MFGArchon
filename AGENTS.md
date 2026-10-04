@@ -97,15 +97,22 @@ meet a convention, the file says so and points at the tracking issue; #2429 coll
 
 ### The library does not clip on its own ⚠️
 
-A value the computation produced is not moved to where the code would like it to be (maintainer
-ruling, #1884). Either raise, or expose the bound as a parameter the caller sets. Two shapes are not
-clips in this sense:
+A value the computation produced, or the caller supplied, is not moved to where the code would like
+it to be (maintainer ruling, #1884). Refuse it, report it, or expose the bound as a parameter the
+caller sets. For the caller's density this is `docs/user/CONVENTIONS.md` § *The measure*. Not clips
+in this sense:
 
-- **A clip that is the operator**: a projection onto an admissible set, or a kernel's compact support.
-- **A clamp bounded by a refusal**: `clip_nonnegative_or_raise` zeroes a negative density only while that
-  adds at most `MAX_CLIP_MASS_FABRICATION` of the mass, and raises beyond it (ruled 2026-10-04).
+- **A clip that is the operator**: the proximal map or optimal control of a bounded cost, or a kernel's
+  compact support. A position moved onto a wall is not this case, because it decides a boundary
+  condition.
+- **A clamp bounded by a refusal**: `clip_nonnegative_or_raise` zeroes a negative density only while
+  that adds at most its `threshold` of the mass, and raises beyond it. The default,
+  `MAX_CLIP_MASS_FABRICATION` = 1e-8, is round-off, and is admitted (ruled 2026-10-04).
+  `fp_network.py` passes 1e-4, a measured scheme tolerance (#1758); whether that is admitted is open
+  on #2485.
 
-#2485 classifies the existing calls and tracks the ones that break this.
+#2485 classifies the 57 `np.clip` calls against this; the `np.maximum(·, 0)` clamps are not yet
+classified.
 
 ### File-path anchoring ⚠️ CRITICAL
 Anchor output paths to **project root**, never CWD: ✅ `Path(__file__).resolve().parent.parent / "results"` or `${hydra:runtime.cwd}/results`; ❌ `Path("results")` / `os.getcwd()` (recursive nesting under `cd`).
