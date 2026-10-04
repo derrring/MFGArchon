@@ -54,6 +54,31 @@ def _default_components_2d():
     )
 
 
+def _problem_crossing_zero():
+    """A 1-D problem whose free value function, from a zero terminal datum, rises above zero near the walls and
+    falls below it in the middle: a running cost a*cos(2 pi x) on top of the aggregating coupling.
+
+    Measured, free solve at t = 0 (Nx = 100, Nt = 50, sigma = 0.1): range [-0.103, +0.063], above +0.02 on 22
+    nodes and below -0.02 on 63. So a ceiling or a corridor around zero is feasible at T and binds before it.
+    """
+    hamiltonian = SeparableHamiltonian(
+        control_cost=QuadraticControlCost(control_cost=1.0),
+        coupling=lambda m: -m,
+        coupling_dm=lambda m: -1.0,
+        potential=lambda t, x: 0.1 * np.cos(2 * np.pi * np.asarray(x, dtype=float)[..., 0]),
+    )
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], boundary_conditions=no_flux_bc(dimension=1), Nx=[100])
+    components = MFGComponents(
+        m_initial=lambda x: np.exp(-10 * np.sum((np.asarray(x) - 0.5) ** 2)),
+        u_terminal=lambda x: 0.0,
+        hamiltonian=hamiltonian,
+    )
+    problem = MFGProblem(geometry=grid, T=1.0, Nt=50, volatility=0.1, components=components)
+    x = grid.coordinates[0]
+    n_time, n_space = problem.Nt_points, len(x)
+    return problem, x, np.ones((n_time, n_space)) / n_space, np.zeros((n_time, n_space))
+
+
 @pytest.mark.slow
 class TestHJBWithLowerObstacle:
     """Test HJB solver with lower obstacle constraint (u ≥ ψ)."""
@@ -222,56 +247,31 @@ class TestHJBWithUpperObstacle:
 
     def test_1d_upper_ceiling(self):
         """Test HJB solver with upper obstacle (ceiling)."""
-        Nx = 100
-        T = 1.0
-        Nt = 50
-        sigma = 0.1
+        problem, x, M_density, U_prev = _problem_crossing_zero()
 
-        grid = TensorProductGrid(bounds=[(0.0, 1.0)], boundary_conditions=no_flux_bc(dimension=1), Nx=[Nx])
-
-        # Terminal cost function (used locally)
-        def terminal_cost(x_coords):
-            return (x_coords[0] - 0.5) ** 2
-
-        # Create MFGProblem with minimal parameters
-        problem = MFGProblem(geometry=grid, T=T, Nt=Nt, volatility=sigma, components=_default_components())
-
-        # Upper obstacle: a ceiling low enough to bind. The free solution reaches 0.0733 at
-        # t = 0, so the original 0.3 ceiling was never touched and the constrained output was
-        # byte-identical to the unconstrained one.
-        x = grid.coordinates[0]
-        psi_upper = 0.05 + 0.0 * x  # Constant ceiling
+        # A ceiling the free solution crosses inside the interval while the terminal datum, zero,
+        # lies under it: an infeasible terminal condition is refused (#2036), so a test that binds
+        # only because its terminal datum starts above the ceiling no longer runs.
+        psi_upper = 0.02 + 0.0 * x
         obstacle = ObstacleConstraint(psi_upper, constraint_type="upper")
+        U_terminal = np.zeros_like(x)
 
-        # Solve
-        solver = HJBFDMSolver(problem, constraint=obstacle)
+        U_solution = HJBFDMSolver(problem, constraint=obstacle).solve_hjb_system(M_density, U_terminal, U_prev)
 
-        # Setup inputs
-        Nt_points = problem.Nt_points
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        M_density = np.ones((Nt_points, Nx_points)) / Nx_points
-        U_terminal = terminal_cost(grid.coordinates)
-        U_prev = np.zeros((Nt_points, Nx_points))
-
-        U_solution = solver.solve_hjb_system(M_density, U_terminal, U_prev)
-
-        # Assertions
-        assert U_solution.shape == (Nt_points, Nx_points), "Solution has correct shape"
+        assert U_solution.shape == U_prev.shape, "Solution has correct shape"
         assert np.all(np.isfinite(U_solution)), "Solution is finite"
 
-        # The ceiling holds at every time level, the terminal one included: the terminal
-        # datum reaches 0.25 and comes back projected to 0.05. Measured sweep max 0.05 exactly.
+        # The ceiling holds at every time level: each step is projected inside the sweep (#2036).
         assert np.all(U_solution <= psi_upper + 1e-10), "Solution must satisfy u ≤ ψ_upper"
 
-        # The contact set must be non-empty, or the ceiling is decoration: measured 22 of the
-        # 101 nodes sitting exactly on it at t = 0.
+        # The contact set must be non-empty, or the ceiling is decoration: measured 20 nodes at t = 0.
         u0 = U_solution[0, :]
         assert np.sum(np.abs(u0 - psi_upper) < 1e-9) >= 10, "upper obstacle never binds"
 
-        # Positive control: the unconstrained solve on the same inputs exceeds the ceiling
-        # (measured max 0.0733 at t = 0), so this configuration can see a broken projection.
+        # Positive control: the unconstrained solve on the same inputs exceeds the ceiling (measured max
+        # 0.063 at t = 0), so this configuration can see a broken projection.
         U_free = HJBFDMSolver(problem).solve_hjb_system(M_density, U_terminal, U_prev)
-        assert U_free[0, :].max() > 0.07, "free solution stays under the ceiling on its own"
+        assert U_free[0, :].max() > 0.05, "free solution stays under the ceiling on its own"
 
 
 @pytest.mark.slow
@@ -279,61 +279,32 @@ class TestHJBWithBilateralObstacle:
     """Test HJB solver with bilateral obstacle (ψ_lower ≤ u ≤ ψ_upper)."""
 
     def test_1d_corridor_constraint(self):
-        """Test bilateral obstacle creating solution corridor."""
-        Nx = 100
-        T = 1.0
-        Nt = 50
-        sigma = 0.1
+        """Test HJB solver with corridor constraint (ψ_lower ≤ u ≤ ψ_upper)."""
+        problem, x, M_density, U_prev = _problem_crossing_zero()
 
-        grid = TensorProductGrid(bounds=[(0.0, 1.0)], boundary_conditions=no_flux_bc(dimension=1), Nx=[Nx])
-
-        # Terminal cost function (used locally)
-        def terminal_cost(x_coords):
-            return 0.5 * (x_coords[0] - 0.5) ** 2
-
-        # Create MFGProblem with minimal parameters
-        problem = MFGProblem(geometry=grid, T=T, Nt=Nt, volatility=sigma, components=_default_components())
-
-        # Bilateral obstacle: a corridor narrow enough to bind on BOTH faces. The free
-        # solution runs over [-0.0063, 0.125] on this configuration, so the original
-        # [-0.2, 0.3] corridor contained it entirely: the constrained output was
-        # byte-identical to the unconstrained one and the projection never fired.
-        x = grid.coordinates[0]
-        psi_lower = -0.004 + 0.0 * x
-        psi_upper = 0.04 + 0.0 * x
+        # A corridor around the terminal datum, zero, which the free solution leaves on both sides
+        # inside the interval. An infeasible terminal condition is refused (#2036).
+        psi_lower = -0.02 + 0.0 * x
+        psi_upper = 0.02 + 0.0 * x
         obstacle = BilateralConstraint(psi_lower, psi_upper)
+        U_terminal = np.zeros_like(x)
 
-        # Solve
-        solver = HJBFDMSolver(problem, constraint=obstacle)
+        U_solution = HJBFDMSolver(problem, constraint=obstacle).solve_hjb_system(M_density, U_terminal, U_prev)
 
-        # Setup inputs
-        Nt_points = problem.Nt_points
-        Nx_points = problem.geometry.get_grid_shape()[0]
-        M_density = np.ones((Nt_points, Nx_points)) / Nx_points
-        U_terminal = terminal_cost(grid.coordinates)
-        U_prev = np.zeros((Nt_points, Nx_points))
-
-        U_solution = solver.solve_hjb_system(M_density, U_terminal, U_prev)
-
-        # Assertions
-        assert U_solution.shape == (Nt_points, Nx_points), "Solution has correct shape"
+        assert U_solution.shape == U_prev.shape, "Solution has correct shape"
         assert np.all(np.isfinite(U_solution)), "Solution is finite"
 
-        # The corridor is enforced at every time level, the terminal one included: the
-        # terminal datum reaches 0.125 and comes back projected. Measured violation 0.0 on
-        # both faces, sweep range exactly [-0.004, 0.04].
+        # The corridor is enforced at every time level: each step is projected inside the sweep.
         assert np.all(U_solution >= psi_lower - 1e-10), "Must satisfy lower bound"
         assert np.all(U_solution <= psi_upper + 1e-10), "Must satisfy upper bound"
 
-        # Both faces must carry an active set, or the corridor tests nothing.
-        # Measured at t = 0: 19 nodes on the floor, 16 on the ceiling.
+        # Both faces must carry an active set, or the corridor tests nothing: measured 45 nodes on the
+        # floor and 24 on the ceiling at t = 0.
         u0 = U_solution[0, :]
         assert np.sum(np.abs(u0 - psi_lower) < 1e-9) > 0, "lower obstacle never binds"
         assert np.sum(np.abs(u0 - psi_upper) < 1e-9) > 0, "upper obstacle never binds"
 
-        # Positive control: on the same inputs without the constraint the solution leaves the
-        # corridor on both sides (19 nodes below the floor, 16 above the ceiling at t = 0),
-        # so the assertions above separate a working projection from a disabled one.
+        # Positive control: without the constraint the solution leaves the corridor on both sides.
         U_free = HJBFDMSolver(problem).solve_hjb_system(M_density, U_terminal, U_prev)
         assert np.any(U_free[0, :] < psi_lower), "free solution never leaves the corridor below"
         assert np.any(U_free[0, :] > psi_upper), "free solution never leaves the corridor above"
