@@ -609,7 +609,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 "  * A REAL CONSTRAINT -- the variational inequality. Pass "
                 "`constraint=ObstacleConstraint(psi, 'lower')` to `HJBFDMSolver` (#591). That slot "
                 "is reserved and deliberately unfinished: it projects rather than solving the VI, "
-                "and only that one solver carries it (#2036, #2046).\n\n"
+                "and only that one solver carries it (#2046).\n\n"
                 "Note also that `obstacles` (plural) is a different field entirely -- geometric "
                 "regions excluded from the domain -- and was never related to this one."
             )

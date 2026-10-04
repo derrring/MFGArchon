@@ -101,10 +101,10 @@ class PenaltyHJBSolver(BaseHJBSolver):
             "`penalty_parameter` changes that.\n\n"
             "What to use instead, and its limits:\n"
             "  HJBFDMSolver(problem, constraint=ObstacleConstraint(psi, 'lower'))  -- #591.\n"
-            "`ObstacleConstraint.project` does read `u` and does enforce `u >= psi` on the "
-            "returned array. It is not yet an obstacle-problem SOLVER: in 1-D the projection runs "
-            "after the backward sweep, so the result is the unconstrained solution clipped, and "
-            "in n-D the terminal slice is never projected (#2036). It is also the only solver "
+            "`ObstacleConstraint.project` does read `u` and does enforce `u >= psi`. HJBFDMSolver "
+            "projects after each time step, in 1-D and n-D, and refuses a terminal condition "
+            "outside the set (#2036). That is a projection splitting, not a solve of the discrete "
+            "variational inequality. It is also the only solver "
             "carrying a `constraint` attribute, so this is an FDM-family capability, not a "
             "general one -- #2046 tracks threading the constraint through the shared timestep "
             "solve, which is where a projection can actually participate in the iteration.\n\n"
@@ -158,12 +158,10 @@ class PenaltyHJBSolver(BaseHJBSolver):
            :meth:`~mfgarchon.geometry.boundary.ObstacleConstraint.project` (#591), which
            ``HJBFDMSolver`` applies when constructed with ``constraint=``. It does read ``u``
            and does enforce ``u >= psi`` on what it returns, which is more than this term can
-           say. **It is not, however, an obstacle-problem solver, and "correct" overstates it**
-           (#2036): in 1D the projection runs after the backward sweep finishes, so the result
-           is exactly ``max(U_free, psi)`` -- the unconstrained solution clipped, with no free
-           boundary resolved; in nD it runs inside the time loop and does feed back, but the
-           terminal slice never passes through it and can violate the constraint. Prefer it
-           over this term while #2002 is open, knowing both limits.
+           say. Since #2036 it is applied after each time step in 1-D and nD alike, so the
+           obstacle feeds back through the sweep, and a terminal condition outside the set is
+           refused. It is a projection splitting, not a solve of the discrete variational
+           inequality (#2046). Prefer it over this term while #2002 is open.
         """
         penalty_param = self._penalty
         obstacle_fn = self._obstacle

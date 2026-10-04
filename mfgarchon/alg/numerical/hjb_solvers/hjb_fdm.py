@@ -286,7 +286,10 @@ class HJBFDMSolver(BaseHJBSolver):
                 - ObstacleConstraint: u ≥ ψ or u ≤ ψ (capacity limits, running cost floor)
                 - BilateralConstraint: ψ_lower ≤ u ≤ ψ_upper (bounded controls)
                 - None: No constraints (default)
-                Applied after each timestep solve via projection P_K(u).
+                Applied after each timestep solve via projection P_K(u), in 1-D and in nD alike, so
+                the constraint propagates backward through the sweep (Issue #2036). The terminal
+                condition is the caller's data and must already lie in K: one that does not is
+                refused, not projected.
             on_newton_failure: Behavior when Newton solver fails (Issue #669).
                 Only meaningful when solver_type="newton" and dimension > 1.
                 - 'raise': Raise ConvergenceError (default, fail-fast).
@@ -558,6 +561,25 @@ class HJBFDMSolver(BaseHJBSolver):
         # solve, or with a tensor volatility, the nD path first reads it inside the Newton residual, whose
         # handler retypes a NotImplementedError as a ConvergenceError (#2477).
         self.get_boundary_conditions()
+        # Issue #2036: every computed step is projected onto the constraint set, but the terminal slice is the
+        # caller's data and is returned as given, so it must already lie in the set. One that does not is refused,
+        # rather than returned infeasible (the nD path before #2036) or silently projected (the 1-D path).
+        if self.constraint is not None:
+            u_terminal = np.asarray(U_terminal, dtype=float)
+            if not np.all(np.isfinite(u_terminal)):
+                raise ValueError(
+                    f"U_terminal has {int(np.size(u_terminal) - np.count_nonzero(np.isfinite(u_terminal)))} non-finite "
+                    f"entries, so whether it lies in the constraint set of {type(self.constraint).__name__} cannot be "
+                    f"checked (Issue #2036)."
+                )
+            violation = float(np.max(np.abs(np.asarray(self.constraint.project(u_terminal), dtype=float) - u_terminal)))
+            if violation > 1e-12 * max(1.0, float(np.max(np.abs(u_terminal)))):
+                raise ValueError(
+                    f"U_terminal lies outside the constraint set of {type(self.constraint).__name__}: projecting it "
+                    f"moves it by up to {violation:.3e}. The terminal condition is returned as given, so it must "
+                    f"satisfy the constraint; pass constraint.project(U_terminal) if that is the terminal condition "
+                    f"you mean (Issue #2036)."
+                )
         # Issue #1071: the multi-population cross-density trajectory is consumed only by the batch
         # Hamiltonian path (compute_hjb_residual at backend=None); the nD path's per-timestep
         # evaluation is not yet validated for it, so restrict to 1D.
@@ -624,13 +646,8 @@ class HJBFDMSolver(BaseHJBSolver):
                 source_term=source_term,
                 cross_density=cross_density,  # Issue #1071
                 failures=self._inner_solve_failures,
+                constraint=self.constraint,
             )
-
-            # Apply variational inequality constraint via projection (Issue #591)
-            # For 1D path, apply constraint to all timesteps after solving
-            if self.constraint is not None:
-                for n in range(U_solution.shape[0]):
-                    U_solution[n] = self.constraint.project(U_solution[n])
 
             return U_solution
         else:

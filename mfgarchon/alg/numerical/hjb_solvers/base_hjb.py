@@ -18,7 +18,7 @@ from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from mfgarchon.geometry.boundary import BoundaryConditions
+    from mfgarchon.geometry.boundary import BoundaryConditions, ConstraintProtocol
 
 # BC-aware gradient computation (Issue #542 fix)
 # Validated in: mfg-research/experiments/crowd_evacuation_2d/runners/exp14b_fdm_bc_fix_validation.py
@@ -1794,6 +1794,7 @@ def solve_hjb_system_backward(
     failures: list[InnerSolveFailure] | None = None,  # Issue #1878: collects every step that does not converge
     numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,  # Issue #2313
     volatility_kind: str | None = None,  # #2378 part 2a: 'field' for an array; a tensor is refused in 1-D
+    constraint: ConstraintProtocol | None = None,  # Issue #2036: projected onto after each step's Newton solve
 ) -> np.ndarray:
     """
     Solve HJB system backward in time using Newton's method.
@@ -1808,6 +1809,11 @@ def solve_hjb_system_backward(
         bc_values: Per-boundary Neumann BC values (Issue #574):
             {"x_min": gradient_left, "x_max": gradient_right}
             Default: None (standard BC with 0 gradient).
+        constraint: A variational-inequality constraint K (Issue #591). Each step's Newton solution is
+            projected onto K before the next, earlier step uses it, so the obstacle propagates backward
+            through the sweep. The terminal slice is the caller's and is neither projected nor
+            checked: the caller must pass one inside K. `HJBFDMSolver.solve_hjb_system` checks it
+            and refuses one outside (Issue #2036).
     """
     volatility, volatility_kind = resolve_volatility_override(
         volatility, volatility_kind, problem=problem, consumer="1-D HJB-FDM (solve_hjb_system_backward)"
@@ -1915,6 +1921,8 @@ def solve_hjb_system_backward(
             failures=failures,
             numerical_hamiltonian=numerical_hamiltonian,
         )
+        if constraint is not None:
+            U_new_n = constraint.project(U_new_n)
         backend_aware_assign(U_solution_this_picard_iter, (n_idx_hjb, slice(None)), U_new_n, backend)
 
         # Check for NaN introduction during Newton step

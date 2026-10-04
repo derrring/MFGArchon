@@ -79,7 +79,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
         ``v``-free term through ``source_term``, which is ``(t, x) -> array`` and cannot carry the
         value function a constraint penalty needs. The term both paths apply penalises POSITION,
         not violation, and cannot enforce ``v >= Psi`` at any ``eps``. The reachable alternative is
-        ``HJBFDMSolver(constraint=...)`` (#591), with its own limits in #2036.
+        ``HJBFDMSolver(constraint=...)`` (#591), a projection splitting with its own limits in #2046.
 
     Performance / solver selection:
         NewtonMFGSolver is research-grade for d>=2 / Nx>~50 — it is ~135x slower
