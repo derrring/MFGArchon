@@ -327,7 +327,7 @@ def _sl_substep_mismatch(hjb_solver: Any, fp_solver: Any) -> str | None:
     - an HJB half on the DPP or canonical-CS path, which never sub-steps. There is no oracle for
       which FP schedule pairs with it: the factory's pair and a sub-stepping FP half each converge
       on some fixtures and not others (#2441);
-    - a half that declares no schedule, such as the deprecated ``FPSLJacobianSolver``.
+    - a half that declares no schedule.
     """
     traces = getattr(hjb_solver, "traces_characteristics", None)
     hjb_switch = getattr(hjb_solver, "enable_adaptive_substepping", None)

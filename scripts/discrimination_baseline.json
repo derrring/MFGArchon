@@ -42,7 +42,7 @@
       "status": "ok"
     },
     "drift_coefficient_2x": {
-      "kill_count": 40,
+      "kill_count": 37,
       "owner": "FP drift c = 1/control_cost (#1420 / G-017)",
       "status": "ok"
     },

@@ -1819,8 +1819,8 @@ class PreallocatedGhostBuffer:
 
         elif bc_type in (BCType.EXTRAPOLATION_LINEAR, BCType.EXTRAPOLATION_QUADRATIC):
             # #1958: this chain had no branch for either member, so both fell to the reflection
-            # fallback below. `fp_semi_lagrangian` builds an EXTRAPOLATION_QUADRATIC BC every
-            # timestep and got a boundary Laplacian 2000% wrong -- measured on U = 0.5x^2, where
+            # fallback below. `fp_semi_lagrangian` (removed in #1756) built an EXTRAPOLATION_QUADRATIC
+            # BC every timestep and got a boundary Laplacian 2000% wrong -- measured on U = 0.5x^2, where
             # the true Laplacian is 1 everywhere, the wall row came back -19.
             #
             # Only the high wall showed it. The parabola is symmetric about x = 0, so the

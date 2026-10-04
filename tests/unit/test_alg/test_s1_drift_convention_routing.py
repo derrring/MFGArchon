@@ -165,7 +165,6 @@ def test_declared_conventions_match_solver_traits():
     from mfgarchon.alg.numerical.fp_solvers.fp_fvm import FPFVMSolver
     from mfgarchon.alg.numerical.fp_solvers.fp_gfdm import FPGFDMSolver
     from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
-    from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian import FPSLJacobianSolver
     from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
 
     assert BaseFPSolver._drift_convention is DriftConvention.VELOCITY
@@ -173,7 +172,6 @@ def test_declared_conventions_match_solver_traits():
     assert FPGFDMSolver._drift_convention is DriftConvention.VELOCITY
     assert WeakFormFPSolver._drift_convention is DriftConvention.VALUE_FUNCTION
     assert FPParticleSolver._drift_convention is DriftConvention.VALUE_FUNCTION
-    assert FPSLJacobianSolver._drift_convention is DriftConvention.VALUE_FUNCTION
 
 
 if __name__ == "__main__":
@@ -197,13 +195,12 @@ def test_resolver_never_emits_a_deprecated_kwarg():
     from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
     from mfgarchon.alg.numerical.fp_solvers.fp_fvm import FPFVMSolver
     from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
-    from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian import FPSLJacobianSolver
     from mfgarchon.utils.deprecation import get_deprecated_parameters
 
     problem = _problem(QuadraticControlCost(control_cost=1.0))
     U, M = _state(problem)
 
-    for solver_cls in (FPFDMSolver, FPFVMSolver, FPParticleSolver, FPSLJacobianSolver):
+    for solver_cls in (FPFDMSolver, FPFVMSolver, FPParticleSolver):
         method = solver_cls.solve_fp_system
         sig_params = set(inspect.signature(method).parameters)
         emitted, _ = resolve_fp_drift_kwargs(

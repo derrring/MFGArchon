@@ -847,10 +847,7 @@ class FPFDMSolver(BaseFPSolver):
         # Issue #1507: A_advection_T (the transposed HJB advection) is NOT an M-matrix, so at high
         # Péclet the solve undershoots negative; clipping to 0 ADDS mass. The caller stores this raw
         # with no mass check, so ∫m drifts up across timesteps and the coupled fixed point converges
-        # self-consistently wrong. Renormalize to the pre-step total (the physical density conserves
-        # mass; the operator-level adjoint A_FP=A_HJB^T is unchanged) and warn when the clip is
-        # non-trivial -- matching fp_semi_lagrangian / fp_fdm_time_stepping (Issues #880/#886), so a
-        # diverging solve is surfaced instead of silently reported as a valid conserved density.
+        # self-consistently wrong.
         # Issue #1683: this used to clip and then renormalize to the pre-step total, which
         # made a diverging solve indistinguishable from a healthy one -- the result was
         # finite, non-negative and exactly mass-conserving, so every cheap check a caller
