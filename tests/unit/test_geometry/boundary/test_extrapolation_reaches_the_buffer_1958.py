@@ -8,8 +8,8 @@ failed differently:
 - **uniform** (`_apply_linear_reflection`) had no terminal `else` at all, so the ghost cells kept
   the buffer's zero-initialised contents -- not a wrong condition, no condition.
 
-`fp_semi_lagrangian` builds an `EXTRAPOLATION_QUADRATIC` BC every timestep and reached the first
-one, computing a boundary Laplacian **2000% wrong**.
+`fp_semi_lagrangian` (removed in #1756) built an `EXTRAPOLATION_QUADRATIC` BC every timestep and
+reached the first one, computing a boundary Laplacian **2000% wrong**.
 
 The formulas were already written and directly tested; nothing reached them from here. That is the
 shape this file pins: not the arithmetic, which was never in doubt, but the routing.
@@ -45,7 +45,7 @@ _EXACT = {
 
 
 def _mixed(bc_type: BCType) -> BoundaryConditions:
-    """Two named faces -- what `fp_semi_lagrangian` builds, and what makes `is_uniform` False."""
+    """Two named faces -- what `fp_semi_lagrangian` built before #1756, and what makes `is_uniform` False."""
     return BoundaryConditions(
         segments=[
             BCSegment(name="l", bc_type=bc_type, value=0.0, boundary="x_min"),
@@ -117,7 +117,7 @@ def test_the_reflection_fallback_is_no_longer_what_extrapolation_gets():
 def test_the_laplacian_is_exact_where_the_extrapolation_is_exact(field_fn, bc_type, expected_laplacian):
     """Quadratic extrapolation reproduces a parabola exactly, so the discrete Laplacian must be
     exact *including the wall rows*. This is the measurement in #1958: it read -19 against a true
-    1, a 2000% error, on the path `fp_semi_lagrangian` takes every timestep.
+    1, a 2000% error, on the path `fp_semi_lagrangian` took every timestep until #1756 removed it.
 
     The linear row is the sibling property and is not redundant -- it fails if the two members
     are wired to the same formula.

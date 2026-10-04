@@ -15,5 +15,5 @@
     - `_crank_nicolson_periodic_distinct` → `_implicit_diffusion_periodic_distinct`
     - `HJBSemiLagrangianSolver._solve_crank_nicolson_diffusion` → `_solve_implicit_diffusion_1d`
   - **Not changed:**
-    - The deprecated `FPSLJacobianSolver` (#1756) keeps Crank–Nicolson and takes no θ.
+    - The deprecated `FPSLJacobianSolver` took no θ. It is removed in the same release (#1756).
     - The HJB `stochastic`, `canonical_cs`, `none` and `explicit` paths do not use this step.

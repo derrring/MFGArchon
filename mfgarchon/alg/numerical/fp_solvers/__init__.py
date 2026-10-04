@@ -10,7 +10,7 @@ individual Fokker-Planck equations, including:
 
 Semi-Lagrangian Variants (Issue #710):
 - FPSLSolver: Forward SL (scatter/splat) - adjoint of HJB SL, RECOMMENDED
-- FPSLJacobianSolver: Backward SL with Jacobian correction - DEPRECATED
+- FPSLJacobianSolver (backward SL with Jacobian correction) was removed in #1756
 
 
 Internal modules (Issue #635 refactoring):
@@ -30,9 +30,6 @@ from .fp_fvm import FPFVMSolver
 from .fp_gfdm import FPGFDMSolver
 from .fp_particle import FPParticleSolver, KDEMethod, KDENormalization
 
-# FPSLJacobianSolver (Backward SL) is deprecated
-from .fp_semi_lagrangian import FPSLJacobianSolver
-
 # FPSLSolver (Forward SL) is the recommended solver - exported from adjoint file
 from .fp_semi_lagrangian_adjoint import (
     FPSLSolver,
@@ -48,7 +45,6 @@ __all__ = [
     "FPNetworkSolver",  # Backward compat - prefer network_solvers import
     "FPParticleSolver",
     "FPSLSolver",  # Forward SL (adjoint of HJB SL) - RECOMMENDED
-    "FPSLJacobianSolver",  # Backward SL with Jacobian - DEPRECATED
     "KDEMethod",  # Issue #709 - KDE boundary correction methods
     "KDENormalization",
     "ParticleDensityQuery",  # Issue #489 - Direct particle query

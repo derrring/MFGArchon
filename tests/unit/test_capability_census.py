@@ -98,7 +98,6 @@ _HONORS_INHOMOGENEOUS_NEUMANN_OWN = {
     "FPFVMSolver": "False",
     "FPGFDMSolver": "False",
     "FPParticleSolver": "False",
-    "FPSLJacobianSolver": "False",
     "FPSLSolver": "False",
     # Joined 2026-10-01 (#1936), the first HJB solver to. On no path does a Neumann value reach every
     # place it touches a wall, and on an exact solution with sigma = 0.2 no path measured converged with
@@ -207,10 +206,10 @@ def test_the_permissive_default_is_still_claimed_by_inheritance(declarations):
         if field in r["inherited"] and r["inherited"][field]["from"] != "BaseMFGSolver"
     }
 
-    # 8 since #1936 moved HJBSemiLagrangianSolver from inherited-True to own-False (7 since #2294
-    # moved FPFEMSolver); see the comment on _HONORS_INHOMOGENEOUS_NEUMANN_OWN above, which is where
-    # the reasons live.
-    assert len(owners) == 8, f"solvers stating it themselves: {sorted(owners)}"
+    # 7 since #1756 removed FPSLJacobianSolver, an own-False owner (8 since #1936 moved
+    # HJBSemiLagrangianSolver from inherited-True to own-False, 7 since #2294 moved FPFEMSolver); see
+    # the comment on _HONORS_INHOMOGENEOUS_NEUMANN_OWN above, which is where the reasons live.
+    assert len(owners) == 7, f"solvers stating it themselves: {sorted(owners)}"
     # 16, the exact complement of the 8 above: each solver left the inherited set in the same change
     # that added it to the owned one (#2294, #1936). These two counts must move together.
     assert len(from_base) == 16, f"solvers claiming True by the permissive default: {sorted(from_base)}"

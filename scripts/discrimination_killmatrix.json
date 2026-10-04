@@ -648,15 +648,6 @@
     "tests/unit/test_alg/test_fp_particle_time_level_1792.py::test_the_density_follows_the_well_forward_in_time[2-21-20000-5.0]": [
       "optimal_control_sign"
     ],
-    "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLJacobianSolver-_compute_velocity-0.5]": [
-      "drift_coefficient_2x"
-    ],
-    "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLJacobianSolver-_compute_velocity-1.0]": [
-      "drift_coefficient_2x"
-    ],
-    "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLJacobianSolver-_compute_velocity-2.0]": [
-      "drift_coefficient_2x"
-    ],
     "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLSolver-_compute_velocity_1d-0.5]": [
       "drift_coefficient_2x"
     ],
@@ -2892,7 +2883,7 @@
       "verify": "diffusion_from_volatility(2.0) == 4.0"
     },
     "drift_coefficient_2x": {
-      "kill_count": 40,
+      "kill_count": 37,
       "killed": [
         "tests/integration/test_coupled_mfg_mms.py::TestCoupledMMSConvergence::test_the_drift_scale_follows_lambda_not_coupling_coefficient",
         "tests/integration/test_newton_mfg_solver.py::TestMFGResidualComputation::test_residual_computation",
@@ -2916,9 +2907,6 @@
         "tests/unit/test_alg/test_fp_mms_wall_order_1728.py::test_divergence_upwind_is_first_order_at_a_drifting_wall[2-1]",
         "tests/unit/test_alg/test_fp_mms_wall_order_1728.py::test_divergence_upwind_is_first_order_on_the_published_gibbs_instance",
         "tests/unit/test_alg/test_fp_nonquadratic.py::TestNonQuadraticHamiltonians::test_equivalence_quadratic_explicit",
-        "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLJacobianSolver-_compute_velocity-0.5]",
-        "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLJacobianSolver-_compute_velocity-1.0]",
-        "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLJacobianSolver-_compute_velocity-2.0]",
         "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLSolver-_compute_velocity_1d-0.5]",
         "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLSolver-_compute_velocity_1d-1.0]",
         "tests/unit/test_alg/test_fp_sl_drift_control_cost_s003.py::test_sl_velocity_uses_control_cost[FPSLSolver-_compute_velocity_1d-2.0]",

@@ -45,7 +45,6 @@ _KNOWN = {
     "FPFVMSolver",
     "FPGFDMSolver",
     "FPParticleSolver",
-    "FPSLJacobianSolver",
     "FPSLSolver",
     "FPNetworkSolver",
     "WeakFormFPSolver",
