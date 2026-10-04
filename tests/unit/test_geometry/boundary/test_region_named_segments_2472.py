@@ -196,3 +196,62 @@ def test_only_a_default_some_face_reads_counts_as_an_operation(boundary, expecte
         domain_bounds=np.array([[0.0, 1.0]]),
     )
     assert geometric_operations(bc) == expected
+
+
+def test_a_template_that_restricts_itself_is_refused_as_before():
+    """The template must not carry its own face or range: before #2472 BCSegment refused that mix, and the
+    face conversion must not turn it into a silently overwritten or stretched condition (review 2, N1)."""
+    grid = _grid()
+    grid.mark_region("outlet", boundary="x_max")
+    for template in (
+        BCSegment(name="o", bc_type=BCType.DIRICHLET, value=0.0, boundary="y_min"),
+        BCSegment(name="o", bc_type=BCType.DIRICHLET, value=0.0, region={"y": (0.4, 0.6)}),
+    ):
+        with pytest.raises(ValueError, match="Cannot mix region specification methods"):
+            mixed_bc_from_regions(grid, {"outlet": template, "default": _WALL})
+
+
+def test_a_kept_region_may_not_be_named_like_a_face():
+    """A partial region named "top" would be read as the whole y_max face by every reader without the
+    geometry (review 2, N2)."""
+    grid = _grid()
+    grid.mark_region("top", predicate=lambda x: (x[:, 1] > 0.99) & (x[:, 0] < 0.4))
+    with pytest.raises(ValueError, match="reads as a face"):
+        mixed_bc_from_regions(grid, {"top": _OUTLET, "default": _WALL})
+
+
+def test_a_region_spanning_two_faces_becomes_both():
+    grid = _grid()
+    mask = np.zeros((N, N), dtype=bool)
+    mask[-1, :] = True  # x_max
+    mask[:, -1] = True  # y_max
+    grid.mark_region("exit", mask=mask.ravel())
+    bc = mixed_bc_from_regions(grid, {"exit": _OUTLET, "default": _WALL})
+    assert sorted((s.name, s.boundary) for s in bc.segments) == [("outlet[x_max]", "x_max"), ("outlet[y_max]", "y_max")]
+    ghosts = _faces(pad_array_with_ghosts(np.ones((N, N)), bc, spacing=1.0 / (N - 1)))
+    for face, expected in (("x_max", -1.0), ("y_max", -1.0), ("x_min", 1.0), ("y_min", 1.0)):
+        np.testing.assert_array_equal(ghosts[face], expected, err_msg=face)
+
+    capped = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0, flux_capacity=1.0)
+    with pytest.raises(ValueError, match="flux_capacity"):
+        mixed_bc_from_regions(grid, {"exit": capped, "default": _WALL})
+
+
+def test_a_zero_flux_region_covering_part_of_a_face_enforces_as_plain_no_flux():
+    """The route InterpolationApplicator's zero-flux short-circuit serves now that whole-face regions
+    become named faces."""
+    from mfgarchon.geometry.boundary.applicator_interpolation import InterpolationApplicator
+
+    grid = _grid()
+    grid.mark_region("strip", predicate=lambda x: x[:, 0] > 0.6)
+    region_bc = mixed_bc_from_regions(
+        grid, {"strip": BCSegment(name="s", bc_type=BCType.NEUMANN, value=0.0), "default": _WALL}
+    )
+    assert region_bc.segments[0].region_name == "strip"
+    rng = np.random.default_rng(2472)
+    field = rng.standard_normal((N, N))
+    applicator = InterpolationApplicator(dimension=2)
+    np.testing.assert_array_equal(
+        applicator.enforce_values(field.copy(), region_bc),
+        applicator.enforce_values(field.copy(), no_flux_bc(dimension=2)),
+    )

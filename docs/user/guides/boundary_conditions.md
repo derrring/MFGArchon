@@ -124,14 +124,15 @@ padded = applicator.apply(field, bc, domain_bounds=np.array(geometry.bounds), ge
 
 **A face-level path imposes one condition per face** (`FDMApplicator`, `pad_array_with_ghosts`, and
 the FDM operators the solvers use). On a structured grid, `mixed_bc_from_regions` resolves a region
-that covers whole faces to those faces when it builds the BC, so every reader applies it without
+that covers whole faces, and no part of any other face, to those faces when it builds the BC, so every reader applies it without
 needing the geometry (#2472). A face counts as covered when the region holds all of its interior, the
 face without the edges it shares with other faces. So whether a strip covers a face depends on the
 resolution.
 
 A region that covers only part of a face keeps its region name. A face-level reader resolves it
 through the geometry when it has one, and otherwise refuses it rather than stretching it to the whole
-face or dropping it.
+face or dropping it. Such a region may not be named like a face (`"top"`, `"x_max"`), because a reader
+without the geometry would take the name as that whole face.
 
 ### Region Marking Methods
 
