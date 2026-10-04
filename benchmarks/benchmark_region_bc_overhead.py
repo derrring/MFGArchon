@@ -24,9 +24,10 @@ sd 5.60 against the median's 5.58.
 So: ~~the central estimate is that the region path costs about **1% or less**~~ [CORRECTED
 2026-10-04, #2472] every figure above timed the UNIFORM path twice. The region BC has one region-named
 segment, which `is_uniform` read as uniform, so both variants ran the same code. Since #2472 the
-region resolves to one segment per face and runs the per-face ghost path. At `50c6f106` one invocation
-gave a median overhead of 39.1% (repeats 37.6% to 41.9%). A single invocation still carries the
-cross-process spread above, so compare builds by running it many times, not once.
+region resolves to one segment per face and runs the per-face ghost path. Measured 2026-10-04 on the
+#2472 fix, one invocation gave a median overhead of 39.1% (repeats 37.6% to 41.9%). A single
+invocation still carries the cross-process spread above, so compare builds by running it many times,
+not once.
 
     python benchmarks/benchmark_region_bc_overhead.py
 """
