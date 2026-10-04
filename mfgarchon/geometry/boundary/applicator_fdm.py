@@ -295,8 +295,17 @@ class FDMApplicator(BaseStructuredApplicator):
             # Parse boundary identifier to get dimension and side
             boundary_id = segment.boundary
 
+            if segment.region_name is not None:
+                # The shared resolver, not "no boundary means every face", which gave a region-named
+                # segment the whole boundary here too (#2472). This reader has no geometry.
+                boundaries_to_apply = [
+                    (d, side)
+                    for d in range(field.ndim)
+                    for side in ("min", "max")
+                    if region_name_governs_face(segment, BoundaryFace(d, side), geometry=None)
+                ]
             # If boundary_id is None, this is a uniform BC - apply to all boundaries
-            if boundary_id is None:
+            elif boundary_id is None:
                 # Determine field dimension
                 field_ndim = field.ndim
                 # Apply to all standard boundaries (x_min, x_max, y_min, y_max, etc.)
@@ -1720,8 +1729,8 @@ class PreallocatedGhostBuffer:
                     return segment
 
             # Method 2: region_name. The old geometry branch indexed the grid's flat region mask with a
-            # d-dimensional face index, raised IndexError every time, and swallowed it at debug level,
-            # so a region never reached its face (#2472).
+            # d-dimensional face index, which raised IndexError for d >= 2 and was swallowed at debug
+            # level, so there a region never reached its face (#2472).
             if segment.region_name is not None and region_name_governs_face(segment, target_face, self._geometry):
                 return segment
 

@@ -8,85 +8,179 @@ Measured on main at `1c84a29c`, with the documented idiom (`mark_region(name, bo
 - two regions, outlet on `x_max` and inlet on `x_min`: `get_bc_type_at_boundary` answered DIRICHLET on
   every face (a segment with no `boundary` covered them all), while the ghosts were the mirror on every
   face. The ghost path's region lookup indexed the grid's flat region mask with a 2-D face index, raised
-  IndexError every time, and swallowed it at debug level, so the outlet reached no face.
+  IndexError, and swallowed it at debug level, so the outlet reached no face.
 
-Also pinned: a region covering part of a face is refused, since one condition per face cannot represent
-it; a reader with no geometry refuses a region name it cannot resolve; and a uniform BC's unused
-`default_bc` no longer makes `geometric_operations` report it as mixed (#2472 item 2).
+The solvers and the FDM operators read a BC without the geometry, so a whole-face region is resolved to
+its faces where the geometry is in hand: when `mixed_bc_from_regions` builds the BC. Refusing it at read
+time instead, the first version of this fix, broke every region-route solve, including zero-flux ones
+that main solved bitwise equal to plain no-flux (review 1 of #2491). A region covering part of a face
+keeps `region_name`, and the face-level readers resolve it through one resolver or refuse it.
+
+Also pinned: a uniform BC's unused `default_bc` no longer makes `geometric_operations` report it as mixed
+(#2472 item 2).
 """
 
 from __future__ import annotations
+
+import logging
+import warnings
 
 import pytest
 
 import numpy as np
 
+from mfgarchon import Conditions, MFGProblem, Model
+from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc, pad_array_with_ghosts
+from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator
 from mfgarchon.geometry.boundary.bc_utils import geometric_operations
 from mfgarchon.geometry.boundary.conditions import mixed_bc_from_regions
 
 N = 9
-_SEGMENTS = {
-    "outlet": BCSegment(name="outlet", bc_type=BCType.DIRICHLET, value=0.0),
-    "inlet": BCSegment(name="inlet", bc_type=BCType.NO_FLUX),
-    "default": BCSegment(name="wall", bc_type=BCType.NO_FLUX),
-}
+_UNIT = np.array([[0.0, 1.0], [0.0, 1.0]])
 
 
-def _grid():
-    return TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[N, N], boundary_conditions=no_flux_bc(dimension=2))
+def _grid(points=(N, N)):
+    d = len(points)
+    return TensorProductGrid(
+        bounds=[(0.0, 1.0)] * d, Nx_points=list(points), boundary_conditions=no_flux_bc(dimension=d)
+    )
 
 
-def _ghosts(regions):
+def _faces(padded):
+    return {"x_min": padded[0, 1:-1], "x_max": padded[-1, 1:-1], "y_min": padded[1:-1, 0], "y_max": padded[1:-1, -1]}
+
+
+_OUTLET = BCSegment(name="outlet", bc_type=BCType.DIRICHLET, value=0.0)
+# A value the default does not share, so whether the inlet reaches x_min is visible.
+_INLET = BCSegment(name="inlet", bc_type=BCType.DIRICHLET, value=2.0)
+_WALL = BCSegment(name="wall", bc_type=BCType.NO_FLUX)
+
+
+@pytest.mark.parametrize("with_inlet", [False, True], ids=["one_region", "two_regions"])
+def test_a_whole_face_region_becomes_its_face(with_inlet):
     grid = _grid()
-    for name, spec in regions.items():
-        grid.mark_region(name, **spec)
-    bc = mixed_bc_from_regions(grid, {name: _SEGMENTS[name] for name in [*regions, "default"]})
-    padded = pad_array_with_ghosts(np.ones((N, N)), bc, geometry=grid)
-    return bc, {
-        "x_min": padded[0, 1:-1],
-        "x_max": padded[-1, 1:-1],
-        "y_min": padded[1:-1, 0],
-        "y_max": padded[1:-1, -1],
-    }
+    grid.mark_region("outlet", boundary="x_max")
+    config = {"outlet": _OUTLET, "default": _WALL}
+    if with_inlet:
+        grid.mark_region("inlet", boundary="x_min")
+        config["inlet"] = _INLET
+    bc = mixed_bc_from_regions(grid, config)
+
+    assert "default" in config, "mixed_bc_from_regions removed the caller's default entry"
+    assert {s.boundary for s in bc.segments} == ({"x_max", "x_min"} if with_inlet else {"x_max"})
+    assert all(s.region_name is None for s in bc.segments)
+
+    # The readers that have no geometry -- the solvers' and the FDM operators' route -- now agree.
+    expected = {"x_max": -1.0, "x_min": 3.0 if with_inlet else 1.0, "y_min": 1.0, "y_max": 1.0}
+    spacing = 1.0 / (N - 1)
+    for padded in (
+        pad_array_with_ghosts(np.ones((N, N)), bc, spacing=spacing),
+        pad_array_with_ghosts(np.ones((N, N)), bc, geometry=grid),
+    ):
+        for face, ghost in _faces(padded).items():
+            np.testing.assert_array_equal(ghost, expected[face], err_msg=face)
+    assert bc.get_bc_type_at_boundary("y_min") is BCType.NO_FLUX
+
+
+def test_a_zero_flux_region_route_solves_as_plain_no_flux():
+    """The solve the first version of this fix broke: main gave it bitwise equal to plain no-flux."""
+    nx, nt = 21, 10
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=no_flux_bc(dimension=1))
+    grid.mark_region("outlet", boundary="x_max")
+    region_bc = mixed_bc_from_regions(
+        grid, {"outlet": BCSegment(name="outlet", bc_type=BCType.NEUMANN, value=0.0), "default": _WALL}
+    )
+
+    def solve(bc):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            logging.disable(logging.WARNING)
+            try:
+                problem = MFGProblem(
+                    model=Model(
+                        hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=0.3
+                    ),
+                    domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=bc),
+                    conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: np.cos(np.pi * x), T=0.5),
+                    Nt=nt,
+                )
+                x = np.linspace(0.0, 1.0, nx)
+                return HJBFDMSolver(problem).solve_hjb_system(
+                    np.ones((nt + 1, nx)), np.cos(np.pi * x), np.zeros((nt + 1, nx))
+                )
+            finally:
+                logging.disable(logging.NOTSET)
+
+    np.testing.assert_array_equal(solve(region_bc), solve(no_flux_bc(dimension=1)))
+
+
+def _raw(region_name, bc_type=BCType.DIRICHLET):
+    """A region-named segment built directly, not through mixed_bc_from_regions."""
+    return BoundaryConditions(
+        segments=[BCSegment(name="s", bc_type=bc_type, value=0.0, region_name=region_name)],
+        dimension=2,
+        default_bc=BCType.NO_FLUX,
+        domain_bounds=_UNIT,
+    )
+
+
+def test_a_raw_region_segment_goes_through_the_shared_resolver():
+    grid = _grid()
+    grid.mark_region("outlet", boundary="x_max")
+    bc = _raw("outlet")
+    assert not bc.is_uniform
+
+    ghosts = _faces(pad_array_with_ghosts(np.ones((N, N)), bc, geometry=grid))
+    np.testing.assert_array_equal(ghosts["x_max"], -1.0)
+    for face in ("x_min", "y_min", "y_max"):
+        np.testing.assert_array_equal(ghosts[face], 1.0, err_msg=face)
+
+    # The readers without a geometry refuse a name that is not a face label ...
+    with pytest.raises(ValueError, match="known only to the geometry"):
+        bc.get_bc_type_at_boundary("y_min")
+    with pytest.raises(ValueError, match="known only to the geometry"):
+        FDMApplicator(dimension=2).enforce_values(np.ones((N, N)), bc, spacing=(0.125, 0.125))
+
+    # ... and resolve one that is (control).
+    labelled = _raw("x_max")
+    assert labelled.get_bc_type_at_boundary("x_max") is BCType.DIRICHLET
+    assert labelled.get_bc_type_at_boundary("y_min") is BCType.NO_FLUX
+    field = FDMApplicator(dimension=2).enforce_values(np.ones((N, N)), labelled, spacing=(0.125, 0.125))
+    np.testing.assert_array_equal(field[-1, :], 0.0)
+    np.testing.assert_array_equal(field[0, 1:-1], 1.0)
+
+
+def test_a_region_covering_part_of_a_face_keeps_its_name_and_is_refused_face_level():
+    grid = _grid()
+    grid.mark_region("strip", predicate=lambda x: x[:, 0] > 0.6)
+    bc = mixed_bc_from_regions(grid, {"strip": _OUTLET, "default": _WALL})
+    assert bc.segments[0].region_name == "strip"
+    with pytest.raises(ValueError, match="covers part of the"):
+        pad_array_with_ghosts(np.ones((N, N)), bc, geometry=grid)
+
+
+def test_a_region_covering_no_whole_face_is_refused():
+    grid = _grid()
+    grid.mark_region("centre", predicate=lambda x: np.all(np.abs(x - 0.5) < 0.2, axis=1))
+    with pytest.raises(ValueError, match="covers no whole boundary face"):
+        pad_array_with_ghosts(np.ones((N, N)), _raw("centre"), geometry=grid)
 
 
 @pytest.mark.parametrize(
-    "regions",
-    [{"outlet": {"boundary": "x_max"}}, {"outlet": {"boundary": "x_max"}, "inlet": {"boundary": "x_min"}}],
-    ids=["one_region", "two_regions"],
+    ("points", "face"),
+    [((9, 2), "y_min"), ((2, 9), "x_max"), ((2, 2), "x_max")],
+    ids=["9x2_y_min", "2x9_x_max", "2x2_x_max"],
 )
-def test_a_region_named_outlet_reaches_its_face_and_only_it(regions):
-    _, ghosts = _ghosts(regions)
-    # Dirichlet g = 0 on u = 1 gives the ghost -1; zero flux mirrors it to +1.
-    np.testing.assert_array_equal(ghosts["x_max"], -1.0)
-    for face in ("x_min", "y_min", "y_max"):
-        np.testing.assert_array_equal(ghosts[face], 1.0, err_msg=f"{face} took the outlet's condition")
-
-
-def test_a_region_covering_part_of_a_face_is_refused():
-    with pytest.raises(ValueError, match="covers part of the"):
-        _ghosts({"outlet": {"predicate": lambda x: x[:, 0] > 0.6}})
-
-
-def test_a_reader_without_the_geometry_refuses_a_region_it_cannot_resolve():
-    grid = _grid()
-    grid.mark_region("outlet", boundary="x_max")
-    bc = mixed_bc_from_regions(grid, {"outlet": _SEGMENTS["outlet"], "default": _SEGMENTS["default"]})
-    assert not bc.is_uniform
-    with pytest.raises(ValueError, match="known only to the geometry"):
-        bc.get_bc_type_at_boundary("y_min")
-
-    # A region name that is a face label names that face, with or without a geometry.
-    labelled = BoundaryConditions(
-        segments=[BCSegment(name="outlet", bc_type=BCType.DIRICHLET, region_name="x_max")],
-        dimension=2,
-        default_bc=BCType.NO_FLUX,
-        domain_bounds=np.array([[0.0, 1.0], [0.0, 1.0]]),
-    )
-    assert labelled.get_bc_type_at_boundary("x_max") is BCType.DIRICHLET
-    assert labelled.get_bc_type_at_boundary("y_min") is BCType.NO_FLUX
+def test_a_whole_face_on_a_two_point_axis_is_not_mistaken_for_a_partial_cover(points, face):
+    """On a two-point axis every point of a face is a corner shared with another face; those corners
+    are not a partial cover of the neighbouring faces (review 1 of #2491, B2)."""
+    grid = _grid(points)
+    grid.mark_region("r", boundary=face)
+    bc = mixed_bc_from_regions(grid, {"r": _OUTLET, "default": _WALL})
+    assert [s.boundary for s in bc.segments] == [face]
 
 
 @pytest.mark.parametrize(

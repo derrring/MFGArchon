@@ -122,12 +122,16 @@ applicator = FDMApplicator(dimension=2)
 padded = applicator.apply(field, bc, domain_bounds=np.array(geometry.bounds), geometry=geometry)
 ```
 
-**A face-level path imposes one condition per face** (`FDMApplicator`, `pad_array_with_ghosts`, the FDM
-operators). On such a path a region governs a face only if it covers the whole face, and a region
-covering part of a face is refused rather than stretched to the whole face or dropped. Which faces a
-region covers is known only to the geometry. So a reader that has no geometry, such as
-`BoundaryConditions.get_bc_type_at_boundary`, refuses a region name unless the name is itself a face
-label (`"x_max"`, `"left"`). The geometry-aware readers resolve it (#2472).
+**A face-level path imposes one condition per face** (`FDMApplicator`, `pad_array_with_ghosts`, and
+the FDM operators the solvers use). On a structured grid, `mixed_bc_from_regions` resolves a region
+that covers whole faces to those faces when it builds the BC, so every reader applies it without
+needing the geometry (#2472). A face counts as covered when the region holds all of its interior, the
+face without the edges it shares with other faces. So whether a strip covers a face depends on the
+resolution.
+
+A region that covers only part of a face keeps its region name. A face-level reader resolves it
+through the geometry when it has one, and otherwise refuses it rather than stretching it to the whole
+face or dropping it.
 
 ### Region Marking Methods
 

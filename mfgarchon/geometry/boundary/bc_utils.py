@@ -117,8 +117,9 @@ def geometric_operations(boundary_conditions: Any) -> set[str]:
     partially-covering segment list plus a differing default produces the same silent collapse
     **with no permutation available** -- a guard that unions only over ``segments`` lets that form
     straight through (Issue #1697). The exception is a uniform BC: its one unrestricted segment
-    covers every face, no reader consults its default, and counting it made one periodic segment
-    over a NO_FLUX default read as mixed (Issue #2472).
+    covers every face, so the face-level readers (`get_bc_type_at_boundary`, the FDM ghost path)
+    never reach its default, and counting it made one periodic segment over a NO_FLUX default read as
+    mixed (Issue #2472). Some per-point readers do consult a uniform BC's default; that is #2490.
 
     Returns an empty set for ``None`` and for legacy BC objects, which carry neither field and so
     have no per-axis information that could disagree.
