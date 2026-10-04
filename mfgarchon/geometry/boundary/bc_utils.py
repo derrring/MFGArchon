@@ -116,7 +116,9 @@ def geometric_operations(boundary_conditions: Any) -> set[str]:
     ``default_bc`` is included deliberately. ``get_bc_type_string`` never reads it, so a
     partially-covering segment list plus a differing default produces the same silent collapse
     **with no permutation available** -- a guard that unions only over ``segments`` lets that form
-    straight through (Issue #1697).
+    straight through (Issue #1697). The exception is a uniform BC: its one unrestricted segment
+    covers every face, no reader consults its default, and counting it made one periodic segment
+    over a NO_FLUX default read as mixed (Issue #2472).
 
     Returns an empty set for ``None`` and for legacy BC objects, which carry neither field and so
     have no per-axis information that could disagree.
@@ -153,7 +155,7 @@ def geometric_operations(boundary_conditions: Any) -> set[str]:
         return bc_type_to_geometric_operation(str(getattr(bc_type, "value", bc_type)))
 
     ops = {_op(seg.bc_type) for seg in segments or ()}
-    if default is not None:
+    if default is not None and not getattr(boundary_conditions, "is_uniform", False):
         ops.add(_op(default))
     return ops
 

@@ -276,6 +276,11 @@ class InterpolationApplicator(BaseBCApplicator):
                 "restricted to part of the boundary (region, sdf_region, normal_direction or region_name); "
                 "it would apply them to whole faces. Give each face one segment by its face name."
             )
+        if partial:
+            # Zero flux on every face, so the typing cannot matter, and the shared resolver cannot type a
+            # region-named face without the geometry: it refuses rather than give the segment every face
+            # (#2472).
+            return [("no_flux", "no_flux")] * ndim
 
         axis_names = ["x", "y", "z", "w"]  # Extend for higher dimensions
         result = []

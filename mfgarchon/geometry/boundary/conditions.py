@@ -204,13 +204,20 @@ class BoundaryConditions:
         """
         Check if this is a uniform BC (single segment covering all boundaries).
 
-        Uniform BCs have exactly one segment with no boundary restriction.
+        Uniform BCs have exactly one segment with no boundary restriction. A marked region
+        (``region_name``) is a restriction: read as uniform, one region-named segment governed every
+        face and ``default_bc`` was never consulted (#2472).
         """
         if len(self.segments) != 1:
             return False
         seg = self.segments[0]
-        # Uniform if no specific boundary, region, sdf_region, or normal_direction
-        return seg.boundary is None and seg.region is None and seg.sdf_region is None and seg.normal_direction is None
+        return (
+            seg.boundary is None
+            and seg.region is None
+            and seg.sdf_region is None
+            and seg.normal_direction is None
+            and seg.region_name is None
+        )
 
     @property
     def is_mixed(self) -> bool:
@@ -433,6 +440,11 @@ class BoundaryConditions:
         Falls back to string equality only when a name resolves to no face at all, so an unrecognised
         identifier still matches itself rather than matching nothing.
         """
+        if segment.region_name is not None:
+            face = parse_boundary_face(boundary)
+            if face is None:
+                return segment.region_name == boundary
+            return region_name_governs_face(segment, face, geometry=None)
         if segment.boundary is None:
             return True
         mine = parse_boundary_face(segment.boundary)
@@ -1265,6 +1277,75 @@ def mixed_bc(
         default_bc=default_bc,
         default_value=default_value,
         corner_strategy=corner_strategy,
+    )
+
+
+def faces_covered_by_region(geometry: Any, region_name: str) -> frozenset[BoundaryFace]:
+    """The boundary faces a marked region governs on a path that imposes one condition per face. #2472
+
+    A region governs face F only if its mask covers all of F's interior: F without the edges it
+    shares with other faces, so a region marked on ``x_max`` does not claim ``y_min`` through their
+    common corner. A region covering part of a face's interior is refused. One condition per face
+    cannot represent it, and either reading would silently drop the other.
+
+    Raises:
+        ValueError: if the region covers part of a face's interior, or no whole face.
+    """
+    mask = np.asarray(geometry.get_region_mask(region_name), dtype=bool).reshape(tuple(geometry.get_grid_shape()))
+    faces = set()
+    for axis in range(mask.ndim):
+        for side, index in (("min", 0), ("max", -1)):
+            face_mask = np.take(mask, index, axis=axis)
+            interior = face_mask[tuple(slice(1, -1) for _ in range(face_mask.ndim))]
+            if interior.size == 0:
+                interior = face_mask
+            if interior.all():
+                faces.add(BoundaryFace(axis, side))
+            elif interior.any():
+                raise ValueError(
+                    f"Marked region {region_name!r} covers part of the {BoundaryFace(axis, side).to_string()} "
+                    f"face ({int(interior.sum())} of {interior.size} interior points). A face-level boundary "
+                    "condition imposes one condition per face and cannot represent a sub-face region. Mark "
+                    "the region on whole faces (mark_region(name, boundary=...)) or use a solver that "
+                    "resolves boundary conditions per point (Issue #2472)."
+                )
+    if not faces:
+        raise ValueError(
+            f"Marked region {region_name!r} covers no whole boundary face, so it cannot carry a boundary "
+            "condition on a face-level path (Issue #2472)."
+        )
+    return frozenset(faces)
+
+
+def region_name_governs_face(segment: BCSegment, face: BoundaryFace, geometry: Any = None) -> bool:
+    """Does a ``region_name`` segment govern ``face``? The one resolver for both face-level readers. #2472
+
+    The geometry's region mask decides when the geometry defines the region
+    (:func:`faces_covered_by_region`). Without it, a region name that is itself a face label
+    ("x_max", "left") names that face. Anything else is refused. Before, one reader let such a
+    segment cover every face and the other skipped it, so they gave different answers on the same
+    object, and neither answer was the region.
+
+    Raises:
+        ValueError: if the region cannot be resolved to faces.
+    """
+    name = segment.region_name
+    if isinstance(geometry, SupportsRegionMarking) and name in geometry.get_region_names():
+        return face in faces_covered_by_region(geometry, name)
+    label = parse_boundary_face(name)
+    if label is not None:
+        return label == face
+    raise ValueError(
+        f"BC segment {segment.name!r} is restricted to the marked region {name!r}, and which faces a "
+        "region covers is known only to the geometry that marked it. "
+        + (
+            "This reader has no geometry"
+            if geometry is None
+            else f"{type(geometry).__name__} defines no region of that name"
+        )
+        + ", so it cannot tell whether the segment governs "
+        f"{face.to_string()}. Pass the geometry (e.g. pad_array_with_ghosts(..., geometry=...)), or name "
+        "the face with BCSegment(boundary=...) (Issue #2472)."
     )
 
 
