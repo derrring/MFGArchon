@@ -949,6 +949,14 @@ def solve_fp_nd_full_system(
             f"Value function spatial shape {U_spatial_shape} doesn't match problem shape {shape}"
         )
 
+    # Issue #1683: the caller's initial density is refused, not clipped. MFGProblem already refuses a
+    # negative m_initial; a direct call bypasses that check, and the clip here zeroed what it found.
+    if np.any(m_initial_condition < 0):
+        raise ValueError(
+            f"m_initial_condition contains negative values (min={float(np.min(m_initial_condition)):.6e}). "
+            "An initial density must be non-negative; the solver does not clip it (Issue #1683)."
+        )
+
     # Edge case: zero timesteps - return empty array
     if Nt == 0:
         return np.zeros((0, *shape), dtype=np.float64)
@@ -956,9 +964,6 @@ def solve_fp_nd_full_system(
     # Allocate solution array
     M_solution = np.zeros((Nt, *shape), dtype=np.float64)
     M_solution[0] = m_initial_condition.copy()
-
-    # Ensure non-negativity of initial condition
-    M_solution[0] = np.maximum(M_solution[0], 0)
 
     # Enforce Dirichlet BC on initial condition (for 1D problems)
     # Uses helper functions for unified/legacy BC compatibility

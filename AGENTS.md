@@ -95,6 +95,18 @@ drift owner, and what the FP solver receives); *Volatility and diffusion* (the k
 table, the one converter); *Callable signatures*; *Arrays, grids and time*. Where the code does not yet
 meet a convention, the file says so and points at the tracking issue; #2429 collects them.
 
+### The library does not clip on its own ⚠️
+
+A value the computation produced is not moved to where the code would like it to be (maintainer
+ruling, #1884). Either raise, or expose the bound as a parameter the caller sets. Two shapes are not
+clips in this sense:
+
+- **A clip that is the operator**: a projection onto an admissible set, or a kernel's compact support.
+- **A clamp bounded by a refusal**: `clip_nonnegative_or_raise` zeroes a negative density only while that
+  adds at most `MAX_CLIP_MASS_FABRICATION` of the mass, and raises beyond it (ruled 2026-10-04).
+
+#2485 classifies the existing calls and tracks the ones that break this.
+
 ### File-path anchoring ⚠️ CRITICAL
 Anchor output paths to **project root**, never CWD: ✅ `Path(__file__).resolve().parent.parent / "results"` or `${hydra:runtime.cwd}/results`; ❌ `Path("results")` / `os.getcwd()` (recursive nesting under `cd`).
 

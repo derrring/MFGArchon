@@ -280,32 +280,6 @@ class TestFPFDMSolverBoundaryConditions:
             assert np.isclose(final_mass, initial_mass, rtol=0.1)
 
 
-class TestFPFDMSolverNonNegativity:
-    """Test non-negativity enforcement."""
-
-    def test_initial_condition_non_negativity(self, standard_problem):
-        """Test that negative values in initial condition are set to zero."""
-        solver = FPFDMSolver(standard_problem)
-
-        (Nx_points,) = standard_problem.geometry.get_grid_shape()
-        Nt_points = standard_problem.Nt + 1
-
-        # Initial condition with some negative values (seeded: an unseeded fixture could draw
-        # an all-positive sample and stop exercising the clip this test exists for)
-        rng = np.random.default_rng(20260813)
-        m_initial = rng.standard_normal(Nx_points)
-        assert (m_initial < 0).sum() > 0, "fixture must contain negatives for the clip to be exercised"
-        U_solution = np.zeros((Nt_points, Nx_points))
-
-        m_result = solver.solve_fp_system(m_initial, U_solution)
-
-        # Initial condition should have negative values removed
-        assert np.all(m_result[0, :] >= 0)
-        # And removed by clipping, not by zeroing the row or renormalising it: every surviving
-        # entry keeps its exact input value. Measured max deviation 0.0 at this seed (25/51 negative).
-        np.testing.assert_array_equal(m_result[0, :], np.clip(m_initial, 0.0, None))
-
-
 class TestFPFDMSolverWithDrift:
     """Test solver behavior with non-zero drift (from HJB solution)."""
 
