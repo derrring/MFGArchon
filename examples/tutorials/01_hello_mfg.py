@@ -55,8 +55,6 @@ if __name__ == "__main__":
     # ==============================================================================
 
     # A deliberately small grid keeps this "hello world" fast to run end-to-end.
-    # (Finer grids are correct but slow on the default FDM solver -- the inner
-    # Newton assembles its Jacobian by O(Nx^2) finite differences; tracked in #1607.)
     domain = TensorProductGrid(
         bounds=[(0.0, 1.0)],  # Domain [0, 1]
         Nx_points=[21],  # 21 grid points (20 intervals)

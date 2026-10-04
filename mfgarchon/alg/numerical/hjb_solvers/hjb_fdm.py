@@ -256,7 +256,7 @@ class HJBFDMSolver(BaseHJBSolver):
         newton_tolerance: float | None = None,
         constraint: ConstraintProtocol | None = None,
         on_newton_failure: NewtonFailurePolicy = "raise",
-        analytic_jacobian: bool = False,
+        analytic_jacobian: bool | None = None,
         # Deprecated parameter (decorator handles warnings)
         damping_factor: float | None = None,
         backend: str | None = None,
@@ -291,17 +291,23 @@ class HJBFDMSolver(BaseHJBSolver):
                 Only meaningful when solver_type="newton" and dimension > 1.
                 - 'raise': Raise ConvergenceError (default, fail-fast).
                 - 'warn_and_fallback': Emit warning and retry with Value Iteration.
-            analytic_jacobian: Opt-in inner-Newton HJB Jacobian assembly (#1607).
-                Default False keeps the per-point finite-difference Jacobian
-                (byte-identical to prior releases; the robust default). True routes
-                single-population solves through the batch analytic (chain-rule)
-                Jacobian -- the same path multi-population solves already use --
-                avoiding the O(Nx^2) per-column gradient recomputes (measured ~17x
-                faster per solve). When it converges it reaches the same fixed point
-                as the FD Jacobian (to tolerance); however the frozen-upwind analytic
-                Jacobian has a SMALLER convergence basin, so on some problems it
-                returns converged=False where the default converges -- fall back to
-                the default there. NumPy backend only (raises otherwise).
+            analytic_jacobian: Which 1D Newton path the solve takes.
+                - None (default): the batch path on the NumPy backend, the per-point path
+                  on any other.
+                - True: the batch path; NumPy backend only (raises otherwise).
+                - False: the per-point path.
+                The batch path evaluates the Hamiltonian on every node in one call, for the
+                residual and for the analytic (chain-rule) Jacobian, O(Nx) per Newton step. The
+                per-point path evaluates it one node at a time and assembles the Jacobian by
+                finite differences, O(Nx^2). A Hamiltonian that gives a different answer when
+                evaluated on several nodes at once is refused on the batch path
+                (`require_batch_safe_hamiltonian`); pass False to solve it point by point.
+                The batch path became the default in #1884. #1607 had kept it opt-in because it
+                then converged on fewer problems, which no longer reproduces at 5a16d60f: across
+                27 coupled LQ configurations (Nx 31-81, coupling 0.02-2, sigma 0.05-0.4,
+                no-flux and periodic) both converged on the same 19, to the same answer within
+                1.2e-12 and in the same number of Picard iterations, and both failed on the
+                other 8. The batch path was 6.4-11.6x faster.
             backend: 'numpy', 'torch', or None
         """
         import warnings
@@ -313,15 +319,15 @@ class HJBFDMSolver(BaseHJBSolver):
 
         self.backend = create_backend(backend or "numpy")
 
-        # #1607: opt-in analytic inner-Newton Jacobian. The batch analytic path in
-        # compute_hjb_jacobian is gated on backend is None; routing single-pop solves
-        # through it (effective_backend=None in solve_hjb_system) swaps the O(Nx^2)
-        # FD-assembled Jacobian for the O(Nx) chain-rule one. NumPy-only: the None
-        # path assumes numpy arrays (no to_numpy), so fail loud rather than silently
-        # mis-run torch/jax. isinstance (not a class-name string) so a legitimate
-        # NumPyBackend subclass is accepted while any genuine non-NumPy backend raises.
-        self._analytic_jacobian = bool(analytic_jacobian)
-        if self._analytic_jacobian and not isinstance(self.backend, NumPyBackend):
+        # The batch analytic path in compute_hjb_jacobian is gated on backend is None; routing
+        # single-pop solves through it (effective_backend=None in solve_hjb_system) swaps the
+        # O(Nx^2) FD-assembled Jacobian for the O(Nx) chain-rule one (#1607, default since #1884).
+        # NumPy-only: the None path assumes numpy arrays (no to_numpy), so an explicit True fails
+        # loud rather than silently mis-running torch/jax, and the default picks it only on NumPy.
+        # isinstance (not a class-name string) so a NumPyBackend subclass counts as NumPy.
+        on_numpy = isinstance(self.backend, NumPyBackend)
+        self._analytic_jacobian = on_numpy if analytic_jacobian is None else bool(analytic_jacobian)
+        if self._analytic_jacobian and not on_numpy:
             raise ValueError(
                 "analytic_jacobian=True is a NumPy-only inner-Newton Jacobian assembly "
                 f"(got backend={type(self.backend).__name__}); use the default backend='numpy'."
@@ -444,6 +450,7 @@ class HJBFDMSolver(BaseHJBSolver):
 
         # Initialize warning flags (Issue #545 - NO hasattr pattern)
         self._bc_warning_emitted: bool = False
+        self._batch_safety_checked: bool = False
 
         # Cached Laplacian operator for nD diffusion (Issue #787)
         self._laplacian_op: object | None = None
@@ -588,14 +595,16 @@ class HJBFDMSolver(BaseHJBSolver):
                 with suppress(AttributeError):
                     logger.debug(f"[DEBUG Issue #542] BC has {len(bc.segments)} segments")
 
-            # Issue #1071: when a multi-population cross-density trajectory is supplied, force the
-            # batch Hamiltonian path (backend=None) — the per-point problem.H() fallback receives
-            # only a scalar own-population density and cannot express cross-population coupling. The
-            # batch path is numerically equivalent to the per-point path (Issue #789), so this
-            # changes nothing for single-population solves (cross_density None => self.backend).
-            # #1607: the analytic_jacobian opt-in also routes single-pop solves through backend=None
-            # to use the O(Nx) analytic Jacobian instead of the O(Nx^2) FD fallback.
+            # backend=None selects the batch Hamiltonian path: the batch residual and the O(Nx) analytic
+            # Jacobian. Issue #1071: a multi-population cross-density trajectory forces it, since the per-point
+            # problem.H() fallback receives only a scalar own-population density. #1607/#1884: the analytic
+            # Jacobian, the NumPy default, takes it for a single population too. That path agrees with the
+            # per-point one only for a Hamiltonian that evaluates every node correctly at once, so a single-
+            # population solve checks that once, and refuses one that does not (#1884).
             effective_backend = None if (cross_density is not None or self._analytic_jacobian) else self.backend
+            if effective_backend is None and cross_density is None and not self._batch_safety_checked:
+                base_hjb.require_batch_safe_hamiltonian(self.problem)
+                self._batch_safety_checked = True
 
             # Use optimized 1D solver with BC-aware computation (Issue #542 fix)
             U_solution = base_hjb.solve_hjb_system_backward(
