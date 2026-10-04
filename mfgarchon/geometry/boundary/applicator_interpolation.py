@@ -76,6 +76,14 @@ class InterpolationApplicator(BaseBCApplicator):
         extrapolation_order: Order of extrapolation for Neumann BC (default: 2)
     """
 
+    #: The types `_enforce_boundary_1d` has a branch for. The two `EXTRAPOLATION_*` members are absent:
+    #: they fell through that dispatch with the boundary value left as interpolated, not set to the
+    #: extrapolation, so they are refused (#1948). `extrapolation_order` is the order of the
+    #: zero-Neumann extrapolation and is unrelated to them.
+    _SUPPORTED_BC_TYPES: frozenset[BCType] = frozenset(
+        {BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX, BCType.REFLECTING, BCType.PERIODIC, BCType.ROBIN}
+    )
+
     def __init__(
         self,
         dimension: int | None = None,
@@ -154,6 +162,8 @@ class InterpolationApplicator(BaseBCApplicator):
         ndim = field.ndim
         if self._dimension is not None and ndim != self._dimension:
             raise ValueError(f"Field dimension ({ndim}) does not match applicator dimension ({self._dimension})")
+        if isinstance(boundary_conditions, BoundaryConditions):  # the legacy 1-D object carries no types to check
+            self._validate_bc_support(boundary_conditions)  # #1948
 
         # Get BC types for each boundary
         bc_types = self._get_bc_types_per_boundary(boundary_conditions, ndim)
@@ -220,6 +230,11 @@ class InterpolationApplicator(BaseBCApplicator):
         elif bc_type == "robin":
             # Robin defaults to Neumann-like extrapolation
             enforce_robin_value_nd(field, axis, side, alpha=1.0, beta=1.0, rhs_value=0.0)
+        else:
+            raise NotImplementedError(
+                f"InterpolationApplicator has no enforcement for a {bc_type!r} boundary at the {side} side of "
+                f"axis {axis}; it would return the interpolated value unchanged (#1948)."
+            )
 
     def _get_bc_types_per_boundary(
         self,

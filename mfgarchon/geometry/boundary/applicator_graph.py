@@ -29,7 +29,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Literal
+from types import MappingProxyType
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 import numpy as np
 
@@ -69,6 +70,17 @@ class NodeBC:
     bc_type: GraphBCType = GraphBCType.DIRICHLET
     value: float | Callable[[int, float], float] = 0.0
     name: str = "boundary"
+
+    def __post_init__(self) -> None:
+        # NEUMANN on a graph is zero flux, the graph Laplacian's own condition at a node, and
+        # `GraphApplicator.apply` leaves both fields unchanged for it. A non-zero flux would be
+        # dropped without a word, so it is refused (#1948).
+        if self.bc_type == GraphBCType.NEUMANN and (callable(self.value) or np.any(np.asarray(self.value) != 0)):
+            raise NotImplementedError(
+                f"NodeBC {self.name!r}: GraphBCType.NEUMANN is zero flux, and a non-zero flux "
+                f"(value={self.value!r}) is not implemented on graphs. It would be dropped rather than "
+                "imposed. Use value=0.0 (the default), or a SOURCE node to inject mass (#1948)."
+            )
 
     def get_nodes(self, num_nodes: int) -> list[int]:
         """Get node indices, resolving callable if needed."""
@@ -176,6 +188,20 @@ class GraphApplicator(BaseGraphApplicator):
         >>> # Direct edge flow specification
         >>> flow_bc = applicator.apply_edge_direct(flow, edges=[(0,1), (2,3)], values=[0.0, 0.0])
     """
+
+    #: (type, field) cells `apply` leaves unchanged on purpose, each with its reason. Declared rather than
+    #: left to a source comment, so a caller and the conformance table can tell a deliberate no-op
+    #: from an unhandled cell (#1948, maintainer ruling 2026-10-04).
+    _DECLARED_IDENTITY: ClassVar[MappingProxyType[tuple[GraphBCType, str], str]] = MappingProxyType(
+        {
+            (GraphBCType.DIRICHLET, "density"): (
+                "a Dirichlet pin is a condition on the value u (#1471); the exit that removes density is ABSORBING (#1478)"
+            ),
+            (GraphBCType.SOURCE, "value"): "a source injects density; u has no source term at the node",
+            (GraphBCType.NEUMANN, "value"): "zero flux is the graph Laplacian's own condition at a node",
+            (GraphBCType.NEUMANN, "density"): "zero flux is the graph Laplacian's own condition at a node",
+        }
+    )
 
     def __init__(self, num_nodes: int):
         """

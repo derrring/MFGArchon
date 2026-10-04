@@ -143,17 +143,13 @@ _APPLICATORS = [
 #: until 2026-09-09, which aborts before the assertion and so could never report XPASS -- the
 #: promise this comment used to make was false for as long as it was written that way.
 #:
-#: The one entry here is not a DECLARED cell: `InterpolationApplicator` has
-#: `_SUPPORTED_BC_TYPES = None`, so there is no declaration to withdraw and the earlier version of
-#: this comment -- which argued from `MeshfreeApplicator` being reachable from
-#: `base_solver.apply_bc` -- was defending cells the set does not contain.
-_KNOWN_SILENT: set[tuple[str, BCType]] = {
-    # `InterpolationApplicator` extrapolates by ORDER (`extrapolation_order` on the constructor), so
-    # the two EXTRAPOLATION_* members select nothing: the order is already fixed and the branch has
-    # nothing left to do. Silent rather than refusing.
-    ("InterpolationApplicator", BCType.EXTRAPOLATION_LINEAR),
-    ("InterpolationApplicator", BCType.EXTRAPOLATION_QUADRATIC),
-}
+#: Emptied by #1948 step 2. Its two entries were `InterpolationApplicator` x `EXTRAPOLATION_*`, recorded
+#: as silent because "the order is already fixed" -- which was false: `extrapolation_order` is the
+#: zero-Neumann extrapolation's order, and the two members simply fell through the dispatch with the
+#: boundary value left as interpolated. The applicator now declares its types and refuses these two
+#: (maintainer ruling 2026-10-04). Kept as an empty set so the next silent cell has somewhere honest
+#: to go.
+_KNOWN_SILENT: set[tuple[str, BCType]] = set()
 
 #: Applicators that never adopted `_SUPPORTED_BC_TYPES`. `None`, or the attribute being absent,
 #: means "not migrated" -- which
@@ -167,7 +163,6 @@ _KNOWN_SILENT: set[tuple[str, BCType]] = {
 #: 43 passed / 10 xfailed, tripping nothing. That is the same promise-without-a-mechanism defect
 #: this file fixes for `_KNOWN_SILENT`, and it does not get to reappear two definitions later.
 _UNDECLARED_APPLICATORS: set[str] = {
-    "InterpolationApplicator",
     "ParticleApplicator",
 }
 
@@ -257,7 +252,7 @@ def test_each_cell_either_applies_or_refuses(name, cls, call, field, bc_type):
     """
     # `getattr` with a default, not attribute access: the convention has THREE states, not two.
     # `FDMApplicator` declares 8, `MeshfreeApplicator` 2, `ImplicitApplicator` 7;
-    # `InterpolationApplicator` and `GraphApplicator` declare `None` ("not migrated", #1456); and
+    # `GraphApplicator` declares `None` ("not migrated", #1456), `InterpolationApplicator` 6 since #1948; and
     # `ParticleApplicator` has no such attribute at all. Bare `cls._SUPPORTED_BC_TYPES` raises
     # `AttributeError` on the third state, which reads as a test bug rather than as the missing
     # declaration it is.
@@ -366,34 +361,33 @@ def _graph_value(bc_type: GraphBCType) -> float | Callable[..., float]:
     guard and reads SILENT, the two-argument `(node, t)` form raises `TypeError` and reads REFUSED,
     and the documented three-argument form applies. Only the third is a fact about the class.
     """
-    return _custom_node_bc if bc_type is GraphBCType.CUSTOM else 2.5
+    if bc_type is GraphBCType.CUSTOM:
+        return _custom_node_bc
+    # NEUMANN is zero flux on a graph, and a non-zero value is refused when the `NodeBC` is built
+    # (`test_a_non_zero_graph_neumann_flux_is_refused`), so its cells are measured at the one value
+    # the type admits.
+    return 0.0 if bc_type is GraphBCType.NEUMANN else 2.5
 
 
 _GRAPH_CELLS = [(t, ft) for t in GraphBCType for ft in _GRAPH_FIELD_TYPES]
 
-#: Graph cells that come back silent, with the same `xfail(strict=True)` mechanism and the same
-#: retirement as `_KNOWN_SILENT`. Measured 2026-09-10 over the whole product: four of ten.
-#:
-#: Every one is a DELIBERATE non-application whose only announcement is a source comment --
-#: DIRICHLET "belongs to the VALUE field (HJB u), not the density field" (#1471), SOURCE "for value
-#: functions, source nodes don't modify u", NEUMANN "no change ... handled by solver". That makes
-#: them the defect class #1948 is about rather than exceptions to it: a caller cannot distinguish a
-#: deliberate no-op from an unhandled type, which is why this table forbids silence even where it
-#: looks harmless. Whether each should apply-and-say-so or refuse is #1948 step 2.
-_GRAPH_KNOWN_SILENT: set[tuple[GraphBCType, str]] = {
-    (GraphBCType.DIRICHLET, "density"),
-    (GraphBCType.SOURCE, "value"),
-    (GraphBCType.NEUMANN, "value"),
-    (GraphBCType.NEUMANN, "density"),
-}
+#: Graph cells that leave the field unchanged ON PURPOSE are DECLARED on the class
+#: (`GraphApplicator._DECLARED_IDENTITY`, with a reason each), not listed here. Until #1948 step 2 they
+#: were four `xfail(strict=True)` entries whose only announcement was a source comment, so a caller
+#: could not tell a deliberate no-op from an unhandled cell. The maintainer ruled (2026-10-04) that
+#: these four are identity by design and must say so. The table holds the declaration to the
+#: behaviour in both directions: a declared cell that changes the field fails, and so does an
+#: undeclared cell that does not.
+_GRAPH_DECLARED_IDENTITY = GraphApplicator._DECLARED_IDENTITY
 
 
 #: The field types this table has DECIDED about. The axis itself stays derived, so the product
 #: grows on its own; this is the direction deriving cannot give you. A derived population can shrink
 #: as quietly as it grows, and shrinking reads as a clean run: measured 2026-09-10, narrowing the
 #: annotation to `Literal["value"]` halves the graph product from ten cells to five and the file
-#: reports `47 passed, 4 xfailed` -- no failure, and the two orphaned "density" entries in
-#: `_GRAPH_KNOWN_SILENT` simply stop matching anything.
+#: reports `47 passed, 4 xfailed` -- no failure, and the two orphaned "density" entries then in
+#: `_GRAPH_KNOWN_SILENT` (since #1948 step 2, `GraphApplicator._DECLARED_IDENTITY`) simply stop
+#: matching anything.
 _GRAPH_FIELD_TYPES_DECIDED = frozenset({"value", "density"})
 
 
@@ -432,11 +426,11 @@ def test_no_graph_cell_refuses_by_accident():
     inside the CUSTOM arm, which reads exactly like a branch that had been fixed to refuse.
 
     This is a sweep and not a line inside the parametrised cell above, and the difference is
-    load-bearing. Four of the ten cells carry `xfail(strict=True)`, which absorbs a failing
-    assertion as an expected failure -- measured 2026-09-10: with the NEUMANN arm raising
+    load-bearing. Until #1948 step 2, four of the ten cells carried `xfail(strict=True)`, which absorbs a
+    failing assertion as an expected failure -- measured 2026-09-10: with the NEUMANN arm raising
     `TypeError`, the same assertion written inside the cell left the file at `50 passed, 6 xfailed`.
-    Those four are exactly the cells a #1948 step-2 fix will touch, so they are the ones that must
-    not be exempt from it. Nothing marks this test, so it fires on all ten.
+    Those four were the cells step 2 changed. No cell carries a mark now; the sweep stays the one
+    place every cell's refusal is checked.
 
     `NotImplementedError` is the refusal the rest of this family raises and what #1948 asks for
     ("an unhandled type must raise with the type named"). `_apply_and_classify` returns its message
@@ -463,18 +457,7 @@ def test_no_graph_cell_refuses_by_accident():
 
 @pytest.mark.parametrize(
     ("bc_type", "field_type"),
-    [
-        pytest.param(
-            t,
-            ft,
-            marks=(
-                [pytest.mark.xfail(strict=True, reason=f"GraphApplicator is silent on {t.name}/{ft}; #1948 step 2")]
-                if (t, ft) in _GRAPH_KNOWN_SILENT
-                else []
-            ),
-        )
-        for (t, ft) in _GRAPH_CELLS
-    ],
+    [pytest.param(t, ft) for (t, ft) in _GRAPH_CELLS],
     ids=[f"{t.name}-{ft}" for (t, ft) in _GRAPH_CELLS],
 )
 def test_each_graph_cell_either_applies_or_refuses(bc_type, field_type):
@@ -495,16 +478,34 @@ def test_each_graph_cell_either_applies_or_refuses(bc_type, field_type):
 
     if outcome == "refused":
         # Whether the refusal is a DELIBERATE one is asserted by
-        # `test_no_graph_cell_refuses_by_accident`, deliberately NOT here: these cells carry
-        # `xfail(strict=True)`, which absorbs any assertion failure as an expected one, so a check
-        # placed here cannot fire on the four cells most likely to acquire a wrong refusal.
+        # `test_no_graph_cell_refuses_by_accident`, which sweeps every cell in one place. It was split
+        # out while four of these cells carried `xfail(strict=True)`, which would have absorbed a
+        # check placed here (#1948 step 2 removed the marks).
+        return
+
+    if (bc_type, field_type) in _GRAPH_DECLARED_IDENTITY:
+        np.testing.assert_array_equal(
+            result,
+            field,
+            err_msg=f"GraphApplicator declares {bc_type.name}/{field_type} an identity and changed the field",
+        )
         return
 
     assert not np.allclose(result, field), (
         f"GraphApplicator returned the field unchanged for GraphBCType.{bc_type.name} on "
         f"field_type={field_type!r}. A caller cannot tell that from a condition that was applied "
-        f"and happened to change nothing."
+        f"and happened to change nothing; declare it in _DECLARED_IDENTITY with its reason, or refuse it."
     )
+
+
+@pytest.mark.parametrize("value", [2.5, lambda node, t: 0.0], ids=["non_zero", "callable"])
+def test_a_non_zero_graph_neumann_flux_is_refused(value):
+    """Graph NEUMANN is zero flux; `apply` leaves both fields unchanged for it. A flux it would drop is
+    refused when the `NodeBC` is built (maintainer ruling 2026-10-04). A callable cannot be checked for
+    zero, and its value is never read, so it is refused too. Control: the zero flux builds."""
+    NodeBC(nodes=[0], bc_type=GraphBCType.NEUMANN, value=0.0, name="wall")
+    with pytest.raises(NotImplementedError, match="zero flux"):
+        NodeBC(nodes=[0], bc_type=GraphBCType.NEUMANN, value=value, name="wall")
 
 
 def test_a_declaration_that_is_absent_disables_the_gate_rather_than_failing_closed():
