@@ -428,9 +428,6 @@
     "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverMassConservation::test_mass_evolution_periodic": [
       "fp_initial_condition_written_at_final_index"
     ],
-    "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverNonNegativity::test_initial_condition_non_negativity": [
-      "fp_initial_condition_written_at_final_index"
-    ],
     "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverProblemVolatility::test_problem_array_sigma_reaches_solver": [
       "fp_initial_condition_written_at_final_index"
     ],
@@ -3048,7 +3045,7 @@
       "verify": "float(upwind_momentum(np.array([1.0]), np.array([-1.0]), \"engquist_osher\")[0]) == 1.0"
     },
     "fp_initial_condition_written_at_final_index": {
-      "kill_count": 136,
+      "kill_count": 135,
       "killed": [
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_gauss_seidel_runs_and_produces_finite_M",
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestFictitiousPlayFPDriftConvention::test_fictitious_play_density_is_non_negative",
@@ -3116,7 +3113,6 @@
         "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverCallableDrift::test_time_dependent_drift",
         "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverMassConservation::test_mass_conservation_no_flux",
         "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverMassConservation::test_mass_evolution_periodic",
-        "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverNonNegativity::test_initial_condition_non_negativity",
         "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverProblemVolatility::test_problem_array_sigma_reaches_solver",
         "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverTensorDiffusion::test_callable_tensor",
         "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverTensorDiffusion::test_diagonal_tensor_2d",
