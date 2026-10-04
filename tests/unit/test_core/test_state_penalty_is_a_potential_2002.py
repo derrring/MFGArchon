@@ -21,8 +21,8 @@ WHY IT IS A POTENTIAL AND NOT A SOURCE. The term is `alpha`-free and `u`-free --
 where you are, not on what you do or what the value function says. That is the definition of a
 potential, and it is what distinguishes this from the variational inequality `v >= Psi(x)` that
 `problem.obstacle` claimed to be and never was. The VI slot is reserved and deliberately
-unfinished: `HJBFDMSolver(constraint=ObstacleConstraint(...))` (#591), with #2036 and #2046 on
-what it still owes.
+unfinished: `HJBFDMSolver(constraint=ObstacleConstraint(...))` (#591), with #2046 on what it still
+owes.
 """
 
 from __future__ import annotations

@@ -261,7 +261,8 @@ class TestHJBWithUpperObstacle:
         assert U_solution.shape == U_prev.shape, "Solution has correct shape"
         assert np.all(np.isfinite(U_solution)), "Solution is finite"
 
-        # The ceiling holds at every time level: each step is projected inside the sweep (#2036).
+        # The ceiling holds at every time level. Feasibility only: a post-hoc clip passes this too, and
+        # the per-step projection is pinned by test_constraint_projected_per_step_2036.
         assert np.all(U_solution <= psi_upper + 1e-10), "Solution must satisfy u ≤ ψ_upper"
 
         # The contact set must be non-empty, or the ceiling is decoration: measured 20 nodes at t = 0.
@@ -294,7 +295,7 @@ class TestHJBWithBilateralObstacle:
         assert U_solution.shape == U_prev.shape, "Solution has correct shape"
         assert np.all(np.isfinite(U_solution)), "Solution is finite"
 
-        # The corridor is enforced at every time level: each step is projected inside the sweep.
+        # The corridor holds at every time level. Feasibility only, as for the ceiling above.
         assert np.all(U_solution >= psi_lower - 1e-10), "Must satisfy lower bound"
         assert np.all(U_solution <= psi_upper + 1e-10), "Must satisfy upper bound"
 

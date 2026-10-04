@@ -47,7 +47,7 @@ Conventions (mirrored verbatim from the prior ``FixedPointIterator`` copy):
 
   The **variational inequality** is a separate, reserved slot — ``ObstacleConstraint`` with
   ``HJBFDMSolver(constraint=...)`` (#591), deliberately unfinished: it projects rather than
-  solving the VI, and only that one solver carries it (#2036, #2046). It was never this channel's
+  solving the VI, and only that one solver carries it (#2046). It was never this channel's
   to provide, since a constraint penalty needs ``v`` and ``source_term`` is ``(t, x) -> array``.
 
 - The HJB source passes the **value-function slice** ``v_t`` to

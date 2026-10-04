@@ -1811,7 +1811,9 @@ def solve_hjb_system_backward(
             Default: None (standard BC with 0 gradient).
         constraint: A variational-inequality constraint K (Issue #591). Each step's Newton solution is
             projected onto K before the next, earlier step uses it, so the obstacle propagates backward
-            through the sweep. The terminal slice is the caller's and is not projected (Issue #2036).
+            through the sweep. The terminal slice is the caller's and is neither projected nor
+            checked: the caller must pass one inside K. `HJBFDMSolver.solve_hjb_system` checks it
+            and refuses one outside (Issue #2036).
     """
     volatility, volatility_kind = resolve_volatility_override(
         volatility, volatility_kind, problem=problem, consumer="1-D HJB-FDM (solve_hjb_system_backward)"

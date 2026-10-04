@@ -566,6 +566,12 @@ class HJBFDMSolver(BaseHJBSolver):
         # rather than returned infeasible (the nD path before #2036) or silently projected (the 1-D path).
         if self.constraint is not None:
             u_terminal = np.asarray(U_terminal, dtype=float)
+            if not np.all(np.isfinite(u_terminal)):
+                raise ValueError(
+                    f"U_terminal has {int(np.size(u_terminal) - np.count_nonzero(np.isfinite(u_terminal)))} non-finite "
+                    f"entries, so whether it lies in the constraint set of {type(self.constraint).__name__} cannot be "
+                    f"checked (Issue #2036)."
+                )
             violation = float(np.max(np.abs(np.asarray(self.constraint.project(u_terminal), dtype=float) - u_terminal)))
             if violation > 1e-12 * max(1.0, float(np.max(np.abs(u_terminal)))):
                 raise ValueError(
