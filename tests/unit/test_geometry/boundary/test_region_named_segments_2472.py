@@ -255,3 +255,30 @@ def test_a_zero_flux_region_covering_part_of_a_face_enforces_as_plain_no_flux():
         applicator.enforce_values(field.copy(), region_bc),
         applicator.enforce_values(field.copy(), no_flux_bc(dimension=2)),
     )
+
+
+def test_the_only_region_on_every_face_is_uniform():
+    """Splitting it per face made it mixed: FP-FVM refused it, and a periodic one ran through the per-face
+    path and solved 0.135 away from periodic_bc under FDM_UPWIND (review 3, NB1)."""
+    from mfgarchon.geometry.boundary import periodic_bc
+
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[N], boundary_conditions=periodic_bc(dimension=1))
+    grid.mark_region("ends", predicate=lambda x: np.isclose(x[:, 0], 0.0) | np.isclose(x[:, 0], 1.0))
+    bc = mixed_bc_from_regions(grid, {"ends": BCSegment(name="p", bc_type=BCType.PERIODIC)})
+    assert bc.is_uniform
+    assert [(s.boundary, s.region_name) for s in bc.segments] == [(None, None)]
+    field = np.sin(2 * np.pi * np.linspace(0.0, 1.0, N)) + np.linspace(0.0, 0.3, N)
+    np.testing.assert_array_equal(
+        pad_array_with_ghosts(field, bc, spacing=1.0 / (N - 1)),
+        pad_array_with_ghosts(field, periodic_bc(dimension=1), spacing=1.0 / (N - 1)),
+    )
+
+
+def test_a_template_naming_a_region_is_accepted_on_a_whole_face():
+    """Before #2472 the config key replaced a template's own region_name; the face conversion must start
+    from that validated segment, not refuse the template (review 3, NB2)."""
+    grid = _grid()
+    grid.mark_region("outlet", boundary="x_max")
+    template = BCSegment(name="o", bc_type=BCType.DIRICHLET, value=0.0, region_name="other")
+    bc = mixed_bc_from_regions(grid, {"outlet": template, "default": _WALL})
+    assert [(s.boundary, s.region_name) for s in bc.segments] == [("x_max", None)]

@@ -129,10 +129,10 @@ needing the geometry (#2472). A face counts as covered when the region holds all
 face without the edges it shares with other faces. So whether a strip covers a face depends on the
 resolution.
 
-A region that covers only part of a face keeps its region name. A face-level reader resolves it
-through the geometry when it has one, and otherwise refuses it rather than stretching it to the whole
-face or dropping it. Such a region may not be named like a face (`"top"`, `"x_max"`), because a reader
-without the geometry would take the name as that whole face.
+A region that covers only part of a face keeps its region name, and a face-level reader refuses it
+rather than stretching it to the whole face or dropping it. Such a region may not be named like a face
+(`"top"`, `"x_max"`), because a reader without the geometry would read the name as that face. The
+only region, on every face, is a uniform condition.
 
 ### Region Marking Methods
 

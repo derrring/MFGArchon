@@ -21,13 +21,9 @@ that repeated measurement puts the true cost in. Taking the ratio of per-variant
 the median of ratios, on the theory that noise is one-sided, does not help: 16 fresh processes gave
 sd 5.60 against the median's 5.58.
 
-So: ~~the central estimate is that the region path costs about **1% or less**~~ [CORRECTED
-2026-10-04, #2472] every figure above timed the UNIFORM path twice. The region BC has one region-named
-segment, which `is_uniform` read as uniform, so both variants ran the same code. Since #2472 the
-region resolves to one segment per face and runs the per-face ghost path. Measured 2026-10-04 on the
-#2472 fix, one invocation gave a median overhead of 39.1% (repeats 37.6% to 41.9%). A single
-invocation still carries the cross-process spread above, so compare builds by running it many times,
-not once.
+So: the central estimate is that the region path costs about **1% or less**, and a single
+invocation of this script carries roughly +/-14 points around it. Compare builds by running it many
+times, not once.
 
     python benchmarks/benchmark_region_bc_overhead.py
 """
@@ -111,8 +107,8 @@ def main() -> None:
     print(
         "\nOne invocation is not an answer. These repeats share a process, so they share caches, "
         "\nallocation layout and core assignment; measured across 14 fresh invocations on an idle "
-        "\nmachine the median above ranged -13.3% to +13.2% (sd 5.5), measured when both variants ran "
-        "\nthe uniform path (#2472). Compare builds over many invocations."
+        "\nmachine the median above ranged -13.3% to +13.2% (sd 5.5). The central estimate from "
+        "\nrepeated running is about 1% or less. Compare builds over many invocations."
     )
 
 

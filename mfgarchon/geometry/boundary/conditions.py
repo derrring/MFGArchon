@@ -1358,7 +1358,7 @@ def region_name_governs_face(segment: BCSegment, face: BoundaryFace, geometry: A
     segment cover every face and another skipped it, so they gave different answers on the same
     object, and neither answer was the region. :func:`mixed_bc_from_regions` resolves whole-face
     regions to named faces when it builds the BC, so this is reached by a region it kept (one covering
-    part of a face) or by a ``region_name`` segment built some other way.
+    part of a face, or no whole face) or by a ``region_name`` segment built some other way.
 
     Raises:
         ValueError: if the region cannot be resolved to faces.
@@ -1395,11 +1395,12 @@ def mixed_bc_from_regions(
 
     On a structured grid, a region that covers whole faces and no part of any other face becomes one
     segment per face, named by ``boundary``: every reader then resolves it with no geometry, which is
-    how the solvers and the FDM operators read a BC (#2472). A region spanning several faces gives
-    segments named ``"{name}[{face}]"``. Any other region keeps ``region_name``. A face-level reader
-    resolves it through the geometry when it has one and refuses it otherwise; a per-point reader
-    matches it point by point when given the geometry. Such a region may not be named like a face
-    ("x_max", "top"), since a reader without the geometry would take the name as that whole face.
+    how the solvers and the FDM operators read a BC (#2472). The only region, on every face, becomes
+    one unrestricted (uniform) segment. A region spanning several faces gives segments named
+    ``"<template name>[<face>]"``. Any other region keeps ``region_name``: a face-level reader refuses
+    it, since one condition per face cannot represent it, and a per-point reader matches it point by
+    point when given the geometry. Such a region may not be named like a face ("x_max", "top"), since
+    a reader without the geometry would read the name as that face.
 
     Args:
         geometry: Geometry with marked regions (must implement SupportsRegionMarking)
@@ -1473,13 +1474,19 @@ def mixed_bc_from_regions(
             if label is not None:
                 raise ValueError(
                     f"Region {region_name!r} is not a set of whole faces, and its name reads as a face "
-                    f"label ({label.to_string()}). Every reader without the "
-                    "geometry would take the label and apply the condition to that whole face. Rename "
-                    "the region (Issue #2472)."
+                    f"label ({label.to_string()}). A reader without the geometry would read the name as "
+                    "that face and apply the condition to all of it, or to no face if the grid has none "
+                    "by that name. Rename the region (Issue #2472)."
                 )
             segments.append(region_segment)
             continue
         faces = sorted(covered, key=lambda f: (f.axis, f.side))
+        if len(bc_config_copy) == 1 and len(faces) == 2 * mask.ndim:
+            # The only region, on every face: that is a uniform BC, as before #2472. Splitting it
+            # made it mixed, which FP-FVM refuses and which runs a periodic BC through the per-face
+            # path (review 3).
+            segments.append(replace(region_segment, region_name=None))
+            continue
         if len(faces) > 1 and segment_template.flux_capacity is not None:
             raise ValueError(
                 f"Region {region_name!r} covers {len(faces)} faces and its segment carries a flux_capacity. "
@@ -1488,7 +1495,7 @@ def mixed_bc_from_regions(
             )
         for face in faces:
             name = segment_template.name if len(faces) == 1 else f"{segment_template.name}[{face.to_string()}]"
-            segments.append(replace(segment_template, boundary=face.to_string(), name=name))
+            segments.append(replace(region_segment, region_name=None, boundary=face.to_string(), name=name))
 
     # Extract domain bounds from geometry if available
     # Use getattr pattern per CLAUDE.md (no hasattr for optional attributes)
