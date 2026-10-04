@@ -159,26 +159,29 @@ KNOWN_NOT_HONOURED = {
 # CONVERGENCE, not exact conservation, and getting that wrong is what the first version of this
 # file did: it asserted `drift < 1e-9` and reported six solvers as failing to honour PERIODIC.
 #
-# Measured drift against refinement (Nx=21/41/81, Nt scaled with it), on THIS commit -- seeded,
-# and with the particle count scaled as Nx^2:
+# Measured drift against refinement (Nx=21/41/81, Nt scaled with it) at `d6a8b2c7` -- seeded, and
+# with the particle count scaled as Nx^2:
 #
-#   FPSLSolver         1.342e-01  4.910e-02  2.618e-02     converges, ratio 0.366
-#   FPSLAdjointSolver  1.342e-01  4.910e-02  2.618e-02     converges, ratio 0.366
 #   FPParticleSolver   5.480e-02  3.429e-02  1.707e-02     converges, ratio 0.626
 #   FPFDMSolver        2.220e-16  9.992e-16  4.885e-15     at round-off: EARLY RETURN
 #   FPFVMSolver        2.665e-15  7.772e-15  3.841e-14     at round-off: EARLY RETURN
+#   FPSLSolver         1.865e-14  1.776e-15  5.462e-14     at round-off: EARLY RETURN
+#
+# The table this replaces still listed FPSLSolver at 1.342e-01 and FPSLAdjointSolver, an alias #2343
+# removed; both rows were stale.
 #
 # Where it converges, that is O(h) discretisation error in a non-conservative scheme, not a
 # capability defect -- these solvers do not claim conservation by construction, and an absolute
 # tolerance on a convergent quantity is a tolerance chosen to make a point.
 #
-# READ THE SECOND COLUMN OF THAT LIST. Two of these rows no longer reach the assertion at all: the
-# `drifts[0] < 1e-12` early return fires and the test passes without measuring convergence.
+# READ THE SECOND COLUMN OF THAT LIST. Three of these four rows no longer reach the assertion at all:
+# the `drifts[0] < 1e-12` early return fires and the test passes without measuring convergence.
 # FPSLJacobianSolver was the long-standing case (exact by renormalisation rather than by
 # conservation -- RFC #1456 class (b), #1429 S0-11) until #1756 retired it. FPFDMSolver and
 # FPFVMSolver joined it in #1837, which put their periodic wrap on the right torus and took their
 # drift from ~5.6e-02 to round-off. That is a real improvement and it makes this oracle vacuous for
-# them, which is worth saying out loud: two green rows here now assert nothing, and a green row that
+# them, which is worth saying out loud. FPSLSolver is at round-off too, so three green rows here now
+# assert nothing and FPParticleSolver is the only row this oracle measures -- and a green row that
 # measured nothing reads exactly like a green row that measured something.
 MASS_NON_CONVERGENT: dict[str, tuple[str, type[Exception]]] = {
     # Empty, and honestly so: no FP solver declaring PERIODIC has a mass error that fails to
@@ -594,7 +597,12 @@ def test_a_declared_bc_type_is_honoured(name, cls, bc_type):
     # convergence that a ratio threshold tuned for the fast cases would have failed.~~ [SUPERSEDED
     # 2026-09-15 by #1878 and #1834: that trend was a stalled Newton on a Jacobian missing its wrap
     # entries, and the solver is now exact at Nx=21. The three-point rule still stands on
-    # FPSLJacobianSolver's non-monotone case.]
+    # FPSLJacobianSolver's non-monotone case.] No declared pair grows any more, so that recorded sequence
+    # is planted directly in `test_the_three_point_check_can_fail` (#1756).
+    _assert_refinement_converges(name, bc_type, residuals)
+
+
+def _assert_refinement_converges(name, bc_type, residuals):
     trend = f"{residuals[0]:.3e}, {residuals[1]:.3e}, {residuals[2]:.3e} at Nx=21/41/81"
     # `or < EXACT`: a residual that has REACHED round-off has converged, and cannot keep halving
     # below machine epsilon -- demanding it would fail a solver for being exact. The early return
@@ -608,6 +616,31 @@ def test_a_declared_bc_type_is_honoured(name, cls, bc_type):
     assert residuals[2] < residuals[1] or residuals[2] < EXACT, (
         f"{name} declares {bc_type.name} but its boundary residual grew from Nx=41 to 81: {trend}"
     )
+
+
+@pytest.mark.parametrize(
+    ("residuals", "refusal"),
+    [
+        ((1.58e00, 7.64e-03, 1.16e-02), "grew from Nx=41 to 81"),
+        ((7.64e-03, 1.58e00, 1.0e-03), "grew from Nx=21 to 41"),
+        ((1.0e-01, 5.0e-02, 2.5e-02), None),
+        ((3.268e-11, 6.661e-16, 6.661e-16), None),
+    ],
+    ids=["grows_at_81", "grows_at_41", "converges", "reaches_round_off"],
+)
+def test_the_three_point_check_can_fail(residuals, refusal):
+    """The control `test_a_declared_bc_type_is_honoured` lost when #1756 retired FPSLJacobianSolver.
+
+    Its PERIODIC strict-xfail was the only declared pair whose residual grew under refinement, so it was
+    the only evidence that the three-point check can fail at all. The first row is its recorded
+    sequence. The second grows on the other arm, which no declared pair has ever exercised. The last two
+    must pass: a converging sequence, and HJBGFDMSolver's (#1841), which reaches round-off and stops.
+    """
+    if refusal is None:
+        _assert_refinement_converges("Planted", BCType.PERIODIC, residuals)
+    else:
+        with pytest.raises(AssertionError, match=refusal):
+            _assert_refinement_converges("Planted", BCType.PERIODIC, residuals)
 
 
 def test_every_declared_pair_is_either_measured_or_named_uncovered():
