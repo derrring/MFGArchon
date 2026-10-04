@@ -90,7 +90,7 @@ from .applicator_base import (
     ZeroFluxCalculator,
     ZeroGradientCalculator,
 )
-from .conditions import BoundaryConditions
+from .conditions import BoundaryConditions, region_name_governs_face
 from .enforcement import enforce_dirichlet_value_nd, enforce_neumann_value_nd
 from .fdm_bc_1d import BoundaryConditions as BoundaryConditions1DFDM
 from .ghost_cells import (
@@ -295,8 +295,17 @@ class FDMApplicator(BaseStructuredApplicator):
             # Parse boundary identifier to get dimension and side
             boundary_id = segment.boundary
 
+            if segment.region_name is not None:
+                # The shared resolver, not "no boundary means every face", which gave a region-named
+                # segment the whole boundary here too (#2472). This reader has no geometry.
+                boundaries_to_apply = [
+                    (d, side)
+                    for d in range(field.ndim)
+                    for side in ("min", "max")
+                    if region_name_governs_face(segment, BoundaryFace(d, side), geometry=None)
+                ]
             # If boundary_id is None, this is a uniform BC - apply to all boundaries
-            if boundary_id is None:
+            elif boundary_id is None:
                 # Determine field dimension
                 field_ndim = field.ndim
                 # Apply to all standard boundaries (x_min, x_max, y_min, y_max, etc.)
@@ -1701,8 +1710,9 @@ class PreallocatedGhostBuffer:
 
         Matching priority:
         1. seg.face matches target_face (handles all string aliases: "left", "x_min", etc.)
-        2. region_name matches face string label
-        3. region_name matches via geometry.get_region_mask()
+        2. region_name, through :func:`region_name_governs_face`: the geometry's region mask when
+           the geometry defines the region, else a region name that is a face label. Anything else
+           raises (Issue #2472).
 
         Args:
             bc: Boundary conditions
@@ -1718,29 +1728,11 @@ class PreallocatedGhostBuffer:
                 if seg_face is not None and seg_face == target_face:
                     return segment
 
-            # Method 2: region_name matches standard face label
-            if segment.region_name is not None:
-                face_label = target_face.to_string()
-                if segment.region_name.lower() == face_label:
-                    return segment
-
-                # Method 3: Use geometry to check if region covers this boundary face
-                if self._geometry is not None:
-                    try:
-                        from mfgarchon.geometry.protocols import SupportsRegionMarking
-
-                        if isinstance(self._geometry, SupportsRegionMarking):
-                            region_names = self._geometry.get_region_names()
-                            if segment.region_name in region_names:
-                                mask = self._geometry.get_region_mask(segment.region_name)
-                                d = self._dimension
-                                boundary_idx = [slice(None)] * d
-                                boundary_idx[target_face.axis] = 0 if target_face.side == "min" else -1
-                                face_mask = mask[tuple(boundary_idx)]
-                                if np.any(face_mask):
-                                    return segment
-                    except Exception:
-                        logger.debug("Geometry query failed during BC segment matching", exc_info=True)
+            # Method 2: region_name. The old geometry branch indexed the grid's flat region mask with a
+            # d-dimensional face index, which raised IndexError for d >= 2 and was swallowed at debug
+            # level, so there a region never reached its face (#2472).
+            if segment.region_name is not None and region_name_governs_face(segment, target_face, self._geometry):
+                return segment
 
         return None
 

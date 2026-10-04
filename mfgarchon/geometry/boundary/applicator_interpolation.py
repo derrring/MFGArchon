@@ -264,8 +264,8 @@ class InterpolationApplicator(BaseBCApplicator):
         # cannot be honoured, and the shared resolver would give it the whole face -- every face, for a
         # segment with no face string. That matters only when the boundary carries some condition other
         # than zero flux: Neumann with g = 0, NO_FLUX and REFLECTING take one branch below, so a
-        # zero-flux-only BC -- the package's region route `mixed_bc_from_regions` sets `region_name` on
-        # whole-face segments too -- is imposed exactly whatever the typing.
+        # zero-flux-only BC -- including a region `mixed_bc_from_regions` keeps because it covers part of a
+        # face -- is imposed exactly whatever the typing.
         def zero_flux(bc_type: BCType | str, value: object) -> bool:
             kind = as_str(bc_type)
             if kind in ("no_flux", "reflecting"):
@@ -291,6 +291,11 @@ class InterpolationApplicator(BaseBCApplicator):
                 "restricted to part of the boundary (region, sdf_region, normal_direction or region_name); "
                 "it would apply them to whole faces. Give each face one segment by its face name."
             )
+        if partial:
+            # Zero flux on every face, so the typing cannot matter, and the shared resolver cannot type a
+            # region-named face without the geometry: it refuses rather than give the segment every face
+            # (#2472).
+            return [("no_flux", "no_flux")] * ndim
 
         axis_names = ["x", "y", "z", "w"]  # Extend for higher dimensions
         result = []

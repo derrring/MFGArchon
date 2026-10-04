@@ -95,33 +95,44 @@ bc = mixed_bc([exit_bc, wall_bc], dimension=2, domain_bounds=bounds)
 For complex geometries, you can define BCs using **regions** marked on the geometry rather than boundary identifiers:
 
 ```python
+import numpy as np
+
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import mixed_bc_from_regions, BCSegment, BCType
+from mfgarchon.geometry.boundary import BCSegment, BCType, FDMApplicator, mixed_bc_from_regions, no_flux_bc
 
 # Create geometry
-geometry = TensorProductGrid(dimension=2, bounds=[(0, 2), (0, 1)], Nx_points=[41, 21])
+geometry = TensorProductGrid(bounds=[(0, 2), (0, 1)], Nx_points=[41, 21], boundary_conditions=no_flux_bc(dimension=2))
 
-# Mark regions using predicates
-geometry.mark_region("inlet", predicate=lambda x: x[:, 0] < 0.1)  # Left 10%
-geometry.mark_region("outlet", predicate=lambda x: x[:, 0] > 1.9)  # Right 10%
-geometry.mark_region("walls", boundary="y_min")  # Bottom wall
-geometry.mark_region("walls", boundary="y_max")  # Top wall (merged with bottom)
+# Mark regions on whole faces
+geometry.mark_region("inlet", boundary="x_min")
+geometry.mark_region("outlet", boundary="x_max")
 
-# Define BCs referencing regions
+# Define BCs referencing regions; "default" covers every face no region claims
 bc_config = {
     "inlet": BCSegment(name="inlet_bc", bc_type=BCType.DIRICHLET, value=1.0),
     "outlet": BCSegment(name="outlet_bc", bc_type=BCType.NEUMANN, value=0.0),
-    "walls": BCSegment(name="wall_bc", bc_type=BCType.NO_FLUX),
-    "default": BCSegment(name="periodic_bc", bc_type=BCType.PERIODIC),
+    "default": BCSegment(name="wall_bc", bc_type=BCType.NO_FLUX),
 }
 
 bc = mixed_bc_from_regions(geometry, bc_config)
 
 # Apply BCs (must pass geometry parameter)
-from mfgarchon.geometry.boundary import FDMApplicator
+field = np.zeros(tuple(geometry.Nx_points))
 applicator = FDMApplicator(dimension=2)
-padded = applicator.apply(field, bc, domain_bounds=geometry.bounds, geometry=geometry)
+padded = applicator.apply(field, bc, domain_bounds=np.array(geometry.bounds), geometry=geometry)
 ```
+
+**A face-level path imposes one condition per face** (`FDMApplicator`, `pad_array_with_ghosts`, and
+the FDM operators the solvers use). On a structured grid, `mixed_bc_from_regions` resolves a region
+that covers whole faces, and no part of any other face, to those faces when it builds the BC, so every reader applies it without
+needing the geometry (#2472). A face counts as covered when the region holds all of its interior, the
+face without the edges it shares with other faces. So whether a strip covers a face depends on the
+resolution.
+
+A region that covers only part of a face keeps its region name, and a face-level reader refuses it
+rather than stretching it to the whole face or dropping it. Such a region may not be named like a face
+(`"top"`, `"x_max"`), because a reader without the geometry would read the name as that face. The
+only region, on every face, is a uniform condition.
 
 ### Region Marking Methods
 

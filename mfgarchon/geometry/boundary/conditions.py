@@ -204,13 +204,20 @@ class BoundaryConditions:
         """
         Check if this is a uniform BC (single segment covering all boundaries).
 
-        Uniform BCs have exactly one segment with no boundary restriction.
+        Uniform BCs have exactly one segment with no boundary restriction. A marked region
+        (``region_name``) is a restriction: read as uniform, one region-named segment governed every
+        face and ``default_bc`` was never consulted (#2472).
         """
         if len(self.segments) != 1:
             return False
         seg = self.segments[0]
-        # Uniform if no specific boundary, region, sdf_region, or normal_direction
-        return seg.boundary is None and seg.region is None and seg.sdf_region is None and seg.normal_direction is None
+        return (
+            seg.boundary is None
+            and seg.region is None
+            and seg.sdf_region is None
+            and seg.normal_direction is None
+            and seg.region_name is None
+        )
 
     @property
     def is_mixed(self) -> bool:
@@ -433,6 +440,11 @@ class BoundaryConditions:
         Falls back to string equality only when a name resolves to no face at all, so an unrecognised
         identifier still matches itself rather than matching nothing.
         """
+        if segment.region_name is not None:
+            face = parse_boundary_face(boundary)
+            if face is None:
+                return segment.region_name == boundary
+            return region_name_governs_face(segment, face, geometry=None)
         if segment.boundary is None:
             return True
         mine = parse_boundary_face(segment.boundary)
@@ -1268,6 +1280,109 @@ def mixed_bc(
     )
 
 
+def _region_faces(mask: np.ndarray) -> tuple[set[BoundaryFace], set[BoundaryFace]]:
+    """The faces a grid-shaped region mask covers, and the faces it covers only part of. #2472
+
+    A face counts as covered when the region holds all of its interior: the face without the
+    points it shares with other faces, so a region on ``x_max`` does not claim ``y_min`` through
+    their common corner. On an axis with two points a face has no interior, since every point of it
+    is shared, and then it counts as covered only if the region holds the whole face.
+    """
+    covered: set[BoundaryFace] = set()
+    partial: set[BoundaryFace] = set()
+    for axis in range(mask.ndim):
+        for side, index in (("min", 0), ("max", -1)):
+            face_mask = np.take(mask, index, axis=axis)
+            interior = face_mask[tuple(slice(1, -1) for _ in range(face_mask.ndim))]
+            if interior.size == 0:
+                if face_mask.all():
+                    covered.add(BoundaryFace(axis, side))
+            elif interior.all():
+                covered.add(BoundaryFace(axis, side))
+            elif interior.any():
+                partial.add(BoundaryFace(axis, side))
+    return covered, partial
+
+
+def _region_mask_on_grid(geometry: Any, region_name: str) -> np.ndarray | None:
+    """The region's mask on the grid's index layout, or None if the geometry has no faces to read."""
+    from mfgarchon.geometry.base import CartesianGrid  # local: geometry.base imports this package
+
+    if not isinstance(geometry, CartesianGrid):
+        return None
+    marked: Any = geometry  # a CartesianGrid that also marks regions (SupportsRegionMarking)
+    return np.asarray(marked.get_region_mask(region_name)).astype(bool).reshape(tuple(marked.get_grid_shape()))
+
+
+def faces_covered_by_region(geometry: Any, region_name: str) -> frozenset[BoundaryFace]:
+    """The boundary faces a marked region governs on a path that imposes one condition per face. #2472
+
+    See :func:`_region_faces` for what "covered" means. A region covering part of a face's interior
+    is refused: one condition per face cannot represent it, and either reading would silently drop
+    the other. Whether a strip covers a face therefore depends on the resolution: a strip may hold
+    a coarse face's whole interior and only part of a finer one's.
+
+    Raises:
+        ValueError: if the geometry is not a structured grid, if the region covers part of a face's
+            interior, or if it covers no whole face.
+    """
+    mask = _region_mask_on_grid(geometry, region_name)
+    if mask is None:
+        raise ValueError(
+            f"{type(geometry).__name__} has no grid faces, so marked region {region_name!r} cannot be "
+            "resolved to a face (Issue #2472)."
+        )
+    covered, partial = _region_faces(mask)
+    if partial:
+        face = min(partial, key=lambda f: (f.axis, f.side))
+        raise ValueError(
+            f"Marked region {region_name!r} covers part of the {face.to_string()} face's interior. A "
+            "face-level boundary condition imposes one condition per face and cannot represent a "
+            "sub-face region. Mark the region on whole faces (mark_region(name, boundary=...)) or use a "
+            "solver that resolves boundary conditions per point (Issue #2472)."
+        )
+    if not covered:
+        raise ValueError(
+            f"Marked region {region_name!r} covers no whole boundary face, so it cannot carry a boundary "
+            "condition on a face-level path (Issue #2472)."
+        )
+    return frozenset(covered)
+
+
+def region_name_governs_face(segment: BCSegment, face: BoundaryFace, geometry: Any = None) -> bool:
+    """Does a ``region_name`` segment govern ``face``? The one resolver for the face-level readers. #2472
+
+    The geometry's region mask decides when the geometry is a structured grid that defines the region
+    (:func:`faces_covered_by_region`). Without it, a region name that is itself a face label
+    ("x_max", "left") names that face. Anything else is refused. Before, one reader let such a
+    segment cover every face and another skipped it, so they gave different answers on the same
+    object, and neither answer was the region. :func:`mixed_bc_from_regions` resolves whole-face
+    regions to named faces when it builds the BC, so this is reached by a region it kept (one covering
+    part of a face, or no whole face) or by a ``region_name`` segment built some other way.
+
+    Raises:
+        ValueError: if the region cannot be resolved to faces.
+    """
+    name = segment.region_name
+    if isinstance(geometry, SupportsRegionMarking) and name in geometry.get_region_names():
+        return face in faces_covered_by_region(geometry, name)
+    label = parse_boundary_face(name)
+    if label is not None:
+        return label == face
+    raise ValueError(
+        f"BC segment {segment.name!r} is restricted to the marked region {name!r}, and which faces a "
+        "region covers is known only to the geometry that marked it. "
+        + (
+            "This reader has no geometry"
+            if geometry is None
+            else f"{type(geometry).__name__} defines no region of that name"
+        )
+        + ", so it cannot tell whether the segment governs "
+        f"{face.to_string()}. Build the BC with mixed_bc_from_regions(geometry, ...), which resolves a "
+        "whole-face region to its faces, or name the face with BCSegment(boundary=...) (Issue #2472)."
+    )
+
+
 def mixed_bc_from_regions(
     geometry: SupportsRegionMarking,
     bc_config: dict[str, BCSegment],
@@ -1277,7 +1392,15 @@ def mixed_bc_from_regions(
     Create mixed boundary conditions from marked regions (Issue #596 Phase 2.5).
 
     Convenient factory for region-based BCs without manual region_name assignment.
-    Automatically populates the region_name field for each BCSegment.
+
+    On a structured grid, a region that covers whole faces and no part of any other face becomes one
+    segment per face, named by ``boundary``: every reader then resolves it with no geometry, which is
+    how the solvers and the FDM operators read a BC (#2472). The only region, on every face, becomes
+    one unrestricted (uniform) segment. A region spanning several faces gives segments named
+    ``"<template name>[<face>]"``. Any other region keeps ``region_name``: a face-level reader refuses
+    it, since one condition per face cannot represent it, and a per-point reader matches it point by
+    point when given the geometry. Such a region may not be named like a face ("x_max", "top"), since
+    a reader without the geometry would read the name as that face.
 
     Args:
         geometry: Geometry with marked regions (must implement SupportsRegionMarking)
@@ -1295,10 +1418,10 @@ def mixed_bc_from_regions(
 
     Example:
         >>> from mfgarchon.geometry import TensorProductGrid
-        >>> from mfgarchon.geometry.boundary import BCSegment, BCType, mixed_bc_from_regions
+        >>> from mfgarchon.geometry.boundary import BCSegment, BCType, mixed_bc_from_regions, no_flux_bc
         >>>
         >>> # Setup geometry with marked regions
-        >>> geometry = TensorProductGrid(bounds=[(0, 1), (0, 1)], Nx_points=[50, 50])
+        >>> geometry = TensorProductGrid(bounds=[(0, 1), (0, 1)], Nx_points=[50, 50], boundary_conditions=no_flux_bc(dimension=2))
         >>> geometry.mark_region("inlet", predicate=lambda x: x[:, 0] < 0.1)
         >>> geometry.mark_region("outlet", boundary="x_max")
         >>>
@@ -1312,7 +1435,8 @@ def mixed_bc_from_regions(
         >>> # Create boundary conditions
         >>> bc = mixed_bc_from_regions(geometry, bc_config)
         >>> assert len(bc.segments) == 2  # inlet + outlet
-        >>> assert bc.segments[0].region_name == "inlet"
+        >>> assert bc.segments[0].region_name == "inlet"  # all of x_min, but part of y_min and y_max
+        >>> assert bc.segments[1].boundary == "x_max"  # a whole face, resolved to it
         >>> assert bc.default_bc == BCType.PERIODIC
     """
     # Validate geometry supports region marking
@@ -1325,11 +1449,10 @@ def mixed_bc_from_regions(
     if dimension is None:
         dimension = geometry.dimension
 
-    # Separate default BC from region-specific BCs
-    default_segment = bc_config.pop("default", None) if "default" in bc_config else None
-
-    # Create copy to avoid mutating input
+    # Separate default BC from region-specific BCs, on a copy: popping from the caller's dict removed
+    # their "default" entry.
     bc_config_copy = dict(bc_config)
+    default_segment = bc_config_copy.pop("default", None)
 
     # Create segments with region_name field populated
     segments = []
@@ -1339,9 +1462,40 @@ def mixed_bc_from_regions(
         if region_name not in available_regions:
             raise ValueError(f"Region '{region_name}' not found in geometry. Available regions: {available_regions}")
 
-        # Clone segment and set region_name (preserves other fields)
-        segment = replace(segment_template, region_name=region_name)
-        segments.append(segment)
+        # Built first as a region-named segment, so BCSegment's own validation refuses a template that
+        # already carries boundary / region / sdf_region / normal_direction, as it did before #2472.
+        region_segment = replace(segment_template, region_name=region_name)
+
+        # A whole-face region becomes its faces (#2472); anything else keeps region_name.
+        mask = _region_mask_on_grid(geometry, region_name)
+        covered, partial = _region_faces(mask) if mask is not None else (set(), set())
+        if not (covered and not partial):
+            label = parse_boundary_face(region_name)
+            if label is not None:
+                raise ValueError(
+                    f"Region {region_name!r} is not a set of whole faces, and its name reads as a face "
+                    f"label ({label.to_string()}). A reader without the geometry would read the name as "
+                    "that face and apply the condition to all of it, or to no face if the grid has none "
+                    "by that name. Rename the region (Issue #2472)."
+                )
+            segments.append(region_segment)
+            continue
+        faces = sorted(covered, key=lambda f: (f.axis, f.side))
+        if len(bc_config_copy) == 1 and len(faces) == 2 * mask.ndim:
+            # The only region, on every face: that is a uniform BC, as before #2472. Splitting it
+            # made it mixed, which FP-FVM refuses and which runs a periodic BC through the per-face
+            # path (review 3).
+            segments.append(replace(region_segment, region_name=None))
+            continue
+        if len(faces) > 1 and segment_template.flux_capacity is not None:
+            raise ValueError(
+                f"Region {region_name!r} covers {len(faces)} faces and its segment carries a flux_capacity. "
+                "One segment per face would count that capacity once per face. Give each face its own "
+                "segment and capacity (Issue #2472)."
+            )
+        for face in faces:
+            name = segment_template.name if len(faces) == 1 else f"{segment_template.name}[{face.to_string()}]"
+            segments.append(replace(region_segment, region_name=None, boundary=face.to_string(), name=name))
 
     # Extract domain bounds from geometry if available
     # Use getattr pattern per CLAUDE.md (no hasattr for optional attributes)
