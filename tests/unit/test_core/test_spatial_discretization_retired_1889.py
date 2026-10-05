@@ -2,7 +2,8 @@
 
 It held the interval count when the problem was built from `spatial_bounds=` and the point count when
 it was built from `geometry=`, for the identical grid. #1888's initial-density normaliser read it under
-the interval reading and started every `geometry=` problem `(n/(n-1))^d` heavy. Space is the domain's
+the interval reading and started every d >= 2 problem built on a `TensorProductGrid` through `geometry=`
+`(n/(n-1))^d` heavy. Space is the domain's
 (CONVENTIONS.md, Counts: intervals versus points): `problem.geometry.Nx` counts intervals and
 `problem.geometry.Nx_points` counts points. That the two constructors describe one grid is pinned by
 `test_initial_density_mass_1888.py::test_both_construction_paths_agree`.

@@ -1293,7 +1293,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
     def spatial_discretization(self):
         raise AttributeError(
             "problem.spatial_discretization is retired (#1889): it held the interval count when the "
-            "problem was built from spatial_bounds= and the point count when it was built from geometry=. "
+            "problem was built from spatial_bounds= and the point count when it was built from a "
+            "TensorProductGrid passed as geometry=. "
             "Space is the domain's: problem.geometry.Nx counts intervals and problem.geometry.Nx_points "
             "counts points, Nx_points = Nx + 1 per axis."
         )
@@ -2244,14 +2245,19 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         if self.dimension == 1:
             dx = self._get_spacing() or 1.0
             return float(np.sum(m) * dx), "uniform-cell"
-        from mfgarchon.geometry.base import CartesianGrid
+        from mfgarchon.geometry import GeometryType
 
-        if isinstance(self.geometry, CartesianGrid):
-            spacing = self.geometry.get_grid_spacing()
+        # A declared Cartesian grid without `integrate` is measured on its cells. This is the population that
+        # had to report `spatial_discretization` before #1889 retired it, and the gate reads the same
+        # declaration `__init__` dispatches on, not `CartesianGrid` inheritance, which the protocol does not ask for.
+        if self.geometry is not None and self.geometry.geometry_type == GeometryType.CARTESIAN_GRID:
+            get_spacing = getattr(self.geometry, "get_grid_spacing", None)
+            spacing = get_spacing() if callable(get_spacing) else None
             if spacing is None:
                 raise ValueError(
                     "measuring the initial density needs the grid spacing, and this geometry "
-                    f"({type(self.geometry).__name__}) does not provide one, although it is a CartesianGrid."
+                    f"({type(self.geometry).__name__}) declares a CARTESIAN_GRID with neither integrate() nor a "
+                    "get_grid_spacing() that returns one."
                 )
             return float(np.sum(m) * float(np.prod(spacing))), "uniform-cell"
         return float(np.sum(m) / self.num_spatial_points), "point-average"
