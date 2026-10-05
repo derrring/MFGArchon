@@ -97,7 +97,6 @@ from .ghost_cells import (
     GhostCellConfig,
     ghost_cell_linear_extrapolation,
     ghost_cell_quadratic_extrapolation,
-    ghost_cell_robin,
 )
 from .types import (
     BCSegment,
@@ -943,6 +942,13 @@ def _wall_layer_indices(axis: int, side: str, g: int) -> tuple[tuple, tuple[tupl
     return wall, layers
 
 
+_UNCONSTRAINED_WALL = (
+    "Robin coefficients alpha = beta = 0 are singular: they do not constrain the solution, so no ghost value "
+    "exists. This is the only degenerate case: beta = 0 alone is the Dirichlet condition u = value/alpha and is "
+    "computed."
+)
+
+
 def _spacing_for_wall(dx: float | None, axis: int, side: str) -> float:
     """The spacing a wall formula multiplies by, or a refusal when the caller does not have it (#1936)."""
     if dx is None:
@@ -978,8 +984,8 @@ def _write_wall_ghosts(
     u = cos(pi x), where this gives 2.00 and agrees with the sparse assembly, which was node-centred already.
 
     beta = 0 is the Dirichlet condition u = value/alpha on the wall node, for which the condition gives no
-    ghost; it takes `ghost_cell_robin`'s, 2 value/alpha - wall, which is the Dirichlet branch's. alpha = beta
-    = 0 constrains nothing, and that owner raises.
+    ghost; it takes the odd reflection about that value, ghost = 2 value/alpha - mirror, which is the Dirichlet
+    branch's (#1968). alpha = beta = 0 constrains nothing, and raises.
 
     Layout along ``axis``: [ghost_lo (g) | interior (N) | ghost_hi (g)].
 
@@ -997,12 +1003,13 @@ def _write_wall_ghosts(
     # Scalar coefficients, the common case: one step for the face, and a pure mirror is a copy. The field path
     # below costs a few array operations per call, which made a 2-D HJB-FDM solve 1.7x slower (#2473 review).
     # `np.float64` is a `float`, so a value evaluated from a callable takes this path too.
-    if (
-        isinstance(alpha, (int, float))
-        and isinstance(beta, (int, float))
-        and isinstance(value, (int, float))
-        and beta != 0
-    ):
+    if isinstance(alpha, (int, float)) and isinstance(beta, (int, float)) and isinstance(value, (int, float)):
+        if beta == 0:
+            if alpha == 0:
+                raise ValueError(_UNCONSTRAINED_WALL)
+            for ghost_index, mirror_index in layers:
+                buf[ghost_index] = 2 * value / alpha - buf[mirror_index]
+            return
         if alpha == 0 and value == 0:
             for ghost_index, mirror_index in layers:
                 buf[ghost_index] = buf[mirror_index]
@@ -1017,20 +1024,22 @@ def _write_wall_ghosts(
     dirichlet = np.abs(np.asarray(beta, dtype=float)) == 0.0
     if dx is None:
         mirror = (np.asarray(alpha) == 0) & (np.asarray(value) == 0)
-        # At a pure mirror the step is 0, and at beta = 0 the ghost is 2 value/alpha - wall: neither reads dx,
+        # At a pure mirror the step is 0, and at beta = 0 the ghost is 2 value/alpha - mirror: neither reads dx,
         # so a unit placeholder gives their exact ghosts. Any other point needs the real spacing.
         dx = 1.0 if np.all(dirichlet | mirror) else _spacing_for_wall(dx, axis, side)
-    cell = None
+    wall_value = None
     if np.any(dirichlet):
-        # Wanted only where beta = 0. Elsewhere the cell form's own singularity, alpha/2 + beta/dx = 0, does not
-        # apply to the node form, so those points get placeholder coefficients whose value is discarded.
-        cell = ghost_cell_robin(u_wall, value, np.where(dirichlet, alpha, 1.0), np.where(dirichlet, beta, 0.0), dx)
+        if np.any(dirichlet & (np.asarray(alpha) == 0)):
+            raise ValueError(_UNCONSTRAINED_WALL)
+        # The wall value where beta = 0; elsewhere a placeholder whose result np.where discards.
+        wall_value = np.asarray(value) / np.where(dirichlet, alpha, 1.0)
     for k, (ghost_index, mirror_index) in enumerate(layers):
+        odd = None if wall_value is None else 2 * wall_value - buf[mirror_index]
         if np.all(dirichlet):
-            buf[ghost_index] = cell
+            buf[ghost_index] = odd
             continue
         node = buf[mirror_index] + 2 * (k + 1) * dx * (value - alpha * u_wall) / np.where(dirichlet, 1.0, beta)
-        buf[ghost_index] = node if cell is None else np.where(dirichlet, cell, node)
+        buf[ghost_index] = node if odd is None else np.where(dirichlet, odd, node)
 
 
 # =============================================================================
@@ -1082,7 +1091,6 @@ class PreallocatedGhostBuffer:
         dtype: np.dtype = np.float64,
         ghost_depth: int = 1,
         order: int = 2,
-        config: GhostCellConfig | None = None,
         geometry: object | None = None,
         periodic_convention: PeriodicGridConvention | None = None,
         spacing: float | Sequence[float] | None = None,
@@ -1102,7 +1110,6 @@ class PreallocatedGhostBuffer:
             order: Accuracy order for ghost cell reconstruction (default: 2)
                 - order = 2: Linear reflection (simple mirror for Neumann)
                 - order > 2: Polynomial extrapolation (high-order schemes like WENO)
-            config: Ghost cell configuration
             geometry: Geometry object for region_name resolution (Issue #577 Phase 3).
                      Required if BC segments use region_name.
 
@@ -1119,7 +1126,6 @@ class PreallocatedGhostBuffer:
         self._order = order
         self._boundary_conditions = boundary_conditions
         self._domain_bounds = domain_bounds
-        self._config = config if config is not None else GhostCellConfig()
         self._geometry = geometry  # For region_name resolution (Issue #577 Phase 3)
         # Issue #1822. An override for a buffer built from a bare BoundaryConditions; normally
         # the convention arrives ON the BC, bound there by the grid. Consulted only where PERIODIC
@@ -1305,21 +1311,11 @@ class PreallocatedGhostBuffer:
                     buf[ghost] = buf[source]
 
         elif bc_type == BCType.DIRICHLET:
-            # Dirichlet: u_ghost = 2*g - u_interior
+            # u = v on the wall node: the odd reflection about it, ghost = 2 v - mirror (#1968). The wall is a node,
+            # as for the Neumann branch below (#1935).
             for axis in range(d):
-                # Low boundary
-                lo_ghost = [slice(None)] * d
-                lo_ghost[axis] = slice(0, g)
-                lo_interior = [slice(None)] * d
-                lo_interior[axis] = slice(g, 2 * g)
-                buf[tuple(lo_ghost)] = 2 * v - buf[tuple(lo_interior)]
-
-                # High boundary
-                hi_ghost = [slice(None)] * d
-                hi_ghost[axis] = slice(-g, None)
-                hi_interior = [slice(None)] * d
-                hi_interior[axis] = slice(-2 * g, -g)
-                buf[tuple(hi_ghost)] = 2 * v - buf[tuple(hi_interior)]
+                for side in ("min", "max"):
+                    _write_wall_ghosts(buf, axis, side, g, None, v, alpha=1.0, beta=0.0)
 
         elif bc_type in [BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING]:
             # du/dn = v for NEUMANN, 0 for NO_FLUX and REFLECTING, about the wall node (#1935). The outward sign
@@ -1824,8 +1820,8 @@ class PreallocatedGhostBuffer:
             buf[ghost] = buf[source]
 
         elif bc_type == BCType.DIRICHLET:
-            # Dirichlet: u_ghost = 2*g - u_interior
-            buf[tuple(ghost_slices)] = 2 * v - buf[tuple(interior_slices)]
+            # u = v on the wall node: the odd reflection about it, as the uniform branch (#1968).
+            _write_wall_ghosts(buf, axis, side, g, None, v, alpha=1.0, beta=0.0)
 
         elif bc_type in [BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING]:
             # The uniform path's arithmetic, through the same `_write_wall_ghosts`: a per-face Neumann flux was

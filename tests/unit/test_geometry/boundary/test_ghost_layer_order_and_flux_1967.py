@@ -240,8 +240,9 @@ def test_depth_one_is_byte_identical(bc_type, value):
     """Depth 1, which every caller in the library uses and which #1967 left unchanged.
 
     #1935 changed it on purpose for the mirror family: the ghost mirrors the node beside the wall,
-    `u[1] + 2h v`, where it copied the wall node, `u[0] + h v`. Dirichlet and periodic did not move,
-    and those two rows are the part of the original invariance claim that still holds.
+    `u[1] + 2h v`, where it copied the wall node, `u[0] + h v`. #1968 moved Dirichlet the same way, to the
+    odd reflection through the node beside the wall, `2v - u[1]`, where it was `2v - u[0]`. Periodic did
+    not move, and that row is the part of the original invariance claim that still holds.
 
     Named as the discrimination kill matrix records it; the name follows the assertion at the next sweep re-record."""
     field = np.cos(2 * np.pi * _XC)
@@ -251,8 +252,8 @@ def test_depth_one_is_byte_identical(bc_type, value):
         assert padded[0] == pytest.approx(field[-1])
         assert padded[-1] == pytest.approx(field[0])
     elif bc_type == "dirichlet":
-        assert padded[0] == pytest.approx(2 * value - field[0])
-        assert padded[-1] == pytest.approx(2 * value - field[-1])
+        assert padded[0] == pytest.approx(2 * value - field[1])
+        assert padded[-1] == pytest.approx(2 * value - field[-2])
     else:
         # BOTH walls: the high wall is the half that moved at g >= 2 in #1967, so asserting only
         # the low one would leave the claim resting on the side that never changed.

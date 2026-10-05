@@ -1,0 +1,7 @@
+- **The ghost buffer's Dirichlet ghost is node-centred, like the rest of it** (Issue #1968). `TensorProductGrid` puts a node on the wall, and #1935 made the Neumann, no-flux, reflecting and Robin ghosts mirror about it.
+  - The Dirichlet branches, uniform and per-face, still used the cell relation `2 g - u_wall`. At order ≤ 2 that is first order against the node oracle $u(-h)$: 0.118 / 0.061 / 0.031 at 9 / 17 / 33 points on $u = e^x$.
+  - They now take the odd reflection through the node beside the wall, `2 g - u_1`, which is second order.
+  - Robin with β = 0, the same condition, moves with them.
+  - No solver test changed when this was probed across the whole suite, slow tests included. The values that moved are those of the unit tests asserting the ghost formula itself.
+- **`PreallocatedGhostBuffer(config=)` is removed.** The buffer stored a `GhostCellConfig` and never read it, so `GridType.VERTEX_CENTERED` passed there changed nothing. No caller in the repository passed it.
+- `FDMApplicator(grid_type=)`, the calculator route (`bc_to_topology_calculator`) and `_compat` keep their `GridType` branches; that part of #1968 stays open.

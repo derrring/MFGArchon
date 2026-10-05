@@ -120,9 +120,9 @@ def test_the_documented_example_is_what_the_function_returns():
 
 def test_a_robin_wall_whose_beta_vanishes_on_part_of_the_face():
     """Field coefficients, as an FP wall carries them: per point on the face. Where beta = 0 the condition is
-    Dirichlet, u = g/alpha, and takes the cell ghost 2 g/alpha - u_b as the Dirichlet branch does; elsewhere
-    the node form. The third point has alpha/2 + beta/dx = 0, the CELL form's singularity, which must not
-    reach a point that uses the node form."""
+    Dirichlet, u = g/alpha, and takes the odd reflection 2 g/alpha - u_1 through the node beside the wall, as
+    the Dirichlet branch does (#1968); elsewhere the node form. The third point has alpha/2 + beta/dx = 0,
+    where the cell form was singular; the node form determines it."""
     from mfgarchon.geometry.boundary.applicator_fdm import _write_wall_ghosts
 
     rng = np.random.default_rng(1935)
@@ -131,7 +131,7 @@ def test_a_robin_wall_whose_beta_vanishes_on_part_of_the_face():
     wall, mirror = buf[1].copy(), buf[2].copy()
     _write_wall_ghosts(buf, 0, "min", 1, dx, value, alpha, beta)
     expected = mirror + 2 * dx * (value - alpha * wall) / np.where(beta == 0, 1.0, beta)
-    expected[0] = 2 * value[0] / alpha[0] - wall[0]
+    expected[0] = 2 * value[0] / alpha[0] - mirror[0]
     np.testing.assert_allclose(buf[0], expected, rtol=0, atol=1e-12)
 
 
@@ -144,3 +144,37 @@ def test_an_axis_too_short_for_the_mirror_raises():
         pad_array_with_ghosts(np.array([1.0]), no_flux_bc(dimension=1), ghost_depth=1, spacing=0.1)
     with pytest.raises(ValueError, match="needs 4 nodes"):
         pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), no_flux_bc(dimension=1), ghost_depth=3, spacing=0.1)
+
+
+@pytest.mark.parametrize("path", ["uniform", "per-face", "robin-beta0"])
+def test_the_dirichlet_ghost_converges_to_the_node_oracle_at_second_order(path):
+    """#1968: on this node-centred grid the Dirichlet ghost is the odd reflection about the wall node, so it
+    approximates u(-h) to O(h^2) at both walls. The cell relation it replaced, 2 g - u_wall, is O(h): it read
+    0.118 / 0.061 / 0.031 at 9 / 17 / 33 points on u = exp(x).
+
+    The uniform condition carries one value, so its field vanishes at both walls, u = sin(pi x) exp(x); the
+    per-face ones take u = exp(x) with each wall's own value. Robin with beta = 0 is the same condition."""
+    from mfgarchon.geometry.boundary import dirichlet_bc, pad_array_with_ghosts
+
+    def exact(x):
+        return np.sin(np.pi * x) * np.exp(x) if path == "uniform" else np.exp(x)
+
+    if path == "uniform":
+        conditions = dirichlet_bc(value=0.0, dimension=1)
+    else:
+        kind, coeffs = (BCType.DIRICHLET, {}) if path == "per-face" else (BCType.ROBIN, {"alpha": 1.0, "beta": 0.0})
+        conditions = BoundaryConditions(
+            segments=[
+                BCSegment(name="lo", bc_type=kind, value=1.0, boundary="x_min", **coeffs),
+                BCSegment(name="hi", bc_type=kind, value=float(np.e), boundary="x_max", **coeffs),
+            ],
+            dimension=1,
+        )
+    errors = []
+    for n in (17, 33, 65):
+        h = 1.0 / (n - 1)
+        x = np.linspace(0.0, 1.0, n)
+        padded = pad_array_with_ghosts(exact(x), conditions, ghost_depth=1, spacing=h)
+        errors.append(max(abs(padded[0] - exact(-h)), abs(padded[-1] - exact(1.0 + h))))
+    orders = np.log2(np.array(errors[:-1]) / np.array(errors[1:]))
+    assert np.all(orders > 1.8), f"observed orders {orders}, errors {errors}"

@@ -155,21 +155,23 @@ def test_every_other_member_is_untouched(build, bc_type):
     regression wearing this commit's message.
 
     #1935 later moved the mirror family -- NEUMANN(0), NO_FLUX, REFLECTING -- on purpose, from the
-    wall node to the node beside it, (2.5, 6.6) to (3.1, 5.2); every other row is as #1958 left it.
+    wall node to the node beside it, (2.5, 6.6) to (3.1, 5.2). #1968 moved DIRICHLET and ROBIN (beta = 0)
+    the same way, to the odd reflection through that node, (-2.5, -6.6) to (-3.1, -5.2); every other row
+    is as #1958 left it.
     Named as the discrimination kill matrix records it; the name follows the assertion at the next sweep re-record."""
     _BEFORE = {
-        ("mixed", "DIRICHLET"): (-2.5, -6.6),
+        ("mixed", "DIRICHLET"): (-3.1, -5.2),
         ("mixed", "NEUMANN"): (3.1, 5.2),
         ("mixed", "NO_FLUX"): (3.1, 5.2),
         ("mixed", "PERIODIC"): (6.6, 2.5),
         ("mixed", "REFLECTING"): (3.1, 5.2),
-        ("mixed", "ROBIN"): (-2.5, -6.6),
-        ("uniform", "DIRICHLET"): (-2.5, -6.6),
+        ("mixed", "ROBIN"): (-3.1, -5.2),
+        ("uniform", "DIRICHLET"): (-3.1, -5.2),
         ("uniform", "NEUMANN"): (3.1, 5.2),
         ("uniform", "NO_FLUX"): (3.1, 5.2),
         ("uniform", "PERIODIC"): (6.6, 2.5),
         ("uniform", "REFLECTING"): (3.1, 5.2),
-        ("uniform", "ROBIN"): (-2.5, -6.6),
+        ("uniform", "ROBIN"): (-3.1, -5.2),
     }
     kind = "mixed" if build is _mixed else "uniform"
     lo, hi = _BEFORE[(kind, bc_type.name)]

@@ -166,12 +166,13 @@ def test_the_cells_that_must_not_have_moved(bc_factory, label):
     coincide there -- a fix that changed it would be a regression, and #1935 did not.
 
     Homogeneous Neumann did move in #1935, on purpose: its ghost mirrors the node beside the wall,
-    `u_1`, where it copied the wall node `u_0`."""
+    `u_1`, where it copied the wall node `u_0`. `beta = 0` moved in #1968 for the same reason: its ghost
+    is the odd reflection `2 g/alpha - u_1` through the node beside the wall, where it was `2 g/alpha - u_0`."""
     padded = pad_array_with_ghosts(_U, bc_factory(), spacing=_DX)
 
     if label == "NEUMANN":
         assert padded[0] == pytest.approx(_U[1])
         assert padded[-1] == pytest.approx(_U[-2])
     else:
-        assert padded[0] == pytest.approx(2 * 0.7 - _U[0])
-        assert padded[-1] == pytest.approx(2 * 0.7 - _U[-1])
+        assert padded[0] == pytest.approx(2 * 0.7 - _U[1])
+        assert padded[-1] == pytest.approx(2 * 0.7 - _U[-2])

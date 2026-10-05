@@ -146,7 +146,7 @@ def test_an_uncovered_face_with_no_default_bc_raises_rather_than_guessing():
     [
         (BCType.NO_FLUX, 0.0, 12.25),  # mirror about the wall node: u[-2] (#1935)
         (BCType.NEUMANN, 3.0, 13.75),  # u[-2] + 2*dx*v = 12.25 + 2*0.25*3
-        (BCType.DIRICHLET, 5.0, -3.0),  # 2*g - u[-1] = 10 - 13
+        (BCType.DIRICHLET, 5.0, -2.25),  # 2*g - u[-2] = 10 - 12.25, odd about the wall node (#1968)
         (BCType.PERIODIC, 0.0, 10.0),  # wraps to u[0]
     ],
 )
@@ -160,7 +160,8 @@ def test_the_default_branch_uses_both_default_bc_and_default_value(default_bc, d
 
     Each row here produces a different number by a different formula, so no single wrong constant
     can satisfy more than one. The `x_min` wall is claimed by an explicit Dirichlet segment in every
-    row and its ghost is asserted unchanged at `2*7 - 10 = 4.0`, which is the control: it shows the
+    row and its ghost is asserted unchanged at `2*7 - 10.75 = 3.25` (odd about the wall node, #1968), which
+    is the control: it shows the
     rows differ because the DEFAULT branch differs, not because the whole BC changed.
     """
     bc = BoundaryConditions(
@@ -173,7 +174,7 @@ def test_the_default_branch_uses_both_default_bc_and_default_value(default_bc, d
     padded = pad_array_with_ghosts(_RAMP, bc, spacing=_DX)
 
     assert padded[-1] == pytest.approx(expected_hi_ghost, abs=1e-12)
-    assert padded[0] == pytest.approx(4.0, abs=1e-12), (
+    assert padded[0] == pytest.approx(3.25, abs=1e-12), (
         "the claimed wall moved, so the row is not isolating the default branch"
     )
 
