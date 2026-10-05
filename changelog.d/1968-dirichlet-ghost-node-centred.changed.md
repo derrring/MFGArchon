@@ -15,7 +15,7 @@
     - The 2-D upwind case has not been isolated.
 - **Level-set reinitialisation reads the ghost too.** On 101 nodes after 200 iterations:
   - its output is unchanged on an exact signed distance;
-  - it moves by 5.0e-3 on twice a signed distance, 5.2e-3 on a field non-monotone at the wall, and 0.42 on $\cos(3\pi x)$, whose wall data disagree with the Dirichlet value.
+  - it moves by 5.0e-3 on twice a signed distance (wall value 0.5, Dirichlet value 0.25); 5.2e-3 on a positive bump, $0.1 + 0.3\sin(5\pi x)$ on $x < 0.2$ and 0.1 elsewhere, which has no zero level set; and 0.42 on $\cos(3\pi x)$ with Dirichlet value 1, which its value −1 at $x = 1$ contradicts.
 - **The grid's gradient and Laplacian operators change at a Dirichlet wall**, on $u = \sin(\pi x) e^x$:
   - the wall gradient's error was O(1) and flat in h (central 1.5, upwind 3.1); it is now first order, 0.18 / 0.095 / 0.048;
   - the wall Laplacian diverged, 47 → 198; it now returns 0, a constant error of $|u''(0)| = 2\pi$.
