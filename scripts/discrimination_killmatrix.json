@@ -2263,7 +2263,7 @@
     "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_default_bc_is_a_second_lever_with_no_permutation_available": [
       "bc_noflux_reads_as_clamp"
     ],
-    "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_the_guard_and_the_lookup_are_separable_2284": [
+    "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_the_per_axis_owner_does_not_read_the_lookup_2284": [
       "bc_noflux_reads_as_clamp"
     ],
     "tests/unit/test_geometry/test_neumann_low_wall_sign.py::TestNeumannLowWallSign::test_negative_v_low_ghost": [
@@ -2598,7 +2598,7 @@
         "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_the_mapping_is_case_insensitive",
         "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_a_duck_typed_bc_is_checked_not_waved_through",
         "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_default_bc_is_a_second_lever_with_no_permutation_available",
-        "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_the_guard_and_the_lookup_are_separable_2284"
+        "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_the_per_axis_owner_does_not_read_the_lookup_2284"
       ],
       "owner": "no_flux/neumann/robin -> reflect (#1698)",
       "seconds": 126.3,

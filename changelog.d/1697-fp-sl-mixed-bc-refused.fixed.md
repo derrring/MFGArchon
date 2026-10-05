@@ -20,6 +20,12 @@ solve-time sites and `_refuse_mixed_per_axis` for the constructor.)
 
 FPSLSolver now caches only an explicitly-passed BC and otherwise resolves the geometry live at each point of use, so the guard sees a BC replaced after construction rather than a construction-time snapshot -- the bypass it exists to close.
 
-Per-axis handling is the actual fix and remains open. It is deliberately not attempted here:
+~~Per-axis handling is the actual fix and remains open. It is deliberately not attempted here:
 `splat_linear_nd` is periodic-blind (it clamps corner indices), so routing a periodic axis through
-it would move traffic onto a known-wrong path that the current uniform configuration avoids.
+it would move traffic onto a known-wrong path that the current uniform configuration avoids.~~
+**[SUPERSEDED 2026-10-05]** Per-axis handling landed in the same release. The splat objection does
+not bite: each destination is folded into the domain by its axis's operation before `splat_linear_nd`
+sees it, so its clamp only ever meets an in-domain point and loses nothing -- the path a uniform
+periodic BC already took. A whole-cell translation along the channel's periodic axis is reproduced
+to 1.1e-15.
+SUPERSEDED-BY: `changelog.d/1560-1697-sl-per-axis-bc.fixed.md`

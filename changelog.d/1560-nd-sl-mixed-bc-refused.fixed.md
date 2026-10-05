@@ -14,5 +14,7 @@ declared type instead of retyping it.
 
 The refusal is pinned behaviourally across the 45-cell dispatch matrix (dimension x characteristic solver x diffusion method), with a source-level invariant test as a backstop.
 
-Per-axis handling is the actual fix and remains open on #1560; until then the library refuses the
-configuration rather than solving a different one.
+~~Per-axis handling is the actual fix and remains open on #1560; until then the library refuses the
+configuration rather than solving a different one.~~ **[SUPERSEDED 2026-10-05]** Per-axis handling
+landed in the same release, so the refusal above now applies only to an axis whose two faces disagree.
+SUPERSEDED-BY: `changelog.d/1560-1697-sl-per-axis-bc.fixed.md`
