@@ -1,0 +1,6 @@
+- **A wall formula that needs the grid spacing refuses when it has none, instead of using 1.0** (Issue #1936). `PreallocatedGhostBuffer` built without `spacing=` or `domain_bounds=` used `dx = 1.0` wherever a ghost formula multiplies by the spacing: the uniform and per-face Neumann, no-flux and reflecting branches, both Robin branches, and the polynomial extrapolation. A Neumann value `g` was then applied as `g/h`, which is what #1904 measured. Each site now raises `ValueError`, naming the missing `spacing=` / `domain_bounds=`. It refuses only where the formula reads the spacing:
+  - a pure mirror (zero flux, no Robin coefficient) still runs without a spacing;
+  - so does the polynomial extrapolation of Dirichlet data or a zero flux, whose ghosts are the same at every scale of $x$.
+- **`FDMApplicator.enforce_values` wants one spacing per axis.** An axis its `spacing` had no entry for was enforced at `h = 1.0`; a `spacing` whose length differs from the field's dimension now raises.
+- `PreallocatedGhostBuffer.get_padded_coordinates`, which has no caller in the repository, refuses a one-point axis without a spacing instead of placing its ghosts 1.0 apart.
+- `pad_array_with_ghosts` already refused a missing spacing (#2140). This covers the buffer's own constructor, which `pad_array_with_ghosts` does not reach without one.

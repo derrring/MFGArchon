@@ -286,6 +286,11 @@ class FDMApplicator(BaseStructuredApplicator):
             spacing_tuple = tuple(spacing)
         else:
             spacing_tuple = spacing
+        if len(spacing_tuple) != field.ndim:
+            raise ValueError(
+                f"spacing has {len(spacing_tuple)} entries for a {field.ndim}-D field; pass one per axis. "
+                "An axis without an entry was enforced at h = 1.0 (#1936)."
+            )
 
         # Import BC types
         from mfgarchon.geometry.boundary.types import BCType
@@ -328,8 +333,7 @@ class FDMApplicator(BaseStructuredApplicator):
                 else:
                     bc_value = segment.value
 
-                # Get grid spacing for this dimension
-                h = spacing_tuple[dim] if dim < len(spacing_tuple) else 1.0
+                h = spacing_tuple[dim]
 
                 # Enforce BC based on type
                 if segment.bc_type == BCType.DIRICHLET:
@@ -932,12 +936,23 @@ def _wall_layer_indices(axis: int, side: str, g: int) -> tuple[tuple, tuple[tupl
     return wall, layers
 
 
+def _spacing_for_wall(dx: float | None, axis: int, side: str) -> float:
+    """The spacing a wall formula multiplies by, or a refusal when the caller does not have it (#1936)."""
+    if dx is None:
+        raise ValueError(
+            f"the ghost layers beyond the {side} wall of axis {axis} carry a non-zero flux or a Robin "
+            "coefficient, which needs the grid spacing, and none was given: build the buffer with spacing= "
+            "or domain_bounds=. The former fallback, dx = 1.0, applied a Neumann value g as g/h (#1904, #1936)."
+        )
+    return dx
+
+
 def _write_wall_ghosts(
     buf: np.ndarray,
     axis: int,
     side: str,
     g: int,
-    dx: float,
+    dx: float | None,
     value: float | np.ndarray,
     alpha: float | np.ndarray = 0.0,
     beta: float | np.ndarray = 1.0,
@@ -960,6 +975,9 @@ def _write_wall_ghosts(
     = 0 constrains nothing, and that owner raises.
 
     Layout along ``axis``: [ghost_lo (g) | interior (N) | ghost_hi (g)].
+
+    ``dx = None`` means the caller does not know the spacing. Only the pure mirror (alpha = 0, value = 0) is
+    independent of it; every other condition refuses rather than assume one (#1904, #1936).
     """
     nodes = buf.shape[axis] - 2 * g
     if nodes < g + 1:
@@ -982,6 +1000,7 @@ def _write_wall_ghosts(
             for ghost_index, mirror_index in layers:
                 buf[ghost_index] = buf[mirror_index]
             return
+        dx = _spacing_for_wall(dx, axis, side)
         step = 2 * dx * value / beta if alpha == 0 else 2 * dx * (value - alpha * buf[wall]) / beta
         for k, (ghost_index, mirror_index) in enumerate(layers):
             buf[ghost_index] = buf[mirror_index] + (k + 1) * step
@@ -989,6 +1008,11 @@ def _write_wall_ghosts(
 
     u_wall = buf[wall]
     dirichlet = np.abs(np.asarray(beta, dtype=float)) == 0.0
+    if dx is None and not np.any(dirichlet) and np.all(np.asarray(alpha) == 0) and np.all(np.asarray(value) == 0):
+        for ghost_index, mirror_index in layers:
+            buf[ghost_index] = buf[mirror_index]
+        return
+    dx = _spacing_for_wall(dx, axis, side)
     cell = None
     if np.any(dirichlet):
         # Wanted only where beta = 0. Elsewhere the cell form's own singularity, alpha/2 + beta/dx = 0, does not
@@ -1296,7 +1320,7 @@ class PreallocatedGhostBuffer:
             # `_write_wall_ghosts`, shared with the per-face path and with ROBIN.
             flux = v if bc_type == BCType.NEUMANN else 0.0
             for axis in range(d):
-                dx = self._grid_spacing[axis] if self._grid_spacing is not None else 1.0
+                dx = None if self._grid_spacing is None else self._grid_spacing[axis]
                 for side in ("min", "max"):
                     _write_wall_ghosts(buf, axis, side, g, dx, flux)
 
@@ -1304,7 +1328,7 @@ class PreallocatedGhostBuffer:
             # alpha*u + beta*du/dn = v with du/dn the OUTWARD normal derivative, which is what
             # `BCSegment.beta` and `BCType.ROBIN` declare (#1262, #2063), about the wall node (#1935).
             for axis in range(d):
-                dx = self._grid_spacing[axis] if self._grid_spacing is not None else 1.0
+                dx = None if self._grid_spacing is None else self._grid_spacing[axis]
                 for side in ("min", "max"):
                     _write_wall_ghosts(buf, axis, side, g, dx, v, alpha, beta)
 
@@ -1435,11 +1459,16 @@ class PreallocatedGhostBuffer:
         g = self._ghost_depth
         d = self._dimension
 
-        # Get grid spacing for this axis
         if self._grid_spacing is not None:
             dx = self._grid_spacing[axis]
+        elif bc_type == BCType.NEUMANN and bc_value != 0:
+            raise ValueError(
+                f"extrapolating a Neumann value {bc_value} beyond axis {axis} needs the grid spacing, and none "
+                "was given: build the buffer with spacing= or domain_bounds= (#1936)."
+            )
         else:
-            # Assume uniform spacing of 1.0 if not provided
+            # Dirichlet data and a zero flux give the same ghosts at every scale of x: the fit in x/dx is one
+            # polynomial. Only a non-zero flux du/dn = g carries a length.
             dx = 1.0
 
         # Extract all points along this axis (iterating over other axes)
@@ -1796,17 +1825,14 @@ class PreallocatedGhostBuffer:
             # once dropped here while the uniform path carried it (#1937), and the layers were reversed in both
             # (#1967) -- one copy each time.
             flux = v if bc_type == BCType.NEUMANN else 0.0
-            dx = self._grid_spacing[axis] if self._grid_spacing is not None else 1.0
+            dx = None if self._grid_spacing is None else self._grid_spacing[axis]
             _write_wall_ghosts(buf, axis, side, g, dx, flux)
 
         elif bc_type == BCType.ROBIN:
             # alpha*u + beta*du/dn = g, du/dn outward (#625, #2063), about the wall node (#1935).
             alpha = getattr(segment, "alpha", 0.0)
             beta = getattr(segment, "beta", 1.0)
-            if self._grid_spacing is not None:
-                dx = self._grid_spacing[axis]
-            else:
-                dx = 1.0  # Fallback (may give incorrect results without proper dx)
+            dx = None if self._grid_spacing is None else self._grid_spacing[axis]
             _write_wall_ghosts(buf, axis, side, g, dx, v, alpha, beta)
 
         elif bc_type in (BCType.EXTRAPOLATION_LINEAR, BCType.EXTRAPOLATION_QUADRATIC):
@@ -1908,7 +1934,10 @@ class PreallocatedGhostBuffer:
             elif self._grid_spacing is not None:
                 h = self._grid_spacing[dim]
             else:
-                h = 1.0  # Fallback for single-point dimension
+                raise ValueError(
+                    f"axis {dim} has one coordinate, so its ghost positions need the grid spacing, and none was "
+                    "given: build the buffer with spacing= or domain_bounds= (#1936)."
+                )
 
             # Extend coordinates: add g points on each side
             lo_ghost_coords = coord[0] - h * np.arange(g, 0, -1)  # [x_min - g*h, ..., x_min - h]
