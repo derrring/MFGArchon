@@ -243,8 +243,6 @@ class CartesianGridMFGProtocol(MFGProblemProtocol, Protocol):
             Must be integer (not "network")
         spatial_bounds: list[tuple[float, float]]
             [(x₀_min, x₀_max), (x₁_min, x₁_max), ...]
-        spatial_discretization: list[int]
-            [N₀, N₁, ...] grid points per dimension
         xSpace: NDArray | list[NDArray]
             Coordinate arrays
 
@@ -275,7 +273,6 @@ class CartesianGridMFGProtocol(MFGProblemProtocol, Protocol):
 
     dimension: int  # Must be int, not "network"
     spatial_bounds: list[tuple[float, float]]  # [(x₀_min, x₀_max), ...]
-    spatial_discretization: list[int]  # [N₀, N₁, ...]
     xSpace: NDArray | list[NDArray]  # Coordinate arrays
 
     # ====================

@@ -117,7 +117,6 @@ class PointCloudGeometry:
                 - num_spatial_points: Number of particles
                 - spatial_shape: (num_particles,)
                 - spatial_bounds: Bounding box of particles
-                - spatial_discretization: None (not applicable)
                 - legacy_1d_attrs: None
         """
         min_coords = np.min(self.positions, axis=0)
@@ -128,7 +127,6 @@ class PointCloudGeometry:
             "num_spatial_points": self.num_particles,
             "spatial_shape": (self.num_particles,),
             "spatial_bounds": bounds,
-            "spatial_discretization": None,
             "legacy_1d_attrs": None,
         }
 

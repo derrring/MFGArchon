@@ -125,7 +125,6 @@ class GeometryProtocol(Protocol):
                 - num_spatial_points: int - Total number of spatial points
                 - spatial_shape: tuple - Shape of spatial arrays
                 - spatial_bounds: tuple of tuples or None - Bounds [(min, max), ...]
-                - spatial_discretization: tuple or None - Discretization [Nx, Ny, ...]
                 - legacy_1d_attrs: dict or None - Legacy 1D attributes (xmin, xmax, etc.)
 
         Added in v0.10.1 for polymorphic geometry handling.

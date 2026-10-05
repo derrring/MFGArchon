@@ -463,7 +463,6 @@ class TensorProductGrid(
                 - num_spatial_points: Total number of points
                 - spatial_shape: Shape tuple (Nx_points[0], Nx_points[1], ...)
                 - spatial_bounds: Bounds [(xmin, xmax), (ymin, ymax), ...]
-                - spatial_discretization: Number of points [Nx_points[0], ...]
                 - legacy_1d_attrs: Legacy 1D attributes (xmin, xmax, etc.) if 1D
 
         Added in v0.10.1 for polymorphic geometry handling.
@@ -472,7 +471,6 @@ class TensorProductGrid(
             "num_spatial_points": self.total_points(),
             "spatial_shape": tuple(self._Nx_points),
             "spatial_bounds": tuple(self.bounds),
-            "spatial_discretization": tuple(self._Nx_points),
         }
 
         # Legacy 1D attributes (for backward compatibility with 1D solvers)
