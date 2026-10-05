@@ -585,8 +585,8 @@ axes and refused. The sequence form is the convention, and library code uses it.
   `np.sum(m) * dx`, mostly particle/KDE diagnostics and convergence metrics.*
 - **Mass conservation needs both the boundary condition and a conservative discretisation.** Under
   no-flux and periodic boundaries the divergence-form schemes, FVM and the splatting semi-Lagrangian
-  solver conserve mass to rounding; FP-FDM's `gradient_upwind` and `gradient_centered` schemes do not,
-  and can lose most of it. Under absorbing boundaries the invariant is that the mass lost equals the
+  solver conserve mass to rounding; FP-FDM's `gradient_upwind` and `gradient_centered` schemes did not,
+  could lose most of it, and were removed in #2007. Under absorbing boundaries the invariant is that the mass lost equals the
   accumulated boundary flux. Conservation and discrete adjointness are separate properties, tested
   separately.
 - **Renormalisation is a per-solver property, not a convention.** `FPSLSolver` does not rescale,

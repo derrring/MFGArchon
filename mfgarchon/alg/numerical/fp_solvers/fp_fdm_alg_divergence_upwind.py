@@ -26,8 +26,6 @@ Mathematical Background:
 Comparison with other schemes:
     | Scheme             | Conservative | Stable      | Accuracy |
     |--------------------|--------------|-------------|----------|
-    | gradient_centered  | NO           | Peclet < 2  | O(dx^2)  |
-    | gradient_upwind    | YES (rows)   | Always      | O(dx)    |
     | divergence_centered| YES (flux)   | Peclet < 2  | O(dx^2)  |
     | divergence_upwind  | YES (flux)   | Always      | O(dx)    |
 """

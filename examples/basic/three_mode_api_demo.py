@@ -111,8 +111,8 @@ def demo_expert_mode():
     problem = create_problem()
 
     # Expert Mode: Create and configure solvers manually.
-    # 'divergence_upwind' is the only one of the four advection schemes that solves this problem.
-    # Measured here, one outcome each -- the failures are NOT the same failure. The two aborts
+    # 'divergence_upwind' is the only one of the four advection schemes that solved this problem
+    # (the two gradient ones were removed in #2007). Measured here, one outcome each -- the failures are NOT the same failure. The two aborts
     # fire inside Picard iteration 1 and so do not depend on the cap; the two convergence counts do,
     # and are quoted at cap 60. "loses 98.17%" is an endpoint mass ratio; "5.1e-15" is
     # mass_conservation_error, a max over time -- different quantities, both worth seeing:
@@ -120,8 +120,8 @@ def demo_expert_mode():
     #   gradient_upwind      converges at 27, endpoint mass ratio 0.018302 (-98.17%)
     #   divergence_centered  aborts at timestep 3/20 (density -6.319e-06)
     #   divergence_upwind    converges at 49, mass_conservation_error 5.1e-15
-    # The gradient family is non-conservative at a no-flux wall (#1075, #2007, #2008), but HOW a
-    # given one fails is a property of the configuration, not of the family -- see the leak table
+    # The gradient family was non-conservative at a no-flux wall (#1075, #2007, #2008), but HOW a
+    # given one failed was a property of the configuration, not of the family -- see the leak table
     # in geometry/boundary/conditions.py, which says so and is measured at a different resolution.
     hjb = HJBFDMSolver(problem)
     fp = FPFDMSolver(problem, advection_scheme="divergence_upwind")

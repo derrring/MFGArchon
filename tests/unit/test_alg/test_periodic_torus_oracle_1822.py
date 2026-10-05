@@ -169,15 +169,16 @@ def test_a_periodic_solve_translates_rigidly(name):
     assert errors[1] < errors[0], f"{name} translation error did not improve under refinement: {errors}"
 
 
-@pytest.mark.parametrize("scheme", ["divergence_upwind", "divergence_centered", "gradient_upwind", "gradient_centered"])
+@pytest.mark.parametrize("scheme", ["divergence_upwind", "divergence_centered"])
 def test_every_fdm_advection_scheme_wraps_on_the_same_torus(scheme):
-    """All four schemes carried their own copy of the wrap, so all four are measured.
+    """Every scheme carried its own copy of the wrap, so every scheme is measured: four of them until
+    #2007 removed the gradient pair, two now.
 
     They now route through one owner, which is exactly why this cannot be one test on the default:
     a copy left behind in a non-default scheme is invisible to a caller who never selects it, and
-    ``FPFDMSolver`` reaches all four through ``advection_scheme``.
+    ``FPFDMSolver`` reaches each through ``advection_scheme``.
 
-    Note what this does NOT show. Under zero drift the four reduce to the same diffusion operator,
+    Note what this does NOT show. Under zero drift the schemes reduce to the same diffusion operator,
     so agreement here says they were fixed together, not that each wrap is separately exercised;
     the drift case above is what puts mass across the wrap face, and it runs on the default.
     """
