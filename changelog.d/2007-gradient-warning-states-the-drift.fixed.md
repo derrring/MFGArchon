@@ -1,4 +1,4 @@
-The `gradient_*` non-conservation warning states the drift dependence instead of understating the
+**[SUPERSEDED 2026-10-05]** The `gradient_*` non-conservation warning states the drift dependence instead of understating the
 leak by an order of magnitude (#2007).
 
 It read *"leaks O(1e-2), even with zero drift"*. Measured:
@@ -15,8 +15,10 @@ budgeting against `O(1e-2)` was off by 10× exactly where the scheme is used.
 The message also now names the **second** defect, because a reader who hears only "does not conserve
 mass" will reach for a conservative wall and that would not fix it: `div(αm) = α·∇m + m ∇·α`, and the
 gradient form drops the second term, so it does not discretize the FP operator even away from the
-wall. Measured on a source-free instance, repointing the wall moves the error from 5.81e-1 to
-8.02e-1 — EOC −0.007 → 0.108.
+wall. ~~Measured on a source-free instance, repointing the wall moves the error from 5.81e-1 to
+8.02e-1 — EOC −0.007 → 0.108.~~ That repointed wall on a gradient interior is neither scheme; the
+wall-free figure, under a periodic boundary, is 5.811380e-01 / 5.839517e-01, EOC −0.007
+(`1728-fp-mms-wall-order.added.md`).
 
 **What this change deliberately does not do.** #2007 recommends removing these schemes, and that
 recommendation stands. It is not settled here: `test_gradient_centered_still_available_and_leaks`
@@ -24,7 +26,8 @@ records a standing decision to keep them explicitly selectable, and a warning is
 overturn a recorded decision. A first attempt at this change refused the scheme under `no_flux` and
 turned that test red — which is how the standing decision was found.
 
-The corrected figures are pinned, including that `O(1e-2)` may appear only as a retraction and not as
-a live claim, with a control confirming the `divergence_*` schemes do not warn.
+~~The corrected figures are pinned, including that `O(1e-2)` may appear only as a retraction and not as
+a live claim, with a control confirming the `divergence_*` schemes do not warn.~~ The pins were
+removed with the schemes.
 
-**Superseded in the same release:** the `gradient_*` schemes, and this warning with them, were removed (#2007, maintainer ruling 2026-10-04); see `2007-remove-fp-gradient-schemes.removed.md`.
+SUPERSEDED-BY: `2007-remove-fp-gradient-schemes.removed.md`, in the same release. The `gradient_*` schemes, and this warning with them, were removed (#2007, maintainer ruling 2026-10-04).

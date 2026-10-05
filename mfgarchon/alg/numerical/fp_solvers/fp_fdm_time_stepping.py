@@ -121,8 +121,9 @@ _SCHEME_ALIASES = {
 
 #: The gradient form v.grad(m), removed in #2007 (maintainer ruling 2026-10-04), with the scheme to use
 #: instead. It drops m*div(v) from div(v*m), so with a non-constant drift it discretizes a different
-#: equation, and its wall imposed dm/dn = 0 rather than J.n = 0 (EOC 0.00 at a drifting wall). Fixing
-#: the wall alone left it non-convergent. "centered" and "upwind" were its legacy aliases.
+#: equation, and its wall imposed dm/dn = 0 rather than J.n = 0 (EOC 0.00 at a drifting wall). With no
+#: wall at all, under a periodic boundary, it does not converge either (EOC -0.007,
+#: test_fp_mms_wall_order_1728.py). "centered" and "upwind" were its legacy aliases.
 _REMOVED_SCHEMES = {
     "gradient_centered": "divergence_centered",
     "gradient_upwind": "divergence_upwind",

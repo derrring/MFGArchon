@@ -2,8 +2,8 @@
 
 `gradient_upwind` and `gradient_centered` discretized v.grad(m). That drops m*div(v) from div(v*m), so
 with a non-constant drift they solved a different equation, and their wall imposed dm/dn = 0 instead
-of J.n = 0: EOC 0.00 at a drifting wall, and still non-convergent with the wall repointed. The
-maintainer ruled on 2026-10-04 to remove them rather than repair the wall. Their legacy aliases
+of J.n = 0: EOC 0.00 at a drifting wall, and EOC -0.007 with no wall at all, under a periodic
+boundary (test_fp_mms_wall_order_1728.py). The maintainer ruled on 2026-10-04 to remove them rather than repair the wall. Their legacy aliases
 "centered" and "upwind" went with them; "flux" (-> divergence_upwind) is the control that must still
 resolve.
 """

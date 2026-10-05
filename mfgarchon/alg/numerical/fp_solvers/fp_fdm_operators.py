@@ -1,10 +1,10 @@
 """Finite difference operators for FP equation discretization.
 
-This module provides common utilities and re-exports for the FDM discretization
+This module provides common utilities for the FDM discretization
 of the Fokker-Planck equation.
 
 Module structure per issue #388:
-    fp_fdm_operators.py - Common utilities and backward-compatible re-exports
+    fp_fdm_operators.py - Common utilities
 
 Advection Scheme Files:
     fp_fdm_alg_divergence_centered.py - divergence_centered (conservative, oscillates)

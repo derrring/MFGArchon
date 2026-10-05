@@ -120,8 +120,8 @@ def demo_expert_mode():
     #   gradient_upwind      converges at 27, endpoint mass ratio 0.018302 (-98.17%)
     #   divergence_centered  aborts at timestep 3/20 (density -6.319e-06)
     #   divergence_upwind    converges at 49, mass_conservation_error 5.1e-15
-    # The gradient family is non-conservative at a no-flux wall (#1075, #2007, #2008), but HOW a
-    # given one fails is a property of the configuration, not of the family -- see the leak table
+    # The gradient family was non-conservative at a no-flux wall (#1075, #2007, #2008), but HOW a
+    # given one failed was a property of the configuration, not of the family -- see the leak table
     # in geometry/boundary/conditions.py, which says so and is measured at a different resolution.
     hjb = HJBFDMSolver(problem)
     fp = FPFDMSolver(problem, advection_scheme="divergence_upwind")
