@@ -16,31 +16,44 @@ import pytest
 
 import numpy as np
 
-from mfgarchon import MFGProblem
+from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
-COMPONENTS = MFGComponents(
-    m_initial=lambda x: np.exp(-30 * np.sum((np.asarray(x) - 0.5) ** 2, axis=-1)),
-    u_terminal=lambda x: 0.0,
-    hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)),
-)
-KWARGS = {"Nt": 4, "T": 0.2, "volatility": 0.4, "components": COMPONENTS}
+HAMILTONIAN = SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0))
+
+
+def M0(x):
+    return np.exp(-30 * np.sum((np.asarray(x) - 0.5) ** 2, axis=-1))
 
 
 def _via_bounds():
+    # `spatial_discretization=` exists only on the legacy constructor, so this path warns that it is deprecated.
+    components = MFGComponents(m_initial=M0, u_terminal=lambda x: 0.0, hamiltonian=HAMILTONIAN)
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="initial density mass")
-        return MFGProblem(spatial_bounds=[(0.0, 1.0), (0.0, 1.0)], spatial_discretization=[10, 10], **KWARGS)
+        return MFGProblem(
+            spatial_bounds=[(0.0, 1.0), (0.0, 1.0)],
+            spatial_discretization=[10, 10],
+            Nt=4,
+            T=0.2,
+            volatility=0.4,
+            components=components,
+        )
 
 
 def _via_geometry():
     grid = TensorProductGrid(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[11, 11], boundary_conditions=no_flux_bc(2))
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="initial density mass")
-        return MFGProblem(geometry=grid, **KWARGS)
+        return MFGProblem(
+            model=Model(hamiltonian=HAMILTONIAN, volatility=0.4),
+            domain=grid,
+            conditions=Conditions(m_initial=M0, u_terminal=lambda x: 0.0, T=0.2),
+            Nt=4,
+        )
 
 
 @pytest.mark.parametrize("build", [_via_bounds, _via_geometry], ids=["spatial_bounds", "geometry"])
