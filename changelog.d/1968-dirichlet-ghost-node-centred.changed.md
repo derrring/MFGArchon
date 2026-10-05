@@ -1,7 +1,18 @@
-- **The ghost buffer's Dirichlet ghost is node-centred, like the rest of it** (Issue #1968). `TensorProductGrid` puts a node on the wall, and #1935 made the Neumann, no-flux, reflecting and Robin ghosts mirror about it.
-  - The Dirichlet branches, uniform and per-face, still used the cell relation `2 g - u_wall`. At order ≤ 2 that is first order against the node oracle $u(-h)$: 0.118 / 0.061 / 0.031 at 9 / 17 / 33 points on $u = e^x$.
-  - They now take the odd reflection through the node beside the wall, `2 g - u_1`, which is second order.
-  - Robin with β = 0, the same condition, moves with them.
-  - No solver test changed when this was probed across the whole suite, slow tests included. The values that moved are those of the unit tests asserting the ghost formula itself.
-- **`PreallocatedGhostBuffer(config=)` is removed.** The buffer stored a `GhostCellConfig` and never read it, so `GridType.VERTEX_CENTERED` passed there changed nothing. No caller in the repository passed it.
-- `FDMApplicator(grid_type=)`, the calculator route (`bc_to_topology_calculator`) and `_compat` keep their `GridType` branches; that part of #1968 stays open.
+- **The ghost buffer's Dirichlet ghost is node-centred, like the rest of it** (Issue #1968). `TensorProductGrid` puts a node on the wall, and #1935 made the Neumann, no-flux, reflecting and Robin ghosts mirror about it. The Dirichlet ghost still used the cell relation `2g − u_wall`: first order against the node oracle $u(-h)$, 0.118 / 0.061 / 0.031 at 9 / 17 / 33 points on $u = e^x$. It is now the odd reflection through the node beside the wall, `2g − u_1`, second order. This covers:
+  - the uniform and per-face `PreallocatedGhostBuffer` branches, and the legacy `fdm_bc_1d` input;
+  - Robin with β = 0, the same condition.
+- **HJB-FDM's Dirichlet solves change, and converge.** Its Newton reads this ghost in the wall row before overwriting the wall node. Against a manufactured solution (σ = 0.5, T = 0.25, Nt = 400, at 17 / 33 / 65 points):
+  - the 1-D centred scheme stalled at 4.2e-2 and now gives 1.3e-2 / 3.7e-3 / 1.5e-3;
+  - the 1-D upwind scheme went 1.6e-1 / 6.0e-2 / 4.3e-2 at irregular order and is now first order, 0.96 and 0.97;
+  - the 2-D centred scheme stalled at 0.103 / 0.069 / 0.066 and now gives 0.099 / 0.023 / 0.0058, second order.
+  - **Upwind's maximum error is larger at these resolutions:** 1-D 0.19 / 0.096 / 0.049 against 0.16 / 0.060 / 0.043, and 2-D 0.66 / 0.35 / 0.18 against 0.64 / 0.31 / 0.13.
+    - In 1-D this was isolated by swapping the cell, node and exact ghosts in one tree. The node ghost tracks the exact ghost: 0.149 / 0.080 / 0.042 / 0.021, against 0.181 / 0.091 / 0.045 / 0.022 at 17 to 129 points.
+    - The cell ghost's smaller maximum was cancellation. Its mid-domain error was half the exact-ghost value, while next to the wall it was 4–10× worse.
+    - The 2-D upwind case has not been isolated.
+- **The grid's gradient and Laplacian operators change at a Dirichlet wall**, on $u = \sin(\pi x) e^x$:
+  - the wall gradient's error was O(1) and flat in h (central 1.5, upwind 3.1); it is now first order, 0.18 / 0.095 / 0.048;
+  - the wall Laplacian diverged, 47 → 198; it now returns 0, a constant error of $|u''(0)| = 2\pi$.
+- **Two more changes come with the node form:**
+  - at ghost depth ≥ 2 the Dirichlet layers were in the wrong order, and now are not;
+  - an axis with ≤ g nodes now raises for Dirichlet as it already did for Neumann (#1935), where it computed before.
+- **The other ghost routes no longer agree with the buffer on Dirichlet.** These are the calculator route (`bc_to_topology_calculator`) and `_compat.get_ghost_values_nd`, which nothing in the library consumes. #1968 stays open for them.

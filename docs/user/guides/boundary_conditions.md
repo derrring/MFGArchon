@@ -235,7 +235,7 @@ A `TensorProductGrid` puts a node on the wall, so the finite-difference ghost is
 - **Robin** (alpha*u + beta*du/dn = g): `u_ghost = u_m + 2*(k+1)*dx*(g - alpha*u_b)/beta`. `du/dn` is the outward derivative and already carries the wall's direction, so there is no sign factor.
 - **Neumann** (du/dn = g): Robin with alpha = 0, beta = 1, so `u_ghost = u_m + 2*(k+1)*dx*g`.
 - **No-flux** and **reflecting** (du/dn = 0): `u_ghost = u_m`, the mirror about the wall node. This is the **zero-gradient** ghost, correct for `u` and for the default applicator path. It is *not* the FP mass-conserving wall; see [FP Solvers (FDM)](#fp-solvers-fdm) below.
-- **Dirichlet** (u = g), and Robin with beta = 0: `u_ghost = 2*g - u_interior` (with `g/alpha` for Robin), the cell-centred form, unchanged by #1935, which concerned the derivative conditions.
+- **Dirichlet** (u = g), and Robin with beta = 0: `u_ghost = 2*g - u_m` (with `g/alpha` for Robin), the odd reflection about the wall node (#1968). Until #1968 this was the cell-centred `2*g - u_b`, which #1935, concerned with the derivative conditions, had left alone.
 
 Until #1935 the derivative conditions used the cell-centred mirror `u_ghost = u_b + dx*g`. On this grid that made the 3-point Laplacian's wall row return half the true value at every `dx`.
 

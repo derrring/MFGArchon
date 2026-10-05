@@ -1,0 +1,1 @@
+- **`PreallocatedGhostBuffer(config=)` is removed** (Issue #1968). The buffer stored the `GhostCellConfig` and never read it, so `GridType.VERTEX_CENTERED` passed there changed nothing. No caller in the repository passed it.

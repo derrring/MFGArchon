@@ -160,9 +160,9 @@ def test_the_default_branch_uses_both_default_bc_and_default_value(default_bc, d
 
     Each row here produces a different number by a different formula, so no single wrong constant
     can satisfy more than one. The `x_min` wall is claimed by an explicit Dirichlet segment in every
-    row and its ghost is asserted unchanged at `2*7 - 10.75 = 3.25` (odd about the wall node, #1968), which
-    is the control: it shows the
-    rows differ because the DEFAULT branch differs, not because the whole BC changed.
+    row and its ghost is asserted unchanged at `2*7 - 10.75 = 3.25`, odd about the wall node (#1968). That is
+    the control: it shows the rows differ because the DEFAULT branch differs, not because the whole BC
+    changed.
     """
     bc = BoundaryConditions(
         segments=[BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=7.0, boundary="x_min")],

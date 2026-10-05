@@ -29,9 +29,11 @@ u = cos(pi x), against 2.00 now, and the sparse assembly, node-centred already, 
 by 4.9 at the wall; it now agrees to 1e-11. Their derivations, with the corrections #2057 and #1350 made
 to them, are in `git show acb13627:mfgarchon/geometry/boundary/applicator_fdm.py`.
 
-Dirichlet (u = g at the wall) keeps the cell-centred u_g = 2*g - u_i, and Robin with beta = 0, which is
-Dirichlet with g/alpha, takes the same. It is out of #1935's scope, which is the derivative conditions, and
-it is not inert: HJB-FDM's Newton solves the wall row with this ghost before overwriting u_0.
+Dirichlet (u = g at the wall), and Robin with beta = 0, which is Dirichlet with g/alpha, take the odd
+reflection about the wall node, u_g = 2*g - u_m (#1968). Until #1968 they kept the cell-centred
+u_g = 2*g - u_b, outside #1935's scope of derivative conditions. That ghost is not inert: HJB-FDM's Newton
+solves the wall row with it before overwriting u_0, and against a manufactured solution its centred scheme
+stalled at 4.2e-2 for 17 / 33 / 65 points (Nt = 400), where the node form gives 1.3e-2 / 3.7e-3 / 1.5e-3.
 
 Corner Handling (Issue #521):
 -----------------------------
@@ -1639,18 +1641,10 @@ class PreallocatedGhostBuffer:
             # Issue #543: Use getattr() instead of hasattr for optional legacy attribute
             v = getattr(bc, "left_value", None)
             v = v if v is not None else 0.0
+            # The odd reflection about the wall node, as the modern Dirichlet branches (#1968).
             for axis in range(d):
-                lo_ghost = [slice(None)] * d
-                lo_ghost[axis] = slice(0, g)
-                lo_interior = [slice(None)] * d
-                lo_interior[axis] = slice(g, 2 * g)
-                buf[tuple(lo_ghost)] = 2 * v - buf[tuple(lo_interior)]
-
-                hi_ghost = [slice(None)] * d
-                hi_ghost[axis] = slice(-g, None)
-                hi_interior = [slice(None)] * d
-                hi_interior[axis] = slice(-2 * g, -g)
-                buf[tuple(hi_ghost)] = 2 * v - buf[tuple(hi_interior)]
+                for side in ("min", "max"):
+                    _write_wall_ghosts(buf, axis, side, g, None, v, alpha=1.0, beta=0.0)
 
     def _update_ghosts_mixed(self, bc: BoundaryConditions, time: float) -> None:
         """
