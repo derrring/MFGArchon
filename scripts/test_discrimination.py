@@ -155,12 +155,9 @@ MUTATIONS: list[Mutation] = [
         name="ghost_spacing_ignored",
         path="mfgarchon/geometry/boundary/applicator_fdm.py",
         old="            self._grid_spacing = values",
-        new="            self._grid_spacing = None  # MUTATED: explicit spacing dropped, dx = 1.0 fallback",
+        new="            self._grid_spacing = None  # MUTATED: explicit spacing dropped",
         owner="the ghost buffer uses the caller's spacing, not dx = 1.0 (#1904)",
-        verify=(
-            "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0),"
-            " ghost_depth=1, spacing=0.05)[0] == 3.0"
-        ),
+        verify="_neumann_ghost_or_refusal() == 'refused'",
     ),
     Mutation(
         name="grid_spacing_uses_point_count",
@@ -556,6 +553,15 @@ from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonia
 from mfgarchon.geometry.boundary import neumann_bc
 from mfgarchon.geometry.boundary.applicator_fdm import pad_array_with_ghosts
 from mfgarchon.geometry.boundary.applicator_fdm import PreallocatedGhostBuffer
+
+
+def _neumann_ghost_or_refusal():
+    # Low-wall ghost of [1,2,3] under a Neumann value 2 at spacing 0.05: 2.2 when the spacing arrives, and a
+    # refusal when it is lost, since #1936 refuses a non-zero flux without a spacing rather than using 1.0.
+    try:
+        return float(pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), neumann_bc(dimension=1, value=2.0), ghost_depth=1, spacing=0.05)[0])
+    except ValueError:
+        return "refused"
 
 
 def _ghost0(bc, order):
