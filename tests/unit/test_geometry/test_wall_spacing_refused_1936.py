@@ -3,9 +3,10 @@
 `PreallocatedGhostBuffer` built without `spacing=` or `domain_bounds=` used dx = 1.0 at every site that
 needs a spacing, so a Neumann value g was applied as g/h (#1904 measured 40 / 80 / 160 / 320 for g = 2).
 `enforce_values` did the same for an axis its `spacing` had no entry for, and `GhostBuffer` defaulted
-`dx` to 1.0. Each site now refuses, and only where the formula reads the spacing: a pure mirror (zero flux,
+`dx` to 1.0. Each wall formula now refuses, and only where it reads the spacing: a pure mirror (zero flux,
 no Robin coefficient), a Robin wall with beta = 0, and the polynomial extrapolation of Dirichlet data are the
-same at every scale, so they still run without one.
+same at every scale, so they still run without one. `GhostBuffer` cannot see inside its calculator, so a bounded
+one refuses at construction without `dx`, whatever the calculator.
 """
 
 from __future__ import annotations
@@ -15,7 +16,12 @@ import pytest
 import numpy as np
 
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, dirichlet_bc, neumann_bc, no_flux_bc
-from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator, GhostBuffer, PreallocatedGhostBuffer
+from mfgarchon.geometry.boundary.applicator_fdm import (
+    FDMApplicator,
+    GhostBuffer,
+    PreallocatedGhostBuffer,
+    _write_wall_ghosts,
+)
 from mfgarchon.geometry.boundary.calculators import BoundedTopology, NeumannCalculator, PeriodicTopology
 
 REFUSAL = r"needs the grid spacing.*#1936\)"
@@ -71,6 +77,16 @@ def test_a_spacing_free_wall_runs_without_a_spacing(bc):
     np.testing.assert_array_equal(_ghosts(bc), _ghosts(bc, spacing=0.37))
 
 
+def test_an_array_condition_refuses_unless_every_point_is_spacing_free():
+    # A 2-D wall of two points, the first beta = 0 and the second a Robin point that reads h.
+    buf = np.zeros((6, 2))
+    buf[1:-1] = np.outer(INTERIOR[:4], [1.0, 2.0])
+    with pytest.raises(ValueError, match=REFUSAL):
+        _write_wall_ghosts(buf, 0, "min", 1, None, 0.0, 1.0, np.array([0.0, 1.0]))
+    # Control: with both points at beta = 0 nothing reads h.
+    _write_wall_ghosts(buf, 0, "min", 1, None, 0.0, 1.0, np.array([0.0, 0.0]))
+
+
 @pytest.mark.parametrize("flux", [2.0, -2.0])
 def test_extrapolation_refuses_a_flux_and_keeps_dirichlet_scale_free(flux):
     with pytest.raises(ValueError, match=REFUSAL):
@@ -90,5 +106,7 @@ def test_enforce_values_wants_one_spacing_per_axis(spacing):
 def test_a_bounded_ghost_buffer_wants_its_spacing():
     with pytest.raises(ValueError, match=r"bounded GhostBuffer passes the grid spacing.*\(#1936\)"):
         GhostBuffer(BoundedTopology(1, (5,)), NeumannCalculator(2.0))
+    with pytest.raises(ValueError, match=r"Grid spacing dimension 0 must match topology dimension 1"):
+        GhostBuffer(BoundedTopology(1, (5,)), NeumannCalculator(2.0), dx=())
     # Control: a periodic buffer does not read the spacing.
     GhostBuffer(PeriodicTopology(1, (5,))).update()

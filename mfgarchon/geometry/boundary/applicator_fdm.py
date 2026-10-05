@@ -651,7 +651,7 @@ class GhostBuffer:
         else:
             self._dx = tuple(float(d) for d in dx)
 
-        if self._dx and len(self._dx) != topology.dimension:
+        if dx is not None and len(self._dx) != topology.dimension:
             raise ValueError(
                 f"Grid spacing dimension {len(self._dx)} must match topology dimension {topology.dimension}"
             )
