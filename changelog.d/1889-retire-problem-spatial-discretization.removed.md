@@ -9,5 +9,5 @@
   - A third-party `CARTESIAN_GRID` geometry without `integrate` keeps the measure it had when it reported the key.
   - It no longer needs the key: before, a missing key was a `KeyError` at construction.
   - The same geometry that reported the key as `None` moves from `point-average` to `uniform-cell`.
-  - A geometry of another type that reported a key moves the other way, from `uniform-cell` to `point-average`. The returned measure name says which was used.
+  - A `MAZE`- or `CUSTOM`-typed geometry without `integrate` that reported a key moves the other way, from `uniform-cell` to `point-average`; with a key but no spacing it moves from a `ValueError` to `point-average`. Implicit, mesh and network geometries do not move. The returned measure name says which was used.
 - **`docs/user/obstacle_problems.md` was off by one.** Built with `spatial_discretization=[63, 63]`, it read the attribute back as the solution grid's shape and so built 63×63 positions for a 64×64 density. It now reads `problem.geometry.Nx_points`, as does the capacity-constrained maze example.
