@@ -288,8 +288,7 @@ class FDMApplicator(BaseStructuredApplicator):
             spacing_tuple = spacing
         if len(spacing_tuple) != field.ndim:
             raise ValueError(
-                f"spacing has {len(spacing_tuple)} entries for a {field.ndim}-D field; pass one per axis. "
-                "An axis without an entry was enforced at h = 1.0 (#1936)."
+                f"spacing has {len(spacing_tuple)} entries for a {field.ndim}-D field; pass one per axis (#1936)."
             )
 
         # Import BC types
@@ -608,7 +607,7 @@ class GhostBuffer:
         self,
         topology: Topology,
         calculator: BoundaryCalculator | None = None,
-        dx: float | tuple[float, ...] = 1.0,
+        dx: float | tuple[float, ...] | None = None,
         ghost_depth: int = 1,
         dtype: type = np.float64,
     ):
@@ -618,7 +617,8 @@ class GhostBuffer:
         Args:
             topology: Grid topology (PeriodicTopology or BoundedTopology)
             calculator: Ghost value calculator (required for bounded, ignored for periodic)
-            dx: Grid spacing (scalar or tuple for each dimension)
+            dx: Grid spacing (scalar or tuple for each dimension). Required for a bounded topology, whose
+                calculator receives it; a periodic topology does not read it.
             ghost_depth: Number of ghost cells per boundary
             dtype: Data type for the buffer
 
@@ -639,12 +639,19 @@ class GhostBuffer:
             )
 
         # Parse grid spacing
-        if isinstance(dx, (int, float)):
+        if dx is None:
+            if not topology.is_periodic:
+                raise ValueError(
+                    "a bounded GhostBuffer passes the grid spacing to its calculator, and dx was not given. The "
+                    "former default, dx = 1.0, applied a Neumann value g as g/h (#1936)."
+                )
+            self._dx: tuple[float, ...] = ()
+        elif isinstance(dx, (int, float)):
             self._dx = tuple([float(dx)] * topology.dimension)
         else:
             self._dx = tuple(float(d) for d in dx)
 
-        if len(self._dx) != topology.dimension:
+        if self._dx and len(self._dx) != topology.dimension:
             raise ValueError(
                 f"Grid spacing dimension {len(self._dx)} must match topology dimension {topology.dimension}"
             )
@@ -976,8 +983,8 @@ def _write_wall_ghosts(
 
     Layout along ``axis``: [ghost_lo (g) | interior (N) | ghost_hi (g)].
 
-    ``dx = None`` means the caller does not know the spacing. Only the pure mirror (alpha = 0, value = 0) is
-    independent of it; every other condition refuses rather than assume one (#1904, #1936).
+    ``dx = None`` means the caller does not know the spacing. The pure mirror (alpha = 0, value = 0) and beta = 0
+    do not read it; every other condition refuses rather than assume one (#1904, #1936).
     """
     nodes = buf.shape[axis] - 2 * g
     if nodes < g + 1:
@@ -1008,11 +1015,11 @@ def _write_wall_ghosts(
 
     u_wall = buf[wall]
     dirichlet = np.abs(np.asarray(beta, dtype=float)) == 0.0
-    if dx is None and not np.any(dirichlet) and np.all(np.asarray(alpha) == 0) and np.all(np.asarray(value) == 0):
-        for ghost_index, mirror_index in layers:
-            buf[ghost_index] = buf[mirror_index]
-        return
-    dx = _spacing_for_wall(dx, axis, side)
+    if dx is None:
+        mirror = (np.asarray(alpha) == 0) & (np.asarray(value) == 0)
+        # At a pure mirror the step is 0, and at beta = 0 the ghost is 2 value/alpha - wall: neither reads dx,
+        # so a unit placeholder gives their exact ghosts. Any other point needs the real spacing.
+        dx = 1.0 if np.all(dirichlet | mirror) else _spacing_for_wall(dx, axis, side)
     cell = None
     if np.any(dirichlet):
         # Wanted only where beta = 0. Elsewhere the cell form's own singularity, alpha/2 + beta/dx = 0, does not

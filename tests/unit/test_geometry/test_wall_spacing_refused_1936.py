@@ -2,9 +2,10 @@
 
 `PreallocatedGhostBuffer` built without `spacing=` or `domain_bounds=` used dx = 1.0 at every site that
 needs a spacing, so a Neumann value g was applied as g/h (#1904 measured 40 / 80 / 160 / 320 for g = 2).
-`enforce_values` did the same for an axis its `spacing` had no entry for. Each site now refuses, and only
-where the formula reads the spacing: a pure mirror (zero flux, no Robin coefficient) and the polynomial
-extrapolation of Dirichlet data are the same at every scale, so they still run without one.
+`enforce_values` did the same for an axis its `spacing` had no entry for, and `GhostBuffer` defaulted
+`dx` to 1.0. Each site now refuses, and only where the formula reads the spacing: a pure mirror (zero flux,
+no Robin coefficient), a Robin wall with beta = 0, and the polynomial extrapolation of Dirichlet data are the
+same at every scale, so they still run without one.
 """
 
 from __future__ import annotations
@@ -14,7 +15,8 @@ import pytest
 import numpy as np
 
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, dirichlet_bc, neumann_bc, no_flux_bc
-from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator, PreallocatedGhostBuffer
+from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator, GhostBuffer, PreallocatedGhostBuffer
+from mfgarchon.geometry.boundary.calculators import BoundedTopology, NeumannCalculator, PeriodicTopology
 
 REFUSAL = r"needs the grid spacing.*#1936\)"
 INTERIOR = np.array([0.0, 1.0, 4.0, 9.0, 16.0, 25.0])
@@ -47,29 +49,46 @@ def _per_face(bc_type, **values):
 def test_a_spacing_dependent_wall_refuses_without_a_spacing(bc):
     with pytest.raises(ValueError, match=REFUSAL):
         _ghosts(bc)
-    # Control: the same condition with the spacing gives the node-centred ghost, mirror + 2 h (g - alpha u) / beta.
-    padded = _ghosts(bc, spacing=0.2)
-    assert np.all(np.isfinite(padded))
+    # Control: the same condition with the spacing runs.
+    assert np.all(np.isfinite(_ghosts(bc, spacing=0.2)))
 
 
 @pytest.mark.parametrize(
-    "bc", [no_flux_bc(dimension=1), neumann_bc(value=0.0, dimension=1), _per_face(BCType.NEUMANN, value=0.0)]
+    "bc",
+    [
+        no_flux_bc(dimension=1),
+        neumann_bc(value=0.0, dimension=1),
+        _per_face(BCType.NEUMANN, value=0.0),
+        BoundaryConditions(
+            segments=[BCSegment(name="w", bc_type=BCType.ROBIN, alpha=1.0, beta=0.0, value=3.0)], dimension=1
+        ),
+        _per_face(BCType.ROBIN, alpha=1.0, beta=0.0, value=3.0),
+    ],
+    ids=["no-flux", "neumann-zero", "neumann-zero-per-face", "robin-beta0-uniform", "robin-beta0-per-face"],
 )
-def test_a_pure_mirror_runs_without_a_spacing(bc):
-    padded = _ghosts(bc)
-    assert padded[0] == INTERIOR[1]
-    assert padded[-1] == INTERIOR[-2]
+def test_a_spacing_free_wall_runs_without_a_spacing(bc):
+    # The ghost does not read h, so it equals the one computed at any spacing.
+    np.testing.assert_array_equal(_ghosts(bc), _ghosts(bc, spacing=0.37))
 
 
-def test_extrapolation_refuses_a_flux_and_keeps_dirichlet_scale_free():
+@pytest.mark.parametrize("flux", [2.0, -2.0])
+def test_extrapolation_refuses_a_flux_and_keeps_dirichlet_scale_free(flux):
     with pytest.raises(ValueError, match=REFUSAL):
-        _ghosts(neumann_bc(value=2.0, dimension=1), order=3)
+        _ghosts(neumann_bc(value=flux, dimension=1), order=3)
     # Dirichlet data fixes the fitted polynomial in x/h, so the ghosts cannot depend on h.
     without = _ghosts(dirichlet_bc(value=1.0, dimension=1), order=3)
     np.testing.assert_allclose(without, _ghosts(dirichlet_bc(value=1.0, dimension=1), order=3, spacing=0.37))
 
 
-def test_enforce_values_wants_one_spacing_per_axis():
+@pytest.mark.parametrize("spacing", [(0.2,), (0.2, 0.2, 0.2)], ids=["short", "long"])
+def test_enforce_values_wants_one_spacing_per_axis(spacing):
     field = np.outer(INTERIOR, np.ones(4))
-    with pytest.raises(ValueError, match=r"spacing has 1 entries for a 2-D field.*\(#1936\)"):
-        FDMApplicator(dimension=2).enforce_values(field, neumann_bc(value=2.0, dimension=2), spacing=(0.2,))
+    with pytest.raises(ValueError, match=rf"spacing has {len(spacing)} entries for a 2-D field.*\(#1936\)"):
+        FDMApplicator(dimension=2).enforce_values(field, neumann_bc(value=2.0, dimension=2), spacing=spacing)
+
+
+def test_a_bounded_ghost_buffer_wants_its_spacing():
+    with pytest.raises(ValueError, match=r"bounded GhostBuffer passes the grid spacing.*\(#1936\)"):
+        GhostBuffer(BoundedTopology(1, (5,)), NeumannCalculator(2.0))
+    # Control: a periodic buffer does not read the spacing.
+    GhostBuffer(PeriodicTopology(1, (5,))).update()
