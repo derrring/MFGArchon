@@ -4,13 +4,10 @@
 (`v.grad(m)`) advection, which leaks probability mass through no-flux walls (lost
 ~58% on a 1D Neumann congestion MFG). It now routes to `divergence_centered`
 (`div(v m)`, telescoping flux, zero boundary flux) -- 2nd-order, central, and
-mass-conservative. The non-conservative form stays available as an explicit
-`advection_scheme` but is no longer the centered default.
+mass-conservative. The non-conservative gradient form was later removed altogether (#2007).
 """
 
 from __future__ import annotations
-
-import warnings
 
 import pytest
 
@@ -91,96 +88,6 @@ def test_fdm_centered_conserves_mass_under_no_flux():
     assert np.all(np.isfinite(traj))
     assert np.max(np.abs(mass - mass[0])) < 1e-12, (
         f"mass drift {np.max(np.abs(mass - mass[0])):.2e} (no-flux must conserve to machine precision)"
-    )
-
-
-def test_gradient_centered_still_available_and_leaks():
-    """The non-conservative form is still selectable explicitly, and demonstrably does NOT
-    conserve mass -- documenting why it is no longer the centered default. Issue #1075:
-    selecting it with a no-flux BC must emit a non-conservation UserWarning."""
-    n, nt = 41, 40
-    prob = _problem(n=n, nt=nt)
-    with pytest.warns(UserWarning, match="Issue #1075"):
-        _, fp = create_paired_solvers(
-            prob, NumericalScheme.FDM_CENTERED, fp_config={"advection_scheme": "gradient_centered"}
-        )
-    assert fp.advection_scheme == "gradient_centered"
-    x = np.linspace(0.0, 1.0, n)
-    # Issue #1632: same correction as above -- `drift_field=<ndarray>` is the velocity channel
-    # and `gradient_centered` does not read it, so this drift was discarded too.
-    potential = np.tile(0.5 * (x - 0.5) ** 2, (nt + 1, 1))
-    m0 = np.exp(-40 * (x - 0.35) ** 2)
-    m0 /= float(_mass(prob.geometry, m0))
-    traj = fp.solve_fp_system(m0, potential_field=potential)
-    mass = _mass(prob.geometry, traj)
-    assert np.max(np.abs(mass - mass[0])) > 1e-3, "gradient_centered is expected to violate conservation"
-
-
-@pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind"])
-def test_gradient_scheme_warns_only_under_no_flux(scheme):
-    """Issue #1075: gradient (non-conservative point-value) schemes warn when paired with a
-    no-flux BC, but the conservative divergence_* schemes do not. The warning steers users
-    to the conservative default rather than silently leaking mass."""
-    prob = _problem()
-    with pytest.warns(UserWarning, match="does NOT conserve mass at no-flux"):
-        create_paired_solvers(prob, NumericalScheme.FDM_CENTERED, fp_config={"advection_scheme": scheme})
-
-    # The conservative default must NOT warn under the same no-flux BC.
-    with warnings.catch_warnings(record=True) as rec:
-        warnings.simplefilter("always")
-        create_paired_solvers(
-            _problem(), NumericalScheme.FDM_CENTERED, fp_config={"advection_scheme": "divergence_upwind"}
-        )
-    assert not [w for w in rec if "Issue #1075" in str(w.message)]
-
-
-def test_the_two_families_coincide_exactly_at_zero_drift():
-    """At zero drift the two wall conditions ARE the same condition, so the schemes must agree.
-
-    **This test asserted the opposite and #2145 refuted it.** It claimed the gradient scheme's
-    no-flux leak "is dominated by the boundary DIFFUSION discretization ... so it leaks even with
-    zero drift, while the conservative scheme stays at machine precision", and pinned
-    `mass_grad > 1e-3` against `mass_div < 1e-12`. Both halves were the rectangle's endpoint share
-    moving, not mass leaving. Measured on this fixture with `U = 0`:
-
-        divergence_centered   rectangle drift 1.330e-02    trapezoid drift 1.665e-15
-        gradient_centered     rectangle drift 1.330e-02    trapezoid drift 1.665e-15
-
-    Identical -- and not merely in mass: `max|div - grad|` over the whole trajectory is 0.000e+00,
-    bit-identical. It cannot be otherwise. With `J = v*m - D*grad(m)` and `v = 0`, `J.n = 0` and
-    `d_n m = 0` are the same equation, so the two schemes assemble the same matrix. The contrast
-    this file wants is real but lives under DRIFT, where the conditions separate; #1975's census
-    measures it there (-76% against -2e-12% at drift 3.2).
-
-    So the property under test is the coincidence itself, which is a sharper statement than the
-    inequality it replaces: a scheme that drifts apart from its counterpart at zero velocity has
-    broken the wall condition in a way no leak threshold would name.
-    """
-    n, nt = 81, 60
-    x = np.linspace(0.0, 1.0, n)
-    prob_zero = _problem(n=n, nt=nt)
-    grid_zero = prob_zero.geometry
-    m0 = np.exp(-200 * (x - 0.05) ** 2)
-    m0 /= float(_mass(grid_zero, m0))
-    U_zero = np.zeros((nt + 1, n))  # zero drift => pure diffusion at the wall
-
-    _, fp_div = create_paired_solvers(prob_zero, NumericalScheme.FDM_CENTERED)
-    traj_div = np.asarray(fp_div.solve_fp_system(m0, potential_field=U_zero))
-    mass_div = _mass(grid_zero, traj_div)
-    assert np.max(np.abs(mass_div - mass_div[0])) < 1e-12, "the conservative scheme must conserve"
-
-    with pytest.warns(UserWarning, match="Issue #1075"):
-        _, fp_grad = create_paired_solvers(
-            _problem(n=n, nt=nt), NumericalScheme.FDM_CENTERED, fp_config={"advection_scheme": "gradient_centered"}
-        )
-    traj_grad = np.asarray(fp_grad.solve_fp_system(m0, potential_field=U_zero))
-    mass_grad = _mass(grid_zero, traj_grad)
-    assert np.max(np.abs(mass_grad - mass_grad[0])) < 1e-12, (
-        "gradient_centered must conserve at zero drift too -- d_n m = 0 IS J.n = 0 when v = 0"
-    )
-    assert np.array_equal(traj_div, traj_grad), (
-        f"the two schemes must be identical at zero drift, where their wall conditions coincide; "
-        f"max|div - grad| = {np.max(np.abs(traj_div - traj_grad)):.3e}"
     )
 
 

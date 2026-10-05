@@ -8,13 +8,11 @@ Module structure per issue #388:
     fp_fdm_bc.py - Edge behavior (boundary condition enforcement, ghost points)
 
 Functions:
-    add_boundary_no_flux_entries: Legacy alias for gradient_upwind
+    add_boundary_no_flux_entries: an older no-flux boundary assembly, with no production caller
     add_boundary_no_flux_entries_conservative: Legacy alias for divergence_upwind
 
 Note:
     The scheme-specific boundary functions are now in their respective files:
-    - fp_fdm_alg_gradient_centered.py: add_boundary_no_flux_entries_gradient_centered
-    - fp_fdm_alg_gradient_upwind.py: add_boundary_no_flux_entries_gradient_upwind
     - fp_fdm_alg_divergence_upwind.py: (uses add_boundary_no_flux_entries_divergence_upwind below)
     - fp_fdm_alg_divergence_centered.py: add_boundary_no_flux_entries_divergence_centered
 

@@ -42,10 +42,8 @@ numbers are unchanged by the flip to 9.3e-14 -- the problem is mirror-symmetric 
 
 WHAT THIS STUDY CANNOT SEE
 --------------------------
-- **The two `gradient_upwind` pins assert that it is broken, so they cannot protect what still
-  works in it.** Deleting its advection term outright leaves all tests here green. That is
-  inherent to pinning non-convergence, and it is the honest answer to "what change trips
-  neither pin while breaking the scheme": read them as recording two defects, not as coverage.
+- **The two `gradient_upwind` defect pins this file carried are gone with the scheme.** #2007 removed
+  the gradient form on the two defects they recorded, below.
 - **It cannot attribute the order to the wall alone.** The measured order is a *min* over the wall
   closure and the interior stencil: substituting a centered interior for `divergence_upwind` still
   gives EOC 0.89/0.94, and substituting a centered *wall* still gives 0.89/0.95 in 1D. That is why
@@ -70,6 +68,7 @@ WHAT THIS STUDY CANNOT SEE
 
   So the wall defect and the interior-form defect are separated here without any source term: a
   non-constant SOURCE-FREE potential suffices, and a sourced MMS is not needed for this question.
+  That separation is why #2007 removed the gradient schemes rather than fixing their wall.
 - **It cannot see a dt error floor**, because the exact solution is stationary. `NT` is held fixed
   while Nx refines for that reason -- not because the schemes are implicit, which buys unconditional
   stability and nothing about accuracy. Measured: errors move < 2% from NT = 10 to NT = 640, and the
@@ -249,32 +248,6 @@ def test_divergence_centered_is_second_order_at_a_drifting_wall(d: int, sign: in
     assert all(o > 1.8 for o in orders), f"expected second order, observed {orders}"
 
 
-@pytest.mark.parametrize("d", [1, 2])
-def test_gradient_upwind_does_not_converge_at_a_drifting_wall(d: int) -> None:
-    """RECORDED DEFECT, not a contract. Fixing it trips this test, and that is intended.
-
-    `gradient_upwind` imposes ∂_n m = 0 (the comment "No-flux: dm/dx = 0" in
-    add_boundary_no_flux_entries_gradient_upwind) rather than J·n = 0, and drops the wall-normal
-    advective flux. Each wall row's steady state is therefore m_0 = m_1, and A·∇m = D∆m under
-    ∂_n m = 0 admits only constants -- so the scheme converges to a UNIFORM limit while the exact
-    solution spans exp(A·L/D) = 4.06. At T = 0.5 the computed span is 1.10, a partially relaxed
-    field; extended to T = 4.0 it reaches 1.0000, the limit itself.
-
-    #1075 names the wrong condition in its title and is closed; the constructor warns about it; and
-    `test_solver_bc_support_census_1975.py::test_the_gradient_schemes_impose_a_zero_gradient_wall_and_leak`
-    already pins the mass-drift half on the same drive. What is new here is the accuracy form -- the
-    scheme does not converge at all -- and the magnitude: the warning's "leaks O(1e-2)" is the
-    zero-drift figure, an order of magnitude below the 1.4e-1 measured at A = 0.7.
-
-    When the wall is rewritten to J·n = 0, this test fails and its message says what to do with it.
-    """
-    orders = _orders(_errors("gradient_upwind", "linear", 1, d))
-    assert all(abs(o) < 0.2 for o in orders), (
-        f"gradient_upwind now converges (orders={orders}) -- the ∂_n m = 0 wall appears to be fixed. "
-        f"Delete this defect pin and give the scheme a real order assertion."
-    )
-
-
 def test_divergence_upwind_is_first_order_on_the_published_gibbs_instance() -> None:
     """The GFDM paper's source-free exact reflected MFG, as an independent published oracle.
 
@@ -287,33 +260,4 @@ def test_divergence_upwind_is_first_order_on_the_published_gibbs_instance() -> N
     assert all(0.8 <= o <= 1.4 for o in orders), f"expected first order, observed {orders}"
     assert errors[0] < GIBBS_LEVEL_BOUND, (
         f"error level {errors[0]:.4e} exceeds {GIBBS_LEVEL_BOUND:.1e} on the published instance"
-    )
-
-
-def test_gradient_upwind_is_wrong_on_a_non_linear_potential_for_a_second_reason() -> None:
-    """RECORDED DEFECT, not a contract -- and a DIFFERENT defect from the wall pinned above.
-
-    The linear instance has constant α, so ∇·(αm) = α·∇m there and the two interior forms coincide;
-    fixing the wall repairs `gradient_upwind` completely on it (6.69e-1 -> 2.23e-2, EOC 0.937,
-    matching `divergence_upwind`). On this instance α is not constant, m∇·α ≠ 0, and the gradient
-    form is therefore discretizing a different operator. The evidence is wall-free, because
-    repointing the wall and re-measuring would give a flux-form boundary on a gradient interior --
-    a hybrid that is neither scheme. Instead: this instance is exactly periodic-compatible, and
-    under `periodic_bc`, where no wall handler runs at all, `gradient_upwind` returns the SAME
-    errors as under no-flux to seven figures (5.811380e-01 / 5.839517e-01, EOC −0.007 both ways)
-    while `divergence_upwind` does move (5.503e-2 -> 5.257e-2). The omitted term is analytic:
-    ∇·(αm) − α·∇m = −m Δphi, max 31.76 here and identically zero on the linear instance.
-
-    Retirement condition, and it is NOT the wall fix: this pin retires when the interior form is
-    corrected to carry m∇·α, or when the scheme is removed. A wall-only change leaves it passing,
-    correctly.
-
-    The assertion is on the ORDER rather than the error level, because the level does not separate
-    the states it must: library 0.5811, interior-fixed 0.5150, advection-deleted 0.5185, all within
-    13% of each other. The order does: −0.007, +1.340, −0.004.
-    """
-    orders = _orders([_solve_error("gradient_upwind", nx, "gibbs") for nx in LEVELS[2]])
-    assert all(abs(o) < 0.2 for o in orders), (
-        f"gradient_upwind now converges on a non-linear potential (orders={orders}). If the interior "
-        f"form carries m*div(alpha), delete this pin and assert a real order."
     )

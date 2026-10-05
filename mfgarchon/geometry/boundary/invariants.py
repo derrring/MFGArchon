@@ -82,12 +82,13 @@ def mass_drift(field: NDArray[np.floating], x: NDArray[np.floating] | Any) -> fl
 
     CHECK THAT CONDITION RATHER THAN ASSUMING IT. On a uniform grid it is one line --
     ``M.sum(axis=1)*dx`` at the first and last rows -- and no scheme name substitutes for it.
-    Measured on the no-flux wall, which is four walls dispatched by ``advection_scheme``:
+    Measured on the no-flux wall, which was four walls dispatched by ``advection_scheme`` until
+    #2007 removed the two ``gradient_*`` schemes:
 
-    - A spatially varying ``volatility_field`` breaks the rectangle sum for ALL FOUR: 4.3e-02
+    - A spatially varying ``volatility_field`` broke the rectangle sum for ALL FOUR: 4.3e-02
       (``divergence_*``) and 4.5e-02 (``gradient_*``) on a 0.05|0.40 step, scaling smoothly with
       the variation and machine-zero for a constant ARRAY, so it is the variation and not the
-      array (#1183). It costs ``gradient_*`` the trapezoid too, 4.4e-02.
+      array (#1183). It cost ``gradient_*`` the trapezoid too, 4.4e-02.
     - Under a SCALAR sigma the families differ. ~~``divergence_*`` holds ``sum(m)*dx`` to 1e-14 at
       any drift~~ **[SUPERSEDED 2026-08-28 by #2145]** -- it holds the TRAPEZOID to 1e-14 at any
       drift, and `sum(m)*dx` not at all: measured on the #1975 census fixture, +25.37733% rectangle
@@ -98,10 +99,9 @@ def mass_drift(field: NDArray[np.floating], x: NDArray[np.floating] | Any) -> fl
       it accepts a grid and works in n-D through ``geometry.integrate``. It still refuses an n-D
       field with 1-D AXIS COORDINATES, by name, because that pair has no measure. ``bc_residual``
       follows it; ``seam`` handled n-D already.
-    - ``gradient_*`` holds the trapezoid instead, and only at zero drift, where this returns 1e-14
-      while the share moves 6e-03. Under wall-normal drift it holds neither, and
-      ``FPFDMSolver.__init__`` warns that the loss is unbounded there -- -23.6% at cell Peclet
-      0.19, -99.97% at 0.89 (#2007).
+    - ``gradient_*`` held the trapezoid instead, and only at zero drift, where this returned 1e-14
+      while the share moved 6e-03. Under wall-normal drift it held neither -- -23.6% at cell Peclet
+      0.19, -99.97% at 0.89 -- and #2007 removed it.
 
     So resolution at the wall is a property of the STATE, not of the setup. Neither "diffusive" nor
     "zero drift" implies it; both admit states concentrated on an end node, where this halves rather

@@ -44,18 +44,13 @@ if TYPE_CHECKING:
 
     from mfgarchon.geometry import TensorProductGrid
 
-# Advection scheme options for FDM (2x2 naming convention)
-# Format: {pde_form}_{spatial_scheme}
-# - pde_form: "gradient" (v·∇m) or "divergence" (∇·(vm))
-# - spatial_scheme: "centered" or "upwind"
+# Advection scheme options for FDM: the divergence form div(v*m), centred or upwind. The gradient
+# form v.grad(m) was removed in #2007 (maintainer ruling 2026-10-04): it drops m*div(v) from the
+# FP operator, and its wall imposed dm/dn = 0 instead of J.n = 0.
 AdvectionScheme = Literal[
-    "gradient_centered",  # NON-conservative (v.grad m), oscillates for Peclet > 2
-    "gradient_upwind",  # NON-conservative at no-flux walls (row sums=1/dt is not mass cons.), stable
     "divergence_centered",  # Conservative (telescoping flux), oscillates for Peclet > 2
     "divergence_upwind",  # Conservative (telescoping flux), stable [factory DEFAULT for FDM]
-    # Legacy aliases (DEPRECATED, will be removed in v1.0.0)
-    "centered",  # -> gradient_centered
-    "upwind",  # -> gradient_upwind
+    # Legacy alias (DEPRECATED, will be removed in v1.0.0)
     "flux",  # -> divergence_upwind
 ]
 
@@ -66,24 +61,16 @@ class FPFDMSolver(BaseFPSolver):
 
     Supports general FP equation: dm/dt + div(v*m) = (sigma^2/2) * Laplacian(m)
 
-    Advection Scheme Options (2x2 classification):
+    Advection Scheme Options:
 
         | Scheme             | PDE Form   | Spatial    | Conservative | Stable |
         |--------------------|------------|------------|--------------|--------|
-        | gradient_centered  | v·grad(m)  | Central    | NO           | Pe<2   |
-        | gradient_upwind    | v·grad(m)  | Upwind     | YES (rows)   | Always |
         | divergence_centered| div(v*m)   | Central    | YES (flux)   | Pe<2   |
         | divergence_upwind  | div(v*m)   | Upwind     | YES (flux)   | Always |
 
-        **gradient_centered**: Non-conservative form with central differences.
-            Second-order accurate but oscillates for Peclet > 2.
-            Use to demonstrate why conservative schemes are needed.
-
-        **gradient_upwind**: Non-conservative form with upwind differences.
-            Row sums = 1/dt, which is NOT mass conservation: column sums are
-            unbalanced at no-flux walls, so mass leaks (up to ~99.8% when the
-            drift is wall-directed). Stable but first-order. Use divergence_* for
-            no-flux FP; the factory routes FDM_UPWIND to divergence_upwind (#382).
+        The gradient form v·grad(m), `gradient_centered` / `gradient_upwind`, was removed in #2007:
+        it drops m·div(v) from the FP operator, and its wall imposed dm/dn = 0 instead of J·n = 0.
+        Passing either name, or its legacy alias, raises and names the divergence scheme to use.
 
         **divergence_centered**: Conservative form with centered flux averaging.
             Mass-conservative via flux telescoping. Oscillates for Peclet > 2.
@@ -93,9 +80,7 @@ class FPFDMSolver(BaseFPSolver):
             Mass-conservative via flux telescoping. Stable, first-order.
             Best choice for MFG: handles boundary fluxes correctly.
 
-    Legacy Aliases (DEPRECATED, will be removed in v1.0.0):
-        - "centered" -> "gradient_centered"
-        - "upwind" -> "gradient_upwind"
+    Legacy Alias (DEPRECATED, will be removed in v1.0.0):
         - "flux" -> "divergence_upwind"
 
     Numerical Scheme:
@@ -151,48 +136,33 @@ class FPFDMSolver(BaseFPSolver):
             Advection term discretization (default: "divergence_upwind").
 
             Scheme names:
-            - "gradient_centered": v·grad(m), central diff. NOT mass-conservative at
-              no-flux walls -- leaks even for pure diffusion (Issue #1075).
-            - "gradient_upwind": v·grad(m), upwind. Also NOT mass-conservative at
-              no-flux walls (point-value boundary Laplacian; Issue #1075).
             - "divergence_centered": div(v*m), centered flux. Mass-conservative (telescoping).
             - "divergence_upwind": div(v*m), upwind flux. Mass-conservative (telescoping). [DEFAULT]
 
-            Legacy names (DEPRECATED, will be removed in v1.0.0):
-            - "centered" -> gradient_centered
-            - "upwind" -> gradient_upwind
+            Legacy name (DEPRECATED, will be removed in v1.0.0):
             - "flux" -> divergence_upwind
+
+            "gradient_centered", "gradient_upwind" and their aliases "centered" / "upwind" were
+            removed in #2007 and raise.
         """
         import warnings
 
         super().__init__(problem)
         self.fp_method_name = "FDM"
 
-        # Map legacy scheme names to new names
-        scheme_aliases = {
-            "centered": "gradient_centered",
-            "upwind": "gradient_upwind",
-            "flux": "divergence_upwind",
-        }
+        # One owner for the alias table, the removed names (#2007) and the error strings: the
+        # time-stepping module's resolver, which the per-step assembly calls too.
+        from .fp_fdm_time_stepping import _SCHEME_ALIASES, _resolve_and_validate_scheme
 
-        # Emit deprecation warning for legacy aliases
-        if advection_scheme in scheme_aliases:
-            new_name = scheme_aliases[advection_scheme]
+        if advection_scheme in _SCHEME_ALIASES:
             warnings.warn(
                 f"advection_scheme='{advection_scheme}' is deprecated. "
-                f"Use advection_scheme='{new_name}' instead. "
+                f"Use advection_scheme='{_SCHEME_ALIASES[advection_scheme]}' instead. "
                 f"Legacy aliases will be removed in v1.0.0.",
                 DeprecationWarning,
                 stacklevel=2,
             )
-            advection_scheme = new_name
-
-        # Validate scheme name (only new names accepted after mapping)
-        valid_schemes = {"gradient_centered", "gradient_upwind", "divergence_centered", "divergence_upwind"}
-        if advection_scheme not in valid_schemes:
-            raise ValueError(f"Invalid advection_scheme: '{advection_scheme}'. Valid options: {sorted(valid_schemes)}")
-
-        self.advection_scheme = advection_scheme
+        self.advection_scheme = _resolve_and_validate_scheme(advection_scheme)
 
         # Detect problem dimension first (inherited from BaseNumericalSolver, Issue #633)
         self.dimension = self._detect_dimension()
@@ -277,52 +247,6 @@ class FPFDMSolver(BaseFPSolver):
         # (Robin has no stencil; Reflecting/Extrapolation are not field-BC types), instead of
         # silently assembling a default (no-flux) wall.
         self._validate_bc_support(self.boundary_conditions)
-
-        # Issue #1075 / #2007: the non-conservative gradient (point-value) advection schemes do
-        # NOT conserve mass at no-flux walls, because the boundary node uses the point-value
-        # Neumann Laplacian (sigma^2/dx^2) rather than the finite-volume half-cell closure.
-        #
-        # THE LEAK IS DRIFT-DEPENDENT, and the previous string understated it by an order of
-        # magnitude (#2007). It said "leaks O(1e-2), even with zero drift". Measured:
-        #
-        #   genuinely zero drift, stationary initial density   -1.7e-14   (no leak at all)
-        #   wall-normal drift A = 0.7, D = 1/8, d = 1          -1.4e-1
-        #   wall-normal drift A = 0.7, D = 1/8, d = 2          -8.9e-1
-        #
-        # So the 1.5e-2 figure was a TRANSIENT density, which the string did not say, and a reader
-        # budgeting against O(1e-2) was off by 10x exactly where the scheme is used.
-        #
-        # There is a second defect this warning does not cover, and it is not a wall problem:
-        # div(alpha m) = alpha.grad(m) + m div(alpha), and the gradient form drops the second term,
-        # so even repointing the wall leaves a scheme that discretizes a different equation
-        # (measured on a source-free instance, 5.81e-1 -> 8.02e-1, EOC -0.007 -> 0.108). #2007
-        # recommends removing these schemes for that reason; this warning is not a substitute for
-        # that decision, and `test_gradient_centered_still_available_and_leaks` records the
-        # standing one to keep them explicitly selectable.
-        #
-        # The conservative path is a 'divergence_*' scheme. Warn once at construction.
-        if self.advection_scheme.startswith("gradient") and (
-            getattr(self.boundary_conditions, "is_uniform", False)
-            and getattr(self.boundary_conditions, "type", None) == "no_flux"
-        ):
-            warnings.warn(
-                f"advection_scheme='{self.advection_scheme}' uses the non-conservative "
-                "gradient (point-value) form and does NOT conserve mass at no-flux walls. "
-                "The loss is UNBOUNDED in the wall-normal drift -- it is not a tolerance you can "
-                "budget for. Measured, n=81, sigma=0.3, T=0.5, drift normal at both walls, by cell "
-                "Peclet v*dx/D: 0 -> +0.5%; 0.19 -> -23.6%; 0.89 -> -99.97%. At the last of those "
-                "the returned density is a relaxed uniform field, not an under-resolved correct "
-                "one. 'divergence_upwind' is 0.0000% at all three. (Earlier revisions of this "
-                "warning quoted a single figure -- first 'O(1e-2), even with zero drift', then "
-                "'-1.4e-1 at A = 0.7'. Both were true of their fixture and both read as a bounded "
-                "error, which is the thing that is false -- Issue #2007.) The same form also drops "
-                "the m*div(alpha) term of div(alpha m), so "
-                "it does not discretize the FP operator even away from the wall. Use a "
-                "'divergence_*' scheme (default 'divergence_upwind') for mass-conservative "
-                "no-flux solves. See Issue #1075 and Issue #2007.",
-                UserWarning,
-                stacklevel=2,
-            )
 
     # _detect_dimension() inherited from BaseNumericalSolver (Issue #633)
 
@@ -906,20 +830,6 @@ if __name__ == "__main__":
     for t in range(Nt):
         U_test_1d[t] = -x  # Drift to the right (alpha = -dU/dx = +1)
 
-    # Test gradient_upwind (gradient form: v·∇m)
-    solver_1d_gu = FPFDMSolver(
-        problem_1d,
-        boundary_conditions=no_flux_bc(dimension=1),
-        advection_scheme="gradient_upwind",
-    )
-    assert solver_1d_gu.dimension == 1
-    assert solver_1d_gu.fp_method_name == "FDM"
-    assert solver_1d_gu.advection_scheme == "gradient_upwind"
-
-    M_1d_gu = solver_1d_gu.solve_fp_system(m_init_1d, U_test_1d, show_progress=False)
-    assert M_1d_gu.shape == (Nt, Nx + 1)
-    assert not has_nan_or_inf(M_1d_gu)
-
     # Test divergence_upwind (divergence form: ∇·(vm))
     solver_1d_du = FPFDMSolver(
         problem_1d,
@@ -932,15 +842,12 @@ if __name__ == "__main__":
     assert M_1d_du.shape == (Nt, Nx + 1)
     assert not has_nan_or_inf(M_1d_du)
 
-    # Calculate mass drift for both (using sum*dx for consistency with 2D)
+    # Calculate mass drift (using sum*dx for consistency with 2D)
     initial_mass_1d = m_init_1d.sum() * dx_1d
-    final_mass_1d_gu = M_1d_gu[-1].sum() * dx_1d
     final_mass_1d_du = M_1d_du[-1].sum() * dx_1d
-    mass_drift_1d_gu = abs(final_mass_1d_gu - initial_mass_1d) / initial_mass_1d
     mass_drift_1d_du = abs(final_mass_1d_du - initial_mass_1d) / initial_mass_1d
 
     print(f"   Initial mass: {initial_mass_1d:.6f}")
-    print(f"   gradient_upwind:   final={final_mass_1d_gu:.6f}, drift={mass_drift_1d_gu:.2%}")
     print(f"   divergence_upwind: final={final_mass_1d_du:.6f}, drift={mass_drift_1d_du:.2%}")
 
     # Test 2D problem with advection schemes
@@ -974,14 +881,6 @@ if __name__ == "__main__":
     for t in range(Nt):
         U_drift[t] = -(X + Y)
 
-    # Test gradient_upwind (non-conservative)
-    solver_2d_gu = FPFDMSolver(
-        problem_2d,
-        boundary_conditions=no_flux_bc(dimension=2),
-        advection_scheme="gradient_upwind",
-    )
-    M_2d_gu = solver_2d_gu.solve_fp_system(m_init_2d, U_drift, show_progress=False)
-
     # Test divergence_upwind (conservative)
     solver_2d_du = FPFDMSolver(
         problem_2d,
@@ -990,27 +889,20 @@ if __name__ == "__main__":
     )
     M_2d_du = solver_2d_du.solve_fp_system(m_init_2d, U_drift, show_progress=False)
 
-    # Calculate mass drift for both
+    # Calculate mass drift
     initial_mass_2d = m_init_2d.sum() * cell_volume
-
-    final_mass_gu = M_2d_gu[-1].sum() * cell_volume
-    mass_drift_gu = abs(final_mass_gu - initial_mass_2d) / initial_mass_2d
 
     final_mass_du = M_2d_du[-1].sum() * cell_volume
     mass_drift_du = abs(final_mass_du - initial_mass_2d) / initial_mass_2d
 
     print(f"   Initial mass: {initial_mass_2d:.6f}")
-    print(f"   gradient_upwind:   final={final_mass_gu:.6f}, drift={mass_drift_gu:.2%}")
     print(f"   divergence_upwind: final={final_mass_du:.6f}, drift={mass_drift_du:.2%}")
 
     # Verify solutions are valid
-    assert not has_nan_or_inf(M_2d_gu), "gradient_upwind solution has NaN/Inf"
     assert not has_nan_or_inf(M_2d_du), "divergence_upwind solution has NaN/Inf"
-    assert np.all(M_2d_gu >= -1e-10), "gradient_upwind: density should be non-negative"
     assert np.all(M_2d_du >= -1e-10), "divergence_upwind: density should be non-negative"
 
     # Verify advection_scheme is properly set
-    assert solver_2d_gu.advection_scheme == "gradient_upwind"
     assert solver_2d_du.advection_scheme == "divergence_upwind"
 
     print("\n" + "=" * 60)
