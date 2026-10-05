@@ -32,8 +32,8 @@ to them, are in `git show acb13627:mfgarchon/geometry/boundary/applicator_fdm.py
 Dirichlet (u = g at the wall), and Robin with beta = 0, which is Dirichlet with g/alpha, take the odd
 reflection about the wall node, u_g = 2*g - u_m (#1968). Until #1968 they kept the cell-centred
 u_g = 2*g - u_b, outside #1935's scope of derivative conditions. That ghost is not inert: HJB-FDM's Newton
-solves the wall row with it before overwriting u_0, and against a manufactured solution its centred scheme
-stalled at 4.2e-2 for 17 / 33 / 65 points (Nt = 400), where the node form gives 1.3e-2 / 3.7e-3 / 1.5e-3.
+solves the wall row with it before overwriting u_0, and against a manufactured solution its 1-D centred
+scheme stalled at 4.2e-2 for 17 / 33 / 65 points (Nt = 400), where the node form gives 1.3e-2 / 3.7e-3 / 1.5e-3.
 
 Corner Handling (Issue #521):
 -----------------------------
