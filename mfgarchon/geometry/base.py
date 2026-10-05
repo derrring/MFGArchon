@@ -264,7 +264,6 @@ class Geometry(ABC):
                 - num_spatial_points: int
                 - spatial_shape: tuple
                 - spatial_bounds: list[tuple] or None
-                - spatial_discretization: list[int] or None
                 - Additional geometry-specific data
 
         Examples:
@@ -1057,7 +1056,6 @@ class UnstructuredMesh(Geometry):
             "num_spatial_points": self.mesh_data.num_vertices,
             "spatial_shape": (self.mesh_data.num_vertices,),  # Unstructured
             "spatial_bounds": list(zip(*self.mesh_data.bounds, strict=True)),
-            "spatial_discretization": None,  # No regular discretization
             "legacy_1d_attrs": None,
             "mesh_data": self.mesh_data,
         }
@@ -1640,7 +1638,6 @@ class ImplicitGeometry(Geometry):
             "num_spatial_points": n_points,
             "spatial_shape": (n_points,),  # Flattened for implicit
             "spatial_bounds": [tuple(b) for b in bounds],
-            "spatial_discretization": None,  # No regular grid
             "implicit_domain": True,
         }
 
@@ -1884,7 +1881,6 @@ class GraphGeometry(Geometry, SupportsGraphLaplacian, SupportsAdjacency):
         config = {
             "num_spatial_points": self.num_spatial_points,
             "spatial_shape": (self.num_spatial_points,),
-            "spatial_discretization": None,
             "legacy_1d_attrs": None,
             "graph_data": {
                 "adjacency_matrix": self.get_adjacency_matrix(),

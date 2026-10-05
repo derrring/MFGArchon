@@ -410,7 +410,7 @@ problem = CapacityConstrainedMFGProblem(
 )
 
 print(f"Problem dimension: {problem.dimension}")
-print(f"Grid: {problem.spatial_discretization}")
+print(f"Grid points: {problem.geometry.Nx_points}")
 print(f"Congestion weight γ: {problem.congestion_weight}")
 ```
 
@@ -445,7 +445,7 @@ m = result.m  # Density
 
 ```python
 # Interpolate capacity to match solution grid
-Nx, Ny = problem.spatial_discretization
+Nx, Ny = problem.geometry.Nx_points
 positions = np.array([[i, j] for i in range(Nx) for j in range(Ny)])
 C_grid = capacity.interpolate_at_positions(positions).reshape(Nx, Ny)
 

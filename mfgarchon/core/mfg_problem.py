@@ -236,8 +236,8 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         Args:
             spatial_bounds: List of (min, max) tuples for each dimension
                            Example: [(0, 1), (0, 1)] for 2D unit square
-            spatial_discretization: List of grid points per dimension
-                                   Example: [50, 50] for 51×51 grid
+            spatial_discretization: Interval count per dimension (Nx); the grid has Nx + 1
+                                   points per axis. Example: [50, 50] for a 51×51 grid
             geometry: BaseGeometry object for complex domains (unified mode)
             hjb_geometry / fp_geometry: Must be specified together AND must be the SAME OBJECT.
                 Two separately-constructed geometries raise NotImplementedError even when they are
@@ -826,7 +826,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         dimension = len(spatial_bounds)
 
         if spatial_discretization is None:
-            # Default: 51 points per dimension
+            # Default: 51 intervals per dimension
             spatial_discretization = [51] * dimension
         elif len(spatial_discretization) != dimension:
             raise ValueError(
@@ -852,7 +852,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         # Store n-D parameters
         self.spatial_bounds = spatial_bounds
-        self.spatial_discretization = spatial_discretization
 
         # The geometry owns the grid shape, as this comment always said. The three branches that
         # stood here recomputed it: the first two from `spatial_discretization` (agreeing with the
@@ -1054,7 +1053,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             self.num_spatial_points = config["num_spatial_points"]
             self.spatial_shape = config["spatial_shape"]
             self.spatial_bounds = config["spatial_bounds"]
-            self.spatial_discretization = config["spatial_discretization"]
 
         elif geometry.geometry_type == GeometryType.UNSTRUCTURED_MESH:
             # BaseGeometry - unstructured mesh via Gmsh
@@ -1065,7 +1063,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             # Set spatial shape and bounds
             self.spatial_shape = (self.num_spatial_points,)  # Unstructured
             self.spatial_bounds = None  # Not a regular grid
-            self.spatial_discretization = None
 
         elif geometry.geometry_type == GeometryType.IMPLICIT:
             # ImplicitDomain - point cloud from SDF
@@ -1073,7 +1070,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             self.collocation_points = geometry.get_spatial_grid()
             self.spatial_shape = (self.num_spatial_points,)
             self.spatial_bounds = geometry.get_bounding_box()
-            self.spatial_discretization = None
 
         elif geometry.geometry_type in (GeometryType.MAZE, GeometryType.NETWORK):
             # Graph-based geometries (mazes, networks)
@@ -1082,7 +1078,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             self.collocation_points = geometry.get_spatial_grid()
             self.spatial_shape = config["spatial_shape"]
             self.spatial_bounds = config.get("spatial_bounds")
-            self.spatial_discretization = config.get("spatial_discretization")
 
             # Store graph-specific data if available
             if "graph_data" in config:
@@ -1097,7 +1092,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             self.collocation_points = geometry.get_spatial_grid()
             self.spatial_shape = config["spatial_shape"]
             self.spatial_bounds = config.get("spatial_bounds")
-            self.spatial_discretization = config.get("spatial_discretization")
 
     def _init_network(
         self,
@@ -1165,7 +1159,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         self.spatial_shape = (self.num_nodes,)
         self.num_spatial_points = self.num_nodes  # For networks, spatial points = nodes
         self.spatial_bounds = None
-        self.spatial_discretization = None
         self.obstacles = None
         self.has_obstacles = False
 
@@ -1295,6 +1288,15 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
     @property
     def diffusion_field(self):
         raise AttributeError(_RETIRED_VOLATILITY_ATTRIBUTE.format(name="diffusion_field"))
+
+    @property
+    def spatial_discretization(self):
+        raise AttributeError(
+            "problem.spatial_discretization is retired (#1889): it held the interval count when the "
+            "problem was built from spatial_bounds= and the point count when it was built from geometry=. "
+            "Space is the domain's: problem.geometry.Nx counts intervals and problem.geometry.Nx_points "
+            "counts points, Nx_points = Nx + 1 per axis."
+        )
 
     # =========================================================================
     # Hamiltonian Properties (Issue #673)
@@ -2242,13 +2244,14 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         if self.dimension == 1:
             dx = self._get_spacing() or 1.0
             return float(np.sum(m) * dx), "uniform-cell"
-        if self.spatial_bounds is not None and self.spatial_discretization is not None:
-            spacing = self.geometry.get_grid_spacing() if self.geometry is not None else None
+        from mfgarchon.geometry.base import CartesianGrid
+
+        if isinstance(self.geometry, CartesianGrid):
+            spacing = self.geometry.get_grid_spacing()
             if spacing is None:
                 raise ValueError(
                     "measuring the initial density needs the grid spacing, and this geometry "
-                    f"({type(self.geometry).__name__}) does not provide one, although it declared "
-                    "spatial_bounds and spatial_discretization."
+                    f"({type(self.geometry).__name__}) does not provide one, although it is a CartesianGrid."
                 )
             return float(np.sum(m) * float(np.prod(spacing))), "uniform-cell"
         return float(np.sum(m) / self.num_spatial_points), "point-average"

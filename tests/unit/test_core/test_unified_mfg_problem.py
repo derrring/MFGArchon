@@ -142,7 +142,7 @@ class TestNDGridMode:
         assert problem.dimension == 2
         assert problem.domain_type == "grid"
         assert problem.spatial_bounds == [(0, 1), (0, 1)]
-        assert problem.spatial_discretization == [50, 50]
+        assert problem.geometry.Nx == [50, 50]
         assert problem.T == 1.0
         assert problem.Nt == 100
         assert problem.volatility == 0.1
@@ -197,7 +197,7 @@ class TestNDGridMode:
             components=_default_components_nd(2),
         )
 
-        assert problem.spatial_discretization == [100, 50]
+        assert problem.geometry.Nx == [100, 50]
         assert problem.dimension == 2
 
     def test_time_domain_alias(self):
@@ -423,7 +423,7 @@ class TestBackwardCompatibility:
         assert problem.Nt == 100
         assert problem.volatility == 0.1
         assert problem.spatial_bounds == [(0, 1), (0, 1)]
-        assert problem.spatial_discretization == [50, 50]
+        assert problem.geometry.Nx == [50, 50]
 
 
 class TestComplexityEstimation:

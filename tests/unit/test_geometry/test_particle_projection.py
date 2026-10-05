@@ -101,7 +101,6 @@ class TestPointCloudGeometry:
         assert config["num_spatial_points"] == 3
         assert config["spatial_shape"] == (3,)
         assert len(config["spatial_bounds"]) == 2  # 2D
-        assert config["spatial_discretization"] is None
 
 
 class TestParticleParticleProjection:
