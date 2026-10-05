@@ -731,6 +731,7 @@ scalar (§ *Volatility and diffusion*), and the public API names it `volatility`
 | `damping_factor` on `FixedPointIterator` | `relaxation` |
 | `OptimizationSense`, `sense`, `sense_sign` | nothing — § *The library minimises* |
 | `AdjointConsistentProvider`, `NormalDriftProvider` | nothing — removed |
+| `problem.spatial_discretization` | `problem.geometry.Nx` (intervals) or `problem.geometry.Nx_points` (points). It held one count or the other depending on the constructor (#1889); the `spatial_discretization=` argument stays and counts intervals |
 
 **Deprecated**, still accepted with a warning: `num_points` → `Nx_points`; `damping_factor` →
 `relaxation`, `damping_factor_M` → `relaxation_M` and `damping` → `relaxation` elsewhere; `u_final` →

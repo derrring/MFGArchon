@@ -1,0 +1,13 @@
+- **`problem.spatial_discretization` is retired and raises `AttributeError`** (Issue #1889). The message names `problem.geometry.Nx` (intervals) and `problem.geometry.Nx_points` (points). For the same grid it held the interval count when the problem was built with `spatial_bounds=` and the point count when it was built with `geometry=`. #1888's initial-density normaliser read it as intervals and started every problem built on a `TensorProductGrid` with d ≥ 2 through `geometry=` `(n/(n-1))^d` heavy.
+  - There is no redirect: one value for both paths would silently change what the other path's callers read.
+  - The `spatial_discretization=` constructor argument is unchanged and counts intervals. Its docstring said "grid points" while giving `[50, 50]` for a 51×51 grid; it now says intervals.
+- **Removed with it:**
+  - the `"spatial_discretization"` key of every geometry's `get_problem_config()`, whose only reader was this attribute;
+  - the field on `CartesianGridMFGProtocol`.
+- **The initial-density fallback gates on the grid's declaration.** For a geometry without `integrate`, the uniform-cell measure gated on the retired attribute. It now gates on `geometry_type == CARTESIAN_GRID`, the declaration `MFGProblem` already dispatches on, and calls `get_grid_spacing()`; a declared Cartesian grid without a spacing raises.
+  - In the library nothing reaches the branch: only `TensorProductGrid` declares `CARTESIAN_GRID`, and it takes the `integrate` branch first.
+  - A third-party `CARTESIAN_GRID` geometry without `integrate` keeps the measure it had when it reported the key.
+  - It no longer needs the key: before, a missing key was a `KeyError` at construction.
+  - The same geometry that reported the key as `None` moves from `point-average` to `uniform-cell`.
+  - A `MAZE`- or `CUSTOM`-typed geometry without `integrate` that reported a key moves the other way, from `uniform-cell` to `point-average`; with a key but no spacing it moves from a `ValueError` to `point-average`. Implicit, mesh and network geometries do not move. The returned measure name says which was used.
+- **`docs/user/obstacle_problems.md` was off by one.** Built with `spatial_discretization=[63, 63]`, it read the attribute back as the solution grid's shape and so built 63×63 positions for a 64×64 density. It now reads `problem.geometry.Nx_points`, as does the capacity-constrained maze example.

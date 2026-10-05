@@ -761,7 +761,6 @@ class NetworkGeometry(GraphGeometry):
         config = {
             "num_spatial_points": self.num_spatial_points,
             "spatial_shape": (self.num_spatial_points,),
-            "spatial_discretization": None,
             "legacy_1d_attrs": None,
         }
 

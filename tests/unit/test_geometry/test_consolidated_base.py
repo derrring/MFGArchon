@@ -303,7 +303,6 @@ class TestDataInterface:
         assert config["num_spatial_points"] == 200
         assert config["spatial_shape"] == (10, 20)
         assert config["spatial_bounds"] == ((0.0, 1.0), (0.0, 2.0))
-        assert config["spatial_discretization"] == (10, 20)
 
 
 class TestEdgeCases:

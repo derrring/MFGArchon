@@ -171,7 +171,7 @@ def solve_and_visualize(
 
     # For now, create synthetic data for visualization demo
     print("   Creating synthetic visualization data...")
-    Nx, Ny = problem.spatial_discretization
+    Nx, Ny = problem.geometry.Nx_points
 
     # Synthetic density (concentrated in corridors)
     m_synthetic = np.random.rand(Nx, Ny) * 0.5
