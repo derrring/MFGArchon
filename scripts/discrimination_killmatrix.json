@@ -86,12 +86,6 @@
       "quadrature_wall_node_counting_measure",
       "fp_initial_condition_written_at_final_index"
     ],
-    "tests/integration/test_fdm_centered_conservation.py::test_gradient_centered_still_available_and_leaks": [
-      "fp_initial_condition_written_at_final_index"
-    ],
-    "tests/integration/test_fdm_centered_conservation.py::test_the_two_families_coincide_exactly_at_zero_drift": [
-      "quadrature_wall_node_counting_measure"
-    ],
     "tests/integration/test_fdm_solvers_mfg_complete.py::TestFDMSolversMFGIntegration::test_fdm_mass_conservation": [
       "fp_initial_condition_written_at_final_index"
     ],
@@ -1507,20 +1501,6 @@
       "periodic_wrap_endpoint_inverted",
       "fp_initial_condition_written_at_final_index"
     ],
-    "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[gradient_centered]": [
-      "diffusion_scalar_2x",
-      "grid_spacing_uses_point_count",
-      "periodic_endpoint_convention_inverted",
-      "periodic_wrap_endpoint_inverted",
-      "fp_initial_condition_written_at_final_index"
-    ],
-    "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[gradient_upwind]": [
-      "diffusion_scalar_2x",
-      "grid_spacing_uses_point_count",
-      "periodic_endpoint_convention_inverted",
-      "periodic_wrap_endpoint_inverted",
-      "fp_initial_condition_written_at_final_index"
-    ],
     "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_fdm_and_fvm_converge_to_the_same_field_under_a_varying_periodic_drift": [
       "periodic_endpoint_convention_inverted",
       "periodic_wrap_endpoint_inverted",
@@ -2687,7 +2667,7 @@
       "verify": "float(diffusion_from_volatility(np.array([2.0]), kind='field')[0]) == 4.0"
     },
     "diffusion_scalar_2x": {
-      "kill_count": 184,
+      "kill_count": 182,
       "killed": [
         "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[1]",
         "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[2]",
@@ -2810,8 +2790,6 @@
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_channel_that_supplies_a_bc_gets_the_same_torus[FPFVMSolver]",
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[divergence_centered]",
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[divergence_upwind]",
-        "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[gradient_centered]",
-        "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[gradient_upwind]",
         "tests/unit/test_alg/test_sigma_tensor_convention_rfc_1596.py::TestDiffusionOperatorShapeConsistency::test_from_volatility_matches_manual_D",
         "tests/unit/test_alg/test_sigma_tensor_convention_rfc_1596.py::TestKernelConvention::test_scalar_is_half_sigma_squared",
         "tests/unit/test_alg/test_sl_cn_wall_2243.py::test_the_1d_crank_nicolson_call_site_is_second_order_at_the_wall",
@@ -3045,7 +3023,7 @@
       "verify": "float(upwind_momentum(np.array([1.0]), np.array([-1.0]), \"engquist_osher\")[0]) == 1.0"
     },
     "fp_initial_condition_written_at_final_index": {
-      "kill_count": 135,
+      "kill_count": 132,
       "killed": [
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_gauss_seidel_runs_and_produces_finite_M",
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestFictitiousPlayFPDriftConvention::test_fictitious_play_density_is_non_negative",
@@ -3061,7 +3039,6 @@
         "tests/integration/test_diffusion_magnitude_gate.py::test_fp_fdm_diffusion_magnitude[implicit]",
         "tests/integration/test_fdm_centered_conservation.py::test_callable_drift_explicit_path_respects_no_flux_no_periodic_wrap",
         "tests/integration/test_fdm_centered_conservation.py::test_fdm_centered_coupled_solve_conserves_mass",
-        "tests/integration/test_fdm_centered_conservation.py::test_gradient_centered_still_available_and_leaks",
         "tests/integration/test_fdm_solvers_mfg_complete.py::TestFDMSolversMFGIntegration::test_fdm_mass_conservation",
         "tests/integration/test_fdm_solvers_mfg_complete.py::TestFDMSolversMFGIntegration::test_fdm_periodic_bc_solution",
         "tests/integration/test_fdm_solvers_mfg_complete.py::TestFDMSolversMFGIntegration::test_fdm_solution_non_negativity",
@@ -3167,8 +3144,6 @@
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_channel_that_supplies_a_bc_gets_the_same_torus[FPFDMSolver]",
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[divergence_centered]",
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[divergence_upwind]",
-        "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[gradient_centered]",
-        "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[gradient_upwind]",
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_fdm_and_fvm_converge_to_the_same_field_under_a_varying_periodic_drift",
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_zero_diffusion_and_zero_drift_do_not_move_the_density[FPFDMSolver]",
         "tests/unit/test_alg/test_picard_reports_failed_inner_solves_1878.py::test_a_converged_result_satisfies_the_discrete_hjb_at_every_step",
@@ -3328,7 +3303,7 @@
       "verify": "TensorProductGrid(bounds=[(0.0, 1.0)], Nx=[10], boundary_conditions=no_flux_bc(dimension=1)).Nx_points == [10]"
     },
     "grid_spacing_uses_point_count": {
-      "kill_count": 56,
+      "kill_count": 54,
       "killed": [
         "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline",
         "tests/unit/test_alg/test_fp_matrix_conservation.py::TestFPProductionConservation::test_density_stays_positive",
@@ -3346,8 +3321,6 @@
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_channel_that_supplies_a_bc_gets_the_same_torus[FPFVMSolver]",
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[divergence_centered]",
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[divergence_upwind]",
-        "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[gradient_centered]",
-        "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[gradient_upwind]",
         "tests/unit/test_alg/test_true_adjoint.py::TestJacobianTransposeEqualsAdvection::test_jacobian_coefficients_match_analytical_dh_dp",
         "tests/unit/test_alg/test_weno_family.py::TestWenoHJDerivativeCorrectness::test_all_variants_recover_gradient[weno-js]",
         "tests/unit/test_alg/test_weno_family.py::TestWenoHJDerivativeCorrectness::test_all_variants_recover_gradient[weno-m]",
@@ -3575,7 +3548,7 @@
       "verify": "abs(_measure_probe() - 21.0) < 1e-9"
     },
     "periodic_endpoint_convention_inverted": {
-      "kill_count": 24,
+      "kill_count": 22,
       "killed": [
         "tests/integration/test_fdm_solvers_mfg_complete.py::TestFDMSolversMFGIntegration::test_fdm_periodic_bc_solution",
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_operator_follows_the_solvers_resolved_boundary_conditions",
@@ -3595,8 +3568,6 @@
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_channel_that_supplies_a_bc_gets_the_same_torus[FPFVMSolver]",
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[divergence_centered]",
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[divergence_upwind]",
-        "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[gradient_centered]",
-        "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[gradient_upwind]",
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_fdm_and_fvm_converge_to_the_same_field_under_a_varying_periodic_drift",
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_the_fvm_wrap_face_velocity_is_the_face_between_the_last_cell_and_the_first",
         "tests/unit/test_fp_fvm.py::test_gate1_mass_conservation_periodic",
@@ -3608,7 +3579,7 @@
       "verify": "TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)).periodic_convention is PeriodicGridConvention.ENDPOINT_EXCLUSIVE"
     },
     "periodic_wrap_endpoint_inverted": {
-      "kill_count": 50,
+      "kill_count": 48,
       "killed": [
         "tests/integration/test_fdm_solvers_mfg_complete.py::TestFDMSolversMFGIntegration::test_fdm_periodic_bc_solution",
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_operator_follows_the_solvers_resolved_boundary_conditions",
@@ -3630,8 +3601,6 @@
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_channel_that_supplies_a_bc_gets_the_same_torus[FPFVMSolver]",
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[divergence_centered]",
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[divergence_upwind]",
-        "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[gradient_centered]",
-        "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_every_fdm_advection_scheme_wraps_on_the_same_torus[gradient_upwind]",
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_fdm_and_fvm_converge_to_the_same_field_under_a_varying_periodic_drift",
         "tests/unit/test_alg/test_periodic_torus_oracle_1822.py::test_the_fvm_wrap_face_velocity_is_the_face_between_the_last_cell_and_the_first",
         "tests/unit/test_fp_fvm.py::test_gate1_mass_conservation_periodic",
@@ -3678,7 +3647,7 @@
       "verify": "check_convergence_criteria(1e-9, 1e-9, 1.0, 1.0, 1e-6)[0]"
     },
     "quadrature_wall_node_counting_measure": {
-      "kill_count": 94,
+      "kill_count": 93,
       "killed": [
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestBlockIteratorFPDriftConvention::test_block_gauss_seidel_runs_and_produces_finite_M",
         "tests/integration/test_1043_coupler_fp_drift_convention.py::TestFictitiousPlayFPDriftConvention::test_fictitious_play_density_is_non_negative",
@@ -3690,7 +3659,6 @@
         "tests/integration/test_fdm_centered_conservation.py::test_callable_drift_explicit_path_respects_no_flux_no_periodic_wrap",
         "tests/integration/test_fdm_centered_conservation.py::test_fdm_centered_conserves_mass_under_no_flux",
         "tests/integration/test_fdm_centered_conservation.py::test_fdm_centered_coupled_solve_conserves_mass",
-        "tests/integration/test_fdm_centered_conservation.py::test_the_two_families_coincide_exactly_at_zero_drift",
         "tests/integration/test_fdm_solvers_mfg_complete.py::TestFDMSolversMFGIntegration::test_fdm_solution_non_negativity",
         "tests/integration/test_mass_conservation_1d.py::TestExplicitDriftNoFluxDiffusionConservation::test_pure_diffusion_no_flux_conserves_mass",
         "tests/integration/test_mass_conservation_1d.py::TestMassConservation1D::test_coupled_fdm_mass_conservation_fast_tier",

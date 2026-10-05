@@ -1198,10 +1198,9 @@ def robin_bc(
     to a QUADRATIC control cost by ``assert_quadratic_drift`` -- the remaining refusal is
     about the wrong FORM (a regularised cost), not a wrong direction.
 
-    For contrast, the ``gradient_*`` family imposes ``d_n m = 0`` by hard-coding the mirrored ghost
-    ``m_{N+1} = m_{N-1}`` (``add_boundary_no_flux_entries_gradient_upwind``,
-    and its ``_centered`` twin) and is non-conservative by design (#1075). How much it
-    leaks is a property of the configuration, not of the family -- at sigma=0.3, 81 points on
+    For contrast, the ``gradient_*`` family, removed in #2007, imposed ``d_n m = 0`` by hard-coding the
+    mirrored ghost ``m_{N+1} = m_{N-1}`` and was non-conservative by design (#1075). How much it
+    leaked was a property of the configuration, not of the family -- at sigma=0.3, 81 points on
     [0,1], dt=1e-3, Gaussian initial density of width s0 at 0.5, potential channel:
 
         scheme               s0     T=0.20    T=0.30    T=0.50

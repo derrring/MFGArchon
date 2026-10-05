@@ -317,30 +317,6 @@ def test_the_conservative_schemes_conserve_mass_at_a_drifted_wall(scheme):
     # this fixture, so the threshold named a failure inside its own pass band. Figures in #1975.
 
 
-@pytest.mark.parametrize("scheme", ["gradient_upwind", "gradient_centered"])
-def test_the_gradient_schemes_impose_a_zero_gradient_wall_and_leak(scheme):
-    """The counterpart, pinned so the distinction cannot quietly collapse in either direction.
-
-    These impose `d_n m = 0`, which is the wrong condition when the drift is not tangential, and
-    they are documented non-conservative (#1075).
-    """
-    drift_pct, _ = _run(scheme)
-    assert drift_pct < -10.0, (
-        f"{scheme} conserved mass ({drift_pct:.4f}%) at a drifted wall. If it now imposes "
-        "J.n = 0 that is a fix worth recording -- see #1075 and #1975 before updating this."
-    )
-
-
-def test_the_two_families_disagree_by_a_large_margin():
-    """A control on the pair above: if the fixture stopped driving mass into the wall, both
-    families would conserve trivially and both tests would still pass in the wrong way."""
-    conservative, _ = _run("divergence_upwind")
-    gradient, _ = _run("gradient_upwind")
-    assert gradient - conservative < -50.0, (
-        "the two schemes no longer separate; the fixture may have stopped exercising the wall"
-    )
-
-
 # =============================================================================
 
 

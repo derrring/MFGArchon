@@ -70,8 +70,8 @@ def create_paired_solvers(
         where validate_duality has no effect (#422). With validate_duality on, an SL pair
         whose halves disagree on sub-stepping is built as asked, with check_solver_duality's warning
         (#2448; canonical-CS / DPP HJB halves are not compared, #2441). check_solver_duality compares no
-        other config key, so another same-family mismatch -- an FDM FP half given
-        advection_scheme="gradient_centered", for one -- is built without a duality report.
+        other config key, so another same-family mismatch -- an FDM_UPWIND FP half given
+        advection_scheme="divergence_centered", for one -- is built without a duality report.
 
     Raises:
         ValueError: If MESHLESS_GALERKIN gets different values for one of its duality-critical keys
@@ -197,15 +197,14 @@ def _create_fdm_pair(
 
     # Map scheme to FP advection scheme
     if scheme == NumericalScheme.FDM_UPWIND:
-        # FDM upwind uses divergence_upwind for FP (mass conservative, handles boundaries correctly)
-        # Note: gradient_upwind has boundary flux bug, see Issue #382
+        # FDM upwind uses divergence_upwind for FP (mass conservative, handles boundaries correctly).
+        # The FP gradient form was removed in #2007.
         fp_config.setdefault("advection_scheme", "divergence_upwind")
     elif scheme == NumericalScheme.FDM_CENTERED:
         # FDM centered uses divergence_centered: 2nd-order central and CONSERVATIVE
         # (telescoping flux, zero boundary flux). The non-conservative gradient_centered
-        # (v.grad(m)) leaks probability mass through no-flux walls (Issue #1149); it stays
-        # available as an explicit advection_scheme but is no longer the centered default.
-        # Both are second-order and oscillate for cell-Peclet > 2.
+        # (v.grad(m)) leaked probability mass through no-flux walls (Issue #1149) and was removed
+        # in #2007. divergence_centered is second-order and oscillates for cell-Peclet > 2.
         fp_config.setdefault("advection_scheme", "divergence_centered")
 
     # Create solvers

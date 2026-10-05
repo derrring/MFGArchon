@@ -201,7 +201,8 @@ result = solver.solve()
 ```
 
 > **The FP advection scheme changes in both "After" blocks, and that is not part of the
-> migration.** The `gradient_*` family is non-conservative at a no-flux wall (#1075, #2007): on the
+> migration.** The `gradient_*` family, shown in the "Before" block as legacy code was written, was
+> removed in #2007 and now raises. It was non-conservative at a no-flux wall (#1075): on the
 > `examples/basic/three_mode_api_demo.py` problem `gradient_upwind` lost 98.17% of the probability
 > mass while the Picard residual stayed under tolerance (#2008), and `gradient_centered` aborts
 > there outright. Migrating the API shape is independent of which scheme you pass — but a guide

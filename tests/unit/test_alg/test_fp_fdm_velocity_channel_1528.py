@@ -143,7 +143,7 @@ def test_u_channel_unchanged_for_minimize():
     assert _mass_drift(result, problem) == pytest.approx(0.0, abs=1e-9)
 
 
-@pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind", "divergence_centered"])
+@pytest.mark.parametrize("scheme", ["divergence_centered"])
 def test_velocity_on_a_non_consuming_scheme_raises(scheme):
     """Issue #1632: a velocity these schemes cannot read must not be silently dropped.
 
@@ -159,7 +159,7 @@ def test_velocity_on_a_non_consuming_scheme_raises(scheme):
         )
 
 
-@pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind", "divergence_centered"])
+@pytest.mark.parametrize("scheme", ["divergence_centered"])
 def test_a_zero_velocity_is_not_an_error(scheme):
     """A zero velocity with NO U to displace is the one accepted case.
 
@@ -176,7 +176,7 @@ def test_a_zero_velocity_is_not_an_error(scheme):
     assert np.isfinite(result).all()
 
 
-@pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind", "divergence_centered", "divergence_upwind"])
+@pytest.mark.parametrize("scheme", ["divergence_centered", "divergence_upwind"])
 def test_a_zero_velocity_alongside_a_real_u_still_raises(scheme):
     """The narrowing must not open the hole it was narrowing around.
 
@@ -220,7 +220,7 @@ def test_the_accept_list_does_not_apply_on_the_tensor_diffusion_path():
         )
 
 
-@pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind", "divergence_upwind"])
+@pytest.mark.parametrize("scheme", ["divergence_centered", "divergence_upwind"])
 def test_a_zero_velocity_that_displaces_a_callable_drift_raises(scheme):
     """The velocity arm wins over the callable-drift arm too, not only over the U arm.
 
@@ -282,7 +282,7 @@ def test_a_misspelled_scheme_reports_itself_as_such():
         )
 
 
-@pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind", "divergence_centered"])
+@pytest.mark.parametrize("scheme", ["divergence_centered"])
 def test_the_raise_names_the_scheme_and_the_way_out(scheme):
     """The diagnostic must be actionable and greppable, not merely raised."""
     with pytest.raises(NotImplementedError) as exc:

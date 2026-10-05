@@ -111,8 +111,8 @@ def demo_expert_mode():
     problem = create_problem()
 
     # Expert Mode: Create and configure solvers manually.
-    # 'divergence_upwind' is the only one of the four advection schemes that solves this problem.
-    # Measured here, one outcome each -- the failures are NOT the same failure. The two aborts
+    # 'divergence_upwind' is the only one of the four advection schemes that solved this problem
+    # (the two gradient ones were removed in #2007). Measured here, one outcome each -- the failures are NOT the same failure. The two aborts
     # fire inside Picard iteration 1 and so do not depend on the cap; the two convergence counts do,
     # and are quoted at cap 60. "loses 98.17%" is an endpoint mass ratio; "5.1e-15" is
     # mass_conservation_error, a max over time -- different quantities, both worth seeing:

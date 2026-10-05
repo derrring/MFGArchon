@@ -26,3 +26,5 @@ turned that test red — which is how the standing decision was found.
 
 The corrected figures are pinned, including that `O(1e-2)` may appear only as a retraction and not as
 a live claim, with a control confirming the `divergence_*` schemes do not warn.
+
+**Superseded in the same release:** the `gradient_*` schemes, and this warning with them, were removed (#2007, maintainer ruling 2026-10-04); see `2007-remove-fp-gradient-schemes.removed.md`.

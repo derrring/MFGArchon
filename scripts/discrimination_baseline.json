@@ -37,7 +37,7 @@
       "status": "ok"
     },
     "diffusion_scalar_2x": {
-      "kill_count": 184,
+      "kill_count": 182,
       "owner": "D = sigma^2/2 for scalar sigma (#811)",
       "status": "ok"
     },
@@ -57,7 +57,7 @@
       "status": "ok"
     },
     "fp_initial_condition_written_at_final_index": {
-      "kill_count": 135,
+      "kill_count": 132,
       "owner": "The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, fp_fdm_time_stepping.py:797, whose own docstring states the convention at :681: \"- Forward time evolution: k=0 -> Nt-1\". No issue n",
       "status": "ok"
     },
@@ -77,7 +77,7 @@
       "status": "ok"
     },
     "grid_spacing_uses_point_count": {
-      "kill_count": 56,
+      "kill_count": 54,
       "owner": "uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim, get_spacing() indexes it, legacy_1d_attrs[\"Dx\"] reads it, cell volume ",
       "status": "ok"
     },
@@ -112,12 +112,12 @@
       "status": "ok"
     },
     "periodic_endpoint_convention_inverted": {
-      "kill_count": 24,
+      "kill_count": 22,
       "owner": "where the last node sits, MEASURED from the coordinates the grid built (#1822). `_axis_convention` is the single owner: `periodic_convention` calls it (tensor_grid.py:415) and `_first_axis_with_convention` calls it (:385). The property docstring states why it is derived rather than asserted: \"Derive",
       "status": "ok"
     },
     "periodic_wrap_endpoint_inverted": {
-      "kill_count": 50,
+      "kill_count": 48,
       "owner": "how many trailing nodes of a periodic axis repeat a node the array already holds -- the ONE number both the ghost skip and the modular span derive from (#1822). types.py:126-130 states the ownership verbatim: \"Every periodic wrap in the package is one of two expressions of this single number, which ",
       "status": "ok"
     },
@@ -127,7 +127,7 @@
       "status": "ok"
     },
     "quadrature_wall_node_counting_measure": {
-      "kill_count": 94,
+      "kill_count": 93,
       "owner": "The measure on a node-centred grid is the TRAPEZOID: `TensorProductGrid` is endpoint-inclusive, so the wall lies ON the end node and that node owns half a cell. Those weights are also the control volumes the conservative FP schemes telescope against, which is why this is one convention and not two (#2145). Sole owner: `mfgarchon/utils/numerical/quadrature.py`, reached by `TensorProductGrid.integrate`, `mass_drift`, the FV advection kernel and the FDM wall rows. SUPERSEDES `m_initial_1d_counting_measure`, which mutated the constructor's normalisation dispatch -- #1887 removed that rescale (the library validates the initial mass and does not change it), so that anchor no longer exists. The convention it defended survived and moved here; the mutation follows it.",
       "status": "ok"
     },

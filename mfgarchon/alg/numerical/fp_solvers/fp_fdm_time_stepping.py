@@ -93,14 +93,6 @@ from .fp_fdm_alg_divergence_centered import (
     add_interior_entries_divergence_centered,
 )
 from .fp_fdm_alg_divergence_upwind import add_interior_entries_divergence_upwind
-from .fp_fdm_alg_gradient_centered import (
-    add_boundary_no_flux_entries_gradient_centered,
-    add_interior_entries_gradient_centered,
-)
-from .fp_fdm_alg_gradient_upwind import (
-    add_boundary_no_flux_entries_gradient_upwind,
-    add_interior_entries_gradient_upwind,
-)
 from .fp_fdm_bc import add_boundary_no_flux_entries_divergence_upwind
 from .fp_fdm_operators import is_boundary_point
 
@@ -112,15 +104,11 @@ logger = get_logger(__name__)
 # =============================================================================
 
 _BOUNDARY_HANDLERS: dict[str, Any] = {
-    "gradient_centered": add_boundary_no_flux_entries_gradient_centered,
-    "gradient_upwind": add_boundary_no_flux_entries_gradient_upwind,
     "divergence_centered": add_boundary_no_flux_entries_divergence_centered,
     "divergence_upwind": add_boundary_no_flux_entries_divergence_upwind,
 }
 
 _INTERIOR_HANDLERS: dict[str, Any] = {
-    "gradient_centered": add_interior_entries_gradient_centered,
-    "gradient_upwind": add_interior_entries_gradient_upwind,
     "divergence_centered": add_interior_entries_divergence_centered,
     "divergence_upwind": add_interior_entries_divergence_upwind,
 }
@@ -128,9 +116,18 @@ _INTERIOR_HANDLERS: dict[str, Any] = {
 # Legacy scheme names -> canonical names (single source for both the outer driver's
 # velocity-support check and the per-timestep assembly).
 _SCHEME_ALIASES = {
-    "centered": "gradient_centered",
-    "upwind": "gradient_upwind",
     "flux": "divergence_upwind",
+}
+
+#: The gradient form v.grad(m), removed in #2007 (maintainer ruling 2026-10-04), with the scheme to use
+#: instead. It drops m*div(v) from div(v*m), so with a non-constant drift it discretizes a different
+#: equation, and its wall imposed dm/dn = 0 rather than J.n = 0 (EOC 0.00 at a drifting wall). Fixing
+#: the wall alone left it non-convergent. "centered" and "upwind" were its legacy aliases.
+_REMOVED_SCHEMES = {
+    "gradient_centered": "divergence_centered",
+    "gradient_upwind": "divergence_upwind",
+    "centered": "divergence_centered",
+    "upwind": "divergence_upwind",
 }
 
 _VALID_SCHEMES = frozenset(_INTERIOR_HANDLERS)
@@ -166,6 +163,12 @@ def _resolve_and_validate_scheme(advection_scheme: str) -> str:
     standalone entry point with its own tests, so it validates its own input rather than
     trusting a caller; this helper is what keeps that from meaning two copies of the message.
     """
+    if advection_scheme in _REMOVED_SCHEMES:
+        raise ValueError(
+            f"advection_scheme={advection_scheme!r} was removed (Issue #2007). The gradient form v.grad(m) "
+            "drops m*div(v) from the Fokker-Planck operator, and its wall imposed dm/dn = 0 instead of "
+            f"J.n = 0. Use advection_scheme={_REMOVED_SCHEMES[advection_scheme]!r}."
+        )
     resolved = _SCHEME_ALIASES.get(advection_scheme, advection_scheme)
     if resolved not in _VALID_SCHEMES:
         raise ValueError(f"Unknown advection_scheme '{advection_scheme}'. Valid options: {sorted(_VALID_SCHEMES)}")
@@ -747,17 +750,12 @@ def solve_fp_nd_full_system(
         constant or per point) for an array; "tensor" for a tensor-valued callable.
     advection_scheme : str
         Advection term discretization scheme. Options:
-        - "gradient_centered": Gradient form + central differences
-          (NOT conservative, oscillates for Peclet > 2)
-        - "gradient_upwind": Gradient form + upwind differences
-          (row-sum consistent but NOT mass-conservative at no-flux walls -- leaks
-          mass even for pure diffusion, Issue #1075; stable, O(dx))
         - "divergence_centered": Divergence form + centered fluxes
           (conservative via telescoping, oscillates for Peclet > 2)
         - "divergence_upwind": Divergence form + upwind fluxes
           (conservative via telescoping, stable, O(dx))
-        Legacy aliases: "centered"->"gradient_centered",
-        "upwind"->"gradient_upwind", "flux"->"divergence_upwind"
+        Legacy alias: "flux"->"divergence_upwind". The gradient schemes and their aliases
+        "centered" / "upwind" were removed in #2007 and raise.
     drift_field : Callable | None
         Optional callable drift field (Phase 2 - Issue #487):
         - None: Use U_solution_for_drift to compute drift
@@ -1368,17 +1366,12 @@ def solve_timestep_full_nd(
         Boundary condition specification
     advection_scheme : str
         Advection term discretization scheme. Options:
-        - "gradient_centered": Gradient form + central differences
-          (NOT conservative, oscillates for Peclet > 2)
-        - "gradient_upwind": Gradient form + upwind differences
-          (row-sum consistent but NOT mass-conservative at no-flux walls -- leaks
-          mass even for pure diffusion, Issue #1075; stable, O(dx))
         - "divergence_centered": Divergence form + centered fluxes
           (conservative via telescoping, oscillates for Peclet > 2)
         - "divergence_upwind": Divergence form + upwind fluxes
           (conservative via telescoping, stable, O(dx)) [DEFAULT]
-        Legacy aliases: "centered"->"gradient_centered",
-        "upwind"->"gradient_upwind", "flux"->"divergence_upwind"
+        Legacy alias: "flux"->"divergence_upwind". The gradient schemes and their aliases
+        "centered" / "upwind" were removed in #2007 and raise.
 
     Returns
     -------

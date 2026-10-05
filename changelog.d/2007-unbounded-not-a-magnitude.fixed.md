@@ -7,3 +7,5 @@ a caller could budget against, which is the part that is false. Re-measured acro
 last of those the returned density is a relaxed uniform field, not an under-resolved correct one,
 and the warning now says so. The schemes remain explicitly selectable — the standing decision in
 `test_gradient_centered_still_available_and_leaks` is untouched.
+
+**Superseded in the same release:** the `gradient_*` schemes, and this warning with them, were removed (#2007, maintainer ruling 2026-10-04); see `2007-remove-fp-gradient-schemes.removed.md`.

@@ -159,9 +159,9 @@ def test_the_operator_is_the_scheme_the_solver_is_configured_with():
     u = np.cos(4 * np.pi * x) + 0.1 * x
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        divergence = FPFDMSolver(problem, advection_scheme="divergence_upwind").build_advection_operator(u)
-        gradient = FPFDMSolver(problem, advection_scheme="gradient_upwind").build_advection_operator(u)
-    separation = float(np.abs((divergence - gradient).toarray()).max())
+        upwind = FPFDMSolver(problem, advection_scheme="divergence_upwind").build_advection_operator(u)
+        centered = FPFDMSolver(problem, advection_scheme="divergence_centered").build_advection_operator(u)
+    separation = float(np.abs((upwind - centered).toarray()).max())
     assert separation > 1.0, f"the two schemes build the same operator ({separation:.3e}); the scheme is not read"
 
 
