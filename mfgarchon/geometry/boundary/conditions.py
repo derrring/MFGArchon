@@ -1021,6 +1021,32 @@ def periodic_bc(
     return bc
 
 
+def periodic_on_every_face(bc: Any) -> bool:
+    """Whether every face of ``bc`` is periodic, however the periodicity is spelt. Issue #2495.
+
+    A uniform periodic BC, one PERIODIC segment per face, and an empty segment list over a periodic
+    ``default_bc`` all say the same thing. The test this replaced, ``bc.is_uniform and bc.type ==
+    "periodic"``, accepted only the first; FP-FDM then solved the other two as no-flux, bit for bit,
+    with no error raised.
+
+    The faces are read through ``get_bc_type_at_boundary``, so a segment the face reader cannot place
+    (#1953, #2490) reads as whatever that reader says. A BC whose dimension is not yet bound has no
+    faces to read and answers ``False``.
+    """
+    from .bc_utils import declares_periodic
+
+    if bc.is_uniform:
+        return bc.type == "periodic"
+    dimension = getattr(bc, "dimension", None)
+    if not declares_periodic(bc) or not dimension:
+        return False
+    return all(
+        bc.get_bc_type_at_boundary(f"axis{axis}_{side}") is BCType.PERIODIC
+        for axis in range(dimension)
+        for side in ("min", "max")
+    )
+
+
 def periodic_axis_span(bc: Any, n: int) -> int | None:
     """How many DISTINCT cells an axis of ``n`` nodes has, or ``None`` if it does not wrap.
 
@@ -1038,7 +1064,7 @@ def periodic_axis_span(bc: Any, n: int) -> int | None:
     without having decided what to do about the wrap.
     """
     try:
-        wraps = bool(bc.is_uniform) and bc.type == "periodic"
+        wraps = periodic_on_every_face(bc)
     except AttributeError:
         # Legacy fdm_bc_1d BoundaryConditions1D: has .type but no .is_uniform, and this assembly
         # does not honour its 'periodic' anyway (see the Issue #1559 note in fp_fdm_time_stepping).

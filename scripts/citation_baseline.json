@@ -1,16 +1,16 @@
 {
   "_comment": "Ratchet for `path.py:NNN` citations whose named symbol is no longer near the cited line (#2102). `drifted` lists WHICH claims are drifted, keyed on the resolved target file, the cited line, and the symbols the prose names beside it; `counts` pins how many, because neither catches what the other does. Both are bidirectional: a new drifted citation is a regression and a fixed one is progress that must be recorded here. `adjudicable` may not SHRINK -- deleting the symbol name from beside a citation would otherwise lower `drifted` and read as an improvement. Regenerate with --write-baseline.",
   "_measured_at": {
-    "head_when_written": "32572ae1-dirty",
+    "head_when_written": "026c1951-dirty",
     "window": 12
   },
   "counts": {
-    "adjudicable": 26,
+    "adjudicable": 25,
     "ambiguous": 7,
-    "anchored": 16,
+    "anchored": 15,
     "drifted": 10,
     "missing": 47,
-    "unadjudicable": 100
+    "unadjudicable": 88
   },
   "drifted": [
     "AGENTS.md -> mfgarchon/utils/mfg_logging/logger.py:211 [caplog]",
