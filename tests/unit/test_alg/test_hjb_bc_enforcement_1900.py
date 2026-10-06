@@ -129,9 +129,6 @@ def _solve_and_measure(bc, nx: int = 21, tol: float = 1e-9):
     [
         "no_flux",
         "neumann_zero",
-        # Dirichlet was a strict xfail here: the wall's PDE row was solved and then overwritten,
-        # residual 5.442e+01 while reporting converged. #2515 replaces the wall row with
-        # u_wall - g in the residual and the Jacobian, so the root already satisfies it.
         "dirichlet",
     ],
 )
