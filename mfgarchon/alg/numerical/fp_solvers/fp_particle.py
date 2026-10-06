@@ -55,7 +55,8 @@ class KDENormalization(StrEnum):
 
     - ``NONE`` -- multiply every slice by one factor, calibrated on the first. The reconstruction's
       own drift stays visible. **The default.**
-    - ``ALL`` -- pin every slice to the caller's mass. Conservation then holds BY FIAT.
+    - ``ALL`` -- pin every slice to the caller's mass times the surviving fraction N_t/N_0 (#2519).
+      Conservation then holds BY FIAT on a closed domain.
 
     **`INITIAL_ONLY` was removed (#2181) because it could not mean anything.** It promised "correct
     at t=0, then carry" -- but at t=0 there is no accumulated drift to correct, and pinning the
@@ -81,7 +82,7 @@ class KDENormalization(StrEnum):
 
     The KDE reconstruction integrates to about 1 whatever particle count built it, so absorption is
     invisible to it and a carried factor preserves that invisibility. Identical numbers on `main`,
-    so this is the solver's property and neither default's: tracked as #2188. [CORRECTED 2026-10-06
+    so this is the solver's property and neither default's: tracked as #2188. [CORRECTED 2026-10-07
     -- #2519: `_to_caller_mass` now multiplies every slice by N_t/N_0, so the returned `M` carries
     the survivors' mass under either default; the table above was measured before that.]
 
@@ -91,7 +92,7 @@ class KDENormalization(StrEnum):
     """
 
     NONE = "none"  # One calibrated factor; the reconstruction's drift stays visible. DEFAULT.
-    ALL = "all"  # Pin every slice -- conservation by fiat, see the class docstring.
+    ALL = "all"  # Pin every slice to the caller's mass x N_t/N_0 -- by fiat, see the class docstring.
 
 
 class KDEMethod(StrEnum):
@@ -334,7 +335,10 @@ class FPParticleSolver(BaseFPSolver):
         if ignored:
             raise NotImplementedError(
                 f"FPParticleSolver: a DIRICHLET wall absorbs particles, which is m = 0 there; the "
-                f"value(s) {ignored} cannot be imposed and would be ignored (#2519). Pass value=0.0."
+                f"value(s) {ignored} cannot be imposed and would be ignored (#2519). If the value is the "
+                f"HJB's (an exit cost on a shared geometry BC), give this solver its own BC: "
+                f"FPParticleSolver(problem, boundary_conditions=dirichlet_bc(value=0.0)); otherwise pass "
+                f"value=0.0."
             )
 
     def _get_grid_params(self) -> dict:
@@ -1430,7 +1434,8 @@ class FPParticleSolver(BaseFPSolver):
         return mass if np.isfinite(mass) and mass > 0.0 else None
 
     def _to_caller_mass(self, density: Any, use_backend: bool = False, particles: Any = None) -> Any:
-        """Put the caller's mass on one reconstructed slice. One owner for both jobs (#2181).
+        """Put the caller's mass on one reconstructed slice. One owner for both jobs (#2181), and the
+        survivor scaling N_t/N_0 on top of either (#2519, `_scale_by_survivors`).
 
         A particle method carries no mass: sampling keeps the density's SHAPE, positions have no
         scale, and the reconstruction returns whatever constant its kernel happens to conserve. Two

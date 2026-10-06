@@ -70,7 +70,8 @@ def _exact_mass(dim: int, t: float) -> float:
 @pytest.mark.parametrize("route", ["grid", "callable"])
 @pytest.mark.parametrize(("dim", "n"), [(1, 21), (2, 15)], ids=["1d", "2d"])
 def test_the_returned_mass_is_the_surviving_mass(dim: int, n: int, route: str):
-    """Before #2519 every case below returned mass ~1.03-1.08 against an exact 0.21-0.67."""
+    """At `e506865e`, before #2519, these cases returned mass 0.975-0.996 at t = T/2 against an exact
+    0.454-0.674: the reconstruction kept the mass of no absorption."""
     nt = 80
     grid, _, M, _ = _solve(dim, n, nt, 16000, route)
     for k in (nt // 2, nt):
@@ -125,8 +126,9 @@ def test_every_slice_carries_the_survivors_of_this_solves_first_slice(dim: int, 
 
     The mass oracle above runs at a fine dt, where one step absorbs too little for a late N_0 to show.
     At Nt = 4 it shows in 2-D: with N_0 taken one step late, slice 1 read mass 0.960 (grid) and 1.000
-    (callable) against a survivors' share of 0.834. The 1-D cases do not see it on this sin-mode m0,
-    which loses little in one step; each of the two calibration lines is caught by a 2-D case.
+    (callable) against a survivors' share of 0.834. Each calibration line is caught by a 2-D case. The
+    1-D grid route never reaches the nD t = 0 line (it runs `_solve_fp_system_cpu`), and the 1-D callable
+    deviation under that mutation, 0.084-0.097 over seeds 0-7, sits just inside the 0.1 tolerance.
     """
     nt = 4
     grid, m0, M, solver = _solve(dim, n, nt, 8000, route)

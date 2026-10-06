@@ -99,7 +99,8 @@ class TestTheAbsorbingSolveReportsMoreErrorThanTheConservingOne:
 
         This replaces a labelled defect pin whose retirement condition read "short of
         `FPParticleSolver` changing what `M` is" -- #2519 is that change. Before it, on this fixture,
-        the grid-only drift was 0.0166 against a true loss of 0.1025. It does not equal the particle
+        the grid-only drift was 0.0153 against a true loss of 0.4187 (465 of 800 particles survive, at
+        `e506865e`). It does not equal the particle
         count, because the KDE's boundary bias moves the integral too, so the override that reads the
         count stays the exact figure; the band below only says the grid is no longer blind to it.
         """

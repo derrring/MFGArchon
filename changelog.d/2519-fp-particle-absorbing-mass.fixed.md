@@ -3,3 +3,4 @@
   - `_to_caller_mass` now multiplies each slice by N_t/N_0. It is the one owner, read by the 1-D CPU, nD CPU and callable-drift paths. The GPU path already refuses absorbing BCs (#1910).
   - On the absorbing heat mode m0(x) e^{−dDπ²t} the returned mass now tracks e^{−dDπ²t}. A remaining excess of a few percent comes from testing absorption only at step ends, and it falls with dt.
   - **A nonzero Dirichlet value is refused.** A particle wall absorbs, which is m = 0, and `dirichlet_bc(value=0.7)` used to solve bit-identically to `value=0.0`.
+  - **A shared geometry BC with a nonzero Dirichlet value is now refused by the particle FP.** Such a value is the HJB's (an exit cost); the particle wall absorbed regardless. Give the FP solver its own BC: `FPParticleSolver(problem, boundary_conditions=dirichlet_bc(value=0.0))`, which constructs and absorbs as before.
