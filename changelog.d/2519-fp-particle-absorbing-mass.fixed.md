@@ -1,0 +1,5 @@
+- **`FPParticleSolver` returns the density of the surviving particles under an absorbing (DIRICHLET) wall** (Issue #2519). **Behaviour change:** `M` changes for every DIRICHLET particle solve, and in a coupled solve so does the density the HJB receives.
+  - Every slice's reconstruction integrates to about 1 whatever particle count built it, so an absorbing wall that removed 72% of the particles (1-D) or 92% (2-D) returned a density of mass 1.03 or 1.07.
+  - `_to_caller_mass` now multiplies each slice by N_t/N_0. It is the one owner, read by the 1-D CPU, nD CPU and callable-drift paths. The GPU path already refuses absorbing BCs (#1910).
+  - On the absorbing heat mode m0(x) e^{−dDπ²t} the returned mass now tracks e^{−dDπ²t}. A remaining excess of a few percent comes from testing absorption only at step ends, and it falls with dt.
+  - **A nonzero Dirichlet value is refused.** A particle wall absorbs, which is m = 0, and `dirichlet_bc(value=0.7)` used to solve bit-identically to `value=0.0`.

@@ -94,22 +94,14 @@ class TestTheAbsorbingSolveReportsMoreErrorThanTheConservingOne:
             f"-- the exact ordering #2188 was filed about"
         )
 
-    def test_the_pre_fix_grid_measurement_understates_the_true_loss(self):
-        """A labelled defect pin: recomputes the OLD (grid-integral) formula directly on the
-        same absorbing solve's own `self.M`, to show it does not track absorption -- the
-        mechanism the issue describes, reproduced rather than asserted.
+    def test_the_grid_measurement_now_tracks_the_true_loss(self):
+        """Since #2519 each slice of `M` carries the survivors' mass, so the grid integral sees the loss.
 
-        The KDE reconstruction is not machine-precision blind to absorption (it is not exactly
-        0.0) -- it is blind in the sense that matters: it does not scale with the true loss.
-        Measured on this fixture: true loss 0.1025 (82 of 800 particles), grid-only drift
-        0.0166 -- a 6x understatement, not a wrong-direction error here, but #2188's own table
-        shows the SAME grid-only mechanism landing on the wrong side of a no-flux comparison
-        entirely (see the oracle test above, which is the ordering claim). This test pins the
-        magnitude gap; that one pins the ordering.
-
-        Retirement condition: this trips if `geometry.integrate` ever starts seeing particle
-        count (it structurally cannot, short of `FPParticleSolver` changing what `M` is), or if
-        this fixture stops losing particles.
+        This replaces a labelled defect pin whose retirement condition read "short of
+        `FPParticleSolver` changing what `M` is" -- #2519 is that change. Before it, on this fixture,
+        the grid-only drift was 0.0166 against a true loss of 0.1025. It does not equal the particle
+        count, because the KDE's boundary bias moves the integral too, so the override that reads the
+        count stays the exact figure; the band below only says the grid is no longer blind to it.
         """
         absorb_result, absorb_fp = _run(_bc(BCType.DIRICHLET))
         traj = absorb_fp.M_particles_trajectory
@@ -122,10 +114,9 @@ class TestTheAbsorbingSolveReportsMoreErrorThanTheConservingOne:
         grid_mass = problem.geometry.integrate(M)
         grid_only_drift = float(np.max(np.abs(grid_mass / grid_mass[0] - 1.0)))
 
-        assert grid_only_drift < true_loss / 2.0, (
-            f"the grid-only measurement ({grid_only_drift!r}) is no longer far below the true "
-            f"particle loss ({true_loss!r}); if this fails, #2188's mechanism no longer holds "
-            "and the override may be redundant"
+        assert 0.75 * true_loss < grid_only_drift < 1.25 * true_loss, (
+            f"the grid integral's drift ({grid_only_drift!r}) does not track the true particle loss "
+            f"({true_loss!r}); `M` should carry the survivors' mass (#2519)"
         )
 
 

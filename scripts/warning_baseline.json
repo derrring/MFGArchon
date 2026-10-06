@@ -105,6 +105,7 @@
     "tests/unit/test_alg/test_fp_nonquadratic.py\tUserWarning\tinitial density mass N.N on the grid mea",
     "tests/unit/test_alg/test_fp_particle.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
     "tests/unit/test_alg/test_fp_particle.py\tUserWarning\tinitial density mass N.N on the grid mea",
+    "tests/unit/test_alg/test_fp_particle_absorbing_mass_2519.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
     "tests/unit/test_alg/test_fp_particle_anisotropic_sigma_1256.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
     "tests/unit/test_alg/test_fp_particle_anisotropic_sigma_1256.py\tUserWarning\tinitial density mass N.N on the grid mea",
     "tests/unit/test_alg/test_fp_particle_gradient_bc_1255.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
