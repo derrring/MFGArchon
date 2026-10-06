@@ -8,17 +8,23 @@ went to the no-flux handler, so the other two solved as no-flux, bit for bit, wi
 reads its ghosts per face and already agreed.
 
 FP-FDM wraps every axis or none -- a wall node is assembled by a handler that cannot wrap -- so a BC
-periodic on some faces only is refused rather than solved as no-flux on every face.
+periodic on some faces only is refused rather than solved as no-flux on every face. So is a periodic
+segment the face reader cannot place: one with no `boundary`, which that reader puts on every face, would
+otherwise be wrapped everywhere while HJB-FDM walls it. A BC that declares periodicity but shows it on no
+face is no-flux, as on main.
 
 Mutations, each run through this file on a scratch copy of the tree:
 
-- the wall routing back to `is_uniform` (`and not wraps_everywhere` removed): both spellings fail,
-  at 2.2e+01 against `periodic_bc`;
-- `periodic_on_every_face` in `periodic_axis_span` back to the uniform test: both spellings fail,
-  at 4.8e+00;
-- the refusal in `FPFDMSolver.__init__` removed: the construction case fails;
-- the refusal in `solve_timestep_full_nd`, where the wall handlers are dispatched, removed: the
-  assembly case fails.
+- the wall routing back to `is_uniform` (`and not wraps_everywhere` removed): the three periodic cases
+  fail, at 2.2e+01 against `periodic_bc`;
+- `periodic_axis_span` back to the uniform test: the three periodic cases fail, at 4.8e+00;
+- the refusal in `FPFDMSolver.__init__` removed: both construction cases fail;
+- the refusal in `solve_timestep_full_nd`, where the wall handlers are dispatched, removed: both
+  assembly cases fail;
+- `refuse_unplaceable_segments` left out of that refusal: both `normal_direction` cases fail;
+- the refusal keyed on "not every face periodic" instead of "some face periodic, not all": the
+  overridden-default case fails;
+- the solver's dimension ignored in favour of the BC's own: the unbound case fails.
 """
 
 from __future__ import annotations
@@ -56,30 +62,52 @@ def _problem(bc):
     return problem, m0, U
 
 
-def _solve(bc):
-    problem, m0, U = _problem(bc)
-    return FPFDMSolver(problem).solve_fp_system(M_initial=m0, potential_field=U, show_progress=False)
+def _solve(bc, handed=False):
+    """Solve with ``bc`` on the grid, or -- ``handed`` -- handed to the solver over a periodic grid."""
+    problem, m0, U = _problem(periodic_bc(dimension=2) if handed else bc)
+    solver = FPFDMSolver(problem, boundary_conditions=bc) if handed else FPFDMSolver(problem)
+    return solver.solve_fp_system(M_initial=m0, potential_field=U, show_progress=False)
 
 
 @pytest.mark.parametrize(
-    "bc_factory",
+    ("bc_factory", "handed", "means"),
     [
         pytest.param(
-            lambda: BoundaryConditions(dimension=2, segments=_faces(BCType.PERIODIC)), id="one-segment-per-face"
+            lambda: BoundaryConditions(dimension=2, segments=_faces(BCType.PERIODIC)),
+            False,
+            "periodic",
+            id="one-segment-per-face",
         ),
         pytest.param(
-            lambda: BoundaryConditions(dimension=2, segments=[], default_bc=BCType.PERIODIC), id="periodic-default"
+            lambda: BoundaryConditions(dimension=2, segments=[], default_bc=BCType.PERIODIC),
+            False,
+            "periodic",
+            id="periodic-default",
+        ),
+        # Never bound to a grid, so it has no dimension of its own: the faces are read with the solver's.
+        pytest.param(
+            lambda: BoundaryConditions(segments=_faces(BCType.PERIODIC)),
+            True,
+            "periodic",
+            id="one-segment-per-face-unbound",
+        ),
+        # Declares periodicity, shows it on no face: no-flux, as on main and as HJB-FDM reads it.
+        pytest.param(
+            lambda: BoundaryConditions(dimension=2, segments=_faces(BCType.NO_FLUX), default_bc=BCType.PERIODIC),
+            False,
+            "no_flux",
+            id="periodic-default-overridden-everywhere",
         ),
     ],
 )
-def test_a_periodic_bc_is_read_from_its_faces_2495(bc_factory):
-    reference = _solve(periodic_bc(dimension=2))
-    walled = _solve(no_flux_bc(dimension=2))
-    solved = _solve(bc_factory())
+def test_a_bc_is_read_from_its_faces_2495(bc_factory, handed, means):
+    reference = _solve(periodic_bc(dimension=2) if means == "periodic" else no_flux_bc(dimension=2))
+    other = _solve(no_flux_bc(dimension=2) if means == "periodic" else periodic_bc(dimension=2))
+    solved = _solve(bc_factory(), handed=handed)
     assert np.array_equal(solved, reference), (
-        f"FP-FDM solved a periodic BC spelt per face {np.abs(solved - reference).max():.3e} away from "
-        f"periodic_bc, and {np.abs(solved - walled).max():.3e} from no_flux_bc -- 0.0 from the second "
-        "is the #2495 defect: a reader recognising periodicity only through a uniform BC's type."
+        f"FP-FDM solved a BC whose faces are all {means} {np.abs(solved - reference).max():.3e} away from "
+        f"the uniform {means} BC, and {np.abs(solved - other).max():.3e} from the other one. 0.0 from the "
+        "other one is a reader deciding by the BC's spelling rather than its faces (#2495)."
     )
 
 
@@ -87,15 +115,36 @@ def _channel():
     return BoundaryConditions(dimension=2, segments=_faces(BCType.NO_FLUX, "x") + _faces(BCType.PERIODIC, "y"))
 
 
+def _periodic_by_normal():
+    """Periodic in x by `normal_direction`, which carries no `boundary`: the face reader puts it on every
+    face, so read naively this channel is periodic everywhere -- while HJB-FDM walls it."""
+    return BoundaryConditions(
+        dimension=2,
+        default_bc=BCType.NO_FLUX,
+        segments=[
+            BCSegment(name=f"x_{s}", bc_type=BCType.PERIODIC, normal_direction=np.array([sign, 0.0]))
+            for s, sign in (("min", -1.0), ("max", 1.0))
+        ],
+    )
+
+
 @pytest.mark.parametrize("entry", ["construction", "assembly"])
-def test_a_bc_periodic_on_some_faces_only_is_refused_2495(entry):
-    """A channel -- no-flux walls in x, periodic in y. FP-FDM cannot wrap one axis and wall the other,
-    and solved this as no-flux on every face; HJB-FDM solves it as the channel it is."""
+@pytest.mark.parametrize(
+    ("bc_factory", "refusal"),
+    [
+        pytest.param(_channel, "periodic on some faces", id="channel"),
+        pytest.param(_periodic_by_normal, "have no `boundary`", id="periodic-by-normal-direction"),
+    ],
+)
+def test_a_bc_periodic_on_some_faces_only_is_refused_2495(bc_factory, refusal, entry):
+    """FP-FDM cannot wrap one axis and wall another. A channel was solved as no-flux on every face; a
+    periodic segment placed by `normal_direction` would be wrapped on every face, where HJB-FDM walls it.
+    Both are refused, the second because the face reader cannot place its segments."""
     if entry == "construction":
-        problem, _, _ = _problem(_channel())
-        with pytest.raises(NotImplementedError, match="periodic on some faces"):
+        problem, _, _ = _problem(bc_factory())
+        with pytest.raises(NotImplementedError, match=refusal):
             FPFDMSolver(problem)
         return
     problem, m0, U = _problem(no_flux_bc(dimension=2))
-    with pytest.raises(NotImplementedError, match="periodic on some faces"):
-        solve_fp_nd_full_system(m0, U, problem, boundary_conditions=_channel(), show_progress=False)
+    with pytest.raises(NotImplementedError, match=refusal):
+        solve_fp_nd_full_system(m0, U, problem, boundary_conditions=bc_factory(), show_progress=False)

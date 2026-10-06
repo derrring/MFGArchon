@@ -176,6 +176,60 @@ def declares_periodic(boundary_conditions: Any) -> bool:
     return getattr(boundary_conditions, "default_bc", None) is BCType.PERIODIC
 
 
+def refuse_unplaceable_segments(boundary_conditions: Any, dimension: int, *, consumer: str) -> None:
+    """Refuse, in a mix of operations, a segment the face reader cannot place. #2467, #1953, #2490.
+
+    ``get_bc_type_at_boundary`` answers one type per face, and four kinds of segment make that answer
+    something other than what the BC says: one with no ``boundary``, which it applies to every face --
+    ``sdf_region``, ``normal_direction`` and ``region_name`` segments are all of this kind, since none
+    of them can carry a ``boundary``; one with ``boundary="all"``, which it applies to no face; one whose
+    ``boundary`` names no face of this domain, which it drops; and one whose ``region`` restricts it to
+    part of a face, which it stretches over the whole face. A uniform BC, or one asking for a single
+    operation, is not affected: every face then reads the same whatever the reader does.
+
+    One owner for every consumer that reads a BC face by face: the semi-Lagrangian pair through
+    :func:`per_axis_operations`, and FP-FDM's periodicity (#2495).
+    """
+    if boundary_conditions is None or getattr(boundary_conditions, "segments", None) is None:
+        return
+    if len(geometric_operations(boundary_conditions)) <= 1 or boundary_conditions.is_uniform:
+        return
+    unbounded = [seg.name for seg in boundary_conditions.segments if seg.boundary is None]
+    if unbounded:
+        raise NotImplementedError(
+            f"{consumer}: segments {unbounded} have no `boundary` in a mix of geometric operations, so "
+            "the faces they cover cannot be read per axis. Give each one the face it lies on with "
+            "`boundary=` (#2467)."
+        )
+    everywhere = [seg.name for seg in boundary_conditions.segments if seg.boundary == "all"]
+    if everywhere:
+        raise NotImplementedError(
+            f"{consumer}: segments {everywhere} use boundary='all' in a mix of geometric operations, and "
+            "the face reader applies 'all' to no face (#1953), so it cannot be read per axis. Name the "
+            "faces each one covers."
+        )
+    from .types import parse_boundary_face
+
+    nowhere = [
+        f"{seg.name} ({type(seg.boundary).__name__} {seg.boundary!r})"
+        for seg in boundary_conditions.segments
+        if (face := parse_boundary_face(seg.boundary)) is None or not 0 <= face.axis < dimension
+    ]
+    if nowhere:
+        raise NotImplementedError(
+            f"{consumer}: segments {nowhere} name no face of this {dimension}-D domain in a mix of "
+            "geometric operations, so the face reader drops them and the default takes their place. Name "
+            "a face such as 'x_min' or 'axis0_max'."
+        )
+    partial = [seg.name for seg in boundary_conditions.segments if seg.region is not None]
+    if partial:
+        raise NotImplementedError(
+            f"{consumer}: segments {partial} cover part of a face (`region`) in a mix of geometric "
+            "operations, and the face reader would "
+            "give each of them its whole face (#2490)."
+        )
+
+
 def per_axis_operations(boundary_conditions: Any, dimension: int, *, consumer: str) -> tuple[str, ...]:
     """The geometric operation on each axis, read face by face. #1560, #1697.
 
@@ -201,41 +255,7 @@ def per_axis_operations(boundary_conditions: Any, dimension: int, *, consumer: s
     """
     if boundary_conditions is None or getattr(boundary_conditions, "segments", None) is None:
         return (bc_type_to_geometric_operation(get_bc_type_string(boundary_conditions)),) * dimension
-    if len(geometric_operations(boundary_conditions)) > 1 and not boundary_conditions.is_uniform:
-        unbounded = [seg.name for seg in boundary_conditions.segments if seg.boundary is None]
-        if unbounded:
-            raise NotImplementedError(
-                f"{consumer}: segments {unbounded} have no `boundary` in a mix of geometric operations, so "
-                "the faces they cover cannot be read per axis. Give each one the face it lies on with "
-                "`boundary=` (#2467)."
-            )
-        everywhere = [seg.name for seg in boundary_conditions.segments if seg.boundary == "all"]
-        if everywhere:
-            raise NotImplementedError(
-                f"{consumer}: segments {everywhere} use boundary='all' in a mix of geometric operations, and "
-                "the face reader applies 'all' to no face (#1953), so it cannot be read per axis. Name the "
-                "faces each one covers."
-            )
-        from .types import parse_boundary_face
-
-        nowhere = [
-            f"{seg.name} ({type(seg.boundary).__name__} {seg.boundary!r})"
-            for seg in boundary_conditions.segments
-            if (face := parse_boundary_face(seg.boundary)) is None or not 0 <= face.axis < dimension
-        ]
-        if nowhere:
-            raise NotImplementedError(
-                f"{consumer}: segments {nowhere} name no face of this {dimension}-D domain in a mix of "
-                "geometric operations, so the face reader drops them and the default takes their place. Name "
-                "a face such as 'x_min' or 'axis0_max'."
-            )
-        partial = [seg.name for seg in boundary_conditions.segments if seg.region is not None]
-        if partial:
-            raise NotImplementedError(
-                f"{consumer}: segments {partial} cover part of a face (`region`) in a mix of geometric "
-                "operations. A semi-Lagrangian fold applies one operation per axis, and the face reader would "
-                "give each of them its whole face (#2490)."
-            )
+    refuse_unplaceable_segments(boundary_conditions, dimension, consumer=consumer)
     operations = []
     for axis in range(dimension):
         ops = [
@@ -249,7 +269,7 @@ def per_axis_operations(boundary_conditions: Any, dimension: int, *, consumer: s
         if ops[0] != ops[1]:
             raise NotImplementedError(
                 f"{consumer}: axis {axis} asks for {ops[0]!r} at its min face and {ops[1]!r} at its max face. "
-                "A semi-Lagrangian fold applies one operation per axis, so the two faces of an axis must agree."
+                "This consumer applies one operation per axis, so the two faces of an axis must agree."
             )
         operations.append(ops[0])
     return tuple(operations)

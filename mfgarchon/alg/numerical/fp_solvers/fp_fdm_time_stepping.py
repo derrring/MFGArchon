@@ -66,9 +66,9 @@ from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.geometry.boundary.applicator_base import (
     LinearConstraint,
 )
-from mfgarchon.geometry.boundary.bc_utils import declares_periodic
+from mfgarchon.geometry.boundary.bc_utils import declares_periodic, refuse_unplaceable_segments
 from mfgarchon.geometry.boundary.conditions import periodic_on_every_face, repeated_endpoint_mirror
-from mfgarchon.geometry.boundary.types import BoundaryFace
+from mfgarchon.geometry.boundary.types import BCType, BoundaryFace
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise, mass_fabricated_by_clip
 from mfgarchon.utils.pde_coefficients import (
@@ -622,7 +622,7 @@ def solve_timestep_explicit_with_drift(
     return M_next
 
 
-def _refuse_partial_periodic(boundary_conditions: Any) -> None:
+def _refuse_partial_periodic(boundary_conditions: Any, dimension: int) -> None:
     """Refuse a BC that is periodic on some faces and not others. Issue #2495.
 
     This assembly wraps every axis or none. A wall node of any non-uniform BC is routed to
@@ -630,22 +630,35 @@ def _refuse_partial_periodic(boundary_conditions: Any) -> None:
     face is periodic. A channel -- no-flux walls beside a periodic axis -- or an axis periodic on one
     face only was therefore assembled as no-flux on every face, bit for bit, with no error.
 
+    The faces are read through `get_bc_type_at_boundary`, so a segment that reader cannot place is
+    refused first (`refuse_unplaceable_segments`): a periodic segment with no `boundary` reads as
+    periodic on every face, and would otherwise be wrapped where HJB-FDM walls it. A BC that declares
+    periodicity but shows it on no face -- a periodic default every face overrides -- is not periodic
+    anywhere and is not refused.
+
     Called where the handlers are dispatched, `solve_timestep_full_nd`, and by `FPFDMSolver` at hand-over.
     The tensor and callable-drift paths never reach them; their operators refuse a non-uniform BC.
     """
     if boundary_conditions is None or not declares_periodic(boundary_conditions):
         return
     try:
-        if periodic_on_every_face(boundary_conditions):
+        if boundary_conditions.is_uniform:
             return
     except AttributeError:
         return  # a legacy fdm_bc_1d BC: refused per type in `solve_timestep_full_nd` (#1559)
-    raise NotImplementedError(
-        "FP-FDM wraps every axis or none, and this boundary condition is periodic on some faces "
-        "only (a channel, or an axis periodic on one face). Its wall rows cannot wrap, so it would be "
-        "solved as no-flux on every face. Use a BC periodic on every face, or the semi-Lagrangian "
-        "pair, which honours a different BC on each axis (#1560). Per-axis FP-FDM is #2505. (#2495)"
-    )
+    refuse_unplaceable_segments(boundary_conditions, dimension, consumer="FPFDMSolver")
+    periodic = [
+        boundary_conditions.get_bc_type_at_boundary(f"axis{axis}_{side}") is BCType.PERIODIC
+        for axis in range(dimension)
+        for side in ("min", "max")
+    ]
+    if any(periodic) and not all(periodic):
+        raise NotImplementedError(
+            "FP-FDM wraps every axis or none, and this boundary condition is periodic on some faces "
+            "only (a channel, or an axis periodic on one face). Its wall rows cannot wrap, so it would be "
+            "solved as no-flux on every face. Use a BC periodic on every face, or the semi-Lagrangian "
+            "pair, which honours a different BC on each axis (#1560). Per-axis FP-FDM is #2505. (#2495)"
+        )
 
 
 def _refuse_provider_wall_coefficients(boundary_conditions) -> None:
@@ -1438,9 +1451,9 @@ def solve_timestep_full_nd(
 
     # A BC periodic on every face wraps every wall node, however it is spelt: routed by the face reader,
     # not by `is_uniform`, which sent one PERIODIC segment per face to the no-flux handler (#2495).
-    _refuse_partial_periodic(boundary_conditions)
+    _refuse_partial_periodic(boundary_conditions, ndim)
     try:
-        wraps_everywhere = periodic_on_every_face(boundary_conditions)
+        wraps_everywhere = periodic_on_every_face(boundary_conditions, ndim)
     except AttributeError:
         wraps_everywhere = False  # legacy fdm_bc_1d BC, refused per type below unless no-flux (#1559)
 

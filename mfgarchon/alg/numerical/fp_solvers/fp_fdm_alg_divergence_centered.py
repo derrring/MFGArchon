@@ -120,7 +120,7 @@ def add_interior_entries_divergence_centered(
 
         # Handle periodic wrapping. `span` is shape[d] only on an endpoint-exclusive grid;
         # see periodic_axis_span for why (Issue #1822).
-        span = periodic_axis_span(boundary_conditions, shape[d])
+        span = periodic_axis_span(boundary_conditions, shape[d], ndim)
         is_periodic = span is not None
         if is_periodic:
             multi_idx_plus[d] = multi_idx_plus[d] % span

@@ -1021,7 +1021,7 @@ def periodic_bc(
     return bc
 
 
-def periodic_on_every_face(bc: Any) -> bool:
+def periodic_on_every_face(bc: Any, dimension: int | None = None) -> bool:
     """Whether every face of ``bc`` is periodic, however the periodicity is spelt. Issue #2495.
 
     A uniform periodic BC, one PERIODIC segment per face, and an empty segment list over a periodic
@@ -1029,15 +1029,16 @@ def periodic_on_every_face(bc: Any) -> bool:
     "periodic"``, accepted only the first; FP-FDM then solved the other two as no-flux, bit for bit,
     with no error raised.
 
-    The faces are read through ``get_bc_type_at_boundary``, so a segment the face reader cannot place
-    (#1953, #2490) reads as whatever that reader says. A BC whose dimension is not yet bound has no
-    faces to read and answers ``False``.
+    The faces are read through ``get_bc_type_at_boundary``, which misplaces some segments -- a periodic
+    one with no ``boundary`` reads as periodic on every face. Ask this only of a BC that has passed
+    ``bc_utils.refuse_unplaceable_segments``, as FP-FDM does. ``dimension`` is the domain's, for a BC
+    not yet bound to one; without either, there are no faces to read and the answer is ``False``.
     """
     from .bc_utils import declares_periodic
 
     if bc.is_uniform:
         return bc.type == "periodic"
-    dimension = getattr(bc, "dimension", None)
+    dimension = dimension or getattr(bc, "dimension", None)
     if not declares_periodic(bc) or not dimension:
         return False
     return all(
@@ -1047,7 +1048,7 @@ def periodic_on_every_face(bc: Any) -> bool:
     )
 
 
-def periodic_axis_span(bc: Any, n: int) -> int | None:
+def periodic_axis_span(bc: Any, n: int, dimension: int | None = None) -> int | None:
     """How many DISTINCT cells an axis of ``n`` nodes has, or ``None`` if it does not wrap.
 
     Issue #1822. A wrap needs two facts, and reading only the first is what every periodic
@@ -1064,7 +1065,7 @@ def periodic_axis_span(bc: Any, n: int) -> int | None:
     without having decided what to do about the wrap.
     """
     try:
-        wraps = periodic_on_every_face(bc)
+        wraps = periodic_on_every_face(bc, dimension)
     except AttributeError:
         # Legacy fdm_bc_1d BoundaryConditions1D: has .type but no .is_uniform, and this assembly
         # does not honour its 'periodic' anyway (see the Issue #1559 note in fp_fdm_time_stepping).
@@ -1084,7 +1085,7 @@ def repeated_endpoint_mirror(bc: Any, multi_idx: tuple[int, ...], shape: tuple[i
     mirrored = list(multi_idx)
     duplicated = False
     for d in range(len(shape)):
-        span = periodic_axis_span(bc, shape[d])
+        span = periodic_axis_span(bc, shape[d], len(shape))
         if span is not None and span < shape[d] and multi_idx[d] >= span:
             mirrored[d] = multi_idx[d] - span
             duplicated = True

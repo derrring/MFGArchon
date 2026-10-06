@@ -251,7 +251,7 @@ class FPFDMSolver(BaseFPSolver):
         self._validate_bc_support(self.boundary_conditions)
         # Issue #2495: a BC periodic on some faces only is refused here, at hand-over, as well as by
         # every assembly entry -- this solver wraps every axis or none.
-        _refuse_partial_periodic(self.boundary_conditions)
+        _refuse_partial_periodic(self.boundary_conditions, self.dimension)
 
     # _detect_dimension() inherited from BaseNumericalSolver (Issue #633)
 
@@ -351,11 +351,11 @@ class FPFDMSolver(BaseFPSolver):
         # resolved one. Reading the geometry here gave a second owner -- measured with a periodic BC passed to the
         # constructor over a no-flux geometry, the two disagree (review of #2344).
         boundary_conditions = self.boundary_conditions
-        _refuse_partial_periodic(boundary_conditions)
+        _refuse_partial_periodic(boundary_conditions, ndim)
         try:
             # Every face, however spelt -- `_get_bc_type` saw no periodicity in an empty segment
             # list over a periodic default (#2495).
-            periodic = periodic_on_every_face(boundary_conditions)
+            periodic = periodic_on_every_face(boundary_conditions, ndim)
         except AttributeError:
             periodic = _get_bc_type(boundary_conditions) == "periodic"  # legacy fdm_bc_1d BC
 
