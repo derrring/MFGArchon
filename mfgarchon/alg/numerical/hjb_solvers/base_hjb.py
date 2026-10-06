@@ -887,7 +887,7 @@ def compute_hjb_residual(
         if source_term is not None:
             Phi_U -= source_term
 
-        return Phi_U
+        return _impose_dirichlet_rows(Phi_U, U_n_current_newton_iterate, bc, current_time)
 
     # Fallback: per-point loop for backend != None or missing precomputed_grad
     for i in range(Nx):
@@ -937,7 +937,35 @@ def compute_hjb_residual(
     if source_term is not None:
         Phi_U -= source_term
 
+    return _impose_dirichlet_rows(Phi_U, U_n_current_newton_iterate, bc, current_time)
+
+
+def _impose_dirichlet_rows(Phi_U: np.ndarray, U: np.ndarray, bc: BoundaryConditions | None, time: float) -> np.ndarray:
+    """Replace each Dirichlet wall row of the residual with ``u_wall - g`` (see `_dirichlet_wall_values`)."""
+    for idx, g in _dirichlet_wall_values(bc, time):
+        Phi_U[idx] = U[idx] - g
     return Phi_U
+
+
+def _dirichlet_wall_values(bc: BoundaryConditions | None, time: float) -> list[tuple[int, float]]:
+    """``(index, g)`` for each 1-D wall node carrying a Dirichlet condition.
+
+    A prescribed node has no PDE row: its equation is ``u_wall - g = 0``. The residual and the
+    Jacobian both replace the wall row with it, so Newton's root already satisfies the condition and
+    the post-solve write of ``g`` is a no-op. Solving the PDE row there and overwriting afterwards
+    returned an array that was not the root Newton certified: the #1900 law failed by 4.2e+01 (at `93c490ba`) on
+    `dirichlet_bc` (#2515), the same shape #1900 removed for Neumann.
+    """
+    if bc is None:
+        return []
+    from mfgarchon.geometry.boundary.types import BCType
+
+    walls = []
+    for idx, side in ((0, "left"), (-1, "right")):
+        bc_type, value, _, _ = _get_bc_info_1d(bc, side, time)
+        if bc_type == BCType.DIRICHLET:
+            walls.append((idx, float(value)))
+    return walls
 
 
 def _extract_bands(Nx: int, apply, label: str):
@@ -1369,6 +1397,13 @@ def compute_hjb_jacobian(
         for _i, _j, _v in J_extras:
             Jac[_i, _j] += _v
         Jac = Jac.tocsr()
+
+    dirichlet_walls = _dirichlet_wall_values(bc, current_time)
+    if dirichlet_walls:
+        Jac = Jac.tolil()
+        for idx, _ in dirichlet_walls:
+            Jac[idx, :] = 0.0
+            Jac[idx, idx] = 1.0
 
     return Jac.tocsr()
 

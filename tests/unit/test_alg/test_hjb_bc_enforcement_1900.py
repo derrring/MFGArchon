@@ -19,9 +19,11 @@ Three implementations of no-flux were in play, which is why this is #1894/#1896'
 ~~O(h^2) ... the residual owns it~~ [RETRACTED 2026-08-12 -- SUPERSEDED-BY: #1904]. The ghost is
 CELL-centred on a NODE-centred grid, so the wall Laplacian converges to HALF the true value
 (0.4959 -> 0.499984 over Nx 21..321). The two implementations approaching the same limit says
-nothing about either being right, and this overwrite was the more accurate of the two. Dirichlet
-and Robin are a different case -- the residual only approaches a prescribed value at O(h) -- so
-their branches stay regardless.
+nothing about either being right, and this overwrite was the more accurate of the two. ~~Dirichlet
+and Robin are a different case~~ Robin is a different case -- the residual only approaches a
+prescribed value at O(h) -- so its branch stays regardless. [CORRECTED 2026-10-06 -- #2515: the
+Dirichlet wall row is now u_wall - g in the residual and the Jacobian, so the Dirichlet branch
+writes what the root already holds.]
 """
 
 from __future__ import annotations
@@ -129,21 +131,7 @@ def _solve_and_measure(bc, nx: int = 21, tol: float = 1e-9):
     [
         "no_flux",
         "neumann_zero",
-        pytest.param(
-            "dirichlet",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=(
-                    "Dirichlet enforcement is still load-bearing and still overwrites the root: "
-                    "residual 5.442e+01 while reporting converged. The residual's ghost padding only "
-                    "APPROACHES the boundary value at O(h) (0.589 -> 0.696 against an exact 0.7 over "
-                    "Nx 41..641), so the branch cannot simply be deleted the way no-flux's was. The "
-                    "fix is row replacement in the residual AND the Jacobian, which #542's own "
-                    "discussion point 2 named and which is its own change. strict=True so this "
-                    "reddens the day it starts passing."
-                ),
-            ),
-        ),
+        "dirichlet",
     ],
 )
 def test_a_solve_that_reports_converged_returns_a_root(bc_name: str):
@@ -163,15 +151,17 @@ def test_a_solve_that_reports_converged_returns_a_root(bc_name: str):
     )
 
 
-def test_the_no_flux_case_actually_converges_here_so_the_law_is_not_vacuous():
+@pytest.mark.parametrize("bc_name", ["no_flux", "dirichlet"])
+def test_the_case_actually_converges_here_so_the_law_is_not_vacuous(bc_name: str):
     """Positive control for the skip above.
 
-    If every configuration failed to converge, the parametrised test would skip its way to green
-    and assert nothing. No-flux is the case the defect was measured on and it must reach the
-    tolerance, or this file is not testing what it claims.
+    If a configuration failed to converge, the parametrised law would skip its way to green and
+    assert nothing. No-flux is the case the defect was measured on; Dirichlet is #2515's, whose
+    residual or Jacobian wall row going wrong stops Newton converging and would otherwise turn the
+    law into a skip.
     """
-    converged, residual, _ = _solve_and_measure(no_flux_bc(dimension=1), tol=1e-9)
-    assert converged, "no-flux no longer converges on this fixture; the law above would be vacuous"
+    converged, residual, _ = _solve_and_measure(BCS[bc_name](), tol=1e-9)
+    assert converged, f"{bc_name} no longer converges on this fixture; the law above would be vacuous"
     assert residual < 1e-9
 
 
