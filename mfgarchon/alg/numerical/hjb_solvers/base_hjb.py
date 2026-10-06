@@ -953,7 +953,7 @@ def _dirichlet_wall_values(bc: BoundaryConditions | None, time: float) -> list[t
     A prescribed node has no PDE row: its equation is ``u_wall - g = 0``. The residual and the
     Jacobian both replace the wall row with it, so Newton's root already satisfies the condition and
     the post-solve write of ``g`` is a no-op. Solving the PDE row there and overwriting afterwards
-    returned an array that was not the root Newton certified: the #1900 law failed by 5.4e+01 on
+    returned an array that was not the root Newton certified: the #1900 law failed by 4.2e+01 (at `93c490ba`) on
     `dirichlet_bc` (#2515), the same shape #1900 removed for Neumann.
     """
     if bc is None:

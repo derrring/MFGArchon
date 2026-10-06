@@ -19,9 +19,11 @@ Three implementations of no-flux were in play, which is why this is #1894/#1896'
 ~~O(h^2) ... the residual owns it~~ [RETRACTED 2026-08-12 -- SUPERSEDED-BY: #1904]. The ghost is
 CELL-centred on a NODE-centred grid, so the wall Laplacian converges to HALF the true value
 (0.4959 -> 0.499984 over Nx 21..321). The two implementations approaching the same limit says
-nothing about either being right, and this overwrite was the more accurate of the two. Dirichlet
-and Robin are a different case -- the residual only approaches a prescribed value at O(h) -- so
-their branches stay regardless.
+nothing about either being right, and this overwrite was the more accurate of the two. ~~Dirichlet
+and Robin are a different case~~ Robin is a different case -- the residual only approaches a
+prescribed value at O(h) -- so its branch stays regardless. [CORRECTED 2026-10-06 -- #2515: the
+Dirichlet wall row is now u_wall - g in the residual and the Jacobian, so the Dirichlet branch
+writes what the root already holds.]
 """
 
 from __future__ import annotations

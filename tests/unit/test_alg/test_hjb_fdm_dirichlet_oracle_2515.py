@@ -15,6 +15,8 @@ the boundary VALUE reaching the solution: dropping g from the wall row (u_wall =
 O(1) error that does not fall with h.
 """
 
+import pytest
+
 import numpy as np
 
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
@@ -41,7 +43,7 @@ def _source(t, x):
     return 0.5 * u_x**2
 
 
-def _error(nx: int) -> tuple[float, np.ndarray]:
+def _error(nx: int, analytic_jacobian: bool) -> tuple[float, np.ndarray]:
     grid = TensorProductGrid(
         bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=dirichlet_bc(dimension=1, value=G)
     )
@@ -52,7 +54,7 @@ def _error(nx: int) -> tuple[float, np.ndarray]:
     )
     problem = MFGProblem(geometry=grid, T=T, Nt=NT, volatility=SIGMA, components=comps)
     x = grid.coordinates[0]
-    U = HJBFDMSolver(problem).solve_hjb_system(
+    U = HJBFDMSolver(problem, analytic_jacobian=analytic_jacobian).solve_hjb_system(
         M_density=np.ones((NT + 1, nx)),
         U_terminal=_u(T, x),
         U_coupling_prev=np.zeros((NT + 1, nx)),
@@ -62,10 +64,13 @@ def _error(nx: int) -> tuple[float, np.ndarray]:
     return float(np.abs(U0 - _u(0.0, x)).max()), U0
 
 
-def test_a_dirichlet_solve_converges_to_the_exact_solution_at_first_order():
+@pytest.mark.parametrize("analytic_jacobian", [True, False], ids=["vectorised", "per_point"])
+def test_a_dirichlet_solve_converges_to_the_exact_solution_at_first_order(analytic_jacobian: bool):
+    """Both residual exits: `analytic_jacobian=False` takes the per-point residual loop, which carries
+    its own copy of the wall-row substitution's call; without it that path returned 188 next to the wall."""
     errors = []
     for nx in (41, 81, 161):
-        err, U0 = _error(nx)
+        err, U0 = _error(nx, analytic_jacobian)
         assert U0[0] == G, f"left wall {U0[0]} against g = {G}"
         assert U0[-1] == G, f"right wall {U0[-1]} against g = {G}"
         errors.append(err)
