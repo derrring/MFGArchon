@@ -184,27 +184,32 @@ def refuse_unplaceable_segments(boundary_conditions: Any, dimension: int, *, con
     ``sdf_region``, ``normal_direction`` and ``region_name`` segments are all of this kind, since none
     of them can carry a ``boundary``; one with ``boundary="all"``, which it applies to no face; one whose
     ``boundary`` names no face of this domain, which it drops; and one whose ``region`` restricts it to
-    part of a face, which it stretches over the whole face. A uniform BC, or one asking for a single
-    operation, is not affected: every face then reads the same whatever the reader does.
+    part of a face, which it stretches over the whole face. A uniform BC is not affected, nor one asking for
+    a single operation with a ``default_bc``: every face then reads that operation whatever the reader
+    does. Without a default it is: a face no segment truly reaches has no condition at all, and the face
+    reader would hand it the misplaced segment's -- a periodic one placed by ``normal_direction`` then
+    wraps every face, where HJB-FDM's ghosts find no BC and raise.
 
     One owner for every consumer that reads a BC face by face: the semi-Lagrangian pair through
     :func:`per_axis_operations`, and FP-FDM's periodicity (#2495).
     """
     if boundary_conditions is None or getattr(boundary_conditions, "segments", None) is None:
         return
-    if len(geometric_operations(boundary_conditions)) <= 1 or boundary_conditions.is_uniform:
+    mixed = len(geometric_operations(boundary_conditions)) > 1
+    if boundary_conditions.is_uniform or (not mixed and getattr(boundary_conditions, "default_bc", None) is not None):
         return
+    where = "in a mix of geometric operations" if mixed else "with no `default_bc` for the faces they miss"
     unbounded = [seg.name for seg in boundary_conditions.segments if seg.boundary is None]
     if unbounded:
         raise NotImplementedError(
-            f"{consumer}: segments {unbounded} have no `boundary` in a mix of geometric operations, so "
+            f"{consumer}: segments {unbounded} have no `boundary` {where}, so "
             "the faces they cover cannot be read per axis. Give each one the face it lies on with "
             "`boundary=` (#2467)."
         )
     everywhere = [seg.name for seg in boundary_conditions.segments if seg.boundary == "all"]
     if everywhere:
         raise NotImplementedError(
-            f"{consumer}: segments {everywhere} use boundary='all' in a mix of geometric operations, and "
+            f"{consumer}: segments {everywhere} use boundary='all' {where}, and "
             "the face reader applies 'all' to no face (#1953), so it cannot be read per axis. Name the "
             "faces each one covers."
         )
@@ -217,15 +222,15 @@ def refuse_unplaceable_segments(boundary_conditions: Any, dimension: int, *, con
     ]
     if nowhere:
         raise NotImplementedError(
-            f"{consumer}: segments {nowhere} name no face of this {dimension}-D domain in a mix of "
-            "geometric operations, so the face reader drops them and the default takes their place. Name "
+            f"{consumer}: segments {nowhere} name no face of this {dimension}-D domain {where}, "
+            "so the face reader drops them and the default takes their place. Name "
             "a face such as 'x_min' or 'axis0_max'."
         )
     partial = [seg.name for seg in boundary_conditions.segments if seg.region is not None]
     if partial:
         raise NotImplementedError(
-            f"{consumer}: segments {partial} cover part of a face (`region`) in a mix of geometric "
-            "operations, and the face reader would "
+            f"{consumer}: segments {partial} cover part of a face (`region`) {where}, "
+            "and the face reader would "
             "give each of them its whole face (#2490)."
         )
 

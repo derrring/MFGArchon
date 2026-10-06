@@ -9,9 +9,10 @@ reads its ghosts per face and already agreed.
 
 FP-FDM wraps every axis or none -- a wall node is assembled by a handler that cannot wrap -- so a BC
 periodic on some faces only is refused rather than solved as no-flux on every face. So is a periodic
-segment the face reader cannot place: one with no `boundary`, which that reader puts on every face, would
-otherwise be wrapped everywhere while HJB-FDM walls it. A BC that declares periodicity but shows it on no
-face is no-flux, as on main.
+segment the face reader cannot place, in a mix of operations or with no `default_bc`: one with no
+`boundary`, which that reader puts on every face, would otherwise be wrapped on faces it does not reach,
+where HJB-FDM walls them over a NO_FLUX default, or finds no BC and raises without one. A BC that
+declares periodicity but shows it on no face is no-flux, as on main.
 
 Mutations, each run through this file on a scratch copy of the tree:
 
@@ -24,7 +25,9 @@ Mutations, each run through this file on a scratch copy of the tree:
 - `refuse_unplaceable_segments` left out of that refusal: both `normal_direction` cases fail;
 - the refusal keyed on "not every face periodic" instead of "some face periodic, not all": the
   overridden-default case fails;
-- the solver's dimension ignored in favour of the BC's own: the unbound case fails.
+- the solver's dimension ignored in favour of the BC's own: the unbound case fails;
+- `refuse_unplaceable_segments` exempting every single-operation BC, as its first version did, rather
+  than only one with a `default_bc`: both no-default cases fail.
 """
 
 from __future__ import annotations
@@ -115,12 +118,13 @@ def _channel():
     return BoundaryConditions(dimension=2, segments=_faces(BCType.NO_FLUX, "x") + _faces(BCType.PERIODIC, "y"))
 
 
-def _periodic_by_normal():
+def _periodic_by_normal(default_bc=BCType.NO_FLUX):
     """Periodic in x by `normal_direction`, which carries no `boundary`: the face reader puts it on every
-    face, so read naively this channel is periodic everywhere -- while HJB-FDM walls it."""
+    face, so read naively this BC is periodic everywhere -- while HJB-FDM walls y over a NO_FLUX default,
+    and finds no BC for y and raises without one."""
     return BoundaryConditions(
         dimension=2,
-        default_bc=BCType.NO_FLUX,
+        default_bc=default_bc,
         segments=[
             BCSegment(name=f"x_{s}", bc_type=BCType.PERIODIC, normal_direction=np.array([sign, 0.0]))
             for s, sign in (("min", -1.0), ("max", 1.0))
@@ -134,6 +138,9 @@ def _periodic_by_normal():
     [
         pytest.param(_channel, "periodic on some faces", id="channel"),
         pytest.param(_periodic_by_normal, "have no `boundary`", id="periodic-by-normal-direction"),
+        pytest.param(
+            lambda: _periodic_by_normal(default_bc=None), "have no `boundary`", id="periodic-by-normal-no-default"
+        ),
     ],
 )
 def test_a_bc_periodic_on_some_faces_only_is_refused_2495(bc_factory, refusal, entry):

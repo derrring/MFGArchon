@@ -67,8 +67,8 @@ from mfgarchon.geometry.boundary.applicator_base import (
     LinearConstraint,
 )
 from mfgarchon.geometry.boundary.bc_utils import declares_periodic, refuse_unplaceable_segments
-from mfgarchon.geometry.boundary.conditions import periodic_on_every_face, repeated_endpoint_mirror
-from mfgarchon.geometry.boundary.types import BCType, BoundaryFace
+from mfgarchon.geometry.boundary.conditions import periodic_faces, periodic_on_every_face, repeated_endpoint_mirror
+from mfgarchon.geometry.boundary.types import BoundaryFace
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise, mass_fabricated_by_clip
 from mfgarchon.utils.pde_coefficients import (
@@ -632,7 +632,8 @@ def _refuse_partial_periodic(boundary_conditions: Any, dimension: int) -> None:
 
     The faces are read through `get_bc_type_at_boundary`, so a segment that reader cannot place is
     refused first (`refuse_unplaceable_segments`): a periodic segment with no `boundary` reads as
-    periodic on every face, and would otherwise be wrapped where HJB-FDM walls it. A BC that declares
+    periodic on every face, and would otherwise be wrapped on faces it does not reach -- where HJB-FDM
+    walls them over a default, or finds no BC and raises without one. A BC that declares
     periodicity but shows it on no face -- a periodic default every face overrides -- is not periodic
     anywhere and is not refused.
 
@@ -647,11 +648,7 @@ def _refuse_partial_periodic(boundary_conditions: Any, dimension: int) -> None:
     except AttributeError:
         return  # a legacy fdm_bc_1d BC: refused per type in `solve_timestep_full_nd` (#1559)
     refuse_unplaceable_segments(boundary_conditions, dimension, consumer="FPFDMSolver")
-    periodic = [
-        boundary_conditions.get_bc_type_at_boundary(f"axis{axis}_{side}") is BCType.PERIODIC
-        for axis in range(dimension)
-        for side in ("min", "max")
-    ]
+    periodic = periodic_faces(boundary_conditions, dimension)
     if any(periodic) and not all(periodic):
         raise NotImplementedError(
             "FP-FDM wraps every axis or none, and this boundary condition is periodic on some faces "

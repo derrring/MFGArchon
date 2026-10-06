@@ -1021,6 +1021,20 @@ def periodic_bc(
     return bc
 
 
+def periodic_faces(bc: Any, dimension: int) -> list[bool]:
+    """Whether each face of ``bc`` reads PERIODIC, axis by axis and min before max. Issue #2495.
+
+    Read through ``get_bc_type_at_boundary``, which misplaces some segments -- see
+    ``bc_utils.refuse_unplaceable_segments``, which a consumer runs first. The one face loop both
+    :func:`periodic_on_every_face` and FP-FDM's refusal read.
+    """
+    return [
+        bc.get_bc_type_at_boundary(f"axis{axis}_{side}") is BCType.PERIODIC
+        for axis in range(dimension)
+        for side in ("min", "max")
+    ]
+
+
 def periodic_on_every_face(bc: Any, dimension: int | None = None) -> bool:
     """Whether every face of ``bc`` is periodic, however the periodicity is spelt. Issue #2495.
 
@@ -1029,9 +1043,10 @@ def periodic_on_every_face(bc: Any, dimension: int | None = None) -> bool:
     "periodic"``, accepted only the first; FP-FDM then solved the other two as no-flux, bit for bit,
     with no error raised.
 
-    The faces are read through ``get_bc_type_at_boundary``, which misplaces some segments -- a periodic
-    one with no ``boundary`` reads as periodic on every face. Ask this only of a BC that has passed
-    ``bc_utils.refuse_unplaceable_segments``, as FP-FDM does. ``dimension`` is the domain's, for a BC
+    The faces are read through :func:`periodic_faces`, which misplaces some segments -- a periodic one
+    with no ``boundary`` reads as periodic on every face. Ask this only of a BC that has passed
+    ``bc_utils.refuse_unplaceable_segments``, as FP-FDM does; that refuses such a segment in a mix, and
+    with no ``default_bc``, which are the cases where its faces are not the BC's. ``dimension`` is the domain's, for a BC
     not yet bound to one; without either, there are no faces to read and the answer is ``False``.
     """
     from .bc_utils import declares_periodic
@@ -1041,11 +1056,7 @@ def periodic_on_every_face(bc: Any, dimension: int | None = None) -> bool:
     dimension = dimension or getattr(bc, "dimension", None)
     if not declares_periodic(bc) or not dimension:
         return False
-    return all(
-        bc.get_bc_type_at_boundary(f"axis{axis}_{side}") is BCType.PERIODIC
-        for axis in range(dimension)
-        for side in ("min", "max")
-    )
+    return all(periodic_faces(bc, dimension))
 
 
 def periodic_axis_span(bc: Any, n: int, dimension: int | None = None) -> int | None:
