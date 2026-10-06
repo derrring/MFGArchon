@@ -151,15 +151,17 @@ def test_a_solve_that_reports_converged_returns_a_root(bc_name: str):
     )
 
 
-def test_the_no_flux_case_actually_converges_here_so_the_law_is_not_vacuous():
+@pytest.mark.parametrize("bc_name", ["no_flux", "dirichlet"])
+def test_the_case_actually_converges_here_so_the_law_is_not_vacuous(bc_name: str):
     """Positive control for the skip above.
 
-    If every configuration failed to converge, the parametrised test would skip its way to green
-    and assert nothing. No-flux is the case the defect was measured on and it must reach the
-    tolerance, or this file is not testing what it claims.
+    If a configuration failed to converge, the parametrised law would skip its way to green and
+    assert nothing. No-flux is the case the defect was measured on; Dirichlet is #2515's, whose
+    residual or Jacobian wall row going wrong stops Newton converging and would otherwise turn the
+    law into a skip.
     """
-    converged, residual, _ = _solve_and_measure(no_flux_bc(dimension=1), tol=1e-9)
-    assert converged, "no-flux no longer converges on this fixture; the law above would be vacuous"
+    converged, residual, _ = _solve_and_measure(BCS[bc_name](), tol=1e-9)
+    assert converged, f"{bc_name} no longer converges on this fixture; the law above would be vacuous"
     assert residual < 1e-9
 
 

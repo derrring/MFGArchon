@@ -677,7 +677,10 @@
     "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_removing_the_enforcement_still_leaves_the_no_flux_condition_satisfied[81]": [
       "engquist_osher_derivative_drops_the_forward_branch"
     ],
-    "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_the_no_flux_case_actually_converges_here_so_the_law_is_not_vacuous": [
+    "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_the_case_actually_converges_here_so_the_law_is_not_vacuous[dirichlet]": [
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
+    "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_the_case_actually_converges_here_so_the_law_is_not_vacuous[no_flux]": [
       "engquist_osher_derivative_drops_the_forward_branch"
     ],
     "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_the_surviving_enforcement_uses_the_grids_own_spacing": [
@@ -2904,7 +2907,7 @@
       "verify": "fp_drift_coefficient(_stub_problem(control_cost=2.0)) == 1.0"
     },
     "engquist_osher_derivative_drops_the_forward_branch": {
-      "kill_count": 58,
+      "kill_count": 59,
       "killed": [
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_check_runs_and_reports_which_pairing_is_adjoint[engquist_osher-False]",
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_check_runs_in_every_adjoint_mode",
@@ -2913,7 +2916,8 @@
         "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_removing_the_enforcement_still_leaves_the_no_flux_condition_satisfied[21]",
         "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_removing_the_enforcement_still_leaves_the_no_flux_condition_satisfied[41]",
         "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_removing_the_enforcement_still_leaves_the_no_flux_condition_satisfied[81]",
-        "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_the_no_flux_case_actually_converges_here_so_the_law_is_not_vacuous",
+        "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_the_case_actually_converges_here_so_the_law_is_not_vacuous[dirichlet]",
+        "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_the_case_actually_converges_here_so_the_law_is_not_vacuous[no_flux]",
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_engquist_osher_linearises_to_the_transpose_of_the_fp_operator[1d]",
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_engquist_osher_linearises_to_the_transpose_of_the_fp_operator[2d]",
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_linearised_operator_is_the_derivative_of_the_hamiltonian_it_linearises[1d-engquist_osher]",
