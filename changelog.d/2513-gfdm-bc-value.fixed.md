@@ -1,0 +1,5 @@
+- **`HJBGFDMSolver` honours the value of a Neumann or Dirichlet BC** (Issue #2513).
+  - A uniform BC, as built by `neumann_bc(value=g)` or `dirichlet_bc(value=g)`, reached the boundary rows with no segment, so the value read as 0. `neumann_bc(value=0.7)` solved bit-identically to `value=0`.
+  - The post-step Dirichlet overwrite wrote NaN for a uniform BC, whatever its value, and 0.0 for a per-face one, on the Newton path.
+  - Both now read the value per point, through the segment, exactly as a per-face BC does. The two spellings solve bit-identically. On exact solutions with g = 0.7 every case converges at second order, for Newton and Howard.
+  - **Results that need re-running:** any GFDM solve with a nonzero value on a uniform Neumann or Dirichlet BC, or with a nonzero per-face Dirichlet value on the Newton path, was solved for a different BC. A per-face Dirichlet value of 0, the common exit case, was unaffected. A uniform `dirichlet_bc` on the Newton path returned NaN for any value, 0 included.
