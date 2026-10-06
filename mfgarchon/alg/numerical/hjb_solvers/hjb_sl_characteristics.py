@@ -351,7 +351,7 @@ def fold_into_domain(
     x: np.ndarray,
     xmin: float | np.ndarray,
     xmax: float | np.ndarray,
-    bc_op: str,
+    bc_op: str | tuple[str, ...],
 ) -> np.ndarray:
     r"""Fold departure points into ``[xmin, xmax]`` under the geometric operation ``bc_op``.
 
@@ -361,10 +361,20 @@ def fold_into_domain(
 
     ``xmin`` / ``xmax`` are scalars (1D) or per-axis arrays broadcastable against ``x`` (nD).
 
+    ``bc_op`` may be one operation per axis, from
+    :func:`~mfgarchon.geometry.boundary.bc_utils.per_axis_operations`; axis ``d`` of ``x`` (its last
+    dimension) is then folded by ``bc_op[d]`` (#1560, #1697).
+
     Raises:
         ValueError: for any other operation. Do not add a fall-through -- an unrecognised
             spelling would then silently pick a boundary condition instead of stopping.
     """
+    if not isinstance(bc_op, str):
+        lo, hi = np.broadcast_to(xmin, (len(bc_op),)), np.broadcast_to(xmax, (len(bc_op),))
+        folded = np.array(x, dtype=float, copy=True)
+        for axis, op in enumerate(bc_op):
+            folded[..., axis] = fold_into_domain(folded[..., axis], lo[axis], hi[axis], op)
+        return folded
     if bc_op == "reflect":
         return reflect_into_domain(x, xmin, xmax)
     if bc_op == "periodic":
@@ -381,7 +391,7 @@ def fold_into_domain(
 def apply_boundary_conditions_nd(
     x: np.ndarray,
     bounds: list[tuple[float, float]],
-    bc_type: str | None = None,
+    bc_type: str | tuple[str, ...] | None = None,
     max_reflections: int = 10,
 ) -> np.ndarray:
     """
@@ -392,7 +402,7 @@ def apply_boundary_conditions_nd(
     Args:
         x: Position vector to constrain, shape (dimension,)
         bounds: List of (min, max) tuples for each dimension
-        bc_type: Boundary condition type:
+        bc_type: Boundary condition type, or one per axis (#1560, #1697):
             - 'periodic': Wrap around domain
             - 'reflect' / 'no_flux' / 'neumann': Mirror about boundary (default for MFG)
             - 'clamp' / 'dirichlet' / None: Clamp to boundary
@@ -407,13 +417,14 @@ def apply_boundary_conditions_nd(
 
     for d in range(dimension):
         xmin, xmax = bounds[d]
-        if bc_type == "periodic":
+        axis_type = bc_type if bc_type is None or isinstance(bc_type, str) else bc_type[d]
+        if axis_type == "periodic":
             length = xmax - xmin
             while x_bounded[d] < xmin:
                 x_bounded[d] += length
             while x_bounded[d] > xmax:
                 x_bounded[d] -= length
-        elif bc_type in ("reflect", "no_flux", "neumann"):
+        elif axis_type in ("reflect", "no_flux", "neumann"):
             # Mirror reflection about boundaries
             for _ in range(max_reflections):
                 if x_bounded[d] < xmin:

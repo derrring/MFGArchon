@@ -12,7 +12,12 @@ fold unchecked. The check now sits at all seven sites that read the BC type, and
 `except Exception -> RuntimeError` handler in `_advect_pointwise` lets the refusal through with its
 declared type instead of retyping it.
 
-The refusal is pinned behaviourally across the 45-cell dispatch matrix (dimension x characteristic solver x diffusion method), with a source-level invariant test as a backstop.
+~~The refusal is pinned behaviourally across the 45-cell dispatch matrix (dimension x characteristic solver x diffusion method), with a source-level invariant test as a backstop.~~ **[SUPERSEDED 2026-10-06]** That matrix was `tests/unit/test_alg/test_nd_sl_mixed_bc_refused_1560.py`,
+removed in the #2227 test reset; the per-axis refusal is pinned in
+`tests/unit/test_geometry/test_mixed_bc_refused_1697.py`.
 
-Per-axis handling is the actual fix and remains open on #1560; until then the library refuses the
-configuration rather than solving a different one.
+~~Per-axis handling is the actual fix and remains open on #1560; until then the library refuses the
+configuration rather than solving a different one.~~ **[SUPERSEDED 2026-10-05]** Per-axis handling
+landed in the same release, so the refusal above now covers only what that fragment lists as still
+refused.
+SUPERSEDED-BY: `changelog.d/1560-1697-sl-per-axis-bc.fixed.md`

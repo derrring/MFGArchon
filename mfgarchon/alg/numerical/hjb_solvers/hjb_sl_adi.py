@@ -244,7 +244,7 @@ def adi_diffusion_step(
     volatility: float | np.ndarray,
     spacing: np.ndarray,
     grid_shape: tuple[int, ...],
-    bc_type: str = "neumann",
+    bc_type: str | tuple[str, ...] = "neumann",
     theta: float = DEFAULT_DIFFUSION_THETA,
 ) -> np.ndarray:
     """
@@ -276,7 +276,7 @@ def adi_diffusion_step(
         volatility: SDE volatility σ (the diffusion is D = σ²/2) - scalar, 1D array (diagonal), or 2D array (full tensor)
         spacing: Grid spacing in each dimension, shape (d,)
         grid_shape: Shape of the grid (N1, N2, ..., Nd)
-        bc_type: 'neumann' (default) or 'periodic'
+        bc_type: 'neumann' (default) or 'periodic', or one per axis (#1560, #1697)
         theta: 0.5 Crank-Nicolson, 1 backward Euler (see ``DEFAULT_DIFFUSION_THETA``)
 
     Returns:
@@ -346,7 +346,8 @@ def adi_diffusion_step(
         dx_d = spacing[d]
         alpha_d = diffusion_from_volatility(sigma_vec[d]) * dt / dx_d**2
         # Apply implicit solve along dimension d
-        U_current = solve_1d_diffusion_along_axis(U_current, d, alpha_d, theta, bc_type)
+        axis_bc = bc_type if isinstance(bc_type, str) else bc_type[d]
+        U_current = solve_1d_diffusion_along_axis(U_current, d, alpha_d, theta, axis_bc)
 
     # Return in original shape
     if U_star.ndim == 1:

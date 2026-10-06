@@ -2263,7 +2263,7 @@
     "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_default_bc_is_a_second_lever_with_no_permutation_available": [
       "bc_noflux_reads_as_clamp"
     ],
-    "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_the_guard_and_the_lookup_are_separable_2284": [
+    "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_the_per_axis_owner_does_not_read_the_lookup_2284": [
       "bc_noflux_reads_as_clamp"
     ],
     "tests/unit/test_geometry/test_neumann_low_wall_sign.py::TestNeumannLowWallSign::test_negative_v_low_ghost": [
@@ -2373,28 +2373,28 @@
     "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[105-grid.Nx_points-[101, 51]]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[623-grid.refine(2).Nx-[20, 20]]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[628-grid.refine(2).Nx-[20, 20]]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[623-grid.refine(2).Nx_points-[21, 21]]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[628-grid.refine(2).Nx_points-[21, 21]]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1625-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1630-]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1677-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1682-]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1736-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1741-]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1774-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1779-]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1822-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1827-]": [
       "grid_interval_count_reads_as_points"
     ],
-    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1868-]": [
+    "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1873-]": [
       "grid_interval_count_reads_as_points"
     ],
     "tests/unit/test_geometry/test_tensor_operators.py::TestBoundaryConditions::test_no_flux_bc": [
@@ -2598,7 +2598,7 @@
         "tests/unit/test_geometry/test_bc_utils_geometric_operation.py::TestGeometricOperationMapping::test_the_mapping_is_case_insensitive",
         "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_a_duck_typed_bc_is_checked_not_waved_through",
         "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_default_bc_is_a_second_lever_with_no_permutation_available",
-        "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_the_guard_and_the_lookup_are_separable_2284"
+        "tests/unit/test_geometry/test_mixed_bc_refused_1697.py::test_the_per_axis_owner_does_not_read_the_lookup_2284"
       ],
       "owner": "no_flux/neumann/robin -> reflect (#1698)",
       "seconds": 126.3,
@@ -3286,14 +3286,14 @@
         "tests/unit/test_geometry/level_set/test_subcell_interface.py::TestSubcellInterface1D::test_accuracy_vs_argmin",
         "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[105-grid.Nx-[100, 50]]",
         "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[105-grid.Nx_points-[101, 51]]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[623-grid.refine(2).Nx-[20, 20]]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[623-grid.refine(2).Nx_points-[21, 21]]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1625-]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1677-]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1736-]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1774-]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1822-]",
-        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1868-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[628-grid.refine(2).Nx-[20, 20]]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_annotated_example_values_are_truthful[628-grid.refine(2).Nx_points-[21, 21]]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1630-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1682-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1741-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1779-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1827-]",
+        "tests/unit/test_geometry/test_tensor_grid_docstring_examples.py::test_constructor_docstring_example_runs[L1873-]",
         "tests/unit/test_operators/test_interface_jump.py::TestInterfaceJumpOperator1D::test_1d_gradient_jump",
         "tests/validation/test_stefan_analytical.py::TestStefanEnergyConservation::test_total_energy_preservation"
       ],

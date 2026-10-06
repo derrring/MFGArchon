@@ -29,11 +29,7 @@ from scipy.optimize import minimize, minimize_scalar
 from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_dH_dp_batch, eval_H_batch
 from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator
 from mfgarchon.geometry.boundary.applicator_interpolation import InterpolationApplicator
-from mfgarchon.geometry.boundary.bc_utils import (
-    bc_type_to_geometric_operation,
-    checked_bc_type_string,
-    refuse_mixed_per_axis,
-)
+from mfgarchon.geometry.boundary.bc_utils import per_axis_diffusion_types, per_axis_operations
 from mfgarchon.geometry.boundary.enforcement import enforce_periodic_value_nd
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.operators.differential.gradient import value_gradient
@@ -117,35 +113,13 @@ except ImportError:
     JAX_AVAILABLE = False
 
 
-_COLLAPSE_REFUSAL = {
-    "consumer": "HJBSemiLagrangianSolver",
-    "alternative": (
-        "Use one BC type across axes, or HJB-FDM/GFDM which resolve BC per wall (Issue #1560 / RFC #1574 Phase 0)."
-    ),
-}
+def _axis_operations(bc, dimension: int) -> tuple[str, ...]:
+    """The fold's geometric operation on each axis, read face by face (#1560).
 
-
-def _checked_bc_type_string(bc) -> str:
-    """Collapse ``bc`` to the single BC type the SL fold applies to every axis, or refuse.
-
-    Thin wrapper over :func:`checked_bc_type_string` -- the refusal plus the lookup -- for the
-    sites that need the collapsed value. The refusal itself is owned by
-    :func:`refuse_mixed_per_axis` since #2284, which is what :func:`_refuse_mixed_per_axis` binds
-    for the constructor. This lives here only to bind the consumer name and the suggested
-    alternative; the logic, including the ``default_bc`` union that a segments-only guard would
-    miss, belongs to ``bc_utils``.
+    Through :func:`per_axis_operations`, which refuses an axis whose two faces disagree; a different
+    operation on each axis, such as no-flux walls in x and periodic in y, is honoured axis by axis.
     """
-    return checked_bc_type_string(bc, **_COLLAPSE_REFUSAL)
-
-
-def _refuse_mixed_per_axis(bc) -> None:
-    """The refusal alone, for the constructor, which has no use for the collapsed value.
-
-    Same owner as :func:`_checked_bc_type_string` and the same bound consumer name; it differs only
-    in not calling ``get_bc_type_string``, whose own ``ValueError`` on a segment-free BC would
-    otherwise reach construction (#2284).
-    """
-    refuse_mixed_per_axis(bc, **_COLLAPSE_REFUSAL)
+    return per_axis_operations(bc, dimension, consumer="HJBSemiLagrangianSolver")
 
 
 class HJBSemiLagrangianSolver(BaseHJBSolver):
@@ -439,14 +413,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # diffusion). None (BC resolved later) is a no-op; SL re-reads get_boundary_conditions().
         self._validate_bc_support(self.get_boundary_conditions())
 
-        # Issue #1560 / RFC #1574 Phase 0: the SL characteristic fold and ADI diffusion collapse a
-        # MIXED per-axis BC to one geometric operation applied to ALL axes, so no-flux on one axis
-        # plus periodic on another is silently reduced and reordering the segments flips the
-        # physics. An inline copy of this predicate lived here until #2284; it had already diverged
-        # from the owner, letting the #1691 rename signature through where `geometric_operations`
-        # refuses to guess. Construction AND every point of use, because the BC can be unset here
+        # Issue #1560: the fold and the ADI diffusion take one geometric operation per axis. An axis whose
+        # two faces disagree is refused, here and at every point of use, because the BC can be unset here
         # and set later.
-        _refuse_mixed_per_axis(self.get_boundary_conditions())
+        _axis_operations(self.get_boundary_conditions(), self.dimension)
 
     # _detect_dimension() inherited from BaseNumericalSolver (Issue #633)
 
@@ -1042,10 +1012,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Returns:
             (Nt, *grid_shape) solution array for value function
         """
-        # The refusal of a mixed BC (#1560) at its point of use, ahead of the first gradient: a BC set on the
-        # geometry after construction otherwise meets `value_gradient`'s refusal first, whose message is about
-        # an axis, not about which BC this solver can honour (#2467).
-        _refuse_mixed_per_axis(self.get_boundary_conditions())
+        # The per-axis read (#1560) at its point of use, ahead of the first gradient: a BC set on the geometry
+        # after construction otherwise meets `value_gradient`'s refusal first, whose message is about an axis,
+        # not about which BC this solver can honour (#2467).
+        _axis_operations(self.get_boundary_conditions(), self.dimension)
 
         # Issue #1316: this solver takes its volatility from the problem, once, at construction
         # (self._volatility), and threads it to the advection-diffusion split and its implicit
@@ -1372,8 +1342,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 x_departures = self.x_grid - vel * self.dt
 
                 # Apply boundary conditions (vectorized)
-                bc = self.get_boundary_conditions()
-                bc_op = bc_type_to_geometric_operation(_checked_bc_type_string(bc))
+                bc_op = _axis_operations(self.get_boundary_conditions(), 1)[0]
                 bounds = self.problem.geometry.get_bounds()
                 xmin, xmax = bounds[0][0], bounds[1][0]
                 # Issue #1161: mirror-reflect out-of-bounds feet (no-flux/Neumann), not
@@ -1822,7 +1791,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # wrap for periodic. fold_into_domain is the correct per-axis fold
         # (identity in-bounds); the earlier center-flip mirrored about the midpoint.
         bc = self.get_boundary_conditions()
-        bc_op = bc_type_to_geometric_operation(_checked_bc_type_string(bc))
+        bc_op = _axis_operations(bc, d)
         bounds = self.problem.geometry.get_bounds()
         x_min = np.asarray(bounds[0], dtype=float)
         x_max = np.asarray(bounds[1], dtype=float)
@@ -1990,7 +1959,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # Boundary fold for the stochastic departures (reflect = no-flux/Neumann, the CS
         # setting; wrap = periodic; clamp otherwise). Shared with the stochastic SL path.
         bc = self.get_boundary_conditions()
-        bc_op = bc_type_to_geometric_operation(_checked_bc_type_string(bc))
+        bc_op = _axis_operations(bc, d)
         bounds = self.problem.geometry.get_bounds()
         x_min = np.asarray(bounds[0], dtype=float)
         x_max = np.asarray(bounds[1], dtype=float)
@@ -2269,6 +2238,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 grid_shape = U_next_shaped.shape
 
             U_star = np.zeros_like(U_next_shaped)
+            axis_ops = _axis_operations(self.get_boundary_conditions(), self.dimension)
 
             for multi_idx in np.ndindex(grid_shape):
                 x_current = np.array([self.grid.coordinates[d][multi_idx[d]] for d in range(self.dimension)])
@@ -2277,11 +2247,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 _bnd_min, _bnd_max = self.grid.get_bounds()  # Issue #1056: uniform accessor
 
                 def dpp_cost_nd(alpha_vec, _xc=x_current, _mc=m_current, _lo=_bnd_min, _hi=_bnd_max):
-                    x_next = _xc + alpha_vec * dt
-                    # Clip to domain bounds (per-axis; the prior self.grid.bounds[0][d] mis-indexed
-                    # the ad-hoc .bounds shape for d>=1 -- latent nD bug, Issue #1056).
-                    for d in range(self.dimension):
-                        x_next[d] = np.clip(x_next[d], _lo[d], _hi[d])
+                    # The foot is folded by each axis's own operation (#1560): it was clipped on every axis,
+                    # which collapsed a no-flux foot onto the wall node (#1161) and did not wrap a periodic one.
+                    x_next = fold_into_domain(_xc + alpha_vec * dt, np.asarray(_lo), np.asarray(_hi), axis_ops)
                     u_next = self._interpolate_value(U_next_shaped, x_next)
                     L_val = float(L_class(x=_xc, alpha=alpha_vec, m=_mc, t=t_value))
                     return dt * L_val + u_next
@@ -2307,9 +2275,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         bounds = self.problem.geometry.get_bounds()
         xmin, xmax = bounds[0][0], bounds[1][0]
 
-        bc = self.get_boundary_conditions()
-        bc_type = _checked_bc_type_string(bc)
-        bc_op = bc_type_to_geometric_operation(bc_type)
+        bc_op = _axis_operations(self.get_boundary_conditions(), 1)[0]
 
         return apply_boundary_conditions_1d(x, xmin=xmin, xmax=xmax, bc_type=bc_op)
 
@@ -2511,9 +2477,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
             # Apply boundary conditions
             # Issue #702: Use centralized bc_utils for consistent BC handling
-            bc = self.get_boundary_conditions()
-            bc_type = _checked_bc_type_string(bc)
-            bc_op = bc_type_to_geometric_operation(bc_type)
+            bc_op = _axis_operations(self.get_boundary_conditions(), 1)[0]
 
             bounds = self.problem.geometry.get_bounds()
             xmin, xmax = bounds[0][0], bounds[1][0]
@@ -2536,10 +2500,8 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 ode_atol=self.ode_atol,
             )
 
-            # Issue #702: Use centralized bc_utils for consistent BC handling
-            bc = self.get_boundary_conditions()
-            bc_type = _checked_bc_type_string(bc)
-            bc_op = bc_type_to_geometric_operation(bc_type)
+            # Issue #702 / #1560: one operation per axis, from the per-axis owner.
+            bc_op = _axis_operations(self.get_boundary_conditions(), self.dimension)
 
             return apply_boundary_conditions_nd(
                 x_departure,
@@ -2896,7 +2858,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Returns:
             Solution after implicit diffusion step
         """
-        bc_op = self._get_diffusion_bc_type()
+        bc_op = self._get_diffusion_bc_types()[0]
         if bc_op == "periodic":
             # The advection step leaves the two coincident endpoints holding independently
             # interpolated values, so the field is not yet periodic when it reaches the solve, which
@@ -2926,13 +2888,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             )
         return values.reshape(grid_shape)
 
-    def _get_diffusion_bc_type(self) -> str:
-        """Get BC type string for diffusion step ('neumann' or 'periodic')."""
-        bc = self.get_boundary_conditions()
-        bc_type = _checked_bc_type_string(bc)
-        if bc_type == "periodic":
-            return "periodic"
-        return "neumann"
+    def _get_diffusion_bc_types(self) -> tuple[str, ...]:
+        """The diffusion step's boundary on each axis, 'neumann' or 'periodic' (#1560)."""
+        return per_axis_diffusion_types(_axis_operations(self.get_boundary_conditions(), self.dimension))
 
     def _adi_diffusion_step(self, U_star: np.ndarray, dt: float) -> np.ndarray:
         """
@@ -2950,21 +2908,22 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         if self.dimension == 1:
             return self._solve_implicit_diffusion_1d(U_star, dt, self._volatility)
 
-        bc_op = self._get_diffusion_bc_type()
-        if bc_op == "periodic":
-            # Same identification the 1D path does, on EVERY axis. The periodic sweep drops the
-            # duplicated endpoint along each axis and refuses a field where it is not one, so an
-            # nD field arriving unfolded raises rather than solving (Issue #1820).
+        bc_ops = self._get_diffusion_bc_types()
+        if "periodic" in bc_ops:
+            # Same identification the 1D path does, on every periodic axis. The periodic sweep drops the
+            # duplicated endpoint along that axis and refuses a field where it is not one, so a field
+            # arriving unfolded raises rather than solving (Issue #1820).
             U_star = U_star.copy()
-            for axis in range(U_star.ndim):
-                enforce_periodic_value_nd(U_star, axis=axis)
+            for axis, op in enumerate(bc_ops):
+                if op == "periodic":
+                    enforce_periodic_value_nd(U_star, axis=axis)
         return adi_diffusion_step(
             U_star,
             dt,
             self._volatility,
             self.dx,
             tuple(self._grid_shape),
-            bc_type=bc_op,
+            bc_type=bc_ops,
             theta=self.diffusion_theta,
         )
 

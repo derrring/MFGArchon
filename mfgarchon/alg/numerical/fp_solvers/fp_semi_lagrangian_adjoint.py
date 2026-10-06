@@ -42,10 +42,11 @@ from mfgarchon.alg.numerical.hjb_solvers.hjb_sl_characteristics import (
     apply_boundary_conditions_1d,
     cfl_substeps,
     check_substep_settings,
+    fold_into_domain,
 )
 from mfgarchon.geometry.boundary.bc_utils import (
-    bc_type_to_geometric_operation,
-    checked_bc_type_string,
+    per_axis_diffusion_types,
+    per_axis_operations,
 )
 from mfgarchon.geometry.boundary.enforcement import enforce_periodic_value_nd
 from mfgarchon.geometry.boundary.types import BCType
@@ -245,40 +246,30 @@ class FPSLSolver(BaseFPSolver):
         # ``get_boundary_conditions()`` resolves first, so it wins for the solver's lifetime;
         # otherwise nothing is cached and the geometry is re-read at every point of use. Caching
         # the geometry's BC here would freeze a construction-time snapshot, and the mixed-BC guard
-        # in ``_get_bc_operation_type`` would then never see a BC replaced afterwards -- the
+        # in ``_axis_operations`` would then never see a BC replaced afterwards -- the
         # bypass this solver's own guard exists to close (Issue #1697).
         self._boundary_conditions = boundary_conditions
         # Issue #1456: fail loud now if the resolved BC requests a type this solver cannot honor
         # (Dirichlet/Robin would otherwise be silently collapsed to the zero-flux Neumann stencil).
         self._validate_bc_support(self.get_boundary_conditions())
+        # Issue #1697: refuse an axis whose two faces disagree now, as HJB-SL does, not at the first solve.
+        self._axis_operations()
 
-    def _get_bc_operation_type(self) -> str:
+    def _axis_operations(self) -> tuple[str, ...]:
+        """The fold's geometric operation on each axis, read face by face (#1697).
+
+        Through :func:`per_axis_operations`, which refuses an axis whose two faces disagree; a different
+        operation on each axis, such as no-flux walls in x and periodic in y, is honoured axis by axis.
         """
-        Get boundary operation type from boundary conditions.
+        return per_axis_operations(self.get_boundary_conditions(), self.dimension, consumer="FPSLSolver")
 
-        Issue #702: Uses centralized bc_utils for consistent BC handling.
+    def _get_diffusion_bc_types(self) -> tuple[str, ...]:
+        """The implicit diffusion's boundary on each axis, 'periodic' or 'neumann'.
 
-        Returns:
-            Geometric operation: 'reflect', 'clamp', or 'periodic'
+        Issue #1257, 2026-06-10 audit: the diffusion sub-step uses the advection's BC, so a periodic axis
+        does not acquire a spurious Neumann seam flux. Per axis since #1697.
         """
-        bc_type = checked_bc_type_string(
-            self.get_boundary_conditions(),
-            consumer="FPSLSolver",
-            alternative=("Use one BC type across axes, or FP-FDM/FVM which resolve BC per wall (Issue #1697)."),
-        )
-        return bc_type_to_geometric_operation(bc_type)
-
-    def _get_diffusion_bc_type(self) -> str:
-        """Return diffusion BC type for the implicit diffusion step: 'periodic' or 'neumann'.
-
-        Issue #1257, 2026-06-10 audit: FP-SL diffusion sub-step must use the
-        same BC type as the advection sub-step so a periodic domain does not
-        acquire a spurious Neumann seam-flux.  Mirrors HJB-SL
-        _get_diffusion_bc_type() (hjb_semi_lagrangian.py:2238).
-        """
-        if self._get_bc_operation_type() == "periodic":
-            return "periodic"
-        return "neumann"
+        return per_axis_diffusion_types(self._axis_operations())
 
     @retired_volatility_keywords
     @deprecated_parameter(param_name="drift_field", since="v0.18.6", replacement="potential_field")
@@ -378,10 +369,10 @@ class FPSLSolver(BaseFPSolver):
                 )
             return values
 
-        # The solver's own refusal of a mixed BC (#1697) at its point of use, ahead of the first velocity:
-        # `value_gradient` refuses a half-periodic geometry too, but its message is about an axis, not about
-        # which BC this solver can honour.
-        self._get_bc_operation_type()
+        # The solver's own refusal of a BC it cannot honour axis by axis (#1697) at its point of use, ahead
+        # of the first velocity: `value_gradient` refuses a half-periodic geometry too, but its message is
+        # about an axis, not about which BC this solver can honour.
+        self._axis_operations()
 
         # Forward time stepping (dimension-agnostic dispatch). When the paired HJB half sub-steps, a
         # step whose CFL number exceeds max(1, cfl_target) is cut into sub-steps here too, by the shared cfl_substeps,
@@ -492,7 +483,7 @@ class FPSLSolver(BaseFPSolver):
         # Issue #702: Apply boundary conditions based on problem BC type
         # This ensures adjoint consistency with HJB-SL solver
         # Uses shared BC operations from hjb_sl_characteristics module
-        bc_op = self._get_bc_operation_type()
+        bc_op = self._axis_operations()[0]
         apply_bc = np.vectorize(lambda x: apply_boundary_conditions_1d(x, self.xmin, self.xmax, bc_op))
         x_dest_bounded = apply_bc(x_dest)
 
@@ -521,11 +512,11 @@ class FPSLSolver(BaseFPSolver):
         # On a periodic domain the advection step already wraps mass across the seam;
         # pairing it with a Neumann/zero-flux diffusion sub-step produces an O(1) seam
         # flux error every step and breaks adjoint consistency with HJB-SL (which
-        # threads _get_diffusion_bc_type into both its CN and ADI).  Use
+        # threads _get_diffusion_bc_types into both its CN and ADI).  Use
         # solve_implicit_diffusion_1d from hjb_sl_adi (which has both
         # 'periodic' and 'neumann' branches) so the periodic case gets the
         # Sherman-Morrison circulant solve instead of the zero-flux stencil.
-        diff_bc = self._get_diffusion_bc_type()
+        diff_bc = self._get_diffusion_bc_types()[0]
         if diff_bc == "periodic":
             # Identify the two coincident endpoints before diffusing. `splat_1d` deposits into
             # index 0 and index -1 independently, but on an endpoint-inclusive grid they are one
@@ -600,30 +591,12 @@ class FPSLSolver(BaseFPSolver):
         # Compute destination positions
         x_dest = [meshes[d] + alpha[d] * dt for d in range(self.dimension)]
 
-        # Apply boundary conditions (per dimension, vectorized)
-        # For tensor product grids, each dimension is independent
-        bc_op = self._get_bc_operation_type()
+        # Fold each axis by its own operation (#1697), through the fold the HJB half uses. The hand-rolled
+        # triangle wave that stood here was `reflect_into_domain`'s, applied with one operation to every axis.
+        ops = self._axis_operations()
         for d in range(self.dimension):
             xmin_d, xmax_d = self.bounds[d]
-            # Vectorized boundary conditions using numpy operations
-            if bc_op == "periodic":
-                length = xmax_d - xmin_d
-                x_dest[d] = xmin_d + np.mod(x_dest[d] - xmin_d, length)
-            elif bc_op == "reflect":
-                # Reflect about boundaries using triangle wave
-                # Maps any point to [xmin, xmax] via reflections
-                length = xmax_d - xmin_d
-                # Normalize: x_norm in [0, 1] for x in [xmin, xmax]
-                x_norm = (x_dest[d] - xmin_d) / length
-                # Triangle wave: 0→1→0→1... (period 2)
-                # mod(x, 2) gives [0, 2), then |. - 1| gives [1, 0, 1)
-                # finally 1 - |.| gives [0, 1, 0)
-                x_fold = 1 - np.abs(np.mod(x_norm, 2) - 1)
-                # Map back to domain
-                x_dest[d] = xmin_d + x_fold * length
-            else:
-                # Clamp (dirichlet / absorbing)
-                x_dest[d] = np.clip(x_dest[d], xmin_d, xmax_d)
+            x_dest[d] = fold_into_domain(x_dest[d], xmin_d, xmax_d, ops[d])
 
         # Stack into (N_total, dimension) array for splatting
         x_dest_array = np.stack([xd.ravel() for xd in x_dest], axis=-1)
@@ -650,21 +623,23 @@ class FPSLSolver(BaseFPSolver):
         # 'neumann', which would impose a zero-flux seam mis-matched to the
         # periodic advection step above.  Mirrors HJB-SL _adi_diffusion_step
         # (hjb_semi_lagrangian.py:2263).
-        if self._get_diffusion_bc_type() == "periodic":
-            # splat deposits into both coincident nodes on every axis, so the field is not yet
-            # periodic when it reaches the sweep, which refuses that (Issue #1820). The mean is
-            # the fold that preserves this density's trapezoid mass -- both nodes already carry a
-            # half weight, so summing would double-count them.
+        diffusion_bcs = self._get_diffusion_bc_types()
+        if "periodic" in diffusion_bcs:
+            # splat deposits into both coincident nodes on every periodic axis, so the field is not yet
+            # periodic when it reaches the sweep, which refuses that (Issue #1820). The mean is the fold
+            # that preserves this density's trapezoid mass -- both nodes already carry a half weight, so
+            # summing would double-count them. Periodic axes only (#1697).
             m_star = m_star.copy()
-            for axis in range(m_star.ndim):
-                enforce_periodic_value_nd(m_star, axis=axis)
+            for axis, bc_d in enumerate(diffusion_bcs):
+                if bc_d == "periodic":
+                    enforce_periodic_value_nd(m_star, axis=axis)
         m_new = adi_diffusion_step(
             U_star=m_star,
             dt=dt,
             volatility=volatility,
             spacing=self.spacing,
             grid_shape=self.grid_shape,
-            bc_type=self._get_diffusion_bc_type(),
+            bc_type=diffusion_bcs,
             theta=self.diffusion_theta,
         )
 

@@ -5,7 +5,7 @@ Issue #702: Shared BC type detection and operation mapping for FDM, SL, GFDM, et
 
 This module provides utilities that replace duplicated BC handling logic in:
 - fp_fdm_time_stepping._get_bc_type()
-- fp_semi_lagrangian_adjoint._get_bc_operation_type()
+- fp_semi_lagrangian_adjoint._axis_operations()
 - hjb_semi_lagrangian._get_bc_type_string()
 
 All solvers should import from this module for consistent BC handling.
@@ -161,55 +161,103 @@ def geometric_operations(boundary_conditions: Any) -> set[str]:
     return ops
 
 
-def refuse_mixed_per_axis(boundary_conditions: Any, *, consumer: str, alternative: str) -> None:
-    """Refuse a BC whose segments ask for more than one geometric operation. #1560, #1697.
+def declares_periodic(boundary_conditions: Any) -> bool:
+    """Whether a face of ``boundary_conditions`` can be periodic: a periodic segment, or a periodic ``default_bc``.
 
-    **The single owner of the per-axis collapse guard**, for every solver whose fold applies one
-    geometric operation to every axis. Returns ``None`` when the configuration is honourable and
-    raises ``NotImplementedError`` when it is not.
-
-    Split out of :func:`checked_bc_type_string` (#2284), which does this **and** returns the
-    collapsed type. **The reason is the responsibility split, which holds on its own**: a solver's
-    constructor wants the refusal and has no use for the value, so it should not be able to fail for
-    reasons belonging to a lookup it never asked for.
-
-    The concrete instance that made it visible is a **defect, not a contract**, and it has its own
-    issue: ``BoundaryConditions(segments=[], default_bc=NO_FLUX)`` asks for one operation and passes
-    this guard, while ``get_bc_type_string`` raises ``ValueError`` on it (#1700 part B, open --
-    "an empty segment list with a uniform default is a legitimate configuration"). When #1700 lands
-    that ValueError goes and this paragraph's example goes with it; the paragraph above does not.
-
-    Call it at the point of use, not only at construction: solvers re-read
-    ``get_boundary_conditions()`` at solve time, so a construction-time check alone is bypassed by
-    a BC that is unset when the solver is built, or replaced afterwards. Construction as well, not
-    instead: a refusal the caller gets when handing the BC over beats one it gets on first solve.
-
-    Args:
-        boundary_conditions: the BC to check.
-        consumer: the refusing component, named in the error (e.g. ``"HJBSemiLagrangianSolver"``).
-        alternative: what the caller should use instead, appended to the error message.
-
-    Per-axis handling is the actual fix and remains open on #1560 (HJB) and #1697 (FP). Until then
-    the library refuses the configuration rather than solving a different one.
+    The one predicate both periodic-convention binders read (#1822): ``TensorProductGrid`` when a BC is
+    attached to it, and ``BaseNumericalSolver`` for a BC the caller hands the solver. Both read segments
+    only until #1560, so a seam left to the default reached the solvers with no convention.
     """
-    ops = geometric_operations(boundary_conditions)
-    if len(ops) > 1:
-        raise NotImplementedError(
-            f"{consumer} does not support a mixed per-axis boundary condition whose segments map "
-            f"to different geometric operations ({sorted(ops)}). The fold applies a single "
-            "operation to every axis, so the result depends on segment order rather than on "
-            f"which wall carries which condition. {alternative}"
-        )
+    from .types import BCType
+
+    segments = getattr(boundary_conditions, "segments", None) or ()
+    if any(getattr(seg, "bc_type", None) is BCType.PERIODIC for seg in segments):
+        return True
+    return getattr(boundary_conditions, "default_bc", None) is BCType.PERIODIC
 
 
-def checked_bc_type_string(boundary_conditions: Any, *, consumer: str, alternative: str) -> str | None:
-    """Collapse ``boundary_conditions`` to one BC type, or refuse if that would change the physics.
+def per_axis_operations(boundary_conditions: Any, dimension: int, *, consumer: str) -> tuple[str, ...]:
+    """The geometric operation on each axis, read face by face. #1560, #1697.
 
-    The guard plus the lookup, for callers that need the collapsed value. Callers that need only
-    the refusal call :func:`refuse_mixed_per_axis`, which is where the predicate now lives.
+    The per-axis owner for the semi-Lagrangian pair: axis ``d``'s operation is
+    :func:`bc_type_to_geometric_operation` of ``get_bc_type_at_boundary("axis<d>_min")`` and of
+    ``"axis<d>_max"``. No-flux on one axis and periodic on another is then two operations, one per axis,
+    instead of the first segment's applied to both.
+
+    ``None`` and a legacy BC without ``segments`` carry no per-face information: their one operation, from
+    :func:`get_bc_type_string`, applies to every axis.
+
+    Raises:
+        NotImplementedError: when an axis's two faces ask for different operations. A fold has one rule per
+            axis, so periodic on one face only, or reflect on one and clamp on the other, is refused rather
+            than resolved by whichever face is read first. Also, in a mix of operations, for a segment the
+            face reader cannot place: one with no ``boundary``, whose faces cannot be told apart (#2467) --
+            ``sdf_region``, ``normal_direction`` and ``region_name`` segments are all of this kind, since
+            none of them can carry a ``boundary``; one with ``boundary="all"``, which the face reader
+            applies to no face (#1953); one whose ``boundary`` names no face of this domain -- a misspelt
+            name, a Gmsh tag, an axis past its dimension -- which the face reader drops and the default
+            replaces; and one whose ``region`` restricts it to part of a face, which the face reader
+            stretches over the whole face (#2490).
     """
-    refuse_mixed_per_axis(boundary_conditions, consumer=consumer, alternative=alternative)
-    return get_bc_type_string(boundary_conditions)
+    if boundary_conditions is None or getattr(boundary_conditions, "segments", None) is None:
+        return (bc_type_to_geometric_operation(get_bc_type_string(boundary_conditions)),) * dimension
+    if len(geometric_operations(boundary_conditions)) > 1 and not boundary_conditions.is_uniform:
+        unbounded = [seg.name for seg in boundary_conditions.segments if seg.boundary is None]
+        if unbounded:
+            raise NotImplementedError(
+                f"{consumer}: segments {unbounded} have no `boundary` in a mix of geometric operations, so "
+                "the faces they cover cannot be read per axis. Give each one the face it lies on with "
+                "`boundary=` (#2467)."
+            )
+        everywhere = [seg.name for seg in boundary_conditions.segments if seg.boundary == "all"]
+        if everywhere:
+            raise NotImplementedError(
+                f"{consumer}: segments {everywhere} use boundary='all' in a mix of geometric operations, and "
+                "the face reader applies 'all' to no face (#1953), so it cannot be read per axis. Name the "
+                "faces each one covers."
+            )
+        from .types import parse_boundary_face
+
+        nowhere = [
+            f"{seg.name} ({type(seg.boundary).__name__} {seg.boundary!r})"
+            for seg in boundary_conditions.segments
+            if (face := parse_boundary_face(seg.boundary)) is None or not 0 <= face.axis < dimension
+        ]
+        if nowhere:
+            raise NotImplementedError(
+                f"{consumer}: segments {nowhere} name no face of this {dimension}-D domain in a mix of "
+                "geometric operations, so the face reader drops them and the default takes their place. Name "
+                "a face such as 'x_min' or 'axis0_max'."
+            )
+        partial = [seg.name for seg in boundary_conditions.segments if seg.region is not None]
+        if partial:
+            raise NotImplementedError(
+                f"{consumer}: segments {partial} cover part of a face (`region`) in a mix of geometric "
+                "operations. A semi-Lagrangian fold applies one operation per axis, and the face reader would "
+                "give each of them its whole face (#2490)."
+            )
+    operations = []
+    for axis in range(dimension):
+        ops = [
+            bc_type_to_geometric_operation(
+                str(getattr(t, "value", t))
+                if (t := boundary_conditions.get_bc_type_at_boundary(f"axis{axis}_{side}")) is not None
+                else None
+            )
+            for side in ("min", "max")
+        ]
+        if ops[0] != ops[1]:
+            raise NotImplementedError(
+                f"{consumer}: axis {axis} asks for {ops[0]!r} at its min face and {ops[1]!r} at its max face. "
+                "A semi-Lagrangian fold applies one operation per axis, so the two faces of an axis must agree."
+            )
+        operations.append(ops[0])
+    return tuple(operations)
+
+
+def per_axis_diffusion_types(operations: tuple[str, ...]) -> tuple[str, ...]:
+    """The implicit diffusion's boundary on each axis: ``periodic`` where the fold wraps, ``neumann`` elsewhere."""
+    return tuple("periodic" if op == "periodic" else "neumann" for op in operations)
 
 
 def describe_inhomogeneous_bc_data(

@@ -1,34 +1,21 @@
 """RFC #1574 Phase 0 capability-honesty guards: fail loud where a declared/dispatched surface is
 broader than the code that honors it.
 
-- #1560: HJBSemiLagrangianSolver collapses a mixed per-axis BC (segments mapping to different
-  geometric operations, e.g. no-flux + periodic) to the first segment's single op applied to all
-  axes.
 - #1564: HJBFDMSolver.build_linearized_operator (the strict-adjoint FP operator, #707) hardcodes
   no-flux at every boundary while HJBFDMSolver declares DIRICHLET supported for the normal solve.
+- #1560: HJBSemiLagrangianSolver collapsed a mixed per-axis BC to one operation on every axis. Its
+  refusal pin retired when per-axis handling landed, as the pin's own message asked; the law it stood
+  in for is `tests/unit/test_alg/test_sl_channel_separates_by_axis_1560_1697.py`, and its control
+  `test_sl_uniform_bc_still_constructs_1560` stays here.
 
-ADMISSION (#2257). Class 3, two defect pins in one file because they are one RFC phase. Both are
-TEMPORARY by construction: RFC #1574 has later phases, and each guard is a refusal standing in for
-an implementation that phase is meant to supply. So each carries a retirement condition that fires
-when its own capability lands -- the refusal stops being raised, the test goes red, and the message
-says to delete the pin rather than restore the raise.
+ADMISSION (#2257). Class 3, a defect pin, TEMPORARY by construction: RFC #1574 has later phases,
+and the guard is a refusal standing in for an implementation that phase is meant to supply. So it
+carries a retirement condition that fires when its own capability lands -- the refusal stops being
+raised, the test goes red, and the message says to delete the pin rather than restore the raise.
 
 A pin without that is what makes a capability harder to add than to leave missing: the next person
-implementing per-axis BC in the SL solver finds a red test asserting the refusal and cannot tell
-whether it is a regression they caused or the pin's own success.
-
-WHAT THE #1560 PIN COVERS
--------------------------
-One owner: `bc_utils.refuse_mixed_per_axis`, which `HJBSemiLagrangianSolver` calls at construction
-and, through the `_checked_bc_type_string` wrapper, at every solve-time site.
-
-The predicate existed TWICE until #2284 -- an inline copy in `__init__`, which had already diverged
-from the owner -- and this pin then held that copy and nothing else. It now holds the owner.
-Measured: disabling the owner's raise turns `test_sl_mixed_per_axis_bc_fails_loud_1560` red, where
-before the consolidation the same mutation left this file green (4 passed either way).
-
-That closes the reach gap this file used to record. Per-axis handling landing in the owner alone can
-no longer leave the pin green, because there is no second copy left to keep raising.
+implementing the capability finds a red test asserting the refusal and cannot tell whether it is a
+regression they caused or the pin's own success.
 """
 
 from __future__ import annotations
@@ -39,22 +26,8 @@ from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian import HJBSemiLagrangianSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_problem import MFGComponents, MFGProblem
-from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, dirichlet_bc, no_flux_bc
+from mfgarchon.geometry.boundary import dirichlet_bc, no_flux_bc
 from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid
-
-_OBSERVED_1560 = "HJBSemiLagrangianSolver did not refuse a mixed per-axis BC at construction."
-
-_CAUSES_1560 = {
-    "per-axis handling landed": (
-        "the RFC #1574 phase this pin existed to demand. Do NOT restore the raise: delete this test "
-        "and replace it with one checking the ops are applied PER AXIS -- no-flux on x reflecting "
-        "while periodic on y wraps, which is the collapse the refusal stood in for. `test_sl_uniform_bc_still_constructs_1560` stays either way. See #1560"
-    ),
-    "the guard moved": (
-        "`bc_utils.refuse_mixed_per_axis` has been its one owner since #2284, so the refusal is "
-        "still correct behaviour and this pin wants re-pointing, not deleting. See #1560, #2284"
-    ),
-}
 
 _OBSERVED_1564 = "build_linearized_operator did not refuse a Dirichlet BC."
 
@@ -84,32 +57,11 @@ def _problem(bc, bounds, npts) -> MFGProblem:
     return MFGProblem(geometry=grid, T=0.2, Nt=2, volatility=0.1, components=_components())
 
 
-def test_sl_mixed_per_axis_bc_fails_loud_1560(still_refused):
-    """no-flux (x) + periodic (y) map to different geometric ops (reflect vs periodic); SL collapses
-    them to one op on all axes, so construction must raise rather than silently pick the first."""
-    mixed = BoundaryConditions(
-        dimension=2,
-        segments=[
-            BCSegment(name="wx", boundary="x_min", bc_type=BCType.NO_FLUX),
-            BCSegment(name="ex", boundary="x_max", bc_type=BCType.NO_FLUX),
-            BCSegment(name="py0", boundary="y_min", bc_type=BCType.PERIODIC),
-            BCSegment(name="py1", boundary="y_max", bc_type=BCType.PERIODIC),
-        ],
-        # `mixed_bc` is deprecated since v0.18.0 -- three minors back against 0.22.0.dev0 -- and
-        # was this file's only use of it (#2257). Its body (conditions.py:1265-1273) forwards
-        # every argument to this constructor unchanged, so the migration is verbatim; the one
-        # thing not carried by the constructor's own defaults is `default_bc`, which the factory
-        # supplied as NEUMANN and the constructor leaves None. Passed explicitly for that reason.
-        default_bc=BCType.NEUMANN,
-    )
-    with still_refused("mixed per-axis", observed=_OBSERVED_1560, causes=_CAUSES_1560):
-        HJBSemiLagrangianSolver(problem=_problem(mixed, [(0.0, 1.0), (0.0, 1.0)], [6, 6]))
-
-
 def test_sl_uniform_bc_still_constructs_1560():
-    """A single BC type across all axes must be unaffected by the mixed-BC guard.
+    """A single BC type across all axes constructs.
 
-    The control. Without it a guard that refused every BC would satisfy the test above.
+    The control the #1560 refusal pin had, kept when per-axis handling retired that pin: the per-axis
+    read still refuses an axis whose two faces disagree, and must not refuse a uniform BC.
     """
     solver = HJBSemiLagrangianSolver(problem=_problem(no_flux_bc(dimension=2), [(0.0, 1.0), (0.0, 1.0)], [6, 6]))
     assert solver is not None
