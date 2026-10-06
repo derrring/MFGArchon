@@ -285,6 +285,45 @@ def per_axis_diffusion_types(operations: tuple[str, ...]) -> tuple[str, ...]:
     return tuple("periodic" if op == "periodic" else "neumann" for op in operations)
 
 
+def fp_view_of_shared_bc(boundary_conditions: Any) -> Any:
+    """The Fokker-Planck reading of a BC shared by the HJB and FP of a coupled MFG (#2512, convention row 5).
+
+    One owner for the translation. An exit is two conditions on two equations: the exit cost u = g on
+    the HJB, and an absorbing wall m = 0 on the FP. A single shared ``DIRICHLET(g)`` cannot mean both
+    literally, so on the FP side it means absorbing and its value is dropped **by design**: every
+    DIRICHLET segment, and a DIRICHLET ``default_bc``, comes back with value 0. Everything else is
+    returned unchanged.
+
+    Only a BC the FP solver reads from the shared problem / geometry goes through here. A BC passed to
+    an FP solver explicitly is the FP's own: there ``DIRICHLET(g)`` is a prescribed density m = g.
+
+    Anything that is not a ``BoundaryConditions`` (``None``, a string sentinel) is returned as is.
+    """
+    from dataclasses import replace
+
+    from .conditions import BoundaryConditions
+    from .types import BCType
+
+    if not isinstance(boundary_conditions, BoundaryConditions):
+        return boundary_conditions
+
+    def carries_a_value(seg: Any) -> bool:
+        return seg.bc_type == BCType.DIRICHLET and not (isinstance(seg.value, (int, float)) and seg.value == 0)
+
+    default_carries = boundary_conditions.default_bc == BCType.DIRICHLET and boundary_conditions.default_value not in (
+        None,
+        0,
+        0.0,
+    )
+    if not default_carries and not any(carries_a_value(seg) for seg in boundary_conditions.segments):
+        return boundary_conditions  # nothing to translate: the caller keeps the geometry's own object
+    segments = [replace(seg, value=0.0) if carries_a_value(seg) else seg for seg in boundary_conditions.segments]
+    changes: dict[str, Any] = {"segments": segments}
+    if default_carries:
+        changes["default_value"] = 0.0
+    return replace(boundary_conditions, **changes)
+
+
 def describe_inhomogeneous_bc_data(
     boundary_conditions: Any,
     *,

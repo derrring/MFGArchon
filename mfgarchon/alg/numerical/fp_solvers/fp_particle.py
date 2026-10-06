@@ -21,6 +21,7 @@ except ImportError:  # pragma: no cover - graceful fallback when SciPy missing
     SCIPY_AVAILABLE = False
 
 from mfgarchon.geometry.boundary.applicator_particle import ParticleApplicator
+from mfgarchon.geometry.boundary.bc_utils import fp_view_of_shared_bc
 from mfgarchon.geometry.boundary.types import BCType
 
 # Issue #625: Migrated from tensor_calculus to operators/stencils
@@ -282,6 +283,10 @@ class FPParticleSolver(BaseFPSolver):
         # 2. Grid geometry boundary conditions (from geometry)
         # 3. Implicit geometry with periodic dimensions (e.g., Hyperrectangle torus)
         # 4. FAIL FAST - no silent fallback (CLAUDE.md principle)
+        # A BC passed here is this solver's own, so DIRICHLET(g) is a prescribed density and an absorbing
+        # wall refuses g != 0. A BC read from the shared problem/geometry is translated: there DIRICHLET(g)
+        # is an exit, u = g for the HJB and m = 0 for this solver (#2512, convention row 5).
+        self._bc_is_shared = boundary_conditions is None
         if boundary_conditions is not None:
             self.boundary_conditions = boundary_conditions
         else:
@@ -321,24 +326,26 @@ class FPParticleSolver(BaseFPSolver):
 
         # Issue #1456: fail loud if the resolved BC requests a type this solver cannot honor
         # (no-op for the "periodic" string sentinel).
+        if self._bc_is_shared:
+            self.boundary_conditions = fp_view_of_shared_bc(self.boundary_conditions)
         self._validate_bc_support(self.boundary_conditions)
         self._refuse_inhomogeneous_dirichlet(self.boundary_conditions)
 
     @staticmethod
     def _refuse_inhomogeneous_dirichlet(bc: Any) -> None:
-        """A particle wall absorbs, which is the density condition m = 0. A nonzero Dirichlet value
-        cannot be imposed on particles and was ignored: `dirichlet_bc(value=0.7)` solved bit-identically
-        to `value=0.0` (#2519)."""
+        """A particle wall absorbs, which is the density condition m = 0. On a BC passed to this solver
+        explicitly a nonzero Dirichlet value is a prescribed density, which particles cannot impose, and it
+        was ignored: `dirichlet_bc(value=0.7)` solved bit-identically to `value=0.0` (#2519). A shared BC
+        never reaches here with one: `fp_view_of_shared_bc` reads its Dirichlet as absorbing."""
         from mfgarchon.geometry.boundary.bc_utils import describe_inhomogeneous_bc_data
 
         ignored = describe_inhomogeneous_bc_data(bc, bc_types={BCType.DIRICHLET})
         if ignored:
             raise NotImplementedError(
                 f"FPParticleSolver: a DIRICHLET wall absorbs particles, which is m = 0 there; the "
-                f"value(s) {ignored} cannot be imposed and would be ignored (#2519). If the value is the "
-                f"HJB's (an exit cost on a shared geometry BC), give this solver its own BC: "
-                f"FPParticleSolver(problem, boundary_conditions=dirichlet_bc(value=0.0)); otherwise pass "
-                f"value=0.0."
+                f"value(s) {ignored} passed in boundary_conditions= are a prescribed density, which particles "
+                f"cannot impose (#2519). For an exit, leave boundary_conditions unset: the shared BC's "
+                f"Dirichlet value is the HJB's exit cost, and this solver absorbs there."
             )
 
     def _get_grid_params(self) -> dict:

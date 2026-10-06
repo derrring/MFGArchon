@@ -102,12 +102,11 @@ def test_the_interior_density_converges_in_particles_and_grid():
     assert errors[1] < 0.75 * errors[0], f"interior L1 {errors}"
 
 
-def test_a_nonzero_dirichlet_value_is_refused():
-    """A particle wall absorbs: m = 0. `dirichlet_bc(value=0.7)` solved bit-identically to 0.0."""
+def _refusal_problem():
     grid = TensorProductGrid(
         bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=dirichlet_bc(dimension=1, value=0.7)
     )
-    problem = MFGProblem(
+    return MFGProblem(
         model=Model(
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=SIGMA
         ),
@@ -115,8 +114,24 @@ def test_a_nonzero_dirichlet_value_is_refused():
         conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=T),
         Nt=4,
     )
+
+
+def test_an_explicit_nonzero_dirichlet_value_is_refused():
+    """A BC passed to the FP solver is its own: DIRICHLET(g) is a prescribed density m = g, which an
+    absorbing particle wall cannot impose. `dirichlet_bc(value=0.7)` solved bit-identically to 0.0."""
     with pytest.raises(NotImplementedError, match="#2519"):
-        FPParticleSolver(problem, num_particles=100)
+        FPParticleSolver(
+            _refusal_problem(), num_particles=100, boundary_conditions=dirichlet_bc(dimension=1, value=0.7)
+        )
+
+
+def test_a_shared_nonzero_dirichlet_value_is_an_exit():
+    """On the shared problem/geometry BC, DIRICHLET(g) is an exit: u = g for the HJB, m = 0 here
+    (`fp_view_of_shared_bc`, #2512 convention row 5). So it constructs, and absorbs."""
+    solver = FPParticleSolver(_refusal_problem(), num_particles=2000, seed=0)
+    assert all(seg.value == 0.0 for seg in solver.boundary_conditions.segments)
+    solver.solve_fp_system(np.ones(11), np.zeros((5, 11)))
+    assert solver._count_alive(solver.M_particles_trajectory[-1]) < 2000
 
 
 @pytest.mark.parametrize("route", ["grid", "callable"])
@@ -139,3 +154,41 @@ def test_every_slice_carries_the_survivors_of_this_solves_first_slice(dim: int, 
         assert abs(float(grid.integrate(M[k])) - expected) < 0.1 * mass0, (
             f"{dim}-D {route}, slice {k}: mass {float(grid.integrate(M[k])):.3f}, survivors' share {expected:.3f}"
         )
+
+
+def test_a_coupled_exit_cost_reaches_the_hjb_and_the_fp_absorbs():
+    """One shared dirichlet_bc(value=0.5) on a coupled HJB-FDM + particle-FP solve: the exit cost reaches
+    the HJB (u = g at both walls on every slice) and the FP absorbs (mass non-increasing, and well below
+    its start). The survivors' share itself is pinned on the uncoupled solves above: the coupling damps
+    M across Picard iterations, so the returned M is not the last FP solve's slice.
+
+    M is not asserted to vanish at the wall: the kernel reconstruction's boundary bias puts density there
+    even when no particle is (0.6 of the interior at an absorbing wall), so the absorption is read off
+    the mass and the particle count instead.
+    """
+    from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
+    from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
+
+    g = 0.5
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=dirichlet_bc(dimension=1, value=g)
+    )
+    problem = MFGProblem(
+        model=Model(
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m),
+            volatility=SIGMA,
+        ),
+        domain=grid,
+        conditions=Conditions(u_terminal=lambda x: g, m_initial=lambda x: 1.0, T=T),
+        Nt=10,
+    )
+    fp = FPParticleSolver(problem, num_particles=4000, seed=0)
+    result = FixedPointIterator(problem, hjb_solver=HJBFDMSolver(problem), fp_solver=fp).solve(
+        max_iterations=3, tolerance=1e-3
+    )
+    U, M = np.asarray(result.U), np.asarray(result.M)
+    np.testing.assert_array_equal(U[:, 0], g)
+    np.testing.assert_array_equal(U[:, -1], g)
+    mass = np.array([float(grid.integrate(M[k])) for k in range(M.shape[0])])
+    assert np.all(np.diff(mass) <= 1e-12), f"mass rose: {mass}"
+    assert mass[-1] < 0.5 * mass[0], f"the exit did not absorb: mass {mass[0]:.3f} -> {mass[-1]:.3f}"
