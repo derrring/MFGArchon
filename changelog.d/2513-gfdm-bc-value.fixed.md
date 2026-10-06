@@ -3,3 +3,8 @@
   - The post-step Dirichlet overwrite wrote NaN for a uniform BC, whatever its value, and 0.0 for a per-face one, on the Newton path.
   - Both now read the value per point, through the segment, exactly as a per-face BC does. The two spellings solve bit-identically. On exact solutions with g = 0.7 every case converges at second order, for Newton and Howard.
   - **Results that need re-running:** any GFDM solve with a nonzero value on a uniform Neumann or Dirichlet BC, or with a nonzero per-face Dirichlet value on the Newton path, was solved for a different BC. A per-face Dirichlet value of 0, the common exit case, was unaffected. A uniform `dirichlet_bc` on the Newton path returned NaN for any value, 0 included.
+  - Three further behaviour changes follow from the same fix:
+    - **Uniform `robin_bc(alpha=0, beta=1, value=g)` is accepted** and solves identically to `neumann_bc(value=g)`. It used to reach the row with no segment, default alpha to 1 and be refused. Robin with alpha ≠ 0 or beta ≠ 1 is still refused, now with the right coefficient named.
+    - **An unresolved `BCValueProvider` in an explicitly passed uniform BC raises on the Newton path,** as it already did on Howard, instead of solving with 0.
+    - **A dict BC's `"value"` or a legacy `fdm_bc_1d.BoundaryConditions`' `left_value`/`right_value` that is nonzero is refused at construction.** No boundary row reads them, so they were solved as 0, apart from a Newton-only overwrite that wrote the value at the wall over an interior solved for 0. A zero value is accepted as before. A dict's `"values"` key is read and unaffected.
+  - Not covered: with `use_ghost_nodes=True` the Neumann value is still dropped (pre-existing, filed separately).

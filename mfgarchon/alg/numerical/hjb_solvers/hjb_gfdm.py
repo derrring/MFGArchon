@@ -663,6 +663,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             self.boundary_indices = self._detect_boundary_indices(collocation_points)
         # Get BC from parameter, or from problem geometry (Issue #542 fix, Issue #527 centralized BC)
         if boundary_conditions is not None:
+            self._refuse_unread_legacy_bc_value(boundary_conditions)
             self.boundary_conditions = boundary_conditions
             # Explicit param is the caller's authoritative static choice; never
             # re-read from geometry at solve time (Issue #1118 BC refresh).
@@ -2478,6 +2479,28 @@ class HJBGFDMSolver(BaseHJBSolver):
         "robin": BCType.ROBIN,
     }
 
+    @staticmethod
+    def _refuse_unread_legacy_bc_value(bc: Any) -> None:
+        """Refuse a nonzero value carried where no BC row reads it (#2513).
+
+        The rows read a value from a `BoundaryConditions` segment or from a dict's ``"values"``. A
+        dict's ``"value"`` and a legacy `fdm_bc_1d.BoundaryConditions`' ``left_value`` /
+        ``right_value`` reach no row, so a nonzero one was solved as 0. A zero one means what it says.
+        """
+        if isinstance(bc, BoundaryConditions):
+            return
+        if isinstance(bc, dict):
+            carried = {"value": bc.get("value")}
+        else:
+            carried = {name: getattr(bc, name, None) for name in ("value", "left_value", "right_value")}
+        unread = {k: v for k, v in carried.items() if v is not None and (callable(v) or v != 0)}
+        if unread:
+            raise NotImplementedError(
+                f"HJBGFDMSolver: the BC carries {sorted(unread)} = {list(unread.values())}, which no "
+                f"boundary row reads, so it would be solved as 0 (#2513). Pass a BoundaryConditions "
+                f"(e.g. dirichlet_bc(value=...) or per-face BCSegments)."
+            )
+
     def _classify_boundary_point(self, i: int, local_idx: int, use_per_point_bc: bool, global_bc_type, legacy_normals):
         """Resolve ``(bc_enum, segment, normal)`` for boundary point ``i``.
 
@@ -3950,6 +3973,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         except AttributeError:
             use_per_point_bc = False
         global_bc_type = self._get_boundary_condition_property("type") if not use_per_point_bc else None
+        if not use_per_point_bc and str(global_bc_type or "").lower() != "dirichlet":
+            return u
         legacy_bc_values = self._get_boundary_condition_property("values") if not use_per_point_bc else None
         legacy_normals = self._bc_config.get("normals", None) if not use_per_point_bc and self._bc_config else None
         current_time = time_idx * (self.problem.T / self.problem.Nt) if getattr(self.problem, "Nt", 0) > 0 else 0.0

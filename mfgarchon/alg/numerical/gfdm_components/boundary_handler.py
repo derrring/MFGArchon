@@ -295,7 +295,7 @@ class BoundaryHandler:
 
         This ensures consistent BC handling between:
         - _apply_boundary_conditions_to_sparse_system (Jacobian)
-        - _apply_boundary_conditions_to_solution (solution)
+        - _apply_boundary_conditions_to_solution (normals only; values come from the segments, #2513)
         - DirectCollocationHandler.apply_to_residual (residual)
 
         Returns
