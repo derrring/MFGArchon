@@ -193,14 +193,25 @@ def test_an_axis_whose_faces_disagree_is_refused(bc_factory):
             "boundary='all'",
             id="seam-everywhere-walls-over-it",
         ),
+        pytest.param(
+            lambda: BoundaryConditions(
+                dimension=2,
+                default_bc=BCType.PERIODIC,
+                segments=[_seg(f"x{s}", BCType.NO_FLUX, f"X_{s.upper()}") for s in ("min", "max")],
+            ),
+            "name no face",
+            id="walls-misspelt-over-a-periodic-default",
+        ),
     ],
 )
 def test_a_segment_the_face_reader_cannot_place_is_refused_in_a_mix(bc_factory, refusal):
     """In a mix of operations the per-axis read must know which operation each face carries, and the face
-    reader misplaces two kinds of segment. It gives a ``region``-restricted one its whole face (#2490), so a
+    reader misplaces three kinds of segment. It gives a ``region``-restricted one its whole face (#2490), so a
     periodic seam on half of each face would be solved as the full channel and a barrier on part of a seam
-    as a full wall. It does not apply ``boundary="all"`` to every face (#1953), so the last BC -- periodic in
-    y once the x walls take priority -- would be solved as a closed box. Each is refused."""
+    as a full wall. It applies ``boundary="all"`` to no face (#1953), so the third BC -- periodic in
+    y once the x walls take priority -- would be solved as a closed box. And it drops a segment whose
+    ``boundary`` names no face of the domain, so walls spelt ``"X_MIN"`` over a periodic default would be
+    solved as a fully periodic domain. Each is refused."""
     with pytest.raises(NotImplementedError, match=refusal):
         per_axis_operations(bc_factory(), 2, **CONSUMER)
 

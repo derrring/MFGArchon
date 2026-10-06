@@ -7,9 +7,17 @@ coincident end nodes on periodic axes only.
 Still refused, at construction and at every point of use: an axis whose two faces ask for different
 operations, such as periodic on one face only; and, in a mix of operations, a segment the face reader
 cannot place -- one with no `boundary` (#2467), which every `sdf_region`, `normal_direction` and
-`region_name` segment is; one with `boundary="all"`, which the face reader does not apply to every face
-(#1953); and one whose `region` restricts it to part of a face, which the face reader stretches over the
-whole face (#2490).
+`region_name` segment is; one with `boundary="all"`, which the face reader applies to no face (#1953);
+one whose `boundary` names no face of the domain (a misspelt name, a Gmsh tag, an axis past the
+dimension), which the face reader drops and the default replaces; and one whose `region` restricts it
+to part of a face, which the face reader stretches over the whole face (#2490). The `"all"` and
+`region` refusals are wider than they need to be -- they also reject a segment whose operation matches
+the faces it lands on -- and wait on #1953 and #2490; `main` refused every mix.
+
+`TensorProductGrid` now binds its periodic convention to a BC whose periodicity comes from
+`default_bc`, not only to one with a periodic segment (#1822). The grid stores the completed BC for
+every solver. Left unbound, a channel with its seam from the default solved up to 11% off the same
+channel with its seam named.
 
 Pinned by separability on a channel with no-flux walls over [0, 1] and a periodic axis over [0, 2]:
 a separable problem must equal the sum (HJB) or product (FP) of its one-axis solutions -- from the 1-D

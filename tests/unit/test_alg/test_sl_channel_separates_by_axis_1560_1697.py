@@ -47,6 +47,11 @@ stochastic step has no ADI sweep, and its reference shares the fold's bounds wit
 Where the bounds row passes with the seam in x, the borrowed interval [0, 2] shares the wall axis's
 lower end, and no foot crosses its upper wall.
 
+The ADI and FP cases also run with the seam in y left to ``default_bc`` instead of named. That reaches
+the grid by another route: its periodic convention is bound from the BC, and the binder once looked at
+``segments`` alone. With that binder restored, those two cases fail at 1.2e-02 (ADI) and 4.7e-02 (FP);
+the shipped code passes them at 2.5e-15 and 8.1e-16.
+
 Sub-stepping is off. Its count is set by the largest velocity on the grid, so the channel and its
 one-axis solves would cut their steps differently, and the law would hold only to O(dt): at Nt=10
 the ADI residual is 5.6e-03 with sub-stepping on and 7.2e-16 with it off. At Nt=40 the CFL number,
@@ -84,8 +89,13 @@ SEAM = ((0.0, 2.0), 17)
 NT, T, SIGMA = 40, 0.5, 0.3
 SEAM_LENGTH = SEAM[0][1] - SEAM[0][0]
 
-# Which axis is periodic. Both, so that a defect tied to an axis's position rather than its BC shows.
-ORIENTATION = pytest.mark.parametrize("seam_axis", [1, 0], ids=["seam-in-y", "seam-in-x"])
+# Which axis is periodic -- both, so that a defect tied to an axis's position rather than its BC shows --
+# and whether the seam is named or left to `default_bc`, which reaches the grid by another route (#1822).
+ORIENTATION = pytest.mark.parametrize(
+    ("seam_axis", "seam_by_default"),
+    [(1, False), (0, False), (1, True)],
+    ids=["seam-in-y", "seam-in-x", "seam-in-y-by-default"],
+)
 
 
 def f(w):
@@ -104,9 +114,11 @@ def b(s):
     return 1.0 + 0.4 * np.sin(2 * np.pi * s / SEAM_LENGTH)
 
 
-def _channel(seam_axis) -> BoundaryConditions:
+def _channel(seam_axis, seam_by_default=False) -> BoundaryConditions:
     wall, seam = "xy"[1 - seam_axis], "xy"[seam_axis]
     walls = [BCSegment(name=f"{wall}_{s}", bc_type=BCType.NO_FLUX, boundary=f"{wall}_{s}") for s in ("min", "max")]
+    if seam_by_default:
+        return BoundaryConditions(dimension=2, segments=walls, default_bc=BCType.PERIODIC)
     seams = [BCSegment(name=f"{seam}_{s}", bc_type=BCType.PERIODIC, boundary=f"{seam}_{s}") for s in ("min", "max")]
     return BoundaryConditions(dimension=2, segments=walls + seams)
 
@@ -160,9 +172,10 @@ def _fp(domain, bc, initial, potential):
 
 
 @ORIENTATION
-def test_hjb_sl_channel_is_the_sum_of_its_axes_1d_solves(seam_axis):
+def test_hjb_sl_channel_is_the_sum_of_its_axes_1d_solves(seam_axis, seam_by_default):
     """ADI: the reference is the 1-D solver on each axis's own interval, another code path."""
-    channel = _hjb(_plane(seam_axis), _channel(seam_axis), _on_plane(seam_axis, lambda w, s: f(w) + g(s)), "adi")
+    bc = _channel(seam_axis, seam_by_default)
+    channel = _hjb(_plane(seam_axis), bc, _on_plane(seam_axis, lambda w, s: f(w) + g(s)), "adi")
     along_wall = _hjb(_line(WALL), no_flux_bc(dimension=1), f, "adi")
     along_seam = _hjb(_line(SEAM), periodic_bc(dimension=1), g, "adi")
     residual = float(np.abs(channel - _outer(along_wall, along_seam, seam_axis, np.add)).max())
@@ -191,10 +204,10 @@ def test_hjb_sl_stochastic_channel_is_the_sum_of_its_axes():
 
 
 @ORIENTATION
-def test_fp_sl_channel_is_the_product_of_its_axes_1d_solves(seam_axis):
+def test_fp_sl_channel_is_the_product_of_its_axes_1d_solves(seam_axis, seam_by_default):
     channel = _fp(
         _plane(seam_axis),
-        _channel(seam_axis),
+        _channel(seam_axis, seam_by_default),
         _on_plane(seam_axis, lambda w, s: a(w) * b(s)),
         _on_plane(seam_axis, lambda w, s: f(w) + g(s)),
     )

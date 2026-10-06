@@ -356,8 +356,13 @@ class TensorProductGrid(
         change removes, one level up.
 
         Returns the BC to store -- a completed copy when it was unstated, otherwise the original.
+
+        A periodic ``default_bc`` counts as much as a periodic segment: since #1560 the semi-Lagrangian
+        pair solves a channel whose seam comes from the default, and an unbound convention put it up to
+        11% off the same channel with its seam named.
         """
-        if not any(seg.bc_type is BCType.PERIODIC for seg in getattr(bc, "segments", [])):
+        periodic_segment = any(seg.bc_type is BCType.PERIODIC for seg in getattr(bc, "segments", []))
+        if not periodic_segment and getattr(bc, "default_bc", None) is not BCType.PERIODIC:
             return bc
         measured = self.periodic_convention
         declared = getattr(bc, "periodic_convention", None)

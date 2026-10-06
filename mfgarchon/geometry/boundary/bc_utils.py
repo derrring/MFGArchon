@@ -178,9 +178,11 @@ def per_axis_operations(boundary_conditions: Any, dimension: int, *, consumer: s
             than resolved by whichever face is read first. Also, in a mix of operations, for a segment the
             face reader cannot place: one with no ``boundary``, whose faces cannot be told apart (#2467) --
             ``sdf_region``, ``normal_direction`` and ``region_name`` segments are all of this kind, since
-            none of them can carry a ``boundary``; one with ``boundary="all"``, which the face reader does
-            not apply to every face (#1953); and one whose ``region`` restricts it to part of a face, which
-            the face reader stretches over the whole face (#2490).
+            none of them can carry a ``boundary``; one with ``boundary="all"``, which the face reader
+            applies to no face (#1953); one whose ``boundary`` names no face of this domain -- a misspelt
+            name, a Gmsh tag, an axis past its dimension -- which the face reader drops and the default
+            replaces; and one whose ``region`` restricts it to part of a face, which the face reader
+            stretches over the whole face (#2490).
     """
     if boundary_conditions is None or getattr(boundary_conditions, "segments", None) is None:
         return (bc_type_to_geometric_operation(get_bc_type_string(boundary_conditions)),) * dimension
@@ -196,8 +198,21 @@ def per_axis_operations(boundary_conditions: Any, dimension: int, *, consumer: s
         if everywhere:
             raise NotImplementedError(
                 f"{consumer}: segments {everywhere} use boundary='all' in a mix of geometric operations, and "
-                "the face reader does not apply 'all' to every face (#1953), so it cannot be read per axis. "
-                "Name the faces each one covers."
+                "the face reader applies 'all' to no face (#1953), so it cannot be read per axis. Name the "
+                "faces each one covers."
+            )
+        from .types import parse_boundary_face
+
+        nowhere = [
+            f"{seg.name} ({seg.boundary!r})"
+            for seg in boundary_conditions.segments
+            if (face := parse_boundary_face(seg.boundary)) is None or face.axis >= dimension
+        ]
+        if nowhere:
+            raise NotImplementedError(
+                f"{consumer}: segments {nowhere} name no face of this {dimension}-D domain in a mix of "
+                "geometric operations, so the face reader drops them and the default takes their place. Name "
+                "a face such as 'x_min' or 'axis0_max'."
             )
         partial = [seg.name for seg in boundary_conditions.segments if seg.region is not None]
         if partial:
