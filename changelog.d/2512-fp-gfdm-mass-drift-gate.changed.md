@@ -1,0 +1,6 @@
+- **`FPGFDMSolver` stops a solve whose mass drifts where the problem conserves it** (#2512 S5, #1752). **Behaviour change:** the end-of-solve mass-drift WARNING is now an error by default.
+  - With no source term, the only case this solver's declared BCs (no-flux, homogeneous Neumann) conserve mass in, the solve raises at the first step where |m_t/m_0 − 1| exceeds `mass_drift_tolerance` (default 1e-2). The message names the step and the mass ratio.
+  - `mass_drift="warn"` restores the old behaviour: keep going and log the worst drift.
+  - Why: the operator does not conserve mass and diverges under refinement (#1752, which keeps the real fix). Measured: 1.000 → 2.795 with nothing clipped, and a run of mass 1.06e+23 that the clip gate passes because it measures a scale-invariant ratio.
+  - Conserving configurations do exist. A smooth density compatible with the wall under pure diffusion holds its mass to about 1e-12. A narrow bump drifts at O(h) (4.7% / 2.0% / 0.8% at 21 / 41 / 81 points), so it passes the default only from about 81 points.
+  - The check is `stop_on_mass_drift` in `utils/numerical/mass_fabrication_gate.py`, beside the clip gate. Other non-conservative FP schemes can opt in.

@@ -33,7 +33,7 @@ NT = 10
 T = 0.5
 
 
-def _build(sigma, Nt=NT):
+def _build(sigma, Nt=NT, **solver_kw):
     """Same construction as `_solver`, with Nt exposed for the refinement-sensitive tests."""
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[N], boundary_conditions=no_flux_bc(dimension=1))
     problem = MFGProblem(
@@ -51,11 +51,16 @@ def _build(sigma, Nt=NT):
             ),
         ),
     )
-    return FPGFDMSolver(problem, collocation_points=np.linspace(0, 1, N).reshape(-1, 1))
+    return FPGFDMSolver(problem, collocation_points=np.linspace(0, 1, N).reshape(-1, 1), **solver_kw)
 
 
-def _solver(sigma):
-    return _build(sigma)
+#: The clip-gate tests below pin the clip gate, so they keep the solve going past the mass-drift gate
+#: (#2512 S5), which stops these drifting configurations first by default.
+_WARN = {"mass_drift": "warn"}
+
+
+def _solver(sigma, **solver_kw):
+    return _build(sigma, **{**_WARN, **solver_kw})
 
 
 def _inputs(drift_scale):
@@ -287,7 +292,8 @@ def test_refining_the_timestep_silences_the_gate_while_the_answer_gets_worse():
             ),
         ),
     )
-    result = FPGFDMSolver(problem, collocation_points=np.linspace(0, 1, n_x).reshape(-1, 1)).solve_fp_system(m0, drift)
+    points = np.linspace(0, 1, n_x).reshape(-1, 1)
+    result = FPGFDMSolver(problem, collocation_points=points, **_WARN).solve_fp_system(m0, drift)
 
     # No assertion on result.min(): `clip_nonnegative_or_raise` returns `np.maximum(density, 0)`
     # into every row, so non-negativity is imposed by the gate and cannot fail. Asserting it
@@ -296,3 +302,77 @@ def test_refining_the_timestep_silences_the_gate_while_the_answer_gets_worse():
         f"final mass {float(result[-1].sum()):.3e}: this configuration is meant to diverge past "
         f"1e+20 while fabricating nothing, which is the blind spot being recorded"
     )
+    # The mass-drift gate (#2512 S5) is the other half of the pair, and by default it stops this.
+    with pytest.raises(ValueError, match="mass ratio"):
+        FPGFDMSolver(problem, collocation_points=points).solve_fp_system(m0, drift)
+
+
+# =============================================================================
+# The mass-drift gate (#2512 S5)
+# =============================================================================
+
+
+def test_a_drifting_solve_stops_at_the_first_step_past_the_tolerance():
+    """The 179% configuration above, at the default: it stops, and says where and by how much."""
+    m0, drift = _inputs(5.0)
+    masses = _solver(0.3).solve_fp_system(m0, drift).sum(axis=1)
+    first = int(np.argmax(np.abs(masses / masses[0] - 1.0) > 1e-2))
+    assert first > 0, "the warn-mode run must cross the tolerance for this test to mean anything"
+    with pytest.raises(ValueError) as exc:
+        _build(0.3).solve_fp_system(m0, drift)
+    message = str(exc.value)
+    assert f"at step {first}" in message, message
+    assert "mass ratio" in message
+    assert "mass_drift" in message, "the message must name the keyword that keeps the solve going"
+
+
+def test_a_conserving_configuration_passes():
+    """A smooth density compatible with the wall, pure diffusion: mass held to 4e-12 at 21 points."""
+    n_x, n_t = 21, 40
+    x = np.linspace(0, 1, n_x)
+    m0 = 1 + 0.5 * np.cos(np.pi * x)
+    m0 /= m0.sum()
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n_x], boundary_conditions=no_flux_bc(dimension=1))
+    problem = MFGProblem(
+        geometry=grid,
+        Nt=n_t,
+        T=T,
+        volatility=0.3,
+        components=MFGComponents(
+            m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)),
+            u_terminal=lambda x: 0.0,
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
+        ),
+    )
+    result = FPGFDMSolver(problem, collocation_points=x.reshape(-1, 1)).solve_fp_system(m0, np.zeros((n_t + 1, n_x)))
+    assert abs(float(result[-1].sum()) / float(m0.sum()) - 1.0) < 1e-9
+
+
+def test_a_source_that_moves_the_mass_is_not_stopped():
+    """Mass is conserved only without a source, so the gate does not apply with one: a constant
+    source adds T*S*|domain| of mass on purpose, and stopping that would fail a correct solve."""
+    n_x, n_t = 21, 40
+    x = np.linspace(0, 1, n_x)
+    m0 = 1 + 0.5 * np.cos(np.pi * x)
+    m0 /= m0.sum()
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n_x], boundary_conditions=no_flux_bc(dimension=1))
+    problem = MFGProblem(
+        geometry=grid,
+        Nt=n_t,
+        T=T,
+        volatility=0.3,
+        components=MFGComponents(
+            m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)),
+            u_terminal=lambda x: 0.0,
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
+        ),
+    )
+    result = FPGFDMSolver(problem, collocation_points=x.reshape(-1, 1)).solve_fp_system(
+        m0, np.zeros((n_t + 1, n_x)), source_term=lambda t, xx: np.full(np.asarray(xx).shape[0], 0.1)
+    )
+    assert float(result[-1].sum()) > 1.5 * float(m0.sum()), "the source should have added mass"
+
+
+def test_mass_drift_rejects_an_unknown_mode():
+    with pytest.raises(ValueError, match="mass_drift"):
+        _build(0.3, mass_drift="ignore")

@@ -181,3 +181,40 @@ def clip_nonnegative_or_raise(
             f"mass, so the solve is stopped rather than reporting a conserved density it did not compute. {remedy}"
         )
     return np.maximum(density, 0.0)
+
+
+#: Default tolerance on |mass_t / mass_0 - 1| for a scheme that opts into `stop_on_mass_drift`.
+MAX_CONSERVED_MASS_DRIFT = 1e-2
+
+
+def stop_on_mass_drift(
+    mass: float,
+    mass_initial: float,
+    *,
+    step: int,
+    tolerance: float,
+    context: str,
+    remedy: str,
+) -> float:
+    """Stop a solve whose mass has drifted where the problem conserves it (#2512 S5).
+
+    `clip_nonnegative_or_raise` cannot see a solve that blows up while staying positive: it measures
+    fabricated mass as a ratio of the mass present, so it is scale-invariant (#1752 measured a finite,
+    non-negative density of mass 2.55e+09 that it passed). This checks the other invariant, the total.
+
+    Call it only where the continuous problem conserves mass -- zero-flux walls, no source, nothing
+    absorbing. Under a flux, a source or an absorbing wall the mass moves legitimately, and stopping
+    there would fail a correct solve; deciding that is the caller's, which knows its BCs and source.
+
+    Returns the drift |mass/mass_initial - 1| so the caller can report it in warn mode.
+    """
+    if mass_initial <= 0:
+        return 0.0
+    drift = abs(float(mass) / float(mass_initial) - 1.0)
+    if not drift <= tolerance:
+        raise ValueError(
+            f"{context}: mass ratio {float(mass) / float(mass_initial):.6g} at step {step} "
+            f"(|drift| {drift:.3e} > tolerance {tolerance:.0e}) on a problem that conserves mass, so the "
+            f"solve is stopped rather than returning a density with that mass. {remedy}"
+        )
+    return drift

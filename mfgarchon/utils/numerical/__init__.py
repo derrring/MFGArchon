@@ -78,8 +78,10 @@ from mfgarchon.utils.numerical.kernels import (
 )
 from mfgarchon.utils.numerical.mass_fabrication_gate import (
     MAX_CLIP_MASS_FABRICATION,
+    MAX_CONSERVED_MASS_DRIFT,
     clip_nonnegative_or_raise,
     mass_fabricated_by_clip,
+    stop_on_mass_drift,
 )
 from mfgarchon.utils.numerical.monotonicity_stats import (
     MonotonicityStats,
@@ -135,6 +137,8 @@ __all__ = [
     "PolicyIterationSolver",
     "clip_nonnegative_or_raise",
     "mass_fabricated_by_clip",
+    "MAX_CONSERVED_MASS_DRIFT",
+    "stop_on_mass_drift",
     "SolverInfo",
     # Particle interpolation (from particle submodule)
     "estimate_kde_bandwidth",

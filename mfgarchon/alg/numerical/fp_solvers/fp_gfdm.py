@@ -32,7 +32,7 @@ from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import TaylorOperat
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.deprecation import deprecated_parameter
-from mfgarchon.utils.numerical import clip_nonnegative_or_raise
+from mfgarchon.utils.numerical import MAX_CONSERVED_MASS_DRIFT, clip_nonnegative_or_raise, stop_on_mass_drift
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     resolve_volatility_override,
@@ -120,6 +120,8 @@ class FPGFDMSolver(BaseFPSolver):
         obstacle_sdf: object | None = None,
         visibility_samples: int = 10,
         visibility_margin: float = 0.0,
+        mass_drift: str = "raise",
+        mass_drift_tolerance: float = MAX_CONSERVED_MASS_DRIFT,
     ):
         """
         Initialize GFDM-based FP solver.
@@ -139,6 +141,11 @@ class FPGFDMSolver(BaseFPSolver):
                 infrastructure. Takes precedence over boundary_type string.
             upwind_scheme: Upwind stabilization scheme ("none", "exponential", "linear")
             upwind_strength: Upwind bias parameter β (typically 0.3-1.0)
+            mass_drift: ``"raise"`` (default) stops the solve at the first step whose mass drifts by more
+                than ``mass_drift_tolerance`` from the initial mass, when no source term is given -- the
+                only case this solver's declared BCs (no-flux, homogeneous Neumann) conserve mass in.
+                ``"warn"`` keeps the solve going and logs the worst drift at the end (#2512 S5, #1752).
+            mass_drift_tolerance: Tolerance on |m_t / m_0 - 1| for ``mass_drift="raise"``.
 
         BC Resolution Order:
             1. Explicit boundary_conditions parameter
@@ -149,6 +156,10 @@ class FPGFDMSolver(BaseFPSolver):
         """
         super().__init__(problem)
         self.fp_method_name = "GFDM"
+        if mass_drift not in ("raise", "warn"):
+            raise ValueError(f"FPGFDMSolver: mass_drift must be 'raise' or 'warn', got {mass_drift!r}")
+        self.mass_drift = mass_drift
+        self.mass_drift_tolerance = float(mass_drift_tolerance)
 
         # Store collocation points
         self.collocation_points = np.asarray(collocation_points)
@@ -709,6 +720,20 @@ class FPGFDMSolver(BaseFPSolver):
                 ),
             )
             mass_current = np.sum(M_solution[t_idx + 1, :])
+            if source_term is None and self.mass_drift == "raise":
+                stop_on_mass_drift(
+                    mass_current,
+                    mass_initial,
+                    step=t_idx + 1,
+                    tolerance=self.mass_drift_tolerance,
+                    context="GFDM FP solve",
+                    remedy=(
+                        "This operator does not conserve mass and diverges under refinement (Issue #1752); "
+                        "upwind_scheme='linear' or 'exponential' reduces the drift, and refining dt makes it "
+                        "worse. Pass mass_drift='warn' to keep the drifting density, or raise "
+                        "mass_drift_tolerance."
+                    ),
+                )
             if mass_initial > 0:
                 drift = abs(mass_current - mass_initial) / mass_initial
                 if drift > max_mass_drift:
