@@ -1,0 +1,4 @@
+- **1-D `HJBFDMSolver` returns the root it reports for a Dirichlet wall** (Issue #2515).
+  - Newton solved the wall node's PDE row and the solver then overwrote `u_wall = g`, so a solve reporting `converged=True` returned an array whose residual was 5.4e+01.
+  - The wall row is now `u_wall − g` in both `compute_hjb_residual` and `compute_hjb_jacobian`, so the root satisfies the condition and the wall ghost no longer enters the 1-D solve.
+  - The returned solution is unchanged to three digits: it was already right to first order on an exact Dirichlet solution, which a new test now pins. What changed is that `converged` and the residual now describe the array returned.

@@ -132,6 +132,7 @@
     "tests/unit/test_alg/test_hjb_canonical_cs_sl.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
     "tests/unit/test_alg/test_hjb_canonical_cs_sl.py\tUserWarning\tinitial density mass N on the grid measu",
     "tests/unit/test_alg/test_hjb_fdm_1d_nd_cross_path_agreement.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
+    "tests/unit/test_alg/test_hjb_fdm_dirichlet_oracle_2515.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
     "tests/unit/test_alg/test_hjb_fdm_solver.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
     "tests/unit/test_alg/test_hjb_fdm_solver.py\tDeprecationWarning\tget_ghost_values_nd is deprecated since ",
     "tests/unit/test_alg/test_hjb_fdm_solver.py\tUserWarning\tinitial density mass N.N on the grid mea",

@@ -129,21 +129,10 @@ def _solve_and_measure(bc, nx: int = 21, tol: float = 1e-9):
     [
         "no_flux",
         "neumann_zero",
-        pytest.param(
-            "dirichlet",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=(
-                    "Dirichlet enforcement is still load-bearing and still overwrites the root: "
-                    "residual 5.442e+01 while reporting converged. The residual's ghost padding only "
-                    "APPROACHES the boundary value at O(h) (0.589 -> 0.696 against an exact 0.7 over "
-                    "Nx 41..641), so the branch cannot simply be deleted the way no-flux's was. The "
-                    "fix is row replacement in the residual AND the Jacobian, which #542's own "
-                    "discussion point 2 named and which is its own change. strict=True so this "
-                    "reddens the day it starts passing."
-                ),
-            ),
-        ),
+        # Dirichlet was a strict xfail here: the wall's PDE row was solved and then overwritten,
+        # residual 5.442e+01 while reporting converged. #2515 replaces the wall row with
+        # u_wall - g in the residual and the Jacobian, so the root already satisfies it.
+        "dirichlet",
     ],
 )
 def test_a_solve_that_reports_converged_returns_a_root(bc_name: str):
