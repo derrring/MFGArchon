@@ -692,6 +692,9 @@
     "tests/unit/test_alg/test_hjb_fdm_1d_nd_cross_path_agreement.py::TestHJBFDMCouplingIndexCrossPath::test_1d_and_nd_couple_un_to_mn[7]": [
       "hjb_marches_forward_in_time"
     ],
+    "tests/unit/test_alg/test_hjb_fdm_dirichlet_oracle_2515.py::test_a_dirichlet_solve_converges_to_the_exact_solution_at_first_order[vectorised]": [
+      "engquist_osher_derivative_drops_the_forward_branch"
+    ],
     "tests/unit/test_alg/test_hjb_fdm_solver.py::TestBoundaryGradientBCAware1384::test_periodic_gradient_matches_the_analytic_derivative_at_the_seam": [
       "periodic_wrap_endpoint_inverted"
     ],
@@ -877,8 +880,7 @@
       "ghost_spacing_ignored"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-monotone-True-dirichlet]": [
-      "engquist_osher_magnitude_is_the_larger_branch",
-      "engquist_osher_derivative_drops_the_forward_branch"
+      "engquist_osher_magnitude_is_the_larger_branch"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-monotone-True-periodic]": [
       "engquist_osher_magnitude_is_the_larger_branch",
@@ -1077,9 +1079,6 @@
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[False-robin_sign_flipped]": [
       "ghost_spacing_ignored"
-    ],
-    "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-dirichlet]": [
-      "engquist_osher_derivative_drops_the_forward_branch"
     ],
     "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-neumann]": [
       "engquist_osher_derivative_drops_the_forward_branch"
@@ -2907,7 +2906,7 @@
       "verify": "fp_drift_coefficient(_stub_problem(control_cost=2.0)) == 1.0"
     },
     "engquist_osher_derivative_drops_the_forward_branch": {
-      "kill_count": 59,
+      "kill_count": 58,
       "killed": [
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_check_runs_and_reports_which_pairing_is_adjoint[engquist_osher-False]",
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_check_runs_in_every_adjoint_mode",
@@ -2918,6 +2917,7 @@
         "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_removing_the_enforcement_still_leaves_the_no_flux_condition_satisfied[81]",
         "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_the_case_actually_converges_here_so_the_law_is_not_vacuous[dirichlet]",
         "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_the_case_actually_converges_here_so_the_law_is_not_vacuous[no_flux]",
+        "tests/unit/test_alg/test_hjb_fdm_dirichlet_oracle_2515.py::test_a_dirichlet_solve_converges_to_the_exact_solution_at_first_order[vectorised]",
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_engquist_osher_linearises_to_the_transpose_of_the_fp_operator[1d]",
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_engquist_osher_linearises_to_the_transpose_of_the_fp_operator[2d]",
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_the_linearised_operator_is_the_derivative_of_the_hamiltonian_it_linearises[1d-engquist_osher]",
@@ -2940,7 +2940,6 @@
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-bump_off_node-True-robin_alpha_eq_beta]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-bump_off_node-True-robin_neumann_like]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-bump_off_node-True-robin_sign_flipped]",
-        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-monotone-True-dirichlet]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-monotone-True-periodic]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-monotone-True-robin_alpha_eq_beta]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-piecewise_linear-True-dirichlet]",
@@ -2958,7 +2957,6 @@
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-True-robin_neumann_like]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_every_row_linearises_the_residual[engquist_osher-rough-True-robin_sign_flipped]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_legacy_no_bc_path_linearises_its_own_residual_too[True]",
-        "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-dirichlet]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-neumann]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-no_flux]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_the_wall_rows_are_the_residuals_own_stencil[True-periodic]",
