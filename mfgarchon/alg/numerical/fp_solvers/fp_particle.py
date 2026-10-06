@@ -232,6 +232,7 @@ class FPParticleSolver(BaseFPSolver):
         self._mass_target: float | None = None
         self._mass_weights: np.ndarray | None = None
         self._mass_factor: float | None = None
+        self._n_particles_initial: int | None = None
         self.M_particles_trajectory: np.ndarray | list | None = None
         # Issue #1412: per-solve volatility override (the resolved scalar sigma the grid-drift
         # paths use), set by solve_fp_system instead of mutating the shared problem.
@@ -793,7 +794,7 @@ class FPParticleSolver(BaseFPSolver):
     def mass_conservation_error_override(self) -> float | None:
         """Fraction of particles absorbed, computed from `M_particles_trajectory` rather than
         the KDE-reconstructed grid density (#2188): see `BaseFPSolver.mass_conservation_error_override`
-        for why the grid density cannot see this at all.
+        for why the grid density ~~cannot see this at all~~ did not see this before #2519. [CORRECTED 2026-10-07 -- #2519: `M` is now scaled by N_t/N_0, so the grid integral does see absorption, short by the KDE's wall bias; the override stays the exact figure because it reads the count itself.]
 
         Same functional form as the grid-based measurement it replaces --
         `max_t |count_t / count_0 - 1|` in place of `max_t |mass_t / mass_0 - 1|` -- applied to

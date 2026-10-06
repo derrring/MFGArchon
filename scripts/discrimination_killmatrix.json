@@ -606,6 +606,18 @@
     "tests/unit/test_alg/test_fp_particle.py::TestFPParticleSolverBasic::test_non_negative_density": [
       "particle_mass_counting_measure"
     ],
+    "tests/unit/test_alg/test_fp_particle_absorbing_mass_2519.py::test_every_slice_carries_the_survivors_of_this_solves_first_slice[1d-callable]": [
+      "particle_mass_counting_measure"
+    ],
+    "tests/unit/test_alg/test_fp_particle_absorbing_mass_2519.py::test_every_slice_carries_the_survivors_of_this_solves_first_slice[1d-grid]": [
+      "particle_mass_counting_measure"
+    ],
+    "tests/unit/test_alg/test_fp_particle_absorbing_mass_2519.py::test_every_slice_carries_the_survivors_of_this_solves_first_slice[2d-callable]": [
+      "particle_mass_counting_measure"
+    ],
+    "tests/unit/test_alg/test_fp_particle_absorbing_mass_2519.py::test_every_slice_carries_the_survivors_of_this_solves_first_slice[2d-grid]": [
+      "particle_mass_counting_measure"
+    ],
     "tests/unit/test_alg/test_fp_particle_absorbing_mass_2519.py::test_the_returned_mass_is_the_surviving_mass[1d-callable]": [
       "particle_mass_counting_measure"
     ],
@@ -623,12 +635,15 @@
       "periodic_endpoint_convention_inverted",
       "periodic_wrap_endpoint_inverted"
     ],
+    "tests/unit/test_alg/test_fp_particle_mass_conservation_2188.py::TestTheAbsorbingSolveReportsMoreErrorThanTheConservingOne::test_the_grid_measurement_now_tracks_the_true_loss": [
+      "particle_mass_counting_measure"
+    ],
     "tests/unit/test_alg/test_fp_particle_solver.py::TestFPParticleSolverHelperMethods::test_compute_gradient": [
       "grid_spacing_uses_point_count"
     ],
     "tests/unit/test_alg/test_fp_particle_solver.py::TestFPParticleSolverHelperMethods::test_normalize_density_all": [
-      "quadrature_wall_node_counting_measure",
-      "particle_mass_counting_measure"
+      "particle_mass_counting_measure",
+      "quadrature_wall_node_counting_measure"
     ],
     "tests/unit/test_alg/test_fp_particle_solver.py::TestFPParticleSolverHelperMethods::test_normalize_density_outside_and_inside_a_solve": [
       "particle_mass_counting_measure"
@@ -1394,8 +1409,8 @@
       "grid_spacing_uses_point_count"
     ],
     "tests/unit/test_alg/test_particle_mass_is_the_callers_2181.py::test_ALL_pins_and_NONE_carries_so_the_modes_are_not_the_same_solve": [
-      "quadrature_wall_node_counting_measure",
-      "particle_mass_counting_measure"
+      "particle_mass_counting_measure",
+      "quadrature_wall_node_counting_measure"
     ],
     "tests/unit/test_alg/test_particle_mass_is_the_callers_2181.py::test_a_later_slice_carries_the_mass_too": [
       "particle_mass_counting_measure"
@@ -3536,15 +3551,20 @@
       "verify": "float(QuadraticControlCost(control_cost=1.0).optimal_control(np.array([1.0]))[0]) > 0"
     },
     "particle_mass_counting_measure": {
-      "kill_count": 17,
+      "kill_count": 22,
       "killed": [
         "tests/integration/test_particle_collocation_mfg.py::TestHJBGFDMWithParticleFP::test_fp_particle_outputs_to_grid",
         "tests/integration/test_particle_collocation_mfg.py::TestHJBGFDMWithParticleFP::test_mass_conservation_particle_fp",
         "tests/unit/test_alg/test_fp_particle.py::TestFPParticleSolverBasic::test_non_negative_density",
+        "tests/unit/test_alg/test_fp_particle_absorbing_mass_2519.py::test_every_slice_carries_the_survivors_of_this_solves_first_slice[1d-callable]",
+        "tests/unit/test_alg/test_fp_particle_absorbing_mass_2519.py::test_every_slice_carries_the_survivors_of_this_solves_first_slice[1d-grid]",
+        "tests/unit/test_alg/test_fp_particle_absorbing_mass_2519.py::test_every_slice_carries_the_survivors_of_this_solves_first_slice[2d-callable]",
+        "tests/unit/test_alg/test_fp_particle_absorbing_mass_2519.py::test_every_slice_carries_the_survivors_of_this_solves_first_slice[2d-grid]",
         "tests/unit/test_alg/test_fp_particle_absorbing_mass_2519.py::test_the_returned_mass_is_the_surviving_mass[1d-callable]",
         "tests/unit/test_alg/test_fp_particle_absorbing_mass_2519.py::test_the_returned_mass_is_the_surviving_mass[1d-grid]",
         "tests/unit/test_alg/test_fp_particle_absorbing_mass_2519.py::test_the_returned_mass_is_the_surviving_mass[2d-callable]",
         "tests/unit/test_alg/test_fp_particle_absorbing_mass_2519.py::test_the_returned_mass_is_the_surviving_mass[2d-grid]",
+        "tests/unit/test_alg/test_fp_particle_mass_conservation_2188.py::TestTheAbsorbingSolveReportsMoreErrorThanTheConservingOne::test_the_grid_measurement_now_tracks_the_true_loss",
         "tests/unit/test_alg/test_fp_particle_solver.py::TestFPParticleSolverHelperMethods::test_normalize_density_all",
         "tests/unit/test_alg/test_fp_particle_solver.py::TestFPParticleSolverHelperMethods::test_normalize_density_outside_and_inside_a_solve",
         "tests/unit/test_alg/test_fp_particle_solver.py::TestFPParticleSolverInitialization::test_solve_fp_system_initial_condition",
