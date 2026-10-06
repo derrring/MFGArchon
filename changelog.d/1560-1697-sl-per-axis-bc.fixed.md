@@ -5,15 +5,19 @@ foot coordinate by its own axis's operation, hand the ADI sweep one boundary per
 coincident end nodes on periodic axes only.
 
 Still refused, at construction and at every point of use: an axis whose two faces ask for different
-operations, such as periodic on one face only; and, in a mix of operations, a segment with no
-`boundary` (#2467) or one restricted to part of a face by `region`, `sdf_region`, `normal_direction`
-or `region_name`, which the face reader would stretch over the whole face (#2490).
+operations, such as periodic on one face only; and, in a mix of operations, a segment the face reader
+cannot place -- one with no `boundary` (#2467), which every `sdf_region`, `normal_direction` and
+`region_name` segment is; one with `boundary="all"`, which the face reader does not apply to every face
+(#1953); and one whose `region` restricts it to part of a face, which the face reader stretches over the
+whole face (#2490).
 
-Pinned by separability on a channel over [0, 1] x [0, 2]: a separable problem must equal the sum (HJB)
-or product (FP) of the 1-D solver's solutions on each axis's own interval, which the scheme
-reproduces to rounding -- 2.6e-15 or below on the shipped code. Giving every axis one operation
-misses by 0.25 (HJB) and 0.17 (FP). The law pins per-axis handling, not each operation: it compares
-the scheme with itself on one axis at a time.
+Pinned by separability on a channel with no-flux walls over [0, 1] and a periodic axis over [0, 2]:
+a separable problem must equal the sum (HJB) or product (FP) of its one-axis solutions -- from the 1-D
+solver on each axis's own interval for ADI and FP-SL, with the periodic axis in y and in x; from the
+same solver's uniform 2-D solves for the stochastic step -- which the scheme reproduces to rounding,
+2.6e-15 or below on the shipped code. Giving every axis one operation misses by 0.25 (HJB, ADI) and
+0.17 (FP). The law pins per-axis handling, not each operation: it compares the scheme with itself on
+one axis at a time.
 
 `bc_utils.refuse_mixed_per_axis` and `bc_utils.checked_bc_type_string` are removed: nothing calls
 them once the pair reads per axis.

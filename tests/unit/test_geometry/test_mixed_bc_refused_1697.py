@@ -152,7 +152,7 @@ def test_an_axis_whose_faces_disagree_is_refused(bc_factory):
 
 
 @pytest.mark.parametrize(
-    "bc_factory",
+    ("bc_factory", "refusal"),
     [
         pytest.param(
             lambda: BoundaryConditions(
@@ -163,6 +163,7 @@ def test_an_axis_whose_faces_disagree_is_refused(bc_factory):
                     for s in ("min", "max")
                 ],
             ),
+            "cover part of a face",
             id="seam-on-half-of-each-face",
         ),
         pytest.param(
@@ -174,15 +175,33 @@ def test_an_axis_whose_faces_disagree_is_refused(bc_factory):
                     for s in ("min", "max")
                 ],
             ),
+            "cover part of a face",
             id="partial-barrier-on-a-seam",
+        ),
+        pytest.param(
+            lambda: BoundaryConditions(
+                dimension=2,
+                default_bc=BCType.NO_FLUX,
+                segments=[
+                    BCSegment(name="seam", bc_type=BCType.PERIODIC, boundary="all", priority=0),
+                    *(
+                        BCSegment(name=f"x{s}", bc_type=BCType.NO_FLUX, boundary=f"x_{s}", priority=1)
+                        for s in ("min", "max")
+                    ),
+                ],
+            ),
+            "boundary='all'",
+            id="seam-everywhere-walls-over-it",
         ),
     ],
 )
-def test_a_segment_on_part_of_a_face_is_refused_in_a_mix(bc_factory):
-    """The face reader gives a segment its whole face whatever ``region`` says (#2490), so a periodic seam
-    on half of each y face would be solved as the full channel, and a barrier on part of a seam as a full
-    wall. In a mix of operations that is a different problem, and it is refused."""
-    with pytest.raises(NotImplementedError, match="cover part of a face"):
+def test_a_segment_the_face_reader_cannot_place_is_refused_in_a_mix(bc_factory, refusal):
+    """In a mix of operations the per-axis read must know which operation each face carries, and the face
+    reader misplaces two kinds of segment. It gives a ``region``-restricted one its whole face (#2490), so a
+    periodic seam on half of each face would be solved as the full channel and a barrier on part of a seam
+    as a full wall. It does not apply ``boundary="all"`` to every face (#1953), so the last BC -- periodic in
+    y once the x walls take priority -- would be solved as a closed box. Each is refused."""
+    with pytest.raises(NotImplementedError, match=refusal):
         per_axis_operations(bc_factory(), 2, **CONSUMER)
 
 

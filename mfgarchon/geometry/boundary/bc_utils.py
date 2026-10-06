@@ -175,10 +175,12 @@ def per_axis_operations(boundary_conditions: Any, dimension: int, *, consumer: s
     Raises:
         NotImplementedError: when an axis's two faces ask for different operations. A fold has one rule per
             axis, so periodic on one face only, or reflect on one and clamp on the other, is refused rather
-            than resolved by whichever face is read first. Also, in a mix of operations, for a segment with
-            no ``boundary``, whose faces cannot be told apart (#2467), and for one restricted to part of a
-            face by ``region``, ``sdf_region``, ``normal_direction`` or ``region_name``, which the face reader
-            would stretch over the whole face (#2490).
+            than resolved by whichever face is read first. Also, in a mix of operations, for a segment the
+            face reader cannot place: one with no ``boundary``, whose faces cannot be told apart (#2467) --
+            ``sdf_region``, ``normal_direction`` and ``region_name`` segments are all of this kind, since
+            none of them can carry a ``boundary``; one with ``boundary="all"``, which the face reader does
+            not apply to every face (#1953); and one whose ``region`` restricts it to part of a face, which
+            the face reader stretches over the whole face (#2490).
     """
     if boundary_conditions is None or getattr(boundary_conditions, "segments", None) is None:
         return (bc_type_to_geometric_operation(get_bc_type_string(boundary_conditions)),) * dimension
@@ -190,19 +192,19 @@ def per_axis_operations(boundary_conditions: Any, dimension: int, *, consumer: s
                 "the faces they cover cannot be read per axis. Give each one the face it lies on with "
                 "`boundary=` (#2467)."
             )
-        partial = [
-            seg.name
-            for seg in boundary_conditions.segments
-            if seg.region is not None
-            or seg.sdf_region is not None
-            or seg.normal_direction is not None
-            or seg.region_name is not None
-        ]
+        everywhere = [seg.name for seg in boundary_conditions.segments if seg.boundary == "all"]
+        if everywhere:
+            raise NotImplementedError(
+                f"{consumer}: segments {everywhere} use boundary='all' in a mix of geometric operations, and "
+                "the face reader does not apply 'all' to every face (#1953), so it cannot be read per axis. "
+                "Name the faces each one covers."
+            )
+        partial = [seg.name for seg in boundary_conditions.segments if seg.region is not None]
         if partial:
             raise NotImplementedError(
-                f"{consumer}: segments {partial} cover part of a face (region, sdf_region, normal_direction or "
-                "region_name) in a mix of geometric operations. A semi-Lagrangian fold applies one operation "
-                "per axis, and the face reader would give each of them its whole face (#2490)."
+                f"{consumer}: segments {partial} cover part of a face (`region`) in a mix of geometric "
+                "operations. A semi-Lagrangian fold applies one operation per axis, and the face reader would "
+                "give each of them its whole face (#2490)."
             )
     operations = []
     for axis in range(dimension):
