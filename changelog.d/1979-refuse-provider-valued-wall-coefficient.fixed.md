@@ -19,7 +19,7 @@ did this correctly for `g`. `alpha` and `beta` now get the same guard, with the 
 
 **Correction to the issue's premise, which changes what the fix is for.** #1979 was filed against a
 ROBIN segment, and that route is not reachable: every grid FP solver refuses `ROBIN` at construction
-(`_validate_bc_support`, #1456, stated in `conditions.py:1149`), measured — `FPFDMSolver` raises
+(`_validate_bc_support`, #1456, stated in the docstring of `conditions.robin_bc`), measured — `FPFDMSolver` raises
 before any assembly. The reachable case is a provider on the `alpha` of a **NO_FLUX** or **NEUMANN**
 segment, which passes the capability gate. That is precisely what `NormalDriftProvider` ~~produces~~ produced (removed in this same release, #2422),
 since an impermeable wall *is* Robin in `m` (`alpha*m - D*d_n m = 0`) and its coefficient lives

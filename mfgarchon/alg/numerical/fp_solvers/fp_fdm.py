@@ -8,6 +8,7 @@ import scipy.sparse as sparse
 from mfgarchon.backends.compat import has_nan_or_inf
 from mfgarchon.geometry import BoundaryConditions
 from mfgarchon.geometry.base import CartesianGrid
+from mfgarchon.geometry.boundary.conditions import periodic_on_every_face
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
@@ -23,6 +24,7 @@ from mfgarchon.utils.pde_coefficients import (
 from .base_fp import BaseFPSolver
 from .fp_fdm_time_stepping import (
     _get_bc_type,
+    _refuse_partial_periodic,
 )
 from .fp_fdm_time_stepping import (
     solve_fp_nd_full_system as _solve_fp_nd_full_system,
@@ -247,6 +249,9 @@ class FPFDMSolver(BaseFPSolver):
         # (Robin has no stencil; Reflecting/Extrapolation are not field-BC types), instead of
         # silently assembling a default (no-flux) wall.
         self._validate_bc_support(self.boundary_conditions)
+        # Issue #2495: a BC periodic on some faces only is refused here, at hand-over, as well as by
+        # every assembly entry -- this solver wraps every axis or none.
+        _refuse_partial_periodic(self.boundary_conditions, self.dimension)
 
     # _detect_dimension() inherited from BaseNumericalSolver (Issue #633)
 
@@ -346,7 +351,13 @@ class FPFDMSolver(BaseFPSolver):
         # resolved one. Reading the geometry here gave a second owner -- measured with a periodic BC passed to the
         # constructor over a no-flux geometry, the two disagree (review of #2344).
         boundary_conditions = self.boundary_conditions
-        periodic = _get_bc_type(boundary_conditions) == "periodic"
+        _refuse_partial_periodic(boundary_conditions, ndim)
+        try:
+            # Every face, however spelt -- `_get_bc_type` saw no periodicity in an empty segment
+            # list over a periodic default (#2495).
+            periodic = periodic_on_every_face(boundary_conditions, ndim)
+        except AttributeError:
+            periodic = _get_bc_type(boundary_conditions) == "periodic"  # legacy fdm_bc_1d BC
 
         rows: list[int] = []
         cols: list[int] = []
