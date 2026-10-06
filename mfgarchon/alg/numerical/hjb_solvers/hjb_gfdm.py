@@ -32,6 +32,7 @@ from mfgarchon.alg.numerical.hjb_solvers.h_eval import (
     eval_H_batch,
 )
 from mfgarchon.geometry.boundary.applicator_base import DiscretizationType
+from mfgarchon.geometry.boundary.conditions import BoundaryConditions
 from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL
 from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace
 from mfgarchon.types.callable_protocols import evaluate_solver_source
@@ -62,7 +63,6 @@ if TYPE_CHECKING:
     from mfgarchon.config.mfg_methods import GFDMConfig
     from mfgarchon.core.derivatives import DerivativeTensors
     from mfgarchon.core.mfg_problem import MFGProblem
-    from mfgarchon.geometry import BoundaryConditions
 
 
 _TENSOR_VOLATILITY_REFUSAL = (
@@ -663,6 +663,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             self.boundary_indices = self._detect_boundary_indices(collocation_points)
         # Get BC from parameter, or from problem geometry (Issue #542 fix, Issue #527 centralized BC)
         if boundary_conditions is not None:
+            self._refuse_unread_legacy_bc_value(boundary_conditions)
             self.boundary_conditions = boundary_conditions
             # Explicit param is the caller's authoritative static choice; never
             # re-read from geometry at solve time (Issue #1118 BC refresh).
@@ -2478,12 +2479,53 @@ class HJBGFDMSolver(BaseHJBSolver):
         "robin": BCType.ROBIN,
     }
 
+    @staticmethod
+    def _refuse_unread_legacy_bc_value(bc: Any) -> None:
+        """Refuse a nonzero value carried where no BC row reads it (#2513).
+
+        The rows read a value from a `BoundaryConditions` segment or from a dict's ``"values"``. A
+        dict's ``"value"`` and a legacy `fdm_bc_1d.BoundaryConditions`' ``left_value`` /
+        ``right_value`` reach no row, so a nonzero one was solved as 0. A zero one means what it says.
+        """
+        if isinstance(bc, BoundaryConditions):
+            return
+        if isinstance(bc, dict):
+            # "values" is the key the rows read; a "value" equal to it says nothing they miss.
+            value, values = bc.get("value"), bc.get("values")
+            agrees = "values" in bc and (
+                value is values
+                or (
+                    not callable(value)
+                    and not callable(values)
+                    and np.array_equal(np.asarray(value), np.asarray(values))
+                )
+            )
+            carried = {} if agrees else {"value": value}
+        else:
+            carried = {name: getattr(bc, name, None) for name in ("value", "left_value", "right_value")}
+        unread = {
+            k: v
+            for k, v in carried.items()
+            if v is not None and (callable(v) or np.any(np.asarray(v, dtype=float) != 0))
+        }
+        if unread:
+            raise NotImplementedError(
+                f"HJBGFDMSolver: the BC carries {sorted(unread)} = {list(unread.values())}, which no "
+                f"boundary row reads, so it would be solved as 0 (#2513). Pass a BoundaryConditions "
+                f"(e.g. dirichlet_bc(value=...) or per-face BCSegments)."
+            )
+
     def _classify_boundary_point(self, i: int, local_idx: int, use_per_point_bc: bool, global_bc_type, legacy_normals):
         """Resolve ``(bc_enum, segment, normal)`` for boundary point ``i``.
 
         Mixed BC uses the pre-classified per-point maps; uniform BC uses the global type +
         computed outward normal. Single source shared by the Newton residual-BC path and the
         Howard value-form path (Issue #1118 PR2), so the two never drift in classification.
+
+        A uniform ``BoundaryConditions`` returns its one segment, so the value is read through
+        ``segment.get_value`` exactly as on the mixed path. The uniform path used to return no
+        segment and fall back to a ``values`` attribute ``BoundaryConditions`` does not have, so
+        ``neumann_bc(value=g)`` solved as g = 0 and ``dirichlet_bc(value=g)`` pinned 0 (#2513).
         """
         if use_per_point_bc:
             segment = self._bc_segment_per_point[i]
@@ -2501,7 +2543,10 @@ class HJBGFDMSolver(BaseHJBSolver):
             normal = self._boundary_handler.compute_outward_normal(i)
         else:
             normal = self._compute_outward_normal(i)
-        return bc_enum, None, normal
+        segment = (
+            self.boundary_conditions.segments[0] if isinstance(self.boundary_conditions, BoundaryConditions) else None
+        )
+        return bc_enum, segment, normal
 
     def _bc_row_for_point(
         self,
@@ -3926,49 +3971,35 @@ class HJBGFDMSolver(BaseHJBSolver):
         return approx_fprime(p, H_of_p, epsilon=1e-7)
 
     def _apply_boundary_conditions_to_solution(self, u: np.ndarray, time_idx: int) -> np.ndarray:
-        """Apply boundary conditions directly to solution array.
+        """Write the Dirichlet value onto the Dirichlet boundary points of ``u``.
 
-        For mixed BC (per-point types), enforces Dirichlet at exit points only.
+        Classified and valued per point through `_classify_boundary_point` and
+        `_eval_bc_dirichlet_value`, the same sources the BC rows use. This overwrite used to
+        read a global value instead -- `None` for every `BoundaryConditions`, which has no
+        `value` attribute -- so a uniform Dirichlet wrote NaN and a per-face one wrote 0.0 over
+        the value its row had just imposed (#2513). Neumann needs no write: its row enforces it.
         """
         if len(self.boundary_indices) == 0:
             return u
 
-        # Check if using per-point BC (mixed BC)
-        # Issue #527: Replace hasattr with try/except per CLAUDE.md guidelines
         try:
             use_per_point_bc = self.boundary_conditions.is_mixed
         except AttributeError:
             use_per_point_bc = False
+        global_bc_type = self._get_boundary_condition_property("type") if not use_per_point_bc else None
+        if not use_per_point_bc and str(global_bc_type or "").lower() != "dirichlet":
+            return u
+        legacy_bc_values = self._get_boundary_condition_property("values") if not use_per_point_bc else None
+        legacy_normals = self._bc_config.get("normals", None) if not use_per_point_bc and self._bc_config else None
+        current_time = time_idx * (self.problem.T / self.problem.Nt) if getattr(self.problem, "Nt", 0) > 0 else 0.0
 
-        # Use unified BC config (single source of truth) when using new infrastructure
-        if self._use_new_infrastructure and self._bc_config is not None:
-            global_bc_type = self._bc_config["type"]
-            bc_values = self._bc_config["values"]
-        else:
-            # Get BC type - will raise error if not specified
-            bc_type_val = self._get_boundary_condition_property("type")
-            global_bc_type = bc_type_val.lower() if isinstance(bc_type_val, str) else bc_type_val
-            bc_values = self._get_boundary_condition_property("value")
-
-        # For per-point BC, apply Dirichlet only at exit points
-        if use_per_point_bc:
-            for i in self.boundary_indices:
-                bc_type = self._get_bc_type_for_point(i)
-                if bc_type == "dirichlet":
-                    if callable(bc_values):
-                        current_time = self.problem.T * time_idx / self.problem.Nt
-                        u[i] = bc_values(self.collocation_points[i], current_time)
-                    else:
-                        u[i] = float(bc_values) if bc_values else 0.0
-        elif global_bc_type == "dirichlet":
-            # Uniform Dirichlet: apply to all boundary points
-            if callable(bc_values):
-                current_time = self.problem.T * time_idx / self.problem.Nt
-                for i in self.boundary_indices:
-                    u[i] = bc_values(self.collocation_points[i], current_time)
-            else:
-                u[self.boundary_indices] = bc_values
-        # For Neumann: no direct solution modification (enforced via residual)
+        for local_idx, i in enumerate(self.boundary_indices):
+            i = int(i)
+            bc_enum, segment, _ = self._classify_boundary_point(
+                i, local_idx, use_per_point_bc, global_bc_type, legacy_normals
+            )
+            if bc_enum == BCType.DIRICHLET:
+                u[i] = self._eval_bc_dirichlet_value(i, segment, legacy_bc_values, current_time)
 
         return u
 

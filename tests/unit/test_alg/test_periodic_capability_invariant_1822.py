@@ -526,7 +526,6 @@ SURFACE_NOT_HONOURED = {
     # finest grid, so "not honoured". That was an artefact of refining h while holding N: the Monte
     # Carlo floor does not move with the grid, so the last comparison was noise, and the verdict
     # was monotone in only 6 of 12 seeds. Refining both, all four declared types converge, 20/20.
-    ("HJBGFDMSolver", "DIRICHLET"): ("#1822 declares DIRICHLET, solve returns NaN", AssertionError),
     ("FPGFDMSolver", "NEUMANN"): ("#1822 density goes invalid mid-solve", ValueError),
     ("FPGFDMSolver", "NO_FLUX"): ("#1822 density goes invalid mid-solve", ValueError),
     # FPSLSolver / FPSLAdjointSolver under NEUMANN and NO_FLUX were listed here as
