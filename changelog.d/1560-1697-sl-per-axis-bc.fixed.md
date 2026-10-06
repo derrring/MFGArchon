@@ -10,14 +10,18 @@ cannot place -- one with no `boundary` (#2467), which every `sdf_region`, `norma
 `region_name` segment is; one with `boundary="all"`, which the face reader applies to no face (#1953);
 one whose `boundary` names no face of the domain (a misspelt name, a Gmsh tag, an axis past the
 dimension), which the face reader drops and the default replaces; and one whose `region` restricts it
-to part of a face, which the face reader stretches over the whole face (#2490). The `"all"` and
-`region` refusals are wider than they need to be -- they also reject a segment whose operation matches
-the faces it lands on -- and wait on #1953 and #2490; `main` refused every mix.
+to part of a face, which the face reader stretches over the whole face (#2490). The `"all"`, `region`
+and no-face refusals are wider than they need to be -- they also reject a segment whose operation
+matches the faces it lands on, or a misspelt one the default would have matched -- and the first two
+wait on #1953 and #2490; `main` refused every mix.
 
 `TensorProductGrid` now binds its periodic convention to a BC whose periodicity comes from
-`default_bc`, not only to one with a periodic segment (#1822). The grid stores the completed BC for
-every solver. Left unbound, a channel with its seam from the default solved up to 11% off the same
-channel with its seam named.
+`default_bc`, not only to one with a periodic segment (#1822), and so does the solver-level binder for a
+BC handed to a solver; both read one predicate, `bc_utils.declares_periodic`. The grid stores the
+completed BC for every solver, so this corrects more than the semi-Lagrangian pair: on a
+`segments=[]`, `default_bc=PERIODIC` BC the grid's Laplacian was 9.3e-01 (relative) and an HJB-FDM solve
+1.9e-01 away from `periodic_bc` on `main`, and are identical to it now. Left unbound, the SL pair solved
+such a BC up to 11% off the same BC with its periodic faces named.
 
 Pinned by separability on a channel with no-flux walls over [0, 1] and a periodic axis over [0, 2]:
 a separable problem must equal the sum (HJB) or product (FP) of its one-axis solutions -- from the 1-D

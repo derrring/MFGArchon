@@ -269,11 +269,11 @@ class BaseMFGSolver(ABC):
         """
         # Local import: this module is imported from mfgarchon.alg.__init__, and reaching
         # geometry.boundary at module scope closes an import cycle.
-        from mfgarchon.geometry.boundary.types import BCType
+        from mfgarchon.geometry.boundary.bc_utils import declares_periodic
 
         if getattr(bc, "periodic_convention", None) is not None:
             return bc
-        if not any(getattr(seg, "bc_type", None) is BCType.PERIODIC for seg in getattr(bc, "segments", [])):
+        if not declares_periodic(bc):
             return bc
         measured = getattr(getattr(self.problem, "geometry", None), "periodic_convention", None)
         if measured is None:

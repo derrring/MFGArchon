@@ -161,6 +161,21 @@ def geometric_operations(boundary_conditions: Any) -> set[str]:
     return ops
 
 
+def declares_periodic(boundary_conditions: Any) -> bool:
+    """Whether a face of ``boundary_conditions`` can be periodic: a periodic segment, or a periodic ``default_bc``.
+
+    The one predicate both periodic-convention binders read (#1822): ``TensorProductGrid`` when a BC is
+    attached to it, and ``BaseNumericalSolver`` for a BC the caller hands the solver. Both read segments
+    only until #1560, so a seam left to the default reached the solvers with no convention.
+    """
+    from .types import BCType
+
+    segments = getattr(boundary_conditions, "segments", None) or ()
+    if any(getattr(seg, "bc_type", None) is BCType.PERIODIC for seg in segments):
+        return True
+    return getattr(boundary_conditions, "default_bc", None) is BCType.PERIODIC
+
+
 def per_axis_operations(boundary_conditions: Any, dimension: int, *, consumer: str) -> tuple[str, ...]:
     """The geometric operation on each axis, read face by face. #1560, #1697.
 
@@ -204,9 +219,9 @@ def per_axis_operations(boundary_conditions: Any, dimension: int, *, consumer: s
         from .types import parse_boundary_face
 
         nowhere = [
-            f"{seg.name} ({seg.boundary!r})"
+            f"{seg.name} ({type(seg.boundary).__name__} {seg.boundary!r})"
             for seg in boundary_conditions.segments
-            if (face := parse_boundary_face(seg.boundary)) is None or face.axis >= dimension
+            if (face := parse_boundary_face(seg.boundary)) is None or not 0 <= face.axis < dimension
         ]
         if nowhere:
             raise NotImplementedError(

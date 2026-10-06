@@ -27,7 +27,7 @@ import numpy as np
 from mfgarchon.geometry.base import CartesianGrid, nearest_point_on_box_boundary
 from mfgarchon.geometry.boundary.periodic import periodic_distance
 from mfgarchon.geometry.boundary.tolerances import ONWALL_TOL
-from mfgarchon.geometry.boundary.types import BCType, PeriodicGridConvention
+from mfgarchon.geometry.boundary.types import PeriodicGridConvention
 from mfgarchon.geometry.protocol import GeometryType
 from mfgarchon.geometry.protocols import (
     SupportsAdvection,
@@ -357,12 +357,12 @@ class TensorProductGrid(
 
         Returns the BC to store -- a completed copy when it was unstated, otherwise the original.
 
-        A periodic ``default_bc`` counts as much as a periodic segment: since #1560 the semi-Lagrangian
-        pair solves a channel whose seam comes from the default, and an unbound convention put it up to
-        11% off the same channel with its seam named.
+        A periodic ``default_bc`` counts as much as a periodic segment (``bc_utils.declares_periodic``): a
+        periodic default reached the solvers unbound, and the SL pair solved it up to 11% off (#1560).
         """
-        periodic_segment = any(seg.bc_type is BCType.PERIODIC for seg in getattr(bc, "segments", []))
-        if not periodic_segment and getattr(bc, "default_bc", None) is not BCType.PERIODIC:
+        from mfgarchon.geometry.boundary.bc_utils import declares_periodic
+
+        if not declares_periodic(bc):
             return bc
         measured = self.periodic_convention
         declared = getattr(bc, "periodic_convention", None)
