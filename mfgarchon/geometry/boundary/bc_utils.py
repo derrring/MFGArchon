@@ -5,7 +5,7 @@ Issue #702: Shared BC type detection and operation mapping for FDM, SL, GFDM, et
 
 This module provides utilities that replace duplicated BC handling logic in:
 - fp_fdm_time_stepping._get_bc_type()
-- fp_semi_lagrangian_adjoint._get_bc_operation_type()
+- fp_semi_lagrangian_adjoint._axis_operations()
 - hjb_semi_lagrangian._get_bc_type_string()
 
 All solvers should import from this module for consistent BC handling.
@@ -175,8 +175,10 @@ def per_axis_operations(boundary_conditions: Any, dimension: int, *, consumer: s
     Raises:
         NotImplementedError: when an axis's two faces ask for different operations. A fold has one rule per
             axis, so periodic on one face only, or reflect on one and clamp on the other, is refused rather
-            than resolved by whichever face is read first. Also when a mix of operations has a segment with
-            no ``boundary``, whose faces cannot be told apart (#2467).
+            than resolved by whichever face is read first. Also, in a mix of operations, for a segment with
+            no ``boundary``, whose faces cannot be told apart (#2467), and for one restricted to part of a
+            face by ``region``, ``sdf_region``, ``normal_direction`` or ``region_name``, which the face reader
+            would stretch over the whole face (#2490).
     """
     if boundary_conditions is None or getattr(boundary_conditions, "segments", None) is None:
         return (bc_type_to_geometric_operation(get_bc_type_string(boundary_conditions)),) * dimension
@@ -187,6 +189,20 @@ def per_axis_operations(boundary_conditions: Any, dimension: int, *, consumer: s
                 f"{consumer}: segments {unbounded} have no `boundary` in a mix of geometric operations, so "
                 "the faces they cover cannot be read per axis. Give each one the face it lies on with "
                 "`boundary=` (#2467)."
+            )
+        partial = [
+            seg.name
+            for seg in boundary_conditions.segments
+            if seg.region is not None
+            or seg.sdf_region is not None
+            or seg.normal_direction is not None
+            or seg.region_name is not None
+        ]
+        if partial:
+            raise NotImplementedError(
+                f"{consumer}: segments {partial} cover part of a face (region, sdf_region, normal_direction or "
+                "region_name) in a mix of geometric operations. A semi-Lagrangian fold applies one operation "
+                "per axis, and the face reader would give each of them its whole face (#2490)."
             )
     operations = []
     for axis in range(dimension):

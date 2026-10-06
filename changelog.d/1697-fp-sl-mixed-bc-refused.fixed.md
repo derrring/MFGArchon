@@ -16,7 +16,9 @@ owner of the refusal for HJB-SL (#1560) and FP-SL (#1697) alike -- the private h
 split the refusal out from the collapse-to-a-value. Both fragments are unreleased and collate into
 the same section, so this names the owner as it will ship. The sentence above about the private
 helper is now incomplete rather than false: there are two, `_checked_bc_type_string` for the
-solve-time sites and `_refuse_mixed_per_axis` for the constructor.)
+solve-time sites and `_refuse_mixed_per_axis` for the constructor.) **[SUPERSEDED 2026-10-06]** All
+four are removed in the same release: the pair reads each axis through `bc_utils.per_axis_operations`.
+SUPERSEDED-BY: `changelog.d/1560-1697-sl-per-axis-bc.fixed.md`
 
 FPSLSolver now caches only an explicitly-passed BC and otherwise resolves the geometry live at each point of use, so the guard sees a BC replaced after construction rather than a construction-time snapshot -- the bypass it exists to close.
 
