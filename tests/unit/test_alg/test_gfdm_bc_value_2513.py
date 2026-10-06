@@ -164,6 +164,10 @@ def test_a_bc_value_no_row_reads_is_refused_not_solved_as_zero():
     )
     problem = MFGProblem(geometry=grid, components=comps, T=T, Nt=4, volatility=SIGMA)
     x = np.linspace(0.0, L, 11).reshape(-1, 1)
-    with pytest.raises(NotImplementedError, match="#2513"):
-        HJBGFDMSolver(problem, collocation_points=x, boundary_conditions={"type": "dirichlet", "value": 0.3}, **_NEWTON)
-    HJBGFDMSolver(problem, collocation_points=x, boundary_conditions={"type": "dirichlet", "value": 0.0}, **_NEWTON)
+    refused = ({"value": 0.3}, {"values": 0.2, "value": 0.3})
+    accepted = ({"value": 0.0}, {"values": 0.3}, {"values": 0.3, "value": 0.3})
+    for extra in refused:
+        with pytest.raises(NotImplementedError, match="#2513"):
+            HJBGFDMSolver(problem, collocation_points=x, boundary_conditions={"type": "dirichlet", **extra}, **_NEWTON)
+    for extra in accepted:
+        HJBGFDMSolver(problem, collocation_points=x, boundary_conditions={"type": "dirichlet", **extra}, **_NEWTON)

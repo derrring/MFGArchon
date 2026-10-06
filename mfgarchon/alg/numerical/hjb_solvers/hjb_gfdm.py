@@ -2490,10 +2490,24 @@ class HJBGFDMSolver(BaseHJBSolver):
         if isinstance(bc, BoundaryConditions):
             return
         if isinstance(bc, dict):
-            carried = {"value": bc.get("value")}
+            # "values" is the key the rows read; a "value" equal to it says nothing they miss.
+            value, values = bc.get("value"), bc.get("values")
+            agrees = "values" in bc and (
+                value is values
+                or (
+                    not callable(value)
+                    and not callable(values)
+                    and np.array_equal(np.asarray(value), np.asarray(values))
+                )
+            )
+            carried = {} if agrees else {"value": value}
         else:
             carried = {name: getattr(bc, name, None) for name in ("value", "left_value", "right_value")}
-        unread = {k: v for k, v in carried.items() if v is not None and (callable(v) or v != 0)}
+        unread = {
+            k: v
+            for k, v in carried.items()
+            if v is not None and (callable(v) or np.any(np.asarray(v, dtype=float) != 0))
+        }
         if unread:
             raise NotImplementedError(
                 f"HJBGFDMSolver: the BC carries {sorted(unread)} = {list(unread.values())}, which no "
