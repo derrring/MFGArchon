@@ -18,6 +18,7 @@ import numpy as np
 
 from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_dH_dp_batch, eval_H_batch
 from mfgarchon.geometry.base import CartesianGrid  # nD FDM needs structured grid ABC
+from mfgarchon.geometry.boundary.applicator_fdm import dirichlet_wall_rows
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.operators.stencils.finite_difference import (
     DEFAULT_NUMERICAL_HAMILTONIAN,
@@ -441,11 +442,6 @@ class HJBFDMSolver(BaseHJBSolver):
                     jacobian=None,  # Use automatic finite differences
                 )
 
-            # Create BC applicator using FDMApplicator (Issue #516)
-            from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator
-
-            self.bc_applicator = FDMApplicator(dimension=self.dimension)
-
             # Get gradient operators from geometry (Issue #596 Phase 2.1)
             # Operators automatically inherit BC from geometry
             scheme = "upwind" if self.use_upwind else "central"
@@ -813,6 +809,11 @@ class HJBFDMSolver(BaseHJBSolver):
                 - BilateralConstraint: ψ_lower ≤ u ≤ ψ_upper
                 - None: No constraints
         """
+        # A Dirichlet node's equation is u - g = 0 in every map below, so the solve's root holds the condition
+        # and nothing is written afterwards (#2537, #2474; 1-D: #2515). A Neumann wall keeps its PDE row, whose
+        # node-centred ghost already imposes du/dn = g.
+        wall, g_wall = dirichlet_wall_rows(self.get_boundary_conditions(), self.shape, time)
+
         used_fallback = False
         if self.solver_type == "fixed_point":
             # Define fixed-point map G: u → u
@@ -826,7 +827,7 @@ class HJBFDMSolver(BaseHJBSolver):
                 rhs = H_values
                 if source_term is not None:
                     rhs = rhs - source_term
-                return U_next - self.dt * rhs
+                return np.where(wall, g_wall, U_next - self.dt * rhs)
 
             U_solution, info = self.nonlinear_solver.solve(G, U_guess)
 
@@ -841,7 +842,7 @@ class HJBFDMSolver(BaseHJBSolver):
                 residual = (U - U_next) / self.dt + H_values
                 if source_term is not None:
                     residual = residual - source_term
-                return residual
+                return np.where(wall, U - g_wall, residual)
 
             # Issue #669: Newton-to-Value-Iteration adaptive fallback
             newton_failed = False
@@ -867,7 +868,7 @@ class HJBFDMSolver(BaseHJBSolver):
                         rhs = H_values
                         if source_term is not None:
                             rhs = rhs - source_term
-                        return U_next - self.dt * rhs
+                        return np.where(wall, g_wall, U_next - self.dt * rhs)
 
                     fallback_solver = FixedPointSolver(
                         relaxation=self.relaxation,
@@ -918,20 +919,7 @@ class HJBFDMSolver(BaseHJBSolver):
                     )
                 )
 
-        # Enforce BC on solution (Issue #542 - nD extension, Issue #527 - centralized BC access)
-        # BC-aware gradients use ghost cells for derivatives, but boundary values must be explicitly set
-        bc = self.get_boundary_conditions()
-        if bc is not None:
-            U_solution = self.bc_applicator.enforce_values(
-                field=U_solution,
-                boundary_conditions=bc,
-                spacing=self.spacing,
-                time=time,
-            )
-
         # Apply variational inequality constraint via projection (Issue #591)
-        # Order: 1) Solve PDE → 2) Enforce BC → 3) Project onto constraint set K
-        # This ensures the solution satisfies both BC and constraints
         if constraint is not None:
             U_solution = constraint.project(U_solution)
 
