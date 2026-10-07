@@ -868,7 +868,7 @@ def build_bc_aware_adjoint_matrix(
                 f"BC type '{bc_type}' at boundary '{boundary_name}' requires source term "
                 f"handling which is not yet implemented in adjoint_mode='auto'. "
                 f"Supported BC types: reflecting, periodic, neumann, absorbing, outflow. "
-                f"Use adjoint_mode='off' or adjoint_mode='transpose' and handle BCs manually. "
+                f"Use adjoint_mode='off' (FPFDMSolver's adjoint step refuses a Dirichlet wall in every mode, #2531). "
                 f"See Issue #704 for planned full BC support."
             )
 
