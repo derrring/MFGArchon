@@ -145,6 +145,9 @@ class FPGFDMSolver(BaseFPSolver):
                 than ``mass_drift_tolerance`` from the initial mass, when no source term is given -- the
                 only case this solver's declared BCs (no-flux, homogeneous Neumann) conserve mass in.
                 ``"warn"`` keeps the solve going and logs the worst drift at the end (#2512 S5, #1752).
+                The mass is the geometry's own measure, so it is checked only when the collocation
+                points are the grid's nodes; on scattered points there is no measure to check against,
+                and the solve says so once rather than reporting a drift of the wrong functional.
             mass_drift_tolerance: Tolerance on |m_t / m_0 - 1| for ``mass_drift="raise"``.
 
         BC Resolution Order:
@@ -158,6 +161,10 @@ class FPGFDMSolver(BaseFPSolver):
         self.fp_method_name = "GFDM"
         if mass_drift not in ("raise", "warn"):
             raise ValueError(f"FPGFDMSolver: mass_drift must be 'raise' or 'warn', got {mass_drift!r}")
+        if not (np.isfinite(mass_drift_tolerance) and mass_drift_tolerance > 0):
+            raise ValueError(
+                f"FPGFDMSolver: mass_drift_tolerance must be finite and positive, got {mass_drift_tolerance!r}"
+            )
         self.mass_drift = mass_drift
         self.mass_drift_tolerance = float(mass_drift_tolerance)
 
@@ -281,6 +288,21 @@ class FPGFDMSolver(BaseFPSolver):
 
         # Priority: Legacy boundary_type string
         return boundary_type_str
+
+    def _grid_measure(self) -> Callable[[np.ndarray], float] | None:
+        """``m -> integral of m`` with the geometry's own measure, when the collocation points are exactly
+        the grid's nodes (C order); ``None`` otherwise -- scattered points carry no measure here."""
+        geometry = getattr(self.problem, "geometry", None)
+        integrate = getattr(geometry, "integrate", None)
+        coords = getattr(geometry, "coordinates", None)
+        if not callable(integrate) or not isinstance(coords, (list, tuple)) or len(coords) != self.dimension:
+            return None
+        nodes = np.stack(np.meshgrid(*[np.asarray(c, dtype=float) for c in coords], indexing="ij"), axis=-1)
+        nodes = nodes.reshape(-1, self.dimension)
+        if nodes.shape != self.collocation_points.shape or not np.allclose(nodes, self.collocation_points):
+            return None
+        shape = tuple(len(c) for c in coords)
+        return lambda m: float(integrate(np.asarray(m, dtype=float).reshape(shape)))
 
     def _compute_adaptive_delta(self) -> float:
         """Compute adaptive delta based on point spacing."""
@@ -610,14 +632,33 @@ class FPGFDMSolver(BaseFPSolver):
         # Storage for density evolution
         M_solution = np.zeros((n_time_points, self.n_points))
         M_solution[0, :] = m_init.copy()
-        mass_initial = np.sum(m_init)
-
-        # Issue #886: track raw mass drift before normalization
         from mfgarchon.utils.mfg_logging import get_logger
 
         _logger = get_logger(__name__)
+        # The conserved quantity is the integral of m, so the drift is measured with the geometry's own
+        # measure; an unweighted sum is a different functional, whose drift on an exact solution reached
+        # 1.75% at 21 uniform points (#2512 S5). Mass is conserved only without a source term.
+        measure = self._grid_measure()
+        check_mass = source_term is None and measure is not None
+        if source_term is None and measure is None:
+            _logger.warning(
+                "GFDM FP solve: the mass check is not performed -- the collocation points are not the "
+                "grid's nodes, so there is no measure to integrate the density with. This operator does "
+                "not conserve mass (Issue #1752)."
+            )
+        mass_initial = measure(m_init) if check_mass else 0.0
         max_mass_drift = 0.0
         max_mass_drift_t_idx = 0
+        if self.upwind_scheme == "none":
+            lever = "upwind_scheme='linear' or 'exponential' reduces a drift-driven leak"
+        else:
+            lever = f"upwind_scheme is already {self.upwind_scheme!r}, which reduces the leak without removing it"
+        drift_remedy = (
+            f"This operator does not conserve mass (Issue #1752: it diverges under refinement when a drift "
+            f"field drives it, and leaks at the boundary stencil even without one); {lever}, and refining dt "
+            f"does not remove it. Pass mass_drift='warn' to keep the drifting density, or raise "
+            f"mass_drift_tolerance."
+        )
 
         # Time stepping loop (forward Euler)
         for t_idx in range(n_time_points - 1):
@@ -675,6 +716,11 @@ class FPGFDMSolver(BaseFPSolver):
                     )
                 dm_dt = dm_dt + s_values
             M_solution[t_idx + 1, :] = m_current + dt * dm_dt
+            if not np.all(np.isfinite(M_solution[t_idx + 1, :])):
+                raise ValueError(
+                    f"GFDM FP solve: the density is not finite at step {t_idx + 1}. That is a failed solve, "
+                    f"not a mass drift, so it stops whatever mass_drift is set to."
+                )
 
             # Issue #1683: this clipped, then renormalised to the initial mass, and warned
             # only above 1% drift. Every configuration therefore returned a final mass of
@@ -719,25 +765,21 @@ class FPGFDMSolver(BaseFPSolver):
                     "what binds here."
                 ),
             )
-            mass_current = np.sum(M_solution[t_idx + 1, :])
-            if source_term is None and self.mass_drift == "raise":
-                stop_on_mass_drift(
-                    mass_current,
-                    mass_initial,
-                    step=t_idx + 1,
-                    tolerance=self.mass_drift_tolerance,
-                    context="GFDM FP solve",
-                    remedy=(
-                        "This operator does not conserve mass and diverges under refinement (Issue #1752); "
-                        "upwind_scheme='linear' or 'exponential' reduces the drift, and refining dt makes it "
-                        "worse. Pass mass_drift='warn' to keep the drifting density, or raise "
-                        "mass_drift_tolerance."
-                    ),
-                )
-            if mass_initial > 0:
-                drift = abs(mass_current - mass_initial) / mass_initial
-                if drift > max_mass_drift:
-                    max_mass_drift, max_mass_drift_t_idx = drift, t_idx + 1
+            if check_mass:
+                mass_current = measure(M_solution[t_idx + 1, :])
+                if self.mass_drift == "raise":
+                    stop_on_mass_drift(
+                        mass_current,
+                        mass_initial,
+                        step=t_idx + 1,
+                        tolerance=self.mass_drift_tolerance,
+                        context="GFDM FP solve",
+                        remedy=drift_remedy,
+                    )
+                if mass_initial > 0:
+                    step_drift = abs(mass_current - mass_initial) / mass_initial
+                    if step_drift > max_mass_drift:
+                        max_mass_drift, max_mass_drift_t_idx = step_drift, t_idx + 1
 
         # Issue #1752: with the renormalisation gone this is the only remaining signal for a
         # drift measured at 179% on a configuration that clips nothing, so it cannot stay at
@@ -748,13 +790,12 @@ class FPGFDMSolver(BaseFPSolver):
         # of mass 2.55e+09 and the gate does not fire. This warning does.
         if max_mass_drift > 1e-6:
             _logger.warning(
-                "GFDM FP mass drift %.2e (worst at t_idx=%d). The flux divergence is unstabilised "
-                "at upwind_scheme=%r and diverges under refinement (Issue #1752) -- refining dt "
-                "makes this worse, not better. The returned density carries the drift rather than "
+                "GFDM FP mass drift %.2e (worst at t_idx=%d), measured with the geometry's measure on a "
+                "problem that conserves mass. %s The returned density carries the drift rather than "
                 "being rescaled to hide it.",
                 max_mass_drift,
                 max_mass_drift_t_idx,
-                self.upwind_scheme,
+                drift_remedy,
             )
 
         return M_solution

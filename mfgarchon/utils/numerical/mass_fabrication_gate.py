@@ -114,7 +114,13 @@ import numpy as np
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-__all__ = ["MAX_CLIP_MASS_FABRICATION", "clip_nonnegative_or_raise", "mass_fabricated_by_clip"]
+__all__ = [
+    "MAX_CLIP_MASS_FABRICATION",
+    "MAX_CONSERVED_MASS_DRIFT",
+    "clip_nonnegative_or_raise",
+    "mass_fabricated_by_clip",
+    "stop_on_mass_drift",
+]
 
 # The largest fraction of the present mass a non-negativity clip may create before the
 # solve is stopped. Round-off is ~1e-15; a failed scheme is O(1) (Issue #1671).
@@ -206,7 +212,10 @@ def stop_on_mass_drift(
     absorbing. Under a flux, a source or an absorbing wall the mass moves legitimately, and stopping
     there would fail a correct solve; deciding that is the caller's, which knows its BCs and source.
 
-    Returns the drift |mass/mass_initial - 1| so the caller can report it in warn mode.
+    ``mass`` must be the conserved functional -- the integral with the domain's measure, not an
+    unweighted sum, whose drift on an exact solution can exceed any useful tolerance (#2512 S5). A
+    non-finite mass raises. With ``mass_initial <= 0`` there is nothing to compare against and the
+    check returns 0.0. Returns the drift |mass/mass_initial - 1|.
     """
     if mass_initial <= 0:
         return 0.0
@@ -214,7 +223,7 @@ def stop_on_mass_drift(
     if not drift <= tolerance:
         raise ValueError(
             f"{context}: mass ratio {float(mass) / float(mass_initial):.6g} at step {step} "
-            f"(|drift| {drift:.3e} > tolerance {tolerance:.0e}) on a problem that conserves mass, so the "
+            f"(|drift| {drift:.3e} > tolerance {tolerance:.3g}) on a problem that conserves mass, so the "
             f"solve is stopped rather than returning a density with that mass. {remedy}"
         )
     return drift

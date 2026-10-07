@@ -295,6 +295,10 @@ def _solver_kwargs(cls: type, x: np.ndarray, nx: int) -> dict:
     kwargs = {}
     if "collocation_points" in params:
         kwargs["collocation_points"] = x.reshape(-1, 1)
+    if "mass_drift" in params:
+        # This surface measures the BC residual, not mass; FP-GFDM's mass-drift gate (#2512 S5) would
+        # stop the solve first and an xfail(raises=ValueError) could not tell the two failures apart.
+        kwargs["mass_drift"] = "warn"
     if "seed" in params:
         # A stochastic solver cannot be classified at all unless it repeats itself (#1838): three
         # trials of one configuration previously returned monotone=False, False, True, so xfail

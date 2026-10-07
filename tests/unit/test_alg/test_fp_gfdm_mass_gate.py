@@ -231,7 +231,7 @@ def test_a_clip_far_below_one_percent_still_stops_the_solve():
     drift = np.tile(25.0 * (x - 0.5) ** 2, (n_t + 1, 1))
 
     with pytest.raises(ValueError) as exc:
-        _build(sigma=0.1, Nt=n_t).solve_fp_system(m0, drift)
+        _build(sigma=0.1, Nt=n_t, **_WARN).solve_fp_system(m0, drift)
     percent = float(str(exc.value).split("would fabricate")[1].split("%")[0])
     assert percent < 0.01, (
         f"message reported {percent}% -- this test is only a threshold pin while the clip "
@@ -310,12 +310,35 @@ def test_refining_the_timestep_silences_the_gate_while_the_answer_gets_worse():
 # =============================================================================
 # The mass-drift gate (#2512 S5)
 # =============================================================================
+#
+# The conserved quantity is the integral of m with the geometry's measure, checked only when the
+# collocation points are the grid's nodes. An unweighted sum is a different functional: on an exact
+# solution its drift reached 1.75% at 21 uniform points, and the first version of this gate measured it.
+
+
+def _diffusion_solver(n_x, n_t, *, points=None, **solver_kw):
+    """Pure diffusion (no drift) on [0, 1], no-flux walls, sigma = 0.3, T = 0.5."""
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n_x], boundary_conditions=no_flux_bc(dimension=1))
+    problem = MFGProblem(
+        geometry=grid,
+        Nt=n_t,
+        T=T,
+        volatility=0.3,
+        components=MFGComponents(
+            m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)),
+            u_terminal=lambda x: 0.0,
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
+        ),
+    )
+    x = np.linspace(0, 1, n_x) if points is None else points
+    return grid, x, FPGFDMSolver(problem, collocation_points=x.reshape(-1, 1), **solver_kw)
 
 
 def test_a_drifting_solve_stops_at_the_first_step_past_the_tolerance():
     """The 179% configuration above, at the default: it stops, and says where and by how much."""
     m0, drift = _inputs(5.0)
-    masses = _solver(0.3).solve_fp_system(m0, drift).sum(axis=1)
+    warn = _solver(0.3)
+    masses = np.array([warn.problem.geometry.integrate(row) for row in warn.solve_fp_system(m0, drift)])
     first = int(np.argmax(np.abs(masses / masses[0] - 1.0) > 1e-2))
     assert first > 0, "the warn-mode run must cross the tolerance for this test to mean anything"
     with pytest.raises(ValueError) as exc:
@@ -327,50 +350,69 @@ def test_a_drifting_solve_stops_at_the_first_step_past_the_tolerance():
 
 
 def test_a_conserving_configuration_passes():
-    """A smooth density compatible with the wall, pure diffusion: mass held to 4e-12 at 21 points."""
-    n_x, n_t = 21, 40
-    x = np.linspace(0, 1, n_x)
-    m0 = 1 + 0.5 * np.cos(np.pi * x)
-    m0 /= m0.sum()
-    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n_x], boundary_conditions=no_flux_bc(dimension=1))
-    problem = MFGProblem(
-        geometry=grid,
-        Nt=n_t,
-        T=T,
-        volatility=0.3,
-        components=MFGComponents(
-            m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)),
-            u_terminal=lambda x: 0.0,
-            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
-        ),
-    )
-    result = FPGFDMSolver(problem, collocation_points=x.reshape(-1, 1)).solve_fp_system(m0, np.zeros((n_t + 1, n_x)))
-    assert abs(float(result[-1].sum()) / float(m0.sum()) - 1.0) < 1e-9
+    """Not symmetric about x = 1/2, so the boundary stencils on the two walls do not cancel: cos(2 pi x),
+    pure diffusion, 41 points, drifts 0.44% (1.08% at 21 points, 0.20% at 81 -- O(h))."""
+    grid, x, solver = _diffusion_solver(41, 160)
+    m0 = 1 + 0.5 * np.cos(2 * np.pi * x)
+    m0 /= grid.integrate(m0)
+    result = solver.solve_fp_system(m0, np.zeros((161, 41)))
+    assert abs(grid.integrate(result[-1]) - 1.0) < 1e-2
+
+
+def test_a_density_that_leaks_mass_stops():
+    """The operator leaks at the boundary stencil even without drift, and not always at O(h): a bump at
+    x = 0.3 loses 2.7% at 81 points (3.3% at 21, 2.6% at 41). A LOSS, so the gate must take |drift|."""
+    grid, x, solver = _diffusion_solver(81, 640)
+    m0 = np.exp(-50 * (x - 0.3) ** 2)
+    m0 /= grid.integrate(m0)
+    with pytest.raises(ValueError, match=r"mass ratio 0\.98"):
+        solver.solve_fp_system(m0, np.zeros((641, 81)))
 
 
 def test_a_source_that_moves_the_mass_is_not_stopped():
     """Mass is conserved only without a source, so the gate does not apply with one: a constant
     source adds T*S*|domain| of mass on purpose, and stopping that would fail a correct solve."""
-    n_x, n_t = 21, 40
-    x = np.linspace(0, 1, n_x)
+    grid, x, solver = _diffusion_solver(21, 40)
     m0 = 1 + 0.5 * np.cos(np.pi * x)
-    m0 /= m0.sum()
-    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n_x], boundary_conditions=no_flux_bc(dimension=1))
-    problem = MFGProblem(
-        geometry=grid,
-        Nt=n_t,
-        T=T,
-        volatility=0.3,
-        components=MFGComponents(
-            m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)),
-            u_terminal=lambda x: 0.0,
-            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
-        ),
+    m0 /= grid.integrate(m0)
+    result = solver.solve_fp_system(
+        m0, np.zeros((41, 21)), source_term=lambda t, xx: np.full(np.asarray(xx).shape[0], 0.1)
     )
-    result = FPGFDMSolver(problem, collocation_points=x.reshape(-1, 1)).solve_fp_system(
-        m0, np.zeros((n_t + 1, n_x)), source_term=lambda t, xx: np.full(np.asarray(xx).shape[0], 0.1)
-    )
-    assert float(result[-1].sum()) > 1.5 * float(m0.sum()), "the source should have added mass"
+    assert grid.integrate(result[-1]) > 1.03, "the source should have added mass"
+
+
+def test_on_scattered_points_the_check_is_not_performed_and_says_so(mfg_caplog):
+    """No measure, so no mass check and no drift warning of the wrong functional -- once, a statement."""
+    import logging
+
+    rng = np.random.default_rng(0)
+    points = np.sort(np.concatenate([[0.0, 1.0], rng.uniform(0.02, 0.98, 19)]))
+    _, x, solver = _diffusion_solver(21, 40, points=points)
+    m0 = np.exp(-50 * (x - 0.3) ** 2)
+    with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.fp_solvers.fp_gfdm"):
+        solver.solve_fp_system(m0, np.zeros((41, 21)))
+    messages = [m for m in mfg_caplog.messages if "mass" in m]
+    assert len(messages) == 1, messages
+    assert "not performed" in messages[0]
+
+
+def test_a_non_finite_density_stops_whatever_mass_drift_says():
+    m0, _ = _inputs(5.0)
+    drift = np.full((NT + 1, N), np.inf)
+    with pytest.raises(ValueError, match="not finite"):
+        _solver(0.3).solve_fp_system(m0, drift)
+
+
+def test_the_tolerance_is_the_opt_out():
+    """mass_drift_tolerance is the documented route: the 179% run (2.44 under the measure) passes at 2."""
+    m0, drift = _inputs(5.0)
+    _build(0.3, mass_drift_tolerance=2.0).solve_fp_system(m0, drift)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), -1.0, 0.0])
+def test_an_invalid_tolerance_is_refused(bad):
+    with pytest.raises(ValueError, match="mass_drift_tolerance"):
+        _build(0.3, mass_drift_tolerance=bad)
 
 
 def test_mass_drift_rejects_an_unknown_mode():
