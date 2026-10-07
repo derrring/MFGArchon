@@ -341,8 +341,8 @@ equation: it gives `J.n = v*m_interior`, which vanishes only when `v = 0`. It is
 (`ghost_cells.py:361`) is the one that constructs `ghost = interior*(2D + v*dx)/(2D - v*dx)` so
 that the total flux vanishes.
 
-- Dirichlet BC: ghost reflects the boundary value -- 0 on a shared BC, where the wall is an exit
-  (absorbing), and `g` on a BC passed to `FPFDMSolver(boundary_conditions=...)` itself.
+- Dirichlet BC: the wall row is the identity, `m = value`, not a ghost -- 0 on a shared BC, where the
+  wall is an exit (absorbing), and `g` on a BC passed to `FPFDMSolver(boundary_conditions=...)` itself.
 
 ### Particle Methods
 

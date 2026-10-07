@@ -250,7 +250,7 @@ class FPFDMSolver(BaseFPSolver):
         self.boundary_conditions = self._with_geometry_periodic_convention(self.boundary_conditions)
         # A BC this solver was not handed is the problem's shared one, where DIRICHLET(g) is an exit: the
         # HJB's u = g and an absorbing wall here (#2512, convention row 5). Read literally it pinned the exit
-        # at m = g and the mass rose 0.636 -> 5.3 (#2525). A BC passed explicitly is the FP's own, m = g.
+        # at m = g and the mass rose 1.0000 -> 3.3247 (#2525). A BC passed explicitly is the FP's own, m = g.
         if boundary_conditions is None:
             self.boundary_conditions = fp_view_of_shared_bc(self.boundary_conditions)
 

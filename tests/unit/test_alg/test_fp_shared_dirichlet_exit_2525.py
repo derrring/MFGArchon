@@ -143,24 +143,60 @@ def test_fp_fem_drops_the_shared_value_by_design():
     np.testing.assert_array_equal(_fem_solve(G)[1], _fem_solve(0.0)[1])
 
 
-def test_the_neumann_refusal_points_a_prescribed_density_at_the_explicit_route():
-    """A Neumann value is refused on the FP side, and the advice used to be "a Dirichlet segment if you
-    meant a prescribed density". On a shared BC that is now an exit, where FP-FDM absorbs, so following
-    it would solve a different problem with no error. The advice names the FP solver's own BC."""
+def _refusal_text(family: str) -> str:
+    """The FP Neumann refusal as `family` prints it, for a shared neumann_bc(0.7)."""
     from mfgarchon.geometry.boundary import neumann_bc
 
-    x = np.linspace(0.0, 1.0, 21)
-    scale = 1.0 / np.trapezoid(_mode(x), x)  # unit mass on the grid measure
-    grid = TensorProductGrid(
-        bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=neumann_bc(dimension=1, value=0.7)
-    )
-    problem = MFGProblem(
-        model=Model(hamiltonian=_hamiltonian(), volatility=SIGMA),
-        domain=grid,
-        conditions=Conditions(m_initial=lambda x: scale * _mode(x), u_terminal=lambda x: 0.0 * np.asarray(x), T=T),
-        Nt=10,
-    )
+    if family == "FEM":
+        from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
+
+        problem = _fem_problem(G)
+        problem.geometry.boundary_conditions = neumann_bc(dimension=2, value=0.7)
+        build = lambda: FPFEMSolver(problem, order=1)  # noqa: E731
+    else:
+        grid = TensorProductGrid(
+            bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=neumann_bc(dimension=1, value=0.7)
+        )
+        problem = MFGProblem(
+            model=Model(hamiltonian=_hamiltonian(), volatility=SIGMA),
+            domain=grid,
+            conditions=Conditions(
+                m_initial=lambda x: 1.0 + 0.0 * np.asarray(x, dtype=float),
+                u_terminal=lambda x: 0.0 * np.asarray(x, dtype=float),
+                T=T,
+            ),
+            Nt=10,
+        )
+        if family == "FDM":
+            build = lambda: FPFDMSolver(problem)  # noqa: E731
+        elif family == "FVM":
+            from mfgarchon.alg.numerical.fp_solvers.fp_fvm import FPFVMSolver
+
+            build = lambda: FPFVMSolver(problem)  # noqa: E731
+        elif family == "GFDM":
+            from mfgarchon.alg.numerical.fp_solvers.fp_gfdm import FPGFDMSolver
+
+            build = lambda: FPGFDMSolver(problem, collocation_points=np.linspace(0.0, 1.0, 21).reshape(-1, 1))  # noqa: E731
+        elif family == "SL":
+            from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
+
+            build = lambda: FPSLSolver(problem)  # noqa: E731
+        else:
+            from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
+
+            build = lambda: FPParticleSolver(problem, num_particles=200, seed=0)  # noqa: E731
     with pytest.raises(NotImplementedError) as exc:
-        FPFDMSolver(problem)
-    assert "FPFDMSolver(boundary_conditions=...)" in str(exc.value)
-    assert "a Dirichlet segment if you meant" not in str(exc.value)
+        build()
+    return str(exc.value)
+
+
+@pytest.mark.parametrize("family", ["FDM", "FEM", "FVM", "GFDM", "SL", "Particle"])
+def test_the_neumann_refusal_advice_is_true_for_every_solver_that_prints_it(family):
+    """The FP Neumann refusal used to advise "a Dirichlet segment if you meant a prescribed density"; on a
+    shared BC that is now an exit, so following it silently solved a different problem. Its replacement
+    must hold for all six FP families that print it: FVM, GFDM and SL refuse DIRICHLET at all, FEM takes
+    no explicit BC, and the particle FP refuses a nonzero one -- only FPFDMSolver imposes m = g."""
+    text = _refusal_text(family)
+    assert "imposed only by FPFDMSolver" in text
+    assert "a Dirichlet segment if you meant" not in text
+    assert "the FP absorbs" not in text
