@@ -90,8 +90,8 @@ def test_problem_solve_holds_a_shared_exit_at_zero_under_a_problem_source():
     problem = _problem(_wall_on_x_max(), nt=20, source_term_fp=lambda t, x, v, m: np.full(np.asarray(m).shape, 1.0))
     result = problem.solve(scheme="fdm_upwind", max_iterations=40, tolerance=1e-6)
     M = np.asarray(result.M)
-    # Picard damps each iterate toward the initial guess, which is nonzero at the exit; read before the fix
-    # the exit held 0.025 here.
+    # Picard damps each iterate toward the initial guess, which is nonzero at the exit, so the bound is the
+    # Picard tolerance. Before the fix the exit held 0.025 here (dt*S).
     assert np.abs(M[1:, -1]).max() < 1e-6
 
 
