@@ -1,16 +1,24 @@
-- **`FPFDMSolver` and `FPFEMSolver` read a shared DIRICHLET(g) as an exit: they absorb, m = 0** (Issue #2525; #2512, convention row 5). **Behaviour change:** `M` changes for every FDM or FEM solve whose problem/geometry BC has a nonzero Dirichlet value.
-  - Both read the shared value literally, as a prescribed density m = g. Measured with `problem.solve(scheme="fdm_upwind")`, 41 points, σ = 0.4, T = 0.5, Nt = 20:
-    - With a shared `dirichlet_bc(value=0.7)`, U = 0.7 at the walls, as the exit cost requires. But M was also pinned at 0.7 there, and the mass rose 0.636 → 5.3.
+- **`FPFDMSolver` and `FPFEMSolver` read a shared DIRICHLET(g) as an exit: they absorb, m = 0** (Issue #2525; #2512, convention row 5). **Behaviour change:** `M` changes for every FEM solve, and every FDM solve not handed `boundary_conditions=`, whose problem/geometry BC has a nonzero Dirichlet value.
+  - Both read the shared value literally, as a prescribed density m = g. Measured on `e8633fe1` with `problem.solve(scheme="fdm_upwind")`, 41 points, σ = 0.4, T = 0.5, Nt = 20:
+    - Exit on x_max, no-flux on x_min, a unit-mass bump: U = 0.7 on the exit, as the exit cost requires. But M was pinned at 0.7 there too, and the mass rose 1.0000 → 3.3247 (converged).
+    - A shared `dirichlet_bc(value=0.7)` on both walls, m0 = sin(πx): the mass reached 5.3 from 0.636. That is an unconverged Picard iterate: `converged=False` at 30 and at 40 iterations, tolerance 1e-6.
     - FP-FEM held its Dirichlet wall at 0.7000.
   - Both now read a BC they were not handed through `bc_utils.fp_view_of_shared_bc`, the owner the particle FP already used (#2521).
-    - `FPFDMSolver` translates only when no `boundary_conditions=` was passed; its docstring and the BC guide (`docs/user/guides/boundary_conditions.md`) now state the split. A BC passed explicitly is the FP's own, and its `DIRICHLET(g)` is still a prescribed density.
+    - `FPFDMSolver` translates only when no `boundary_conditions=` was passed. A BC passed explicitly is the FP's own, and its `DIRICHLET(g)` is still a prescribed density.
     - The weak-form FP base translates for FEM and meshless Galerkin alike, since neither takes an explicit BC. The meshless FP's own translator call is removed.
+  - **The docs and the advice follow.**
+    - The BC guide's DIRICHLET row and FDM bullet (`docs/user/guides/boundary_conditions.md`), and `FPFDMSolver`'s docstring, state the split.
+    - The FP Neumann refusal used to advise "a Dirichlet segment if you meant a prescribed density". On a shared BC that is now an exit, so following the advice would have solved a different problem silently. The message now points to `FPFDMSolver(boundary_conditions=...)`.
   - **Measured after the fix:**
-    - Pure diffusion with the exit on x_max and no-flux on x_min: FP-FDM matches the exact mode cos(πx/2) e^{−D(π/2)²t} to 4.8e-04 / 1.2e-04 / 3.0e-05 at 21 / 41 / 81 points. FP-FEM matches it to 1.5e-03 at `refined(3)`. Both hold m = 0 on the exit at every step.
+    - Pure diffusion with the exit on x_max and no-flux on x_min: FP-FDM matches the exact mode cos(πx/2) e^{−D(π/2)²t} to 4.8e-04 / 1.2e-04 / 3.0e-05 at 21 / 41 / 81 points (Nt 10 / 40 / 160). FP-FEM matches it to 1.5e-03 at `refined(3)`. Both hold m = 0 on the exit at every step.
     - Coupled `fdm_upwind`, same exit: U = 0.7 at the exit, and the mass falls at every step.
-  - **`RegimeSwitchingIterator`** reads the FP solver's `boundary_conditions` (#1802). A shared nonzero Dirichlet with FP-FDM therefore no longer counts as FP boundary data, and the iterator constructs. An explicit `FPFDMSolver(boundary_conditions=dirichlet_bc(value=0.2))` is still refused.
-    - FEM and meshless FPs have no such attribute, so the guard reads the geometry's untranslated BC. It still refuses them, now for a reason that is no longer true (#2529).
+  - **`RegimeSwitchingIterator`** reads the FP solver's `boundary_conditions` (#1802). A shared nonzero Dirichlet with FP-FDM therefore no longer counts as FP boundary data, and the iterator constructs.
+    - An explicit Dirichlet on FP-FDM is still refused, through a segment value or the `default_bc` fall-through.
+    - FEM and meshless FPs have no `boundary_conditions` attribute, so the guard reads the geometry's untranslated BC and still refuses them (#2529).
+      - For FEM that refusal was correct on main and is false now.
+      - For meshless it was already false on main.
   - **Limits, filed:**
     - On the `problem.components.boundary_conditions` route, the HJB does not read the BC when the geometry carries one, so that exit has no u = g half (#2530).
-    - FP-FDM adds a source term to its Dirichlet rows, so under a source the exit holds dt·S rather than 0: with S = 1 and dt = 0.05, it holds 0.05 at every step. Separately, `solve_fp_step_adjoint_mode` imposes no Dirichlet value; the absorbing reading above is `solve_fp_system`'s (#2531).
-  - FP-FVM, FP-GFDM and FP-SL declare no DIRICHLET and refuse it at construction.
+    - FP-FDM adds a source term to its Dirichlet rows, so under a source the exit holds dt·S rather than 0: with S = 1 and dt = 0.05, it holds 0.05 at every step.
+    - Separately, `solve_fp_step_adjoint_mode` imposes no Dirichlet value; the absorbing reading above is `solve_fp_system`'s (#2531).
+  - FP-FVM, FP-GFDM and FP-SL refuse DIRICHLET at any g, shared or explicit.

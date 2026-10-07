@@ -525,10 +525,23 @@ class TestDiagonalOutflowIsNotALaggedSource:
     # problem / geometry is an exit (#2512, convention row 5): the FP absorbs. (On the
     # `problem_components` route the HJB does not read that BC at all when the geometry carries
     # one, #2530.) So the one route left carrying FP data is the solver's own kwarg -- which
-    # also outranks geometry, so a guard reading geometry still misses it.
-    def test_inhomogeneous_fp_boundary_data_is_refused(self):
+    # also outranks geometry, so a guard reading geometry still misses it. Both channels a BC
+    # carries data on are pinned there: a segment value, and the `default_bc` fall-through (#1686).
+    @pytest.mark.parametrize("channel", ["segment_value", "default_bc_fallthrough"])
+    def test_inhomogeneous_fp_boundary_data_is_refused(self, channel):
         """The factor is exact only for homogeneous BCs; inhomogeneous data must not solve."""
-        from mfgarchon.geometry.boundary import dirichlet_bc
+        from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, dirichlet_bc
+
+        def fp_bc():
+            if channel == "segment_value":
+                return dirichlet_bc(value=0.2, dimension=1)
+            return BoundaryConditions(
+                dimension=1,
+                segments=[BCSegment(name="left0", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_min")],
+                default_bc=BCType.DIRICHLET,
+                default_value=0.2,
+                domain_bounds=[[0.0, 1.0]],
+            )
 
         problems = [_make_problem(coupling_strength=c, sigma=0.1, T=1.0, Nt=10) for c in (1.0, 0.5)]
         Q = np.array([[-0.1, 0.1], [0.2, -0.2]])
@@ -537,7 +550,7 @@ class TestDiagonalOutflowIsNotALaggedSource:
                 problems=problems,
                 regime_config=RegimeSwitchingConfig(transition_matrix=Q),
                 hjb_solvers=[HJBFDMSolver(p) for p in problems],
-                fp_solvers=[FPFDMSolver(p, boundary_conditions=dirichlet_bc(value=0.2, dimension=1)) for p in problems],
+                fp_solvers=[FPFDMSolver(p, boundary_conditions=fp_bc()) for p in problems],
             )
 
     @pytest.mark.parametrize("route", ["geometry", "problem_components", "default_bc_fallthrough"])

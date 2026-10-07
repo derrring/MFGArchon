@@ -1,10 +1,11 @@
 """A shared DIRICHLET(g) is an exit, so FP-FDM and FP-FEM absorb there (#2525, #2512 convention row 5).
 
-The HJB reads the shared BC as the exit cost u = g; every FP solver reads it as an absorbing wall, m = 0,
-through `bc_utils.fp_view_of_shared_bc`. A BC passed to an FP solver explicitly is its own, and there
-DIRICHLET(g) is a prescribed density m = g. Both solvers read the shared value literally: measured at
-`e8633fe1`, `problem.solve(scheme="fdm_upwind")` with a shared `dirichlet_bc(value=0.7)` pinned the walls
-at M = 0.7 and the mass rose 0.636 -> 5.3; FP-FEM held its Dirichlet wall at 0.7000.
+The HJB reads the shared BC as the exit cost u = g; the FP solvers that accept DIRICHLET read it as an
+absorbing wall, m = 0, through `bc_utils.fp_view_of_shared_bc`. A BC passed to FP-FDM explicitly is its
+own, and there DIRICHLET(g) is a prescribed density m = g. Both solvers read the shared value literally:
+on `e8633fe1`, `problem.solve(scheme="fdm_upwind")` with the exit on x_max pinned it at M = 0.7 and the
+mass rose 1.0000 -> 3.3247 (the coupled test's fixture, converged); FP-FEM held its Dirichlet wall at
+0.7000.
 
 The fixtures put the exit on ONE wall, x_max, with no-flux on x_min. A symmetric fixture (both walls
 Dirichlet, sin(pi x)) cannot tell a reader that translates one wall from one that translates both.
@@ -140,3 +141,26 @@ def test_fp_fem_absorbs_a_shared_exit_and_matches_the_decaying_mode():
 def test_fp_fem_drops_the_shared_value_by_design():
     """The value of a shared Dirichlet belongs to the HJB: g = 0.7 solves bit-identically to g = 0."""
     np.testing.assert_array_equal(_fem_solve(G)[1], _fem_solve(0.0)[1])
+
+
+def test_the_neumann_refusal_points_a_prescribed_density_at_the_explicit_route():
+    """A Neumann value is refused on the FP side, and the advice used to be "a Dirichlet segment if you
+    meant a prescribed density". On a shared BC that is now an exit, where FP-FDM absorbs, so following
+    it would solve a different problem with no error. The advice names the FP solver's own BC."""
+    from mfgarchon.geometry.boundary import neumann_bc
+
+    x = np.linspace(0.0, 1.0, 21)
+    scale = 1.0 / np.trapezoid(_mode(x), x)  # unit mass on the grid measure
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=neumann_bc(dimension=1, value=0.7)
+    )
+    problem = MFGProblem(
+        model=Model(hamiltonian=_hamiltonian(), volatility=SIGMA),
+        domain=grid,
+        conditions=Conditions(m_initial=lambda x: scale * _mode(x), u_terminal=lambda x: 0.0 * np.asarray(x), T=T),
+        Nt=10,
+    )
+    with pytest.raises(NotImplementedError) as exc:
+        FPFDMSolver(problem)
+    assert "FPFDMSolver(boundary_conditions=...)" in str(exc.value)
+    assert "a Dirichlet segment if you meant" not in str(exc.value)
