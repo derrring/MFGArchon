@@ -285,6 +285,71 @@ def per_axis_diffusion_types(operations: tuple[str, ...]) -> tuple[str, ...]:
     return tuple("periodic" if op == "periodic" else "neumann" for op in operations)
 
 
+def _describe_bc_value(value: Any) -> object | None:
+    """A description if this BC value is not verifiably zero, else None. One owner for that question,
+    read by `describe_inhomogeneous_bc_data` and `fp_view_of_shared_bc`.
+
+    ``float()`` is reached only for things it accepts: an array or a provider would otherwise raise
+    TypeError out of a capability gate, and an all-zero array is a legitimate ``g = 0`` that must not
+    crash.
+    """
+    import numpy as np
+
+    from mfgarchon.geometry.boundary.providers import is_provider
+
+    if value is None:
+        return None
+    if is_provider(value):
+        return "<provider>"
+    if callable(value):
+        return "<callable>"
+    if isinstance(value, np.ndarray):
+        return None if not value.any() else "<array>"
+    try:
+        return None if float(value) == 0.0 else float(value)
+    except (TypeError, ValueError):
+        return f"<unrecognised {type(value).__name__}>"
+
+
+def fp_view_of_shared_bc(boundary_conditions: Any) -> Any:
+    """The Fokker-Planck reading of a shared problem/geometry BC (#2512, convention row 5).
+
+    One owner for the translation. An exit is two conditions on two equations: the exit cost u = g on
+    the HJB, and an absorbing wall m = 0 on the FP. A single shared ``DIRICHLET(g)`` cannot mean both
+    literally, so on the FP side it means absorbing and its value is dropped **by design**: every
+    DIRICHLET segment, and a DIRICHLET ``default_bc``, comes back with value 0. Everything else is
+    returned unchanged.
+
+    Only a BC the FP solver reads from the shared problem / geometry goes through here -- in a coupled
+    solve or a standalone FP solve alike, since the solver cannot tell them apart. A BC passed to an FP
+    solver explicitly is the FP's own: there ``DIRICHLET(g)`` is a prescribed density m = g.
+
+    Anything that is not a ``BoundaryConditions`` (``None``, a string sentinel) is returned as is.
+    """
+    from dataclasses import replace
+
+    from .conditions import BoundaryConditions
+    from .types import BCType
+
+    if not isinstance(boundary_conditions, BoundaryConditions):
+        return boundary_conditions
+
+    def carries_a_value(seg: Any) -> bool:
+        return seg.bc_type == BCType.DIRICHLET and _describe_bc_value(seg.value) is not None
+
+    default_carries = (
+        boundary_conditions.default_bc == BCType.DIRICHLET
+        and _describe_bc_value(boundary_conditions.default_value) is not None
+    )
+    if not default_carries and not any(carries_a_value(seg) for seg in boundary_conditions.segments):
+        return boundary_conditions  # nothing to translate: the caller keeps the geometry's own object
+    segments = [replace(seg, value=0.0) if carries_a_value(seg) else seg for seg in boundary_conditions.segments]
+    changes: dict[str, Any] = {"segments": segments}
+    if default_carries:
+        changes["default_value"] = 0.0
+    return replace(boundary_conditions, **changes)
+
+
 def describe_inhomogeneous_bc_data(
     boundary_conditions: Any,
     *,
@@ -327,30 +392,6 @@ def describe_inhomogeneous_bc_data(
     Returns:
         Descriptions of the offending values, e.g. ``[0.2]``, ``['<callable>']``.
     """
-    import numpy as np
-
-    from mfgarchon.geometry.boundary.providers import is_provider
-
-    def _describe(value: Any) -> object | None:
-        """A description if this value is not verifiably zero, else None.
-
-        ``float()`` is reached only for things it accepts: an array or a provider would
-        otherwise raise TypeError out of a capability gate, and an all-zero array is a
-        legitimate ``g = 0`` that must not crash.
-        """
-        if value is None:
-            return None
-        if is_provider(value):
-            return "<provider>"
-        if callable(value):
-            return "<callable>"
-        if isinstance(value, np.ndarray):
-            return None if not value.any() else "<array>"
-        try:
-            return None if float(value) == 0.0 else float(value)
-        except (TypeError, ValueError):
-            return f"<unrecognised {type(value).__name__}>"
-
     missing = object()
     segments = getattr(boundary_conditions, "segments", missing)
     default_bc = getattr(boundary_conditions, "default_bc", missing)
@@ -370,12 +411,12 @@ def describe_inhomogeneous_bc_data(
     for seg in segments or ():
         if bc_types is not None and seg.bc_type not in bc_types:
             continue
-        described = _describe(getattr(seg, "value", None))
+        described = _describe_bc_value(getattr(seg, "value", None))
         if described is not None:
             found.append(described)
 
     if default_bc is not None and (bc_types is None or default_bc in bc_types):
-        described = _describe(getattr(boundary_conditions, "default_value", None))
+        described = _describe_bc_value(getattr(boundary_conditions, "default_value", None))
         if described is not None:
             found.append(described)
 

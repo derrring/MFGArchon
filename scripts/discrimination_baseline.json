@@ -107,7 +107,7 @@
       "status": "ok"
     },
     "particle_mass_counting_measure": {
-      "kill_count": 14,
+      "kill_count": 22,
       "owner": "The particle FP step measures a slice's mass on the GEOMETRY'S OWN measure, not the counting measure and not `sum(m) * dx` -- the rectangle rule is not the mass on an endpoint-inclusive grid (#2145). Sole owner: `FPParticleSolver._measure`, reached by `_to_caller_mass`, which is the only thing that decides what a reconstructed slice's mass is. RETARGETED from `_compute_total_mass`, which #2181 deleted: that helper measured `sum(density) * dV` and the KDE normalisation divided by it so the density integrated to 1. Both halves of that sentence stopped being true -- the measure is now the geometry's, and the target is the caller's mass rather than 1 -- but the convention it defended survived and moved here, so the mutation follows it.",
       "status": "ok"
     },

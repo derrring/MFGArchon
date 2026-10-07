@@ -57,6 +57,7 @@ class SolverResult:
             none. ``FPParticleSolver.mass_conservation_error_override`` supplies the number
             actually conserved; see ``BaseFPSolver.mass_conservation_error_override`` for the
             general seam a solver uses to report this.
+            [CORRECTED 2026-10-07 -- #2519: `M` is now scaled by N_t/N_0, so the grid integral does see absorption, short by the KDE's wall bias; the override stays the exact figure because it reads the count itself.]
     """
 
     U: NDArray[np.floating]

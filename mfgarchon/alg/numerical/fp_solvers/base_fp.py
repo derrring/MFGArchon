@@ -132,6 +132,7 @@ class BaseFPSolver(BaseNumericalSolver):
         none are indistinguishable through `M` -- measured, the 99.6%-loss run reported LESS
         error than the 0%-loss run, because what the grid integral actually tracked was
         `sigma`, through the KDE bandwidth, not absorption at all.
+        [CORRECTED 2026-10-07 -- #2519: `M` is now scaled by N_t/N_0, so the grid integral does see absorption, short by the KDE's wall bias; the override stays the exact figure because it reads the count itself.]
 
         Returning `None` (the default) means: no solver-specific measurement exists, use the
         generic grid-density one. A solver overrides this only when its own state holds

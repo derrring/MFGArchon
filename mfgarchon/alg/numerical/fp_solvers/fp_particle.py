@@ -21,6 +21,7 @@ except ImportError:  # pragma: no cover - graceful fallback when SciPy missing
     SCIPY_AVAILABLE = False
 
 from mfgarchon.geometry.boundary.applicator_particle import ParticleApplicator
+from mfgarchon.geometry.boundary.bc_utils import fp_view_of_shared_bc
 from mfgarchon.geometry.boundary.types import BCType
 
 # Issue #625: Migrated from tensor_calculus to operators/stencils
@@ -55,7 +56,8 @@ class KDENormalization(StrEnum):
 
     - ``NONE`` -- multiply every slice by one factor, calibrated on the first. The reconstruction's
       own drift stays visible. **The default.**
-    - ``ALL`` -- pin every slice to the caller's mass. Conservation then holds BY FIAT.
+    - ``ALL`` -- pin every slice to the caller's mass times the surviving fraction N_t/N_0 (#2519).
+      Conservation then holds BY FIAT on a closed domain.
 
     **`INITIAL_ONLY` was removed (#2181) because it could not mean anything.** It promised "correct
     at t=0, then carry" -- but at t=0 there is no accumulated drift to correct, and pinning the
@@ -81,7 +83,9 @@ class KDENormalization(StrEnum):
 
     The KDE reconstruction integrates to about 1 whatever particle count built it, so absorption is
     invisible to it and a carried factor preserves that invisibility. Identical numbers on `main`,
-    so this is the solver's property and neither default's: tracked as #2188.
+    so this is the solver's property and neither default's: tracked as #2188. [CORRECTED 2026-10-07
+    -- #2519: `_to_caller_mass` now multiplies every slice by N_t/N_0, so the returned `M` carries
+    the survivors' mass under either default; the table above was measured before that.]
 
     So the case for NONE is only that it does not fabricate conservation -- not that it measures it.
     ALL remains available and is the right choice when the reconstruction's own drift is what you do
@@ -89,7 +93,7 @@ class KDENormalization(StrEnum):
     """
 
     NONE = "none"  # One calibrated factor; the reconstruction's drift stays visible. DEFAULT.
-    ALL = "all"  # Pin every slice -- conservation by fiat, see the class docstring.
+    ALL = "all"  # Pin every slice to the caller's mass x N_t/N_0 -- by fiat, see the class docstring.
 
 
 class KDEMethod(StrEnum):
@@ -230,6 +234,7 @@ class FPParticleSolver(BaseFPSolver):
         self._mass_target: float | None = None
         self._mass_weights: np.ndarray | None = None
         self._mass_factor: float | None = None
+        self._n_particles_initial: int | None = None
         self.M_particles_trajectory: np.ndarray | list | None = None
         # Issue #1412: per-solve volatility override (the resolved scalar sigma the grid-drift
         # paths use), set by solve_fp_system instead of mutating the shared problem.
@@ -278,6 +283,10 @@ class FPParticleSolver(BaseFPSolver):
         # 2. Grid geometry boundary conditions (from geometry)
         # 3. Implicit geometry with periodic dimensions (e.g., Hyperrectangle torus)
         # 4. FAIL FAST - no silent fallback (CLAUDE.md principle)
+        # A BC passed here is this solver's own, so DIRICHLET(g) is a prescribed density and an absorbing
+        # wall refuses g != 0. A BC read from the shared problem/geometry is translated: there DIRICHLET(g)
+        # is an exit, u = g for the HJB and m = 0 for this solver (#2512, convention row 5).
+        self._bc_is_shared = boundary_conditions is None
         if boundary_conditions is not None:
             self.boundary_conditions = boundary_conditions
         else:
@@ -317,7 +326,27 @@ class FPParticleSolver(BaseFPSolver):
 
         # Issue #1456: fail loud if the resolved BC requests a type this solver cannot honor
         # (no-op for the "periodic" string sentinel).
+        if self._bc_is_shared:
+            self.boundary_conditions = fp_view_of_shared_bc(self.boundary_conditions)
         self._validate_bc_support(self.boundary_conditions)
+        self._refuse_inhomogeneous_dirichlet(self.boundary_conditions)
+
+    @staticmethod
+    def _refuse_inhomogeneous_dirichlet(bc: Any) -> None:
+        """A particle wall absorbs, which is the density condition m = 0. On a BC passed to this solver
+        explicitly a nonzero Dirichlet value is a prescribed density, which particles cannot impose, and it
+        was ignored: `dirichlet_bc(value=0.7)` solved bit-identically to `value=0.0` (#2519). A shared BC
+        never reaches here with one: `fp_view_of_shared_bc` reads its Dirichlet as absorbing."""
+        from mfgarchon.geometry.boundary.bc_utils import describe_inhomogeneous_bc_data
+
+        ignored = describe_inhomogeneous_bc_data(bc, bc_types={BCType.DIRICHLET})
+        if ignored:
+            raise NotImplementedError(
+                f"FPParticleSolver: a DIRICHLET wall absorbs particles, which is m = 0 there; the "
+                f"value(s) {ignored} passed in boundary_conditions= are a prescribed density, which particles "
+                f"cannot impose (#2519). For an exit, leave boundary_conditions unset: the shared BC's "
+                f"Dirichlet value is the HJB's exit cost, and this solver absorbs there."
+            )
 
     def _get_grid_params(self) -> dict:
         """
@@ -776,7 +805,7 @@ class FPParticleSolver(BaseFPSolver):
     def mass_conservation_error_override(self) -> float | None:
         """Fraction of particles absorbed, computed from `M_particles_trajectory` rather than
         the KDE-reconstructed grid density (#2188): see `BaseFPSolver.mass_conservation_error_override`
-        for why the grid density cannot see this at all.
+        for why the grid density ~~cannot see this at all~~ did not see this before #2519. [CORRECTED 2026-10-07 -- #2519: `M` is now scaled by N_t/N_0, so the grid integral does see absorption, short by the KDE's wall bias; the override stays the exact figure because it reads the count itself.]
 
         Same functional form as the grid-based measurement it replaces --
         `max_t |count_t / count_0 - 1|` in place of `max_t |mass_t / mass_0 - 1|` -- applied to
@@ -1367,7 +1396,7 @@ class FPParticleSolver(BaseFPSolver):
 
         # This slice is handed to the drift callable, so its mass has to be right HERE and not on
         # the returned history -- see `_to_caller_mass`.
-        return self._to_caller_mass(m_density_estimated)
+        return self._to_caller_mass(m_density_estimated, particles=particles_at_time_t)
 
     def _quadrature_weights(self) -> np.ndarray | None:
         """The geometry's own measure as an array, so one functional is used everywhere (#2145).
@@ -1411,8 +1440,9 @@ class FPParticleSolver(BaseFPSolver):
         mass = float((arr * w).sum())
         return mass if np.isfinite(mass) and mass > 0.0 else None
 
-    def _to_caller_mass(self, density, use_backend: bool = False):
-        """Put the caller's mass on one reconstructed slice. One owner for both jobs (#2181).
+    def _to_caller_mass(self, density: Any, use_backend: bool = False, particles: Any = None) -> Any:
+        """Put the caller's mass on one reconstructed slice. One owner for both jobs (#2181), and the
+        survivor scaling N_t/N_0 on top of either (#2519, `_scale_by_survivors`).
 
         A particle method carries no mass: sampling keeps the density's SHAPE, positions have no
         scale, and the reconstruction returns whatever constant its kernel happens to conserve. Two
@@ -1440,6 +1470,33 @@ class FPParticleSolver(BaseFPSolver):
         The calibration absorbs that constant, but only because every slice is now measured the same
         way.
         """
+        return self._scale_by_survivors(self._restore_mass(density, use_backend), particles)
+
+    def _scale_by_survivors(self, density: Any, particles: Any) -> Any:
+        """Multiply by N_t / N_0, the fraction of this solve's particles still alive (#2519).
+
+        The reconstruction integrates to about 1 whatever particle count built it, so an absorbing
+        wall that removed 92% of the particles returned a density of mass 1.07. Each particle carries
+        mass/N_0; the slice's mass is the survivors' share. N_0 is the count behind the first slice of
+        the solve, calibrated with the mass factor. A row with any NaN coordinate is absorbed (the
+        `preserve_indices` representation)."""
+        if particles is None:
+            return density
+        alive = self._count_alive(particles)
+        if self._n_particles_initial is None:
+            self._n_particles_initial = alive
+        if not self._n_particles_initial:
+            return density
+        return density * (alive / self._n_particles_initial)
+
+    @staticmethod
+    def _count_alive(particles: Any) -> int:
+        arr = np.asarray(particles, dtype=float)
+        if arr.shape[0] == 0:
+            return 0
+        return int(np.isfinite(arr.reshape(arr.shape[0], -1)).all(axis=1).sum())
+
+    def _restore_mass(self, density: Any, use_backend: bool = False) -> Any:
         if self._mass_target is None:
             return density
         if self._should_normalize_density():
@@ -1576,6 +1633,7 @@ class FPParticleSolver(BaseFPSolver):
         self._mass_target = self._caller_mass(M_initial)
         self._mass_weights = self._quadrature_weights() if self._mass_target is not None else None
         self._mass_factor = None  # calibrated on the first KDE reconstruction of THIS solve
+        self._n_particles_initial = None  # likewise: the count behind the first slice (#2519)
         # Reset here rather than in the implementation: the callable-drift path returns before the
         # reset that lives there, so a reused solver carried its counter across solves and
         # INITIAL_ONLY degenerated to NONE from the second Picard iteration on. That was latent
@@ -2075,7 +2133,7 @@ class FPParticleSolver(BaseFPSolver):
         M_density_on_grid[0] = self._estimate_density_from_particles_nd(init_particles, coordinates, bounds)
 
         # Restore the caller's mass ALWAYS; the KDE-drift correction stays conditional (#2181).
-        M_density_on_grid[0] = self._normalize_density_nd(M_density_on_grid[0], spacings)
+        M_density_on_grid[0] = self._normalize_density_nd(M_density_on_grid[0], spacings, particles=init_particles)
 
         if Nt == 1:
             if use_segment_aware_bc:
@@ -2167,7 +2225,9 @@ class FPParticleSolver(BaseFPSolver):
             M_density_on_grid[t_idx + 1] = self._estimate_density_from_particles_nd(new_particles, coordinates, bounds)
 
             # Restore the caller's mass ALWAYS; correct the KDE's own drift only if asked (#2181).
-            M_density_on_grid[t_idx + 1] = self._normalize_density_nd(M_density_on_grid[t_idx + 1], spacings)
+            M_density_on_grid[t_idx + 1] = self._normalize_density_nd(
+                M_density_on_grid[t_idx + 1], spacings, particles=new_particles
+            )
 
         # Finalize: store trajectory, build history, return result
         trajectory = particles_list if use_segment_aware_bc else current_particles
@@ -2175,7 +2235,7 @@ class FPParticleSolver(BaseFPSolver):
             M_density_on_grid, trajectory, Nt, dimension=dimension, use_segment_aware_bc=use_segment_aware_bc
         )
 
-    def _normalize_density_nd(self, density: np.ndarray, spacings: list[float]) -> np.ndarray:
+    def _normalize_density_nd(self, density: np.ndarray, spacings: list[float], particles: Any = None) -> np.ndarray:
         """
         Put the caller's mass on one reconstructed nD slice; see `_to_caller_mass` (#2181).
 
@@ -2190,7 +2250,7 @@ class FPParticleSolver(BaseFPSolver):
         Returns:
             Normalized density array
         """
-        return self._to_caller_mass(density)
+        return self._to_caller_mass(density, particles=particles)
 
     def _solve_fp_system_gpu(self, m_initial_condition: np.ndarray, U_solution_for_drift: np.ndarray) -> np.ndarray:
         """
@@ -2533,6 +2593,9 @@ class FPParticleSolver(BaseFPSolver):
             particles_list[0] = init_p
         else:
             current_particles[0] = init_p
+        # Slice 0 here is the caller's array and never reaches `_to_caller_mass`, so N_0 is taken
+        # from the particles directly; otherwise the first KDE slice, one absorbing step later, would.
+        self._n_particles_initial = self._count_alive(init_p)
 
         # Issue #1119: preserve_indices bookkeeping. Maintain orig_indices mapping
         # live particles → their original index, and a parallel full-size NaN-marked
@@ -2720,7 +2783,9 @@ class FPParticleSolver(BaseFPSolver):
                 )
 
                 # Restore the caller's mass ALWAYS; correct the KDE's own drift only if asked.
-                M_density_on_grid[t_idx + 1] = self._normalize_density_nd(M_density_on_grid[t_idx + 1], spacings)
+                M_density_on_grid[t_idx + 1] = self._normalize_density_nd(
+                    M_density_on_grid[t_idx + 1], spacings, particles=new_particles
+                )
 
         # Finalize: store trajectory, build history, return result
         # Note: callable drift uses Nt+1 time points (0 to Nt inclusive)

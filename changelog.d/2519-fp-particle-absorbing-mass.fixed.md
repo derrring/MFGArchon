@@ -1,0 +1,9 @@
+- **`FPParticleSolver` returns the density of the surviving particles under an absorbing (DIRICHLET) wall** (Issue #2519). **Behaviour change:** `M` changes for every DIRICHLET particle solve, and in a coupled solve so does the density the HJB receives.
+  - Every slice's reconstruction integrates to about 1 whatever particle count built it, so an absorbing wall that removed 72% of the particles (1-D) or 92% (2-D) returned a density of mass 1.03 or 1.07.
+  - `_to_caller_mass` now multiplies each slice by N_t/N_0. It is the one owner, read by the 1-D CPU, nD CPU and callable-drift paths. The GPU path already refuses absorbing BCs (#1910).
+  - On the absorbing heat mode m0(x) e^{−dDπ²t} the returned mass now tracks e^{−dDπ²t}. A remaining excess of a few percent comes from testing absorption only at step ends, and it falls with dt.
+  - **What a Dirichlet value means on the FP side depends on where the BC comes from** (#2512, convention row 5, new owner `bc_utils.fp_view_of_shared_bc`):
+    - On the shared problem/geometry BC, `DIRICHLET(g)` is an exit (in a coupled solve or a standalone FP solve alike): u = g for the HJB, and the particle FP absorbs (m = 0) there. A nonzero g is the HJB's exit cost, so it constructs; its value is dropped on the FP side by design.
+    - On a BC passed to `FPParticleSolver(boundary_conditions=...)`, `DIRICHLET(g)` is a prescribed density m = g, which particles cannot impose. A nonzero g there is **refused**; before, `value=0.7` solved bit-identically to 0.0.
+    - A provider-valued exit cost on the shared BC (`ConstantProvider(g)`, a state-reading provider) now works with the particle FP; it raised `TypeError` before.
+    - `RegimeSwitchingIterator`'s homogeneous-FP-data guard reads the FP solver's BC (`_fp_boundary_conditions`), which for the particle FP is now the translated one, so a shared exit cost with a particle FP passes it. This was established by reading the code, not by a test.
