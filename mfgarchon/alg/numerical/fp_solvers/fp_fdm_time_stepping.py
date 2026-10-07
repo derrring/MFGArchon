@@ -204,7 +204,8 @@ def _declares_dirichlet(boundary_conditions: Any) -> bool:
     """Could `_is_dirichlet_at_point` answer True anywhere: a uniform Dirichlet, a Dirichlet segment, or a
     DIRICHLET ``default_bc`` fall-through. The matrix assembly gives each such point an identity row; the
     RHS loop gated on segments alone missed the fall-through, which then held its initial value -- 0.0408
-    for an explicit g = 0.7, climbing to 0.5408 under S = 1 (#2531, review 1). Issue #1258 is the earlier
+    for an explicit g = 0.7, climbing to 0.5408 under S = 1 (21 points, dt = 0.05, m0 = exp(-20 (x - 0.6)^2);
+    #2531, review 1). Issue #1258 is the earlier
     instance of the same gap: `_get_bc_type` is None for a mixed BC, and the check read only it."""
     if _get_bc_type(boundary_conditions) == "dirichlet":
         return True
