@@ -46,7 +46,7 @@ def _poisson_1d(N: int, u_exact, f_func, degree: int = 2, gamma: float = 20.0):
     disc = discretization_from_cloud(nodes, delta=3.5 / (N - 1), degree=degree, n_gauss=6)
     K, M = disc.stiffness(), disc.mass()
     bc = _dirichlet_bc({"x_min": float(u_exact(np.array([0.0]))[0]), "x_max": float(u_exact(np.array([1.0]))[0])})
-    N_block, rhs_data = assemble_nitsche_terms(disc, bc, D, gamma, n_gauss=6, include_data=True)
+    N_block, rhs_data = assemble_nitsche_terms(disc, bc, D, gamma, n_gauss=6)
     A = (D * K + N_block).tocsr()
     rhs = M @ f_func(nodes[:, 0])
     if rhs_data is not None:
@@ -84,14 +84,14 @@ class TestNitscheAssembly:
         from mfgarchon.geometry.boundary import no_flux_bc
 
         disc = discretization_from_cloud(np.linspace(0, 1, 21)[:, None], 3.5 / 20, degree=2, n_gauss=4)
-        N_block, rhs = assemble_nitsche_terms(disc, no_flux_bc(dimension=1), D, 20.0, 4, include_data=True)
+        N_block, rhs = assemble_nitsche_terms(disc, no_flux_bc(dimension=1), D, 20.0, 4)
         assert N_block is None
         assert rhs is None
 
     def test_block_symmetric(self):
         disc = discretization_from_cloud(np.linspace(0, 1, 41)[:, None], 3.5 / 40, degree=2, n_gauss=6)
         bc = _dirichlet_bc({"x_min": 0.0, "x_max": 0.0})
-        N_block, _ = assemble_nitsche_terms(disc, bc, D, 20.0, 6, include_data=True)
+        N_block, _ = assemble_nitsche_terms(disc, bc, D, 20.0, 6)
         assert abs(N_block - N_block.T).max() < 1e-10
 
     def test_augmented_operator_spd(self):
@@ -101,12 +101,16 @@ class TestNitscheAssembly:
         assert eigvalsh(0.5 * (Adense + Adense.T)).min() > 0.0  # Dirichlet removes the constant nullspace
 
     def test_hjb_fp_block_identical(self):
-        """The symmetric block is identical for HJB (data) and FP (no data): A_FP = A_HJB^T."""
+        """The block is identical for the HJB (the shared BC, data g) and the FP (the same BC read
+        through the translator, g = 0): A_FP = A_HJB^T, and the FP gets no data load."""
+        from mfgarchon.geometry.boundary.bc_utils import fp_view_of_shared_bc
+
         disc = discretization_from_cloud(np.linspace(0, 1, 41)[:, None], 3.5 / 40, degree=2, n_gauss=6)
-        bc = _dirichlet_bc({"x_min": 0.0})
-        N_hjb, _ = assemble_nitsche_terms(disc, bc, D, 20.0, 6, include_data=True)
-        N_fp, rhs_fp = assemble_nitsche_terms(disc, bc, D, 20.0, 6, include_data=False)
+        bc = _dirichlet_bc({"x_min": 0.7})
+        N_hjb, rhs_hjb = assemble_nitsche_terms(disc, bc, D, 20.0, 6)
+        N_fp, rhs_fp = assemble_nitsche_terms(disc, fp_view_of_shared_bc(bc), D, 20.0, 6)
         assert abs(N_hjb - N_fp).max() == 0.0
+        assert rhs_hjb is not None
         assert rhs_fp is None
 
 
@@ -142,7 +146,7 @@ def _poisson_2d(n: int, gamma: float = 100.0, degree: int = 2):
     disc = discretization_from_cloud(nodes, delta=3.5 / (n - 1), degree=degree, n_gauss=6)
     K, M = disc.stiffness(), disc.mass()
     bc = _dirichlet_bc(dict.fromkeys(("x_min", "x_max", "y_min", "y_max"), 0.0), dim=2)
-    N_block, _ = assemble_nitsche_terms(disc, bc, D, gamma, n_gauss=6, include_data=True)
+    N_block, _ = assemble_nitsche_terms(disc, bc, D, gamma, n_gauss=6)
     f = D * 2.0 * np.pi**2 * np.sin(np.pi * nodes[:, 0]) * np.sin(np.pi * nodes[:, 1])
     U = spsolve((D * K + N_block).tocsr(), M @ f)
     phi_nodes, _ = shape_functions_and_grads(nodes, nodes, disc._rho, disc._exps, "numpy")

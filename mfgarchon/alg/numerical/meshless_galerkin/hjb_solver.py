@@ -24,7 +24,7 @@ import numpy as np
 
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
-from mfgarchon.alg.numerical.meshless_galerkin.nitsche import refuse_an_unread_dirichlet_default
+from mfgarchon.alg.numerical.meshless_galerkin.nitsche import refuse_what_nitsche_cannot_place
 from mfgarchon.alg.numerical.weak_form_hjb_solver import WeakFormHJBSolver
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
@@ -66,7 +66,7 @@ class MeshlessGalerkinHJBSolver(WeakFormHJBSolver):
     ) -> None:
         disc = discretization_from_cloud(collocation_points, delta, degree, n_gauss, backend, domain=domain)
         super().__init__(problem, disc)
-        refuse_an_unread_dirichlet_default(self._bc)
+        refuse_what_nitsche_cannot_place(self._bc)
         self.hjb_method_name = "MeshlessGalerkin"
         self._n_gauss = n_gauss
         self._nitsche_penalty = nitsche_penalty
@@ -124,7 +124,7 @@ class MeshlessGalerkinHJBSolver(WeakFormHJBSolver):
             return self._nitsche_cache
         from mfgarchon.alg.numerical.meshless_galerkin.nitsche import assemble_nitsche_terms
 
-        terms = assemble_nitsche_terms(self._disc, self._bc, D, self._nitsche_penalty, self._n_gauss, include_data=True)
+        terms = assemble_nitsche_terms(self._disc, self._bc, D, self._nitsche_penalty, self._n_gauss)
         self._nitsche_cache = terms
         self._nitsche_cache_D = D
         return terms
