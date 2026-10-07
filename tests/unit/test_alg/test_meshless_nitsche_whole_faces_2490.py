@@ -1,10 +1,12 @@
 """The meshless Nitsche path places conditions on whole faces only, and refuses what it cannot place (#2490).
 
-One predicate, `nitsche._segment_faces`, says which bounding-box faces a segment governs; the Nitsche
-assembly imposes Dirichlet data there and the default-DIRICHLET guard counts coverage with it. Before,
-the assembly stretched a segment restricted to part of a face onto whole faces (a 1-D Dirichlet segment on
-``region={0: (0.5, 1)}`` absorbed 0.6652, the both-walls figure, where x_max alone gives 0.8326), and the
-guard read `BoundaryConditions._segment_covers`, which counts such a segment as covering its face.
+`nitsche._segment_faces` gives the bounding-box faces a segment names; `_dirichlet_faces` gives each Dirichlet
+segment the faces no earlier segment in the BC's priority order claims (ties by declaration order), as
+`get_bc_at_point` reads them. The Nitsche assembly imposes Dirichlet data there, the pair's pure-Neumann
+answer comes from the same placement, and the default-DIRICHLET guard counts coverage with `_segment_faces`.
+Before, the assembly applied a segment whose placement it could not read to every face it named, or to every
+face when it named none (a 1-D Dirichlet segment on ``region={0: (0.5, 1)}`` absorbed 0.6652, the both-walls
+figure, where x_max alone gives 0.8326), and the guard read `BoundaryConditions._segment_covers`.
 """
 
 import pytest
@@ -171,3 +173,37 @@ def test_any_real_scalar_is_a_dirichlet_value(value):
         )
 
     np.testing.assert_array_equal(u(value), u(1.0))
+
+
+def test_equal_priorities_go_by_declaration_order():
+    """Ties are read in declaration order, as `get_bc_at_point` reads them: the first segment naming a
+    face takes it."""
+    no_flux_first = _bc(_nf(boundary="x_max"), _dirichlet(boundary="x_max"))
+    dirichlet_first = _bc(_dirichlet(boundary="x_max"), _nf(boundary="x_max"))
+    assert _fp_mass_ratio(no_flux_first) == pytest.approx(_fp_mass_ratio(no_flux_bc(dimension=1)), abs=1e-12)
+    assert _fp_mass_ratio(dirichlet_first) == pytest.approx(
+        _fp_mass_ratio(_bc(_nf(boundary="x_min"), _dirichlet(boundary="x_max"))), abs=1e-12
+    )
+
+
+@pytest.mark.parametrize(
+    "value", [np.complex128(1j), np.array([1j]), np.array([1 + 5j])], ids=["scalar", "imag", "mixed"]
+)
+def test_a_complex_dirichlet_value_is_refused(value):
+    """`float()` on a NumPy complex drops the imaginary part with only a ComplexWarning; the HJB would have
+    imposed g = 0 for 1j and g = 1 for 1 + 5j (main raised)."""
+    bc = _bc(_nf(boundary="x_min"), BCSegment(name="d", bc_type=BCType.DIRICHLET, value=value, boundary="x_max"))
+    solver = MeshlessGalerkinHJBSolver(_problem(bc), XS, delta=0.35)
+    n = solver.n_dof
+    with pytest.raises(NotImplementedError, match="complex"):
+        solver.solve_hjb_system(
+            M_density=np.ones((5, n)), U_terminal=np.cos(np.pi * XS[:, 0]), U_coupling_prev=np.zeros((5, n))
+        )
+
+
+def test_a_segment_refused_for_outranking_a_dirichlet_one_says_so():
+    """A non-Dirichlet segment is read only because it can take a face from a Dirichlet one; the refusal
+    names that reason, not just its unplaceable boundary name."""
+    bc = _bc(BCSegment(name="inlet", bc_type=BCType.NO_FLUX, boundary="inlet", priority=1), _dirichlet())
+    with pytest.raises(NotImplementedError, match="outranks a Dirichlet segment"):
+        MeshlessGalerkinFPSolver(_problem(bc), XS, delta=0.35)

@@ -122,7 +122,7 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         where a Dirichlet is an exit with value 0 (#2512, convention row 5), so the data load
         is zero and this returns ``(N_nitsche, None)``: absorbing ``m = 0``, decided by the
         translator alone. The block is the HJB's, so ``A_FP = A_HJB^T``. ``(None, None)`` if
-        no Dirichlet segments. Cached on ``D``."""
+        no Dirichlet face is placed. Cached on ``D``."""
         if self._nitsche_cache is not None and self._nitsche_cache_D == D:
             return self._nitsche_cache
         from mfgarchon.alg.numerical.meshless_galerkin.nitsche import assemble_nitsche_terms

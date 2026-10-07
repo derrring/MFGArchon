@@ -69,10 +69,10 @@ def refuse_what_nitsche_cannot_place(bc: BoundaryConditions | None) -> None:
     The terms are assembled at the first solve; this checks at construction what they would read.
 
     - **A Dirichlet segment this path cannot place** (``region``, ``sdf_region``, ``normal_direction``, or
-      a ``region_name`` that is not a face), or one of higher priority than a Dirichlet segment, is refused
-      by `_segment_faces` rather than applied to every face (#2490).
+      a ``region_name`` that is not a face), or any segment it cannot place that outranks a Dirichlet one,
+      is refused by `_segment_faces` rather than dropped (#2490).
     - **A DIRICHLET ``default_bc`` that governs some face** is refused. Nitsche reads only segments
-      (`_dirichlet_faces`, `bc_adapter.is_pure_neumann`), so before this the faces it governed got the
+      (`_dirichlet_faces`, `places_no_dirichlet_face`), so before this the faces it governed got the
       natural condition: a default-DIRICHLET right wall kept all its mass (ratio 1.0000) where the same
       wall as an explicit segment absorbs (0.8326 at 11 points, delta 0.35, sigma 0.3, T 0.5, zero drift)
       (#2512 S4). Coverage is `_segment_faces` too, so a segment it cannot place is refused here rather
@@ -125,7 +125,8 @@ def _segment_faces(segment, d: int) -> list[tuple[int, str]]:
     A face named by ``boundary`` (aliases such as ``"left"`` included) or by a ``region_name`` that is a
     face label maps to that face; ``boundary=None`` or ``"all"`` names every face. A segment carrying
     ``region``, ``sdf_region`` or ``normal_direction`` is refused: this path places conditions by face name
-    and cannot read those fields, and it used to drop them and apply the segment to every face (#2490).
+    and cannot read those fields. It used to drop them, sending a segment with no ``boundary`` to every face
+    and one with a ``boundary`` to that whole face (#2490).
     Measured before: a 1-D Dirichlet segment on ``region={0: (0.5, 1)}`` absorbed 0.6652, the both-walls
     figure, where x_max alone gives 0.8326. A Dirichlet ``sdf_region`` was integrated on its zero level
     set -- for a ball centred on a corner of the unit square, a quarter circle inside the domain.
@@ -149,7 +150,7 @@ def _segment_faces(segment, d: int) -> list[tuple[int, str]]:
         raise NotImplementedError(
             f"Meshless Galerkin: segment {segment.name!r} is placed by {', '.join(restricted)}, which the interim "
             "Nitsche path cannot read -- it places conditions by face name only -- so it is refused rather than "
-            "applied to every face (#2490). Name the face with boundary='x_min' etc."
+            "dropped (#2490). Name the face with boundary='x_min' etc."
         )
     if segment.region_name is not None:
         face = parse_boundary_face(segment.region_name)
@@ -191,7 +192,17 @@ def _dirichlet_faces(bc: BoundaryConditions | None, d: int) -> list[tuple[BCSegm
     claimed: set[tuple[int, str]] = set()
     placed = []
     for seg in segments[: dirichlet_at[-1] + 1]:
-        faces = _segment_faces(seg, d)
+        if seg.bc_type == BCType.DIRICHLET:
+            faces = _segment_faces(seg, d)
+        else:
+            try:
+                faces = _segment_faces(seg, d)
+            except NotImplementedError as exc:
+                raise NotImplementedError(
+                    f"Meshless Galerkin: segment {seg.name!r} outranks a Dirichlet segment in the BC's priority order, "
+                    "so the faces it claims decide where the Dirichlet one applies, and this path cannot place it "
+                    f"(#2490): {exc}"
+                ) from exc
         if seg.bc_type == BCType.DIRICHLET:
             placed.append((seg, [face for face in faces if face not in claimed]))
         claimed.update(faces)
@@ -233,6 +244,12 @@ def _evaluate_g(value, x_b: NDArray) -> NDArray:
 
     from mfgarchon.geometry.boundary.bc_utils import _describe_bc_value
 
+    if np.iscomplexobj(value):
+        # `float()` on a NumPy complex drops the imaginary part with only a ComplexWarning, and
+        # `_describe_bc_value` reads 1j as zero that way: refused, not truncated.
+        raise NotImplementedError(
+            f"Dirichlet value {value!r} is complex; the meshless Nitsche path takes a real g (#2490)."
+        )
     if _describe_bc_value(value) is None:
         return np.zeros(x_b.shape[0])
     if isinstance(value, numbers.Real) or (isinstance(value, np.ndarray) and value.size == 1):
@@ -265,7 +282,7 @@ def assemble_nitsche_terms(
         ``(N, rhs)``: ``N`` the ``(n_dof, n_dof)`` sparse block to ADD to
         ``M/dt + D*K``; ``rhs`` the ``(n_dof,)`` Dirichlet-data load, or ``None`` when every value is
         zero -- the FP's case, whose shared Dirichlet the translator has set to the absorbing ``g = 0``.
-        ``(None, None)`` if there are no Dirichlet segments.
+        ``(None, None)`` if no Dirichlet face is placed (`_dirichlet_faces`).
     """
     placed = [(seg, faces) for seg, faces in _dirichlet_faces(bc, disc.dim) if faces]
     if not placed:

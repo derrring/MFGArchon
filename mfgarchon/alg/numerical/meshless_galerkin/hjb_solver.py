@@ -117,7 +117,7 @@ class MeshlessGalerkinHJBSolver(WeakFormHJBSolver):
         """Symmetric Nitsche Dirichlet terms ``u = g`` for the HJB diffusion block.
 
         Returns ``(N_nitsche, rhs_data)`` to add to ``M/dt + D*K`` and the RHS, or
-        ``(None, None)`` if no Dirichlet segments are present (then the natural
+        ``(None, None)`` if no Dirichlet face is placed (then the natural
         Neumann/no-flux path is used). Cached: the block depends only on ``D``, which
         is constant across a solve."""
         if self._nitsche_cache is not None and self._nitsche_cache_D == D:
