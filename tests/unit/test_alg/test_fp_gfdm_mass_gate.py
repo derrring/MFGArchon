@@ -312,8 +312,9 @@ def test_refining_the_timestep_silences_the_gate_while_the_answer_gets_worse():
 # =============================================================================
 #
 # The conserved quantity is the integral of m with the geometry's measure, checked only when the
-# collocation points are the grid's nodes. An unweighted sum is a different functional: on an exact
-# solution its drift reached 1.75% at 21 uniform points, and the first version of this gate measured it.
+# collocation points are the grid's nodes. An unweighted sum is a different functional: on the exact mode
+# 1 + 0.5 cos(2 pi x) e^{-D (2 pi)^2 t} it drifts 1.37% at 21 uniform points (trapezoid: 3e-16), and the
+# first version of this gate measured it. On other points only a gross blow-up check runs.
 
 
 def _diffusion_solver(n_x, n_t, *, points=None, **solver_kw):
@@ -350,8 +351,9 @@ def test_a_drifting_solve_stops_at_the_first_step_past_the_tolerance():
 
 
 def test_a_conserving_configuration_passes():
-    """Not symmetric about x = 1/2, so the boundary stencils on the two walls do not cancel: cos(2 pi x),
-    pure diffusion, 41 points, drifts 0.44% (1.08% at 21 points, 0.20% at 81 -- O(h))."""
+    """cos(2 pi x) is symmetric about x = 1/2, so the boundary-stencil leaks at the two walls add rather
+    than cancel (an antisymmetric mode such as cos(pi x) conserves by symmetry alone). Pure diffusion,
+    41 points: 0.44% (1.08% at 21 points, 0.20% at 81 -- O(h))."""
     grid, x, solver = _diffusion_solver(41, 160)
     m0 = 1 + 0.5 * np.cos(2 * np.pi * x)
     m0 /= grid.integrate(m0)
@@ -381,19 +383,99 @@ def test_a_source_that_moves_the_mass_is_not_stopped():
     assert grid.integrate(result[-1]) > 1.03, "the source should have added mass"
 
 
-def test_on_scattered_points_the_check_is_not_performed_and_says_so(mfg_caplog):
-    """No measure, so no mass check and no drift warning of the wrong functional -- once, a statement."""
+def test_on_scattered_points_only_the_gross_check_runs_and_it_is_said_once(mfg_caplog):
+    """No measure, so no conservation check -- said once, at construction, not once per solve."""
     import logging
 
     rng = np.random.default_rng(0)
     points = np.sort(np.concatenate([[0.0, 1.0], rng.uniform(0.02, 0.98, 19)]))
-    _, x, solver = _diffusion_solver(21, 40, points=points)
-    m0 = np.exp(-50 * (x - 0.3) ** 2)
     with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.fp_solvers.fp_gfdm"):
+        _, x, solver = _diffusion_solver(21, 40, points=points)
+        m0 = np.exp(-50 * (x - 0.3) ** 2)
         solver.solve_fp_system(m0, np.zeros((41, 21)))
-    messages = [m for m in mfg_caplog.messages if "mass" in m]
+        solver.solve_fp_system(m0, np.zeros((41, 21)))
+    messages = [m for m in mfg_caplog.messages if "measure" in m]
     assert len(messages) == 1, messages
-    assert "not performed" in messages[0]
+    assert "gross blow-up check" in messages[0]
+
+
+def _blowup(**solver_kw):
+    """Review 2 of #2526: 21 nodes jittered by 1e-3, sigma 0.1, drift 25 (x - 1/2)^2, Nt = 2560. Left to
+    run (mass_drift="warn") it returns a density of sum|m| 2.53e+09 x the initial, finite and positive."""
+    n, n_t = 21, 2560
+    x = np.linspace(0, 1, n)
+    x[1:-1] += 1e-3 * np.random.default_rng(0).uniform(-1, 1, n - 2)
+    solver = FPGFDMSolver(_build(0.1, Nt=n_t).problem, collocation_points=x.reshape(-1, 1), **solver_kw)
+    m0 = np.exp(-30 * (x - 0.5) ** 2)
+    return solver, m0 / m0.sum(), np.tile(25.0 * (x - 0.5) ** 2, (n_t + 1, 1))
+
+
+def test_a_blow_up_on_scattered_points_is_stopped_by_the_gross_check():
+    solver, m0, drift = _blowup()
+    with pytest.raises(ValueError, match="outside the gross band"):
+        solver.solve_fp_system(m0, drift)
+
+
+def test_in_warn_mode_the_gross_check_warns_and_returns(mfg_caplog):
+    import logging
+
+    solver, m0, drift = _blowup(mass_drift="warn")
+    with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.fp_solvers.fp_gfdm"):
+        solver.solve_fp_system(m0, drift)
+    assert any("gross blow-up check" in m and "Not a conservation check" in m for m in mfg_caplog.messages)
+
+
+def test_an_exact_mode_on_a_strongly_non_uniform_cloud_passes_the_gross_check():
+    """Spacing ratio 3.73 (x = (4^s - 1)/3): the unweighted sum|m| moves only to 0.976 of its start, far
+    inside [0.1, 10], so the band does not false-alarm the weight spread of an adaptive cloud."""
+    s_ = np.linspace(0, 1, 21)
+    points = (np.exp(np.log(4.0) * s_) - 1) / 3.0
+    _, x, solver = _diffusion_solver(21, 200, points=points)
+    solver.solve_fp_system(1 + 0.5 * np.cos(2 * np.pi * x), np.zeros((201, 21)))
+
+
+def test_the_2d_measure_is_the_geometrys_own_integral():
+    """C-order points on an 11 x 7 grid: the measure is geometry.integrate on the reshaped array, and on
+    a field asymmetric in both axes it equals the nested trapezoid. Square cells, so no stencil degenerates."""
+    from mfgarchon.geometry.boundary import no_flux_bc as nf
+
+    grid = TensorProductGrid(bounds=[(0.0, 1.0), (0.0, 0.6)], Nx_points=[11, 7], boundary_conditions=nf(dimension=2))
+    problem = MFGProblem(
+        geometry=grid,
+        Nt=4,
+        T=T,
+        volatility=0.3,
+        components=MFGComponents(
+            m_initial=lambda x, y: np.full_like(np.asarray(x, dtype=float), 1 / 0.6),
+            u_terminal=lambda x, y: 0.0,
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
+        ),
+    )
+    X, Y = np.meshgrid(*grid.coordinates, indexing="ij")
+    solver = FPGFDMSolver(problem, collocation_points=np.column_stack([X.ravel(), Y.ravel()]))
+    f = np.exp(X) * (1 + Y**2)
+    nested = np.trapezoid(np.trapezoid(f, grid.coordinates[1], axis=1), grid.coordinates[0])
+    assert solver._mass_measure is not None
+    assert solver._mass_measure(f.ravel()) == pytest.approx(nested, rel=1e-12)
+
+
+def test_the_remedy_does_not_tell_a_stabilised_solve_to_stabilise_either():
+    """The mass-drift remedy follows upwind_scheme, as the clip gate's does."""
+    m0, drift = _inputs(5.0)
+    with pytest.raises(ValueError) as exc:
+        _build(0.3, upwind_scheme="linear").solve_fp_system(m0, drift)
+    message = str(exc.value)
+    assert "upwind_scheme='linear' reduces the leak without removing it" in message
+    assert "'linear' or 'exponential' reduces" not in message
+
+
+def test_the_1822_surface_runs_fp_gfdm_in_warn_mode():
+    """That surface measures the BC residual; an xfail(raises=ValueError) there cannot tell this gate
+    from the clip gate, so the kwarg it injects is pinned here."""
+    from test_periodic_capability_invariant_1822 import _solver_kwargs
+
+    kwargs = _solver_kwargs(FPGFDMSolver, np.linspace(0.0, 1.0, 11), 11)
+    assert kwargs.get("mass_drift") == "warn"
 
 
 def test_a_non_finite_density_stops_whatever_mass_drift_says():

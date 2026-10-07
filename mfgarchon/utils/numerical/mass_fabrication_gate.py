@@ -115,10 +115,12 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 __all__ = [
+    "GROSS_MASS_CHANGE_BAND",
     "MAX_CLIP_MASS_FABRICATION",
     "MAX_CONSERVED_MASS_DRIFT",
     "clip_nonnegative_or_raise",
     "mass_fabricated_by_clip",
+    "stop_on_gross_mass_change",
     "stop_on_mass_drift",
 ]
 
@@ -227,3 +229,39 @@ def stop_on_mass_drift(
             f"solve is stopped rather than returning a density with that mass. {remedy}"
         )
     return drift
+
+
+#: The band for `stop_on_gross_mass_change`: a factor of 10 each way. For a non-negative density an
+#: unweighted ratio can differ from the true one by the cloud's quadrature-weight spread (max w / min w),
+#: which adaptive clouds put well above 2; the check exists for catastrophes (its pinned specimen reaches
+#: 2.53e+09), and
+#: a factor of 10 still catches those at the first step past it.
+GROSS_MASS_CHANGE_BAND = (0.1, 10.0)
+
+
+def stop_on_gross_mass_change(
+    total: float,
+    total_initial: float,
+    *,
+    step: int,
+    context: str,
+    remedy: str,
+    band: tuple[float, float] = GROSS_MASS_CHANGE_BAND,
+) -> float:
+    """Stop a solve whose density blows up or vanishes where no measure exists to check conservation.
+
+    A gross check, not a conservation check: ``total`` is sum|m| over points with no quadrature
+    weights, so it is compared only against a wide band. ``sum|m|`` and not ``sum m``, because a
+    sign-indefinite density can cancel in a plain sum and hide growth (#1683). Returns the ratio.
+    """
+    if not total_initial > 0:
+        return 1.0
+    ratio = float(total) / float(total_initial)
+    low, high = band
+    if not low <= ratio <= high:
+        raise ValueError(
+            f"{context}: sum|m| changed by a factor {ratio:.3g} at step {step}, outside the gross band "
+            f"[{low:.3g}, {high:.3g}]. This is a gross blow-up check, not a conservation check: there is no "
+            f"measure on these points to check the mass with. {remedy}"
+        )
+    return ratio
