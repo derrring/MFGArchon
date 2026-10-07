@@ -1,10 +1,21 @@
-- **`FPGFDMSolver` stops a solve whose mass drifts where the problem conserves it** (#2512 S5, #1752). **Behaviour change:** the end-of-solve mass-drift WARNING is now an error by default.
-  - The mass is the integral with the geometry's measure, checked only when the collocation points are the grid's nodes and there is no source term. With its declared BCs (no-flux, homogeneous Neumann) the problem conserves mass exactly then.
-  - The solve raises at the first step where |m_t/m_0 − 1| exceeds `mass_drift_tolerance` (default 1e-2), naming the step and the mass ratio. `mass_drift="warn"` keeps the solve going and logs the worst drift.
-  - On scattered collocation points there is no measure, so no conservation check is made; only a gross blow-up check runs, stopping the solve when sum|m| leaves [0.1, 10] times its initial value. Construction says so once. The unweighted sum is not the conserved quantity: on the exact mode 1 + 0.5 cos(2πx) e^{−D(2π)²t} it drifts 1.37% at 21 uniform points, where the trapezoid holds to 3e-16.
+- **`FPGFDMSolver` stops a solve whose mass leaves its budget** (#2512 S5, #1752). **Behaviour change:** the end-of-solve mass-drift WARNING is now an error by default.
+  - **The budget.** With the solver's declared BCs (no-flux, homogeneous Neumann), only a source moves the mass: d/dt ∫m = ∫S.
+    - The budget is the initial mass plus the source the solve added, summed by its own forward-Euler rule (S at t_k, times dt).
+    - The drift is |mass − budget| / (initial mass + the |source| added). Without a source this is |m_t/m_0 − 1|.
+    - The solve raises at the first step where the drift exceeds `mass_drift_tolerance` (default 1e-2), naming the step.
+    - `mass_drift="warn"` keeps the solve going and logs the worst drift.
+  - **Grid nodes.** The mass is the integral with the geometry's measure. It is used only when the collocation points are the grid's nodes in C order.
+  - **Other points.** There is no measure, so no budget check is made. Construction says so once. Only a gross blow-up check on sum|m| runs:
+    - Without a source it stops the solve when sum|m| leaves [0.1, 10] times its initial value.
+    - With a source, only the upper bound applies, against sum|m_0| plus the |source| added, because a source may legitimately drain the mass.
+    - The unweighted sum is not the conserved quantity: on the exact mode 1 + 0.5 cos(2πx) e^{−D(2π)²t} it drifts 1.37% at 21 uniform points, where the trapezoid holds to 3e-16.
   - A non-finite density raises, whatever `mass_drift` is set to.
-  - **Where it passes and where it does not, at zero drift, σ = 0.3, T = 0.5:**
-    - cos(2πx) drifts 1.08% / 0.44% / 0.20% at 21 / 41 / 81 points, so it passes from 41.
-    - A bump at x = 0.3 loses 3.3% / 2.6% / 2.7%, so it raises at every resolution measured.
+  - **Where it passes and where it does not.** Zero drift, σ = 0.3, T = 0.5, grid nodes:
+    - 1-D, Nt = 40 / 160 / 640 at 21 / 41 / 81 points:
+      - cos(πx), antisymmetric about ½, so the wall leaks cancel: 4e-12 / 1e-12 / 7e-13.
+      - cos(2πx), symmetric, so they add: 1.075% / 0.44% / 0.20%. It passes from 41 points.
+      - A bump at x = 0.3 loses 3.3% / 2.6% / 2.7%, so it raises at every resolution measured.
+    - 2-D, a Gaussian exp(−20|x − c|²) at the centre of the unit square: 2.6% / 0.14% / 1.5% at 11² / 21² / 41², independent of Nt. It raises at 11² and 41².
     - With a drift field, the configuration whose mass grows 144% (179% in the unweighted sum) raises at step 4.
-  - The operator does not conserve mass (#1752 keeps the real fix). The check is `stop_on_mass_drift` beside the clip gate in `utils/numerical/mass_fabrication_gate.py`; other FP schemes can opt in.
+  - **Sources do not switch the check off.** Review 3 of the PR found that an exemption for "has a source" silenced every check, where main warned. Real callers pass one: graph MFG, the regime-switching iterator, and `mfg_residual`.
+  - The operator does not conserve mass (#1752 keeps the real fix). The checks are `stop_on_mass_drift` and `stop_on_gross_mass_change`, beside the clip gate in `utils/numerical/mass_fabrication_gate.py`; other FP schemes can opt in.

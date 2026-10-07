@@ -36,6 +36,7 @@ from mfgarchon.utils.numerical import (
     GROSS_MASS_CHANGE_BAND,
     MAX_CONSERVED_MASS_DRIFT,
     clip_nonnegative_or_raise,
+    gross_mass_excursion,
     stop_on_gross_mass_change,
     stop_on_mass_drift,
 )
@@ -147,14 +148,17 @@ class FPGFDMSolver(BaseFPSolver):
                 infrastructure. Takes precedence over boundary_type string.
             upwind_scheme: Upwind stabilization scheme ("none", "exponential", "linear")
             upwind_strength: Upwind bias parameter β (typically 0.3-1.0)
-            mass_drift: ``"raise"`` (default) stops the solve at the first step whose mass drifts by more
-                than ``mass_drift_tolerance`` from the initial mass, when no source term is given -- the
-                only case this solver's declared BCs (no-flux, homogeneous Neumann) conserve mass in.
-                ``"warn"`` keeps the solve going and logs the worst drift at the end (#2512 S5, #1752).
-                The mass is the geometry's own measure, so conservation is checked only when the
+            mass_drift: ``"raise"`` (default) stops the solve at the first step whose mass leaves its
+                budget by more than ``mass_drift_tolerance``; ``"warn"`` keeps the solve going and logs
+                the worst excursion at the end (#2512 S5, #1752). With this solver's declared BCs
+                (no-flux, homogeneous Neumann) only a source moves the mass, so the budget is the
+                initial mass plus the source the solve added, by its own forward-Euler rule.
+                The mass is the geometry's own measure, so the budget is checked only when the
                 collocation points are the grid's nodes (C order). On other points there is no measure:
-                only a gross blow-up check on sum|m| runs, against the band ``GROSS_MASS_CHANGE_BAND``.
-            mass_drift_tolerance: Tolerance on |m_t / m_0 - 1| for ``mass_drift="raise"``.
+                only a gross blow-up check on sum|m| runs, against the band ``GROSS_MASS_CHANGE_BAND``
+                -- both bounds without a source, only the upper one (against sum|m_0| plus the |source|
+                added) with one, since a source may drain the mass. A non-finite density raises always.
+            mass_drift_tolerance: Tolerance on |mass - budget| / (initial mass + |source| added).
 
         BC Resolution Order:
             1. Explicit boundary_conditions parameter
@@ -252,8 +256,8 @@ class FPGFDMSolver(BaseFPSolver):
 
             get_logger(__name__).warning(
                 "FPGFDMSolver: the collocation points are not the grid's nodes in C (ij) order, so there is "
-                "no measure to check mass conservation with; only a gross blow-up check on sum|m| runs (band "
-                "%s). This operator does not conserve mass (Issue #1752).",
+                "no measure to check the mass with; only a gross blow-up check on sum|m| runs (band %s; "
+                "under a source term only its upper bound). This operator does not conserve mass (Issue #1752).",
                 GROSS_MASS_CHANGE_BAND,
             )
 
@@ -656,11 +660,15 @@ class FPGFDMSolver(BaseFPSolver):
         # The conserved quantity is the integral of m, so the drift is measured with the geometry's own
         # measure. An unweighted sum is a different functional: on the exact mode 1 + 0.5 cos(2 pi x)
         # e^{-D (2 pi)^2 t} it drifts 1.37% at 21 uniform points while the trapezoid holds to 3e-16 (#2512
-        # S5). Mass is conserved only without a source term.
+        # S5). Only the source moves the mass under the declared BCs: d/dt (integral of m) = integral of S, so
+        # the budget sums dt * measure(S_k) at the level the update adds S_k (t_k, forward Euler), and the
+        # scale sums dt * measure(|S_k|). An exemption for "has a source" silenced every check where main
+        # warned (#2526 review 3).
         measure = self._mass_measure
-        conserving = source_term is None
-        mass_initial = measure(m_init) if conserving and measure is not None else 0.0
-        gross_initial = float(np.sum(np.abs(m_init))) if conserving and measure is None else 0.0
+        mass_initial = measure(m_init) if measure is not None else 0.0
+        gross_initial = float(np.sum(np.abs(m_init))) if measure is None else 0.0
+        source_added = 0.0
+        source_scale = 0.0
         max_mass_drift = 0.0
         max_mass_drift_t_idx = 0
         worst_gross = (1.0, 0)
@@ -730,6 +738,11 @@ class FPGFDMSolver(BaseFPSolver):
                         f"shape (N, d) taken from the collocation points."
                     )
                 dm_dt = dm_dt + s_values
+                if measure is not None:
+                    source_added += dt * measure(s_values)
+                    source_scale += dt * measure(np.abs(s_values))
+                else:
+                    source_scale += dt * float(np.sum(np.abs(s_values)))
             M_solution[t_idx + 1, :] = m_current + dt * dm_dt
             if not np.all(np.isfinite(M_solution[t_idx + 1, :])):
                 raise ValueError(
@@ -738,6 +751,7 @@ class FPGFDMSolver(BaseFPSolver):
                 )
             if gross_initial > 0:
                 gross = float(np.sum(np.abs(M_solution[t_idx + 1, :])))
+                gross_source = source_scale if source_term is not None else None
                 if self.mass_drift == "raise":
                     stop_on_gross_mass_change(
                         gross,
@@ -745,11 +759,12 @@ class FPGFDMSolver(BaseFPSolver):
                         step=t_idx + 1,
                         context="GFDM FP solve",
                         remedy=drift_remedy + " Pass mass_drift='warn' to keep the density.",
+                        source_added=gross_source,
                     )
-                ratio = gross / gross_initial
-                low, high = GROSS_MASS_CHANGE_BAND
-                if not low <= ratio <= high and abs(np.log(ratio)) > abs(np.log(worst_gross[0])):
-                    worst_gross = (ratio, t_idx + 1)
+                excursion = gross_mass_excursion(gross, gross_initial, source_added=gross_source)
+                # Farthest from the band in either direction: a vanishing density is as bad as a growing one.
+                if excursion is not None and abs(np.log(excursion)) > abs(np.log(worst_gross[0])):
+                    worst_gross = (excursion, t_idx + 1)
 
             # Issue #1683: this clipped, then renormalised to the initial mass, and warned
             # only above 1% drift. Every configuration therefore returned a final mass of
@@ -792,21 +807,20 @@ class FPGFDMSolver(BaseFPSolver):
                     "what binds here."
                 ),
             )
-            if conserving and measure is not None:
-                mass_current = measure(M_solution[t_idx + 1, :])
-                if self.mass_drift == "raise":
-                    stop_on_mass_drift(
-                        mass_current,
-                        mass_initial,
-                        step=t_idx + 1,
-                        tolerance=self.mass_drift_tolerance,
-                        context="GFDM FP solve",
-                        remedy=drift_remedy + raise_suffix,
-                    )
-                if mass_initial > 0:
-                    step_drift = abs(mass_current - mass_initial) / mass_initial
-                    if step_drift > max_mass_drift:
-                        max_mass_drift, max_mass_drift_t_idx = step_drift, t_idx + 1
+            if measure is not None:
+                # One owner of the drift: under "warn" the same function measures it and never raises.
+                step_drift = stop_on_mass_drift(
+                    measure(M_solution[t_idx + 1, :]),
+                    mass_initial,
+                    step=t_idx + 1,
+                    tolerance=self.mass_drift_tolerance if self.mass_drift == "raise" else np.inf,
+                    context="GFDM FP solve",
+                    remedy=drift_remedy + raise_suffix,
+                    source_added=source_added,
+                    source_scale=source_scale,
+                )
+                if step_drift > max_mass_drift:
+                    max_mass_drift, max_mass_drift_t_idx = step_drift, t_idx + 1
 
         # Issue #1752: the clip gate cannot catch a divergence that stays positive -- it measures
         # fabricated mass as a RATIO of the mass present, which is scale-invariant. Measured:
@@ -816,17 +830,19 @@ class FPGFDMSolver(BaseFPSolver):
         # so it cannot stay at DEBUG, where it once hid a 144% drift on a run that clips nothing.
         if max_mass_drift > 1e-6:
             _logger.warning(
-                "GFDM FP mass drift %.2e (worst at t_idx=%d), measured with the geometry's measure on a "
-                "problem that conserves mass. %s The returned density carries the drift rather than "
-                "being rescaled to hide it.",
+                "GFDM FP mass drift %.2e (worst at t_idx=%d), measured with the geometry's measure against "
+                "the budget: the initial mass plus the source the solve added, the only thing that moves the "
+                "mass under the declared BCs. %s The returned density carries the drift rather than being "
+                "rescaled to hide it.",
                 max_mass_drift,
                 max_mass_drift_t_idx,
                 drift_remedy,
             )
         if worst_gross[1]:
             _logger.warning(
-                "GFDM FP gross blow-up check: sum|m| changed by a factor %.3g (worst at t_idx=%d), outside %s. "
-                "Not a conservation check -- these points carry no measure. %s",
+                "GFDM FP gross blow-up check: sum|m| left its band by a factor %.6g (worst at t_idx=%d; band %s, "
+                "under a source the upper bound only, against sum|m_0| plus the |source| added). Not a "
+                "conservation check -- these points carry no measure. %s",
                 worst_gross[0],
                 worst_gross[1],
                 GROSS_MASS_CHANGE_BAND,

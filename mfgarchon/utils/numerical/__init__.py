@@ -81,6 +81,7 @@ from mfgarchon.utils.numerical.mass_fabrication_gate import (
     MAX_CLIP_MASS_FABRICATION,
     MAX_CONSERVED_MASS_DRIFT,
     clip_nonnegative_or_raise,
+    gross_mass_excursion,
     mass_fabricated_by_clip,
     stop_on_gross_mass_change,
     stop_on_mass_drift,
@@ -142,6 +143,7 @@ __all__ = [
     "MAX_CONSERVED_MASS_DRIFT",
     "stop_on_mass_drift",
     "GROSS_MASS_CHANGE_BAND",
+    "gross_mass_excursion",
     "stop_on_gross_mass_change",
     "SolverInfo",
     # Particle interpolation (from particle submodule)

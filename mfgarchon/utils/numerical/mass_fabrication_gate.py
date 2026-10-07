@@ -119,6 +119,7 @@ __all__ = [
     "MAX_CLIP_MASS_FABRICATION",
     "MAX_CONSERVED_MASS_DRIFT",
     "clip_nonnegative_or_raise",
+    "gross_mass_excursion",
     "mass_fabricated_by_clip",
     "stop_on_gross_mass_change",
     "stop_on_mass_drift",
@@ -203,30 +204,40 @@ def stop_on_mass_drift(
     tolerance: float,
     context: str,
     remedy: str,
+    source_added: float = 0.0,
+    source_scale: float = 0.0,
 ) -> float:
-    """Stop a solve whose mass has drifted where the problem conserves it (#2512 S5).
+    """Stop a solve whose mass has left its budget (#2512 S5).
 
     `clip_nonnegative_or_raise` cannot see a solve that blows up while staying positive: it measures
     fabricated mass as a ratio of the mass present, so it is scale-invariant (#1752 measured a finite,
     non-negative density of mass 2.55e+09 that it passed). This checks the other invariant, the total.
 
-    Call it only where the continuous problem conserves mass -- zero-flux walls, no source, nothing
-    absorbing. Under a flux, a source or an absorbing wall the mass moves legitimately, and stopping
-    there would fail a correct solve; deciding that is the caller's, which knows its BCs and source.
+    The law is d/dt (integral of m) = integral of S. The budget is ``mass_initial + source_added``, where
+    ``source_added`` is the source the caller's integrator actually added, summed by the integrator's own
+    rule (time level, dt); with no source it is the initial mass. The drift is measured against
+    ``mass_initial + source_scale``, the same sum over |S|, so a source that drains the mass toward zero
+    is not divided by a vanishing number.
 
-    ``mass`` must be the conserved functional -- the integral with the domain's measure, not an
-    unweighted sum, whose drift on an exact solution can exceed any useful tolerance (#2512 S5). A
-    non-finite mass raises. With ``mass_initial <= 0`` there is nothing to compare against and the
-    check returns 0.0. Returns the drift |mass/mass_initial - 1|.
+    Call it only where nothing else moves the mass -- zero-flux walls, nothing absorbing; deciding that
+    is the caller's, which knows its BCs. ``mass`` must be the integral with the domain's measure, not an
+    unweighted sum, whose drift on an exact solution can exceed any useful tolerance (#2512 S5). With a
+    scale <= 0 there is nothing to compare against and the check returns 0.0. Returns the drift.
     """
-    if mass_initial <= 0:
+    scale = float(mass_initial) + float(source_scale)
+    if not scale > 0:
         return 0.0
-    drift = abs(float(mass) / float(mass_initial) - 1.0)
+    budget = float(mass_initial) + float(source_added)
+    drift = abs(float(mass) - budget) / scale
     if not drift <= tolerance:
+        if source_scale:
+            what = f"mass {float(mass):.6g} against its budget {budget:.6g} (initial mass plus the source added)"
+        else:
+            what = f"mass ratio {float(mass) / float(mass_initial):.6g}"
         raise ValueError(
-            f"{context}: mass ratio {float(mass) / float(mass_initial):.6g} at step {step} "
-            f"(|drift| {drift:.3e} > tolerance {tolerance:.3g}) on a problem that conserves mass, so the "
-            f"solve is stopped rather than returning a density with that mass. {remedy}"
+            f"{context}: {what} at step {step} (|drift| {drift:.3e} of {scale:.6g} > tolerance {tolerance:.3g}), "
+            f"where only the source moves the mass, so the solve is stopped rather than returning a density "
+            f"with that mass. {remedy}"
         )
     return drift
 
@@ -234,9 +245,32 @@ def stop_on_mass_drift(
 #: The band for `stop_on_gross_mass_change`: a factor of 10 each way. For a non-negative density an
 #: unweighted ratio can differ from the true one by the cloud's quadrature-weight spread (max w / min w),
 #: which adaptive clouds put well above 2; the check exists for catastrophes (its pinned specimen reaches
-#: 2.53e+09), and
-#: a factor of 10 still catches those at the first step past it.
+#: 2.53e+09), and a factor of 10 still catches those at the first step past it.
 GROSS_MASS_CHANGE_BAND = (0.1, 10.0)
+
+
+def gross_mass_excursion(
+    total: float,
+    total_initial: float,
+    *,
+    band: tuple[float, float] = GROSS_MASS_CHANGE_BAND,
+    source_added: float | None = None,
+) -> float | None:
+    """The factor by which sum|m| left its band, or None while it is inside.
+
+    Without a source (``source_added is None``) the band is two-sided around ``total_initial``. Under a
+    source the mass may legitimately drain, so only the upper bound applies, against ``total_initial +
+    source_added`` -- the sum of dt * sum|S_k| the solve added. ``sum|m|`` and not ``sum m``, because a
+    sign-indefinite density can cancel in a plain sum and hide growth (#1683).
+    """
+    reference = float(total_initial) + (float(source_added) if source_added is not None else 0.0)
+    if not reference > 0:
+        return None
+    ratio = float(total) / reference
+    low, high = band
+    if ratio > high or (source_added is None and ratio < low):
+        return ratio
+    return None
 
 
 def stop_on_gross_mass_change(
@@ -247,21 +281,22 @@ def stop_on_gross_mass_change(
     context: str,
     remedy: str,
     band: tuple[float, float] = GROSS_MASS_CHANGE_BAND,
-) -> float:
-    """Stop a solve whose density blows up or vanishes where no measure exists to check conservation.
-
-    A gross check, not a conservation check: ``total`` is sum|m| over points with no quadrature
-    weights, so it is compared only against a wide band. ``sum|m|`` and not ``sum m``, because a
-    sign-indefinite density can cancel in a plain sum and hide growth (#1683). Returns the ratio.
-    """
-    if not total_initial > 0:
-        return 1.0
-    ratio = float(total) / float(total_initial)
+    source_added: float | None = None,
+) -> None:
+    """Stop a solve whose density blows up -- or, with no source, vanishes -- where no measure exists to
+    check the mass with. A gross check, not a conservation check: see `gross_mass_excursion`."""
+    ratio = gross_mass_excursion(total, total_initial, band=band, source_added=source_added)
+    if ratio is None:
+        return
     low, high = band
-    if not low <= ratio <= high:
-        raise ValueError(
-            f"{context}: sum|m| changed by a factor {ratio:.3g} at step {step}, outside the gross band "
-            f"[{low:.3g}, {high:.3g}]. This is a gross blow-up check, not a conservation check: there is no "
-            f"measure on these points to check the mass with. {remedy}"
+    if source_added is None:
+        what = f"sum|m| changed by a factor {ratio:.6g} at step {step}, outside the gross band [{low:.6g}, {high:.6g}]"
+    else:
+        what = (
+            f"sum|m| reached {ratio:.6g} times sum|m_0| plus the |source| added at step {step}, above the gross "
+            f"bound {high:.6g}"
         )
-    return ratio
+    raise ValueError(
+        f"{context}: {what}. This is a gross blow-up check, not a conservation check: there is no measure on "
+        f"these points to check the mass with. {remedy}"
+    )

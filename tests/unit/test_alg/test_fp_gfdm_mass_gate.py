@@ -353,7 +353,7 @@ def test_a_drifting_solve_stops_at_the_first_step_past_the_tolerance():
 def test_a_conserving_configuration_passes():
     """cos(2 pi x) is symmetric about x = 1/2, so the boundary-stencil leaks at the two walls add rather
     than cancel (an antisymmetric mode such as cos(pi x) conserves by symmetry alone). Pure diffusion,
-    41 points: 0.44% (1.08% at 21 points, 0.20% at 81 -- O(h))."""
+    41 points, Nt 160: 0.44% (1.075% at 21 / Nt 40, 0.20% at 81 / Nt 640 -- O(h))."""
     grid, x, solver = _diffusion_solver(41, 160)
     m0 = 1 + 0.5 * np.cos(2 * np.pi * x)
     m0 /= grid.integrate(m0)
@@ -363,7 +363,8 @@ def test_a_conserving_configuration_passes():
 
 def test_a_density_that_leaks_mass_stops():
     """The operator leaks at the boundary stencil even without drift, and not always at O(h): a bump at
-    x = 0.3 loses 2.7% at 81 points (3.3% at 21, 2.6% at 41). A LOSS, so the gate must take |drift|."""
+    x = 0.3 loses 2.7% at 81 points (3.3% at 21, 2.6% at 41; Nt 640 / 40 / 160). A LOSS, so the gate
+    must take |drift|."""
     grid, x, solver = _diffusion_solver(81, 640)
     m0 = np.exp(-50 * (x - 0.3) ** 2)
     m0 /= grid.integrate(m0)
@@ -372,15 +373,47 @@ def test_a_density_that_leaks_mass_stops():
 
 
 def test_a_source_that_moves_the_mass_is_not_stopped():
-    """Mass is conserved only without a source, so the gate does not apply with one: a constant
-    source adds T*S*|domain| of mass on purpose, and stopping that would fail a correct solve."""
+    """Under a source the law is d/dt (integral of m) = integral of S: a constant source adds T*S*|domain|
+    of mass on purpose, and the budget counts it, so a correct solve passes and lands on the budget."""
     grid, x, solver = _diffusion_solver(21, 40)
     m0 = 1 + 0.5 * np.cos(np.pi * x)
     m0 /= grid.integrate(m0)
     result = solver.solve_fp_system(
         m0, np.zeros((41, 21)), source_term=lambda t, xx: np.full(np.asarray(xx).shape[0], 0.1)
     )
-    assert grid.integrate(result[-1]) > 1.03, "the source should have added mass"
+    assert grid.integrate(result[-1]) == pytest.approx(1.0 + T * 0.1, abs=1e-9)
+
+
+def test_the_budget_closes_on_a_pure_source_to_round_off():
+    """The budget must add S_k by the integrator's own rule: forward Euler at t_k. A constant density
+    under a spatially constant S(t) = 1 + t is moved by the source alone (the GFDM Laplacian of a
+    constant is 1.9e-13), so the budget closes to round-off and a 1e-12 tolerance passes. Summing S at
+    t_{k+1} instead is off by dt (S(T) - S(0)) = 6.25e-3 of a 1.6 mass and must raise."""
+    grid, _x, solver = _diffusion_solver(21, 40, mass_drift_tolerance=1e-12)
+    result = solver.solve_fp_system(
+        np.ones(21), np.zeros((41, 21)), source_term=lambda t, xx: np.full(np.asarray(xx).shape[0], 1.0 + t)
+    )
+    dt = T / 40
+    assert grid.integrate(result[-1]) == pytest.approx(1.0 + sum(dt * (1.0 + k * dt) for k in range(40)), abs=1e-12)
+
+
+@pytest.mark.parametrize("on_grid", [True, False], ids=["grid_nodes", "jittered"])
+def test_a_draining_source_is_not_stopped(on_grid):
+    """A source that removes 95% of the mass is legitimate. On grid nodes the budget follows it; on
+    scattered points the gross band's lower bound, which this solve crosses, does not apply under a source."""
+    from mfgarchon.utils.numerical import gross_mass_excursion
+
+    x0 = np.linspace(0, 1, 21)
+    if not on_grid:
+        x0[1:-1] += 1e-3 * np.random.default_rng(0).uniform(-1, 1, 19)
+    _, x, solver = _diffusion_solver(21, 40, points=None if on_grid else x0)
+    m0 = 1 + 0.5 * np.cos(np.pi * x)
+    result = solver.solve_fp_system(m0, np.zeros((41, 21)), source_term=lambda t, xx: -0.95 * m0 / T)
+    if not on_grid:
+        final = float(np.abs(result[-1]).sum())
+        assert gross_mass_excursion(final, float(np.abs(m0).sum())) is not None, (
+            "without a source this level is outside the band, so the test reaches the waived bound"
+        )
 
 
 def test_on_scattered_points_only_the_gross_check_runs_and_it_is_said_once(mfg_caplog):
@@ -411,9 +444,53 @@ def _blowup(**solver_kw):
 
 
 def test_a_blow_up_on_scattered_points_is_stopped_by_the_gross_check():
+    import re
+
     solver, m0, drift = _blowup()
-    with pytest.raises(ValueError, match="outside the gross band"):
+    with pytest.raises(ValueError, match="outside the gross band") as exc:
         solver.solve_fp_system(m0, drift)
+    factor = float(re.search(r"by a factor (\S+) at step", str(exc.value)).group(1))
+    assert factor > 10.0, "print the factor with enough digits to be past the band edge it crossed"
+
+
+@pytest.mark.parametrize("source", [0.0, 0.01], ids=["source_zero", "source_0.01"])
+@pytest.mark.parametrize("on_grid", [True, False], ids=["grid_nodes", "jittered"])
+def test_a_source_term_does_not_silence_the_check(on_grid, source):
+    """Review 3 of #2526: "has a source" exempted every check, so these four returned ~2.5e+09 x their
+    mass with no signal, where main warned. Grid nodes: the budget. Jittered: the gross upper bound."""
+    if on_grid:
+        solver = _build(0.1, Nt=2560)
+        m0, drift = _inputs(25.0)
+        drift = np.tile(drift[0], (2561, 1))
+    else:
+        solver, m0, drift = _blowup()
+    with pytest.raises(ValueError, match="budget|mass ratio" if on_grid else "above the gross bound"):
+        solver.solve_fp_system(m0, drift, source_term=lambda t, xx: np.full(np.asarray(xx).shape[0], source))
+
+
+def test_the_gross_sum_takes_absolute_values():
+    """One step of explicit diffusion at dt*D/h^2 ~ 10 turns a spike into an alternating-sign field:
+    sum m stays ~1 while sum|m| grows ~140x. The gross check must see that before the clip does."""
+    x = np.linspace(0, 1, 21)
+    x[1:-1] += 1e-3 * np.random.default_rng(0).uniform(-1, 1, 19)
+    solver = FPGFDMSolver(_build(1.0, Nt=2).problem, collocation_points=x.reshape(-1, 1))
+    m0 = np.zeros(21)
+    m0[10] = 1.0
+    with pytest.raises(ValueError, match="outside the gross band"):
+        solver.solve_fp_system(m0, np.zeros((3, 21)))
+
+
+def test_the_gross_baseline_takes_absolute_values():
+    """A sign-indefinite m0 (sum 0.48, sum|m| 9.04): against its cancelled sum the first step would look
+    like an 18x blow-up. Against sum|m0| it is in band, and the clip gate is what stops it."""
+    x = np.linspace(0, 1, 21)
+    x[1:-1] += 1e-3 * np.random.default_rng(0).uniform(-1, 1, 19)
+    solver = FPGFDMSolver(_build(0.3, Nt=10).problem, collocation_points=x.reshape(-1, 1))
+    m0 = np.exp(-50 * (x - 0.3) ** 2) - 0.9 * np.exp(-50 * (x - 0.7) ** 2)
+    with pytest.raises(ValueError) as exc:
+        solver.solve_fp_system(m0, np.zeros((11, 21)))
+    assert "Clipping it to zero" in str(exc.value)
+    assert "gross" not in str(exc.value)
 
 
 def test_in_warn_mode_the_gross_check_warns_and_returns(mfg_caplog):
@@ -425,9 +502,24 @@ def test_in_warn_mode_the_gross_check_warns_and_returns(mfg_caplog):
     assert any("gross blow-up check" in m and "Not a conservation check" in m for m in mfg_caplog.messages)
 
 
+def test_in_warn_mode_a_vanishing_density_is_reported_too(mfg_caplog):
+    """The worst excursion is the farthest from the band in either direction. A stand-in operator
+    (dm/dt = -c m) decays sum|m| to 0.0084 of its start; tracking only growth would never report it."""
+    import logging
+
+    x = np.linspace(0, 1, 21)
+    x[1:-1] += 1e-3 * np.random.default_rng(0).uniform(-1, 1, 19)
+    solver = FPGFDMSolver(_build(0.3, Nt=40).problem, collocation_points=x.reshape(-1, 1), mass_drift="warn")
+    solver.gfdm_operator.laplacian = lambda m: -200.0 * np.asarray(m)
+    with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.fp_solvers.fp_gfdm"):
+        solver.solve_fp_system(np.exp(-30 * (x - 0.5) ** 2), np.zeros((41, 21)))
+    assert any("gross blow-up check" in m and "factor 0.00844" in m for m in mfg_caplog.messages)
+
+
 def test_an_exact_mode_on_a_strongly_non_uniform_cloud_passes_the_gross_check():
     """Spacing ratio 3.73 (x = (4^s - 1)/3): the unweighted sum|m| moves only to 0.976 of its start, far
-    inside [0.1, 10], so the band does not false-alarm the weight spread of an adaptive cloud."""
+    inside [0.1, 10]. That pins this specimen only: the band's lower edge sits well below 0.976. It is
+    not a proof that no adaptive cloud false-alarms."""
     s_ = np.linspace(0, 1, 21)
     points = (np.exp(np.log(4.0) * s_) - 1) / 3.0
     _, x, solver = _diffusion_solver(21, 200, points=points)
