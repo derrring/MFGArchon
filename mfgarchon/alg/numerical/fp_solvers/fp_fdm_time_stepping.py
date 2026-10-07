@@ -1584,7 +1584,14 @@ def solve_timestep_full_nd(
     # Right-hand side
     b_rhs = m_flat / dt
 
-    # Enforce Dirichlet RHS at boundary points (Issue #859, extended for mixed BC #1258).
+    # Add source term to RHS (MMS verification)
+    if source_term is not None:
+        b_rhs = b_rhs + source_term
+
+    # Enforce Dirichlet RHS at boundary points (Issue #859, extended for mixed BC #1258), AFTER the
+    # source: a Dirichlet row reads m = g, a constraint rather than a balance, and a source added to it
+    # held the wall at g + dt*S -- an absorbing exit at dt*S, 0.025 for S = 1 at dt = 0.025 under
+    # problem.solve (#2531).
     # Issue #1258 fix (2026-06-10 audit): _get_bc_type returns None for mixed BC, so the
     # prior check `== "dirichlet"` never fired, leaving b_rhs[boundary] = m_current/dt and
     # solving m_next[boundary] = m_current[boundary] (frozen at IC) instead of the prescribed
@@ -1602,10 +1609,6 @@ def solve_timestep_full_nd(
             ):
                 bc_value = _get_dirichlet_value_at_point(boundary_conditions, multi_idx, shape)
                 b_rhs[idx] = bc_value / dt
-
-    # Add source term to RHS (MMS verification)
-    if source_term is not None:
-        b_rhs = b_rhs + source_term
 
     # The repeated-endpoint rows assembled above read `m[i] - m[mirror] = 0`. Zeroed last so a
     # source term cannot re-enter a row that carries a constraint rather than a balance.

@@ -755,6 +755,21 @@ class FPFDMSolver(BaseFPSolver):
 
         spacing = list(self.problem.geometry.get_grid_spacing())
         bc = self.boundary_conditions
+        # The system below is I/dt + A^T - D with right-hand side m/dt and no Dirichlet row: a wall the
+        # BC calls Dirichlet is not held at its value, absorbing or prescribed (#2531). Refused rather
+        # than solved as something else.
+        from .fp_fdm_operators import is_boundary_point
+        from .fp_fdm_time_stepping import _is_dirichlet_at_point
+
+        if any(
+            is_boundary_point(idx, shape, len(shape)) and _is_dirichlet_at_point(bc, idx, shape)
+            for idx in np.ndindex(*shape)
+        ):
+            raise NotImplementedError(
+                "FPFDMSolver.solve_fp_step_adjoint_mode imposes no Dirichlet row, so a Dirichlet wall -- an "
+                "absorbing exit or a prescribed density -- would not hold its value (#2531). With "
+                "BlockIterator, adjoint_mode='off' solves the FP side through solve_fp_system, which does."
+            )
 
         sigma_arr = np.asarray(sigma_val)
         varying_sigma = sigma_arr.ndim > 0 and float(np.ptp(sigma_arr)) > 1e-12

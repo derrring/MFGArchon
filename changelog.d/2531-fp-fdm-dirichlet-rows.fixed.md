@@ -1,0 +1,8 @@
+- **FP-FDM Dirichlet walls hold their value under a source, and the adjoint step refuses a Dirichlet wall** (#2531; #2512, convention row 5).
+  - **The source was added to the Dirichlet rows.** A Dirichlet row reads m = g, a constraint rather than a balance. Because the source was added to every row after the Dirichlet values were set, the wall held g + dt·S.
+    - Measured on main with `problem.solve(scheme="fdm_upwind")`, a shared exit (absorbing since #2528) and a problem-level `source_term_fp`: the exit held exactly dt·S, 0.025 for S = 1 and 0.005 for S = 0.2 at dt = 0.025, where it must hold 0.
+    - An explicit DIRICHLET(0.7) held 0.75 at dt = 0.05.
+    - The Dirichlet rows are now set after the source, as the repeated-endpoint rows already were. The source still enters every balance row: on no-flux walls the mass grows by exactly dt·S per step.
+  - **`FPFDMSolver.solve_fp_step_adjoint_mode`**, used by `BlockIterator`'s adjoint modes, solves I/dt + Aᵀ − D with right-hand side m/dt and no Dirichlet row.
+    - From cos(πx/2), a uniform Dirichlet left the walls at 0.5338 / 0.0359 after one step, for g = 0 and g = 0.7 alike, silently. A mixed one raised a `ValueError` from `LaplacianOperator`.
+    - It now raises `NotImplementedError` for any Dirichlet wall and points to `adjoint_mode='off'`.
