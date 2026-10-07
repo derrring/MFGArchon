@@ -65,13 +65,15 @@ _GATED = {
     "HJBGFDMSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "PERIODIC", "ROBIN"},
     "HJBSemiLagrangianSolver": {"NEUMANN", "NO_FLUX", "PERIODIC"},
     "HJBWENOSolver": {"NEUMANN", "NO_FLUX", "PERIODIC"},
+    # #2512 S4, 2026-10-07: the gate runs from WeakForm*Solver.__init__ -> get_boundary_conditions().
+    # Behavioural cover: tests/unit/test_alg/test_meshless_galerkin_declares_bcs.py
+    "MeshlessGalerkinFPSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "REFLECTING"},
+    "MeshlessGalerkinHJBSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "REFLECTING"},
 }
 
 #: Declares nothing, so `BaseMFGSolver._validate_bc_support` (`mfgarchon/alg/base_solver.py`) no-ops on it. #1977.
 _UNGATED = {
     "FPNetworkSolver",
-    "MeshlessGalerkinFPSolver",
-    "MeshlessGalerkinHJBSolver",
     "NetworkHJBSolver",
     "NetworkPolicyIterationHJBSolver",
     "PenaltyHJBSolver",
@@ -185,6 +187,9 @@ def test_the_permissive_default_is_claimed_by_inheritance():
         # Issue #1936: the first HJB solver to state it, False. On no path does a Neumann value reach
         # every place it touches a wall, and with diffusion no path measured converged with g.
         "HJBSemiLagrangianSolver",
+        # #2512 S4: both assemble no boundary load, and neumann_bc(value=0.7) solved identically to 0.0.
+        "MeshlessGalerkinFPSolver",
+        "MeshlessGalerkinHJBSolver",
     }
     # `FPSLSolver` was here as the parent of `FPSLAdjointSolver`, the one solver that inherited
     # this from a sibling rather than the base. #2343 removed that alias, so every remaining
@@ -229,6 +234,8 @@ def test_no_solver_inherits_its_bc_declaration_from_a_sibling():
         "HJBGFDMSolver",
         "HJBSemiLagrangianSolver",
         "HJBWENOSolver",
+        "MeshlessGalerkinFPSolver",
+        "MeshlessGalerkinHJBSolver",
     }, f"the set of solvers declaring their own supported BC types moved: {sorted(own)}"
     assert set(inherited) <= {"BaseMFGSolver"}, (
         f"a solver inherits {field} from a non-base parent: "

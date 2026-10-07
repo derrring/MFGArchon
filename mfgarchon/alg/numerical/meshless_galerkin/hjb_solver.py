@@ -24,7 +24,9 @@ import numpy as np
 
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
+from mfgarchon.alg.numerical.meshless_galerkin.nitsche import refuse_an_unread_dirichlet_default
 from mfgarchon.alg.numerical.weak_form_hjb_solver import WeakFormHJBSolver
+from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
 
 if TYPE_CHECKING:
@@ -37,6 +39,17 @@ class MeshlessGalerkinHJBSolver(WeakFormHJBSolver):
     """HJB on a scattered point cloud via Galerkin MLS (Type-A discrete duality)."""
 
     _scheme_family = SchemeFamily.MESHLESS_GALERKIN
+
+    # The natural BC carries du/dn = 0 (no-flux, homogeneous Neumann, and reflection, which induces it on
+    # the value) and Nitsche carries a Dirichlet value; PERIODIC and ROBIN raised only at solve time.
+    # Undeclared, the gate returned early and a Neumann value was dropped: neumann_bc(value=0.7) solved
+    # identically to 0.0 (#2512 S4).
+    _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING, BCType.DIRICHLET})
+    honors_inhomogeneous_neumann: bool = False
+    _inhomogeneous_neumann_gap: str = (
+        "The meshless Galerkin HJB assembles no boundary load, so its natural condition is du/dn = 0. "
+        "Use g = 0 (no_flux_bc()), or the FEM solver, which assembles the Neumann load."
+    )
 
     def __init__(
         self,
@@ -53,6 +66,7 @@ class MeshlessGalerkinHJBSolver(WeakFormHJBSolver):
     ) -> None:
         disc = discretization_from_cloud(collocation_points, delta, degree, n_gauss, backend, domain=domain)
         super().__init__(problem, disc)
+        refuse_an_unread_dirichlet_default(self._bc)
         self.hjb_method_name = "MeshlessGalerkin"
         self._n_gauss = n_gauss
         self._nitsche_penalty = nitsche_penalty
