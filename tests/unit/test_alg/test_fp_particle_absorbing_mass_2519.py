@@ -162,9 +162,11 @@ def test_a_coupled_exit_cost_reaches_the_hjb_and_the_fp_absorbs():
     its start). The survivors' share itself is pinned on the uncoupled solves above: the coupling damps
     M across Picard iterations, so the returned M is not the last FP solve's slice.
 
+    The fixture takes u_T = g, so every slice holds g at the wall exactly; with u_T != g the iterator's
+    damping of the initial guess leaves the wall short of g after three iterations (pre-existing).
     M is not asserted to vanish at the wall: the kernel reconstruction's boundary bias puts density there
-    even when no particle is (0.6 of the interior at an absorbing wall), so the absorption is read off
-    the mass and the particle count instead.
+    even when no particle is (wall/centre about 0.7 at T on this fixture), so the absorption is read off
+    the mass instead.
     """
     from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
     from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
@@ -192,3 +194,25 @@ def test_a_coupled_exit_cost_reaches_the_hjb_and_the_fp_absorbs():
     mass = np.array([float(grid.integrate(M[k])) for k in range(M.shape[0])])
     assert np.all(np.diff(mass) <= 1e-12), f"mass rose: {mass}"
     assert mass[-1] < 0.5 * mass[0], f"the exit did not absorb: mass {mass[0]:.3f} -> {mass[-1]:.3f}"
+
+
+@pytest.mark.parametrize("value", [np.zeros(2), np.array([0.5, 0.5])], ids=["zero_array", "nonzero_array"])
+def test_an_array_valued_shared_dirichlet_is_translated_without_crashing(value):
+    """An all-zero array is a legitimate g = 0, and a nonzero one is an exit cost; the translator decides
+    "carries a value" with the same owner as the capability gate (`_describe_bc_value`)."""
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=dirichlet_bc(dimension=1, value=value)
+    )
+    problem = MFGProblem(
+        model=Model(
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=SIGMA
+        ),
+        domain=grid,
+        conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=T),
+        Nt=4,
+    )
+    solver = FPParticleSolver(problem, num_particles=100)
+    if not value.any():
+        assert solver.boundary_conditions is grid.get_boundary_conditions(), "nothing to translate"
+    else:
+        assert all(np.all(np.asarray(seg.value) == 0) for seg in solver.boundary_conditions.segments)
