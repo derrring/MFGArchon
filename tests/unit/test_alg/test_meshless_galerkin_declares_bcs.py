@@ -91,7 +91,7 @@ def test_an_honoured_bc_constructs(cls, bc_factory):
 def test_the_hjb_still_imposes_a_nonzero_dirichlet_value():
     """Nitsche carries the value on the HJB, so it is declared without a value refusal.
 
-    Nitsche imposes it weakly: 0.697 / 0.712 at 11 points, 0.6999 / 0.7004 at 21. The band separates
+    Nitsche imposes it weakly: 0.697 / 0.712 on this fixture (11 points, delta 0.35). The band separates
     "the value arrives" from "the value is dropped", which would leave the wall near 0 or near the
     terminal data, +-1.
     """

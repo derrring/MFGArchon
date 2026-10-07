@@ -73,7 +73,9 @@ def refuse_an_unread_dirichlet_default(bc: BoundaryConditions | None) -> None:
     """The meshless pair reads Dirichlet walls only from segments (`dirichlet_segments`,
     `bc_adapter.is_pure_neumann`), so a DIRICHLET ``default_bc`` that governs some face is refused. Before
     this, the faces it governed got the natural condition: a default-DIRICHLET right wall kept all its
-    mass (ratio 1.0000) where the same wall as an explicit segment absorbed (0.8152) (#2512 S4)."""
+    mass (ratio 1.0000) where the same wall as an explicit segment absorbs (0.8326 at 11 points, delta
+    0.35, sigma 0.3, T 0.5, zero drift) (#2512 S4). Coverage is `_segment_covers`, so its answers for
+    restricted segments (#2490) and ``boundary="all"`` (#1953) are this guard's too."""
     if bc is None:
         return
     from mfgarchon.geometry.boundary.types import BCType

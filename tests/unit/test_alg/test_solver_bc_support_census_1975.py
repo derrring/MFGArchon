@@ -65,7 +65,7 @@ _GATED = {
     "HJBGFDMSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "PERIODIC", "ROBIN"},
     "HJBSemiLagrangianSolver": {"NEUMANN", "NO_FLUX", "PERIODIC"},
     "HJBWENOSolver": {"NEUMANN", "NO_FLUX", "PERIODIC"},
-    # #2512 S4, 2026-10-07: declared and called together, as the FEM pair did.
+    # #2512 S4, 2026-10-07: the gate runs from WeakForm*Solver.__init__ -> get_boundary_conditions().
     # Behavioural cover: tests/unit/test_alg/test_meshless_galerkin_declares_bcs.py
     "MeshlessGalerkinFPSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "REFLECTING"},
     "MeshlessGalerkinHJBSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "REFLECTING"},
