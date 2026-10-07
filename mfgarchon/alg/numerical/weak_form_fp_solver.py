@@ -65,7 +65,8 @@ class WeakFormFPSolver(BaseFPSolver):
         # the accessor method (e.g. TensorProductGrid), silently dropping Dirichlet.
         # No weak-form FP solver takes an explicit BC, so this is the problem's shared one, where
         # DIRICHLET(g) is an exit: the HJB's u = g and an absorbing wall here (#2512, convention row 5).
-        # Condensed literally it pinned the FEM exit wall at m = g (#2525).
+        # Condensed literally it pinned the FEM exit wall at m = g (#2525). A subclass that takes an
+        # explicit BC must skip this, as FPFDMSolver does: there DIRICHLET(g) is the FP's own m = g.
         self._bc = fp_view_of_shared_bc(self.get_boundary_conditions())
         # Issue #1489 (S3): one-shot latch for the adjoint-step positivity clip warning (the adjoint
         # path is stateless per call, so the latch lives on the solver to warn once per solve).

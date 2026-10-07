@@ -134,7 +134,9 @@ class FPFDMSolver(BaseFPSolver):
         problem : Any
             MFG problem definition
         boundary_conditions : BoundaryConditions | None
-            Boundary condition specification (default: no-flux)
+            The FP's own BC: here ``DIRICHLET(g)`` is a prescribed density m = g. When None, the BC is
+            resolved from the problem / geometry (default: no-flux), which is the BC the HJB shares,
+            and a ``DIRICHLET(g)`` there is an exit: absorbing, m = 0 (#2512, convention row 5).
         advection_scheme : str
             Advection term discretization (default: "divergence_upwind").
 

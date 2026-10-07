@@ -522,9 +522,10 @@ class TestDiagonalOutflowIsNotALaggedSource:
     # this pin covered only `geometry`, and review proved the other routes walked past the
     # guard and returned m(T,x) = 0.180967 / 0.163746 against an intended 0.2 -- exactly
     # g*exp(-q_k T) at two different rates. Since #2525 a BC the FP reads from the shared
-    # problem / geometry is an exit (#2512, convention row 5): its Dirichlet value is the
-    # HJB's, and the FP absorbs. So the one route left carrying FP data is the solver's own
-    # kwarg -- which also outranks geometry, so a guard reading geometry still misses it.
+    # problem / geometry is an exit (#2512, convention row 5): the FP absorbs. (On the
+    # `problem_components` route the HJB does not read that BC at all when the geometry carries
+    # one, #2530.) So the one route left carrying FP data is the solver's own kwarg -- which
+    # also outranks geometry, so a guard reading geometry still misses it.
     def test_inhomogeneous_fp_boundary_data_is_refused(self):
         """The factor is exact only for homogeneous BCs; inhomogeneous data must not solve."""
         from mfgarchon.geometry.boundary import dirichlet_bc

@@ -37,11 +37,18 @@ is a Neumann condition for the value function.
 
 | Type | HJB side (on `u`) | FP side (on `m`) | Typical use |
 |------|-------------------|------------------|-------------|
-| `DIRICHLET` | `u = g` | `m = g` | Fixed value at boundary |
+| `DIRICHLET` | `u = g` | shared BC: **`m = 0`** (absorbing); a BC passed to the FP solver itself: `m = g` | Exit with exit cost `g`; fixed value |
 | `NEUMANN` | `du/dn = g` | see note below | Prescribed boundary data |
 | `NO_FLUX` | `du/dn = 0` | **`J.n = 0`**, where `J = v*m - D*grad(m)` | Reflecting / insulating wall; the mass-conserving choice |
 | `ROBIN` | `alpha*u + beta*du/dn = g` | same form on `m` | Mixed condition |
 | `PERIODIC` | `u(x_min) = u(x_max)` | `m(x_min) = m(x_max)` | Wrap-around domain |
+
+**`DIRICHLET` on a shared BC is an exit** (#2512, convention row 5). One `DIRICHLET(g)` on the
+problem or geometry cannot mean `u = g` and `m = g` at once: the HJB reads the exit cost `u = g`,
+and every FP solver reads an absorbing wall `m = 0` through `bc_utils.fp_view_of_shared_bc`. A BC
+passed to an FP solver explicitly (`FPFDMSolver(boundary_conditions=...)`) is the FP's own, and
+there `DIRICHLET(g)` is a prescribed density `m = g`; FP solvers that cannot impose one refuse a
+nonzero `g` there.
 
 **`NO_FLUX` on the FP side is zero *total* flux, not zero gradient.** With drift at the wall the
 two differ: `J.n = 0` gives `D dm/dn = (v.n) m`, so `dm/dn` is generally **non-zero**. The FDM

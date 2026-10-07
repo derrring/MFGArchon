@@ -87,7 +87,7 @@ def test_fp_fdm_keeps_an_explicit_dirichlet_as_a_prescribed_density():
 
 def test_a_coupled_exit_cost_holds_u_at_g_and_absorbs_m():
     """Through `problem.solve`, the route #2525 was measured on. The bump sits nearer the exit, so the
-    drift and the diffusion both reach it; literally read, the mass rose 0.394 -> 2.74 here."""
+    drift and the diffusion both reach it; read literally (main, e8633fe1), the mass rose 1.0000 -> 3.3247 here."""
     problem = _problem_1d(41, 20, lambda x: np.exp(-20 * (np.asarray(x, dtype=float) - 0.6) ** 2))
     result = problem.solve(scheme="fdm_upwind", max_iterations=40, tolerance=1e-6)
     U, M = np.asarray(result.U), np.asarray(result.M)
