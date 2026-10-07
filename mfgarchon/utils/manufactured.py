@@ -450,6 +450,10 @@ class GeneratedPair:
     refused by the solvers (see ``pair_for``). Returning one BC would work today and would have to
     change the first time a family distinguishes them, which is the point at which an interface
     change is most expensive.
+
+    ``bc_m`` is the FP solver's own BC: pass it as ``FPFDMSolver(boundary_conditions=bc_m)``. Placed on
+    the shared problem/geometry instead, a DIRICHLET is an exit and the FP absorbs, m = 0 (#2512,
+    convention row 5), so ``m`` would not sit at ``m_floor``.
     """
 
     pair: ManufacturedPair

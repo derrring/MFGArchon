@@ -37,11 +37,20 @@ is a Neumann condition for the value function.
 
 | Type | HJB side (on `u`) | FP side (on `m`) | Typical use |
 |------|-------------------|------------------|-------------|
-| `DIRICHLET` | `u = g` | `m = g` | Fixed value at boundary |
+| `DIRICHLET` | `u = g` | shared BC: **`m = 0`** (absorbing); a BC passed to the FP solver itself: `m = g` | Exit with exit cost `g`; fixed value |
 | `NEUMANN` | `du/dn = g` | see note below | Prescribed boundary data |
 | `NO_FLUX` | `du/dn = 0` | **`J.n = 0`**, where `J = v*m - D*grad(m)` | Reflecting / insulating wall; the mass-conserving choice |
 | `ROBIN` | `alpha*u + beta*du/dn = g` | same form on `m` | Mixed condition |
 | `PERIODIC` | `u(x_min) = u(x_max)` | `m(x_min) = m(x_max)` | Wrap-around domain |
+
+**`DIRICHLET` on a shared BC is an exit** (#2512, convention row 5). One `DIRICHLET(g)` on the
+problem or geometry cannot mean `u = g` and `m = g` at once: the HJB reads the exit cost `u = g`,
+and the FP solvers that accept DIRICHLET -- FDM, FEM, meshless Galerkin and particle -- read an
+absorbing wall `m = 0` through `bc_utils.fp_view_of_shared_bc`. FP-FVM, FP-GFDM and FP-SL refuse
+DIRICHLET at any `g`, shared or explicit. A BC passed to an FP solver explicitly is the FP's own,
+where `DIRICHLET(g)` is a prescribed density `m = g`: only `FPFDMSolver(boundary_conditions=...)`
+imposes one; the particle FP refuses a nonzero `g` there, and FEM and meshless Galerkin take no
+explicit BC.
 
 **`NO_FLUX` on the FP side is zero *total* flux, not zero gradient.** With drift at the wall the
 two differ: `J.n = 0` gives `D dm/dn = (v.n) m`, so `dm/dn` is generally **non-zero**. The FDM
@@ -332,7 +341,8 @@ equation: it gives `J.n = v*m_interior`, which vanishes only when `v = 0`. It is
 (`ghost_cells.py:361`) is the one that constructs `ghost = interior*(2D + v*dx)/(2D - v*dx)` so
 that the total flux vanishes.
 
-- Dirichlet BC: ghost reflects the boundary value
+- Dirichlet BC: the wall row is the identity, `m = value`, not a ghost -- 0 on a shared BC, where the
+  wall is an exit (absorbing), and `g` on a BC passed to `FPFDMSolver(boundary_conditions=...)` itself.
 
 ### Particle Methods
 

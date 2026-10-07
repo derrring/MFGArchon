@@ -23,6 +23,7 @@ import numpy as np
 from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
+from mfgarchon.geometry.boundary.bc_utils import fp_view_of_shared_bc
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
@@ -62,7 +63,11 @@ class WeakFormFPSolver(BaseFPSolver):
         # Single source of truth for BCs (matches WeakFormHJBSolver); plain
         # getattr(geometry, "boundary_conditions") misses grids that expose BCs via
         # the accessor method (e.g. TensorProductGrid), silently dropping Dirichlet.
-        self._bc = self.get_boundary_conditions()
+        # No weak-form FP solver takes an explicit BC, so this is the problem's shared one, where
+        # DIRICHLET(g) is an exit: the HJB's u = g and an absorbing wall here (#2512, convention row 5).
+        # Condensed literally it pinned the FEM exit wall at m = g (#2525). A subclass that takes an
+        # explicit BC must skip this, as FPFDMSolver does: there DIRICHLET(g) is the FP's own m = g.
+        self._bc = fp_view_of_shared_bc(self.get_boundary_conditions())
         # Issue #1489 (S3): one-shot latch for the adjoint-step positivity clip warning (the adjoint
         # path is stateless per call, so the latch lives on the solver to warn once per solve).
         self._adjoint_clip_warned = False

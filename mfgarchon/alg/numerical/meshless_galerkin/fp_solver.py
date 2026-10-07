@@ -37,7 +37,6 @@ from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
 from mfgarchon.alg.numerical.meshless_galerkin.nitsche import refuse_an_unread_dirichlet_default
 from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
-from mfgarchon.geometry.boundary.bc_utils import fp_view_of_shared_bc
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.pde_coefficients import assert_quadratic_drift
 
@@ -78,10 +77,6 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         disc = discretization_from_cloud(collocation_points, delta, degree, n_gauss, backend, domain=domain)
         super().__init__(problem, disc)
         refuse_an_unread_dirichlet_default(self._bc)
-        # This pair reads only the shared problem BC, so a Dirichlet there is an exit: the HJB's u = g, an
-        # absorbing wall here (#2512, convention row 5). The translation changes values only, not faces or
-        # penalty, so the Nitsche blocks -- and the Type-A transpose identity -- are unaffected.
-        self._bc = fp_view_of_shared_bc(self._bc)
         self._G_grad: list[sparse.csr_matrix] | None = None
         self._n_gauss = n_gauss
         self._nitsche_penalty = nitsche_penalty

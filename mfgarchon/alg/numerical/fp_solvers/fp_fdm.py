@@ -8,6 +8,7 @@ import scipy.sparse as sparse
 from mfgarchon.backends.compat import has_nan_or_inf
 from mfgarchon.geometry import BoundaryConditions
 from mfgarchon.geometry.base import CartesianGrid
+from mfgarchon.geometry.boundary.bc_utils import fp_view_of_shared_bc
 from mfgarchon.geometry.boundary.conditions import periodic_on_every_face
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.deprecation import deprecated_parameter
@@ -133,7 +134,10 @@ class FPFDMSolver(BaseFPSolver):
         problem : Any
             MFG problem definition
         boundary_conditions : BoundaryConditions | None
-            Boundary condition specification (default: no-flux)
+            The FP's own BC: here ``DIRICHLET(g)`` is a prescribed density m = g. When None, the BC is
+            resolved from the problem / geometry (default: no-flux) -- the BC the HJB shares, except
+            on the ``problem.components`` route when the geometry carries one (#2530) -- and a
+            ``DIRICHLET(g)`` there is an exit: absorbing, m = 0 (#2512, convention row 5).
         advection_scheme : str
             Advection term discretization (default: "divergence_upwind").
 
@@ -244,6 +248,11 @@ class FPFDMSolver(BaseFPSolver):
         # from one library, depending only on which channel supplied the BC. Applied once, after
         # both branches, so no channel can be added below it and miss it.
         self.boundary_conditions = self._with_geometry_periodic_convention(self.boundary_conditions)
+        # A BC this solver was not handed is the problem's shared one, where DIRICHLET(g) is an exit: the
+        # HJB's u = g and an absorbing wall here (#2512, convention row 5). Read literally it pinned the exit
+        # at m = g and the mass rose 1.0000 -> 3.3247 (#2525). A BC passed explicitly is the FP's own, m = g.
+        if boundary_conditions is None:
+            self.boundary_conditions = fp_view_of_shared_bc(self.boundary_conditions)
 
         # Issue #1456: fail loud now if the resolved BC requests a type FP-FDM cannot honor
         # (Robin has no stencil; Reflecting/Extrapolation are not field-BC types), instead of
