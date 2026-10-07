@@ -1,0 +1,7 @@
+- **The meshless Galerkin solvers declare the BCs they honour, so the gate refuses the rest** (#2512 S4).
+  - `MeshlessGalerkinHJBSolver` and `MeshlessGalerkinFPSolver` declared nothing, so `_validate_bc_support` returned early and every BC constructed.
+  - Measured at `7eb53144`: the HJB solved `neumann_bc(value=0.7)` identically to 0.0, the FP solved `neumann_bc(value=1.0)` identically to no-flux, and PERIODIC and ROBIN raised only once the solve reached a condensation hook.
+  - Now both declare {NO_FLUX, NEUMANN, REFLECTING, DIRICHLET}, and a nonzero Neumann value is refused on both. Neither assembles a boundary load.
+  - **A DIRICHLET `default_bc` that governs some face is refused.** Nitsche reads only segments, so before this a default-DIRICHLET right wall kept all its mass (ratio 1.0000), where the same wall written as a segment absorbed (0.8152). A uniform `dirichlet_bc()`, whose one unrestricted segment covers every face, is unaffected. Coverage is the BC object's own (`_segment_covers`), so face aliases and region-named segments are read correctly.
+  - **A shared Dirichlet value is an exit** (#2512, convention row 5). The HJB imposes u = g by Nitsche, and the FP reads the BC through `fp_view_of_shared_bc`, where it is an absorbing wall. An exit cost therefore runs through `create_paired_solvers(MESHLESS_GALERKIN)`: u = g at both walls, mass falling.
+  - **Behaviour change:** PERIODIC, ROBIN, a nonzero Neumann value, and a DIRICHLET `default_bc` left to govern a face now raise at construction.

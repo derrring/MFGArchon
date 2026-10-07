@@ -60,12 +60,42 @@ if TYPE_CHECKING:
 
 
 def dirichlet_segments(bc: BoundaryConditions | None) -> list:
-    """Dirichlet segments of a BoundaryConditions object (empty list if none)."""
+    """Dirichlet segments of a BoundaryConditions object (empty list if none). Segments only:
+    a DIRICHLET ``default_bc`` is refused at construction by `refuse_an_unread_dirichlet_default`."""
     if bc is None:
         return []
     from mfgarchon.geometry.boundary.types import BCType
 
     return [s for s in bc.segments if s.bc_type == BCType.DIRICHLET]
+
+
+def refuse_an_unread_dirichlet_default(bc: BoundaryConditions | None) -> None:
+    """The meshless pair reads Dirichlet walls only from segments (`dirichlet_segments`,
+    `bc_adapter.is_pure_neumann`), so a DIRICHLET ``default_bc`` that governs some face is refused. Before
+    this, the faces it governed got the natural condition: a default-DIRICHLET right wall kept all its
+    mass (ratio 1.0000) where the same wall as an explicit segment absorbed (0.8152) (#2512 S4)."""
+    if bc is None:
+        return
+    from mfgarchon.geometry.boundary.types import BCType
+
+    if getattr(bc, "default_bc", None) == BCType.DIRICHLET and _faces_left_to_the_default(bc):
+        raise NotImplementedError(
+            "Meshless Galerkin: a DIRICHLET default_bc is not imposed -- Nitsche reads only segments, so "
+            "the faces it governs would get the natural condition instead. Give each Dirichlet face its "
+            "own BCSegment(boundary=...)."
+        )
+
+
+def _faces_left_to_the_default(bc: BoundaryConditions) -> list[str]:
+    """Bounding-box faces no segment governs, so ``default_bc`` would.
+
+    Coverage is the BC object's own answer (`_segment_covers`, #1939): it resolves face aliases
+    ("left" is "x_min") and region-named segments, which a string comparison here got wrong both ways.
+    """
+    from mfgarchon.geometry.boundary.types import BoundaryFace
+
+    faces = [BoundaryFace(axis, side).to_string() for axis in range(bc.dimension or 0) for side in ("min", "max")]
+    return [face for face in faces if not any(bc._segment_covers(seg, face) for seg in bc.segments)]
 
 
 def _domain_bounds(disc: MeshlessGalerkinDiscretization) -> list[tuple[float, float]]:

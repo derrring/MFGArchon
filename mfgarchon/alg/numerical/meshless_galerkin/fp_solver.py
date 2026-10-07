@@ -35,7 +35,10 @@ from scipy import sparse
 
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
+from mfgarchon.alg.numerical.meshless_galerkin.nitsche import refuse_an_unread_dirichlet_default
 from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
+from mfgarchon.geometry.boundary.bc_utils import fp_view_of_shared_bc
+from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.pde_coefficients import assert_quadratic_drift
 
 if TYPE_CHECKING:
@@ -48,6 +51,17 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
     """Fokker-Planck on a scattered point cloud via Galerkin MLS (Type-A discrete duality)."""
 
     _scheme_family = SchemeFamily.MESHLESS_GALERKIN
+
+    # No-flux, homogeneous Neumann and reflecting are the natural condition; DIRICHLET is an absorbing
+    # wall (m = 0) imposed by Nitsche. This pair reads only the shared problem BC, so a Dirichlet value
+    # there is the HJB's exit cost and is not this solver's to impose (#2512, convention row 5).
+    # Undeclared, the gate returned early: neumann_bc(value=1) solved identically to no-flux (#2512 S4).
+    _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING, BCType.DIRICHLET})
+    honors_inhomogeneous_neumann: bool = False
+    _inhomogeneous_neumann_gap: str = (
+        "The meshless Galerkin FP assembles no boundary flux, so its natural condition is zero flux. "
+        "Use g = 0 (no_flux_bc())."
+    )
 
     def __init__(
         self,
@@ -63,6 +77,11 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
     ) -> None:
         disc = discretization_from_cloud(collocation_points, delta, degree, n_gauss, backend, domain=domain)
         super().__init__(problem, disc)
+        refuse_an_unread_dirichlet_default(self._bc)
+        # This pair reads only the shared problem BC, so a Dirichlet there is an exit: the HJB's u = g, an
+        # absorbing wall here (#2512, convention row 5). The translation changes values only, not faces or
+        # penalty, so the Nitsche blocks -- and the Type-A transpose identity -- are unaffected.
+        self._bc = fp_view_of_shared_bc(self._bc)
         self._G_grad: list[sparse.csr_matrix] | None = None
         self._n_gauss = n_gauss
         self._nitsche_penalty = nitsche_penalty

@@ -46,8 +46,6 @@ def declarations(census):
 _DECLARES_NOTHING = {
     "solver": {
         "FPNetworkSolver",
-        "MeshlessGalerkinFPSolver",
-        "MeshlessGalerkinHJBSolver",
         "NetworkHJBSolver",
         "NetworkPolicyIterationHJBSolver",
         "PenaltyHJBSolver",
@@ -103,6 +101,10 @@ _HONORS_INHOMOGENEOUS_NEUMANN_OWN = {
     # place it touches a wall, and on an exact solution with sigma = 0.2 no path measured converged with
     # g, so it refuses the value.
     "HJBSemiLagrangianSolver": "False",
+    # Joined 2026-10-07 (#2512 S4), with their first `_SUPPORTED_BC_TYPES`. Both assemble no boundary
+    # load, so a Neumann value reached neither: measured, neumann_bc(value=0.7) solved identically to 0.0.
+    "MeshlessGalerkinFPSolver": "False",
+    "MeshlessGalerkinHJBSolver": "False",
 }
 
 
@@ -209,10 +211,11 @@ def test_the_permissive_default_is_still_claimed_by_inheritance(declarations):
     # 7 since #1756 removed FPSLJacobianSolver, an own-False owner (8 since #1936 moved
     # HJBSemiLagrangianSolver from inherited-True to own-False, 7 since #2294 moved FPFEMSolver); see
     # the comment on _HONORS_INHOMOGENEOUS_NEUMANN_OWN above, which is where the reasons live.
-    assert len(owners) == 7, f"solvers stating it themselves: {sorted(owners)}"
-    # 16, the exact complement of the 8 above: each solver left the inherited set in the same change
-    # that added it to the owned one (#2294, #1936). These two counts must move together.
-    assert len(from_base) == 16, f"solvers claiming True by the permissive default: {sorted(from_base)}"
+    # 9 since #2512 S4 moved the meshless Galerkin pair from inherited-True to own-False.
+    assert len(owners) == 9, f"solvers stating it themselves: {sorted(owners)}"
+    # 14, the exact complement of the 9 above: each solver left the inherited set in the same change
+    # that added it to the owned one (#2294, #1936, #2512 S4). These two counts must move together.
+    assert len(from_base) == 14, f"solvers claiming True by the permissive default: {sorted(from_base)}"
     assert set(from_base.values()) == {"True"}
     assert from_sibling == {}, (
         f"a solver now inherits {field} from a non-base parent: {from_sibling}. That is the second "
