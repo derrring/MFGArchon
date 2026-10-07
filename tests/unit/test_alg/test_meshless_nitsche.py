@@ -21,10 +21,10 @@ from mfgarchon.alg.numerical.meshless_galerkin.discretization import (
 )
 from mfgarchon.alg.numerical.meshless_galerkin.mls_basis import shape_functions_and_grads
 from mfgarchon.alg.numerical.meshless_galerkin.nitsche import (
+    _dirichlet_faces,
     _domain_bounds,
     _segment_quadrature,
     assemble_nitsche_terms,
-    dirichlet_segments,
 )
 from mfgarchon.alg.numerical.meshless_galerkin.quadrature import boundary_tensor_gauss
 from mfgarchon.geometry.boundary import BoundaryConditions
@@ -199,7 +199,9 @@ class TestBoundaryRuleResolvesTheSupportScale:
         disc = MeshlessGalerkinDiscretization(nodes, rho, 2, np.array([[0.5, 0.5]]), np.array([1.0]), backend="numpy")
         bc = _dirichlet_bc(dict.fromkeys(("x_min", "x_max", "y_min", "y_max"), 0.0), dim=2)
         bounds = _domain_bounds(disc)
-        q_b = sum(len(_segment_quadrature(s, disc, bounds, self.N_GAUSS)[0]) for s in dirichlet_segments(bc))
+        q_b = sum(
+            len(_segment_quadrature(faces, disc, bounds, self.N_GAUSS)[0]) for _, faces in _dirichlet_faces(bc, 2)
+        )
         return q_b, rho, max(hi - lo for lo, hi in bounds)
 
     def test_the_rule_holds_two_cells_per_support_radius_at_every_level(self):

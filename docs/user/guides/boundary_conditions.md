@@ -67,7 +67,7 @@ The calculator classes name this distinction explicitly:
 | `NoFluxCalculator` | **deprecated since v0.16.11** — an alias for `ZeroGradientCalculator`. Pick one of the two above explicitly |
 
 > **Note on `NEUMANN` with a non-zero value.** `neumann_bc(value=g)` with `g != 0` is **refused at
-> construction by every FP solver**: on the FP side a Neumann value is a prescribed flux `J.n = g`,
+> construction by every grid FP solver**: on the FP side a Neumann value is a prescribed flux `J.n = g`,
 > which none implements yet ([Issue #1686](https://github.com/derrring/MFGArchon/issues/1686)). The
 > semi-Lagrangian and meshless Galerkin HJB solvers refuse it too. Use `g = 0` (equivalently
 > `no_flux_bc()`) for a coupled solve.

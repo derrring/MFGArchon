@@ -109,9 +109,9 @@ class MeshlessGalerkinHJBSolver(WeakFormHJBSolver):
         return self._disc.streamline_diffusion(velocity, D, c_scale=self._sd_scale)
 
     def _is_pure_neumann(self) -> bool:
-        from mfgarchon.alg.numerical.fem.bc_adapter import is_pure_neumann
+        from mfgarchon.alg.numerical.meshless_galerkin.nitsche import places_no_dirichlet_face
 
-        return is_pure_neumann(self._bc)
+        return places_no_dirichlet_face(self._bc, self._disc.dim)
 
     def _weak_bc_terms(self, D: float):
         """Symmetric Nitsche Dirichlet terms ``u = g`` for the HJB diffusion block.

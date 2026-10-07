@@ -90,3 +90,84 @@ def test_the_fp_absorbs_a_shared_dirichlet_because_the_translator_says_so():
     bit-identically to DIRICHLET(0). No second site decides it (#2512, convention row 5)."""
     assert _fp_mass_ratio(dirichlet_bc(dimension=1, value=0.5)) == _fp_mass_ratio(dirichlet_bc(dimension=1, value=0.0))
     assert _fp_mass_ratio(dirichlet_bc(dimension=1, value=0.0)) < _fp_mass_ratio(no_flux_bc(dimension=1))
+
+
+def _nf(**where):
+    return BCSegment(name="nf", bc_type=BCType.NO_FLUX, **where)
+
+
+def test_a_face_belongs_to_the_highest_priority_segment_that_names_it():
+    """A priority -1 Dirichlet "all" under a priority 1 no-flux x_min is a wall on x_max only, as
+    `get_bc_at_point` resolves it. Imposed on both faces it absorbed 0.6652 (main raised)."""
+    layered = _bc(_dirichlet(boundary="all", priority=-1), _nf(boundary="x_min", priority=1))
+    separated = _bc(_nf(boundary="x_min"), _dirichlet(boundary="x_max"))
+    assert _fp_mass_ratio(layered) == pytest.approx(_fp_mass_ratio(separated), abs=1e-12)
+
+
+def test_an_unscoped_segment_of_higher_priority_takes_every_face():
+    """No-flux with no boundary at priority 1 over a Dirichlet x_max: no-flux everywhere (1.0000). Main
+    imposed the Dirichlet too (0.8326, the x_max-wall figure)."""
+    layered = _bc(_nf(priority=1), _dirichlet(boundary="x_max"))
+    assert _fp_mass_ratio(layered) == pytest.approx(_fp_mass_ratio(no_flux_bc(dimension=1)), abs=1e-12)
+
+
+def test_the_hjb_takes_each_faces_value_from_its_own_segment():
+    """A Dirichlet "all" (g = 0) under a Dirichlet x_max (g = 1): each face takes its own segment's value.
+    Imposing both on x_max averaged them (u(1) 0.5067); main raised on the "all" segment."""
+    layered = _bc(
+        BCSegment(name="all", bc_type=BCType.DIRICHLET, value=0.0, boundary="all", priority=-1),
+        BCSegment(name="right", bc_type=BCType.DIRICHLET, value=1.0, boundary="x_max", priority=1),
+    )
+    separated = _bc(
+        BCSegment(name="left", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_min"),
+        BCSegment(name="right", bc_type=BCType.DIRICHLET, value=1.0, boundary="x_max"),
+    )
+    values = []
+    for bc in (layered, separated):
+        solver = MeshlessGalerkinHJBSolver(_problem(bc), XS, delta=0.35)
+        n = solver.n_dof
+        U = solver.solve_hjb_system(
+            M_density=np.ones((5, n)), U_terminal=np.cos(np.pi * XS[:, 0]), U_coupling_prev=np.zeros((5, n))
+        )
+        values.append(np.asarray(U))
+    np.testing.assert_allclose(values[0], values[1], rtol=0, atol=1e-12)
+
+
+@pytest.mark.parametrize("cls", CLASSES)
+def test_a_lower_priority_segment_cannot_take_a_face_and_is_not_read(cls):
+    """Only segments up to the last Dirichlet one can claim a face from it, so a lower-priority segment
+    this path cannot place does not make the BC refused."""
+    cls(_problem(_bc(_dirichlet(boundary="x_max", priority=1), _nf(region={0: (0.0, 0.5)}))), XS, delta=0.35)
+
+
+@pytest.mark.parametrize("zero", [np.int64(0), np.zeros(1), None], ids=["int64", "size1_array", "none"])
+def test_a_zero_the_translator_accepts_is_a_zero_here(zero):
+    """The FP holds the translated BC, which leaves a verifiably zero value as it is; the Nitsche data
+    reader must agree with that owner (`_describe_bc_value`), as main's FP did by never reading it."""
+    assert _fp_mass_ratio(
+        _bc(_nf(boundary="x_min"), BCSegment(name="d", bc_type=BCType.DIRICHLET, value=zero, boundary="x_max"))
+    ) == _fp_mass_ratio(_bc(_nf(boundary="x_min"), _dirichlet(boundary="x_max")))
+
+
+def test_a_non_dirichlet_sdf_segment_is_refused_by_the_coverage_guard_not_as_the_curved_route():
+    segment = BCSegment(name="nf", bc_type=BCType.NO_FLUX, sdf_region=lambda x: np.asarray(x)[..., 0] - 0.5)
+    with pytest.raises(NotImplementedError, match="#2490") as exc:
+        MeshlessGalerkinFPSolver(_problem(_bc(segment, default=BCType.DIRICHLET, default_value=0.0)), XS, delta=0.35)
+    assert "withdrawn" not in str(exc.value)
+
+
+@pytest.mark.parametrize("value", [np.int64(1), np.float32(1.0), np.ones(1)], ids=["int64", "float32", "size1_array"])
+def test_any_real_scalar_is_a_dirichlet_value(value):
+    """The HJB imposes the value; a NumPy scalar or a size-1 array is the number it holds."""
+
+    def u(v):
+        bc = _bc(_nf(boundary="x_min"), BCSegment(name="d", bc_type=BCType.DIRICHLET, value=v, boundary="x_max"))
+        solver = MeshlessGalerkinHJBSolver(_problem(bc), XS, delta=0.35)
+        n = solver.n_dof
+        return np.asarray(
+            solver.solve_hjb_system(
+                M_density=np.ones((5, n)), U_terminal=np.cos(np.pi * XS[:, 0]), U_coupling_prev=np.zeros((5, n))
+            )
+        )
+
+    np.testing.assert_array_equal(u(value), u(1.0))
