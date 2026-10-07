@@ -755,13 +755,13 @@ class FPFDMSolver(BaseFPSolver):
 
         spacing = list(self.problem.geometry.get_grid_spacing())
         bc = self.boundary_conditions
-        # The system below is I/dt + A^T - D with right-hand side m/dt and no Dirichlet row: a wall the
-        # BC calls Dirichlet is not held at its value, absorbing or prescribed (#2531). Refused rather
-        # than solved as something else.
+        # The system below is I/dt + A^T - D with right-hand side m/dt and no Dirichlet row: the Laplacian's
+        # Dirichlet stencil puts g = 0 one cell outside the wall (first order) and drops any other g -- a
+        # uniform 0.7 solved identically to 0 (#2531). Refused rather than solved as something else.
         from .fp_fdm_operators import is_boundary_point
-        from .fp_fdm_time_stepping import _is_dirichlet_at_point
+        from .fp_fdm_time_stepping import _declares_dirichlet, _is_dirichlet_at_point
 
-        if any(
+        if _declares_dirichlet(bc) and any(
             is_boundary_point(idx, shape, len(shape)) and _is_dirichlet_at_point(bc, idx, shape)
             for idx in np.ndindex(*shape)
         ):

@@ -200,6 +200,20 @@ def _add_boundary_dirichlet_entries(
     data_values.append(1.0 / dt)
 
 
+def _declares_dirichlet(boundary_conditions: Any) -> bool:
+    """Could `_is_dirichlet_at_point` answer True anywhere: a uniform Dirichlet, a Dirichlet segment, or a
+    DIRICHLET ``default_bc`` fall-through. The matrix assembly gives each such point an identity row; the
+    RHS loop gated on segments alone missed the fall-through, which then held its initial value -- 0.0408
+    for an explicit g = 0.7, climbing to 0.5408 under S = 1 (#2531, review 1). Issue #1258 is the earlier
+    instance of the same gap: `_get_bc_type` is None for a mixed BC, and the check read only it."""
+    if _get_bc_type(boundary_conditions) == "dirichlet":
+        return True
+    if any(seg.bc_type.value == "dirichlet" for seg in getattr(boundary_conditions, "segments", None) or []):
+        return True
+    default = getattr(boundary_conditions, "default_bc", None)
+    return getattr(default, "value", None) == "dirichlet"
+
+
 def _is_dirichlet_at_point(
     boundary_conditions: Any,
     multi_idx: tuple[int, ...],
@@ -1590,18 +1604,10 @@ def solve_timestep_full_nd(
 
     # Enforce Dirichlet RHS at boundary points (Issue #859, extended for mixed BC #1258), AFTER the
     # source: a Dirichlet row reads m = g, a constraint rather than a balance, and a source added to it
-    # held the wall at g + dt*S -- an absorbing exit at dt*S, 0.025 for S = 1 at dt = 0.025 under
-    # problem.solve (#2531).
-    # Issue #1258 fix (2026-06-10 audit): _get_bc_type returns None for mixed BC, so the
-    # prior check `== "dirichlet"` never fired, leaving b_rhs[boundary] = m_current/dt and
-    # solving m_next[boundary] = m_current[boundary] (frozen at IC) instead of the prescribed
-    # Dirichlet value.  Now detect mixed BC with any Dirichlet segment and apply per point.
-    bc_type_str = _get_bc_type(boundary_conditions)
-    _has_dirichlet = bc_type_str == "dirichlet" or (
-        bc_type_str is None
-        and any(seg.bc_type.value == "dirichlet" for seg in getattr(boundary_conditions, "segments", []))
-    )
-    if _has_dirichlet:
+    # put g + dt*S into the solve -- an absorbing exit held at dt*S, 0.025 for S = 1 at dt = 0.025 under
+    # problem.solve (#2531). The rows themselves come from the per-point resolver above, so the values
+    # must be written wherever it can answer Dirichlet; `_declares_dirichlet` is that test, cheap.
+    if _declares_dirichlet(boundary_conditions):
         for idx in range(N_total):
             multi_idx = np.unravel_index(idx, shape)
             if is_boundary_point(multi_idx, shape, ndim) and _is_dirichlet_at_point(

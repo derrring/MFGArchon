@@ -515,7 +515,9 @@ def pair_for(
     ``FPFDMSolver`` with such a pair raises at timestep 1 of 17, ``density went to -2.928e-02``,
     from ``clip_nonnegative_or_raise``. With ``m_floor > 0`` the same study runs and gives the
     first Dirichlet-wall convergence order this repository has measured: interior EOC 1.05 and 0.99
-    over nx = 21, 41, 81, which is what the default ``divergence_upwind`` should give.
+    over nx = 21, 41, 81, which is what the default ``divergence_upwind`` should give. That was measured
+    before #2531, when the MMS source also entered the Dirichlet rows and the solve saw the wall at
+    ``m_floor + dt*S``; the setup was not recorded, so the figure has not been re-measured since.
 
     ROBIN is refused, and the reason is not in this function. Measured at the time of writing:
     ``FPFDMSolver``, ``FPFVMSolver``, ``FPGFDMSolver``, ``FPSLSolver`` and ``HJBFDMSolver`` all

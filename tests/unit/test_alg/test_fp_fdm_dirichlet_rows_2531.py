@@ -4,8 +4,8 @@ A Dirichlet row reads m = g, a constraint rather than a balance. The source was 
 the Dirichlet values, so the wall held g + dt*S: under `problem.solve(scheme="fdm_upwind")` with a shared
 exit (absorbing since #2528) and a problem-level `source_term_fp`, the exit held dt*S -- 0.025 for S = 1 at
 dt = 0.025 -- where it must hold 0. `solve_fp_step_adjoint_mode` solves I/dt + A^T - D with right-hand
-side m/dt and has no Dirichlet row at all: a uniform Dirichlet wall held neither g nor 0, silently. It is
-refused for a Dirichlet wall.
+side m/dt and has no Dirichlet row: a uniform Dirichlet absorbed one cell outside the wall and dropped
+any nonzero g, silently. It is refused for a Dirichlet wall.
 
 The fixtures put the Dirichlet wall on x_max only, with no-flux on x_min.
 """
@@ -102,8 +102,9 @@ def test_problem_solve_holds_a_shared_exit_at_zero_under_a_problem_source():
 )
 def test_the_adjoint_step_refuses_a_dirichlet_wall(bc):
     """It has no Dirichlet row. On main, from cos(pi x / 2), a uniform Dirichlet left the walls at
-    0.5338 / 0.0359 after one step for g = 0 and g = 0.7 alike -- neither absorbing nor prescribed, and
-    silent; a mixed one raised a ValueError from LaplacianOperator."""
+    0.5338 / 0.0359 after one step for g = 0 and g = 0.7 alike: the Laplacian's Dirichlet stencil absorbs
+    one cell outside the wall (first order) and the value 0.7 was dropped, silently. A mixed one raised a
+    ValueError from LaplacianOperator."""
     from scipy import sparse
 
     solver = FPFDMSolver(_problem(no_flux_bc(dimension=1)), boundary_conditions=bc)
@@ -117,3 +118,34 @@ def test_the_adjoint_step_still_runs_on_no_flux():
     solver = FPFDMSolver(_problem(no_flux_bc(dimension=1)))
     M_next = solver.solve_fp_step_adjoint_mode(np.ones(N), sparse.csr_matrix((N, N)))
     assert np.all(np.isfinite(M_next))
+
+
+def _fall_through(g: float) -> BoundaryConditions:
+    """No-flux on x_min, and x_max left to a DIRICHLET ``default_bc``."""
+    return BoundaryConditions(
+        dimension=1,
+        segments=[BCSegment(name="wall", bc_type=BCType.NO_FLUX, boundary="x_min")],
+        default_bc=BCType.DIRICHLET,
+        default_value=g,
+    )
+
+
+@pytest.mark.parametrize("source", [None, 1.0], ids=["no_source", "source"])
+def test_a_dirichlet_default_fall_through_wall_holds_its_value(source):
+    """The matrix gave the fall-through wall an identity row, and the RHS loop, gated on segments alone,
+    never wrote its value: the wall held its initial 0.0408, or climbed 0.0908 -> 0.5408 under S = 1."""
+    src = None if source is None else _constant(source)
+    explicit = _solve(FPFDMSolver(_problem(no_flux_bc(dimension=1)), boundary_conditions=_fall_through(0.7)), src)
+    np.testing.assert_allclose(explicit[1:, -1], 0.7, rtol=0, atol=1e-12)
+    shared = _solve(FPFDMSolver(_problem(_fall_through(0.7))), src)
+    assert np.all(shared[1:, -1] == 0.0), "a shared Dirichlet default is an exit"
+
+
+def test_the_source_still_reaches_the_interior_beside_a_dirichlet_wall():
+    """Linearity: the source's contribution is the solve with dt*S on the balance rows and 0 on the wall.
+    A positive source therefore raises every interior value; a reorder that dropped the source whenever a
+    Dirichlet row exists would leave the difference at zero."""
+    solver = FPFDMSolver(_problem(_wall_on_x_max()))
+    difference = _solve(solver, _constant(1.0)) - _solve(solver, None)
+    assert np.all(difference[1:, 1:-1] > 0.0)
+    assert np.all(difference[1:, -1] == 0.0)
