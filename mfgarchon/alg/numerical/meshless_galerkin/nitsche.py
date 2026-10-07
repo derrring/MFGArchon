@@ -37,8 +37,13 @@ Scope (interim, #1138):
 - ``disc.advection`` carries no boundary term, so ``Gamma_D`` is **diffusively
   absorbing but advectively reflecting** -- rigorous for ``b.n = 0`` on ``Gamma_D``.
   Advective outflow (e.g. evacuation) needs an upwind boundary flux: a follow-up.
-- Inhomogeneous FP-Dirichlet (``m = g != 0``) is out of scope (the FP solve loop has
-  no Nitsche-RHS hook; only the homogeneous absorbing ``g = 0`` case is supported).
+- Both solvers assemble the data load from the BC they hold. The FP holds the shared BC as
+  read through ``bc_utils.fp_view_of_shared_bc``, where a Dirichlet is an exit (``g = 0``,
+  absorbing; #2512, convention row 5), so the translator alone decides that ``m = 0``.
+- A segment placed by ``region``, ``sdf_region`` or ``normal_direction`` is refused when its placement
+  matters: a Dirichlet one, one that outranks a Dirichlet segment, or any with a DIRICHLET ``default_bc``.
+  This path places conditions by face name only, with the BC's precedence (#2490). Otherwise such a
+  segment carries the natural condition, which needs no placement.
 
 Issue #1138.
 """
@@ -50,36 +55,36 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy import sparse
 
-from mfgarchon.alg.numerical.meshless_galerkin.quadrature import boundary_tensor_gauss, surface_quadrature
+from mfgarchon.alg.numerical.meshless_galerkin.quadrature import boundary_tensor_gauss
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from mfgarchon.alg.numerical.meshless_galerkin.discretization import MeshlessGalerkinDiscretization
     from mfgarchon.geometry.boundary import BoundaryConditions
+    from mfgarchon.geometry.boundary.types import BCSegment
 
 
-def dirichlet_segments(bc: BoundaryConditions | None) -> list:
-    """Dirichlet segments of a BoundaryConditions object (empty list if none). Segments only:
-    a DIRICHLET ``default_bc`` is refused at construction by `refuse_an_unread_dirichlet_default`."""
-    if bc is None:
-        return []
-    from mfgarchon.geometry.boundary.types import BCType
+def refuse_what_nitsche_cannot_place(bc: BoundaryConditions | None) -> None:
+    """Refuse, at construction, a BC the meshless pair's Nitsche path would misplace.
 
-    return [s for s in bc.segments if s.bc_type == BCType.DIRICHLET]
+    The terms are assembled at the first solve; this checks at construction what they would read.
 
-
-def refuse_an_unread_dirichlet_default(bc: BoundaryConditions | None) -> None:
-    """The meshless pair reads Dirichlet walls only from segments (`dirichlet_segments`,
-    `bc_adapter.is_pure_neumann`), so a DIRICHLET ``default_bc`` that governs some face is refused. Before
-    this, the faces it governed got the natural condition: a default-DIRICHLET right wall kept all its
-    mass (ratio 1.0000) where the same wall as an explicit segment absorbs (0.8326 at 11 points, delta
-    0.35, sigma 0.3, T 0.5, zero drift) (#2512 S4). Coverage is `_segment_covers`, so its answers for
-    restricted segments (#2490) and ``boundary="all"`` (#1953) are this guard's too."""
+    - **A Dirichlet segment this path cannot place** (``region``, ``sdf_region``, ``normal_direction``, or
+      a ``region_name`` that is not a face), or any segment it cannot place that outranks a Dirichlet one,
+      is refused by `_segment_faces` rather than dropped (#2490).
+    - **A DIRICHLET ``default_bc`` that governs some face** is refused. Nitsche reads only segments
+      (`_dirichlet_faces`, `places_no_dirichlet_face`), so before this the faces it governed got the
+      natural condition: a default-DIRICHLET right wall kept all its mass (ratio 1.0000) where the same
+      wall as an explicit segment absorbs (0.8326 at 11 points, delta 0.35, sigma 0.3, T 0.5, zero drift)
+      (#2512 S4). Coverage is `_segment_faces` too, so a segment it cannot place is refused here rather
+      than counted as covering a face.
+    """
     if bc is None:
         return
     from mfgarchon.geometry.boundary.types import BCType
 
+    _dirichlet_faces(bc, bc.dimension or 0)
     if getattr(bc, "default_bc", None) == BCType.DIRICHLET and _faces_left_to_the_default(bc):
         raise NotImplementedError(
             "Meshless Galerkin: a DIRICHLET default_bc is not imposed -- Nitsche reads only segments, so "
@@ -89,15 +94,25 @@ def refuse_an_unread_dirichlet_default(bc: BoundaryConditions | None) -> None:
 
 
 def _faces_left_to_the_default(bc: BoundaryConditions) -> list[str]:
-    """Bounding-box faces no segment governs, so ``default_bc`` would.
-
-    Coverage is the BC object's own answer (`_segment_covers`, #1939): it resolves face aliases
-    ("left" is "x_min") and region-named segments, which a string comparison here got wrong both ways.
-    """
+    """Bounding-box faces no segment governs, so ``default_bc`` would. Coverage is `_segment_faces`."""
     from mfgarchon.geometry.boundary.types import BoundaryFace
 
-    faces = [BoundaryFace(axis, side).to_string() for axis in range(bc.dimension or 0) for side in ("min", "max")]
-    return [face for face in faces if not any(bc._segment_covers(seg, face) for seg in bc.segments)]
+    d = bc.dimension or 0
+    covered = {face for seg in bc.segments for face in _segment_faces(seg, d)}
+    return [
+        BoundaryFace(ax, side).to_string() for ax in range(d) for side in ("min", "max") if (ax, side) not in covered
+    ]
+
+
+def places_no_dirichlet_face(bc: BoundaryConditions | None, d: int) -> bool:
+    """No face carries a Dirichlet condition once precedence is applied: the natural condition everywhere.
+
+    The meshless pair's pure-Neumann answer, read from the placement Nitsche imposes with, so the two cannot
+    disagree. A Dirichlet segment whose every face a higher-priority segment claims is not a wall; a
+    type-only reading (`fem.bc_adapter.is_pure_neumann`) called it one, and with no Nitsche term to impose
+    the solve fell through to nodal condensation, which this basis cannot do.
+    """
+    return not any(faces for _, faces in _dirichlet_faces(bc, d))
 
 
 def _domain_bounds(disc: MeshlessGalerkinDiscretization) -> list[tuple[float, float]]:
@@ -106,57 +121,102 @@ def _domain_bounds(disc: MeshlessGalerkinDiscretization) -> list[tuple[float, fl
 
 
 def _segment_faces(segment, d: int) -> list[tuple[int, str]]:
-    """Bounding-box faces a Dirichlet segment applies to.
+    """Bounding-box faces a segment names, whole faces only. Which of them it governs is
+    `_dirichlet_faces`'s answer, which applies the BC's precedence.
 
-    A named face (``"x_min"``) maps to one ``(axis, side)``; an unscoped segment
-    (``boundary is None``) applies to every face of the box. Anything else (e.g. a
-    Gmsh physical-group tag) is unsupported in the interim bounding-box path.
+    A face named by ``boundary`` (aliases such as ``"left"`` included) or by a ``region_name`` that is a
+    face label maps to that face; ``boundary=None`` or ``"all"`` names every face. A segment carrying
+    ``region``, ``sdf_region`` or ``normal_direction`` is refused: this path places conditions by face name
+    and cannot read those fields. It used to drop them, sending a segment with no ``boundary`` to every face
+    and one with a ``boundary`` to that whole face (#2490).
+    Measured before: a 1-D Dirichlet segment on ``region={0: (0.5, 1)}`` absorbed 0.6652, the both-walls
+    figure, where x_max alone gives 0.8326. A Dirichlet ``sdf_region`` was integrated on its zero level
+    set -- for a ball centred on a corner of the unit square, a quarter circle inside the domain.
+
+    `bc_utils.refuse_unplaceable_segments` refuses a related set for the readers that take one condition
+    per face (the semi-Lagrangian pair, FP-FDM's periodicity), with a different policy: it also refuses
+    ``"all"`` and ``region_name`` segments, which this path can place.
     """
-    from mfgarchon.geometry.boundary.types import parse_boundary_face
+    from mfgarchon.geometry.boundary.types import BCType, parse_boundary_face
 
+    if segment.bc_type == BCType.DIRICHLET and getattr(segment, "sdf_region", None) is not None:
+        raise NotImplementedError(
+            f"Meshless Galerkin: Dirichlet segment {segment.name!r} carries sdf_region, which BCSegment defines as "
+            "selecting part of the boundary; this path integrated its zero level set instead -- in general not "
+            "the part it selects, and for a ball on a box corner a curve inside the domain. The curved-domain "
+            "Dirichlet route (#1139) is withdrawn until curved "
+            "boundaries have their own field, distinct from sdf_region (#2490). On a box, name the face with "
+            "boundary='x_min' etc."
+        )
+    restricted = [f for f in ("region", "sdf_region", "normal_direction") if getattr(segment, f, None) is not None]
+    if restricted:
+        raise NotImplementedError(
+            f"Meshless Galerkin: segment {segment.name!r} is placed by {', '.join(restricted)}, which the interim "
+            "Nitsche path cannot read -- it places conditions by face name only -- so it is refused rather than "
+            "dropped (#2490). Name the face with boundary='x_min' etc."
+        )
+    if segment.region_name is not None:
+        face = parse_boundary_face(segment.region_name)
+        if face is None:
+            raise NotImplementedError(
+                f"Meshless Galerkin: segment {segment.name!r} names region {segment.region_name!r}, which is not a "
+                "bounding-box face; the interim Nitsche path cannot place it (#2490)."
+            )
+        return [(face.axis, face.side)]
+    if segment.boundary is None or segment.boundary == "all":
+        return [(ax, side) for ax in range(d) for side in ("min", "max")]
     face = parse_boundary_face(segment.boundary)
     if face is not None:
         return [(face.axis, face.side)]
-    if segment.boundary is None:
-        return [(ax, side) for ax in range(d) for side in ("min", "max")]
     raise NotImplementedError(
-        f"Dirichlet boundary {segment.boundary!r} is not an axis-aligned bounding-box face; "
-        "only named faces (e.g. 'x_min') or unscoped (all faces) are supported by the interim "
-        "meshless Nitsche path (#1138)."
+        f"Meshless Galerkin: boundary {segment.boundary!r} is not an axis-aligned bounding-box face; only named "
+        "faces (e.g. 'x_min') or every face (boundary=None or 'all') are supported by the interim Nitsche path "
+        "(#1138)."
     )
 
 
-def _check_boundary_node_coverage(x_b: NDArray, disc) -> None:
-    """Fail fast if any boundary quadrature point lacks MLS node support.
+def _dirichlet_faces(bc: BoundaryConditions | None, d: int) -> list[tuple[BCSegment, list[tuple[int, str]]]]:
+    """Each Dirichlet segment with the faces it governs: those it names that no earlier segment in the BC's
+    priority order already claims -- the order `BoundaryConditions.get_bc_at_point` reads, highest first.
 
-    A point with fewer than ``len(exps)`` cloud nodes within the support radius makes
-    the MLS moment matrix singular; raise a greppable error naming the bare point
-    rather than letting a deep ``LinAlgError`` surface later. The cloud must cover the
-    Dirichlet boundary ``{sdf=0}``.
+    A face named by both a priority -1 Dirichlet ``boundary="all"`` and a priority 1 no-flux ``x_min`` is
+    the no-flux segment's; imposing the Dirichlet there too absorbed 0.6652 where the resolver's answer gives
+    0.8326 (#2490). Segments after the last Dirichlet one cannot take a face from it and are not read, so a
+    lower-priority segment this path cannot place is not refused here.
     """
-    from scipy.spatial import cKDTree
+    from mfgarchon.geometry.boundary.types import BCType
 
-    n_min = len(disc._exps)
-    counts = np.asarray(cKDTree(disc.dof_coordinates).query_ball_point(x_b, disc.rho, return_length=True))
-    bad = np.flatnonzero(counts < n_min)
-    if bad.size:
-        i = int(bad[0])
-        raise ValueError(
-            f"Curved-boundary quadrature point {np.round(x_b[i], 4).tolist()} has only {int(counts[i])} cloud "
-            f"nodes within rho={disc.rho:.4g} (need >= {n_min}); the cloud must cover the Dirichlet boundary "
-            "{sdf=0}. Add nodes near the boundary or enlarge delta (#1139)."
-        )
+    if bc is None:
+        return []
+    segments = list(bc.segments)  # sorted by priority, highest first (BoundaryConditions.__post_init__)
+    dirichlet_at = [i for i, seg in enumerate(segments) if seg.bc_type == BCType.DIRICHLET]
+    if not dirichlet_at:
+        return []
+    claimed: set[tuple[int, str]] = set()
+    placed = []
+    for seg in segments[: dirichlet_at[-1] + 1]:
+        if seg.bc_type == BCType.DIRICHLET:
+            faces = _segment_faces(seg, d)
+        else:
+            try:
+                faces = _segment_faces(seg, d)
+            except NotImplementedError as exc:
+                raise NotImplementedError(
+                    f"Meshless Galerkin: segment {seg.name!r} outranks a Dirichlet segment in the BC's priority order, "
+                    "so the faces it claims decide where the Dirichlet one applies, and this path cannot place it "
+                    f"(#2490): {exc}"
+                ) from exc
+        if seg.bc_type == BCType.DIRICHLET:
+            placed.append((seg, [face for face in faces if face not in claimed]))
+        claimed.update(faces)
+    return placed
 
 
-def _segment_quadrature(segment, disc, bounds, n_gauss):
-    """Boundary quadrature ``(x_b, w_b, n_b)`` for one Dirichlet segment.
+def _segment_quadrature(faces, disc, bounds, n_gauss):
+    """Boundary quadrature ``(x_b, w_b, n_b)`` on the faces one Dirichlet segment governs.
 
-    A segment carrying ``sdf_region`` (a curved boundary, #1139) is integrated on the
-    level set ``{sdf_region = 0}`` via ``surface_quadrature``; otherwise the
-    axis-aligned bounding-box face rule (``boundary_tensor_gauss``) is used.
-
-    Both branches size their cell count off the cloud scale: **two cells per support
-    radius**, so at least ``2 * n_gauss`` points fall within every ``rho`` along a face.
+    The axis-aligned bounding-box face rule (``boundary_tensor_gauss``), with the cell
+    count sized off the cloud scale: **two cells per support radius**, so at least ``2 * n_gauss`` points fall within every ``rho`` along a face.
     The integrand is ``phi_i phi_j`` and ``phi_i (n . grad phi_j)``, which varies on the
     MLS support scale ``rho`` and therefore gets *finer* under refinement; a rule whose
     resolution does not follow it resolves less of the integrand at every level (#1679).
@@ -175,21 +235,28 @@ def _segment_quadrature(segment, disc, bounds, n_gauss):
     # Cells per support radius, not per domain: rho shrinks with the cloud, so this
     # count grows under refinement while a fixed one silently does not.
     n_cells = max(1, int(np.ceil(2.0 * max_side / disc.rho)))
-    sdf = getattr(segment, "sdf_region", None)
-    if sdf is not None:
-        # A marching grid over a smooth curve needs a floor the flat-face rule does
-        # not: the level set has to be found before it can be integrated.
-        x_b, w_b, n_b = surface_quadrature(sdf, bounds, max(16, n_cells))
-        _check_boundary_node_coverage(x_b, disc)
-        return x_b, w_b, n_b
-    faces = _segment_faces(segment, disc.dim)
     return boundary_tensor_gauss(bounds, faces, n_cells=n_cells, n_gauss=n_gauss)
 
 
 def _evaluate_g(value, x_b: NDArray) -> NDArray:
-    """Prescribed Dirichlet value at boundary points (scalar or callable g(x))."""
-    if isinstance(value, (int, float)):
-        return np.full(x_b.shape[0], float(value))
+    """Prescribed Dirichlet value at boundary points: a real number, a callable ``g(x)``, or anything the
+    one owner of "verifiably zero" (`bc_utils._describe_bc_value`) counts as zero -- ``None``,
+    ``np.int64(0)``, ``np.zeros(1)``. The FP reads the translated BC, which leaves such a value as it is,
+    so a narrower test here would refuse a zero the translator already accepted."""
+    import numbers
+
+    from mfgarchon.geometry.boundary.bc_utils import _describe_bc_value
+
+    if np.iscomplexobj(value):
+        # `float()` on a NumPy complex drops the imaginary part with only a ComplexWarning, and
+        # `_describe_bc_value` reads 1j as zero that way: refused, not truncated.
+        raise NotImplementedError(
+            f"Dirichlet value {value!r} is complex; the meshless Nitsche path takes a real g (#2490)."
+        )
+    if _describe_bc_value(value) is None:
+        return np.zeros(x_b.shape[0])
+    if isinstance(value, numbers.Real) or (isinstance(value, np.ndarray) and value.size == 1):
+        return np.full(x_b.shape[0], float(np.asarray(value).reshape(-1)[0]))
     if callable(value):
         return np.array([float(value(x)) for x in x_b], dtype=np.float64)
     raise NotImplementedError(
@@ -204,9 +271,8 @@ def assemble_nitsche_terms(
     D: float,
     gamma: float,
     n_gauss: int,
-    include_data: bool,
 ) -> tuple[sparse.csr_matrix | None, NDArray | None]:
-    """Symmetric Nitsche operator block (and HJB Dirichlet-data RHS) for the weak form.
+    """Symmetric Nitsche operator block and Dirichlet-data RHS for the weak form.
 
     Args:
         disc: the meshless discretization (provides ``rho`` and ``boundary_shape_data``).
@@ -214,28 +280,27 @@ def assemble_nitsche_terms(
         D: diffusion coefficient (``sigma^2 / 2``); every Nitsche term scales with it.
         gamma: dimensionless penalty (coercivity needs ``gamma > 2*C_tr``).
         n_gauss: Gauss points per free dimension for the surface quadrature.
-        include_data: ``True`` (HJB ``u=g``) builds the data RHS; ``False`` (FP
-            absorbing ``g=0``) returns ``rhs=None``.
 
     Returns:
         ``(N, rhs)``: ``N`` the ``(n_dof, n_dof)`` sparse block to ADD to
-        ``M/dt + D*K``; ``rhs`` the ``(n_dof,)`` Dirichlet-data load or ``None``.
-        ``(None, None)`` if there are no Dirichlet segments.
+        ``M/dt + D*K``; ``rhs`` the ``(n_dof,)`` Dirichlet-data load, or ``None`` when every value is
+        zero -- the FP's case, whose shared Dirichlet the translator has set to the absorbing ``g = 0``.
+        ``(None, None)`` if no Dirichlet face is placed (`_dirichlet_faces`).
     """
-    segs = dirichlet_segments(bc)
-    if not segs:
+    placed = [(seg, faces) for seg, faces in _dirichlet_faces(bc, disc.dim) if faces]
+    if not placed:
         return None, None
 
     bounds = _domain_bounds(disc)
     rho = disc.rho
 
     xs, ws, ns, gs = [], [], [], []
-    for s in segs:
-        x_b, w_b, n_b = _segment_quadrature(s, disc, bounds, n_gauss)
+    for s, faces in placed:
+        x_b, w_b, n_b = _segment_quadrature(faces, disc, bounds, n_gauss)
         xs.append(x_b)
         ws.append(w_b)
         ns.append(n_b)
-        gs.append(_evaluate_g(s.value, x_b) if include_data else np.zeros(x_b.shape[0]))
+        gs.append(_evaluate_g(s.value, x_b))
 
     x_b = np.vstack(xs)
     w_b = np.concatenate(ws)
@@ -255,7 +320,7 @@ def assemble_nitsche_terms(
     N = ((-D) * B + (-D) * B.T + pen * P).tocsr()
 
     rhs = None
-    if include_data and np.any(g_b != 0.0):
+    if np.any(g_b != 0.0):
         wg = w_b * g_b
         rhs = (-D) * (gn_b.T @ wg) + pen * (phi_b.T @ wg)
 

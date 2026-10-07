@@ -35,7 +35,7 @@ from scipy import sparse
 
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
-from mfgarchon.alg.numerical.meshless_galerkin.nitsche import refuse_an_unread_dirichlet_default
+from mfgarchon.alg.numerical.meshless_galerkin.nitsche import refuse_what_nitsche_cannot_place
 from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.pde_coefficients import assert_quadratic_drift
@@ -76,7 +76,7 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
     ) -> None:
         disc = discretization_from_cloud(collocation_points, delta, degree, n_gauss, backend, domain=domain)
         super().__init__(problem, disc)
-        refuse_an_unread_dirichlet_default(self._bc)
+        refuse_what_nitsche_cannot_place(self._bc)
         self._G_grad: list[sparse.csr_matrix] | None = None
         self._n_gauss = n_gauss
         self._nitsche_penalty = nitsche_penalty
@@ -111,25 +111,23 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         return self._G_grad
 
     def _is_pure_neumann(self) -> bool:
-        from mfgarchon.alg.numerical.fem.bc_adapter import is_pure_neumann
+        from mfgarchon.alg.numerical.meshless_galerkin.nitsche import places_no_dirichlet_face
 
-        return is_pure_neumann(self._bc)
+        return places_no_dirichlet_face(self._bc, self._disc.dim)
 
     def _weak_bc_terms(self, D: float):
-        """Symmetric Nitsche absorbing terms ``m = 0`` for the FP diffusion block.
+        """Symmetric Nitsche terms for the FP diffusion block, from the BC this solver holds.
 
-        Returns ``(N_nitsche, None)`` -- the homogeneous case adds no RHS data. The
-        block is assembled identically to the HJB solver (``include_data=False`` only
-        skips the zero data vector), so it is symmetric and equals the HJB block,
-        keeping ``A_FP = A_HJB^T``. ``(None, None)`` if no Dirichlet segments. Cached
-        on ``D``."""
+        That BC is the shared one read through ``fp_view_of_shared_bc`` (the weak-form base),
+        where a Dirichlet is an exit with value 0 (#2512, convention row 5), so the data load
+        is zero and this returns ``(N_nitsche, None)``: absorbing ``m = 0``, decided by the
+        translator alone. The block is the HJB's, so ``A_FP = A_HJB^T``. ``(None, None)`` if
+        no Dirichlet face is placed. Cached on ``D``."""
         if self._nitsche_cache is not None and self._nitsche_cache_D == D:
             return self._nitsche_cache
         from mfgarchon.alg.numerical.meshless_galerkin.nitsche import assemble_nitsche_terms
 
-        terms = assemble_nitsche_terms(
-            self._disc, self._bc, D, self._nitsche_penalty, self._n_gauss, include_data=False
-        )
+        terms = assemble_nitsche_terms(self._disc, self._bc, D, self._nitsche_penalty, self._n_gauss)
         self._nitsche_cache = terms
         self._nitsche_cache_D = D
         return terms
