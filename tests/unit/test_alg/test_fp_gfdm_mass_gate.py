@@ -399,8 +399,9 @@ def test_the_budget_closes_on_a_pure_source_to_round_off():
 
 @pytest.mark.parametrize("on_grid", [True, False], ids=["grid_nodes", "jittered"])
 def test_a_draining_source_is_not_stopped(on_grid):
-    """A source that removes 95% of the mass is legitimate. On grid nodes the budget follows it; on
-    scattered points the gross band's lower bound, which this solve crosses, does not apply under a source."""
+    """A source that removes 95% of the mass is legitimate. On grid nodes the budget follows it. On
+    scattered points the lower bound's reference is sum|m_0| minus the most the source can drain, 5% of
+    sum|m_0| here, and the drained density sits at that reference."""
     from mfgarchon.utils.numerical import gross_mass_excursion
 
     x0 = np.linspace(0, 1, 21)
@@ -412,7 +413,7 @@ def test_a_draining_source_is_not_stopped(on_grid):
     if not on_grid:
         final = float(np.abs(result[-1]).sum())
         assert gross_mass_excursion(final, float(np.abs(m0).sum())) is not None, (
-            "without a source this level is outside the band, so the test reaches the waived bound"
+            "against sum|m_0| alone this level is below the band, so the test reaches the drain-adjusted reference"
         )
 
 
@@ -429,7 +430,7 @@ def test_on_scattered_points_only_the_gross_check_runs_and_it_is_said_once(mfg_c
         solver.solve_fp_system(m0, np.zeros((41, 21)))
     messages = [m for m in mfg_caplog.messages if "measure" in m]
     assert len(messages) == 1, messages
-    assert "gross blow-up check" in messages[0]
+    assert "only a gross check on sum|m| runs" in messages[0]
 
 
 def _blowup(**solver_kw):
@@ -447,9 +448,9 @@ def test_a_blow_up_on_scattered_points_is_stopped_by_the_gross_check():
     import re
 
     solver, m0, drift = _blowup()
-    with pytest.raises(ValueError, match="outside the gross band") as exc:
+    with pytest.raises(ValueError, match="above the bound") as exc:
         solver.solve_fp_system(m0, drift)
-    factor = float(re.search(r"by a factor (\S+) at step", str(exc.value)).group(1))
+    factor = float(re.search(r"sum\|m\| is (\S+) times", str(exc.value)).group(1))
     assert factor > 10.0, "print the factor with enough digits to be past the band edge it crossed"
 
 
@@ -464,19 +465,103 @@ def test_a_source_term_does_not_silence_the_check(on_grid, source):
         drift = np.tile(drift[0], (2561, 1))
     else:
         solver, m0, drift = _blowup()
-    with pytest.raises(ValueError, match="budget|mass ratio" if on_grid else "above the gross bound"):
+    with pytest.raises(ValueError, match="to its budget" if on_grid else "above the bound"):
         solver.solve_fp_system(m0, drift, source_term=lambda t, xx: np.full(np.asarray(xx).shape[0], source))
 
 
+def _r4(on_grid, **solver_kw):
+    """Review 4 of #2526: the real operator under an outward drift 10 (x - 1/2) drains sum|m| to 0.019 of
+    its start with nothing going negative (sigma 0.3, Nt 160, 21 points)."""
+    x = np.linspace(0, 1, 21)
+    if not on_grid:
+        x[1:-1] += 1e-3 * np.random.default_rng(0).uniform(-1, 1, 19)
+    solver = FPGFDMSolver(_build(0.3, Nt=160).problem, collocation_points=x.reshape(-1, 1), **solver_kw)
+    return solver, np.exp(-30 * (x - 0.5) ** 2), np.tile(10.0 * (x - 0.5), (161, 1))
+
+
+def _r3(on_grid, **solver_kw):
+    if on_grid:
+        solver = _build(0.1, Nt=2560, **solver_kw)
+        m0, drift = _inputs(25.0)
+        return solver, m0, np.tile(drift[0], (2561, 1))
+    return _blowup(**solver_kw)
+
+
+@pytest.mark.parametrize("mode", ["raise", "warn"])
+@pytest.mark.parametrize("on_grid", [True, False], ids=["grid_nodes", "jittered"])
+@pytest.mark.parametrize("case", [_r3, _r4], ids=["review3_blowup", "review4_vanish"])
+def test_no_source_and_a_zero_source_are_one_case(case, on_grid, mode):
+    """The class, not an instance: S = 0 is what "no source" means, so the gate must not tell them apart.
+    Reviews 3 and 4 each found a check that a source identically zero switched off."""
+    import logging
+
+    solver_none, m0, drift = case(on_grid, mass_drift=mode)
+    solver_zero, _, _ = case(on_grid, mass_drift=mode)
+    outcomes = []
+    for solver, kwargs in (
+        (solver_none, {}),
+        (solver_zero, {"source_term": lambda t, xx: np.zeros(np.asarray(xx).shape[0])}),
+    ):
+        lines: list[str] = []
+        handler = logging.Handler()
+        handler.emit = lambda record, lines=lines: lines.append(record.getMessage())
+        logger = logging.getLogger("mfgarchon.alg.numerical.fp_solvers.fp_gfdm")
+        logger.addHandler(handler)
+        try:
+            result = ("returned", np.asarray(solver.solve_fp_system(m0, drift, **kwargs)))
+        except ValueError as exc:
+            result = ("raised", str(exc))
+        finally:
+            logger.removeHandler(handler)
+        outcomes.append((result, lines))
+    (r_none, l_none), (r_zero, l_zero) = outcomes
+    assert r_none[0] == r_zero[0]
+    if r_none[0] == "raised":
+        assert r_none[1] == r_zero[1]
+    else:
+        np.testing.assert_array_equal(r_none[1], r_zero[1])
+    assert l_none == l_zero
+    if mode == "raise":
+        assert r_none[0] == "raised", "every one of these four setups is a failed solve the gate must stop"
+
+
+def test_a_small_positive_source_does_not_waive_the_lower_bound():
+    """Review 4: under source 0.01 the drained density was not reported. A positive source cannot
+    remove mass, so the lower bound keeps its full reference."""
+    solver, m0, drift = _r4(on_grid=False)
+    with pytest.raises(ValueError, match="below the bound"):
+        solver.solve_fp_system(m0, drift, source_term=lambda t, xx: np.full(np.asarray(xx).shape[0], 0.01))
+
+
+def test_the_drift_is_measured_against_the_source_scale():
+    """A source adding 20x the mass carries the operator's leak with it: |mass - budget| is 3.7% of the
+    initial mass but 0.18% of the scale initial mass + |source| added, which is what the tolerance is on."""
+    grid, x, solver = _diffusion_solver(41, 160)
+    m0 = 1 + 0.5 * np.cos(2 * np.pi * x)
+    m0 /= grid.integrate(m0)
+    solver.solve_fp_system(m0, np.zeros((161, 41)), source_term=lambda t, xx: 20.0 * m0 / T)
+
+
+def test_the_gross_upper_reference_counts_the_positive_source():
+    """On scattered points a source adding 20x the mass takes sum|m| to 21x its start, legitimately; the
+    upper bound is 10 x (sum|m_0| + the positive source added), not 10 x sum|m_0|."""
+    x0 = np.linspace(0, 1, 21)
+    x0[1:-1] += 1e-3 * np.random.default_rng(0).uniform(-1, 1, 19)
+    _, x, solver = _diffusion_solver(21, 40, points=x0)
+    m0 = 1 + 0.5 * np.cos(np.pi * x)
+    solver.solve_fp_system(m0, np.zeros((41, 21)), source_term=lambda t, xx: 20.0 * m0 / T)
+
+
 def test_the_gross_sum_takes_absolute_values():
-    """One step of explicit diffusion at dt*D/h^2 ~ 10 turns a spike into an alternating-sign field:
-    sum m stays ~1 while sum|m| grows ~140x. The gross check must see that before the clip does."""
+    """One step of explicit diffusion at dt*D/h^2 = 50 turns a spike into an alternating-sign field: the
+    signed sum is 4.72, inside the band, while sum|m| is 142. The gross check must see that before the
+    clip does."""
     x = np.linspace(0, 1, 21)
     x[1:-1] += 1e-3 * np.random.default_rng(0).uniform(-1, 1, 19)
     solver = FPGFDMSolver(_build(1.0, Nt=2).problem, collocation_points=x.reshape(-1, 1))
     m0 = np.zeros(21)
     m0[10] = 1.0
-    with pytest.raises(ValueError, match="outside the gross band"):
+    with pytest.raises(ValueError, match="above the bound"):
         solver.solve_fp_system(m0, np.zeros((3, 21)))
 
 
@@ -513,7 +598,7 @@ def test_in_warn_mode_a_vanishing_density_is_reported_too(mfg_caplog):
     solver.gfdm_operator.laplacian = lambda m: -200.0 * np.asarray(m)
     with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.fp_solvers.fp_gfdm"):
         solver.solve_fp_system(np.exp(-30 * (x - 0.5) ** 2), np.zeros((41, 21)))
-    assert any("gross blow-up check" in m and "factor 0.00844" in m for m in mfg_caplog.messages)
+    assert any("gross blow-up check" in m and "0.00844" in m for m in mfg_caplog.messages)
 
 
 def test_an_exact_mode_on_a_strongly_non_uniform_cloud_passes_the_gross_check():
