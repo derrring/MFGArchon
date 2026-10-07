@@ -40,8 +40,10 @@ Scope (interim, #1138):
 - Both solvers assemble the data load from the BC they hold. The FP holds the shared BC as
   read through ``bc_utils.fp_view_of_shared_bc``, where a Dirichlet is an exit (``g = 0``,
   absorbing; #2512, convention row 5), so the translator alone decides that ``m = 0``.
-- A segment placed by ``region``, ``sdf_region`` or ``normal_direction`` is refused: this path
-  places conditions by face name only, with the BC's precedence (#2490).
+- A segment placed by ``region``, ``sdf_region`` or ``normal_direction`` is refused when its placement
+  matters: a Dirichlet one, one that outranks a Dirichlet segment, or any with a DIRICHLET ``default_bc``.
+  This path places conditions by face name only, with the BC's precedence (#2490). Otherwise such a
+  segment carries the natural condition, which needs no placement.
 
 Issue #1138.
 """
@@ -140,8 +142,9 @@ def _segment_faces(segment, d: int) -> list[tuple[int, str]]:
     if segment.bc_type == BCType.DIRICHLET and getattr(segment, "sdf_region", None) is not None:
         raise NotImplementedError(
             f"Meshless Galerkin: Dirichlet segment {segment.name!r} carries sdf_region, which BCSegment defines as "
-            "selecting part of the boundary; this path integrated its zero level set instead -- for a box "
-            "domain, a curve inside it. The curved-domain Dirichlet route (#1139) is withdrawn until curved "
+            "selecting part of the boundary; this path integrated its zero level set instead -- in general not "
+            "the part it selects, and for a ball on a box corner a curve inside the domain. The curved-domain "
+            "Dirichlet route (#1139) is withdrawn until curved "
             "boundaries have their own field, distinct from sdf_region (#2490). On a box, name the face with "
             "boundary='x_min' etc."
         )
