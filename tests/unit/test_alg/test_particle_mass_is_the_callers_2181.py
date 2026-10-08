@@ -54,9 +54,8 @@ def _problem(grid: TensorProductGrid, centre: float, share: float) -> MFGProblem
     Built on the v1.0 API, and the reason is narrower than it first looks. It keeps this file from
     adding a DeprecationWarning identity to the warning ratchet -- but "the legacy constructor warns"
     is NOT on its own a reason to prefer v1.0, because that warning says legacy will be removed at
-    v1.0.0 while `Model`/`Conditions` cannot yet express everything `MFGComponents` can:
-    when this was written, `potential_func` had no v1.0 home (#2554 has since retired it for
-    `SeparableHamiltonian(potential=)`). So the conversion here rests on
+    v1.0.0 while `Model`/`Conditions` cannot yet express everything `MFGComponents` can. So the
+    conversion here rests on
     having CHECKED that the two paths build the same object for this fixture -- Nt, T, sigma,
     dimension, spatial_shape, initial_mass, initial_mass_measure and `m_initial` all identical --
     not on the deprecation being authoritative.

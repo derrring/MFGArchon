@@ -15,4 +15,4 @@
     - Its Hamiltonian guide built `MFGComponents(hamiltonian_func=...)`, which raises `TypeError`, and it cited `docs/migration/HAMILTONIAN_API.md`, which does not exist.
     - Its geometry guide ended with `MFGProblem(geometry=..., T=..., Nt=..., volatility=...)`, which raises for a missing `u_terminal`.
     - The redirect table named `MFGComponents.hamiltonian_func`, `hamiltonian_dm_func` and `hamiltonian_dp_func`, none of which exists.
-    - Both guides now print the v1.0 spelling (`Model`, `Conditions`, a Hamiltonian object). The rows for `hamiltonian`, `dH_dm`, `dH_dp`, `running_cost` and `potential` now name the Hamiltonian's own channels, and each row is pinned by its text. A test runs each printed guide and requires it to build a problem.
+    - Both guides now print the v1.0 spelling (`Model`, `Conditions`, a Hamiltonian object). The rows for `hamiltonian`, `dH_dm`, `dH_dp`, `running_cost` and `potential` now name the Hamiltonian's own channels. A test pins each row's opening, through the channel it names; the `potential` row is pinned whole. A test runs each printed guide and requires it to build a problem.

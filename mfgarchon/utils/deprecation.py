@@ -598,12 +598,14 @@ def validate_kwargs(
         >>> DEPRECATED = {"dH_dm": "SeparableHamiltonian(coupling_dm=...)"}
         >>> RECOGNIZED = {"m_initial", "u_terminal"}
         >>> validate_kwargs(
-        ...     kwargs={"hamiltonian": my_func, "typo_param": 123},
+        ...     kwargs={"dH_dm": my_func, "typo_param": 123},
         ...     deprecated_kwargs=DEPRECATED,
         ...     recognized_kwargs=RECOGNIZED,
         ...     context="MFGProblem",
         ... )
-        ValueError: Deprecated kwargs in MFGProblem: 'hamiltonian' -> Use MFGComponents...
+        ValueError: Deprecated kwargs detected in MFGProblem:
+        <BLANKLINE>
+          - 'dH_dm' -> SeparableHamiltonian(coupling_dm=...)
 
     Issue #666: Prevents silent fail where user-provided kwargs are ignored.
     """
