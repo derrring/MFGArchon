@@ -2,12 +2,14 @@
 
 P1 elements, so the error falls at second order. Each cell is run on both arms of the step:
 
-- **Picard**, the default, is handed the exact solution as its previous iterate. That isolates the step's
-  boundary treatment, including the Dirichlet lift, which only Picard reads.
-- **Newton** solves the nonlinear step itself. It is the full oracle.
+- **Picard**, the default, is handed the exact solution as its previous iterate, so H is frozen at the exact
+  solution and the nonlinearity is not solved on this arm. That isolates the step's boundary treatment,
+  including the Dirichlet lift, which only Picard reads.
+- **Newton** solves the nonlinear step itself.
 
-**Fixtures.** Each solution is ``u = psi(x) + w(t) phi(x)`` with ``w`` linear in t, so backward Euler is
-exact in time and the ratios are spatial (``Nt`` 5 -> 40 moves the finest 1-D error at 40 cells by under 1.8%).
+**Fixtures.** Each solution is ``u = psi(x) + w(t) phi(x)`` with ``w`` linear in t, so the time error is small
+beside the spatial one and the ratios are spatial. When this file was written, ``Nt`` 5 -> 40 moved the finest
+1-D error at 40 cells by at most 3.7%.
 - Data that carry a value differ from wall to wall.
 - The optimal drift ``-grad u`` points into every wall that carries a flux datum (NEUMANN, ROBIN).
 - The no-flux and reflecting solutions are even about no midline.
@@ -18,11 +20,18 @@ exact in time and the ratios are spatial (``Nt`` 5 -> 40 moves the finest 1-D er
 **Assertions per arm.**
 - The error ratio, in (3.0, 5.0).
 - Each level's error, two-sided, within a factor of 1.25 either way of the value recorded here.
-- Dirichlet nodes equal ``g`` exactly at every time.
+- Dirichlet nodes equal ``g`` to 1e-12 at every time.
 
 A level outside its band in either direction is a change in the boundary treatment. Re-measure and record it.
 REFLECTING has no code of its own here: it takes the NEUMANN/NO_FLUX arm. Its cells are the NO_FLUX
 solutions under REFLECTING segments, so they pin that the type keeps reaching that arm.
+
+**Two arms the cells do not reach, pinned separately.**
+- A terminal datum that disagrees with ``g``: every cell's terminal datum already equals ``g`` on its
+  Dirichlet nodes, so the step's own imposition of ``g`` is invisible there.
+- The uniform spelling (``dirichlet_bc``, ``neumann_bc``, ``robin_bc``): its segment has no ``boundary`` and
+  takes the whole-boundary arm, which the per-face cells never call. It must solve as the per-face spelling
+  with the same datum on every face.
 """
 
 from __future__ import annotations
@@ -40,7 +49,7 @@ from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
 from mfgarchon.alg.numerical.fem.mesh_adapter import skfem_to_meshdata
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
-from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
+from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, dirichlet_bc, neumann_bc, robin_bc
 from mfgarchon.geometry.meshes.mesh_1d import Mesh1D
 from mfgarchon.geometry.meshes.mesh_2d import Mesh2D
 
@@ -208,8 +217,8 @@ CELLS: dict[str, Cell] = {
         # outward du/dn: x_min -0.6, x_max -0.25, so the drift points into both walls
         1,
         lambda: [
-            _seg("x_min", BCType.NEUMANN, -0.6, alpha=0.0, beta=1.0),
-            _seg("x_max", BCType.NEUMANN, -0.25, alpha=0.0, beta=1.0),
+            _seg("x_min", BCType.NEUMANN, -0.6),
+            _seg("x_max", BCType.NEUMANN, -0.25),
         ],
         _poly1(0.3, 0.6, -0.425),
         _COS1,
@@ -273,7 +282,7 @@ CELLS: dict[str, Cell] = {
         # outward du/dn: x_min -0.6, x_max -0.25, y_min -0.3, y_max -0.45 -- the drift points into every wall
         2,
         lambda: [
-            _seg(f, BCType.NEUMANN, g, alpha=0.0, beta=1.0)
+            _seg(f, BCType.NEUMANN, g)
             for f, g in (("x_min", -0.6), ("x_max", -0.25), ("y_min", -0.3), ("y_max", -0.45))
         ],
         _poly2(0.3, 0.6, -0.425, 0.3, (-0.45 - 0.3) / (2 * LY)),
@@ -324,10 +333,11 @@ def _on_face(X: np.ndarray, face: str) -> np.ndarray:
     return np.isclose(X[:, axis], 0.0 if face.endswith("min") else top)
 
 
-def solve_level(cell: Cell, n: int, newton: bool) -> tuple[float, float]:
-    """(max error over every node and time level, max |U - g| over the Dirichlet nodes)."""
+def _solve(cell: Cell, n: int, newton: bool, bc=None, terminal_offset: float = 0.0):
+    """(U, exact, X) for ``cell`` at ``n`` cells, under ``bc`` if given, with ``terminal_offset`` added to the
+    terminal datum on the cell's Dirichlet nodes."""
     geometry = _geometry(cell.dim, n)
-    geometry.boundary_conditions = BoundaryConditions(dimension=cell.dim, segments=cell.segments())
+    geometry.boundary_conditions = bc or BoundaryConditions(dimension=cell.dim, segments=cell.segments())
     problem = MFGProblem(
         model=Model(
             hamiltonian=SeparableHamiltonian(
@@ -348,26 +358,42 @@ def solve_level(cell: Cell, n: int, newton: bool) -> tuple[float, float]:
     X = solver._disc.dof_coordinates
     dt = problem.dt
     exact = np.array([cell.u(k * dt, X) for k in range(cell.nt + 1)])
+    terminal = exact[-1].copy()
+    on_dirichlet = np.zeros(X.shape[0], dtype=bool)
+    for face in cell.dirichlet:
+        on_dirichlet |= _on_face(X, face)
+    terminal[on_dirichlet] += terminal_offset
     U = np.asarray(
         solver.solve_hjb_system(
             M_density=np.ones((cell.nt + 1, X.shape[0])),
-            U_terminal=exact[-1],
+            U_terminal=terminal,
             U_coupling_prev=None if newton else exact,
             source_term=cell.source,
             use_newton=newton,
             newton_tolerance=1e-12,
         )
     )
-    wall = 0.0
+    return U, exact, X
+
+
+def _dirichlet_miss(cell: Cell, U: np.ndarray, X: np.ndarray) -> float:
+    """max |U - g| over the cell's Dirichlet nodes, at every time level of ``U``."""
+    miss = 0.0
     for face, g in cell.dirichlet.items():
         on = _on_face(X, face)
-        wall = max(wall, float(np.abs(U[:, on] - g(X[on])).max()))
-    return float(np.abs(U - exact).max()), wall
+        miss = max(miss, float(np.abs(U[:, on] - g(X[on])).max()))
+    return miss
+
+
+def solve_level(cell: Cell, n: int, newton: bool) -> tuple[float, float]:
+    """(max error over every node and time level, max |U - g| over the Dirichlet nodes)."""
+    U, exact, X = _solve(cell, n, newton)
+    return float(np.abs(U - exact).max()), _dirichlet_miss(cell, U, X)
 
 
 @pytest.fixture(autouse=True)
-def _quiet():
-    logging.getLogger("mfgarchon").setLevel(logging.WARNING)
+def _quiet(caplog):
+    caplog.set_level(logging.WARNING, logger="mfgarchon")
 
 
 # ---------------------------------------------------------------------------------------------- the record
@@ -390,8 +416,11 @@ RATIO_BAND = (3.0, 5.0)
 
 def test_every_declared_bc_type_has_a_cell_in_both_dimensions():
     declared = {t.value for t in HJBFEMSolver._SUPPORTED_BC_TYPES}
+    for name, cell in CELLS.items():
+        carried = {s.bc_type.value for s in cell.segments()}
+        assert carried == {name.rsplit("_", 1)[0]}, f"{name} carries {sorted(carried)}"
     for dim in (1, 2):
-        covered = {name.rsplit("_", 1)[0] for name in CELLS if name.endswith(f"_{dim}d")}
+        covered = {s.bc_type.value for cell in CELLS.values() if cell.dim == dim for s in cell.segments()}
         assert declared <= covered, f"{dim}-D: declared {sorted(declared)}, oracle cells for {sorted(covered)}"
     assert set(CELLS) == set(MEASURED)
 
@@ -416,3 +445,38 @@ def test_an_exact_solution_is_reproduced_at_second_order(name: str, arm: str):
 
     for n, (_, wall) in zip(cell.levels, rows, strict=True):
         assert wall < 1e-12, f"{name} [{arm}]: a Dirichlet node misses g by {wall:.3e} at n = {n}"
+
+
+@pytest.mark.parametrize("arm", ["picard", "newton"])
+@pytest.mark.parametrize("name", ["dirichlet_1d", "dirichlet_2d"])
+def test_the_step_imposes_g_when_the_terminal_datum_misses_it(name: str, arm: str):
+    cell = CELLS[name]
+    U, _, X = _solve(cell, cell.levels[0], newton=arm == "newton", terminal_offset=0.3)
+    assert _dirichlet_miss(cell, U[-1:], X) > 0.29, "the terminal datum was meant to miss g by 0.3"
+    miss = _dirichlet_miss(cell, U[:-1], X)
+    assert miss < 1e-12, f"{name} [{arm}]: a Dirichlet node misses g by {miss:.3e} before t = T"
+
+
+_UNIFORM = {
+    "dirichlet": (lambda: dirichlet_bc(dimension=2, value=0.4), {"bc_type": BCType.DIRICHLET, "value": 0.4}),
+    "neumann": (lambda: neumann_bc(dimension=2, value=-0.3), {"bc_type": BCType.NEUMANN, "value": -0.3}),
+    "robin": (
+        lambda: robin_bc(dimension=2, alpha=2.0, beta=0.5, value=0.6),
+        {"bc_type": BCType.ROBIN, "value": 0.6, "alpha": 2.0, "beta": 0.5},
+    ),
+}
+
+
+@pytest.mark.parametrize("arm", ["picard", "newton"])
+@pytest.mark.parametrize("kind", sorted(_UNIFORM))
+def test_the_uniform_spelling_solves_as_the_same_datum_on_every_face(kind: str, arm: str):
+    cell, n, newton = CELLS["no_flux_2d"], _LEVELS_2D[0], arm == "newton"
+    uniform, per_face = _UNIFORM[kind]
+    faces = BoundaryConditions(dimension=2, segments=[_seg(f, **per_face) for f in _ALL])
+
+    U_uniform = _solve(cell, n, newton, bc=uniform())[0]
+    U_faces = _solve(cell, n, newton, bc=faces)[0]
+    U_natural = _solve(cell, n, newton)[0]
+
+    assert np.abs(U_faces - U_natural).max() > 1e-2, "the datum was meant to move the solution"
+    np.testing.assert_allclose(U_uniform, U_faces, rtol=0.0, atol=1e-12)
