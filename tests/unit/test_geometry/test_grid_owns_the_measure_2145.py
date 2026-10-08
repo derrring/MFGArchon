@@ -265,15 +265,29 @@ class TestWhatTheRefusalDoesToCallers:
                 assert volatility is None, "this stub cannot honour a volatility field"
                 return 1e6 * np.tile(np.asarray(m_initial, dtype=float), (self.problem.Nt + 1, 1))
 
-        blowing = _fresh()
-        blowing.geometry.integrate = _refuses
-        result = FixedPointIterator(blowing, HJBFDMSolver(blowing), _BlowsUp(blowing), relaxation=1.0).solve(
-            max_iterations=2, tolerance=1e-6
-        )
-        assert result.converged is False
-        assert result.mass_conservation_error is None, (
-            "a geometry that cannot integrate must report 'not measured', not a fabricated number"
-        )
+        def _solve_blowing_up(integrate):
+            blowing = _fresh()
+            blowing.geometry.integrate = integrate
+            return FixedPointIterator(blowing, HJBFDMSolver(blowing), _BlowsUp(blowing), relaxation=1.0).solve(
+                max_iterations=2, tolerance=1e-6
+            )
+
+        def _not_implemented(_field):
+            raise NotImplementedError("this geometry has no measure")
+
+        for refusal in (_refuses, _not_implemented):
+            result = _solve_blowing_up(refusal)
+            assert result.converged is False
+            assert result.mass_conservation_error is None, (
+                "a geometry that cannot integrate must report 'not measured', not a fabricated number"
+            )
+
+        # Narrowed means narrowed: an `integrate` that fails for some other reason is a bug to surface.
+        def _broken(_field):
+            raise TypeError("a defect in integrate itself")
+
+        with pytest.raises(TypeError, match="a defect in integrate itself"):
+            _solve_blowing_up(_broken)
 
         def _reports_zero_mass(field):
             return np.zeros(np.asarray(field, dtype=float).shape[0])

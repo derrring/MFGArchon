@@ -46,12 +46,13 @@ def _problem(data: str = "moving") -> MFGProblem:
 
     - ``moving``: a bump of mass 1 drifting toward a terminal-cost well; both fields move.
     - ``heavy``: mass 10 with coupling 0.1 m, so f(m) and the dynamics are ``moving``'s: the relative
-      change is the same and the absolute change ten times larger.
+      change is the same and the absolute change ten times ``moving``'s.
     - ``static_u``: the bump with no coupling and no terminal cost, so u = 0 exactly and only m moves.
     - ``static_m``: a uniform density with coupling 5 m and terminal cost 1, so u = 1 + 5 (T - t) is flat,
-      m never moves, and only u moves. The terminal row anchors u's norm away from 0, so a damped
+      m stays uniform to rounding (relative change 1.9e-16 per sweep), and only u moves. The terminal row anchors u's norm away from 0, so a damped
       step's relative size does not divide its damping factor back out.
-    - ``static``: a uniform density with no coupling and no terminal cost: neither field moves.
+    - ``static``: a uniform density with no coupling and no terminal cost: neither field moves (u = 0
+      exactly, m to rounding).
     """
     x = np.linspace(0.0, 1.0, _NX)
     mass = np.sum(np.exp(-30 * (x - 0.3) ** 2) * np.r_[0.5, np.ones(_NX - 2), 0.5]) / (_NX - 1)
@@ -90,14 +91,19 @@ def _solve(
 ) -> bool:
     """Run one coupling iterator for at most ``sweeps`` sweeps and return its verdict.
 
-    ``mixed`` gives a multi-field iterator one ``static`` field and the others ``data``, with no coupling
-    between them, so the larger field change is the others'.
+    ``mixed`` gives a multi-field iterator ``static`` fields with one ``data`` field among them, second of
+    two or in the middle of three, and no coupling between fields.
+
+    A regime problem on ``static_u`` data switches one way, from regime 1 into regime 0 at rate 5: regime
+    1's density is static after its first sweep, while regime 0's keeps moving because its inflow reads
+    regime 1's previous trajectory.
     """
-    fields = (
-        (lambda n: [_problem("static")] + [_problem(data) for _ in range(n - 1)])
-        if mixed
-        else (lambda n: [_problem(data) for _ in range(n)])
-    )
+
+    def fields(n):
+        if not mixed:
+            return [_problem(data) for _ in range(n)]
+        return [_problem(data) if i == 1 else _problem("static") for i in range(n)]
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         logging.disable(logging.WARNING)
@@ -119,8 +125,8 @@ def _solve(
                     )
                 return bool(r.converged)
             if kind == "multi_population":
-                ps = fields(2)
-                multi = MultiPopulationProblem(populations=ps, population_names=["a", "b"])
+                ps = fields(3 if mixed else 2)
+                multi = MultiPopulationProblem(populations=ps, population_names=["a", "b", "c"][: len(ps)])
                 it = MultiPopulationIterator(
                     multi, [HJBFDMSolver(q) for q in ps], [FPFDMSolver(q) for q in ps], relaxation=relaxation
                 )
@@ -149,9 +155,16 @@ def _solve(
                 )
             assert kind == "regime"
             ps = fields(2)
-            # A symmetric generator moves no mass between two identical densities; none at all for `mixed`.
-            rate = 0.0 if mixed else (0.1 if data == "static_m" else None)
-            q = np.array([[-0.1, 0.1], [0.2, -0.2]]) if rate is None else np.array([[-rate, rate], [rate, -rate]])
+            # No switching for `mixed`; one-way switching from regime 1 into regime 0 for `static_u` (above); a
+            # symmetric generator between two identical uniform densities for `static_m`.
+            if mixed:
+                q = np.zeros((2, 2))
+            elif data == "static_u":
+                q = np.array([[0.0, 0.0], [5.0, -5.0]])
+            elif data == "static_m":
+                q = np.array([[-0.1, 0.1], [0.1, -0.1]])
+            else:
+                q = np.array([[-0.1, 0.1], [0.2, -0.2]])
             return (
                 RegimeSwitchingIterator(
                     ps,
@@ -206,45 +219,49 @@ def test_an_absolute_bound_applies_only_when_asked_for(kind):
 @pytest.mark.parametrize(
     ("kind", "data"),
     [
-        *[pytest.param(kind, "static_u", id=f"{kind}-only_m_moves") for kind in _DAMPED if kind != "regime"],
+        *[pytest.param(kind, "static_u", id=f"{kind}-only_m_moves") for kind in _DAMPED],
         *[pytest.param(kind, "static_m", id=f"{kind}-only_u_moves") for kind in _DAMPED if kind != "multi_population"],
     ],
 )
 def test_each_field_is_measured_before_damping(kind, data):
     """#1684 item 7, one field at a time, which is the shape the multi-population defect had.
 
-    One field is static, its map change exactly 0 (u = 0, or a uniform m that never moves), and the
-    other moves by about 0.2 (m) or 1 (u) relative per sweep. At relaxation 0.01 the moving field's
-    damped step is a hundredth of that, so an iterator that measured only that field's damped step
-    would stop at a tolerance of 0.1. A pin that damps both fields at once cannot see a one-field revert.
-
-    Two cases have no damped half to revert: `MultiPopulationIterator` never damps u, and
-    `RegimeSwitchingIterator` takes its first sweep's density undamped, so with u static its density
-    is at its fixed point from then on.
+    One field is static (u = 0 exactly, or a uniform m that stays uniform to rounding) and the other moves:
+    m by about 0.2 relative per sweep, u by 0.39 (fixed point, block) to 0.96 (graph, regime). At relaxation
+    0.01 the moving field's damped step is a hundredth of that, so an iterator that measured only that
+    field's damped step would stop at a tolerance of 0.1. A pin that damps both fields at once cannot see a
+    one-field revert. `MultiPopulationIterator` never damps u, so it has no u half to revert.
     """
     assert _solve(kind, relaxation=0.01, tolerance=0.1, absolute_tolerance=None, data=data) is False
 
 
 @pytest.mark.parametrize(
-    ("kind", "data"),
+    ("kind", "data", "tolerance", "sweeps", "mixed"),
     [
-        pytest.param("graph", "static_u", id="graph-m_moves"),
-        pytest.param("graph", "static_m", id="graph-u_moves"),
-        pytest.param("regime", "static_m", id="regime-u_moves"),
+        pytest.param("graph", "static_u", 0.15, 3, True, id="graph-m_moves"),
+        pytest.param("graph", "static_m", 0.6, 3, True, id="graph-u_moves"),
+        pytest.param("multi_population", "static_u", 0.15, 3, True, id="multi_population-m_moves"),
+        pytest.param("multi_population", "static_m", 0.6, 1, True, id="multi_population-u_moves"),
+        pytest.param("regime", "static_u", 0.15, 3, False, id="regime-m_moves"),
+        pytest.param("regime", "static_m", 0.6, 3, True, id="regime-u_moves"),
     ],
 )
-def test_the_largest_field_change_decides(kind, data):
+def test_the_largest_field_change_decides(kind, data, tolerance, sweeps, mixed):
     """A multi-field iterator takes the max over fields, of each field's change (#2555 ruling (ii)).
 
-    One field is static and the others move in one quantity only (m, or u), with no coupling between
-    fields, at relaxation 0.01. The moving quantity's relative change stays above 0.1 for three sweeps
-    and the static field's is 0, so a min over fields of that quantity would stop at once.
-
-    Populations are left out: each one's Hamiltonian sees the others' densities, so none can be held
-    static beside a moving one. Regime's density case is left out because its first sweep takes the
-    density undamped, so with u static the density is at its fixed point from then on.
+    One field moves in one quantity (m by about 0.19, or u by about 0.95, relative per sweep at relaxation
+    0.01) and the others are static: zero-coupling fields around it in the middle of three (graph,
+    populations) or second of two (regime's u case), or the source regime of one-way switching (regime's
+    m case). Each tolerance sits below the moving field's change and above the mean over fields, so a min,
+    a mean, or reading one end field would stop where the max does not. Populations run one sweep for u,
+    because `MultiPopulationIterator` does not damp u and reaches u's fixed point at the second sweep.
     """
-    assert _solve(kind, relaxation=0.01, tolerance=0.1, absolute_tolerance=None, data=data, mixed=True) is False
+    assert (
+        _solve(
+            kind, relaxation=0.01, tolerance=tolerance, absolute_tolerance=None, data=data, mixed=mixed, sweeps=sweeps
+        )
+        is False
+    )
 
 
 @pytest.mark.parametrize("route", ["keyword", "nt_reentry", "config"])

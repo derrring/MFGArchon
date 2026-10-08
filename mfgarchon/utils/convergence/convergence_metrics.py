@@ -423,7 +423,7 @@ def calculate_l2_convergence_metrics(
     """Deprecated: :func:`sweep_change` on the uniform measure of one scalar spacing ``Dx``.
 
     Every entry weighs ``Dx``, over all axes at once, so the values are the pre-#2555
-    ``||diff||_2 * sqrt(Dx * Dt)`` and its ratio, equal to rounding, for arrays of any shape.
+    ``||diff||_2 * sqrt(Dx * Dt)`` and its ratio, equal to rounding, for real arrays of any shape.
     """
     return sweep_change(U_new, U_old, M_new, M_old, lambda f: np.sum(f) * Dx, Dt)
 
