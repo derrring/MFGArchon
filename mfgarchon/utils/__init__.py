@@ -56,6 +56,8 @@ from .convergence import (
     compute_norm,
     create_distribution_monitor,
     create_rolling_monitor,
+    l2_change,
+    sweep_change,
     test_particle_detection,
     wrap_solver_with_adaptive_convergence,
 )
@@ -302,6 +304,8 @@ __all__ = [
     "SolverTypeDetector",
     "calculate_error",
     "calculate_l2_convergence_metrics",
+    "l2_change",
+    "sweep_change",
     "create_distribution_monitor",
     "create_rolling_monitor",
     # Convergence checkers (Protocol-based)

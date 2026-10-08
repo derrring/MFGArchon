@@ -122,7 +122,11 @@ class PicardConfig(BaseConfig):
     max_iterations : int
         Maximum number of iterations (default: 100)
     tolerance : float
-        Convergence tolerance (default: 1e-6)
+        Bound on the relative discrete L2 change one sweep makes, in the problem's spatial measure
+        (default: 1e-6; docs/user/CONVENTIONS.md § 9).
+    absolute_tolerance : float | None
+        If set, the absolute L2 change must also fall below it. None (default) compares no absolute
+        quantity (#2555).
     relaxation : float
         Relaxation (under-relaxation) factor omega in (0, 1] for the update:
         u^{n+1} = omega * u_new + (1 - omega) * u^n.
@@ -163,6 +167,7 @@ class PicardConfig(BaseConfig):
 
     max_iterations: int = Field(default=100, ge=1)
     tolerance: float = Field(default=1e-6, gt=0)
+    absolute_tolerance: float | None = Field(default=None, gt=0)
     relaxation: float = Field(default=0.5, gt=0, le=1.0)
     relaxation_M: float | None = Field(default=None, gt=0, le=1.0)
     relaxation_schedule: Literal["constant", "harmonic", "sqrt", "exponential"] = "constant"

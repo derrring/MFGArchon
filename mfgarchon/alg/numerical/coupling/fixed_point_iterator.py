@@ -323,6 +323,7 @@ class FixedPointIterator(BaseCouplingIterator):
         return_tuple: bool = False,
         iteration_callback: IterationCallback | None = None,
         track_measure_field: bool = False,
+        absolute_tolerance: float | None = None,
         **kwargs: Any,
     ) -> SolverResult | tuple[np.ndarray, np.ndarray, int, np.ndarray, np.ndarray]:
         """
@@ -331,7 +332,7 @@ class FixedPointIterator(BaseCouplingIterator):
         Args:
             config: Solver configuration (overrides instance config)
             max_iterations: Maximum iterations (legacy parameter)
-            tolerance: Convergence tolerance (legacy parameter)
+            tolerance: Bound on the relative L2 change of one sweep (legacy parameter; CONVENTIONS.md § 9)
             return_tuple: Return legacy tuple format instead of SolverResult
             iteration_callback: Optional callback called after each Picard iteration.
                 Signature: callback(iteration, U, M, error_U, error_M) -> bool
@@ -341,6 +342,7 @@ class FixedPointIterator(BaseCouplingIterator):
                 MeasureField snapshot for sensitivity analysis. The resulting
                 GridMeasureField is attached to SolverResult.metadata["measure_field"].
                 Each snapshot stores (ParticleMeasure from M_k, U_k). Default False.
+            absolute_tolerance: If given, the absolute L2 change must also fall below it (#2555)
             **kwargs: Additional parameters for backward compatibility
 
         Returns:
@@ -362,6 +364,7 @@ class FixedPointIterator(BaseCouplingIterator):
         if solve_config is not None:
             final_max_iterations = solve_config.picard.max_iterations
             final_tolerance = solve_config.picard.tolerance
+            final_absolute_tolerance = solve_config.picard.absolute_tolerance
             final_damping_factor = solve_config.picard.relaxation
             # Issue #719: Per-variable relaxation and schedules from config
             # relaxation_M / relaxation_schedule_M use `or` because None means "follow U"
@@ -376,6 +379,7 @@ class FixedPointIterator(BaseCouplingIterator):
                 max_iterations or kwargs.get("max_picard_iterations") or kwargs.get("Niter_max") or 100
             )
             final_tolerance = tolerance or kwargs.get("picard_tolerance") or kwargs.get("l2errBoundPicard") or 1e-6
+            final_absolute_tolerance = absolute_tolerance
             final_damping_factor = self.relaxation
             final_damping_factor_M = self.relaxation_M  # Issue #719
             final_schedule = self.relaxation_schedule  # Issue #719 Phase 2
@@ -427,13 +431,10 @@ class FixedPointIterator(BaseCouplingIterator):
         is_grid = isinstance(geometry, CartesianGrid)
         if is_grid:
             shape = tuple(self.problem.geometry.get_grid_shape())
-            grid_spacing = self.problem.geometry.get_grid_spacing()[0]  # For compatibility
         elif getattr(geometry, "geometry_type", None) == GeometryType.UNSTRUCTURED_MESH:
-            # Coupled-FEM chain seam 3: unstructured mesh -> flat per-DOF state, no grid spacing.
+            # Coupled-FEM chain seam 3: unstructured mesh -> flat per-DOF state.
             # The FEM / meshless-Galerkin solvers assemble their own operators; the iterator only
-            # shuttles (Nt+1, N) arrays. grid_spacing is a benign unit weight here -- the L2
-            # convergence is a *relative* tolerance, so a constant volume element does not change
-            # convergence detection (only the absolute L2 value, which is not compared to anything).
+            # shuttles (Nt+1, N) arrays.
             # Issue #1489 (S6): size the state on the SOLVER's DOF count, not num_spatial_points
             # (= num_vertices). For P2 FEM n_dof = vertices + edges > num_vertices, so a
             # (Nt+1, num_vertices) state mismatches the (Nt+1, n_dof) the solver returns -> an opaque
@@ -448,12 +449,15 @@ class FixedPointIterator(BaseCouplingIterator):
                 )
             n = fp_n if fp_n is not None else (hjb_n if hjb_n is not None else int(self.problem.num_spatial_points))
             shape = (int(n),)
-            grid_spacing = 1.0
         else:
             raise ValueError(
                 f"Problem geometry must be a CartesianGrid or unstructured mesh, got {type(geometry).__name__}"
             )
         time_step = self.problem.dt
+        # #2555: the change a sweep makes is measured in the problem's own spatial measure, the one
+        # `initial_mass` is measured in, so the same relative accuracy stops at the same sweep in any
+        # dimension and on any extent.
+        integrate = self.problem.spatial_measure().integrate
 
         # Issue #1285: M_initial / U_terminal are needed by both the warm-start
         # and cold-start paths (HJB solve, FP solve, BC preservation).  Hoist
@@ -726,7 +730,7 @@ class FixedPointIterator(BaseCouplingIterator):
                     break
 
                 # Calculate convergence metrics
-                from mfgarchon.utils.convergence import calculate_l2_convergence_metrics
+                from mfgarchon.utils.convergence import sweep_change
 
                 # The Picard residual is between the MAP'S OUTPUT and its input, U_new vs U_old.
                 # `self.U` is that output after damping or Anderson, so measuring it conflates
@@ -736,7 +740,7 @@ class FixedPointIterator(BaseCouplingIterator):
                 # l2distu_abs fell 5.825e-01 -> 7.944e-02 as relaxation went 1.0 -> 0.1, a factor
                 # of 7.3 bought by the damping factor rather than by progress toward the fixed
                 # point. Convergence is a property of the map; damping is a property of the path.
-                metrics = calculate_l2_convergence_metrics(U_new, U_old, M_new, M_old, grid_spacing, time_step)
+                metrics = sweep_change(U_new, U_old, M_new, M_old, integrate, time_step)
                 self.l2distu_abs[iiter] = metrics["l2distu_abs"]
                 self.l2distu_rel[iiter] = metrics["l2distu_rel"]
                 self.l2distm_abs[iiter] = metrics["l2distm_abs"]
@@ -811,6 +815,7 @@ class FixedPointIterator(BaseCouplingIterator):
                                 self.l2distu_abs[iiter],
                                 self.l2distm_abs[iiter],
                                 final_tolerance,
+                                final_absolute_tolerance,
                             ),
                             inner_failures,
                         )
@@ -826,6 +831,7 @@ class FixedPointIterator(BaseCouplingIterator):
                     self.l2distu_abs[iiter],
                     self.l2distm_abs[iiter],
                     final_tolerance,
+                    final_absolute_tolerance,
                 )
                 converged, convergence_reason = refuse_convergence_over_failed_inner_solves(
                     criteria_met, convergence_reason, inner_failures

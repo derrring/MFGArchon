@@ -591,8 +591,9 @@ axes and refused. The sequence form is the convention, and library code uses it.
   `np.sum(m) * dx` is a *different functional* even on a uniform grid: it gives each end node a full
   cell and over-counts by $\tfrac{dx}{2}(m_0 + m_N)$. No other geometry carries an `integrate`; a
   network is measured on its nodes, and other geometries fall back to a named `uniform-cell` or
-  `point-average` measure. *Not yet met (#2429): live sites outside that fallback still measure with
-  `np.sum(m) * dx`, mostly particle/KDE diagnostics and convergence metrics.*
+  `point-average` measure. `MFGProblem.spatial_measure()` makes that choice, once per problem (#2555).
+  *Not yet met (#2429, #2566): live sites outside that fallback still measure with `np.sum(m) * dx`,
+  mostly particle/KDE diagnostics and the public convergence helpers #2566 lists.*
 - **Mass conservation needs both the boundary condition and a conservative discretisation.** Under
   no-flux and periodic boundaries the divergence-form schemes, FVM and the splatting semi-Lagrangian
   solver conserve mass to rounding; FP-FDM's `gradient_upwind` and `gradient_centered` schemes did not,
@@ -606,12 +607,13 @@ axes and refused. The sequence form is the convention, and library code uses it.
 ### What a tolerance bounds
 
 **The outer coupling tolerance bounds a relative change, measured in the discrete $L^2$ norm** whose
-measure is the geometry's quadrature, the owner above, not a scalar `dx` (ruled 2026-10-08): the change
-between iterates, relative to their size, for $u$ and for $m$. There is no absolute criterion unless
-the caller asks for one. *Not yet met (#2429, #2555): the coupling iterators also, or
-only, test an absolute change, measured with the first axis's spacing alone, with a unit weight on a
-mesh, or as a max-norm. So the same tolerance does not mean the same thing across dimensions or across
-iterators. #2429 lists them.*
+measure is the problem's own, the owner above, not a scalar `dx` (ruled 2026-10-08): the change one
+sweep makes, the map's output against its input and never the damped step (#1684), relative to the
+output's size, for $u$ and for $m$. An iterator over several fields, whether populations, regimes or
+graph nodes, takes the max over fields of each field's relative change in its own measure. There is no
+absolute criterion unless the caller asks for one with `absolute_tolerance`. All six coupling
+iterators read the owners: `MFGProblem.spatial_measure()` for the measure, `sweep_change` for the
+change, and `check_convergence_criteria` for the verdict (#2555).
 
 **The inner Newton tolerance bounds the grid-scaled residual norm**, and
 `base_hjb.hjb_residual_norm` is its owner on every Newton path (ruled 2026-10-08). So a tolerance means

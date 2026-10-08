@@ -10,6 +10,7 @@ Modules:
   - DistributionComparator: Wasserstein, KL divergence, moments
   - RollingConvergenceMonitor: Window-based statistical convergence
   - calculate_error: Unified L1/L2/Linf error computation
+  - sweep_change, l2_change: the change one coupling sweep made, in the problem's measure (#2555)
   - ConvergenceConfig: Configuration dataclass for solver integration
 
 - **convergence_monitors.py**: MFG-specific monitors
@@ -69,6 +70,8 @@ from .convergence_metrics import (
     # Factory
     create_moment_monitor,
     create_rolling_monitor,
+    l2_change,
+    sweep_change,
 )
 
 # =============================================================================
@@ -99,6 +102,8 @@ __all__ = [
     "RollingConvergenceMonitor",
     "calculate_error",
     "calculate_l2_convergence_metrics",
+    "l2_change",
+    "sweep_change",
     "ConvergenceConfig",
     "create_moment_monitor",
     "create_rolling_monitor",

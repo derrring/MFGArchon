@@ -48,7 +48,7 @@ from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.core.model import Conditions, Model
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
-from mfgarchon.utils.convergence import calculate_l2_convergence_metrics
+from mfgarchon.utils.convergence import sweep_change
 
 SWEEPS = 14
 BASE = 0.1
@@ -78,14 +78,14 @@ def _reference(m0: np.ndarray, u_terminal: np.ndarray, hybrid: bool) -> dict[str
     """The averaged best response from the loop's cold start: the final belief and the map residuals."""
     problem = _problem()
     hjb, fp = HJBFDMSolver(problem), FPFDMSolver(problem)
-    dx, dt = problem.geometry.get_grid_spacing()[0], problem.dt
+    integrate, dt = problem.spatial_measure().integrate, problem.dt
     M = np.tile(m0, (problem.Nt + 1, 1))
     U = np.tile(u_terminal, (problem.Nt + 1, 1))
     residual_M, residual_U = [], []
     for k in range(SWEEPS):
         U_best = np.asarray(hjb.solve_hjb_system(M, u_terminal, U))
         M_best = np.asarray(fp.solve_fp_system(m0, potential_field=U_best))
-        metrics = calculate_l2_convergence_metrics(U_best, U, M_best, M, dx, dt)
+        metrics = sweep_change(U_best, U, M_best, M, integrate, dt)
         residual_M.append(metrics["l2distm_rel"])
         residual_U.append(metrics["l2distu_rel"])
         weight = BASE / (k + 1)

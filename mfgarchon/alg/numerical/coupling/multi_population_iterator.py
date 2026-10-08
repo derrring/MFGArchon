@@ -114,8 +114,13 @@ class MultiPopulationIterator:
         self,
         max_iterations: int = 50,
         tolerance: float = 1e-6,
+        absolute_tolerance: float | None = None,
     ) -> MultiPopulationResult:
         """Run Picard iteration over K populations.
+
+        ``tolerance`` bounds the largest relative L2 change of a sweep, over populations and fields, each
+        population's in its own problem's measure (docs/user/CONVENTIONS.md § 9). ``absolute_tolerance``,
+        if given, must also bound the largest absolute change (#2555).
 
         Returns
         -------
@@ -145,6 +150,14 @@ class MultiPopulationIterator:
             U_k = np.zeros((Nt + 1, Nx))
             U_k[-1] = U_terminal_k
             U.append(U_k)
+
+        from mfgarchon.utils.convergence import sweep_change
+
+        from .fixed_point_utils import check_convergence_criteria
+
+        populations = [self.multi_problem.get_population(k) for k in range(K)]
+        integrates = [p.spatial_measure().integrate for p in populations]
+        dts = [p.dt for p in populations]
 
         # Picard iteration
         converged = False
@@ -279,31 +292,28 @@ class MultiPopulationIterator:
                 M[k] = (1 - self.relaxation) * M_old[k] + self.relaxation * M_new_k
 
             # Check convergence on BOTH fields, and on the MAP's residual rather than the damped
-            # step. `errors` keeps its shape and type -- one float per population -- but now means
-            # the larger of the two field changes, which is what a reader of "Final per-population
-            # errors" already assumed it meant.
+            # step. `errors` keeps its shape and type -- one float per population -- and means the
+            # larger of the two fields' relative changes.
             #
             # `M_map[k] - M_old[k]`, NOT `M[k] - M_old[k]`. The damped update is
             # `M = (1-r)*M_old + r*M_map`, so `M - M_old` is identically `r * (M_map - M_old)` and
             # the reported error scales with the relaxation factor. That is #1684 items 6 and 7 --
             # "turning damping down makes anything converge" -- and this repository has already
-            # fixed and pinned it at `nonlinear_solvers.py` and `fixed_point_iterator.py`. An
+            # fixed it at `nonlinear_solvers.py` and `fixed_point_iterator.py`. An
             # earlier version of this block measured the damped step and so reintroduced, in the
             # multi-population path, the exact defect the issue it cites is about: measured on the
             # cross-coupled 2-population fixture at relaxation 0.01, it reported converged=True at
             # sweep 2 with a true residual 45-61x the tolerance. U is never damped here, so its
             # half was always the map residual.
             #
-            # Caveat that remains, stated rather than hidden: these are absolute max-norm changes,
-            # so u and m meet one tolerance in their own units, while the single-population
-            # FixedPointIterator tracks `l2distu_rel` / `l2distm_rel`. Aligning the two criteria is
-            # a single-source question and is deliberately not folded in here.
-            for k in range(K):
-                err_M_k = float(np.max(np.abs(M_map[k] - M_old[k])))
-                err_U_k = float(np.max(np.abs(U[k] - U_old[k])))
-                errors_M.append(err_M_k)
-                errors_U.append(err_U_k)
-                errors.append(max(err_M_k, err_U_k))
+            # #2555: each population's change is its relative L2 change in its OWN problem's measure,
+            # and the criterion is the single-population one, fed the max over populations -- so u and
+            # m no longer meet one tolerance in their own units.
+            per_population = [sweep_change(U[k], U_old[k], M_map[k], M_old[k], integrates[k], dts[k]) for k in range(K)]
+            for metrics_k in per_population:
+                errors_M.append(metrics_k["l2distm_rel"])
+                errors_U.append(metrics_k["l2distu_rel"])
+                errors.append(max(metrics_k["l2distm_rel"], metrics_k["l2distu_rel"]))
             max_error = max(errors)
 
             logger.info(
@@ -312,8 +322,15 @@ class MultiPopulationIterator:
                 f"per_pop_u={[f'{e:.2e}' for e in errors_U]}"
             )
 
-            if max_error < tolerance:
-                converged = True
+            converged, _ = check_convergence_criteria(
+                max(m["l2distu_rel"] for m in per_population),
+                max(m["l2distm_rel"] for m in per_population),
+                max(m["l2distu_abs"] for m in per_population),
+                max(m["l2distm_abs"] for m in per_population),
+                tolerance,
+                absolute_tolerance,
+            )
+            if converged:
                 break
 
         return MultiPopulationResult(
@@ -343,10 +360,10 @@ class MultiPopulationResult:
         Whether tolerance was reached.
     errors : list[float]
         Final per-population errors: for each population, the larger of the u and m
-        max-norm changes over the last sweep, both measured on the MAP's output rather
-        than on the damped update -- `max|M_map - M_old|`, not `max|M - M_old|`, which
-        differs from it by a factor of the relaxation (#1684 items 6/7). Before #1684
-        item 5 this was m only, and so was `converged`. Empty when no sweep completed.
+        relative L2 changes over the last sweep, in that population's own measure (#2555),
+        both measured on the MAP's output rather than on the damped update -- `M_map - M_old`,
+        not `M - M_old`, which differs from it by a factor of the relaxation (#1684 items 6/7).
+        Before #1684 item 5 this was m only, and so was `converged`. Empty when no sweep completed.
     errors_M, errors_U : list[float] | None
         The same errors split by field, so a non-converged run says WHICH field
         failed rather than only that one did. Cleared with `errors` at the start of
