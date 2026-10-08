@@ -678,12 +678,12 @@ computational domain**, at every wall, in every dimension.
 **$L = D - A$, positive semidefinite, with $D$ the weighted degree** $D_{ii} = \sum_j w_{ij}$, the node
 strength (ruled 2026-10-08). It enters diffusion with a minus sign:
 $\partial_t m = -\tfrac{\sigma^2}{2} L m + \dots$, so the graph Laplace operator is $\Delta_G = -L$. The
-owner is one function, `graph_laplacian(adjacency)` in `geometry/graph/laplacian.py`, which forms
-$L = D - A$ from a weighted adjacency matrix (ruled 2026-10-08). `SupportsGraphLaplacian` stays the
-interface consumers type against; it is not the owner. Every code path that forms $L$ calls the owner
-and supplies only its adjacency. *Not yet met (#2429, #1951): the owner does not exist yet, and the
-geometry getters, `NetworkData`, the network backends and `LaplacianCoupling` each form $D - A$
-themselves (#2429 lists the sites); `node_degrees` returns the combinatorial degree on the igraph and
+owner is one function that forms $L = D - A$ from a weighted adjacency matrix (ruled 2026-10-08);
+this file names it `graph_laplacian(adjacency)`, in `geometry/graph/laplacian.py`.
+`SupportsGraphLaplacian` stays the interface consumers type against; it is not the owner. Every
+implementer calls the owner and supplies only its adjacency. *Not yet met (#2429, #1951): the owner does
+not exist yet, and the geometry getters, `NetworkData`, the network backends and `LaplacianCoupling` each
+form $L$ without it (#2429 lists the sites); `node_degrees` returns the combinatorial degree on the igraph and
 networkit backends and the strength on networkx; `LaplacianCoupling.compute_fp_source`
 returns $+\kappa (Lm)_i$ as an FP source term, so it enters as $\partial_t m = +\kappa L m$, the
 opposite sign; the network FP solver assembles $-\tfrac{\sigma^2}{2} L m$ inline from edge weights
@@ -697,11 +697,12 @@ boundary helper never mutates the caller's array (ruled 2026-10-08). Reflection 
 `reflect_positions` in `geometry/boundary/corner/position.py`, the module #521 consolidated, and
 wrapping by `wrap_positions` in `geometry/boundary/periodic.py`. *Not yet met (#2429, #2550): absorption
 has no owner function. `corner.absorb_positions` clamps a particle to the wall and keeps it, so it must
-not be used for an absorbing wall, where the mass that leaves is lost through the wall (§ 9). The only
-implementation that absorbs is `ParticleApplicator.apply`, which removes the particle.
-`ParticleApplicator` wraps through `corner.wrap_positions`, a deprecated shim for the periodic owner, and
-the particle solver's 1-D GPU path uses a separate copy in `utils/particle_utils.py`. No helper measured
-mutates the caller's array.*
+not be used for an absorbing wall, where the mass that leaves is lost through the wall (§ 9). The
+particle solver absorbs through `ParticleApplicator.apply`, which removes the particle;
+`ParticleApplicator.apply_with_flux_limits` and `MeshfreeApplicator`'s absorbing mode carry their own
+copies. `ParticleApplicator` and the solver's uniform periodic path wrap through `corner.wrap_positions`,
+a deprecated shim for the periodic owner, and the particle solver's 1-D GPU path uses a separate copy in
+`utils/particle_utils.py`. No helper measured mutates the caller's array.*
 
 ### Pointwise and bulk must agree
 
