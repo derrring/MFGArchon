@@ -48,6 +48,7 @@ from mfgarchon.geometry.boundary import (
     no_flux_bc,
     periodic_bc,
 )
+from mfgarchon.geometry.boundary.types import PeriodicGridConvention
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -133,6 +134,7 @@ class Cell:
     nts: tuple[int, ...]
     values: dict = field(default_factory=dict)  # Dirichlet face -> g
     slopes: dict = field(default_factory=dict)  # Neumann / no-flux face -> outward du/dn
+    seam: bool = False  # periodic: the duplicated endpoints must come back equal
 
     @property
     def dim(self) -> int:
@@ -155,9 +157,14 @@ _n = {"x_min": -0.4, "x_max": -1.0}  # outward Neumann slopes: u_x(0) = 0.4, u_x
 _alpha, _beta = -_n["x_min"], (_n["x_min"] + _n["x_max"]) / 2
 
 # 2-D: sigma = 0.5, T = 0.3, Nt = 2. Linear in t, so implicit Euler is exact in time and the ratios are spatial.
+# The domain is [0, 1] x [0, LY] with LY = 0.6 on n x n points, so dy = 0.6 dx at every level and the extent
+# is not square: a square grid is a symmetry, and it hid a ghost reading the other axis's spacing
+# (#2547). KY = pi / LY puts the y modes' walls and seam at y = 0 and y = LY.
 T2, S2 = 0.3, 0.5
 D2 = S2**2 / 2
-_g2 = -0.5  # uniform outward Neumann slope; q(z) = g (z^2 - z) has -q'(0) = q'(1) = g
+LY = 0.6
+KY = P / LY
+_g2 = -0.5  # uniform outward Neumann slope; q(z) = g (z^2 / L - z) has -q'(0) = q'(L) = g on [0, L]
 
 
 def _sin(k, c=0.0):
@@ -222,6 +229,7 @@ CELLS: dict[str, Cell] = {
         S1,
         (81, 161, 321),
         (20, 40, 80),
+        seam=True,
     ),
     # ------------------------------------------------------------------------------------------------ 2-D
     "dirichlet_uniform_2d": Cell(
@@ -231,9 +239,9 @@ CELLS: dict[str, Cell] = {
             D2,
             [
                 (0.4, CONST, [ONE, ONE]),
-                (0.5, CONST, [_sin(P), _sin(P)]),
-                (0.25, CONST, [_sin(2 * P), _sin(P)]),
-                (0.6, TAU, [_sin(P), _sin(2 * P)]),
+                (0.5, CONST, [_sin(P), _sin(KY)]),
+                (0.25, CONST, [_sin(2 * P), _sin(KY)]),
+                (0.6, TAU, [_sin(P), _sin(2 * KY)]),
             ],
         ),
         S2,
@@ -257,10 +265,10 @@ CELLS: dict[str, Cell] = {
             [
                 (0.3, CONST, [ONE, ONE]),
                 (0.5, CONST, [("lin",), ONE]),
-                (0.5, CONST, [_sin(P), _cos(P)]),
+                (0.5, CONST, [_sin(P), _cos(KY)]),
                 (0.25, CONST, [_sin(2 * P), ONE]),
                 (0.6, TAU, [_sin(P), ONE]),
-                (0.3, TAU, [_sin(2 * P), _cos(P)]),
+                (0.3, TAU, [_sin(2 * P), _cos(KY)]),
             ],
         ),
         S2,
@@ -284,11 +292,11 @@ CELLS: dict[str, Cell] = {
             D2,
             [
                 (0.2, CONST, [ONE, ONE]),
-                (0.7, CONST, [ONE, ("lin",)]),
-                (0.4, CONST, [_cos(P), _sin(P)]),
-                (-0.2, CONST, [ONE, _sin(2 * P)]),
-                (-0.5, TAU, [ONE, _sin(P)]),
-                (0.3, TAU, [_cos(P), _sin(2 * P)]),
+                (0.7 / LY, CONST, [ONE, ("lin",)]),
+                (0.4, CONST, [_cos(P), _sin(KY)]),
+                (-0.2, CONST, [ONE, _sin(2 * KY)]),
+                (-0.5, TAU, [ONE, _sin(KY)]),
+                (0.3, TAU, [_cos(P), _sin(2 * KY)]),
             ],
         ),
         S2,
@@ -305,9 +313,9 @@ CELLS: dict[str, Cell] = {
             [
                 (_g2, CONST, [("sq",), ONE]),
                 (-_g2, CONST, [("lin",), ONE]),
-                (_g2, CONST, [ONE, ("sq",)]),
+                (_g2 / LY, CONST, [ONE, ("sq",)]),
                 (-_g2, CONST, [ONE, ("lin",)]),
-                (0.4, CONST, [_cos(P), _cos(P)]),
+                (0.4, CONST, [_cos(P), _cos(KY)]),
                 (0.2, CONST, [_cos(2 * P), ONE]),
                 (0.5, TAU, [_cos(P), ONE]),
             ],
@@ -334,8 +342,8 @@ CELLS: dict[str, Cell] = {
                 (0.4, CONST, [("lin",), ONE]),
                 (-0.65, CONST, [("sq",), ONE]),
                 (0.6, CONST, [ONE, ("lin",)]),
-                (-0.4, CONST, [ONE, ("sq",)]),
-                (0.4, CONST, [_cos(P), _cos(P)]),
+                (-0.4 / LY, CONST, [ONE, ("sq",)]),
+                (0.4, CONST, [_cos(P), _cos(KY)]),
                 (0.5, TAU, [_cos(P), ONE]),
             ],
         ),
@@ -353,11 +361,11 @@ _NO_FLUX_2D = Exact(
     [
         (0.5, CONST, [_cos(P), ONE]),
         (-0.25, CONST, [_cos(2 * P), ONE]),
-        (-0.3, CONST, [ONE, _cos(P)]),
-        (0.15, CONST, [ONE, _cos(2 * P)]),
-        (0.15, CONST, [_cos(P), _cos(P)]),
+        (-0.3, CONST, [ONE, _cos(KY)]),
+        (0.15, CONST, [ONE, _cos(2 * KY)]),
+        (0.15, CONST, [_cos(P), _cos(KY)]),
         (0.6, TAU, [_cos(P), ONE]),
-        (-0.4, TAU, [_cos(2 * P), _cos(P)]),
+        (-0.4, TAU, [_cos(2 * P), _cos(KY)]),
     ],
 )
 _PERIODIC_2D = Exact(
@@ -365,10 +373,10 @@ _PERIODIC_2D = Exact(
     D2,
     [
         (0.5, CONST, [_sin(2 * P, 0.3), ONE]),
-        (0.3, CONST, [ONE, _sin(2 * P, 1.1)]),
-        (0.15, CONST, [_sin(2 * P), _cos(2 * P)]),
+        (0.3, CONST, [ONE, _sin(2 * KY, 1.1)]),
+        (0.15, CONST, [_sin(2 * P), _cos(2 * KY)]),
         (0.4, TAU, [_sin(2 * P, 0.2), ONE]),
-        (-0.3, TAU, [ONE, _cos(2 * P, 0.7)]),
+        (-0.3, TAU, [ONE, _cos(2 * KY, 0.7)]),
     ],
 )
 _ALL_FACES = ("x_min", "x_max", "y_min", "y_max")
@@ -383,9 +391,9 @@ CELLS["no_flux_faced_2d"] = Cell(
     (2, 2),
     slopes=dict.fromkeys(_ALL_FACES, 0.0),
 )
-CELLS["periodic_uniform_2d"] = Cell(lambda: periodic_bc(dimension=2), _PERIODIC_2D, S2, (11, 21), (2, 2))
+CELLS["periodic_uniform_2d"] = Cell(lambda: periodic_bc(dimension=2), _PERIODIC_2D, S2, (11, 21), (2, 2), seam=True)
 CELLS["periodic_faced_2d"] = Cell(
-    lambda: _faces(2, dict.fromkeys(_ALL_FACES, (BCType.PERIODIC, 0.0))), _PERIODIC_2D, S2, (11, 21), (2, 2)
+    lambda: _faces(2, dict.fromkeys(_ALL_FACES, (BCType.PERIODIC, 0.0))), _PERIODIC_2D, S2, (11, 21), (2, 2), seam=True
 )
 
 
@@ -397,6 +405,7 @@ class Level:
     error: float
     values: dict  # Dirichlet face -> max |U - g| at t = 0
     slopes: dict  # face -> max |second-order outward slope - datum| at t = 0
+    seam: float  # max |u(0) - u(last)| along each periodic axis at t = 0; 0.0 for a cell without a seam
     failures: tuple
 
 
@@ -416,8 +425,14 @@ def _outward_slope(u: np.ndarray, face: str, h: float) -> np.ndarray:
     return (3 * v[-1] - 4 * v[-2] + v[-3]) / (2 * h)
 
 
+def _grid(dim: int, n: int, bc: BoundaryConditions) -> TensorProductGrid:
+    if dim == 1:
+        return TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=bc)
+    return TensorProductGrid(bounds=[(0.0, 1.0), (0.0, LY)], Nx_points=[n, n], boundary_conditions=bc)
+
+
 def solve_level(cell: Cell, n: int, nt: int) -> Level:
-    grid = TensorProductGrid(bounds=[(0.0, 1.0)] * cell.dim, Nx_points=[n] * cell.dim, boundary_conditions=cell.bc())
+    grid = _grid(cell.dim, n, cell.bc())
     problem = MFGProblem(
         model=Model(
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=cell.sigma
@@ -430,7 +445,7 @@ def solve_level(cell: Cell, n: int, nt: int) -> Level:
     )
     X = list(np.meshgrid(*grid.coordinates, indexing="ij"))
     u_T = cell.exact.u(cell.exact.T, X)
-    shape = (nt + 1, *([n] * cell.dim))
+    shape = (nt + 1, *X[0].shape)
     solver = HJBFDMSolver(problem)
     with warnings.catch_warnings():
         # The 2-D Newton tries JAX autodiff on a NumPy residual and falls back to finite differences, at
@@ -444,11 +459,20 @@ def solve_level(cell: Cell, n: int, nt: int) -> Level:
                 source_term=cell.exact.source,
             )
         )
-    u0, h = U[0], 1.0 / (n - 1)
+    u0 = U[0]
+    h = [float(c[1] - c[0]) for c in grid.coordinates]
+    seam = 0.0
+    if cell.seam:
+        # The duplicated endpoint is one point only on an endpoint-inclusive grid (#1822).
+        assert grid.periodic_convention is PeriodicGridConvention.ENDPOINT_INCLUSIVE, grid.periodic_convention
+        seam = max(float(np.abs(u0.take(0, axis=a) - u0.take(-1, axis=a)).max()) for a in range(cell.dim))
     return Level(
         error=float(np.abs(u0 - cell.exact.u(0.0, X)).max()),
         values={f: float(np.abs(u0[_face_index(cell.dim, f)] - g).max()) for f, g in cell.values.items()},
-        slopes={f: float(np.abs(_outward_slope(u0, f, h) - g).max()) for f, g in cell.slopes.items()},
+        slopes={
+            f: float(np.abs(_outward_slope(u0, f, h[{"x": 0, "y": 1}[f[0]]]) - g).max()) for f, g in cell.slopes.items()
+        },
+        seam=seam,
         failures=tuple(solver.inner_solve_failures() or ()),
     )
 
@@ -458,33 +482,33 @@ def ladder(cell: Cell) -> list[Level]:
 
 
 # ---------------------------------------------------------------------------------------------- the record
-# Errors at t = 0 per level, and each wall-carrying cell's largest second-order slope miss at the finest level,
-# measured at d1a9a1e8 (#2537). The bands below are two-sided: a closure that is wrong at O(h) can keep the rate
-# and move the level either way.
+# Errors at t = 0 per level, and each wall-carrying cell's largest second-order slope miss at the finest level:
+# the 1-D cells measured at d1a9a1e8 (#2537), the 2-D cells on the rectangle at 711204a6 (#2547). The bands below
+# are two-sided: a closure that is wrong at O(h) can keep the rate and move the level either way.
 MEASURED = {
     "dirichlet_1d": (5.8975e-02, 2.9356e-02, 1.4653e-02),
     "neumann_1d": (5.8333e-02, 2.9202e-02, 1.4486e-02),
     "no_flux_1d": (8.9860e-02, 4.5278e-02, 2.2454e-02),
     "periodic_1d": (1.7122e-01, 8.8253e-02, 4.4669e-02),
-    "dirichlet_uniform_2d": (6.8797e-02, 3.6665e-02),
-    "dirichlet_faced_x_2d": (1.0334e-01, 5.4198e-02),
-    "dirichlet_faced_y_2d": (1.2249e-01, 7.1737e-02),
-    "neumann_uniform_2d": (5.3867e-02, 3.1438e-02),
-    "neumann_faced_2d": (7.4509e-02, 4.0757e-02),
-    "no_flux_uniform_2d": (2.8961e-01, 1.6285e-01),
-    "no_flux_faced_2d": (2.8961e-01, 1.6285e-01),
-    "periodic_uniform_2d": (3.4106e-01, 1.9917e-01),
-    "periodic_faced_2d": (3.4106e-01, 1.9917e-01),
+    "dirichlet_uniform_2d": (7.2590e-02, 3.8216e-02),
+    "dirichlet_faced_x_2d": (9.2265e-02, 5.5684e-02),
+    "dirichlet_faced_y_2d": (2.3146e-01, 1.4634e-01),
+    "neumann_uniform_2d": (5.7708e-02, 3.3905e-02),
+    "neumann_faced_2d": (1.0539e-01, 5.9103e-02),
+    "no_flux_uniform_2d": (3.3089e-01, 1.8712e-01),
+    "no_flux_faced_2d": (3.3089e-01, 1.8712e-01),
+    "periodic_uniform_2d": (3.6383e-01, 2.1056e-01),
+    "periodic_faced_2d": (3.6383e-01, 2.1056e-01),
 }
 SLOPE_MEASURED = {
     "neumann_1d": 9.03e-04,
     "no_flux_1d": 1.38e-03,
-    "dirichlet_faced_x_2d": 5.92e-03,
-    "dirichlet_faced_y_2d": 4.04e-03,
-    "neumann_uniform_2d": 8.38e-03,
-    "neumann_faced_2d": 6.83e-03,
-    "no_flux_uniform_2d": 9.84e-02,
-    "no_flux_faced_2d": 9.84e-02,
+    "dirichlet_faced_x_2d": 1.03e-02,
+    "dirichlet_faced_y_2d": 3.38e-03,
+    "neumann_uniform_2d": 7.55e-03,
+    "neumann_faced_2d": 6.84e-03,
+    "no_flux_uniform_2d": 9.76e-02,
+    "no_flux_faced_2d": 9.76e-02,
 }
 LEVEL_BAND = 1.25
 RATIO_BAND = {1: (1.6, 2.6), 2: (1.5, 2.5)}
@@ -523,6 +547,7 @@ def test_an_exact_solution_is_reproduced_to_its_order_level_and_wall(name: str):
     for level in levels:
         for face, miss in level.values.items():
             assert miss == 0.0, f"{name}: the Dirichlet face {face} misses g by {miss:.3e}"
+        assert level.seam < 1e-10, f"{name}: the duplicated seam endpoints differ by {level.seam:.3e}"
 
     if cell.slopes:
         fine, coarse = max(levels[-1].slopes.values()), max(levels[-2].slopes.values())
