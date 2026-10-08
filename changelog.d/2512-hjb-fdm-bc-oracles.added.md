@@ -1,0 +1,12 @@
+- **HJB-FDM is checked against exact solutions on every BC it declares, in 1-D and 2-D** (Issue #2512 (a), default path).
+  - **13 cells.** One per declared type (DIRICHLET, NEUMANN, NO_FLUX, PERIODIC) in 1-D. In 2-D, one per type on each path of the ghost buffer, uniform and per-face, with Dirichlet in two orientations.
+  - **Fixtures that separate rival wall treatments.** Data that carry a value differ at the two walls of an axis. No-flux and periodic solutions are even about neither the midline nor the seam. The optimal drift points into every data-carrying wall.
+  - **Each cell asserts:**
+    - convergence of every inner step;
+    - the error ratio;
+    - each level's error, two-sided, within ±25% of the value recorded at #2537;
+    - Dirichlet walls exactly `g`, and Neumann and no-flux wall slopes to second order.
+  - **Measured against one mutation per branch arm of the wall code, plus the historical defects.**
+    - Red: the Neumann flux sign and the dropped flux, on each path separately; #2141's low-wall sign; #1935's cell-centred mirror, which a rate alone misses because it lowers the error; the odd mirror; periodic read as no-flux, on each path; the seam mirror; #1822's exclusive wrap, caught by the level alone; the Dirichlet rows' dropped `g`, swapped sides and skipped rows; and the face resolver's old first-segment fallback.
+    - The 1-D PDE-row mutation (#2515) is caught by the #1900 law test, not here.
+    - The Dirichlet ghost's own arms are inert for HJB-FDM by construction, since #2518 and #2537 replace the rows they feed.

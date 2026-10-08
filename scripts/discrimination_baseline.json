@@ -37,7 +37,7 @@
       "status": "ok"
     },
     "diffusion_scalar_2x": {
-      "kill_count": 182,
+      "kill_count": 195,
       "owner": "D = sigma^2/2 for scalar sigma (#811)",
       "status": "ok"
     },
@@ -47,7 +47,7 @@
       "status": "ok"
     },
     "engquist_osher_derivative_drops_the_forward_branch": {
-      "kill_count": 58,
+      "kill_count": 62,
       "owner": "`upwind_momentum_derivatives` is the one owner of d(p)/d(backward) and d(p)/d(forward); for `engquist_osher` both are nonzero at a local maximum, and the analytic HJB Jacobian, the nD linearised operator and the strict-adjoint operator all read them, so the Jacobian is the residual's own derivative (#2313)",
       "status": "ok"
     },
@@ -67,7 +67,7 @@
       "status": "ok"
     },
     "ghost_spacing_ignored": {
-      "kill_count": 77,
+      "kill_count": 80,
       "owner": "the ghost buffer uses the caller's spacing, not dx = 1.0 (#1904)",
       "status": "ok"
     },
@@ -77,12 +77,12 @@
       "status": "ok"
     },
     "grid_spacing_uses_point_count": {
-      "kill_count": 55,
+      "kill_count": 62,
       "owner": "uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim, get_spacing() indexes it, legacy_1d_attrs[\"Dx\"] reads it, cell volume ",
       "status": "ok"
     },
     "hjb_marches_forward_in_time": {
-      "kill_count": 31,
+      "kill_count": 35,
       "owner": "The HJB marches BACKWARD in time, from the terminal row down to t=0, while the FP marches forward -- the adjoint pairing. Single site: base_hjb.py:1780, the only time loop in solve_hjb_system_backward. The M-indexing that rides on it is documented in the same loop body at base_hjb.py:1790: \"# BUG #7",
       "status": "ok"
     },
@@ -92,7 +92,7 @@
       "status": "ok"
     },
     "neumann_low_wall_flux_sign": {
-      "kill_count": 39,
+      "kill_count": 40,
       "owner": "inhomogeneous Neumann is prescribed on the OUTWARD normal, so at the low wall (outward normal -x) du/dx = -v and the offset is ADDED, the same sign as the high wall (#1262). Since #1967 the magnitude is (2k-1)*dx*v rather than dx*v -- ghost layer k sits that far from its mirror -- so the k=1 case is the historical dx*v and the deeper layers scale.",
       "status": "ok"
     },
@@ -112,12 +112,12 @@
       "status": "ok"
     },
     "periodic_endpoint_convention_inverted": {
-      "kill_count": 22,
+      "kill_count": 25,
       "owner": "where the last node sits, MEASURED from the coordinates the grid built (#1822). `_axis_convention` is the single owner: `periodic_convention` calls it (tensor_grid.py:415) and `_first_axis_with_convention` calls it (:385). The property docstring states why it is derived rather than asserted: \"Derive",
       "status": "ok"
     },
     "periodic_wrap_endpoint_inverted": {
-      "kill_count": 48,
+      "kill_count": 51,
       "owner": "how many trailing nodes of a periodic axis repeat a node the array already holds -- the ONE number both the ghost skip and the modular span derive from (#1822). types.py:126-130 states the ownership verbatim: \"Every periodic wrap in the package is one of two expressions of this single number, which ",
       "status": "ok"
     },
