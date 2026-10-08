@@ -19,7 +19,10 @@ move the level -- the cell-centred no-flux mirror (#1935) LOWERS it -- so each c
 - the error ratio under refinement;
 - each level's error, two-sided, within a band around the value measured when this file was written;
 - the wall itself: Dirichlet nodes equal ``g``, and a Neumann or no-flux wall's slope, read off the returned
-  field to second order, matches its datum.
+  field to second order, matches its datum;
+- the seam itself, on a periodic cell: the grid is endpoint-inclusive, so the first and last nodes along each
+  periodic axis are one point and must come back equal (#2547). A level band alone missed a one-sided seam shift
+  and caught #1822's exclusive wrap by 2%.
 
 A level outside its band in either direction is a change in the wall closure. Re-measure and record it, as
 for the discrimination ratchet.

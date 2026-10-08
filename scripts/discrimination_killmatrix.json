@@ -772,11 +772,13 @@
     ],
     "tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[periodic_faced_2d]": [
       "diffusion_scalar_2x",
+      "grid_spacing_uses_point_count",
       "periodic_endpoint_convention_inverted",
       "periodic_wrap_endpoint_inverted"
     ],
     "tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[periodic_uniform_2d]": [
       "diffusion_scalar_2x",
+      "grid_spacing_uses_point_count",
       "periodic_endpoint_convention_inverted",
       "periodic_wrap_endpoint_inverted"
     ],
@@ -3510,7 +3512,7 @@
       "verify": "TensorProductGrid(bounds=[(0.0, 1.0)], Nx=[10], boundary_conditions=no_flux_bc(dimension=1)).Nx_points == [10]"
     },
     "grid_spacing_uses_point_count": {
-      "kill_count": 62,
+      "kill_count": 64,
       "killed": [
         "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline",
         "tests/unit/test_alg/test_fp_matrix_conservation.py::TestFPProductionConservation::test_density_stays_positive",
@@ -3524,6 +3526,8 @@
         "tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[neumann_1d]",
         "tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[neumann_faced_2d]",
         "tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[neumann_uniform_2d]",
+        "tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[periodic_faced_2d]",
+        "tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[periodic_uniform_2d]",
         "tests/unit/test_alg/test_hjb_fdm_nd_wall_rows_2537.py::test_a_neumann_wall_holds_its_slope_to_second_order",
         "tests/unit/test_alg/test_hjb_jacobian_matches_residual_1894.py::test_periodic_wrap_with_a_volatility_field_does_not_collapse_the_jacobian",
         "tests/unit/test_alg/test_nd_velocity_batch_shape_2330.py::test_a_one_population_cross_density_is_read_per_node",

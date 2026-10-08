@@ -77,7 +77,7 @@
       "status": "ok"
     },
     "grid_spacing_uses_point_count": {
-      "kill_count": 62,
+      "kill_count": 64,
       "owner": "uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim, get_spacing() indexes it, legacy_1d_attrs[\"Dx\"] reads it, cell volume ",
       "status": "ok"
     },

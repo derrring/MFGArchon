@@ -1,12 +1,13 @@
 - **HJB-FDM is checked against exact solutions on every BC it declares, in 1-D and 2-D** (Issue #2512 (a), default path).
   - **13 cells.** One per declared type (DIRICHLET, NEUMANN, NO_FLUX, PERIODIC) in 1-D. In 2-D, one per type on each path of the ghost buffer, uniform and per-face, with Dirichlet in two orientations.
-  - **Fixtures that separate rival wall treatments.** In the per-face cells, data that carry a value differ at the two walls of an axis. No-flux and periodic solutions are even about neither the midline nor the seam. The optimal drift points into every Neumann wall.
+  - **Fixtures that separate rival wall treatments.** In the per-face cells, data that carry a value differ at the two walls of an axis. No-flux and periodic solutions are even about neither the midline nor the seam. The optimal drift points into every Neumann wall. The 2-D domain is [0, 1] × [0, 0.6] with dy = 0.6 dx, so a defect that reads one axis's spacing for the other is visible (#2547).
   - **Each cell asserts:**
     - convergence of every inner step;
     - the error ratio;
     - each level's error, two-sided, within a factor of 1.25 either way of the value recorded at #2537;
-    - Dirichlet walls exactly `g`, and Neumann and no-flux wall slopes to second order.
+    - Dirichlet walls exactly `g`, and Neumann and no-flux wall slopes to second order;
+    - on a periodic grid, whose last node repeats the first, the two seam endpoints equal to 1e-10 (#2547).
   - **Measured against one mutation per branch arm of the wall code, plus the historical defects.**
-    - Red: the Neumann flux sign (in the shared ghost writer) and the dropped flux (on each path separately); #2141's low-wall sign; #1935's cell-centred mirror, which a rate alone misses because it lowers the error; the odd mirror; periodic read as no-flux, on each path; the seam mirror; #1822's exclusive wrap, caught by the level alone; the Dirichlet rows' dropped `g`, swapped sides and skipped rows; and the face resolver's old first-segment fallback.
+    - Red: the Neumann flux sign (in the shared ghost writer) and the dropped flux (on each path separately); #2141's low-wall sign; #1935's cell-centred mirror, which a rate alone misses because it lowers the error; the odd mirror; periodic read as no-flux, on each path; the seam mirror; #1822's exclusive wrap and a one-sided seam shift, each caught by the seam assertion; a flux ghost reading the other axis's spacing; the Dirichlet rows' dropped `g`, swapped sides and skipped rows; and the face resolver's old first-segment fallback.
     - The 1-D PDE-row mutation (#2515) is caught by the #1900 law test, not here.
     - The Dirichlet ghost's own arms are inert for HJB-FDM by construction, since #2518 and #2537 replace the rows they feed.
