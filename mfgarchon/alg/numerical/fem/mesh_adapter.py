@@ -111,8 +111,7 @@ def meshdata_to_skfem(mesh_data: MeshData) -> skfem.Mesh:
     mesh = mesh_cls(nodes, elements)
 
     # Transfer boundary tags if available (gmsh physical-group path)
-    if mesh_data.boundary_faces is not None and len(mesh_data.boundary_faces) > 0:
-        _apply_boundary_tags(mesh, mesh_data)
+    _apply_boundary_tags(mesh, mesh_data)
 
     # Issue #607: tag axis-aligned wall facets as named boundaries (x_min/x_max/...) matching the
     # BoundaryFace naming, so a BCSegment(boundary="x_min") resolves to the right facet set. This
@@ -240,7 +239,11 @@ def _apply_boundary_tags(mesh: skfem.Mesh, mesh_data: MeshData) -> None:
     tagged = tags != 0  # 0 is default/untagged
     if not np.any(tagged):
         return
-    faces = np.asarray(mesh_data.boundary_faces).reshape(len(mesh_data.boundary_faces), -1)
+    faces = (
+        np.empty((0, 1), dtype=np.int64) if mesh_data.boundary_faces is None else np.asarray(mesh_data.boundary_faces)
+    )
+    if faces.ndim == 1:  # one vertex per face (1-D), given flat
+        faces = faces[:, None]
     if len(tags) != len(faces):
         raise ValueError(
             f"MeshData carries {len(tags)} boundary tags for {len(faces)} boundary faces; a tag is read "
@@ -255,13 +258,13 @@ def _apply_boundary_tags(mesh: skfem.Mesh, mesh_data: MeshData) -> None:
         facet = facet_of.get(tuple(np.sort(faces[k])))
         if facet is None:
             raise ValueError(
-                f"Boundary face {faces[k].tolist()} (tag {tags[k]}) is not a facet of the mesh, so its "
-                f"region_{tags[k]} boundary cannot be placed."
+                f"Boundary face {faces[k].tolist()} (tag {tags[k]}) is not a facet of the mesh: no element "
+                f"has those vertices as a side, so its region_{tags[k]} boundary cannot be placed."
             )
         facet_ids[k] = facet
 
     for tag in np.unique(tags[tagged]):
-        mesh._boundaries[f"region_{tag}"] = facet_ids[tags == tag]
+        mesh._boundaries[f"region_{tag}"] = np.unique(facet_ids[tags == tag])
 
 
 if __name__ == "__main__":

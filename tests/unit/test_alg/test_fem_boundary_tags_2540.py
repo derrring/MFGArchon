@@ -42,38 +42,63 @@ def _solve_with_exit_on(boundary: str):
 
 def test_a_region_tag_on_the_default_path_solves_as_the_wall_it_names():
     """``Mesh1D`` tags its right wall 1. Through ``problem.solve`` (FEM_P1 on a mesh), the exit on ``region_1``
-    must be the exit on ``x_max``: U = 1 and m = 0 there. Measured before the fix: U(0) = 0.1235 and
-    m(T) = 1.198 at x = 1, with U = 1 and m = 7e-9 at x = 0.1."""
+    must be the exit on ``x_max``: U = 1 and m = 0 there. Measured before the fix, at this setup: U(0) = 0.1235
+    and m(T) = 1.089 at x = 1, with U = 1 and m = 7e-9 at x = 0.1."""
     U_tag, M_tag = _solve_with_exit_on("region_1")
     U_wall, M_wall = _solve_with_exit_on("x_max")
     np.testing.assert_array_equal(U_tag, U_wall)
     np.testing.assert_array_equal(M_tag, M_wall)
 
 
+_X, _Y = np.linspace(0.0, 1.0, 5), np.linspace(0.0, 0.6, 4)
+_X3, _Y3, _Z3 = np.linspace(0.0, 1.0, 3), np.linspace(0.0, 0.8, 3), np.linspace(0.0, 0.6, 3)
+_MESHES = {
+    "triangle": lambda: skfem.MeshTri.init_tensor(_X, _Y),
+    "quad": lambda: skfem.MeshQuad.init_tensor(_X, _Y),
+    "tetrahedron": lambda: skfem.MeshTet.init_tensor(_X3, _Y3, _Z3),
+    # scikit-fem stores hexahedron facets cyclically, not sorted like the others
+    "hexahedron": lambda: skfem.MeshHex.init_tensor(_X3, _Y3, _Z3),
+}
+
+
 def _box_meshdata(element: str):
-    """A box mesh, top 0.6 on its last axis, boundary faces in scikit-fem's boundary order, each face's
-    vertices reversed so that the match cannot rely on vertex order. Hexahedra are here because scikit-fem
-    stores their facets unsorted (cyclic), unlike lines, triangles, quads and tetrahedra."""
-    if element == "triangle":
-        mesh = skfem.MeshTri.init_tensor(np.linspace(0.0, 1.0, 5), np.linspace(0.0, 0.6, 4))
-    else:
-        mesh = skfem.MeshHex.init_tensor(np.linspace(0.0, 1.0, 3), np.linspace(0.0, 1.0, 3), np.linspace(0.0, 0.6, 3))
-    md = skfem_to_meshdata(mesh)
+    """A box mesh's MeshData, boundary faces in scikit-fem's boundary order, each face's vertices reversed so
+    that the match cannot rely on vertex order."""
+    md = skfem_to_meshdata(_MESHES[element]())
     md.boundary_faces = md.boundary_faces[:, ::-1].copy()
     return md
 
 
-@pytest.mark.parametrize("element", ["triangle", "hexahedron"])
+def _walls(md) -> list[np.ndarray]:
+    """For each axis wall (axis 0 low, axis 0 high, axis 1 low, ...), the boundary faces lying on it."""
+    corners = md.vertices[md.boundary_faces]
+    walls = []
+    for axis in range(md.vertices.shape[1]):
+        for bound in (md.vertices[:, axis].min(), md.vertices[:, axis].max()):
+            walls.append(np.all(np.isclose(corners[..., axis], bound), axis=1))
+    return walls
+
+
+@pytest.mark.parametrize("element", sorted(_MESHES))
 def test_tagged_faces_land_on_their_own_facets(element):
+    """Every wall but the last gets its own tag, the last stays untagged (0), and one face is listed twice."""
     md = _box_meshdata(element)
-    on_top = np.all(np.isclose(md.vertices[md.boundary_faces, -1], 0.6), axis=1)
-    md.boundary_tags = np.where(on_top, 3, 0).astype(np.int64)
+    walls = _walls(md)
+    faces = md.boundary_faces.copy()
+    tags = np.zeros(len(faces), dtype=np.int64)
+    for tag, on in enumerate(walls[:-1], start=1):
+        tags[on] = tag
+    twice = np.flatnonzero(tags == 1)[0]
+    md.boundary_faces = np.vstack([faces, faces[twice]])
+    md.boundary_tags = np.append(tags, 1)
 
     converted = meshdata_to_skfem(md)
 
-    placed = converted.boundaries["region_3"]
-    assert len(np.unique(placed)) == np.count_nonzero(on_top)
-    np.testing.assert_allclose(converted.p[-1, converted.facets[:, placed]], 0.6)
+    assert "region_0" not in converted.boundaries
+    for tag, on in enumerate(walls[:-1], start=1):
+        placed = [tuple(sorted(f)) for f in converted.facets[:, converted.boundaries[f"region_{tag}"]].T]
+        assert len(placed) == len(set(placed)), f"region_{tag} lists a facet twice"
+        assert set(placed) == {tuple(sorted(f)) for f in faces[on]}, f"region_{tag} is not its wall"
 
 
 def test_untagged_faces_add_no_region_whatever_the_tag_count():
@@ -89,7 +114,11 @@ def test_untagged_faces_add_no_region_whatever_the_tag_count():
 
 @pytest.mark.parametrize(
     ("case", "message"),
-    [("not_a_facet", "is not a facet of the mesh"), ("one_tag_short", "boundary tags for")],
+    [
+        ("not_a_facet", "is not a facet of the mesh"),
+        ("one_tag_short", "boundary tags for"),
+        ("no_faces", "5 boundary tags for 0 boundary faces"),
+    ],
 )
 def test_a_tag_that_cannot_be_placed_raises(case, message):
     md = _box_meshdata("triangle")
@@ -97,7 +126,10 @@ def test_a_tag_that_cannot_be_placed_raises(case, message):
     md.boundary_tags[0] = 2
     if case == "not_a_facet":
         md.boundary_faces[0] = [0, md.vertices.shape[0] - 1]  # opposite corners: no edge joins them
-    else:
+    elif case == "one_tag_short":
         md.boundary_tags = md.boundary_tags[:-1]
+    else:
+        md.boundary_faces = md.boundary_faces[:0]
+        md.boundary_tags = np.full(5, 2, dtype=np.int64)
     with pytest.raises(ValueError, match=message):
         meshdata_to_skfem(md)

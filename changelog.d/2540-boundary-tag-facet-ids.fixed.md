@@ -1,8 +1,9 @@
 - **A tagged mesh boundary lands on the facets it names** (Issue #2540).
   - `meshdata_to_skfem` turns `MeshData.boundary_tags` into scikit-fem boundaries named `region_<tag>`. It stored each tagged face's **position** in `boundary_faces` as its facet id, so the boundary was placed on whichever facets carried those numbers.
-  - On the default path: `problem.solve()` on a `Mesh1D` (FEM_P1), with a Dirichlet exit of 1.0 on `region_1`, the right wall. The exit was imposed at the interior vertex x = 0.1 (U = 1.0, m = 7e-9 there), and x = 1 was left free, with U(0) = 0.1235 and m(T) = 1.198. It now solves exactly as the same BC on `x_max`.
-  - Each tagged face is now matched to the facet with the same vertex set, in any vertex order.
-  - **Refused, where the tag used to be placed silently:**
-    - a tagged face that is not a facet of the mesh;
-    - tags that do not pair one-to-one with the boundary faces.
+  - On the default path: `problem.solve()` on a 10-element `Mesh1D` (FEM_P1), with a Dirichlet exit of 1.0 on `region_1`, the right wall, and `m_initial ≡ 1`. The exit was imposed at the interior vertex x = 0.1 (U = 1.0, m = 7e-9 there), and x = 1 was left free, with U(0) = 0.1235 and m(T) = 1.198. It now solves exactly as the same BC on `x_max`.
+  - Each tagged face is now matched to the facet with the same vertex set, in any vertex order. A face listed twice is placed once.
+  - **Refused, where the tag used to be placed silently or dropped:**
+    - a tagged face that is not a facet of the mesh. By reading `Mesh3D`, a CAD import with a tagged surface that bounds no volume now raises when the mesh is converted, before any BC is read;
+    - tags that do not pair one-to-one with the boundary faces, including tags with no faces at all.
   - An all-zero tag array places no region, as before, whatever its length.
+  - **`Mesh1D` has no `region_0`.** It tags its left wall 0, which reads as untagged, so use `x_min`. A flux BC on a boundary name the mesh lacks is still integrated over the whole boundary (#2301).
