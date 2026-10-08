@@ -441,8 +441,11 @@ def solve_level(cell: Cell, n: int, nt: int) -> Level:
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=cell.sigma
         ),
         domain=grid,
+        # Unit mass on the domain (area LY in 2-D); the HJB solve reads M_density below, never m_initial.
         conditions=Conditions(
-            m_initial=lambda x: 1.0 + 0.0 * float(np.sum(x)), u_terminal=lambda x: 0.0, T=cell.exact.T
+            m_initial=lambda x, c=(1.0 if cell.dim == 1 else 1.0 / LY): c + 0.0 * float(np.sum(x)),
+            u_terminal=lambda x: 0.0,
+            T=cell.exact.T,
         ),
         Nt=nt,
     )
