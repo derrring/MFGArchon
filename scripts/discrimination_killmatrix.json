@@ -820,6 +820,66 @@
     "tests/unit/test_alg/test_hjb_fdm_upwind_minimum_2308.py::test_a_coarse_grid_solve_is_not_wrecked_at_the_minimum[41-0.05-0.12]": [
       "hjb_marches_forward_in_time"
     ],
+    "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[dirichlet_1d-newton]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[dirichlet_1d-picard]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[dirichlet_2d-newton]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[dirichlet_2d-picard]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[neumann_1d-newton]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[neumann_1d-picard]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[neumann_2d-newton]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[neumann_2d-picard]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[no_flux_1d-newton]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[no_flux_1d-picard]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[no_flux_2d-newton]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[no_flux_2d-picard]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[reflecting_1d-newton]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[reflecting_1d-picard]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[reflecting_2d-newton]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[reflecting_2d-picard]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[robin_1d-newton]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[robin_1d-picard]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[robin_2d-newton]": [
+      "diffusion_scalar_2x"
+    ],
+    "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[robin_2d-picard]": [
+      "diffusion_scalar_2x"
+    ],
     "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_engquist_osher_linearises_to_the_transpose_of_the_fp_operator[1d]": [
       "drift_coefficient_2x",
       "constructed_preset_is_accepted_and_ignored",
@@ -2770,7 +2830,7 @@
       "verify": "float(diffusion_from_volatility(np.array([2.0]), kind='field')[0]) == 4.0"
     },
     "diffusion_scalar_2x": {
-      "kill_count": 195,
+      "kill_count": 215,
       "killed": [
         "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[1]",
         "tests/integration/test_diffusion_magnitude_gate.py::test_adi_diffusion_magnitude[2]",
@@ -2822,6 +2882,26 @@
         "tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[periodic_1d]",
         "tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[periodic_faced_2d]",
         "tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[periodic_uniform_2d]",
+        "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[dirichlet_1d-newton]",
+        "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[dirichlet_1d-picard]",
+        "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[dirichlet_2d-newton]",
+        "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[dirichlet_2d-picard]",
+        "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[neumann_1d-newton]",
+        "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[neumann_1d-picard]",
+        "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[neumann_2d-newton]",
+        "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[neumann_2d-picard]",
+        "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[no_flux_1d-newton]",
+        "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[no_flux_1d-picard]",
+        "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[no_flux_2d-newton]",
+        "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[no_flux_2d-picard]",
+        "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[reflecting_1d-newton]",
+        "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[reflecting_1d-picard]",
+        "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[reflecting_2d-newton]",
+        "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[reflecting_2d-picard]",
+        "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[robin_1d-newton]",
+        "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[robin_1d-picard]",
+        "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[robin_2d-newton]",
+        "tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[robin_2d-picard]",
         "tests/unit/test_alg/test_hjb_gfdm_llf_augmentation.py::TestLLFAugmentationPinning::test_llf_at_least_one_node_augmented",
         "tests/unit/test_alg/test_hjb_gfdm_llf_augmentation.py::TestLLFAugmentationPinning::test_llf_sigma_eff_stored",
         "tests/unit/test_alg/test_hjb_gfdm_llf_augmentation.py::TestLLFNumerics::test_cone_constant_effect",

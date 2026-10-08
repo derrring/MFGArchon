@@ -1,0 +1,13 @@
+- **HJB-FEM is checked against exact solutions on every BC it declares, in 1-D and 2-D** (Issue #2512 (a), default path).
+  - **10 cells**, DIRICHLET, NEUMANN, NO_FLUX, REFLECTING and ROBIN in each dimension, each on both arms of the step:
+    - Picard, the default, handed the exact previous iterate, so it isolates the boundary treatment, including the Dirichlet lift;
+    - Newton, which solves the nonlinear step and is the full oracle.
+  - **Fixtures that separate rival treatments.** P1 elements converge at second order on solutions linear in t, so the error is spatial. The 2-D domain is [0, 1] × [0, 0.6], so dx ≠ dy and an axis-confusing defect is visible (#2547). The data differ from wall to wall. The drift points into every wall that carries a flux datum. The no-flux solutions are even about no midline.
+  - **Each cell asserts** the error ratio, each level's error within a factor of 1.25 either way of the recorded value (two-sided), and Dirichlet nodes equal to `g`.
+  - **Measured against one mutation per branch arm of the FEM boundary code,** all red:
+    - the Dirichlet value, DOF lookup and lift sign (the lift on Picard only, as Newton condenses homogeneously);
+    - the flux load (dropped, sign, swapped facets, consumed with the wrong sign);
+    - the Robin boundary mass and normal sign;
+    - a natural wall misrouted as Dirichlet or as Robin;
+    - x and y faces swapped, for the Dirichlet DOFs and for the flux facets.
+  - **REFLECTING** takes the NEUMANN/NO_FLUX arm, and its cells pin that it keeps doing so.
