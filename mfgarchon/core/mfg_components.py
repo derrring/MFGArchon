@@ -2,7 +2,7 @@
 
 This module contains:
 - MFGComponents: Dataclass for custom MFG problem definition
-- HamiltonianMixin: Mixin providing Hamiltonian evaluation methods (H, dH_dm, potential)
+- HamiltonianMixin: Mixin providing Hamiltonian evaluation methods (H, dH_dm, dH_dp)
 - ConditionsMixin: Mixin providing initial/final/boundary condition methods
 
 The mixin pattern allows MFGProblem to inherit these methods while keeping
@@ -12,13 +12,13 @@ the logic in separate, focused modules.
 from __future__ import annotations
 
 import contextlib
+import functools
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from mfgarchon.core.derivatives import DerivativeTensors, to_multi_index_dict
-from mfgarchon.types.callable_protocols import POTENTIAL_SLOTS, BoundCallable, bound_attribute
 
 # Issue #670: npart, ppart imports removed - no default Hamiltonian
 from mfgarchon.utils.mfg_logging import get_logger
@@ -86,8 +86,6 @@ class MFGComponents:
         Initial density distribution m_0(x).
     u_terminal : Callable | NDArray
         Terminal value function u_T(x).
-    potential_func : Callable, optional
-        Additional potential V(t, x) (if not in Hamiltonian); a time-independent V(x) is accepted.
     boundary_conditions : BoundaryConditions, optional
         Boundary conditions for the domain.
     """
@@ -100,9 +98,6 @@ class MFGComponents:
     m_initial: Callable | NDArray | None = None  # m_0(x): initial density
     u_terminal: Callable | NDArray | None = None  # u_T(x): terminal value function
     u_final: Callable | NDArray | None = None  # DEPRECATED: use u_terminal instead
-
-    # Optional potential (if not included in Hamiltonian)
-    potential_func: Callable | None = None  # V(t, x) -> float
 
     # Boundary conditions
     boundary_conditions: BoundaryConditions | None = None
@@ -192,8 +187,34 @@ class MFGComponents:
 
 
 # ============================================================================
-# Hamiltonian Mixin - H, dH_dm, Jacobian, Coupling, Potential
+# Hamiltonian Mixin - H, dH_dm, Jacobian, Coupling
 # ============================================================================
+
+
+# `potential_func` is retired (#2554): it was stored as `problem.f_potential` and no solver added it to H.
+# Refused around the generated __init__, as `Model` refuses `sigma`, so the error names the channel that reaches H.
+_generated_components_init = MFGComponents.__init__
+
+
+@functools.wraps(_generated_components_init)
+def _components_init_refusing_potential_func(self: MFGComponents, *args: Any, **kwargs: Any) -> None:
+    if len(args) > 5:
+        # potential_func was the sixth field; without this, a sixth positional argument would land
+        # silently in boundary_conditions, the field that moved into its slot.
+        raise TypeError(
+            f"MFGComponents takes at most 5 positional arguments, got {len(args)}: its sixth, potential_func, "
+            "is retired (#2554), so pass boundary_conditions and the later fields by keyword."
+        )
+    if "potential_func" in kwargs:
+        raise TypeError(
+            "MFGComponents(potential_func=...) is retired (#2554): it was stored and no solver added it to H, "
+            "so the solve ignored it. Pass the potential to the Hamiltonian, e.g. "
+            "SeparableHamiltonian(control_cost=..., potential=lambda t, x: V(x)); H carries it as -V (cost-signed)."
+        )
+    _generated_components_init(self, *args, **kwargs)
+
+
+MFGComponents.__init__ = _components_init_refusing_potential_func  # type: ignore[method-assign]
 
 
 class HamiltonianMixin:
@@ -205,15 +226,12 @@ class HamiltonianMixin:
     - dH_dm(): Hamiltonian derivative w.r.t. density
     - get_hjb_hamiltonian_jacobian_contrib(): Jacobian for Newton methods
     - get_hjb_residual_m_coupling_term(): Coupling terms
-    - _setup_custom_potential(): Potential initialization
-    - get_potential_at_time(): Time-dependent potential access
 
     Required attributes from the inheriting class:
     - components: MFGComponents | None
     - is_custom: bool
     - coupling_coefficient: float
     - tSpace: np.ndarray
-    - f_potential: np.ndarray
     - spatial_shape: tuple
     - dimension: int
     - _get_spatial_grid_internal(): method
@@ -226,7 +244,6 @@ class HamiltonianMixin:
     is_custom: bool
     coupling_coefficient: float
     tSpace: np.ndarray
-    f_potential: np.ndarray
     spatial_shape: tuple
     dimension: int
 
@@ -265,91 +282,6 @@ class HamiltonianMixin:
                 "  )\n"
                 "  components = MFGComponents(hamiltonian=H, m_initial=..., u_terminal=...)"
             )
-
-        # Bind the potential at acceptance (optional component), so an unmatched signature is refused here
-        if self.components.potential_func is not None:
-            self._bound_potential_func()
-
-    def _bound_potential_func(self) -> BoundCallable:
-        """``components.potential_func`` bound to its slots (#2375 ruling 8)."""
-        return bound_attribute(
-            self.components, "potential_func", POTENTIAL_SLOTS, role="potential_func", spatial_only=True
-        )
-
-    def _setup_custom_potential(self) -> None:
-        """Setup custom potential function (part of Hamiltonian)."""
-        if self.components is None or self.components.potential_func is None:
-            return
-
-        potential = self._bound_potential_func()
-        spatial_grid = self._get_spatial_grid_internal()
-        num_intervals = self._get_num_intervals() or 0
-
-        for i in range(num_intervals + 1):
-            # Extract scalar from grid point (grid has shape (Nx, 1) for 1D)
-            x_i = float(spatial_grid[i, 0])
-            self.f_potential[i] = potential(x=x_i, t=0.0)
-
-    def get_potential_at_time(self, t_idx: int) -> np.ndarray:
-        """Get potential function at specific time (for time-dependent potentials)."""
-        if self.is_custom and self.components is not None and self.components.potential_func is not None:
-            potential = self._bound_potential_func()
-            if "t" in potential.passes:
-                current_time = self.tSpace[t_idx] if t_idx < len(self.tSpace) else 0.0
-                potential_at_t = np.zeros_like(self.f_potential)
-
-                num_intervals = self._get_num_intervals() or 0
-                spatial_grid = self._get_spatial_grid_internal()
-                for i in range(num_intervals + 1):
-                    # Extract scalar from grid point (grid has shape (Nx, 1) for 1D)
-                    x_i = float(spatial_grid[i, 0])
-                    potential_at_t[i] = potential(x=x_i, t=current_time)
-
-                return potential_at_t
-
-        return self.f_potential.copy()
-
-    def _get_potential_at_index(self, x_idx: int | tuple[int, ...]) -> float:
-        """
-        Safely retrieve potential cost V(x) at given index.
-
-        Handles both grid-based (FDM) and meshfree (GFDM) methods.
-        Returns 0.0 if index is out of bounds (meshfree fallback).
-
-        Args:
-            x_idx: Grid index - either flat int or tuple for nD
-
-        Returns:
-            Potential value at index, or 0.0 if out of bounds
-        """
-        if self.f_potential is None:
-            return 0.0
-
-        # Normalize to flat index
-        flat_idx: int | None = None
-
-        if isinstance(x_idx, tuple):
-            if self.spatial_shape is not None and len(self.spatial_shape) > 1:
-                # Multi-dimensional tuple index - convert to flat
-                # Use mode='clip' to avoid ValueError, then check bounds
-                try:
-                    flat_idx = int(np.ravel_multi_index(x_idx, self.spatial_shape, mode="raise"))
-                except ValueError:
-                    # Coordinate outside defined shape
-                    return 0.0
-            else:
-                # 1D tuple like (5,)
-                flat_idx = x_idx[0] if len(x_idx) > 0 else 0
-        else:
-            # Scalar index
-            flat_idx = int(x_idx)
-
-        # Single bounds check
-        if 0 <= flat_idx < self.f_potential.size:
-            return float(self.f_potential.flat[flat_idx])
-
-        # Out of bounds - meshfree method with index beyond grid
-        return 0.0
 
     def H(
         self,

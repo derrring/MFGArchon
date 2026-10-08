@@ -135,7 +135,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
     - dH_dm(): Hamiltonian derivative w.r.t. density
     - get_hjb_hamiltonian_jacobian_contrib(): Jacobian for Newton methods
     - get_hjb_residual_m_coupling_term(): Coupling terms
-    - get_potential_at_time(): Time-dependent potential accessor
 
     ConditionsMixin (problem setup):
     - get_boundary_conditions(): Boundary condition accessor
@@ -213,7 +212,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         coupling_coefficient: float = 0.5,
         # MFG coupling parameters
         lambda_: float | None = None,  # Control cost (H uses |p|²/(2λ))
-        gamma: float = 1.0,  # Density coupling strength (H uses -γm²)
         # Class-based Hamiltonian (Issue #673 - recommended)
         hamiltonian: Any | None = None,  # HamiltonianBase instance
         # Advanced
@@ -309,7 +307,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             problem = MFGProblem(network=graph, time_domain=(1.0, 100))
 
             # Mode 5: Custom components
-            components = MFGComponents(hamiltonian_func=..., ...)
+            components = MFGComponents(hamiltonian=SeparableHamiltonian(...), m_initial=..., u_terminal=...)
             problem = MFGProblem(
                 spatial_bounds=[(0, 1)],
                 spatial_discretization=[100],
@@ -366,6 +364,13 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 "volatility Sigma, with volatility_kind='field' or 'tensor' for an array -- or "
                 "diffusion= -- the PDE coefficient A = 1/2 Sigma Sigma^T. On the v1.0 API it is "
                 "Model(volatility=...)."
+            )
+        if "gamma" in kwargs:
+            raise TypeError(
+                "MFGProblem(gamma=...) is retired (#2554): it was stored and no solver read it, so it "
+                "changed nothing. A density term in H goes through the Hamiltonian's coupling channel, "
+                "e.g. SeparableHamiltonian(control_cost=..., coupling=lambda m: gamma * m**2, "
+                "coupling_dm=lambda m: 2 * gamma * m); H carries it as -f (cost-signed)."
             )
 
         # =====================================================================
@@ -709,7 +714,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 Nt,
                 coupling_coefficient,
                 lambda_,
-                gamma,
                 suppress_warnings,
             )
             # For dual geometry mode, store both geometries explicitly
@@ -719,7 +723,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         elif mode == "network":
             # Mode 3: Network MFG
-            self._init_network(network, T, Nt, coupling_coefficient, lambda_, gamma)
+            self._init_network(network, T, Nt, coupling_coefficient, lambda_)
 
         elif mode == "default":
             # Default: 1D unit interval with 51 grid points
@@ -772,7 +776,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         self._validate_kwargs(all_params)
 
         # Initialize arrays (Issue #670: unified naming)
-        self.f_potential: NDArray
         self.u_terminal: NDArray  # Terminal condition u(T, x)
         self.m_initialial: NDArray  # Initial density m(0, x)
 
@@ -987,7 +990,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         Nt: int,
         coupling_coefficient: float,
         lambda_: float | None,
-        gamma: float,
         suppress_warnings: bool,
     ) -> None:
         """
@@ -1001,7 +1003,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             obstacles: List of obstacle geometries (for domain geometries)
             T, Nt: Time domain parameters
             coupling_coefficient: Physical parameters
-            lambda_, gamma: MFG coupling parameters
+            lambda_: control cost parameter
             suppress_warnings: Suppress warnings
         """
         # Import geometry protocol
@@ -1039,7 +1041,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         # MFG coupling parameters (for custom Hamiltonians)
         self.lambda_ = lambda_
-        self.gamma = gamma
 
         # Initialize spatial discretization based on geometry type
         from mfgarchon.geometry import GeometryType
@@ -1100,7 +1101,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         Nt: int,
         coupling_coefficient: float,
         lambda_: float | None,
-        gamma: float,
     ) -> None:
         """
         Initialize problem on network/graph.
@@ -1153,7 +1153,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         # MFG coupling parameters (for custom Hamiltonians)
         self.lambda_ = lambda_
-        self.gamma = gamma
 
         # Spatial discretization (nodes)
         self.spatial_shape = (self.num_nodes,)
@@ -1952,13 +1951,12 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             self.components.hamiltonian = composed
 
     def _initialize_functions(self, **kwargs: Any) -> None:
-        """Initialize potential, initial density, and final value functions.
+        """Initialize the initial density and the terminal value function.
 
         Issue #670: u_terminal/m_initial must be provided via MFGComponents.
         No silent defaults - Fail Fast principle.
         """
         # Initialize arrays with correct shape for both 1D and n-D
-        self.f_potential = np.zeros(self.spatial_shape)
         self.u_terminal = np.zeros(self.spatial_shape)
         self.m_initial = np.zeros(self.spatial_shape)
 
@@ -2006,12 +2004,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 drift_result = validate_drift(self.drift_field, self.geometry)
                 if not drift_result.is_valid:
                     raise ValidationError(drift_result)
-
-            # Validate the potential through its binding (#2375 ruling 8): the check `validate_running_cost`
-            # made here tried positional (x, m), (0.0, x, m) and (x), whose verdict depended on the order
-            # the potential takes and refused valid (t, x) potentials.
-            if self.components.potential_func is not None:
-                self._bound_potential_func()
 
         # Issue #687: Validate array-type diffusion/drift fields
         if self.geometry is not None and self.spatial_shape is not None:
@@ -2095,16 +2087,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 "See examples/tutorials/01_hello_mfg.py for the classic LQ-MFG setup."
             )
 
-        # === Potential: V(x,t) - defaults to zero (Issue #671: explicit default) ===
-        # Zero potential is a valid physical choice (many MFG problems have V=0).
-        # Unlike m_initial/u_terminal, zero potential doesn't require explicit specification.
-        has_potential = has_components and self.components.potential_func is not None
-        if has_potential:
-            self._setup_custom_potential()
-        else:
-            # Issue #671: Zero potential is the explicit default (physically meaningful)
-            self.f_potential[:] = 0.0
-
         # Issue #687: Validate computed arrays for NaN/Inf (after setup methods)
         if self.geometry is not None:
             from mfgarchon.utils.validation import ValidationError, validate_finite
@@ -2116,11 +2098,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             m_result = validate_finite(self.m_initial, "m_initial")
             if not m_result.is_valid:
                 raise ValidationError(m_result)
-
-            if has_potential:
-                pot_result = validate_finite(self.f_potential, "f_potential")
-                if not pot_result.is_valid:
-                    raise ValidationError(pot_result)
 
         # === Issue #672: Validate m_initial before normalization (Fail Fast) ===
         # Check 1: Non-negativity (density must be >= 0)
@@ -2266,8 +2243,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
     # Methods inherited from HamiltonianMixin:
     # - H(), dH_dm(), get_hjb_hamiltonian_jacobian_contrib()
-    # - get_hjb_residual_m_coupling_term(), get_potential_at_time()
-    # - _setup_custom_potential(), _validate_hamiltonian_components()
+    # - get_hjb_residual_m_coupling_term(), _validate_hamiltonian_components()
     #
     # Methods inherited from ConditionsMixin:
     # - get_boundary_conditions()
@@ -2313,7 +2289,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 "problem_type": self.components.problem_type,
                 "is_custom": True,
                 "has_custom_hamiltonian": True,
-                "has_custom_potential": self.components.potential_func is not None,
                 "has_custom_initial": self.components.m_initial is not None,
                 "has_custom_final": self.components.u_terminal is not None,
                 # Issue #673: jacobian_fd() always available on HamiltonianBase
@@ -2329,7 +2304,6 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 "problem_type": "example",
                 "is_custom": False,
                 "has_custom_hamiltonian": False,
-                "has_custom_potential": False,
                 "has_custom_initial": False,
                 "has_custom_final": False,
                 "has_jacobian": False,
@@ -2344,13 +2318,14 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
     # Kwargs Validation - Fail Fast on Deprecated/Unrecognized Parameters
     # ============================================================================
 
-    # Deprecated kwargs that should use MFGComponents instead (Issue #666, #670)
+    # Retired kwargs, each refused with the API that replaces it (Issue #666, #670, #2554)
     _DEPRECATED_KWARGS: ClassVar[dict[str, str]] = {
-        "hamiltonian": "MFGComponents.hamiltonian_func",
-        "dH_dm": "MFGComponents.hamiltonian_dm_func",
-        "dH_dp": "MFGComponents.hamiltonian_dp_func",
-        "potential": "MFGComponents.potential_func",
-        "running_cost": "MFGComponents.hamiltonian_func",
+        "hamiltonian": "Model(hamiltonian=...), a Hamiltonian object such as SeparableHamiltonian(...)",
+        "dH_dm": "the Hamiltonian's coupling_dm=, which takes f'(m); H carries -f, so dH/dm = -f'(m), e.g. "
+        "SeparableHamiltonian(coupling=..., coupling_dm=...)",
+        "dH_dp": "the Hamiltonian's control_cost=, whose dp() is dH/dp, e.g. QuadraticControlCost(...)",
+        "potential": "SeparableHamiltonian(potential=...)",
+        "running_cost": "the Hamiltonian's potential= (a cost of x) or coupling= (a cost of m)",
         "terminal_cost": "MFGComponents.u_terminal",
         # Issue #670: initial/terminal conditions now ONLY via MFGComponents
         "m_initial": "MFGComponents.m_initial",
@@ -2399,8 +2374,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 migration_guide = """
 
 The legacy 1D geometry kwargs (xmin/xmax/Nx/Lx) are no longer supported.
-Use the geometry-first API:
+Build the grid and pass it as the domain:
 
+  from mfgarchon import Conditions, MFGProblem, Model
   from mfgarchon.geometry import TensorProductGrid
   from mfgarchon.geometry.boundary import no_flux_bc
 
@@ -2409,32 +2385,37 @@ Use the geometry-first API:
       Nx_points=[Nx + 1],  # Nx intervals -> Nx + 1 grid points
       boundary_conditions=no_flux_bc(dimension=1),
   )
-
-  problem = MFGProblem(geometry=geometry, T=T, Nt=Nt, volatility=sigma)
+  problem = MFGProblem(
+      model=Model(hamiltonian=my_hamiltonian, volatility=sigma),
+      domain=geometry,
+      conditions=Conditions(m_initial=my_m0, u_terminal=my_uT, T=T),
+      Nt=Nt,
+  )
 
 See: docs/user/GEOMETRY_FIRST_API_GUIDE.md"""
             else:
                 migration_guide = """
 
-The old kwargs-based Hamiltonian API is no longer supported.
-Use MFGComponents for custom problem definitions:
+The kwargs-based Hamiltonian API is no longer supported.
+Build the Hamiltonian as an object and pass it through Model:
 
-  from mfgarchon.core.mfg_problem import MFGComponents
+  from mfgarchon import Conditions, MFGProblem, Model
+  from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 
-  components = MFGComponents(
-      hamiltonian_func=my_hamiltonian,
-      hamiltonian_dm_func=my_dH_dm,
-      m_initial=my_m0,
+  hamiltonian = SeparableHamiltonian(
+      control_cost=QuadraticControlCost(control_cost=1.0),
+      potential=my_potential,  # V(t, x), cost-signed
+      coupling=my_coupling,  # f(m)
+      coupling_dm=my_coupling_dm,  # f'(m)
   )
-
   problem = MFGProblem(
-      geometry=my_geometry,
-      T=T, Nt=Nt,
-      volatility=sigma,
-      components=components,
+      model=Model(hamiltonian=hamiltonian, volatility=sigma),
+      domain=my_geometry,
+      conditions=Conditions(m_initial=my_m0, u_terminal=my_uT, T=T),
+      Nt=Nt,
   )
 
-See: docs/migration/HAMILTONIAN_API.md"""
+See: docs/user/CONVENTIONS.md, section 2 (the cost channels and their signs)"""
             raise ValueError(str(e) + migration_guide) from None
 
     # ============================================================================

@@ -61,7 +61,6 @@ class _MockProblem:
         self.lambda_ = 1.0
         self.is_custom = False
         self.hamiltonian_class = None
-        self.f_potential = None
 
     def H(self, x_idx, m_at_x, p_values, t_idx):
         return 0.5 * sum(v**2 for v in p_values.values() if isinstance(v, (int, float)))

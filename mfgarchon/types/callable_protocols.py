@@ -108,8 +108,8 @@ def bind_user_callable(
       reads the same in the new order as in the old one, or as in the half-migration that moved
       only ``t``. Not ``*args`` either, for the same reason.
     - **``x`` alone**, where ``spatial_only`` allows a spatial callable: at most one required
-      parameter, or only ``*args``, as ``MFGComponents`` has always called a ``potential_func``
-      that declares no time.
+      parameter, or only ``*args``: a spatial callable, such as an initial density, declares no
+      time.
 
     Refused here, rather than failing or computing at the first call:
 

@@ -1,0 +1,18 @@
+- **`MFGComponents(potential_func=)` and `MFGProblem(gamma=)` are refused** (Issue #2554). Both were accepted and stored, and no solver added either to H, so a solve returned the answer to a problem without them.
+  - Measured on the default HJB-FDM solve (41 points on [0, 1], no-flux, T = 0.5, Nt = 20):
+    - V = 2 through `potential_func` moved u(0) by 0.0. The same V through `SeparableHamiltonian(potential=)` moved it by 1.0 = V T.
+    - `gamma` 5 against 0, at m = 2, moved it by 0.0.
+  - Each now raises `TypeError` naming the channel that reaches H:
+    - for a potential, the Hamiltonian's `potential=`, e.g. `SeparableHamiltonian(potential=...)`;
+    - for a density term, its `coupling=` with `coupling_dm=`.
+  - **Removed, as only those inputs fed them:** `problem.f_potential`, `problem.gamma`, `MFGProblem.get_potential_at_time`, and HJB-GFDM's warning that `f_potential` was being ignored.
+  - `NetworkMFGComponents`, a dataclass subclass, loses the inherited field too. Passing it there raises the generic unexpected-keyword `TypeError` (#2561).
+  - A sixth positional argument to `MFGComponents` is refused. That slot was `potential_func`, and would otherwise pass silently into `boundary_conditions`.
+  - #2378's entry in this release reorders `potential_func`'s arguments to `(t, x)`. That no longer applies: the keyword is refused.
+  - The legacy keyword `MFGProblem(potential=)` is still refused, and its message now names `SeparableHamiltonian(potential=...)` instead of the retired `MFGComponents.potential_func`.
+  - **The refusal message for the legacy keywords now prints advice that runs.**
+    - The geometry guide is printed for `xmin=`, `xmax=`, `Nx=` and `Lx=`, and the Hamiltonian guide for every other retired keyword.
+    - Its Hamiltonian guide built `MFGComponents(hamiltonian_func=...)`, which raises `TypeError`, and it cited `docs/migration/HAMILTONIAN_API.md`, which does not exist.
+    - Its geometry guide ended with `MFGProblem(geometry=..., T=..., Nt=..., volatility=...)`, which raises for a missing `u_terminal`.
+    - The redirect table named `MFGComponents.hamiltonian_func`, `hamiltonian_dm_func` and `hamiltonian_dp_func`, none of which exists.
+    - Both guides now print the v1.0 spelling (`Model`, `Conditions`, a Hamiltonian object). The rows for `hamiltonian`, `dH_dm`, `dH_dp`, `running_cost` and `potential` now name the Hamiltonian's own channels. A test pins each row's opening, through the channel it names; the `potential` row is pinned whole. A test runs each printed guide and requires it to build a problem.
