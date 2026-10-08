@@ -1,0 +1,24 @@
+- **n-D `HJBFDMSolver` returns the root it reports, at Dirichlet and Neumann walls** (Issues #2537, #2474).
+  - Each step solved every wall node's PDE row, then `FDMApplicator.enforce_values` overwrote Dirichlet faces with `g` and Neumann faces with the first-order `u[0] = u[1] + g h`. A step reporting `converged=True` therefore returned an array that was not Newton's root.
+    - `neumann_bc(0)`, 2-D at 21² / 41², from #2537's script: |F(returned)| = 3.25 / 3.33 against |F(root)| ≈ 1e-8.
+    - The new law test's Dirichlet arms, on main: the returned array differed from Newton's root by 3.1e-01 (uniform) and 6.4e-01 (faced).
+    - 1-D lost the same shape in #1900 and #2515.
+  - **Dirichlet.** A Dirichlet node's equation is now `u − g = 0` in Newton's residual and in both value-iteration maps (the fixed-point solver and Newton's fallback), via `applicator_fdm.dirichlet_wall_rows`.
+  - **Neumann.** A Neumann node keeps its PDE row, whose node-centred ghost already imposes du/dn = g (for g constant in time, #2543).
+  - Nothing is written after the solve, and `HJBFDMSolver.bc_applicator`, which only that call read, is removed.
+- **`neumann_bc(0)` and `no_flux_bc` return one array in n-D HJB-FDM**, as in 1-D. They are one condition on the HJB side (#1685), but the overwrite applied to NEUMANN only. In 2-D they differed by 4.3e-02 at 21² and 1.2e-02 at 41².
+- **A Neumann wall's slope is now second order** for a datum constant in time. A time-dependent one is still read at `t = 0` by the cached Laplacian (#2543). On a 2-D manufactured solution whose four walls carry different data, the returned field's second-order one-sided slope missed `g` by 0.422 / 0.238 / 0.123 at 11² / 21² / 41². It now misses by 0.0328 / 0.00683 / 0.000984. The maximum solution error there goes from 0.117 / 0.0511 / 0.0236 to 0.0745 / 0.0408 / 0.0212.
+- **Behaviour changes at faces the overwrite applied in the wrong order:**
+  - **`get_bc_type_at_boundary`'s own example, through `mixed_bc`.** It is a DIRICHLET exit on x_max plus a NEUMANN wall segment with no `boundary`. It now holds the exit at `g`. The overwrite applied the wall to every face after the exit, so x_max came back at 0.045..0.174 against g = 0.7 (the t = 0 slice, 11², Nt = 2).
+  - **A Dirichlet face meeting a Neumann face** holds `g` at the shared corner. The Neumann overwrite ran after the Dirichlet one and moved it to 0.25 against g = 0.2.
+  - **Two Dirichlet faces meeting at a corner.** The node takes the value of the segment first in the BC's own order: priority, then declaration, the order `get_bc_at_point` reads segments in. The overwrite applied segments in that order, so the last one, the lowest priority, won.
+- **One resolver for a face's segment.** `applicator_fdm.face_segment` answers "which segment does the FDM ghost impose on this face" for both the ghost buffer and the Dirichlet rows, so a face is Dirichlet in the rows exactly when it is in the residual. `PreallocatedGhostBuffer._find_segment_for_face` is folded into it.
+- **Refused: a segment the FDM ghosts cannot place.** n-D HJB-FDM now runs `bc_utils.refuse_unplaceable_segments`, the one owner for face-by-face readers (#2467, #1953, #2490), in a new `ghosts=True` mode. A solver held by its ghosts imposes each face's datum, so in that mode the "one operation with a default" exemption does not apply. Before #2537 the post-solve overwrite read these its own way. By reading its code, it imposed a boundary-less segment on every face, skipped `"all"`, stretched a `region` over its whole face, and raised `IndexError` on a face outside the domain.
+  - **A segment of a mixed BC with no `boundary`** covers every face for `get_bc_type_at_boundary` and no face for the ghosts, which give the face `default_bc`. It is refused on a face where the two give a different effect: a Dirichlet value, a flux, or a wrap.
+    - NO_FLUX and a value-less NEUMANN are one zero flux.
+    - So `get_bc_type_at_boundary`'s exit-and-wall example solves under a NEUMANN or a NO_FLUX default, and a face-label `region_name` solves.
+    - Unrefused, `[DIRICHLET 0.5, no boundary] + [NEUMANN x_min]` would have come back at −0.57..−0.36 over x_max (t = 0 slice, 11²).
+  - **`boundary="all"`**, which both readers apply to no face (#1953), **a `boundary` naming no face of the domain** (`z_max` in 2-D: the overwrite raised `IndexError` on it, and the ghosts drop it), and **a `region` covering part of a face** (#2490) are refused in any BC that is not uniform.
+- **Errors move to the start of the step.** Two inputs now raise `ValueError` before the step's solve, where they used to raise inside Newton and come back as `ConvergenceError`. The context string is now `face_segment`, for every caller of the ghost resolver, where it was `PreallocatedGhostBuffer._update_ghosts_mixed`.
+  - A mixed BC with a face no segment covers and no `default_bc` (#1100).
+  - A `region_name` that is not a face label (#2472).

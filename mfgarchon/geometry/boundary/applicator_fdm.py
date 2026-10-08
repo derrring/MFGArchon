@@ -71,7 +71,7 @@ Usage:
 from __future__ import annotations
 
 import functools
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -1049,6 +1049,130 @@ def _write_wall_ghosts(
 # =============================================================================
 
 
+def face_segment(bc: BoundaryConditions, target_face: BoundaryFace, geometry: Any = None) -> BCSegment:
+    """The segment whose condition the FDM ghosts impose on ``target_face``.
+
+    One resolver for the ghost path (`PreallocatedGhostBuffer._update_ghosts_mixed`) and for the rows that
+    must agree with it (`dirichlet_wall_rows`). The first segment, in priority order, that is placed on the
+    face by ``boundary`` (every alias: "left", "x_min", ..., Issue #946) or whose ``region_name`` governs it
+    (:func:`region_name_governs_face`: the geometry's region mask when the geometry defines the region, else a
+    region name that is a face label; anything else raises, Issue #2472). Failing that, a uniform BC's one
+    segment, else ``default_bc``.
+
+    A segment of a mixed BC with neither ``boundary`` nor ``region_name`` reaches no face here, while
+    ``BoundaryConditions``' own accessors give it every face (see ``value_gradient``).
+    """
+    segment = next(
+        (
+            seg
+            for seg in bc.segments
+            if (seg.boundary is not None and seg.face is not None and seg.face == target_face)
+            or (seg.region_name is not None and region_name_governs_face(seg, target_face, geometry))
+        ),
+        None,
+    )
+    if segment is None:
+        # `default_bc`, not `bc.segments[0]`. Segments are sorted priority-DESCENDING
+        # (`conditions.py:135`), so the old fallback handed every unclaimed wall the
+        # highest-priority segment -- typically the exit. Measured on the mixed-BC idiom
+        # from `BCSegment`'s own docstring (one DIRICHLET exit on x_min, default_bc
+        # NO_FLUX): 4 of 4 walls received the Dirichlet ghost, and dropping the exit's
+        # priority to -5 changed it to 1 of 4, which is the fingerprint of a sort-order
+        # fallback rather than of any BC semantics. `default_bc` exists, is documented,
+        # and `get_bc_type_at_boundary` already answers correctly on the same object.
+        #
+        # `_resolve_default_bc` raises when `default_bc` is unset (#1100) rather than
+        # guessing -- that is deliberate and it is why this is not a silent change: a BC
+        # whose segments do not cover every face and which names no default was
+        # previously given one by accident of sort order.
+        # #2042: two situations arrive here and only one of them has an answer.
+        #
+        # (a) A UNIFORM BC took this path -- exactly one segment, no boundary
+        #     restriction, so no priority ambiguity and nothing to choose between.
+        #     Forward it. This is reading the data that is present, not the
+        #     `bc.segments[0]` fallback the comment above rejects: that one fired on
+        #     MIXED BCs, where [0] means "highest priority" and handed every unclaimed
+        #     wall the exit. `is_uniform` is exactly the case where that cannot happen.
+        #     Synthesising instead drops `alpha`, `beta` and any callable value --
+        #     measured, a Robin wall became a clean Dirichlet(3.0) bit for bit.
+        if bc.is_uniform:
+            segment = bc.segments[0]
+        else:
+            default_type = bc._resolve_default_bc("face_segment")
+            # (b) A genuinely mixed BC with an unclaimed face. There is nothing to
+            #     forward: `default_value` is declared, `default_alpha`/`default_beta`
+            #     do not exist on BoundaryConditions at all. `BCSegment`'s defaults are
+            #     `alpha=1.0, beta=0.0`, and **beta = 0 IS Dirichlet** -- so defaulting
+            #     a ROBIN silently changes the boundary condition's TYPE rather than
+            #     approximating it, and the caller cannot see it happen.
+            #
+            #     There is no default Robin. This continues #1100's ruling one level
+            #     down: `_resolve_default_bc` already raises when `default_bc` is unset
+            #     "rather than guessing", and an unspecified alpha/beta is the same
+            #     incompleteness.
+            if default_type is BCType.ROBIN:
+                raise NotImplementedError(
+                    f"This boundary condition names ROBIN as its default, and face "
+                    f"{target_face} is claimed by no segment -- but a Robin needs "
+                    f"`alpha` and `beta`, and `BoundaryConditions` carries no "
+                    f"`default_alpha`/`default_beta` to take them from. Defaulting "
+                    f"them would use BCSegment's `alpha=1.0, beta=0.0`, and beta = 0 "
+                    f"is DIRICHLET -- the wall would silently become a different "
+                    f"boundary condition, not an approximate one. Add a segment "
+                    f"covering {target_face} with explicit alpha/beta, or choose a "
+                    f"default_bc that needs neither (Issue #2042)."
+                )
+            segment = BCSegment(
+                name="__default__",
+                bc_type=default_type,
+                value=bc.default_value,
+            )
+    return segment
+
+
+def segment_value(segment: BCSegment, time: float) -> Any:
+    """The datum a face's ghost reads from ``segment`` at ``time``: ``value(time)`` for a callable, 0 for None."""
+    value = segment.value
+    if callable(value):
+        return value(time)
+    return value if value is not None else 0.0
+
+
+def dirichlet_wall_rows(
+    bc: BoundaryConditions | None, shape: tuple[int, ...], time: float = 0.0, geometry: Any = None
+) -> tuple[NDArray[np.bool_], NDArray[np.float64]]:
+    """The nodes whose equation is ``u - g = 0``, and their ``g``: every node of a face whose ghost is Dirichlet.
+
+    A prescribed node has no PDE row. A residual that keeps one there solves it with the Dirichlet ghost, and
+    writing ``g`` afterwards returns an array that is not the root the solve certified (#2474). Read through
+    `face_segment`, so a face is Dirichlet here exactly when its ghost is -- given the ``geometry`` the ghosts
+    resolve with. The FDM operators pad without one (`pad_array_with_ghosts`), and so does a caller of theirs.
+
+    Where Dirichlet faces meet, the segment first in the BC's own order (priority, then declaration -- the order
+    `BoundaryConditions.get_bc_at_point` reads them in) holds the shared nodes; a synthesised ``default_bc``
+    comes last. `get_bc_at_point` itself cannot settle a corner: it matches a face-named segment only against
+    the one ``boundary_id`` its caller passes.
+    """
+    mask = np.zeros(shape, dtype=bool)
+    values = np.zeros(shape, dtype=np.float64)
+    if bc is None:
+        return mask, values
+    claims = []
+    for axis in range(len(shape)):
+        for side in ("min", "max"):
+            segment = face_segment(bc, BoundaryFace(axis, side), geometry)
+            if segment.bc_type == BCType.DIRICHLET:
+                rank = next((i for i, seg in enumerate(bc.segments) if seg is segment), len(bc.segments))
+                claims.append((rank, axis, side, segment_value(segment, time)))
+    for _, axis, side, g in sorted(claims, key=lambda claim: claim[0]):
+        face: list[int | slice] = [slice(None)] * len(shape)
+        face[axis] = 0 if side == "min" else -1
+        index = tuple(face)
+        values[index] = np.where(mask[index], values[index], g)
+        mask[index] = True
+    return mask, values
+
+
 class PreallocatedGhostBuffer:
     """
     Pre-allocated buffer for zero-copy ghost cell boundary conditions.
@@ -1661,106 +1785,10 @@ class PreallocatedGhostBuffer:
             for side in ["min", "max"]:
                 target_face = BoundaryFace(axis, side)
 
-                # Find matching BC segment for this face (Issue #946)
-                segment = self._find_segment_for_face(bc, target_face)
-
-                if segment is None:
-                    # `default_bc`, not `bc.segments[0]`. Segments are sorted priority-DESCENDING
-                    # (`conditions.py:135`), so the old fallback handed every unclaimed wall the
-                    # highest-priority segment -- typically the exit. Measured on the mixed-BC idiom
-                    # from `BCSegment`'s own docstring (one DIRICHLET exit on x_min, default_bc
-                    # NO_FLUX): 4 of 4 walls received the Dirichlet ghost, and dropping the exit's
-                    # priority to -5 changed it to 1 of 4, which is the fingerprint of a sort-order
-                    # fallback rather than of any BC semantics. `default_bc` exists, is documented,
-                    # and `get_bc_type_at_boundary` already answers correctly on the same object.
-                    #
-                    # `_resolve_default_bc` raises when `default_bc` is unset (#1100) rather than
-                    # guessing -- that is deliberate and it is why this is not a silent change: a BC
-                    # whose segments do not cover every face and which names no default was
-                    # previously given one by accident of sort order.
-                    # #2042: two situations arrive here and only one of them has an answer.
-                    #
-                    # (a) A UNIFORM BC took this path -- exactly one segment, no boundary
-                    #     restriction, so no priority ambiguity and nothing to choose between.
-                    #     Forward it. This is reading the data that is present, not the
-                    #     `bc.segments[0]` fallback the comment above rejects: that one fired on
-                    #     MIXED BCs, where [0] means "highest priority" and handed every unclaimed
-                    #     wall the exit. `is_uniform` is exactly the case where that cannot happen.
-                    #     Synthesising instead drops `alpha`, `beta` and any callable value --
-                    #     measured, a Robin wall became a clean Dirichlet(3.0) bit for bit.
-                    if bc.is_uniform:
-                        segment = bc.segments[0]
-                    else:
-                        default_type = bc._resolve_default_bc("PreallocatedGhostBuffer._update_ghosts_mixed")
-                        # (b) A genuinely mixed BC with an unclaimed face. There is nothing to
-                        #     forward: `default_value` is declared, `default_alpha`/`default_beta`
-                        #     do not exist on BoundaryConditions at all. `BCSegment`'s defaults are
-                        #     `alpha=1.0, beta=0.0`, and **beta = 0 IS Dirichlet** -- so defaulting
-                        #     a ROBIN silently changes the boundary condition's TYPE rather than
-                        #     approximating it, and the caller cannot see it happen.
-                        #
-                        #     There is no default Robin. This continues #1100's ruling one level
-                        #     down: `_resolve_default_bc` already raises when `default_bc` is unset
-                        #     "rather than guessing", and an unspecified alpha/beta is the same
-                        #     incompleteness.
-                        if default_type is BCType.ROBIN:
-                            raise NotImplementedError(
-                                f"This boundary condition names ROBIN as its default, and face "
-                                f"{target_face} is claimed by no segment -- but a Robin needs "
-                                f"`alpha` and `beta`, and `BoundaryConditions` carries no "
-                                f"`default_alpha`/`default_beta` to take them from. Defaulting "
-                                f"them would use BCSegment's `alpha=1.0, beta=0.0`, and beta = 0 "
-                                f"is DIRICHLET -- the wall would silently become a different "
-                                f"boundary condition, not an approximate one. Add a segment "
-                                f"covering {target_face} with explicit alpha/beta, or choose a "
-                                f"default_bc that needs neither (Issue #2042)."
-                            )
-                        segment = BCSegment(
-                            name="__default__",
-                            bc_type=default_type,
-                            value=bc.default_value,
-                        )
+                segment = face_segment(bc, target_face, self._geometry)
 
                 # Apply ghost cell formula for this face
                 self._apply_ghost_for_face(buf, axis, side, segment, time, g)
-
-    def _find_segment_for_face(
-        self,
-        bc: BoundaryConditions,
-        target_face: BoundaryFace,
-    ) -> BCSegment | None:
-        """
-        Find the BC segment that applies to a specific face.
-
-        Uses BoundaryFace for dimension-agnostic matching (Issue #946).
-
-        Matching priority:
-        1. seg.face matches target_face (handles all string aliases: "left", "x_min", etc.)
-        2. region_name, through :func:`region_name_governs_face`: the geometry's region mask when
-           the geometry defines the region, else a region name that is a face label. Anything else
-           raises (Issue #2472).
-
-        Args:
-            bc: Boundary conditions
-            target_face: Target boundary face
-
-        Returns:
-            Matching BCSegment or None if no explicit match
-        """
-        for segment in bc.segments:
-            # Method 1: Structured face match via seg.face (Issue #946)
-            if segment.boundary is not None:
-                seg_face = segment.face
-                if seg_face is not None and seg_face == target_face:
-                    return segment
-
-            # Method 2: region_name. The old geometry branch indexed the grid's flat region mask with a
-            # d-dimensional face index, which raised IndexError for d >= 2 and was swallowed at debug
-            # level, so there a region never reached its face (#2472).
-            if segment.region_name is not None and region_name_governs_face(segment, target_face, self._geometry):
-                return segment
-
-        return None
 
     def _apply_ghost_for_face(
         self,
@@ -1785,12 +1813,7 @@ class PreallocatedGhostBuffer:
         d = self._dimension
         bc_type = segment.bc_type
 
-        # Evaluate value if callable
-        value = segment.value
-        if callable(value):
-            v = value(time)
-        else:
-            v = value if value is not None else 0.0
+        v = segment_value(segment, time)
 
         # Get slices for this face
         if side == "min":

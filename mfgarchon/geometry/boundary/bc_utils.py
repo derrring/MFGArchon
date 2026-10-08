@@ -176,7 +176,9 @@ def declares_periodic(boundary_conditions: Any) -> bool:
     return getattr(boundary_conditions, "default_bc", None) is BCType.PERIODIC
 
 
-def refuse_unplaceable_segments(boundary_conditions: Any, dimension: int, *, consumer: str) -> None:
+def refuse_unplaceable_segments(
+    boundary_conditions: Any, dimension: int, *, consumer: str, ghosts: bool = False, time: float = 0.0
+) -> None:
     """Refuse, in a mix of operations, a segment the face reader cannot place. #2467, #1953, #2490.
 
     ``get_bc_type_at_boundary`` answers one type per face, and four kinds of segment make that answer
@@ -191,15 +193,32 @@ def refuse_unplaceable_segments(boundary_conditions: Any, dimension: int, *, con
     wraps every face, where HJB-FDM's ghosts find no BC and raise.
 
     One owner for every consumer that reads a BC face by face: the semi-Lagrangian pair through
-    :func:`per_axis_operations`, and FP-FDM's periodicity (#2495).
+    :func:`per_axis_operations`, FP-FDM's periodicity (#2495), and -- with ``ghosts=True`` -- n-D HJB-FDM,
+    which is held by the FDM ghosts alone (#2537).
+
+    ``ghosts=True`` is for a consumer that imposes each face's datum through the ghost resolver
+    (`applicator_fdm.face_segment`), which places a segment with no ``boundary`` on no face. For it the
+    single-operation exemption does not hold, since data differ where operations agree. A segment with
+    no ``boundary`` is refused only on a face where the ghosts' effect differs from what
+    ``get_bc_type_at_boundary``'s segment means there. The effect is a Dirichlet value, a flux, or a wrap,
+    read at ``time``; NO_FLUX and a value-less NEUMANN are the same zero flux. So a face-label
+    ``region_name``, or a wall equal to the default it falls to, passes. The other three kinds are refused
+    in any BC that is not uniform.
     """
     if boundary_conditions is None or getattr(boundary_conditions, "segments", None) is None:
         return
     mixed = len(geometric_operations(boundary_conditions)) > 1
-    if boundary_conditions.is_uniform or (not mixed and getattr(boundary_conditions, "default_bc", None) is not None):
+    if boundary_conditions.is_uniform:
         return
-    where = "in a mix of geometric operations" if mixed else "with no `default_bc` for the faces they miss"
-    unbounded = [seg.name for seg in boundary_conditions.segments if seg.boundary is None]
+    if not ghosts and not mixed and getattr(boundary_conditions, "default_bc", None) is not None:
+        return
+    if ghosts:
+        where = "where the FDM ghosts impose each face's datum"
+        _refuse_what_the_ghosts_do_not_impose(boundary_conditions, dimension, consumer, time)
+        unbounded = []
+    else:
+        where = "in a mix of geometric operations" if mixed else "with no `default_bc` for the faces they miss"
+        unbounded = [seg.name for seg in boundary_conditions.segments if seg.boundary is None]
     if unbounded:
         raise NotImplementedError(
             f"{consumer}: segments {unbounded} have no `boundary` {where}, so "
@@ -218,7 +237,8 @@ def refuse_unplaceable_segments(boundary_conditions: Any, dimension: int, *, con
     nowhere = [
         f"{seg.name} ({type(seg.boundary).__name__} {seg.boundary!r})"
         for seg in boundary_conditions.segments
-        if (face := parse_boundary_face(seg.boundary)) is None or not 0 <= face.axis < dimension
+        if seg.boundary is not None  # with ghosts=True a segment with no `boundary` was judged above
+        and ((face := parse_boundary_face(seg.boundary)) is None or not 0 <= face.axis < dimension)
     ]
     if nowhere:
         raise NotImplementedError(
@@ -232,6 +252,53 @@ def refuse_unplaceable_segments(boundary_conditions: Any, dimension: int, *, con
             f"{consumer}: segments {partial} cover part of a face (`region`) {where}, "
             "and the face reader would "
             "give each of them its whole face (#2490)."
+        )
+
+
+def _ghost_effect(segment: Any, time: float) -> tuple:
+    """What the FDM ghosts impose for ``segment``: its arm in `_write_wall_ghosts`, and the datum that arm reads."""
+    from .applicator_fdm import segment_value
+    from .types import BCType
+
+    bc_type = segment.bc_type
+    if bc_type == BCType.DIRICHLET:
+        return ("dirichlet", float(segment_value(segment, time)))
+    if bc_type == BCType.NEUMANN:
+        return ("flux", float(segment_value(segment, time)))
+    if bc_type in (BCType.NO_FLUX, BCType.REFLECTING):
+        return ("flux", 0.0)
+    if bc_type == BCType.ROBIN:
+        return ("robin", float(segment.alpha), float(segment.beta), float(segment_value(segment, time)))
+    return (bc_type.value,)
+
+
+def _refuse_what_the_ghosts_do_not_impose(boundary_conditions: Any, dimension: int, consumer: str, time: float) -> None:
+    """The ``ghosts=True`` half of `refuse_unplaceable_segments`: compare, per face, the effect of the segment
+    ``get_bc_type_at_boundary`` resolves (its mixed branch, `_segment_covers` in priority order) with the
+    effect of the one the ghosts impose (`face_segment`)."""
+    from .applicator_fdm import face_segment
+    from .types import BoundaryFace
+
+    clashes = []
+    for axis in range(dimension):
+        for side in ("min", "max"):
+            face = BoundaryFace(axis, side)
+            name = face.to_string()
+            imposed = face_segment(boundary_conditions, face)
+            declared = next(
+                (seg for seg in boundary_conditions.segments if boundary_conditions._segment_covers(seg, name)), None
+            )
+            if declared is None or declared is imposed:
+                continue
+            want, got = _ghost_effect(declared, time), _ghost_effect(imposed, time)
+            if want != got:
+                clashes.append(f"{name}: '{declared.name}' declares {want}, the ghosts impose {got} ('{imposed.name}')")
+    if clashes:
+        raise NotImplementedError(
+            f"{consumer}: segments with no `boundary` cover every face for get_bc_type_at_boundary but reach no "
+            f"face through the FDM ghosts, which give it `default_bc`, so the solve would impose something else: "
+            + "; ".join(clashes)
+            + ". Give each segment the face it lies on with `boundary=` (#2537, #2467)."
         )
 
 
