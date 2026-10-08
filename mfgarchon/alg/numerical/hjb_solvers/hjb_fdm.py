@@ -18,7 +18,7 @@ import numpy as np
 
 from mfgarchon.alg.numerical.hjb_solvers.h_eval import eval_dH_dp_batch, eval_H_batch
 from mfgarchon.geometry.base import CartesianGrid  # nD FDM needs structured grid ABC
-from mfgarchon.geometry.boundary.applicator_fdm import dirichlet_wall_rows
+from mfgarchon.geometry.boundary.applicator_fdm import dirichlet_wall_rows, refuse_what_the_ghosts_do_not_impose
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.operators.stencils.finite_difference import (
     DEFAULT_NUMERICAL_HAMILTONIAN,
@@ -812,7 +812,9 @@ class HJBFDMSolver(BaseHJBSolver):
         # A Dirichlet node's equation is u - g = 0 in every map below, so the solve's root holds the condition
         # and nothing is written afterwards (#2537, #2474; 1-D: #2515). A Neumann wall keeps its PDE row, whose
         # node-centred ghost already imposes du/dn = g.
-        wall, g_wall = dirichlet_wall_rows(self.get_boundary_conditions(), self.shape, time)
+        bc = self.get_boundary_conditions()
+        refuse_what_the_ghosts_do_not_impose(bc, self.dimension, time)
+        wall, g_wall = dirichlet_wall_rows(bc, self.shape, time)
 
         used_fallback = False
         if self.solver_type == "fixed_point":

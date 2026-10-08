@@ -167,8 +167,8 @@ def _apply_once(outputs: list):
 def test_the_fixed_point_map_returns_g_at_a_dirichlet_node(monkeypatch):
     """Value iteration's map gives a Dirichlet node ``g``, so its fixed point holds the condition with
     nothing written afterwards. One application is enough to read the map's wall rows: the 2-D value
-    iteration does not converge on this fixture (600 iterations at dt D / h^2 = 0.117), which is
-    neither here nor there for what the map returns."""
+    iteration does not converge on this fixture (dt D / h^2 = 1.875, its 30 iterations), nor with
+    dt D / h^2 = 0.117 and 600, which is neither here nor there for what the map returns."""
     from mfgarchon.utils.numerical.nonlinear_solvers import FixedPointSolver
 
     outputs: list = []
@@ -310,3 +310,38 @@ def test_a_neumann_wall_holds_its_slope_to_second_order():
     coarse, fine = _wall_slope_miss(11), _wall_slope_miss(21)
     assert fine < 0.02, f"wall slope misses g by {fine:.3e} at 21^2"
     assert coarse / fine > 3.0, f"wall slope error ratio {coarse / fine:.2f} under refinement is not second order"
+
+
+_UNPLACED = {
+    # A Dirichlet with no `boundary` under a NEUMANN x_min: the accessors give it the other three faces.
+    "dirichlet_everywhere_else": lambda: BoundaryConditions(
+        dimension=2,
+        segments=[
+            BCSegment(name="rest", bc_type=BCType.DIRICHLET, value=0.5),
+            BCSegment(name="left", bc_type=BCType.NEUMANN, boundary="x_min", value=0.0),
+        ],
+        domain_bounds=BOUNDS,
+        default_bc=BCType.NEUMANN,
+    ),
+    # The exit-and-wall example with a wall that carries a datum the NEUMANN(0) default does not.
+    "wall_with_a_datum": lambda: BoundaryConditions(
+        dimension=2,
+        segments=[
+            BCSegment(name="exit", bc_type=BCType.DIRICHLET, boundary="x_max", value=0.7),
+            BCSegment(name="wall", bc_type=BCType.NEUMANN, value=-0.8),
+        ],
+        domain_bounds=BOUNDS,
+        default_bc=BCType.NEUMANN,
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_UNPLACED))
+def test_a_segment_the_ghosts_cannot_place_is_refused_where_it_changes_a_face(case: str):
+    """A segment of a mixed BC with no `boundary` covers every face for the accessors and none for the
+    ghosts, which give the face `default_bc`. The overwrite used to write the accessor's datum after the
+    solve; without it the face would silently solve the default -- measured: the Dirichlet 0.5 came back at
+    -0.55..-0.36 on x_max, and the wall's -0.8 as slope +0.305. Where the two agree (`exit_and_wall` above,
+    a value-less NEUMANN wall over a NEUMANN(0) default) it solves."""
+    with pytest.raises(NotImplementedError, match="no `boundary`"):
+        _solve(_UNPLACED[case]())

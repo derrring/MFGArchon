@@ -1,15 +1,23 @@
 - **n-D `HJBFDMSolver` returns the root it reports, at Dirichlet and Neumann walls** (Issues #2537, #2474).
   - Each step solved every wall node's PDE row, then `FDMApplicator.enforce_values` overwrote Dirichlet faces with `g` and Neumann faces with the first-order `u[0] = u[1] + g h`. A step reporting `converged=True` therefore returned an array that was not Newton's root.
-    - Neumann g ≠ 0, 2-D at 11² / 21² / 41²: |F(returned)| = 2.07 / 1.92 / 1.92 against |F(root)| ≈ 1e-14.
-    - Dirichlet 2-D: 1.81 / 1.47 / 1.02.
+    - `neumann_bc(0)`, 2-D at 21² / 41², from #2537's script: |F(returned)| = 3.25 / 3.33 against |F(root)| ≈ 1e-8.
+    - The new law test's Dirichlet arms, on main: the returned array differed from Newton's root by 3.1e-01 (uniform) and 6.4e-01 (faced).
     - 1-D lost the same shape in #1900 and #2515.
   - **Dirichlet.** A Dirichlet node's equation is now `u − g = 0` in Newton's residual and in both value-iteration maps (the fixed-point solver and Newton's fallback), via `applicator_fdm.dirichlet_wall_rows`.
-  - **Neumann.** A Neumann node keeps its PDE row, whose node-centred ghost already imposes du/dn = g.
+  - **Neumann.** A Neumann node keeps its PDE row, whose node-centred ghost already imposes du/dn = g (for g constant in time, #2543).
   - Nothing is written after the solve, and `HJBFDMSolver.bc_applicator`, which only that call read, is removed.
 - **`neumann_bc(0)` and `no_flux_bc` return one array in n-D HJB-FDM**, as in 1-D. They are one condition on the HJB side (#1685), but the overwrite applied to NEUMANN only. In 2-D they differed by 4.3e-02 at 21² and 1.2e-02 at 41².
-- **A Neumann wall's slope is now second order.** On a 2-D manufactured solution whose four walls carry different data, the returned field's second-order one-sided slope missed `g` by 0.422 / 0.238 / 0.123 at 11² / 21² / 41². It now misses by 0.0328 / 0.00683 / 0.000984. The maximum solution error there goes from 0.117 / 0.0511 / 0.0236 to 0.0745 / 0.0408 / 0.0212.
+- **A Neumann wall's slope is now second order** for a datum constant in time. A time-dependent one is still read at `t = 0` by the cached Laplacian (#2543). On a 2-D manufactured solution whose four walls carry different data, the returned field's second-order one-sided slope missed `g` by 0.422 / 0.238 / 0.123 at 11² / 21² / 41². It now misses by 0.0328 / 0.00683 / 0.000984. The maximum solution error there goes from 0.117 / 0.0511 / 0.0236 to 0.0745 / 0.0408 / 0.0212.
 - **Behaviour changes at faces the overwrite applied in the wrong order:**
-  - **`get_bc_type_at_boundary`'s own example, through `mixed_bc`.** It is a DIRICHLET exit on x_max plus a NEUMANN wall segment with no `boundary`. It now holds the exit at `g`. The overwrite applied the wall to every face after the exit, so x_max came back at 0.045..0.174 against g = 0.7 (11², Nt = 2).
+  - **`get_bc_type_at_boundary`'s own example, through `mixed_bc`.** It is a DIRICHLET exit on x_max plus a NEUMANN wall segment with no `boundary`. It now holds the exit at `g`. The overwrite applied the wall to every face after the exit, so x_max came back at 0.045..0.174 against g = 0.7 (the t = 0 slice, 11², Nt = 2).
   - **A Dirichlet face meeting a Neumann face** holds `g` at the shared corner. The Neumann overwrite ran after the Dirichlet one and moved it to 0.25 against g = 0.2.
   - **Two Dirichlet faces meeting at a corner.** The node takes the value of the segment first in the BC's own order: priority, then declaration, the order `get_bc_at_point` reads segments in. The overwrite applied segments in that order, so the last one, the lowest priority, won.
 - **One resolver for a face's segment.** `applicator_fdm.face_segment` answers "which segment does the FDM ghost impose on this face" for both the ghost buffer and the Dirichlet rows, so a face is Dirichlet in the rows exactly when it is in the residual. `PreallocatedGhostBuffer._find_segment_for_face` is folded into it.
+- **Refused: a segment the ghosts cannot place, where it changes a face.** A segment of a mixed BC with neither `boundary` nor `region_name` covers every face for `get_bc_type_at_boundary` but no face for the FDM ghosts, which give the face `default_bc` (#2490).
+  - The overwrite used to write the accessor's datum, so n-D HJB-FDM imposed the segment.
+  - Without the overwrite it would have solved the default, silently: `[DIRICHLET 0.5, no boundary] + [NEUMANN x_min]` came back at −0.55..−0.36 on x_max.
+  - `applicator_fdm.refuse_what_the_ghosts_do_not_impose` now raises `NotImplementedError` wherever the two readers give a face a different type or datum.
+  - The exit-and-wall example above, a value-less NEUMANN wall over a NEUMANN(0) default, is unchanged.
+- **Errors move to the start of the step.** Two inputs now raise `ValueError` before the step's solve, where they used to raise inside Newton and come back as `ConvergenceError`. The context string is now `face_segment`, for every caller of the ghost resolver, where it was `PreallocatedGhostBuffer._update_ghosts_mixed`.
+  - A mixed BC with a face no segment covers and no `default_bc` (#1100).
+  - A `region_name` that is not a face label (#2472).

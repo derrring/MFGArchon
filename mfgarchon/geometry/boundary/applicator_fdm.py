@@ -1173,6 +1173,47 @@ def dirichlet_wall_rows(
     return mask, values
 
 
+def refuse_what_the_ghosts_do_not_impose(bc: BoundaryConditions | None, dimension: int, time: float = 0.0) -> None:
+    """Raise where the FDM ghosts (`face_segment`) impose a different condition on a face from the one
+    `BoundaryConditions.get_bc_type_at_boundary` resolves there.
+
+    The two readers place one kind of segment differently: a segment of a mixed BC with neither ``boundary``
+    nor ``region_name`` covers every face for the accessor and no face for the ghosts, which give the face
+    ``default_bc`` instead. A solver that writes the accessor's datum after its solve imposes the segment; one
+    held by its ghosts alone solves the default, silently -- n-D HJB-FDM after #2537 dropped a Dirichlet 0.5
+    declared this way to no-flux. Faces are compared by type and by datum at ``time`` (None reads as 0, as in
+    `segment_value`), so a value-less NEUMANN wall over a NEUMANN(0) default passes. #2472 refused the same
+    split for region names.
+    """
+    if bc is None or bc.is_uniform:
+        return
+    clashes = []
+    for axis in range(dimension):
+        for side in ("min", "max"):
+            face = BoundaryFace(axis, side)
+            name = face.to_string()
+            imposed = face_segment(bc, face)
+            declared = next((seg for seg in bc.segments if bc._segment_covers(seg, name)), None)
+            if declared is None:
+                continue  # both readers fall to `default_bc`
+            if declared.bc_type != imposed.bc_type or not np.array_equal(
+                segment_value(declared, time), segment_value(imposed, time)
+            ):
+                clashes.append(
+                    f"{name}: declared {declared.bc_type.name}({segment_value(declared, time)}) by segment "
+                    f"'{declared.name}', imposed {imposed.bc_type.name}({segment_value(imposed, time)}) by "
+                    f"'{imposed.name}'"
+                )
+    if clashes:
+        raise NotImplementedError(
+            "The FDM ghosts would solve a different boundary condition from the one declared: "
+            + "; ".join(clashes)
+            + ". A segment of a mixed BC with no `boundary` covers every face for BoundaryConditions' "
+            "accessors but reaches no face through the ghosts, which give that face `default_bc`. Give each "
+            "segment the face it lies on with `boundary=` (#2537; #2472 refused the same split for region names)."
+        )
+
+
 class PreallocatedGhostBuffer:
     """
     Pre-allocated buffer for zero-copy ghost cell boundary conditions.

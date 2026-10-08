@@ -334,7 +334,7 @@ MUTATIONS: list[Mutation] = [
         path="mfgarchon/geometry/boundary/applicator_fdm.py",
         # The anchor carries the line BELOW the dispatch, because `if bc.is_uniform:` alone stopped
         # being unique on 2026-08-22: #2042 added a second branch on the same predicate inside
-        # `_update_ghosts_mixed`, at the same indentation. The harness refuses a non-unique anchor
+        # `_update_ghosts_mixed` (since #2537, `face_segment`), at the same indentation. The harness refuses a non-unique anchor
         # rather than mutating an arbitrary one of the two, which is how this was caught -- and the
         # right fix is a more specific anchor, not an `and` clause added to the product code purely
         # to dodge a string match.

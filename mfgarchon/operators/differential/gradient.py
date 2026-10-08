@@ -442,7 +442,7 @@ def value_gradient(
     takes the first segment's, so on a geometry mixing periodic and non-periodic faces -- reachable wherever the
     solver does not refuse such a BC itself: ``FPParticleSolver``, and ``FPSLSolver`` given its own
     ``boundary_conditions`` -- the answer depended on the segments' order. That accessor and the ghosts'
-    resolver (``PreallocatedGhostBuffer._find_segment_for_face``) both match a segment with a ``boundary`` by
+    resolver (``applicator_fdm.face_segment``) both match a segment with a ``boundary`` by
     its face, whatever region it is restricted to within that face. A segment with no ``boundary`` covers every
     face for the accessor, while the ghosts match it to a face only through its region name, or not at all; in a
     periodic mix that disagreement can decide which axes are periodic, so such a segment is refused there, as is
