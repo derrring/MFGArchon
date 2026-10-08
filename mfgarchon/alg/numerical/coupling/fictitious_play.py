@@ -297,6 +297,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         tolerance: float | None = None,
         return_tuple: bool = False,
         iteration_callback: Callable[[int, np.ndarray, np.ndarray, float, float], bool | None] | None = None,
+        absolute_tolerance: float | None = None,
         **kwargs: Any,
     ) -> SolverResult | tuple[np.ndarray, np.ndarray, int, np.ndarray, np.ndarray]:
         """
@@ -305,11 +306,12 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         Args:
             config: Solver configuration (overrides instance config)
             max_iterations: Maximum iterations (legacy parameter)
-            tolerance: Convergence tolerance (legacy parameter)
+            tolerance: Bound on the relative L2 change of one sweep (legacy parameter; CONVENTIONS.md § 9)
             return_tuple: Return legacy tuple format instead of SolverResult
             iteration_callback: Optional callback for custom logging per iteration.
                 Signature: (iteration, U, M, error_U, error_M) -> bool | None
                 Return True to stop early, None/False to continue.
+            absolute_tolerance: If given, the absolute L2 change must also fall below it (#2555)
             **kwargs: Additional parameters for backward compatibility
 
         Returns:
@@ -322,12 +324,14 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         if solve_config is not None:
             final_max_iterations = solve_config.picard.max_iterations
             final_tolerance = solve_config.picard.tolerance
+            final_absolute_tolerance = solve_config.picard.absolute_tolerance
             verbose = solve_config.picard.verbose
         else:
             final_max_iterations = (
                 max_iterations or kwargs.get("max_picard_iterations") or kwargs.get("Niter_max") or 100
             )
             final_tolerance = tolerance or kwargs.get("picard_tolerance") or kwargs.get("l2errBoundPicard") or 1e-6
+            final_absolute_tolerance = absolute_tolerance
             verbose = kwargs.get("verbose", True)
 
         # Get problem dimensions
@@ -349,8 +353,8 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             raise ValueError("Problem geometry must be CartesianGrid")
 
         shape = tuple(self.problem.geometry.get_grid_shape())
-        grid_spacing = self.problem.geometry.get_grid_spacing()[0]
         time_step = self.problem.dt
+        integrate = self.problem.spatial_measure().integrate  # #2555
 
         # Issue #1285: M_initial / U_terminal are needed by both the warm-start
         # and cold-start paths (HJB solve, FP solve, BC preservation).  Hoist
@@ -483,7 +487,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             # default tolerance reported converged=True at sweep 359 with the map residual 3.57e-04
             # on #1914's sigma=0 fixture (#2415). This is
             # #1684 item 7, which FixedPointIterator already measures this way.
-            metrics = calculate_l2_convergence_metrics(U_new, U_old, M_candidate, M_old, grid_spacing, time_step)
+            metrics = calculate_l2_convergence_metrics(U_new, U_old, M_candidate, M_old, integrate, time_step)
             self.l2distu_abs[k] = metrics["l2distu_abs"]
             self.l2distu_rel[k] = metrics["l2distu_rel"]
             self.l2distm_abs[k] = metrics["l2distm_abs"]
@@ -515,6 +519,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
                 self.l2distu_abs[k],
                 self.l2distm_abs[k],
                 final_tolerance,
+                final_absolute_tolerance,
             )
 
             if converged:

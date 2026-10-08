@@ -362,29 +362,30 @@ class TestHJBResidualNormGridScaling:
 
 
 class TestPicardCriterionIsAConjunction:
-    """``check_convergence_criteria`` requires the relative AND the absolute error below tol.
+    """``check_convergence_criteria`` bounds the relative change, AND the absolute one when asked (#2555).
 
     Measured by the 24-axis ratchet (#1906): reading the ``and`` as ``or`` was killed by ZERO of
-    6138 tests. The function's own docstring states "Convergence criteria (both must be
-    satisfied)", so the declaration was live and unguarded.
+    6138 tests, when the criterion was relative-and-absolute unconditionally. #2555 made the absolute
+    half opt-in (CONVENTIONS.md § 9); the conjunction survives between the relative test and the
+    opt-in absolute one.
 
-    The cases below are exactly the two where a conjunction and a disjunction disagree; a test
+    The cases below are exactly the ones where a conjunction and a disjunction disagree; a test
     that only checks "both small -> True" and "both large -> False" passes under either.
     """
 
     TOL = 1e-6
 
-    def test_a_small_relative_error_alone_is_not_convergence(self):
+    def test_a_small_relative_error_alone_is_convergence_unless_an_absolute_bound_is_asked_for(self):
         from mfgarchon.alg.numerical.coupling.fixed_point_utils import check_convergence_criteria
 
-        converged, _ = check_convergence_criteria(1e-9, 1e-9, 1.0, 1.0, self.TOL)
-        assert converged is False
+        assert check_convergence_criteria(1e-9, 1e-9, 1.0, 1.0, self.TOL)[0] is True
+        assert check_convergence_criteria(1e-9, 1e-9, 1.0, 1.0, self.TOL, absolute_tolerance=self.TOL)[0] is False
 
     def test_a_small_absolute_error_alone_is_not_convergence(self):
         from mfgarchon.alg.numerical.coupling.fixed_point_utils import check_convergence_criteria
 
-        converged, _ = check_convergence_criteria(1.0, 1.0, 1e-9, 1e-9, self.TOL)
-        assert converged is False
+        assert check_convergence_criteria(1.0, 1.0, 1e-9, 1e-9, self.TOL)[0] is False
+        assert check_convergence_criteria(1.0, 1.0, 1e-9, 1e-9, self.TOL, absolute_tolerance=self.TOL)[0] is False
 
     def test_both_below_tolerance_is_convergence_and_says_so(self):
         from mfgarchon.alg.numerical.coupling.fixed_point_utils import check_convergence_criteria

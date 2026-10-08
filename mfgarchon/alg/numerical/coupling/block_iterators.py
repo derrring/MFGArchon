@@ -691,6 +691,7 @@ class BlockIterator(BaseCouplingIterator):
         max_iterations: int = 100,
         tolerance: float = 1e-5,
         verbose: bool = True,
+        absolute_tolerance: float | None = None,
         **kwargs: Any,
     ) -> SolverResult | tuple[NDArray, NDArray, dict[str, Any]]:
         """
@@ -698,8 +699,9 @@ class BlockIterator(BaseCouplingIterator):
 
         Args:
             max_iterations: Maximum iterations
-            tolerance: Convergence tolerance
+            tolerance: Bound on the relative L2 change of one sweep (docs/user/CONVENTIONS.md § 9)
             verbose: Print progress information
+            absolute_tolerance: If given, the absolute L2 change must also fall below it (#2555)
             **kwargs: Additional parameters
 
         Returns:
@@ -710,8 +712,8 @@ class BlockIterator(BaseCouplingIterator):
         # Get problem dimensions
         num_time_steps = self.problem.Nt + 1
         shape = tuple(self.problem.geometry.get_grid_shape())
-        grid_spacing = self.problem.geometry.get_grid_spacing()[0]
         time_step = self.problem.dt
+        integrate = self.problem.spatial_measure().integrate  # #2555
 
         # Initialize conditions
         self._M_initial, self._U_terminal = self._initialize_conditions(shape)
@@ -813,7 +815,9 @@ class BlockIterator(BaseCouplingIterator):
             # Calculate convergence metrics
             from mfgarchon.utils.convergence import calculate_l2_convergence_metrics
 
-            metrics = calculate_l2_convergence_metrics(self.U, U_old, self.M, M_old, grid_spacing, time_step)
+            # The block's output against its input, not the damped `self.U - U_old`, which is
+            # `relaxation * (U_new - U_old)` and lets the damping factor buy the verdict (#1684 item 7).
+            metrics = calculate_l2_convergence_metrics(U_new, U_old, M_new, M_old, integrate, time_step)
 
             self.error_history_U.append(metrics["l2distu_rel"])
             self.error_history_M.append(metrics["l2distm_rel"])
@@ -835,6 +839,7 @@ class BlockIterator(BaseCouplingIterator):
                 metrics["l2distu_abs"],
                 metrics["l2distm_abs"],
                 tolerance,
+                absolute_tolerance,
             )
 
             if converged:

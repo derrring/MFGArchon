@@ -7,7 +7,7 @@ not just MFG problems. It includes:
 
 - DistributionComparator: Wasserstein, KL divergence, moments
 - RollingConvergenceMonitor: Window-based statistical convergence (renamed from StochasticConvergenceMonitor)
-- calculate_error: Unified error computation (L1, L2, Linf)
+- calculate_l2_convergence_metrics: the change one coupling sweep made, in the problem's measure
 - ConvergenceConfig: Configuration dataclass for future solver integration
 
 These utilities can be used for standalone HJB, FP, heat equation,
@@ -18,7 +18,10 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 import numpy as np
 
@@ -291,104 +294,52 @@ class RollingConvergenceMonitor:
 # =============================================================================
 
 
-def calculate_error(
-    new: np.ndarray,
-    old: np.ndarray,
-    dx: float = 1.0,
-    dt: float = 1.0,
-    norm: Literal["l1", "l2", "linf"] = "l2",
-) -> dict[str, float]:
+#: Below this norm of the map's output the relative change is undefined, and the absolute change
+#: stands in for it -- so a field that is identically zero converges on its absolute change.
+RELATIVE_CHANGE_FLOOR = 1e-12
+
+
+def l2_change(
+    new: np.ndarray, old: np.ndarray, integrate: Callable[[np.ndarray], Any], dt: float
+) -> tuple[float, float]:
+    """The absolute and relative discrete L2 change of a ``(time, *spatial)`` history (#2555).
+
+    ``integrate`` is the problem's spatial measure (:meth:`MFGProblem.spatial_measure`), which reduces
+    the trailing spatial axes; time rows are weighted by ``dt``. So
+    ``absolute = sqrt(dt * sum_n integrate((new - old)[n] ** 2))`` and ``relative`` divides it by the same
+    norm of ``new``, unless that norm is at most :data:`RELATIVE_CHANGE_FLOOR`.
     """
-    Calculate error between arrays with multiple norm options.
-
-    Args:
-        new, old: Arrays to compare
-        dx, dt: Grid spacing (for proper scaling in L1/L2 norms)
-        norm: 'l1', 'l2', or 'linf'
-
-    Returns:
-        dict with 'absolute' and 'relative' errors
-
-    Notes:
-        - L1: ||f||_1 = integral(|f|)dx  (mass/total variation)
-        - L2: ||f||_2 = sqrt(integral(f^2)dx)  (energy norm)
-        - Linf: ||f||_inf = max|f|  (pointwise, no grid scaling)
-    """
-    diff = new - old
-
-    if norm == "l1":
-        # L1 norm with grid scaling
-        scale = np.sqrt(dx * dt)
-        abs_error = float(np.sum(np.abs(diff)) * scale)
-        norm_new = float(np.sum(np.abs(new)) * scale)
-    elif norm == "l2":
-        # L2 norm with grid scaling
-        scale = np.sqrt(dx * dt)
-        abs_error = float(np.linalg.norm(diff) * scale)
-        norm_new = float(np.linalg.norm(new) * scale)
-    elif norm == "linf":
-        # Linf norm - no grid scaling
-        abs_error = float(np.max(np.abs(diff)))
-        norm_new = float(np.max(np.abs(new)))
-    else:
-        raise ValueError(f"Unknown norm: {norm}. Use 'l1', 'l2', or 'linf'.")
-
-    rel_error = abs_error / norm_new if norm_new > 1e-12 else abs_error
-
-    return {
-        "absolute": abs_error,
-        "relative": rel_error,
-        "norm": norm,
-    }
+    absolute = float(np.sqrt(dt * np.sum(integrate((new - old) ** 2))))
+    norm_new = float(np.sqrt(dt * np.sum(integrate(new**2))))
+    relative = absolute / norm_new if norm_new > RELATIVE_CHANGE_FLOOR else absolute
+    return absolute, relative
 
 
 def calculate_l2_convergence_metrics(
-    U_new: np.ndarray,
+    U_map: np.ndarray,
     U_old: np.ndarray,
-    M_new: np.ndarray,
+    M_map: np.ndarray,
     M_old: np.ndarray,
-    Dx: float,
-    Dt: float,
+    integrate: Callable[[np.ndarray], Any],
+    dt: float,
 ) -> dict[str, float]:
-    """
-    Calculate L2 convergence metrics for MFG fixed-point iterations.
+    """The change one coupling sweep made, for U and for M: the one owner of what is compared (#2555).
 
-    This helper eliminates code duplication between fixed-point iterator
-    implementations by providing a single source for computing both
-    absolute and relative L2 errors.
+    ``U_map`` and ``M_map`` are the map's OUTPUT, before damping, acceleration or averaging; ``U_old``
+    and ``M_old`` are its input. That pair is #1684 item 7's ruling: the damped step is
+    ``theta * (map - old)``, so measuring it lets a smaller damping factor buy the verdict. Convergence
+    is a property of the map; damping is a property of the path.
 
-    Args:
-        U_new: Current value function array
-        U_old: Previous value function array
-        M_new: Current density array
-        M_old: Previous density array
-        Dx: Spatial grid spacing
-        Dt: Temporal grid spacing
+    Each change is :func:`l2_change` in the problem's spatial measure ``integrate``. The outer tolerance
+    bounds the relative values (``docs/user/CONVENTIONS.md`` § 9); the absolute values are compared
+    only when a caller sets ``absolute_tolerance``.
 
     Returns:
-        Dictionary with keys:
-            - 'l2distu_abs': Absolute L2 error for U
-            - 'l2distu_rel': Relative L2 error for U
-            - 'l2distm_abs': Absolute L2 error for M
-            - 'l2distm_rel': Relative L2 error for M
-
-    Example:
-        >>> metrics = calculate_l2_convergence_metrics(U_new, U_old, M_new, M_old, Dx, Dt)
-        >>> print(f"U relative error: {metrics['l2distu_rel']:.2e}")
-
-    Note:
-        The normalization factor sqrt(Dx * Dt) accounts for grid discretization,
-        making errors comparable across different grid resolutions.
+        ``l2distu_abs``, ``l2distu_rel``, ``l2distm_abs``, ``l2distm_rel``.
     """
-    u_error = calculate_error(U_new, U_old, dx=Dx, dt=Dt, norm="l2")
-    m_error = calculate_error(M_new, M_old, dx=Dx, dt=Dt, norm="l2")
-
-    return {
-        "l2distu_abs": u_error["absolute"],
-        "l2distu_rel": u_error["relative"],
-        "l2distm_abs": m_error["absolute"],
-        "l2distm_rel": m_error["relative"],
-    }
+    u_abs, u_rel = l2_change(U_map, U_old, integrate, dt)
+    m_abs, m_rel = l2_change(M_map, M_old, integrate, dt)
+    return {"l2distu_abs": u_abs, "l2distu_rel": u_rel, "l2distm_abs": m_abs, "l2distm_rel": m_rel}
 
 
 # =============================================================================

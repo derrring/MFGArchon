@@ -36,10 +36,12 @@ from mfgarchon.alg.numerical.coupling.base_mfg import (
     assert_paired_solver_sigma,
 )
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
+    check_convergence_criteria,
     diverged_value_function,
     fp_solver_sig_params,
     resolve_fp_drift_kwargs,
 )
+from mfgarchon.utils.convergence import calculate_l2_convergence_metrics
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -96,7 +98,7 @@ class RegimeSwitchingResult:
     """Number of Picard iterations performed."""
 
     error_history: list[float] = field(default_factory=list)
-    """Max error across all regimes per iteration."""
+    """Per sweep, the largest relative L2 change over regimes and fields (inf when not comparable)."""
 
     regime_config: RegimeSwitchingConfig | None = None
     """The regime switching configuration used."""
@@ -126,14 +128,17 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
     max_iterations : int
         Maximum Picard iterations (default 50).
     tolerance : float
-        Convergence tolerance on max over regimes of both the value-function and the
-        density change, max(|v^k_{n+1} - v^k_n|, |m^k_{n+1} - m^k_n|) (default 1e-5).
+        Bound on the largest relative L2 change of a sweep, over regimes and over the value function and
+        the density, each regime's in its own problem's measure; the change is the sweep's output before
+        damping against its input (default 1e-5; docs/user/CONVENTIONS.md § 9, #2555).
     damping : float
         Damping factor for Picard update (default 0.5).
     update_scheme : Literal["jacobi", "gauss_seidel"]
         Update order for regimes (default "gauss_seidel").
         Gauss-Seidel uses already-updated v^j for j < k (faster convergence).
         Jacobi uses all old values (parallelizable but slower).
+    absolute_tolerance : float | None
+        If given, the largest absolute L2 change must also fall below it (default None).
 
     Example
     -------
@@ -159,6 +164,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         tolerance: float = 1e-5,
         damping: float = 0.5,
         update_scheme: Literal["jacobi", "gauss_seidel"] = "gauss_seidel",
+        absolute_tolerance: float | None = None,
     ):
         # Use first problem as representative for base class
         super().__init__(problems[0])
@@ -181,6 +187,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         self._fp_drift_convention_k = [getattr(fp, "_drift_convention", None) for fp in fp_solvers]
         self._max_iter = max_iterations
         self._tol = tolerance
+        self._abs_tol = absolute_tolerance
         self._damping = damping
         self._update_scheme = update_scheme
 
@@ -433,6 +440,8 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         Ms = [p.get_m_initial() for p in self._problems]
 
         error_history = []
+        integrates = [p.spatial_measure().integrate for p in self._problems]
+        dts = [p.dt for p in self._problems]
 
         for iteration in range(self._max_iter):
             Us_new = [None] * K
@@ -519,6 +528,30 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 # factor, not in the source (see _make_fp_source, Issue #1681).
                 Ms_new[k] = self._undo_integrating_factor(k, self._outflow_rate(k, K, Q), N_k)
 
+            # --- Convergence: the sweep's output against its input, BEFORE damping ---
+            # Gate on BOTH the value function AND the density change (the canonical (u, m) criterion),
+            # and on the map's output: after damping the change is `theta` times this one, so the
+            # damping factor bought the verdict (#1684 item 7). Each regime's change is its relative L2
+            # change in its own problem's measure, and the criterion takes the max over regimes (#2555).
+            # On iteration 0 `Ms[k]` is the 1-D m_initial while `Ms_new[k]` is the trajectory, so the
+            # density change is undefined and the sweep does not converge.
+            if all(Ms_new[k] is not None and Ms[k].ndim == Ms_new[k].ndim for k in range(K)):
+                per_regime = [
+                    calculate_l2_convergence_metrics(Us_new[k], Us_full[k], Ms_new[k], Ms[k], integrates[k], dts[k])
+                    for k in range(K)
+                ]
+                error = max(max(c["l2distu_rel"], c["l2distm_rel"]) for c in per_regime)
+                converged, _ = check_convergence_criteria(
+                    max(c["l2distu_rel"] for c in per_regime),
+                    max(c["l2distm_rel"] for c in per_regime),
+                    max(c["l2distu_abs"] for c in per_regime),
+                    max(c["l2distm_abs"] for c in per_regime),
+                    self._tol,
+                    self._abs_tol,
+                )
+            else:
+                error, converged = float("inf"), False
+
             # --- Damping ---
             theta = self._damping
             for k in range(K):
@@ -526,27 +559,12 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 if Ms_new[k] is not None and Ms[k].ndim == Ms_new[k].ndim:
                     Ms_new[k] = theta * Ms_new[k] + (1 - theta) * Ms[k]
 
-            # --- Convergence check ---
-            # Gate on BOTH the value function AND the density change — the canonical (u, m)
-            # criterion (see fixed_point_utils.check_convergence_criteria). Previously this
-            # checked only U, so a regime whose density was still evolving while its value
-            # function had stabilized (different timescales across regimes) reported
-            # converged=True with a non-converged density (Issue #1043-class one-field defect).
-            error_U = max(np.max(np.abs(Us_new[k] - Us_full[k])) for k in range(K))
-            # On iteration 0 the initial Ms[k] is the 1D m_initial while Ms_new[k] is the 2D
-            # trajectory (the ndim guard above skips iter-0 M-damping), so the M-change is
-            # undefined → treat as not-converged.
-            if all(Ms_new[k] is not None and Ms[k].ndim == Ms_new[k].ndim for k in range(K)):
-                error_M = max(np.max(np.abs(Ms_new[k] - Ms[k])) for k in range(K))
-            else:
-                error_M = float("inf")
-            error = max(error_U, error_M)
             error_history.append(error)
 
             Us_full = Us_new
             Ms = Ms_new
 
-            if error < self._tol:
+            if converged:
                 self._last_result = RegimeSwitchingResult(
                     values=Us_full,
                     densities=Ms,

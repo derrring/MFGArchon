@@ -593,7 +593,7 @@ def test_calculate_l2_convergence_metrics():
     Dx = 0.1
     Dt = 0.01
 
-    metrics = calculate_l2_convergence_metrics(u_curr, u_prev, m_curr, m_prev, Dx, Dt)
+    metrics = calculate_l2_convergence_metrics(u_curr, u_prev, m_curr, m_prev, lambda f: f.sum(axis=-1) * Dx, Dt)
 
     assert "l2distu_abs" in metrics
     assert "l2distm_abs" in metrics
@@ -611,7 +611,7 @@ def test_calculate_l2_convergence_metrics_identical():
     Dx = 0.1
     Dt = 0.01
 
-    metrics = calculate_l2_convergence_metrics(u, u, m, m, Dx, Dt)
+    metrics = calculate_l2_convergence_metrics(u, u, m, m, lambda f: f.sum(axis=-1) * Dx, Dt)
 
     assert metrics["l2distu_abs"] < 1e-10
     assert metrics["l2distm_abs"] < 1e-10
@@ -627,7 +627,7 @@ def test_calculate_l2_convergence_metrics_large_change():
     Dx = 0.1
     Dt = 0.01
 
-    metrics = calculate_l2_convergence_metrics(u_curr, u_prev, m_curr, m_prev, Dx, Dt)
+    metrics = calculate_l2_convergence_metrics(u_curr, u_prev, m_curr, m_prev, lambda f: f.sum(axis=-1) * Dx, Dt)
 
     assert metrics["l2distu_abs"] > 0
     assert metrics["l2distm_abs"] > 0

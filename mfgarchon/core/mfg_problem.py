@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 import numpy as np
 
@@ -49,6 +49,17 @@ _RETIRED_VOLATILITY_ATTRIBUTE = (
 # ============================================================================
 # Unified MFG Problem Class
 # ============================================================================
+
+
+class SpatialMeasure(NamedTuple):
+    """How a problem integrates a field over space, and the name of that measure (#2555).
+
+    ``integrate`` reduces the TRAILING spatial axes, so a ``(time, *spatial)`` history integrates to one
+    value per time row. Returned by :meth:`MFGProblem.spatial_measure`.
+    """
+
+    integrate: Callable[[NDArray], Any]
+    name: str
 
 
 def _same_geometry(a: object, b: object) -> bool:
@@ -2171,8 +2182,12 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
     _INITIAL_MASS_TOLERANCE: ClassVar[float] = 1e-8
 
-    def _measure_initial_density(self) -> tuple[float, str]:
-        """The initial density's total mass, and the name of the measure that produced it.
+    def spatial_measure(self) -> SpatialMeasure:
+        """The measure this problem integrates over space with, and its name: the one owner (#2555).
+
+        ``initial_mass`` reads it, and so does the coupling iterators' convergence norm
+        (``calculate_l2_convergence_metrics``), so the mass a problem reports and the change its outer
+        tolerance bounds are measured alike. ``integrate`` reduces the trailing spatial axes.
 
         The name is returned rather than assumed because these branches are genuinely different
         objects, not fallbacks of one: a network has no cell volume at all, and an unstructured
@@ -2199,29 +2214,14 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
         Same lesson as #2157: gate on the thing you are about to use.
         """
-        m = np.asarray(self.m_initial)
         integrate = getattr(self.geometry, "integrate", None)
         if not self.is_network and callable(integrate):
-            try:
-                return float(integrate(m)), "grid"
-            except ValueError as exc:
-                # The one case that reaches here is a single-node axis, which `quadrature_weights_1d`
-                # refuses because a one-node axis has no measure -- returning 0 or dx would both be
-                # inventions. That refusal is right, but its message names neither this problem nor
-                # `m_initial`, so re-raise with both. Found by independent review of #2145: on a
-                # 1-point grid `MFGProblem` used to construct and now did not, with a diagnostic a
-                # caller could not act on.
-                raise ValueError(
-                    f"cannot measure m_initial on this geometry: {exc}. A "
-                    f"{type(self.geometry).__name__} with a one-node axis has zero extent, so it "
-                    "carries no measure and no Fokker-Planck problem is posed on it. Give the axis "
-                    "at least two points."
-                ) from exc
+            return SpatialMeasure(integrate, "grid")
         if self.is_network:
-            return float(np.sum(m)), "node-sum"
+            return SpatialMeasure(lambda f: np.sum(f, axis=-1), "node-sum")
         if self.dimension == 1:
             dx = self._get_spacing() or 1.0
-            return float(np.sum(m) * dx), "uniform-cell"
+            return SpatialMeasure(lambda f: np.sum(f, axis=-1) * dx, "uniform-cell")
         from mfgarchon.geometry import GeometryType
 
         # A declared Cartesian grid without `integrate` is measured on its cells. This is the population that
@@ -2232,12 +2232,36 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             spacing = get_spacing() if callable(get_spacing) else None
             if spacing is None:
                 raise ValueError(
-                    "measuring the initial density needs the grid spacing, and this geometry "
+                    "measuring a field on this geometry needs the grid spacing, and this geometry "
                     f"({type(self.geometry).__name__}) declares a CARTESIAN_GRID with neither integrate() nor a "
                     "get_grid_spacing() that returns one."
                 )
-            return float(np.sum(m) * float(np.prod(spacing))), "uniform-cell"
-        return float(np.sum(m) / self.num_spatial_points), "point-average"
+            cell = float(np.prod(spacing))
+            axes = tuple(range(-len(spacing), 0))
+            return SpatialMeasure(lambda f: np.sum(f, axis=axes) * cell, "uniform-cell")
+        n = self.num_spatial_points
+        return SpatialMeasure(lambda f: np.sum(f, axis=-1) / n, "point-average")
+
+    def _measure_initial_density(self) -> tuple[float, str]:
+        """The initial density's total mass, and the name of the measure that produced it."""
+        measure = self.spatial_measure()
+        try:
+            return float(measure.integrate(np.asarray(self.m_initial))), measure.name
+        except ValueError as exc:
+            if measure.name != "grid":
+                raise
+            # The one case that reaches here is a single-node axis, which `quadrature_weights_1d`
+            # refuses because a one-node axis has no measure -- returning 0 or dx would both be
+            # inventions. That refusal is right, but its message names neither this problem nor
+            # `m_initial`, so re-raise with both. Found by independent review of #2145: on a
+            # 1-point grid `MFGProblem` used to construct and now did not, with a diagnostic a
+            # caller could not act on.
+            raise ValueError(
+                f"cannot measure m_initial on this geometry: {exc}. A "
+                f"{type(self.geometry).__name__} with a one-node axis has zero extent, so it "
+                "carries no measure and no Fokker-Planck problem is posed on it. Give the axis "
+                "at least two points."
+            ) from exc
 
     # Issue #670: _setup_default_initial_density() removed - m_initial must be explicit
 
@@ -2428,6 +2452,7 @@ See: docs/user/CONVENTIONS.md, section 2 (the cost channels and their signs)"""
         *,
         max_iterations: int | None = None,
         tolerance: float | None = None,
+        absolute_tolerance: float | None = None,
         verbose: bool | None = None,
         config: Any | None = None,
         scheme: Any | None = None,
@@ -2459,7 +2484,10 @@ See: docs/user/CONVENTIONS.md, section 2 (the cost channels and their signs)"""
                 from numerics (Nt) — different solvers may want different Nt
                 for the same physical problem.
             max_iterations: Maximum fixed-point iterations (default: from config or 100)
-            tolerance: Convergence tolerance (default: from config or 1e-6)
+            tolerance: Bound on the relative L2 change of one fixed-point sweep (default: from config
+                or 1e-6; docs/user/CONVENTIONS.md § 9)
+            absolute_tolerance: If given, the absolute L2 change must also fall below it (default:
+                from config, or None: no absolute criterion; #2555)
             verbose: Show solver progress (default: from config or True)
             config: Optional MFGSolverConfig for advanced configuration.
                 ``config.picard`` drives iteration parameters (max_iterations,
@@ -2512,6 +2540,7 @@ See: docs/user/CONVENTIONS.md, section 2 (the cost channels and their signs)"""
                 return new_problem.solve(
                     max_iterations=max_iterations,
                     tolerance=tolerance,
+                    absolute_tolerance=absolute_tolerance,
                     verbose=verbose,
                     config=config,
                     scheme=scheme,
@@ -2536,6 +2565,8 @@ See: docs/user/CONVENTIONS.md, section 2 (the cost channels and their signs)"""
             config.picard.max_iterations = max_iterations
         if tolerance is not None:
             config.picard.tolerance = tolerance
+        if absolute_tolerance is not None:
+            config.picard.absolute_tolerance = absolute_tolerance
         if verbose is not None:
             config.picard.verbose = verbose
 

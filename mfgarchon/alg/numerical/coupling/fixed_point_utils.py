@@ -198,39 +198,41 @@ def check_convergence_criteria(
     l2distm_rel: float,
     l2distu_abs: float,
     l2distm_abs: float,
-    tol_picard: float,
+    tolerance: float,
+    absolute_tolerance: float | None = None,
 ) -> tuple[bool, str]:
-    """
-    Check if fixed-point iteration has converged.
+    """Whether a coupling sweep's change meets the outer tolerance: the one owner of the verdict (#2555).
 
-    Convergence criteria (both must be satisfied):
-    1. Relative errors: max(l2distu_rel, l2distm_rel) < tol_picard
-    2. Absolute errors: max(l2distu_abs, l2distm_abs) < tol_picard
+    The inputs are what ``calculate_l2_convergence_metrics`` returns for the map's output against its
+    input, so the pair compared, and the measure it is compared in, are fixed there.
 
-    Args:
-        l2distu_rel: Relative L2 error for U
-        l2distm_rel: Relative L2 error for M
-        l2distu_abs: Absolute L2 error for U
-        l2distm_abs: Absolute L2 error for M
-        tol_picard: Convergence tolerance
+    - ``tolerance`` bounds the larger RELATIVE change, ``max(l2distu_rel, l2distm_rel)``
+      (``docs/user/CONVENTIONS.md`` § 9). The ``max`` over the two fields is half the criterion: a
+      density settling while the value function diverges is not convergence (#1914).
+    - ``absolute_tolerance``, when given, must ALSO bound ``max(l2distu_abs, l2distm_abs)``. It is
+      ``None`` by default, and then no absolute quantity is compared.
+
+    A multi-field iterator (populations, regimes, graph nodes) passes, for each of the four values, the
+    max over its fields of that field's change in its own measure.
 
     Returns:
-        Tuple of (converged: bool, reason: str)
+        ``(converged, reason)``; ``reason`` is empty when not converged.
 
     Example:
-        >>> converged, reason = check_convergence_criteria(1e-7, 1e-8, 1e-6, 1e-7, 1e-6)
-        >>> print(converged)  # True
-        >>> print(reason)  # "Converged: Rel err 1.0e-07, Abs err 1.0e-06 < tol 1.0e-06"
+        >>> check_convergence_criteria(1e-7, 1e-8, 3.0, 2.0, 1e-6)
+        (True, 'Converged: Rel err 1.0e-07 < tol 1.0e-06')
+        >>> check_convergence_criteria(1e-7, 1e-8, 3.0, 2.0, 1e-6, absolute_tolerance=1e-6)
+        (False, '')
     """
     max_rel_err = max(l2distu_rel, l2distm_rel)
     max_abs_err = max(l2distu_abs, l2distm_abs)
-
-    # Both relative and absolute errors must be below tolerance
-    if max_rel_err < tol_picard and max_abs_err < tol_picard:
-        reason = f"Converged: Rel err {max_rel_err:.1e}, Abs err {max_abs_err:.1e} < tol {tol_picard:.1e}"
+    absolute_met = absolute_tolerance is None or max_abs_err < absolute_tolerance
+    if max_rel_err < tolerance and absolute_met:
+        reason = f"Converged: Rel err {max_rel_err:.1e} < tol {tolerance:.1e}"
+        if absolute_tolerance is not None:
+            reason += f", Abs err {max_abs_err:.1e} < absolute_tolerance {absolute_tolerance:.1e}"
         return True, reason
-    else:
-        return False, ""
+    return False, ""
 
 
 def read_inner_solve_failures(hjb_solver: object) -> object:

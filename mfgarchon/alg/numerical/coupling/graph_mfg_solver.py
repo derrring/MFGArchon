@@ -27,12 +27,14 @@ import numpy as np
 
 from mfgarchon.alg.numerical.coupling.base_mfg import BaseCouplingIterator, assert_paired_solver_sigma
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
+    check_convergence_criteria,
     fp_solver_sig_params,
     resolve_fp_drift_kwargs,
 )
 from mfgarchon.alg.numerical.coupling.graph_coupling import _get_time_slice
 from mfgarchon.alg.numerical.coupling.source_composition import _call_problem_source, _problem_hjb_source_terms
 from mfgarchon.types.callable_protocols import evaluate_solver_source
+from mfgarchon.utils.convergence import calculate_l2_convergence_metrics
 
 from .fixed_point_utils import diverged_value_function
 
@@ -64,7 +66,7 @@ class GraphMFGResult:
     """Number of Picard iterations performed."""
 
     error_history: list[float] = field(default_factory=list)
-    """Max error across all nodes per iteration."""
+    """Per sweep, the largest relative L2 change over nodes and fields (inf when not comparable)."""
 
     n_nodes: int = 0
     """Number of nodes in the graph."""
@@ -96,10 +98,13 @@ class GraphMFGSolver(BaseCouplingIterator):
     max_iterations : int
         Maximum Picard iterations (default 50).
     tolerance : float
-        Convergence tolerance on max over nodes of both the value-function and the
-        density change, max(|v^k_{n+1} - v^k_n|, |m^k_{n+1} - m^k_n|) (default 1e-5).
+        Bound on the largest relative L2 change of a sweep, over nodes and over the value function and
+        the density, each node's in its own problem's measure; the change is the sweep's output before
+        damping against its input (default 1e-5; docs/user/CONVENTIONS.md § 9, #2555).
     damping : float
         Damping factor for Picard update (default 0.5).
+    absolute_tolerance : float | None
+        If given, the largest absolute L2 change must also fall below it (default None).
 
     Example
     -------
@@ -124,6 +129,7 @@ class GraphMFGSolver(BaseCouplingIterator):
         max_iterations: int = 50,
         tolerance: float = 1e-5,
         damping: float = 0.5,
+        absolute_tolerance: float | None = None,
     ):
         # Use first problem as representative for base class
         super().__init__(problems[0])
@@ -141,6 +147,7 @@ class GraphMFGSolver(BaseCouplingIterator):
         self._fp_drift_convention_k = [getattr(fp, "_drift_convention", None) for fp in fp_solvers]
         self._max_iter = max_iterations
         self._tol = tolerance
+        self._abs_tol = absolute_tolerance
         self._damping = damping
 
         # Validate dimensions
@@ -196,6 +203,8 @@ class GraphMFGSolver(BaseCouplingIterator):
             Ms.append(m_init)
 
         error_history: list[float] = []
+        integrates = [p.spatial_measure().integrate for p in self._problems]
+        dts = [p.dt for p in self._problems]
 
         for iteration in range(self._max_iter):
             Us_new: list[NDArray] = [np.empty(0)] * N
@@ -277,6 +286,30 @@ class GraphMFGSolver(BaseCouplingIterator):
                     M_k = self._fp[k].solve_fp_system(m0_k, Us_new[k], source_term=fp_source)
                 Ms_new[k] = M_k
 
+            # --- Convergence: the sweep's output against its input, BEFORE damping ---
+            # Gate on BOTH the value function AND the density change (the canonical (u, m) criterion),
+            # and on the map's output: after damping the change is `theta` times this one, so the
+            # damping factor bought the verdict (#1684 item 7). Each node's change is its relative L2
+            # change in its own problem's measure, and the criterion takes the max over nodes (#2555).
+            if all(Ms_new[k] is not None and Ms_new[k].shape == Ms_expanded[k].shape for k in range(N)):
+                per_node = [
+                    calculate_l2_convergence_metrics(
+                        Us_new[k], Us_full[k], Ms_new[k], Ms_expanded[k], integrates[k], dts[k]
+                    )
+                    for k in range(N)
+                ]
+                error = max(max(c["l2distu_rel"], c["l2distm_rel"]) for c in per_node)
+                converged, _ = check_convergence_criteria(
+                    max(c["l2distu_rel"] for c in per_node),
+                    max(c["l2distm_rel"] for c in per_node),
+                    max(c["l2distu_abs"] for c in per_node),
+                    max(c["l2distm_abs"] for c in per_node),
+                    self._tol,
+                    self._abs_tol,
+                )
+            else:
+                error, converged = float("inf"), False
+
             # --- Damping ---
             theta = self._damping
             for k in range(N):
@@ -286,31 +319,12 @@ class GraphMFGSolver(BaseCouplingIterator):
                     if Ms_new[k].shape == Ms_expanded.shape:
                         Ms_new[k] = theta * Ms_new[k] + (1 - theta) * Ms_expanded
 
-            # --- Convergence check ---
-            # Gate on BOTH the value function AND the density change (the canonical (u, m)
-            # criterion). Previously this checked only U, so a node whose density was still
-            # evolving while its value function had stabilized reported converged=True with a
-            # non-converged density (same one-field defect as RegimeSwitchingIterator).
-            error_U = max(np.max(np.abs(Us_new[k] - Us_full[k])) for k in range(N))
-            m_errors = []
-            m_comparable = True
-            for k in range(N):
-                if Ms_new[k] is None:
-                    m_comparable = False
-                    break
-                Ms_exp = self._expand_density(k, Ms[k])
-                if Ms_new[k].shape != Ms_exp.shape:
-                    m_comparable = False
-                    break
-                m_errors.append(np.max(np.abs(Ms_new[k] - Ms_exp)))
-            error_M = max(m_errors) if (m_comparable and m_errors) else float("inf")
-            error = max(error_U, error_M)
             error_history.append(error)
 
             Us_full = Us_new
             Ms = Ms_new
 
-            if error < self._tol:
+            if converged:
                 self._last_result = GraphMFGResult(
                     values=Us_full,
                     densities=Ms,
