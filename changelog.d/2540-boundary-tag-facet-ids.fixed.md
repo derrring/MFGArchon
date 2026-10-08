@@ -1,0 +1,8 @@
+- **A tagged mesh boundary lands on the facets it names** (Issue #2540).
+  - `meshdata_to_skfem` turns `MeshData.boundary_tags` into scikit-fem boundaries named `region_<tag>`. It stored each tagged face's **position** in `boundary_faces` as its facet id, so the boundary was placed on whichever facets carried those numbers.
+  - On the default path: `problem.solve()` on a `Mesh1D` (FEM_P1), with a Dirichlet exit of 1.0 on `region_1`, the right wall. The exit was imposed at the interior vertex x = 0.1 (U = 1.0, m = 7e-9 there), and x = 1 was left free, with U(0) = 0.1235 and m(T) = 1.198. It now solves exactly as the same BC on `x_max`.
+  - Each tagged face is now matched to the facet with the same vertex set, in any vertex order.
+  - **Refused, where the tag used to be placed silently:**
+    - a tagged face that is not a facet of the mesh;
+    - tags that do not pair one-to-one with the boundary faces.
+  - An all-zero tag array places no region, as before, whatever its length.
