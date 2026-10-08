@@ -406,8 +406,9 @@ def sweep_change(
 @deprecated(
     since="v0.22.0",
     replacement=(
-        "Use sweep_change(U_map, U_old, M_map, M_old, problem.spatial_measure().integrate, dt), which measures "
-        "the change in the problem's own measure rather than with one scalar spacing (#2555)."
+        "sweep_change(U_map, U_old, M_map, M_old, problem.spatial_measure().integrate, dt) from "
+        "mfgarchon.utils.convergence, which measures the change in the problem's own measure rather than "
+        "with one scalar spacing (#2555)."
     ),
     removal_blockers=["migration_docs"],
     deprecated_on="2026-10-08",
