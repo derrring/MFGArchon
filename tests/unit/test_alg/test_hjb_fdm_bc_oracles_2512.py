@@ -21,8 +21,8 @@ move the level -- the cell-centred no-flux mirror (#1935) LOWERS it -- so each c
 - the wall itself: Dirichlet nodes equal ``g``, and a Neumann or no-flux wall's slope, read off the returned
   field to second order, matches its datum;
 - the seam itself, on a periodic cell: the grid is endpoint-inclusive, so the first and last nodes along each
-  periodic axis are one point and must come back equal (#2547). A level band alone missed a one-sided seam shift
-  and caught #1822's exclusive wrap by 2%.
+  periodic axis are one point and must come back equal (#2547). On ``periodic_1d`` a level band alone missed a
+  one-sided seam shift and caught #1822's exclusive wrap by at most 2.5%.
 
 A level outside its band in either direction is a change in the wall closure. Re-measure and record it, as
 for the discrimination ratchet.
@@ -161,8 +161,9 @@ _alpha, _beta = -_n["x_min"], (_n["x_min"] + _n["x_max"]) / 2
 
 # 2-D: sigma = 0.5, T = 0.3, Nt = 2. Linear in t, so implicit Euler is exact in time and the ratios are spatial.
 # The domain is [0, 1] x [0, LY] with LY = 0.6 on n x n points, so dy = 0.6 dx at every level and the extent
-# is not square: a square grid is a symmetry, and it hid a ghost reading the other axis's spacing
-# (#2547). KY = pi / LY puts the y modes' walls and seam at y = 0 and y = LY.
+# is not square: a square grid is a symmetry, and it hid a ghost reading the other axis's spacing (#2547). The
+# point count is still the same on both axes, so a defect that reads one axis's count for the other stays
+# hidden. KY = pi / LY puts the y modes' walls and seam at y = 0 and y = LY.
 T2, S2 = 0.3, 0.5
 D2 = S2**2 / 2
 LY = 0.6

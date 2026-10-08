@@ -4,7 +4,7 @@
   - **Each cell asserts:**
     - convergence of every inner step;
     - the error ratio;
-    - each level's error, two-sided, within a factor of 1.25 either way of the value recorded at #2537;
+    - each level's error, two-sided, within a factor of 1.25 either way of the value recorded at #2537 (1-D) and #2547 (2-D);
     - Dirichlet walls exactly `g`, and Neumann and no-flux wall slopes to second order;
     - on a periodic grid, whose last node repeats the first, the two seam endpoints equal to 1e-10 (#2547).
   - **Measured against one mutation per branch arm of the wall code, plus the historical defects.**
