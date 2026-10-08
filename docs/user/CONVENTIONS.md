@@ -165,6 +165,15 @@ with the opposite sign and $u$ can increase backward in time; so can diffusion a
 terminal data. The sign of $g$ is irrelevant — it does not enter $\partial_t u$ at all. Do not use
 this direction as an acceptance criterion outside the stated hypotheses.
 
+### The density the HJB step reads
+
+**The HJB step at $t_n$ reads the density at the same time level, $m^n$**: #1423's ruling, stated here
+on 2026-10-08.
+Reading $m^{n+1}$ instead is an $O(\Delta t)$ change in the coupling alone, so two schemes solving the
+same problem must read the same level. HJB-FDM (1-D, through `base_hjb`, and n-D) reads `M_density[n]`.
+*Not yet met (#2429, #2557): HJB-SL reads $m^{n+1}$ (`m_idx = min(n + 1, …)` in
+`hjb_semi_lagrangian.py`), and no single owner yet gives "the density for HJB step $n$".*
+
 ---
 
 ## 3. Hamiltonian and Lagrangian
@@ -511,7 +520,8 @@ On the coupling-level API — `MFGProblem.solve`, the coupling iterators, `Picar
 `max_iterations` and `tolerance` are the outer loop's. HJB-FDM and HJB-GFDM qualify theirs:
 `max_newton_iterations`, `newton_tolerance`. Elsewhere the bare name does not mean the outer loop:
 `NewtonConfig.max_iterations` / `.tolerance`, `HJBSemiLagrangianSolver(tolerance=)`,
-`NetworkHJBSolver(tolerance=)` and `HJBHowardSolver(max_iter=, tol=)` are inner-loop settings.
+`NetworkHJBSolver(tolerance=)` and `HJBHowardSolver(max_iter=, tol=)` are inner-loop settings. What the
+outer and the Newton tolerance bound is in § *The measure*, *What a tolerance bounds*.
 
 The fixed-point relaxation parameter is `relaxation` (with `relaxation_M`, `adaptive_relaxation`,
 `relaxation_schedule`).
@@ -593,6 +603,40 @@ axes and refused. The sequence form is the convention, and library code uses it.
   because its splatting conserves; `FPParticleSolver` pins every slice to the caller's mass under `kde_normalization="all"`. Comparing
   $\int m$ across solvers therefore measures the solver as well as the physics.
 
+### What a tolerance bounds
+
+**The outer coupling tolerance bounds a relative change, measured in the discrete $L^2$ norm** whose
+measure is the geometry's quadrature, the owner above, not a scalar `dx` (ruled 2026-10-08): the change
+between iterates, relative to their size, for $u$ and for $m$. There is no absolute criterion unless
+the caller asks for one. *Not yet met (#2429, #2555): the coupling iterators also, or
+only, test an absolute change, measured with the first axis's spacing alone, with a unit weight on a
+mesh, or as a max-norm. So the same tolerance does not mean the same thing across dimensions or across
+iterators. #2429 lists them.*
+
+**The inner Newton tolerance bounds the grid-scaled residual norm**, and
+`base_hjb.hjb_residual_norm` is its owner on every Newton path (ruled 2026-10-08). So a tolerance means
+the same thing under refinement and across schemes. *Not yet met (#2429, #1885): the owner's one caller
+is the 1-D FDM path's `newton_hjb_step`. The n-D FDM and GFDM Newton paths compare an unscaled
+`np.linalg.norm(residual)` against the same `DEFAULT_NEWTON_TOLERANCE`. The weak-form Newton path, which
+`HJBFEMSolver` and `MeshlessGalerkinHJBSolver` take with `use_newton=True`, stops on the mass-matrix norm
+of the Newton step rather than on a residual, against its own default of `1e-6`. And the owner takes a
+scalar `dx`, which can carry a uniform grid's cell volume but not a graded grid's or a scattered point
+set's weights.*
+
+### A kernel density bandwidth is a factor
+
+**In kernel density estimation, a `bandwidth` argument is a factor multiplied by the sample standard
+deviation**, as in `scipy.stats.gaussian_kde`, and an absolute width goes through a separately named
+keyword. `"scott"` and `"silverman"` mean scipy's definitions: $n^{-1/(d+4)}$ and
+$\left(n(d+2)/4\right)^{-1/(d+4)}$ (ruled 2026-10-08). A kernel length scale that is not a density
+estimate, such as a graphon's, is not covered. No single owner applies the rule yet. *Not yet met
+(#2429, #2556): several density paths read the bandwidth another way. Some take a number as an absolute
+width; `FPParticleSolver`'s default reflection path takes it as a factor of the standard deviation of the
+sample with its ghost particles, and its GPU path as a factor of the initial sample's standard deviation,
+held fixed; and the particle-to-grid projection for $d \ge 2$ turns a string rule, including its default
+`"scott"`, into an absolute width and then multiplies by the standard deviation again. #2429 lists the
+sites.*
+
 ---
 
 ## 10. Geometry
@@ -628,6 +672,37 @@ navigable region. Name which SDF a normal came from before using it.
 
 A boundary condition written $\partial u/\partial n = g$ uses the **outward normal of the
 computational domain**, at every wall, in every dimension.
+
+### The graph Laplacian
+
+**$L = D - A$, positive semidefinite, with $D$ the weighted degree** $D_{ii} = \sum_j w_{ij}$, the node
+strength (ruled 2026-10-08). It enters diffusion with a minus sign:
+$\partial_t m = -\tfrac{\sigma^2}{2} L m + \dots$, so the graph Laplace operator is $\Delta_G = -L$. The
+owner is one function that forms $L = D - A$ from a weighted adjacency matrix (ruled 2026-10-08);
+this file names it `graph_laplacian(adjacency)`, in `geometry/graph/laplacian.py`.
+`SupportsGraphLaplacian` stays the interface consumers type against; it is not the owner. Every
+implementer calls the owner and supplies only its adjacency. *Not yet met (#2429, #1951): the owner does
+not exist yet, and the geometry getters, `NetworkData`, the network backends and `LaplacianCoupling` each
+form $L$ without it (#2429 lists the sites); `node_degrees` returns the combinatorial degree on the igraph and
+networkit backends and the strength on networkx; `LaplacianCoupling.compute_fp_source`
+returns $+\kappa (Lm)_i$ as an FP source term, so it enters as $\partial_t m = +\kappa L m$, the
+opposite sign; the network FP solver assembles $-\tfrac{\sigma^2}{2} L m$ inline from edge weights
+rather than reading $L$, and its inline comment's sign contradicts its arithmetic; and the protocol's
+docstring writes the diffusion as $-\sigma^2 L m$, without the $\tfrac12$.*
+
+### Particles at a wall
+
+**One owner applies a particle's wall rule for each boundary type** (reflect, absorb or wrap), and a
+boundary helper never mutates the caller's array (ruled 2026-10-08). Reflection is owned by
+`reflect_positions` in `geometry/boundary/corner/position.py`, the module #521 consolidated, and
+wrapping by `wrap_positions` in `geometry/boundary/periodic.py`. *Not yet met (#2429, #2550): absorption
+has no owner function. `corner.absorb_positions` clamps a particle to the wall and keeps it, so it must
+not be used for an absorbing wall, where the mass that leaves is lost through the wall (§ 9). The
+particle solver absorbs through `ParticleApplicator.apply`, which removes the particle;
+`ParticleApplicator.apply_with_flux_limits` and `MeshfreeApplicator`'s absorbing mode carry their own
+copies. `ParticleApplicator` and the solver's uniform periodic path wrap through `corner.wrap_positions`,
+a deprecated shim for the periodic owner, and the particle solver's 1-D GPU path uses a separate copy in
+`utils/particle_utils.py`. No helper measured mutates the caller's array.*
 
 ### Pointwise and bulk must agree
 
