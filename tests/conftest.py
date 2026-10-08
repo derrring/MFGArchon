@@ -152,8 +152,35 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "numerical: Tests for numerical algorithms")
 
 
+#: A test function whose name contains one of these says it is slow, so it must also carry the marker.
+SLOW_NAME_WORDS = ("slow", "benchmark")
+
+
+def undeclared_slow_names(items) -> list[str]:
+    """Node IDs of tests whose function name says slow or benchmark but which carry neither marker.
+
+    The marker is the declaration (#1875). A rule here once marked every test whose NAME contained
+    "large", "slow" or "benchmark" as slow, and the gate deselects `slow`: a descriptive name removed a
+    fast test from the gate with nothing at the test to show it, which is how #2570's max-over-fields
+    pins never ran before merge. A name may still say slow; it then has to be declared.
+    """
+    return [
+        item.nodeid
+        for item in items
+        if any(word in getattr(item, "originalname", item.name) for word in SLOW_NAME_WORDS)
+        and item.get_closest_marker("slow") is None
+        and item.get_closest_marker("benchmark") is None
+    ]
+
+
 def pytest_collection_modifyitems(config, items):
-    """Modify test collection to add markers based on test paths."""
+    """Add markers based on test paths, and refuse a test whose name says slow without the marker."""
+    undeclared = undeclared_slow_names(items)
+    if undeclared:
+        raise pytest.UsageError(
+            "these tests are named as slow or benchmark but carry neither marker; add @pytest.mark.slow "
+            "(or @pytest.mark.benchmark), or rename them (#1875):\n  " + "\n  ".join(undeclared)
+        )
     for item in items:
         # Add markers based on test file paths
         test_path = str(item.fspath)
@@ -166,10 +193,6 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.performance)
         elif "/mathematical/" in test_path:
             item.add_marker(pytest.mark.mathematical)
-
-        # Mark slow tests based on name patterns
-        if "large" in item.name or "slow" in item.name or "benchmark" in item.name:
-            item.add_marker(pytest.mark.slow)
 
 
 # =============================================================================

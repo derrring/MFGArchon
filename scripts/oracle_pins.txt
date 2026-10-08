@@ -1,0 +1,57 @@
+# The tests that #2512's progress counts, so that a pin which leaves the gate turns the gate red
+# instead of quietly lowering the real count (#1875). `scripts/check_oracle_pins.py` collects every
+# target below under the gate's marker expression, `scripts/ci_markers.txt`, and fails if any is
+# deselected or missing. A cell counts only when all of its lines collect.
+#
+# One line per target: <kind> <label> <target>. A target is a pytest node ID, or a test file, which
+# then requires every test in that file to collect. Kinds:
+#   oracle      an oracle cell of #2512 (a), labelled <family>/<cell>
+#   convention  a convention of #2512 met in code, labelled by its id in docs/user/CONVENTIONS.md
+#   pin         a pin a batch rests on that is not a cell itself
+# A batch appends its own lines in the PR that counts its cells.
+
+# HJB-FDM, #2546 and #2560: 8 cells, BC type x dimension
+oracle hjb_fdm/dirichlet_1d   tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[dirichlet_1d]
+oracle hjb_fdm/dirichlet_2d   tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[dirichlet_faced_x_2d]
+oracle hjb_fdm/dirichlet_2d   tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[dirichlet_faced_y_2d]
+oracle hjb_fdm/dirichlet_2d   tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[dirichlet_uniform_2d]
+oracle hjb_fdm/neumann_1d     tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[neumann_1d]
+oracle hjb_fdm/neumann_2d     tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[neumann_faced_2d]
+oracle hjb_fdm/neumann_2d     tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[neumann_uniform_2d]
+oracle hjb_fdm/no_flux_1d     tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[no_flux_1d]
+oracle hjb_fdm/no_flux_2d     tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[no_flux_faced_2d]
+oracle hjb_fdm/no_flux_2d     tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[no_flux_uniform_2d]
+oracle hjb_fdm/periodic_1d    tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[periodic_1d]
+oracle hjb_fdm/periodic_2d    tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[periodic_faced_2d]
+oracle hjb_fdm/periodic_2d    tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[periodic_uniform_2d]
+pin    hjb_fdm/coverage       tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_every_declared_bc_type_has_a_cell_in_both_dimensions
+pin    hjb_fdm/whole_file     tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py
+
+# HJB-FEM, #2548: 10 cells, BC type x dimension, each under Picard and Newton
+oracle hjb_fem/dirichlet_1d   tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[dirichlet_1d-picard]
+oracle hjb_fem/dirichlet_1d   tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[dirichlet_1d-newton]
+oracle hjb_fem/dirichlet_2d   tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[dirichlet_2d-picard]
+oracle hjb_fem/dirichlet_2d   tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[dirichlet_2d-newton]
+oracle hjb_fem/neumann_1d     tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[neumann_1d-picard]
+oracle hjb_fem/neumann_1d     tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[neumann_1d-newton]
+oracle hjb_fem/neumann_2d     tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[neumann_2d-picard]
+oracle hjb_fem/neumann_2d     tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[neumann_2d-newton]
+oracle hjb_fem/no_flux_1d     tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[no_flux_1d-picard]
+oracle hjb_fem/no_flux_1d     tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[no_flux_1d-newton]
+oracle hjb_fem/no_flux_2d     tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[no_flux_2d-picard]
+oracle hjb_fem/no_flux_2d     tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[no_flux_2d-newton]
+oracle hjb_fem/reflecting_1d  tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[reflecting_1d-picard]
+oracle hjb_fem/reflecting_1d  tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[reflecting_1d-newton]
+oracle hjb_fem/reflecting_2d  tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[reflecting_2d-picard]
+oracle hjb_fem/reflecting_2d  tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[reflecting_2d-newton]
+oracle hjb_fem/robin_1d       tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[robin_1d-picard]
+oracle hjb_fem/robin_1d       tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[robin_1d-newton]
+oracle hjb_fem/robin_2d       tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[robin_2d-picard]
+oracle hjb_fem/robin_2d       tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_at_second_order[robin_2d-newton]
+pin    hjb_fem/coverage       tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py::test_every_declared_bc_type_has_a_cell_in_both_dimensions
+pin    hjb_fem/whole_file     tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py
+pin    hjb_fem/boundary_tags  tests/unit/test_alg/test_fem_boundary_tags_2540.py
+
+# Conventions met in code
+convention C1                 tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py
+convention C1                 tests/unit/test_alg/test_status_reports_the_final_state_1684.py::test_the_reported_error_is_the_larger_of_the_two_fields

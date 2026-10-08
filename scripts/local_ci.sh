@@ -549,7 +549,7 @@ step "Ratchet self-tests (the instruments, before their numbers)"
 # arm runs in `.github/workflows/family-emptied.yml`, which has a token anyway. Proven rather than
 # assumed: with a `gh` on PATH that exits 127 and says so, `--self-test` passes and
 # `--self-test --online` fails, so the offline pass is not an artefact of the stub being missed.
-for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation check_citations check_warnings check_manifests check_mypy_scope check_docstring_kwargs family_queue generate_deprecation_guide; do
+for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation check_citations check_warnings check_manifests check_mypy_scope check_docstring_kwargs family_queue generate_deprecation_guide check_oracle_pins; do
   "${PYS[@]}" "scripts/${_selftest}.py" --self-test || { check 1 "ratchet self-tests: ${_selftest} cannot see what it counts"; }
 done
 check 0 "every fast ratchet still detects what it claims to detect"
@@ -557,6 +557,13 @@ check 0 "every fast ratchet still detects what it claims to detect"
 step "Fail-fast ratchet"
 "${PYS[@]}" scripts/check_fail_fast.py --path mfgarchon --check-baseline scripts/fail_fast_baseline.json
 check $? "no new silent fallbacks vs baseline"
+
+# The tests #2512's progress counts must run here. A name rule that marked "large" tests slow kept
+# #2570's max-over-fields pins out of this gate unseen (#1875); a marker, a rename or a skip would do
+# the same. `scripts/oracle_pins.txt` lists them, and this collects each under this gate's markers.
+step "Oracle pins collect under the gate's markers"
+"${PYS[@]}" scripts/check_oracle_pins.py
+check $? "every oracle cell, convention and pin #2512 counts is collected by this gate"
 
 # Docs are the one artefact almost nothing runs. Two test files execute any docstring example:
 # test_tensor_grid_docstring_examples.py (#1638, one class) and test_docstring_examples_2346.py
