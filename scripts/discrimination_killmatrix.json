@@ -355,6 +355,9 @@
     "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_each_field_is_measured_before_damping[multi_population-only_m_moves]": [
       "picard_criterion_reads_as_or"
     ],
+    "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_each_field_is_measured_before_damping[regime-only_m_moves]": [
+      "picard_criterion_reads_as_or"
+    ],
     "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_each_field_is_measured_before_damping[regime-only_u_moves]": [
       "picard_criterion_reads_as_or"
     ],
@@ -3995,7 +3998,7 @@
       "verify": "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), periodic_bc(dimension=1), ghost_depth=1, spacing=1.0)[0] == 2.0"
     },
     "picard_criterion_reads_as_or": {
-      "kill_count": 51,
+      "kill_count": 52,
       "killed": [
         "tests/integration/test_block_iterators.py::TestBlockIteratorBasic::test_jacobi_executes",
         "tests/integration/test_mfg_callable_coefficients.py::TestMFGCallableCoefficients::test_mfg_callable_diffusion_with_array",
@@ -4025,6 +4028,7 @@
         "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_each_field_is_measured_before_damping[graph-only_m_moves]",
         "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_each_field_is_measured_before_damping[graph-only_u_moves]",
         "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_each_field_is_measured_before_damping[multi_population-only_m_moves]",
+        "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_each_field_is_measured_before_damping[regime-only_m_moves]",
         "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_each_field_is_measured_before_damping[regime-only_u_moves]",
         "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_problem_solve_threads_the_absolute_bound[config]",
         "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_problem_solve_threads_the_absolute_bound[keyword]",
@@ -4050,7 +4054,7 @@
         "tests/unit/test_utils/test_runtime_validation.py::test_fp_is_not_solved_after_hjb_returns_nonfinite"
       ],
       "owner": "The outer coupling tolerance bounds the RELATIVE L2 change, and an absolute bound applies only when `absolute_tolerance` is given -- then BOTH must hold (CONVENTIONS.md section 9, #2555). Owner: check_convergence_criteria in fixed_point_utils.py, read by all six coupling iterators. RETARGETED from the unconditional relative-AND-absolute criterion #2555 retired: with no absolute tolerance the disjunction accepts any relative change.",
-      "seconds": 197.5,
+      "seconds": 141.3,
       "status": "ok",
       "verify": "check_convergence_criteria(1.0, 1.0, 1e-9, 1e-9, 1e-6)[0]"
     },
