@@ -370,6 +370,63 @@
     "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_problem_solve_threads_the_absolute_bound[nt_reentry]": [
       "picard_criterion_reads_as_or"
     ],
+    "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_absolute_bound_reaches_the_callback_and_config_paths": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[graph-m_moves-first]": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[graph-m_moves-last]": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[graph-m_moves-middle]": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[graph-u_moves-first]": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[graph-u_moves-last]": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[graph-u_moves-middle]": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[multi_population-m_moves-first]": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[multi_population-m_moves-last]": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[multi_population-m_moves-middle]": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[multi_population-u_moves-first]": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[multi_population-u_moves-last]": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[multi_population-u_moves-middle]": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[regime-m_moves-first]": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[regime-m_moves-last]": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[regime-m_moves-middle]": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[regime-u_moves-first]": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[regime-u_moves-last]": [
+      "picard_criterion_reads_as_or"
+    ],
+    "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[regime-u_moves-middle]": [
+      "picard_criterion_reads_as_or"
+    ],
     "tests/unit/test_alg/test_diverged_hjb_stops_before_fp_1718.py::test_a_late_divergence_does_not_publish_the_previous_sweeps_errors": [
       "picard_criterion_reads_as_or"
     ],
@@ -3998,7 +4055,7 @@
       "verify": "pad_array_with_ghosts(np.array([1.0, 2.0, 3.0]), periodic_bc(dimension=1), ghost_depth=1, spacing=1.0)[0] == 2.0"
     },
     "picard_criterion_reads_as_or": {
-      "kill_count": 52,
+      "kill_count": 71,
       "killed": [
         "tests/integration/test_block_iterators.py::TestBlockIteratorBasic::test_jacobi_executes",
         "tests/integration/test_mfg_callable_coefficients.py::TestMFGCallableCoefficients::test_mfg_callable_diffusion_with_array",
@@ -4033,6 +4090,25 @@
         "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_problem_solve_threads_the_absolute_bound[config]",
         "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_problem_solve_threads_the_absolute_bound[keyword]",
         "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_problem_solve_threads_the_absolute_bound[nt_reentry]",
+        "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_absolute_bound_reaches_the_callback_and_config_paths",
+        "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[graph-m_moves-first]",
+        "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[graph-m_moves-last]",
+        "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[graph-m_moves-middle]",
+        "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[graph-u_moves-first]",
+        "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[graph-u_moves-last]",
+        "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[graph-u_moves-middle]",
+        "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[multi_population-m_moves-first]",
+        "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[multi_population-m_moves-last]",
+        "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[multi_population-m_moves-middle]",
+        "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[multi_population-u_moves-first]",
+        "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[multi_population-u_moves-last]",
+        "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[multi_population-u_moves-middle]",
+        "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[regime-m_moves-first]",
+        "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[regime-m_moves-last]",
+        "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[regime-m_moves-middle]",
+        "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[regime-u_moves-first]",
+        "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[regime-u_moves-last]",
+        "tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py::test_the_max_over_fields_decides[regime-u_moves-middle]",
         "tests/unit/test_alg/test_diverged_hjb_stops_before_fp_1718.py::test_a_late_divergence_does_not_publish_the_previous_sweeps_errors",
         "tests/unit/test_alg/test_fp_fdm_dirichlet_rows_2531.py::test_problem_solve_holds_a_shared_exit_at_zero_under_a_problem_source",
         "tests/unit/test_alg/test_fp_particle_absorbing_mass_2519.py::test_a_coupled_exit_cost_reaches_the_hjb_and_the_fp_absorbs",
@@ -4054,7 +4130,7 @@
         "tests/unit/test_utils/test_runtime_validation.py::test_fp_is_not_solved_after_hjb_returns_nonfinite"
       ],
       "owner": "The outer coupling tolerance bounds the RELATIVE L2 change, and an absolute bound applies only when `absolute_tolerance` is given -- then BOTH must hold (CONVENTIONS.md section 9, #2555). Owner: check_convergence_criteria in fixed_point_utils.py, read by all six coupling iterators. RETARGETED from the unconditional relative-AND-absolute criterion #2555 retired: with no absolute tolerance the disjunction accepts any relative change.",
-      "seconds": 141.3,
+      "seconds": 96.8,
       "status": "ok",
       "verify": "check_convergence_criteria(1.0, 1.0, 1e-9, 1e-9, 1e-6)[0]"
     },
