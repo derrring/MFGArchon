@@ -608,11 +608,10 @@ axes and refused. The sequence form is the convention, and library code uses it.
 **The outer coupling tolerance bounds a relative change, measured in the discrete $L^2$ norm** whose
 measure is the geometry's quadrature, the owner above, not a scalar `dx` (ruled 2026-10-08): the change
 between iterates, relative to their size, for $u$ and for $m$. There is no absolute criterion unless
-the caller asks for one with a keyword. *Not yet met (#2429, #2555): the Picard loop also requires the
-absolute change below the tolerance, and scales that absolute value by the first axis's spacing only,
-so on a 2-D grid it is about $\sqrt{N_y/L_y}$ stricter; on a mesh it sets the spacing to 1. The relative
-value does not depend on the spacing. `MultiPopulationIterator`, `GraphMFGSolver` and
-`RegimeSwitchingIterator` stop on an absolute max-norm change.*
+the caller asks for one with a keyword. *Not yet met (#2429, #2555): the coupling iterators also, or
+only, test an absolute change, measured with the first axis's spacing alone, with a unit weight on a
+mesh, or as a max-norm. So the same tolerance does not mean the same thing across dimensions or across
+iterators. #2429 lists them.*
 
 **The inner Newton tolerance bounds the grid-scaled residual norm**, and
 `base_hjb.hjb_residual_norm` is its owner on every path: 1-D, n-D and GFDM (ruled 2026-10-08). So a
@@ -628,21 +627,12 @@ deviation**, as in `scipy.stats.gaussian_kde`, and an absolute width goes throug
 keyword. `"scott"` and `"silverman"` mean scipy's definitions: $n^{-1/(d+4)}$ and
 $\left(n(d+2)/4\right)^{-1/(d+4)}$ (ruled 2026-10-08). A kernel length scale that is not a density
 estimate, such as a graphon's, is not covered. No single owner applies the rule yet. *Not yet met
-(#2429, #2556):*
-
-- *`FPParticleSolver`'s default density path (`kde_method="reflection"`, through `reflection_kde`) uses
-  a numeric `kde_bandwidth` as a factor of the standard deviation of the sample together with its
-  ghost particles, and as an absolute width for the ghost zone. With a factor 0.5 on a sample of
-  standard deviation 0.05, its peak is 1.07 where scipy's is 7.03. A string rule agrees with scipy.*
-- *The particle-to-grid projection (`operators/interpolation/projection.py`) agrees with scipy in 1-D;
-  for $d \ge 2$ it replaces scipy's silverman factor with an absolute width and then multiplies by the
-  standard deviation again (2-D peak 7.12 against scipy's 3.79).*
-- *`beta_kde`, `ParticleMeasure.to_density(bandwidth=)`, `ParticleDensityQuery(bandwidth=)` (to which
-  the particle result forwards the solver's numeric `kde_bandwidth`), `GaussianKDE(bw_method=)` in
-  `torch_utils`, and `gaussian_kde_gpu(kernel="wendland_c2")` read a numeric bandwidth as an absolute
-  width; `renormalization_kde` reads it as both.*
-- *`adaptive_bandwidth_selection` returns an absolute width under a different silverman rule,
-  $0.9\min(\sigma, \mathrm{IQR}/1.34)\,n^{-1/5}$.*
+(#2429, #2556): several density paths read the bandwidth another way. Some take a number as an absolute
+width; `FPParticleSolver`'s default reflection path takes it as a factor of the standard deviation of the
+sample with its ghost particles, and its GPU path as a factor of the initial sample's standard deviation,
+held fixed; and the particle-to-grid projection for $d \ge 2$ turns a string rule, including its default
+`"scott"`, into an absolute width and then multiplies by the standard deviation again. #2429 lists the
+sites.*
 
 ---
 
@@ -685,24 +675,24 @@ computational domain**, at every wall, in every dimension.
 **$L = D - A$, positive semidefinite, with $D$ the weighted degree** $D_{ii} = \sum_j w_{ij}$, the node
 strength (ruled 2026-10-08). It enters diffusion with a minus sign:
 $\partial_t m = -\tfrac{\sigma^2}{2} L m + \dots$, so the graph Laplace operator is $\Delta_G = -L$. The
-geometry protocol `SupportsGraphLaplacian` (`get_graph_laplacian_operator`) is the owner this file
-designates; the ruling names none. Its implementations, the network backends' `get_laplacian_matrix`
-and the network problem's `get_laplacian_matrix` all form this weighted $D - A$. *Not yet met (#2429,
+owner is to be designated: the ruling names none, and the user's ruling on it is pending. The
+implementations of `SupportsGraphLaplacian`, the network backends' `get_laplacian_matrix` and the
+network problem's `get_laplacian_matrix` each form this weighted $D - A$ today. *Not yet met (#2429,
 #1951): `node_degrees` returns the combinatorial degree on the igraph and networkit backends and the
-strength on networkx; `LaplacianCoupling.compute_fp_source` adds $+\kappa (Lm)_i$ to the density, so it
-enters as $\partial_t m = +\kappa L m$, the opposite sign; the network FP solver assembles $-D L m$
-inline from edge weights rather than reading $L$, and its inline comment gives the opposite sign to its
-docstring; and the protocol's docstring writes the diffusion as $-\sigma^2 L m$, without the $\tfrac12$.*
+strength on networkx; `LaplacianCoupling.compute_fp_source` returns $+\kappa (Lm)_i$ as an FP source
+term, so it enters as $\partial_t m = +\kappa L m$, the opposite sign; the network FP solver assembles
+$-\tfrac{\sigma^2}{2} L m$ inline from edge weights rather than reading $L$, and its inline comment's sign
+contradicts its arithmetic; and the protocol's docstring writes the diffusion as $-\sigma^2 L m$,
+without the $\tfrac12$.*
 
 ### Particles at a wall
 
 **One owner applies a particle's wall rule for each boundary type** (reflect, absorb or wrap), and a
-boundary helper never mutates the caller's array (ruled 2026-10-08). The owner #521 designates is
-`utils/numerical/particle/boundary.py`. *Not yet met (#2429, #2550): that module has no production
-caller, handles 1-D only, and its `"dirichlet"` clamps a particle to the wall rather than absorbing it.
-The solver reflects and wraps through `geometry/boundary/corner/position.py` on the CPU, absorbs
-through `ParticleApplicator`, and calls the copy in `utils/particle_utils.py` on the GPU. No helper
-measured mutates the caller's array.*
+boundary helper never mutates the caller's array (ruled 2026-10-08). The owner is the module #521
+consolidated, `geometry/boundary/corner/position.py`: `reflect_positions` and `absorb_positions`, with
+`wrap_positions` deferring to `geometry/boundary/periodic`. *Not yet met (#2429, #2550): the particle
+solver absorbs through `ParticleApplicator`'s own logic rather than `absorb_positions`, and its 1-D GPU
+path uses a separate copy in `utils/particle_utils.py`. No helper measured mutates the caller's array.*
 
 ### Pointwise and bulk must agree
 
