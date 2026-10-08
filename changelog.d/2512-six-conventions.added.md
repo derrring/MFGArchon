@@ -1,0 +1,7 @@
+- **Six conventions are now stated in `docs/user/CONVENTIONS.md`, each with its owner named** (ruled 2026-10-08). Where the code does not meet one yet, the file says so and points at #2429, and at the issue that implements it.
+  - **§ 2:** the HJB step at $t_n$ reads the density $m^n$ (#1423).
+  - **§ 9, the outer coupling tolerance:** it bounds a relative discrete $L^2$ change, measured by the geometry's quadrature. There is no absolute criterion unless the caller asks for one.
+  - **§ 9, the Newton tolerance:** it bounds the grid-scaled residual norm, owned by `base_hjb.hjb_residual_norm` on every path.
+  - **§ 9, a kernel `bandwidth`:** it is a factor times the sample standard deviation, as in scipy, and `"scott"` / `"silverman"` mean scipy's rules. An absolute width goes through a separately named keyword.
+  - **§ 10, the graph Laplacian:** it is $L = D - A$ with weighted degrees, positive semidefinite, and it enters diffusion as $-\tfrac{\sigma^2}{2} L m$.
+  - **§ 10, particles at a wall:** one owner applies a particle's wall rule for each boundary type, and a boundary helper never mutates the caller's array.
