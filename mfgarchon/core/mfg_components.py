@@ -2,7 +2,7 @@
 
 This module contains:
 - MFGComponents: Dataclass for custom MFG problem definition
-- HamiltonianMixin: Mixin providing Hamiltonian evaluation methods (H, dH_dm, potential)
+- HamiltonianMixin: Mixin providing Hamiltonian evaluation methods (H, dH_dm, dH_dp)
 - ConditionsMixin: Mixin providing initial/final/boundary condition methods
 
 The mixin pattern allows MFGProblem to inherit these methods while keeping
@@ -187,7 +187,7 @@ class MFGComponents:
 
 
 # ============================================================================
-# Hamiltonian Mixin - H, dH_dm, Jacobian, Coupling, Potential
+# Hamiltonian Mixin - H, dH_dm, Jacobian, Coupling
 # ============================================================================
 
 
@@ -198,6 +198,13 @@ _generated_components_init = MFGComponents.__init__
 
 @functools.wraps(_generated_components_init)
 def _components_init_refusing_potential_func(self: MFGComponents, *args: Any, **kwargs: Any) -> None:
+    if len(args) > 5:
+        # potential_func was the sixth field; without this, a sixth positional argument would land
+        # silently in boundary_conditions, the field that moved into its slot.
+        raise TypeError(
+            f"MFGComponents takes at most 5 positional arguments, got {len(args)}: its sixth, potential_func, "
+            "is retired (#2554), so pass boundary_conditions and the later fields by keyword."
+        )
     if "potential_func" in kwargs:
         raise TypeError(
             "MFGComponents(potential_func=...) is retired (#2554): it was stored and no solver added it to H, "

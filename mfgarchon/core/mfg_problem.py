@@ -307,7 +307,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             problem = MFGProblem(network=graph, time_domain=(1.0, 100))
 
             # Mode 5: Custom components
-            components = MFGComponents(hamiltonian_func=..., ...)
+            components = MFGComponents(hamiltonian=SeparableHamiltonian(...), m_initial=..., u_terminal=...)
             problem = MFGProblem(
                 spatial_bounds=[(0, 1)],
                 spatial_discretization=[100],
@@ -2318,10 +2318,11 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
     # Kwargs Validation - Fail Fast on Deprecated/Unrecognized Parameters
     # ============================================================================
 
-    # Deprecated kwargs that should use MFGComponents instead (Issue #666, #670)
+    # Retired kwargs, each refused with the API that replaces it (Issue #666, #670, #2554)
     _DEPRECATED_KWARGS: ClassVar[dict[str, str]] = {
         "hamiltonian": "Model(hamiltonian=...), a Hamiltonian object such as SeparableHamiltonian(...)",
-        "dH_dm": "the Hamiltonian's coupling_dm=, e.g. SeparableHamiltonian(coupling=..., coupling_dm=...)",
+        "dH_dm": "the Hamiltonian's coupling_dm=, which takes f'(m); H carries -f, so dH/dm = -f'(m), e.g. "
+        "SeparableHamiltonian(coupling=..., coupling_dm=...)",
         "dH_dp": "the Hamiltonian's control_cost=, whose dp() is dH/dp, e.g. QuadraticControlCost(...)",
         "potential": "SeparableHamiltonian(potential=...)",
         "running_cost": "the Hamiltonian's potential= (a cost of x) or coupling= (a cost of m)",

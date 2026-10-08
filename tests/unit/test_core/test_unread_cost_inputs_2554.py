@@ -50,10 +50,30 @@ def test_potential_func_is_refused_naming_the_potential_channel():
         MFGComponents(hamiltonian=_hamiltonian(), potential_func=lambda t, x: 2.0)
 
 
-def test_the_legacy_potential_keyword_points_at_the_hamiltonian():
-    """``MFGProblem(potential=)`` was redirected to ``MFGComponents.potential_func``, the input refused above."""
-    with pytest.raises(ValueError, match=r"'potential' -> SeparableHamiltonian\(potential=\.\.\.\)"):
-        _problem(potential=lambda t, x: 2.0)
+def test_a_sixth_positional_argument_is_refused():
+    """``potential_func`` was the sixth field; a sixth positional argument must not slide into the next one."""
+    with pytest.raises(TypeError, match=r"at most 5 positional arguments.*potential_func"):
+        MFGComponents(_hamiltonian(), None, lambda x: 1.0, lambda x: 0.0, None, lambda t, x: 2.0)
+
+
+@pytest.mark.parametrize(
+    ("keyword", "row"),
+    [
+        ("hamiltonian", r"'hamiltonian' -> Model\(hamiltonian=\.\.\.\)"),
+        ("dH_dm", r"'dH_dm' -> the Hamiltonian's coupling_dm=, which takes f'\(m\); H carries -f"),
+        ("dH_dp", r"'dH_dp' -> the Hamiltonian's control_cost=, whose dp\(\) is dH/dp"),
+        ("running_cost", r"'running_cost' -> the Hamiltonian's potential= \(a cost of x\) or coupling="),
+        ("potential", r"'potential' -> SeparableHamiltonian\(potential=\.\.\.\)"),
+    ],
+)
+def test_each_retired_keyword_names_the_api_that_replaces_it(keyword, row):
+    """Each row used to name an ``MFGComponents.hamiltonian_*`` field that does not exist, or the refused
+    ``potential_func``. ``hamiltonian`` is a named parameter of ``MFGProblem``, so its row is reached through
+    ``components.parameters``; the validator the constructor calls is called directly for every row."""
+    with pytest.raises(ValueError, match=row) as refusal:
+        _problem()._validate_kwargs({keyword: lambda *args: 0.0})
+    assert "hamiltonian_func" not in str(refusal.value)
+    assert "potential_func" not in str(refusal.value)
 
 
 def _guide(message: str) -> str:
@@ -66,8 +86,8 @@ def _guide(message: str) -> str:
 
 @pytest.mark.parametrize(
     "refused",
-    [{"dH_dm": lambda m: m}, {"running_cost": lambda t, x, m: 0.0}, {"xmin": 0.0}],
-    ids=["hamiltonian_guide", "running_cost_row_and_hamiltonian_guide", "geometry_guide"],
+    [{"dH_dm": lambda m: m}, {"xmin": 0.0}],
+    ids=["hamiltonian_guide", "geometry_guide"],
 )
 def test_the_advice_a_refused_keyword_prints_constructs(refused):
     """Run the code block the refusal prints, with its placeholders bound: it must build a problem. Until #2554
