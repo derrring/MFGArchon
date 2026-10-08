@@ -122,8 +122,8 @@
       "status": "ok"
     },
     "picard_criterion_reads_as_or": {
-      "kill_count": 2,
-      "owner": "Picard convergence requires BOTH the relative AND the absolute L2 error below tolerance. Owner: check_convergence_criteria, fixed_point_utils.py:192-229, whose docstring states 'Convergence criteria (both must be satisfied)'. Single-sourced by three call sites routing to it: fixed_point_iterator.py:",
+      "kill_count": 40,
+      "owner": "The outer coupling tolerance bounds the RELATIVE L2 change, and an absolute bound applies only when `absolute_tolerance` is given -- then BOTH must hold (CONVENTIONS.md section 9, #2555). Owner: check_convergence_criteria in fixed_point_utils.py, read by all six coupling iterators. RETARGETED from the unconditional relative-AND-absolute criterion #2555 retired: with no absolute tolerance the disjunction accepts any relative change.",
       "status": "ok"
     },
     "quadrature_wall_node_counting_measure": {

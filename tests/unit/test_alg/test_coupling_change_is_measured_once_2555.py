@@ -94,28 +94,36 @@ def _solve(kind: str, relaxation: float, tolerance: float, absolute_tolerance: f
             if kind == "graph":
                 ps = [_problem() for _ in range(3)]
                 adjacency = np.array([[0, 1, 1], [1, 0, 1], [1, 1, 0]], dtype=float)
-                return GraphMFGSolver(
+                return (
+                    GraphMFGSolver(
+                        ps,
+                        AdjacencyCoupling(adjacency, alpha=0.05, beta=0.02),
+                        [HJBFDMSolver(q) for q in ps],
+                        [FPFDMSolver(q) for q in ps],
+                        max_iterations=3,
+                        tolerance=tolerance,
+                        damping=relaxation,
+                        absolute_tolerance=absolute_tolerance,
+                    )
+                    .solve()
+                    .converged
+                )
+            assert kind == "regime"
+            ps = [_problem(), _problem()]
+            return (
+                RegimeSwitchingIterator(
                     ps,
-                    AdjacencyCoupling(adjacency, alpha=0.05, beta=0.02),
+                    RegimeSwitchingConfig(transition_matrix=np.array([[-0.1, 0.1], [0.2, -0.2]])),
                     [HJBFDMSolver(q) for q in ps],
                     [FPFDMSolver(q) for q in ps],
                     max_iterations=3,
                     tolerance=tolerance,
                     damping=relaxation,
                     absolute_tolerance=absolute_tolerance,
-                ).solve().converged
-            assert kind == "regime"
-            ps = [_problem(), _problem()]
-            return RegimeSwitchingIterator(
-                ps,
-                RegimeSwitchingConfig(transition_matrix=np.array([[-0.1, 0.1], [0.2, -0.2]])),
-                [HJBFDMSolver(q) for q in ps],
-                [FPFDMSolver(q) for q in ps],
-                max_iterations=3,
-                tolerance=tolerance,
-                damping=relaxation,
-                absolute_tolerance=absolute_tolerance,
-            ).solve().converged
+                )
+                .solve()
+                .converged
+            )
         finally:
             logging.disable(logging.NOTSET)
 
@@ -165,7 +173,12 @@ def _graded_grid():
 @pytest.mark.parametrize(
     ("geometry", "area"),
     [
-        (lambda: TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[_NX], boundary_conditions=no_flux_bc(dimension=1)), 1.0),
+        (
+            lambda: TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[_NX], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            1.0,
+        ),
         (
             lambda: TensorProductGrid(
                 bounds=[(0.0, 1.0), (0.0, 10.0)], Nx_points=[_NX, 7], boundary_conditions=no_flux_bc(dimension=2)
@@ -194,7 +207,9 @@ def test_the_change_is_the_l2_norm_in_the_geometrys_own_measure(geometry, area):
         Nt=_NT,
     )
     shape = (problem.Nt + 1, *problem.geometry.get_grid_shape())
-    absolute, relative = l2_change(np.full(shape, 3.0), np.full(shape, 1.0), problem.spatial_measure().integrate, problem.dt)
+    absolute, relative = l2_change(
+        np.full(shape, 3.0), np.full(shape, 1.0), problem.spatial_measure().integrate, problem.dt
+    )
     assert absolute == pytest.approx(2.0 * np.sqrt(area * problem.dt * (problem.Nt + 1)), rel=1e-12)
     assert relative == pytest.approx(2.0 / 3.0, rel=1e-12)
 
