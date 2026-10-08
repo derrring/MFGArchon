@@ -37,7 +37,7 @@
       "status": "ok"
     },
     "diffusion_scalar_2x": {
-      "kill_count": 195,
+      "kill_count": 215,
       "owner": "D = sigma^2/2 for scalar sigma (#811)",
       "status": "ok"
     },
