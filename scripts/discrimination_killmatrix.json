@@ -719,6 +719,19 @@
     "tests/unit/test_alg/test_hjb_fdm_dirichlet_oracle_2515.py::test_a_dirichlet_solve_converges_to_the_exact_solution_at_first_order[vectorised]": [
       "engquist_osher_derivative_drops_the_forward_branch"
     ],
+    "tests/unit/test_alg/test_hjb_fdm_nd_wall_rows_2537.py::test_a_converged_step_returns_the_root_it_certified[neumann_faced]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_alg/test_hjb_fdm_nd_wall_rows_2537.py::test_a_converged_step_returns_the_root_it_certified[neumann_uniform]": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_alg/test_hjb_fdm_nd_wall_rows_2537.py::test_a_dirichlet_face_holds_g_where_it_meets_a_neumann_face": [
+      "ghost_spacing_ignored"
+    ],
+    "tests/unit/test_alg/test_hjb_fdm_nd_wall_rows_2537.py::test_a_neumann_wall_holds_its_slope_to_second_order": [
+      "ghost_spacing_ignored",
+      "grid_spacing_uses_point_count"
+    ],
     "tests/unit/test_alg/test_hjb_fdm_solver.py::TestBoundaryGradientBCAware1384::test_periodic_gradient_matches_the_analytic_derivative_at_the_seam": [
       "periodic_wrap_endpoint_inverted"
     ],
@@ -3207,8 +3220,12 @@
       "verify": "float(AdvectionOperator(velocity_field=np.ones((1, 3)), spacings=[1.0], field_shape=(3,), scheme='upwind', form='divergence', bc=no_flux_bc(dimension=1), mass_conservative=True)(np.array([1.0, 2.0, 3.0]))[0]) == 4.0"
     },
     "ghost_spacing_ignored": {
-      "kill_count": 73,
+      "kill_count": 77,
       "killed": [
+        "tests/unit/test_alg/test_hjb_fdm_nd_wall_rows_2537.py::test_a_converged_step_returns_the_root_it_certified[neumann_faced]",
+        "tests/unit/test_alg/test_hjb_fdm_nd_wall_rows_2537.py::test_a_converged_step_returns_the_root_it_certified[neumann_uniform]",
+        "tests/unit/test_alg/test_hjb_fdm_nd_wall_rows_2537.py::test_a_dirichlet_face_holds_g_where_it_meets_a_neumann_face",
+        "tests/unit/test_alg/test_hjb_fdm_nd_wall_rows_2537.py::test_a_neumann_wall_holds_its_slope_to_second_order",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_minimum_band_is_zero_where_dH_dp_is_not[robin_sign_flipped]",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_tied_wall_row_that_is_not_a_switching_node_still_gets_the_right_branch",
         "tests/unit/test_alg/test_hjb_jacobian_advection_1896.py::test_a_volatility_field_does_not_disturb_the_advection_block[robin_sign_flipped]",
@@ -3329,13 +3346,14 @@
       "verify": "TensorProductGrid(bounds=[(0.0, 1.0)], Nx=[10], boundary_conditions=no_flux_bc(dimension=1)).Nx_points == [10]"
     },
     "grid_spacing_uses_point_count": {
-      "kill_count": 54,
+      "kill_count": 55,
       "killed": [
         "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline",
         "tests/unit/test_alg/test_fp_matrix_conservation.py::TestFPProductionConservation::test_density_stays_positive",
         "tests/unit/test_alg/test_fp_particle_gradient_bc_1255.py::TestGradientBCOverrideThreaded::test_gradient_uses_periodic_override_not_noflux_geometry",
         "tests/unit/test_alg/test_fp_particle_solver.py::TestFPParticleSolverHelperMethods::test_compute_gradient",
         "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_the_surviving_enforcement_uses_the_grids_own_spacing",
+        "tests/unit/test_alg/test_hjb_fdm_nd_wall_rows_2537.py::test_a_neumann_wall_holds_its_slope_to_second_order",
         "tests/unit/test_alg/test_hjb_jacobian_matches_residual_1894.py::test_periodic_wrap_with_a_volatility_field_does_not_collapse_the_jacobian",
         "tests/unit/test_alg/test_nd_velocity_batch_shape_2330.py::test_a_one_population_cross_density_is_read_per_node",
         "tests/unit/test_alg/test_nd_velocity_batch_shape_2330.py::test_the_velocity_is_the_optimal_control_at_each_points_own_density[CongestionHamiltonian]",
