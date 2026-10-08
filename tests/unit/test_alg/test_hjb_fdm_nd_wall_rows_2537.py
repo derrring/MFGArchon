@@ -81,6 +81,23 @@ ARMS = {
         domain_bounds=BOUNDS,
         default_bc=BCType.NEUMANN,
     ),
+    # The same, spelled with the NO_FLUX default #1100's message suggests: on the HJB side one zero flux.
+    "exit_and_wall_no_flux_default": lambda: BoundaryConditions(
+        dimension=2,
+        segments=[
+            BCSegment(name="exit", bc_type=BCType.DIRICHLET, boundary="x_max", value=0.7),
+            BCSegment(name="wall", bc_type=BCType.NEUMANN),
+        ],
+        domain_bounds=BOUNDS,
+        default_bc=BCType.NO_FLUX,
+    ),
+    # A face-label region name places its segment for both readers (#2472).
+    "region_name_face_label": lambda: BoundaryConditions(
+        dimension=2,
+        segments=[BCSegment(name="exit", bc_type=BCType.DIRICHLET, region_name="x_max", value=0.6)],
+        domain_bounds=BOUNDS,
+        default_bc=BCType.NO_FLUX,
+    ),
 }
 
 
@@ -313,7 +330,7 @@ def test_a_neumann_wall_holds_its_slope_to_second_order():
 
 
 _UNPLACED = {
-    # A Dirichlet with no `boundary` under a NEUMANN x_min: the accessors give it the other three faces.
+    # A Dirichlet with no `boundary` under a NEUMANN x_min: the accessors give it every face, the ghosts none.
     "dirichlet_everywhere_else": lambda: BoundaryConditions(
         dimension=2,
         segments=[
@@ -323,7 +340,7 @@ _UNPLACED = {
         domain_bounds=BOUNDS,
         default_bc=BCType.NEUMANN,
     ),
-    # The exit-and-wall example with a wall that carries a datum the NEUMANN(0) default does not.
+    # The exit-and-wall example with a wall whose datum the NEUMANN(0) default does not carry.
     "wall_with_a_datum": lambda: BoundaryConditions(
         dimension=2,
         segments=[
@@ -333,15 +350,48 @@ _UNPLACED = {
         domain_bounds=BOUNDS,
         default_bc=BCType.NEUMANN,
     ),
+    # One operation everywhere, so a reader of operations alone sees nothing; the datum still differs.
+    "one_operation_other_datum": lambda: BoundaryConditions(
+        dimension=2,
+        segments=[
+            BCSegment(name="wall", bc_type=BCType.NEUMANN, value=-0.8),
+            BCSegment(name="left", bc_type=BCType.NEUMANN, boundary="x_min", value=0.0),
+        ],
+        domain_bounds=BOUNDS,
+        default_bc=BCType.NEUMANN,
+    ),
+    # Both readers apply 'all' to no face (#1953).
+    "boundary_all": lambda: BoundaryConditions(
+        dimension=2,
+        segments=[BCSegment(name="all", bc_type=BCType.DIRICHLET, boundary="all", value=0.5)],
+        domain_bounds=BOUNDS,
+        default_bc=BCType.NO_FLUX,
+    ),
+    # A face of no 2-D domain: the overwrite raised IndexError on it, the ghosts drop it.
+    "z_max_in_2d": lambda: BoundaryConditions(
+        dimension=2,
+        segments=[BCSegment(name="top", bc_type=BCType.DIRICHLET, boundary="z_max", value=0.5)],
+        domain_bounds=BOUNDS,
+        default_bc=BCType.NO_FLUX,
+    ),
+    # Part of a face: both readers stretch it over the whole face (#2490).
+    "partial_face": lambda: BoundaryConditions(
+        dimension=2,
+        segments=[
+            BCSegment(name="half", bc_type=BCType.DIRICHLET, boundary="x_max", region={1: (0.0, 0.5)}, value=0.5)
+        ],
+        domain_bounds=BOUNDS,
+        default_bc=BCType.NO_FLUX,
+    ),
 }
 
 
 @pytest.mark.parametrize("case", sorted(_UNPLACED))
-def test_a_segment_the_ghosts_cannot_place_is_refused_where_it_changes_a_face(case: str):
-    """A segment of a mixed BC with no `boundary` covers every face for the accessors and none for the
-    ghosts, which give the face `default_bc`. The overwrite used to write the accessor's datum after the
-    solve; without it the face would silently solve the default -- measured: the Dirichlet 0.5 came back at
-    -0.55..-0.36 on x_max, and the wall's -0.8 as slope +0.305. Where the two agree (`exit_and_wall` above,
-    a value-less NEUMANN wall over a NEUMANN(0) default) it solves."""
-    with pytest.raises(NotImplementedError, match="no `boundary`"):
+def test_a_segment_the_ghosts_cannot_place_is_refused(case: str):
+    """`bc_utils.refuse_unplaceable_segments`, with ``ghosts=True``: a segment the FDM ghosts cannot place
+    is refused instead of silently solving `default_bc` on its faces. The post-solve overwrite used to write
+    the accessor's datum, so these were imposed (or, for `z_max_in_2d`, raised IndexError) before #2537. A
+    segment with no `boundary` is refused only where it changes a face's effect, so `exit_and_wall`, its
+    NO_FLUX-default spelling and a face-label `region_name` above all solve."""
+    with pytest.raises(NotImplementedError, match="HJBFDMSolver"):
         _solve(_UNPLACED[case]())

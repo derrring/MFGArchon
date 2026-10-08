@@ -13,11 +13,12 @@
   - **A Dirichlet face meeting a Neumann face** holds `g` at the shared corner. The Neumann overwrite ran after the Dirichlet one and moved it to 0.25 against g = 0.2.
   - **Two Dirichlet faces meeting at a corner.** The node takes the value of the segment first in the BC's own order: priority, then declaration, the order `get_bc_at_point` reads segments in. The overwrite applied segments in that order, so the last one, the lowest priority, won.
 - **One resolver for a face's segment.** `applicator_fdm.face_segment` answers "which segment does the FDM ghost impose on this face" for both the ghost buffer and the Dirichlet rows, so a face is Dirichlet in the rows exactly when it is in the residual. `PreallocatedGhostBuffer._find_segment_for_face` is folded into it.
-- **Refused: a segment the ghosts cannot place, where it changes a face.** A segment of a mixed BC with neither `boundary` nor `region_name` covers every face for `get_bc_type_at_boundary` but no face for the FDM ghosts, which give the face `default_bc` (#2490).
-  - The overwrite used to write the accessor's datum, so n-D HJB-FDM imposed the segment.
-  - Without the overwrite it would have solved the default, silently: `[DIRICHLET 0.5, no boundary] + [NEUMANN x_min]` came back at −0.55..−0.36 on x_max.
-  - `applicator_fdm.refuse_what_the_ghosts_do_not_impose` now raises `NotImplementedError` wherever the two readers give a face a different type or datum.
-  - The exit-and-wall example above, a value-less NEUMANN wall over a NEUMANN(0) default, is unchanged.
+- **Refused: a segment the FDM ghosts cannot place.** n-D HJB-FDM now runs `bc_utils.refuse_unplaceable_segments`, the one owner for face-by-face readers (#2467, #1953, #2490), in a new `ghosts=True` mode. A solver held by its ghosts imposes each face's datum, so in that mode the "one operation with a default" exemption does not apply. Before #2537 the post-solve overwrite read these its own way. By reading its code, it imposed a boundary-less segment on every face, skipped `"all"`, stretched a `region` over its whole face, and raised `IndexError` on a face outside the domain.
+  - **A segment of a mixed BC with no `boundary`** covers every face for `get_bc_type_at_boundary` and no face for the ghosts, which give the face `default_bc`. It is refused on a face where the two give a different effect: a Dirichlet value, a flux, or a wrap.
+    - NO_FLUX and a value-less NEUMANN are one zero flux.
+    - So `get_bc_type_at_boundary`'s exit-and-wall example solves under a NEUMANN or a NO_FLUX default, and a face-label `region_name` solves.
+    - Unrefused, `[DIRICHLET 0.5, no boundary] + [NEUMANN x_min]` would have come back at −0.57..−0.36 over x_max (t = 0 slice, 11²).
+  - **`boundary="all"`**, which both readers apply to no face (#1953), **a `boundary` naming no face of the domain** (`z_max` in 2-D: the overwrite raised `IndexError` on it, and the ghosts drop it), and **a `region` covering part of a face** (#2490) are refused in any BC that is not uniform.
 - **Errors move to the start of the step.** Two inputs now raise `ValueError` before the step's solve, where they used to raise inside Newton and come back as `ConvergenceError`. The context string is now `face_segment`, for every caller of the ghost resolver, where it was `PreallocatedGhostBuffer._update_ghosts_mixed`.
   - A mixed BC with a face no segment covers and no `default_bc` (#1100).
   - A `region_name` that is not a face label (#2472).
