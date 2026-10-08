@@ -4,9 +4,14 @@
 ``problem.gamma``, and nothing added either to H. Measured at 37ca5651 on the default HJB-FDM solve (41 points on
 [0, 1], no-flux, T = 0.5, Nt = 20): V = 2 through ``potential_func`` moved u(0) by 0.0, where the same V through
 ``SeparableHamiltonian(potential=)`` moved it by 1.0 = V T; ``gamma`` 5 against 0, at m = 2, moved it by 0.0.
+
+The refusal for the legacy keywords prints a migration guide, and that guide is advice a user will run: it is run here,
+as printed, and must build a problem.
 """
 
 from __future__ import annotations
+
+import textwrap
 
 import pytest
 
@@ -25,15 +30,19 @@ def _grid() -> TensorProductGrid:
     return TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
 
 
+def _problem(**extra) -> MFGProblem:
+    return MFGProblem(
+        model=Model(hamiltonian=_hamiltonian(), volatility=0.5),
+        domain=_grid(),
+        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.5),
+        Nt=5,
+        **extra,
+    )
+
+
 def test_gamma_is_refused_naming_the_coupling_channel():
     with pytest.raises(TypeError, match=r"MFGProblem\(gamma=\.\.\.\) is retired \(#2554\).*coupling="):
-        MFGProblem(
-            model=Model(hamiltonian=_hamiltonian(), volatility=0.5),
-            domain=_grid(),
-            conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.5),
-            Nt=5,
-            gamma=5.0,
-        )
+        _problem(gamma=5.0)
 
 
 def test_potential_func_is_refused_naming_the_potential_channel():
@@ -43,6 +52,43 @@ def test_potential_func_is_refused_naming_the_potential_channel():
 
 def test_the_legacy_potential_keyword_points_at_the_hamiltonian():
     """``MFGProblem(potential=)`` was redirected to ``MFGComponents.potential_func``, the input refused above."""
-    components = MFGComponents(hamiltonian=_hamiltonian(), m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0)
     with pytest.raises(ValueError, match=r"'potential' -> SeparableHamiltonian\(potential=\.\.\.\)"):
-        MFGProblem(geometry=_grid(), components=components, T=0.5, Nt=5, potential=lambda t, x: 2.0)
+        _problem(potential=lambda t, x: 2.0)
+
+
+def _guide(message: str) -> str:
+    """The code block a refusal message prints, dedented: from its first import to the line before ``See:``."""
+    lines = message.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("  from mfgarchon"))
+    end = next(i for i, line in enumerate(lines) if line.startswith("See:"))
+    return textwrap.dedent("\n".join(lines[start:end]))
+
+
+@pytest.mark.parametrize(
+    "refused",
+    [{"dH_dm": lambda m: m}, {"running_cost": lambda t, x, m: 0.0}, {"xmin": 0.0}],
+    ids=["hamiltonian_guide", "running_cost_row_and_hamiltonian_guide", "geometry_guide"],
+)
+def test_the_advice_a_refused_keyword_prints_constructs(refused):
+    """Run the code block the refusal prints, with its placeholders bound: it must build a problem. Until #2554
+    the Hamiltonian guide built MFGComponents(hamiltonian_func=...), which raises TypeError, and the geometry
+    guide built MFGProblem(geometry=..., T=..., Nt=..., volatility=...), which raises for a missing u_terminal."""
+    with pytest.raises(ValueError, match=r"Deprecated kwargs detected") as refusal:
+        _problem(**refused)
+    namespace = {
+        "my_potential": lambda t, x: 0.0,
+        "my_coupling": lambda m: m**2,
+        "my_coupling_dm": lambda m: 2 * m,
+        "my_hamiltonian": _hamiltonian(),
+        "my_m0": lambda x: 1.0 + 0.0 * x,
+        "my_uT": lambda x: 0.0 * x,
+        "my_geometry": _grid(),
+        "xmin": 0.0,
+        "xmax": 1.0,
+        "Nx": 10,
+        "T": 0.5,
+        "Nt": 5,
+        "sigma": 0.5,
+    }
+    exec(_guide(str(refusal.value)), namespace)
+    assert isinstance(namespace["problem"], MFGProblem)

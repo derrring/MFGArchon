@@ -2320,11 +2320,11 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
     # Deprecated kwargs that should use MFGComponents instead (Issue #666, #670)
     _DEPRECATED_KWARGS: ClassVar[dict[str, str]] = {
-        "hamiltonian": "MFGComponents.hamiltonian_func",
-        "dH_dm": "MFGComponents.hamiltonian_dm_func",
-        "dH_dp": "MFGComponents.hamiltonian_dp_func",
+        "hamiltonian": "Model(hamiltonian=...), a Hamiltonian object such as SeparableHamiltonian(...)",
+        "dH_dm": "the Hamiltonian's coupling_dm=, e.g. SeparableHamiltonian(coupling=..., coupling_dm=...)",
+        "dH_dp": "the Hamiltonian's control_cost=, whose dp() is dH/dp, e.g. QuadraticControlCost(...)",
         "potential": "SeparableHamiltonian(potential=...)",
-        "running_cost": "MFGComponents.hamiltonian_func",
+        "running_cost": "the Hamiltonian's potential= (a cost of x) or coupling= (a cost of m)",
         "terminal_cost": "MFGComponents.u_terminal",
         # Issue #670: initial/terminal conditions now ONLY via MFGComponents
         "m_initial": "MFGComponents.m_initial",
@@ -2373,8 +2373,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 migration_guide = """
 
 The legacy 1D geometry kwargs (xmin/xmax/Nx/Lx) are no longer supported.
-Use the geometry-first API:
+Build the grid and pass it as the domain:
 
+  from mfgarchon import Conditions, MFGProblem, Model
   from mfgarchon.geometry import TensorProductGrid
   from mfgarchon.geometry.boundary import no_flux_bc
 
@@ -2383,32 +2384,37 @@ Use the geometry-first API:
       Nx_points=[Nx + 1],  # Nx intervals -> Nx + 1 grid points
       boundary_conditions=no_flux_bc(dimension=1),
   )
-
-  problem = MFGProblem(geometry=geometry, T=T, Nt=Nt, volatility=sigma)
+  problem = MFGProblem(
+      model=Model(hamiltonian=my_hamiltonian, volatility=sigma),
+      domain=geometry,
+      conditions=Conditions(m_initial=my_m0, u_terminal=my_uT, T=T),
+      Nt=Nt,
+  )
 
 See: docs/user/GEOMETRY_FIRST_API_GUIDE.md"""
             else:
                 migration_guide = """
 
-The old kwargs-based Hamiltonian API is no longer supported.
-Use MFGComponents for custom problem definitions:
+The kwargs-based Hamiltonian API is no longer supported.
+Build the Hamiltonian as an object and pass it through Model:
 
-  from mfgarchon.core.mfg_problem import MFGComponents
+  from mfgarchon import Conditions, MFGProblem, Model
+  from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 
-  components = MFGComponents(
-      hamiltonian_func=my_hamiltonian,
-      hamiltonian_dm_func=my_dH_dm,
-      m_initial=my_m0,
+  hamiltonian = SeparableHamiltonian(
+      control_cost=QuadraticControlCost(control_cost=1.0),
+      potential=my_potential,  # V(t, x), cost-signed
+      coupling=my_coupling,  # f(m)
+      coupling_dm=my_coupling_dm,  # f'(m)
   )
-
   problem = MFGProblem(
-      geometry=my_geometry,
-      T=T, Nt=Nt,
-      volatility=sigma,
-      components=components,
+      model=Model(hamiltonian=hamiltonian, volatility=sigma),
+      domain=my_geometry,
+      conditions=Conditions(m_initial=my_m0, u_terminal=my_uT, T=T),
+      Nt=Nt,
   )
 
-See: docs/migration/HAMILTONIAN_API.md"""
+See: docs/user/CONVENTIONS.md, section 2 (the cost channels and their signs)"""
             raise ValueError(str(e) + migration_guide) from None
 
     # ============================================================================
