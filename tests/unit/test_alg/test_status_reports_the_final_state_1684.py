@@ -163,7 +163,9 @@ def test_a_static_m_with_a_moving_u_does_not_converge():
     )
     # Fixture validity, and the breakdown that says which field failed.
     assert r.errors_M == pytest.approx([0.0], abs=1e-14), f"the fixture is wrong if m moved: errors_M={r.errors_M}"
-    assert r.errors_U[0] == pytest.approx(1.0), f"u should move by 1.0 per sweep: {r.errors_U}"
+    # u moves by 1.0 per sweep and is 3.0 everywhere after the third, so its RELATIVE L2 change, which
+    # is what `errors_U` holds since #2555, is exactly 1/3.
+    assert r.errors_U[0] == pytest.approx(1.0 / 3.0), f"u should move by 1.0 per sweep: {r.errors_U}"
 
 
 def test_the_m_error_is_the_map_residual_not_the_damped_step():

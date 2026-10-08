@@ -151,7 +151,7 @@ class MultiPopulationIterator:
             U_k[-1] = U_terminal_k
             U.append(U_k)
 
-        from mfgarchon.utils.convergence import calculate_l2_convergence_metrics
+        from mfgarchon.utils.convergence import sweep_change
 
         from .fixed_point_utils import check_convergence_criteria
 
@@ -309,10 +309,7 @@ class MultiPopulationIterator:
             # #2555: each population's change is its relative L2 change in its OWN problem's measure,
             # and the criterion is the single-population one, fed the max over populations -- so u and
             # m no longer meet one tolerance in their own units.
-            per_population = [
-                calculate_l2_convergence_metrics(U[k], U_old[k], M_map[k], M_old[k], integrates[k], dts[k])
-                for k in range(K)
-            ]
+            per_population = [sweep_change(U[k], U_old[k], M_map[k], M_old[k], integrates[k], dts[k]) for k in range(K)]
             for metrics_k in per_population:
                 errors_M.append(metrics_k["l2distm_rel"])
                 errors_U.append(metrics_k["l2distu_rel"])

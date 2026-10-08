@@ -243,13 +243,14 @@ class TestWhatTheRefusalDoesToCallers:
         def _refuses(_field):
             raise ValueError("this geometry has no measure")
 
+        # Since #2555 the change each sweep makes is measured in the geometry's own measure, so a
+        # geometry that cannot integrate cannot measure its convergence either: the solve stops on the
+        # geometry's own refusal rather than reporting a number from some other measure. The mass
+        # block's narrowed `except` still serves a solve that ends before its first measured sweep.
         refusing = _fresh()
         refusing.geometry.integrate = _refuses
-        result = refusing.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False)
-        assert result.mass_conservation_error is None, (
-            "a geometry that cannot integrate must report 'not measured', not a fabricated number"
-        )
-        assert result.M is not None, "and the solve itself must still return its result"
+        with pytest.raises(ValueError, match="this geometry has no measure"):
+            refusing.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False)
 
         def _reports_zero_mass(field):
             return np.zeros(np.asarray(field, dtype=float).shape[0])

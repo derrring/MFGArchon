@@ -479,7 +479,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             self.U = preserve_terminal_condition(self.U, U_terminal)
 
             # Calculate convergence metrics
-            from mfgarchon.utils.convergence import calculate_l2_convergence_metrics
+            from mfgarchon.utils.convergence import sweep_change
 
             # The residual of the map, M_candidate vs M_old -- not the averaged step. The step is
             # exactly alpha * (M_candidate - M_old), so under a decaying alpha it shrinks whether or
@@ -487,7 +487,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
             # default tolerance reported converged=True at sweep 359 with the map residual 3.57e-04
             # on #1914's sigma=0 fixture (#2415). This is
             # #1684 item 7, which FixedPointIterator already measures this way.
-            metrics = calculate_l2_convergence_metrics(U_new, U_old, M_candidate, M_old, integrate, time_step)
+            metrics = sweep_change(U_new, U_old, M_candidate, M_old, integrate, time_step)
             self.l2distu_abs[k] = metrics["l2distu_abs"]
             self.l2distu_rel[k] = metrics["l2distu_rel"]
             self.l2distm_abs[k] = metrics["l2distm_abs"]

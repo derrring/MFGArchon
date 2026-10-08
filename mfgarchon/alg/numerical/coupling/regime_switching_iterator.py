@@ -41,7 +41,7 @@ from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
     fp_solver_sig_params,
     resolve_fp_drift_kwargs,
 )
-from mfgarchon.utils.convergence import calculate_l2_convergence_metrics
+from mfgarchon.utils.convergence import sweep_change
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -537,8 +537,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
             # density change is undefined and the sweep does not converge.
             if all(Ms_new[k] is not None and Ms[k].ndim == Ms_new[k].ndim for k in range(K)):
                 per_regime = [
-                    calculate_l2_convergence_metrics(Us_new[k], Us_full[k], Ms_new[k], Ms[k], integrates[k], dts[k])
-                    for k in range(K)
+                    sweep_change(Us_new[k], Us_full[k], Ms_new[k], Ms[k], integrates[k], dts[k]) for k in range(K)
                 ]
                 error = max(max(c["l2distu_rel"], c["l2distm_rel"]) for c in per_regime)
                 converged, _ = check_convergence_criteria(

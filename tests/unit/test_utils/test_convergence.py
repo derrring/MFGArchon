@@ -27,9 +27,9 @@ from mfgarchon.utils.convergence import (
     RollingConvergenceMonitor,
     SolverTypeDetector,
     _ErrorHistoryTracker,
-    calculate_l2_convergence_metrics,
     create_distribution_monitor,
     create_rolling_monitor,
+    sweep_change,
 )
 
 # =============================================================================
@@ -584,8 +584,8 @@ def test_create_rolling_monitor():
 
 
 @pytest.mark.unit
-def test_calculate_l2_convergence_metrics():
-    """Test calculate_l2_convergence_metrics utility."""
+def test_sweep_change():
+    """Test sweep_change utility (calculate_l2_convergence_metrics before #2555)."""
     u_prev = np.ones((10, 10)) * 1.0
     u_curr = np.ones((10, 10)) * 1.01
     m_prev = np.ones((10, 10)) * 0.5
@@ -593,7 +593,7 @@ def test_calculate_l2_convergence_metrics():
     Dx = 0.1
     Dt = 0.01
 
-    metrics = calculate_l2_convergence_metrics(u_curr, u_prev, m_curr, m_prev, lambda f: f.sum(axis=-1) * Dx, Dt)
+    metrics = sweep_change(u_curr, u_prev, m_curr, m_prev, lambda f: f.sum(axis=-1) * Dx, Dt)
 
     assert "l2distu_abs" in metrics
     assert "l2distm_abs" in metrics
@@ -604,21 +604,21 @@ def test_calculate_l2_convergence_metrics():
 
 
 @pytest.mark.unit
-def test_calculate_l2_convergence_metrics_identical():
+def test_sweep_change_identical():
     """Test L2 metrics are near zero for identical arrays."""
     u = np.random.rand(15, 15)
     m = np.random.rand(15, 15)
     Dx = 0.1
     Dt = 0.01
 
-    metrics = calculate_l2_convergence_metrics(u, u, m, m, lambda f: f.sum(axis=-1) * Dx, Dt)
+    metrics = sweep_change(u, u, m, m, lambda f: f.sum(axis=-1) * Dx, Dt)
 
     assert metrics["l2distu_abs"] < 1e-10
     assert metrics["l2distm_abs"] < 1e-10
 
 
 @pytest.mark.unit
-def test_calculate_l2_convergence_metrics_large_change():
+def test_sweep_change_large_change():
     """Test L2 metrics for large changes."""
     u_prev = np.ones((10, 10))
     u_curr = np.ones((10, 10)) * 2.0  # 100% change
@@ -627,7 +627,7 @@ def test_calculate_l2_convergence_metrics_large_change():
     Dx = 0.1
     Dt = 0.01
 
-    metrics = calculate_l2_convergence_metrics(u_curr, u_prev, m_curr, m_prev, lambda f: f.sum(axis=-1) * Dx, Dt)
+    metrics = sweep_change(u_curr, u_prev, m_curr, m_prev, lambda f: f.sum(axis=-1) * Dx, Dt)
 
     assert metrics["l2distu_abs"] > 0
     assert metrics["l2distm_abs"] > 0

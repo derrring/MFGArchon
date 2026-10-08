@@ -31,7 +31,12 @@ from mfgarchon.core.multi_population import MultiPopulationProblem
 from mfgarchon.core.regime_switching import RegimeSwitchingConfig
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
-from mfgarchon.utils.convergence.convergence_metrics import RELATIVE_CHANGE_FLOOR, l2_change
+from mfgarchon.utils.convergence.convergence_metrics import (
+    RELATIVE_CHANGE_FLOOR,
+    calculate_l2_convergence_metrics,
+    l2_change,
+    sweep_change,
+)
 
 _NX, _NT = 12, 5
 
@@ -202,3 +207,21 @@ def test_below_the_floor_the_relative_change_is_the_absolute_one():
     assert RELATIVE_CHANGE_FLOOR == 1e-12
     assert absolute == pytest.approx(np.sqrt(0.5 * 3 * 4 * 0.1 * 1e-6), rel=1e-12)
     assert relative == absolute
+
+
+@pytest.mark.parametrize("shape", [(_NT + 1, _NX), (_NT + 1, 5, 7)], ids=["1d", "2d"])
+def test_the_deprecated_scalar_spacing_form_is_the_owner_on_a_uniform_measure(shape):
+    """The deprecation's equivalence test: old function against owner, and against the pre-#2555 formula.
+
+    ``calculate_l2_convergence_metrics(..., Dx, Dt)`` is ``sweep_change`` on the measure that weighs every
+    node ``Dx``, which is the ``||diff||_2 * sqrt(Dx * Dt)`` it computed before #2555.
+    """
+    rng = np.random.default_rng(0)
+    U, U0, M, M0 = (rng.standard_normal(shape) for _ in range(4))
+    Dx, Dt = 0.1, 0.04
+    with pytest.warns(DeprecationWarning, match="sweep_change"):
+        old = calculate_l2_convergence_metrics(U, U0, M, M0, Dx, Dt)
+    new = sweep_change(U, U0, M, M0, lambda f: np.sum(f, axis=tuple(range(1, f.ndim))) * Dx, Dt)
+    assert old == pytest.approx(new, rel=1e-13)
+    assert old["l2distu_abs"] == pytest.approx(np.linalg.norm(U - U0) * np.sqrt(Dx * Dt), rel=1e-13)
+    assert old["l2distm_rel"] == pytest.approx(np.linalg.norm(M - M0) / np.linalg.norm(M), rel=1e-13)

@@ -203,7 +203,7 @@ def check_convergence_criteria(
 ) -> tuple[bool, str]:
     """Whether a coupling sweep's change meets the outer tolerance: the one owner of the verdict (#2555).
 
-    The inputs are what ``calculate_l2_convergence_metrics`` returns for the map's output against its
+    The inputs are what ``sweep_change`` returns for the map's output against its
     input, so the pair compared, and the measure it is compared in, are fixed there.
 
     - ``tolerance`` bounds the larger RELATIVE change, ``max(l2distu_rel, l2distm_rel)``

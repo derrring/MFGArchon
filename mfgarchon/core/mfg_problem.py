@@ -2186,7 +2186,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         """The measure this problem integrates over space with, and its name: the one owner (#2555).
 
         ``initial_mass`` reads it, and so does the coupling iterators' convergence norm
-        (``calculate_l2_convergence_metrics``), so the mass a problem reports and the change its outer
+        (``sweep_change``), so the mass a problem reports and the change its outer
         tolerance bounds are measured alike. ``integrate`` reduces the trailing spatial axes.
 
         The name is returned rather than assumed because these branches are genuinely different

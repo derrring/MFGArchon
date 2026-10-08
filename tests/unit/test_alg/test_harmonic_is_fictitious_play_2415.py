@@ -48,7 +48,7 @@ from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.core.model import Conditions, Model
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
-from mfgarchon.utils.convergence import calculate_l2_convergence_metrics
+from mfgarchon.utils.convergence import sweep_change
 
 SWEEPS = 14
 BASE = 0.1
@@ -85,7 +85,7 @@ def _reference(m0: np.ndarray, u_terminal: np.ndarray, hybrid: bool) -> dict[str
     for k in range(SWEEPS):
         U_best = np.asarray(hjb.solve_hjb_system(M, u_terminal, U))
         M_best = np.asarray(fp.solve_fp_system(m0, potential_field=U_best))
-        metrics = calculate_l2_convergence_metrics(U_best, U, M_best, M, integrate, dt)
+        metrics = sweep_change(U_best, U, M_best, M, integrate, dt)
         residual_M.append(metrics["l2distm_rel"])
         residual_U.append(metrics["l2distu_rel"])
         weight = BASE / (k + 1)

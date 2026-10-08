@@ -813,11 +813,11 @@ class BlockIterator(BaseCouplingIterator):
             self.U = preserve_terminal_condition(self.U, self._U_terminal)
 
             # Calculate convergence metrics
-            from mfgarchon.utils.convergence import calculate_l2_convergence_metrics
+            from mfgarchon.utils.convergence import sweep_change
 
             # The block's output against its input, not the damped `self.U - U_old`, which is
             # `relaxation * (U_new - U_old)` and lets the damping factor buy the verdict (#1684 item 7).
-            metrics = calculate_l2_convergence_metrics(U_new, U_old, M_new, M_old, integrate, time_step)
+            metrics = sweep_change(U_new, U_old, M_new, M_old, integrate, time_step)
 
             self.error_history_U.append(metrics["l2distu_rel"])
             self.error_history_M.append(metrics["l2distm_rel"])

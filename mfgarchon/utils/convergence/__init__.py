@@ -9,7 +9,8 @@ Modules:
 - **convergence_metrics.py**: General-purpose utilities
   - DistributionComparator: Wasserstein, KL divergence, moments
   - RollingConvergenceMonitor: Window-based statistical convergence
-  - calculate_l2_convergence_metrics: the change one coupling sweep made, in the problem's measure
+  - calculate_error: Unified L1/L2/Linf error computation
+  - sweep_change, l2_change: the change one coupling sweep made, in the problem's measure (#2555)
   - ConvergenceConfig: Configuration dataclass for solver integration
 
 - **convergence_monitors.py**: MFG-specific monitors
@@ -23,8 +24,9 @@ Modules:
 
 Usage:
     # General-purpose convergence checking
-    from mfgarchon.utils.convergence import RollingConvergenceMonitor
+    from mfgarchon.utils.convergence import calculate_error, RollingConvergenceMonitor
 
+    error = calculate_error(u_new, u_old, dx=0.01, norm='l2')
     monitor = RollingConvergenceMonitor(window_size=10)
 
     # MFG-specific monitoring
@@ -63,10 +65,13 @@ from .convergence_metrics import (
     DistributionComparator,
     MomentConvergenceMonitor,
     RollingConvergenceMonitor,
+    calculate_error,
     calculate_l2_convergence_metrics,
     # Factory
     create_moment_monitor,
     create_rolling_monitor,
+    l2_change,
+    sweep_change,
 )
 
 # =============================================================================
@@ -95,7 +100,10 @@ __all__ = [
     "DistributionComparator",
     "MomentConvergenceMonitor",
     "RollingConvergenceMonitor",
+    "calculate_error",
     "calculate_l2_convergence_metrics",
+    "l2_change",
+    "sweep_change",
     "ConvergenceConfig",
     "create_moment_monitor",
     "create_rolling_monitor",

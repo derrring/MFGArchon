@@ -34,7 +34,7 @@ from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
 from mfgarchon.alg.numerical.coupling.graph_coupling import _get_time_slice
 from mfgarchon.alg.numerical.coupling.source_composition import _call_problem_source, _problem_hjb_source_terms
 from mfgarchon.types.callable_protocols import evaluate_solver_source
-from mfgarchon.utils.convergence import calculate_l2_convergence_metrics
+from mfgarchon.utils.convergence import sweep_change
 
 from .fixed_point_utils import diverged_value_function
 
@@ -293,9 +293,7 @@ class GraphMFGSolver(BaseCouplingIterator):
             # change in its own problem's measure, and the criterion takes the max over nodes (#2555).
             if all(Ms_new[k] is not None and Ms_new[k].shape == Ms_expanded[k].shape for k in range(N)):
                 per_node = [
-                    calculate_l2_convergence_metrics(
-                        Us_new[k], Us_full[k], Ms_new[k], Ms_expanded[k], integrates[k], dts[k]
-                    )
+                    sweep_change(Us_new[k], Us_full[k], Ms_new[k], Ms_expanded[k], integrates[k], dts[k])
                     for k in range(N)
                 ]
                 error = max(max(c["l2distu_rel"], c["l2distm_rel"]) for c in per_node)

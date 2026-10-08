@@ -7,7 +7,8 @@ not just MFG problems. It includes:
 
 - DistributionComparator: Wasserstein, KL divergence, moments
 - RollingConvergenceMonitor: Window-based statistical convergence (renamed from StochasticConvergenceMonitor)
-- calculate_l2_convergence_metrics: the change one coupling sweep made, in the problem's measure
+- calculate_error: Unified error computation (L1, L2, Linf)
+- sweep_change: the change one coupling sweep made, in the problem's measure
 - ConvergenceConfig: Configuration dataclass for future solver integration
 
 These utilities can be used for standalone HJB, FP, heat equation,
@@ -24,6 +25,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 import numpy as np
+
+from mfgarchon.utils.deprecation import deprecated
 
 # =============================================================================
 # DISTRIBUTION COMPARISON UTILITIES
@@ -294,6 +297,57 @@ class RollingConvergenceMonitor:
 # =============================================================================
 
 
+def calculate_error(
+    new: np.ndarray,
+    old: np.ndarray,
+    dx: float = 1.0,
+    dt: float = 1.0,
+    norm: Literal["l1", "l2", "linf"] = "l2",
+) -> dict[str, float]:
+    """
+    Calculate error between arrays with multiple norm options.
+
+    Args:
+        new, old: Arrays to compare
+        dx, dt: Grid spacing (for proper scaling in L1/L2 norms)
+        norm: 'l1', 'l2', or 'linf'
+
+    Returns:
+        dict with 'absolute' and 'relative' errors
+
+    Notes:
+        - L1: ||f||_1 = integral(|f|)dx  (mass/total variation)
+        - L2: ||f||_2 = sqrt(integral(f^2)dx)  (energy norm)
+        - Linf: ||f||_inf = max|f|  (pointwise, no grid scaling)
+    """
+    diff = new - old
+
+    if norm == "l1":
+        # L1 norm with grid scaling
+        scale = np.sqrt(dx * dt)
+        abs_error = float(np.sum(np.abs(diff)) * scale)
+        norm_new = float(np.sum(np.abs(new)) * scale)
+    elif norm == "l2":
+        # L2 norm with grid scaling
+        scale = np.sqrt(dx * dt)
+        abs_error = float(np.linalg.norm(diff) * scale)
+        norm_new = float(np.linalg.norm(new) * scale)
+    elif norm == "linf":
+        # Linf norm - no grid scaling
+        abs_error = float(np.max(np.abs(diff)))
+        norm_new = float(np.max(np.abs(new)))
+    else:
+        raise ValueError(f"Unknown norm: {norm}. Use 'l1', 'l2', or 'linf'.")
+
+    rel_error = abs_error / norm_new if norm_new > 1e-12 else abs_error
+
+    return {
+        "absolute": abs_error,
+        "relative": rel_error,
+        "norm": norm,
+    }
+
+
 #: Below this norm of the map's output the relative change is undefined, and the absolute change
 #: stands in for it -- so a field that is identically zero converges on its absolute change.
 RELATIVE_CHANGE_FLOOR = 1e-12
@@ -315,7 +369,7 @@ def l2_change(
     return absolute, relative
 
 
-def calculate_l2_convergence_metrics(
+def sweep_change(
     U_map: np.ndarray,
     U_old: np.ndarray,
     M_map: np.ndarray,
@@ -336,10 +390,41 @@ def calculate_l2_convergence_metrics(
 
     Returns:
         ``l2distu_abs``, ``l2distu_rel``, ``l2distm_abs``, ``l2distm_rel``.
+
+    Example:
+        >>> integrate = problem.spatial_measure().integrate
+        >>> metrics = sweep_change(U_new, U_old, M_new, M_old, integrate, problem.dt)
+        >>> converged, reason = check_convergence_criteria(
+        ...     metrics["l2distu_rel"], metrics["l2distm_rel"], metrics["l2distu_abs"], metrics["l2distm_abs"], 1e-6
+        ... )
     """
     u_abs, u_rel = l2_change(U_map, U_old, integrate, dt)
     m_abs, m_rel = l2_change(M_map, M_old, integrate, dt)
     return {"l2distu_abs": u_abs, "l2distu_rel": u_rel, "l2distm_abs": m_abs, "l2distm_rel": m_rel}
+
+
+@deprecated(
+    since="v0.22.0",
+    replacement=(
+        "Use sweep_change(U_map, U_old, M_map, M_old, problem.spatial_measure().integrate, dt), which measures "
+        "the change in the problem's own measure rather than with one scalar spacing (#2555)."
+    ),
+    removal_blockers=["migration_docs"],
+    deprecated_on="2026-10-08",
+)
+def calculate_l2_convergence_metrics(
+    U_new: np.ndarray,
+    U_old: np.ndarray,
+    M_new: np.ndarray,
+    M_old: np.ndarray,
+    Dx: float,
+    Dt: float,
+) -> dict[str, float]:
+    """Deprecated: :func:`sweep_change` on the uniform measure of one scalar spacing ``Dx``.
+
+    Every node weighs ``Dx``, so the values are the pre-#2555 ``||diff||_2 * sqrt(Dx * Dt)`` and its ratio.
+    """
+    return sweep_change(U_new, U_old, M_new, M_old, lambda f: np.reshape(f, (np.shape(f)[0], -1)).sum(axis=-1) * Dx, Dt)
 
 
 # =============================================================================
