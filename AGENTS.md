@@ -407,10 +407,11 @@ Do **not** edit: `mfgarchon/__init__.py` (reads `importlib.metadata`), `workflow
 - **Changelog per PR (#1521)**: add a `changelog.d/<slug>.<category>.md` fragment (category ∈ `added/changed/deprecated/removed/fixed`) — do **not** edit `CHANGELOG.md`. Fragments are separate files, so PRs never conflict on the changelog (batched or not). See `changelog.d/README.md`.
 - **Before merge**: the **local** full suite is authoritative — `./scripts/local_ci.sh` (see *Pre-commit / pre-merge checks*). GitHub's PR checks are a fast tier only and green there is **not** sufficient.
 - **Review before merge (MANDATORY)**: run an **independent adversarial review** of the PR before merging — a fresh reviewer (subagent / cross-model / worktree-isolated), *not* just author self-review. Merge only when it returns MERGE-OK, or after fixing every blocker it raises and re-reviewing. Local-green ≠ correct. A review blocks only on substance (user ruling, 2026-10-08):
-  - **Blocker**: a behaviour defect in the diff; a user-facing false statement (docs, error message, changelog) that would lead a user to solve a different problem; or a claimed fix with no pin that goes red without it. Fix it, then re-review.
-  - **Must-fix, no re-review**: a false number or claim in a test docstring, a comment or the PR body. Correct it, re-run the check, state the command and its output in the PR, and merge without another review round.
+  - **Blocker**: a behaviour defect in the diff; a user-facing false statement (docs, error message, changelog) that would lead a user to solve a different problem; or a claimed fix with no pin that goes red without it. Fix it, then re-review. For a user-facing false statement, the re-review reads only the corrected text, since a corrected statement needs a second reader too. It counts as the next of the PR's three reviews.
+  - **Must-fix, no re-review**: a false number or claim in a test docstring, a comment or the PR body, or in user-facing text where it would not lead a user to solve a different problem. Correct it, re-run the check, state the command and its output in the PR, and merge without another review round.
   - **Should-fix**: wording, clarity, style. Fix it or file it; it never blocks.
-  - A prose-only fix is not a diff change that triggers the next review.
+  - A review whose findings are all must-fix or should-fix returns MERGE-OK, and the must-fix corrections are a condition of merging.
+  - A prose-only must-fix or should-fix correction is not a diff change that triggers the next review.
 
 ### GitHub issue/PR management ⚠️ MANDATORY
 

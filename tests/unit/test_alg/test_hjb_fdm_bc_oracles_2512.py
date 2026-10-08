@@ -4,11 +4,14 @@ One cell per BC type and dimension, and in 2-D one per path of the ghost buffer:
 `_apply_linear_reflection`, a BC with a segment per face `_apply_ghost_for_face`.
 
 **Each fixture is chosen so that rival wall treatments give different numbers.**
-- Data that carry a value differ at the two walls of an axis.
-- Where they carry none (no-flux, periodic), the solution is not even about the midline, nor about the seam.
-- The optimal drift ``-grad u`` points into every data-carrying wall, which is what carries the wall data
-  into the solution. With it pointing away, swapping a Neumann wall's data left the error unchanged to the
-  printed digit (#2512 census).
+- In the per-face cells, data that carry a value differ at the two walls of an axis. A uniform BC carries one
+  value on every wall, so its cells rely on the solution instead.
+- Where the data carry none (no-flux, periodic), the solution is not even about the midline, nor about the
+  seam.
+- The optimal drift ``-grad u`` points into every Neumann wall, which is what carries a flux datum into the
+  solution. With it pointing away, swapping a Neumann wall's data left the error unchanged to the printed
+  digit (#2512, comment 6042778010). Dirichlet walls need no drift condition: the wall value is asserted
+  exactly.
 
 **Each cell asserts more than a convergence rate.** Wall closures that are wrong at O(h) keep the rate and
 move the level -- the cell-centred no-flux mirror (#1935) LOWERS it -- so each cell asserts:
@@ -211,7 +214,8 @@ CELLS: dict[str, Cell] = {
         slopes={"x_min": 0.0, "x_max": 0.0},
     ),
     "periodic_1d": Cell(
-        # At the seam u = 1/2 and u_x != 0, so neither an odd reflection nor a mirror reproduces it. Time and
+        # At the seam u != 0 (1/2 at t = T, decaying) and u_x != 0, so neither an odd reflection nor a mirror
+        # reproduces it. Time and
         # space errors have opposite signs here, so dt ~ h.
         lambda: periodic_bc(dimension=1),
         Exact(T1, D1, [(1.0, ("exp", 4 * D1 * P**2), [_sin(2 * P)]), (0.5, ("exp", 16 * D1 * P**2), [_cos(4 * P)])]),
