@@ -728,6 +728,8 @@ scalar (§ *Volatility and diffusion*), and the public API names it `volatility`
 | per-solve `volatility_field`, `volatility_matrix`, `diffusion_field`, `tensor_diffusion_field` | `volatility=` with `volatility_kind=` — the per-solve keyword always carried the volatility |
 | `problem.volatility_field`, `problem.diffusion_field` | `problem.volatility`, `problem.diffusion` |
 | `obstacle=` | `state_penalty`, or `constraint=ObstacleConstraint(...)` |
+| `MFGComponents(potential_func=)`, `problem.f_potential` | the Hamiltonian's `potential=`, e.g. `SeparableHamiltonian(potential=...)`. It was stored and no solver added it to $H$ (#2554) |
+| `MFGProblem(gamma=)`, `problem.gamma` | the Hamiltonian's `coupling=` (with `coupling_dm=`). It was stored and nothing read it (#2554) |
 | `damping_factor` on `FixedPointIterator` | `relaxation` |
 | `OptimizationSense`, `sense`, `sense_sign` | nothing — § *The library minimises* |
 | `AdjointConsistentProvider`, `NormalDriftProvider` | nothing — removed |

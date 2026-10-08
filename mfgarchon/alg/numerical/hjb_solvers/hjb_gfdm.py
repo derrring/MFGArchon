@@ -1169,7 +1169,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         self._D_grad: list | None = None  # Gradient differentiation matrices
         self._D_lap: Any | None = None  # Laplacian differentiation matrix
         self._cached_derivative_weights: dict | None = None  # Pre-computed GFDM weights
-        self._f_potential_warned: bool = False  # One-time warning for unused f_potential (Issue #766)
 
     def _compute_n_spatial_grid_points(self) -> int:
         """Compute total number of spatial grid points from geometry."""
@@ -2267,9 +2266,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         Compute HJB residual using pre-computed derivatives (per-point path).
 
         Per-point path via problem.H(). The potential V(x) comes from the
-        Hamiltonian class (e.g., SeparableHamiltonian._potential), NOT from
-        problem.f_potential. Active for custom problems (is_custom=True) or
-        when QP monotonicity is enabled. See Issue #766.
+        Hamiltonian class (e.g., SeparableHamiltonian._potential). Active for custom problems
+        (is_custom=True) or when QP monotonicity is enabled. See Issue #766.
         """
         from mfgarchon.core.derivatives import from_multi_index_dict
 
@@ -3773,21 +3771,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         #    vectorized residual branch that ran only for is_custom=False mock problems.)
         H_class = getattr(self.problem, "hamiltonian_class", None)
         use_hamiltonian_batch = H_class is not None and self.qp_optimization_level == "none"
-
-        # Warn if f_potential is set but won't be used (Issue #766)
-        if not self._f_potential_warned:
-            f_pot = getattr(self.problem, "f_potential", None)
-            if f_pot is not None and np.any(f_pot != 0):
-                warnings.warn(
-                    "f_potential is set but will be ignored because the per-point "
-                    "Hamiltonian path is active (is_custom=True or QP mode). "
-                    "The potential V(x) comes from the Hamiltonian class instead. "
-                    "Use SeparableHamiltonian(potential=...) to set the potential. "
-                    "See Issue #766.",
-                    UserWarning,
-                    stacklevel=2,
-                )
-                self._f_potential_warned = True
 
         # Compute actual time for batch Hamiltonian calls
         current_time = time_idx * (self.problem.T / self.problem.Nt)

@@ -1,0 +1,9 @@
+- **`MFGComponents(potential_func=)` and `MFGProblem(gamma=)` are refused** (Issue #2554). Both were accepted and stored, and no solver added either to H, so a solve returned the answer to a problem without them.
+  - Measured on the default HJB-FDM solve (41 points on [0, 1], no-flux, T = 0.5, Nt = 20):
+    - V = 2 through `potential_func` moved u(0) by 0.0. The same V through `SeparableHamiltonian(potential=)` moved it by 1.0 = V T.
+    - `gamma` 5 against 0, at m = 2, moved it by 0.0.
+  - Each now raises `TypeError` naming the channel that reaches H:
+    - for a potential, the Hamiltonian's `potential=`, e.g. `SeparableHamiltonian(potential=...)`;
+    - for a density term, its `coupling=` with `coupling_dm=`.
+  - **Removed, as only those inputs fed them:** `problem.f_potential`, `problem.gamma`, `MFGProblem.get_potential_at_time`, and HJB-GFDM's warning that `f_potential` was being ignored.
+  - The legacy keyword `MFGProblem(potential=)` is still refused, and its message now names `SeparableHamiltonian(potential=...)` instead of the retired `MFGComponents.potential_func`.

@@ -97,7 +97,6 @@ def test_mfg_components_defaults():
     assert components.hamiltonian is H
 
     # Optional fields have None/empty defaults
-    assert components.potential_func is None
     assert components.m_initial is None
     assert components.u_final is None
     assert components.boundary_conditions is None
@@ -232,49 +231,6 @@ def test_mfg_problem_temporal_grid():
 # ===================================================================
 # Test Custom Components
 # ===================================================================
-
-
-@pytest.mark.unit
-def test_mfg_problem_with_custom_potential():
-    """Test MFGProblem with custom potential function."""
-
-    def custom_potential(t, x):
-        return x**2
-
-    geometry = default_geometry(bounds=[(0.0, 1.0)], Nx_points=[11])
-    # Issue #670: must provide m_initial and u_final
-    # Issue #673: Hamiltonian required
-    components = MFGComponents(
-        hamiltonian=default_hamiltonian(),
-        potential_func=custom_potential,
-        m_initial=lambda x: 1.0,  # Uniform
-        u_terminal=lambda x: 0.0,  # Zero terminal cost
-    )
-    problem = MFGProblem(geometry=geometry, components=components)
-
-    assert problem.is_custom is True
-    assert problem.components is not None
-    # Check potential was set using custom function
-    expected = problem.geometry.get_spatial_grid() ** 2
-    # Flatten both arrays for comparison (problem stores as 2D column vector)
-    assert np.allclose(np.ravel(problem.f_potential), np.ravel(expected))
-
-
-@pytest.mark.unit
-def test_mfg_problem_accepts_a_time_first_potential_func_whatever_its_body():
-    """#2402 review: validation tried positional (x, m), (0.0, x, m), (x), refusing valid (t, x) bodies.
-
-    It now validates through the potential's binding (#2375 ruling 8), the call the solve makes.
-    """
-    geometry = default_geometry(bounds=[(0.0, 1.0)], Nx_points=[11])
-    components = MFGComponents(
-        hamiltonian=default_hamiltonian(),
-        potential_func=lambda t, x: float(t) + x**2,
-        m_initial=lambda x: 1.0,
-        u_terminal=lambda x: 0.0,
-    )
-    problem = MFGProblem(geometry=geometry, components=components)
-    assert np.allclose(np.ravel(problem.f_potential), np.ravel(problem.geometry.get_spatial_grid()) ** 2)
 
 
 @pytest.mark.unit
@@ -595,19 +551,6 @@ def test_get_boundary_conditions_custom():
 # ===================================================================
 # Test Getter Methods
 # ===================================================================
-
-
-@pytest.mark.unit
-def test_get_potential_at_time():
-    """Test get_potential_at_time returns array."""
-    problem = create_test_problem(Nt=20)
-
-    potential = problem.get_potential_at_time(t_idx=5)
-
-    assert isinstance(potential, np.ndarray)
-    assert len(potential) == problem.geometry.get_grid_shape()[0]  # Nx+1 points
-    # Should match stored potential
-    assert np.allclose(potential, problem.f_potential)
 
 
 @pytest.mark.unit
