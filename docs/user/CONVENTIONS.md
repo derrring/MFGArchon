@@ -608,17 +608,20 @@ axes and refused. The sequence form is the convention, and library code uses it.
 **The outer coupling tolerance bounds a relative change, measured in the discrete $L^2$ norm** whose
 measure is the geometry's quadrature, the owner above, not a scalar `dx` (ruled 2026-10-08): the change
 between iterates, relative to their size, for $u$ and for $m$. There is no absolute criterion unless
-the caller asks for one with a keyword. *Not yet met (#2429, #2555): the coupling iterators also, or
+the caller asks for one. *Not yet met (#2429, #2555): the coupling iterators also, or
 only, test an absolute change, measured with the first axis's spacing alone, with a unit weight on a
 mesh, or as a max-norm. So the same tolerance does not mean the same thing across dimensions or across
 iterators. #2429 lists them.*
 
 **The inner Newton tolerance bounds the grid-scaled residual norm**, and
-`base_hjb.hjb_residual_norm` is its owner on every path: 1-D, n-D and GFDM (ruled 2026-10-08). So a
-tolerance means the same thing under refinement and across schemes. *Not yet met (#2429, #1885): the
-n-D FDM and GFDM Newton paths compare an unscaled `np.linalg.norm(residual)` against the same
-`DEFAULT_NEWTON_TOLERANCE`; and the owner takes a scalar `dx`, which can carry a uniform grid's cell
-volume but not a graded grid's or a scattered point set's weights.*
+`base_hjb.hjb_residual_norm` is its owner on every Newton path (ruled 2026-10-08). So a tolerance means
+the same thing under refinement and across schemes. *Not yet met (#2429, #1885): the owner's one caller
+is the 1-D FDM path's `newton_hjb_step`. The n-D FDM and GFDM Newton paths compare an unscaled
+`np.linalg.norm(residual)` against the same `DEFAULT_NEWTON_TOLERANCE`. The weak-form Newton path, which
+`HJBFEMSolver` and `MeshlessGalerkinHJBSolver` take with `use_newton=True`, stops on the mass-matrix norm
+of the Newton step rather than on a residual, against its own default of `1e-6`. And the owner takes a
+scalar `dx`, which can carry a uniform grid's cell volume but not a graded grid's or a scattered point
+set's weights.*
 
 ### A kernel density bandwidth is a factor
 
@@ -675,24 +678,30 @@ computational domain**, at every wall, in every dimension.
 **$L = D - A$, positive semidefinite, with $D$ the weighted degree** $D_{ii} = \sum_j w_{ij}$, the node
 strength (ruled 2026-10-08). It enters diffusion with a minus sign:
 $\partial_t m = -\tfrac{\sigma^2}{2} L m + \dots$, so the graph Laplace operator is $\Delta_G = -L$. The
-owner is to be designated: the ruling names none, and the user's ruling on it is pending. The
-implementations of `SupportsGraphLaplacian`, the network backends' `get_laplacian_matrix` and the
-network problem's `get_laplacian_matrix` each form this weighted $D - A$ today. *Not yet met (#2429,
-#1951): `node_degrees` returns the combinatorial degree on the igraph and networkit backends and the
-strength on networkx; `LaplacianCoupling.compute_fp_source` returns $+\kappa (Lm)_i$ as an FP source
-term, so it enters as $\partial_t m = +\kappa L m$, the opposite sign; the network FP solver assembles
-$-\tfrac{\sigma^2}{2} L m$ inline from edge weights rather than reading $L$, and its inline comment's sign
-contradicts its arithmetic; and the protocol's docstring writes the diffusion as $-\sigma^2 L m$,
-without the $\tfrac12$.*
+owner is one function, `graph_laplacian(adjacency)` in `geometry/graph/laplacian.py`, which forms
+$L = D - A$ from a weighted adjacency matrix (ruled 2026-10-08). `SupportsGraphLaplacian` stays the
+interface consumers type against; it is not the owner. Every code path that forms $L$ calls the owner
+and supplies only its adjacency. *Not yet met (#2429, #1951): the owner does not exist yet, and the
+geometry getters, `NetworkData`, the network backends and `LaplacianCoupling` each form $D - A$
+themselves (#2429 lists the sites); `node_degrees` returns the combinatorial degree on the igraph and
+networkit backends and the strength on networkx; `LaplacianCoupling.compute_fp_source`
+returns $+\kappa (Lm)_i$ as an FP source term, so it enters as $\partial_t m = +\kappa L m$, the
+opposite sign; the network FP solver assembles $-\tfrac{\sigma^2}{2} L m$ inline from edge weights
+rather than reading $L$, and its inline comment's sign contradicts its arithmetic; and the protocol's
+docstring writes the diffusion as $-\sigma^2 L m$, without the $\tfrac12$.*
 
 ### Particles at a wall
 
 **One owner applies a particle's wall rule for each boundary type** (reflect, absorb or wrap), and a
-boundary helper never mutates the caller's array (ruled 2026-10-08). The owner is the module #521
-consolidated, `geometry/boundary/corner/position.py`: `reflect_positions` and `absorb_positions`, with
-`wrap_positions` deferring to `geometry/boundary/periodic`. *Not yet met (#2429, #2550): the particle
-solver absorbs through `ParticleApplicator`'s own logic rather than `absorb_positions`, and its 1-D GPU
-path uses a separate copy in `utils/particle_utils.py`. No helper measured mutates the caller's array.*
+boundary helper never mutates the caller's array (ruled 2026-10-08). Reflection is owned by
+`reflect_positions` in `geometry/boundary/corner/position.py`, the module #521 consolidated, and
+wrapping by `wrap_positions` in `geometry/boundary/periodic.py`. *Not yet met (#2429, #2550): absorption
+has no owner function. `corner.absorb_positions` clamps a particle to the wall and keeps it, so it must
+not be used for an absorbing wall, where the mass that leaves is lost through the wall (§ 9). The only
+implementation that absorbs is `ParticleApplicator.apply`, which removes the particle.
+`ParticleApplicator` wraps through `corner.wrap_positions`, a deprecated shim for the periodic owner, and
+the particle solver's 1-D GPU path uses a separate copy in `utils/particle_utils.py`. No helper measured
+mutates the caller's array.*
 
 ### Pointwise and bulk must agree
 
