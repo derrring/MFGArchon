@@ -260,8 +260,8 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         name="picard_criterion_reads_as_or",
         path="mfgarchon/alg/numerical/coupling/fixed_point_utils.py",
-        old="    if max_rel_err < tolerance and absolute_met:",
-        new="    if max_rel_err < tolerance or absolute_met:  # MUTATED: conjunction -> disjunction",
+        old="    if max_rel_err < tol_picard and absolute_met:",
+        new="    if max_rel_err < tol_picard or absolute_met:  # MUTATED: conjunction -> disjunction",
         owner="The outer coupling tolerance bounds the RELATIVE L2 change, and an absolute bound applies only when `absolute_tolerance` is given -- then BOTH must hold (CONVENTIONS.md section 9, #2555). Owner: check_convergence_criteria in fixed_point_utils.py, read by all six coupling iterators. RETARGETED from the unconditional relative-AND-absolute criterion #2555 retired: with no absolute tolerance the disjunction accepts any relative change.",
         verify="check_convergence_criteria(1.0, 1.0, 1e-9, 1e-9, 1e-6)[0]",
     ),

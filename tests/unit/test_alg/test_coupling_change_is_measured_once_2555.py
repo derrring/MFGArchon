@@ -41,10 +41,25 @@ from mfgarchon.utils.convergence.convergence_metrics import (
 _NX, _NT = 12, 5
 
 
-def _problem() -> MFGProblem:
-    """A 1-D coupled problem whose map moves: a bump of mass 1 drifting toward a terminal-cost well."""
+def _problem(data: str = "moving") -> MFGProblem:
+    """A 1-D coupled problem on 12 points, with one of five data sets.
+
+    - ``moving``: a bump of mass 1 drifting toward a terminal-cost well; both fields move.
+    - ``heavy``: mass 10 with coupling 0.1 m, so f(m) and the dynamics are ``moving``'s: the relative
+      change is the same and the absolute change ten times larger.
+    - ``static_u``: the bump with no coupling and no terminal cost, so u = 0 exactly and only m moves.
+    - ``static_m``: a uniform density with coupling 5 m and terminal cost 1, so u = 1 + 5 (T - t) is flat,
+      m never moves, and only u moves. The terminal row anchors u's norm away from 0, so a damped
+      step's relative size does not divide its damping factor back out.
+    - ``static``: a uniform density with no coupling and no terminal cost: neither field moves.
+    """
     x = np.linspace(0.0, 1.0, _NX)
     mass = np.sum(np.exp(-30 * (x - 0.3) ** 2) * np.r_[0.5, np.ones(_NX - 2), 0.5]) / (_NX - 1)
+    bump = lambda x: np.exp(-30 * (np.asarray(x, dtype=float) - 0.3) ** 2) / mass  # noqa: E731
+    flat = lambda x: 1.0 + 0.0 * np.asarray(x, dtype=float)  # noqa: E731
+    well = lambda x: (np.asarray(x, dtype=float) - 0.7) ** 2  # noqa: E731
+    coupled = data in ("moving", "heavy", "static_m")
+    c = {"heavy": 0.1, "static_m": 5.0}.get(data, 1.0)
     return MFGProblem(
         geometry=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[_NX], boundary_conditions=no_flux_bc(dimension=1)),
         T=0.2,
@@ -52,55 +67,79 @@ def _problem() -> MFGProblem:
         volatility=0.3,
         components=MFGComponents(
             hamiltonian=SeparableHamiltonian(
-                control_cost=QuadraticControlCost(control_cost=1.0), coupling=lambda m: m, coupling_dm=lambda m: 1.0
+                control_cost=QuadraticControlCost(control_cost=1.0),
+                coupling=(lambda m: c * m) if coupled else (lambda m: 0.0 * np.asarray(m)),
+                coupling_dm=(lambda m: c) if coupled else (lambda m: 0.0 * np.asarray(m)),
             ),
-            u_terminal=lambda x: (np.asarray(x, dtype=float) - 0.7) ** 2,
-            m_initial=lambda x: np.exp(-30 * (np.asarray(x, dtype=float) - 0.3) ** 2) / mass,
+            u_terminal=well
+            if data in ("moving", "heavy")
+            else (lambda x: (1.0 if data == "static_m" else 0.0) + 0.0 * np.asarray(x)),
+            m_initial={"heavy": lambda x: 10.0 * bump(x)}.get(data, bump if data in ("moving", "static_u") else flat),
         ),
     )
 
 
-def _solve(kind: str, relaxation: float, tolerance: float, absolute_tolerance: float | None) -> bool:
-    """Run one coupling iterator for at most 3 sweeps and return its verdict."""
+def _solve(
+    kind: str,
+    relaxation: float,
+    tolerance: float,
+    absolute_tolerance: float | None,
+    data: str = "moving",
+    mixed: bool = False,
+    sweeps: int = 3,
+) -> bool:
+    """Run one coupling iterator for at most ``sweeps`` sweeps and return its verdict.
+
+    ``mixed`` gives a multi-field iterator one ``static`` field and the others ``data``, with no coupling
+    between them, so the larger field change is the others'.
+    """
+    fields = (
+        (lambda n: [_problem("static")] + [_problem(data) for _ in range(n - 1)])
+        if mixed
+        else (lambda n: [_problem(data) for _ in range(n)])
+    )
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         logging.disable(logging.WARNING)
         try:
             if kind in ("fixed_point", "block", "fictitious_play"):
-                p = _problem()
+                p = _problem(data)
                 hjb, fp = HJBFDMSolver(p), FPFDMSolver(p)
                 if kind == "fixed_point":
                     it = FixedPointIterator(p, hjb, fp, relaxation=relaxation)
-                    r = it.solve(max_iterations=3, tolerance=tolerance, absolute_tolerance=absolute_tolerance)
+                    r = it.solve(max_iterations=sweeps, tolerance=tolerance, absolute_tolerance=absolute_tolerance)
                 elif kind == "block":
                     it = BlockIterator(p, hjb, fp, method="gauss_seidel", relaxation=relaxation)
                     r = it.solve(
-                        max_iterations=3, tolerance=tolerance, absolute_tolerance=absolute_tolerance, verbose=False
+                        max_iterations=sweeps, tolerance=tolerance, absolute_tolerance=absolute_tolerance, verbose=False
                     )
                 else:
                     r = FictitiousPlayIterator(p, hjb, fp).solve(
-                        max_iterations=3, tolerance=tolerance, absolute_tolerance=absolute_tolerance
+                        max_iterations=sweeps, tolerance=tolerance, absolute_tolerance=absolute_tolerance
                     )
                 return bool(r.converged)
             if kind == "multi_population":
-                ps = [_problem(), _problem()]
+                ps = fields(2)
                 multi = MultiPopulationProblem(populations=ps, population_names=["a", "b"])
                 it = MultiPopulationIterator(
                     multi, [HJBFDMSolver(q) for q in ps], [FPFDMSolver(q) for q in ps], relaxation=relaxation
                 )
                 return bool(
-                    it.solve(max_iterations=3, tolerance=tolerance, absolute_tolerance=absolute_tolerance).converged
+                    it.solve(
+                        max_iterations=sweeps, tolerance=tolerance, absolute_tolerance=absolute_tolerance
+                    ).converged
                 )
             if kind == "graph":
-                ps = [_problem() for _ in range(3)]
+                ps = fields(3)
                 adjacency = np.array([[0, 1, 1], [1, 0, 1], [1, 1, 0]], dtype=float)
+                strength = 0.0 if mixed else 1.0
                 return (
                     GraphMFGSolver(
                         ps,
-                        AdjacencyCoupling(adjacency, alpha=0.05, beta=0.02),
+                        AdjacencyCoupling(adjacency, alpha=0.05 * strength, beta=0.02 * strength),
                         [HJBFDMSolver(q) for q in ps],
                         [FPFDMSolver(q) for q in ps],
-                        max_iterations=3,
+                        max_iterations=sweeps,
                         tolerance=tolerance,
                         damping=relaxation,
                         absolute_tolerance=absolute_tolerance,
@@ -109,14 +148,17 @@ def _solve(kind: str, relaxation: float, tolerance: float, absolute_tolerance: f
                     .converged
                 )
             assert kind == "regime"
-            ps = [_problem(), _problem()]
+            ps = fields(2)
+            # A symmetric generator moves no mass between two identical densities; none at all for `mixed`.
+            rate = 0.0 if mixed else (0.1 if data == "static_m" else None)
+            q = np.array([[-0.1, 0.1], [0.2, -0.2]]) if rate is None else np.array([[-rate, rate], [rate, -rate]])
             return (
                 RegimeSwitchingIterator(
                     ps,
-                    RegimeSwitchingConfig(transition_matrix=np.array([[-0.1, 0.1], [0.2, -0.2]])),
-                    [HJBFDMSolver(q) for q in ps],
-                    [FPFDMSolver(q) for q in ps],
-                    max_iterations=3,
+                    RegimeSwitchingConfig(transition_matrix=q),
+                    [HJBFDMSolver(q_) for q_ in ps],
+                    [FPFDMSolver(q_) for q_ in ps],
+                    max_iterations=sweeps,
                     tolerance=tolerance,
                     damping=relaxation,
                     absolute_tolerance=absolute_tolerance,
@@ -152,11 +194,104 @@ def test_damping_cannot_buy_the_verdict(kind):
 def test_an_absolute_bound_applies_only_when_asked_for(kind):
     """Each iterator stops on the relative change alone, and on both when ``absolute_tolerance`` is set.
 
-    At relaxation 1 every iterator's relative change falls below 0.5 by the third sweep on this
-    fixture; an absolute bound of 1e-12 is not met by then.
+    On the ``heavy`` data at relaxation 1, every iterator's relative change is below 0.5 by sweep 2
+    (0.379 for the single-pair iterators; regime measures from its second sweep), while their absolute
+    change there is 2.39. So an iterator that compared the absolute change by default,
+    against the same tolerance, would not stop within two sweeps.
     """
-    assert _solve(kind, relaxation=1.0, tolerance=0.5, absolute_tolerance=None) is True
-    assert _solve(kind, relaxation=1.0, tolerance=0.5, absolute_tolerance=1e-12) is False
+    assert _solve(kind, relaxation=1.0, tolerance=0.5, absolute_tolerance=None, data="heavy", sweeps=2) is True
+    assert _solve(kind, relaxation=1.0, tolerance=0.5, absolute_tolerance=1e-12, data="heavy", sweeps=2) is False
+
+
+@pytest.mark.parametrize(
+    ("kind", "data"),
+    [
+        *[pytest.param(kind, "static_u", id=f"{kind}-only_m_moves") for kind in _DAMPED if kind != "regime"],
+        *[pytest.param(kind, "static_m", id=f"{kind}-only_u_moves") for kind in _DAMPED if kind != "multi_population"],
+    ],
+)
+def test_each_field_is_measured_before_damping(kind, data):
+    """#1684 item 7, one field at a time, which is the shape the multi-population defect had.
+
+    One field is static, its map change exactly 0 (u = 0, or a uniform m that never moves), and the
+    other moves by about 0.2 (m) or 1 (u) relative per sweep. At relaxation 0.01 the moving field's
+    damped step is a hundredth of that, so an iterator that measured only that field's damped step
+    would stop at a tolerance of 0.1. A pin that damps both fields at once cannot see a one-field revert.
+
+    Two cases have no damped half to revert: `MultiPopulationIterator` never damps u, and
+    `RegimeSwitchingIterator` takes its first sweep's density undamped, so with u static its density
+    is at its fixed point from then on.
+    """
+    assert _solve(kind, relaxation=0.01, tolerance=0.1, absolute_tolerance=None, data=data) is False
+
+
+@pytest.mark.parametrize(
+    ("kind", "data"),
+    [
+        pytest.param("graph", "static_u", id="graph-m_moves"),
+        pytest.param("graph", "static_m", id="graph-u_moves"),
+        pytest.param("regime", "static_m", id="regime-u_moves"),
+    ],
+)
+def test_the_largest_field_change_decides(kind, data):
+    """A multi-field iterator takes the max over fields, of each field's change (#2555 ruling (ii)).
+
+    One field is static and the others move in one quantity only (m, or u), with no coupling between
+    fields, at relaxation 0.01. The moving quantity's relative change stays above 0.1 for three sweeps
+    and the static field's is 0, so a min over fields of that quantity would stop at once.
+
+    Populations are left out: each one's Hamiltonian sees the others' densities, so none can be held
+    static beside a moving one. Regime's density case is left out because its first sweep takes the
+    density undamped, so with u static the density is at its fixed point from then on.
+    """
+    assert _solve(kind, relaxation=0.01, tolerance=0.1, absolute_tolerance=None, data=data, mixed=True) is False
+
+
+@pytest.mark.parametrize("route", ["keyword", "nt_reentry", "config"])
+def test_problem_solve_threads_the_absolute_bound(route):
+    """`MFGProblem.solve(absolute_tolerance=)`, its `Nt=` re-entry and `PicardConfig` each reach the verdict.
+
+    The ``heavy`` data through the default scheme at relaxation 1 meets a relative tolerance of 0.5 at
+    sweep 2; an absolute bound of 1e-12 is not met within three sweeps.
+    """
+    from mfgarchon.config import MFGSolverConfig
+    from mfgarchon.config.core import PicardConfig
+
+    x = np.linspace(0.0, 1.0, _NX)
+    mass = np.sum(np.exp(-30 * (x - 0.3) ** 2) * np.r_[0.5, np.ones(_NX - 2), 0.5]) / (_NX - 1)
+
+    def run(absolute_tolerance):
+        problem = MFGProblem(
+            model=Model(
+                hamiltonian=SeparableHamiltonian(
+                    control_cost=QuadraticControlCost(control_cost=1.0),
+                    coupling=lambda m: 0.1 * m,
+                    coupling_dm=lambda m: 0.1 + 0.0 * np.asarray(m),
+                ),
+                volatility=0.3,
+            ),
+            domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[_NX], boundary_conditions=no_flux_bc(dimension=1)),
+            conditions=Conditions(
+                m_initial=lambda x: 10.0 * np.exp(-30 * (np.asarray(x, dtype=float) - 0.3) ** 2) / mass,
+                u_terminal=lambda x: (np.asarray(x, dtype=float) - 0.7) ** 2,
+                T=0.2,
+            ),
+            Nt=_NT,
+        )
+        picard = {"max_iterations": 3, "tolerance": 0.5, "relaxation": 1.0, "verbose": False}
+        if route == "config":
+            return problem.solve(
+                config=MFGSolverConfig(picard=PicardConfig(**picard, absolute_tolerance=absolute_tolerance))
+            )
+        nt = {"nt_reentry": _NT + 1}.get(route)
+        return problem.solve(
+            Nt=nt, config=MFGSolverConfig(picard=PicardConfig(**picard)), absolute_tolerance=absolute_tolerance
+        )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        assert run(None).converged is True
+        assert run(1e-12).converged is False
 
 
 def _graded_grid():

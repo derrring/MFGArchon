@@ -252,6 +252,29 @@ class TestWhatTheRefusalDoesToCallers:
         with pytest.raises(ValueError, match="this geometry has no measure"):
             refusing.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False)
 
+        # The narrowed `except` still serves a solve that stops before its first measured sweep: an FP
+        # step that blows the mass up ends the loop first, and the mass block must then report 'not
+        # measured' for a geometry that refuses, not raise from inside the result's construction.
+        from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
+        from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+        from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+
+        class _BlowsUp(FPFDMSolver):
+            def solve_fp_system(self, m_initial, *args, source_term=None, volatility=None, **kwargs):
+                assert source_term is None, "this stub cannot honour a source term"
+                assert volatility is None, "this stub cannot honour a volatility field"
+                return 1e6 * np.tile(np.asarray(m_initial, dtype=float), (self.problem.Nt + 1, 1))
+
+        blowing = _fresh()
+        blowing.geometry.integrate = _refuses
+        result = FixedPointIterator(blowing, HJBFDMSolver(blowing), _BlowsUp(blowing), relaxation=1.0).solve(
+            max_iterations=2, tolerance=1e-6
+        )
+        assert result.converged is False
+        assert result.mass_conservation_error is None, (
+            "a geometry that cannot integrate must report 'not measured', not a fabricated number"
+        )
+
         def _reports_zero_mass(field):
             return np.zeros(np.asarray(field, dtype=float).shape[0])
 

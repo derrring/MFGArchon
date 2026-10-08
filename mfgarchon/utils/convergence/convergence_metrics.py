@@ -411,7 +411,6 @@ def sweep_change(
         "with one scalar spacing (#2555)."
     ),
     removal_blockers=["migration_docs"],
-    deprecated_on="2026-10-08",
 )
 def calculate_l2_convergence_metrics(
     U_new: np.ndarray,
@@ -423,9 +422,10 @@ def calculate_l2_convergence_metrics(
 ) -> dict[str, float]:
     """Deprecated: :func:`sweep_change` on the uniform measure of one scalar spacing ``Dx``.
 
-    Every node weighs ``Dx``, so the values are the pre-#2555 ``||diff||_2 * sqrt(Dx * Dt)`` and its ratio.
+    Every entry weighs ``Dx``, over all axes at once, so the values are the pre-#2555
+    ``||diff||_2 * sqrt(Dx * Dt)`` and its ratio, equal to rounding, for arrays of any shape.
     """
-    return sweep_change(U_new, U_old, M_new, M_old, lambda f: np.reshape(f, (np.shape(f)[0], -1)).sum(axis=-1) * Dx, Dt)
+    return sweep_change(U_new, U_old, M_new, M_old, lambda f: np.sum(f) * Dx, Dt)
 
 
 # =============================================================================

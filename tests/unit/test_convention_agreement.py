@@ -369,7 +369,7 @@ class TestPicardCriterionIsAConjunction:
     half opt-in (CONVENTIONS.md § 9); the conjunction survives between the relative test and the
     opt-in absolute one.
 
-    The cases below are exactly the ones where a conjunction and a disjunction disagree; a test
+    The cases below include the ones where a conjunction and a disjunction disagree; a test
     that only checks "both small -> True" and "both large -> False" passes under either.
     """
 
