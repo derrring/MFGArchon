@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from mfgarchon.alg.base_solver import BaseNumericalSolver, SchemeFamily
+
+#: A BC passes through the FP's owners with its type unchanged.
+_BC = TypeVar("_BC")
 
 
 class DriftConvention(Enum):
@@ -185,7 +188,7 @@ class BaseFPSolver(BaseNumericalSolver):
                 "exit lands."
             )
 
-    def _fp_view_of_shared(self, bc: Any) -> Any:
+    def _fp_view_of_shared(self, bc: _BC) -> _BC:
         """The FP reading of a BC this solver read from the shared problem or geometry (#2512, row B3).
 
         The one route for every FP solver: ``get_boundary_conditions()`` ends in it, and a solver that
@@ -196,7 +199,7 @@ class BaseFPSolver(BaseNumericalSolver):
 
         return fp_view_of_shared_bc(bc)
 
-    def _fp_own_bc(self, bc: Any) -> Any:
+    def _fp_own_bc(self, bc: _BC) -> _BC:
         """A BC handed to this solver, which is the FP's own: a NEUMANN in it is refused (#2512, row B3)."""
         from mfgarchon.geometry.boundary.bc_utils import refuse_explicit_fp_neumann
 
