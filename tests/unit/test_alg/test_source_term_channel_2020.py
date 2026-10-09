@@ -263,15 +263,6 @@ def _hjb_semi_lagrangian():
     return lambda f: s.solve_hjb_system(m, np.zeros(_N), u, **({"source_term": f} if f else {}))
 
 
-def _fp_gfdm():
-    from mfgarchon.alg.numerical.fp_solvers.fp_gfdm import FPGFDMSolver
-
-    p = _grid_problem()
-    u = np.zeros((p.Nt + 1, _N))
-    s = FPGFDMSolver(p, collocation_points=np.linspace(0.0, 1.0, _N).reshape(-1, 1))
-    return lambda f: s.solve_fp_system(np.ones(_N) / _N, drift_field=u, **({"source_term": f} if f else {}))
-
-
 def _fp_particle():
     from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
 
@@ -316,24 +307,7 @@ _CASES = [
     # `**_unused`. It refuses rather than honours because a source already reaches it through the
     # constructor's `running_cost`, filled by `HJBGFDMSolver(..., inner_solver="howard").solve_hjb_system(..., source_term=...)`.
     ("HJBHowardSolver", _hjb_howard, "refuses"),
-    # 2026-09-04 (#2020): was "refuses" -- and the refusal was a bare argument-binding
-    # TypeError, i.e. the parameter was simply absent, which #2020's own body distinguishes
-    # from a refusal ("Refusing is a behaviour; an absent signature is not"). It is now
-    # threaded into the forward-Euler update on the collocation points, at t_n -- the level every
-    # other term in that expression sits at. (`fp_fdm.py` uses t_{n+1} because it is IMPLICIT; the
-    # convention is the operator's level, not the literal t_next. Review caught the first version
-    # copying t_{n+1} across that boundary: both are consistent and the gap is clean O(dt), but
-    # t_n reaches the space floor at once while t_{n+1} descends to it from above.)
-    #
-    # What the channel bought, measured: with the source the interior error at nx=41, nt=200 is
-    # 1.535e-04 against 5.199e-02 without it, 339x; and the family's spatial order became
-    # measurable for the first time -- interior EOC 1.00, 0.88, 0.83, 0.88 over nx 11..161,
-    # space-limited (holding nx=41 and refining nt 200->3200 moves the error 1.00x).
-    # That is BELOW the second order the HJB half of GFDM measures
-    # (test_gfdm_mms_source_1991.py). Recorded, not diagnosed, and deliberately not pinned:
-    # no derivation here says what the correct rate for this operator is, and pinning a
-    # rate nobody derived would turn it into a specification.
-    ("FPGFDMSolver", _fp_gfdm, "honours"),
+    # FPGFDMSolver's row went with the solver, withdrawn in #2583; its rebuild is #2584.
     # 2026-09-04 (#2020): both were "refuses", and both refusals were a bare argument-binding
     # TypeError -- the parameter was absent, which #2020's own body separates from a refusal
     # ("Refusing is a behaviour; an absent signature is not"). Each now takes the source as a
@@ -352,7 +326,7 @@ _CASES = [
     # the substep in each solver and re-running the same fixture gives 1.026e-01 (FPSLSolver) and
     # 1.043e-01 (FPSLJacobianSolver), i.e. roughly TWICE the no-source error, which is what
     # subtracting what should be added does to the deviation. Correct sign is 52x and 3716x better
-    # than flipped. FPGFDMSolver behaves the same: 1.041e-01 flipped against 1.648e-04 correct.
+    # than flipped.
     # 2026-09-04 (#2020): stays a ROW, and refuses honestly. It was briefly moved to `_UNCOVERED`
     # as "structurally inapplicable"; independent review showed that reason was wrong. It kills one
     # candidate entry point (an additive cell update -- there are no cells) and was presented as
@@ -388,6 +362,7 @@ _UNCOVERED: dict[str, str] = {
     "NetworkPolicyIterationHJBSolver": "needs a network problem; reads problem.num_nodes unguarded "
     "and raises AttributeError on a grid",
     "FPNetworkSolver": "needs a network problem",
+    "FPGFDMSolver": "withdrawn (#2583): construction refuses; the rebuild is #2584",
     "WeakFormHJBSolver": "intended-abstract base -- constructs given a discretization, then its BC "
     "hooks raise NotImplementedError; the concrete subclasses are the FEM rows above",
     "WeakFormFPSolver": "intended-abstract base -- same",

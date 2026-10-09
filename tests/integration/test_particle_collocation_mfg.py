@@ -7,9 +7,8 @@ Tests the typical MFG workflow using:
 
 This is the recommended workflow for meshfree MFG problems.
 
-Note: FPGFDMSolver exists for specialized use cases where you want
-GFDM-based density evolution on collocation points, but the typical
-workflow uses particle-based FP for better handling of density transport.
+Note: FPGFDMSolver, GFDM-based density evolution on collocation points, is withdrawn (#2583): it built no
+wall. The particle FP is the FP for this workflow.
 """
 
 from __future__ import annotations
@@ -18,7 +17,7 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.alg.numerical.fp_solvers import FPGFDMSolver, FPParticleSolver
+from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
 from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
@@ -177,66 +176,6 @@ class TestHJBGFDMWithParticleFP:
         # Measured max|M - m0| across seeds 0/1/7/1234/20260813 at N=2000: 0.0033 to 0.0048. The
         # bound is the old 0.25 scaled by the density (0.25 * 0.032258 = 0.00806).
         assert np.abs(M - m0[0]).max() < 0.00806
-
-
-class TestFPGFDMSolver:
-    """Test FPGFDMSolver for specialized meshfree density evolution."""
-
-    def test_fp_gfdm_initialization(self):
-        """Test FPGFDMSolver initialization."""
-        problem = SimpleLQMFG2D()
-        N_points = 100
-
-        domain = Hyperrectangle(np.array([[0, 1], [0, 1]]))
-        points = domain.sample_uniform(N_points, seed=42)
-
-        fp_solver = FPGFDMSolver(problem, collocation_points=points, delta=0.15)
-
-        assert fp_solver.n_points == N_points
-        assert fp_solver.dimension == 2
-
-    def test_fp_gfdm_mass_conservation(self):
-        """Test mass conservation in GFDM-based FP solver."""
-        problem = SimpleLQMFG2D()
-        N_points = 100
-
-        domain = Hyperrectangle(np.array([[0, 1], [0, 1]]))
-        points = domain.sample_uniform(N_points, seed=42)
-
-        fp_solver = FPGFDMSolver(problem, collocation_points=points, delta=0.15)
-
-        # Use temporal grid size (Nt + 1), not spatial grid
-        n_time_points = problem.Nt + 1
-        m0 = np.ones(N_points) / N_points
-
-        # drift_field must be shape (Nt+1, N, d) for GFDM solver
-        # Use zero drift for this test
-        drift_field = np.zeros((n_time_points, N_points, problem.d))
-
-        M = fp_solver.solve_fp_system(m0, drift_field=drift_field, show_progress=False)
-
-        # Check mass conservation
-        for t_idx in range(n_time_points):
-            mass = np.sum(M[t_idx, :])
-            assert np.abs(mass - 1.0) < 1e-10
-
-    def test_fp_gfdm_validates_shapes(self):
-        """Test that FPGFDMSolver validates input shapes."""
-        problem = SimpleLQMFG2D()
-        N_points = 100
-
-        domain = Hyperrectangle(np.array([[0, 1], [0, 1]]))
-        points = domain.sample_uniform(N_points, seed=42)
-
-        solver = FPGFDMSolver(problem, collocation_points=points, delta=0.15)
-
-        # Wrong m0 shape
-        Nt_points = problem.geometry.get_grid_shape()[0]
-        m0_wrong = np.ones(50)
-        U_correct = np.zeros((Nt_points, N_points))
-
-        with pytest.raises(ValueError, match="must match"):
-            solver.solve_fp_system(m0_wrong, U_correct, show_progress=False)
 
 
 class TestCollocationModeRemoved:

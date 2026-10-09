@@ -15,7 +15,7 @@ What it does NOT catch, stated so the number is not read as coverage: a position
 moved, a keyword whose meaning changed while the name survived, a callee it cannot resolve (a local
 name, a method on an instance built earlier in the example), anything in a `**kwargs` signature,
 keywords hidden behind `f(**mapping)` since those names are not in the AST, and the blocks whose
-source does not parse -- 17 of 636, measured 2026-09-28 (#2422), leaving 619 analysed. Those are
+source does not parse -- 17 of 634, measured 2026-10-09 (#2583), leaving 617 analysed. Those are
 excluded from the reported block count rather than counted as analysed -- the count below is what was
 ANALYSED, not what was seen.
 

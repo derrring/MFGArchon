@@ -249,7 +249,15 @@ result = problem.solve(hjb_solver=hjb, fp_solver=fp)
 
 ### Pattern 3: GFDM with Collocation Points
 
-**Before**:
+> **FP-GFDM is withdrawn** ([#2583](https://github.com/derrring/MFGArchon/issues/2583)): it built no wall,
+> so on a bounded domain the drift's flux crossed the boundary. `FPGFDMSolver(...)` and
+> `create_paired_solvers(problem, NumericalScheme.GFDM, ...)` raise until it is rebuilt
+> ([#2584](https://github.com/derrring/MFGArchon/issues/2584)). `problem.solve(scheme=NumericalScheme.GFDM)`
+> raised before this as well: it has no way to pass the collocation points `HJBGFDMSolver` requires. To keep
+> the GFDM HJB, pair it with an FP solver that builds walls, as below; that pair is not dual, so Expert Mode
+> warns.
+
+**Before** (no longer runs):
 ```python
 import numpy as np
 from mfgarchon.alg.numerical import HJBGFDMSolver, FPGFDMSolver
@@ -265,22 +273,16 @@ solver = create_solver(problem, hjb_solver=hjb, fp_solver=fp)
 result = solver.solve()
 ```
 
-**After** (config threading):
+**After** (the GFDM HJB with an FP that builds walls):
 ```python
 import numpy as np
-from mfgarchon.factory import create_paired_solvers
-from mfgarchon.types import NumericalScheme
+from mfgarchon.alg.numerical import FPFDMSolver, HJBGFDMSolver
 
 problem = MFGProblem(Nx=[40], Nt=20, T=1.0)
 points = np.linspace(0, 1, 30)[:, None]
 
-# Config threading: specify once, used for both
-hjb, fp = create_paired_solvers(
-    problem,
-    NumericalScheme.GFDM,
-    hjb_config={"collocation_points": points, "delta": 0.1},
-    # fp_config automatically inherits collocation_points and delta
-)
+hjb = HJBGFDMSolver(problem, collocation_points=points, delta=0.1)
+fp = FPFDMSolver(problem)  # or FPParticleSolver(problem)
 
 result = problem.solve(hjb_solver=hjb, fp_solver=fp)
 ```
@@ -315,7 +317,7 @@ These schemes satisfy $L_{FP} = L_{HJB}^T + O(h)$ asymptotically:
 
 | Scheme | Use Case | Order | Stability |
 |:-------|:---------|:------|:----------|
-| `GFDM` | Unstructured grids, complex geometries | 2nd order | Good |
+| `GFDM` | Unstructured grids, complex geometries; its FP is withdrawn ([#2583](https://github.com/derrring/MFGArchon/issues/2583)), so the pair raises until [#2584](https://github.com/derrring/MFGArchon/issues/2584) | 2nd order | Good |
 
 **Note**: Type B schemes require renormalization for optimal Nash gap convergence.
 
@@ -329,8 +331,8 @@ If you see this warning:
 
 ```
 Expert Mode: Non-dual solver pair detected!
-  HJB: HJBFDMSolver (fdm)
-  FP: FPGFDMSolver (gfdm)
+  HJB: HJBGFDMSolver (gfdm)
+  FP: FPFDMSolver (fdm)
   Status: not_dual
 This may lead to poor convergence or Nash gap issues.
 Consider using Safe Mode for guaranteed duality.
@@ -345,8 +347,7 @@ Consider using Safe Mode for guaranteed duality.
 ```python
 # Instead of mixing FDM with GFDM:
 result = problem.solve(scheme=NumericalScheme.FDM_UPWIND)
-# Or use matching schemes:
-result = problem.solve(scheme=NumericalScheme.GFDM)
+# The matching GFDM pair raises while its FP is withdrawn (#2583).
 ```
 
 ### Deprecation Warning: create_solver()

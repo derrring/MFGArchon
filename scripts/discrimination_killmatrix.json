@@ -187,9 +187,6 @@
       "terminal_condition_pinned_at_initial_index",
       "fp_initial_condition_written_at_final_index"
     ],
-    "tests/integration/test_particle_collocation_mfg.py::TestFPGFDMSolver::test_fp_gfdm_mass_conservation": [
-      "diffusion_scalar_2x"
-    ],
     "tests/integration/test_particle_collocation_mfg.py::TestHJBGFDMWithParticleFP::test_fp_particle_outputs_to_grid": [
       "particle_mass_counting_measure"
     ],
@@ -636,18 +633,6 @@
     "tests/unit/test_alg/test_fp_fdm_velocity_channel_1528.py::test_velocity_channel_runs_for_costs_the_u_channel_refuses[flux-quadratic]": [
       "quadrature_wall_node_counting_measure",
       "fp_initial_condition_written_at_final_index"
-    ],
-    "tests/unit/test_alg/test_fp_gfdm_mass_gate.py::test_a_clip_far_below_one_percent_still_stops_the_solve": [
-      "diffusion_scalar_2x"
-    ],
-    "tests/unit/test_alg/test_fp_gfdm_mass_gate.py::test_a_configuration_with_no_negatives_at_all_still_runs": [
-      "diffusion_scalar_2x"
-    ],
-    "tests/unit/test_alg/test_fp_gfdm_mass_gate.py::test_the_drift_is_reported_at_warning_level": [
-      "diffusion_scalar_2x"
-    ],
-    "tests/unit/test_alg/test_fp_gfdm_mass_gate.py::test_the_scheme_does_not_conserve_mass_and_now_says_so": [
-      "diffusion_scalar_2x"
     ],
     "tests/unit/test_alg/test_fp_matrix_conservation.py::TestConservativeAdvection::test_conservative_operator_column_sum_zero_no_flux": [
       "quadrature_wall_node_counting_measure"
@@ -3030,16 +3015,11 @@
         "tests/integration/test_mms_validation.py::TestMMSFokkerPlanck1D::test_sinusoidal_periodic_convergence",
         "tests/integration/test_mms_validation.py::TestMMSFokkerPlanck1D::test_source_term_steady_state_convergence",
         "tests/integration/test_mms_validation.py::TestMMSHJB1D::test_backward_heat_periodic_convergence",
-        "tests/integration/test_particle_collocation_mfg.py::TestFPGFDMSolver::test_fp_gfdm_mass_conservation",
         "tests/integration/test_sl_mms_anisotropic_2198.py::test_sl_is_first_order_with_an_off_diagonal_sigma",
         "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline",
         "tests/regression/test_solver_golden_baseline.py::test_gfdm_hjb_matches_golden_baseline",
         "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverArrayDiffusion::test_spatiotemporal_diffusion_1d",
         "tests/unit/test_alg/test_fp_fdm_solver.py::TestFPFDMSolverTensorDiffusion::test_isotropic_tensor_matches_scalar_diffusion",
-        "tests/unit/test_alg/test_fp_gfdm_mass_gate.py::test_a_clip_far_below_one_percent_still_stops_the_solve",
-        "tests/unit/test_alg/test_fp_gfdm_mass_gate.py::test_a_configuration_with_no_negatives_at_all_still_runs",
-        "tests/unit/test_alg/test_fp_gfdm_mass_gate.py::test_the_drift_is_reported_at_warning_level",
-        "tests/unit/test_alg/test_fp_gfdm_mass_gate.py::test_the_scheme_does_not_conserve_mass_and_now_says_so",
         "tests/unit/test_alg/test_fp_matrix_conservation.py::TestFPProductionConservation::test_density_stays_positive",
         "tests/unit/test_alg/test_fp_mms_wall_order_1728.py::test_divergence_centered_is_second_order_at_a_drifting_wall[1--1]",
         "tests/unit/test_alg/test_fp_mms_wall_order_1728.py::test_divergence_centered_is_second_order_at_a_drifting_wall[1-1]",
