@@ -99,17 +99,20 @@ def read_results(path: Path, nonce: str) -> dict[str, str]:
         nodeid = "::".join([file, *[c for c in classes if c], name])
         tags = {child.tag for child in case}
         outcome = "failed" if tags & {"failure", "error"} else ("skipped" if "skipped" in tags else "passed")
-        # A call failure and a teardown error are two elements for one test; the worse one stands.
+        # A test function imported into another module reports under its defining file, so its two elements
+        # rebuild to one node ID. The worse outcome stands, so a passing copy cannot hide a failing one.
         results[nodeid] = max(outcome, results.get(nodeid, "passed"), key=_WORST.__getitem__)
     if not results:
         raise ResultsError(f"the results file {path} lists no tests")
     return results
 
 
-def read_population(returncode: int, stdout: str, files: list[str]) -> set[str]:
+def read_population(returncode: int, stdout: str, files: list[str], stderr: str = "") -> set[str]:
     """The node IDs a ``--collect-only --verbosity=-1`` run printed, or CollectionError if it did not run."""
     if returncode not in (0, 5):
-        raise CollectionError(f"pytest exit {returncode} collecting {len(files)} files:\n{stdout[-1500:]}")
+        raise CollectionError(
+            f"pytest exit {returncode} collecting {len(files)} files:\n{stdout[-1500:]}{stderr[-1500:]}"
+        )
     population = {line.strip() for line in stdout.splitlines() if "::" in line}
     if returncode == 0 and not population:
         raise CollectionError(
@@ -119,16 +122,17 @@ def read_population(returncode: int, stdout: str, files: list[str]) -> set[str]:
 
 
 def collect_population(files: list[str]) -> set[str]:
-    """Every node ID pytest collects from ``files``, with no marker selection, as the gate's suite line runs."""
+    """Every node ID pytest collects from ``files``, with no marker selection, in the suite line's environment."""
     existing = [f for f in files if (REPO / f).is_file()]
     if not existing:
         return set()
-    # The suite line's own environment and flags. An explicit level, not -q: pytest.ini's addopts adds
-    # --verbose, and only -1 prints one node ID a line.
+    # The suite line's own environment. Its flags are not reused: the collection adds --collect-only,
+    # -p no:cacheprovider, and an explicit level, not -q, because pytest.ini's addopts adds --verbose and only
+    # -1 prints one node ID a line.
     env = dict(os.environ, PYTHONSAFEPATH="1")
     cmd = [sys.executable, "-P", "-m", "pytest", "--collect-only", "--verbosity=-1", "-p", "no:cacheprovider"]
     run = subprocess.run([*cmd, *existing], cwd=REPO, capture_output=True, text=True, env=env)
-    return read_population(run.returncode, run.stdout, existing)
+    return read_population(run.returncode, run.stdout, existing, run.stderr)
 
 
 def evaluate(entries, results: dict[str, str], population: set[str]) -> tuple[int, list[str]]:
@@ -196,7 +200,7 @@ def check(manifest: Path, junit: Path, nonce: str) -> tuple[int, list[str]]:
     try:
         population = collect_population(sorted({t.split("::", 1)[0] for _, _, t in entries if t != UNPINNED}))
     except CollectionError as exc:
-        return 1, [f"the manifest's files do not collect, so their targets cannot be read: {exc}"]
+        return 1, [f"pytest could not list the manifest's tests, so their targets cannot be read: {exc}"]
     return evaluate(entries, results, population)
 
 
@@ -205,13 +209,14 @@ def _junit(cases: str, name: str = "run-1") -> str:
 
 
 def self_test() -> int:
-    """Every status, the whole-file arm, the met rule, the kinds, and all eight ways the inputs can fail."""
+    """Every status, the whole-file arm, the met rule, the kinds, and eight ways the results and collection fail."""
     failures: list[str] = []
     passed = '<testcase file="t/a.py" classname="t.a" name="test_p"/>'
     in_class = '<testcase file="t/a.py" classname="t.a.TestK" name="test_k[1]"/>'
     skipped = '<testcase file="t/a.py" classname="t.a" name="test_s"><skipped message="x"/></testcase>'
     failed = '<testcase file="t/a.py" classname="t.a" name="test_f"><failure message="x"/></testcase>'
-    teardown = '<testcase file="t/a.py" classname="t.a" name="test_f"/>'  # a second element for test_f
+    # test_f imported into t/b.py: a second element that rebuilds to test_f's node ID, and passes
+    imported_copy = '<testcase file="t/a.py" classname="t.b" name="test_f"/>'
     population = {
         "t/a.py::test_p",
         "t/a.py::TestK::test_k[1]",
@@ -222,7 +227,7 @@ def self_test() -> int:
     }
     with tempfile.TemporaryDirectory() as tmp:
         good = Path(tmp) / "good.xml"
-        good.write_text(_junit(passed + in_class + skipped + failed + teardown))
+        good.write_text(_junit(passed + in_class + skipped + failed + imported_copy))
         results = read_results(good, "run-1")
 
         def expect(target: str, word: str) -> None:
@@ -233,7 +238,7 @@ def self_test() -> int:
         expect("t/a.py::test_p", "ok")
         expect("t/a.py::TestK::test_k[1]", "ok")  # a class in classname rebuilds the node ID
         expect("t/a.py::test_s", "SKIPPED")
-        expect("t/a.py::test_f", "FAILED")  # its later, clean element does not overwrite the failure
+        expect("t/a.py::test_f", "FAILED")  # its passing imported copy does not hide the failure
         expect("t/a.py::test_d", "NOT RUN")  # collected, absent from the run: deselected
         expect("t/a.py::gone", "MISSING")
         expect("t/a.py", "FAILED")  # the whole-file arm: one failed test of five
