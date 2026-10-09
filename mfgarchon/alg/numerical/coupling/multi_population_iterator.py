@@ -151,7 +151,7 @@ class MultiPopulationIterator:
             U_k[-1] = U_terminal_k
             U.append(U_k)
 
-        from mfgarchon.utils.convergence import sweep_change
+        from mfgarchon.utils.convergence import sweep_change, worst_sweep_change
 
         from .fixed_point_utils import check_convergence_criteria
 
@@ -310,11 +310,12 @@ class MultiPopulationIterator:
             # and the criterion is the single-population one, fed the max over populations -- so u and
             # m no longer meet one tolerance in their own units.
             per_population = [sweep_change(U[k], U_old[k], M_map[k], M_old[k], integrates[k], dts[k]) for k in range(K)]
+            worst = worst_sweep_change(per_population, "population")
             for metrics_k in per_population:
                 errors_M.append(metrics_k["l2distm_rel"])
                 errors_U.append(metrics_k["l2distu_rel"])
                 errors.append(max(metrics_k["l2distm_rel"], metrics_k["l2distu_rel"]))
-            max_error = max(errors)
+            max_error = max(worst["l2distm_rel"], worst["l2distu_rel"])
 
             logger.info(
                 f"Multi-pop iter {iteration + 1}/{max_iterations}: "
@@ -323,10 +324,10 @@ class MultiPopulationIterator:
             )
 
             converged, _ = check_convergence_criteria(
-                max(m["l2distu_rel"] for m in per_population),
-                max(m["l2distm_rel"] for m in per_population),
-                max(m["l2distu_abs"] for m in per_population),
-                max(m["l2distm_abs"] for m in per_population),
+                worst["l2distu_rel"],
+                worst["l2distm_rel"],
+                worst["l2distu_abs"],
+                worst["l2distm_abs"],
                 tolerance,
                 absolute_tolerance,
             )

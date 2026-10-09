@@ -11,6 +11,8 @@ Modules:
   - RollingConvergenceMonitor: Window-based statistical convergence
   - calculate_error: Unified L1/L2/Linf error computation
   - sweep_change, l2_change: the change one coupling sweep made, in the problem's measure (#2555)
+  - worst_sweep_change, refuse_non_finite_change: the max over a multi-field sweep's fields, and the
+    refusal of a non-finite change (#2578)
   - ConvergenceConfig: Configuration dataclass for solver integration
 
 - **convergence_monitors.py**: MFG-specific monitors
@@ -71,7 +73,9 @@ from .convergence_metrics import (
     create_moment_monitor,
     create_rolling_monitor,
     l2_change,
+    refuse_non_finite_change,
     sweep_change,
+    worst_sweep_change,
 )
 
 # =============================================================================
@@ -103,7 +107,9 @@ __all__ = [
     "calculate_error",
     "calculate_l2_convergence_metrics",
     "l2_change",
+    "refuse_non_finite_change",
     "sweep_change",
+    "worst_sweep_change",
     "ConvergenceConfig",
     "create_moment_monitor",
     "create_rolling_monitor",

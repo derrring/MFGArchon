@@ -17,12 +17,13 @@ or any iterative PDE solver.
 
 from __future__ import annotations
 
+import math
 from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping, Sequence
 
 import numpy as np
 
@@ -401,6 +402,45 @@ def sweep_change(
     u_abs, u_rel = l2_change(U_map, U_old, integrate, dt)
     m_abs, m_rel = l2_change(M_map, M_old, integrate, dt)
     return {"l2distu_abs": u_abs, "l2distu_rel": u_rel, "l2distm_abs": m_abs, "l2distm_rel": m_rel}
+
+
+def refuse_non_finite_change(change: Mapping[str, float], where: str | None = None) -> None:
+    """Raise ``ValueError`` naming every non-finite value in ``change``, and ``where`` it came from (#2578).
+
+    The one message for the verdict's owner and for :func:`worst_sweep_change`. A NaN compares false
+    with everything, so a ``max`` that meets one keeps or drops it by position, and no verdict may be
+    reached with one.
+    """
+    non_finite = [f"{name}={value}" for name, value in change.items() if not math.isfinite(value)]
+    if non_finite:
+        located = f" in {where}" if where else ""
+        raise ValueError(
+            f"a sweep's change must be finite to judge convergence, got {', '.join(non_finite)}{located} (#2578)"
+        )
+
+
+def worst_sweep_change(per_field: Sequence[Mapping[str, float]], field: str) -> dict[str, float]:
+    """The change a multi-field sweep is judged on: the max over fields of each value (#2555, #2578).
+
+    A multi-field iterator (populations, graph nodes, regimes) measures each field's change in its own
+    measure with :func:`sweep_change`, and the criterion takes the max over fields. Builtin ``max`` keeps
+    a NaN only when it comes first -- ``max([1e-7, nan])`` is ``1e-7`` -- so a NaN in any later field
+    reached the verdict as a finite change. Only this aggregation knows which field it was, so the
+    refusal is here and names it.
+
+    Args:
+        per_field: One :func:`sweep_change` result per field, in field order.
+        field: What a field is, for the message: ``"population"``, ``"node"`` or ``"regime"``.
+
+    Returns:
+        :func:`sweep_change`'s four keys, each the max over fields.
+
+    Raises:
+        ValueError: a field's change is NaN or infinite; the message names its index ``k``.
+    """
+    for k, change in enumerate(per_field):
+        refuse_non_finite_change(change, f"{field} k={k}")
+    return {key: max(change[key] for change in per_field) for key in per_field[0]}
 
 
 @deprecated(

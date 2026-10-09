@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from mfgarchon.utils.convergence.convergence_metrics import refuse_non_finite_change
 from mfgarchon.utils.mfg_logging import get_logger
 
 logger = get_logger(__name__)
@@ -215,6 +216,15 @@ def check_convergence_criteria(
     A multi-field iterator (populations, regimes, graph nodes) passes, for each of the four values, the
     max over its fields of that field's change in its own measure.
 
+    A non-finite change is refused, naming the value (#2578). ``max`` drops a NaN in its second argument,
+    since every comparison with NaN is false, so a NaN density change used to leave the verdict to the
+    value function's change alone and could report convergence. A multi-field iterator aggregates
+    through :func:`~mfgarchon.utils.convergence.worst_sweep_change`, which refuses first and names the
+    field.
+
+    Raises:
+        ValueError: one of the four changes is NaN or infinite.
+
     Returns:
         ``(converged, reason)``; ``reason`` is empty when not converged.
 
@@ -224,6 +234,9 @@ def check_convergence_criteria(
         >>> check_convergence_criteria(1e-7, 1e-8, 3.0, 2.0, 1e-6, absolute_tolerance=1e-6)
         (False, '')
     """
+    refuse_non_finite_change(
+        {"l2distu_rel": l2distu_rel, "l2distm_rel": l2distm_rel, "l2distu_abs": l2distu_abs, "l2distm_abs": l2distm_abs}
+    )
     max_rel_err = max(l2distu_rel, l2distm_rel)
     max_abs_err = max(l2distu_abs, l2distm_abs)
     absolute_met = absolute_tolerance is None or max_abs_err < absolute_tolerance

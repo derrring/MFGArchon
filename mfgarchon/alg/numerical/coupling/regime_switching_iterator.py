@@ -41,7 +41,7 @@ from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
     fp_solver_sig_params,
     resolve_fp_drift_kwargs,
 )
-from mfgarchon.utils.convergence import sweep_change
+from mfgarchon.utils.convergence import sweep_change, worst_sweep_change
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -539,12 +539,13 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 per_regime = [
                     sweep_change(Us_new[k], Us_full[k], Ms_new[k], Ms[k], integrates[k], dts[k]) for k in range(K)
                 ]
-                error = max(max(c["l2distu_rel"], c["l2distm_rel"]) for c in per_regime)
+                worst = worst_sweep_change(per_regime, "regime")
+                error = max(worst["l2distu_rel"], worst["l2distm_rel"])
                 converged, _ = check_convergence_criteria(
-                    max(c["l2distu_rel"] for c in per_regime),
-                    max(c["l2distm_rel"] for c in per_regime),
-                    max(c["l2distu_abs"] for c in per_regime),
-                    max(c["l2distm_abs"] for c in per_regime),
+                    worst["l2distu_rel"],
+                    worst["l2distm_rel"],
+                    worst["l2distu_abs"],
+                    worst["l2distm_abs"],
                     self._tol,
                     self._abs_tol,
                 )
