@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from mfgarchon.alg.base_solver import BaseNumericalSolver, SchemeFamily
 
@@ -165,6 +165,25 @@ class BaseFPSolver(BaseNumericalSolver):
 
         # Validate solver compatibility if problem supports it (Phase 3.1.5)
         self._validate_problem_compatibility()
+
+    def _validate_bc_support(self, bc: Any) -> None:
+        """The base support check, and a capacity-limited exit refused, because no FP solver honours one (#2575).
+
+        Every FP solver reaches this on the BC it will solve with, through its own call or through
+        ``get_boundary_conditions()``. A ``flux_capacity`` on a segment was accepted and ignored on every
+        route, so a capped exit solved as uncapped. The HJB side is not refused: on a shared exit it reads
+        u = g.
+        """
+        super()._validate_bc_support(bc)
+        capped = [
+            seg.name for seg in getattr(bc, "segments", None) or () if getattr(seg, "flux_capacity", None) is not None
+        ]
+        if capped:
+            raise NotImplementedError(
+                f"{type(self).__name__}: segment(s) {capped} carry a flux_capacity, a capacity-limited exit, "
+                "which no FP solver implements yet. Every FP solver would absorb at the uncapped rate and "
+                "ignore the cap (#2575). Remove flux_capacity until the capacity-limited exit lands."
+            )
 
     def _validate_problem_compatibility(self) -> None:
         """
