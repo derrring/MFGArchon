@@ -614,6 +614,16 @@ graph nodes, takes the max over fields of each field's relative change in its ow
 absolute criterion unless the caller asks for one with `absolute_tolerance`. All six coupling
 iterators read the owners: `MFGProblem.spatial_measure()` for the measure, `sweep_change` for the
 change, and `check_convergence_criteria` for the verdict (#2555).
+`tests/unit/test_alg/test_c1_change_has_one_owner_2512.py` holds to the owners everything under
+`alg/numerical/coupling/`, and any other module of `alg/` that references `PicardConfig`, its `picard`
+attribute, `BaseCouplingIterator`, `check_convergence_criteria` or `sweep_change`; those names approximate
+"takes the outer tolerance". It fails if one of them measures this change, or decides on it, itself,
+through the shapes its docstring lists (#2512). *Not yet met (#2565): `NewtonMFGSolver` stops on an
+unscaled absolute norm of the Picard residual, the quantity this convention governs. It is excluded from
+that guard only until #2565 routes it through the owners; the convention is not met while it is.*
+`HomotopyContinuation`'s corrector, with its own `corr_tol`, and `PrimalDualMFGSolver`, which stops on an
+optimisation residual and its own density change, are separate algorithms with their own tolerances.
+This convention does not govern them (#2573).
 
 **The inner Newton tolerance bounds the grid-scaled residual norm**, and
 `base_hjb.hjb_residual_norm` is its owner on every Newton path (ruled 2026-10-08). So a tolerance means
