@@ -1131,6 +1131,14 @@ def neumann_bc(
     """
     Create Neumann boundary conditions (du/dn = value at boundary).
 
+    Two readings, by who reads the BC (#2512, row B3):
+
+    - As the problem's shared BC, ``value`` is the HJB's: du/dn = g, the boundary cost per unit of
+      boundary local time. The FP reads the face as zero total flux, J.n = 0, whatever g is, because
+      the agents are reflected.
+    - Handed to an FP solver explicitly it would mean dm/dn = g, which no FP solver implements, so the
+      solver refuses it. Pass ``no_flux_bc()`` for a reflecting FP wall.
+
     Args:
         value: Normal derivative value (constant or callable(point, time))
         dimension: Spatial dimension. If None, dimension will be inferred when

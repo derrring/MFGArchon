@@ -14,7 +14,7 @@ from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import BCSegment, mixed_bc, no_flux_bc
+from mfgarchon.geometry.boundary import BCSegment, BoundaryConditions, no_flux_bc
 from mfgarchon.geometry.boundary.types import BCType
 
 
@@ -75,8 +75,9 @@ def test_particle_solver_multi_exit_1d():
         components=_default_components_1d(),
     )
 
-    # Multi-exit BC: two DIRICHLET exits on opposite ends
-    bc_multi_exit = mixed_bc(
+    # Multi-exit BC: two DIRICHLET exits on opposite ends. Built directly: the deprecated mixed_bc sets a
+    # NEUMANN fall-through, which an FP solver handed this BC refuses (#2512, row B3).
+    bc_multi_exit = BoundaryConditions(
         dimension=1,
         segments=[
             BCSegment(

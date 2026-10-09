@@ -29,7 +29,7 @@ from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSo
 from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver, HJBSemiLagrangianSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import dirichlet_bc, neumann_bc, no_flux_bc, periodic_bc, robin_bc
+from mfgarchon.geometry.boundary import dirichlet_bc, no_flux_bc, periodic_bc, robin_bc
 
 NT = 4
 N = {1: 21, 2: 9}
@@ -70,10 +70,8 @@ def _solve(solver, dim):
         (HJBFDMSolver, 2, robin_bc(alpha=1.0, beta=1.0, dimension=2), "ROBIN"),
         (HJBSemiLagrangianSolver, 1, dirichlet_bc(dimension=1), "DIRICHLET"),
         (FPSLSolver, 1, dirichlet_bc(dimension=1), "DIRICHLET"),
-        # The validator's other half: a Neumann value, which FP-SL drops (#1686).
-        (FPSLSolver, 1, neumann_bc(value=-0.3, dimension=1), "honours only the homogeneous"),
     ],
-    ids=["hjb_fdm-1d-robin", "hjb_fdm-2d-robin", "hjb_sl-dirichlet", "fp_sl-dirichlet", "fp_sl-neumann_value"],
+    ids=["hjb_fdm-1d-robin", "hjb_fdm-2d-robin", "hjb_sl-dirichlet", "fp_sl-dirichlet"],
 )
 def test_a_bc_swapped_onto_the_geometry_is_checked_before_it_is_solved(cls, dim, unsupported, refusal):
     with warnings.catch_warnings():

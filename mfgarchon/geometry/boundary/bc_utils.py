@@ -442,14 +442,24 @@ def refuse_explicit_fp_neumann(boundary_conditions: Any, consumer: str) -> Any:
 
     if not isinstance(boundary_conditions, BoundaryConditions):
         return boundary_conditions
-    if boundary_conditions.default_bc == BCType.NEUMANN or any(
-        seg.bc_type == BCType.NEUMANN for seg in boundary_conditions.segments
-    ):
+    where = (
+        [f"segment(s) {names}"]
+        if (names := [seg.name for seg in boundary_conditions.segments if seg.bc_type == BCType.NEUMANN])
+        else []
+    )
+    if boundary_conditions.default_bc == BCType.NEUMANN:
+        # The fall-through is refused even where no face reaches it; narrowing it to a reachable default
+        # needs the face resolution of #2512's row B1.
+        where.append(
+            "default_bc=NEUMANN, the fall-through for faces no segment names (mixed_bc sets it unless told "
+            "otherwise); pass default_bc=BCType.NO_FLUX, or build BoundaryConditions(segments=...) directly"
+        )
+    if where:
         raise NotImplementedError(
             f"{consumer}: a NEUMANN boundary condition passed to an FP solver means dm/dn = g, which no FP "
             "solver implements: under a drift, the zero-flux wall they build is J.n = 0, a different "
-            "condition (#2512). Pass no_flux_bc() for a reflecting wall. A NEUMANN on the problem's shared "
-            "BC is the HJB's du/dn = g, and the FP reads it as zero flux."
+            f"condition (#2512). Found: {'; '.join(where)}. Use NO_FLUX (no_flux_bc()) for a reflecting "
+            "wall. A NEUMANN on the problem's shared BC is the HJB's du/dn = g, and the FP reads it as zero flux."
         )
     return boundary_conditions
 

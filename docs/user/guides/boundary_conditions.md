@@ -66,11 +66,13 @@ The calculator classes name this distinction explicitly:
 | `ZeroFluxCalculator` | `J.n = 0` (mass conservation) |
 | `NoFluxCalculator` | **deprecated since v0.16.11** — an alias for `ZeroGradientCalculator`. Pick one of the two above explicitly |
 
-> **Note on `NEUMANN` with a non-zero value.** `neumann_bc(value=g)` with `g != 0` is **refused at
-> construction by every grid FP solver**: on the FP side a Neumann value is a prescribed flux `J.n = g`,
-> which none implements yet ([Issue #1686](https://github.com/derrring/MFGArchon/issues/1686)). The
-> semi-Lagrangian and meshless Galerkin HJB solvers refuse it too. Use `g = 0` (equivalently
-> `no_flux_bc()`) for a coupled solve.
+> **Note on `NEUMANN` on the FP side.** On the problem's shared BC, `neumann_bc(value=g)` is the HJB's
+> `du/dn = g`, and every FP solver reads the face as zero flux `J.n = 0`, whatever `g` is
+> ([Issue #2512](https://github.com/derrring/MFGArchon/issues/2512), row B3). Handed to an FP solver
+> explicitly, as in `FPFDMSolver(problem, boundary_conditions=...)`, a NEUMANN would mean `dm/dn = g`,
+> which no FP solver implements, so it is refused: use `no_flux_bc()` for a reflecting FP wall. The
+> semi-Lagrangian and meshless Galerkin HJB solvers refuse a non-zero `g`
+> ([Issue #1686](https://github.com/derrring/MFGArchon/issues/1686)).
 
 ## Mixed Boundary Conditions
 

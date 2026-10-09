@@ -872,16 +872,16 @@ class TestFPParticlePreserveIndices:
 
     @staticmethod
     def _absorbing_corridor_problem():
-        """2D corridor with absorbing right wall, neumann elsewhere."""
+        """2D corridor with absorbing right wall, no-flux elsewhere."""
         from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
 
         Lx, Ly, Nt, T = 4.0, 2.0, 20, 1.0
         bc = BoundaryConditions(
             segments=[
-                BCSegment(name="left", bc_type=BCType.NEUMANN, value=0.0, boundary="x_min"),
+                BCSegment(name="left", bc_type=BCType.NO_FLUX, value=0.0, boundary="x_min"),
                 BCSegment(name="right", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max"),
-                BCSegment(name="bottom", bc_type=BCType.NEUMANN, value=0.0, boundary="y_min"),
-                BCSegment(name="top", bc_type=BCType.NEUMANN, value=0.0, boundary="y_max"),
+                BCSegment(name="bottom", bc_type=BCType.NO_FLUX, value=0.0, boundary="y_min"),
+                BCSegment(name="top", bc_type=BCType.NO_FLUX, value=0.0, boundary="y_max"),
             ],
             dimension=2,
         )
