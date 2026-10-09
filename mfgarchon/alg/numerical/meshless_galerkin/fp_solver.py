@@ -57,10 +57,6 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
     # Undeclared, the gate returned early: neumann_bc(value=1) solved identically to no-flux (#2512 S4).
     _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING, BCType.DIRICHLET})
     honors_inhomogeneous_neumann: bool = False
-    _inhomogeneous_neumann_gap: str = (
-        "The meshless Galerkin FP assembles no boundary flux, so its natural condition is zero flux. "
-        "Use g = 0 (no_flux_bc())."
-    )
 
     def __init__(
         self,

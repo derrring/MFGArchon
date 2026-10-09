@@ -132,10 +132,9 @@ class FPFVMSolver(BaseFPSolver):
     # Robin / Reflecting / Extrapolation are not represented.
     _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN, BCType.PERIODIC})
 
-    #: Issue #1686: this family reads a NEUMANN segment's type and drops its value.
-    #: On the FP side a Neumann value is a prescribed flux J.n = g, and no FP solver
-    #: implements an inhomogeneous flux wall, so a non-zero g is refused rather than
-    #: silently discarded. Flip this to True in the same commit that implements it.
+    #: Issue #1686: no FP solver applies a Neumann value, so this stays False. It is no longer reached
+    #: with one: BaseFPSolver reads a shared NEUMANN(0) as zero flux and refuses a shared NEUMANN(g != 0) and an
+    #: explicit one (#2512, row B3).
     honors_inhomogeneous_neumann: bool = False
 
     # The FP equation consumes the advective velocity alpha directly via ``drift_field``; a
@@ -198,27 +197,31 @@ class FPFVMSolver(BaseFPSolver):
         return self._with_geometry_periodic_convention(self._boundary_conditions_source(boundary_conditions))
 
     def _boundary_conditions_source(self, boundary_conditions: BoundaryConditions | None) -> BoundaryConditions:
-        """Which object supplies the BC, before the grid's periodic layout is bound onto it."""
+        """Which object supplies the BC, before the grid's periodic layout is bound onto it.
+
+        A BC passed here is the FP's own, and a NEUMANN in it is refused; one read from the shared problem
+        or geometry is translated, so a NEUMANN there is zero flux (#2512, row B3).
+        """
         if boundary_conditions is not None:
-            return boundary_conditions
+            return self._fp_own_bc(boundary_conditions)
 
         try:
             if self.problem.components is not None and self.problem.components.boundary_conditions is not None:
-                return self.problem.components.boundary_conditions
+                return self._fp_view_of_shared(self.problem.components.boundary_conditions)
         except AttributeError:
             pass
 
         try:
             bc = self.problem.geometry.boundary_conditions
             if bc is not None:
-                return bc
+                return self._fp_view_of_shared(bc)
         except AttributeError:
             pass
 
         try:
             bc = self.problem.geometry.get_boundary_conditions()
             if bc is not None:
-                return bc
+                return self._fp_view_of_shared(bc)
         except AttributeError:
             pass
 

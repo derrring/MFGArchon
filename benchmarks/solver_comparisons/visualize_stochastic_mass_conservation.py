@@ -14,7 +14,7 @@ from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
 from mfgarchon.alg.numerical.mfg_solvers.fixed_point_iterator import FixedPointIterator
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import neumann_bc, no_flux_bc
+from mfgarchon.geometry.boundary import no_flux_bc
 
 
 def main():
@@ -34,7 +34,7 @@ def main():
         volatility=1.0,
         coupling_coefficient=0.5,
     )
-    bc = neumann_bc(dimension=1, value=0.0)
+    bc = no_flux_bc(dimension=1)
 
     fp_solver = FPParticleSolver(problem, num_particles=1000, normalize_kde_output=True, boundary_conditions=bc)
     hjb_solver = HJBFDMSolver(problem)

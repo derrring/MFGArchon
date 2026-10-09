@@ -33,7 +33,7 @@ from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
 def _bc(right_type: BCType) -> BoundaryConditions:
     return BoundaryConditions(
         segments=[
-            BCSegment(name="left", bc_type=BCType.NEUMANN, value=0.0, boundary="x_min"),
+            BCSegment(name="left", bc_type=BCType.NO_FLUX, value=0.0, boundary="x_min"),
             BCSegment(name="right", bc_type=right_type, value=0.0, boundary="x_max"),
         ],
         dimension=1,
@@ -73,7 +73,7 @@ class TestTheAbsorbingSolveReportsMoreErrorThanTheConservingOne:
         itself: it is `1 - surviving/initial`, counted directly from the trajectory the solve
         actually produced, not by calling the function under test on itself.
         """
-        no_flux_result, _ = _run(_bc(BCType.NEUMANN))
+        no_flux_result, _ = _run(_bc(BCType.NO_FLUX))
         absorb_result, absorb_fp = _run(_bc(BCType.DIRICHLET))
 
         assert no_flux_result.mass_conservation_error == 0.0, (
@@ -125,7 +125,7 @@ class TestMassConservationErrorOverrideDirectly:
     """Unit-level tests on the override in isolation, covering all three trajectory shapes."""
 
     def test_a_fixed_shape_array_with_no_absorption_gives_zero(self):
-        problem = _problem(_bc(BCType.NEUMANN))
+        problem = _problem(_bc(BCType.NO_FLUX))
         fp = FPParticleSolver(problem, num_particles=10, seed=1)
         fp.M_particles_trajectory = np.zeros((5, 10))  # (Nt, num_particles)
         assert fp.mass_conservation_error_override() == 0.0
@@ -162,7 +162,7 @@ class TestMassConservationErrorOverrideDirectly:
         assert fp.mass_conservation_error_override() == compact.mass_conservation_error_override()
 
     def test_no_trajectory_yet_gives_none(self):
-        problem = _problem(_bc(BCType.NEUMANN))
+        problem = _problem(_bc(BCType.NO_FLUX))
         fp = FPParticleSolver(problem, num_particles=10, seed=1)
         assert fp.M_particles_trajectory is None
         assert fp.mass_conservation_error_override() is None
@@ -197,10 +197,10 @@ class TestBothAbsorbingRepresentationsAgreeThroughARealSolve:
         Lx, Ly, Nt, T = 4.0, 2.0, 20, 1.0
         bc = BoundaryConditions(
             segments=[
-                BCSegment(name="left", bc_type=BCType.NEUMANN, value=0.0, boundary="x_min"),
+                BCSegment(name="left", bc_type=BCType.NO_FLUX, value=0.0, boundary="x_min"),
                 BCSegment(name="right", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max"),
-                BCSegment(name="bottom", bc_type=BCType.NEUMANN, value=0.0, boundary="y_min"),
-                BCSegment(name="top", bc_type=BCType.NEUMANN, value=0.0, boundary="y_max"),
+                BCSegment(name="bottom", bc_type=BCType.NO_FLUX, value=0.0, boundary="y_min"),
+                BCSegment(name="top", bc_type=BCType.NO_FLUX, value=0.0, boundary="y_max"),
             ],
             dimension=2,
         )

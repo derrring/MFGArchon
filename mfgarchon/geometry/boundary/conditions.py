@@ -1131,6 +1131,17 @@ def neumann_bc(
     """
     Create Neumann boundary conditions (du/dn = value at boundary).
 
+    Two readings, by who reads the BC (#2512, row B3):
+
+    - As the problem's shared BC, ``value`` is the HJB's: du/dn = g, the boundary cost per unit of
+      boundary local time. With g = 0 the FP reads the face as zero total flux, J.n = 0 (ruled
+      2026-10-08). A nonzero g is refused at the FP (user ruling 2026-10-09): it says nothing about the
+      agents' mass at the wall, so keep ``neumann_bc(value=g)`` on the problem for the HJB and give the
+      FP solver ``boundary_conditions=no_flux_bc(...)``. ``FPFEMSolver`` and
+      ``MeshlessGalerkinFPSolver`` take no such parameter, so they cannot run that model until #2532.
+    - Handed to an FP solver explicitly it would mean dm/dn = g, which no FP solver implements, so the
+      solver refuses it. Pass ``no_flux_bc()`` for a reflecting FP wall.
+
     Args:
         value: Normal derivative value (constant or callable(point, time))
         dimension: Spatial dimension. If None, dimension will be inferred when

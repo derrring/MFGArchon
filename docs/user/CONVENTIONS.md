@@ -727,11 +727,25 @@ one implementation, and a neighbour set that changes size invalidates any matrix
 previous one. *Not yet met (#2429): SDF normals disagree between the pointwise and bulk paths at a
 singular point, and three finite-difference SDF-gradient implementations coexist.*
 
+### A shared Neumann condition
+
+On a BC the HJB and the FP share, a NEUMANN face is the HJB's: $\partial u / \partial n = g$, the
+boundary cost per unit of boundary local time. `NEUMANN(0)` is the reflecting pairing, and the FP reads it
+as zero total flux, $J \cdot n = 0$ (`NO_FLUX`; ruled 2026-10-08). A `NEUMANN(g)` with $g \ne 0$ is
+refused at the FP (user ruling 2026-10-09): $g$ says nothing about the agents' mass at the wall, and a
+mass flux through the wall is not a Neumann condition. The two equations' BCs are then specified
+separately: the shared BC keeps `NEUMANN(g)` for the HJB, and the FP solver is given
+`boundary_conditions=no_flux_bc(...)` for reflected agents. An FP solver with no such parameter cannot run
+that model yet (`FPFEMSolver`, `MeshlessGalerkinFPSolver`: #2532). A value that is not provably zero, such as a callable, counts as
+$g \ne 0$. `BaseFPSolver` owns the reading, through `bc_utils.fp_view_of_shared_bc`, and
+`get_boundary_conditions()` and each FP solver's own resolution end in it. A NEUMANN handed to an FP
+solver explicitly would mean $\partial m / \partial n = g$, which no FP solver implements, so it is
+refused, $g = 0$ included; a reflecting FP wall is `NO_FLUX` (#2512, row B3).
+
 ### What is not settled here
 
-The remaining boundary-condition conventions — the relationship between `NO_FLUX` and a zero Neumann
-condition, the Fokker–Planck flux form at a wall, and ghost-cell placement on vertex- versus
-cell-centred grids — are being reworked. Until that lands, the open boundary-condition issues (#1456,
+The remaining boundary-condition conventions — the Fokker–Planck flux form at a wall, and ghost-cell
+placement on vertex- versus cell-centred grids — are being reworked. Until that lands, the open boundary-condition issues (#1456,
 #2005) are the record, not this file.
 
 ---

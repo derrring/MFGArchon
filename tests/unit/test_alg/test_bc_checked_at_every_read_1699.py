@@ -70,8 +70,8 @@ def _solve(solver, dim):
         (HJBFDMSolver, 2, robin_bc(alpha=1.0, beta=1.0, dimension=2), "ROBIN"),
         (HJBSemiLagrangianSolver, 1, dirichlet_bc(dimension=1), "DIRICHLET"),
         (FPSLSolver, 1, dirichlet_bc(dimension=1), "DIRICHLET"),
-        # The validator's other half: a Neumann value, which FP-SL drops (#1686).
-        (FPSLSolver, 1, neumann_bc(value=-0.3, dimension=1), "honours only the homogeneous"),
+        # The other half: a shared Neumann value, which an FP solver refuses at every read (#2512, row B3).
+        (FPSLSolver, 1, neumann_bc(value=-0.3, dimension=1), "has a NEUMANN value that is not zero"),
     ],
     ids=["hjb_fdm-1d-robin", "hjb_fdm-2d-robin", "hjb_sl-dirichlet", "fp_sl-dirichlet", "fp_sl-neumann_value"],
 )

@@ -98,10 +98,9 @@ class FPGFDMSolver(BaseFPSolver):
     # Use TensorProductGrid + FDM/FVM for periodic geometries.
     _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN})
 
-    #: Issue #1686: this family reads a NEUMANN segment's type and drops its value.
-    #: On the FP side a Neumann value is a prescribed flux J.n = g, and no FP solver
-    #: implements an inhomogeneous flux wall, so a non-zero g is refused rather than
-    #: silently discarded. Flip this to True in the same commit that implements it.
+    #: Issue #1686: no FP solver applies a Neumann value, so this stays False. It is no longer reached
+    #: with one: BaseFPSolver reads a shared NEUMANN(0) as zero flux and refuses a shared NEUMANN(g != 0) and an
+    #: explicit one (#2512, row B3).
     honors_inhomogeneous_neumann: bool = False
 
     def __init__(
@@ -174,6 +173,9 @@ class FPGFDMSolver(BaseFPSolver):
         # The RETURN value is discarded. It used to be stored as `self._boundary_type`, which
         # nothing in the package ever read (removed 2026-08-17); `TaylorOperator` takes no boundary
         # argument at all, so the resolved string reached nothing.
+        # A BC passed here is the FP's own, and a NEUMANN in it is refused (#2512, row B3).
+        if boundary_conditions is not None:
+            boundary_conditions = self._fp_own_bc(boundary_conditions)
         self._resolve_boundary_type(
             boundary_conditions=boundary_conditions,
             boundary_type_str=boundary_type,

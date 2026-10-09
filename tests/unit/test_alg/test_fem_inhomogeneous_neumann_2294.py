@@ -19,8 +19,9 @@ THE TWO HALVES ARE NOT THE SAME CONDITION, and this file exists as much for that
 Measured 2026-09-10, driving `FPFEMSolver` with a wall-crossing drift: at `g=0` mass is conserved to
 `6.7e-15` where `dm/dn = 0` would leak by `-int (a.n) m`, and at `g=5` the injection rate is exactly
 `D*g*|dOmega| = 1.25` and IDENTICAL with and without drift, where the gradient reading would differ
-by `int (a.n) m`. So `FPFEMSolver` now declares `honors_inhomogeneous_neumann = False` and the #1686
-gate refuses the problem before the solve rather than solving a different one.
+by `int (a.n) m`. So `FPFEMSolver` now declares `honors_inhomogeneous_neumann = False`, and the #1686
+gate refused the problem before the solve rather than solving a different one. Since #2512's row B3 the
+FP's reading of the shared BC refuses a nonzero `g` earlier still.
 
 WAS A RECORDED DEFECT PIN, retired 2026-09-10 by its own stated condition: the natural-BC family had
 no assembly at all, `g` was accepted and discarded, and both solvers claimed
@@ -234,35 +235,33 @@ def test_the_fp_solver_refuses_the_neumann_spelling():
     has its own tests, and `weak_form_fp_solver.py` already discloses the total-flux character of an
     inhomogeneous Robin as out of scope for #1237 -- so it is filed, not widened here.
 
-    What this test covers is ONE enforcement path: `_validate_bc_support`, reached from
-    `FPFEMSolver.__init__`, refusing on `honors_inhomogeneous_neumann = False`. It does not reach
-    `assemble_robin_terms`; `test_the_natural_bc_parameter_gates_the_neumann_arm` covers that.
+    The refusal is the shared BC's FP reading (#2512, row B3; user ruling 2026-10-09): on the shared
+    BC, g is the HJB's boundary cost, and `fp_view_of_shared_bc`, reached from `FPFEMSolver.__init__`
+    through `get_boundary_conditions()`, refuses a NEUMANN whose g is not zero. It stops construction
+    before #1686's `_validate_bc_support` gate, so it does not reach `assemble_robin_terms` either;
+    `test_the_natural_bc_parameter_gates_the_neumann_arm` covers that. The advice elsewhere is to give
+    the FP its own no-flux BC, and FP-FEM has no parameter to give one through, so its message says the
+    model cannot run on it until #2532 lands (it tracks WeakFormFPSolver's route).
 
-    `_build_advection` assembles `div(v m)` on the volume basis and returns `-C.T` with no facet
-    term, so this weak form's natural boundary condition is the total flux `J.n`. Adding the HJB
-    load would impose `J.n = -D*g` while the caller wrote `dm/dn = g` -- equal only where the drift
-    has no normal component at the wall, which is exactly the configuration a test is most likely to
-    use and least likely to notice.
-
-    Retirement: if FP ever gains the advection facet term (#1237), it can honour the condition, and
-    then `honors_inhomogeneous_neumann` goes back to True and this test says so by failing.
+    Retirement: when #2532 gives FP-FEM a BC of its own, the advice changes and this test says so by
+    failing on the message.
     """
-    with pytest.raises((NotImplementedError, ValueError)) as excinfo:
+    with pytest.raises(NotImplementedError) as excinfo:
         FPFEMSolver(_problem(_segments("neumann", _G)), order=1)
 
-    assert not FPFEMSolver.honors_inhomogeneous_neumann, (
-        "FPFEMSolver declares it honours an inhomogeneous Neumann again. If the advection facet "
-        "term now exists, delete this test; if not, the declaration is false and #1686's gate is "
-        "no longer refusing the problem."
-    )
-    assert "NEUMANN" in str(excinfo.value).upper()
+    message = str(excinfo.value)
+    assert "du/dn = g" in message, message
+    assert "not a Neumann condition" in message, message
+    assert "FPFEMSolver takes no boundary_conditions of its own yet, so this model cannot run on it" in message
+    assert "#2532" in message, message
+    assert "boundary_conditions=no_flux_bc" not in message, message
 
 
 def test_the_natural_bc_parameter_gates_the_neumann_arm():
     """The new mechanism, pinned at the level it lives on. An adversarial review found it unpinned.
 
     `test_the_fp_solver_refuses_the_neumann_spelling` never reaches `assemble_robin_terms` -- the
-    #1686 gate stops the solve at construction -- so every mutation of the new machinery survived it:
+    shared-BC refusal stops the solve at construction -- so every mutation of the new machinery survived it:
     neutering the `natural_bc != "gradient"` check, flipping `FPFEMSolver`'s call to `"gradient"`, and
     flipping the parameter default. A test named for a mechanism that is satisfied by a different one
     is the failure this file exists to avoid, one level up. So this calls the function directly.
@@ -448,7 +447,8 @@ def test_each_solver_declares_the_capability_it_actually_has():
     `honors_inhomogeneous_neumann` was `True` on both solvers while the value was dropped, and
     DECLARED on neither -- inherited from `BaseMFGSolver`, so a sweep over own-class attributes saw
     nothing to check, which is the blindness #1975 records. Now HJB inherits a `True` that is
-    finally accurate and FP declares its own `False`, which is what makes #1686's gate fire.
+    finally accurate and FP declares its own `False`, which made #1686's gate fire; the FP's reading of the
+    shared BC now refuses a nonzero Neumann value before it (#2512, row B3).
     """
     assert HJBFEMSolver.honors_inhomogeneous_neumann is True
     assert "honors_inhomogeneous_neumann" not in vars(HJBFEMSolver), (

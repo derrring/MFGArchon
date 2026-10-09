@@ -21,7 +21,6 @@ except ImportError:  # pragma: no cover - graceful fallback when SciPy missing
     SCIPY_AVAILABLE = False
 
 from mfgarchon.geometry.boundary.applicator_particle import ParticleApplicator
-from mfgarchon.geometry.boundary.bc_utils import fp_view_of_shared_bc
 from mfgarchon.geometry.boundary.types import BCType
 
 # Issue #625: Migrated from tensor_calculus to operators/stencils
@@ -175,10 +174,9 @@ class FPParticleSolver(BaseFPSolver):
         {BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING, BCType.PERIODIC, BCType.DIRICHLET}
     )
 
-    #: Issue #1686: this family reads a NEUMANN segment's type and drops its value.
-    #: On the FP side a Neumann value is a prescribed flux J.n = g, and no FP solver
-    #: implements an inhomogeneous flux wall, so a non-zero g is refused rather than
-    #: silently discarded. Flip this to True in the same commit that implements it.
+    #: Issue #1686: no FP solver applies a Neumann value, so this stays False. It is no longer reached
+    #: with one: BaseFPSolver reads a shared NEUMANN(0) as zero flux and refuses a shared NEUMANN(g != 0) and an
+    #: explicit one (#2512, row B3).
     honors_inhomogeneous_neumann: bool = False
 
     def __init__(
@@ -288,7 +286,7 @@ class FPParticleSolver(BaseFPSolver):
         # is an exit, u = g for the HJB and m = 0 for this solver (#2512, convention row 5).
         self._bc_is_shared = boundary_conditions is None
         if boundary_conditions is not None:
-            self.boundary_conditions = boundary_conditions
+            self.boundary_conditions = self._fp_own_bc(boundary_conditions)
         else:
             # Try geometry BC (use try/except, not hasattr - Issue #543)
             try:
@@ -327,7 +325,7 @@ class FPParticleSolver(BaseFPSolver):
         # Issue #1456: fail loud if the resolved BC requests a type this solver cannot honor
         # (no-op for the "periodic" string sentinel).
         if self._bc_is_shared:
-            self.boundary_conditions = fp_view_of_shared_bc(self.boundary_conditions)
+            self.boundary_conditions = self._fp_view_of_shared(self.boundary_conditions)
         self._validate_bc_support(self.boundary_conditions)
         self._refuse_inhomogeneous_dirichlet(self.boundary_conditions)
 
@@ -3016,10 +3014,11 @@ if __name__ == "__main__":
 
     # Test 3: Absorbing BC (segment-aware)
     print("\nTesting 2D FPParticleSolver with absorbing BC...")
-    from mfgarchon.geometry.boundary import BCSegment, mixed_bc
+    from mfgarchon.geometry.boundary import BCSegment, BoundaryConditions
 
-    # Create BC with exit on right wall (DIRICHLET = absorbing for particles)
-    bc_absorbing = mixed_bc(
+    # Create BC with exit on right wall (DIRICHLET = absorbing for particles). Built directly: the deprecated
+    # mixed_bc sets a NEUMANN fall-through, which an FP solver handed this BC refuses (#2512, row B3).
+    bc_absorbing = BoundaryConditions(
         dimension=2,
         segments=[
             BCSegment(

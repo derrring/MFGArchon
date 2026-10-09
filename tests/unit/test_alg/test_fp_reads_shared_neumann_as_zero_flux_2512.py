@@ -1,0 +1,277 @@
+"""An FP solver reads a shared NEUMANN(0) as zero flux, refuses a shared NEUMANN(g != 0), and refuses one of its own (#2512, row B3).
+
+A shared BC carries one datum per face, and its value is the HJB's: for NEUMANN(g), the boundary cost per
+unit of local time, du/dn = g. `BaseFPSolver._fp_view_of_shared` owns the FP's reading of it:
+- NEUMANN(0) is the reflecting pairing, zero total flux J.n = 0 (ruled 2026-10-08);
+- NEUMANN(g != 0) is refused at the FP (user ruling 2026-10-09). Its g says nothing about the agents'
+  mass at the wall, and a mass flux through the wall is not a Neumann condition, so the two equations'
+  BCs are specified separately: the shared BC keeps NEUMANN(g) for the HJB, and the FP solver is given
+  its own no-flux BC. A family with no such parameter cannot run the model yet (#2532: FP-FEM and meshless Galerkin).
+
+A NEUMANN handed to an FP solver explicitly would mean dm/dn = g, which no FP solver implements, so it is
+refused, g = 0 included (`_fp_own_bc`).
+
+The routing pins solve under a drift into the x_max wall, where J.n = 0 and dm/dn = 0 differ.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+import numpy as np
+
+from mfgarchon import Conditions, MFGProblem, Model
+from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import (
+    BCSegment,
+    BCType,
+    BoundaryConditions,
+    neumann_bc,
+    no_flux_bc,
+)
+
+SIGMA, T, NT = 0.4, 0.5, 10
+OWN_REFUSAL = r"a NEUMANN boundary condition passed to an FP solver means dm/dn = g"
+SHARED_REFUSAL = r"the problem's shared boundary condition has a NEUMANN value that is not zero"
+
+
+def _model() -> Model:
+    return Model(
+        hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=SIGMA
+    )
+
+
+def _grid_problem(bc: BoundaryConditions, dim: int) -> MFGProblem:
+    n = 21 if dim == 1 else 11
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)] * dim, Nx_points=[n] * dim, boundary_conditions=bc)
+    return MFGProblem(
+        model=_model(),
+        domain=grid,
+        conditions=Conditions(
+            m_initial=lambda x: 1.0 + 0.0 * np.asarray(x, dtype=float)[..., 0], u_terminal=lambda x: 0.0, T=T
+        ),
+        Nt=NT,
+    )
+
+
+def _fdm_solve(bc: BoundaryConditions, dim: int) -> np.ndarray:
+    problem = _grid_problem(bc, dim)
+    solver = FPFDMSolver(problem)
+    shape = tuple(problem.geometry.get_grid_shape())
+    x = np.meshgrid(*[np.linspace(0.0, 1.0, s) for s in shape], indexing="ij")[0]
+    # U = -x, so the drift -grad U points into the x_max wall.
+    return np.asarray(
+        solver.solve_fp_system(M_initial=np.ones(shape), potential_field=np.broadcast_to(-x, (NT + 1, *shape)))
+    )
+
+
+def _mesh(dim: int):
+    if dim == 1:
+        from mfgarchon.geometry.meshes.mesh_1d import Mesh1D
+
+        geometry = Mesh1D(bounds=(0.0, 1.0), num_elements=16)
+        geometry.generate_mesh()
+        return geometry
+    import skfem
+
+    from mfgarchon.alg.numerical.fem.mesh_adapter import skfem_to_meshdata
+    from mfgarchon.geometry.meshes.mesh_2d import Mesh2D
+
+    geometry = Mesh2D(domain_type="rectangle", bounds=(0.0, 1.0, 0.0, 1.0))
+    xs = np.linspace(0.0, 1.0, 9)
+    geometry.mesh_data = skfem_to_meshdata(skfem.MeshTri.init_tensor(xs, xs))
+    return geometry
+
+
+def _fem_solve(bc: BoundaryConditions, dim: int) -> np.ndarray:
+    from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
+
+    geometry = _mesh(dim)
+    geometry.boundary_conditions = bc
+    # Unit mass on the mesh's own measure: Mesh1D's uniform-cell measure gives a constant c the mass c (n+1)/n.
+    c = 16 / 17 if dim == 1 else 1.0
+    problem = MFGProblem(
+        model=_model(),
+        domain=geometry,
+        conditions=Conditions(m_initial=lambda p: c + 0.0 * np.asarray(p)[..., 0], u_terminal=lambda p: 0.0, T=T),
+        Nt=NT,
+    )
+    solver = FPFEMSolver(problem, order=1)
+    x = solver._disc.dof_coordinates[:, 0]
+    return np.asarray(
+        solver.solve_fp_system(M_initial=np.ones_like(x), potential_field=np.broadcast_to(-x, (NT + 1, x.size)))
+    )
+
+
+_CELLS = pytest.mark.parametrize(
+    ("family", "dim"),
+    [("fdm", 1), ("fdm", 2), ("fem", 1), ("fem", 2)],
+    ids=["fdm-1d", "fdm-2d", "fem-1d", "fem-2d"],
+)
+
+
+@_CELLS
+def test_a_shared_neumann_zero_solves_as_zero_flux(family, dim):
+    solve = _fdm_solve if family == "fdm" else _fem_solve
+    np.testing.assert_array_equal(solve(neumann_bc(dimension=dim), dim), solve(no_flux_bc(dimension=dim), dim))
+
+
+@_CELLS
+def test_a_shared_neumann_value_is_refused_naming_both_readings(family, dim):
+    """g = 0.7: the HJB's boundary cost, which the FP cannot read a wall condition from."""
+    solve = _fdm_solve if family == "fdm" else _fem_solve
+    with pytest.raises(NotImplementedError, match=SHARED_REFUSAL) as excinfo:
+        solve(neumann_bc(value=0.7, dimension=dim), dim)
+    message = str(excinfo.value)
+    assert "du/dn = g" in message
+    assert "a mass flux through the wall is not a Neumann condition" in message
+    if family == "fdm":
+        assert "pass FPFDMSolver boundary_conditions=no_flux_bc(dimension=...)" in message
+    else:
+        assert "FPFEMSolver takes no boundary_conditions of its own yet" in message
+        assert "#2532" in message
+
+
+@pytest.mark.parametrize("dim", [1, 2])
+def test_fdm_refuses_a_neumann_of_its_own(dim):
+    """FP-FDM takes an explicit BC, and a NEUMANN in it is refused, g = 0 included. FP-FEM takes none (#2532)."""
+    with pytest.raises(NotImplementedError, match=OWN_REFUSAL):
+        FPFDMSolver(_grid_problem(no_flux_bc(dimension=dim), dim), boundary_conditions=neumann_bc(dimension=dim))
+    FPFDMSolver(_grid_problem(no_flux_bc(dimension=dim), dim), boundary_conditions=no_flux_bc(dimension=dim))
+
+
+def _families_with_an_explicit_route():
+    from mfgarchon.alg.numerical.fp_solvers.fp_fvm import FPFVMSolver
+    from mfgarchon.alg.numerical.fp_solvers.fp_gfdm import FPGFDMSolver
+    from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
+    from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
+
+    points = np.linspace(0.0, 1.0, 21).reshape(-1, 1)
+    return {
+        "FVM": lambda p, bc: FPFVMSolver(p, boundary_conditions=bc),
+        "GFDM": lambda p, bc: FPGFDMSolver(p, collocation_points=points, boundary_conditions=bc),
+        "SL": lambda p, bc: FPSLSolver(p, boundary_conditions=bc),
+        "Particle": lambda p, bc: FPParticleSolver(p, num_particles=200, seed=0, boundary_conditions=bc),
+    }
+
+
+@pytest.mark.parametrize("family", ["FVM", "GFDM", "SL", "Particle"])
+def test_every_explicit_route_refuses_a_neumann(family):
+    build = _families_with_an_explicit_route()[family]
+    problem = _grid_problem(no_flux_bc(dimension=1), 1)
+    with pytest.raises(NotImplementedError, match=OWN_REFUSAL):
+        build(problem, neumann_bc(dimension=1))
+    build(problem, no_flux_bc(dimension=1))
+
+
+def test_the_refusal_names_a_neumann_fall_through():
+    """A BC whose segments cover every face can still carry default_bc=NEUMANN, which the deprecated
+    mixed_bc sets; the refusal says so and how to avoid it. It refuses even where no face reaches the
+    default, until #2512's row B1 resolves face coverage."""
+    covered = BoundaryConditions(
+        dimension=1,
+        segments=[
+            BCSegment(name="left", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_min"),
+            BCSegment(name="right", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max"),
+        ],
+        default_bc=BCType.NEUMANN,
+    )
+    with pytest.raises(NotImplementedError, match=r"default_bc=NEUMANN.*pass default_bc=BCType.NO_FLUX"):
+        FPFDMSolver(_grid_problem(no_flux_bc(dimension=1), 1), boundary_conditions=covered)
+
+
+def _build_on_shared(family: str, g: float):
+    """``family``'s FP solver on a problem whose shared BC is NEUMANN(g), and the BC it holds."""
+    if family == "FEM":
+        from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
+
+        geometry = _mesh(2)
+        geometry.boundary_conditions = neumann_bc(value=g, dimension=2)
+        problem = MFGProblem(
+            model=_model(),
+            domain=geometry,
+            conditions=Conditions(m_initial=lambda p: 1.0 + 0.0 * np.asarray(p)[..., 0], u_terminal=lambda p: 0.0, T=T),
+            Nt=NT,
+        )
+        return FPFEMSolver(problem, order=1)._bc
+    if family == "Meshless":
+        from mfgarchon.alg.numerical.meshless_galerkin.fp_solver import MeshlessGalerkinFPSolver
+
+        problem = _grid_problem(neumann_bc(value=g, dimension=1), 1)
+        return MeshlessGalerkinFPSolver(problem, np.linspace(0.0, 1.0, 11).reshape(-1, 1), delta=0.35)._bc
+    if family == "FDM":
+        return FPFDMSolver(_grid_problem(neumann_bc(value=g, dimension=1), 1)).boundary_conditions
+    solver = _families_with_an_explicit_route()[family](_grid_problem(neumann_bc(value=g, dimension=1), 1), None)
+    return solver.boundary_conditions if family in ("FVM", "Particle") else solver.get_boundary_conditions()
+
+
+_ALL_FAMILIES = ["FDM", "FEM", "FVM", "GFDM", "SL", "Particle", "Meshless"]
+
+
+@pytest.mark.parametrize("family", _ALL_FAMILIES)
+def test_every_family_reads_a_shared_neumann_zero_as_no_flux(family):
+    held = _build_on_shared(family, 0.0)
+    assert held.default_bc != BCType.NEUMANN
+    assert all(seg.bc_type != BCType.NEUMANN for seg in held.segments)
+
+
+@pytest.mark.parametrize("family", _ALL_FAMILIES)
+def test_every_family_refuses_a_shared_neumann_value(family):
+    """The advice follows the family: give the FP its own no-flux BC, or, with no parameter for one, wait for it."""
+    with pytest.raises(NotImplementedError, match=SHARED_REFUSAL) as excinfo:
+        _build_on_shared(family, 0.7)
+    if family in ("FEM", "Meshless"):
+        assert "takes no boundary_conditions of its own yet, so this model cannot run on it" in str(excinfo.value)
+        assert "boundary_conditions=no_flux_bc" not in str(excinfo.value)
+    else:
+        assert "boundary_conditions=no_flux_bc(dimension=...) for reflected agents" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("family", ["FDM", "FVM", "GFDM", "SL", "Particle"])
+def test_the_refusals_advice_runs(family):
+    """Followed: the shared BC keeps NEUMANN(0.7) for the HJB, and the FP is given its own no-flux BC.
+
+    The FP solves under the drift into the x_max wall, and an HJB solver on the same problem still reads g = 0.7.
+    """
+    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+
+    problem = _grid_problem(neumann_bc(value=0.7, dimension=1), 1)
+    build = {"FDM": lambda p, bc: FPFDMSolver(p, boundary_conditions=bc), **_families_with_an_explicit_route()}[family]
+    solver = build(problem, no_flux_bc(dimension=1))
+    x = np.linspace(0.0, 1.0, 21)
+    if family == "GFDM":
+        M = solver.solve_fp_system(M_initial=np.ones(21), drift_field=np.ones((NT + 1, 21)))
+    else:
+        M = solver.solve_fp_system(M_initial=np.ones(21), potential_field=np.broadcast_to(-x, (NT + 1, 21)))
+    assert np.shape(M) == (NT + 1, 21)
+    assert np.all(np.isfinite(M))
+    hjb_bc = HJBFDMSolver(problem).get_boundary_conditions()
+    assert [(seg.bc_type, seg.value) for seg in hjb_bc.segments] == [(BCType.NEUMANN, 0.7)]
+
+
+@pytest.mark.parametrize(
+    ("shared", "what"),
+    [
+        (lambda: neumann_bc(value=lambda t: 0.7, dimension=1), "<callable>"),
+        (
+            lambda: BoundaryConditions(
+                dimension=1,
+                segments=[
+                    BCSegment(name="left", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_min"),
+                    BCSegment(name="right", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max"),
+                ],
+                default_bc=BCType.NEUMANN,
+                default_value=0.7,
+            ),
+            "default_bc=NEUMANN, the fall-through",
+        ),
+    ],
+    ids=["callable", "fall-through"],
+)
+def test_a_value_not_provably_zero_is_refused(shared, what):
+    """A callable is not assumed zero, and the default_bc fall-through is a value too (#1686)."""
+    with pytest.raises(NotImplementedError, match=SHARED_REFUSAL) as excinfo:
+        FPFDMSolver(_grid_problem(shared(), 1))
+    assert what in str(excinfo.value)

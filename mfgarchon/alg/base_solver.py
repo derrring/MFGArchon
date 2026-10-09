@@ -288,13 +288,10 @@ class BaseMFGSolver(ABC):
     honors_inhomogeneous_neumann: bool = True
 
     #: Why a solver that sets ``honors_inhomogeneous_neumann = False`` refuses a Neumann value; the gate
-    #: below appends it. Every FP family shares this reason; a solver refusing for another one overrides it.
-    _inhomogeneous_neumann_gap: str = (
-        "On the FP side a Neumann value is a prescribed flux J.n = g, and no FP solver implements an "
-        "inhomogeneous flux wall yet. Use g = 0 (equivalently no_flux_bc()). A prescribed density m = g is "
-        "imposed only by FPFDMSolver, from a DIRICHLET BC passed to it (FPFDMSolver(boundary_conditions=...)); "
-        "a DIRICHLET on the shared problem/geometry BC is an exit, not a density (#2512, convention row 5)."
-    )
+    #: below appends it, and a solver with a reason of its own overrides it. No FP solver reaches the gate
+    #: with a NEUMANN value: BaseFPSolver reads a shared NEUMANN(0) as zero flux and refuses a shared
+    #: NEUMANN(g != 0) and an explicit NEUMANN (#2512, row B3).
+    _inhomogeneous_neumann_gap: str = "Use g = 0, or a solver that honours a Neumann value."
 
     #: Declared per solver. `None` means "un-migrated": the gate below no-ops rather than refusing
     #: everything.

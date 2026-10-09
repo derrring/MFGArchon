@@ -13,7 +13,7 @@ All solvers should import from this module for consistent BC handling.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NoReturn
 
 
 def get_bc_type_string(boundary_conditions: Any) -> str | None:
@@ -378,18 +378,33 @@ def _describe_bc_value(value: Any) -> object | None:
         return f"<unrecognised {type(value).__name__}>"
 
 
-def fp_view_of_shared_bc(boundary_conditions: Any) -> Any:
-    """The Fokker-Planck reading of a shared problem/geometry BC (#2512, convention row 5).
+def fp_view_of_shared_bc(boundary_conditions: Any, *, consumer: str, takes_its_own_bc: bool) -> Any:
+    """The Fokker-Planck reading of a shared problem/geometry BC (#2512, row B3).
 
-    One owner for the translation. An exit is two conditions on two equations: the exit cost u = g on
-    the HJB, and an absorbing wall m = 0 on the FP. A single shared ``DIRICHLET(g)`` cannot mean both
-    literally, so on the FP side it means absorbing and its value is dropped **by design**: every
-    DIRICHLET segment, and a DIRICHLET ``default_bc``, comes back with value 0. Everything else is
-    returned unchanged.
+    One owner for the translation. A shared BC carries one datum per face, and two equations read it.
+    The shared value is the HJB's: for a Dirichlet the exit cost, for a Neumann du/dn = g, the boundary
+    cost per unit local time. On the FP side:
+
+    - every DIRICHLET segment, and a DIRICHLET ``default_bc``, comes back with value 0: an absorbing
+      wall, m = 0, its value dropped **by design** (ruled 2026-10-07);
+    - a NEUMANN with g = 0, as a segment or the ``default_bc``, comes back as NO_FLUX with value 0: the
+      reflecting pairing, zero total flux J.n = 0 (ruled 2026-10-08);
+    - a NEUMANN whose g is not provably zero is **refused** (user ruling 2026-10-09). Its g is the HJB's
+      boundary cost and says nothing about the agents' mass at the wall, and a mass flux through the
+      wall is not a Neumann condition, so the two equations' BCs are specified separately. "Not provably
+      zero" is `describe_inhomogeneous_bc_data`'s answer, so a callable or a provider is refused rather
+      than assumed zero, and the ``default_bc`` fall-through is checked too (#1686).
+
+    Everything else is returned unchanged.
+
+    ``consumer`` names the solver in the refusal, and ``takes_its_own_bc`` says whether it has a
+    ``boundary_conditions`` parameter through which the FP's BC can be given separately: the refusal's
+    advice depends on it.
 
     Only a BC the FP solver reads from the shared problem / geometry goes through here -- in a coupled
     solve or a standalone FP solve alike, since the solver cannot tell them apart. A BC passed to an FP
-    solver explicitly is the FP's own: there ``DIRICHLET(g)`` is a prescribed density m = g.
+    solver explicitly is the FP's own: there ``DIRICHLET(g)`` is a prescribed density m = g, and a
+    NEUMANN is refused (`refuse_explicit_fp_neumann`).
 
     Anything that is not a ``BoundaryConditions`` (``None``, a string sentinel) is returned as is.
     """
@@ -400,21 +415,102 @@ def fp_view_of_shared_bc(boundary_conditions: Any) -> Any:
 
     if not isinstance(boundary_conditions, BoundaryConditions):
         return boundary_conditions
+    if values := describe_inhomogeneous_bc_data(boundary_conditions, bc_types={BCType.NEUMANN}):
+        _refuse_a_shared_neumann_value(boundary_conditions, values, consumer, takes_its_own_bc)
 
-    def carries_a_value(seg: Any) -> bool:
-        return seg.bc_type == BCType.DIRICHLET and _describe_bc_value(seg.value) is not None
+    def fp_segment(seg: Any) -> Any:
+        if seg.bc_type == BCType.NEUMANN:
+            return replace(seg, bc_type=BCType.NO_FLUX, value=0.0)
+        if seg.bc_type == BCType.DIRICHLET and _describe_bc_value(seg.value) is not None:
+            return replace(seg, value=0.0)
+        return seg
 
-    default_carries = (
-        boundary_conditions.default_bc == BCType.DIRICHLET
-        and _describe_bc_value(boundary_conditions.default_value) is not None
-    )
-    if not default_carries and not any(carries_a_value(seg) for seg in boundary_conditions.segments):
-        return boundary_conditions  # nothing to translate: the caller keeps the geometry's own object
-    segments = [replace(seg, value=0.0) if carries_a_value(seg) else seg for seg in boundary_conditions.segments]
-    changes: dict[str, Any] = {"segments": segments}
-    if default_carries:
+    segments = [fp_segment(seg) for seg in boundary_conditions.segments]
+    changes: dict[str, Any] = {}
+    if any(new is not old for new, old in zip(segments, boundary_conditions.segments, strict=True)):
+        changes["segments"] = segments
+    default = boundary_conditions.default_bc
+    if default == BCType.NEUMANN:
+        changes.update(default_bc=BCType.NO_FLUX, default_value=0.0)
+    elif default == BCType.DIRICHLET and _describe_bc_value(boundary_conditions.default_value) is not None:
         changes["default_value"] = 0.0
+    if not changes:
+        return boundary_conditions  # nothing to translate: the caller keeps the geometry's own object
     return replace(boundary_conditions, **changes)
+
+
+def _refuse_a_shared_neumann_value(
+    boundary_conditions: Any, values: list[object], consumer: str, takes_its_own_bc: bool
+) -> NoReturn:
+    """The refusal of a shared NEUMANN whose g is not provably zero, naming both readings (#2512, row B3)."""
+    from .types import BCType
+
+    where = [
+        f"segment {seg.name!r}"
+        for seg in boundary_conditions.segments
+        if seg.bc_type == BCType.NEUMANN and _describe_bc_value(seg.value) is not None
+    ]
+    if (
+        boundary_conditions.default_bc == BCType.NEUMANN
+        and _describe_bc_value(boundary_conditions.default_value) is not None
+    ):
+        where.append("default_bc=NEUMANN, the fall-through for faces no segment names")
+    if takes_its_own_bc:
+        how = (
+            f"keep NEUMANN(g) on the shared BC for the HJB, and pass {consumer} "
+            "boundary_conditions=no_flux_bc(dimension=...) for reflected agents; through problem.solve, "
+            "build that FP solver "
+            "yourself and pass it as fp_solver="
+        )
+    else:
+        how = (
+            f"{consumer} takes no boundary_conditions of its own yet, so this model cannot run on it until "
+            "it does (#2532 tracks it)"
+        )
+    raise NotImplementedError(
+        f"{consumer}: the problem's shared boundary condition has a NEUMANN value that is not zero "
+        f"({', '.join(map(str, values))}, at {'; '.join(where)}). On the shared BC that value is the HJB's "
+        "boundary cost, du/dn = g. It says nothing about the agents' mass at the wall, and a mass flux "
+        "through the wall is not a Neumann condition, so the FP cannot read one from it (#2512, user ruling "
+        f"2026-10-09). Specify the two equations' BCs separately: {how}."
+    )
+
+
+def refuse_explicit_fp_neumann(boundary_conditions: Any, consumer: str) -> Any:
+    """Refuse a NEUMANN in a BC handed to an FP solver, and return the BC otherwise (#2512, row B3).
+
+    A BC passed to an FP solver is the FP's own, and its NEUMANN would mean dm/dn = g. No FP solver
+    implements that: under a drift the zero-flux wall they build is J.n = 0, which is not dm/dn = 0. So
+    every NEUMANN segment or ``default_bc`` in it is refused, g = 0 included (ruled 2026-10-08). Anything
+    that is not a ``BoundaryConditions`` is returned as is.
+    """
+    from .conditions import BoundaryConditions
+    from .types import BCType
+
+    if not isinstance(boundary_conditions, BoundaryConditions):
+        return boundary_conditions
+    where = (
+        [f"segment(s) {names}"]
+        if (names := [seg.name for seg in boundary_conditions.segments if seg.bc_type == BCType.NEUMANN])
+        else []
+    )
+    if boundary_conditions.default_bc == BCType.NEUMANN:
+        # The fall-through is refused even where no face reaches it; narrowing it to a reachable default
+        # needs the face resolution of #2512's row B1.
+        where.append(
+            "default_bc=NEUMANN, the fall-through for faces no segment names (mixed_bc sets it unless told "
+            "otherwise); pass default_bc=BCType.NO_FLUX, or build BoundaryConditions(segments=...) directly"
+        )
+    if where:
+        raise NotImplementedError(
+            f"{consumer}: a NEUMANN boundary condition passed to an FP solver means dm/dn = g, which no FP "
+            "solver implements: under a drift, the zero-flux wall an FP solver builds, where it builds one, is "
+            "J.n = 0, a different "
+            f"condition (#2512). Found: {'; '.join(where)}. Use NO_FLUX (no_flux_bc()) for a reflecting "
+            "wall. A NEUMANN on the problem's shared BC is the HJB's du/dn = g: the FP reads g = 0 as zero flux and "
+            "refuses a nonzero g."
+        )
+    return boundary_conditions
 
 
 def describe_inhomogeneous_bc_data(

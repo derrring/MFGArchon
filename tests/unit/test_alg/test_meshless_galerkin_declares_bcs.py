@@ -1,5 +1,8 @@
 """The meshless Galerkin pair declares the BCs it honours, so the gate refuses the rest (#2512 S4).
 
+A nonzero shared Neumann value is refused at the FP before the gate, by the FP's reading of the shared BC
+(#2512, row B3); the HJB still refuses it through the gate.
+
 Both solvers declared nothing, so `_validate_bc_support` returned early and every BC constructed:
 measured at `7eb53144`, the HJB solved `neumann_bc(value=0.7)` identically to 0.0, the FP solved
 `neumann_bc(value=1.0)` identically to no-flux, and PERIODIC / ROBIN raised only once the solve reached

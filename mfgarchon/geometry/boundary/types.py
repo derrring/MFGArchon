@@ -139,7 +139,10 @@ class BCType(Enum):
 
     Standard BC Types:
         DIRICHLET: Fixed value at boundary (u = g)
-        NEUMANN: Fixed normal derivative at boundary (du/dn = g)
+        NEUMANN: Fixed normal derivative at boundary (du/dn = g). On a BC the HJB and FP share, g is
+            the HJB's datum. The FP reads g = 0 as zero flux (NO_FLUX) and refuses a nonzero g, which says
+            nothing about the agents' mass at the wall; the two equations' BCs are then specified separately.
+            An FP solver refuses a NEUMANN handed to it explicitly, which would mean dm/dn = g (#2512, row B3).
         ROBIN: Mixed condition (alpha*u + beta*du/dn = g)
         PERIODIC: Wrap-around boundaries (u(x_min) = u(x_max))
 
