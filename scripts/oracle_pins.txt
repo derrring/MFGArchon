@@ -108,6 +108,11 @@ oracle fp_fem/robin_2d              -
 # The (b) rows
 row grid/B1_face_segment            -
 row grid/B2_value_form_and_time     -
+# Row B3 awaits two readers outside its guard's population that read the shared BC raw on the FP's
+# behalf: BlockIterator._get_boundary_bc_types (the FP adjoint matrix in "auto" mode) and
+# RegimeSwitchingIterator's fallback (#2529). A follow-up PR under row B3 routes both through the owner,
+# widens the guard's population and replaces this `-` (audit session ruling, 2026-10-09).
+row grid/B3_fp_view_of_shared_bc    -
 row grid/B3_fp_view_of_shared_bc    tests/unit/test_alg/test_fp_reads_the_shared_bc_through_its_owner_2512.py
 row grid/B4_cell_vs_node            -
 row grid/B5_wall_stencil            -
