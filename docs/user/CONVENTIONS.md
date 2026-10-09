@@ -611,18 +611,20 @@ measure is the problem's own, the owner above, not a scalar `dx` (ruled 2026-10-
 sweep makes, the map's output against its input and never the damped step (#1684), relative to the
 output's size, for $u$ and for $m$. An iterator over several fields, whether populations, regimes or
 graph nodes, takes the max over fields of each field's relative change in its own measure. There is no
-absolute criterion unless the caller asks for one with `absolute_tolerance`. All six coupling
-iterators read the owners: `MFGProblem.spatial_measure()` for the measure, `sweep_change` for the
-change, and `check_convergence_criteria` for the verdict (#2555).
+absolute criterion unless the caller asks for one with `absolute_tolerance`. A non-finite change is
+refused, not judged: the verdict raises, naming the value, and the max over fields raises first, naming
+the field (#2578). All six coupling iterators read the owners: `MFGProblem.spatial_measure()` for the
+measure, `sweep_change` for the change, and `check_convergence_criteria` for the verdict (#2555); the
+three over several fields also read `worst_sweep_change` for the max over fields (#2578).
 `tests/unit/test_alg/test_c1_change_has_one_owner_2512.py` holds to the owners everything under
 `alg/numerical/coupling/`, and any other module of `alg/` that references `PicardConfig`, its `picard`
-attribute, `BaseCouplingIterator`, `check_convergence_criteria` or `sweep_change`; those names approximate
-"takes the outer tolerance". It fails if one of them measures this change, or decides on it, itself,
-through the shapes its docstring lists (#2512). `NewtonMFGSolver` stops on the same kind of quantity, its
-Picard residual, the map's output against its input; its map is the Jacobi one, where
-`FixedPointIterator`'s is Gauss-Seidel, with the same fixed point. After its warm-up and at each iterate
-its Newton loop evaluates, it decides through `sweep_change` and `check_convergence_criteria` on
-`solve(tolerance=)` (#2565).
+attribute, `BaseCouplingIterator`, `check_convergence_criteria`, `sweep_change` or `worst_sweep_change`;
+those names approximate "takes the outer tolerance". It fails if one of them measures this change, or
+decides on it, itself, through the shapes its docstring lists (#2512). `NewtonMFGSolver` stops on the
+same kind of quantity, its Picard residual, the map's output against its input; its map is the Jacobi
+one, where `FixedPointIterator`'s is Gauss-Seidel, with the same fixed point. After its warm-up and at
+each iterate its Newton loop evaluates, it decides through `sweep_change` and
+`check_convergence_criteria` on `solve(tolerance=)` (#2565).
 `HomotopyContinuation`'s corrector, with its own `corr_tol`, and `PrimalDualMFGSolver`, which stops on an
 optimisation residual and its own density change, are separate algorithms with their own tolerances.
 This convention does not govern them (#2573).

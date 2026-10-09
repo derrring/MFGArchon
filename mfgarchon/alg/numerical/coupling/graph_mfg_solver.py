@@ -34,7 +34,7 @@ from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
 from mfgarchon.alg.numerical.coupling.graph_coupling import _get_time_slice
 from mfgarchon.alg.numerical.coupling.source_composition import _call_problem_source, _problem_hjb_source_terms
 from mfgarchon.types.callable_protocols import evaluate_solver_source
-from mfgarchon.utils.convergence import sweep_change
+from mfgarchon.utils.convergence import sweep_change, worst_sweep_change
 
 from .fixed_point_utils import diverged_value_function
 
@@ -296,12 +296,13 @@ class GraphMFGSolver(BaseCouplingIterator):
                     sweep_change(Us_new[k], Us_full[k], Ms_new[k], Ms_expanded[k], integrates[k], dts[k])
                     for k in range(N)
                 ]
-                error = max(max(c["l2distu_rel"], c["l2distm_rel"]) for c in per_node)
+                worst = worst_sweep_change(per_node, "node")
+                error = max(worst["l2distu_rel"], worst["l2distm_rel"])
                 converged, _ = check_convergence_criteria(
-                    max(c["l2distu_rel"] for c in per_node),
-                    max(c["l2distm_rel"] for c in per_node),
-                    max(c["l2distu_abs"] for c in per_node),
-                    max(c["l2distm_abs"] for c in per_node),
+                    worst["l2distu_rel"],
+                    worst["l2distm_rel"],
+                    worst["l2distu_abs"],
+                    worst["l2distm_abs"],
                     self._tol,
                     self._abs_tol,
                 )

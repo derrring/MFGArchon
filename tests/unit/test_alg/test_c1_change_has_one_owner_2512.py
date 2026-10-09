@@ -2,16 +2,19 @@
 
 C1 (#2555) governs the outer coupling tolerance of docs/user/CONVENTIONS.md § 7, taken by `MFGProblem.solve`,
 the coupling iterators and `PicardConfig`: it bounds the change one sweep makes, the map's output against
-its input, Phi(x) - x, relative and in the problem's own measure. Its owners are `MFGProblem.spatial_measure` (the measure), `sweep_change` (the change) and
-`check_convergence_criteria` (the verdict). #2570's behavioural pins show that today's six iterators use
-them. They cannot stop a new consumer from computing the change itself, and this guard does (audit session
-ruling, 2026-10-09, #2512 comment 6073690080).
+its input, Phi(x) - x, relative and in the problem's own measure. Its owners are
+`MFGProblem.spatial_measure` (the measure), `sweep_change` (the change), `worst_sweep_change` (its max over
+a multi-field sweep's fields, #2578) and `check_convergence_criteria` (the verdict). #2570's behavioural
+pins show that today's six iterators use the measure, the change and the verdict, #2565's that
+`NewtonMFGSolver` does, and #2578's that the three multi-field iterators take the max over fields through
+`worst_sweep_change`. Pins cannot stop a new consumer from computing the change itself, and this guard does
+(audit session ruling, 2026-10-09, #2512 comment 6073690080).
 
 **Population.** Every module under `mfgarchon/alg/numerical/coupling/`, and any other module under
 `mfgarchon/alg/` that references `PicardConfig`, its `picard` attribute, `BaseCouplingIterator`,
-`check_convergence_criteria` or `sweep_change`. "Takes the outer tolerance" is approximated by those names,
-not implemented: a module that receives the tolerance only as a plain `tolerance=` argument, or names
-`PicardConfig` only in a string annotation, is outside it.
+`check_convergence_criteria`, `sweep_change` or `worst_sweep_change`. "Takes the outer tolerance" is
+approximated by those names, not implemented: a module that receives the tolerance only as a plain
+`tolerance=` argument, or names `PicardConfig` only in a string annotation, is outside it.
 
 **A difference** is a binary subtraction of two non-constant operands (a ratio minus 1 is a diagnostic,
 not a change between two states); ``.ravel()``, ``.flatten()`` or ``.reshape(...)`` of one; or a name
@@ -21,6 +24,14 @@ assigned directly from a subtraction in the same function or an enclosing one. *
 - ``sum``, ``nansum`` or ``mean`` of a squared difference, or of a product with one as a factor
   (``(a - b)**2 * dx``), as a call or a method, where squared is ``d**2``, ``d * d`` or ``square(d)``;
 - ``d @ d``, ``dot(d, d)`` or ``vdot(d, d)``;
+- an aggregation of a change over fields, which is `worst_sweep_change`'s (#2578): ``max``, ``min``,
+  ``amax``, ``amin``, ``nanmax`` or ``nanmin``, as a call or a method, over a list, set or generator
+  comprehension that reads one of `sweep_change`'s keys (``l2distu_rel`` and the rest, by a constant
+  subscript or ``.get``), or over a name the function fills with such reads (by a plain ``=`` of such a
+  comprehension, or ``append`` / ``extend``), or a running ``w = max(w, <key read>)`` as a plain ``=``. A
+  ``max`` between U's and M's change of one sweep is not over fields, and is not matched. That too is a
+  shape: it also matches a max or min over the iterations of one field, such as a history, and it misses
+  a dict comprehension, an annotated assignment and a key held in a variable;
 - what the guard treats as a convergence verdict outside `check_convergence_criteria`: every ``<``,
   ``<=``, ``>`` or ``>=`` comparison with exactly one side whose name contains "tol", and ``allclose`` /
   ``isclose`` with a tol-named ``atol`` or ``rtol`` keyword. That is a shape, not a definition of a
@@ -62,7 +73,20 @@ import pytest
 REPO = Path(__file__).resolve().parents[3]
 ALG = Path("mfgarchon") / "alg"
 COUPLING = ALG / "numerical" / "coupling"
-OWNERS = frozenset({"PicardConfig", "picard", "BaseCouplingIterator", "check_convergence_criteria", "sweep_change"})
+OWNERS = frozenset(
+    {
+        "PicardConfig",
+        "picard",
+        "BaseCouplingIterator",
+        "check_convergence_criteria",
+        "sweep_change",
+        "worst_sweep_change",
+    }
+)
+#: The keys of `sweep_change`'s result: a max or min over fields of one of them is an aggregation (#2578).
+CHANGE_KEYS = frozenset({"l2distu_rel", "l2distu_abs", "l2distm_rel", "l2distm_abs"})
+_AGGREGATES = frozenset({"max", "min", "amax", "amin", "nanmax", "nanmin"})
+_COMPREHENSIONS = (ast.GeneratorExp, ast.ListComp, ast.SetComp)
 #: Metrics that compute a change their own way: the deprecated wrapper, and #2566's helpers.
 RIVAL_METRICS = frozenset(
     {
@@ -97,6 +121,26 @@ def _tol_named(node: ast.AST) -> bool:
     return name is not None and "tol" in name.lower()
 
 
+def _reads_a_change_key(node: ast.AST) -> bool:
+    """``node`` reads one of `sweep_change`'s keys, by subscript or by ``.get``, anywhere inside it."""
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Subscript) and isinstance(sub.slice, ast.Constant) and sub.slice.value in CHANGE_KEYS:
+            return True
+        if (
+            isinstance(sub, ast.Call)
+            and _name(sub.func) == "get"
+            and sub.args
+            and isinstance(sub.args[0], ast.Constant)
+            and sub.args[0].value in CHANGE_KEYS
+        ):
+            return True
+    return False
+
+
+def _comprehension_of_change_keys(node: ast.AST) -> bool:
+    return any(isinstance(sub, _COMPREHENSIONS) and _reads_a_change_key(sub.elt) for sub in ast.walk(node))
+
+
 def _references_an_owner(tree: ast.AST) -> bool:
     for node in ast.walk(tree):
         if isinstance(node, (ast.Name, ast.Attribute)) and _name(node) in OWNERS:
@@ -122,7 +166,19 @@ class _Scope:
     def __init__(self, node: ast.AST, inherited: frozenset[str] = frozenset()):
         self.node = node
         self.named: set[str] = set(inherited)
+        #: Names this scope fills with per-field change values: a comprehension of key reads, or appended to.
+        self.per_field: set[str] = set()
         for sub in _own_nodes(node):
+            if isinstance(sub, ast.Assign) and _comprehension_of_change_keys(sub.value):
+                self.per_field.update(t.id for t in sub.targets if isinstance(t, ast.Name))
+            if (
+                isinstance(sub, ast.Call)
+                and isinstance(sub.func, ast.Attribute)
+                and sub.func.attr in {"append", "extend"}
+                and isinstance(sub.func.value, ast.Name)
+                and any(_reads_a_change_key(a) for a in sub.args)
+            ):
+                self.per_field.add(sub.func.value.id)
             if isinstance(sub, ast.Assign) and self._is_inline_difference(sub.value):
                 self.named.update(t.id for t in sub.targets if isinstance(t, ast.Name))
             elif isinstance(sub, ast.AnnAssign) and sub.value is not None and self._is_inline_difference(sub.value):
@@ -171,9 +227,24 @@ class _Scope:
             and self.difference(node.args[0])
         )
 
+    def over_fields(self, node: ast.AST) -> bool:
+        """``node`` holds one change value per field: a comprehension of key reads, or a name filled with them."""
+        if isinstance(node, ast.Name) and node.id in self.per_field:
+            return True
+        return _comprehension_of_change_keys(node)
+
     def rivals(self) -> set[tuple[int, str]]:
         found: set[tuple[int, str]] = set()
         for node in _own_nodes(self.node):
+            if (
+                isinstance(node, ast.Assign)
+                and isinstance(node.value, ast.Call)
+                and _name(node.value.func) in _AGGREGATES
+            ):
+                targets = {t.id for t in node.targets if isinstance(t, ast.Name)}
+                running = [a for a in node.value.args if isinstance(a, ast.Name) and a.id in targets]
+                if running and any(_reads_a_change_key(a) for a in node.value.args):
+                    found.add((node.lineno, "an aggregation of a change over fields"))
             if isinstance(node, ast.BinOp) and isinstance(node.op, ast.MatMult):
                 if self.difference(node.left) and self.difference(node.right):
                     found.add((node.lineno, "d @ d"))
@@ -196,6 +267,10 @@ class _Scope:
                 found.add((node.lineno, "sum of a squared difference"))
             if fn in {"dot", "vdot"} and len(args) == 2 and all(self.difference(a) for a in args):
                 found.add((node.lineno, f"{fn}(d, d)"))
+            if fn in _AGGREGATES and (
+                any(self.over_fields(a) for a in args) or (method_of is not None and self.over_fields(method_of))
+            ):
+                found.add((node.lineno, "an aggregation of a change over fields"))
             if fn in {"allclose", "isclose"} and any(
                 k.arg in {"atol", "rtol"} and _tol_named(k.value) for k in node.keywords
             ):
@@ -313,8 +388,9 @@ def test_no_module_in_c1s_population_measures_a_change_itself():
     }
     assert iterators <= {Path(p).name for p in population}, "the population no longer reaches the six iterators"
     assert sites == [], (
-        "each site measures a change, or decides on one, outside C1's owners. Route it through sweep_change and "
-        "check_convergence_criteria (C1, #2555); if it is not the outer loop's change, name it as an exclusion "
+        "each site measures a change, or decides on one, outside C1's owners. Route it through sweep_change, "
+        "worst_sweep_change and check_convergence_criteria (C1, #2555, #2578); if it is not the outer loop's "
+        "change, name it as an exclusion "
         "in this file with the reason:\n" + "\n".join(sites)
     )
 
@@ -375,6 +451,16 @@ def test_a_new_consumer_outside_coupling_is_in_the_population(alg_copy):
         ("d = a - b\nx = np.dot(d, d)", "dot(d, d)"),
         ("d = a - b\nx = np.vdot(d, d)", "vdot(d, d)"),
         ("x = np.allclose(a, b, atol=tol)", "a verdict by allclose"),
+        ('x = max(c["l2distm_rel"] for c in a)', "an aggregation of a change over fields"),
+        ('x = min([c["l2distu_abs"] for c in a])', "an aggregation of a change over fields"),
+        ('x = np.nanmax([c.get("l2distm_rel") for c in a])', "an aggregation of a change over fields"),
+        ('x = np.array([c["l2distm_abs"] for c in a]).max()', "an aggregation of a change over fields"),
+        (
+            'e = [max(c["l2distu_rel"], c["l2distm_rel"]) for c in a]\nx = np.amax(e)',
+            "an aggregation of a change over fields",
+        ),
+        ('e = []\nfor c in a:\n    e.append(c["l2distm_rel"])\nx = max(e)', "an aggregation of a change over fields"),
+        ('w = 0.0\nfor c in a:\n    w = max(w, c["l2distm_rel"])', "an aggregation of a change over fields"),
         ("x = calculate_error(a, b)", "calls calculate_error"),
         ("x = calculate_l2_convergence_metrics(a, b)", "calls calculate_l2_convergence_metrics"),
         ("x = compute_norm(a)", "calls compute_norm"),
@@ -423,3 +509,18 @@ def test_a_ratio_minus_one_is_not_a_change():
     """A difference needs two non-constant operands: a mass diagnostic is not a sweep's change."""
     scope = _Scope(ast.parse("x = np.max(np.abs(mass / m0 - 1.0))"))
     assert scope.rivals() == set()
+
+
+@pytest.mark.parametrize(
+    "planted",
+    [
+        'x = max(c["l2distu_rel"], c["l2distm_rel"])',
+        'w = worst_sweep_change(a, "node")\nx = max(w["l2distu_rel"], w["l2distm_rel"])',
+        "x = max(err for err in a)",
+    ],
+    ids=["u-against-m", "of-the-aggregate", "no-change-key"],
+)
+def test_a_max_that_is_not_over_fields_of_a_change_is_not_an_aggregation(alg_copy, planted):
+    """The aggregation rule's scope: U against M of one change, or a max over values that are not a change."""
+    body = "def _planted(a, b, dx, tol):\n" + "".join(f"    {line}\n" for line in planted.splitlines())
+    assert _planted_scan(alg_copy, alg_copy / COUPLING / "planted_shape.py", None, body) == []

@@ -101,6 +101,7 @@ convention C1                 tests/unit/test_alg/test_coupling_change_is_measur
 convention C1                 tests/unit/test_alg/test_status_reports_the_final_state_1684.py::test_the_reported_error_is_the_larger_of_the_two_fields
 convention C1                 tests/unit/test_alg/test_c1_change_has_one_owner_2512.py
 convention C1                 tests/unit/test_alg/test_newton_decides_through_the_owners_2565.py
+convention C1                 tests/unit/test_alg/test_verdict_refuses_non_finite_2578.py
 convention C2                       -
 convention C3                       -
 convention C4                       -
