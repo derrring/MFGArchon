@@ -14,6 +14,8 @@ import pytest
 
 from tests.conftest import pytest_collection_modifyitems, pytest_runtest_setup, says_slow, undeclared_slow_names
 
+pytest_plugins = ("pytester",)
+
 
 class _Item:
     """The parts of a collected pytest item the conftest hooks read and write."""
@@ -67,3 +69,21 @@ def test_an_undeclared_name_fails_where_it_runs():
     with pytest.raises(pytest.fail.Exception, match=r"^rename this test, or declare it with @pytest\.mark\.slow"):
         pytest_runtest_setup(undeclared)
     assert pytest_runtest_setup(declared) is None
+
+
+def test_an_undeclared_name_fails_in_a_real_session_even_when_marked_xfail(pytester):
+    """The hooks in a real pytest session, where other plugins act on the same test.
+
+    pytest's skipping plugin turns a setup failure into an expected failure once it has read an xfail
+    marker, so the conftest hook must run first. A fake item cannot see that interplay.
+    """
+    pytester.makeconftest("from tests.conftest import pytest_collection_modifyitems, pytest_runtest_setup\n")
+    pytester.makepyfile(
+        "import pytest\n\n\n"
+        "@pytest.mark.xfail(reason='an xfail marker must not absorb the refusal')\n"
+        "def test_a_slow_solve():\n    pass\n\n\n"
+        "def test_a_slowdown_is_reported():\n    pass\n"
+    )
+    result = pytester.runpytest_inprocess("-p", "no:cacheprovider", "-p", "no:xdist", "-p", "no:benchmark")
+    result.assert_outcomes(errors=1, passed=1)
+    result.stdout.fnmatch_lines(["*ERROR at setup of test_a_slow_solve*", "*rename this test*"])

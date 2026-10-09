@@ -736,8 +736,10 @@ if [[ $FAST -eq 0 ]]; then
   # The tests #2512's progress counts must pass in this run (#1875). A name rule that marked "large"
   # tests slow held #1684's errors-max pin out of this gate unseen; a marker, a rename, a skip or an
   # --ignore does the same, and the suite stays green. `scripts/oracle_pins.txt` declares them.
+  # Plain "$PY", not PYS: the check collects the manifest's files in the suite line's own environment,
+  # and PYS would prepend this tree to PYTHONPATH.
   step "The tests #2512 counts passed in this run"
-  "${PYS[@]}" scripts/check_oracle_pins.py --junit "$ORACLE_JUNIT" --nonce "$ORACLE_NONCE"
+  "$PY" scripts/check_oracle_pins.py --junit "$ORACLE_JUNIT" --nonce "$ORACLE_NONCE"
   check $? "every oracle cell, row, convention and pin #2512 pins passed in this suite run"
 else
   printf '\n\033[33mSKIPPED\033[0m test suite (--fast)\n'

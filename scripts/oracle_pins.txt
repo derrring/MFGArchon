@@ -4,16 +4,17 @@
 # passed in that run.
 #
 # One line per target: <kind> <label> <target>. A target is a pytest node ID, or a test file, which then
-# requires every test pytest collects from that file to pass. A target of `-` declares an item nothing
-# pins yet: it counts in the denominator and is never met. A label is met only when it has at least one
-# target and every one of its targets passed. Kinds:
+# requires every test pytest collects from that file to pass. A target of `-` declares a part nothing
+# pins yet: it counts in the denominator and keeps its label unmet. A label is met only when it has at
+# least one target, no `-` part, and every one of its targets passed. Kinds:
 #   oracle      an oracle cell of #2512 (a), labelled <family>/<cell>; 38 cells, BC type x dimension
 #   row         a (b) row of #2512 (comment 6054006841), labelled <grid|network>/<row>
 #   convention  a convention ruled 2026-10-08, labelled C1-C6 as #2429 numbers them
 #   pin         a pin a batch rests on that is not a cell itself
-# A row, or a convention whose ruling names one owner, is met only by a structural guard that fails if
-# a rival reader reappears, with a planted-rival control in the same check (user ruling, 2026-10-09). An
-# existing owner alone never meets it.
+# A row is met only by a structural guard that fails if a rival reader reappears, with a planted-rival
+# control in the same check; an owner existing, or a behavioural test of it, does not meet it. A
+# convention whose ruling names an owner needs both: behavioural pins over every current consumer, and
+# such a guard over the owner. Ruled by the audit session, 2026-10-09: #2512 comment 6073690080.
 # A batch replaces its own `-` lines with targets in the PR that counts its cells.
 
 # HJB-FDM, #2546 and #2560: 8 cells, BC type x dimension
@@ -98,6 +99,8 @@ row network/N2_node_bc_arity        -
 # Conventions
 convention C1                 tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py
 convention C1                 tests/unit/test_alg/test_status_reports_the_final_state_1684.py::test_the_reported_error_is_the_larger_of_the_two_fields
+# C1's guard against a rival change or criterion under alg/: its own PR, right after #2572
+convention C1                       -
 convention C2                       -
 convention C3                       -
 convention C4                       -

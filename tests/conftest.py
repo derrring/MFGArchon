@@ -196,8 +196,13 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.mathematical)
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item):
-    """Fail a test flagged at collection, so it fails where it runs, under xdist or not."""
+    """Fail a test flagged at collection, so it fails where it runs, under xdist or not.
+
+    First, before pytest's skipping plugin: once that plugin has read an ``xfail`` marker, it reports
+    a setup failure as an expected failure, and a flagged test marked xfail would read XFAIL.
+    """
     if item.stash.get(UNDECLARED_SLOW, False):
         pytest.fail(
             "rename this test, or declare it with @pytest.mark.slow: its name says slow, it carries no "
