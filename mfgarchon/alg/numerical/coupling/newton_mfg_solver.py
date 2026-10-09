@@ -110,10 +110,10 @@ class NewtonMFGSolver(BaseCouplingIterator):
             basin, so a too-short warmup can converge to a spurious near-trivial fixed
             point of the discrete MFG map. For stiff couplings increase this until the
             warmup residual is well past its transient peak (Issue #1233).
-        newton_tolerance: Deprecated (#2565). The outer tolerance is ``solve(tolerance=)`` at both stops,
-            the relative change of the Picard residual in the problem's measure. If passed, it acts as
-            ``solve(absolute_tolerance=)`` -- measured in the geometry's L2 norm, no longer as an unscaled
-            2-norm -- and passing both is refused.
+        newton_tolerance: Deprecated (#2565). The outer tolerance is ``solve(tolerance=)`` at both stops. If
+            passed, or assigned to the attribute, it acts as ``solve(absolute_tolerance=)``: an extra bound on
+            the owners' absolute change -- the larger of U's and M's dt-weighted space-time L2 change, not an
+            unscaled 2-norm -- so it can tighten the stop but no longer loosen it. Passing both is refused.
         newton_max_iterations: Maximum Newton iterations (default: 20)
         line_search: Enable backtracking line search (default: True)
         use_jax_autodiff: Use JAX autodiff for the Jacobian (default: False). The MFG
@@ -137,8 +137,8 @@ class NewtonMFGSolver(BaseCouplingIterator):
         param_name="newton_tolerance",
         since="v0.22.0",
         replacement=(
-            "absolute_tolerance= on solve(); the bound is now measured in the geometry's L2 norm, "
-            "not as an unscaled 2-norm"
+            "absolute_tolerance= on solve(), an extra bound beside tolerance= on the larger of U's and M's "
+            "dt-weighted space-time L2 change, not an unscaled 2-norm, so it can no longer loosen the stop"
         ),
     )
     @retired_volatility_keywords
@@ -169,8 +169,8 @@ class NewtonMFGSolver(BaseCouplingIterator):
         self.picard_warmup = picard_warmup
         self.picard_damping = picard_damping
 
-        # Newton parameters. A passed newton_tolerance is read as solve()'s absolute_tolerance (#2565).
-        self._deprecated_newton_tolerance = newton_tolerance
+        # Newton parameters. A passed or assigned newton_tolerance is read as solve()'s absolute_tolerance (#2565).
+        self.newton_tolerance = newton_tolerance
         self.newton_max_iterations = newton_max_iterations
         self.line_search = line_search
         self.use_jax_autodiff = use_jax_autodiff
@@ -283,9 +283,11 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
         Args:
             max_iterations: Maximum total iterations (Picard + Newton)
-            tolerance: The outer coupling tolerance (docs/user/CONVENTIONS.md § 9): it bounds the relative
-                change of the Picard residual Phi(x) - x in the problem's own measure, after the warm-up and
-                at every Newton iterate, through `sweep_change` and `check_convergence_criteria` (#2565).
+            tolerance: The outer coupling tolerance (docs/user/CONVENTIONS.md § 9): it bounds the Picard
+                residual Phi(x) - x relative to the map's output, in the problem's own measure, through
+                `sweep_change` and `check_convergence_criteria` (#2565). It is checked after the warm-up and
+                at each iterate Newton evaluates before stepping; the iterate returned when Newton's budget
+                runs out is not judged, so it reports not converged.
             absolute_tolerance: Opt-in absolute bound on the same change, as for the other coupling
                 iterators. Refused together with the deprecated ``newton_tolerance``.
             verbose: Print progress information
@@ -295,13 +297,13 @@ class NewtonMFGSolver(BaseCouplingIterator):
             (U, M, info): Solution and convergence information
         """
         start_time = time.time()
-        if self._deprecated_newton_tolerance is not None:
+        if self.newton_tolerance is not None:
             if absolute_tolerance is not None:
                 raise ValueError(
                     "NewtonMFGSolver: newton_tolerance (deprecated) and absolute_tolerance were both given. "
                     "Pass absolute_tolerance to solve() only: it is the same bound, in the geometry's L2 norm (#2565)."
                 )
-            absolute_tolerance = self._deprecated_newton_tolerance
+            absolute_tolerance = self.newton_tolerance
         verdict = self._outer_verdict(tolerance, absolute_tolerance)
 
         # Initialize from warm start or cold start
@@ -413,8 +415,10 @@ class NewtonMFGSolver(BaseCouplingIterator):
     ) -> Callable[[NDArray, NDArray, NDArray, NDArray], tuple[bool, str]]:
         """``(U, M, F_HJB, F_FP) -> (converged, reason)``: the owners' verdict on the Picard residual (#2565).
 
-        The residual ``F = Phi(x) - x`` is the map's output against its input, the pair `sweep_change`
+        The residual ``F = Phi(x) - x`` is the map's output against its input, the kind of pair `sweep_change`
         measures for every other coupling iterator; so ``U + F_HJB`` and ``M + F_FP`` are the map's output.
+        Newton's map is the Jacobi one -- the FP is fed the input U -- where FixedPointIterator's is
+        Gauss-Seidel; the two have the same fixed point.
         """
         integrate = self.problem.spatial_measure().integrate
         dt = self.problem.dt

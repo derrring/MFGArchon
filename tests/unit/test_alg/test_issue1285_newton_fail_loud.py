@@ -98,10 +98,9 @@ def _assert_finite_solve(problem: MFGProblem) -> tuple[np.ndarray, np.ndarray]:
     from mfgarchon.alg.numerical.coupling.newton_mfg_solver import NewtonMFGSolver
 
     hjb_solver, fp_solver = _make_solvers(problem)
-    solver = NewtonMFGSolver(
-        problem, hjb_solver, fp_solver, picard_warmup=3, newton_max_iterations=15, newton_tolerance=1e-8
-    )
-    U, M, _info = solver.solve(max_iterations=18, tolerance=1e-8, verbose=False)
+    solver = NewtonMFGSolver(problem, hjb_solver, fp_solver, picard_warmup=3, newton_max_iterations=15)
+    # absolute_tolerance replaces the deprecated newton_tolerance, and acts identically (#2565).
+    U, M, _info = solver.solve(max_iterations=18, tolerance=1e-8, absolute_tolerance=1e-8, verbose=False)
     assert np.all(np.isfinite(U)), "U not finite"
     assert np.all(np.isfinite(M)), "M not finite"
     assert U.shape == solver.mfg_residual.solution_shape

@@ -58,13 +58,17 @@ def _solve(solve_kw: dict, **ctor_kw):
 
 
 def test_the_outer_tolerance_decides_newtons_own_iterations():
-    """A looser tolerance stops Newton earlier, each below its bound. Before #2565 phase 2 never read it."""
+    """A looser tolerance stops Newton earlier, and a reported convergence holds below its bound.
+
+    Before #2565 phase 2 never read `tolerance`: at 1e-13 it reported converged at a relative change of
+    3.4e-13, above the bound, and took 4 Newton iterations at 1e-5 as at 1e-13 (measured at `455b39bf`).
+    """
     _, _, loose, loose_change = _solve({"tolerance": 1e-5})
-    _, _, tight, tight_change = _solve({"tolerance": 1e-12})
+    _, _, tight, tight_change = _solve({"tolerance": 1e-13})
     assert loose["converged"]
     assert tight["converged"]
     assert loose_change < 1e-5
-    assert tight_change < 1e-12
+    assert tight_change < 1e-13
     assert loose["newton_iterations"] < tight["newton_iterations"]
 
 
@@ -77,18 +81,29 @@ def test_the_warm_up_stops_on_the_relative_change_in_the_problems_measure():
 
 
 def test_absolute_tolerance_reaches_the_verdict():
-    """The absolute bound is an extra requirement on the same change. After three warm-up sweeps the relative
-    change, 0.374, meets tolerance 0.5, and the absolute change, 0.082, then decides the warm-up stop."""
-    _, _, met, _ = _solve({"tolerance": 0.5, "absolute_tolerance": 0.5}, picard_warmup=3)
+    """The absolute bound is an extra requirement on the same change, at both stops.
+
+    After three warm-up sweeps the relative change, 0.374, meets tolerance 0.5, and the absolute change,
+    0.082 (dt-weighted, in the problem's measure), then decides the warm-up stop: 0.1 stops it, 0.05 does
+    not. In phase 2 an absolute 1e-10 beside tolerance 1e-3 takes more Newton iterations than none.
+    """
+    _, _, met, _ = _solve({"tolerance": 0.5, "absolute_tolerance": 0.1}, picard_warmup=3)
     assert met["convergence_reason"] == "Converged during Picard warm-up"
     _, _, unmet, _ = _solve({"tolerance": 0.5, "absolute_tolerance": 0.05}, picard_warmup=3, newton_max_iterations=1)
     assert unmet["convergence_reason"] != "Converged during Picard warm-up"
+    _, _, relative_only, _ = _solve({"tolerance": 1e-3})
+    _, _, with_absolute, _ = _solve({"tolerance": 1e-3, "absolute_tolerance": 1e-10})
+    assert relative_only["converged"]
+    assert with_absolute["converged"]
+    assert with_absolute["newton_iterations"] > relative_only["newton_iterations"]
 
 
-@pytest.mark.parametrize("bound", [0.5, 0.05], ids=["met_at_warm_up", "not_met_at_warm_up"])
+@pytest.mark.parametrize(
+    "bound", [0.5, 0.1, 0.05], ids=["met_at_warm_up", "met_by_absolute_only", "not_met_at_warm_up"]
+)
 def test_the_deprecated_newton_tolerance_acts_as_absolute_tolerance(bound):
     """The equivalence test of the deprecation policy: newton_tolerance=x solves as absolute_tolerance=x."""
-    with pytest.warns(DeprecationWarning, match=r"geometry's L2 norm, not as an unscaled 2-norm"):
+    with pytest.warns(DeprecationWarning, match=r"dt-weighted space-time L2 change, not an unscaled 2-norm"):
         U_old, M_old, info_old, _ = _solve(
             {"tolerance": 0.5}, newton_tolerance=bound, picard_warmup=3, newton_max_iterations=1
         )
@@ -99,6 +114,17 @@ def test_the_deprecated_newton_tolerance_acts_as_absolute_tolerance(bound):
     np.testing.assert_array_equal(M_old, M_new)
     assert info_old["convergence_reason"] == info_new["convergence_reason"]
     assert info_old["total_iterations"] == info_new["total_iterations"]
+
+
+def test_an_assigned_newton_tolerance_acts_as_well():
+    """The public attribute is read at solve(), so assigning it is not a silent no-op."""
+    problem = _problem()
+    solver = NewtonMFGSolver(
+        problem, HJBFDMSolver(problem), FPFDMSolver(problem), picard_warmup=3, newton_max_iterations=1
+    )
+    solver.newton_tolerance = 0.05
+    _, _, info = solver.solve(max_iterations=30, tolerance=0.5, verbose=False)
+    assert info["convergence_reason"] != "Converged during Picard warm-up"
 
 
 def test_newton_tolerance_and_absolute_tolerance_together_are_refused():

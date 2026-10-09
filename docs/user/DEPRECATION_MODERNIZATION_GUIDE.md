@@ -50,7 +50,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 - **`m_initial`** in `FPFEMSolver.solve_fp_system()` — use `M_initial` instead (remove by v0.25.0)
 - **`m_initial_condition`** in `FPGFDMSolver.solve_fp_system()` — use `M_initial` instead (remove by v0.25.0)
 - **`m_initial`** in `MeshlessGalerkinFPSolver.solve_fp_system()` — use `M_initial` instead (remove by v0.25.0)
-- **`newton_tolerance`** in `NewtonMFGSolver.__init__()` — use `absolute_tolerance= on solve(); the bound is now measured in the geometry's L2 norm, not as an unscaled 2-norm` instead (remove by v0.25.0)
+- **`newton_tolerance`** in `NewtonMFGSolver.__init__()` — use `absolute_tolerance= on solve(), an extra bound beside tolerance= on the larger of U's and M's dt-weighted space-time L2 change, not an unscaled 2-norm, so it can no longer loosen the stop` instead (remove by v0.25.0)
 - **`m_initial`** in `WeakFormFPSolver.solve_fp_system()` — use `M_initial` instead (remove by v0.25.0)
 
 ### Functions / Classes
