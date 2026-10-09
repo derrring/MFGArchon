@@ -613,7 +613,14 @@ output's size, for $u$ and for $m$. An iterator over several fields, whether pop
 graph nodes, takes the max over fields of each field's relative change in its own measure. There is no
 absolute criterion unless the caller asks for one with `absolute_tolerance`. All six coupling
 iterators read the owners: `MFGProblem.spatial_measure()` for the measure, `sweep_change` for the
-change, and `check_convergence_criteria` for the verdict (#2555).
+change, and `check_convergence_criteria` for the verdict (#2555). The convention is defined by that
+tolerance, the outer loop's of § 7, so it holds every module that takes it: everything under
+`alg/numerical/coupling/`, and any other module of `alg/` that references `PicardConfig`,
+`check_convergence_criteria` or `sweep_change`. `tests/unit/test_alg/test_c1_change_has_one_owner_2512.py`
+fails if one of them measures a change itself, through the shapes its docstring lists (#2512).
+`HomotopyContinuation`'s corrector, with its own `corr_tol`, and `PrimalDualMFGSolver`, which stops on an
+optimisation residual and its own density change, are separate algorithms with their own tolerances.
+This convention does not govern them (#2573).
 
 **The inner Newton tolerance bounds the grid-scaled residual norm**, and
 `base_hjb.hjb_residual_norm` is its owner on every Newton path (ruled 2026-10-08). So a tolerance means
