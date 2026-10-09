@@ -131,8 +131,9 @@ MYPY_PROBE="mfgarchon/config/_gate_probe.py"
 # baseline: `MFGARCHON_WARNING_CENSUS=scripts/warning_baseline.json ./scripts/local_ci.sh --fast`
 # left ` D scripts/warning_baseline.json` and exit 0. Clean up only what this script created.
 CENSUS_OWNED=""
-trap 'rm -f "$PROBE_ERR_FILE" "$MYPY_PROBE" ${CENSUS_OWNED:+"$CENSUS_OWNED"}; rm -rf "$PROBE_DIR"' EXIT
-trap 'rm -f "$PROBE_ERR_FILE" "$MYPY_PROBE" ${CENSUS_OWNED:+"$CENSUS_OWNED"}; rm -rf "$PROBE_DIR"; exit 130' INT TERM
+ORACLE_JUNIT=""
+trap 'rm -f "$PROBE_ERR_FILE" "$MYPY_PROBE" ${CENSUS_OWNED:+"$CENSUS_OWNED"} ${ORACLE_JUNIT:+"$ORACLE_JUNIT"}; rm -rf "$PROBE_DIR"' EXIT
+trap 'rm -f "$PROBE_ERR_FILE" "$MYPY_PROBE" ${CENSUS_OWNED:+"$CENSUS_OWNED"} ${ORACLE_JUNIT:+"$ORACLE_JUNIT"}; rm -rf "$PROBE_DIR"; exit 130' INT TERM
 # tail -5, not -3: a ModuleNotFoundError is exactly 3 lines, but a SyntaxError spends them on the
 # source echo and the caret, dropping the `File ...` line that names the culprit.
 probe_err() { [[ -n "$PROBE_ERR_FILE" ]] && tail -5 "$PROBE_ERR_FILE" 2>/dev/null; }
@@ -549,7 +550,7 @@ step "Ratchet self-tests (the instruments, before their numbers)"
 # arm runs in `.github/workflows/family-emptied.yml`, which has a token anyway. Proven rather than
 # assumed: with a `gh` on PATH that exits 127 and says so, `--self-test` passes and
 # `--self-test --online` fails, so the offline pass is not an artefact of the stub being missed.
-for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation check_citations check_warnings check_manifests check_mypy_scope check_docstring_kwargs family_queue generate_deprecation_guide; do
+for _selftest in check_fail_fast check_doc_api check_assertion_strength check_internal_deprecation check_citations check_warnings check_manifests check_mypy_scope check_docstring_kwargs family_queue generate_deprecation_guide check_oracle_pins; do
   "${PYS[@]}" "scripts/${_selftest}.py" --self-test || { check 1 "ratchet self-tests: ${_selftest} cannot see what it counts"; }
 done
 check 0 "every fast ratchet still detects what it claims to detect"
@@ -716,15 +717,30 @@ if [[ $FAST -eq 0 ]]; then
     CENSUS_OWNED="${TMPDIR:-/tmp}/mfgarchon-warnings.$$.json"
     export MFGARCHON_WARNING_CENSUS="$CENSUS_OWNED"
   fi
+  # The run's own results, for the #2512 step below. The nonce ties the file to this run, so a file
+  # left by an earlier green run cannot stand in for one that died before writing.
+  ORACLE_JUNIT="${TMPDIR:-/tmp}/mfgarchon-gate-junit.$$.xml"
+  ORACLE_NONCE="gate-$$-$RANDOM"
+  rm -f "$ORACLE_JUNIT"
   PYTHONSAFEPATH=1 "$PY" -P -m pytest tests/ -n auto \
     -m "$(cat "$(dirname "$0")/ci_markers.txt")" \
-    -q --durations=10 --disable-warnings
+    -q --durations=10 --disable-warnings \
+    -o junit_family=xunit1 -o "junit_suite_name=$ORACLE_NONCE" --junitxml="$ORACLE_JUNIT"
   check $? "full suite"
 
   # Suppressing the listing without this is a regression in attention, not a fix: it makes ignoring
   # 5,000 warnings cheaper. This is what makes the suppression honest. (#2119)
   "${PYS[@]}" scripts/check_warnings.py
   check $? "no warning identity appeared or vanished unrecorded"
+
+  # The tests #2512's progress counts must pass in this run (#1875). A name rule that marked "large"
+  # tests slow held #1684's errors-max pin out of this gate unseen; a marker, a rename, a skip or an
+  # --ignore does the same, and the suite stays green. `scripts/oracle_pins.txt` declares them.
+  # Plain "$PY", not PYS: the check collects the manifest's files in the suite line's own environment,
+  # and PYS would prepend this tree to PYTHONPATH.
+  step "The tests #2512 counts passed in this run"
+  "$PY" scripts/check_oracle_pins.py --junit "$ORACLE_JUNIT" --nonce "$ORACLE_NONCE"
+  check $? "every oracle cell, row, convention and pin #2512 pins passed in this suite run"
 else
   printf '\n\033[33mSKIPPED\033[0m test suite (--fast)\n'
 fi

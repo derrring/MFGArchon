@@ -152,9 +152,37 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "numerical: Tests for numerical algorithms")
 
 
+#: Set at collection on a test whose function name says slow but which carries no `slow` marker.
+UNDECLARED_SLOW = pytest.StashKey[bool]()
+
+
+def says_slow(name: str) -> bool:
+    """Whether ``slow`` is one of the underscore-separated words of a test function's name."""
+    return "slow" in name.split("_")
+
+
+def undeclared_slow_names(items) -> list[str]:
+    """Node IDs of tests whose function name says slow but which carry no `slow` marker.
+
+    The marker is the declaration (#1875). A rule here once marked every test whose NAME contained
+    "large", "slow" or "benchmark" as slow, and the gate deselects `slow`: a descriptive name removed a
+    fast test from the gate with nothing at the test to show it. At `bfdab257` it held 31 fast cases
+    out of the gate, among them #1684's pin of `MultiPopulationResult.errors`. A name may still say
+    slow; it then has to be declared.
+    """
+    return [
+        item.nodeid
+        for item in items
+        if says_slow(getattr(item, "originalname", item.name)) and item.get_closest_marker("slow") is None
+    ]
+
+
 def pytest_collection_modifyitems(config, items):
-    """Modify test collection to add markers based on test paths."""
+    """Add markers based on test paths, and flag a test whose name says slow without the marker."""
+    undeclared = set(undeclared_slow_names(items))
     for item in items:
+        if item.nodeid in undeclared:
+            item.stash[UNDECLARED_SLOW] = True
         # Add markers based on test file paths
         test_path = str(item.fspath)
 
@@ -167,9 +195,20 @@ def pytest_collection_modifyitems(config, items):
         elif "/mathematical/" in test_path:
             item.add_marker(pytest.mark.mathematical)
 
-        # Mark slow tests based on name patterns
-        if "large" in item.name or "slow" in item.name or "benchmark" in item.name:
-            item.add_marker(pytest.mark.slow)
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item):
+    """Fail a test flagged at collection, so it fails where it runs, under xdist or not.
+
+    First, before pytest's skipping plugin: once that plugin has read an ``xfail`` marker, it reports
+    a setup failure as an expected failure, and a flagged test marked xfail would read XFAIL.
+    """
+    if item.stash.get(UNDECLARED_SLOW, False):
+        pytest.fail(
+            "rename this test, or declare it with @pytest.mark.slow: its name says slow, it carries no "
+            "slow marker, and the gate selects by marker, not by name (#1875)",
+            pytrace=False,
+        )
 
 
 # =============================================================================
