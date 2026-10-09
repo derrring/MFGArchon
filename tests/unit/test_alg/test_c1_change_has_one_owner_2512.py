@@ -1,8 +1,8 @@
 """C1's structural guard: nothing in C1's population measures a sweep's change, or decides on one, itself.
 
-C1 (#2555) governs a coupling-level tolerance that bounds a CHANGE between iterates: the outer loop's
-`tolerance` of docs/user/CONVENTIONS.md § 7, taken by `MFGProblem.solve`, the coupling iterators and
-`PicardConfig`. Its owners are `MFGProblem.spatial_measure` (the measure), `sweep_change` (the change) and
+C1 (#2555) governs the outer coupling tolerance of docs/user/CONVENTIONS.md § 7, taken by `MFGProblem.solve`,
+the coupling iterators and `PicardConfig`: it bounds the change one sweep makes, the map's output against
+its input, Phi(x) - x, relative and in the problem's own measure. Its owners are `MFGProblem.spatial_measure` (the measure), `sweep_change` (the change) and
 `check_convergence_criteria` (the verdict). #2570's behavioural pins show that today's six iterators use
 them. They cannot stop a new consumer from computing the change itself, and this guard does (audit session
 ruling, 2026-10-09, #2512 comment 6073690080).
@@ -15,19 +15,20 @@ not implemented: a module that receives the tolerance only as a plain `tolerance
 
 **A difference** is a binary subtraction of two non-constant operands (a ratio minus 1 is a diagnostic,
 not a change between two states); ``.ravel()``, ``.flatten()`` or ``.reshape(...)`` of one; or a name
-assigned from one in the same function or an enclosing one. **Rivals in the population:**
+assigned directly from a subtraction in the same function or an enclosing one. **Rivals in the population:**
 - a ``norm`` of a difference;
 - ``max``, ``amax`` or ``nanmax`` of ``abs`` or ``absolute`` of a difference, or ``abs(...).max()``;
-- ``sum``, ``nansum`` or ``mean`` of a squared difference, or of one times any weight (``* dx``,
-  ``* w``), as a call or a method, where squared is ``d**2``, ``d * d`` or ``square(d)``;
+- ``sum``, ``nansum`` or ``mean`` of a squared difference, or of a product with one as a factor
+  (``(a - b)**2 * dx``), as a call or a method, where squared is ``d**2``, ``d * d`` or ``square(d)``;
 - ``d @ d``, ``dot(d, d)`` or ``vdot(d, d)``;
-- a convergence verdict outside `check_convergence_criteria`: a ``<``, ``<=``, ``>`` or ``>=`` comparison
-  with exactly one tol-named side, or ``allclose`` / ``isclose`` with a tol-named ``atol`` or ``rtol``.
-  With default tolerances they check configuration, such as two nodes' ``dt`` agreeing, not convergence.
+- what the guard treats as a convergence verdict outside `check_convergence_criteria`: every ``<``,
+  ``<=``, ``>`` or ``>=`` comparison with exactly one side whose name contains "tol", and ``allclose`` /
+  ``isclose`` with a tol-named ``atol`` or ``rtol`` keyword. That is a shape, not a definition of a
+  verdict: it also matches a validation such as ``tol <= 0``, and it misses ``err < tol * scale``.
 
-**Anywhere under** `mfgarchon/alg/`: a call to a metric that computes a change its own way. These are the
-deprecated `calculate_l2_convergence_metrics`, and #2566's `calculate_error`, `compute_norm`,
-`MFGConvergenceChecker` and its factory `create_convergence_checker`.
+**Anywhere under** `mfgarchon/alg/`: a call to a metric that computes a change its own way. Among them are
+the deprecated `calculate_l2_convergence_metrics`, and #2566's `calculate_error`, `compute_norm`,
+`MFGConvergenceChecker` and `create_convergence_checker`, the factory of all three of #2566's checkers.
 
 Every function, method, nested function and lambda is a scope. Other spellings, such as an L1 sum of
 ``abs(d)``, a difference passed through a helper or stored on an attribute first, or a tuple or augmented
@@ -37,10 +38,11 @@ assignment, are out of scope: this guard names the shapes it covers and does not
 - `check_convergence_criteria`, the verdict's owner.
 - `AndersonAccelerator.update`. Its residual norm and its stagnation test decide how to mix: restart,
   skip, safeguard. They do not decide whether the outer loop has converged.
-- The class `NewtonMFGSolver`. Its coupling-level `tolerance` bounds a RESIDUAL, which is C2's (#2565),
-  not a change, so C1 does not govern it; C2's own guard is to cover it. `MFGResidual`, which computes that
-  residual, is C2's too, but it matches no rule here, so it carries no exclusion: an exclusion that holds
-  nothing back would only be an escape hatch.
+- The class `NewtonMFGSolver`, a KNOWN VIOLATION and not a definitional exclusion. It stops on an
+  unscaled absolute norm of the Picard residual, the quantity this convention governs. It is excluded from
+  this guard only until #2565 routes it through the owners; the convention is not met while it is.
+  `MFGResidual`, which computes that residual, matches no rule here, so it carries no exclusion: an
+  exclusion that holds nothing back would only be an escape hatch.
 
 **Not C1 by definition.** These are separate algorithms with their own parameters, not exemptions; both
 are entries in ledger #2573:

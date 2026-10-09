@@ -100,6 +100,9 @@ row network/N2_node_bc_arity        -
 convention C1                 tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py
 convention C1                 tests/unit/test_alg/test_status_reports_the_final_state_1684.py::test_the_reported_error_is_the_larger_of_the_two_fields
 convention C1                 tests/unit/test_alg/test_c1_change_has_one_owner_2512.py
+# NewtonMFGSolver stops on an unscaled absolute norm of the Picard residual, the quantity C1 governs; the
+# guard excludes it only until #2565 routes it through the owners, and C1 is not met until then.
+convention C1                       -
 convention C2                       -
 convention C3                       -
 convention C4                       -
