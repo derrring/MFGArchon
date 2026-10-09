@@ -2,17 +2,17 @@
 
 C1 (#2555) governs the outer coupling tolerance of docs/user/CONVENTIONS.md § 7, taken by `MFGProblem.solve`,
 the coupling iterators and `PicardConfig`: it bounds the change one sweep makes, the map's output against
-its input, Phi(x) - x, relative and in the problem's own measure. Its owners are `MFGProblem.spatial_measure` (the measure), `sweep_change` (the change),
-`worst_sweep_change` (its max over a multi-field sweep's fields, #2578) and `check_convergence_criteria`
-(the verdict). #2570's behavioural pins show that today's six iterators use
-them. They cannot stop a new consumer from computing the change itself, and this guard does (audit session
-ruling, 2026-10-09, #2512 comment 6073690080).
+its input, Phi(x) - x, relative and in the problem's own measure. Its owners are
+`MFGProblem.spatial_measure` (the measure), `sweep_change` (the change), `worst_sweep_change` (its max over
+a multi-field sweep's fields, #2578) and `check_convergence_criteria` (the verdict). #2570's behavioural
+pins show that today's six iterators use them. They cannot stop a new consumer from computing the change
+itself, and this guard does (audit session ruling, 2026-10-09, #2512 comment 6073690080).
 
 **Population.** Every module under `mfgarchon/alg/numerical/coupling/`, and any other module under
 `mfgarchon/alg/` that references `PicardConfig`, its `picard` attribute, `BaseCouplingIterator`,
-`check_convergence_criteria`, `sweep_change` or `worst_sweep_change`. "Takes the outer tolerance" is approximated by those names,
-not implemented: a module that receives the tolerance only as a plain `tolerance=` argument, or names
-`PicardConfig` only in a string annotation, is outside it.
+`check_convergence_criteria`, `sweep_change` or `worst_sweep_change`. "Takes the outer tolerance" is
+approximated by those names, not implemented: a module that receives the tolerance only as a plain
+`tolerance=` argument, or names `PicardConfig` only in a string annotation, is outside it.
 
 **A difference** is a binary subtraction of two non-constant operands (a ratio minus 1 is a diagnostic,
 not a change between two states); ``.ravel()``, ``.flatten()`` or ``.reshape(...)`` of one; or a name
