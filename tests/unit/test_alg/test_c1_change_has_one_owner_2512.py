@@ -5,8 +5,10 @@ the coupling iterators and `PicardConfig`: it bounds the change one sweep makes,
 its input, Phi(x) - x, relative and in the problem's own measure. Its owners are
 `MFGProblem.spatial_measure` (the measure), `sweep_change` (the change), `worst_sweep_change` (its max over
 a multi-field sweep's fields, #2578) and `check_convergence_criteria` (the verdict). #2570's behavioural
-pins show that today's six iterators use them. They cannot stop a new consumer from computing the change
-itself, and this guard does (audit session ruling, 2026-10-09, #2512 comment 6073690080).
+pins show that today's six iterators use the measure, the change and the verdict, #2565's that
+`NewtonMFGSolver` does, and #2578's that the three multi-field iterators take the max over fields through
+`worst_sweep_change`. Pins cannot stop a new consumer from computing the change itself, and this guard does
+(audit session ruling, 2026-10-09, #2512 comment 6073690080).
 
 **Population.** Every module under `mfgarchon/alg/numerical/coupling/`, and any other module under
 `mfgarchon/alg/` that references `PicardConfig`, its `picard` attribute, `BaseCouplingIterator`,
@@ -23,11 +25,13 @@ assigned directly from a subtraction in the same function or an enclosing one. *
   (``(a - b)**2 * dx``), as a call or a method, where squared is ``d**2``, ``d * d`` or ``square(d)``;
 - ``d @ d``, ``dot(d, d)`` or ``vdot(d, d)``;
 - an aggregation of a change over fields, which is `worst_sweep_change`'s (#2578): ``max``, ``min``,
-  ``amax``, ``amin``, ``nanmax`` or ``nanmin``, as a call or a method, over a comprehension that reads one
-  of `sweep_change`'s keys (``l2distu_rel`` and the rest, by subscript or ``.get``), or over a name the
-  function fills with such reads (assigned a comprehension, appended or extended), or a running
-  ``w = max(w, <key read>)``. A ``max`` between U's and M's change of one sweep is not over fields, and
-  is not matched;
+  ``amax``, ``amin``, ``nanmax`` or ``nanmin``, as a call or a method, over a list, set or generator
+  comprehension that reads one of `sweep_change`'s keys (``l2distu_rel`` and the rest, by a constant
+  subscript or ``.get``), or over a name the function fills with such reads (by a plain ``=`` of such a
+  comprehension, or ``append`` / ``extend``), or a running ``w = max(w, <key read>)`` as a plain ``=``. A
+  ``max`` between U's and M's change of one sweep is not over fields, and is not matched. That too is a
+  shape: it also matches a max or min over the iterations of one field, such as a history, and it misses
+  a dict comprehension, an annotated assignment and a key held in a variable;
 - what the guard treats as a convergence verdict outside `check_convergence_criteria`: every ``<``,
   ``<=``, ``>`` or ``>=`` comparison with exactly one side whose name contains "tol", and ``allclose`` /
   ``isclose`` with a tol-named ``atol`` or ``rtol`` keyword. That is a shape, not a definition of a

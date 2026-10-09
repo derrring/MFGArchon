@@ -7,10 +7,14 @@
     fictitious-play, multi-population, graph and regime-switching iterators stop on a non-finite U.
     In those five, a non-finite density from an FP solver that does not check its own output now
     raises instead of reading as converged.
+  - `NewtonMFGSolver` judges the map's output after its warm-up and at each Newton iterate (#2565). A
+    NaN density at the post-warm-up verdict, at `tolerance=1e3`, reported `Converged during Picard
+    warm-up`; it now raises.
   - Finite but overflowing iterates pass those finiteness checks: a density at `1e200` gives an
     `inf`/`nan` change that used to read as converged, and the same in U used to read as not
-    converged with an empty reason. Both now raise. `FixedPointIterator` stops a density that has
-    grown 1e4-fold before judging (#1489), so there only U's case reaches the verdict.
+    converged with an empty reason. Both now raise. `FixedPointIterator` stops a density whose finite
+    total mass has grown 1e4-fold before judging (#1489). A density whose total mass overflows to inf
+    skips that check, reached its verdict and read as converged, and now raises too.
 - **A multi-field solve refuses a non-finite change in any field, naming it** (#2578). The
   multi-population, graph and regime-switching iterators each took builtin `max` over their fields
   before the verdict, and that `max` keeps a NaN only when it comes first, so a NaN density in
