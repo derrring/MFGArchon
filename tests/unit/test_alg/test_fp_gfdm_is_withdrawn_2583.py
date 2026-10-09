@@ -76,17 +76,19 @@ def test_the_gfdm_pair_is_refused_with_the_same_reason():
 def test_the_alternatives_the_refusal_names_hold_a_wall(route):
     """Both alternatives, run on a terminal cost that drives agents into the x_max wall: the density piles
     up against it and the mass stays. Measured at this commit: m(T) at x_max over the midpoint is 34.0
-    (FDM_UPWIND) and 27.2 (GFDM HJB with FP-FDM); a wall-less solve gives 1.0."""
+    (FDM_UPWIND) and 27.2 (GFDM HJB with FP-FDM); a wall-less solve gives 1.0. The refusal says the second
+    pair is not dual and that Expert Mode warns about it, so that warning is asserted too."""
     problem = _problem(_grid(no_flux_bc(dimension=1)), u_terminal=lambda x: -2.0 * np.asarray(x, dtype=float))
     if route == "dual scheme":
         result = problem.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=20, verbose=False)
     else:
-        result = problem.solve(
-            hjb_solver=HJBGFDMSolver(problem, collocation_points=POINTS),
-            fp_solver=FPFDMSolver(problem),
-            max_iterations=20,
-            verbose=False,
-        )
+        with pytest.warns(UserWarning, match=r"DUALITY MISMATCH WARNING"):
+            result = problem.solve(
+                hjb_solver=HJBGFDMSolver(problem, collocation_points=POINTS),
+                fp_solver=FPFDMSolver(problem),
+                max_iterations=20,
+                verbose=False,
+            )
     M = np.asarray(result.M)
     assert M[-1, -1] > 3.0 * M[-1, N // 2] > 3.0 * M[-1, 0]
     weights = np.r_[0.5, np.ones(N - 2), 0.5] / (N - 1)
