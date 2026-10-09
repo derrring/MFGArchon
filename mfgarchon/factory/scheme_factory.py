@@ -79,7 +79,8 @@ def create_paired_solvers(
         ValueError: If, with validate_duality on, the factory itself built solvers of different
             families outside FVM, or a pair check_solver_duality cannot classify
             (VALIDATION_SKIPPED) -- a bug in either case
-        NotImplementedError: If the scheme is not implemented in the factory
+        NotImplementedError: For NumericalScheme.GFDM, whose FP half is withdrawn (#2583), before either
+            half is built; or if the scheme is not implemented in the factory
 
     Examples:
         >>> # Safe Mode: Automatic dual pairing

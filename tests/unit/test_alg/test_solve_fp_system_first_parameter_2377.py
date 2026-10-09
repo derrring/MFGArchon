@@ -8,7 +8,7 @@ and raised TypeError on eight, and `M_initial=` raised on four. Positional calls
 which is why it survived.
 
 `test_every_fp_solver_names_its_first_parameter_M_initial` pins the name on every concrete library
-subclass of `BaseFPSolver`, inherited or not, and requires all ten to be reached; renaming any one of
+subclass of `BaseFPSolver`, inherited or not, and requires all nine to be reached; renaming any one of
 them back fails it. The weak form's old spelling stays accepted for the deprecation window (AGENTS.md,
 clause 4), and the policy's clause 2 equivalence tests below hold it to the new one. FP-GFDM's
 `m_initial_condition` row went with the solver, withdrawn in #2583. Its refusing stub's `solve_fp_system`

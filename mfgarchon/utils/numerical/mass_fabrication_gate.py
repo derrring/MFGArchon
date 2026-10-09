@@ -72,7 +72,7 @@ reported its whole-solve drift, but reported is the accurate verb -- it was a `l
 and the solve returned. That was the only thing separating a GFDM configuration whose honest
 answer was a 0.27% drift from one that returned a final mass of 1.06e+23, and by this campaign's
 own standard ("a diagnostic nobody reads is the same failure as no diagnostic") a log is not a
-gate. FP-GFDM is withdrawn since (#2583), so that solve no longer runs. The point stands for any
+gate. FP-GFDM has since been withdrawn (#2583), so that solve no longer runs. The point stands for any
 scheme: what should stop a divergent-but-positive solve is a different invariant than this one,
 not a stricter threshold.
 

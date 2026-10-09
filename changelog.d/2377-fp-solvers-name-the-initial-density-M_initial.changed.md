@@ -17,7 +17,7 @@
     new name together raises `ValueError`. `FPGFDMSolver`'s `m_initial_condition` went with the
     solver, withdrawn in this same release (#2583).
   - The weak-form family now raises `ValueError("M_initial is required")` when no initial
-    density is given. It used to require it positionally. FDM, both SL solvers and the network
+    density is given. It used to require it positionally. FDM, the SL solver and the network
     solver already raise this. FVM falls back to the problem's initial density, and the particle
     solver accepts `initial_particles` instead.
   - A test pins the name on the nine library solvers that subclass the base, `FPGFDMSolver`'s refusing

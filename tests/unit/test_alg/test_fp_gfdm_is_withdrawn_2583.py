@@ -3,8 +3,9 @@
 FP-GFDM built no wall: no flux or ghost row, and an operator with no boundary-condition argument, so on a bounded
 domain the drift's flux crossed the boundary. What that did to mass depended on the drift (it stayed at 1 under a
 uniform drift and moved to 0.599 or 1.629 under others), so a mass check could not be relied on to see it. Every
-domain GFDM is admitted on is bounded (grids, which always carry a BC, and implicit domains, which carry none), so
-the refusal is unconditional at construction (user ruling 2026-10-09). The rebuild is #2584.
+domain it accepted was bounded (grids, which always carry a BC, and implicit domains, which carry none) or periodic
+without being wrapped, so the refusal is unconditional at construction (user ruling 2026-10-09). The rebuild is
+#2584.
 
 The alternative is pinned by a property of its result, not by completion: completion alone passed FP-GFDM's own
 wall-less solve.
@@ -82,8 +83,8 @@ def test_safe_mode_gfdm_reaches_the_reason():
 
 @pytest.mark.parametrize("route", ["dual scheme", "GFDM HJB with FP-FDM"])
 def test_the_alternatives_the_refusal_names_hold_a_wall(route):
-    """Both alternatives the refusal names for a grid, run on a terminal cost that drives agents into the x_max
-    wall: the density piles up against it and the mass stays.
+    """Both alternatives the refusal names for a grid without obstacles, run on a terminal cost that drives agents
+    into the x_max wall: the density piles up against it and the mass stays.
 
     Measured at this commit: m(T) at x_max over the midpoint is 34.0 (FDM_UPWIND) and 27.2 (GFDM HJB with
     FP-FDM), at mass 1.000000. With FP-FDM's wall rows made transparent (review 1 of #2585) the ratios are 7.31

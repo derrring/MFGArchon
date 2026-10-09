@@ -253,8 +253,9 @@ result = problem.solve(hjb_solver=hjb, fp_solver=fp)
 > so on a bounded domain the drift's flux crossed the boundary. `FPGFDMSolver(...)`,
 > `create_paired_solvers(problem, NumericalScheme.GFDM, ...)` and `problem.solve(scheme=NumericalScheme.GFDM)`
 > raise with that reason until it is rebuilt ([#2584](https://github.com/derrring/MFGArchon/issues/2584)).
-> On a grid, to keep the GFDM HJB, pair it with an FP solver that builds walls, as below; that pair is not
-> dual, so Expert Mode warns. On an implicit domain neither this pair nor `FDM_UPWIND` runs.
+> On a grid without obstacles, to keep the GFDM HJB, pair it with an FP solver that builds walls, as below;
+> that pair is not dual, so Expert Mode warns. On an implicit domain or a grid with obstacles, neither this
+> pair nor `FDM_UPWIND` runs.
 
 **Before** (its FP half is withdrawn):
 ```python
@@ -291,7 +292,7 @@ problem = MFGProblem(
 )
 points = grid.get_spatial_grid()
 
-hjb = HJBGFDMSolver(problem, collocation_points=points, delta=0.1)
+hjb = HJBGFDMSolver(problem, collocation_points=points, delta=0.2)
 fp = FPFDMSolver(problem)  # builds the no-flux wall; the pair is not dual, so Expert Mode warns
 
 result = problem.solve(hjb_solver=hjb, fp_solver=fp)
@@ -457,7 +458,7 @@ For most problems, start with FDM_UPWIND.
 
 ### Can I mix schemes?
 
-**No** - mixing schemes (e.g., FDM HJB with GFDM FP) breaks adjoint duality. The system will warn you in Expert Mode and prevent it in Safe Mode.
+**No** - mixing schemes (e.g., FDM HJB with FVM FP) breaks adjoint duality. The system will warn you in Expert Mode and prevent it in Safe Mode.
 
 ### What about Semi-Lagrangian?
 

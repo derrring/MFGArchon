@@ -10,16 +10,21 @@ What that did to mass depended on the drift, so a mass check could not be relied
 1-D, 21 points, sigma = 0.4, T = 0.5, Nt = 10, a uniform initial density and an explicit no-flux wall:
 - under a uniform drift +1 toward x_max, FP-FDM piles the density up at the wall (m(T) = 0.0493, 0.5573,
   6.3400 at x = 0, 0.5, 1) while FP-GFDM stayed uniform (1.0000 at all three), both at mass 1.0000;
-- under the drifts ``x`` and ``0.5 - x``, FP-GFDM's mass at T was 0.599 and 1.629, i.e. (1 -/+ 0.05)^10,
-  the net boundary flux per explicit step.
+- under the drifts ``x`` and ``0.5 - x``, FP-GFDM's mass at T was 0.599 and 1.629, i.e. (1 -/+ 0.05)^10:
+  a net boundary flux of 0.05 of the mass per explicit step, compounded over the 10 steps.
 
-An implicit domain carrying no BC gave the same uniform solve, and every domain GFDM is admitted on is
-bounded. It was reachable as a standalone FP solve with a velocity the caller supplies,
-``solve_fp_system(drift_field=...)``; a coupled solve with the GFDM pair already raised #1420's auto-route
-error. User ruling 2026-10-09: refuse rather than solve wall-less.
+An implicit domain carrying no BC gave the same uniform solve. Every domain it accepted was bounded, or
+periodic without being wrapped: a periodic implicit domain behaved exactly like a non-periodic one.
 
-The class stays, as a refusing stub, so an import fails loudly with the reason rather than with an
-ImportError, and ``scheme_factory``'s GFDM pair raises the same reason before it builds anything. The
+It ran wherever the caller supplied the velocity: standalone, ``solve_fp_system(drift_field=...)``, and inside
+a coupled solve given the iterator's ``drift_field=`` override. The GFDM pair's own coupled solve, which
+routes the drift from the value function, did not run: it raised #1420's auto-route error under a smooth
+separable Hamiltonian, and a drift-shape ``ValueError`` under a bounded or L1 control cost. User ruling
+2026-10-09: refuse rather than solve wall-less.
+
+The class stays, as a refusing stub: the import succeeds and construction fails with the reason, rather
+than the import failing with an ImportError, and ``scheme_factory``'s GFDM pair raises the same reason before
+it builds anything. The
 rebuild, as the discrete adjoint of the GFDM generator that the HJB side already assembles, is #2584. The
 deleted body is in git history.
 """
@@ -34,13 +39,13 @@ from mfgarchon.utils.pde_coefficients import retired_volatility_keywords
 
 WITHDRAWN = (
     "FPGFDMSolver is withdrawn: FP-GFDM built no wall (no flux or ghost row; its operator took no "
-    "boundary-condition argument), so on every domain it accepted, all of them bounded, the drift's flux "
-    "crossed the boundary (#2583). It refuses construction until it is rebuilt as the discrete adjoint of the "
-    "GFDM generator (#2584). On a grid, use a scheme with a dual FP, e.g. "
+    "boundary-condition argument), so on every bounded domain it accepted the drift's flux crossed the "
+    "boundary (#2583). It refuses construction until it is rebuilt as the discrete adjoint of the "
+    "GFDM generator (#2584). On a grid without obstacles, use a scheme with a dual FP, e.g. "
     "problem.solve(scheme=NumericalScheme.FDM_UPWIND), or, to keep the GFDM HJB, pair it with an FP solver "
     "that builds walls: problem.solve(hjb_solver=HJBGFDMSolver(problem, collocation_points=...), "
-    "fp_solver=FPFDMSolver(problem)), a non-dual pair that Expert Mode warns about. On an implicit domain "
-    "neither runs: FDM_UPWIND and FPFDMSolver refuse it."
+    "fp_solver=FPFDMSolver(problem)), a non-dual pair that Expert Mode warns about. On an implicit domain or "
+    "a grid with obstacles neither runs: FDM_UPWIND and FPFDMSolver refuse it."
 )
 
 

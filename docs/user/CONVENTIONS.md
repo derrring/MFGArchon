@@ -240,13 +240,13 @@ Two channels, and each FP solver declares which one it reads (`_drift_convention
   the value function to network populations as `drift_field=`, the deprecated alias.*
 - **`drift_field` carries a velocity $\alpha^*$.** The coupling layer computes it only for a
   non-smooth or non-separable $H$, and passes it only to a solver whose convention is `VELOCITY`
-  (FDM, FVM, GFDM).
+  (FDM, FVM; FP-GFDM was the third, withdrawn in #2583).
 
-A solver whose convention is `VALUE_FUNCTION` — the particle solver, the two semi-Lagrangian solvers,
+A solver whose convention is `VALUE_FUNCTION` — the particle solver, the semi-Lagrangian solver,
 the network solver and the weak-form family — cannot represent the drift of a non-smooth or
 non-separable $H$, and the coupling layer refuses to route $u$ to one rather than let it advect with
-$-c\,\nabla u$. `FPGFDMSolver` has no `potential_field`, and the coupling layer refuses to hand it $u$
-as a velocity. *Not yet met (#2429): called directly, the semi-Lagrangian pair and the particle solver
+$-c\,\nabla u$. `FPGFDMSolver`, withdrawn in #2583, had no `potential_field`, and the coupling layer refused
+to hand it $u$ as a velocity; that refusal still guards any solver that takes only `drift_field`. *Not yet met (#2429): called directly, the semi-Lagrangian pair and the particle solver
 accept `potential_field=U` with a non-separable $H$ and advect with $-c\,\nabla u$, $c$ being the legacy
 `coupling_coefficient`.*
 
