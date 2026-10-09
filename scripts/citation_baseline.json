@@ -1,16 +1,16 @@
 {
   "_comment": "Ratchet for `path.py:NNN` citations whose named symbol is no longer near the cited line (#2102). `drifted` lists WHICH claims are drifted, keyed on the resolved target file, the cited line, and the symbols the prose names beside it; `counts` pins how many, because neither catches what the other does. Both are bidirectional: a new drifted citation is a regression and a fixed one is progress that must be recorded here. `adjudicable` may not SHRINK -- deleting the symbol name from beside a citation would otherwise lower `drifted` and read as an improvement. Regenerate with --write-baseline.",
   "_measured_at": {
-    "head_when_written": "026c1951-dirty",
+    "head_when_written": "2820f428",
     "window": 12
   },
   "counts": {
-    "adjudicable": 25,
+    "adjudicable": 24,
     "ambiguous": 7,
     "anchored": 15,
-    "drifted": 10,
+    "drifted": 9,
     "missing": 47,
-    "unadjudicable": 88
+    "unadjudicable": 85
   },
   "drifted": [
     "AGENTS.md -> mfgarchon/utils/mfg_logging/logger.py:211 [caplog]",
@@ -21,7 +21,6 @@
     "changelog.d/single-source-ratchet.added.md -> mfgarchon/meta/code_generation.py:400 [diffusion_from_volatility,diffusion_from_volatility_torch,owner,sentinel_symbol]",
     "tests/unit/test_alg/test_meshless_stabilization.py -> mfgarchon/alg/numerical/meshless_galerkin/hjb_solver.py:51 [WeakFormHJBSolver.solve_hjb_system]",
     "tests/unit/test_alg/test_solver_bc_support_census_1975.py -> mfgarchon/alg/numerical/hjb_solvers/hjb_howard.py:363 [BoundaryHandler,seg.bc_type]",
-    "tests/unit/test_alg/test_solver_bc_support_census_1975.py -> mfgarchon/alg/numerical/network_solvers/fp_network.py:606 [HJBNetworkSolver]",
-    "tests/unit/test_mfg_caplog.py -> mfgarchon/alg/numerical/fp_solvers/fp_gfdm.py:575 [caplog]"
+    "tests/unit/test_alg/test_solver_bc_support_census_1975.py -> mfgarchon/alg/numerical/network_solvers/fp_network.py:606 [HJBNetworkSolver]"
   ]
 }

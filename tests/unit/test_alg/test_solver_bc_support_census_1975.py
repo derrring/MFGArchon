@@ -58,7 +58,8 @@ _GATED = {
     "HJBFEMSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "REFLECTING", "ROBIN"},
     "FPFDMSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "PERIODIC"},
     "FPFVMSolver": {"NEUMANN", "NO_FLUX", "PERIODIC"},
-    "FPGFDMSolver": {"NEUMANN", "NO_FLUX"},
+    # Withdrawn: FP-GFDM built no wall, so it declares nothing and refuses construction (#2583).
+    "FPGFDMSolver": set(),
     "FPParticleSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "PERIODIC", "REFLECTING"},
     "FPSLSolver": {"NEUMANN", "NO_FLUX", "PERIODIC"},
     "HJBFDMSolver": {"DIRICHLET", "NEUMANN", "NO_FLUX", "PERIODIC"},

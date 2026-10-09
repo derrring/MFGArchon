@@ -84,6 +84,8 @@ class NumericalScheme(Enum):
         - Use case: Complex geometry, obstacles, unstructured grids
         - Adjoint: Complementary upwind parameters (not exact discrete transpose)
         - **Note**: Requires mass renormalization (applied automatically)
+        - **Withdrawn pair**: its FP half is withdrawn (#2583) until its rebuild (#2584), so the GFDM
+          pair refuses; the GFDM HJB solver still runs, paired by hand
 
     Scheme Selection Guide
     ----------------------
@@ -94,8 +96,8 @@ class NumericalScheme(Enum):
     | 2D smooth | FDM_CENTERED | Higher accuracy if stable |
     | 2D/3D regular grid | SL_LINEAR | Better scaling, unconditionally stable |
     | High accuracy needed | SL_CUBIC | O(h^4) if stable (check for NaN) |
-    | Obstacles/complex geom | GFDM | Only scheme that handles obstacles |
-    | Unstructured mesh | GFDM | Meshfree handles irregular grids |
+    | Obstacles/complex geom | none yet | GFDM's pair is refused while its FP is withdrawn (#2583) |
+    | Unstructured mesh | none yet | GFDM's pair is refused while its FP is withdrawn (#2583) |
     | FEM triangle mesh | FEM_P1 | Variational structure on unstructured mesh |
     | FEM high accuracy | FEM_P2 | Quadratic elements, O(h^3) convergence |
 

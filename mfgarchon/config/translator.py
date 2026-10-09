@@ -429,8 +429,8 @@ def fp_config_to_kwargs(
     # ------------------------------------------------------------------
     # GFDM sub-config (FPConfig has no gfdm field; skip if absent)
     # ------------------------------------------------------------------
-    # Note: FPConfig does not include a gfdm sub-config — GFDM FP params
-    # are threaded via the pair factory's delta/collocation_points syncing.
+    # Note: FPConfig does not include a gfdm sub-config. The GFDM pair is refused while FP-GFDM is
+    # withdrawn (#2583).
     # This gap is tracked in Refs #1155.
 
     # ------------------------------------------------------------------

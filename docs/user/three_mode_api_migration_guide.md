@@ -249,7 +249,15 @@ result = problem.solve(hjb_solver=hjb, fp_solver=fp)
 
 ### Pattern 3: GFDM with Collocation Points
 
-**Before**:
+> **FP-GFDM is withdrawn** ([#2583](https://github.com/derrring/MFGArchon/issues/2583)): it built no wall,
+> so on a bounded domain the drift's flux crossed the boundary. `FPGFDMSolver(...)`,
+> `create_paired_solvers(problem, NumericalScheme.GFDM, ...)` and `problem.solve(scheme=NumericalScheme.GFDM)`
+> raise with that reason until it is rebuilt ([#2584](https://github.com/derrring/MFGArchon/issues/2584)).
+> On a grid without obstacles, to keep the GFDM HJB, pair it with an FP solver that builds walls, as below;
+> that pair is not dual, so Expert Mode warns. On an implicit domain or a grid with obstacles, neither this
+> pair nor `FDM_UPWIND` runs.
+
+**Before** (its FP half is withdrawn):
 ```python
 import numpy as np
 from mfgarchon.alg.numerical import HJBGFDMSolver, FPGFDMSolver
@@ -265,22 +273,27 @@ solver = create_solver(problem, hjb_solver=hjb, fp_solver=fp)
 result = solver.solve()
 ```
 
-**After** (config threading):
+**After** (the GFDM HJB with an FP that builds walls; runs as written):
 ```python
 import numpy as np
-from mfgarchon.factory import create_paired_solvers
-from mfgarchon.types import NumericalScheme
 
-problem = MFGProblem(Nx=[40], Nt=20, T=1.0)
-points = np.linspace(0, 1, 30)[:, None]
+from mfgarchon import Conditions, MFGProblem, Model
+from mfgarchon.alg.numerical import FPFDMSolver, HJBGFDMSolver
+from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
 
-# Config threading: specify once, used for both
-hjb, fp = create_paired_solvers(
-    problem,
-    NumericalScheme.GFDM,
-    hjb_config={"collocation_points": points, "delta": 0.1},
-    # fp_config automatically inherits collocation_points and delta
+grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[30], boundary_conditions=no_flux_bc(dimension=1))
+problem = MFGProblem(
+    model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.3),
+    domain=grid,
+    conditions=Conditions(m_initial=lambda x: 1.0 + 0.0 * x[..., 0], u_terminal=lambda x: -x[..., 0], T=1.0),
+    Nt=20,
 )
+points = grid.get_spatial_grid()
+
+hjb = HJBGFDMSolver(problem, collocation_points=points, delta=0.2)
+fp = FPFDMSolver(problem)  # builds the no-flux wall; the pair is not dual, so Expert Mode warns
 
 result = problem.solve(hjb_solver=hjb, fp_solver=fp)
 ```
@@ -315,7 +328,7 @@ These schemes satisfy $L_{FP} = L_{HJB}^T + O(h)$ asymptotically:
 
 | Scheme | Use Case | Order | Stability |
 |:-------|:---------|:------|:----------|
-| `GFDM` | Unstructured grids, complex geometries | 2nd order | Good |
+| `GFDM` | Unstructured grids, complex geometries; its FP is withdrawn ([#2583](https://github.com/derrring/MFGArchon/issues/2583)), so the pair raises until [#2584](https://github.com/derrring/MFGArchon/issues/2584) | 2nd order | Good |
 
 **Note**: Type B schemes require renormalization for optimal Nash gap convergence.
 
@@ -329,8 +342,8 @@ If you see this warning:
 
 ```
 Expert Mode: Non-dual solver pair detected!
-  HJB: HJBFDMSolver (fdm)
-  FP: FPGFDMSolver (gfdm)
+  HJB: HJBGFDMSolver (gfdm)
+  FP: FPFDMSolver (fdm)
   Status: not_dual
 This may lead to poor convergence or Nash gap issues.
 Consider using Safe Mode for guaranteed duality.
@@ -345,8 +358,7 @@ Consider using Safe Mode for guaranteed duality.
 ```python
 # Instead of mixing FDM with GFDM:
 result = problem.solve(scheme=NumericalScheme.FDM_UPWIND)
-# Or use matching schemes:
-result = problem.solve(scheme=NumericalScheme.GFDM)
+# The matching GFDM pair raises while its FP is withdrawn (#2583).
 ```
 
 ### Deprecation Warning: create_solver()
@@ -446,7 +458,7 @@ For most problems, start with FDM_UPWIND.
 
 ### Can I mix schemes?
 
-**No** - mixing schemes (e.g., FDM HJB with GFDM FP) breaks adjoint duality. The system will warn you in Expert Mode and prevent it in Safe Mode.
+**No** - mixing schemes (e.g., FDM HJB with FVM FP) breaks adjoint duality. The system will warn you in Expert Mode and prevent it in Safe Mode.
 
 ### What about Semi-Lagrangian?
 

@@ -104,7 +104,7 @@ _SEARCHED = (
 #   HJBWENOSolver   2.64e-01     FPSLJacobianSolver  1.58e+00 (retired in #1756)
 #   FPFVMSolver     1.79e-01     FPFDMSolver         1.29e-01
 #   HJBGFDMSolver   raises NotImplementedError for PERIODIC
-#   FPGFDMSolver    raises ValueError (density goes invalid mid-solve)
+#   FPGFDMSolver    raised ValueError (density goes invalid mid-solve); withdrawn in #2583
 #
 # Passing: HJBSemiLagrangianSolver (0.0) and FPSLSolver / FPSLAdjointSolver (4.4e-16) -- the three
 # repaired in #1824, and the only genuine positive controls this file has ever had.
@@ -526,8 +526,9 @@ SURFACE_NOT_HONOURED = {
     # finest grid, so "not honoured". That was an artefact of refining h while holding N: the Monte
     # Carlo floor does not move with the grid, so the last comparison was noise, and the verdict
     # was monotone in only 6 of 12 seeds. Refining both, all four declared types converge, 20/20.
-    ("FPGFDMSolver", "NEUMANN"): ("#1822 density goes invalid mid-solve", ValueError),
-    ("FPGFDMSolver", "NO_FLUX"): ("#1822 density goes invalid mid-solve", ValueError),
+    # FPGFDMSolver under NEUMANN and NO_FLUX were listed here and left the declared surface in #2583:
+    # FP-GFDM built no wall, so it is withdrawn, declares nothing and refuses construction. Its refusal
+    # is pinned in tests/unit/test_alg/test_fp_gfdm_is_withdrawn_2583.py.
     # FPSLSolver / FPSLAdjointSolver under NEUMANN and NO_FLUX were listed here as
     # "#1822 Nx=81 solve raises" and were REMOVED by #2243, which switched their diffusion wall to
     # the mirror stencil. Read what that did and did not do, because the two are easy to swap:
@@ -672,7 +673,8 @@ def test_the_surface_matrix_measures_every_declared_pair_it_has_a_fixture_for():
     that disappear, and both record a live defect. What stops that being silent is this test: the
     old keying now reports 1 failed / 38 passed / 11 xfailed, where before this test existed it
     was green. A suite that stays green while it quietly stops measuring things is what this
-    ratchet exists to prevent, so the coverage is asserted rather than assumed.
+    ratchet exists to prevent, so the coverage is asserted rather than assumed. FP-GFDM's two rows left
+    again in #2583, by withdrawal rather than by narrowing: it declares nothing and refuses construction.
     """
     expected = {
         (name, t.name)

@@ -12,7 +12,8 @@ with plain `caplog` were red:
   **that already exists** when it runs. That sweep runs once per test PHASE, so the discriminator
   is not module-import vs function-local -- a logger created in a fixture is visible in the test
   body -- it is whether the logger existed before this phase's sweep. One born mid-solve did not,
-  which is the `fp_gfdm.py:575` case, so whether a test passes depends on whether an earlier test
+  which was FP-GFDM's case (`fp_gfdm.py` at f1b74f3d created its only logger inside the solve;
+  withdrawn in #2583), so whether a test passes depends on whether an earlier test
   in the same worker happened to create the logger first.
 
 `mfg_caplog` attaches to the emitting logger itself, so it depends on neither the pytest version
@@ -69,8 +70,8 @@ def test_it_sees_a_logger_born_after_pytest_swept_for_them(mfg_caplog, caplog):
 
     pytest attaches its capture handler to the non-propagating loggers that exist when the test
     phase begins. This logger is created inside the test, after that sweep, exactly as
-    `fp_gfdm.py:575` creates its own inside a solve -- so `caplog` cannot see it on either
-    pytest version, while `mfg_caplog` attaches on demand and does.
+    FP-GFDM's solve created its own (`fp_gfdm.py` at f1b74f3d, withdrawn in #2583) -- so `caplog`
+    cannot see it on either pytest version, while `mfg_caplog` attaches on demand and does.
     """
     born_late = "mfgarchon.tests.mfg_caplog_born_late"
     assert born_late not in logging.Logger.manager.loggerDict, (

@@ -8,10 +8,11 @@ and raised TypeError on eight, and `M_initial=` raised on four. Positional calls
 which is why it survived.
 
 `test_every_fp_solver_names_its_first_parameter_M_initial` pins the name on every concrete library
-subclass of `BaseFPSolver`, inherited or not, and requires all ten to be reached; renaming any one of
-them back fails it. The two old spellings on
-GFDM and the weak form stay accepted for the deprecation window (AGENTS.md, clause 4), and the
-policy's clause 2 equivalence tests below hold the old keyword to the new one.
+subclass of `BaseFPSolver`, inherited or not, and requires all nine to be reached; renaming any one of
+them back fails it. The weak form's old spelling stays accepted for the deprecation window (AGENTS.md,
+clause 4), and the policy's clause 2 equivalence tests below hold it to the new one. FP-GFDM's
+`m_initial_condition` row went with the solver, withdrawn in #2583. Its refusing stub's `solve_fp_system`
+keeps the new first parameter, `M_initial`, and takes no `m_initial_condition`.
 """
 
 from __future__ import annotations
@@ -95,16 +96,6 @@ def _problem():
     )
 
 
-def _gfdm():
-    from mfgarchon.alg.numerical.fp_solvers.fp_gfdm import FPGFDMSolver
-
-    problem = _problem()
-    # delta=0.6 gives even a wall point six neighbours among 11, so no k-NN fallback fires.
-    solver = FPGFDMSolver(problem, collocation_points=np.linspace(0.0, 1.0, _N).reshape(-1, 1), delta=0.6)
-    m0 = np.linspace(1.0, 2.0, _N)
-    return solver, m0, {"drift_field": np.zeros((problem.Nt + 1, _N))}
-
-
 def _weak_form():
     pytest.importorskip("skfem", reason="scikit-fem required for the weak-form FEM solver")
     from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
@@ -133,7 +124,7 @@ def _weak_form():
     return solver, 1.0 + 0.5 * np.sin(np.pi * x), {"potential_field": None}
 
 
-@pytest.mark.parametrize(("build", "old"), [(_gfdm, "m_initial_condition"), (_weak_form, "m_initial")])
+@pytest.mark.parametrize(("build", "old"), [(_weak_form, "m_initial")])
 def test_the_deprecated_keyword_warns_and_solves_the_same_problem(build, old):
     solver, m0, rest = build()
     new = np.asarray(solver.solve_fp_system(M_initial=m0.copy(), **rest))
@@ -142,7 +133,7 @@ def test_the_deprecated_keyword_warns_and_solves_the_same_problem(build, old):
     np.testing.assert_array_equal(via_old, new)
 
 
-@pytest.mark.parametrize(("build", "old"), [(_gfdm, "m_initial_condition"), (_weak_form, "m_initial")])
+@pytest.mark.parametrize(("build", "old"), [(_weak_form, "m_initial")])
 def test_both_spellings_at_once_are_refused(build, old):
     solver, m0, rest = build()
     with warnings.catch_warnings():
@@ -151,7 +142,7 @@ def test_both_spellings_at_once_are_refused(build, old):
             solver.solve_fp_system(M_initial=m0.copy(), **{old: m0.copy()}, **rest)
 
 
-@pytest.mark.parametrize("build", [_gfdm, _weak_form])
+@pytest.mark.parametrize("build", [_weak_form])
 def test_no_initial_density_is_refused_by_name(build):
     solver, _, rest = build()
     with pytest.raises(ValueError, match="M_initial is required"):

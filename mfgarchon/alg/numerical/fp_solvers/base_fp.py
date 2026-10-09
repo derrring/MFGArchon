@@ -253,7 +253,6 @@ class BaseFPSolver(BaseNumericalSolver):
             "FPFDMSolver": "fdm",
             "FPParticleSolver": "particle",
             "FPNetworkSolver": "network_solver",
-            "FPGFDMSolver": "gfdm",
         }
         return type_mapping.get(class_name)
 

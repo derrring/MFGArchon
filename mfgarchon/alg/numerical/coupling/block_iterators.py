@@ -322,7 +322,7 @@ class BlockIterator(BaseCouplingIterator):
             # FixedPointIterator.solve().
             # Previously used a sig-probe heuristic (Issue #919) that put U directly
             # into potential_field/drift_field without Hamiltonian-smoothness dispatch —
-            # incorrect for solvers where drift_field is alpha* (e.g. FPGFDMSolver).
+            # incorrect for solvers where drift_field is alpha* (e.g. FPFVMSolver).
             drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
                 self.problem,
                 self._fp_sig_params,

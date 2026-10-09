@@ -6,7 +6,7 @@ individual Fokker-Planck equations, including:
 - Finite difference methods (FPFDMSolver)
 - Particle-based methods (FPParticleSolver)
 - Semi-Lagrangian methods (FPSLSolver)
-- GFDM meshfree methods (FPGFDMSolver)
+- GFDM: FPGFDMSolver is withdrawn (#2583), a refusing stub until its rebuild (#2584)
 
 Semi-Lagrangian Variants (Issue #710):
 - FPSLSolver: Forward SL (scatter/splat) - adjoint of HJB SL, RECOMMENDED

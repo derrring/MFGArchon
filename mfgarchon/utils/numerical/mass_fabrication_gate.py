@@ -68,12 +68,13 @@ sign violation large enough to matter. It does not certify that a solve converge
 must not read a passing gate as "healthy".
 
 Where magnitude matters, something must **stop**, and this function is not it. `fp_gfdm.py`
-reports its whole-solve drift, but reports is the accurate verb -- it is a `logger.warning`,
-and the solve returns. That is the only thing separating a GFDM configuration whose honest
-answer is a 0.27% drift from one that returns a final mass of 1.06e+23, and by this campaign's
+reported its whole-solve drift, but reported is the accurate verb -- it was a `logger.warning`,
+and the solve returned. That was the only thing separating a GFDM configuration whose honest
+answer was a 0.27% drift from one that returned a final mass of 1.06e+23, and by this campaign's
 own standard ("a diagnostic nobody reads is the same failure as no diagnostic") a log is not a
-gate. Recorded rather than fixed: what should stop a divergent-but-positive solve is a
-different invariant than this one, not a stricter threshold.
+gate. FP-GFDM has since been withdrawn (#2583), so that solve no longer runs. The point stands for any
+scheme: what should stop a divergent-but-positive solve is a different invariant than this one,
+not a stricter threshold.
 
 Worth stating plainly because the failure is adversarial in shape wherever it does occur: the
 natural response to this gate firing is to refine the timestep, and on a scheme whose spatial

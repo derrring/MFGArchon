@@ -1,6 +1,6 @@
 {
   "_comment": "Warning identities the suite emits (#2119). Keyed (file, kind, digits-normalised text[:40]) -- NOT line numbers, which move under any edit, and NOT occurrence counts, which jitter run to run. Bidirectional: a new identity is a regression, a removed one is progress that must be recorded here. `occurrences` is reported, never gated. `toolchain_when_written` is attribution for a later diff (#2158), also never gated; a value of `ambiguous:a|b` or `unreadable` cannot be written here, because it would name a broken environment rather than a version. Regenerate with --write-baseline.",
-  "occurrences_when_written": 7186,
+  "occurrences_when_written": 7144,
   "toolchain_when_written": {
     "python": "3.12.13",
     "pytest": "9.1.1",
@@ -96,8 +96,8 @@
     "tests/unit/test_alg/test_fp_fdm_solver.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
     "tests/unit/test_alg/test_fp_fdm_solver.py\tDeprecationWarning\tnum_points is deprecated since vN.N.N. U",
     "tests/unit/test_alg/test_fp_fdm_solver.py\tUserWarning\tinitial density mass N.N on the grid mea",
-    "tests/unit/test_alg/test_fp_gfdm_mass_gate.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
-    "tests/unit/test_alg/test_fp_gfdm_mass_gate.py\tUserWarning\tinitial density mass N.N on the grid mea",
+    "tests/unit/test_alg/test_fp_gfdm_is_withdrawn_2583.py\tUserWarning\tHJBGFDMSolver: no `monotonicity_scheme` ",
+    "tests/unit/test_alg/test_fp_gfdm_is_withdrawn_2583.py\tUserWarning\tinitial density mass N.N on the uniform-",
     "tests/unit/test_alg/test_fp_matrix_conservation.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",
     "tests/unit/test_alg/test_fp_matrix_conservation.py\tUserWarning\tinitial density mass N.N on the grid mea",
     "tests/unit/test_alg/test_fp_mms_wall_order_1728.py\tDeprecationWarning\tLegacy MFGProblem(geometry=, components=",

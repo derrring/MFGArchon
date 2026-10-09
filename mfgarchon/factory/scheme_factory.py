@@ -20,7 +20,7 @@ Usage (Safe Mode - Phase 3):
 Benefits over Manual Solver Selection:
     - Automatic duality guarantee (no mixing FDM with GFDM)
     - Config threading to both solvers
-    - Scheme-appropriate defaults (e.g., renormalization for GFDM)
+    - Scheme-appropriate defaults
     - Educational warnings for advanced users overriding defaults
 
 References:
@@ -31,7 +31,7 @@ References:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import numpy as np
 
@@ -79,24 +79,13 @@ def create_paired_solvers(
         ValueError: If, with validate_duality on, the factory itself built solvers of different
             families outside FVM, or a pair check_solver_duality cannot classify
             (VALIDATION_SKIPPED) -- a bug in either case
-        NotImplementedError: If the scheme is not implemented in the factory
+        NotImplementedError: For NumericalScheme.GFDM, whose FP half is withdrawn (#2583), before either
+            half is built; or if the scheme is not implemented in the factory
 
     Examples:
         >>> # Safe Mode: Automatic dual pairing
         >>> hjb, fp = create_paired_solvers(problem, NumericalScheme.FDM_UPWIND)
         >>> assert hjb._scheme_family == fp._scheme_family  # Guaranteed
-
-        >>> # With custom configs
-        >>> hjb, fp = create_paired_solvers(
-        ...     problem,
-        ...     NumericalScheme.GFDM,
-        ...     hjb_config={"delta": 0.05},
-        ...     fp_config={"delta": 0.05, "upwind_scheme": "exponential"},
-        ... )
-
-        >>> # GFDM automatically gets renormalization recommendation
-        >>> result = check_solver_duality(hjb, fp)
-        >>> assert result.requires_renormalization()  # Type B scheme
     """
     # Initialize configs
     # Copies: the pair builders fill in defaults with setdefault, and writing them into the caller's
@@ -311,48 +300,16 @@ def _create_gfdm_pair(
     problem: MFGProblem,
     hjb_config: dict[str, Any],
     fp_config: dict[str, Any],
-) -> tuple[BaseHJBSolver, BaseFPSolver]:
+) -> NoReturn:
+    """GFDM pair: refused, because its FP half is withdrawn (#2583) until it is rebuilt (#2584).
+
+    Refuses before building the HJB half, so the reason is the first thing raised. Building it first cost a
+    stencil assembly and its warnings, and without ``collocation_points`` the HJB's ``TypeError`` pre-empted the
+    reason (review 1 of #2585).
     """
-    Create GFDM HJB-FP solver pair.
+    from mfgarchon.alg.numerical.fp_solvers.fp_gfdm import WITHDRAWN
 
-    Continuous duality (Type B): L_FP = L_HJB^T + O(h) asymptotically.
-    Requires renormalization for Nash gap convergence.
-
-    Args:
-        problem: MFG problem
-        hjb_config: HJB solver config
-        fp_config: FP solver config
-
-    Returns:
-        (HJBGFDMSolver, FPGFDMSolver) tuple
-
-    Note:
-        GFDM uses asymmetric neighborhoods (nearest neighbors differ for different
-        points), so discrete transpose is not exact. However, the continuous
-        operators are adjoints, giving O(h) error. Renormalization compensates
-        for this during fixed-point iteration.
-    """
-    from mfgarchon.alg.numerical.fp_solvers import FPGFDMSolver
-    from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
-
-    # Thread common GFDM parameters to both solvers
-    # If delta specified for one, use it for both (consistency)
-    if "delta" in hjb_config and "delta" not in fp_config:
-        fp_config["delta"] = hjb_config["delta"]
-    elif "delta" in fp_config and "delta" not in hjb_config:
-        hjb_config["delta"] = fp_config["delta"]
-
-    # Thread collocation_points if specified
-    if "collocation_points" in hjb_config and "collocation_points" not in fp_config:
-        fp_config["collocation_points"] = hjb_config["collocation_points"]
-    elif "collocation_points" in fp_config and "collocation_points" not in hjb_config:
-        hjb_config["collocation_points"] = fp_config["collocation_points"]
-
-    # Create solvers
-    hjb_solver = HJBGFDMSolver(problem, **hjb_config)
-    fp_solver = FPGFDMSolver(problem, **fp_config)
-
-    return hjb_solver, fp_solver
+    raise NotImplementedError(WITHDRAWN)
 
 
 def _create_meshless_galerkin_pair(
@@ -365,7 +322,7 @@ def _create_meshless_galerkin_pair(
     Discrete duality (Type A): the FP operator is the exact transpose of the
     Galerkin HJB operator, so no renormalization is needed. Requires
     ``collocation_points`` (and typically ``delta``) in the configs; these are
-    threaded across HJB/FP for consistency, mirroring the GFDM pair.
+    threaded across HJB/FP for consistency.
     """
     from mfgarchon.alg.numerical.meshless_galerkin import (
         MeshlessGalerkinFPSolver,

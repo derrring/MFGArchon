@@ -2,15 +2,16 @@
 """Measure `path.py:NNN` citations in durable prose that no longer point at what they name.
 
 A line number in a document is a claim with an expiry date, and nothing marks it when it stops
-being true. At `WINDOW = 12`: 10 of the 28 adjudicable citations in this repository's live prose
--- 36% -- name a symbol that is not near the cited line (Issue #2102).
+being true. At `WINDOW = 12`: 9 of the 24 adjudicable citations in this repository's live prose
+-- 38% -- name a symbol that is not near the cited line (Issue #2102).
 
 THIS IS A REVIEW QUEUE, NOT A DEFECT LIST, and the distinction is measured rather than modest.
-All 10 rows were read by hand, and they contain both kinds -- **genuinely wrong citations, and the
+All 9 rows were read by hand, and they contain both kinds -- **genuinely wrong citations, and the
 instrument mis-attributing a symbol** -- in a proportion two independent hand-reads disagreed
 about, so none is stated here. The row whose disposition was already settled, a claim withdrawn
 under this repository's retraction convention (#2112), has left the population: the prose carrying
-it was deleted. So has a stale line number whose prose #2378 rewrote.
+it was deleted. So has a stale line number whose prose #2378 rewrote, and a citation of a line
+#2583 deleted.
 A prose line often carries a citation and a backticked name belonging to a DIFFERENT clause
 -- "`propagate = False` (logger.py, line 211), so whether `caplog` sees..." is a CORRECT citation
 whose target line really is `logger.propagate = False`, with `caplog` sitting in the consequence
@@ -785,10 +786,10 @@ def compare_to_baseline(result: dict, path: Path) -> int:
             + "\n      - the citation is right and this line's backticked name belongs to a"
             + "\n        neighbouring clause. Then change nothing and record it -- a"
             + "\n        legitimate outcome, not a workaround."
-            + "\n    Of the 10 rows in the standing backlog (two more left with the prose carrying"
-            + "\n    them: #2112's withdrawn claim, and a stale line #2378 rewrote) two independent"
-            + "\n    hand-reads disagreed about which fall in which kind -- so no proportion"
-            + "\n    here is worth acting on. Read the line."
+            + "\n    Of the 9 rows in the standing backlog (three more left with the prose carrying"
+            + "\n    them: #2112's withdrawn claim, a stale line #2378 rewrote, and a line #2583"
+            + "\n    deleted) two independent hand-reads disagreed about which fall in which"
+            + "\n    kind -- so no proportion here is worth acting on. Read the line."
         )
     if left := sorted(was - is_now):
         # REPORTED, NOT ADJUDICATED, and the shortest path to that was deleting code rather than

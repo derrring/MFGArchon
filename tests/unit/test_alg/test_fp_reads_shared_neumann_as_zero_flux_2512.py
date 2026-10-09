@@ -144,20 +144,17 @@ def test_fdm_refuses_a_neumann_of_its_own(dim):
 
 def _families_with_an_explicit_route():
     from mfgarchon.alg.numerical.fp_solvers.fp_fvm import FPFVMSolver
-    from mfgarchon.alg.numerical.fp_solvers.fp_gfdm import FPGFDMSolver
     from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
     from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
 
-    points = np.linspace(0.0, 1.0, 21).reshape(-1, 1)
     return {
         "FVM": lambda p, bc: FPFVMSolver(p, boundary_conditions=bc),
-        "GFDM": lambda p, bc: FPGFDMSolver(p, collocation_points=points, boundary_conditions=bc),
         "SL": lambda p, bc: FPSLSolver(p, boundary_conditions=bc),
         "Particle": lambda p, bc: FPParticleSolver(p, num_particles=200, seed=0, boundary_conditions=bc),
     }
 
 
-@pytest.mark.parametrize("family", ["FVM", "GFDM", "SL", "Particle"])
+@pytest.mark.parametrize("family", ["FVM", "SL", "Particle"])
 def test_every_explicit_route_refuses_a_neumann(family):
     build = _families_with_an_explicit_route()[family]
     problem = _grid_problem(no_flux_bc(dimension=1), 1)
@@ -207,7 +204,8 @@ def _build_on_shared(family: str, g: float):
     return solver.boundary_conditions if family in ("FVM", "Particle") else solver.get_boundary_conditions()
 
 
-_ALL_FAMILIES = ["FDM", "FEM", "FVM", "GFDM", "SL", "Particle", "Meshless"]
+#: FP-GFDM is withdrawn (#2583) and constructs on no problem; its refusal is pinned in its own file.
+_ALL_FAMILIES = ["FDM", "FEM", "FVM", "SL", "Particle", "Meshless"]
 
 
 @pytest.mark.parametrize("family", _ALL_FAMILIES)
@@ -229,11 +227,13 @@ def test_every_family_refuses_a_shared_neumann_value(family):
         assert "boundary_conditions=no_flux_bc(dimension=...) for reflected agents" in str(excinfo.value)
 
 
-@pytest.mark.parametrize("family", ["FDM", "FVM", "GFDM", "SL", "Particle"])
+@pytest.mark.parametrize("family", ["FDM", "FVM", "SL", "Particle"])
 def test_the_refusals_advice_runs(family):
     """Followed: the shared BC keeps NEUMANN(0.7) for the HJB, and the FP is given its own no-flux BC.
 
-    The FP solves under the drift into the x_max wall, and an HJB solver on the same problem still reads g = 0.7.
+    The FP solves under the drift into the x_max wall, and the wall holds: the density piles up against it
+    and the mass stays. Completion alone passed a wall-less solve, FP-GFDM's, whose density stayed uniform
+    (#2583). An HJB solver on the same problem still reads g = 0.7.
     """
     from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 
@@ -241,12 +241,14 @@ def test_the_refusals_advice_runs(family):
     build = {"FDM": lambda p, bc: FPFDMSolver(p, boundary_conditions=bc), **_families_with_an_explicit_route()}[family]
     solver = build(problem, no_flux_bc(dimension=1))
     x = np.linspace(0.0, 1.0, 21)
-    if family == "GFDM":
-        M = solver.solve_fp_system(M_initial=np.ones(21), drift_field=np.ones((NT + 1, 21)))
-    else:
-        M = solver.solve_fp_system(M_initial=np.ones(21), potential_field=np.broadcast_to(-x, (NT + 1, 21)))
+    M = np.asarray(solver.solve_fp_system(M_initial=np.ones(21), potential_field=np.broadcast_to(-x, (NT + 1, 21))))
     assert np.shape(M) == (NT + 1, 21)
     assert np.all(np.isfinite(M))
+    # Measured at the head: m(T) at x_max over the midpoint is 11.4 (FDM), 19.2 (FVM), 8.9 (SL), 7.7
+    # (Particle); a wall-less solve gives 1.0.
+    assert M[-1, -1] > 3.0 * M[-1, 10] > 3.0 * M[-1, 0]
+    weights = np.r_[0.5, np.ones(19), 0.5] / 20
+    assert abs(float(np.sum(M[-1] * weights)) - 1.0) < 0.05
     hjb_bc = HJBFDMSolver(problem).get_boundary_conditions()
     assert [(seg.bc_type, seg.value) for seg in hjb_bc.segments] == [(BCType.NEUMANN, 0.7)]
 

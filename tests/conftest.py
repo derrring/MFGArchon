@@ -624,7 +624,8 @@ class MFGLogCapture:
       test PHASE (setup / call / teardown), so the discriminator is not "module level vs
       inside a function" -- a logger created in a *fixture* is visible in the test body,
       measured -- it is whether the logger existed before this phase's sweep. A logger born
-      mid-solve is not, which is the ``fp_gfdm.py:575`` case. pytest's own comment names this
+      mid-solve is not, which was FP-GFDM's case (``fp_gfdm.py`` at f1b74f3d created its only logger
+      inside the solve; withdrawn in #2583). pytest's own comment names this
       gap: the sweep "will miss loggers that *become* non-propagating after the ``__enter__``",
       and ``MFGLogger`` sets ``propagate`` at creation.
 

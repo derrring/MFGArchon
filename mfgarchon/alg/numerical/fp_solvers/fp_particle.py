@@ -125,8 +125,6 @@ class FPParticleSolver(BaseFPSolver):
     This solver samples particles from the initial distribution, evolves them
     using SDE dynamics, and reconstructs the density on a grid using KDE.
 
-    For meshfree density evolution on collocation points, use FPGFDMSolver instead.
-
     Density Modes (Issue #489 - Direct Particle Query):
         - "grid_only" (default): Store only grid density M (backward compatible)
         - "hybrid": Store both grid density M and particle positions for direct queries
@@ -1673,8 +1671,6 @@ class FPParticleSolver(BaseFPSolver):
 
         Uses KDE-based particle method: sample own particles, output to grid via KDE.
         Strategy Selection: Automatically selects CPU/GPU/Hybrid based on problem size.
-
-        For meshfree density evolution on scattered points, use FPGFDMSolver instead.
 
         Args:
             M_initial: Initial density m0(x) on grid. Required unless initial_particles provided.

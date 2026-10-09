@@ -682,7 +682,7 @@ def resolve_fp_drift_kwargs(
           represent it (Issue #1489 S1).
 
     Issue #1489 (S1): the drift convention cannot be inferred from parameter presence.
-    ``drift_field`` is a real velocity channel on some solvers (fp_fvm / fp_gfdm / FPFDM)
+    ``drift_field`` is a real velocity channel on some solvers (fp_fvm / FPFDM)
     but a DEPRECATED ALIAS for ``potential_field=U`` on the weak-form family
     (``DriftConvention.VALUE_FUNCTION``). The routing therefore keys on the solver-declared
     ``drift_convention`` when the caller supplies it, and falls back byte-for-byte to the
@@ -774,7 +774,7 @@ def resolve_fp_drift_kwargs(
                     "non-separable, whose optimal control alpha* is the (set-valued) Clarke control, "
                     "not -c*grad(U). U cannot represent this drift, so passing it would silently solve "
                     "the wrong problem. Use a VELOCITY-channel FP solver that accepts a precomputed "
-                    "alpha* (e.g. FPGFDMSolver / FPFVMSolver / FPFDMSolver) with an explicit "
+                    "alpha* (e.g. FPFVMSolver / FPFDMSolver) with an explicit "
                     "`drift_field=alpha*`, or use a smooth separable Hamiltonian. Issue #1489 (S1); "
                     "see also #1420."
                 )
@@ -782,7 +782,7 @@ def resolve_fp_drift_kwargs(
         elif "drift_field" in params:
             # Issue #1420 (G-017 V2): the FP solver exposes only `drift_field` (the velocity α*,
             # DriftConvention.VELOCITY) and no `potential_field`. We hold the value function U, not a
-            # velocity, and for a meshfree/collocation solver (e.g. FPGFDMSolver) the coupling layer
+            # velocity, and for a meshfree/collocation solver the coupling layer
             # cannot derive α* at the solver's own points (compute_fp_velocity_field is grid-based).
             # Passing U as `drift_field` would silently advect the value function as a velocity — the
             # exact #1043/V2 bug. Fail loud instead of solving the wrong problem.
