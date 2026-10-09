@@ -240,7 +240,7 @@ def test_the_fp_solver_refuses_the_neumann_spelling():
     before #1686's `_validate_bc_support` gate, so it does not reach `assemble_robin_terms` either;
     `test_the_natural_bc_parameter_gates_the_neumann_arm` covers that. The advice elsewhere is to give
     the FP its own no-flux BC, and FP-FEM has no parameter to give one through, so its message says the
-    model cannot run on it until #2532 lands.
+    model cannot run on it until #2532 lands (it tracks WeakFormFPSolver's route).
 
     Retirement: when #2532 gives FP-FEM a BC of its own, the advice changes and this test says so by
     failing on the message.

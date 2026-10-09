@@ -3014,10 +3014,11 @@ if __name__ == "__main__":
 
     # Test 3: Absorbing BC (segment-aware)
     print("\nTesting 2D FPParticleSolver with absorbing BC...")
-    from mfgarchon.geometry.boundary import BCSegment, mixed_bc
+    from mfgarchon.geometry.boundary import BCSegment, BoundaryConditions
 
-    # Create BC with exit on right wall (DIRICHLET = absorbing for particles)
-    bc_absorbing = mixed_bc(
+    # Create BC with exit on right wall (DIRICHLET = absorbing for particles). Built directly: the deprecated
+    # mixed_bc sets a NEUMANN fall-through, which an FP solver handed this BC refuses (#2512, row B3).
+    bc_absorbing = BoundaryConditions(
         dimension=2,
         segments=[
             BCSegment(

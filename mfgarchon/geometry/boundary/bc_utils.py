@@ -463,7 +463,7 @@ def _refuse_a_shared_neumann_value(
     else:
         how = (
             f"{consumer} takes no boundary_conditions of its own yet, so this model cannot run on it until "
-            "it does (#2532 tracks FP-FEM's)"
+            "it does (#2532 tracks it)"
         )
     raise NotImplementedError(
         f"{consumer}: the problem's shared boundary condition has a NEUMANN value that is not zero "

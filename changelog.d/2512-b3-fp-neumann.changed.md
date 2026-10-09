@@ -13,5 +13,5 @@
   and a mass flux through the wall is not a Neumann condition. It also says how to specify the two
   equations' BCs separately: keep `neumann_bc(value=g)` on the problem for the HJB, and pass the FP solver
   `boundary_conditions=no_flux_bc(...)`. `FPFEMSolver` and `MeshlessGalerkinFPSolver` take no BC of their
-  own, so they cannot run that model yet; #2532 tracks FP-FEM's. A value that is not provably zero, such
+  own, so they cannot run that model yet; #2532 tracks the route for both. A value that is not provably zero, such
   as a callable, counts as nonzero.

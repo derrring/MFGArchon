@@ -736,7 +736,7 @@ refused at the FP (user ruling 2026-10-09): $g$ says nothing about the agents' m
 mass flux through the wall is not a Neumann condition. The two equations' BCs are then specified
 separately: the shared BC keeps `NEUMANN(g)` for the HJB, and the FP solver is given
 `boundary_conditions=no_flux_bc(...)` for reflected agents. An FP solver with no such parameter cannot run
-that model yet (`FPFEMSolver`: #2532). A value that is not provably zero, such as a callable, counts as
+that model yet (`FPFEMSolver`, `MeshlessGalerkinFPSolver`: #2532). A value that is not provably zero, such as a callable, counts as
 $g \ne 0$. `BaseFPSolver` owns the reading, through `bc_utils.fp_view_of_shared_bc`, and
 `get_boundary_conditions()` and each FP solver's own resolution end in it. A NEUMANN handed to an FP
 solver explicitly would mean $\partial m / \partial n = g$, which no FP solver implements, so it is

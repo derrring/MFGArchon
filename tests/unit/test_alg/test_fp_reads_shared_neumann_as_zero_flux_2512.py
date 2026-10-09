@@ -6,7 +6,7 @@ unit of local time, du/dn = g. `BaseFPSolver._fp_view_of_shared` owns the FP's r
 - NEUMANN(g != 0) is refused at the FP (user ruling 2026-10-09). Its g says nothing about the agents'
   mass at the wall, and a mass flux through the wall is not a Neumann condition, so the two equations'
   BCs are specified separately: the shared BC keeps NEUMANN(g) for the HJB, and the FP solver is given
-  its own no-flux BC. A family with no such parameter cannot run the model yet (#2532 for FP-FEM).
+  its own no-flux BC. A family with no such parameter cannot run the model yet (#2532: FP-FEM and meshless Galerkin).
 
 A NEUMANN handed to an FP solver explicitly would mean dm/dn = g, which no FP solver implements, so it is
 refused, g = 0 included (`_fp_own_bc`).

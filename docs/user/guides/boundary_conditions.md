@@ -71,7 +71,7 @@ The calculator classes name this distinction explicitly:
 > non-zero `g`, which says nothing about the agents' mass at the wall: keep `neumann_bc(value=g)` on the
 > problem for the HJB, and give the FP solver its own `boundary_conditions=no_flux_bc(...)`
 > ([Issue #2512](https://github.com/derrring/MFGArchon/issues/2512), row B3). `FPFEMSolver` takes no BC of
-> its own yet, so it cannot run that model until
+> its own yet, nor does `MeshlessGalerkinFPSolver`, so neither can run that model until
 > [Issue #2532](https://github.com/derrring/MFGArchon/issues/2532) lands. Handed to an FP solver
 > explicitly, as in `FPFDMSolver(problem, boundary_conditions=...)`, a NEUMANN would mean `dm/dn = g`,
 > which no FP solver implements, so it is refused: use `no_flux_bc()` for a reflecting FP wall. The
