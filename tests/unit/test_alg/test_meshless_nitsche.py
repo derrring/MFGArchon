@@ -108,7 +108,9 @@ class TestNitscheAssembly:
         disc = discretization_from_cloud(np.linspace(0, 1, 41)[:, None], 3.5 / 40, degree=2, n_gauss=6)
         bc = _dirichlet_bc({"x_min": 0.7})
         N_hjb, rhs_hjb = assemble_nitsche_terms(disc, bc, D, 20.0, 6)
-        N_fp, rhs_fp = assemble_nitsche_terms(disc, fp_view_of_shared_bc(bc), D, 20.0, 6)
+        N_fp, rhs_fp = assemble_nitsche_terms(
+            disc, fp_view_of_shared_bc(bc, consumer="test", takes_its_own_bc=False), D, 20.0, 6
+        )
         assert abs(N_hjb - N_fp).max() == 0.0
         assert rhs_hjb is not None
         assert rhs_fp is None

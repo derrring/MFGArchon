@@ -1134,8 +1134,10 @@ def neumann_bc(
     Two readings, by who reads the BC (#2512, row B3):
 
     - As the problem's shared BC, ``value`` is the HJB's: du/dn = g, the boundary cost per unit of
-      boundary local time. The FP reads the face as zero total flux, J.n = 0, whatever g is, because
-      the agents are reflected.
+      boundary local time. With g = 0 the FP reads the face as zero total flux, J.n = 0 (ruled
+      2026-10-08). A nonzero g is refused at the FP (user ruling 2026-10-09): it says nothing about the
+      agents' mass at the wall, so keep ``neumann_bc(value=g)`` on the problem for the HJB and give the
+      FP solver ``boundary_conditions=no_flux_bc(...)``.
     - Handed to an FP solver explicitly it would mean dm/dn = g, which no FP solver implements, so the
       solver refuses it. Pass ``no_flux_bc()`` for a reflecting FP wall.
 

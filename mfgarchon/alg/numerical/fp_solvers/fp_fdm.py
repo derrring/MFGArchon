@@ -114,7 +114,8 @@ class FPFDMSolver(BaseFPSolver):
     _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX, BCType.PERIODIC})
 
     #: Issue #1686: no FP solver applies a Neumann value, so this stays False. It is no longer reached
-    #: with one: BaseFPSolver reads a shared NEUMANN as zero flux and refuses an explicit one (#2512, row B3).
+    #: with one: BaseFPSolver reads a shared NEUMANN(0) as zero flux and refuses a shared NEUMANN(g != 0) and an
+    #: explicit one (#2512, row B3).
     honors_inhomogeneous_neumann: bool = False
 
     def __init__(

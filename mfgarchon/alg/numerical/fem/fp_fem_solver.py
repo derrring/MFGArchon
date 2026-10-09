@@ -106,8 +106,8 @@ class FPFEMSolver(WeakFormFPSolver):
     #: Issue #2294. This solver's natural boundary condition is the total flux ``J.n = 0``, not
     #: ``dm/dn = 0``, because ``_build_advection`` never integrates ``div(v m)`` by parts onto the
     #: facets. So it cannot express ``dm/dn = g`` and does not claim to. It is not reached with one: a
-    #: shared NEUMANN arrives as zero flux, this solver's natural condition, through BaseFPSolver (#2512,
-    #: row B3), and it takes no explicit BC (#2532).
+    #: shared NEUMANN(0) arrives as zero flux, this solver's natural condition, a shared NEUMANN(g != 0) is
+    #: refused, both through BaseFPSolver (#2512, row B3), and it takes no explicit BC (#2532).
     honors_inhomogeneous_neumann = False
 
     def _robin_operator_terms(self, D: float):

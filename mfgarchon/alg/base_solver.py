@@ -289,7 +289,8 @@ class BaseMFGSolver(ABC):
 
     #: Why a solver that sets ``honors_inhomogeneous_neumann = False`` refuses a Neumann value; the gate
     #: below appends it, and a solver with a reason of its own overrides it. No FP solver reaches the gate
-    #: with a NEUMANN: BaseFPSolver reads a shared one as zero flux and refuses an explicit one (#2512, row B3).
+    #: with a NEUMANN value: BaseFPSolver reads a shared NEUMANN(0) as zero flux and refuses a shared
+    #: NEUMANN(g != 0) and an explicit NEUMANN (#2512, row B3).
     _inhomogeneous_neumann_gap: str = "Use g = 0, or a solver that honours a Neumann value."
 
     #: Declared per solver. `None` means "un-migrated": the gate below no-ops rather than refusing

@@ -52,17 +52,15 @@ def _reflecting():
     return BoundaryConditions(dimension=1, segments=[BCSegment(name="r", bc_type=BCType.REFLECTING)])
 
 
+@pytest.mark.parametrize("cls", [MeshlessGalerkinHJBSolver, MeshlessGalerkinFPSolver])
 @pytest.mark.parametrize(
-    ("cls", "bc_factory"),
+    "bc_factory",
     [
-        # The FP reads a shared NEUMANN as zero flux whatever its value (#2512, row B3), so only the HJB refuses it.
-        (MeshlessGalerkinHJBSolver, lambda: neumann_bc(dimension=1, value=0.7)),
-        (MeshlessGalerkinHJBSolver, lambda: periodic_bc(dimension=1)),
-        (MeshlessGalerkinFPSolver, lambda: periodic_bc(dimension=1)),
-        (MeshlessGalerkinHJBSolver, _robin),
-        (MeshlessGalerkinFPSolver, _robin),
+        lambda: neumann_bc(dimension=1, value=0.7),
+        lambda: periodic_bc(dimension=1),
+        _robin,
     ],
-    ids=["hjb-neumann_nonzero", "hjb-periodic", "fp-periodic", "hjb-robin", "fp-robin"],
+    ids=["neumann_nonzero", "periodic", "robin"],
 )
 def test_an_unhonoured_bc_is_refused_at_construction(cls, bc_factory):
     with pytest.raises(NotImplementedError, match="MeshlessGalerkin"):
