@@ -286,11 +286,11 @@ class TestNewtonMFGSolverParameters:
             hjb_solver,
             fp_solver,
             picard_warmup=1,
-            newton_tolerance=1e-8,  # Tight tolerance
             newton_max_iterations=20,
         )
 
-        _U, _M, info = newton_solver.solve(max_iterations=25, tolerance=1e-8, verbose=False)
+        # Tight relative and absolute bounds; absolute_tolerance replaces the deprecated newton_tolerance (#2565).
+        _U, _M, info = newton_solver.solve(max_iterations=25, tolerance=1e-8, absolute_tolerance=1e-8, verbose=False)
 
         # Should complete (converged or max iterations)
         assert info["total_iterations"] > 0

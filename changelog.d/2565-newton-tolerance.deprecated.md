@@ -1,0 +1,1 @@
+- **`NewtonMFGSolver(newton_tolerance=)` is deprecated; pass `solve(absolute_tolerance=)`** (Issue #2565). Until its removal, a passed `newton_tolerance` still acts: it becomes `absolute_tolerance`, now measured in the geometry's L2 norm rather than as an unscaled 2-norm, with a `DeprecationWarning` saying so. Passing both is refused.

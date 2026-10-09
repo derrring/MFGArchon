@@ -366,6 +366,7 @@ class NewtonSolver(NonlinearSolver):
         F: Callable[[NDArray], NDArray],
         x0: NDArray,
         jacobian: Callable[[NDArray], NDArray | sparse.spmatrix] | None = None,
+        converged: Callable[[NDArray, NDArray], tuple[bool, str]] | None = None,
         **kwargs: Any,
     ) -> tuple[NDArray, SolverInfo]:
         """
@@ -375,6 +376,9 @@ class NewtonSolver(NonlinearSolver):
             F: Residual function F: x → ℝ^n (same shape as x)
             x0: Initial guess (any shape)
             jacobian: Optional Jacobian (overrides self.jacobian_func)
+            converged: Optional stopping verdict ``(x, F(x)) -> (stop, reason)``, which replaces
+                ``||F(x)|| < tolerance``. Only the verdict moves: F, and so the Jacobian, are untouched.
+                ``None`` keeps the norm test.
 
         Returns:
             x: Solution (same shape as x0)
@@ -408,7 +412,8 @@ class NewtonSolver(NonlinearSolver):
             residual_history.append(float(residual_norm))
 
             # Check convergence
-            if residual_norm < self.tolerance:
+            stop = residual_norm < self.tolerance if converged is None else converged(x_current, F_current)[0]
+            if stop:
                 solver_time = time.time() - start_time
                 result = x_current.item() if is_scalar else x_current
                 return result, SolverInfo(

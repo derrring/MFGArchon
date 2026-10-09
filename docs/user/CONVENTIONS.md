@@ -618,9 +618,9 @@ change, and `check_convergence_criteria` for the verdict (#2555).
 `alg/numerical/coupling/`, and any other module of `alg/` that references `PicardConfig`, its `picard`
 attribute, `BaseCouplingIterator`, `check_convergence_criteria` or `sweep_change`; those names approximate
 "takes the outer tolerance". It fails if one of them measures this change, or decides on it, itself,
-through the shapes its docstring lists (#2512). *Not yet met (#2565): `NewtonMFGSolver` stops on an
-unscaled absolute norm of the Picard residual, the quantity this convention governs. It is excluded from
-that guard only until #2565 routes it through the owners; the convention is not met while it is.*
+through the shapes its docstring lists (#2512). `NewtonMFGSolver` stops on the same quantity, the Picard
+residual: after its warm-up and at every Newton iterate, it decides through `sweep_change` and
+`check_convergence_criteria` on `solve(tolerance=)` (#2565).
 `HomotopyContinuation`'s corrector, with its own `corr_tol`, and `PrimalDualMFGSolver`, which stops on an
 optimisation residual and its own density change, are separate algorithms with their own tolerances.
 This convention does not govern them (#2573).
