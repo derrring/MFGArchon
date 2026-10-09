@@ -146,11 +146,8 @@ from .protocol import (
 from .traits import (
     BoundaryAware,
     BoundaryDef,
-    ConnectivityAware,
     ConnectivityType,
-    StructureAware,
     StructureType,
-    TraitAwareGeometry,
 )
 
 __all__ = [
@@ -182,10 +179,7 @@ __all__ = [
     "ConnectivityType",
     "StructureType",
     "BoundaryDef",
-    "ConnectivityAware",
-    "StructureAware",
     "BoundaryAware",
-    "TraitAwareGeometry",
     # AMR stub (for future library integration)
     "AdaptiveGeometry",
     "AMRNotImplementedError",

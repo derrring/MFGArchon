@@ -8,46 +8,29 @@ The geometry module provides domain definitions, boundary conditions, and mesh g
 
 ## Module Organization
 
-The geometry module is organized into specialized subdirectories:
+Each entry is the first line of that package's or module's own docstring.
 
-### Subdirectory Structure
+### Subpackages
 
-- **`meshes/`** - Mesh generation and data structures
-  - `mesh_data.py` - Universal mesh data containers (`MeshData`, `MeshVisualizationMode`)
-  - `mesh_1d.py`, `mesh_2d.py`, `mesh_3d.py` - Dimension-specific mesh implementations
-  - `mesh_manager.py` - Mesh lifecycle management
-  - `mesh_pipeline.py` - Gmsh → Meshio → PyVista integration
+- **`amr/`** - Adaptive Mesh Refinement (AMR) - API stub for future library integration.
+- **`boundary/`** - Boundary condition management for MFG problems.
+- **`graph/`** - Graph-based geometries for MFG problems.
+- **`grids/`** - Cartesian grid geometries for MFG problems.
+- **`implicit/`** - Geometry Infrastructure for Meshfree MFG Methods
+- **`level_set/`** - Level Set Methods for Free Boundary Problems in MFG.
+- **`meshes/`** - Unstructured mesh geometries for MFG problems.
+- **`protocols/`** - Geometry trait protocols for capability-based interface design.
 
-- **`grids/`** - Cartesian grid geometries (no external dependencies)
-  - `tensor_grid.py` - Unified nD grids (`TensorProductGrid`) - supports 1D, 2D, 3D, and higher dimensions
+### Top-level modules
 
-- **`graph/`** - Network and maze geometries
-  - **Network geometries**: `network_geometry.py` - Graph-based domains (`BaseNetworkGeometry`, `GridNetwork`)
-  - **Maze generators**:
-    - `maze_cellular_automata.py` - Cellular automata maze generation
-    - `maze_recursive_division.py` - Recursive division algorithm
-    - `maze_hybrid.py` - Hybrid maze strategies
-    - `maze_voronoi.py` - Voronoi-based maze generation
-
-- **`boundary/`** - Boundary condition management
-  - `bc_1d.py`, `bc_2d.py`, `bc_3d.py` - Dimension-specific boundary conditions
-  - `bc_manager.py` - Unified boundary condition management
-  - `mfg_bc_handler_2d.py`, `mfg_bc_handler_3d.py` - MFG-specific handlers
-
-- **`implicit/`** - Implicit geometry definitions
-  - `implicit_geometry.py` - Level-set based geometry representation
-  - Support for complex geometries defined by implicit functions
-
-- **`amr/`** - Adaptive mesh refinement
-  - `amr_1d.py`, `amr_triangular_2d.py`, `amr_tetrahedral_3d.py` - AMR implementations
-  - `amr_manager.py` - AMR lifecycle management
-
-### File Naming Conventions
-
-- **Grid files**: `tensor_grid.py` contains unified `TensorProductGrid` for all dimensions
-- **Maze files**: Prefixed with `maze_` (`maze_cellular_automata.py`, `maze_hybrid.py`)
-- **Network files**: Prefixed with `network_` (`network_geometry.py`)
-- **Boundary files**: Prefixed with `bc_` (`bc_2d.py`, `bc_manager.py`)
+- `base.py` - Unified geometry base classes for MFGarchon.
+- `cloud_geodesic.py` - Geodesic distance on meshfree clouds with obstacle-aware edge filtering.
+- `collocation.py` - Geometry-aware collocation point generation for meshfree methods.
+- `masks.py` - Mask generation for boundary condition regions.
+- `predicates.py` - Region predicate factories for geometry marking.
+- `protocol.py` - Unified geometry protocol for MFG problems.
+- `traits.py` - Geometry trait enums, and the one protocol a dispatcher reads.
+- `visibility.py` - Visibility queries for meshfree methods in domains with obstacles.
 
 ### Import Patterns
 
@@ -65,7 +48,7 @@ from mfgarchon.geometry import (
 from mfgarchon.geometry.grids import TensorProductGrid
 from mfgarchon.geometry.graph import BaseNetworkGeometry
 from mfgarchon.geometry.meshes import MeshData
-from mfgarchon.geometry.boundary import BoundaryConditionManager2D
+from mfgarchon.geometry.boundary import BoundaryConditions, no_flux_bc
 ```
 
 ## Domain Types
@@ -329,31 +312,9 @@ print(f"Average element quality: {quality['avg_quality']}")
 
 ### Module References
 
-- **Meshes**: `mfgarchon.geometry.meshes` - Mesh data structures and generation
-  - `meshes.mesh_data`: Universal mesh containers
-  - `meshes.mesh_manager`: Mesh lifecycle management
-  - `meshes.mesh_pipeline`: Gmsh integration pipeline
-
-- **Grids**: `mfgarchon.geometry.grids` - Cartesian grid geometries
-  - `grids.tensor_grid`: Unified `TensorProductGrid` for all dimensions (1D, 2D, 3D, nD)
-
-- **Graphs**: `mfgarchon.geometry.graph` - Network and maze geometries
-  - `graph.network_geometry`: Network-based domains
-  - `graph.maze_*`: Maze generation algorithms
-
-- **Boundaries**: `mfgarchon.geometry.boundary` - Boundary condition management
-  - `boundary.bc_2d`, `boundary.bc_3d`: Dimension-specific boundary conditions
-  - `boundary.bc_manager`: Unified boundary management
-  - `boundary.mfg_bc_handler_*`: MFG-specific handlers
-
-- **Implicit**: `mfgarchon.geometry.implicit` - Level-set based geometries
-  - `implicit.implicit_geometry`: Implicit geometry definitions
-
-- **AMR**: `mfgarchon.geometry.amr` - Adaptive mesh refinement
-  - `amr.amr_*`: Dimension-specific AMR implementations
+See [Module Organization](#module-organization).
 
 ### Examples
 
 - `examples/basic/geometry/`: Simple geometry demonstrations
-- `examples/advanced/geometry/`: Complex multi-domain examples
 - `examples/tutorials/`: Step-by-step geometry tutorials

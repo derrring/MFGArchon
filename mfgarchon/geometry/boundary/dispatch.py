@@ -108,12 +108,12 @@ def get_applicator_for_geometry(
         return MeshfreeApplicator(geometry=geometry)
 
     elif discretization == DiscretizationType.FEM:
-        # FEM BC is handled via bc_adapter.py (scikit-fem condense pattern),
-        # not through the applicator dispatch. See bc_adapter.py for usage.
+        # FEM BC is handled via alg/numerical/fem/bc_adapter.py (scikit-fem condense pattern),
+        # not through the applicator dispatch.
         raise NotImplementedError(
             "FEM BC application uses bc_adapter.py (scikit-fem condense pattern) "
             "directly, not through the applicator dispatch. "
-            "Use: from mfgarchon.geometry.boundary.bc_adapter import apply_fem_bc"
+            "Use: from mfgarchon.alg.numerical.fem.bc_adapter import apply_bc_to_fem_system"
         )
 
     elif discretization == DiscretizationType.GRAPH:
