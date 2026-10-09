@@ -38,11 +38,9 @@ assignment, are out of scope: this guard names the shapes it covers and does not
 - `check_convergence_criteria`, the verdict's owner.
 - `AndersonAccelerator.update`. Its residual norm and its stagnation test decide how to mix: restart,
   skip, safeguard. They do not decide whether the outer loop has converged.
-- The class `NewtonMFGSolver`, a KNOWN VIOLATION and not a definitional exclusion. It stops on an
-  unscaled absolute norm of the Picard residual, the quantity this convention governs. It is excluded from
-  this guard only until #2565 routes it through the owners; the convention is not met while it is.
-  `MFGResidual`, which computes that residual, matches no rule here, so it carries no exclusion: an
-  exclusion that holds nothing back would only be an escape hatch.
+
+`NewtonMFGSolver` stops on the Picard residual Phi(x) - x, the quantity this convention governs, and since
+#2565 it decides through the owners like the other iterators, so it carries no exclusion.
 
 **Not C1 by definition.** These are separate algorithms with their own parameters, not exemptions; both
 are entries in ledger #2573:
@@ -75,14 +73,13 @@ RIVAL_METRICS = frozenset(
         "create_convergence_checker",
     }
 )
-#: A function excludes itself only; a class excludes every scope inside it. See the module docstring.
+#: Each excludes that one function only. See the module docstring.
 EXCLUDED_FUNCTIONS = frozenset(
     {
         ((COUPLING / "fixed_point_utils.py").as_posix(), "check_convergence_criteria"),
         ((COUPLING / "anderson_acceleration.py").as_posix(), "AndersonAccelerator.update"),
     }
 )
-EXCLUDED_CLASSES = frozenset({((COUPLING / "newton_mfg_solver.py").as_posix(), "NewtonMFGSolver")})
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 _ORDER = (ast.Lt, ast.LtE, ast.Gt, ast.GtE)
 
@@ -245,9 +242,7 @@ def scopes(tree: ast.Module):
 
 
 def _excluded(module: str, qualname: str) -> bool:
-    if (module, qualname) in EXCLUDED_FUNCTIONS:
-        return True
-    return any(module == m and (qualname == c or qualname.startswith(c + ".")) for m, c in EXCLUDED_CLASSES)
+    return (module, qualname) in EXCLUDED_FUNCTIONS
 
 
 def in_population(rel: Path, tree: ast.AST) -> bool:
@@ -395,8 +390,8 @@ def test_each_covered_shape_is_found(alg_copy, planted, what):
 
 
 def test_each_exclusion_names_a_live_scope():
-    """An exclusion of a function or class that is gone, or that no longer matches a rule, is deleted."""
-    for module, name in sorted(EXCLUDED_FUNCTIONS | EXCLUDED_CLASSES):
+    """An exclusion of a function that is gone, or that no longer matches a rule, is deleted."""
+    for module, name in sorted(EXCLUDED_FUNCTIONS):
         held = scopes(ast.parse((REPO / module).read_text()))
         inside = [scope for q, scope in held if q == name or q.startswith(name + ".")]
         assert inside, f"{name} is gone from {module}: delete the exclusion"
@@ -414,10 +409,6 @@ def test_each_exclusion_names_a_live_scope():
         ("anderson_acceleration.py", None, "class _Other:\n" + _function("update", "    ", "self, a, b")),
         # the same qualified name in another module
         ("fixed_point_iterator.py", None, "class AndersonAccelerator:\n" + _function("update", "    ", "self, a, b")),
-        # a module-level function beside each excluded class, and the class name in another module
-        ("newton_mfg_solver.py", None, _function("_planted")),
-        ("mfg_residual.py", None, _function("_planted")),
-        ("fixed_point_iterator.py", None, "class NewtonMFGSolver:\n" + _function("solve", "    ", "self, a, b")),
         # a function of the same name as the verdict's owner, in another module
         ("fixed_point_iterator.py", None, _function("check_convergence_criteria")),
     ],

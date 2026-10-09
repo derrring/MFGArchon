@@ -32,16 +32,20 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.utils.convergence import sweep_change
+from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.nonlinear_solvers import NewtonSolver, SolverInfo
 from mfgarchon.utils.pde_coefficients import retired_volatility_keywords
 from mfgarchon.utils.solver_result import SolverResult
 
 from .base_mfg import BaseCouplingIterator, assert_paired_solver_sigma
-from .fixed_point_utils import diverged_value_function
+from .fixed_point_utils import check_convergence_criteria, diverged_value_function
 from .mfg_residual import MFGResidual
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from numpy.typing import NDArray
 
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver
@@ -106,7 +110,10 @@ class NewtonMFGSolver(BaseCouplingIterator):
             basin, so a too-short warmup can converge to a spurious near-trivial fixed
             point of the discrete MFG map. For stiff couplings increase this until the
             warmup residual is well past its transient peak (Issue #1233).
-        newton_tolerance: Convergence tolerance for Newton (default: 1e-6)
+        newton_tolerance: Deprecated (#2565). The outer tolerance is ``solve(tolerance=)`` at both stops. If
+            passed, or assigned to the attribute, it acts as ``solve(absolute_tolerance=)``: an extra bound on
+            the owners' absolute change -- the larger of U's and M's dt-weighted space-time L2 change, not an
+            unscaled 2-norm -- so it can tighten the stop but no longer loosen it. Passing both is refused.
         newton_max_iterations: Maximum Newton iterations (default: 20)
         line_search: Enable backtracking line search (default: True)
         use_jax_autodiff: Use JAX autodiff for the Jacobian (default: False). The MFG
@@ -126,6 +133,14 @@ class NewtonMFGSolver(BaseCouplingIterator):
         >>> print(f"Converged: {info['converged']}, iterations: {info['iterations']}")
     """
 
+    @deprecated_parameter(
+        param_name="newton_tolerance",
+        since="v0.22.0",
+        replacement=(
+            "absolute_tolerance= on solve(), an extra bound beside tolerance= on the larger of U's and M's "
+            "dt-weighted space-time L2 change, not an unscaled 2-norm, so it can no longer loosen the stop"
+        ),
+    )
     @retired_volatility_keywords
     def __init__(
         self,
@@ -135,7 +150,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
         *,
         picard_warmup: int = 3,
         picard_damping: float = 0.5,
-        newton_tolerance: float = 1e-6,
+        newton_tolerance: float | None = None,
         newton_max_iterations: int = 20,
         line_search: bool = True,
         use_jax_autodiff: bool | str = False,
@@ -154,7 +169,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
         self.picard_warmup = picard_warmup
         self.picard_damping = picard_damping
 
-        # Newton parameters
+        # Newton parameters. A passed or assigned newton_tolerance is read as solve()'s absolute_tolerance (#2565).
         self.newton_tolerance = newton_tolerance
         self.newton_max_iterations = newton_max_iterations
         self.line_search = line_search
@@ -260,6 +275,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
         max_iterations: int = 30,
         tolerance: float = 1e-5,
         verbose: bool = True,
+        absolute_tolerance: float | None = None,
         **kwargs: Any,
     ) -> tuple[NDArray, NDArray, dict[str, Any]]:
         """
@@ -267,7 +283,13 @@ class NewtonMFGSolver(BaseCouplingIterator):
 
         Args:
             max_iterations: Maximum total iterations (Picard + Newton)
-            tolerance: Convergence tolerance
+            tolerance: The outer coupling tolerance (docs/user/CONVENTIONS.md § 9): it bounds the Picard
+                residual Phi(x) - x relative to the map's output, in the problem's own measure, through
+                `sweep_change` and `check_convergence_criteria` (#2565). It is checked after the warm-up and
+                at each iterate Newton evaluates before stepping; the iterate returned when Newton's budget
+                runs out is not judged, so it reports not converged.
+            absolute_tolerance: Opt-in absolute bound on the same change, as for the other coupling
+                iterators. Refused together with the deprecated ``newton_tolerance``.
             verbose: Print progress information
             **kwargs: Additional solver parameters
 
@@ -275,6 +297,15 @@ class NewtonMFGSolver(BaseCouplingIterator):
             (U, M, info): Solution and convergence information
         """
         start_time = time.time()
+        if self.newton_tolerance is not None:
+            if absolute_tolerance is not None:
+                raise ValueError(
+                    "NewtonMFGSolver: newton_tolerance (deprecated) and absolute_tolerance were both given. "
+                    "Pass absolute_tolerance to solve() only: it is the same bound, on the larger of U's and M's "
+                    "dt-weighted space-time L2 change (#2565)."
+                )
+            absolute_tolerance = self.newton_tolerance
+        verdict = self._outer_verdict(tolerance, absolute_tolerance)
 
         # Initialize from warm start or cold start
         warm_start = self.get_warm_start_data()
@@ -314,9 +345,9 @@ class NewtonMFGSolver(BaseCouplingIterator):
             if verbose and picard_res:
                 print(f"  Final Picard residual: {picard_res[-1]:.2e}")
 
-        # Check if already converged after Picard
-        current_residual = self.mfg_residual.compute_residual_norm(U, M)
-        if current_residual < tolerance:
+        # Check if already converged after Picard: the outer verdict on the Picard residual (#2565)
+        _, F_HJB, F_FP = self.mfg_residual.compute_residual(U, M, return_components=True)
+        if verdict(U, M, F_HJB, F_FP)[0]:
             self.U = U
             self.M = M
             self.total_iterations = self.picard_warmup
@@ -337,10 +368,10 @@ class NewtonMFGSolver(BaseCouplingIterator):
         if verbose:
             print(f"Phase 2: Newton iterations (max {remaining_iterations})")
 
-        # Create Newton solver
+        # Create Newton solver. Its own norm tolerance is not consulted: the stop is the outer verdict
+        # passed to solve() below (#2565), so it keeps its default.
         newton_solver = NewtonSolver(
             max_iterations=min(remaining_iterations, self.newton_max_iterations),
-            tolerance=self.newton_tolerance,
             sparse=True,
             line_search=self.line_search,
             use_jax_autodiff=self.use_jax_autodiff,
@@ -354,6 +385,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
         x_solution, newton_info = newton_solver.solve(
             self.mfg_residual.residual_function,
             x_current,
+            converged=lambda x, F: verdict(*self.mfg_residual.unpack_state(x), *self.mfg_residual.unpack_state(F)),
         )
 
         # Unpack solution
@@ -378,6 +410,32 @@ class NewtonMFGSolver(BaseCouplingIterator):
             elapsed=elapsed,
             newton_info=newton_info,
         )
+
+    def _outer_verdict(
+        self, tolerance: float, absolute_tolerance: float | None
+    ) -> Callable[[NDArray, NDArray, NDArray, NDArray], tuple[bool, str]]:
+        """``(U, M, F_HJB, F_FP) -> (converged, reason)``: the owners' verdict on the Picard residual (#2565).
+
+        The residual ``F = Phi(x) - x`` is the map's output against its input, the kind of pair `sweep_change`
+        measures for every other coupling iterator; so ``U + F_HJB`` and ``M + F_FP`` are the map's output.
+        Newton's map is the Jacobi one -- the FP is fed the input U -- where FixedPointIterator's is
+        Gauss-Seidel; the two have the same fixed point.
+        """
+        integrate = self.problem.spatial_measure().integrate
+        dt = self.problem.dt
+
+        def verdict(U: NDArray, M: NDArray, F_HJB: NDArray, F_FP: NDArray) -> tuple[bool, str]:
+            metrics = sweep_change(U + F_HJB, U, M + F_FP, M, integrate, dt)
+            return check_convergence_criteria(
+                metrics["l2distu_rel"],
+                metrics["l2distm_rel"],
+                metrics["l2distu_abs"],
+                metrics["l2distm_abs"],
+                tolerance,
+                absolute_tolerance,
+            )
+
+        return verdict
 
     def _create_result(
         self,

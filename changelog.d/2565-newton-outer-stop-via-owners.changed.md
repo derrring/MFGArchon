@@ -1,0 +1,8 @@
+- **`NewtonMFGSolver` stops on the outer coupling tolerance, measured as the other coupling iterators measure it** (Issue #2565). Newton solves for the Picard residual Φ(x) − x, the map's output against its input: the quantity the outer tolerance governs (`docs/user/CONVENTIONS.md` § 9).
+  - Before, the check after the warm-up compared an unscaled 2-norm of that residual with `solve(tolerance=)`. Phase 2 stopped on the same unscaled norm against the constructor's `newton_tolerance`, so `tolerance` was never read there.
+  - Both stops now take the Picard residual relative to the map's output, in the problem's own measure, through `sweep_change` and `check_convergence_criteria`, against `solve(tolerance=)`, with an opt-in `solve(absolute_tolerance=)` as for the other iterators. The iterate Newton returns when its budget runs out is not judged, and is reported not converged.
+  - Measured on a 21-point 1-D fixture, Newton iterations after a 3-sweep warm-up, before → after:
+    - `tolerance=1e-5`: 4 → 3. Before, phase 2 ran to the unscaled 1e-6; it now stops at a relative change of 5.8e-6.
+    - `tolerance=1e-12`: 4 → 5. Before, it reported convergence at a relative change of 1.1e-11, above the bound asked for; it now reaches 3.3e-16.
+    - A 5-sweep warm-up with `tolerance=1e-3`: 3 → 2.
+  - `NewtonSolver.solve` takes an optional `converged=(x, F) -> (stop, reason)` verdict in place of its norm test. Without one, nothing changes.
