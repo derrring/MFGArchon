@@ -192,11 +192,16 @@ def deprecated_parameter(
                 passed = False
 
             if passed:
+                # Past every wrapper of this module, not just this one: under a stacked decorator the
+                # frame above an inner wrapper is the outer wrapper, and a warning attributed there
+                # names this module, which pytest.ini's `ignore::DeprecationWarning:mfgarchon.*`
+                # filters -- the call site was invisible to the gate (#2579).
                 warnings.warn(
                     f"Parameter '{param_name}' in '{func.__name__}' is deprecated "
                     f"since {since}. Use '{replacement}' instead.",
                     DeprecationWarning,
                     stacklevel=2,
+                    skip_file_prefixes=WRAPPER_FRAMES,
                 )
 
             # Call original function
