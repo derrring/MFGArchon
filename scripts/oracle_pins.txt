@@ -65,8 +65,12 @@ oracle fp_fdm/dirichlet_exit_1d     -
 oracle fp_fdm/dirichlet_exit_2d     -
 oracle fp_fdm/dirichlet_density_1d  -
 oracle fp_fdm/dirichlet_density_2d  -
-oracle fp_fdm/neumann_1d            -
-oracle fp_fdm/neumann_2d            -
+oracle fp_fdm/neumann_1d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_zero_solves_as_zero_flux[fdm-1d]
+oracle fp_fdm/neumann_1d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_value_is_refused_naming_both_readings[fdm-1d]
+oracle fp_fdm/neumann_1d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_fdm_refuses_a_neumann_of_its_own[1]
+oracle fp_fdm/neumann_2d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_zero_solves_as_zero_flux[fdm-2d]
+oracle fp_fdm/neumann_2d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_value_is_refused_naming_both_readings[fdm-2d]
+oracle fp_fdm/neumann_2d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_fdm_refuses_a_neumann_of_its_own[2]
 oracle fp_fdm/no_flux_1d            -
 oracle fp_fdm/no_flux_2d            -
 oracle fp_fdm/periodic_1d           -
@@ -75,8 +79,12 @@ oracle fp_fdm/periodic_2d           -
 # FP-FEM: 10 cells. It has no explicit-density route (#2532), so Dirichlet is the exit only.
 oracle fp_fem/dirichlet_exit_1d     -
 oracle fp_fem/dirichlet_exit_2d     -
-oracle fp_fem/neumann_1d            -
-oracle fp_fem/neumann_2d            -
+# The Neumann cells are met by the routing pin and the shared refusal (#2512, row B3). A refusal pin of an
+# explicit NEUMANN is owed when #2532 adds FP-FEM's explicit route.
+oracle fp_fem/neumann_1d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_zero_solves_as_zero_flux[fem-1d]
+oracle fp_fem/neumann_1d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_value_is_refused_naming_both_readings[fem-1d]
+oracle fp_fem/neumann_2d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_zero_solves_as_zero_flux[fem-2d]
+oracle fp_fem/neumann_2d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_value_is_refused_naming_both_readings[fem-2d]
 oracle fp_fem/no_flux_1d            -
 oracle fp_fem/no_flux_2d            -
 oracle fp_fem/reflecting_1d         -
@@ -87,7 +95,7 @@ oracle fp_fem/robin_2d              -
 # The (b) rows
 row grid/B1_face_segment            -
 row grid/B2_value_form_and_time     -
-row grid/B3_fp_view_of_shared_bc    -
+row grid/B3_fp_view_of_shared_bc    tests/unit/test_alg/test_fp_reads_the_shared_bc_through_its_owner_2512.py
 row grid/B4_cell_vs_node            -
 row grid/B5_wall_stencil            -
 row grid/B6_low_wall_sign           -
