@@ -1,14 +1,20 @@
-# The tests that #2512's progress counts, so that a pin which leaves the gate turns the gate red
-# instead of quietly lowering the real count (#1875). `scripts/check_oracle_pins.py` collects every
-# target below under the gate's marker expression, `scripts/ci_markers.txt`, and fails if any is
-# deselected or missing. A cell counts only when all of its lines collect.
+# The tests that #2512's progress counts, so that a pin which leaves the gate, or stops passing in it,
+# turns the gate red instead of quietly lowering the real count (#1875). `scripts/local_ci.sh` writes the
+# suite's own results as JUnit and `scripts/check_oracle_pins.py` reads them: a target counts only if it
+# passed in that run.
 #
-# One line per target: <kind> <label> <target>. A target is a pytest node ID, or a test file, which
-# then requires every test in that file to collect. Kinds:
-#   oracle      an oracle cell of #2512 (a), labelled <family>/<cell>
-#   convention  a convention of #2512 met in code, labelled by its id in docs/user/CONVENTIONS.md
+# One line per target: <kind> <label> <target>. A target is a pytest node ID, or a test file, which then
+# requires every test pytest collects from that file to pass. A target of `-` declares an item nothing
+# pins yet: it counts in the denominator and is never met. A label is met only when it has at least one
+# target and every one of its targets passed. Kinds:
+#   oracle      an oracle cell of #2512 (a), labelled <family>/<cell>; 38 cells, BC type x dimension
+#   row         a (b) row of #2512 (comment 6054006841), labelled <grid|network>/<row>
+#   convention  a convention ruled 2026-10-08, labelled C1-C6 as #2429 numbers them
 #   pin         a pin a batch rests on that is not a cell itself
-# A batch appends its own lines in the PR that counts its cells.
+# A row, or a convention whose ruling names one owner, is met only by a structural guard that fails if
+# a rival reader reappears, with a planted-rival control in the same check (user ruling, 2026-10-09). An
+# existing owner alone never meets it.
+# A batch replaces its own `-` lines with targets in the PR that counts its cells.
 
 # HJB-FDM, #2546 and #2560: 8 cells, BC type x dimension
 oracle hjb_fdm/dirichlet_1d   tests/unit/test_alg/test_hjb_fdm_bc_oracles_2512.py::test_an_exact_solution_is_reproduced_to_its_order_level_and_wall[dirichlet_1d]
@@ -52,6 +58,48 @@ pin    hjb_fem/coverage       tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.p
 pin    hjb_fem/whole_file     tests/unit/test_alg/test_hjb_fem_bc_oracles_2512.py
 pin    hjb_fem/boundary_tags  tests/unit/test_alg/test_fem_boundary_tags_2540.py
 
-# Conventions met in code
+# FP-FDM: 10 cells. Dirichlet is two cells: as an exit (a shared Dirichlet, m = 0) and as a prescribed
+# density (an explicit FP BC, m = g).
+oracle fp_fdm/dirichlet_exit_1d     -
+oracle fp_fdm/dirichlet_exit_2d     -
+oracle fp_fdm/dirichlet_density_1d  -
+oracle fp_fdm/dirichlet_density_2d  -
+oracle fp_fdm/neumann_1d            -
+oracle fp_fdm/neumann_2d            -
+oracle fp_fdm/no_flux_1d            -
+oracle fp_fdm/no_flux_2d            -
+oracle fp_fdm/periodic_1d           -
+oracle fp_fdm/periodic_2d           -
+
+# FP-FEM: 10 cells. It has no explicit-density route (#2532), so Dirichlet is the exit only.
+oracle fp_fem/dirichlet_exit_1d     -
+oracle fp_fem/dirichlet_exit_2d     -
+oracle fp_fem/neumann_1d            -
+oracle fp_fem/neumann_2d            -
+oracle fp_fem/no_flux_1d            -
+oracle fp_fem/no_flux_2d            -
+oracle fp_fem/reflecting_1d         -
+oracle fp_fem/reflecting_2d         -
+oracle fp_fem/robin_1d              -
+oracle fp_fem/robin_2d              -
+
+# The (b) rows
+row grid/B1_face_segment            -
+row grid/B2_value_form_and_time     -
+row grid/B3_fp_view_of_shared_bc    -
+row grid/B4_cell_vs_node            -
+row grid/B5_wall_stencil            -
+row grid/B6_low_wall_sign           -
+row grid/B7_inhomogeneous_value     -
+row grid/B8_no_image_raises         -
+row network/N1_graph_bc_alphabet    -
+row network/N2_node_bc_arity        -
+
+# Conventions
 convention C1                 tests/unit/test_alg/test_coupling_change_is_measured_once_2555.py
 convention C1                 tests/unit/test_alg/test_status_reports_the_final_state_1684.py::test_the_reported_error_is_the_larger_of_the_two_fields
+convention C2                       -
+convention C3                       -
+convention C4                       -
+convention C5                       -
+convention C6                       -
