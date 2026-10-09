@@ -301,7 +301,8 @@ class NewtonMFGSolver(BaseCouplingIterator):
             if absolute_tolerance is not None:
                 raise ValueError(
                     "NewtonMFGSolver: newton_tolerance (deprecated) and absolute_tolerance were both given. "
-                    "Pass absolute_tolerance to solve() only: it is the same bound, in the geometry's L2 norm (#2565)."
+                    "Pass absolute_tolerance to solve() only: it is the same bound, on the larger of U's and M's "
+                    "dt-weighted space-time L2 change (#2565)."
                 )
             absolute_tolerance = self.newton_tolerance
         verdict = self._outer_verdict(tolerance, absolute_tolerance)
