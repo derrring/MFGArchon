@@ -144,7 +144,7 @@ def _create_2d_mfg_solver(problem, damping=0.3):
     hjb = HJBFDMSolver(
         problem,
         solver_type="fixed_point",
-        damping_factor=0.8,
+        relaxation=0.8,
         max_newton_iterations=50,
     )
     fp = FPFDMSolver(problem)

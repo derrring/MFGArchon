@@ -97,7 +97,7 @@ class TestHJBFDM2DBasic:
     def test_2d_initialization_fixed_point(self):
         """Test that 2D solver initializes correctly in fixed-point mode."""
         problem = QuadraticHamiltonian2D(N=10, T=0.5, Nt=10)
-        solver = HJBFDMSolver(problem, solver_type="fixed_point", damping_factor=0.7)
+        solver = HJBFDMSolver(problem, solver_type="fixed_point", relaxation=0.7)
 
         assert solver.dimension == 2
         assert solver.hjb_method_name == "FDM-2D-fixed_point"
@@ -158,7 +158,7 @@ class TestHJBFDM2DSolving:
         solver = HJBFDMSolver(
             problem,
             solver_type="fixed_point",
-            damping_factor=0.8,
+            relaxation=0.8,
             max_newton_iterations=50,
             newton_tolerance=1e-5,
         )
@@ -238,7 +238,7 @@ class TestHJBFDM2DConvergence:
         solver_fp = HJBFDMSolver(
             problem,
             solver_type="fixed_point",
-            damping_factor=0.8,
+            relaxation=0.8,
             max_newton_iterations=100,
             newton_tolerance=1e-6,
         )
