@@ -13,8 +13,8 @@ Mapping:
                        load is D*int_dOmega g phi_i. The FP side integrates div(v m) on the volume
                        basis with no facet term, so ITS natural condition is the total flux J.n;
                        the same load would impose J.n = -D*g, a different condition. FP therefore
-                       declares honors_inhomogeneous_neumann = False and #1686's gate refuses it
-                       (Issue #2294)
+                       declares honors_inhomogeneous_neumann = False (Issue #2294); the FP's reading
+                       of the shared BC refuses a nonzero g before #1686's gate (#2512, row B3)
     BCType.NO_FLUX   → same as NEUMANN (zero normal derivative)
     BCType.ROBIN     → operator augmentation (NOT condensation): a D-scaled FacetBasis boundary
                        mass + load assembled by ``assemble_robin_terms`` and folded into the

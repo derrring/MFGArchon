@@ -19,8 +19,9 @@ THE TWO HALVES ARE NOT THE SAME CONDITION, and this file exists as much for that
 Measured 2026-09-10, driving `FPFEMSolver` with a wall-crossing drift: at `g=0` mass is conserved to
 `6.7e-15` where `dm/dn = 0` would leak by `-int (a.n) m`, and at `g=5` the injection rate is exactly
 `D*g*|dOmega| = 1.25` and IDENTICAL with and without drift, where the gradient reading would differ
-by `int (a.n) m`. So `FPFEMSolver` now declares `honors_inhomogeneous_neumann = False` and the #1686
-gate refuses the problem before the solve rather than solving a different one.
+by `int (a.n) m`. So `FPFEMSolver` now declares `honors_inhomogeneous_neumann = False`, and the #1686
+gate refused the problem before the solve rather than solving a different one. Since #2512's row B3 the
+FP's reading of the shared BC refuses a nonzero `g` earlier still.
 
 WAS A RECORDED DEFECT PIN, retired 2026-09-10 by its own stated condition: the natural-BC family had
 no assembly at all, `g` was accepted and discarded, and both solvers claimed
@@ -446,7 +447,8 @@ def test_each_solver_declares_the_capability_it_actually_has():
     `honors_inhomogeneous_neumann` was `True` on both solvers while the value was dropped, and
     DECLARED on neither -- inherited from `BaseMFGSolver`, so a sweep over own-class attributes saw
     nothing to check, which is the blindness #1975 records. Now HJB inherits a `True` that is
-    finally accurate and FP declares its own `False`, which is what makes #1686's gate fire.
+    finally accurate and FP declares its own `False`, which made #1686's gate fire; the FP's reading of the
+    shared BC now refuses a nonzero Neumann value before it (#2512, row B3).
     """
     assert HJBFEMSolver.honors_inhomogeneous_neumann is True
     assert "honors_inhomogeneous_neumann" not in vars(HJBFEMSolver), (

@@ -458,7 +458,9 @@ def _refuse_a_shared_neumann_value(
     if takes_its_own_bc:
         how = (
             f"keep NEUMANN(g) on the shared BC for the HJB, and pass {consumer} "
-            "boundary_conditions=no_flux_bc(dimension=...) for reflected agents"
+            "boundary_conditions=no_flux_bc(dimension=...) for reflected agents; through problem.solve, "
+            "build that FP solver "
+            "yourself and pass it as fp_solver="
         )
     else:
         how = (
@@ -502,7 +504,8 @@ def refuse_explicit_fp_neumann(boundary_conditions: Any, consumer: str) -> Any:
     if where:
         raise NotImplementedError(
             f"{consumer}: a NEUMANN boundary condition passed to an FP solver means dm/dn = g, which no FP "
-            "solver implements: under a drift, the zero-flux wall they build is J.n = 0, a different "
+            "solver implements: under a drift, the zero-flux wall an FP solver builds, where it builds one, is "
+            "J.n = 0, a different "
             f"condition (#2512). Found: {'; '.join(where)}. Use NO_FLUX (no_flux_bc()) for a reflecting "
             "wall. A NEUMANN on the problem's shared BC is the HJB's du/dn = g: the FP reads g = 0 as zero flux and "
             "refuses a nonzero g."

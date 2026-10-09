@@ -63,8 +63,8 @@ class WeakFormFPSolver(BaseFPSolver):
         # getattr(geometry, "boundary_conditions") misses grids that expose BCs via
         # the accessor method (e.g. TensorProductGrid), silently dropping Dirichlet.
         # No weak-form FP solver takes an explicit BC, so this is the problem's shared one, read through
-        # BaseFPSolver: a DIRICHLET(g) is an exit, absorbing here, and a NEUMANN is zero flux (#2512, row
-        # B3). Condensed literally a Dirichlet pinned the FEM exit wall at m = g (#2525).
+        # BaseFPSolver: a DIRICHLET(g) is an exit, absorbing here, a NEUMANN(0) is zero flux and a nonzero one
+        # is refused (#2512, row B3). Condensed literally a Dirichlet pinned the FEM exit wall at m = g (#2525).
         self._bc = self.get_boundary_conditions()
         # Issue #1489 (S3): one-shot latch for the adjoint-step positivity clip warning (the adjoint
         # path is stateless per call, so the latch lives on the solver to warn once per solve).

@@ -247,8 +247,9 @@ class FPFDMSolver(BaseFPSolver):
         # both branches, so no channel can be added below it and miss it.
         self.boundary_conditions = self._with_geometry_periodic_convention(self.boundary_conditions)
         # A BC this solver was not handed is the problem's shared one: a DIRICHLET(g) is an exit, the HJB's
-        # u = g and an absorbing wall here, and a NEUMANN is zero flux here (#2512, row B3). Read literally a
-        # Dirichlet pinned the exit at m = g and the mass rose 1.0000 -> 3.3247 (#2525). A BC passed
+        # u = g and an absorbing wall here, a NEUMANN(0) is zero flux here and a nonzero one is refused
+        # (#2512, row B3). Read literally a Dirichlet pinned the exit at m = g and the mass rose
+        # 1.0000 -> 3.3247 (#2525). A BC passed
         # explicitly is the FP's own: DIRICHLET(g) is m = g there, and a NEUMANN is refused above.
         if boundary_conditions is None:
             self.boundary_conditions = self._fp_view_of_shared(self.boundary_conditions)

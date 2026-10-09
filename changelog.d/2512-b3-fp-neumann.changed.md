@@ -2,7 +2,8 @@
   `FPFVMSolver`, `FPGFDMSolver`, `FPSLSolver` and `FPParticleSolver` accepted
   `boundary_conditions=neumann_bc()` and refused only a nonzero value. A NEUMANN in an FP solver's own BC
   would mean `dm/dn = g`, which no FP solver implements: under a drift, the wall they build is the zero
-  total flux `J.n = 0`, a different condition. Pass `no_flux_bc()` for a reflecting FP wall. A
+  total flux `J.n = 0`, a different condition. `FPGFDMSolver` builds no wall at all; its operator takes no
+  boundary argument. Pass `no_flux_bc()` for a reflecting FP wall. A
   `default_bc=NEUMANN`, the fall-through for faces no segment names, is refused too, even where no face
   reaches it. The deprecated `mixed_bc` sets it unless told otherwise, so pass
   `default_bc=BCType.NO_FLUX`, or build `BoundaryConditions(segments=...)` directly.
