@@ -1,13 +1,15 @@
-"""No FP solver honours a capacity-limited exit, so every one refuses `flux_capacity` (#2575).
+"""No FP solver honours a capacity-limited exit, so a segment carrying `flux_capacity` is refused (#2575).
 
-`BCSegment.flux_capacity` was accepted on every route and ignored on every route. On #2531's fixture,
-FP-FDM's outflow over the horizon was 0.081667 with and without a cap of 1e-6, and the particle solver's
-was 0.071469 both ways, at `5e4b64e4`. The particle helper that reads the cap,
-`_apply_boundary_conditions_with_flux_limits`, has no caller. The refusal sits in
-`BaseFPSolver._validate_bc_support`, which every FP solver reaches on the BC it solves with.
+A capped Dirichlet exit was accepted, and the cap ignored, by FDM, particle, FEM and meshless; SL, GFDM and
+FVM refuse the exit itself. On #2531's fixture at `5e4b64e4`, FP-FDM's outflow over the horizon was 0.081667
+with and without a cap of 1e-6, and the particle solver's was 0.071469 both ways. The particle path that
+would apply a cap, `_apply_boundary_conditions_with_flux_limits`, has no caller. The refusal sits in
+`BaseFPSolver._validate_bc_support`, which every FP solver that takes a segment BC reaches on the BC it
+solves with.
 
 Retirement: the capacity-limited exit is scheduled in this phase (user ruling, 2026-10-09). When it lands,
-each refusal below becomes that capability's oracle, and this file goes.
+these refusals fail with "DID NOT RAISE"; delete this file then, and let this fixture become the
+capability's oracle: outflow over the horizon at most cap * T = 5e-7.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonia
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
 
-REFUSAL = r"carry a flux_capacity, a capacity-limited exit, which no FP solver implements yet"
+REFUSAL = r"carry a flux_capacity, which no FP solver honours yet"
 CAP = 1e-6
 
 

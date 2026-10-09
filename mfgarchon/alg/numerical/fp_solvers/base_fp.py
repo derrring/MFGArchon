@@ -167,12 +167,12 @@ class BaseFPSolver(BaseNumericalSolver):
         self._validate_problem_compatibility()
 
     def _validate_bc_support(self, bc: Any) -> None:
-        """The base support check, and a capacity-limited exit refused, because no FP solver honours one (#2575).
+        """The base support check, and any segment carrying a ``flux_capacity`` refused: no FP solver honours one (#2575).
 
-        Every FP solver reaches this on the BC it will solve with, through its own call or through
-        ``get_boundary_conditions()``. A ``flux_capacity`` on a segment was accepted and ignored on every
-        route, so a capped exit solved as uncapped. The HJB side is not refused: on a shared exit it reads
-        u = g.
+        Every FP solver that takes a segment BC reaches this on the BC it will solve with, through its own call
+        or through ``get_boundary_conditions()``; a network problem carries no segment BC. A capped Dirichlet
+        exit was accepted and the cap ignored by FDM, particle, FEM and meshless, so it solved as uncapped; SL,
+        GFDM and FVM refuse the exit itself. The HJB side is not refused: on a shared exit it reads u = g.
         """
         super()._validate_bc_support(bc)
         capped = [
@@ -180,9 +180,9 @@ class BaseFPSolver(BaseNumericalSolver):
         ]
         if capped:
             raise NotImplementedError(
-                f"{type(self).__name__}: segment(s) {capped} carry a flux_capacity, a capacity-limited exit, "
-                "which no FP solver implements yet. Every FP solver would absorb at the uncapped rate and "
-                "ignore the cap (#2575). Remove flux_capacity until the capacity-limited exit lands."
+                f"{type(self).__name__}: segment(s) {capped} carry a flux_capacity, which no FP solver honours "
+                "yet: the solve would ignore the cap (#2575). Remove flux_capacity until the capacity-limited "
+                "exit lands."
             )
 
     def _validate_problem_compatibility(self) -> None:
