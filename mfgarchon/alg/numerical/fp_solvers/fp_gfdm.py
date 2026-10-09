@@ -174,6 +174,9 @@ class FPGFDMSolver(BaseFPSolver):
         # The RETURN value is discarded. It used to be stored as `self._boundary_type`, which
         # nothing in the package ever read (removed 2026-08-17); `TaylorOperator` takes no boundary
         # argument at all, so the resolved string reached nothing.
+        # A BC passed here is the FP's own, and a NEUMANN in it is refused (#2512, row B3).
+        if boundary_conditions is not None:
+            boundary_conditions = self._fp_own_bc(boundary_conditions)
         self._resolve_boundary_type(
             boundary_conditions=boundary_conditions,
             boundary_type_str=boundary_type,

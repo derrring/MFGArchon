@@ -185,6 +185,30 @@ class BaseFPSolver(BaseNumericalSolver):
                 "exit lands."
             )
 
+    def _fp_view_of_shared(self, bc: Any) -> Any:
+        """The FP reading of a BC this solver read from the shared problem or geometry (#2512, row B3).
+
+        The one route for every FP solver: ``get_boundary_conditions()`` ends in it, and a solver that
+        resolves the shared BC through its own chain passes the result here. A Dirichlet comes back
+        absorbing and a Neumann as zero flux (`fp_view_of_shared_bc`).
+        """
+        from mfgarchon.geometry.boundary.bc_utils import fp_view_of_shared_bc
+
+        return fp_view_of_shared_bc(bc)
+
+    def _fp_own_bc(self, bc: Any) -> Any:
+        """A BC handed to this solver, which is the FP's own: a NEUMANN in it is refused (#2512, row B3)."""
+        from mfgarchon.geometry.boundary.bc_utils import refuse_explicit_fp_neumann
+
+        return refuse_explicit_fp_neumann(bc, type(self).__name__)
+
+    def _lookup_boundary_conditions(self) -> Any:
+        """The base chain, read as an FP solver reads it: its own BC refused if NEUMANN, the shared one translated."""
+        bc = super()._lookup_boundary_conditions()
+        if getattr(self, "_boundary_conditions", None) is not None:
+            return self._fp_own_bc(bc)
+        return self._fp_view_of_shared(bc)
+
     def _validate_problem_compatibility(self) -> None:
         """
         Validate that this solver is compatible with the problem.

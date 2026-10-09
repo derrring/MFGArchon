@@ -21,7 +21,6 @@ except ImportError:  # pragma: no cover - graceful fallback when SciPy missing
     SCIPY_AVAILABLE = False
 
 from mfgarchon.geometry.boundary.applicator_particle import ParticleApplicator
-from mfgarchon.geometry.boundary.bc_utils import fp_view_of_shared_bc
 from mfgarchon.geometry.boundary.types import BCType
 
 # Issue #625: Migrated from tensor_calculus to operators/stencils
@@ -288,7 +287,7 @@ class FPParticleSolver(BaseFPSolver):
         # is an exit, u = g for the HJB and m = 0 for this solver (#2512, convention row 5).
         self._bc_is_shared = boundary_conditions is None
         if boundary_conditions is not None:
-            self.boundary_conditions = boundary_conditions
+            self.boundary_conditions = self._fp_own_bc(boundary_conditions)
         else:
             # Try geometry BC (use try/except, not hasattr - Issue #543)
             try:
@@ -327,7 +326,7 @@ class FPParticleSolver(BaseFPSolver):
         # Issue #1456: fail loud if the resolved BC requests a type this solver cannot honor
         # (no-op for the "periodic" string sentinel).
         if self._bc_is_shared:
-            self.boundary_conditions = fp_view_of_shared_bc(self.boundary_conditions)
+            self.boundary_conditions = self._fp_view_of_shared(self.boundary_conditions)
         self._validate_bc_support(self.boundary_conditions)
         self._refuse_inhomogeneous_dirichlet(self.boundary_conditions)
 

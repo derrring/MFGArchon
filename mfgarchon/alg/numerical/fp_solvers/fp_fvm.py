@@ -198,27 +198,31 @@ class FPFVMSolver(BaseFPSolver):
         return self._with_geometry_periodic_convention(self._boundary_conditions_source(boundary_conditions))
 
     def _boundary_conditions_source(self, boundary_conditions: BoundaryConditions | None) -> BoundaryConditions:
-        """Which object supplies the BC, before the grid's periodic layout is bound onto it."""
+        """Which object supplies the BC, before the grid's periodic layout is bound onto it.
+
+        A BC passed here is the FP's own, and a NEUMANN in it is refused; one read from the shared problem
+        or geometry is translated, so a NEUMANN there is zero flux (#2512, row B3).
+        """
         if boundary_conditions is not None:
-            return boundary_conditions
+            return self._fp_own_bc(boundary_conditions)
 
         try:
             if self.problem.components is not None and self.problem.components.boundary_conditions is not None:
-                return self.problem.components.boundary_conditions
+                return self._fp_view_of_shared(self.problem.components.boundary_conditions)
         except AttributeError:
             pass
 
         try:
             bc = self.problem.geometry.boundary_conditions
             if bc is not None:
-                return bc
+                return self._fp_view_of_shared(bc)
         except AttributeError:
             pass
 
         try:
             bc = self.problem.geometry.get_boundary_conditions()
             if bc is not None:
-                return bc
+                return self._fp_view_of_shared(bc)
         except AttributeError:
             pass
 

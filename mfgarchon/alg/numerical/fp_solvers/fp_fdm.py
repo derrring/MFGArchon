@@ -8,7 +8,6 @@ import scipy.sparse as sparse
 from mfgarchon.backends.compat import has_nan_or_inf
 from mfgarchon.geometry import BoundaryConditions
 from mfgarchon.geometry.base import CartesianGrid
-from mfgarchon.geometry.boundary.bc_utils import fp_view_of_shared_bc
 from mfgarchon.geometry.boundary.conditions import periodic_on_every_face
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.utils.deprecation import deprecated_parameter
@@ -194,7 +193,7 @@ class FPFDMSolver(BaseFPSolver):
         # 5. Grid geometry boundary handler (legacy, if available)
         # 6. Default no-flux BC (fallback)
         if boundary_conditions is not None:
-            self.boundary_conditions = boundary_conditions
+            self.boundary_conditions = self._fp_own_bc(boundary_conditions)
         else:
             bc_found = False
 
@@ -248,11 +247,12 @@ class FPFDMSolver(BaseFPSolver):
         # from one library, depending only on which channel supplied the BC. Applied once, after
         # both branches, so no channel can be added below it and miss it.
         self.boundary_conditions = self._with_geometry_periodic_convention(self.boundary_conditions)
-        # A BC this solver was not handed is the problem's shared one, where DIRICHLET(g) is an exit: the
-        # HJB's u = g and an absorbing wall here (#2512, convention row 5). Read literally it pinned the exit
-        # at m = g and the mass rose 1.0000 -> 3.3247 (#2525). A BC passed explicitly is the FP's own, m = g.
+        # A BC this solver was not handed is the problem's shared one: a DIRICHLET(g) is an exit, the HJB's
+        # u = g and an absorbing wall here, and a NEUMANN is zero flux here (#2512, row B3). Read literally a
+        # Dirichlet pinned the exit at m = g and the mass rose 1.0000 -> 3.3247 (#2525). A BC passed
+        # explicitly is the FP's own: DIRICHLET(g) is m = g there, and a NEUMANN is refused above.
         if boundary_conditions is None:
-            self.boundary_conditions = fp_view_of_shared_bc(self.boundary_conditions)
+            self.boundary_conditions = self._fp_view_of_shared(self.boundary_conditions)
 
         # Issue #1456: fail loud now if the resolved BC requests a type FP-FDM cannot honor
         # (Robin has no stencil; Reflecting/Extrapolation are not field-BC types), instead of
