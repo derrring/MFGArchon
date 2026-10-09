@@ -25,23 +25,13 @@ helper of its own, or a reassignment between the read and the owner is not follo
 from __future__ import annotations
 
 import ast
-import shutil
 from pathlib import Path
 
 import pytest
 
-REPO = Path(__file__).resolve().parents[3]
-ALG = Path("mfgarchon") / "alg"
+from tests.structural_guard import ALG, FUNCTIONS, REPO, copy_alg, name_of, own_nodes, planted_scan
+
 OWNER = "_fp_view_of_shared"
-_FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
-
-
-def _name(node: ast.AST) -> str | None:
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        return node.attr
-    return None
 
 
 def _is_self(node: ast.AST) -> bool:
@@ -57,16 +47,6 @@ def _key(node: ast.AST) -> str | None:
     return None
 
 
-def _own_nodes(scope: ast.AST):
-    """The nodes of ``scope`` itself: a nested function or lambda is its own scope and is not entered."""
-    stack = list(ast.iter_child_nodes(scope))
-    while stack:
-        node = stack.pop()
-        yield node
-        if not isinstance(node, _FUNCTIONS):
-            stack.extend(ast.iter_child_nodes(node))
-
-
 def shared_read(node: ast.AST) -> bool:
     if isinstance(node, ast.Attribute) and node.attr == "boundary_conditions" and isinstance(node.ctx, ast.Load):
         return not _is_self(node.value)
@@ -79,12 +59,12 @@ def shared_read(node: ast.AST) -> bool:
 
 def raw_reads(scope: ast.AST) -> list[int]:
     """Lines of the shared reads in ``scope`` that do not reach the owner's argument in ``scope``."""
-    nodes = list(_own_nodes(scope))
+    nodes = list(own_nodes(scope))
     parents = {child: node for node in nodes for child in ast.iter_child_nodes(node)}
     owner_args = [
         arg
         for node in nodes
-        if isinstance(node, ast.Call) and _name(node.func) == OWNER
+        if isinstance(node, ast.Call) and name_of(node.func) == OWNER
         for arg in [*node.args, *(keyword.value for keyword in node.keywords)]
     ]
     inside_owner = {id(sub) for arg in owner_args for sub in ast.walk(arg)}
@@ -128,7 +108,7 @@ def raw_reads(scope: ast.AST) -> list[int]:
 def _scopes(tree: ast.AST):
     """``(name, scope)`` for every function and lambda in ``tree``, nested ones included."""
     for node in ast.walk(tree):
-        if isinstance(node, _FUNCTIONS):
+        if isinstance(node, FUNCTIONS):
             yield getattr(node, "name", "<lambda>"), node
 
 
@@ -143,7 +123,7 @@ def fp_classes(trees: dict[Path, ast.Module]) -> set[str]:
                 if (
                     isinstance(node, ast.ClassDef)
                     and node.name not in names
-                    and any(_name(b) in names for b in node.bases)
+                    and any(name_of(b) in names for b in node.bases)
                 ):
                     names.add(node.name)
                     changed = True
@@ -167,22 +147,11 @@ def scan(root: Path) -> tuple[list[str], list[str]]:
 @pytest.fixture(scope="module")
 def alg_copy(tmp_path_factory) -> Path:
     """A copy of `mfgarchon/alg` to plant rivals in; the tests add files and restore what they edit."""
-    root = tmp_path_factory.mktemp("b3_guard")
-    shutil.copytree(REPO / ALG, root / ALG)
-    return root
+    return copy_alg(tmp_path_factory, "b3_guard")
 
 
 def _planted_scan(alg_copy: Path, target: Path, planted: str) -> list[str]:
-    """Append ``planted`` to a copied module (or create it), scan, and restore the module."""
-    original = target.read_text() if target.exists() else None
-    try:
-        target.write_text((original + "\n\n" if original else "") + planted)
-        return scan(alg_copy)[1]
-    finally:
-        if original is None:
-            target.unlink(missing_ok=True)
-        else:
-            target.write_text(original)
+    return planted_scan(scan, alg_copy, target, planted)
 
 
 def test_every_fp_solver_reads_the_shared_bc_through_its_owner():

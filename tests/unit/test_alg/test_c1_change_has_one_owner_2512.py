@@ -34,12 +34,14 @@ assigned directly from a subtraction in the same function or an enclosing one. *
   a dict comprehension, an annotated assignment and a key held in a variable;
 - what the guard treats as a convergence verdict outside `check_convergence_criteria`: every ``<``,
   ``<=``, ``>`` or ``>=`` comparison with exactly one side whose name contains "tol", and ``allclose`` /
-  ``isclose`` with a tol-named ``atol`` or ``rtol`` keyword. That is a shape, not a definition of a
-  verdict: it also matches a validation such as ``tol <= 0``, and it misses ``err < tol * scale``.
+  ``isclose`` with a tol-named ``atol`` or ``rtol`` keyword. A comparison with a numeric-constant side,
+  such as ``tol <= 0``, is a validation of the tolerance, not a verdict, and is skipped. That is a shape,
+  not a definition of a verdict: it misses ``err < tol * scale``.
 
 **Anywhere under** `mfgarchon/alg/`: a call to a metric that computes a change its own way. Among them are
-the deprecated `calculate_l2_convergence_metrics`, and #2566's `calculate_error`, `compute_norm`,
-`MFGConvergenceChecker` and `create_convergence_checker`, the factory of all three of #2566's checkers.
+the deprecated `calculate_l2_convergence_metrics`, and #2566's `calculate_error`, `compute_norm`, its three
+checkers `HJBConvergenceChecker`, `FPConvergenceChecker` and `MFGConvergenceChecker`, and
+`create_convergence_checker`, their factory.
 
 Every function, method, nested function and lambda is a scope. Other spellings, such as an L1 sum of
 ``abs(d)``, a difference passed through a helper or stored on an attribute first, or a tuple or augmented
@@ -65,13 +67,12 @@ shows.
 from __future__ import annotations
 
 import ast
-import shutil
 from pathlib import Path
 
 import pytest
 
-REPO = Path(__file__).resolve().parents[3]
-ALG = Path("mfgarchon") / "alg"
+from tests.structural_guard import ALG, FUNCTIONS, REPO, copy_alg, name_of, own_nodes, planted_scan
+
 COUPLING = ALG / "numerical" / "coupling"
 OWNERS = frozenset(
     {
@@ -93,6 +94,8 @@ RIVAL_METRICS = frozenset(
         "calculate_l2_convergence_metrics",
         "calculate_error",
         "compute_norm",
+        "HJBConvergenceChecker",
+        "FPConvergenceChecker",
         "MFGConvergenceChecker",
         "create_convergence_checker",
     }
@@ -104,21 +107,19 @@ EXCLUDED_FUNCTIONS = frozenset(
         ((COUPLING / "anderson_acceleration.py").as_posix(), "AndersonAccelerator.update"),
     }
 )
-_FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 _ORDER = (ast.Lt, ast.LtE, ast.Gt, ast.GtE)
 
 
-def _name(node: ast.AST) -> str | None:
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        return node.attr
-    return None
-
-
 def _tol_named(node: ast.AST) -> bool:
-    name = _name(node)
+    name = name_of(node)
     return name is not None and "tol" in name.lower()
+
+
+def _numeric_constant(node: ast.AST) -> bool:
+    """An int or float literal, signed or not: what a validation compares a tolerance against."""
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        node = node.operand
+    return isinstance(node, ast.Constant) and type(node.value) in (int, float)
 
 
 def _reads_a_change_key(node: ast.AST) -> bool:
@@ -128,7 +129,7 @@ def _reads_a_change_key(node: ast.AST) -> bool:
             return True
         if (
             isinstance(sub, ast.Call)
-            and _name(sub.func) == "get"
+            and name_of(sub.func) == "get"
             and sub.args
             and isinstance(sub.args[0], ast.Constant)
             and sub.args[0].value in CHANGE_KEYS
@@ -143,21 +144,11 @@ def _comprehension_of_change_keys(node: ast.AST) -> bool:
 
 def _references_an_owner(tree: ast.AST) -> bool:
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Name, ast.Attribute)) and _name(node) in OWNERS:
+        if isinstance(node, (ast.Name, ast.Attribute)) and name_of(node) in OWNERS:
             return True
         if isinstance(node, ast.ImportFrom) and any(alias.name in OWNERS for alias in node.names):
             return True
     return False
-
-
-def _own_nodes(scope: ast.AST):
-    """The nodes of ``scope`` itself: a nested function or lambda is its own scope and is not entered."""
-    stack = list(ast.iter_child_nodes(scope))
-    while stack:
-        node = stack.pop()
-        yield node
-        if not isinstance(node, _FUNCTIONS):
-            stack.extend(ast.iter_child_nodes(node))
 
 
 class _Scope:
@@ -168,7 +159,7 @@ class _Scope:
         self.named: set[str] = set(inherited)
         #: Names this scope fills with per-field change values: a comprehension of key reads, or appended to.
         self.per_field: set[str] = set()
-        for sub in _own_nodes(node):
+        for sub in own_nodes(node):
             if isinstance(sub, ast.Assign) and _comprehension_of_change_keys(sub.value):
                 self.per_field.update(t.id for t in sub.targets if isinstance(t, ast.Name))
             if (
@@ -207,7 +198,7 @@ class _Scope:
     def abs_of_difference(self, node: ast.AST) -> bool:
         return (
             isinstance(node, ast.Call)
-            and _name(node.func) in {"abs", "absolute"}
+            and name_of(node.func) in {"abs", "absolute"}
             and bool(node.args)
             and self.difference(node.args[0])
         )
@@ -222,7 +213,7 @@ class _Scope:
             return self.squared_difference(node.left) or self.squared_difference(node.right)
         return (
             isinstance(node, ast.Call)
-            and _name(node.func) == "square"
+            and name_of(node.func) == "square"
             and bool(node.args)
             and self.difference(node.args[0])
         )
@@ -235,11 +226,11 @@ class _Scope:
 
     def rivals(self) -> set[tuple[int, str]]:
         found: set[tuple[int, str]] = set()
-        for node in _own_nodes(self.node):
+        for node in own_nodes(self.node):
             if (
                 isinstance(node, ast.Assign)
                 and isinstance(node.value, ast.Call)
-                and _name(node.value.func) in _AGGREGATES
+                and name_of(node.value.func) in _AGGREGATES
             ):
                 targets = {t.id for t in node.targets if isinstance(t, ast.Name)}
                 running = [a for a in node.value.args if isinstance(a, ast.Name) and a.id in targets]
@@ -249,11 +240,12 @@ class _Scope:
                 if self.difference(node.left) and self.difference(node.right):
                     found.add((node.lineno, "d @ d"))
             if isinstance(node, ast.Compare) and any(isinstance(op, _ORDER) for op in node.ops):
-                if sum(_tol_named(side) for side in [node.left, *node.comparators]) == 1:
+                sides = [node.left, *node.comparators]
+                if sum(_tol_named(side) for side in sides) == 1 and not any(map(_numeric_constant, sides)):
                     found.add((node.lineno, "a verdict against a tolerance"))
             if not isinstance(node, ast.Call):
                 continue
-            fn, args = _name(node.func), node.args
+            fn, args = name_of(node.func), node.args
             method_of = node.func.value if isinstance(node.func, ast.Attribute) else None
             if fn == "norm" and args and self.difference(args[0]):
                 found.add((node.lineno, "norm of a difference"))
@@ -281,7 +273,7 @@ class _Scope:
 def _qualname(tree: ast.Module, target: ast.AST) -> str:
     def walk(node: ast.AST, path: list[str]):
         for child in ast.iter_child_nodes(node):
-            if isinstance(child, (*_FUNCTIONS, ast.ClassDef)):
+            if isinstance(child, (*FUNCTIONS, ast.ClassDef)):
                 name = getattr(child, "name", "<lambda>")
                 if child is target:
                     return ".".join([*path, name])
@@ -307,9 +299,9 @@ def scopes(tree: ast.Module):
     def visit(node: ast.AST, qualname: str, inherited: frozenset[str]) -> None:
         scope = _Scope(node, inherited)
         out.append((qualname, scope))
-        names = frozenset(scope.named) if isinstance(node, _FUNCTIONS) else frozenset()
-        for child in _own_nodes(node):
-            if isinstance(child, _FUNCTIONS):
+        names = frozenset(scope.named) if isinstance(node, FUNCTIONS) else frozenset()
+        for child in own_nodes(node):
+            if isinstance(child, FUNCTIONS):
                 visit(child, _qualname(tree, child), names)
 
     visit(tree, "<module>", frozenset())
@@ -332,8 +324,8 @@ def scan(root: Path) -> tuple[list[str], list[str]]:
         module = rel.as_posix()
         tree = ast.parse(path.read_text(), filename=str(rel))
         for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and _name(node.func) in RIVAL_METRICS:
-                sites.add(f"{module}:{node.lineno}: calls {_name(node.func)}")
+            if isinstance(node, ast.Call) and name_of(node.func) in RIVAL_METRICS:
+                sites.add(f"{module}:{node.lineno}: calls {name_of(node.func)}")
         if not in_population(rel, tree):
             continue
         population.append(module)
@@ -345,35 +337,19 @@ def scan(root: Path) -> tuple[list[str], list[str]]:
     return population, sorted(sites)
 
 
-@pytest.fixture(scope="module")
-def alg_copy(tmp_path_factory) -> Path:
-    """A copy of `mfgarchon/alg` to plant rivals in; the tests add files and restore what they edit."""
-    root = tmp_path_factory.mktemp("c1_guard")
-    shutil.copytree(REPO / ALG, root / ALG)
-    return root
-
-
-def _planted_scan(alg_copy: Path, target: Path, anchor: str | None, planted: str) -> list[str]:
-    """Plant ``planted`` in a copied module, before ``anchor`` or at the end, scan, and restore the module."""
-    original = target.read_text() if target.exists() else None
-    try:
-        if anchor is None:
-            target.write_text((original + "\n\n" if original else "") + planted)
-        else:
-            assert original is not None, anchor
-            assert original.count(anchor) == 1, anchor
-            target.write_text(original.replace(anchor, planted + anchor))
-        return scan(alg_copy)[1]
-    finally:
-        if original is None:
-            target.unlink(missing_ok=True)
-        else:
-            target.write_text(original)
-
-
 def _function(name: str, indent: str = "", args: str = "a, b") -> str:
     body = [f"def {name}({args}):", "    delta = a - b", "    return np.max(np.abs(delta))"]
     return "".join(f"{indent}{line}\n" for line in body) + "\n"
+
+
+@pytest.fixture(scope="module")
+def alg_copy(tmp_path_factory) -> Path:
+    """A copy of `mfgarchon/alg` to plant rivals in; the tests add files and restore what they edit."""
+    return copy_alg(tmp_path_factory, "c1_guard")
+
+
+def _planted_scan(alg_copy: Path, target: Path, anchor: str | None, planted: str) -> list[str]:
+    return planted_scan(scan, alg_copy, target, planted, anchor)
 
 
 def test_no_module_in_c1s_population_measures_a_change_itself():
@@ -466,6 +442,8 @@ def test_a_new_consumer_outside_coupling_is_in_the_population(alg_copy):
         ("x = compute_norm(a)", "calls compute_norm"),
         ("x = MFGConvergenceChecker()", "calls MFGConvergenceChecker"),
         ("x = create_convergence_checker()", "calls create_convergence_checker"),
+        ("x = HJBConvergenceChecker()", "calls HJBConvergenceChecker"),
+        ("x = FPConvergenceChecker()", "calls FPConvergenceChecker"),
     ],
 )
 def test_each_covered_shape_is_found(alg_copy, planted, what):
@@ -523,4 +501,15 @@ def test_a_ratio_minus_one_is_not_a_change():
 def test_a_max_that_is_not_over_fields_of_a_change_is_not_an_aggregation(alg_copy, planted):
     """The aggregation rule's scope: U against M of one change, or a max over values that are not a change."""
     body = "def _planted(a, b, dx, tol):\n" + "".join(f"    {line}\n" for line in planted.splitlines())
+    assert _planted_scan(alg_copy, alg_copy / COUPLING / "planted_shape.py", None, body) == []
+
+
+@pytest.mark.parametrize(
+    "planted",
+    ["if tol <= 0:\n    raise ValueError(tol)", "assert 0.0 < tol < 1", "if tolerance > -1e-12:\n    pass"],
+    ids=["non-positive", "chained", "signed-float"],
+)
+def test_a_comparison_with_a_numeric_constant_is_a_validation(alg_copy, planted):
+    """The verdict rule's narrowing: ``err < tol`` is found (the "criterion" plant above), ``tol <= 0`` is not."""
+    body = "def _planted(a, b, dx, tol, tolerance):\n" + "".join(f"    {line}\n" for line in planted.splitlines())
     assert _planted_scan(alg_copy, alg_copy / COUPLING / "planted_shape.py", None, body) == []
