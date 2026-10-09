@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from mfgarchon.alg.base_solver import BaseNumericalSolver, SchemeFamily
 
@@ -165,6 +165,25 @@ class BaseFPSolver(BaseNumericalSolver):
 
         # Validate solver compatibility if problem supports it (Phase 3.1.5)
         self._validate_problem_compatibility()
+
+    def _validate_bc_support(self, bc: Any) -> None:
+        """The base support check, and any segment carrying a ``flux_capacity`` refused: no FP solver honours one (#2575).
+
+        Every FP solver that takes a segment BC reaches this on the BC it will solve with, through its own call
+        or through ``get_boundary_conditions()``; a network problem carries no segment BC. A capped Dirichlet
+        exit was accepted and the cap ignored by FDM, particle, FEM and meshless, so it solved as uncapped; SL,
+        GFDM and FVM refuse the exit itself. The HJB side is not refused: on a shared exit it reads u = g.
+        """
+        super()._validate_bc_support(bc)
+        capped = [
+            seg.name for seg in getattr(bc, "segments", None) or () if getattr(seg, "flux_capacity", None) is not None
+        ]
+        if capped:
+            raise NotImplementedError(
+                f"{type(self).__name__}: segment(s) {capped} carry a flux_capacity, which no FP solver honours "
+                "yet: the solve would ignore the cap (#2575). Remove flux_capacity until the capacity-limited "
+                "exit lands."
+            )
 
     def _validate_problem_compatibility(self) -> None:
         """

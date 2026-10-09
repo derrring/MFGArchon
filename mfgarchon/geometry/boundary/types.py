@@ -483,6 +483,7 @@ class BCSegment:
     # Flux-limited absorption (for DIRICHLET exits)
     # Units: mass/time for density methods, particles/time for Lagrangian methods
     # None = unlimited (instant absorption)
+    # No FP solver honours a cap yet; every FP solver that takes a segment BC refuses one carrying it (#2575).
     flux_capacity: float | None = None
 
     @property
