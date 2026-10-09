@@ -1,12 +1,13 @@
 """FP-GFDM is withdrawn: it refuses construction, and the alternative its refusal names holds a wall (#2583).
 
-FP-GFDM built no wall: its operator took no boundary argument, so on a bounded domain the drift's flux
-crossed the boundary at exactly conserved mass. Every domain GFDM is admitted on is bounded (grids, which
-always carry a BC, and implicit domains, which carry none), so the refusal is unconditional at
-construction (user ruling 2026-10-09). The rebuild is #2584.
+FP-GFDM built no wall: no flux or ghost row, and an operator with no boundary-condition argument, so on a bounded
+domain the drift's flux crossed the boundary. What that did to mass depended on the drift (it stayed at 1 under a
+uniform drift and moved to 0.599 or 1.629 under others), so a mass check could not be relied on to see it. Every
+domain GFDM is admitted on is bounded (grids, which always carry a BC, and implicit domains, which carry none), so
+the refusal is unconditional at construction (user ruling 2026-10-09). The rebuild is #2584.
 
-The alternative is pinned by a property of its result, not by completion: completion alone passed
-FP-GFDM's own wall-less solve.
+The alternative is pinned by a property of its result, not by completion: completion alone passed FP-GFDM's own
+wall-less solve.
 """
 
 from __future__ import annotations
@@ -62,22 +63,35 @@ def test_construction_is_refused_with_the_reason(domain):
         FPGFDMSolver(_problem(domain()), collocation_points=POINTS)
 
 
-def test_the_gfdm_pair_is_refused_with_the_same_reason():
-    """`scheme_factory`'s GFDM pair, the default path, reaches the same refusal."""
+@pytest.mark.parametrize("hjb_config", [{"collocation_points": POINTS}, None], ids=["with-points", "no-points"])
+def test_the_gfdm_pair_refuses_with_the_reason_before_building_anything(hjb_config):
+    """`scheme_factory`'s GFDM pair refuses before it builds the HJB half. Without collocation points, building the
+    HJB first raised its own `TypeError` and the reason never showed (review 1 of #2585)."""
     from mfgarchon.factory import create_paired_solvers
 
     with pytest.raises(NotImplementedError, match=REFUSAL):
-        create_paired_solvers(
-            _problem(_grid(no_flux_bc(dimension=1))), NumericalScheme.GFDM, hjb_config={"collocation_points": POINTS}
-        )
+        create_paired_solvers(_problem(_grid(no_flux_bc(dimension=1))), NumericalScheme.GFDM, hjb_config=hjb_config)
+
+
+def test_safe_mode_gfdm_reaches_the_reason():
+    """`problem.solve(scheme=GFDM)` has no way to pass collocation points; it raised the HJB's `TypeError` before
+    this change, and reaches the withdrawal's reason now that the pair refuses first."""
+    with pytest.raises(NotImplementedError, match=REFUSAL):
+        _problem(_grid(no_flux_bc(dimension=1))).solve(scheme=NumericalScheme.GFDM, verbose=False)
 
 
 @pytest.mark.parametrize("route", ["dual scheme", "GFDM HJB with FP-FDM"])
 def test_the_alternatives_the_refusal_names_hold_a_wall(route):
-    """Both alternatives, run on a terminal cost that drives agents into the x_max wall: the density piles
-    up against it and the mass stays. Measured at this commit: m(T) at x_max over the midpoint is 34.0
-    (FDM_UPWIND) and 27.2 (GFDM HJB with FP-FDM); a wall-less solve gives 1.0. The refusal says the second
-    pair is not dual and that Expert Mode warns about it, so that warning is asserted too."""
+    """Both alternatives the refusal names for a grid, run on a terminal cost that drives agents into the x_max
+    wall: the density piles up against it and the mass stays.
+
+    Measured at this commit: m(T) at x_max over the midpoint is 34.0 (FDM_UPWIND) and 27.2 (GFDM HJB with
+    FP-FDM), at mass 1.000000. With FP-FDM's wall rows made transparent (review 1 of #2585) the ratios are 7.31
+    and 10.84 at mass 0.848 and 0.863, so on this coupled fixture it is the mass line that separates a wall-less
+    FP. The pile-up inequality alone does not.
+
+    The refusal says the second pair is not dual and that Expert Mode warns about it, so that warning is
+    asserted too."""
     problem = _problem(_grid(no_flux_bc(dimension=1)), u_terminal=lambda x: -2.0 * np.asarray(x, dtype=float))
     if route == "dual scheme":
         result = problem.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=20, verbose=False)
@@ -93,3 +107,12 @@ def test_the_alternatives_the_refusal_names_hold_a_wall(route):
     assert M[-1, -1] > 3.0 * M[-1, N // 2] > 3.0 * M[-1, 0]
     weights = np.r_[0.5, np.ones(N - 2), 0.5] / (N - 1)
     assert abs(float(np.sum(M[-1] * weights)) - 1.0) < 1e-6
+
+
+def test_on_an_implicit_domain_both_alternatives_refuse():
+    """The refusal says that neither alternative runs on an implicit domain. This goes red when either starts
+    accepting one, which is when that sentence must change."""
+    with pytest.raises(ValueError, match="Cannot use HJBFDMSolver with this problem"):
+        _problem(Hyperrectangle(np.array([[0.0, 1.0]]))).solve(scheme=NumericalScheme.FDM_UPWIND, verbose=False)
+    with pytest.raises(ValueError, match="Cannot use FPFDMSolver with this problem"):
+        FPFDMSolver(_problem(Hyperrectangle(np.array([[0.0, 1.0]]))))

@@ -250,14 +250,13 @@ result = problem.solve(hjb_solver=hjb, fp_solver=fp)
 ### Pattern 3: GFDM with Collocation Points
 
 > **FP-GFDM is withdrawn** ([#2583](https://github.com/derrring/MFGArchon/issues/2583)): it built no wall,
-> so on a bounded domain the drift's flux crossed the boundary. `FPGFDMSolver(...)` and
-> `create_paired_solvers(problem, NumericalScheme.GFDM, ...)` raise until it is rebuilt
-> ([#2584](https://github.com/derrring/MFGArchon/issues/2584)). `problem.solve(scheme=NumericalScheme.GFDM)`
-> raised before this as well: it has no way to pass the collocation points `HJBGFDMSolver` requires. To keep
-> the GFDM HJB, pair it with an FP solver that builds walls, as below; that pair is not dual, so Expert Mode
-> warns.
+> so on a bounded domain the drift's flux crossed the boundary. `FPGFDMSolver(...)`,
+> `create_paired_solvers(problem, NumericalScheme.GFDM, ...)` and `problem.solve(scheme=NumericalScheme.GFDM)`
+> raise with that reason until it is rebuilt ([#2584](https://github.com/derrring/MFGArchon/issues/2584)).
+> On a grid, to keep the GFDM HJB, pair it with an FP solver that builds walls, as below; that pair is not
+> dual, so Expert Mode warns. On an implicit domain neither this pair nor `FDM_UPWIND` runs.
 
-**Before** (no longer runs):
+**Before** (its FP half is withdrawn):
 ```python
 import numpy as np
 from mfgarchon.alg.numerical import HJBGFDMSolver, FPGFDMSolver
@@ -273,16 +272,27 @@ solver = create_solver(problem, hjb_solver=hjb, fp_solver=fp)
 result = solver.solve()
 ```
 
-**After** (the GFDM HJB with an FP that builds walls):
+**After** (the GFDM HJB with an FP that builds walls; runs as written):
 ```python
 import numpy as np
-from mfgarchon.alg.numerical import FPFDMSolver, HJBGFDMSolver
 
-problem = MFGProblem(Nx=[40], Nt=20, T=1.0)
-points = np.linspace(0, 1, 30)[:, None]
+from mfgarchon import Conditions, MFGProblem, Model
+from mfgarchon.alg.numerical import FPFDMSolver, HJBGFDMSolver
+from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc
+
+grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[30], boundary_conditions=no_flux_bc(dimension=1))
+problem = MFGProblem(
+    model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.3),
+    domain=grid,
+    conditions=Conditions(m_initial=lambda x: 1.0 + 0.0 * x[..., 0], u_terminal=lambda x: -x[..., 0], T=1.0),
+    Nt=20,
+)
+points = grid.get_spatial_grid()
 
 hjb = HJBGFDMSolver(problem, collocation_points=points, delta=0.1)
-fp = FPFDMSolver(problem)  # or FPParticleSolver(problem)
+fp = FPFDMSolver(problem)  # builds the no-flux wall; the pair is not dual, so Expert Mode warns
 
 result = problem.solve(hjb_solver=hjb, fp_solver=fp)
 ```

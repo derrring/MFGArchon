@@ -11,7 +11,8 @@ which is why it survived.
 subclass of `BaseFPSolver`, inherited or not, and requires all ten to be reached; renaming any one of
 them back fails it. The weak form's old spelling stays accepted for the deprecation window (AGENTS.md,
 clause 4), and the policy's clause 2 equivalence tests below hold it to the new one. FP-GFDM's
-`m_initial_condition` row went with the solver, withdrawn in #2583; its refusing stub keeps the name.
+`m_initial_condition` row went with the solver, withdrawn in #2583. Its refusing stub's `solve_fp_system`
+keeps the new first parameter, `M_initial`, and takes no `m_initial_condition`.
 """
 
 from __future__ import annotations

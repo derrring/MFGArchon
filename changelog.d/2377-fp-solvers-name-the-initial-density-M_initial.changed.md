@@ -12,16 +12,17 @@
 
   Positional calls are unaffected.
 
-  - `FPGFDMSolver.solve_fp_system(m_initial_condition=...)` and the weak-form family's
-    `solve_fp_system(m_initial=...)` still work. They emit a `DeprecationWarning`, solve the same
-    problem, and are removed at v0.25.0. Passing an old and the new name together raises
-    `ValueError`.
-  - GFDM and the weak-form family now raise `ValueError("M_initial is required")` when no initial
-    density is given. They used to require it positionally. FDM, both SL solvers and the network
+  - The weak-form family's `solve_fp_system(m_initial=...)` still works. It emits a
+    `DeprecationWarning`, solves the same problem, and is removed at v0.25.0. Passing the old and the
+    new name together raises `ValueError`. `FPGFDMSolver`'s `m_initial_condition` went with the
+    solver, withdrawn in this same release (#2583).
+  - The weak-form family now raises `ValueError("M_initial is required")` when no initial
+    density is given. It used to require it positionally. FDM, both SL solvers and the network
     solver already raise this. FVM falls back to the problem's initial density, and the particle
     solver accepts `initial_particles` instead.
-  - A test pins the name on all ten current library solvers. A future solver is covered only if its
-    module is imported there.
+  - A test pins the name on the nine library solvers that subclass the base, `FPGFDMSolver`'s refusing
+    stub among them. `FPSLJacobianSolver`, the tenth when this was written, was retired in #1756. A
+    future solver is covered only if its module is imported there.
   - Known gap: the weak-form family's new warning is the inner of two stacked deprecation
     decorators. It is therefore attributed to `deprecation.py`, and Python's default filters hide
     it outside a test run. This is #2417, which also affects five older functions.

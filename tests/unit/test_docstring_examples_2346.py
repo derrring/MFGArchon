@@ -12,7 +12,7 @@ red under a simulated `Nx` removal. That file is one class; this one is a list.
 **1348 of them fail**, and **1153 of those failures are `NameError`** — examples written as narrative fragments that
 use names defined in a neighbouring docstring. `doctest`'s unit of isolation is the docstring, so those can never pass
 under any runner, and turning execution on package-wide is a documentation rewrite rather than a check. The 24 modules
-below are the ones whose examples already pass, all 178 of them.
+below are the ones whose examples already pass, all 177 of them.
 
 **So this covers 24 of 180 modules with examples, and nothing else.** The number is in `test_the_allowlist_states_its_own_coverage`
 so that it cannot quietly be read as "the package's examples are checked". The complement is covered differently and
@@ -26,7 +26,7 @@ What it does NOT redden on, measured rather than assumed: the removal batches. A
 and #2331, the listed modules' examples touch two (`Nx` in `types.pde_coefficients`, `num_points` in
 `geometry.graph.maze_hybrid`), and under a simulated `Nx` removal this file stayed GREEN while
 `scripts/check_docstring_kwargs.py` produced 30 findings (review of #2351). The static checker is what protects the
-removal programme; this file's value is that 178 examples in 24 modules now break loudly on a repr, import or
+removal programme; this file's value is that 177 examples in 24 modules now break loudly on a repr, import or
 signature change, where before nothing ran them at all.
 
 Growing the list is deliberate: make a module's examples self-contained, confirm they pass, add it here.
@@ -136,7 +136,7 @@ EXECUTABLE = [
     "mfgarchon.operators.interaction.convolution",  # 6
     "mfgarchon.types.callable_protocols",  # 16
     "mfgarchon.types.pde_coefficients",  # 10
-    "mfgarchon.utils.adjoint_validation",  # 15
+    "mfgarchon.utils.adjoint_validation",  # 14
     "mfgarchon.utils.callable_adapter",  # 3
     "mfgarchon.utils.numerical._compat.gfdm_operators",  # 11
     "mfgarchon.utils.numerical.autodiff",  # 3

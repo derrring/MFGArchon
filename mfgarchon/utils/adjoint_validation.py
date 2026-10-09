@@ -152,11 +152,11 @@ def check_solver_duality(
         >>> assert result.is_valid_pairing()
         >>> assert result.status == DualityStatus.DISCRETE_DUAL
 
+        >>> # FP-GFDM is withdrawn (#2583), so the GFDM HJB has no dual FP until #2584:
         >>> from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
-        >>> from mfgarchon.alg.numerical.fp_solvers import FPGFDMSolver
-        >>> result = check_solver_duality(HJBGFDMSolver, FPGFDMSolver)
-        >>> assert result.is_valid_pairing()
-        >>> assert result.requires_renormalization()  # Type B needs renorm
+        >>> result = check_solver_duality(HJBGFDMSolver, FPFDMSolver, warn_on_mismatch=False)
+        >>> assert not result.is_valid_pairing()
+        >>> assert result.status == DualityStatus.NOT_DUAL
     """
     # Extract solver classes if instances were passed
     hjb_class = hjb_solver if isinstance(hjb_solver, type) else type(hjb_solver)
@@ -212,7 +212,7 @@ def check_solver_duality(
                 f"Recommendation: Use matching families:\n"
                 f"  • HJBFDMSolver ↔ FPFDMSolver (discrete duality)\n"
                 f"  • HJBSemiLagrangianSolver ↔ FPSLSolver (discrete duality)\n"
-                f"  • HJBGFDMSolver ↔ FPGFDMSolver (continuous duality, needs renorm)\n"
+                f"  • HJBGFDMSolver has no dual FP until #2584 (FPGFDMSolver is withdrawn, #2583)\n"
                 f"{'=' * 70}\n",
                 UserWarning,
                 stacklevel=2,
@@ -366,9 +366,9 @@ def validate_scheme_config(
     Examples:
         >>> from mfgarchon.types import NumericalScheme
         >>> from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
-        >>> from mfgarchon.alg.numerical.fp_solvers import FPGFDMSolver
+        >>> from mfgarchon.alg.numerical.fp_solvers import FPFVMSolver
         >>> result = validate_scheme_config(
-        ...     NumericalScheme.FDM_UPWIND, HJBFDMSolver, FPGFDMSolver
+        ...     NumericalScheme.FDM_UPWIND, HJBFDMSolver, FPFVMSolver
         ... )
         >>> assert result.status == DualityStatus.NOT_DUAL  # Mismatch!
     """

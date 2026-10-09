@@ -46,7 +46,8 @@ by nobody having tried.
 
 STATUS: `_SWALLOWERS` is empty -- nothing silently discards a source any more, which is what #2020
 was about. ~~every solver here now HONOURS a source~~ [CORRECTED 2026-08-21] that was true of the
-six rows this file had; it covered 6 of 21 concrete solvers. Eight more are now rows, and ~~five~~ ~~four~~ **one** of
+six rows this file had; it covered 6 of 21 concrete solvers. ~~Eight~~ **Seven** more are now rows ([CORRECTED
+2026-10-09] FPGFDMSolver's row left with the solver, #2583), and ~~five~~ ~~four~~ **one** of
 them REFUSES -- ~~`HJBSemiLagrangianSolver`,~~ ~~`FPGFDMSolver`,~~ `FPParticleSolver`,
 ~~`FPSLSolver`,~~ ~~`FPSLJacobianSolver`~~. [CORRECTED 2026-09-04] The other three were wired in
 #2020, and their "refusals" had been bare argument-binding `TypeError`s -- the parameter was simply
