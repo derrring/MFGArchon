@@ -18,7 +18,7 @@ recorded here. Per wall: what the cell is named for, measured, and a rival that 
 - No flux: ``||J_h.n||`` on the boundary falls at first order (P1 gradients), and the rival, the same solve with
   the wall written as ``dm/dn = 0`` (the advection without its by-parts form), misses the density by a constant.
 - Exit: the exit nodes hold 0 at every time, and the rival that reads the shared value as a density Dirichlet
-  (lift and write both keep 0.7) misses in the interior. The mass identity -- the change in mass equals the source
+  (lift and write both keep 0.7) misses away from the exit nodes. The mass identity -- the change in mass equals the source
   minus the integrated exit flux -- is reported beside the oracle, not as it.
 """
 
@@ -283,9 +283,10 @@ def test_the_exit_drops_the_shared_value_and_a_wall_that_keeps_it_misses(name: s
     exit_nodes = np.isclose(X[:, 0], 1.0)
     assert exit_nodes.any()
     assert np.abs(M[1:, exit_nodes]).max() == 0.0
-    # The rival's exit nodes hold 0.7 by construction, so its miss is measured away from them: in the interior.
+    # The rival's exit nodes hold 0.7 by construction, so its miss is measured on every other node (the other
+    # walls included).
     _rival, X, R = _solve(cell, n, _ExitKeepsTheValue)
-    interior = ~np.isclose(X[:, 0], 1.0)
+    interior = ~np.isclose(X[:, 0], 1.0)  # every node but the exit's
     miss = max(np.abs(R[k][interior] - cell.m(k * T / NT, X)[interior]).max() for k in range(NT + 1))
     assert miss > 50 * MEASURED[name][-1], miss
 
