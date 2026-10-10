@@ -117,12 +117,10 @@ pin    fp_fem/whole_file           tests/unit/test_alg/test_fp_fem_bc_oracles_25
 # The (b) rows
 row grid/B1_face_segment            -
 row grid/B2_value_form_and_time     -
-# Row B3 awaits two readers outside its guard's population that read the shared BC raw on the FP's
-# behalf: BlockIterator._get_boundary_bc_types (the FP adjoint matrix in "auto" mode) and
-# RegimeSwitchingIterator's fallback (#2529). A follow-up PR under row B3 routes both through the owner,
-# widens the guard's population and replaces this `-` (audit session ruling, 2026-10-09).
-row grid/B3_fp_view_of_shared_bc    -
+# Row B3's guard covers the coupling layer too: BlockIterator's "auto" adjoint mode, one of the two readers
+# it awaited, is removed, and RegimeSwitchingIterator's fallback reads the FP solver's owner path (#2529).
 row grid/B3_fp_view_of_shared_bc    tests/unit/test_alg/test_fp_reads_the_shared_bc_through_its_owner_2512.py
+row grid/B3_fp_view_of_shared_bc    tests/unit/test_alg/test_regime_guard_reads_what_the_fp_imposes_2529.py
 row grid/B4_cell_vs_node            -
 row grid/B5_wall_stencil            -
 row grid/B6_low_wall_sign           -

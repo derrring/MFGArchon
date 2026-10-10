@@ -99,10 +99,10 @@ class BlockIterator(BaseCouplingIterator):
         drift_field: Optional drift override for non-MFG problems
         adjoint_mode: Adjoint enforcement mode (Issue #622, #704, #707).
             - "off": Independent matrix construction (default)
-            - "transpose": FP uses A_hjb^T directly (velocity-based, only valid for symmetric BCs)
             - "jacobian_transpose": FP uses A_Jac^T from linearized HJB operator (Issue #707).
               Correct for arbitrary Hamiltonians. Requires class-based Hamiltonian.
-            - "auto": Detects BC types, uses transpose for symmetric, correction for Dirichlet
+            "transpose" and "auto" were removed after their deprecation window: they raise, naming
+            "jacobian_transpose".
         adjoint_verify: Enable runtime adjoint verification for debugging.
 
     Example:
@@ -176,22 +176,18 @@ class BlockIterator(BaseCouplingIterator):
         self.drift_field = drift_field
 
         # Issue #622, #704, #707: Adjoint mode
-        _valid_adjoint_modes = ("off", "transpose", "jacobian_transpose", "auto")
+        if adjoint_mode in ("transpose", "auto"):
+            # Deprecated since v0.17.13 (#706, #707) and removed once the policy allowed it (3 minor versions;
+            # the warning had said v1.0.0). They built the FP operator from `build_advection_matrix`, whose
+            # transpose is not the HJB linearisation's: on a 40-point no-flux grid the interior window gives
+            # max|A^T - B| = 245 against max|J^T - B| = 2.8e-14, B being the FP solver's own operator.
+            raise ValueError(
+                f"adjoint_mode='{adjoint_mode}' was removed (deprecated since v0.17.13): it did not transpose the "
+                "linearized HJB operator. Use adjoint_mode='jacobian_transpose', which does (Issue #707)."
+            )
+        _valid_adjoint_modes = ("off", "jacobian_transpose")
         if adjoint_mode not in _valid_adjoint_modes:
             raise ValueError(f"adjoint_mode must be one of {_valid_adjoint_modes}, got '{adjoint_mode}'")
-
-        # Deprecate old modes (#706, #707)
-        if adjoint_mode in ("transpose", "auto"):
-            import warnings
-
-            warnings.warn(
-                f"adjoint_mode='{adjoint_mode}' is deprecated since v0.17.13. "
-                "Use adjoint_mode='jacobian_transpose' instead, which correctly "
-                "transposes the linearized HJB Jacobian (Issue #707). "
-                f"The '{adjoint_mode}' mode will be removed in v1.0.0.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
 
         # Issue #2338: `adjoint_verify` promises a check, so a configuration where it cannot run is a
         # configuration error rather than a silent pass. In `off` mode no adjoint coupling is built and none is
@@ -390,32 +386,14 @@ class BlockIterator(BaseCouplingIterator):
                 "volatility, and this one is a tensor (volatility_kind='tensor'). Use adjoint_mode='off'."
             )
 
-        # Import utilities
-        if self.adjoint_mode == "auto":
-            from mfgarchon.alg.numerical.adjoint import build_bc_aware_adjoint_matrix
-
         for k in range(num_time_steps - 1):
             U_k = U[k]
             M_current = M_solution[k]
 
-            # Build FP matrix based on mode
-            if self.adjoint_mode == "jacobian_transpose":
-                # Issue #707: True adjoint via linearized HJB Jacobian
-                # A_fp = A_Jac^T where A_Jac = dH/dp * dp/dU (correct for any Hamiltonian)
-                A_jac = self._hjb_linearised_operator(U_k, M_current, k * self.problem.dt)
-                A_fp = A_jac.T.tocsr()
-            else:
-                # Velocity-based modes use build_advection_matrix
-                A_hjb = self.hjb_solver.build_advection_matrix(U_k)
-
-                if self.adjoint_mode == "transpose":
-                    A_fp = A_hjb.T.tocsr()
-                else:  # "auto"
-                    bc_types = self._get_boundary_bc_types()
-                    grid_shape = self.problem.geometry.get_grid_shape()
-                    dx = self.problem.geometry.get_grid_spacing()
-                    dt = self.problem.dt
-                    A_fp = build_bc_aware_adjoint_matrix(A_hjb, bc_types, grid_shape, dx, dt)
+            # Issue #707: True adjoint via linearized HJB Jacobian
+            # A_fp = A_Jac^T where A_Jac = dH/dp * dp/dU (correct for any Hamiltonian)
+            A_jac = self._hjb_linearised_operator(U_k, M_current, k * self.problem.dt)
+            A_fp = A_jac.T.tocsr()
 
             # Issue #704/#2338: verify against the FP solver's OWN operator, in every mode. In
             # `jacobian_transpose` the A_fp above is the transpose by construction, so comparing it to the
@@ -430,31 +408,6 @@ class BlockIterator(BaseCouplingIterator):
             M_solution[k + 1] = M_next
 
         return M_solution
-
-    def _get_boundary_bc_types(self) -> dict[str, str]:
-        """Extract BC types from problem geometry."""
-        bc_types = {}
-        geometry = self.problem.geometry
-
-        try:
-            bc = geometry.boundary_conditions
-            if bc is not None:
-                for segment in getattr(bc, "segments", []):
-                    name = getattr(segment, "name", None)
-                    bc_type = getattr(segment, "bc_type", None)
-                    if name and bc_type:
-                        bc_types[name] = bc_type.value if hasattr(bc_type, "value") else str(bc_type)
-        except AttributeError:
-            pass
-
-        if not bc_types:
-            dim = geometry.dimension
-            for d in range(dim):
-                axis = ["x", "y", "z"][d] if dim <= 3 else f"x_{d + 1}"
-                bc_types[f"{axis}_min"] = "reflecting"
-                bc_types[f"{axis}_max"] = "reflecting"
-
-        return bc_types
 
     def _hjb_linearised_operator(self, U_k: NDArray, M_current: NDArray, time: float) -> sparse.spmatrix:
         """The exact HJB Jacobian, or a refusal naming the solver that builds none (#707, #2338).

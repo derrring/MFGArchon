@@ -210,26 +210,17 @@ def test_the_report_still_sees_a_pair_that_is_not_adjoint():
     assert report.total_error > 1e-3, f"the report is blind to a pair the check rejects ({report.total_error:.3e})"
 
 
-def test_the_check_runs_in_every_adjoint_mode():
-    """The call sits outside the mode branch, and nothing pinned that (review of #2344: the mutation moving it
-    inside `jacobian_transpose` survived the suite).
+@pytest.mark.parametrize("mode", ["transpose", "auto"])
+def test_the_removed_adjoint_modes_refuse_and_name_the_one_that_transposes(mode):
+    """`transpose` and `auto` built the FP operator from `build_advection_matrix`, whose transpose is not the HJB
+    linearisation's (interior window, 40-point no-flux grid: 245 against 2.8e-14). They were removed after their
+    deprecation window. The mode they name is the one `_verified_run` above executes, with no mismatch.
 
-    `transpose` is deprecated, so the warning is consumed here rather than left to widen the warning census.
-    """
+    This replaces a pin that the check ran in every adjoint mode, which with one non-`off` mode left has nothing
+    to separate."""
     problem = _problem()
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        with pytest.warns(DeprecationWarning, match=r"adjoint_mode='transpose' is deprecated"):
-            iterator = BlockIterator(
-                problem,
-                HJBFDMSolver(problem),
-                FPFDMSolver(problem),
-                adjoint_verify=True,
-                adjoint_mode="transpose",
-            )
-        metadata = iterator.solve(max_iterations=1, tolerance=1e-6).metadata
-    assert metadata["adjoint_rows_compared"] == _N - 2
-    assert metadata["adjoint_mismatch_count"] == 0
+    with pytest.raises(ValueError, match=rf"adjoint_mode='{mode}' was removed.*jacobian_transpose"):
+        BlockIterator(problem, HJBFDMSolver(problem), FPFDMSolver(problem), adjoint_mode=mode)
 
 
 def test_the_window_is_the_grid_it_is_given():

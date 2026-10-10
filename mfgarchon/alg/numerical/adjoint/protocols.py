@@ -11,7 +11,7 @@ Two approaches for adjoint consistency in MFG coupling:
    Correct for arbitrary Hamiltonians, not just quadratic H = (c/2)|p|^2.
    Requires class-based Hamiltonian with dp() method.
 
-Note: The old "transpose" mode (Issue #622, deprecated in #706) naively
+Note: The old "transpose" and "auto" modes (Issue #622, deprecated in #706, since removed) naively
 transposed the velocity-based advection matrix. This is incorrect for
 non-symmetric upwind stencils. The "jacobian_transpose" mode (#707) is
 the correct implementation.
