@@ -42,6 +42,14 @@ TWO MEASUREMENT CHOICES, both forced by measurement rather than taste:
   `--no-pretty` is kept because it makes the output 1818 lines instead of 4438-8545 and identical at
   every width.
 
+THE TOOLCHAIN IS PART OF THE MEASUREMENT. The counts are a function of the interpreter that runs mypy,
+not only of the tree: on 2026-10-10 numpy 2.4.6 -> 2.5.3 alone moved `alg` 706 -> 693 and `operators`
+34 -> 35, under mypy 2.3 and 2.4 alike (#2592). A baseline read on another toolchain therefore reports
+the environment as a change in the tree, and this script's advice for a change -- re-record -- would,
+on the wrong environment, overwrite the right baseline. So the baseline stamps python, mypy and numpy,
+and a check on a toolchain whose python minor version, mypy version or numpy version differs from the
+stamp is refused before anything is compared.
+
 Exit 0 clean, 1 the tree moved against the baseline, 2 the instrument could not measure.
 """
 
@@ -216,8 +224,48 @@ def compare(baseline: dict, counts: dict[str, int], checked: int, statuses: dict
 
 
 def _toolchain() -> dict[str, str]:
+    """This interpreter's toolchain, read where mypy reads stubs: pyproject fixes ``python_version = "3.12"``, so on
+    a 3.12 interpreter mypy's target is this one and its numpy is the one checked. Any other minor version is
+    refused by `toolchain_mismatch` before the scan."""
+    from importlib import metadata
+
     out = subprocess.run([sys.executable, "-P", "-m", "mypy", "--version"], capture_output=True, text=True).stdout
-    return {"python": ".".join(str(v) for v in sys.version_info[:3]), "mypy": out.strip()}
+    try:
+        numpy = metadata.version("numpy")
+    except metadata.PackageNotFoundError:
+        numpy = "absent"
+    return {"python": ".".join(str(v) for v in sys.version_info[:3]), "mypy": out.strip(), "numpy": numpy}
+
+
+def _comparable(stamp: dict[str, str]) -> dict[str, str | None]:
+    """The parts of a stamp that are compared: python's minor version, mypy's version, numpy's version.
+
+    A sample, not every input: measured between #2592's two environments, numpy alone moved the counts, and
+    swapping pydantic (and its mypy plugin), scipy, matplotlib, cvxpy, numba or polars moved none. mypy is
+    stamped as a precaution. A python patch release and mypy's "compiled" flag are left out: neither changed
+    a count.
+    """
+    python = stamp.get("python")
+    mypy = re.search(r"\d+(?:\.\d+)+", stamp.get("mypy") or "")
+    return {
+        "python": ".".join(python.split(".")[:2]) if python else None,
+        "mypy": mypy.group(0) if mypy else None,
+        "numpy": stamp.get("numpy"),
+    }
+
+
+def toolchain_mismatch(recorded: dict[str, str], live: dict[str, str]) -> list[str]:
+    """How ``live`` differs from the ``recorded`` stamp in what the counts depend on; empty when it does not.
+
+    A field the stamp does not record counts as a difference: such a baseline cannot say what it was
+    measured on, so it is not compared either.
+    """
+    was, now = _comparable(recorded), _comparable(live)
+    return [
+        f"{key} {was[key] or 'unrecorded'} recorded, {now[key] or 'unknown'} here"
+        for key in was
+        if was[key] != now[key]
+    ]
 
 
 def write_baseline(path: Path) -> int:
@@ -282,6 +330,21 @@ def check_baseline(path: Path) -> int:
         print(f"CANNOT RUN: no baseline at {path}. Write one with --write-baseline.", file=sys.stderr)
         return EXIT_INSTRUMENT_BROKEN
     baseline = json.loads(path.read_text())
+
+    recorded, live = baseline.get("toolchain_when_written") or {}, _toolchain()
+    if moved := toolchain_mismatch(recorded, live):
+        print(
+            f"CANNOT RUN: {path.name} was recorded on another toolchain ({'; '.join(moved)}). The counts are a "
+            "function of it -- numpy 2.4 -> 2.5 alone moved two packages (#2592) -- so compared here, the "
+            "environment would read as a change in the tree.\n"
+            f"  recorded: {json.dumps(recorded, sort_keys=True)}\n"
+            f"  here:     {json.dumps(live, sort_keys=True)}  ({sys.executable})\n"
+            "  Run this check with the environment the recorded stamp names (MFG_PYTHON=<its python> for "
+            "scripts/local_ci.sh). Moving the project's environment is its own reviewed re-baseline, not a "
+            "fix for this message.",
+            file=sys.stderr,
+        )
+        return EXIT_INSTRUMENT_BROKEN
 
     try:
         counts, checked = scan()
@@ -410,12 +473,57 @@ def _self_test() -> int:
         failures.append("_FOUND matches a success line, so a clean run would be read as an error total")
 
     # Drive the caller's return, not just the comparison.
+    import contextlib
+    import io
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmp:
         missing = Path(tmp) / "absent.json"
         if check_baseline(missing) != EXIT_INSTRUMENT_BROKEN:
             failures.append("a missing baseline must exit 2 (cannot measure), not 0 or 1")
+
+    # The toolchain guard (#2592). What it compares, then the caller.
+    stamp = {"python": "3.12.15", "mypy": "mypy 2.4.0 (compiled: yes)", "numpy": "2.5.3"}
+    if toolchain_mismatch(stamp, dict(stamp)):
+        failures.append("an identical toolchain stamp was refused")
+    if toolchain_mismatch(stamp, {**stamp, "python": "3.12.13", "mypy": "mypy 2.4.0 (compiled: no)"}):
+        failures.append("a python patch release or mypy's compiled flag was refused; no count depends on them")
+    for key, other in (("numpy", "2.4.6"), ("mypy", "mypy 2.3.0 (compiled: yes)"), ("python", "3.14.0")):
+        if not toolchain_mismatch(stamp, {**stamp, key: other}):
+            failures.append(f"a different {key} was not refused")
+    if not toolchain_mismatch({k: v for k, v in stamp.items() if k != "numpy"}, stamp):
+        failures.append("a baseline whose stamp records no numpy was compared")
+
+    # The caller, both ways, with the scan replaced by a sentinel so the control costs no mypy run: a stamp
+    # matching this interpreter must reach the scan, and a foreign one must stop before it, exit 2, name both
+    # stamps, and not offer to re-record.
+    def scan_reached() -> tuple[dict[str, int], int]:
+        raise RuntimeError("SENTINEL: the scan was reached")
+
+    real_scan, live = globals()["scan"], _toolchain()
+    globals()["scan"] = scan_reached
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, numpy, want_scan in (("matching", live["numpy"], True), ("foreign", "0.0.0", False)):
+                path = Path(tmp) / f"{name}.json"
+                path.write_text(json.dumps({**base, "toolchain_when_written": {**live, "numpy": numpy}}))
+                out, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    rc = check_baseline(path)
+                text = out.getvalue() + err.getvalue()
+                if ("SENTINEL" in text) != want_scan:
+                    failures.append(f"a {name} toolchain stamp {'did not reach' if want_scan else 'reached'} the scan")
+                if not want_scan:
+                    if rc != EXIT_INSTRUMENT_BROKEN:
+                        failures.append(f"a foreign toolchain must exit 2 (cannot measure), got {rc}")
+                    if "--write-baseline" in text:
+                        failures.append(
+                            "the cross-toolchain refusal offers --write-baseline, which would undo the baseline"
+                        )
+                    if "numpy 0.0.0 recorded" not in text or live["numpy"] not in text:
+                        failures.append("the cross-toolchain refusal does not name both stamps")
+    finally:
+        globals()["scan"] = real_scan
 
     if failures:
         for line in failures:
@@ -424,7 +532,9 @@ def _self_test() -> int:
     print(
         "self-test OK: increase, decrease, a package leaving the scan, one entering, a new bucket and "
         "a resized scan all fire; no change is silent; identical zero counts part on status alone; "
-        "attribute() counts both of mypy's line formats and the _root bucket; a missing baseline exits 2"
+        "attribute() counts both of mypy's line formats and the _root bucket; a missing baseline exits 2; "
+        "a foreign toolchain stamp exits 2 before the scan without offering to re-record, and a matching one "
+        "reaches it"
     )
     return EXIT_OK
 
