@@ -4,7 +4,8 @@ Two filters hid it. pytest.ini's ``ignore:Parameter.*is deprecated:DeprecationWa
 `@deprecated_parameter` warning; it is deleted. And under any other wrapper from `mfgarchon/utils/deprecation.py`
 -- a second `@deprecated_parameter`, or `retired_parameters` (which `retired_volatility_keywords` uses) -- the
 frame above the wrapper is that wrapper, so a plain ``stacklevel=2`` attributed the warning to deprecation.py,
-which pytest.ini's surviving ``ignore::DeprecationWarning:mfgarchon.*`` filters. Measured at the base: 10
+which the suite's two surviving module filters drop: pytest.ini's ``ignore::DeprecationWarning:mfgarchon.*`` and
+the same filter in ``tests/conftest.py``'s autouse ``suppress_warnings`` fixture. Measured at the base: 10
 (function, parameter) pairs in 7 functions were attributed there. The decorator now skips every frame of its own
 module (`WRAPPER_FRAMES`).
 
@@ -12,8 +13,14 @@ module (`WRAPPER_FRAMES`).
 the suite's own warning filters, with no ``simplefilter``, so pytest.ini is inside what they measure:
 - restoring the deleted filter reddens all three;
 - mutating the skip prefix to the bare ``__file__``, which CPython 3.12 does not match against itself, sends the
-  inner warnings back to deprecation.py, where the module filter hides them, and reddens the two stacked cases.
+  inner warnings back to deprecation.py, where the module filters hide them, and reddens the two stacked cases.
   The single-decorator control does not move.
+
+They assume the suite's own configuration, in which pytest shows DeprecationWarning: pytest installs that only
+when ``sys.warnoptions`` is empty. Under ``PYTHONWARNINGS=...`` or ``-W ignore::DeprecationWarning`` they fail
+with ``{} == {...}``, the same text as a restored ini filter, and under ``-W error:Parameter`` the warning is
+raised. Check the run's warning options before reading such a red as a regression (review 2 of #2588). The gate
+passes none.
 """
 
 from __future__ import annotations
