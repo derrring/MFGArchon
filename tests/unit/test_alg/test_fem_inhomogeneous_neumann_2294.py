@@ -269,11 +269,11 @@ def test_the_natural_bc_parameter_gates_the_neumann_arm():
 
     # The SOLVER's basis, never a hand-built one -- and the distinction is between two meshes, not
     # two spellings. Measured: a RAW `MeshTri.init_sqsymmetric().refined(2)` has `boundaries=None`,
-    # so `_find_segment_facets` falls back and `boundary="x_min"` resolves to 32 of 32 facets;
+    # so `_find_segment_facets` fell back and resolved `boundary="x_min"` to 32 of 32 facets;
     # the same mesh routed through `skfem_to_meshdata` carries `x_min/x_max/y_min/y_max` and
-    # resolves to 8 of 32. Building the basis by hand therefore inflates this load 4x (#2301), which
-    # reads as a defect in the assembly and once cost this branch a false accusation against
-    # correct code.
+    # resolves to 8 of 32. Building the basis by hand therefore inflated this load 4x (#2301), which
+    # read as a defect in the assembly and once cost this branch a false accusation against
+    # correct code. That fallback is gone (#2595, rows 2 and 7): on the raw mesh the name now raises.
     solver = HJBFEMSolver(_problem(_segments("neumann", _G)), order=1)
     basis, bc = solver._basis, solver._bc
 
@@ -363,7 +363,10 @@ def test_the_value_guard_admits_real_numbers_and_nothing_else(value, accepted):
 
     from mfgarchon.alg.numerical.fem.bc_adapter import assemble_robin_terms
 
-    basis = skfem.Basis(skfem.MeshTri.init_sqsymmetric().refined(2), skfem.ElementTriP1())
+    # The mesh carries the x_min tag the segment names: since #2595's rows 2 and 7 an untagged mesh raises
+    # instead of spreading the load over the whole boundary, which these accepted values used to rely on.
+    mesh = skfem.MeshTri.init_sqsymmetric().refined(2).with_boundaries({"x_min": lambda x: np.isclose(x[0], 0.0)})
+    basis = skfem.Basis(mesh, skfem.ElementTriP1())
     bc = BoundaryConditions(
         dimension=2, segments=[BCSegment(name="L", bc_type=BCType.NEUMANN, value=value, boundary="x_min")]
     )

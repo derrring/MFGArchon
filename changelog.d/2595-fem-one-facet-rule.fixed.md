@@ -1,0 +1,5 @@
+- **FEM places ROBIN and NEUMANN(g) loads by the same facet rule as Dirichlet DOFs** (#2595, rows 2 and 7). `bc_adapter._find_segment_facets` had a rule of its own, with two silent wrong answers, measured on main at `d74160d1`:
+  - **A name the mesh does not tag loaded the whole boundary.** That includes a library alias such as `"left"`, and any name on an untagged scikit-fem mesh. On a 16-element interval with HJB-FEM, a ROBIN(0.3) named `"left"` gave u(0, x_max) = 0.0565, against 0.0001 when named `"x_min"`, where the BC layer reads x_max as NO_FLUX.
+  - **A tag holding no facet placed the load nowhere.** On a disc, a ROBIN or NEUMANN(g) named `"x_max"` changed the solution by exactly 0.
+  - Both now raise, as a Dirichlet segment's name does, with the same advice: name one of the mesh's tagged boundaries, or tag the mesh first. A load named by a tag that holds facets is placed exactly as before.
+  - **Behaviour change:** code that named a ROBIN or NEUMANN(g) face on a hand-built, untagged scikit-fem mesh and relied on the whole-boundary fallback now gets a `ValueError`. Tag the mesh (`with_boundaries`) and name the face.
