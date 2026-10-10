@@ -324,8 +324,9 @@ if __name__ == "__main__":
     print("CONCLUSION")
     print("=" * 70)
     print("""
-The strict adjoint mode (solve_fp_step_adjoint_mode) uses A_HJB^T directly
-without boundary post-processing. This causes:
+The removed adjoint_mode="transpose" passed A_HJB^T to solve_fp_step_adjoint_mode
+directly, without boundary post-processing (#2594 removed it; "jacobian_transpose"
+passes the linearised operator's transpose). That caused:
 
 1. Non-zero off-diagonal entries at boundary rows of A^T
 2. Mass flux through boundaries (violates no-flux BC)

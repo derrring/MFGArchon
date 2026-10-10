@@ -2,6 +2,9 @@
 """
 Diagnostic: Strict Adjoint Mode Boundary Behavior.
 
+It examines the velocity-based A_HJB^T of the removed adjoint_mode="transpose" (#2594). The
+remaining adjoint_mode="jacobian_transpose" passes the linearised operator's transpose instead.
+
 This script uses the ACTUAL codebase implementations to verify:
 1. What A_HJB^T looks like at boundaries
 2. How solve_fp_step_adjoint_mode() treats these boundaries

@@ -177,12 +177,13 @@ class BlockIterator(BaseCouplingIterator):
 
         # Issue #622, #704, #707: Adjoint mode
         if adjoint_mode in ("transpose", "auto"):
-            # Deprecated since v0.17.13 (#706, #707) and removed once the policy allowed it (3 minor versions;
-            # the warning had said v1.0.0). They built the FP operator from `build_advection_matrix`, whose
-            # transpose is not the HJB linearisation's: on a 40-point no-flux grid the interior window gives
-            # max|A^T - B| = 245 against max|J^T - B| = 2.8e-14, B being the FP solver's own operator.
+            # Deprecated in v0.17.14 (#476; its warning said "since v0.17.13") and removed once the policy allowed
+            # it (3 minor versions; the warning had said v1.0.0). They built the FP operator from
+            # `build_advection_matrix`, whose transpose is not the HJB linearisation's: on
+            # test_adjoint_verify_runs_2338's 40-point fixture (engquist_osher, first sweep, interior window)
+            # max|A^T - B| reaches 245 against max|J^T - B| = 2.8e-14, B being the FP solver's own operator.
             raise ValueError(
-                f"adjoint_mode='{adjoint_mode}' was removed (deprecated since v0.17.13): it did not transpose the "
+                f"adjoint_mode='{adjoint_mode}' was removed (deprecated in v0.17.14): it did not transpose the "
                 "linearized HJB operator. Use adjoint_mode='jacobian_transpose', which does (Issue #707)."
             )
         _valid_adjoint_modes = ("off", "jacobian_transpose")
@@ -242,14 +243,32 @@ class BlockIterator(BaseCouplingIterator):
         return self.relaxation_M
 
     def _validate_strict_adjoint_capability(self) -> None:
-        """
-        Validate that solvers support strict adjoint mode (Issue #622, #704).
+        """Refuse, at construction, a pair the remaining adjoint mode cannot run (Issue #622, #704, #707).
 
-        Uses protocol-based validation to ensure solvers implement required methods.
+        ``"jacobian_transpose"`` needs the HJB's linearised operator (`LinearizedOperatorCapable`) and the FP's
+        adjoint step (`AdjointCapableFPSolver`), so those are the two protocols asked. The deprecated
+        `validate_adjoint_capability` asked the HJB for ``build_advection_matrix`` instead, which only the removed
+        ``"transpose"`` and ``"auto"`` consumed. `_hjb_linearised_operator` asks the HJB half again at each step,
+        as the narrowing for the call, with the same refusal.
         """
-        from mfgarchon.alg.numerical.adjoint import validate_adjoint_capability
+        from mfgarchon.alg.numerical.adjoint.protocols import AdjointCapableFPSolver, LinearizedOperatorCapable
 
-        validate_adjoint_capability(self.hjb_solver, self.fp_solver, strict=True)
+        if not isinstance(self.hjb_solver, LinearizedOperatorCapable):
+            raise NotImplementedError(self._no_linearised_operator(self.hjb_solver))
+        if not isinstance(self.fp_solver, AdjointCapableFPSolver):
+            raise NotImplementedError(
+                f"adjoint_mode={self.adjoint_mode!r} needs the FP's adjoint step, and {type(self.fp_solver).__name__} "
+                "has none: it does not satisfy `AdjointCapableFPSolver` (no `solve_fp_step_adjoint_mode`). Use "
+                "FPFDMSolver, or adjoint_mode='off'."
+            )
+
+    def _no_linearised_operator(self, hjb_solver: object) -> str:
+        """The refusal of an HJB solver with no linearised operator, at construction and at each step alike."""
+        return (
+            f"adjoint_mode={self.adjoint_mode!r} needs the linearised HJB operator, and "
+            f"{type(hjb_solver).__name__} builds none (#707, #2338): it does not satisfy "
+            f"`LinearizedOperatorCapable`. Use HJBFDMSolver, or adjoint_mode='off'."
+        )
 
     def _initialize_conditions(self, shape: tuple[int, ...]) -> tuple[NDArray, NDArray]:
         """Initialize initial density and terminal value from problem."""
@@ -395,8 +414,8 @@ class BlockIterator(BaseCouplingIterator):
             A_jac = self._hjb_linearised_operator(U_k, M_current, k * self.problem.dt)
             A_fp = A_jac.T.tocsr()
 
-            # Issue #704/#2338: verify against the FP solver's OWN operator, in every mode. In
-            # `jacobian_transpose` the A_fp above is the transpose by construction, so comparing it to the
+            # Issue #704/#2338: verify against the FP solver's OWN operator. In `jacobian_transpose`, the one
+            # mode left, the A_fp above is the transpose by construction, so comparing it to the
             # Jacobian would verify the assignment and nothing else; what the adjoint claim is about is whether
             # the FP solver's own discretisation is that transpose.
             if self.adjoint_verify:
@@ -421,11 +440,7 @@ class BlockIterator(BaseCouplingIterator):
 
         hjb_solver = self.hjb_solver
         if not isinstance(hjb_solver, LinearizedOperatorCapable):
-            raise NotImplementedError(
-                f"adjoint_mode={self.adjoint_mode!r} needs the linearised HJB operator, and "
-                f"{type(hjb_solver).__name__} builds none (#707, #2338): it does not satisfy "
-                f"`LinearizedOperatorCapable`. Use HJBFDMSolver, or adjoint_mode='off'."
-            )
+            raise NotImplementedError(self._no_linearised_operator(hjb_solver))
         return hjb_solver.build_linearized_operator(U_k, M_current, time=time)
 
     def _interior_flat_indices(self) -> NDArray:
@@ -520,7 +535,7 @@ class BlockIterator(BaseCouplingIterator):
         time = step * self.problem.dt
         A_fp_own = self._fp_advection_operator(U_k)
         # Built here rather than taken from the caller even in `jacobian_transpose` mode, where one is already in
-        # hand: a parameter that is only ever None in the velocity modes is a branch the verified modes never run,
+        # hand: a parameter that was only ever None in the removed velocity modes was a branch the verified mode never ran,
         # and a mutation swapping this call for `build_advection_matrix` survived the whole suite while it existed
         # (#2338, mutation check). `audits/mathematical.md` states the same rule for this identity -- an operator
         # accepted from the side under test makes the check tautological.

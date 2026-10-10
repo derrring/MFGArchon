@@ -659,28 +659,30 @@ class FPFDMSolver(BaseFPSolver):
         """
         Solve single FP timestep using externally provided advection matrix.
 
-        This method is used in strict adjoint mode (Issue #622) where the
-        FP solver uses A^T from the HJB solver instead of building its own
-        advection matrix. This guarantees exact adjoint consistency:
-            L_FP = L_HJB^T
+        ``BlockIterator(adjoint_mode="jacobian_transpose")`` passes the transpose of the HJB's linearised
+        operator, ``HJBFDMSolver.build_linearized_operator(U, M, time).T`` (Issue #707), in place of the FP's
+        own advection matrix. Where that linearisation is the FP scheme's own -- the default ``engquist_osher``
+        Hamiltonian -- this gives L_FP = L_HJB^T: on ``test_adjoint_verify_runs_2338``'s 40-point fixture its
+        interior matches ``build_advection_operator`` to 2.8e-14. The removed ``"transpose"`` passed
+        ``build_advection_matrix(U).T`` instead, which missed it by up to 245 there (#2594).
 
         Mathematical Formulation:
             FP equation: dm/dt + ∇·(vm) = (σ²/2) Δm
 
-            Discretized with A_advection_T (transpose of HJB's matrix):
+            Discretized with A_advection_T (the transposed HJB linearisation):
                 (I/dt + A_advection_T + D) m^{k+1} = m^k / dt
 
             where:
-            - A_advection_T: Advection matrix from HJB solver (transposed)
+            - A_advection_T: the HJB's linearised operator, transposed
             - D: Diffusion matrix (built internally; symmetric for a CONSTANT diffusion, and
               self-adjoint in the control-volume inner product in general -- see the Note)
             - I: Identity matrix
 
         Args:
             M_current: Current density at timestep k, shape (*spatial_shape)
-            A_advection_T: Transposed advection matrix from HJB solver.
+            A_advection_T: The transposed linearised HJB operator.
                 Shape: (N_total, N_total) where N_total = prod(spatial_shape).
-                This is A_hjb.T where A_hjb was built by HJBFDMSolver.build_advection_matrix().
+                ``BlockIterator`` passes ``HJBFDMSolver.build_linearized_operator(U, M, time).T``.
             volatility: The SDE volatility (optional); the diffusion is D = sigma^2/2.
                 - None: Use problem.volatility, with its kind
                 - float: Constant volatility
@@ -693,9 +695,9 @@ class FPFDMSolver(BaseFPSolver):
             M_next: Density at timestep k+1, shape (*spatial_shape)
 
         Example:
-            >>> # In FixedPointIterator with strict_adjoint=True:
-            >>> A_hjb = hjb_solver.build_advection_matrix(U_current)
-            >>> M_next = fp_solver.solve_fp_step_adjoint_mode(M_current, A_hjb.T)
+            >>> # What BlockIterator(adjoint_mode="jacobian_transpose") does at each step:
+            >>> J = hjb_solver.build_linearized_operator(U_current, M_current, time=t)
+            >>> M_next = fp_solver.solve_fp_step_adjoint_mode(M_current, J.T)
 
         Note:
             ~~The diffusion operator is symmetric (D = D^T)~~ **[CORRECTED 2026-08-28, #2145]**.
@@ -705,17 +707,17 @@ class FPFDMSolver(BaseFPSolver):
             would require the equal-volume mesh this grid is not. Measured on the varying-sigma
             path: `max|D - Dᵀ|` 0.0 before #2145, 197.02 after; `max|WD - (WD)ᵀ|` is 0.0.
 
-            Using this method with A_hjb.T therefore gives `L_FP = L_HJB^T` for the advection
-            part, while the diffusion half is adjoint-consistent in `L²(w)` rather than in the
-            unweighted inner product. Independent review measured this whole path and found it
-            conserves NEITHER measure, on this revision and on its predecessor alike (-13.54%
-            rectangle, -15.29% trapezoid, byte-identical), because `A_HJB` has row sums of 60 --
-            so the symmetry argument was not what was carrying it.
+            The advection half is therefore the HJB's transpose, while the diffusion half is
+            adjoint-consistent in `L²(w)` rather than in the unweighted inner product. Independent
+            review measured the path the removed ``"transpose"`` took, with ``A_hjb.T`` from
+            ``build_advection_matrix``, and found it conserved NEITHER measure (-13.54% rectangle,
+            -15.29% trapezoid, byte-identical across two revisions), because `A_HJB` has row sums of
+            60 -- so the symmetry argument was not what was carrying it.
 
         See Also:
-            - Issue #622: Strict Achdou adjoint mode implementation
-            - HJBFDMSolver.build_advection_matrix(): Builds the advection matrix
-            - FixedPointIterator: Orchestrates matrix passing between solvers
+            - Issue #707: the linearised HJB operator whose transpose is passed
+            - HJBFDMSolver.build_linearized_operator(): builds it
+            - BlockIterator: ``adjoint_mode="jacobian_transpose"`` passes it at each step
         """
         # Get problem dimensions
         shape = M_current.shape

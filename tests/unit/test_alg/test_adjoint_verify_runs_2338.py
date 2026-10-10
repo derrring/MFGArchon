@@ -213,8 +213,9 @@ def test_the_report_still_sees_a_pair_that_is_not_adjoint():
 @pytest.mark.parametrize("mode", ["transpose", "auto"])
 def test_the_removed_adjoint_modes_refuse_and_name_the_one_that_transposes(mode):
     """`transpose` and `auto` built the FP operator from `build_advection_matrix`, whose transpose is not the HJB
-    linearisation's (interior window, 40-point no-flux grid: 245 against 2.8e-14). They were removed after their
-    deprecation window. The mode they name is the one `_verified_run` above executes, with no mismatch.
+    linearisation's (on `_problem(n=40)` under `engquist_osher`, the first sweep's U, interior window: up to 245
+    against 2.8e-14). They were removed after their deprecation window. The mode they name is the one
+    `_verified_run` above executes; under `engquist_osher`, the default, it reports no mismatch.
 
     This replaces a pin that the check ran in every adjoint mode, which with one non-`off` mode left has nothing
     to separate."""
@@ -249,7 +250,9 @@ def test_it_refuses_a_grid_with_no_interior():
 def test_it_refuses_an_hjb_solver_that_builds_no_linearised_operator():
     """`BaseHJBSolver` declares no `build_linearized_operator` and only `HJBFDMSolver` defines one, so every call
     site reached through the base class would have raised `AttributeError` mid-solve (review of #2344 found this
-    through the mypy scope ratchet). The refusal that replaced it was itself unexercised.
+    through the mypy scope ratchet). The refusal comes at construction: the gate asks `LinearizedOperatorCapable`,
+    the capability `"jacobian_transpose"` uses, where it used to ask for `build_advection_matrix` and let this solver
+    through to fail at the first step (#2594).
     """
     problem = _problem(n=11)
 
@@ -260,15 +263,49 @@ def test_it_refuses_an_hjb_solver_that_builds_no_linearised_operator():
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
+        hjb, fp = OperatorlessHJBSolver(problem), FPFDMSolver(problem)
+        with pytest.raises(NotImplementedError, match=r"needs the linearised HJB operator.*LinearizedOperatorCapable"):
+            BlockIterator(problem, hjb, fp, adjoint_verify=True, adjoint_mode="jacobian_transpose")
+
+
+def test_an_hjb_solver_without_the_removed_modes_matrix_is_admitted():
+    """`build_advection_matrix` was consumed only by the removed `"transpose"` and `"auto"`, so an HJB solver that
+    builds the linearisation and not that matrix runs `"jacobian_transpose"` (#2594). The construction gate used to
+    refuse it, through the deprecated `validate_adjoint_capability`."""
+    problem = _problem(n=11)
+
+    class LinearisationOnlyHJBSolver(HJBFDMSolver):
+        """Satisfies `LinearizedOperatorCapable` and not the removed modes' protocol."""
+
+        build_advection_matrix = None  # type: ignore[assignment]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
         iterator = BlockIterator(
             problem,
-            OperatorlessHJBSolver(problem),
+            LinearisationOnlyHJBSolver(problem),
             FPFDMSolver(problem),
             adjoint_verify=True,
             adjoint_mode="jacobian_transpose",
         )
-        with pytest.raises(NotImplementedError, match=r"LinearizedOperatorCapable|linearised HJB operator"):
-            iterator.solve(max_iterations=1, tolerance=1e-6)
+        result = iterator.solve(max_iterations=1, tolerance=1e-6)
+    assert result.metadata["adjoint_rows_compared"] == 11 - 2
+
+
+def test_it_refuses_an_fp_solver_with_no_adjoint_step_at_construction():
+    """The gate's FP half: `"jacobian_transpose"` steps the FP through `solve_fp_step_adjoint_mode`."""
+    problem = _problem(n=11)
+
+    class StepLessFPSolver(FPFDMSolver):
+        """Satisfies nothing that `AdjointCapableFPSolver` asks for."""
+
+        solve_fp_step_adjoint_mode = None  # type: ignore[assignment]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        hjb, fp = HJBFDMSolver(problem), StepLessFPSolver(problem)
+        with pytest.raises(NotImplementedError, match=r"needs the FP's adjoint step.*AdjointCapableFPSolver"):
+            BlockIterator(problem, hjb, fp, adjoint_mode="jacobian_transpose")
 
 
 def test_the_operator_follows_the_solvers_resolved_boundary_conditions():

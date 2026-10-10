@@ -799,7 +799,7 @@ def _get_axis_name(dim_index: int, total_dims: int) -> str:
 
 
 # =============================================================================
-# BC-Aware Adjoint Matrix Construction
+# Operator Splitting Utilities
 # =============================================================================
 
 

@@ -1113,7 +1113,9 @@ class HJBFDMSolver(BaseHJBSolver):
 
         This matrix encodes the drift velocity v = -coupling_coefficient * ∇U, upwinded on the
         sign of v. It is a velocity-mode operator, and its transpose is NOT the FP solver's own
-        operator: on a 40-point no-flux grid, over the interior window, max|A^T - B| = 245 with
+        operator: on ``test_adjoint_verify_runs_2338``'s ``_problem(n=40)`` (no-flux, Nt=8, T=0.4,
+        sigma=0.05) under the default ``engquist_osher`` Hamiltonian, at the first strict-adjoint
+        sweep's U and over the interior window, max|A^T - B| reaches 245 (45 at the first step) with
         B = ``FPFDMSolver.build_advection_operator(U)``, while ``build_linearized_operator``'s
         transpose gives 2.8e-14. That is why ``BlockIterator``'s ``adjoint_mode`` values that
         transposed this matrix ("transpose", "auto") were removed; the strict-adjoint path uses
