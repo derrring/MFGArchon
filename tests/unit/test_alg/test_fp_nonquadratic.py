@@ -355,7 +355,7 @@ class TestFixedPointIteratorDrift:
 
         Nx, Nt = 51, 20
         bc = no_flux_bc(dimension=1)
-        geom = TensorProductGrid(bounds=[(0.0, 1.0)], num_points=[Nx], boundary_conditions=bc)
+        geom = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[Nx], boundary_conditions=bc)
         components = MFGComponents(
             hamiltonian=hamiltonian,
             m_initial=lambda x: np.exp(-((x - 0.5) ** 2) / 0.02),

@@ -1,14 +1,19 @@
-"""A deprecated parameter's warning names the caller's file and line, under stacked decorators too (#2579).
+"""A deprecated parameter's warning reaches the suite and names the caller's file and line (#2579).
 
-Under two stacked `@deprecated_parameter` decorators the frame above the inner wrapper is the outer
-wrapper, so a plain ``stacklevel=2`` attributed the inner warning to `mfgarchon/utils/deprecation.py`.
-pytest.ini's ``ignore::DeprecationWarning:mfgarchon.*`` filters that module, so a call site left on the
-inner parameter was invisible to the suite and to the warning census: `TensorProductGrid(dimension=...)`
-×34 in the CI tier. The decorator now skips every frame of its own module (`WRAPPER_FRAMES`).
+Two filters hid it. pytest.ini's ``ignore:Parameter.*is deprecated:DeprecationWarning`` matched every
+`@deprecated_parameter` warning; it is deleted. And under any other wrapper from `mfgarchon/utils/deprecation.py`
+-- a second `@deprecated_parameter`, or `retired_parameters` (which `retired_volatility_keywords` uses) -- the
+frame above the wrapper is that wrapper, so a plain ``stacklevel=2`` attributed the warning to deprecation.py,
+which pytest.ini's surviving ``ignore::DeprecationWarning:mfgarchon.*`` filters. Measured at the base: 10
+(function, parameter) pairs in 7 functions were attributed there. The decorator now skips every frame of its own
+module (`WRAPPER_FRAMES`).
 
-`pytest.warns` cannot see attribution, so these read ``warning.filename`` and ``warning.lineno``. With the
-skip prefix mutated to the bare ``__file__``, which CPython 3.12 does not match against itself, the
-stacked pair goes back to naming deprecation.py and the single-decorator control does not move.
+`pytest.warns` cannot see attribution, so these read ``warning.filename`` and ``warning.lineno``. They record under
+the suite's own warning filters, with no ``simplefilter``, so pytest.ini is inside what they measure:
+- restoring the deleted filter reddens all three;
+- mutating the skip prefix to the bare ``__file__``, which CPython 3.12 does not match against itself, sends the
+  inner warnings back to deprecation.py, where the module filter hides them, and reddens the two stacked cases.
+  The single-decorator control does not move.
 """
 
 from __future__ import annotations
@@ -32,9 +37,9 @@ def _single(new_only=None, old_only=None):
 
 
 def _attributions(call) -> dict[str, tuple[str, int]]:
-    """``{deprecated parameter: (filename, lineno)}`` for each deprecated-parameter warning ``call`` raises."""
+    """``{deprecated parameter: (filename, lineno)}`` for each deprecated-parameter warning ``call`` raises that
+    the suite's own filters let through. No ``simplefilter``: that would bypass pytest.ini (review 1 of #2588)."""
     with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
         call()
     return {
         str(w.message).split("'")[1]: (w.filename, w.lineno)
@@ -65,7 +70,8 @@ def test_a_single_decorator_names_the_caller():
 
 
 def test_the_library_stacked_pair_names_the_caller():
-    """`TensorProductGrid.__init__` stacks `num_points` over `dimension`, the census's 34 hidden call sites."""
+    """`TensorProductGrid.__init__` stacks `num_points` over `dimension`. A decorator-level recorder found 34
+    `dimension` uses at 11 call sites in 5 files of the CI tier that the census never saw."""
     bc = no_flux_bc(dimension=1)
 
     def call():
