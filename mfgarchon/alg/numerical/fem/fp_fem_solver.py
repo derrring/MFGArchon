@@ -13,7 +13,7 @@ Issue #773 (FEM); Issue #1131 Phase 2 (factored onto WeakFormFPSolver).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from scipy import sparse
 
     from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.geometry.boundary import BoundaryConditions
 
 logger = get_logger(__name__)
 
@@ -58,7 +59,12 @@ class FPFEMSolver(WeakFormFPSolver):
         {BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX, BCType.REFLECTING, BCType.ROBIN}
     )
 
-    def __init__(self, problem: MFGProblem, order: int = 1) -> None:
+    def __init__(
+        self, problem: MFGProblem, order: int = 1, boundary_conditions: BoundaryConditions | None = None
+    ) -> None:
+        """``boundary_conditions``, if given, is the FP's own BC (#2532): a DIRICHLET(g) is a prescribed
+        density m = g, a ROBIN the FP's total-flux Robin, and a NEUMANN is refused. Without it the solver
+        reads the problem's shared BC, where a DIRICHLET is an absorbing exit (#2512, row B3)."""
         # Issue #1489: a non-mesh geometry (e.g. TensorProductGrid) has no `mesh_data` attribute at all,
         # so a direct `.mesh_data` access raised AttributeError BEFORE this guard — the message naming
         # TensorProductGrid was unreachable for its own case. getattr catches both the missing-attribute
@@ -74,7 +80,7 @@ class FPFEMSolver(WeakFormFPSolver):
         from .assembly import create_basis
 
         self._basis = create_basis(self._skfem_mesh, order=order)
-        super().__init__(problem, FEMDiscretization(self._basis))
+        super().__init__(problem, FEMDiscretization(self._basis), boundary_conditions=boundary_conditions)
         # Issue #1456 / #1977: the declaration above is inert unless the gate is CALLED. Measured
         # 2026-08-17: with `_SUPPORTED_BC_TYPES` declared and no call, PERIODIC and
         # EXTRAPOLATION_LINEAR both constructed. The FEM path had zero of the 14 call sites, so its
@@ -82,6 +88,13 @@ class FPFEMSolver(WeakFormFPSolver):
         self._validate_bc_support(self.get_boundary_conditions())
         self.order = order
         logger.info(f"FPFEMSolver initialized: {self._n_dof} DOFs, {self._skfem_mesh.t.shape[1]} elements")
+
+    def _validate_bc_support(self, bc: Any) -> None:
+        """The base checks, and what the FEM adapter would misread in silence (`refuse_what_fem_cannot_impose`)."""
+        super()._validate_bc_support(bc)
+        from .bc_adapter import refuse_what_fem_cannot_impose
+
+        refuse_what_fem_cannot_impose(self._skfem_mesh, bc, type(self).__name__)
 
     @property
     def basis(self):
@@ -106,30 +119,29 @@ class FPFEMSolver(WeakFormFPSolver):
     #: Issue #2294. This solver's natural boundary condition is the total flux ``J.n = 0``, not
     #: ``dm/dn = 0``, because ``_build_advection`` never integrates ``div(v m)`` by parts onto the
     #: facets. So it cannot express ``dm/dn = g`` and does not claim to. It is not reached with one: a
-    #: shared NEUMANN(0) arrives as zero flux, this solver's natural condition, a shared NEUMANN(g != 0) is
-    #: refused, both through BaseFPSolver (#2512, row B3), and it takes no explicit BC (#2532).
+    #: shared NEUMANN(0) arrives as zero flux, this solver's natural condition, and a shared NEUMANN(g != 0)
+    #: and an explicit NEUMANN are refused, all through BaseFPSolver (#2512, row B3).
     honors_inhomogeneous_neumann = False
 
     def _robin_operator_terms(self, D: float):
-        """Robin boundary operator augmentation, adjoint of the HJB term (Issue #1237).
+        """Robin boundary operator augmentation: the FP's total-flux Robin ``J.n = (D/beta)(alpha*m - g)`` (Issue #1237).
 
-        The FP Robin term is the symmetric boundary mass ``D*(alpha/beta)*int_dOmega phi_i phi_j``
-        from integrating the FP diffusion operator ``-D*Delta m`` by parts, plus the boundary load
-        ``D*(1/beta)*int_dOmega g phi_i``. Because the boundary mass is symmetric, this is identical
-        to the HJB Robin term, so ``A_FP = A_HJB^T`` is preserved for the diffusion+Robin block.
+        The term is the symmetric boundary mass ``D*(alpha/beta)*int_dOmega phi_i phi_j`` plus the boundary
+        load ``D*(1/beta)*int_dOmega g phi_i``. This weak form integrates the whole flux ``J = v m - D grad m``
+        by parts and leaves ``J.n`` on the boundary, so the term imposes ``alpha*m - (beta/D)*J.n = g``, not
+        ``alpha*m + beta*dm/dn = g`` (#2512, user ruling 2026-10-10). The boundary mass is the HJB Robin
+        term's, so ``A_FP = A_HJB^T`` is preserved for the diffusion+Robin block.
         Assembled via ``skfem.FacetBasis``; ``(None, None)`` when no Robin segment is present.
 
         ``natural_bc="flux"``: ``_build_advection`` assembles ``div(v m)`` on the VOLUME basis with
         no facet term, so the boundary term this weak form leaves is the TOTAL flux ``J.n``, not
-        ``dm/dn``. An inhomogeneous ``NEUMANN(g)`` is therefore refused rather than assembled --
-        adding ``D*int g phi`` would impose ``J.n = -D*g``, a different condition wearing the same
-        name (Issue #2294).
+        ``dm/dn``. A ``ROBIN(alpha, beta, g)`` therefore imposes ``J.n = (D/beta)(alpha*m - g)``, which
+        is the FP's Robin convention (#2512, user ruling 2026-10-10). A ``NEUMANN(g)`` would mean
+        ``dm/dn = g``, which this weak form cannot impose, so it is refused rather than assembled:
+        adding ``D*int g phi`` would impose ``J.n = -D*g`` (Issue #2294). That is what
+        ``ROBIN(alpha=0, beta=1, g)`` imposes, by the convention, and the two load vectors are equal.
 
-        **The refusal covers that SPELLING, not the condition.** ``ROBIN(alpha=0, beta=1, g)`` is the
-        same condition and still assembles here, producing a load vector bit-identical to the one
-        refused (measured, ``max|diff| = 0.0``). The Robin path predates #2294 and the total-flux
-        character of an inhomogeneous Robin is already declared out of scope by
-        ``weak_form_fp_solver``'s own note (#1237); it is filed rather than widened here."""
+        Only an explicit ROBIN reaches this: a shared one is the HJB's, refused at the FP."""
         from .bc_adapter import assemble_robin_terms
 
         return assemble_robin_terms(self._basis, self._bc, D, natural_bc="flux")

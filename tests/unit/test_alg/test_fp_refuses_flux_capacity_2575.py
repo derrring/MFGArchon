@@ -88,6 +88,13 @@ def _fem(cap):
     return FPFEMSolver(_mesh_problem(_exit(2, cap)), order=1)
 
 
+def _fem_explicit(cap):
+    """FP-FEM's own BC (#2532) goes through the same gate as the shared one."""
+    from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
+
+    return FPFEMSolver(_mesh_problem(_exit(2, None)), order=1, boundary_conditions=_exit(2, cap))
+
+
 ROUTES = {
     "fdm-shared": lambda cap: FPFDMSolver(_grid_problem(_exit(1, cap))),
     "fdm-explicit": lambda cap: FPFDMSolver(_grid_problem(_exit(1, None)), boundary_conditions=_exit(1, cap)),
@@ -95,7 +102,8 @@ ROUTES = {
     "particle-explicit": lambda cap: FPParticleSolver(
         _grid_problem(_exit(1, None)), num_particles=200, boundary_conditions=_exit(1, cap)
     ),
-    "fem-shared": _fem,  # FP-FEM takes no explicit BC (#2532)
+    "fem-shared": _fem,
+    "fem-explicit": lambda cap: _fem_explicit(cap),
 }
 
 

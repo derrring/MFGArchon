@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.geometry.boundary import BoundaryConditions
 
 
 class MeshlessGalerkinFPSolver(WeakFormFPSolver):
@@ -52,9 +53,10 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
     _scheme_family = SchemeFamily.MESHLESS_GALERKIN
 
     # No-flux, homogeneous Neumann and reflecting are the natural condition; DIRICHLET is an absorbing
-    # wall (m = 0) imposed by Nitsche. This pair reads only the shared problem BC, so a Dirichlet value
-    # there is the HJB's exit cost and is not this solver's to impose (#2512, convention row 5).
-    # Undeclared, the gate returned early: neumann_bc(value=1) solved identically to no-flux (#2512 S4).
+    # wall (m = 0) imposed by Nitsche. A Dirichlet value on the shared BC is the HJB's exit cost and is
+    # not this solver's to impose (#2512, convention row 5); one in its own BC is refused
+    # (`_validate_bc_support`). Undeclared, the gate returned early: neumann_bc(value=1) solved
+    # identically to no-flux (#2512 S4).
     _SUPPORTED_BC_TYPES: frozenset = frozenset({BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING, BCType.DIRICHLET})
     honors_inhomogeneous_neumann: bool = False
 
@@ -69,9 +71,13 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         domain: object | None = None,
         nitsche_penalty: float = 20.0,
         streamline_diffusion_scale: float = 0.0,
+        boundary_conditions: BoundaryConditions | None = None,
     ) -> None:
+        """``boundary_conditions``, if given, is the FP's own BC (#2532). It adds no wall this solver lacks:
+        NO_FLUX, REFLECTING and an absorbing DIRICHLET(0) solve as the shared route does, and a DIRICHLET
+        with a value, a NEUMANN and a ROBIN are refused."""
         disc = discretization_from_cloud(collocation_points, delta, degree, n_gauss, backend, domain=domain)
-        super().__init__(problem, disc)
+        super().__init__(problem, disc, boundary_conditions=boundary_conditions)
         refuse_what_nitsche_cannot_place(self._bc)
         self._G_grad: list[sparse.csr_matrix] | None = None
         self._n_gauss = n_gauss
@@ -82,6 +88,24 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         # (default), 1 = canonical SUPG. MUST match the paired HJB solver's value or
         # A_FP = A_HJB^T breaks (the factory threads it across the pair).
         self._sd_scale = float(streamline_diffusion_scale)
+
+    def _validate_bc_support(self, bc: object) -> None:
+        """The base check, and a DIRICHLET whose value is not provably zero refused.
+
+        Only this solver's own BC can carry one, since the shared view drops a Dirichlet value. There it
+        would be a prescribed density m = g, which Nitsche's data load could impose, but no oracle checks a
+        meshless density, so the explicit route stops at the walls the shared one gives (#2581, A-4).
+        """
+        super()._validate_bc_support(bc)
+        from mfgarchon.geometry.boundary.bc_utils import describe_inhomogeneous_bc_data
+
+        if values := describe_inhomogeneous_bc_data(bc, bc_types={BCType.DIRICHLET}):
+            raise NotImplementedError(
+                f"MeshlessGalerkinFPSolver: a DIRICHLET boundary condition with a value that is not zero "
+                f"({', '.join(map(str, values))}) would be a prescribed density m = g, which this solver does "
+                "not impose: no oracle checks a meshless density yet (#2581, A-4). Its Dirichlet wall is the "
+                "absorbing exit, m = 0: pass the value as 0, or use FPFEMSolver or FPFDMSolver for m = g."
+            )
 
     def _gradient_operators(self) -> list[sparse.csr_matrix]:
         # G_d = diag(1/M_lumped) @ R_d : mass-lumped L2 projection of d/dx_d.
@@ -114,10 +138,10 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
     def _weak_bc_terms(self, D: float):
         """Symmetric Nitsche terms for the FP diffusion block, from the BC this solver holds.
 
-        That BC is the shared one read through ``fp_view_of_shared_bc`` (the weak-form base),
-        where a Dirichlet is an exit with value 0 (#2512, convention row 5), so the data load
-        is zero and this returns ``(N_nitsche, None)``: absorbing ``m = 0``, decided by the
-        translator alone. The block is the HJB's, so ``A_FP = A_HJB^T``. ``(None, None)`` if
+        A shared BC is read through ``fp_view_of_shared_bc`` (the weak-form base), where a
+        Dirichlet is an exit with value 0 (#2512, convention row 5), and an explicit one with a
+        value is refused (`_validate_bc_support`). So the data load is zero and this returns
+        ``(N_nitsche, None)``: absorbing ``m = 0``. The block is the HJB's, so ``A_FP = A_HJB^T``. ``(None, None)`` if
         no Dirichlet face is placed. Cached on ``D``."""
         if self._nitsche_cache is not None and self._nitsche_cache_D == D:
             return self._nitsche_cache

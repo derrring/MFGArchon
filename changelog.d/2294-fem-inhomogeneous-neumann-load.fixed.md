@@ -7,6 +7,6 @@
   so its natural condition is the **total flux** `J.n`, not `dm/dn`: the same load would impose
   `J.n = -D*g`, a different condition. `FPFEMSolver` therefore declares
   `honors_inhomogeneous_neumann = False` and the Issue #1686 gate refuses such a problem before the
-  solve instead of silently solving another one. The refusal is keyed on the `NEUMANN` spelling;
-  `ROBIN(alpha=0, beta=1, g)` is the same condition and still assembles on the FP side, which is
-  pre-existing and already disclosed as out of scope for Issue #1237.
+  solve instead of silently solving another one. `ROBIN(alpha=0, beta=1, g)` handed to `FPFEMSolver` as its
+  own BC assembles that same load, and by the FP's Robin convention it means exactly `J.n = -D*g`: a
+  condition on the flux, not `dm/dn = g` (#2512, user ruling 2026-10-10). A shared ROBIN is refused at the FP.

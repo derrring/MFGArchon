@@ -13,6 +13,6 @@
   refusal is not new, but its message now says why: `g` says nothing about the agents' mass at the wall,
   and a mass flux through the wall is not a Neumann condition. It also says how to specify the two
   equations' BCs separately: keep `neumann_bc(value=g)` on the problem for the HJB, and pass the FP solver
-  `boundary_conditions=no_flux_bc(...)`. `FPFEMSolver` and `MeshlessGalerkinFPSolver` take no BC of their
-  own, so they cannot run that model yet; #2532 tracks the route for both. A value that is not provably zero, such
-  as a callable, counts as nonzero.
+  `boundary_conditions=no_flux_bc(...)`, which every FP solver that reads a segment BC takes (`FPFEMSolver` and
+  `MeshlessGalerkinFPSolver` since #2532). A value that is not provably zero, such as a callable, counts as
+  nonzero.

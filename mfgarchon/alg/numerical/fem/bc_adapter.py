@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-    from mfgarchon.geometry.boundary import BoundaryConditions
+    from mfgarchon.geometry.boundary import BCSegment, BoundaryConditions
 
 
 def apply_bc_to_fem_system(
@@ -195,36 +195,116 @@ def is_pure_neumann(bc: BoundaryConditions | None) -> bool:
     return all(s.bc_type in neumann_types for s in bc.segments)
 
 
+def _segment_boundary_facets(mesh: skfem.Mesh, segment: BCSegment) -> NDArray:
+    """The boundary facets a segment's DOFs come from: its named boundary, or the whole boundary for ``None``.
+
+    One rule for the Dirichlet DOFs (`_find_segment_dofs`) and for what a ``default_bc`` is left to govern
+    (`refuse_what_fem_cannot_impose`). Only the ``boundary`` name is read. A segment also placed by
+    ``region``, ``region_name``, ``sdf_region`` or ``normal_direction`` resolves as its ``boundary`` face
+    if it names one -- the whole face, not the placed part -- and as the whole boundary if it names none.
+
+    A name must be a tag that holds facets. A tag the mesh carries with no facet in it is refused as a missing
+    one: the axis tags are placed by bounding box (`mesh_adapter._tag_axis_aligned_boundaries`), so on a domain
+    that touches its bounding box only at points, such as a disc, they exist and are empty, and condensing
+    nothing would leave that face a wall (#2593, review 3).
+    """
+    boundary_name = getattr(segment, "boundary", None)
+    if boundary_name:
+        # Issue #1489 (F3): a NAMED boundary absent from the mesh is an ERROR — silently falling back
+        # to the WHOLE boundary would over-constrain (a one-wall Dirichlet applied everywhere). The
+        # mesh_adapter auto-tags axis-aligned walls (x_min/x_max/...) for box domains (#607).
+        holding = {name: facets for name, facets in (mesh.boundaries or {}).items() if len(facets)}
+        if boundary_name not in holding:
+            raise ValueError(_no_such_tagged_boundary(mesh, segment, boundary_name, holding))
+        return np.asarray(holding[boundary_name])
+    return np.asarray(mesh.boundary_facets())
+
+
+def _no_such_tagged_boundary(mesh: skfem.Mesh, segment: BCSegment, boundary_name: object, holding: dict) -> str:
+    """The refusal of a name no facet-holding tag carries, with advice that can be followed on this mesh."""
+    from mfgarchon.geometry.boundary.types import parse_boundary_face
+
+    head = (
+        f"Segment '{getattr(segment, 'name', '?')}' names boundary '{boundary_name}', but the mesh has no such "
+        "tagged boundary"
+    )
+    empty = (
+        f" The mesh carries the tag '{boundary_name}', but no facet is in it."
+        if boundary_name in (mesh.boundaries or {})
+        else ""
+    )
+    why = (
+        " A missing named boundary would otherwise silently apply the BC to the ENTIRE boundary (Issue #1489), "
+        "and an empty one to none of it (#2593)."
+    )
+    if not holding:
+        return (
+            f"{head}: none of its tags holds a facet, so no face can be named on it.{empty}{why} Tag the mesh "
+            "before naming a face: give its MeshData nonzero "
+            "boundary_tags, one per boundary_faces row, and name the face 'region_<tag>'."
+        )
+    face = parse_boundary_face(boundary_name) if isinstance(boundary_name, str) else None
+    alias = (
+        f" The BC layer reads '{boundary_name}' as '{face.to_string()}', which this mesh tags."
+        if face is not None and face.to_string() != boundary_name and face.to_string() in holding
+        else ""
+    )
+    return (
+        f"{head} (available: {sorted(holding)}).{empty}{alias}{why} Name one of the mesh's tagged boundaries as "
+        "boundary=."
+    )
+
+
 def _find_segment_dofs(
     mesh: skfem.Mesh,
     basis: skfem.Basis,
     segment,
 ) -> list[int]:
-    """Find DOF indices for a BCSegment on the skfem mesh.
+    """DOF indices for a BCSegment on the skfem mesh, from `_segment_boundary_facets`.
 
-    Uses segment.boundary name to look up mesh.boundaries dict,
-    or falls back to all boundary nodes.
+    Issue #1489 (F2): resolved via ``basis.get_dofs`` on the boundary FACETS (which includes P2 edge-midpoint
+    DOFs), NOT ``mesh.boundary_nodes()`` (vertices only -> half the P2 boundary left free -> Dirichlet silently
+    enforced on vertices only).
     """
-    boundary_name = getattr(segment, "boundary", None)
+    return list(basis.get_dofs(_segment_boundary_facets(mesh, segment)).flatten())
 
-    if boundary_name:
-        # Issue #1489 (F3): a NAMED boundary absent from the mesh is an ERROR — silently falling back
-        # to the WHOLE boundary would over-constrain (a one-wall Dirichlet applied everywhere). The
-        # mesh_adapter auto-tags axis-aligned walls (x_min/x_max/...) for box domains (#607).
-        if not mesh.boundaries or boundary_name not in mesh.boundaries:
-            available = sorted(mesh.boundaries) if mesh.boundaries else "none"
-            raise ValueError(
-                f"Dirichlet segment '{getattr(segment, 'name', '?')}' names boundary '{boundary_name}', "
-                f"but the mesh has no such tagged boundary (available: {available}). A missing named "
-                f"boundary would otherwise silently apply the BC to the ENTIRE boundary (Issue #1489). "
-                f"Tag it, or use boundary=None for the whole boundary."
-            )
-        return list(basis.get_dofs(mesh.boundaries[boundary_name]).flatten())
 
-    # Issue #1489 (F2): boundary=None -> the whole boundary. Resolve DOFs via basis.get_dofs on the
-    # boundary FACETS (which includes P2 edge-midpoint DOFs), NOT mesh.boundary_nodes() (vertices only
-    # -> half the P2 boundary is left free -> Dirichlet silently enforced on vertices only).
-    return list(basis.get_dofs(mesh.boundary_facets()).flatten())
+def refuse_what_fem_cannot_impose(mesh: skfem.Mesh, bc: BoundaryConditions | None, consumer: str) -> None:
+    """Refuse, at construction, what the FEM adapter would otherwise misread in silence (#2593).
+
+    - **A Dirichlet value it cannot read** (`dirichlet_constant`). It used to become 0.
+    - **A DIRICHLET ``default_bc`` left to govern boundary facets no segment claims.** The adapter imposes
+      conditions segment by segment and never reads ``default_bc``, so those facets got the natural condition
+      instead: a silent wall where an exit or a prescribed value was asked for.
+    Under a DIRICHLET default, the facets each segment claims follow `_segment_boundary_facets`, the rule its
+    Dirichlet DOFs follow, for segments of every type, so a segment named by anything but a tag that holds
+    facets -- a library alias such as ``"left"``, or an empty axis tag on a disc, included -- raises
+    there rather than claiming the whole boundary or nothing. A falsy name (``0``, ``""``) is read as no name.
+    A segment also placed by ``region``, ``region_name``, ``sdf_region`` or ``normal_direction`` claims its
+    whole ``boundary`` face, or the whole boundary if it names none, which this check cannot see past (#2595).
+    ``dirichlet_bc(g)`` passes, since its segment names the whole boundary.
+    """
+    from mfgarchon.geometry.boundary.types import BCType
+
+    if bc is None:
+        return
+    for segment in bc.segments:
+        if segment.bc_type == BCType.DIRICHLET and not callable(segment.value):
+            dirichlet_constant(segment)
+    if bc.default_bc != BCType.DIRICHLET:
+        return
+    claimed: set[int] = set()
+    for segment in bc.segments:
+        claimed.update(int(f) for f in _segment_boundary_facets(mesh, segment))
+    unclaimed = sorted({int(f) for f in mesh.boundary_facets()} - claimed)
+    if unclaimed:
+        raise NotImplementedError(
+            f"{consumer}: default_bc=DIRICHLET governs {len(unclaimed)} boundary facet(s) that no segment "
+            "names, and the FEM path imposes conditions only from segments, so those facets would get the "
+            "natural condition instead of the Dirichlet one (#2593). Give each Dirichlet face its own "
+            f"BCSegment(bc_type=BCType.DIRICHLET, value={bc.default_value!r}, boundary=...): a segment's value "
+            "defaults to 0.0, not to default_value."
+        )
 
 
 def _evaluate_segment_values(
@@ -232,7 +312,14 @@ def _evaluate_segment_values(
     basis: skfem.Basis,
     dofs: list[int],
 ) -> list[float]:
-    """Evaluate BCSegment value at the given DOFs."""
+    """The segment's Dirichlet value at the given DOFs, refusing a value it cannot read.
+
+    A callable is read as ``value(x)`` at each DOF, with no time argument, and its values are not checked.
+    Anything else is a constant, read by `dirichlet_constant`. This used to read as 0 every constant that is
+    not an ``int`` or ``float`` instance, so ``np.float32(0.7)`` held 0 (#2593). The FDM ghost path
+    (`applicator_fdm.segment_value`) reads a callable as ``value(t)`` and checks no type: the two disagree
+    until #2512's row B2 gives the value one owner.
+    """
     value = getattr(segment, "value", 0.0)
 
     if callable(value):
@@ -241,10 +328,45 @@ def _evaluate_segment_values(
         # indices >= n_vertices, so mesh.p[:, dofs] was out of bounds / wrong-coordinate.
         coords = basis.doflocs[:, dofs].T  # (n_dofs, dim)
         return [float(value(x)) for x in coords]
-    elif isinstance(value, (int, float)):
-        return [float(value)] * len(dofs)
-    else:
-        return [0.0] * len(dofs)
+    return [dirichlet_constant(segment)] * len(dofs)
+
+
+def dirichlet_constant(segment: BCSegment) -> float:
+    """A non-callable Dirichlet value as a float (#2593).
+
+    A boolean is refused first, ``False`` included. Then anything the library's one owner of "verifiably zero"
+    reads as zero is 0 (`_describe_bc_value`: ``None``, an all-zero array, and also ``"0"``, ``Decimal("0")``
+    and a complex 0). Otherwise a finite real number or a finite 0-d real array is its value, and anything else
+    is refused.
+    """
+    from mfgarchon.geometry.boundary.bc_utils import _describe_bc_value
+
+    value = getattr(segment, "value", 0.0)
+    if isinstance(value, (bool, np.bool_)) or (isinstance(value, np.ndarray) and value.dtype == np.bool_):
+        raise NotImplementedError(
+            f"Dirichlet segment '{getattr(segment, 'name', '?')}' has a boolean value, which is not a boundary "
+            "datum: give a real number, a 0-d real array, or a callable g(x) (#2593)."
+        )
+    if _describe_bc_value(value) is None:
+        return 0.0
+    real = isinstance(value, numbers.Real) or (
+        isinstance(value, np.ndarray)
+        and value.ndim == 0
+        and np.issubdtype(value.dtype, np.number)
+        and not np.iscomplexobj(value)
+    )
+    if not real:
+        raise NotImplementedError(
+            f"Dirichlet segment '{getattr(segment, 'name', '?')}' has a value of type {type(value).__name__}, "
+            "which the FEM path cannot read: give a real number, a 0-d real array, or a callable g(x) (#2593)."
+        )
+    constant = float(value)
+    if not np.isfinite(constant):
+        raise NotImplementedError(
+            f"Dirichlet segment '{getattr(segment, 'name', '?')}' has a non-finite value {constant}; the FEM "
+            "path would impose it and return a non-finite solution (#2593)."
+        )
+    return constant
 
 
 def _find_segment_facets(mesh: skfem.Mesh, segment) -> NDArray:
@@ -295,10 +417,10 @@ def assemble_robin_terms(
     segment — ``BCSegment`` defaults ``alpha=1.0, beta=0.0``, the Dirichlet weighting.
     ``natural_bc="flux"`` (the default, because it is the restrictive one) **refuses** an
     inhomogeneous Neumann: a weak form whose boundary term is the total flux ``J.n`` cannot impose
-    ``dm/dn = g``, and assembling the same load there would silently impose ``J.n = -D*g``. Note the
-    scope: that refusal is keyed on the ``NEUMANN`` **spelling**. ``ROBIN(alpha=0, beta=1, g)`` is
-    the same condition and is still assembled under ``"flux"``, which is pre-existing behaviour with
-    its own tests and its own #1237 disclosure -- not something this parameter closes.
+    ``dm/dn = g``, and assembling the same load there would silently impose ``J.n = -D*g``.
+    ``ROBIN(alpha=0, beta=1, g)`` is still assembled under ``"flux"``, and by the FP's Robin convention
+    it means exactly that, ``J.n = -D*g``: a condition on the flux, not a second spelling of ``dm/dn = g``
+    (#2512, user ruling 2026-10-10).
     ``NO_FLUX`` and ``REFLECTING`` are excluded throughout: both are homogeneous here, and
     ``NO_FLUX`` on the FP side is ``J.n = 0``, owned by ``FPResolver``.
 

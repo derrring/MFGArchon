@@ -84,7 +84,7 @@ oracle fp_fdm/no_flux_2d            -
 oracle fp_fdm/periodic_1d           -
 oracle fp_fdm/periodic_2d           -
 
-# FP-FEM: 10 cells. It has no explicit-density route (#2532), so Dirichlet is the exit only.
+# FP-FEM: 10 cells. Dirichlet is the shared exit; the explicit route's prescribed density (#2532) is pinned below.
 # Each met cell lists its oracle (an exact density at second order) and the wall property it is named for, with a
 # rival that must miss. The mass identity at the exit is pinned beside the oracle, not as it.
 oracle fp_fem/dirichlet_exit_1d     tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[dirichlet_exit_1d]
@@ -92,16 +92,17 @@ oracle fp_fem/dirichlet_exit_1d     tests/unit/test_alg/test_fp_fem_bc_oracles_2
 oracle fp_fem/dirichlet_exit_2d     tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[dirichlet_exit_2d]
 oracle fp_fem/dirichlet_exit_2d     tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_exit_drops_the_shared_value_and_a_wall_that_keeps_it_misses[dirichlet_exit_2d]
 # The Neumann cells list their routing pin, the shared refusal (#2512, row B3) and both targets of the NO_FLUX cell
-# they solve as, so they are met only while it is.
-# A refusal pin of an explicit NEUMANN is owed when #2532 adds FP-FEM's explicit route.
+# they solve as, so they are met only while it is, and the refusal of a NEUMANN of FP-FEM's own (#2532).
 oracle fp_fem/neumann_1d          tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[no_flux_1d]
 oracle fp_fem/neumann_1d          tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_wall_carries_no_total_flux_and_a_neumann_wall_misses[no_flux_1d]
 oracle fp_fem/neumann_1d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_zero_solves_as_zero_flux[fem-1d]
 oracle fp_fem/neumann_1d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_value_is_refused_naming_both_readings[fem-1d]
+oracle fp_fem/neumann_1d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_fem_refuses_a_neumann_of_its_own[1]
 oracle fp_fem/neumann_2d          tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[no_flux_2d]
 oracle fp_fem/neumann_2d          tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_wall_carries_no_total_flux_and_a_neumann_wall_misses[no_flux_2d]
 oracle fp_fem/neumann_2d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_zero_solves_as_zero_flux[fem-2d]
 oracle fp_fem/neumann_2d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_value_is_refused_naming_both_readings[fem-2d]
+oracle fp_fem/neumann_2d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_fem_refuses_a_neumann_of_its_own[2]
 oracle fp_fem/no_flux_1d            tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[no_flux_1d]
 oracle fp_fem/no_flux_1d            tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_wall_carries_no_total_flux_and_a_neumann_wall_misses[no_flux_1d]
 oracle fp_fem/no_flux_2d            tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[no_flux_2d]
@@ -113,6 +114,8 @@ oracle fp_fem/robin_2d              -
 pin    fp_fem/exit_mass_identity   tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_exit_loses_the_integrated_boundary_flux[dirichlet_exit_1d]
 pin    fp_fem/exit_mass_identity   tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_exit_loses_the_integrated_boundary_flux[dirichlet_exit_2d]
 pin    fp_fem/whole_file           tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py
+pin    fp_fem/explicit_route       tests/unit/test_alg/test_weak_form_fp_explicit_bc_2532.py
+pin    fp_fem/shared_robin_refused tests/unit/test_alg/test_fp_refuses_a_shared_robin_2512.py
 
 # The (b) rows
 row grid/B1_face_segment            -

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 from abc import abstractmethod
 from enum import Enum
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -194,17 +193,12 @@ class BaseFPSolver(BaseNumericalSolver):
 
         The one route for every FP solver: ``get_boundary_conditions()`` ends in it, and a solver that
         resolves the shared BC through its own chain passes the result here. A Dirichlet comes back
-        absorbing, a Neumann with g = 0 as zero flux, and a Neumann with g != 0 is refused
+        absorbing, a Neumann with g = 0 as zero flux, and a Neumann with g != 0 or any Robin is refused
         (`fp_view_of_shared_bc`).
         """
         from mfgarchon.geometry.boundary.bc_utils import fp_view_of_shared_bc
 
-        return fp_view_of_shared_bc(bc, consumer=type(self).__name__, takes_its_own_bc=self._takes_its_own_bc())
-
-    @classmethod
-    def _takes_its_own_bc(cls) -> bool:
-        """Whether the FP's BC can be given separately: this solver's constructor takes ``boundary_conditions``."""
-        return "boundary_conditions" in inspect.signature(cls.__init__).parameters
+        return fp_view_of_shared_bc(bc, consumer=type(self).__name__)
 
     def _fp_own_bc(self, bc: _BC) -> _BC:
         """A BC handed to this solver, which is the FP's own: a NEUMANN in it is refused (#2512, row B3)."""

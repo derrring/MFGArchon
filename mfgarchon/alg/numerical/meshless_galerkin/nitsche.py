@@ -39,7 +39,8 @@ Scope (interim, #1138):
   Advective outflow (e.g. evacuation) needs an upwind boundary flux: a follow-up.
 - Both solvers assemble the data load from the BC they hold. The FP holds the shared BC as
   read through ``bc_utils.fp_view_of_shared_bc``, where a Dirichlet is an exit (``g = 0``,
-  absorbing; #2512, convention row 5), so the translator alone decides that ``m = 0``.
+  absorbing; #2512, convention row 5), or its own BC, where ``MeshlessGalerkinFPSolver._validate_bc_support``
+  refuses a Dirichlet value (#2532). Either way the FP's data load is zero: ``m = 0``.
 - A segment placed by ``region``, ``sdf_region`` or ``normal_direction`` is refused when its placement
   matters: a Dirichlet one, one that outranks a Dirichlet segment, or any with a DIRICHLET ``default_bc``.
   This path places conditions by face name only, with the BC's precedence (#2490). Otherwise such a

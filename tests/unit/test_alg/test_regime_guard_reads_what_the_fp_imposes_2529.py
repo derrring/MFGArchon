@@ -71,3 +71,26 @@ def test_data_the_fp_solver_really_imposes_is_still_refused():
         RegimeSwitchingIterator(
             problems=problems, regime_config=_CONFIG, hjb_solvers=[HJBFDMSolver(p) for p in problems], fp_solvers=fps
         )
+
+
+def test_an_fem_fp_given_its_own_inhomogeneous_data_is_refused():
+    """FP-FEM's own DIRICHLET(0.7) (#2532) is data it imposes, and the guard refuses it like FP-FDM's.
+
+    The shared BC here is NO_FLUX. With the shared exit instead, reading the geometry and reading what the FP
+    imposes would both refuse, and this test could not tell the two apart. Before #2529's fix the guard read the
+    geometry for a solver with no ``boundary_conditions`` attribute, saw no-flux, and accepted the pair while the
+    FP imposed m = 0.7 (#2593, review 1).
+    """
+
+    def mesh_no_flux() -> Mesh1D:
+        geo = Mesh1D(bounds=(0.0, 1.0), num_elements=10)
+        geo.generate_mesh()
+        geo.boundary_conditions = no_flux_bc(dimension=1)
+        return geo
+
+    problems = [_problem(mesh_no_flux(), m0=1.0 / 1.1) for _ in range(2)]
+    own = BoundaryConditions(dimension=1, segments=list(_EXIT))
+    fps = [FPFEMSolver(p, boundary_conditions=own) for p in problems]
+    hjbs = [HJBFEMSolver(p) for p in problems]
+    with pytest.raises(ValueError, match=r"not verifiably zero: \[0\.7\]"):
+        RegimeSwitchingIterator(problems=problems, regime_config=_CONFIG, hjb_solvers=hjbs, fp_solvers=fps)

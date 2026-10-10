@@ -40,7 +40,7 @@ is a Neumann condition for the value function.
 | `DIRICHLET` | `u = g` | shared BC: **`m = 0`** (absorbing); a BC passed to the FP solver itself: `m = g` | Exit with exit cost `g`; fixed value |
 | `NEUMANN` | `du/dn = g` | see note below | Prescribed boundary data |
 | `NO_FLUX` | `du/dn = 0` | **`J.n = 0`**, where `J = v*m - D*grad(m)` | Reflecting / insulating wall; the mass-conserving choice |
-| `ROBIN` | `alpha*u + beta*du/dn = g` | same form on `m` | Mixed condition |
+| `ROBIN` | `alpha*u + beta*du/dn = g` | shared BC: refused; a BC passed to the FP solver itself: **`J.n = (D/beta)(alpha*m - g)`** (FP-FEM only) | Mixed condition; a finite-rate exit |
 | `PERIODIC` | `u(x_min) = u(x_max)` | `m(x_min) = m(x_max)` | Wrap-around domain |
 
 **`DIRICHLET` on a shared BC is an exit** (#2512, convention row 5). One `DIRICHLET(g)` on the
@@ -48,9 +48,9 @@ problem or geometry cannot mean `u = g` and `m = g` at once: the HJB reads the e
 and the FP solvers that accept DIRICHLET -- FDM, FEM, meshless Galerkin and particle -- read an
 absorbing wall `m = 0` through `bc_utils.fp_view_of_shared_bc`. FP-FVM, FP-GFDM and FP-SL refuse
 DIRICHLET at any `g`, shared or explicit. A BC passed to an FP solver explicitly is the FP's own,
-where `DIRICHLET(g)` is a prescribed density `m = g`: only `FPFDMSolver(boundary_conditions=...)`
-imposes one; the particle FP refuses a nonzero `g` there, and FEM and meshless Galerkin take no
-explicit BC.
+where `DIRICHLET(g)` is a prescribed density `m = g`: `FPFDMSolver(boundary_conditions=...)` and
+`FPFEMSolver(boundary_conditions=...)` impose one; the particle FP and meshless Galerkin refuse a nonzero
+`g` there ([Issue #2532](https://github.com/derrring/MFGArchon/issues/2532)).
 
 **`NO_FLUX` on the FP side is zero *total* flux, not zero gradient.** With drift at the wall the
 two differ: `J.n = 0` gives `D dm/dn = (v.n) m`, so `dm/dn` is generally **non-zero**. The FDM
@@ -70,9 +70,9 @@ The calculator classes name this distinction explicitly:
 > `du/dn = g`. Every FP solver reads `neumann_bc()` (`g = 0`) as zero flux `J.n = 0`, and refuses a
 > non-zero `g`, which says nothing about the agents' mass at the wall: keep `neumann_bc(value=g)` on the
 > problem for the HJB, and give the FP solver its own `boundary_conditions=no_flux_bc(...)`
-> ([Issue #2512](https://github.com/derrring/MFGArchon/issues/2512), row B3). `FPFEMSolver` takes no BC of
-> its own yet, nor does `MeshlessGalerkinFPSolver`, so neither can run that model until
-> [Issue #2532](https://github.com/derrring/MFGArchon/issues/2532) lands. Handed to an FP solver
+> ([Issue #2512](https://github.com/derrring/MFGArchon/issues/2512), row B3). A shared `ROBIN` is the
+> HJB's too and is refused at the FP whatever its coefficients: an FP Robin is a condition on the total
+> flux, `J.n = (D/beta)(alpha*m - g)` (see `docs/user/CONVENTIONS.md`). Handed to an FP solver
 > explicitly, as in `FPFDMSolver(problem, boundary_conditions=...)`, a NEUMANN would mean `dm/dn = g`,
 > which no FP solver implements, so it is refused: use `no_flux_bc()` for a reflecting FP wall. The
 > semi-Lagrangian and meshless Galerkin HJB solvers refuse a non-zero `g`
