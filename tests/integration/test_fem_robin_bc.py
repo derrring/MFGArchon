@@ -58,17 +58,24 @@ def _robin_g_ends(D: float) -> tuple[float, float]:
     return float(g_left), float(g_right)
 
 
-def _robin_problem_1d(num_elements: int, sigma: float, g_left: float, g_right: float, hamiltonian=None):
-    """A 1D line-mesh MFG problem with Robin BC on both ends."""
-    geom = Mesh1D(bounds=(0.0, 1.0), num_elements=num_elements)
-    geom.generate_mesh()
-    geom.boundary_conditions = BoundaryConditions(
+def _robin_bc_1d(g_left: float, g_right: float) -> BoundaryConditions:
+    """Robin on both ends of the unit rod. Shared, it is the HJB's; an FP solver is handed it as its own,
+    since a shared ROBIN is refused at the FP (#2512). These FP checks run at zero drift, where the FP's
+    total-flux Robin and the HJB's Robin coincide."""
+    return BoundaryConditions(
         dimension=1,
         segments=[
             BCSegment(name="L", bc_type=BCType.ROBIN, alpha=_ALPHA, beta=_BETA, value=g_left, boundary="x_min"),
             BCSegment(name="R", bc_type=BCType.ROBIN, alpha=_ALPHA, beta=_BETA, value=g_right, boundary="x_max"),
         ],
     )
+
+
+def _robin_problem_1d(num_elements: int, sigma: float, g_left: float, g_right: float, hamiltonian=None):
+    """A 1D line-mesh MFG problem with Robin BC on both ends."""
+    geom = Mesh1D(bounds=(0.0, 1.0), num_elements=num_elements)
+    geom.generate_mesh()
+    geom.boundary_conditions = _robin_bc_1d(g_left, g_right)
     if hamiltonian is None:
         hamiltonian = SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0), coupling=lambda m: 0.0)
     components = MFGComponents(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, hamiltonian=hamiltonian)
@@ -101,12 +108,13 @@ class TestRobinConvergence:
 
         sigma, D = _sigma_D()
         g_left, g_right = _robin_g_ends(D)
-        solver_cls = HJBFEMSolver if solver_name == "hjb" else FPFEMSolver
-
         errs, hs = [], []
         for ne in [8, 16, 32, 64]:
             problem = _robin_problem_1d(ne, sigma, g_left, g_right)
-            solver = solver_cls(problem, order=1)
+            if solver_name == "hjb":
+                solver = HJBFEMSolver(problem, order=1)
+            else:
+                solver = FPFEMSolver(problem, order=1, boundary_conditions=_robin_bc_1d(g_left, g_right))
             A_robin, rhs_robin = solver._robin_operator_terms(D)
             assert A_robin is not None, "Robin hook returned no-op operator for a Robin problem"
             assert rhs_robin is not None, "Robin hook returned no-op load for a Robin problem"
@@ -255,7 +263,7 @@ class TestRobinSolveLoopWiring:
         g_left = _ALPHA * m_lin(0.0) + _BETA * (-0.3)
         g_right = _ALPHA * m_lin(1.0) + _BETA * (0.3)
         problem = _robin_problem_1d(ne, sigma, g_left, g_right)
-        solver = FPFEMSolver(problem, order=1)
+        solver = FPFEMSolver(problem, order=1, boundary_conditions=_robin_bc_1d(g_left, g_right))
         x = solver._disc.dof_coordinates[:, 0]
         A_robin, rhs_robin = solver._robin_operator_terms(D)
         m_steady = spsolve((D * solver._K + A_robin).tocsc(), rhs_robin)
@@ -277,7 +285,7 @@ class TestRobinSolveLoopWiring:
         g_left = _ALPHA * m_lin(0.0) + _BETA * (-0.3)
         g_right = _ALPHA * m_lin(1.0) + _BETA * (0.3)
         problem = _robin_problem_1d(ne, sigma, g_left, g_right)
-        solver = FPFEMSolver(problem, order=1)
+        solver = FPFEMSolver(problem, order=1, boundary_conditions=_robin_bc_1d(g_left, g_right))
         N = solver.n_dof
         A_robin, rhs_robin = solver._robin_operator_terms(D)
         m_steady = spsolve((D * solver._K + A_robin).tocsc(), rhs_robin)

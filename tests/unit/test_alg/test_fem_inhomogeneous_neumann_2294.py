@@ -12,9 +12,9 @@ THE TWO HALVES ARE NOT THE SAME CONDITION, and this file exists as much for that
 - **FP** assembles `div(v m)` on the volume basis with no facet term (`_build_advection` returns
   `-C.T`). The boundary term it leaves is the TOTAL FLUX `J.n = v m - D grad m`. Adding the same
   load there would impose `J.n = -D*g`, which coincides with `dm/dn = g` only where the drift has no
-  normal component at the wall. The refusal is keyed on the SPELLING: `ROBIN(alpha=0, beta=1, g)`
-  still assembles on the FP side and gives a load bit-identical to the refused one. Pre-existing,
-  disclosed under #1237, filed rather than widened here.
+  normal component at the wall. `ROBIN(alpha=0, beta=1, g)` assembles that same load on the FP side,
+  and by the FP's Robin convention it means exactly `J.n = -D*g` (#2512, user ruling 2026-10-10), so
+  it is a different condition from `dm/dn = g` and not a second spelling of the refused one.
 
 Measured 2026-09-10, driving `FPFEMSolver` with a wall-crossing drift: at `g=0` mass is conserved to
 `6.7e-15` where `dm/dn = 0` would leak by `-int (a.n) m`, and at `g=5` the injection rate is exactly
@@ -118,8 +118,13 @@ def _solve(solver_name: str, kind: str, g: float):
     Both are driven by a NON-CONSTANT state, and that is a correctness requirement rather than
     taste: see `test_the_solve_is_not_degenerate`.
     """
-    cls = HJBFEMSolver if solver_name == "HJBFEMSolver" else FPFEMSolver
-    solver = cls(_problem(_segments(kind, g)), order=1)
+    if solver_name == "FPFEMSolver" and kind == "robin":
+        # A shared ROBIN is the HJB's and is refused at the FP (#2512), so the FP is handed its own.
+        robin = BoundaryConditions(dimension=2, segments=_segments("robin", g))
+        solver = FPFEMSolver(_problem(_segments("neumann", 0.0)), order=1, boundary_conditions=robin)
+    else:
+        cls = HJBFEMSolver if solver_name == "HJBFEMSolver" else FPFEMSolver
+        solver = cls(_problem(_segments(kind, g)), order=1)
     x = solver._disc.dof_coordinates[:, 0]
     if solver_name == "HJBFEMSolver":
         return np.asarray(solver.solve_hjb_system(M_density=np.ones((4, x.size)), U_terminal=np.sin(np.pi * x)))
@@ -229,22 +234,17 @@ def test_the_boundary_load_is_the_partition_of_unity_on_the_named_walls():
 def test_the_fp_solver_refuses_the_neumann_spelling():
     """#2294's other half, named for what it actually checks.
 
-    NOT "the FP weak form refuses the condition": it refuses this SPELLING. `ROBIN(alpha=0, beta=1, g)`
-    is the same mathematical condition and still reaches the FP assembly, producing a load vector
-    bit-identical to the one refused here (`max|diff| = 0.0`, measured). That path is pre-existing,
-    has its own tests, and `weak_form_fp_solver.py` already discloses the total-flux character of an
-    inhomogeneous Robin as out of scope for #1237 -- so it is filed, not widened here.
+    `ROBIN(alpha=0, beta=1, g)` still reaches the FP assembly with a load bit-identical to the one
+    refused here (`max|diff| = 0.0`, measured), and that is not a second spelling slipping through: by
+    the FP's Robin convention it means `J.n = -D*g`, which is what that load imposes, while `NEUMANN(g)`
+    would mean `dm/dn = g` (#2512, user ruling 2026-10-10). Only an explicit ROBIN reaches it.
 
     The refusal is the shared BC's FP reading (#2512, row B3; user ruling 2026-10-09): on the shared
     BC, g is the HJB's boundary cost, and `fp_view_of_shared_bc`, reached from `FPFEMSolver.__init__`
     through `get_boundary_conditions()`, refuses a NEUMANN whose g is not zero. It stops construction
     before #1686's `_validate_bc_support` gate, so it does not reach `assemble_robin_terms` either;
-    `test_the_natural_bc_parameter_gates_the_neumann_arm` covers that. The advice elsewhere is to give
-    the FP its own no-flux BC, and FP-FEM has no parameter to give one through, so its message says the
-    model cannot run on it until #2532 lands (it tracks WeakFormFPSolver's route).
-
-    Retirement: when #2532 gives FP-FEM a BC of its own, the advice changes and this test says so by
-    failing on the message.
+    `test_the_natural_bc_parameter_gates_the_neumann_arm` covers that. Since #2532 FP-FEM takes a BC of
+    its own, so the advice is to give it a no-flux one, as for every FP solver.
     """
     with pytest.raises(NotImplementedError) as excinfo:
         FPFEMSolver(_problem(_segments("neumann", _G)), order=1)
@@ -252,9 +252,8 @@ def test_the_fp_solver_refuses_the_neumann_spelling():
     message = str(excinfo.value)
     assert "du/dn = g" in message, message
     assert "not a Neumann condition" in message, message
-    assert "FPFEMSolver takes no boundary_conditions of its own yet, so this model cannot run on it" in message
-    assert "#2532" in message, message
-    assert "boundary_conditions=no_flux_bc" not in message, message
+    assert "pass FPFEMSolver boundary_conditions=no_flux_bc(dimension=...) for reflected agents" in message, message
+    assert "#2532" not in message, message
 
 
 def test_the_natural_bc_parameter_gates_the_neumann_arm():

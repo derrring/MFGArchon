@@ -6,7 +6,7 @@ unit of local time, du/dn = g. `BaseFPSolver._fp_view_of_shared` owns the FP's r
 - NEUMANN(g != 0) is refused at the FP (user ruling 2026-10-09). Its g says nothing about the agents'
   mass at the wall, and a mass flux through the wall is not a Neumann condition, so the two equations'
   BCs are specified separately: the shared BC keeps NEUMANN(g) for the HJB, and the FP solver is given
-  its own no-flux BC. A family with no such parameter cannot run the model yet (#2532: FP-FEM and meshless Galerkin).
+  its own no-flux BC. Every FP solver that reads a segment BC takes one (FP-FEM and meshless Galerkin since #2532).
 
 A NEUMANN handed to an FP solver explicitly would mean dm/dn = g, which no FP solver implements, so it is
 refused, g = 0 included (`_fp_own_bc`).
@@ -85,20 +85,23 @@ def _mesh(dim: int):
     return geometry
 
 
-def _fem_solve(bc: BoundaryConditions, dim: int) -> np.ndarray:
-    from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
-
+def _mesh_problem(bc: BoundaryConditions, dim: int) -> MFGProblem:
     geometry = _mesh(dim)
     geometry.boundary_conditions = bc
     # Unit mass on the mesh's own measure: Mesh1D's uniform-cell measure gives a constant c the mass c (n+1)/n.
     c = 16 / 17 if dim == 1 else 1.0
-    problem = MFGProblem(
+    return MFGProblem(
         model=_model(),
         domain=geometry,
         conditions=Conditions(m_initial=lambda p: c + 0.0 * np.asarray(p)[..., 0], u_terminal=lambda p: 0.0, T=T),
         Nt=NT,
     )
-    solver = FPFEMSolver(problem, order=1)
+
+
+def _fem_solve(bc: BoundaryConditions, dim: int) -> np.ndarray:
+    from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
+
+    solver = FPFEMSolver(_mesh_problem(bc, dim), order=1)
     x = solver._disc.dof_coordinates[:, 0]
     return np.asarray(
         solver.solve_fp_system(M_initial=np.ones_like(x), potential_field=np.broadcast_to(-x, (NT + 1, x.size)))
@@ -127,34 +130,46 @@ def test_a_shared_neumann_value_is_refused_naming_both_readings(family, dim):
     message = str(excinfo.value)
     assert "du/dn = g" in message
     assert "a mass flux through the wall is not a Neumann condition" in message
-    if family == "fdm":
-        assert "pass FPFDMSolver boundary_conditions=no_flux_bc(dimension=...)" in message
-    else:
-        assert "FPFEMSolver takes no boundary_conditions of its own yet" in message
-        assert "#2532" in message
+    solver = "FPFDMSolver" if family == "fdm" else "FPFEMSolver"
+    assert f"pass {solver} boundary_conditions=no_flux_bc(dimension=...)" in message
 
 
 @pytest.mark.parametrize("dim", [1, 2])
 def test_fdm_refuses_a_neumann_of_its_own(dim):
-    """FP-FDM takes an explicit BC, and a NEUMANN in it is refused, g = 0 included. FP-FEM takes none (#2532)."""
+    """FP-FDM takes an explicit BC, and a NEUMANN in it is refused, g = 0 included."""
     with pytest.raises(NotImplementedError, match=OWN_REFUSAL):
         FPFDMSolver(_grid_problem(no_flux_bc(dimension=dim), dim), boundary_conditions=neumann_bc(dimension=dim))
     FPFDMSolver(_grid_problem(no_flux_bc(dimension=dim), dim), boundary_conditions=no_flux_bc(dimension=dim))
 
 
+@pytest.mark.parametrize("dim", [1, 2])
+def test_fem_refuses_a_neumann_of_its_own(dim):
+    """FP-FEM takes an explicit BC since #2532, and a NEUMANN in it is refused, g = 0 included."""
+    from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
+
+    problem = _mesh_problem(no_flux_bc(dimension=dim), dim)
+    with pytest.raises(NotImplementedError, match=OWN_REFUSAL):
+        FPFEMSolver(problem, order=1, boundary_conditions=neumann_bc(dimension=dim))
+    FPFEMSolver(problem, order=1, boundary_conditions=no_flux_bc(dimension=dim))
+
+
 def _families_with_an_explicit_route():
+    """The grid families' builders; FP-FEM needs a mesh and is built where it is used."""
     from mfgarchon.alg.numerical.fp_solvers.fp_fvm import FPFVMSolver
     from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
     from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
+    from mfgarchon.alg.numerical.meshless_galerkin.fp_solver import MeshlessGalerkinFPSolver
 
+    cloud = np.linspace(0.0, 1.0, 21).reshape(-1, 1)
     return {
         "FVM": lambda p, bc: FPFVMSolver(p, boundary_conditions=bc),
         "SL": lambda p, bc: FPSLSolver(p, boundary_conditions=bc),
         "Particle": lambda p, bc: FPParticleSolver(p, num_particles=200, seed=0, boundary_conditions=bc),
+        "Meshless": lambda p, bc: MeshlessGalerkinFPSolver(p, cloud, delta=0.35, boundary_conditions=bc),
     }
 
 
-@pytest.mark.parametrize("family", ["FVM", "SL", "Particle"])
+@pytest.mark.parametrize("family", ["FVM", "SL", "Particle", "Meshless"])
 def test_every_explicit_route_refuses_a_neumann(family):
     build = _families_with_an_explicit_route()[family]
     problem = _grid_problem(no_flux_bc(dimension=1), 1)
@@ -184,15 +199,7 @@ def _build_on_shared(family: str, g: float):
     if family == "FEM":
         from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
 
-        geometry = _mesh(2)
-        geometry.boundary_conditions = neumann_bc(value=g, dimension=2)
-        problem = MFGProblem(
-            model=_model(),
-            domain=geometry,
-            conditions=Conditions(m_initial=lambda p: 1.0 + 0.0 * np.asarray(p)[..., 0], u_terminal=lambda p: 0.0, T=T),
-            Nt=NT,
-        )
-        return FPFEMSolver(problem, order=1)._bc
+        return FPFEMSolver(_mesh_problem(neumann_bc(value=g, dimension=2), 2), order=1)._bc
     if family == "Meshless":
         from mfgarchon.alg.numerical.meshless_galerkin.fp_solver import MeshlessGalerkinFPSolver
 
@@ -217,39 +224,49 @@ def test_every_family_reads_a_shared_neumann_zero_as_no_flux(family):
 
 @pytest.mark.parametrize("family", _ALL_FAMILIES)
 def test_every_family_refuses_a_shared_neumann_value(family):
-    """The advice follows the family: give the FP its own no-flux BC, or, with no parameter for one, wait for it."""
+    """Every family is advised to give the FP its own no-flux BC; each takes one (#2532 for FEM and meshless)."""
     with pytest.raises(NotImplementedError, match=SHARED_REFUSAL) as excinfo:
         _build_on_shared(family, 0.7)
-    if family in ("FEM", "Meshless"):
-        assert "takes no boundary_conditions of its own yet, so this model cannot run on it" in str(excinfo.value)
-        assert "boundary_conditions=no_flux_bc" not in str(excinfo.value)
-    else:
-        assert "boundary_conditions=no_flux_bc(dimension=...) for reflected agents" in str(excinfo.value)
+    assert "boundary_conditions=no_flux_bc(dimension=...) for reflected agents" in str(excinfo.value)
 
 
-@pytest.mark.parametrize("family", ["FDM", "FVM", "SL", "Particle"])
+@pytest.mark.parametrize("family", ["FDM", "FVM", "SL", "Particle", "Meshless", "FEM"])
 def test_the_refusals_advice_runs(family):
     """Followed: the shared BC keeps NEUMANN(0.7) for the HJB, and the FP is given its own no-flux BC.
 
     The FP solves under the drift into the x_max wall, and the wall holds: the density piles up against it
     and the mass stays. Completion alone passed a wall-less solve, FP-GFDM's, whose density stayed uniform
-    (#2583). An HJB solver on the same problem still reads g = 0.7.
+    (#2583). An HJB solver on the same problem still reads g = 0.7. FP-FEM runs on a 16-element mesh of the
+    same interval, beside HJB-FEM.
     """
-    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+    if family == "FEM":
+        from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
+        from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
 
-    problem = _grid_problem(neumann_bc(value=0.7, dimension=1), 1)
-    build = {"FDM": lambda p, bc: FPFDMSolver(p, boundary_conditions=bc), **_families_with_an_explicit_route()}[family]
-    solver = build(problem, no_flux_bc(dimension=1))
-    x = np.linspace(0.0, 1.0, 21)
-    M = np.asarray(solver.solve_fp_system(M_initial=np.ones(21), potential_field=np.broadcast_to(-x, (NT + 1, 21))))
-    assert np.shape(M) == (NT + 1, 21)
+        problem = _mesh_problem(neumann_bc(value=0.7, dimension=1), 1)
+        solver = FPFEMSolver(problem, order=1, boundary_conditions=no_flux_bc(dimension=1))
+        x = solver._disc.dof_coordinates[:, 0]
+        hjb = HJBFEMSolver(problem)
+    else:
+        from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+
+        problem = _grid_problem(neumann_bc(value=0.7, dimension=1), 1)
+        builders = {"FDM": lambda p, bc: FPFDMSolver(p, boundary_conditions=bc), **_families_with_an_explicit_route()}
+        solver = builders[family](problem, no_flux_bc(dimension=1))
+        x = np.linspace(0.0, 1.0, 21)
+        hjb = HJBFDMSolver(problem)
+    M = np.asarray(
+        solver.solve_fp_system(M_initial=np.ones(x.size), potential_field=np.broadcast_to(-x, (NT + 1, x.size)))
+    )
+    assert np.shape(M) == (NT + 1, x.size)
     assert np.all(np.isfinite(M))
-    # Measured at the head: m(T) at x_max over the midpoint is 11.4 (FDM), 19.2 (FVM), 8.9 (SL), 7.7
-    # (Particle); a wall-less solve gives 1.0.
-    assert M[-1, -1] > 3.0 * M[-1, 10] > 3.0 * M[-1, 0]
-    weights = np.r_[0.5, np.ones(19), 0.5] / 20
-    assert abs(float(np.sum(M[-1] * weights)) - 1.0) < 0.05
-    hjb_bc = HJBFDMSolver(problem).get_boundary_conditions()
+    right, middle, left = (int(np.argmin(np.abs(x - at))) for at in (1.0, 0.5, 0.0))
+    # Measured: m(T) at x_max over the midpoint is 11.4 (FDM), 19.2 (FVM), 8.9 (SL), 7.7 (Particle), 20.7
+    # (Meshless) and 14.6 (FEM); a wall-less solve gives 1.0.
+    assert M[-1, right] > 3.0 * M[-1, middle] > 3.0 * M[-1, left]
+    order = np.argsort(x)
+    assert abs(float(np.trapezoid(M[-1, order], x[order])) - 1.0) < 0.05
+    hjb_bc = hjb.get_boundary_conditions()
     assert [(seg.bc_type, seg.value) for seg in hjb_bc.segments] == [(BCType.NEUMANN, 0.7)]
 
 

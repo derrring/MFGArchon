@@ -42,6 +42,7 @@ if TYPE_CHECKING:
 
     from mfgarchon.alg.numerical.weak_form_discretization import WeakFormDiscretization
     from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.geometry.boundary import BoundaryConditions
 
 logger = get_logger(__name__)
 
@@ -53,8 +54,16 @@ class WeakFormFPSolver(BaseFPSolver):
     # own quadrature/MLS basis (a genuine feature: avoids differentiating U on a coarse FP grid).
     _drift_convention = DriftConvention.VALUE_FUNCTION
 
-    def __init__(self, problem: MFGProblem, discretization: WeakFormDiscretization) -> None:
+    def __init__(
+        self,
+        problem: MFGProblem,
+        discretization: WeakFormDiscretization,
+        boundary_conditions: BoundaryConditions | None = None,
+    ) -> None:
         super().__init__(problem)
+        # An explicit BC is the FP's own and is used as given, a NEUMANN refused (#2532); without one the
+        # solver reads the problem's shared BC, translated (`BaseFPSolver._lookup_boundary_conditions`).
+        self._boundary_conditions = boundary_conditions
         self._disc = discretization
         self._n_dof = discretization.n_dof
         self._K = discretization.stiffness()
@@ -62,9 +71,9 @@ class WeakFormFPSolver(BaseFPSolver):
         # Single source of truth for BCs (matches WeakFormHJBSolver); plain
         # getattr(geometry, "boundary_conditions") misses grids that expose BCs via
         # the accessor method (e.g. TensorProductGrid), silently dropping Dirichlet.
-        # No weak-form FP solver takes an explicit BC, so this is the problem's shared one, read through
-        # BaseFPSolver: a DIRICHLET(g) is an exit, absorbing here, a NEUMANN(0) is zero flux and a nonzero one
-        # is refused (#2512, row B3). Condensed literally a Dirichlet pinned the FEM exit wall at m = g (#2525).
+        # The shared BC is read through BaseFPSolver: a DIRICHLET(g) is an exit, absorbing here, a NEUMANN(0)
+        # is zero flux, and a nonzero NEUMANN or any ROBIN is refused (#2512, row B3). Condensed literally, a
+        # shared Dirichlet pinned the FEM exit wall at m = g (#2525); an explicit DIRICHLET(g) is that density.
         self._bc = self.get_boundary_conditions()
         # Issue #1489 (S3): one-shot latch for the adjoint-step positivity clip warning (the adjoint
         # path is stateless per call, so the latch lives on the solver to warn once per solve).
@@ -96,16 +105,17 @@ class WeakFormFPSolver(BaseFPSolver):
         return None, None
 
     def _robin_operator_terms(self, D: float):
-        """Optional Robin boundary operator augmentation ``alpha*m + beta*dm/dn = g``.
+        """Optional Robin boundary operator augmentation, the FP's total-flux Robin ``J.n = (D/beta)(alpha*m - g)``.
 
         Returns ``(A_robin, rhs_robin)`` to ADD to the spatial operator ``M/dt + D*K`` and each
-        timestep RHS, or ``(None, None)`` for no Robin BC. The FP Robin term is the ADJOINT of
-        the HJB one: it is the boundary mass ``D*(alpha/beta)*int_dOmega phi_i phi_j`` from
-        integrating the FP DIFFUSION operator ``-D*Delta m`` by parts, which is symmetric, so its
-        transpose equals itself and ``A_FP = A_HJB^T`` is preserved for the diffusion+Robin block.
-        Default no-op; only the FEM solver overrides this (the meshless absorbing-Nitsche path is
-        unperturbed). The advection-flux boundary coupling for an inhomogeneous Robin OUTFLOW is a
-        distinct total-flux BC and is out of scope (Issue #1237)."""
+        timestep RHS, or ``(None, None)`` for no Robin BC. The term is the boundary mass
+        ``D*(alpha/beta)*int_dOmega phi_i phi_j`` and the load ``D*(g/beta)*int_dOmega phi_i``. The
+        weak form integrates the whole flux by parts and leaves ``J.n`` on the boundary, so this
+        imposes ``alpha*m - (beta/D)*J.n = g``, which is not ``alpha*m + beta*dm/dn = g`` where the
+        drift crosses the wall (#2512, user ruling 2026-10-10). The boundary mass is symmetric, the
+        same block as the HJB's Robin term, so ``A_FP = A_HJB^T`` is preserved for the
+        diffusion+Robin block. Only an explicit ROBIN reaches it; a shared one is refused. Default
+        no-op; only the FEM solver overrides this."""
         return None, None
 
     # --- Advection from drift (subclass-supplied) -----------------------------

@@ -378,7 +378,7 @@ def _describe_bc_value(value: Any) -> object | None:
         return f"<unrecognised {type(value).__name__}>"
 
 
-def fp_view_of_shared_bc(boundary_conditions: Any, *, consumer: str, takes_its_own_bc: bool) -> Any:
+def fp_view_of_shared_bc(boundary_conditions: Any, *, consumer: str) -> Any:
     """The Fokker-Planck reading of a shared problem/geometry BC (#2512, row B3).
 
     One owner for the translation. A shared BC carries one datum per face, and two equations read it.
@@ -393,18 +393,22 @@ def fp_view_of_shared_bc(boundary_conditions: Any, *, consumer: str, takes_its_o
       boundary cost and says nothing about the agents' mass at the wall, and a mass flux through the
       wall is not a Neumann condition, so the two equations' BCs are specified separately. "Not provably
       zero" is `describe_inhomogeneous_bc_data`'s answer, so a callable or a provider is refused rather
-      than assumed zero, and the ``default_bc`` fall-through is checked too (#1686).
+      than assumed zero, and the ``default_bc`` fall-through is checked too (#1686);
+    - a ROBIN, as a segment or the ``default_bc``, is **refused**, whatever its coefficients (user ruling
+      2026-10-10). On the shared BC it is the HJB's alpha*u + beta*du/dn = g. An FP Robin condition is on
+      the total flux, J.n = (D/beta)(alpha*m - g), which is not alpha*m + beta*dm/dn = g where the drift
+      crosses the wall, so the HJB's coefficients do not say what the FP's are.
 
-    Everything else is returned unchanged.
+    Everything else is returned unchanged: NO_FLUX, REFLECTING and PERIODIC mean the same to both
+    equations, and the EXTRAPOLATION types reach the FP solver's own support check, which refuses them.
 
-    ``consumer`` names the solver in the refusal, and ``takes_its_own_bc`` says whether it has a
-    ``boundary_conditions`` parameter through which the FP's BC can be given separately: the refusal's
-    advice depends on it.
+    ``consumer`` names the solver in the refusal, which advises giving that solver its own
+    ``boundary_conditions``.
 
     Only a BC the FP solver reads from the shared problem / geometry goes through here -- in a coupled
     solve or a standalone FP solve alike, since the solver cannot tell them apart. A BC passed to an FP
-    solver explicitly is the FP's own: there ``DIRICHLET(g)`` is a prescribed density m = g, and a
-    NEUMANN is refused (`refuse_explicit_fp_neumann`).
+    solver explicitly is the FP's own: there ``DIRICHLET(g)`` is a prescribed density m = g, a ROBIN is
+    the FP's total-flux Robin, and a NEUMANN is refused (`refuse_explicit_fp_neumann`).
 
     Anything that is not a ``BoundaryConditions`` (``None``, a string sentinel) is returned as is.
     """
@@ -416,7 +420,11 @@ def fp_view_of_shared_bc(boundary_conditions: Any, *, consumer: str, takes_its_o
     if not isinstance(boundary_conditions, BoundaryConditions):
         return boundary_conditions
     if values := describe_inhomogeneous_bc_data(boundary_conditions, bc_types={BCType.NEUMANN}):
-        _refuse_a_shared_neumann_value(boundary_conditions, values, consumer, takes_its_own_bc)
+        _refuse_a_shared_neumann_value(boundary_conditions, values, consumer)
+    if any(seg.bc_type == BCType.ROBIN for seg in boundary_conditions.segments) or (
+        boundary_conditions.default_bc == BCType.ROBIN
+    ):
+        _refuse_a_shared_robin(boundary_conditions, consumer)
 
     def fp_segment(seg: Any) -> Any:
         if seg.bc_type == BCType.NEUMANN:
@@ -439,9 +447,16 @@ def fp_view_of_shared_bc(boundary_conditions: Any, *, consumer: str, takes_its_o
     return replace(boundary_conditions, **changes)
 
 
-def _refuse_a_shared_neumann_value(
-    boundary_conditions: Any, values: list[object], consumer: str, takes_its_own_bc: bool
-) -> NoReturn:
+def _separate_bc_advice(consumer: str, kept: str) -> str:
+    """How to specify the two equations' BCs separately, which both shared refusals advise."""
+    return (
+        f"keep {kept} on the shared BC for the HJB, and pass {consumer} "
+        "boundary_conditions=no_flux_bc(dimension=...) for reflected agents; through problem.solve, "
+        "build that FP solver yourself and pass it as fp_solver="
+    )
+
+
+def _refuse_a_shared_neumann_value(boundary_conditions: Any, values: list[object], consumer: str) -> NoReturn:
     """The refusal of a shared NEUMANN whose g is not provably zero, naming both readings (#2512, row B3)."""
     from .types import BCType
 
@@ -455,24 +470,28 @@ def _refuse_a_shared_neumann_value(
         and _describe_bc_value(boundary_conditions.default_value) is not None
     ):
         where.append("default_bc=NEUMANN, the fall-through for faces no segment names")
-    if takes_its_own_bc:
-        how = (
-            f"keep NEUMANN(g) on the shared BC for the HJB, and pass {consumer} "
-            "boundary_conditions=no_flux_bc(dimension=...) for reflected agents; through problem.solve, "
-            "build that FP solver "
-            "yourself and pass it as fp_solver="
-        )
-    else:
-        how = (
-            f"{consumer} takes no boundary_conditions of its own yet, so this model cannot run on it until "
-            "it does (#2532 tracks it)"
-        )
     raise NotImplementedError(
         f"{consumer}: the problem's shared boundary condition has a NEUMANN value that is not zero "
         f"({', '.join(map(str, values))}, at {'; '.join(where)}). On the shared BC that value is the HJB's "
         "boundary cost, du/dn = g. It says nothing about the agents' mass at the wall, and a mass flux "
         "through the wall is not a Neumann condition, so the FP cannot read one from it (#2512, user ruling "
-        f"2026-10-09). Specify the two equations' BCs separately: {how}."
+        f"2026-10-09). Specify the two equations' BCs separately: {_separate_bc_advice(consumer, 'NEUMANN(g)')}."
+    )
+
+
+def _refuse_a_shared_robin(boundary_conditions: Any, consumer: str) -> NoReturn:
+    """The refusal of a shared ROBIN at the FP, naming both readings (#2512, user ruling 2026-10-10)."""
+    from .types import BCType
+
+    where = [f"segment {seg.name!r}" for seg in boundary_conditions.segments if seg.bc_type == BCType.ROBIN]
+    if boundary_conditions.default_bc == BCType.ROBIN:
+        where.append("default_bc=ROBIN, the fall-through for faces no segment names")
+    raise NotImplementedError(
+        f"{consumer}: the problem's shared boundary condition has a ROBIN condition (at {'; '.join(where)}). "
+        "On the shared BC it is the HJB's, alpha*u + beta*du/dn = g. An FP Robin condition is on the total "
+        "flux, J.n = (D/beta)(alpha*m - g), which is not alpha*m + beta*dm/dn = g where the drift crosses the "
+        "wall, so the HJB's coefficients do not say what the FP's are (#2512, user ruling 2026-10-10). "
+        f"Specify the two equations' BCs separately: {_separate_bc_advice(consumer, 'ROBIN')}."
     )
 
 

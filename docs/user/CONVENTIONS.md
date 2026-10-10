@@ -735,12 +735,26 @@ as zero total flux, $J \cdot n = 0$ (`NO_FLUX`; ruled 2026-10-08). A `NEUMANN(g)
 refused at the FP (user ruling 2026-10-09): $g$ says nothing about the agents' mass at the wall, and a
 mass flux through the wall is not a Neumann condition. The two equations' BCs are then specified
 separately: the shared BC keeps `NEUMANN(g)` for the HJB, and the FP solver is given
-`boundary_conditions=no_flux_bc(...)` for reflected agents. An FP solver with no such parameter cannot run
-that model yet (`FPFEMSolver`, `MeshlessGalerkinFPSolver`: #2532). A value that is not provably zero, such as a callable, counts as
-$g \ne 0$. `BaseFPSolver` owns the reading, through `bc_utils.fp_view_of_shared_bc`, and
+`boundary_conditions=no_flux_bc(...)` for reflected agents. A value that is not provably zero, such as a
+callable, counts as $g \ne 0$. `BaseFPSolver` owns the reading, through `bc_utils.fp_view_of_shared_bc`, and
 `get_boundary_conditions()` and each FP solver's own resolution end in it. A NEUMANN handed to an FP
 solver explicitly would mean $\partial m / \partial n = g$, which no FP solver implements, so it is
 refused, $g = 0$ included; a reflecting FP wall is `NO_FLUX` (#2512, row B3).
+
+### A Robin condition at the FP
+
+An FP Robin condition is a condition on the total flux $J = v m - D \nabla m$: `ROBIN(alpha, beta, g)`
+means $J \cdot n = (D / \beta)(\alpha m - g)$, equivalently $\alpha m - (\beta / D)\, J \cdot n = g$ (user
+ruling 2026-10-10). It is not $\alpha m + \beta\, \partial m / \partial n = g$ where the drift crosses the
+wall: written as conditions equal to $g$, the two differ by $(\beta / D)(v \cdot n)\, m$. With $g = 0$ it is
+an exit at a finite rate, $J \cdot n$ proportional to $m$. `FPFEMSolver` imposes it from its own
+`boundary_conditions`, because its weak form leaves $J \cdot n$ on the boundary; no other FP solver accepts a
+ROBIN.
+
+On a BC the HJB and the FP share, a ROBIN face is the HJB's, $\alpha u + \beta\, \partial u / \partial n = g$,
+and it is refused at the FP whatever its coefficients: they do not say what the FP's would be. As for a
+shared Neumann value, the shared BC keeps the ROBIN for the HJB, and the FP solver is given its own
+`boundary_conditions`. `bc_utils.fp_view_of_shared_bc` owns the refusal (#2512).
 
 ### What is not settled here
 

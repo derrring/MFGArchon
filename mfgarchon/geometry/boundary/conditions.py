@@ -1137,8 +1137,7 @@ def neumann_bc(
       boundary local time. With g = 0 the FP reads the face as zero total flux, J.n = 0 (ruled
       2026-10-08). A nonzero g is refused at the FP (user ruling 2026-10-09): it says nothing about the
       agents' mass at the wall, so keep ``neumann_bc(value=g)`` on the problem for the HJB and give the
-      FP solver ``boundary_conditions=no_flux_bc(...)``. ``FPFEMSolver`` and
-      ``MeshlessGalerkinFPSolver`` take no such parameter, so they cannot run that model until #2532.
+      FP solver ``boundary_conditions=no_flux_bc(...)``.
     - Handed to an FP solver explicitly it would mean dm/dn = g, which no FP solver implements, so the
       solver refuses it. Pass ``no_flux_bc()`` for a reflecting FP wall.
 
@@ -1194,6 +1193,10 @@ def robin_bc(
     """
     Create Robin boundary conditions (alpha*u + beta*du/dn = value).
 
+    That is the HJB's reading. Handed to an FP solver as its own BC, the coefficients mean a condition on
+    the total flux, ``J.n = (D/beta)*(alpha*m - value)``; on a BC the two equations share, a ROBIN is the
+    HJB's and is refused at the FP (#2512, user ruling 2026-10-10; ``docs/user/CONVENTIONS.md``).
+
     **You probably do not want this for a reflecting FP wall.** ``J.n = 0`` is Robin in ``m``, but
     the conservative schemes already impose it structurally -- by zeroing the total face flux,
     with no BC-type branch naming it -- and ``FPParticleSolver`` gets the same wall from Skorokhod
@@ -1201,13 +1204,15 @@ def robin_bc(
 
     Which solvers read the coefficients (#1975):
 
-    - ``FPFEMSolver`` / ``HJBFEMSolver`` -- weak form, coefficients read:
+    - ``FPFEMSolver`` (from its own ``boundary_conditions`` only) / ``HJBFEMSolver`` -- weak form,
+      coefficients read:
       ``A_robin = D*(alpha/beta)*int_dOmega phi_i phi_j``, load ``D*(1/beta)*int_dOmega g phi_i``.
       Constant ``g`` only; ``beta == 0`` fails loud; a provider-valued ``alpha`` raises a bare
       ``TypeError`` from ``float()``.
     - ``HJBGFDMSolver`` -- the ``Robin(0, 1)`` case only, i.e. ``n . grad u = g``.
-    - **Every grid FP solver refuses ROBIN at construction** (``_validate_bc_support``, #1456,
-      raising from ``BaseMFGSolver``), uniform and mixed alike. The refusal is load-bearing:
+    - **Every grid FP solver refuses ROBIN at construction**, uniform and mixed alike: a shared one in
+      ``fp_view_of_shared_bc`` (#2512), its own in ``_validate_bc_support`` (#1456, raising from
+      ``BaseMFGSolver``). The refusal is load-bearing:
       the FDM boundary handlers are not passed ``boundary_conditions``, so they read none of
       ``alpha``/``beta``/``value``. Below the gate -- calling ``solve_timestep_full_nd`` directly,
       or mutating ``solver.boundary_conditions`` after construction (#2475) -- a ROBIN segment is
