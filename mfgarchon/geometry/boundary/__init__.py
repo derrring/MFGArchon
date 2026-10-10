@@ -21,7 +21,7 @@ Primary API (covers 95% of usage)::
 For applicators, import from submodules::
 
     from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator
-    from mfgarchon.geometry.boundary.bc_adapter import apply_fem_bc  # FEM via scikit-fem
+    from mfgarchon.alg.numerical.fem.bc_adapter import apply_bc_to_fem_system  # FEM via scikit-fem
     from mfgarchon.geometry.boundary.applicator_graph import GraphApplicator
     from mfgarchon.geometry.boundary.dispatch import apply_bc
 """
@@ -97,7 +97,7 @@ from .types import (
 #
 # For secondary/specialist APIs (applicators, calculators, ghost formulas,
 # graph BC, corner handling, etc.), import from submodules:
-#   from mfgarchon.geometry.boundary.bc_adapter import apply_fem_bc  # FEM
+#   from mfgarchon.alg.numerical.fem.bc_adapter import apply_bc_to_fem_system  # FEM
 #   from mfgarchon.geometry.boundary.applicator_graph import GraphApplicator
 #   from mfgarchon.geometry.boundary.protocols import BoundaryCapable
 #   from mfgarchon.geometry.boundary.calculators import DirichletCalculator

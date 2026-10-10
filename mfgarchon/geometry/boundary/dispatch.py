@@ -15,9 +15,9 @@ Usage:
     >>> padded_field = apply_bc(geometry, field, boundary_conditions)
     >>>
     >>> # For repeated application (performance): get reusable applicator
-    >>> applicator = get_applicator_for_geometry(geometry, bc)
-    >>> padded_field_1 = applicator.apply(field_1)
-    >>> padded_field_2 = applicator.apply(field_2)
+    >>> applicator = get_applicator_for_geometry(geometry)  # FDM by default
+    >>> padded_field_1 = applicator.apply(field_1, boundary_conditions)
+    >>> padded_field_2 = applicator.apply(field_2, boundary_conditions)
 """
 
 from __future__ import annotations
@@ -76,7 +76,8 @@ def get_applicator_for_geometry(
         discretization: Discretization method. Options:
             - DiscretizationType.FDM (default): Ghost cell method
             - DiscretizationType.GFDM: Meshfree collocation
-            - DiscretizationType.FEM: Matrix modification
+            - DiscretizationType.FEM: refused -- FEM BCs modify the assembled system, through
+              `mfgarchon.alg.numerical.fem.bc_adapter`
             - DiscretizationType.GRAPH: Network boundaries
 
     Returns:
@@ -113,7 +114,10 @@ def get_applicator_for_geometry(
         raise NotImplementedError(
             "FEM BC application uses bc_adapter.py (scikit-fem condense pattern) "
             "directly, not through the applicator dispatch. "
-            "Use: from mfgarchon.alg.numerical.fem.bc_adapter import apply_bc_to_fem_system"
+            "Use: from mfgarchon.alg.numerical.fem.bc_adapter import apply_bc_to_fem_system, on the "
+            "assembled system; with Dirichlet it condenses the system, so scatter the solution back with "
+            "get_dirichlet_dofs_and_values, and a Robin segment is not applied there but assembled into the "
+            "operator by assemble_robin_terms."
         )
 
     elif discretization == DiscretizationType.GRAPH:
@@ -224,7 +228,7 @@ def apply_bc(
         # Use bc_adapter.py (scikit-fem condense pattern) instead.
         raise NotImplementedError(
             "FEM BC application requires matrix/rhs modification. "
-            "Use bc_adapter.py (scikit-fem condense pattern) directly."
+            "Use mfgarchon.alg.numerical.fem.bc_adapter (scikit-fem condense pattern) on the assembled system."
         )
 
     else:

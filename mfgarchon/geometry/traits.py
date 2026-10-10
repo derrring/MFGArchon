@@ -31,7 +31,7 @@ from typing import Protocol, runtime_checkable
 class ConnectivityType(Enum):
     """How neighbor relationships are determined.
 
-    Directly dictates memory access patterns and kernel selection.
+    Declared by the Geometry subclasses' ``connectivity_type``; nothing in the package reads it.
 
     Values:
         IMPLICIT: Neighbors via stride arithmetic (TensorProductGrid).
@@ -50,8 +50,7 @@ class ConnectivityType(Enum):
 class StructureType(Enum):
     """Whether the geometry has regular logical indexing.
 
-    Determines whether fields can be reshaped to (Nx, Ny, ...) grids
-    and whether stencil-based operators (FDM, WENO) are applicable.
+    Declared by the Geometry subclasses' ``structure_type``; nothing in the package reads it.
 
     Values:
         STRUCTURED: Nodes form a regular lattice with logical (i,j,k) coords.
@@ -74,7 +73,7 @@ class BoundaryDef(Enum):
             Supports curved and complex boundaries.
         IMPLICIT: Signed distance function phi(x) = 0.
             Dimension-agnostic, natural for CSG.
-        NONE: No boundary (periodic domains, graphs, open domains).
+        NONE: No boundary (graphs, open domains). A periodic TensorProductGrid reports BOX.
     """
 
     BOX = "box"
