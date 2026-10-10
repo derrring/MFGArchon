@@ -47,7 +47,8 @@ not only of the tree: on 2026-10-10 numpy 2.4.6 -> 2.5.3 alone moved `alg` 706 -
 34 -> 35, under mypy 2.3 and 2.4 alike (#2592). A baseline read on another toolchain therefore reports
 the environment as a change in the tree, and this script's advice for a change -- re-record -- would,
 on the wrong environment, overwrite the right baseline. So the baseline stamps python, mypy and numpy,
-and a check on a toolchain that differs in any of them is refused before anything is compared.
+and a check on a toolchain whose python minor version, mypy version or numpy version differs from the
+stamp is refused before anything is compared.
 
 Exit 0 clean, 1 the tree moved against the baseline, 2 the instrument could not measure.
 """
@@ -223,7 +224,9 @@ def compare(baseline: dict, counts: dict[str, int], checked: int, statuses: dict
 
 
 def _toolchain() -> dict[str, str]:
-    """This interpreter's toolchain. It is also mypy's target, so its numpy's stubs are the ones checked."""
+    """This interpreter's toolchain, read where mypy reads stubs: pyproject fixes ``python_version = "3.12"``, so on
+    a 3.12 interpreter mypy's target is this one and its numpy is the one checked. Any other minor version is
+    refused by `toolchain_mismatch` before the scan."""
     from importlib import metadata
 
     out = subprocess.run([sys.executable, "-P", "-m", "mypy", "--version"], capture_output=True, text=True).stdout
@@ -235,9 +238,12 @@ def _toolchain() -> dict[str, str]:
 
 
 def _comparable(stamp: dict[str, str]) -> dict[str, str | None]:
-    """The parts of a stamp the counts depend on: python's minor version, mypy's version, numpy's version.
+    """The parts of a stamp that are compared: python's minor version, mypy's version, numpy's version.
 
-    A python patch release and mypy's "compiled" flag are left out: neither changes a stub or a check.
+    A sample, not every input: measured between #2592's two environments, numpy alone moved the counts, and
+    swapping pydantic (and its mypy plugin), scipy, matplotlib, cvxpy, numba or polars moved none. mypy is
+    stamped as a precaution. A python patch release and mypy's "compiled" flag are left out: neither changed
+    a count.
     """
     python = stamp.get("python")
     mypy = re.search(r"\d+(?:\.\d+)+", stamp.get("mypy") or "")
