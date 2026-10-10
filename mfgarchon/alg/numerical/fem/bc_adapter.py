@@ -202,22 +202,56 @@ def _segment_boundary_facets(mesh: skfem.Mesh, segment: BCSegment) -> NDArray:
     (`refuse_what_fem_cannot_impose`). Only the ``boundary`` name is read. A segment also placed by
     ``region``, ``region_name``, ``sdf_region`` or ``normal_direction`` resolves as its ``boundary`` face
     if it names one -- the whole face, not the placed part -- and as the whole boundary if it names none.
+
+    A name must be a tag that holds facets. A tag the mesh carries with no facet in it is refused as a missing
+    one: the axis tags are placed by bounding box (`mesh_adapter._tag_axis_aligned_boundaries`), so on a curved
+    domain they exist and are empty, and condensing nothing would leave that face a wall (#2593, review 3).
     """
     boundary_name = getattr(segment, "boundary", None)
     if boundary_name:
         # Issue #1489 (F3): a NAMED boundary absent from the mesh is an ERROR — silently falling back
         # to the WHOLE boundary would over-constrain (a one-wall Dirichlet applied everywhere). The
         # mesh_adapter auto-tags axis-aligned walls (x_min/x_max/...) for box domains (#607).
-        if not mesh.boundaries or boundary_name not in mesh.boundaries:
-            available = sorted(mesh.boundaries) if mesh.boundaries else "none"
-            raise ValueError(
-                f"Segment '{getattr(segment, 'name', '?')}' names boundary '{boundary_name}', "
-                f"but the mesh has no such tagged boundary (available: {available}). A missing named "
-                f"boundary would otherwise silently apply the BC to the ENTIRE boundary (Issue #1489). "
-                f"Name one of the mesh's tagged boundaries as boundary=."
-            )
-        return np.asarray(mesh.boundaries[boundary_name])
+        holding = {name: facets for name, facets in (mesh.boundaries or {}).items() if len(facets)}
+        if boundary_name not in holding:
+            raise ValueError(_no_such_tagged_boundary(mesh, segment, boundary_name, holding))
+        return np.asarray(holding[boundary_name])
     return np.asarray(mesh.boundary_facets())
+
+
+def _no_such_tagged_boundary(mesh: skfem.Mesh, segment: BCSegment, boundary_name: object, holding: dict) -> str:
+    """The refusal of a name no facet-holding tag carries, with advice that can be followed on this mesh."""
+    from mfgarchon.geometry.boundary.types import parse_boundary_face
+
+    head = (
+        f"Segment '{getattr(segment, 'name', '?')}' names boundary '{boundary_name}', but the mesh has no such "
+        "tagged boundary"
+    )
+    empty = (
+        f" The mesh carries the tag '{boundary_name}', but no facet is in it."
+        if boundary_name in (mesh.boundaries or {})
+        else ""
+    )
+    why = (
+        " A missing named boundary would otherwise silently apply the BC to the ENTIRE boundary (Issue #1489), "
+        "and an empty one to none of it (#2593)."
+    )
+    if not holding:
+        return (
+            f"{head}: none of its tags holds a facet, so only a whole-boundary segment (boundary=None) can be "
+            f"placed on it.{empty}{why} Tag the mesh before naming a face: give its MeshData nonzero "
+            "boundary_tags, one per boundary_faces row, and name the face 'region_<tag>'."
+        )
+    face = parse_boundary_face(boundary_name) if isinstance(boundary_name, str) else None
+    alias = (
+        f" The BC layer reads '{boundary_name}' as '{face.to_string()}', which this mesh tags."
+        if face is not None and face.to_string() != boundary_name and face.to_string() in holding
+        else ""
+    )
+    return (
+        f"{head} (available: {sorted(holding)}).{empty}{alias}{why} Name one of the mesh's tagged boundaries as "
+        "boundary=."
+    )
 
 
 def _find_segment_dofs(
@@ -242,8 +276,9 @@ def refuse_what_fem_cannot_impose(mesh: skfem.Mesh, bc: BoundaryConditions | Non
       conditions segment by segment and never reads ``default_bc``, so those facets got the natural condition
       instead: a silent wall where an exit or a prescribed value was asked for.
     Under a DIRICHLET default, the facets each segment claims follow `_segment_boundary_facets`, the rule its
-    Dirichlet DOFs follow, for segments of every type, so a segment named by anything but a tag the mesh carries -- a library alias
-    such as ``"left"`` included -- raises there rather than claiming the whole boundary. A segment also
+    Dirichlet DOFs follow, for segments of every type, so a segment named by anything but a tag that holds
+    facets -- a library alias such as ``"left"``, or an empty axis tag on a curved mesh, included -- raises
+    there rather than claiming the whole boundary or nothing. A segment also
     placed by ``region``, ``region_name``, ``sdf_region`` or ``normal_direction`` claims its whole
     ``boundary`` face, or the whole boundary if it names none, which this check cannot see past.
     ``dirichlet_bc(g)`` passes, since its segment names the whole boundary.
@@ -266,7 +301,8 @@ def refuse_what_fem_cannot_impose(mesh: skfem.Mesh, bc: BoundaryConditions | Non
             f"{consumer}: default_bc=DIRICHLET governs {len(unclaimed)} boundary facet(s) that no segment "
             "names, and the FEM path imposes conditions only from segments, so those facets would get the "
             "natural condition instead of the Dirichlet one (#2593). Give each Dirichlet face its own "
-            "BCSegment(boundary=...)."
+            f"BCSegment(bc_type=BCType.DIRICHLET, value={bc.default_value!r}, boundary=...): a segment's value "
+            "defaults to 0.0, not to default_value."
         )
 
 

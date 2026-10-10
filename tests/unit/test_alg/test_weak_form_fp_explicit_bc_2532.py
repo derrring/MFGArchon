@@ -187,8 +187,23 @@ _UNREADABLE = [
     True,
     np.True_,
     np.array(True),
+    False,
+    np.False_,
 ]
-_UNREADABLE_IDS = ["provider", "str", "1-d", "Decimal", "nan", "inf", "complex", "bool", "np.bool_", "0-d bool"]
+_UNREADABLE_IDS = [
+    "provider",
+    "str",
+    "1-d",
+    "Decimal",
+    "nan",
+    "inf",
+    "complex",
+    "bool",
+    "np.bool_",
+    "0-d bool",
+    "False",
+    "np.False_",
+]
 
 
 def _as_number(value) -> float:
@@ -230,13 +245,16 @@ def test_fem_refuses_a_dirichlet_value_it_cannot_read(route, value):
         build()
 
 
-def _build(route: str, bc: BoundaryConditions):
-    """FP-FEM given ``bc`` as its own BC (the shared BC is the exit), or HJB-FEM given ``bc`` as the shared BC."""
+def _build(route: str, bc: BoundaryConditions, domain=None):
+    """FP-FEM given ``bc`` as its own BC, or HJB-FEM given ``bc`` as the shared BC, on ``domain`` (default the unit
+    interval). The FP's shared BC is the exit on the interval, and no-flux on any other domain."""
     from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
 
     if route == "fp-explicit":
-        return _fem(_problem(_mesh(1), _exit(1, EXIT_VALUE)), bc)
-    return HJBFEMSolver(_problem(_mesh(1), bc))
+        if domain is None:
+            return _fem(_problem(_mesh(1), _exit(1, EXIT_VALUE)), bc)
+        return _fem(_problem(domain, no_flux_bc(dimension=bc.dimension)), bc)
+    return HJBFEMSolver(_problem(_mesh(1) if domain is None else domain, bc))
 
 
 def _wall_and_exit(route: str, bc: BoundaryConditions) -> tuple[float, float]:
@@ -275,6 +293,7 @@ def test_fem_refuses_a_dirichlet_default_no_segment_names(route):
     with pytest.raises(NotImplementedError, match=r"default_bc=DIRICHLET governs 1 boundary facet") as excinfo:
         _build(route, _with_dirichlet_default(_WALL))
     assert "boundary=None" not in str(excinfo.value)
+    assert f"value={EXIT_VALUE!r}" in str(excinfo.value)
     wall, exit_value = _wall_and_exit(route, _with_dirichlet_default(_WALL, _EXIT_SEGMENT))
     assert wall < 0.1
     assert exit_value == pytest.approx(EXIT_VALUE, abs=1e-12)
@@ -291,11 +310,70 @@ def test_a_segment_named_by_an_alias_is_refused_and_the_advice_runs(route):
     with pytest.raises(
         ValueError,
         match=r"no such tagged boundary \(available: \[.*'x_min'.*\]\).*Name one of the mesh's tagged boundaries",
-    ):
+    ) as excinfo:
         _build(route, _with_dirichlet_default(alias, _EXIT_SEGMENT))
+    assert "The BC layer reads 'left' as 'x_min'" in str(excinfo.value)
     wall, exit_value = _wall_and_exit(route, _with_dirichlet_default(_WALL, _EXIT_SEGMENT))
     assert wall < 0.1
     assert exit_value == pytest.approx(EXIT_VALUE, abs=1e-12)
+
+
+def _disc(tag_exit: bool):
+    """A builder of the unit disc (``MeshTri.init_circle(3)``), whose axis tags, placed by bounding box, hold no
+    facets. With ``tag_exit`` the boundary faces with x > 0.9 at both ends carry MeshData tag 1, as ``region_1``."""
+
+    def build(bc: BoundaryConditions):
+        import skfem
+
+        from mfgarchon.alg.numerical.fem.mesh_adapter import skfem_to_meshdata
+        from mfgarchon.geometry.meshes.mesh_2d import Mesh2D
+
+        mesh_data = skfem_to_meshdata(skfem.MeshTri.init_circle(3))
+        if tag_exit:
+            x = mesh_data.vertices[mesh_data.boundary_faces][..., 0]
+            mesh_data.boundary_tags = np.where(x.min(axis=1) > 0.9, 1, 0)
+        geometry = Mesh2D(domain_type="circle", bounds=(-1.0, 1.0, -1.0, 1.0))
+        geometry.mesh_data = mesh_data
+        geometry.boundary_conditions = bc
+        return geometry
+
+    return build
+
+
+def _disc_exit(name: str) -> BoundaryConditions:
+    segment = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=EXIT_VALUE, boundary=name)
+    return BoundaryConditions(dimension=2, segments=[segment], default_bc=BCType.NO_FLUX)
+
+
+def _solve_on_disc(route: str, name: str, tag_exit: bool):
+    """Build and solve on the disc with the exit named ``name``: a Dirichlet segment's name is resolved with its
+    DOFs, at solve time. Returns the solver and the FP density at T or the HJB value at t = 0."""
+    solver = _build(route, _disc_exit(name), domain=_disc(tag_exit))
+    n = solver._disc.dof_coordinates.shape[0]
+    if route == "fp-explicit":
+        return solver, np.asarray(solver.solve_fp_system(M_initial=np.zeros(n), potential_field=None))[-1]
+    return solver, np.asarray(solver.solve_hjb_system(M_density=np.ones((NT + 1, n)), U_terminal=np.zeros(n)))[0]
+
+
+@pytest.mark.parametrize("route", ["fp-explicit", "hjb-shared"])
+def test_a_tag_holding_no_facet_is_refused_and_the_advice_runs(route):
+    """On a curved mesh the axis tags exist and hold no facets, so an exit named "x_max" condensed nothing and the
+    face stayed a wall, on main too; the alias refusal's advice pointed there (#2593, review 3). An empty tag is
+    refused as a missing one. With no tag holding a facet, the advice is to tag the mesh, and it is executed: the
+    exit faces tagged 1 and named "region_1" hold the value. Once tagged, "x_max" is still refused, listing it."""
+    with pytest.raises(
+        ValueError, match=r"none of its tags holds a facet.*Tag the mesh before naming a face"
+    ) as excinfo:
+        _solve_on_disc(route, "x_max", tag_exit=False)
+    assert "available" not in str(excinfo.value)
+    with pytest.raises(ValueError, match=r"no such tagged boundary \(available: \['region_1'\]\)") as excinfo:
+        _solve_on_disc(route, "x_max", tag_exit=True)
+    assert "The mesh carries the tag 'x_max', but no facet is in it." in str(excinfo.value)
+
+    solver, field = _solve_on_disc(route, "region_1", tag_exit=True)
+    exit_dofs = solver._basis.get_dofs(solver._skfem_mesh.boundaries["region_1"]).flatten()
+    assert exit_dofs.size == 5
+    np.testing.assert_allclose(field[exit_dofs], EXIT_VALUE, atol=1e-12)
 
 
 @pytest.mark.parametrize("value", [None, np.array([0.0]), np.zeros(3)], ids=["None", "1-d", "3-vector"])
