@@ -17,8 +17,9 @@ P1 elements, so the density error falls at second order. The FP equation is ``d_
 recorded here. Per wall: what the cell is named for, measured, and a rival that must miss.
 - No flux: ``||J_h.n||`` on the boundary falls at first order (P1 gradients), and the rival, the same solve with
   the wall written as ``dm/dn = 0`` (the advection without its by-parts form), misses the density by a constant.
-- Exit: the exit nodes hold 0 at every time, and the rival that keeps the shared value instead misses. The mass
-  identity -- the loss equals the integrated boundary flux -- is reported beside the oracle, not as it.
+- Exit: the exit nodes hold 0 at every time, and the rival that reads the shared value as a density Dirichlet
+  (lift and write both keep 0.7) misses in the interior. The mass identity -- the change in mass equals the source
+  minus the integrated exit flux -- is reported beside the oracle, not as it.
 """
 
 from __future__ import annotations
@@ -153,11 +154,22 @@ class _WallAsZeroNormalDerivative(FPFEMSolver):
 
 
 class _ExitKeepsTheValue(FPFEMSolver):
-    """The rival exit: the shared Dirichlet's value imposed on the density instead of dropped."""
+    """The rival exit: the shared Dirichlet read as a density Dirichlet, ``m = 0.7`` at the exit. Both the
+    condensation's lift and the post-solve write take the raw shared BC instead of the FP view, so the value is
+    kept throughout the solve, not only written into the exit nodes afterwards."""
+
+    def _shared(self):
+        return self.problem.geometry.boundary_conditions
+
+    def _apply_bc_to_system(self, matrix, rhs):
+        from mfgarchon.alg.numerical.fem.bc_adapter import apply_bc_to_fem_system
+
+        return apply_bc_to_fem_system(matrix, rhs, self._basis, self._shared())
 
     def _dirichlet_dofs_and_values(self):
-        dofs, values = super()._dirichlet_dofs_and_values()
-        return dofs, np.full_like(np.asarray(values, dtype=float), EXIT_VALUE)
+        from mfgarchon.alg.numerical.fem.bc_adapter import get_dirichlet_dofs_and_values
+
+        return get_dirichlet_dofs_and_values(self._basis, self._shared())
 
 
 def _geometry(cell: Cell, n: int):
@@ -178,7 +190,8 @@ def _solve(cell: Cell, n: int, solver_cls=FPFEMSolver):
     problem = MFGProblem(
         model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)), volatility=SIGMA),
         domain=_geometry(cell, n),
-        # The problem's own initial density is not read: the solve is handed the manufactured one.
+        # The problem's own initial density is evaluated at construction, but the solve is handed the manufactured one;
+        # the constant only makes MFGProblem's mass report read 1 on Mesh1D's uniform-cell measure.
         conditions=Conditions(
             m_initial=lambda p, c=(n / (n + 1) if cell.dim == 1 else 1.0): c, u_terminal=lambda p: 0.0, T=T
         ),
@@ -225,7 +238,13 @@ MEASURED = {
     "dirichlet_exit_1d": (8.1297e-03, 2.0416e-03, 5.1097e-04),
     "dirichlet_exit_2d": (7.3374e-02, 2.0187e-02, 5.3398e-03),
 }
+# ||J_h.n|| on the no-flux boundary at T, per level, measured at 1290195a.
+MEASURED_WALL_FLUX = {
+    "no_flux_1d": (7.5829e-02, 3.8183e-02, 1.9238e-02),
+    "no_flux_2d": (1.8420e-01, 9.4860e-02, 4.7817e-02),
+}
 LEVEL_BAND = 1.25
+MASS_BAND = 2e-3  # relative to the expected change; measured 2.77e-4 (1-D) and 2.56e-4 (2-D) at the finest level
 RATIO_BAND = (3.0, 5.0)
 
 
@@ -249,6 +268,8 @@ def test_the_wall_carries_no_total_flux_and_a_neumann_wall_misses(name: str):
         solver, _X, M = _solve(cell, n)
         flux.append(_wall_flux(cell, solver, M[-1]))
     assert all(1.7 < flux[i] / flux[i + 1] < 2.3 for i in range(len(flux) - 1)), flux
+    for level, (got, recorded) in enumerate(zip(flux, MEASURED_WALL_FLUX[name], strict=True)):
+        assert recorded / LEVEL_BAND < got < recorded * LEVEL_BAND, (name, level, got, recorded)
     rival = [_error(cell, *_solve(cell, n, _WallAsZeroNormalDerivative)[1:]) for n in cell.ns[-2:]]
     assert rival[-1] > 50 * MEASURED[name][-1], rival
     assert rival[0] / rival[1] < 1.2, f"the rival converges, so the cell does not separate the walls: {rival}"
@@ -262,14 +283,17 @@ def test_the_exit_drops_the_shared_value_and_a_wall_that_keeps_it_misses(name: s
     exit_nodes = np.isclose(X[:, 0], 1.0)
     assert exit_nodes.any()
     assert np.abs(M[1:, exit_nodes]).max() == 0.0
-    rival = _error(cell, *_solve(cell, n, _ExitKeepsTheValue)[1:])
-    assert rival > 50 * MEASURED[name][-1], rival
+    # The rival's exit nodes hold 0.7 by construction, so its miss is measured away from them: in the interior.
+    _rival, X, R = _solve(cell, n, _ExitKeepsTheValue)
+    interior = ~np.isclose(X[:, 0], 1.0)
+    miss = max(np.abs(R[k][interior] - cell.m(k * T / NT, X)[interior]).max() for k in range(NT + 1))
+    assert miss > 50 * MEASURED[name][-1], miss
 
 
 @pytest.mark.parametrize("name", ["dirichlet_exit_1d", "dirichlet_exit_2d"])
 def test_the_exit_loses_the_integrated_boundary_flux(name: str):
     """The mass identity beside the oracle: ``M(T) - M(0) = int S - int_exit J.n`` over the run, with the exact flux.
-    The discrete loss differs from it at the discretisation's order, so the band is relative to the loss."""
+    The discrete change differs from it at the discretisation's order, so the band is relative to it."""
     cell = CELLS[name]
     solver, X, M = _solve(cell, cell.ns[-1])
     mass = lambda v: float((solver._M @ v).sum())  # noqa: E731
@@ -284,4 +308,4 @@ def test_the_exit_loses_the_integrated_boundary_flux(name: str):
         out = sum(float(np.trapezoid(cell.flux(t, face)[:, 0], ys)) for t in times) * dt
     loss = mass(M[-1]) - mass(M[0])
     expected = sourced - out
-    assert abs(loss - expected) < 0.02 * abs(expected), (loss, expected)
+    assert abs(loss - expected) < MASS_BAND * abs(expected), (loss, expected)

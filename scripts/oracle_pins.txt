@@ -91,12 +91,15 @@ oracle fp_fem/dirichlet_exit_1d     tests/unit/test_alg/test_fp_fem_bc_oracles_2
 oracle fp_fem/dirichlet_exit_1d     tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_exit_drops_the_shared_value_and_a_wall_that_keeps_it_misses[dirichlet_exit_1d]
 oracle fp_fem/dirichlet_exit_2d     tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[dirichlet_exit_2d]
 oracle fp_fem/dirichlet_exit_2d     tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_exit_drops_the_shared_value_and_a_wall_that_keeps_it_misses[dirichlet_exit_2d]
-# The Neumann cells list their routing pin, the shared refusal (#2512, row B3) and the NO_FLUX oracle they solve as.
+# The Neumann cells list their routing pin, the shared refusal (#2512, row B3) and both targets of the NO_FLUX cell
+# they solve as, so they are met only while it is.
 # A refusal pin of an explicit NEUMANN is owed when #2532 adds FP-FEM's explicit route.
 oracle fp_fem/neumann_1d          tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[no_flux_1d]
+oracle fp_fem/neumann_1d          tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_wall_carries_no_total_flux_and_a_neumann_wall_misses[no_flux_1d]
 oracle fp_fem/neumann_1d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_zero_solves_as_zero_flux[fem-1d]
 oracle fp_fem/neumann_1d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_value_is_refused_naming_both_readings[fem-1d]
 oracle fp_fem/neumann_2d          tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[no_flux_2d]
+oracle fp_fem/neumann_2d          tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_wall_carries_no_total_flux_and_a_neumann_wall_misses[no_flux_2d]
 oracle fp_fem/neumann_2d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_zero_solves_as_zero_flux[fem-2d]
 oracle fp_fem/neumann_2d          tests/unit/test_alg/test_fp_reads_shared_neumann_as_zero_flux_2512.py::test_a_shared_neumann_value_is_refused_naming_both_readings[fem-2d]
 oracle fp_fem/no_flux_1d            tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[no_flux_1d]
