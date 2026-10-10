@@ -149,7 +149,10 @@ class TestHighDimensionalEdgeCases:
 
     def test_negative_dimension_raises(self):
         """Test that negative dimension raises error."""
-        with pytest.raises(ValueError, match=r"dimension|doesn't match"):
+        with (
+            pytest.warns(DeprecationWarning, match="'dimension'"),
+            pytest.raises(ValueError, match=r"dimension|doesn't match"),
+        ):
             TensorProductGrid(
                 dimension=-1, bounds=[(0.0, 1.0)], Nx_points=[10], boundary_conditions=no_flux_bc(dimension=1)
             )

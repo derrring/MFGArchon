@@ -57,8 +57,8 @@ def test_fp_volatility_override_equals_problem_with_that_sigma():
 
     fp_override = MeshlessGalerkinFPSolver(_problem(sigma=0.9), collocation_points=_cloud(), delta=3.5 / 14)
     fp_native = MeshlessGalerkinFPSolver(_problem(sigma=0.3), collocation_points=_cloud(), delta=3.5 / 14)
-    traj_override = fp_override.solve_fp_system(m0, drift_field=drift, volatility=0.3)
-    traj_native = fp_native.solve_fp_system(m0, drift_field=drift, volatility=None)
+    traj_override = fp_override.solve_fp_system(m0, potential_field=drift, volatility=0.3)
+    traj_native = fp_native.solve_fp_system(m0, potential_field=drift, volatility=None)
     assert np.allclose(traj_override, traj_native, atol=1e-12)
 
 

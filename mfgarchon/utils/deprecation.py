@@ -192,11 +192,17 @@ def deprecated_parameter(
                 passed = False
 
             if passed:
+                # Past every wrapper of this module, not just this one: under a stacked decorator the
+                # frame above an inner wrapper is the outer wrapper (another `deprecated_parameter`, or
+                # `retired_parameters`), and a warning attributed there names this module, which the suite's
+                # `ignore::DeprecationWarning:mfgarchon.*` filters (pytest.ini and tests/conftest.py) drop -- the
+                # call site was invisible to the gate (#2579).
                 warnings.warn(
                     f"Parameter '{param_name}' in '{func.__name__}' is deprecated "
                     f"since {since}. Use '{replacement}' instead.",
                     DeprecationWarning,
                     stacklevel=2,
+                    skip_file_prefixes=WRAPPER_FRAMES,
                 )
 
             # Call original function
@@ -509,8 +515,9 @@ def deprecated_alias(
     return alias_wrapper
 
 
-#: ``skip_file_prefixes`` for a warning raised inside a function this module's decorators wrap, so the
-#: warning names the caller and not the wrapper (#2417). The path WITHOUT its ``.py``: measured on
+#: ``skip_file_prefixes`` for a warning raised inside a function this module's decorators wrap (#2417), and for
+#: ``deprecated_parameter``'s own warning under another of this module's wrappers (#2579), so the warning
+#: names the caller and not a wrapper. The path WITHOUT its ``.py``: measured on
 #: CPython 3.12.13 (2026-09-28), a prefix equal to the whole filename does not match it, while any
 #: strict prefix does.
 WRAPPER_FRAMES: tuple[str, ...] = (os.path.splitext(__file__)[0],)

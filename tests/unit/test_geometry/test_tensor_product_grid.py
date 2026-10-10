@@ -93,13 +93,19 @@ class TestInitialization:
             TensorProductGrid(bounds=[], Nx_points=[], boundary_conditions=bc_1d)
 
         # Explicit dimension with empty bounds still raises empty bounds error
-        with pytest.raises(ValueError, match="bounds cannot be empty"):
+        with (
+            pytest.warns(DeprecationWarning, match="'dimension'"),
+            pytest.raises(ValueError, match="bounds cannot be empty"),
+        ):
             TensorProductGrid(bounds=[], Nx_points=[], dimension=1, boundary_conditions=bc_1d)
 
     def test_mismatched_bounds_length_raises(self, bc_1d) -> None:
         """Test that explicit dimension mismatching bounds raises ValueError."""
         # Issue #676: dimension inferred from bounds, explicit dimension must match
-        with pytest.raises(ValueError, match="dimension=2 doesn't match len\\(bounds\\)=1"):
+        with (
+            pytest.warns(DeprecationWarning, match="'dimension'"),
+            pytest.raises(ValueError, match="dimension=2 doesn't match len\\(bounds\\)=1"),
+        ):
             TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[10, 10], dimension=2, boundary_conditions=bc_1d)
 
     def test_mismatched_num_points_length_raises(self, bc_2d) -> None:

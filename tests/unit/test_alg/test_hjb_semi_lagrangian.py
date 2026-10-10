@@ -858,7 +858,6 @@ class TestStochasticCharacteristicSL:
                 return 0.0
 
         geometry = TensorProductGrid(
-            dimension=1,
             bounds=[(-1.0, 1.0)],
             Nx_points=[31],
             boundary_conditions=no_flux_bc(dimension=1),
@@ -927,7 +926,6 @@ class TestStochasticCharacteristicSL:
         N, Nt = 100, 200
 
         geometry = TensorProductGrid(
-            dimension=1,
             bounds=[(-5.0, 5.0)],
             Nx_points=[N + 1],
             boundary_conditions=no_flux_bc(dimension=1),
@@ -1053,7 +1051,6 @@ class TestStochasticSLUnificationPinning:
         import warnings as _w
 
         geometry = TensorProductGrid(
-            dimension=1,
             bounds=[(0.0, 1.0)],
             Nx_points=[51],
             boundary_conditions=no_flux_bc(dimension=1),
@@ -1104,7 +1101,6 @@ class TestStochasticCharacteristicSL_nD:  # noqa: N801 — SL_nD = semi-Lagrangi
 
         bc = no_flux_bc(dimension=2)
         grid = TensorProductGrid(
-            dimension=2,
             bounds=[(0.0, 1.0), (0.0, 1.0)],
             Nx_points=[N, N],
             boundary_conditions=bc,

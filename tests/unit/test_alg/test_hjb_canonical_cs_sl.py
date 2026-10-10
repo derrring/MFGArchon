@@ -42,9 +42,7 @@ from mfgarchon.geometry.boundary import no_flux_bc
 
 def _make_problem(bounds, Nx, T, Nt, diffusion, terminal_fn, coupling=None):
     """1D MFGProblem with separable quadratic-control Hamiltonian H = |p|^2/2 + h."""
-    geometry = TensorProductGrid(
-        dimension=1, bounds=[bounds], Nx_points=[Nx], boundary_conditions=no_flux_bc(dimension=1)
-    )
+    geometry = TensorProductGrid(bounds=[bounds], Nx_points=[Nx], boundary_conditions=no_flux_bc(dimension=1))
     components = MFGComponents(
         hamiltonian=SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=1.0),
@@ -298,9 +296,7 @@ class TestCanonicalCSMultiDimensional:
 
     def test_2d_runs_and_bounded(self):
         bc = no_flux_bc(dimension=2)
-        grid = TensorProductGrid(
-            dimension=2, bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[11, 11], boundary_conditions=bc
-        )
+        grid = TensorProductGrid(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[11, 11], boundary_conditions=bc)
         problem = MFGProblem(
             geometry=grid,
             T=0.2,
@@ -337,9 +333,7 @@ class TestCanonicalCSControlCostLambda:
     @staticmethod
     def _solve(control_cost: float):
         Nx, Nt = 41, 20
-        geometry = TensorProductGrid(
-            dimension=1, bounds=[(-2.0, 2.0)], Nx_points=[Nx], boundary_conditions=no_flux_bc(dimension=1)
-        )
+        geometry = TensorProductGrid(bounds=[(-2.0, 2.0)], Nx_points=[Nx], boundary_conditions=no_flux_bc(dimension=1))
         components = MFGComponents(
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=control_cost)),
             m_initial=lambda x: 1.0,

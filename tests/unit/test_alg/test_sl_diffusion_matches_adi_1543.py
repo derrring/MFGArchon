@@ -43,9 +43,7 @@ def _diffusion_problem(d: int, N: int, Nt: int, sigma: float = SIGMA) -> MFGProb
     """Pure-diffusion setup: huge control cost => drift alpha* = -grad(u)/lambda -> 0 and the kinetic
     value term dt*|grad u|^2/(2 lambda) -> 0; zero potential/coupling => H(x,0,m) = 0. The Lax-Oleinik
     update u^n = u_avg + dt*(H(p) - 2 H(0)) then collapses to u^n = u_avg (the diffusion average)."""
-    grid = TensorProductGrid(
-        dimension=d, bounds=[(0.0, L)] * d, Nx_points=[N] * d, boundary_conditions=no_flux_bc(dimension=d)
-    )
+    grid = TensorProductGrid(bounds=[(0.0, L)] * d, Nx_points=[N] * d, boundary_conditions=no_flux_bc(dimension=d))
     return MFGProblem(
         model=Model(
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1e8)), volatility=sigma
