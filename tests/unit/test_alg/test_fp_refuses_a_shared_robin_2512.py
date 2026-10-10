@@ -102,6 +102,7 @@ def test_every_family_refuses_a_shared_robin_naming_both_readings(family):
     assert "alpha*u + beta*du/dn = g" in message
     assert "J.n = (D/beta)(alpha*m - g), which is not alpha*m + beta*dm/dn = g" in message
     assert f"pass {_CLASS[family]} boundary_conditions=no_flux_bc(dimension=...) for reflected agents" in message
+    assert "build both solvers yourself and pass them as hjb_solver= and fp_solver=" in message
 
 
 def test_a_robin_fall_through_is_refused():

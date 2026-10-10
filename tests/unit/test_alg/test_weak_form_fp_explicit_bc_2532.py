@@ -176,8 +176,19 @@ def test_meshless_refuses_an_explicit_density(value):
 # or a finite 0-d real array, and anything else is refused at construction.
 _READABLE = [0.7, np.float32(0.7), np.int64(1), np.array(0.7), Fraction(7, 10), lambda x: 0.7]
 _READABLE_IDS = ["float", "float32", "int64", "0-d", "Fraction", "callable"]
-_UNREADABLE = [ConstantProvider(0.7), "0.7", np.array([0.7]), Decimal("0.7"), float("nan"), np.inf, np.array(0.7 + 0j)]
-_UNREADABLE_IDS = ["provider", "str", "1-d", "Decimal", "nan", "inf", "complex"]
+_UNREADABLE = [
+    ConstantProvider(0.7),
+    "0.7",
+    np.array([0.7]),
+    Decimal("0.7"),
+    float("nan"),
+    np.inf,
+    np.array(0.7 + 0j),
+    True,
+    np.True_,
+    np.array(True),
+]
+_UNREADABLE_IDS = ["provider", "str", "1-d", "Decimal", "nan", "inf", "complex", "bool", "np.bool_", "0-d bool"]
 
 
 def _as_number(value) -> float:
@@ -215,26 +226,94 @@ def test_fem_refuses_a_dirichlet_value_it_cannot_read(route, value):
     else:
         problem = _problem(_mesh(1), _exit(1, value))
         build = lambda: HJBFEMSolver(problem)  # noqa: E731
-    with pytest.raises(NotImplementedError, match=r"Dirichlet segment 'exit' has a (value of type|non-finite)"):
+    with pytest.raises(NotImplementedError, match=r"Dirichlet segment 'exit' has a (value of type|non-finite|boolean)"):
         build()
+
+
+def _build(route: str, bc: BoundaryConditions):
+    """FP-FEM given ``bc`` as its own BC (the shared BC is the exit), or HJB-FEM given ``bc`` as the shared BC."""
+    from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
+
+    if route == "fp-explicit":
+        return _fem(_problem(_mesh(1), _exit(1, EXIT_VALUE)), bc)
+    return HJBFEMSolver(_problem(_mesh(1), bc))
+
+
+def _wall_and_exit(route: str, bc: BoundaryConditions) -> tuple[float, float]:
+    """The density (FP, from m = 0) at T or the value (HJB, terminal 0) at t = 0, at the x_min wall and the x_max
+    exit."""
+    solver = _build(route, bc)
+    x = solver._disc.dof_coordinates[:, 0]
+    if route == "fp-explicit":
+        field = np.asarray(solver.solve_fp_system(M_initial=np.zeros(x.size), potential_field=None))[-1]
+    else:
+        field = np.asarray(solver.solve_hjb_system(M_density=np.ones((NT + 1, x.size)), U_terminal=np.zeros(x.size)))[0]
+    return float(field[np.isclose(x, 0.0)][0]), float(field[np.isclose(x, 1.0)][0])
+
+
+_WALL = BCSegment(name="wall", bc_type=BCType.NO_FLUX, value=0.0, boundary="x_min")
+_EXIT_SEGMENT = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=EXIT_VALUE, boundary="x_max")
+
+
+def _with_dirichlet_default(*segments: BCSegment) -> BoundaryConditions:
+    return BoundaryConditions(
+        dimension=1, segments=list(segments), default_bc=BCType.DIRICHLET, default_value=EXIT_VALUE
+    )
 
 
 @pytest.mark.parametrize("route", ["fp-explicit", "hjb-shared"])
 def test_fem_refuses_a_dirichlet_default_no_segment_names(route):
     """The FEM adapter imposes conditions only from segments, so a DIRICHLET default_bc behind a segment set that
-    leaves a face unnamed got the natural condition there. That BC is refused; one whose segments name every face,
-    and dirichlet_bc(g), whose segment names the whole boundary, are not."""
-    from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
+    leaves a face unnamed got the natural condition there. That BC is refused, and its advice -- give each
+    Dirichlet face its own segment -- is executed: the wall stays free and the exit holds the value (measured
+    0.0013 at the wall).
+
+    It does not advise boundary=None any more. The FEM adapter ignores segment precedence, so a whole-boundary
+    DIRICHLET beside the NO_FLUX wall condensed the wall too, to 0.7 (#2593, review 2)."""
     from mfgarchon.geometry.boundary import dirichlet_bc
 
-    def build(bc):
-        if route == "fp-explicit":
-            return _fem(_problem(_mesh(1), _exit(1, EXIT_VALUE)), bc)
-        return HJBFEMSolver(_problem(_mesh(1), bc))
+    with pytest.raises(NotImplementedError, match=r"default_bc=DIRICHLET governs 1 boundary facet") as excinfo:
+        _build(route, _with_dirichlet_default(_WALL))
+    assert "boundary=None" not in str(excinfo.value)
+    wall, exit_value = _wall_and_exit(route, _with_dirichlet_default(_WALL, _EXIT_SEGMENT))
+    assert wall < 0.1
+    assert exit_value == pytest.approx(EXIT_VALUE, abs=1e-12)
+    _wall_and_exit(route, dirichlet_bc(value=EXIT_VALUE, dimension=1))
 
-    wall = BCSegment(name="wall", bc_type=BCType.NO_FLUX, value=0.0, boundary="x_min")
-    exit_ = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=EXIT_VALUE, boundary="x_max")
-    with pytest.raises(NotImplementedError, match=r"default_bc=DIRICHLET governs 1 boundary facet"):
-        build(BoundaryConditions(dimension=1, segments=[wall], default_bc=BCType.DIRICHLET, default_value=EXIT_VALUE))
-    build(BoundaryConditions(dimension=1, segments=[wall, exit_], default_bc=BCType.DIRICHLET, default_value=0.7))
-    build(dirichlet_bc(value=EXIT_VALUE, dimension=1))
+
+@pytest.mark.parametrize("route", ["fp-explicit", "hjb-shared"])
+def test_a_segment_named_by_an_alias_is_refused_and_the_advice_runs(route):
+    """Under a DIRICHLET default every segment's facets are resolved by the mesh's tags, so a wall named by a library
+    alias ("left") is refused, though both FEM solvers solved that BC correctly on main: HJB-FEM held u = 0.0013 at
+    the wall and 0.7 at the exit (#2593, review 2; FEM's naming rule against the BC layer's is #2512's row B1). The
+    advice names the mesh's tags; renaming the wall to the tag it means solves with it intact."""
+    alias = BCSegment(name="wall", bc_type=BCType.NO_FLUX, value=0.0, boundary="left")
+    with pytest.raises(
+        ValueError,
+        match=r"no such tagged boundary \(available: \[.*'x_min'.*\]\).*Name one of the mesh's tagged boundaries",
+    ):
+        _build(route, _with_dirichlet_default(alias, _EXIT_SEGMENT))
+    wall, exit_value = _wall_and_exit(route, _with_dirichlet_default(_WALL, _EXIT_SEGMENT))
+    assert wall < 0.1
+    assert exit_value == pytest.approx(EXIT_VALUE, abs=1e-12)
+
+
+@pytest.mark.parametrize("value", [None, np.array([0.0]), np.zeros(3)], ids=["None", "1-d", "3-vector"])
+@pytest.mark.parametrize("route", ["fp-explicit", "hjb-shared"])
+def test_fem_reads_a_verifiably_zero_value_as_zero(route, value):
+    """``None`` and an all-zero array are verifiably zero data to the library's one owner (`_describe_bc_value`), as
+    on main and as the FP's view of a shared BC says; the adapter asks that owner first, so it no longer refuses the
+    array."""
+    from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
+
+    if route == "fp-explicit":
+        solver = _fem(_problem(_mesh(1), no_flux_bc(dimension=1)), _exit(1, value))
+        x = solver._disc.dof_coordinates[:, 0]
+        field = np.asarray(solver.solve_fp_system(M_initial=np.ones(x.size), potential_field=None))[1:]
+    else:
+        solver = HJBFEMSolver(_problem(_mesh(1), _exit(1, value)))
+        x = solver._disc.dof_coordinates[:, 0]
+        field = np.asarray(solver.solve_hjb_system(M_density=np.ones((NT + 1, x.size)), U_terminal=np.ones(x.size)))[
+            :-1
+        ]
+    np.testing.assert_array_equal(field[:, np.isclose(x, 1.0)], 0.0)

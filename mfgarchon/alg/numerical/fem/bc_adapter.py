@@ -199,8 +199,9 @@ def _segment_boundary_facets(mesh: skfem.Mesh, segment: BCSegment) -> NDArray:
     """The boundary facets a segment's DOFs come from: its named boundary, or the whole boundary for ``None``.
 
     One rule for the Dirichlet DOFs (`_find_segment_dofs`) and for what a ``default_bc`` is left to govern
-    (`refuse_what_fem_cannot_impose`). Only the ``boundary`` name is read: a segment placed by
-    ``region``, ``sdf_region`` or ``normal_direction`` resolves as if it named the whole boundary.
+    (`refuse_what_fem_cannot_impose`). Only the ``boundary`` name is read. A segment also placed by
+    ``region``, ``region_name``, ``sdf_region`` or ``normal_direction`` resolves as its ``boundary`` face
+    if it names one -- the whole face, not the placed part -- and as the whole boundary if it names none.
     """
     boundary_name = getattr(segment, "boundary", None)
     if boundary_name:
@@ -213,7 +214,7 @@ def _segment_boundary_facets(mesh: skfem.Mesh, segment: BCSegment) -> NDArray:
                 f"Segment '{getattr(segment, 'name', '?')}' names boundary '{boundary_name}', "
                 f"but the mesh has no such tagged boundary (available: {available}). A missing named "
                 f"boundary would otherwise silently apply the BC to the ENTIRE boundary (Issue #1489). "
-                f"Tag it, or use boundary=None for the whole boundary."
+                f"Name one of the mesh's tagged boundaries as boundary=."
             )
         return np.asarray(mesh.boundaries[boundary_name])
     return np.asarray(mesh.boundary_facets())
@@ -236,16 +237,16 @@ def _find_segment_dofs(
 def refuse_what_fem_cannot_impose(mesh: skfem.Mesh, bc: BoundaryConditions | None, consumer: str) -> None:
     """Refuse, at construction, what the FEM adapter would otherwise misread in silence (#2593).
 
-    - **A Dirichlet value it cannot read**: anything but a callable, a finite real number or a 0-d real
-      array (`dirichlet_constant`). It used to become 0.
+    - **A Dirichlet value it cannot read** (`dirichlet_constant`). It used to become 0.
     - **A DIRICHLET ``default_bc`` left to govern boundary facets no segment claims.** The adapter imposes
       conditions segment by segment and never reads ``default_bc``, so those facets got the natural condition
       instead: a silent wall where an exit or a prescribed value was asked for.
-    The facets each segment claims follow `_segment_boundary_facets`, the rule its Dirichlet DOFs follow, for
-    segments of every type; a misnamed segment raises there rather than claiming the whole boundary. A
-    segment placed by ``region``, ``sdf_region`` or ``normal_direction`` is outside what this check sees: it
-    resolves as the whole boundary and claims everything. ``dirichlet_bc(g)`` passes, since its segment
-    names the whole boundary.
+    Under a DIRICHLET default, the facets each segment claims follow `_segment_boundary_facets`, the rule its
+    Dirichlet DOFs follow, for segments of every type, so a segment named by anything but a tag the mesh carries -- a library alias
+    such as ``"left"`` included -- raises there rather than claiming the whole boundary. A segment also
+    placed by ``region``, ``region_name``, ``sdf_region`` or ``normal_direction`` claims its whole
+    ``boundary`` face, or the whole boundary if it names none, which this check cannot see past.
+    ``dirichlet_bc(g)`` passes, since its segment names the whole boundary.
     """
     from mfgarchon.geometry.boundary.types import BCType
 
@@ -265,7 +266,7 @@ def refuse_what_fem_cannot_impose(mesh: skfem.Mesh, bc: BoundaryConditions | Non
             f"{consumer}: default_bc=DIRICHLET governs {len(unclaimed)} boundary facet(s) that no segment "
             "names, and the FEM path imposes conditions only from segments, so those facets would get the "
             "natural condition instead of the Dirichlet one (#2593). Give each Dirichlet face its own "
-            "BCSegment(boundary=...), or name the whole boundary with boundary=None."
+            "BCSegment(boundary=...)."
         )
 
 
@@ -276,11 +277,11 @@ def _evaluate_segment_values(
 ) -> list[float]:
     """The segment's Dirichlet value at the given DOFs, refusing a value it cannot read.
 
-    A callable is read as ``value(x)`` at each DOF, with no time argument; a real number or a 0-d real array
-    is a constant. Anything else used to become 0 here in silence, so ``np.float32(0.7)`` held m = 0 (#2593);
-    it is refused instead, as is a non-finite value. The FDM ghost path (`applicator_fdm.segment_value`)
-    reads a callable as ``value(t)`` and checks no type: the two disagree until #2512's row B2 gives the
-    value one owner.
+    A callable is read as ``value(x)`` at each DOF, with no time argument, and its values are not checked.
+    Anything else is a constant, read by `dirichlet_constant`. This used to read every value but a plain
+    ``int`` or ``float`` as 0, so ``np.float32(0.7)`` held 0 (#2593). The FDM ghost path
+    (`applicator_fdm.segment_value`) reads a callable as ``value(t)`` and checks no type: the two disagree
+    until #2512's row B2 gives the value one owner.
     """
     value = getattr(segment, "value", 0.0)
 
@@ -294,9 +295,21 @@ def _evaluate_segment_values(
 
 
 def dirichlet_constant(segment: BCSegment) -> float:
-    """A non-callable Dirichlet value as a float: a finite real number or 0-d real array, else refused (#2593)."""
+    """A non-callable Dirichlet value as a float (#2593).
+
+    ``None`` and anything the library's one owner of "verifiably zero" reads as zero (`_describe_bc_value`:
+    an all-zero array included) is 0, as on every other path. Otherwise a finite real number or a finite 0-d
+    real array is its value. A boolean, and anything else, is refused.
+    """
+    from mfgarchon.geometry.boundary.bc_utils import _describe_bc_value
+
     value = getattr(segment, "value", 0.0)
-    if value is None:
+    if isinstance(value, (bool, np.bool_)) or (isinstance(value, np.ndarray) and value.dtype == np.bool_):
+        raise NotImplementedError(
+            f"Dirichlet segment '{getattr(segment, 'name', '?')}' has a boolean value, which is not a boundary "
+            "datum: give a real number, a 0-d real array, or a callable g(x) (#2593)."
+        )
+    if _describe_bc_value(value) is None:
         return 0.0
     real = isinstance(value, numbers.Real) or (
         isinstance(value, np.ndarray)
