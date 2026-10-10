@@ -225,8 +225,8 @@ def test_every_family_reads_a_shared_neumann_zero_as_no_flux(family):
 @pytest.mark.parametrize("family", _ALL_FAMILIES)
 def test_every_family_refuses_a_shared_neumann_value(family):
     """Every family is advised to give the FP its own no-flux BC; each takes one (#2532 for FEM and meshless).
-    Through problem.solve both solvers are passed: a hand-built FP alone leaves the HJB to be built from the same
-    problem (#2593, review 2)."""
+    Through problem.solve both solvers are passed: given fp_solver= alone, problem.solve raises "Expert Mode requires
+    BOTH hjb_solver and fp_solver" (#2593, review 2)."""
     with pytest.raises(NotImplementedError, match=SHARED_REFUSAL) as excinfo:
         _build_on_shared(family, 0.7)
     message = str(excinfo.value)

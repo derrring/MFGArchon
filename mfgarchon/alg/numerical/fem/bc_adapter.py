@@ -278,8 +278,8 @@ def _evaluate_segment_values(
     """The segment's Dirichlet value at the given DOFs, refusing a value it cannot read.
 
     A callable is read as ``value(x)`` at each DOF, with no time argument, and its values are not checked.
-    Anything else is a constant, read by `dirichlet_constant`. This used to read every value but a plain
-    ``int`` or ``float`` as 0, so ``np.float32(0.7)`` held 0 (#2593). The FDM ghost path
+    Anything else is a constant, read by `dirichlet_constant`. This used to read as 0 every constant that is
+    not an ``int`` or ``float`` instance, so ``np.float32(0.7)`` held 0 (#2593). The FDM ghost path
     (`applicator_fdm.segment_value`) reads a callable as ``value(t)`` and checks no type: the two disagree
     until #2512's row B2 gives the value one owner.
     """
@@ -297,9 +297,10 @@ def _evaluate_segment_values(
 def dirichlet_constant(segment: BCSegment) -> float:
     """A non-callable Dirichlet value as a float (#2593).
 
-    ``None`` and anything the library's one owner of "verifiably zero" reads as zero (`_describe_bc_value`:
-    an all-zero array included) is 0, as on every other path. Otherwise a finite real number or a finite 0-d
-    real array is its value. A boolean, and anything else, is refused.
+    A boolean is refused first, ``False`` included. Then anything the library's one owner of "verifiably zero"
+    reads as zero is 0 (`_describe_bc_value`: ``None``, an all-zero array, and also ``"0"``, ``Decimal("0")``
+    and a complex 0). Otherwise a finite real number or a finite 0-d real array is its value, and anything else
+    is refused.
     """
     from mfgarchon.geometry.boundary.bc_utils import _describe_bc_value
 
