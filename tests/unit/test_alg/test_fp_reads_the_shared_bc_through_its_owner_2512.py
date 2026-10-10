@@ -6,11 +6,17 @@ guard fails if one reads the shared BC and uses the raw value (audit session rul
 comment 6073690080).
 
 **Population.** Every module under `mfgarchon/alg/` that defines a class deriving, transitively, from
-`BaseFPSolver`.
+`BaseFPSolver`; and every module under `mfgarchon/alg/numerical/coupling/`, whose iterators read BCs on an FP
+solver's behalf (`BlockIterator`'s removed "auto" adjoint mode and `RegimeSwitchingIterator`'s FP-data guard
+did, #2529).
 
-**A shared read** is `<x>.boundary_conditions` loaded from anything but `self`, `<x>.get_boundary_conditions()`
-called on anything but `self`, or any `get_boundary_handler()`. `self.boundary_conditions` is the solver's
-own attribute, and `self.get_boundary_conditions()` is the owner path itself.
+**A shared read** is `<x>.boundary_conditions` loaded from anything but `self`, `getattr(<x>,
+"boundary_conditions", ...)` on anything but `self`, `<x>.get_boundary_conditions()` called on anything but
+`self`, or any `get_boundary_handler()`. `self.boundary_conditions` is the solver's own attribute, and
+`self.get_boundary_conditions()` is the owner path itself. In a coupling module a read is shared only if its
+object names `problem`, `geometry` or `components`, where the shared BC lives: reading an FP solver's own
+resolved BC (`fp.boundary_conditions`, `fp.get_boundary_conditions()`) is that solver's answer, not a read of
+the shared one.
 
 **The rule.** Each shared read must reach the owner's argument in the same function: inside it, or through
 names and `self` attributes assigned from it, transitively. That is per read: a function that translates
@@ -32,6 +38,8 @@ import pytest
 from tests.structural_guard import ALG, FUNCTIONS, REPO, copy_alg, name_of, own_nodes, planted_scan
 
 OWNER = "_fp_view_of_shared"
+COUPLING = ALG / "numerical" / "coupling"
+SHARED_SOURCES = frozenset({"problem", "geometry", "components"})
 
 
 def _is_self(node: ast.AST) -> bool:
@@ -47,17 +55,49 @@ def _key(node: ast.AST) -> str | None:
     return None
 
 
-def shared_read(node: ast.AST) -> bool:
+def _chain_names(node: ast.AST) -> set[str]:
+    """The names an object expression walks through: ``getattr(getattr(problem, "geometry"), ...)`` gives
+    ``{"problem", "geometry"}``, and ``self.problem.geometry`` gives ``{"self", "problem", "geometry"}``."""
+    names: set[str] = set()
+    while True:
+        if isinstance(node, ast.Attribute):
+            names.add(node.attr)
+            node = node.value
+        elif isinstance(node, ast.Call) and name_of(node.func) == "getattr" and node.args:
+            if len(node.args) > 1 and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str):
+                names.add(node.args[1].value)
+            node = node.args[0]
+        elif isinstance(node, ast.Call):
+            node = node.func
+        else:
+            if isinstance(node, ast.Name):
+                names.add(node.id)
+            return names
+
+
+def shared_read(node: ast.AST, coupling: bool = False) -> bool:
+    obj = None
     if isinstance(node, ast.Attribute) and node.attr == "boundary_conditions" and isinstance(node.ctx, ast.Load):
-        return not _is_self(node.value)
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        obj = node.value
+    elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        if node.func.attr == "get_boundary_handler":
+            return True
         if node.func.attr == "get_boundary_conditions":
-            return not _is_self(node.func.value)
-        return node.func.attr == "get_boundary_handler"
-    return False
+            obj = node.func.value
+    elif (
+        isinstance(node, ast.Call)
+        and name_of(node.func) == "getattr"
+        and len(node.args) > 1
+        and isinstance(node.args[1], ast.Constant)
+        and node.args[1].value == "boundary_conditions"
+    ):
+        obj = node.args[0]
+    if obj is None or _is_self(obj):
+        return False
+    return not coupling or bool(_chain_names(obj) & SHARED_SOURCES)
 
 
-def raw_reads(scope: ast.AST) -> list[int]:
+def raw_reads(scope: ast.AST, coupling: bool = False) -> list[int]:
     """Lines of the shared reads in ``scope`` that do not reach the owner's argument in ``scope``."""
     nodes = list(own_nodes(scope))
     parents = {child: node for node in nodes for child in ast.iter_child_nodes(node)}
@@ -101,7 +141,7 @@ def raw_reads(scope: ast.AST) -> list[int]:
     return sorted(
         node.lineno
         for node in nodes
-        if shared_read(node) and not isinstance(parents.get(node), ast.Compare) and not reaches(node)
+        if shared_read(node, coupling) and not isinstance(parents.get(node), ast.Compare) and not reaches(node)
     )
 
 
@@ -136,11 +176,13 @@ def scan(root: Path) -> tuple[list[str], list[str]]:
     classes = fp_classes(trees)
     population, sites = [], []
     for rel, tree in trees.items():
-        if not any(isinstance(node, ast.ClassDef) and node.name in classes for node in ast.walk(tree)):
+        defines_fp = any(isinstance(node, ast.ClassDef) and node.name in classes for node in ast.walk(tree))
+        coupling = not defines_fp and rel.is_relative_to(COUPLING)
+        if not (defines_fp or coupling):
             continue
         population.append(rel.as_posix())
         for name, scope in _scopes(tree):
-            sites.extend(f"{rel.as_posix()}:{line}: in {name}" for line in raw_reads(scope))
+            sites.extend(f"{rel.as_posix()}:{line}: in {name}" for line in raw_reads(scope, coupling))
     return population, sorted(sites)
 
 
@@ -167,6 +209,8 @@ def test_every_fp_solver_reads_the_shared_bc_through_its_owner():
         "fp_network.py",
     }
     assert solvers <= {Path(p).name for p in population}, "the population no longer reaches the FP solvers"
+    readers = {"block_iterators.py", "regime_switching_iterator.py"}
+    assert readers <= {Path(p).name for p in population}, "the population no longer reaches the coupling readers"
     assert sites == [], (
         "each site reads the shared BC and uses it raw. Pass it to self._fp_view_of_shared, or read it through "
         "self.get_boundary_conditions() (#2512, row B3):\n" + "\n".join(sites)
@@ -235,3 +279,37 @@ def test_a_new_fp_solver_anywhere_in_alg_is_in_the_population(alg_copy):
     assert _planted_scan(alg_copy, alg_copy / rel, "class _NotFP:\n" + raw) == [], "not an FP solver: not B3's"
     sites = _planted_scan(alg_copy, alg_copy / rel, "class _FP(FPParticleSolver):\n" + raw)
     assert sites == [f"{rel.as_posix()}:3: in _planted"], sites
+
+
+_PLANT_COUPLING = "def _planted(problem, fp_solver):\n{body}"
+
+
+@pytest.mark.parametrize(
+    ("body", "raw"),
+    [
+        # #2529's fallback at the base, which the attribute-only predicate could not see.
+        ('return getattr(getattr(problem, "geometry", None), "boundary_conditions", None)', [1]),
+        ("return problem.geometry.boundary_conditions", [1]),
+        ("return problem.components.get_boundary_conditions()", [1]),
+        ('return getattr(fp_solver, "boundary_conditions", None)', []),
+        ("return fp_solver.get_boundary_conditions()", []),
+        ("return fp_solver._fp_view_of_shared(problem.geometry.boundary_conditions)", []),
+    ],
+    ids=[
+        "the-2529-fallback",
+        "geometry-attribute-raw",
+        "components-accessor-raw",
+        "the-fp-solvers-own-attribute",
+        "the-fp-solvers-owner-path",
+        "translated",
+    ],
+)
+def test_each_coupling_shape_is_judged(alg_copy, body, raw):
+    """A coupling module reads on an FP solver's behalf: a read of the shared BC must reach the owner, and a read
+    of the solver's own resolved BC is not a shared read."""
+    module = COUPLING / "regime_switching_iterator.py"
+    indented = "".join(f"    {line}\n" for line in body.splitlines())
+    original_lines = (REPO / module).read_text().count("\n") + 1  # appended after the original and a blank line
+    first = original_lines + 2  # the def is the plant's first line
+    sites = _planted_scan(alg_copy, alg_copy / module, _PLANT_COUPLING.format(body=indented))
+    assert sites == [f"{module.as_posix()}:{first + line}: in _planted" for line in raw], sites

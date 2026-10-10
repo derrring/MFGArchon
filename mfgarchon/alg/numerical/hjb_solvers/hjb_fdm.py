@@ -1111,12 +1111,15 @@ class HJBFDMSolver(BaseHJBSolver):
         """
         Build upwind advection matrix from value function gradient.
 
-        This matrix encodes the drift velocity v = -coupling_coefficient * ∇U
-        using the same upwind discretization that would be used internally.
-
-        For strict adjoint mode (Issue #622), this matrix A_HJB is passed to the
-        FP solver which uses A_HJB^T, guaranteeing exact adjoint consistency:
-            L_FP = L_HJB^T
+        This matrix encodes the drift velocity v = -coupling_coefficient * ∇U, upwinded on the
+        sign of v. It is a velocity-mode operator, and its transpose is NOT the FP solver's own
+        operator: on ``test_adjoint_verify_runs_2338``'s ``_problem(n=40)`` (no-flux, Nt=8, T=0.4,
+        sigma=0.05) under the default ``engquist_osher`` Hamiltonian, at the first strict-adjoint
+        sweep's U and over the interior window, max|A^T - B| reaches 245 (45 at the first step) with
+        B = ``FPFDMSolver.build_advection_operator(U)``, while ``build_linearized_operator``'s
+        transpose gives 2.8e-14. That is why ``BlockIterator``'s ``adjoint_mode`` values that
+        transposed this matrix ("transpose", "auto") were removed; the strict-adjoint path uses
+        ``build_linearized_operator`` (#707, #2338).
 
         Mathematical Background:
             For MFG with Hamiltonian H = (coupling/2)|∇u|², the optimal control is:
@@ -1136,17 +1139,7 @@ class HJBFDMSolver(BaseHJBSolver):
             N_total = prod(spatial_shape). The matrix encodes the advection
             operator using velocity-based linear upwind discretization.
 
-        Example:
-            >>> # Build matrix for strict adjoint coupling
-            >>> A_hjb = hjb_solver.build_advection_matrix(U_current)
-            >>> # FP solver uses transpose
-            >>> A_fp = A_hjb.T  # Exact adjoint!
-
         Note:
-            The matrix uses velocity-based linear upwind (same as FP's
-            divergence_upwind mode). This ensures the transpose relationship
-            holds for mass conservation.
-
             The velocity is ``-coupling * p`` with ``p`` the momentum of the solver's
             ``numerical_hamiltonian`` (#2313), and that is the optimal control only where the
             momentum is a single one-sided difference. At a discrete local maximum
@@ -1158,7 +1151,7 @@ class HJBFDMSolver(BaseHJBSolver):
         See Also:
             - Issue #622: Strict Achdou adjoint mode implementation
             - solve_hjb_step_with_matrix(): Uses externally provided matrix
-            - FPFDMSolver.solve_fp_step_adjoint_mode(): Uses A^T from this method
+            - build_linearized_operator(): the exact derivative, whose transpose the strict-adjoint FP step uses
         """
         if self.dimension == 1:
             return self._build_advection_matrix_1d(U, coupling_coefficient, time)
@@ -1173,7 +1166,8 @@ class HJBFDMSolver(BaseHJBSolver):
     ) -> sparse.csr_matrix:
         """Build 1D upwind advection matrix.
 
-        Uses velocity-based linear upwind discretization matching FP divergence form.
+        Uses velocity-based linear upwind discretization. Its transpose is not the FP solver's operator
+        (see ``build_advection_matrix``).
 
         For velocity v = -coupling * ∂U/∂x at point i:
         - If v_i > 0 (flow to right): use backward difference (info from left)
@@ -1181,7 +1175,6 @@ class HJBFDMSolver(BaseHJBSolver):
         - If v_i < 0 (flow to left): use forward difference (info from right)
           A[i,i] -= v_i/dx, A[i,i+1] += v_i/dx
 
-        This matches the "divergence_upwind" scheme in FP solver.
         """
         import scipy.sparse as sparse
 

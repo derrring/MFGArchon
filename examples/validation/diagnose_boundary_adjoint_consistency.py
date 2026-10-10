@@ -15,7 +15,8 @@ Mathematical Background:
 ------------------------
 For advection-diffusion FP: dm/dt = D*Δm - ∇·(m*α) where α = -λ*∇U
 
-In Strict Adjoint Mode (Issue #622):
+In the removed adjoint_mode="transpose" (Issue #622; removed in #2594, where
+adjoint_mode="jacobian_transpose" passes the linearised operator's transpose instead):
 - HJB builds advection matrix A_HJB using velocity-based linear upwind
 - FP uses A_HJB^T directly (transpose)
 - Diffusion is handled separately (symmetric, always adjoint-consistent)
@@ -374,7 +375,7 @@ The transpose of HJB's point-based matrix does NOT equal FP's face-based matrix
 because the boundary treatment differs fundamentally.
 
 RECOMMENDATION:
-For strict adjoint mode to work correctly at boundaries, either:
+For the removed adjoint_mode="transpose" (#2594) to have worked at boundaries, either:
 a) HJB should also use face-based flux discretization, OR
 b) Post-process A_HJB^T to zero out boundary flux contributions
 """)

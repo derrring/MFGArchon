@@ -295,8 +295,8 @@ class WeakFormFPSolver(BaseFPSolver):
     ) -> NDArray:
         """Single FP timestep with an externally provided (transposed) advection matrix.
 
-        Used by BlockIterator's adjoint modes: the FP operator is supplied directly,
-        e.g. as the transpose of the assembled HJB operator. ``volatility`` is read by its declared
+        Used by BlockIterator's adjoint_mode="jacobian_transpose": the FP operator is supplied directly,
+        as the transpose of the HJB's linearised operator. ``volatility`` is read by its declared
         ``volatility_kind`` (#2378); this solver assembles one scalar D, so an array is refused.
         """
         volatility, _ = resolve_volatility_override(

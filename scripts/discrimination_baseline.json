@@ -42,17 +42,17 @@
       "status": "ok"
     },
     "drift_coefficient_2x": {
-      "kill_count": 37,
+      "kill_count": 36,
       "owner": "FP drift c = 1/control_cost (#1420 / G-017)",
       "status": "ok"
     },
     "engquist_osher_derivative_drops_the_forward_branch": {
-      "kill_count": 62,
+      "kill_count": 61,
       "owner": "`upwind_momentum_derivatives` is the one owner of d(p)/d(backward) and d(p)/d(forward); for `engquist_osher` both are nonzero at a local maximum, and the analytic HJB Jacobian, the nD linearised operator and the strict-adjoint operator all read them, so the Jacobian is the residual's own derivative (#2313)",
       "status": "ok"
     },
     "engquist_osher_magnitude_is_the_larger_branch": {
-      "kill_count": 43,
+      "kill_count": 42,
       "owner": "the default `engquist_osher` preset of `upwind_momentum` evaluates H at sqrt(a+^2 + b-^2) per axis (ACD's Example 1), which at a discrete local maximum sums both one-sided differences; that sum is what makes its linearisation the transpose of the FDM FP divergence_upwind operator (#2313). Taking the larger branch instead is Rouy-Tourin, which leaves the transpose defect at maxima",
       "status": "ok"
     },

@@ -256,11 +256,6 @@
       "rouy_tourin_branch_swap",
       "constructed_preset_is_accepted_and_ignored"
     ],
-    "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_check_runs_in_every_adjoint_mode": [
-      "drift_coefficient_2x",
-      "engquist_osher_magnitude_is_the_larger_branch",
-      "engquist_osher_derivative_drops_the_forward_branch"
-    ],
     "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_operator_follows_the_solvers_resolved_boundary_conditions": [
       "periodic_endpoint_convention_inverted",
       "periodic_wrap_endpoint_inverted"
@@ -3217,13 +3212,12 @@
       "verify": "diffusion_from_volatility(2.0) == 4.0"
     },
     "drift_coefficient_2x": {
-      "kill_count": 37,
+      "kill_count": 36,
       "killed": [
         "tests/integration/test_coupled_mfg_mms.py::TestCoupledMMSConvergence::test_the_drift_scale_follows_lambda_not_coupling_coefficient",
         "tests/integration/test_newton_mfg_solver.py::TestMFGResidualComputation::test_residual_computation",
         "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline",
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_check_runs_and_reports_which_pairing_is_adjoint[engquist_osher-False]",
-        "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_check_runs_in_every_adjoint_mode",
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_report_agrees_with_the_check_it_ships_beside",
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_window_is_the_grid_it_is_given",
         "tests/unit/test_alg/test_drift_contract.py::test_fp_scalar_drift_matches_hamiltonian_optimal_control[0.5]",
@@ -3263,10 +3257,9 @@
       "verify": "fp_drift_coefficient(_stub_problem(control_cost=2.0)) == 1.0"
     },
     "engquist_osher_derivative_drops_the_forward_branch": {
-      "kill_count": 62,
+      "kill_count": 61,
       "killed": [
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_check_runs_and_reports_which_pairing_is_adjoint[engquist_osher-False]",
-        "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_check_runs_in_every_adjoint_mode",
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_report_agrees_with_the_check_it_ships_beside",
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_window_is_the_grid_it_is_given",
         "tests/unit/test_alg/test_hjb_bc_enforcement_1900.py::test_removing_the_enforcement_still_leaves_the_no_flux_condition_satisfied[21]",
@@ -3334,11 +3327,10 @@
       "verify": "float(upwind_momentum_derivatives(np.array([1.0]), np.array([-1.0]), \"engquist_osher\")[1][0]) == 0.0"
     },
     "engquist_osher_magnitude_is_the_larger_branch": {
-      "kill_count": 43,
+      "kill_count": 42,
       "killed": [
         "tests/regression/test_solver_golden_baseline.py::test_coupled_solve_matches_golden_baseline",
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_check_runs_and_reports_which_pairing_is_adjoint[engquist_osher-False]",
-        "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_check_runs_in_every_adjoint_mode",
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_report_agrees_with_the_check_it_ships_beside",
         "tests/unit/test_alg/test_adjoint_verify_runs_2338.py::test_the_window_is_the_grid_it_is_given",
         "tests/unit/test_alg/test_hjb_fp_adjoint_numerical_hamiltonian_2313.py::test_engquist_osher_linearises_to_the_transpose_of_the_fp_operator[1d]",

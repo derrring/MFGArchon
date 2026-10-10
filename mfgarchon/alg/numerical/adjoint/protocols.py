@@ -11,7 +11,7 @@ Two approaches for adjoint consistency in MFG coupling:
    Correct for arbitrary Hamiltonians, not just quadratic H = (c/2)|p|^2.
    Requires class-based Hamiltonian with dp() method.
 
-Note: The old "transpose" mode (Issue #622, deprecated in #706) naively
+Note: The old "transpose" and "auto" modes (Issue #622, deprecated in #706, since removed) naively
 transposed the velocity-based advection matrix. This is incorrect for
 non-symmetric upwind stencils. The "jacobian_transpose" mode (#707) is
 the correct implementation.
@@ -60,12 +60,12 @@ class AdjointCapableHJBSolver(Protocol):
 @runtime_checkable
 class AdjointCapableFPSolver(Protocol):
     """
-    DEPRECATED: Protocol for FP solvers that support strict adjoint mode.
+    Protocol for FP solvers that take one step with an externally supplied advection operator.
 
-    This protocol is deprecated because the underlying approach (using A_hjb.T)
-    is mathematically incorrect. Use divergence_upwind scheme instead.
-
-    See Issue #706 (adjoint discretization).
+    It is the FP half of what ``BlockIterator(adjoint_mode="jacobian_transpose")`` requires at
+    construction: each step hands ``solve_fp_step_adjoint_mode`` the transpose of the HJB's
+    linearised operator (Issue #707). What Issue #706 found incorrect was supplying ``A_hjb.T`` from
+    ``build_advection_matrix``, the removed ``"transpose"`` mode (#2594).
     """
 
     def solve_fp_step_adjoint_mode(
@@ -77,10 +77,9 @@ class AdjointCapableFPSolver(Protocol):
         volatility_kind: str | None = None,
     ) -> NDArray[np.floating]:
         """
-        DEPRECATED: Solve one FP timestep using externally-provided advection matrix.
+        Solve one FP timestep with an externally supplied, transposed advection operator.
 
-        This method is deprecated because using A_hjb.T is mathematically incorrect.
-        Use standard solve_fp_step with divergence_upwind scheme instead.
+        ``BlockIterator`` passes the transposed linearised HJB operator (Issue #707).
         """
         ...
 

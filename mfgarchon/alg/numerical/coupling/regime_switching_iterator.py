@@ -60,7 +60,7 @@ if TYPE_CHECKING:
 _MAX_OUTFLOW_HORIZON = 50.0
 
 
-def _fp_boundary_conditions(fp_solver: Any, problem: Any) -> Any:
+def _fp_boundary_conditions(fp_solver: Any) -> Any:
     """The BC object the FP solve will actually impose.
 
     NOT ``problem.geometry.boundary_conditions``. ``FPFDMSolver`` resolves its BC from a
@@ -72,13 +72,18 @@ def _fp_boundary_conditions(fp_solver: Any, problem: Any) -> Any:
 
     #1802's first version of the guard read geometry instead, and both higher-priority
     routes walked past it: the predicate flagged the object the solver used and returned
-    clean for the object the guard looked at. Falling back to geometry only when the
-    solver exposes nothing keeps non-FDM solvers covered.
+    clean for the object the guard looked at.
+
+    A solver that exposes no ``boundary_conditions`` attribute -- the weak-form family keeps its BC in
+    ``_bc``, set from ``get_boundary_conditions()`` -- is asked through that method, which ends in the
+    FP's reading of the shared BC (``BaseFPSolver._fp_view_of_shared``, #2512 row B3). The geometry's
+    BC read raw is not what such a solver imposes: a shared Dirichlet exit is absorbing at the FP, its
+    value dropped, so a guard reading the raw value refused a homogeneous FP exit (#2529).
     """
     resolved = getattr(fp_solver, "boundary_conditions", None)
     if resolved is not None:
         return resolved
-    return getattr(getattr(problem, "geometry", None), "boundary_conditions", None)
+    return fp_solver.get_boundary_conditions()
 
 
 @dataclass
@@ -251,7 +256,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         for k in range(K):
             if self._outflow_rate(k, K, Q) == 0.0:
                 continue  # no factor is applied to this regime, so nothing is rescaled
-            bc = _fp_boundary_conditions(self._fp[k], self._problems[k])
+            bc = _fp_boundary_conditions(self._fp[k])
             offences = describe_inhomogeneous_bc_data(bc, bc_types=None)
             if offences:
                 msg = (

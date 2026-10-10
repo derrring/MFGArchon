@@ -59,8 +59,6 @@ from .operators import (
     build_advection_matrix_1d,
     # Geometry-aware factories (preferred API)
     build_advection_matrix_from_geometry,
-    # BC-aware adjoint
-    build_bc_aware_adjoint_matrix,
     build_diffusion_matrix,
     build_diffusion_matrix_1d,
     build_diffusion_matrix_2d,
@@ -108,7 +106,6 @@ __all__ = [
     "make_operator_adjoint",
     "verify_operator_splitting_adjoint",
     "OperatorConfig",
-    "build_bc_aware_adjoint_matrix",
     # Verification
     "verify_discrete_adjoint",
     "verify_duality",
