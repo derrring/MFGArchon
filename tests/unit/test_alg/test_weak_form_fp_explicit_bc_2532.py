@@ -360,12 +360,18 @@ def test_a_tag_holding_no_facet_is_refused_and_the_advice_runs(route):
     """On the disc the axis tags exist and hold no facets, so an exit named "x_max" condensed nothing and the
     face stayed a wall, on main too; the alias refusal's advice pointed there (#2593, review 3). An empty tag is
     refused as a missing one. With no tag holding a facet, the advice is to tag the mesh, and it is executed: the
-    exit faces tagged 1 and named "region_1" hold the value. Once tagged, "x_max" is still refused, listing it."""
+    exit faces tagged 1 and named "region_1" hold the value. Once tagged, "x_max" is still refused, listing it.
+
+    The no-tag message offers no whole-boundary segment: beside a named wall that would condense the wall too
+    (#2595 rows 1 and 10). And the tagged exit is not spread over the boundary: the 5 boundary DOFs at x < -0.9
+    hold at most 1.21e-9 (FP) and 1.09e-9 (HJB), measured, so 1e-6 separates them from the exit's 0.7."""
     with pytest.raises(
         ValueError, match=r"none of its tags holds a facet.*Tag the mesh before naming a face"
     ) as excinfo:
         _solve_on_disc(route, "x_max", tag_exit=False)
     assert "available" not in str(excinfo.value)
+    assert "boundary=None" not in str(excinfo.value)
+    assert "whole-boundary" not in str(excinfo.value)
     with pytest.raises(ValueError, match=r"no such tagged boundary \(available: \['region_1'\]\)") as excinfo:
         _solve_on_disc(route, "x_max", tag_exit=True)
     assert "The mesh carries the tag 'x_max', but no facet is in it." in str(excinfo.value)
@@ -374,6 +380,10 @@ def test_a_tag_holding_no_facet_is_refused_and_the_advice_runs(route):
     exit_dofs = solver._basis.get_dofs(solver._skfem_mesh.boundaries["region_1"]).flatten()
     assert exit_dofs.size == 5
     np.testing.assert_allclose(field[exit_dofs], EXIT_VALUE, atol=1e-12)
+    boundary_dofs = solver._basis.get_dofs(solver._skfem_mesh.boundary_facets()).flatten()
+    far_wall = boundary_dofs[solver._basis.doflocs[0, boundary_dofs] < -0.9]
+    assert far_wall.size == 5
+    assert np.max(np.abs(field[far_wall])) < 1e-6
 
 
 @pytest.mark.parametrize("value", [None, np.array([0.0]), np.zeros(3)], ids=["None", "1-d", "3-vector"])

@@ -239,8 +239,8 @@ def _no_such_tagged_boundary(mesh: skfem.Mesh, segment: BCSegment, boundary_name
     )
     if not holding:
         return (
-            f"{head}: none of its tags holds a facet, so only a whole-boundary segment (boundary=None) can be "
-            f"placed on it.{empty}{why} Tag the mesh before naming a face: give its MeshData nonzero "
+            f"{head}: none of its tags holds a facet, so no face can be named on it.{empty}{why} Tag the mesh "
+            "before naming a face: give its MeshData nonzero "
             "boundary_tags, one per boundary_faces row, and name the face 'region_<tag>'."
         )
     face = parse_boundary_face(boundary_name) if isinstance(boundary_name, str) else None
