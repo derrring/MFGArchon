@@ -204,8 +204,9 @@ def _segment_boundary_facets(mesh: skfem.Mesh, segment: BCSegment) -> NDArray:
     if it names one -- the whole face, not the placed part -- and as the whole boundary if it names none.
 
     A name must be a tag that holds facets. A tag the mesh carries with no facet in it is refused as a missing
-    one: the axis tags are placed by bounding box (`mesh_adapter._tag_axis_aligned_boundaries`), so on a curved
-    domain they exist and are empty, and condensing nothing would leave that face a wall (#2593, review 3).
+    one: the axis tags are placed by bounding box (`mesh_adapter._tag_axis_aligned_boundaries`), so on a domain
+    that touches its bounding box only at points, such as a disc, they exist and are empty, and condensing
+    nothing would leave that face a wall (#2593, review 3).
     """
     boundary_name = getattr(segment, "boundary", None)
     if boundary_name:
@@ -277,10 +278,10 @@ def refuse_what_fem_cannot_impose(mesh: skfem.Mesh, bc: BoundaryConditions | Non
       instead: a silent wall where an exit or a prescribed value was asked for.
     Under a DIRICHLET default, the facets each segment claims follow `_segment_boundary_facets`, the rule its
     Dirichlet DOFs follow, for segments of every type, so a segment named by anything but a tag that holds
-    facets -- a library alias such as ``"left"``, or an empty axis tag on a curved mesh, included -- raises
-    there rather than claiming the whole boundary or nothing. A segment also
-    placed by ``region``, ``region_name``, ``sdf_region`` or ``normal_direction`` claims its whole
-    ``boundary`` face, or the whole boundary if it names none, which this check cannot see past.
+    facets -- a library alias such as ``"left"``, or an empty axis tag on a disc, included -- raises
+    there rather than claiming the whole boundary or nothing. A falsy name (``0``, ``""``) is read as no name.
+    A segment also placed by ``region``, ``region_name``, ``sdf_region`` or ``normal_direction`` claims its
+    whole ``boundary`` face, or the whole boundary if it names none, which this check cannot see past (#2595).
     ``dirichlet_bc(g)`` passes, since its segment names the whole boundary.
     """
     from mfgarchon.geometry.boundary.types import BCType

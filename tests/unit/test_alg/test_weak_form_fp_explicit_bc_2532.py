@@ -357,7 +357,7 @@ def _solve_on_disc(route: str, name: str, tag_exit: bool):
 
 @pytest.mark.parametrize("route", ["fp-explicit", "hjb-shared"])
 def test_a_tag_holding_no_facet_is_refused_and_the_advice_runs(route):
-    """On a curved mesh the axis tags exist and hold no facets, so an exit named "x_max" condensed nothing and the
+    """On the disc the axis tags exist and hold no facets, so an exit named "x_max" condensed nothing and the
     face stayed a wall, on main too; the alias refusal's advice pointed there (#2593, review 3). An empty tag is
     refused as a missing one. With no tag holding a facet, the advice is to tag the mesh, and it is executed: the
     exit faces tagged 1 and named "region_1" hold the value. Once tagged, "x_max" is still refused, listing it."""
