@@ -3,7 +3,8 @@
   "checked_source_files": 269,
   "toolchain_when_written": {
     "python": "3.12.15",
-    "mypy": "mypy 2.4.0 (compiled: yes)"
+    "mypy": "mypy 2.4.0 (compiled: yes)",
+    "numpy": "2.5.3"
   },
   "status": {
     "alg": "measured",
