@@ -13,6 +13,9 @@ NEUMANN refused (`BaseFPSolver._fp_own_bc`); without one the solver reads the pr
 
 from __future__ import annotations
 
+from decimal import Decimal
+from fractions import Fraction
+
 import pytest
 
 import numpy as np
@@ -21,6 +24,7 @@ from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc
+from mfgarchon.geometry.boundary.providers import ConstantProvider
 
 SIGMA, T, NT = 0.4, 0.5, 10
 EXIT_VALUE = 0.7
@@ -120,8 +124,8 @@ def test_fem_holds_an_explicit_density_and_reads_a_shared_dirichlet_as_an_exit(d
     exactly 0. Handed the same BC as its own, the FP holds m = 0.7 at the wall, and with no drift and a no-flux
     wall opposite the exact steady state is m = 0.7 everywhere, which a long horizon (T = 100, dt = 10)
     reaches: measured max|m(T) - 0.7| = 1.6e-5 in 1-D and 2-D. A route that wrote 0.7 after a solve lifted at
-    0 (the write-only rival of `test_fp_fem_bc_oracles_2512.py`, review 1) stays near 0 in the far interior:
-    0.699 in 1-D and 0.698 in 2-D.
+    0 (the write-only rival of `test_fp_fem_bc_oracles_2512.py`, review 1) misses that state by 0.699 in 1-D
+    and 0.698 in 2-D, its density falling to 6e-4 and 1.9e-3.
     """
     problem = _problem(_mesh(dim), _exit(dim, EXIT_VALUE), horizon=100.0)
     shared, own = _fem(problem), _fem(problem, _exit(dim, EXIT_VALUE))
@@ -163,3 +167,74 @@ def test_meshless_refuses_an_explicit_density(value):
     problem = _problem(_grid, no_flux_bc(dimension=1))
     with pytest.raises(NotImplementedError, match="would be a prescribed density m = g"):
         _meshless(problem, _exit(1, value))
+
+
+# ------------------------------------------------------------------------- the FEM adapter's Dirichlet value
+# The explicit route hands FP-FEM a Dirichlet value the shared view used to zero first, and the FEM adapter read
+# any value but a plain int or float as 0: np.float32(0.7) held m = 0 (#2593, review 1). HJB-FEM reads the same
+# adapter from the shared BC, so it held u = 0 there on main. A value is now a callable g(x), a finite real number
+# or a finite 0-d real array, and anything else is refused at construction.
+_READABLE = [0.7, np.float32(0.7), np.int64(1), np.array(0.7), Fraction(7, 10), lambda x: 0.7]
+_READABLE_IDS = ["float", "float32", "int64", "0-d", "Fraction", "callable"]
+_UNREADABLE = [ConstantProvider(0.7), "0.7", np.array([0.7]), Decimal("0.7"), float("nan"), np.inf, np.array(0.7 + 0j)]
+_UNREADABLE_IDS = ["provider", "str", "1-d", "Decimal", "nan", "inf", "complex"]
+
+
+def _as_number(value) -> float:
+    return float(value(np.zeros(1))) if callable(value) else float(value)
+
+
+@pytest.mark.parametrize("value", _READABLE, ids=_READABLE_IDS)
+def test_fem_holds_an_explicit_density_of_every_readable_value(value):
+    """The steady state of the density test, m = g everywhere, for each value class."""
+    own = _fem(_problem(_mesh(1), _exit(1, EXIT_VALUE), horizon=100.0), _exit(1, value))
+    x = own._disc.dof_coordinates[:, 0]
+    M = np.asarray(own.solve_fp_system(M_initial=np.zeros(x.size), potential_field=None))
+    assert np.abs(M[-1] - _as_number(value)).max() < 1e-3
+
+
+@pytest.mark.parametrize("value", _READABLE, ids=_READABLE_IDS)
+def test_hjb_fem_holds_a_shared_dirichlet_of_every_readable_value(value):
+    """The HJB's u = g on the exit at every level the solve writes, for each value class."""
+    from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
+
+    solver = HJBFEMSolver(_problem(_mesh(1), _exit(1, value)))
+    x = solver._disc.dof_coordinates[:, 0]
+    U = np.asarray(solver.solve_hjb_system(M_density=np.ones((NT + 1, x.size)), U_terminal=np.zeros(x.size)))
+    np.testing.assert_allclose(U[:-1, np.isclose(x, 1.0)], _as_number(value), rtol=1e-6)
+
+
+@pytest.mark.parametrize("value", _UNREADABLE, ids=_UNREADABLE_IDS)
+@pytest.mark.parametrize("route", ["fp-explicit", "hjb-shared"])
+def test_fem_refuses_a_dirichlet_value_it_cannot_read(route, value):
+    from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
+
+    if route == "fp-explicit":
+        problem, own = _problem(_mesh(1), _exit(1, EXIT_VALUE)), _exit(1, value)
+        build = lambda: _fem(problem, own)  # noqa: E731
+    else:
+        problem = _problem(_mesh(1), _exit(1, value))
+        build = lambda: HJBFEMSolver(problem)  # noqa: E731
+    with pytest.raises(NotImplementedError, match=r"Dirichlet segment 'exit' has a (value of type|non-finite)"):
+        build()
+
+
+@pytest.mark.parametrize("route", ["fp-explicit", "hjb-shared"])
+def test_fem_refuses_a_dirichlet_default_no_segment_names(route):
+    """The FEM adapter imposes conditions only from segments, so a DIRICHLET default_bc behind a segment set that
+    leaves a face unnamed got the natural condition there. That BC is refused; one whose segments name every face,
+    and dirichlet_bc(g), whose segment names the whole boundary, are not."""
+    from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
+    from mfgarchon.geometry.boundary import dirichlet_bc
+
+    def build(bc):
+        if route == "fp-explicit":
+            return _fem(_problem(_mesh(1), _exit(1, EXIT_VALUE)), bc)
+        return HJBFEMSolver(_problem(_mesh(1), bc))
+
+    wall = BCSegment(name="wall", bc_type=BCType.NO_FLUX, value=0.0, boundary="x_min")
+    exit_ = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=EXIT_VALUE, boundary="x_max")
+    with pytest.raises(NotImplementedError, match=r"default_bc=DIRICHLET governs 1 boundary facet"):
+        build(BoundaryConditions(dimension=1, segments=[wall], default_bc=BCType.DIRICHLET, default_value=EXIT_VALUE))
+    build(BoundaryConditions(dimension=1, segments=[wall, exit_], default_bc=BCType.DIRICHLET, default_value=0.7))
+    build(dirichlet_bc(value=EXIT_VALUE, dimension=1))

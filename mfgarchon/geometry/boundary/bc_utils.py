@@ -452,7 +452,7 @@ def _separate_bc_advice(consumer: str, kept: str) -> str:
     return (
         f"keep {kept} on the shared BC for the HJB, and pass {consumer} "
         "boundary_conditions=no_flux_bc(dimension=...) for reflected agents; through problem.solve, "
-        "build that FP solver yourself and pass it as fp_solver="
+        "build both solvers yourself and pass them as hjb_solver= and fp_solver="
     )
 
 

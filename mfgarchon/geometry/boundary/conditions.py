@@ -1233,7 +1233,10 @@ def robin_bc(
     **The trap.** The reflecting condition's own coefficients are
     ``(alpha, beta) = (D_pH(x, grad u).n, D)``, so ``alpha = -v_n``, NOT ``+v_n``, wherever the FP
     transport velocity is ``v = -D_pH``. That also follows from the library's own
-    ``J = v*m - D grad m`` without mentioning ``D_pH``, which is the sense-free route to it.
+    ``J = v*m - D grad m`` without mentioning ``D_pH``, which is the sense-free route to it. Those are the
+    coefficients of the reflecting wall read as a condition on ``m``. An FP solver reads a ROBIN as a
+    condition on the flux, ``J.n = (D/beta)(alpha*m - g)`` (#2512, user ruling 2026-10-10), so there the
+    reflecting wall is ``ROBIN(0, beta, 0)``, which is ``NO_FLUX``.
 
     ``D*alpha/beta = -v_n`` is by the law above the row that DOUBLES -- an influx. So encoding the
     reflecting condition as a Robin segment on a conservative assembly is unbounded, not merely

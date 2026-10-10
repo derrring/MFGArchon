@@ -758,8 +758,8 @@ shared Neumann value, the shared BC keeps the ROBIN for the HJB, and the FP solv
 
 ### What is not settled here
 
-The remaining boundary-condition conventions — the Fokker–Planck flux form at a wall, and ghost-cell
-placement on vertex- versus cell-centred grids — are being reworked. Until that lands, the open boundary-condition issues (#1456,
+The remaining boundary-condition convention — ghost-cell placement on vertex- versus cell-centred grids —
+is being reworked. Until that lands, the open boundary-condition issues (#1456,
 #2005) are the record, not this file.
 
 ---

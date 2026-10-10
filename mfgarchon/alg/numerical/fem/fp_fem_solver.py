@@ -13,7 +13,7 @@ Issue #773 (FEM); Issue #1131 Phase 2 (factored onto WeakFormFPSolver).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.weak_form_fp_solver import WeakFormFPSolver
@@ -89,6 +89,13 @@ class FPFEMSolver(WeakFormFPSolver):
         self.order = order
         logger.info(f"FPFEMSolver initialized: {self._n_dof} DOFs, {self._skfem_mesh.t.shape[1]} elements")
 
+    def _validate_bc_support(self, bc: Any) -> None:
+        """The base checks, and what the FEM adapter would misread in silence (`refuse_what_fem_cannot_impose`)."""
+        super()._validate_bc_support(bc)
+        from .bc_adapter import refuse_what_fem_cannot_impose
+
+        refuse_what_fem_cannot_impose(self._skfem_mesh, bc, type(self).__name__)
+
     @property
     def basis(self):
         return self._basis
@@ -117,12 +124,13 @@ class FPFEMSolver(WeakFormFPSolver):
     honors_inhomogeneous_neumann = False
 
     def _robin_operator_terms(self, D: float):
-        """Robin boundary operator augmentation, adjoint of the HJB term (Issue #1237).
+        """Robin boundary operator augmentation: the FP's total-flux Robin ``J.n = (D/beta)(alpha*m - g)`` (Issue #1237).
 
-        The FP Robin term is the symmetric boundary mass ``D*(alpha/beta)*int_dOmega phi_i phi_j``
-        from integrating the FP diffusion operator ``-D*Delta m`` by parts, plus the boundary load
-        ``D*(1/beta)*int_dOmega g phi_i``. Because the boundary mass is symmetric, this is identical
-        to the HJB Robin term, so ``A_FP = A_HJB^T`` is preserved for the diffusion+Robin block.
+        The term is the symmetric boundary mass ``D*(alpha/beta)*int_dOmega phi_i phi_j`` plus the boundary
+        load ``D*(1/beta)*int_dOmega g phi_i``. This weak form integrates the whole flux ``J = v m - D grad m``
+        by parts and leaves ``J.n`` on the boundary, so the term imposes ``alpha*m - (beta/D)*J.n = g``, not
+        ``alpha*m + beta*dm/dn = g`` (#2512, user ruling 2026-10-10). The boundary mass is the HJB Robin
+        term's, so ``A_FP = A_HJB^T`` is preserved for the diffusion+Robin block.
         Assembled via ``skfem.FacetBasis``; ``(None, None)`` when no Robin segment is present.
 
         ``natural_bc="flux"``: ``_build_advection`` assembles ``div(v m)`` on the VOLUME basis with

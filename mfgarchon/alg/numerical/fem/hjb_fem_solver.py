@@ -89,6 +89,13 @@ class HJBFEMSolver(WeakFormHJBSolver):
             f"HJBFEMSolver initialized: {self._n_dof} DOFs, {self._skfem_mesh.t.shape[1]} elements, order={order}"
         )
 
+    def _validate_bc_support(self, bc: Any) -> None:
+        """The base checks, and what the FEM adapter would misread in silence (`refuse_what_fem_cannot_impose`)."""
+        super()._validate_bc_support(bc)
+        from .bc_adapter import refuse_what_fem_cannot_impose
+
+        refuse_what_fem_cannot_impose(self._skfem_mesh, bc, type(self).__name__)
+
     @property
     def basis(self):
         """scikit-fem Basis object."""

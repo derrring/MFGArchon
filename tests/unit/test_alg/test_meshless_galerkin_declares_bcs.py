@@ -71,8 +71,8 @@ def test_an_unhonoured_bc_is_refused_at_construction(cls, bc_factory):
 
 
 def test_the_fp_takes_a_shared_dirichlet_value_as_an_exit():
-    """The pair reads only the shared BC, where DIRICHLET(g) is an exit: the HJB's u = g, an absorbing
-    wall here (#2512, convention row 5). So a nonzero value constructs."""
+    """On the shared BC DIRICHLET(g) is an exit: the HJB's u = g, an absorbing wall here (#2512, convention
+    row 5). So a nonzero value constructs."""
     MeshlessGalerkinFPSolver(_problem(dirichlet_bc(dimension=1, value=0.5)), XS, delta=0.35)
 
 
@@ -154,7 +154,7 @@ def test_a_coupled_exit_cost_runs_through_the_factory():
     """One shared dirichlet_bc(0.5) on the meshless pair built by create_paired_solvers: the exit cost
     reaches the HJB (u = g at both walls, to Nitsche's weak accuracy) and the FP absorbs (mass falls,
     non-increasing). A value refusal on the FP -- which this pair once had -- made this configuration
-    impossible, since the pair reads one BC and the FP takes no BC of its own.
+    impossible, since the factory hands the pair one shared BC.
 
     M is not asserted to vanish at the wall: Nitsche imposes the absorbing wall weakly, M = 0.125 at T
     on 21 points.
