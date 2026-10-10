@@ -1,0 +1,8 @@
+- **`get_applicator_for_geometry(..., DiscretizationType.FEM)` now names imports that exist.**
+  - **Before.** Its `NotImplementedError` advised `from mfgarchon.geometry.boundary.bc_adapter import apply_fem_bc`. Neither that module nor that function exists, so following the advice raised `ModuleNotFoundError`.
+  - **Now.** It names `from mfgarchon.alg.numerical.fem.bc_adapter import apply_bc_to_fem_system`, for the assembled system. It also names the two helpers that function does not cover:
+    - `get_dirichlet_dofs_and_values`, to scatter a condensed Dirichlet solution back;
+    - `assemble_robin_terms`, since a Robin segment is assembled into the operator.
+  - **The pin.** A test executes the advice and checks the function it imports.
+  - **The same false import elsewhere.** It was also in `mfgarchon.geometry.boundary`'s package docstring (what `help()` shows) and in a comment; both are corrected.
+  - **`apply_bc`'s FEM refusal** now names the module by its package path.

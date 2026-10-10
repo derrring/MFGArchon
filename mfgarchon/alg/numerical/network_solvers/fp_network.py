@@ -103,13 +103,11 @@ class FPNetworkSolver(BaseFPSolver):
         Mass conservation enforced through discrete operators.
     """
 
-    # Node-BC capability gate (Issue #1468; #1456 network family). The network BC model is
-    # `NetworkMFGComponents.boundary_nodes` (a node-level Dirichlet pin applied via
-    # `NetworkMFGProblem.apply_boundary_conditions`), NOT the continuum `BCType`/segments framework —
-    # so the inherited `_validate_bc_support` (which keys on `BoundaryConditions.segments`) is a
-    # structural no-op for network problems. This solver ignores `boundary_nodes` entirely and
-    # unconditionally renormalizes total mass each step, so it cannot honor a node BC: `False`.
-    _honors_node_bc: bool = False
+    # Node BCs (#1468, #1471, #1478): the network BC model is the geometry's `GraphBCConfig`, node-level and
+    # without `segments`, so the inherited `_validate_bc_support` (which returns when `bc` has no `segments`)
+    # is a structural no-op here. This solver honours the node BC itself: it applies it to the density each
+    # step through `_node_applicator.apply_fp`, and no longer renormalises mass (#1683). Pinned by
+    # `TestFPNetworkSolverAbsorbingNodeBC`.
 
     def __init__(
         self,
