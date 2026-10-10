@@ -6,4 +6,4 @@
   is a default path, and neither has a production caller; tracked in #2309 and #2310. Also moved at
   minima: `DirectDerivOperator(scheme="upwind")`, `tensor_calculus.advection` on its default
   `form="gradient", method="upwind"`, and the velocity in `HJBFDMSolver.build_advection_matrix`, reached
-  only through the deprecated `transpose`/`auto` adjoint modes.
+  only through the deprecated `transpose`/`auto` adjoint modes, which are removed later in this release (#2594).

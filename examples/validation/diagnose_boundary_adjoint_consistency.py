@@ -375,7 +375,7 @@ The transpose of HJB's point-based matrix does NOT equal FP's face-based matrix
 because the boundary treatment differs fundamentally.
 
 RECOMMENDATION:
-For strict adjoint mode to work correctly at boundaries, either:
+For the removed adjoint_mode="transpose" (#2594) to have worked at boundaries, either:
 a) HJB should also use face-based flux discretization, OR
 b) Post-process A_HJB^T to zero out boundary flux contributions
 """)

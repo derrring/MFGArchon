@@ -332,8 +332,9 @@ passes the linearised operator's transpose). That caused:
 2. Mass flux through boundaries (violates no-flux BC)
 3. Cumulative mass drift over time
 
-RECOMMENDED FIX (Issue #625):
-In solve_fp_step_adjoint_mode(), post-process A_advection_T to enforce no-flux:
+A FIX ONCE CONSIDERED (Issue #625) for the removed adjoint_mode="transpose" (#2594). It does not
+apply to the remaining mode, which hands solve_fp_step_adjoint_mode the linearised HJB operator's
+transpose. For the removed mode, post-process A_advection_T to enforce no-flux:
 
 ```python
 # After receiving A_advection_T, fix boundary rows

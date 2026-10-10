@@ -662,8 +662,9 @@ class FPFDMSolver(BaseFPSolver):
         ``BlockIterator(adjoint_mode="jacobian_transpose")`` passes the transpose of the HJB's linearised
         operator, ``HJBFDMSolver.build_linearized_operator(U, M, time).T`` (Issue #707), in place of the FP's
         own advection matrix. Where that linearisation is the FP scheme's own -- the default ``engquist_osher``
-        Hamiltonian -- this gives L_FP = L_HJB^T: on ``test_adjoint_verify_runs_2338``'s 40-point fixture its
-        interior matches ``build_advection_operator`` to 2.8e-14. The removed ``"transpose"`` passed
+        Hamiltonian -- this gives L_FP = L_HJB^T on the interior: on ``test_adjoint_verify_runs_2338``'s
+        ``_problem(n=40)`` the interior matches ``build_advection_operator`` to 2.8e-14, while the wall rows,
+        which ``build_linearized_operator`` zeroes, differ (162.8 over the full matrix). The removed ``"transpose"`` passed
         ``build_advection_matrix(U).T`` instead, which missed it by up to 245 there (#2594).
 
         Mathematical Formulation:
@@ -697,7 +698,7 @@ class FPFDMSolver(BaseFPSolver):
         Example:
             >>> # What BlockIterator(adjoint_mode="jacobian_transpose") does at each step:
             >>> J = hjb_solver.build_linearized_operator(U_current, M_current, time=t)
-            >>> M_next = fp_solver.solve_fp_step_adjoint_mode(M_current, J.T)
+            >>> M_next = fp_solver.solve_fp_step_adjoint_mode(M_current, J.T, volatility=sigma, time=t)
 
         Note:
             ~~The diffusion operator is symmetric (D = D^T)~~ **[CORRECTED 2026-08-28, #2145]**.

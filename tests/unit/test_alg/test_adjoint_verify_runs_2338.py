@@ -115,7 +115,7 @@ def test_it_refuses_an_fp_solver_that_cannot_supply_an_operator():
     """A solver can satisfy the strict-adjoint protocol and still have no matrix to compare (#2338).
 
     `WeakFormFPSolver` is the in-tree case: it defines `solve_fp_step_adjoint_mode`, so
-    `validate_adjoint_capability` admits it, and it assembles no advection operator. The stand-in below is that shape
+    the construction gate's `AdjointCapableFPSolver` admits it, and it assembles no advection operator. The stand-in below is that shape
     with none of its construction cost. Skipping here is what the issue reports; refusing is the user ruling of
     2026-09-16.
     """

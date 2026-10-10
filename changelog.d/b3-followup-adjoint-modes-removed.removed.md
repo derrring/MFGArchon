@@ -24,6 +24,9 @@
 - **`BlockIterator`'s adjoint construction gate asks for what `"jacobian_transpose"` uses.**
   - **The protocols:** `LinearizedOperatorCapable` for the HJB and `AdjointCapableFPSolver` for the FP. It used to ask, through the deprecated `validate_adjoint_capability`, for `build_advection_matrix`, which only the removed modes consumed.
   - **Admitted now:** an HJB solver with the linearisation and no `build_advection_matrix`.
-  - **Refused at construction, not at the first step:** an HJB solver without `build_linearized_operator`, with the same message as before.
-  - **Changed exception, which callers catch:** an FP solver lacking `solve_fp_step_adjoint_mode` now raises `NotImplementedError` at construction (was `TypeError`), like every other capability refusal on this path.
-  - `validate_adjoint_capability`, the `AdjointCapableHJBSolver` export and `HJBFDMSolver.build_advection_matrix` stay. They are deprecated public names with callers, and the deprecation policy removes them (ledger #2573).
+  - **An HJB solver without `build_linearized_operator`** is refused at construction with the message the per-step check gave. In-tree, every such HJB class was already refused at construction, by the deprecated check's `TypeError` with a different message. Only an HJB with `build_advection_matrix` and no linearisation, of which there are none in-tree, used to reach the first step.
+  - **Changed exception, which callers catch:** an HJB solver lacking `build_linearized_operator` and an FP solver lacking `solve_fp_step_adjoint_mode` now raise `NotImplementedError` at construction (was `TypeError`), like every other capability refusal on this path.
+  - **Unchanged:**
+    - `validate_adjoint_capability`, deprecated since v0.17.0 with removal by v0.25.0, now has no in-tree caller;
+    - the `AdjointCapableHJBSolver` export is deprecated in its docstring only;
+    - `HJBFDMSolver.build_advection_matrix` is a public method, not deprecated, that still has callers (ledger #2573).

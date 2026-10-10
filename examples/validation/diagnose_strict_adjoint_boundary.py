@@ -222,8 +222,8 @@ if __name__ == "__main__":
     print("CONCLUSION")
     print("=" * 70)
     print("""
-The strict adjoint mode (Issue #622) currently uses A_HJB^T directly without
-any boundary correction. This means:
+The removed adjoint_mode="transpose" (Issue #622; removed in #2594) used A_HJB^T
+directly, without any boundary correction. This means:
 
 1. The FP equation sees advection flux from A_HJB^T at boundaries
 2. A_HJB^T preserves terms that allow mass to "flow through" boundaries

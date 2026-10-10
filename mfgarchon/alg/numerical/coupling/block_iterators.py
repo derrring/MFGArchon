@@ -180,7 +180,7 @@ class BlockIterator(BaseCouplingIterator):
             # Deprecated in v0.17.14 (#476; its warning said "since v0.17.13") and removed once the policy allowed
             # it (3 minor versions; the warning had said v1.0.0). They built the FP operator from
             # `build_advection_matrix`, whose transpose is not the HJB linearisation's: on
-            # test_adjoint_verify_runs_2338's 40-point fixture (engquist_osher, first sweep, interior window)
+            # test_adjoint_verify_runs_2338's _problem(n=40) (engquist_osher, first sweep, interior window)
             # max|A^T - B| reaches 245 against max|J^T - B| = 2.8e-14, B being the FP solver's own operator.
             raise ValueError(
                 f"adjoint_mode='{adjoint_mode}' was removed (deprecated in v0.17.14): it did not transpose the "
@@ -534,8 +534,7 @@ class BlockIterator(BaseCouplingIterator):
 
         time = step * self.problem.dt
         A_fp_own = self._fp_advection_operator(U_k)
-        # Built here rather than taken from the caller even in `jacobian_transpose` mode, where one is already in
-        # hand: a parameter that was only ever None in the removed velocity modes was a branch the verified mode never ran,
+        # Built here rather than taken from the caller, which has one in hand: a parameter that was only ever None in the removed velocity modes was a branch the verified mode never ran,
         # and a mutation swapping this call for `build_advection_matrix` survived the whole suite while it existed
         # (#2338, mutation check). `audits/mathematical.md` states the same rule for this identity -- an operator
         # accepted from the side under test makes the check tautological.

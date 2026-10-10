@@ -60,12 +60,12 @@ class AdjointCapableHJBSolver(Protocol):
 @runtime_checkable
 class AdjointCapableFPSolver(Protocol):
     """
-    DEPRECATED: Protocol for FP solvers that support strict adjoint mode.
+    Protocol for FP solvers that take one step with an externally supplied advection operator.
 
-    This protocol is deprecated because the underlying approach (using A_hjb.T)
-    is mathematically incorrect. Use divergence_upwind scheme instead.
-
-    See Issue #706 (adjoint discretization).
+    It is the FP half of what ``BlockIterator(adjoint_mode="jacobian_transpose")`` requires at
+    construction: each step hands ``solve_fp_step_adjoint_mode`` the transpose of the HJB's
+    linearised operator (Issue #707). What Issue #706 found incorrect was supplying ``A_hjb.T`` from
+    ``build_advection_matrix``, the removed ``"transpose"`` mode (#2594).
     """
 
     def solve_fp_step_adjoint_mode(
@@ -77,10 +77,9 @@ class AdjointCapableFPSolver(Protocol):
         volatility_kind: str | None = None,
     ) -> NDArray[np.floating]:
         """
-        DEPRECATED: Solve one FP timestep using externally-provided advection matrix.
+        Solve one FP timestep with an externally supplied, transposed advection operator.
 
-        This method is deprecated because using A_hjb.T is mathematically incorrect.
-        Use standard solve_fp_step with divergence_upwind scheme instead.
+        ``BlockIterator`` passes the transposed linearised HJB operator (Issue #707).
         """
         ...
 
