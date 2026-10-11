@@ -905,8 +905,9 @@ def boundary_value(
     what it declares: ``(t, x)``, ``(x)``, ``(t)`` or ``(time)``. ``x`` is one point, a 1-D array of shape
     ``(d,)``, ``d = 1`` included. A reader with no time passes ``t=None``, and one with no point ``x=None``. A
     callable that declares what its reader lacks is refused there, at first use, and the message names ``where``,
-    the reader and the face. It returns one number at the point; a return of one element, of any shape, is read as
-    that element, and a longer one is refused.
+    the reader and the face. It returns one number at the point, read as a constant is below: a return of one
+    element, of any shape, is that element, and a longer one is refused, as is ``None``, which a function with no
+    ``return`` gives.
 
     **A constant** (#2593): ``None``, and whatever `_describe_bc_value` calls zero, is 0. A boolean is refused. A
     finite real number is its value, and so is a size-1 real array of any shape, read as its element. A complex
@@ -916,8 +917,6 @@ def boundary_value(
     **A** ``BCValueProvider`` is resolved with ``state``. Without one it is refused (``NotImplementedError``): the
     coupling layer resolves providers before a solve (`with_resolved_providers`).
     """
-    from mfgarchon.geometry.boundary.bc_utils import _describe_bc_value
-
     if is_provider(value):
         if state is None:
             raise NotImplementedError(
@@ -940,13 +939,26 @@ def boundary_value(
             )
         if x is not None and np.ndim(x) != 1:
             raise ValueError(f"{where} passed x of shape {np.shape(x)}; a boundary value takes one point, shape (d,).")
-        result = np.asarray(bound(t=t, x=x))
-        if result.size != 1:
+        returned = bound(t=t, x=x)
+        if returned is None:
             raise NotImplementedError(
-                f"{kind}: its value returned {result.size} numbers, shape {result.shape}, at one point; {where} reads "
-                "one number per point (#2512 row B2)."
+                f"{kind}: its value returned None at one point, which {where} cannot read; does the function lack a "
+                "`return`? (#2512 row B2)"
             )
-        return float(result.reshape(()))  # one element, of any shape, as a constant's is read
+        if np.size(returned) != 1:
+            raise NotImplementedError(
+                f"{kind}: its value returned {np.size(returned)} numbers, shape {np.shape(returned)}, at one point; "
+                f"{where} reads one number per point (#2512 row B2)."
+            )
+        # The return is read as a constant is, so the owner holds one reading of a value, not two (#2512 row B2).
+        return _read_constant(returned, kind=f"{kind} (what its callable returned)", where=where)
+    return _read_constant(value, kind=kind, where=where)
+
+
+def _read_constant(value: Any, *, kind: str, where: str) -> float:
+    """A constant boundary value, or what a callable one returned at a point: `boundary_value`'s contract."""
+    from mfgarchon.geometry.boundary.bc_utils import _describe_bc_value
+
     if isinstance(value, (bool, np.bool_)) or (isinstance(value, np.ndarray) and value.dtype == np.bool_):
         raise NotImplementedError(
             f"{kind} has a boolean value, which is not a boundary datum: give a real number, a real array of one "

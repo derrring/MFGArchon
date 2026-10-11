@@ -114,6 +114,12 @@ def test_a_callable_returning_more_than_one_number_at_a_point_is_refused():
         _segment(lambda t, x: np.array([t, t])).get_value(np.array([0.9]), t=0.5)
 
 
+def _fdm_bc(value) -> BoundaryConditions:
+    return BoundaryConditions(
+        dimension=1, segments=[_segment(value), BCSegment(name="w", bc_type=BCType.NO_FLUX, boundary="x_min")]
+    )
+
+
 def _fdm_ghost_wall(bc):
     from mfgarchon.geometry.boundary.applicator_fdm import pad_array_with_ghosts
 
@@ -139,11 +145,25 @@ def _hjb_1d(bc):
 def test_each_fdm_reader_receives_the_owners_value_at_its_time(reader):
     """Row B2's families whose numbers B2a does not change (#2512 comment 6104689754, section 5): FDM reads one value
     per face, at the time it is given. ``0.25 + t`` at t = 0.5 is 0.75."""
-    bc = BoundaryConditions(
-        dimension=1,
-        segments=[_segment(lambda t: 0.25 + t), BCSegment(name="w", bc_type=BCType.NO_FLUX, boundary="x_min")],
-    )
-    assert reader(bc) == pytest.approx(0.75, abs=1e-12)
+    assert reader(_fdm_bc(lambda t: 0.25 + t)) == pytest.approx(0.75, abs=1e-12)
+
+
+@pytest.mark.parametrize(
+    ("returned", "message"),
+    [
+        (float("nan"), r"\(what its callable returned\) has a non-finite value nan"),
+        (True, r"\(what its callable returned\) has a boolean value"),
+        (np.complex128(1j), r"\(what its callable returned\) has a complex value"),
+        (None, r"its value returned None at one point, .* does the function lack a `return`"),
+    ],
+    ids=["nan", "True", "imaginary", "None"],
+)
+def test_what_a_callable_returns_is_read_as_a_constant_is(returned, message):
+    """One reading of a value, whether given or returned. At this FDM wall b10b9e65 imposed NaN, 1.0 and 0.0 (with a
+    ComplexWarning) for the first three, and None raised a bare TypeError; ``None`` is refused rather than read as 0,
+    since a function with no ``return`` gives it."""
+    with pytest.raises(NotImplementedError, match=message):
+        _fdm_ghost_wall(_fdm_bc(lambda t: returned))
 
 
 def test_nitsche_receives_the_owners_value_at_each_point():

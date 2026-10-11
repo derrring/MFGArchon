@@ -132,11 +132,14 @@ pin    fp_fem/shared_robin_refused tests/unit/test_alg/test_fp_refuses_a_shared_
 
 # The (b) rows
 row grid/B1_face_segment            -
-# Row B2 is met by its first half (B2a), as the plan ruled (#2512 comment 6104689754, section 5): the guard, and
-# pins for the families whose numbers B2a does not change. B2b adds the readers with no time or at t = 0 (FP-FDM's
-# Dirichlet reads, the guard's one allowance; FEM; meshless Galerkin) and HJB-GFDM's time, each with an oracle.
+# Row B2 is not met by its first half (B2a): one evaluation of a segment's value is its target, and a decoder is
+# still allowlisted (FP-FDM's `_get_dirichlet_value_at_point`, D8) and GFDM's dict channel is unrouted (#2597).
+# B2a lands the guard as a ratchet and the family pins. B2b fills the row once the guard's allowlist holds no
+# decoder, only classifiers, constructors and the D21 pass-through (audit session ruling, 2026-10-11, correcting
+# the plan's section 5 in #2512 comment 6104689754).
 row grid/B2_value_form_and_time     tests/unit/test_geometry/boundary/test_value_has_one_owner_2512.py
 row grid/B2_value_form_and_time     tests/unit/test_geometry/boundary/test_boundary_value_owner_2512.py
+row grid/B2_value_form_and_time     -
 # Row B3's guard covers the coupling layer too: BlockIterator's "auto" adjoint mode, one of the two readers
 # it awaited, is removed, and RegimeSwitchingIterator's fallback reads the FP solver's owner path (#2529).
 row grid/B3_fp_view_of_shared_bc    tests/unit/test_alg/test_fp_reads_the_shared_bc_through_its_owner_2512.py

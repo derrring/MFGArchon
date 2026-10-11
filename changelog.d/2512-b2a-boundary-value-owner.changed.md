@@ -48,6 +48,15 @@
     At a Dirichlet exit, HJB-FDM's ghost imposed 1.0 for `True`, 0.0 for `np.complex128(1j)` and NaN for `nan`;
     each is now refused. The BC resolver's passthrough read `np.float32(0.7)` and `np.array([0.7])` as 0.0; it now
     reads both as 0.7.
+  - **What a callable returns is read as a constant is**, so the owner holds one reading of a value:
+    - a return of one element, of any shape, is that element;
+    - a longer return is refused, and so are NaN, a boolean and a complex value;
+    - `None` is refused, not read as 0, since a function with no `return` gives it.
+
+    At HJB-FDM's Dirichlet wall, a callable returning `nan`, `True` or `np.complex128(1j)` imposed NaN, 1.0 and 0.0.
+    On a 2-D face, `lambda t: t * np.arange(1.0, 6.0)` at t = 0.5 was broadcast along the face's padded row, ghost
+    corners included, and set the wall's three nodes to 1.0, 1.5 and 2.0. Each is now refused; a field along a face
+    is a separate capability.
   - **The FP's shared-Neumann reader refuses a complex value.** It read `np.complex128(1j)` as zero flux, since
     `float()` drops the imaginary part.
   - **A `BCValueProvider`** read by a reader with no iteration state is refused with `NotImplementedError`,
