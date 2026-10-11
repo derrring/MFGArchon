@@ -2491,13 +2491,13 @@ class HJBGFDMSolver(BaseHJBSolver):
         """The `BoundaryConditions` a deprecated dict BC spells (#2597, since v0.22.0).
 
         ``{"type": t, "values": g}`` becomes ``dirichlet_bc``, ``neumann_bc``, ``no_flux_bc`` or ``periodic_bc`` of
-        the solver's dimension, with ``g`` as the value:
+        the solver's dimension, with ``g`` as the value. ``t`` must be one of those four names, as a string:
 
-        - a number is the value, and a missing ``"values"`` is 0, as the rows read it;
-        - a callable keeps its old call, by the point alone, so it is wrapped as ``g(x)``. What it returns now meets
-          the value contract, so ``None``, a boolean or more than one number is refused;
-        - a per-point ``"values"`` (a list, tuple, array, or a dict by point index) is refused: a value per node is
-          a planned capability (#2600).
+        - a number, or an array of one element, is the value, and a missing ``"values"`` is 0;
+        - a callable keeps its old call, by the point alone, so it is wrapped as ``g(x)``. What it returns, and a
+          constant, now meet the value contract, so ``None`` returned, a boolean or a string is refused at the solve;
+        - a per-point ``"values"`` (a list, tuple, a dict by point index, or an array of more than one element) is
+          refused: a value per node is a planned capability (#2600).
 
         A Neumann ``"values"`` was read only as an index dict, so a number or a callable was solved as 0 (#2520); it
         is now the Neumann datum, as it is for ``neumann_bc(value=g)``. The dict's ``"value"`` is checked against
@@ -2536,7 +2536,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         if kind not in factories:
             raise ValueError(f"HJBGFDMSolver: unknown dict BC type {kind!r}; supported: {sorted(factories)} (#2597).")
         if isinstance(values, np.ndarray) and values.size == 1:
-            pass  # one element, read as its element by the owner, as the rows read it
+            pass  # one element: the owner reads it as its element
         elif isinstance(values, (list, tuple, dict, np.ndarray)):
             raise NotImplementedError(
                 f'HJBGFDMSolver: a dict BC\'s per-point "values" (a {type(values).__name__}) is not accepted since '

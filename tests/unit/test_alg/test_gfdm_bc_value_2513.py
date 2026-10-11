@@ -220,6 +220,7 @@ def test_a_dict_bc_the_translation_cannot_spell_is_refused():
         ({"type": "mixed"}, ValueError, r"unknown dict BC type 'mixed'"),
         ({"values": 0.1}, ValueError, r'needs a "type" string.*it has None'),
         ({"type": None}, ValueError, r'needs a "type" string.*it has None'),
+        ({"type": BCType.DIRICHLET, "values": 0.1}, ValueError, r'needs a "type" string.*it has <BCType\.DIRICHLET'),
     )
     for bc, error, message in refused:
         with (
@@ -232,7 +233,8 @@ def test_a_dict_bc_the_translation_cannot_spell_is_refused():
         {"type": "no_flux", "values": 0},
         {"type": "periodic"},
         {"type": "periodic", "values": 0.0},
-        {"type": "dirichlet", "values": np.array(0.1)},  # one element: the value, as the rows read it
+        {"type": "dirichlet", "values": np.array(0.1)},  # one element, zero-dimensional or not: the value
+        {"type": "dirichlet", "values": np.array([0.1])},
     )
     for bc in accepted:
         with pytest.warns(DeprecationWarning, match="A dict for parameter 'boundary_conditions'"):
