@@ -138,13 +138,21 @@ row grid/B1_face_segment            -
 # B2a lands the guard as a ratchet and the family pins. B2b fills the row when
 #   (a) the guard's allowlist holds no decoder, under a guard that covers both of the census's predicates: today's
 #       `.value` reads, and a value passed into a helper that tests `callable(v)` and calls it (D5, D16, D22-D26).
-#       The guard covers both since B2b-2a; its allowlists still hold D8 (first predicate) and D6 (second), each
-#       naming B2b-2b as its removal;
-#   (b) #2535 and #2538, which the row closes (#2512 comment 6054006841), are closed: D1 has no time default, so a
-#       reader with no time cannot pass one, and a g(t) oracle reaches every reader handed a time, FP-FDM's D8 and
+#       The guard covers both since B2b-2a. B2b-2b-i routes D8, so its first-predicate allowance is gone; the second
+#       predicate's still holds D6, naming B2b-2b-ii as its removal;
+#   (b) #2535 and #2538, which the row closes (#2512 comment 6054006841), #2605 and #2543's time half are closed,
+#       and no library reader reads a time it was not given: an owner call's t comes from the caller; a signature
+#       default forwarded to the owner is None; and an operator cached across steps reads the step's time, not its
+#       construction time (#2543) (audit session rulings, 2026-10-12). D1 reads no time it is not given (`None`,
+#       refused for a value that declares t), and a g(t) oracle reaches every reader handed a time, FP-FDM's D8 and
 #       D9 and HJB-SL's D6, as a call counter on the owner shows (every t HJB-SL's nD path passes is the step's
-#       time). Today D9 and D8's mixed path are routed but read t = 0 through D1's default, which (a) alone cannot
-#       see;
+#       time). B2b-2b-i meets FP-FDM's half and closes #2535: D8 and D9 read the level's time and the node, under
+#       `test_fp_fdm_dirichlet_time_2535.py`'s exact oracle and time recorder. B2b-2b-ii takes HJB-SL's D6, #2538,
+#       the six readers whose `time=0.0` default reaches the owner (HJB-WENO's ghost fill among them, #2605),
+#       #2543's time half, and the guard's check of such defaults. The guard cannot see construction-time binding,
+#       so only #2543's oracle covers it. #2543's other half, a replaced BC object solved stale, is #2475's class,
+#       a BC captured at construction, not value form or time, and is not this row's. No grid row here owns it,
+#       and neither does #2512's table of seven conventions;
 #   (c) a Robin segment's alpha and beta are read through the owner's constant contract, a callable one refused
 #       naming #1237, and the readers' own float() and getattr defaults removed. Met by B2b-1: one reader,
 #       `segment_robin_coefficients`, and the guard's coefficient check.

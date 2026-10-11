@@ -43,6 +43,7 @@ from .types import (
     BoundaryFace,
     PeriodicGridConvention,
     _compute_sdf_gradient,
+    _declares_time,
     boundary_value,
     parse_boundary_face,
     repeated_endpoint_count,
@@ -494,30 +495,33 @@ class BoundaryConditions:
         # No match - return default BC type (fails loud if default_bc unset)
         return self._resolve_default_bc("get_bc_type_at_boundary")
 
-    def get_bc_value_at_boundary(self, boundary: str, time: float = 0.0, point: np.ndarray | None = None) -> float:
+    def get_bc_value_at_boundary(
+        self, boundary: str, time: float | None = None, point: np.ndarray | None = None
+    ) -> float:
         """
         Get the BC value at a specific boundary (safe accessor for mixed BCs).
 
         Args:
             boundary: Boundary identifier (e.g., "x_min", "x_max")
-            time: Current time for time-dependent BCs
+            time: The time to read a time-dependent value at. With none, a value that declares ``t`` is refused,
+                not read at a default time (#2512 row B2, #2535); a constant, or ``g(x)``, needs none.
             point: Optional spatial point for spatially-varying BCs
 
         Returns:
             BC value at the specified boundary
         """
-        # Read through the one owner (#2512 row B2): a callable value is g(t, x), time first, by name. Until row B2's
-        # second half, `time` keeps its 0.0 default, which is where FP-FDM's t = 0 read enters (#2535).
+        # Read through the one owner (#2512 row B2): a callable value is g(t, x), time first, by name.
         where = f"BoundaryConditions.get_bc_value_at_boundary({boundary!r})"
         if self.is_uniform:
-            return segment_value(self.segments[0], t=time, x=point, where=where)
-
-        # For mixed BCs, find the highest priority segment
-        for segment in self.segments:
-            if self._segment_covers(segment, boundary):
-                return segment_value(segment, t=time, x=point, where=where)
-
-        # No match - the default value
+            segment: BCSegment | None = self.segments[0]
+        else:
+            # For mixed BCs, the highest priority segment that covers the boundary, or none: the default value
+            segment = next((s for s in self.segments if self._segment_covers(s, boundary)), None)
+        value = segment.value if segment is not None else self.default_value
+        if time is None and _declares_time(value, segment):
+            raise NotImplementedError(f"{where}: the value declares t; pass time= to read it at a time (#2512 row B2).")
+        if segment is not None:
+            return segment_value(segment, t=time, x=point, where=where)
         return boundary_value(self.default_value, kind="default_value", t=time, x=point, where=where)
 
     def identify_boundary_face(
