@@ -1482,7 +1482,7 @@ def solve_timestep_full_nd(
         # Check if this is a boundary point
         is_boundary = is_boundary_point(multi_idx, shape, ndim)
 
-        # Determine BC type (Issue #859: explicit legacy handling, fail on unknown)
+        # Determine BC type (Issue #859: fail on unknown; an object without is_uniform is refused, #1559)
         # Issue #1250 2026-06-10 audit: uniform 'neumann' is homogeneous-Neumann, identical
         # to 'no_flux' for the FP equation; the operator paths already treat them identically
         # (laplacian.py:307, advection.py:316).  Route to the same no-flux boundary handler.

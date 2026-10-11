@@ -1016,7 +1016,7 @@ def _tensor_diffusion_2d(
             # Mixed BC - use unified interface (may not be uniform no-flux)
             u_padded = pad_array_with_ghosts(u, bc, ghost_depth=1, time=time, spacing=(dx, dy))
         else:
-            # Legacy or unified uniform BC - check type
+            # Not a BoundaryConditions: read by its .type, if it has one
             try:
                 bc_type_str = bc.type.lower()
                 is_noflux = bc_type_str in ["no_flux", "neumann"]
