@@ -70,18 +70,21 @@ def _solve(route: str, domain, bc: BoundaryConditions):
     no-flux shared one (m(t, x), m0 = 1). Returns the DOF x-coordinates and the field at every time level."""
     from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
     from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
+    from mfgarchon.geometry.meshes.mesh_1d import Mesh1D
 
+    geometry = domain(bc if route == "hjb-shared" else no_flux_bc(dimension=bc.dimension))
+    # Unit mass on the domain's own measure: Mesh1D's uniform-cell measure gives a constant c the mass c (n+1)/n.
+    c = 16 / 17 if isinstance(geometry, Mesh1D) else 1.0
     model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.4)
     conditions = Conditions(
-        m_initial=lambda x: 1.0 + 0.0 * np.asarray(x, dtype=float)[..., 0], u_terminal=lambda x: 0.0, T=0.5
+        m_initial=lambda x: c + 0.0 * np.asarray(x, dtype=float)[..., 0], u_terminal=lambda x: 0.0, T=0.5
     )
+    problem = MFGProblem(model=model, domain=geometry, conditions=conditions, Nt=NT)
     if route == "hjb-shared":
-        solver = HJBFEMSolver(MFGProblem(model=model, domain=domain(bc), conditions=conditions, Nt=NT))
+        solver = HJBFEMSolver(problem)
         n = solver._disc.dof_coordinates.shape[0]
         field = solver.solve_hjb_system(M_density=np.ones((NT + 1, n)), U_terminal=np.zeros(n))
     else:
-        shared = no_flux_bc(dimension=bc.dimension)
-        problem = MFGProblem(model=model, domain=domain(shared), conditions=conditions, Nt=NT)
         solver = FPFEMSolver(problem, order=1, boundary_conditions=bc)
         n = solver._disc.dof_coordinates.shape[0]
         field = solver.solve_fp_system(M_initial=np.ones(n), potential_field=None)
