@@ -27,9 +27,12 @@ shapes are the criterion, since an AST guard cannot be complete over Python synt
   second half extends the guard to the second predicate before the row is met;
 - names carried through a second name (``f = seg.value; g = f``), an annotated assignment, a walrus, or tuple
   unpacking;
-- arithmetic on a value (``seg.value * h``), ``np.full``'s fill value, ``np.float64(...)``, ``.value.__call__``, and
-  module-level code.
-None of these is a shape a census decoder uses.
+- arithmetic on a value (``seg.value * h``), an augmented store (``a[i] += seg.value``), an attribute store
+  (``o.x = seg.value``), and indexing a value (``seg.value[0]``);
+- a value wrapped in a list (``np.array([seg.value])``), passed by keyword (``np.asarray(a=seg.value)``), or as a
+  conversion's later argument (``np.full``'s fill value), and ``np.float64(...)``;
+- ``.value.__call__``, a closure over a carried name, a loop target, and module-level code.
+None of these is a shape a census decoder uses (review 2 of #2598 planted each one).
 """
 
 from __future__ import annotations

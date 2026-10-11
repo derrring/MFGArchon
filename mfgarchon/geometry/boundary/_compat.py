@@ -299,7 +299,7 @@ def _compute_ghost_pair(
     beta: float = 0.0,
 ) -> tuple[NDArray, NDArray]:
     """Compute ghost values for both boundaries with same BC type."""
-    g = bc_value  # read by `segment_value` before it gets here (#2512 row B2)
+    g = bc_value  # read by the owner before it gets here, `segment_value` or `boundary_value` (#2512 row B2)
 
     if bc_type == BCType.PERIODIC:
         return u_int_right.copy(), u_int_left.copy()
@@ -360,7 +360,7 @@ def _compute_single_ghost(
         time: Current time
         config: Ghost cell configuration
     """
-    g = bc_value  # read by `segment_value` before it gets here (#2512 row B2)
+    g = bc_value  # read by the owner before it gets here, `segment_value` or `boundary_value` (#2512 row B2)
 
     if bc_type == BCType.PERIODIC:
         # For mixed BC with periodic, this shouldn't normally happen

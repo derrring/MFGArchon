@@ -239,9 +239,10 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
                 - "dirichlet": Set field to bc_value at boundary
                 - "neumann": Set normal derivative to bc_value (requires additional ops)
                 - "penalty": Add penalty term pushing field toward bc_value
-            bc_value: Boundary value: a number, or a callable ``g(x)`` of one point ``x`` of shape ``(d,)``. Its
-                parameter must be named ``x``: it is bound by name (#2512 row B2), and this method has no time
-                to pass, so one that declares ``t`` is refused.
+            bc_value: Boundary value: a number, or a function ``g(x)`` of one point ``x`` of shape ``(d,)``, a def
+                or a lambda. Its parameter must be named ``x``: it is bound by name (#2512 row B2), and this method
+                has no time to pass, so one that declares ``t`` is refused. Another callable, such as a SciPy
+                interpolant over space, is refused too; wrap it, ``lambda x: s(x[0])``.
             penalty_weight: Weight for penalty method
 
         Returns:

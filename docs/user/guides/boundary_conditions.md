@@ -320,8 +320,9 @@ Not every method can read every form. Each refuses, when it first reads the valu
 not have:
 - a method that reads one value per face, such as the FDM ghost layer, has no point to pass, so it refuses a value
   that declares `x`, even with a default: write `g(t)` if the value does not vary along the face;
-- FEM and the meshless Galerkin path read `g(x)` at each boundary point but have no time to pass yet, so they
-  refuse a value that declares `t`;
+- FEM's Dirichlet DOFs and the meshless Galerkin path read `g(x)` at each boundary point but have no time to pass
+  yet, so they refuse a value that declares `t`. FEM's Robin and Neumann loads read one constant per segment, with
+  neither a time nor a point, so they refuse a callable that declares either;
 - HJB-GFDM (through `BCSegment.get_value`) passes both, so it reads `inlet_profile(t, x)` above.
 
 A boundary value is a function you write, a `def` or a `lambda` (or a `functools.partial` of one), since its

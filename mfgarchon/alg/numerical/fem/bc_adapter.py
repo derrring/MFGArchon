@@ -320,7 +320,7 @@ def _evaluate_segment_values(
     """
     from mfgarchon.geometry.boundary.types import segment_value
 
-    where = f"the FEM Dirichlet DOFs of segment {segment.name!r}"
+    where = f"the FEM Dirichlet assembly of segment {segment.name!r}"
     if callable(segment.value):
         # Issue #1489 (F5): evaluate at the DOF coordinates via basis.doflocs (a coordinate for EVERY
         # DOF), NOT mesh.p (vertex coordinates only). For P2 the boundary DOF set includes edge-midpoint

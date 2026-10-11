@@ -170,7 +170,7 @@ def test_what_a_callable_returns_is_read_as_a_constant_is(returned, message):
 
 
 def test_a_one_element_object_array_holding_true_is_a_boolean():
-    """Review 1 of #2598: the boolean test ran before the unwrap, so the head read this as 1.0 at every reader."""
+    """Review 1 of #2598: the boolean test ran before the unwrap, so 7d382a7f read this as 1.0 at every reader."""
     with pytest.raises(NotImplementedError, match="has a boolean value"):
         _fdm_ghost_wall(_fdm_bc(np.array([True], dtype=object)))
 
@@ -218,7 +218,10 @@ def test_a_callable_that_is_not_a_function_you_write_is_refused_when_the_segment
     """User ruling, 2026-10-11 (rule C): a boundary value is a def or a lambda, or a partial of one. Another callable's
     parameter names were not written against the slots: a SciPy interpolant takes ``(x, ...)``, so one built over time
     data would be read as g(x), time data at the position. b10b9e65 called FDM's value as ``value(time)`` and read it."""
-    with pytest.raises(TypeError, match=r"not a function you write: a boundary value is a def or a lambda"):
+    with pytest.raises(
+        TypeError,
+        match=r"not a plain def or lambda: a boundary value is a function whose parameter names declare what it reads",
+    ):
         _segment(make())
 
 
@@ -242,6 +245,38 @@ def test_a_positional_only_function_is_refused_and_its_advised_wrap_reads():
     with pytest.raises(TypeError, match=r"takes \(t, /\), with positional-only parameters.*`lambda t: f\(t\)`"):
         _segment(eval("lambda t, /: t"))
     assert _fdm_ghost_wall(_fdm_bc(lambda t: math.sin(t))) == pytest.approx(math.sin(0.5), abs=1e-12)
+
+
+def test_a_reader_with_neither_time_nor_point_advises_a_constant_and_reads_one():
+    """Review 2 of #2598 (M1): the resolver's passthrough has neither t nor x, so advising g(x) for a g(t), or g(t) for
+    a g(x), led into a second refusal. Its advice is a constant, and a constant reads there."""
+    from mfgarchon.geometry.boundary.resolution import _resolve_passthrough
+
+    with pytest.raises(NotImplementedError, match=r"declares t, but the BC resolver's .* write it as a constant"):
+        _resolve_passthrough(_segment(lambda t: t))
+    with pytest.raises(NotImplementedError, match=r"declares x, but the BC resolver's .* write it as a constant"):
+        _resolve_passthrough(_segment(lambda x: x[0]))
+    assert _resolve_passthrough(_segment(0.75)).value == pytest.approx(0.75, abs=1e-15)
+
+
+def test_fdm_advises_g_of_t_and_reads_it():
+    """FDM has a time and no point: it advises g(t), and g(t) reads at its wall."""
+    with pytest.raises(NotImplementedError, match=r"declares x, but the FDM .* write it as g\(t\)"):
+        _fdm_ghost_wall(_fdm_bc(lambda x: x[0]))
+    assert _fdm_ghost_wall(_fdm_bc(lambda t: 0.25 + t)) == pytest.approx(0.75, abs=1e-12)
+
+
+def test_fem_dirichlet_advises_g_of_x_and_reads_it():
+    """FEM's Dirichlet assembly has a point and no time: it advises g(x), and g(x) reads at the DOF x = 1."""
+    import skfem
+
+    from mfgarchon.alg.numerical.fem.bc_adapter import _evaluate_segment_values
+
+    basis = skfem.Basis(skfem.MeshLine(np.linspace(0.0, 1.0, 5)), skfem.ElementLineP1())
+    dof = int(np.argmax(basis.doflocs[0]))
+    with pytest.raises(NotImplementedError, match=r"declares t, but the FEM Dirichlet .* write it as g\(x\)"):
+        _evaluate_segment_values(_segment(lambda t: t), basis, [dof])
+    assert _evaluate_segment_values(_segment(lambda x: 0.5 + x[0]), basis, [dof]) == pytest.approx([1.5], abs=1e-12)
 
 
 def test_a_legacy_callable_left_value_is_read_through_the_owner():

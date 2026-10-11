@@ -20,9 +20,10 @@
     - a callable that is not a function you write (user ruling, 2026-10-11): a boundary value is a `def` or a
       `lambda`, or a `functools.partial` of one, whose parameter names declare what it reads. A SciPy interpolant,
       a class instance, a bound method, a builtin or NumPy ufunc (`math.sin`, `np.sin`, `abs`), `np.vectorize` and
-      a jax-wrapped function are refused, with the advice to wrap them. b10b9e65 called FDM's value as
-      `value(time)`, so it read a time interpolant, `math.sin` and `np.sin` there correctly: wrap them,
-      `value=lambda t: s(t)`, `value=lambda t: np.sin(t)`;
+      a jax-wrapped function are refused, with the advice to wrap them. So is a def that a decorator turned into
+      another object: `@functools.cache` or `@lru_cache`, `numba.njit`, or a classmethod taken off its class.
+      b10b9e65 called FDM's value as `value(time)`, so it read a time interpolant, `math.sin`, `np.sin`, a cached
+      def and a classmethod there correctly. Wrap them, `value=lambda t: s(t)`, `value=lambda t: np.sin(t)`;
     - a function that cannot be called by name, `def f(t, /)`;
     - one that puts `x` before `t`, such as `lambda x, t: ...`, which is never swapped (#2378 phase 5,
       #2375 ruling 8).
@@ -56,6 +57,10 @@
     - refused: every boolean, every complex value (0 included), an array of more than one element that is not
       all zero, any other type, and a non-finite number.
 
+    These rules read one object level. A fully masked one-element array is 0 whatever its dtype, boolean and
+    complex included, and a value nested deeper in object arrays is read as `_describe_bc_value` sees it: a doubly
+    nested `False` or complex 0 reads 0. Row B2's second half replaces this with a layered contract.
+
     At a Dirichlet exit, HJB-FDM's ghost imposed 1.0 for `True`, 0.0 for `np.complex128(1j)` and NaN for `nan`;
     each is now refused. The BC resolver's passthrough read `np.float32(0.7)` and `np.array([0.7])` as 0.0; it now
     reads both as 0.7.
@@ -64,10 +69,18 @@
     - a longer return is refused, and so are NaN, a boolean and a complex value;
     - `None` is refused, not read as 0, since a function with no `return` gives it.
 
+    A return is unwrapped once more than a constant, so one nested two object levels deep is read a level deeper
+    than the same constant, until row B2's second half.
+
     At HJB-FDM's Dirichlet wall, a callable returning `nan`, `True` or `np.complex128(1j)` imposed NaN, 1.0 and 0.0.
     On a 2-D face, `lambda t: t * np.arange(1.0, 6.0)` at t = 0.5 was broadcast along the face's padded row, ghost
     corners included, and set the wall's three nodes to 1.0, 1.5 and 2.0. Each is now refused; a field along a face
     is a separate capability.
+  - **The deprecated `BoundaryConditions1DFDM`'s Dirichlet `left_value`, as `get_ghost_values_nd` reads it, goes
+    through the owner too**, since the ghost helper it feeds lost its own decode. A callable is read by name, and
+    the constant contract applies. b10b9e65 imposed ghosts from `True` as 1.0, broadcast a 2-element array, and
+    imposed NaN; it read `lambda s` and `np.sin` with the time, and `lambda x` with the time as `x`. Each is now
+    refused. The other legacy readers are unchanged.
   - **The FP's shared-Neumann reader refuses a complex value.** It read `np.complex128(1j)` as zero flux, since
     `float()` drops the imaginary part.
   - **A `BCValueProvider`** read by a reader with no iteration state is refused with `NotImplementedError`,
