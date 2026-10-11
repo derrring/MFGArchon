@@ -251,34 +251,39 @@ def _get_dirichlet_value_at_point(
     boundary_conditions: Any,
     multi_idx: tuple[int, ...],
     shape: tuple[int, ...],
+    *,
+    time: float | None = None,
+    point: np.ndarray | None = None,
 ) -> float:
-    """Get Dirichlet BC value at a boundary point.
+    """The Dirichlet value at a boundary node: the value of the first Dirichlet wall the node lies on, read through the
+    owner by `get_bc_value_at_boundary` at ``time`` and at the node ``point`` (#2512 row B2).
 
-    Issue #1258 fix (2026-06-10 audit): for mixed BC, resolve the value from the
-    specific Dirichlet wall the grid point is on via get_bc_value_at_boundary, not
-    from the first Dirichlet segment regardless of wall (which would give wrong values
-    when multiple Dirichlet walls exist with different values).
+    Issue #1258: for mixed BC, the wall the node is on, not the first Dirichlet segment. The time stepping passes the
+    level it solves for, t_{k+1}. This read a callable as 0, and a mixed BC's value at t = 0 (#2535).
     """
-    try:
-        if boundary_conditions.is_uniform:
-            seg = boundary_conditions.segments[0]
-            return float(seg.value) if not callable(seg.value) else 0.0
-        # Mixed BC: find the Dirichlet wall this grid point is on, return its value.
-        _AXIS_NAMES = {0: "x", 1: "y", 2: "z", 3: "w"}
-        ndim = len(shape)
-        for d in range(ndim):
-            name = _AXIS_NAMES.get(d, f"axis{d}")
-            if multi_idx[d] == 0:
-                wall = f"{name}_min"
-                if boundary_conditions.get_bc_type_at_boundary(wall).value == "dirichlet":
-                    return float(boundary_conditions.get_bc_value_at_boundary(wall))
-            if multi_idx[d] == shape[d] - 1:
-                wall = f"{name}_max"
-                if boundary_conditions.get_bc_type_at_boundary(wall).value == "dirichlet":
-                    return float(boundary_conditions.get_bc_value_at_boundary(wall))
-    except (AttributeError, ValueError, IndexError):
-        pass
-    return 0.0
+    _AXIS_NAMES = {0: "x", 1: "y", 2: "z", 3: "w"}
+    for d in range(len(shape)):
+        name = _AXIS_NAMES.get(d, f"axis{d}")
+        for side, on_wall in (("min", multi_idx[d] == 0), ("max", multi_idx[d] == shape[d] - 1)):
+            wall = f"{name}_{side}"
+            if on_wall and boundary_conditions.get_bc_type_at_boundary(wall).value == "dirichlet":
+                return float(boundary_conditions.get_bc_value_at_boundary(wall, time=time, point=point))
+    raise RuntimeError(f"FP-FDM read a Dirichlet value at node {tuple(multi_idx)}, which is on no Dirichlet wall.")
+
+
+def _node(grid: Any, multi_idx: tuple[int | np.integer[Any], ...]) -> np.ndarray:
+    """The coordinates of a grid node, one point of shape (d,)."""
+    return np.array([grid.coordinates[d][multi_idx[d]] for d in range(len(multi_idx))], dtype=float)
+
+
+def _dirichlet_walls_1d(boundary_conditions: Any, grid: Any) -> list[tuple[int, BoundaryFace, np.ndarray]]:
+    """The walls of a 1-D grid whose own BC is Dirichlet, as ``(index, face, wall node)``. Each wall by its own type:
+    a BC whose segments are all Dirichlet can still leave a wall to a no-flux default (#2535)."""
+    return [
+        (index, BoundaryFace(0, side), _node(grid, (index,)))
+        for index, side in ((0, "min"), (-1, "max"))
+        if boundary_conditions.get_bc_type_at_boundary(f"x_{side}").value == "dirichlet"
+    ]
 
 
 def _get_bc_type(boundary_conditions: Any) -> str | None:
@@ -313,20 +318,16 @@ def _get_bc_type(boundary_conditions: Any) -> str | None:
         return None
 
 
-def _get_bc_value(boundary_conditions: Any, face: BoundaryFace) -> float:
+def _get_bc_value(
+    boundary_conditions: Any, face: BoundaryFace, *, time: float | None = None, point: np.ndarray | None = None
+) -> float:
     """
-    Get BC value at a specific boundary, through `BoundaryConditions.get_bc_value_at_boundary`.
+    Get BC value at a specific boundary, through `BoundaryConditions.get_bc_value_at_boundary`, at ``time`` and
+    at the wall node ``point`` (#2512 row B2).
 
     Issue #946: Uses BoundaryFace instead of string identifiers for internal dispatch.
-
-    Args:
-        boundary_conditions: Any BC object
-        face: Boundary face identifier
-
-    Returns:
-        BC value at the specified boundary
     """
-    return boundary_conditions.get_bc_value_at_boundary(face.to_string())
+    return boundary_conditions.get_bc_value_at_boundary(face.to_string(), time=time, point=point)
 
 
 if TYPE_CHECKING:
@@ -997,12 +998,13 @@ def solve_fp_nd_full_system(
     M_solution = np.zeros((Nt, *shape), dtype=np.float64)
     M_solution[0] = m_initial_condition.copy()
 
-    # Enforce Dirichlet BC on initial condition (for 1D problems)
-    # through the BoundaryConditions helpers above
-    bc_type = _get_bc_type(boundary_conditions)
-    if bc_type == "dirichlet" and ndim == 1:
-        M_solution[0, 0] = _get_bc_value(boundary_conditions, BoundaryFace(0, "min"))
-        M_solution[0, -1] = _get_bc_value(boundary_conditions, BoundaryFace(0, "max"))
+    # A 1-D BC whose segments are all Dirichlet holds its Dirichlet walls at g(0) at level 0 too, read at the wall
+    # node; a BC with a non-Dirichlet segment keeps the caller's initial density there (#1258's pin). Every later
+    # level is the implicit step's, whose rows hold g(t_{k+1}); the explicit steps refuse a Dirichlet wall. A
+    # post-step overwrite, which wrote such a BC onto both walls, a no-flux default included, is gone (#2535).
+    if ndim == 1 and _get_bc_type(boundary_conditions) == "dirichlet":
+        for index, face, wall_node in _dirichlet_walls_1d(boundary_conditions, grid):
+            M_solution[0, index] = _get_bc_value(boundary_conditions, face, time=0.0, point=wall_node)
 
     # Edge cases
     if Nt <= 1:
@@ -1157,6 +1159,7 @@ def solve_fp_nd_full_system(
                 advection_scheme=advection_scheme,
                 source_term=source_values,
                 interface_velocity=vel_at_k,
+                time=(k + 1) * dt,
             )
 
         M_solution[k + 1] = M_next
@@ -1211,11 +1214,6 @@ def solve_fp_nd_full_system(
                     fabricated,
                 )
             M_solution[k + 1] = np.maximum(M_solution[k + 1], 0)
-
-        # Enforce Dirichlet BC
-        if bc_type == "dirichlet" and ndim == 1:
-            M_solution[k + 1, 0] = _get_bc_value(boundary_conditions, BoundaryFace(0, "min"))
-            M_solution[k + 1, -1] = _get_bc_value(boundary_conditions, BoundaryFace(0, "max"))
 
         # Issue #640: Report progress to hierarchical progress bar
         if progress_callback is not None:
@@ -1368,9 +1366,11 @@ def solve_timestep_full_nd(
     advection_scheme: str = "divergence_upwind",
     source_term: np.ndarray | None = None,
     interface_velocity: np.ndarray | None = None,
+    time: float | None = None,
 ) -> np.ndarray:
     """
-    Solve one timestep of the full nD FP equation.
+    Solve one timestep of the full nD FP equation, for the level at ``time``: the time at which a Dirichlet value
+    is read (#2512 row B2). With none, a value that declares ``t`` is refused; a constant needs none.
 
     Assembles sparse matrix A and RHS b, then solves A*m_{k+1} = b.
 
@@ -1503,7 +1503,9 @@ def solve_timestep_full_nd(
         # Dispatch to scheme-specific assembly function (Issue #859)
         if is_boundary and _is_dirichlet_at_point(boundary_conditions, multi_idx, shape):
             # Dirichlet BC: row becomes identity (m = prescribed value)
-            bc_value = _get_dirichlet_value_at_point(boundary_conditions, multi_idx, shape)
+            bc_value = _get_dirichlet_value_at_point(
+                boundary_conditions, multi_idx, shape, time=time, point=_node(grid, multi_idx)
+            )
             _add_boundary_dirichlet_entries(row_indices, col_indices, data_values, flat_idx, dt, bc_value)
         elif (is_no_flux or not is_uniform) and is_boundary and not wraps_everywhere:
             # No-flux or mixed BC at boundary: scheme-specific assembly
@@ -1565,7 +1567,9 @@ def solve_timestep_full_nd(
             if is_boundary_point(multi_idx, shape, ndim) and _is_dirichlet_at_point(
                 boundary_conditions, multi_idx, shape
             ):
-                bc_value = _get_dirichlet_value_at_point(boundary_conditions, multi_idx, shape)
+                bc_value = _get_dirichlet_value_at_point(
+                    boundary_conditions, multi_idx, shape, time=time, point=_node(grid, multi_idx)
+                )
                 b_rhs[idx] = bc_value / dt
 
     # The repeated-endpoint rows assembled above read `m[i] - m[mirror] = 0`. Zeroed last so a

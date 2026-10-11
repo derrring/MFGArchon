@@ -55,10 +55,6 @@ VALUE_ATTRS = frozenset({"value", "default_value"})
 ENUM_HOLDERS = frozenset({"bc_type", "default_bc", "type", "kind", "math_type"})
 CONVERT = frozenset({"float", "int", "complex", "asarray", "array"})
 ALLOWED = {
-    # Row B2's second half routes these (#2512 comment 6104689754); remove each from this list when it does.
-    ("mfgarchon/alg/numerical/fp_solvers/fp_fdm_time_stepping.py", "_get_dirichlet_value_at_point"): (
-        "removed by B2b-2b: FP-FDM reads its Dirichlet at t = 0 (#2535)"
-    ),
     # An attribute named `value` that is not a boundary value: a cvxpy Problem's optimal value.
     ("mfgarchon/alg/numerical/gfdm_components/joint_socp.py", "solve_joint_socp_at_stencil"): "cvxpy",
     ("mfgarchon/alg/numerical/gfdm_components/joint_socp.py", "solve_relaxed_joint_socp_at_stencil"): "cvxpy",
@@ -368,3 +364,66 @@ def test_every_callable_allowance_still_covers_a_site():
 def test_a_planted_callable_decode_is_found(package_copy, planted):
     target = package_copy / PACKAGE / "geometry" / "boundary" / "_planted_rival.py"
     assert any("_planted_rival.py" in site for site in planted_scan(callable_scan, package_copy, target, planted))
+
+
+# Row B2's second half (B2b-2b-i): no reader gives the owner a literal time. A reader with no time passes none, and
+# the owner refuses a value that declares t (#2512 row B2, #2535); a literal t = 0 was how FP-FDM read every step at
+# the initial time. A site is a call of `segment_value` or `boundary_value` with ``t=`` a numeric literal, or of
+# `get_bc_value_at_boundary` with ``time=`` one. Blind spots: a literal passed positionally, through a name, or
+# through a helper that forwards its own parameter (FP-FDM's level-0 write passes ``time=0.0`` to `_get_bc_value`,
+# which is t_0, not a default); a negative literal, ``t=-0.0``, which is a unary minus, not a constant; a call
+# outside a function or lambda body, as in the other checks here; `BCSegment.get_value`'s ``t=``, which is not
+# checked, since `NodeBC.get_value` shares its name; and a signature default forwarded to the owner,
+# ``def f(..., time=0.0)`` passing ``t=time``, which reads t = 0 for every caller that omits it. Six readers do so
+# at this check's landing, HJB-WENO's ghost fill among them (#2605); their check is B2b-2b-ii's.
+_TIME_KEYWORDS = {"segment_value": "t", "boundary_value": "t", "get_bc_value_at_boundary": "time"}
+
+
+def time_literals(scope: ast.AST) -> list[int]:
+    """Lines in ``scope`` that hand the owner, or `get_bc_value_at_boundary`, a numeric literal time."""
+    lines = []
+    for node in own_nodes(scope):
+        if isinstance(node, ast.Call):
+            name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", None)
+            keyword = _TIME_KEYWORDS.get(name)
+            for kw in node.keywords:
+                if (
+                    kw.arg == keyword
+                    and isinstance(kw.value, ast.Constant)
+                    and isinstance(kw.value.value, (int, float))
+                    and not isinstance(kw.value.value, bool)
+                ):
+                    lines.append(node.lineno)
+    return lines
+
+
+def time_literal_scan(root: Path) -> tuple[list[str], list[str]]:
+    population, sites = [], []
+    for path in sorted((root / PACKAGE).rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        if rel in EXCLUDED:
+            continue
+        population.append(rel)
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, FUNCTIONS):
+                sites.extend(f"{rel}:{line}: in {getattr(node, 'name', '<lambda>')}" for line in time_literals(node))
+    return population, sorted(set(sites))
+
+
+def test_no_reader_gives_the_owner_a_literal_time():
+    population, sites = time_literal_scan(REPO)
+    assert len(population) > 100, f"the population looks truncated: {len(population)} modules"
+    assert sites == [], "a literal time handed to the owner (#2512 row B2, #2535):\n" + "\n".join(sites)
+
+
+@pytest.mark.parametrize(
+    "planted",
+    [
+        "def _rival(segment):\n    return segment_value(segment, t=0.0, x=None, where='w')\n",
+        "def _rival(bc):\n    return bc.get_bc_value_at_boundary('x_min', time=0)\n",
+    ],
+    ids=["owner", "accessor"],
+)
+def test_a_planted_literal_time_is_found(package_copy, planted):
+    target = package_copy / PACKAGE / "geometry" / "boundary" / "_planted_rival.py"
+    assert any("_planted_rival.py" in site for site in planted_scan(time_literal_scan, package_copy, target, planted))

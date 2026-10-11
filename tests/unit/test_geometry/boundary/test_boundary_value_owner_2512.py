@@ -87,6 +87,23 @@ def test_the_accessor_passes_its_point_as_x_of_shape_d():
     assert bc.get_bc_value_at_boundary("x_max", time=0.5, point=np.array([0.9])) == pytest.approx(9.5)
 
 
+def test_an_accessor_given_no_time_refuses_a_value_that_declares_t_and_says_to_pass_one():
+    """`get_bc_value_at_boundary` and `BCSegment.get_value` read a time-dependent value at t = 0 when given no time,
+    which is how FP-FDM read every step at the initial time (#2535). With none, they now refuse it, and the advice
+    runs: the same call with a time reads g at it. A constant, or g(x), needs no time."""
+    bc = BoundaryConditions(dimension=1, segments=[_segment(lambda t: 0.25 + t)], default_bc=BCType.NO_FLUX)
+    with pytest.raises(NotImplementedError, match=r"declares t; pass time= to read it at a time"):
+        bc.get_bc_value_at_boundary("x_max")
+    assert bc.get_bc_value_at_boundary("x_max", time=0.5) == pytest.approx(0.75)
+    segment = bc.segments[0]
+    with pytest.raises(NotImplementedError, match=r"declares t; pass t= to read it at a time"):
+        segment.get_value(np.array([1.0]))
+    assert segment.get_value(np.array([1.0]), t=0.5) == pytest.approx(0.75)
+    for value, expected in ((0.3, 0.3), (lambda x: 2.0 * x[0], 2.0)):
+        no_time = BoundaryConditions(dimension=1, segments=[_segment(value)], default_bc=BCType.NO_FLUX)
+        assert no_time.get_bc_value_at_boundary("x_max", point=np.array([1.0])) == pytest.approx(expected)
+
+
 # `BCSegment.get_value(point=[0.9], t=0.5)`, HJB-GFDM's Dirichlet read: the callable, the value b10b9e65 read, and
 # the value now (None: refused when the segment is built). b10b9e65 tried four positional signatures.
 _GET_VALUE = {

@@ -802,7 +802,7 @@ class BCSegment:
     def get_value(
         self,
         point: np.ndarray,
-        t: float = 0.0,
+        t: float | None = None,
         state: dict[str, Any] | None = None,
     ) -> float:
         """
@@ -810,7 +810,8 @@ class BCSegment:
 
         Args:
             point: Spatial coordinates as 1D array
-            t: Time
+            t: The time to read a time-dependent value at. With none, a value that declares ``t`` is refused,
+               not read at a default time (#2512 row B2); a constant, or ``g(x)``, needs none.
             state: Optional iteration state dict for BCValueProvider resolution
                    (Issue #625). Required if value is a provider. Standard keys:
                    'm_current', 'U_current', 'geometry', 'volatility', 'iteration'.
@@ -827,7 +828,11 @@ class BCSegment:
             TypeError: If a callable value, reassigned after the segment was built, cannot be bound by name.
             ValueError: If ``point`` is not one point of shape ``(d,)``.
         """
-        # Until row B2's second half, `t` keeps its 0.0 default; HJB-GFDM, the one caller, passes its time.
+        if t is None and _declares_time(self.value, self):
+            raise NotImplementedError(
+                f"BCSegment.get_value: segment {self.name!r}'s value declares t; pass t= to read it at a time "
+                "(#2512 row B2)."
+            )
         return segment_value(self, t=t, x=np.asarray(point, dtype=float), where="BCSegment.get_value", state=state)
 
     def __str__(self) -> str:
@@ -852,6 +857,14 @@ class BCSegment:
             parts.append(f"(priority={self.priority})")
 
         return " ".join(parts)
+
+
+def _declares_time(value: Any, segment: BCSegment | None = None) -> bool:
+    """Whether ``value`` is a callable that declares ``t``, which an accessor called with no time cannot read."""
+    if not callable(value) or is_provider(value):
+        return False
+    bound = segment.value_binding() if segment is not None else bind_boundary_value(value)
+    return "t" in bound.passes
 
 
 def bind_boundary_value(fn: Callable[..., Any]) -> BoundCallable:

@@ -8,5 +8,6 @@
   - **`FPFDMSolver.solve_fp_step_adjoint_mode`** solves I/dt + Aᵀ − D with RHS m/dt and no Dirichlet row. `BlockIterator` reaches it in every `adjoint_mode` but `'off'` when the FP solver carries its own Dirichlet BC. With a shared one it reaches it in the deprecated `'transpose'`, and in the deprecated `'auto'` when the Dirichlet is declared through `default_bc`; `'jacobian_transpose'` refuses a shared Dirichlet earlier. Measured on main through `BlockIterator` (21 points, σ = 0.4, T = 0.5, Nt = 10, 2 Picard iterations): an FP-own uniform Dirichlet left the x_max wall at 0.2002 for g = 0.7 and g = 0 alike, in `'transpose'`, `'jacobian_transpose'` and `'auto'`, silently. `'auto'`'s own refusal no longer advises `'transpose'`. `'transpose'` and `'auto'` are removed later in this release (#2594).
     - From cos(πx/2) (21 points, σ = 0.4, dt = 0.05, Aᵀ = 0), a uniform Dirichlet left the walls at 0.5338 / 0.0359 after one step for g = 0 and g = 0.7 alike: the Laplacian's Dirichlet stencil absorbs one cell outside the wall, and the value was dropped. A mixed one raised a `ValueError` from `LaplacianOperator`.
     - It now raises `NotImplementedError` for any Dirichlet wall and points to `adjoint_mode='off'`.
-  - Filed, not fixed here: FP-FDM imposes 0 for a callable Dirichlet value on a uniform BC (#2535).
+  - FP-FDM's read of a callable Dirichlet value as 0 on a uniform BC was not fixed here. It is fixed later in this
+    release; see the #2535 entry.
   - `utils.manufactured.pair_for` notes that its quoted Dirichlet-wall EOC predates this fix.
