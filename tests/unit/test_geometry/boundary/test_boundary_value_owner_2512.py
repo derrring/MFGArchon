@@ -155,8 +155,14 @@ def test_each_fdm_reader_receives_the_owners_value_at_its_time(reader):
         (True, r"\(what its callable returned\) has a boolean value"),
         (np.complex128(1j), r"\(what its callable returned\) has a complex value"),
         (None, r"its value returned None at one point, .* does the function lack a `return`"),
-        (np.array([True], dtype=object), r"\(what its callable returned\) has a boolean value"),
-        (np.array([None], dtype=object), r"its value returned None at one point, .* does the function lack a `return`"),
+        (
+            np.array([True], dtype=object),
+            r"\(what its callable returned\) has a value of type ndarray with dtype object",
+        ),
+        (
+            np.array([None], dtype=object),
+            r"\(what its callable returned\) has a value of type ndarray with dtype object",
+        ),
     ],
     ids=["nan", "True", "imaginary", "None", "object-True", "object-None"],
 )
@@ -169,9 +175,10 @@ def test_what_a_callable_returns_is_read_as_a_constant_is(returned, message):
         _fdm_ghost_wall(_fdm_bc(lambda t: returned))
 
 
-def test_a_one_element_object_array_holding_true_is_a_boolean():
-    """Review 1 of #2598: the boolean test ran before the unwrap, so 7d382a7f read this as 1.0 at every reader."""
-    with pytest.raises(NotImplementedError, match="has a boolean value"):
+def test_an_object_array_is_refused_at_the_container():
+    """Review 1 of #2598: the boolean test ran before the unwrap, so 7d382a7f read object [True] as 1.0 at every reader.
+    An object array is now refused whatever it holds (audit session ruling on review 1 of #2601)."""
+    with pytest.raises(NotImplementedError, match="has a value of type ndarray with dtype object"):
         _fdm_ghost_wall(_fdm_bc(np.array([True], dtype=object)))
 
 
@@ -333,3 +340,193 @@ def test_an_fdm_ghost_refuses_a_value_that_declares_x_at_first_use_naming_itself
     )
     with pytest.raises(NotImplementedError, match=r"declares x, but the FDM .* face x_max"):
         pad_array_with_ghosts(np.ones(5), bc, time=0.5, spacing=(0.25,))
+
+
+def _nested(value):
+    """A one-element object array holding ``value``, which may itself be one."""
+    array = np.empty(1, dtype=object)
+    array[0] = value
+    return array
+
+
+_BOOLEAN, _COMPLEX = r"has a boolean value", r"has a complex value"
+_NONE = r"returned None at one point, .* does the function lack a `return`"
+_OBJECT = r"has a value of type \w+ with dtype object"
+
+
+def _self_referential():
+    array = np.empty(1, dtype=object)
+    array[0] = array
+    return array
+
+
+# The layered contract (#2512 row B2's second half), with literal expectations: a number is what reads, a pattern is
+# the refusal. Rows are named by the review finding they pin, or by the layer outcome they show. ``returned`` reads the
+# value as a callable's return.
+_CONTRACT = [
+    # Layer 1, dtype: an array must be of integer or floating dtype, refused at the container otherwise.
+    ("True", True, False, _BOOLEAN),
+    ("1j", 1j, False, _COMPLEX),
+    ("review-1 blocker: object [True]", _nested(True), False, _OBJECT),
+    ("M3a: fully masked [True]", np.ma.array([True], mask=[True]), False, _BOOLEAN),
+    ("M3a: fully masked [1j]", np.ma.array([1j], mask=[True]), False, _COMPLEX),
+    ("M3b: doubly nested False", _nested(_nested(False)), False, _OBJECT),
+    ("M3b: doubly nested 0j", _nested(_nested(0j)), False, _OBJECT),
+    ("M4: doubly nested 0.7, constant", _nested(_nested(0.7)), False, _OBJECT),
+    ("M4: doubly nested 0.7, returned", _nested(_nested(0.7)), True, _OBJECT),
+    ("object [0.7], read as 0.7 at 07dfd27b", _nested(0.7), False, _OBJECT),
+    ("review 1 of #2601, M1: object np.matrix [[0.7]]", np.matrix([[0.7]], dtype=object), False, _OBJECT),
+    ("review 1 of #2601, M1: a self-referential object array", _self_referential(), False, _OBJECT),
+    ("review 1: object [None], returned", _nested(None), True, _OBJECT),
+    ("a fully masked string array", np.ma.array(["0.7"], mask=[True]), False, r"with dtype <U3"),
+    ("a timedelta64 array", np.array([1], dtype="timedelta64[s]"), False, r"with dtype timedelta64\[s\]"),
+    # Layer 2, one unwrap.
+    ("one element of shape (1, 1)", np.array([[0.7]]), False, 0.7),
+    ("np.matrix [[0.7]]", np.matrix([[0.7]]), False, 0.7),
+    ("masked [0.7], unmasked", np.ma.array([0.7]), False, 0.7),
+    ("a return of two numbers", np.array([1.0, 2.0]), True, r"returned 2 numbers, shape \(2,\), at one point"),
+    # Layer 3, the value.
+    ("None, constant", None, False, 0.0),
+    ("None, returned", None, True, _NONE),
+    ("fully masked, one element", np.ma.masked_all(1), False, 0.0),
+    ("fully masked [nan]", np.ma.array([np.nan], mask=[True]), False, 0.0),
+    ("fully masked, three elements", np.ma.masked_all(3), False, 0.0),
+    ("all zero, three elements", np.zeros(3), False, 0.0),
+    ('"0"', "0", False, 0.0),
+    ("float32 0.5", np.float32(0.5), False, 0.5),
+    ('"0.7"', "0.7", False, r"has a value of type str"),
+    ("nan", float("nan"), False, r"has a non-finite value nan"),
+]
+
+
+@pytest.mark.parametrize(
+    ("value", "returned", "expected"), [row[1:] for row in _CONTRACT], ids=[row[0] for row in _CONTRACT]
+)
+def test_the_layered_contract(value, returned, expected):
+    """One function reads a constant and a callable's return (#2512 row B2): the dtype, one unwrap, the value.
+    Each review of #2598 found the next container corner of a one-layer reading; these rows pin each of them."""
+    from mfgarchon.geometry.boundary.types import boundary_value
+
+    read = (lambda t: value) if returned else value
+    if isinstance(expected, str):
+        with pytest.raises(NotImplementedError, match=expected):
+            boundary_value(read, kind="k", t=0.5, x=None, where="w")
+    else:
+        assert boundary_value(read, kind="k", t=0.5, x=None, where="w") == pytest.approx(expected, abs=1e-7)
+
+
+def test_a_provider_returns_one_number_read_as_a_return_is():
+    """A provider's result is read as a callable's return (#2512 row B2): one number. A value per node is #2600."""
+    from mfgarchon.geometry.boundary.providers import BaseBCValueProvider
+    from mfgarchon.geometry.boundary.types import boundary_value
+
+    class _Provider(BaseBCValueProvider):
+        def __init__(self, result):
+            self.result = result
+
+        def compute(self, state):
+            return self.result
+
+    assert boundary_value(_Provider(np.float64(0.3)), kind="k", t=0.5, x=None, where="w", state={}) == 0.3
+    for result, refusal in ((np.array([0.1, 0.2]), r"returned 2 numbers.*#2600"), (True, _BOOLEAN), (None, _NONE)):
+        with pytest.raises(NotImplementedError, match=refusal):
+            boundary_value(_Provider(result), kind="k", t=0.5, x=None, where="w", state={})
+
+
+def test_a_robin_coefficient_is_read_by_one_reader_and_a_callable_or_a_field_is_refused():
+    """`segment_robin_coefficients` (#2512 row B2): a constant each, by the constant contract. A callable is refused
+    naming #1237, and a field from a provider naming #2600, the per-node capability no reader has yet."""
+    from mfgarchon.geometry.boundary.types import segment_robin_coefficients
+
+    def robin(alpha, beta):
+        return BCSegment(name="r", bc_type=BCType.ROBIN, value=0.0, alpha=alpha, beta=beta, boundary="x_max")
+
+    assert segment_robin_coefficients(robin(np.float32(2.0), np.array([0.5])), where="w") == (2.0, 0.5)
+    for alpha, refusal in (
+        (lambda t: 1.0, r"is a callable; a Robin coefficient is one constant per segment.*\(#1237\)"),
+        (np.array([1.0, 2.0]), r"is a field of 2 values along the wall.*#2600"),
+        (
+            True,
+            r"has a boolean value, which is not a boundary datum: give a real number, or a real array of one element: a Robin",
+        ),
+        (1j, r"has a complex value"),
+        (float("nan"), r"has a non-finite value"),
+        (None, r"'s alpha is None"),
+    ):
+        with pytest.raises(NotImplementedError, match=refusal):
+            segment_robin_coefficients(robin(alpha, 1.0), where="w")
+
+
+def test_the_fem_robin_load_refuses_a_callable_naming_1237():
+    """FEM's Robin and Neumann loads are one constant per segment (#1237; the user's coverage-not-every-axis
+    ruling): a callable g declares what the load cannot pass, and the refusal names #1237."""
+    import skfem
+
+    from mfgarchon.alg.numerical.fem.bc_adapter import assemble_robin_terms
+
+    mesh = skfem.MeshLine(np.linspace(0.0, 1.0, 5)).with_boundaries({"x_max": lambda x: np.isclose(x[0], 1.0)})
+    basis = skfem.Basis(mesh, skfem.ElementLineP1())
+    bc = BoundaryConditions(
+        dimension=1,
+        segments=[BCSegment(name="r", bc_type=BCType.ROBIN, value=lambda t: t, alpha=1.0, beta=1.0, boundary="x_max")],
+        default_bc=BCType.NO_FLUX,
+    )
+    with pytest.raises(NotImplementedError, match=r"declares t, but the FEM Robin load .*\(#1237\).* a constant"):
+        assemble_robin_terms(basis, bc, 0.125, natural_bc="gradient")
+
+
+@pytest.mark.parametrize(
+    "segment",
+    [
+        BCSegment(name="d", bc_type=BCType.DIRICHLET, value=0.7, alpha=None, boundary="x_max"),
+        BCSegment(name="n", bc_type=BCType.NEUMANN, value=0.0, alpha=lambda t: 1.0, boundary="x_max"),
+        BCSegment(name="f", bc_type=BCType.NO_FLUX, alpha=True, boundary="x_max"),
+    ],
+    ids=["dirichlet-alpha-None", "neumann-alpha-callable", "no-flux-alpha-True"],
+)
+def test_a_segment_that_is_not_robin_has_its_coefficients_left_unread(segment):
+    """Review 1 of #2601 (M3): the uniform FDM ghosts, the resolver's passthrough and the 1-D HJB read use alpha and
+    beta in their Robin arm alone, so a non-Robin segment's fields are not read, and what 07dfd27b solved still solves:
+    the Dirichlet wall at 0.7, the Neumann and no-flux walls at the interior value 1."""
+    from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _get_bc_info_1d
+    from mfgarchon.geometry.boundary.resolution import _resolve_passthrough
+
+    bc = BoundaryConditions(dimension=1, segments=[segment], default_bc=BCType.NO_FLUX)
+    expected = 0.7 if segment.bc_type == BCType.DIRICHLET else 1.0
+    assert _fdm_ghost_wall(bc) == pytest.approx(expected, abs=1e-12)
+    assert _get_bc_info_1d(bc, "right", time=0.5)[0] == segment.bc_type
+    if segment.bc_type != BCType.NO_FLUX:  # NO_FLUX resolves per equation, not by the passthrough
+        assert _resolve_passthrough(segment).value == pytest.approx(0.7 if segment.bc_type == BCType.DIRICHLET else 0.0)
+
+
+def test_the_fdm_uniform_ghosts_leave_a_non_robin_segments_coefficients_unread():
+    """Review 1 of #2601 (M3), at the site `pad_array_with_ghosts` does not reach: `PreallocatedGhostBuffer`'s uniform
+    update. A Dirichlet segment whose alpha is None gives exactly the ghosts of one whose alpha is the default."""
+    from mfgarchon.geometry.boundary.applicator_fdm import PreallocatedGhostBuffer
+
+    def ghosts(segment):
+        bc = BoundaryConditions(dimension=1, segments=[segment])
+        buf = PreallocatedGhostBuffer(interior_shape=(5,), boundary_conditions=bc, domain_bounds=np.array([[0.0, 1.0]]))
+        buf.interior[:] = np.linspace(0.0, 1.0, 5)
+        buf.update_ghosts(time=0.5)
+        return buf.padded.copy()
+
+    without = ghosts(BCSegment(name="d", bc_type=BCType.DIRICHLET, value=0.7, alpha=None))
+    np.testing.assert_array_equal(without, ghosts(BCSegment(name="d", bc_type=BCType.DIRICHLET, value=0.7)))
+
+
+@pytest.mark.parametrize("resolver", ["HJBResolver", "FPResolver"])
+def test_a_provider_valued_robin_segment_is_resolved_with_the_solver_state(resolver):
+    """Review 1 of #2601 (C6), a regression #2598 introduced: `resolve_bc` with `HJBResolver` resolved a provider on a
+    Robin segment's value with the solver state (b10b9e65: 0.37). #2598's passthrough read it with no state and
+    refused it, so the resolver's own provider branch never ran. The passthrough now passes the state to the owner,
+    for both resolvers: `FPResolver`, whose passthrough read the value as 0.0 at b10b9e65, too (review 2 of #2601)."""
+    from mfgarchon.geometry.boundary import resolution
+    from mfgarchon.geometry.boundary.providers import ConstantProvider
+
+    segment = BCSegment(
+        name="r", bc_type=BCType.ROBIN, value=ConstantProvider(0.37), alpha=2.0, beta=1.0, boundary="x_max"
+    )
+    bc = BoundaryConditions(dimension=1, segments=[segment], default_bc=BCType.NO_FLUX)
+    (resolved,) = resolution.resolve_bc(bc, getattr(resolution, resolver)(), {"iteration": 0})
+    assert (resolved.value, resolved.alpha, resolved.beta) == (0.37, 2.0, 1.0)

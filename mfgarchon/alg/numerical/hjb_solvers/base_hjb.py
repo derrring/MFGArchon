@@ -202,7 +202,7 @@ def _get_bc_info_1d(
     Returns:
         Tuple (BCType, value, alpha, beta)
     """
-    from mfgarchon.geometry.boundary.types import BoundaryFace, segment_value
+    from mfgarchon.geometry.boundary.types import BCType, BoundaryFace, segment_robin_coefficients, segment_value
 
     target_face = BoundaryFace(0, "min" if side == "left" else "max")
     default_alpha, default_beta = 1.0, 0.0
@@ -215,8 +215,12 @@ def _get_bc_info_1d(
             value = segment_value(
                 seg, t=time, x=None, where=f"the 1-D HJB boundary read of face {target_face.to_string()}"
             )
-            alpha = getattr(seg, "alpha", default_alpha)
-            beta = getattr(seg, "beta", default_beta)
+            # Only a Robin segment's coefficients are read; the 1-D HJB uses them in its Robin arm alone.
+            alpha, beta = (
+                segment_robin_coefficients(seg, where=f"the 1-D HJB boundary read of face {target_face.to_string()}")
+                if seg.bc_type == BCType.ROBIN
+                else (default_alpha, default_beta)
+            )
             return seg.bc_type, value, alpha, beta
 
     # Priority 2: no segment carries this face -- fall back to the uniform default.

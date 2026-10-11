@@ -57,9 +57,7 @@
     - refused: every boolean, every complex value (0 included), an array of more than one element that is not
       all zero, any other type, and a non-finite number.
 
-    These rules read one object level. A fully masked one-element array is 0 whatever its dtype, boolean and
-    complex included, and a value nested deeper in object arrays is read as `_describe_bc_value` sees it: a doubly
-    nested `False` or complex 0 reads 0. Row B2's second half replaces this with a layered contract.
+    The contract is read in three layers: see the entry for row B2's second half (#2512).
 
     At a Dirichlet exit, HJB-FDM's ghost imposed 1.0 for `True`, 0.0 for `np.complex128(1j)` and NaN for `nan`;
     each is now refused. The BC resolver's passthrough read `np.float32(0.7)` and `np.array([0.7])` as 0.0; it now
@@ -68,9 +66,6 @@
     - a return of one element, an array of any shape, masked arrays included, is that element;
     - a longer return is refused, and so are NaN, a boolean and a complex value;
     - `None` is refused, not read as 0, since a function with no `return` gives it.
-
-    A return is unwrapped once more than a constant, so one nested two object levels deep is read a level deeper
-    than the same constant, until row B2's second half.
 
     At HJB-FDM's Dirichlet wall, a callable returning `nan`, `True` or `np.complex128(1j)` imposed NaN, 1.0 and 0.0.
     On a 2-D face, `lambda t: t * np.arange(1.0, 6.0)` at t = 0.5 was broadcast along the face's padded row, ghost
