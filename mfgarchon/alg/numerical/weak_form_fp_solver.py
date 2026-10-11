@@ -87,10 +87,14 @@ class WeakFormFPSolver(BaseFPSolver):
     def _is_pure_neumann(self) -> bool:
         raise NotImplementedError
 
-    def _dirichlet_dofs_and_values(self) -> tuple[NDArray, NDArray]:
+    def _dirichlet_dofs_and_values(self, t: float | None = None) -> tuple[NDArray, NDArray]:
+        """The Dirichlet dofs and their values, read at ``t``, the time of the level solved for (#2512 row B2)."""
         raise NotImplementedError
 
-    def _apply_bc_to_system(self, matrix, rhs):
+    def _apply_bc_to_system(
+        self, matrix: sparse.csr_matrix, rhs: NDArray, t: float | None = None
+    ) -> tuple[sparse.csr_matrix, NDArray]:
+        """Condense the linear system onto interior dofs for Dirichlet BC, its values read at ``t``."""
         raise NotImplementedError
 
     def _weak_bc_terms(self, D: float):
@@ -246,8 +250,8 @@ class WeakFormFPSolver(BaseFPSolver):
             elif pure_neumann:
                 M[n + 1] = spsolve(A_system, rhs)
             else:
-                A_bc, rhs_bc = self._apply_bc_to_system(A_system, rhs)
-                d_dofs, d_vals = self._dirichlet_dofs_and_values()
+                A_bc, rhs_bc = self._apply_bc_to_system(A_system, rhs, t=(n + 1) * dt)
+                d_dofs, d_vals = self._dirichlet_dofs_and_values((n + 1) * dt)
                 interior = np.setdiff1d(np.arange(N), d_dofs)
                 M[n + 1, interior] = spsolve(A_bc, rhs_bc)
                 M[n + 1, d_dofs] = d_vals

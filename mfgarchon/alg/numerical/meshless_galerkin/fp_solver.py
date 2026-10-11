@@ -152,14 +152,16 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         self._nitsche_cache_D = D
         return terms
 
-    def _dirichlet_dofs_and_values(self):
+    def _dirichlet_dofs_and_values(self, t: float | None = None) -> tuple[NDArray, NDArray]:
         raise NotImplementedError(
             "MeshlessGalerkinFPSolver imposes absorbing (m=0) BC weakly via Nitsche (_weak_bc_terms), "
             "not nodal condensation -- its MLS basis is non-interpolatory. Reaching this hook means an "
             "unsupported BC type (e.g. Robin, or inhomogeneous m=g!=0)."
         )
 
-    def _apply_bc_to_system(self, matrix, rhs):
+    def _apply_bc_to_system(
+        self, matrix: sparse.csr_matrix, rhs: NDArray, t: float | None = None
+    ) -> tuple[sparse.csr_matrix, NDArray]:
         raise NotImplementedError(
             "MeshlessGalerkinFPSolver imposes absorbing (m=0) BC weakly via Nitsche (_weak_bc_terms), "
             "not nodal condensation. Reaching this hook means an unsupported BC type."

@@ -76,11 +76,14 @@ class WeakFormHJBSolver(BaseHJBSolver):
     def _is_pure_neumann(self) -> bool:
         raise NotImplementedError
 
-    def _dirichlet_dofs_and_values(self) -> tuple[NDArray, NDArray]:
+    def _dirichlet_dofs_and_values(self, t: float | None = None) -> tuple[NDArray, NDArray]:
+        """The Dirichlet dofs and their values, read at ``t``, the time of the level solved for (#2512 row B2)."""
         raise NotImplementedError
 
-    def _apply_bc_to_system(self, matrix, rhs, homogeneous=False):
-        """Condense the linear system onto interior dofs for Dirichlet BC.
+    def _apply_bc_to_system(
+        self, matrix: sparse.csr_matrix, rhs: NDArray, homogeneous: bool = False, t: float | None = None
+    ) -> tuple[sparse.csr_matrix, NDArray]:
+        """Condense the linear system onto interior dofs for Dirichlet BC, its values read at ``t``.
 
         ``homogeneous=True`` zeroes the boundary lift — used for the Newton CORRECTION, whose boundary
         increment is 0 (``U_current`` already carries ``u=g``). Lifting the correction by the actual
@@ -88,8 +91,8 @@ class WeakFormHJBSolver(BaseHJBSolver):
         update (Issue #1489)."""
         raise NotImplementedError
 
-    def _weak_bc_terms(self, D: float):
-        """Optional weak (Nitsche) boundary terms for non-interpolatory bases.
+    def _weak_bc_terms(self, D: float, t: float | None = None) -> tuple[sparse.csr_matrix | None, NDArray | None]:
+        """Optional weak (Nitsche) boundary terms for non-interpolatory bases, the data read at ``t``.
 
         Returns ``(A_extra, rhs_extra)`` to ADD to the full-size implicit operator
         and RHS, then solved on ALL dofs (no condensation), or ``(None, None)`` for
@@ -189,7 +192,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
         dim = len(self._G_grad)
         x_grid = self._disc.dof_coordinates  # (N, dim)
 
-        A_extra, rhs_extra = self._weak_bc_terms(D)
+        A_extra, rhs_extra = self._weak_bc_terms(D, t)
         weak_bc = A_extra is not None
         # Robin operator augmentation (Issue #1237): the boundary mass enters the Jacobian
         # (and the residual via A_robin @ U); the boundary load enters the residual as -rhs_robin.
@@ -203,7 +206,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
         pure_neumann = self._is_pure_neumann()
         condense = not pure_neumann and not weak_bc
         if condense:
-            d_dofs, d_vals = self._dirichlet_dofs_and_values()
+            d_dofs, d_vals = self._dirichlet_dofs_and_values(t)
             interior = np.setdiff1d(np.arange(N), d_dofs)
         else:
             d_dofs = np.array([], dtype=int)
@@ -254,7 +257,7 @@ class WeakFormHJBSolver(BaseHJBSolver):
                 # Issue #1489 (S2): the Newton correction has a homogeneous boundary increment
                 # (delta[d_dofs]=0, since U_current already carries u=g from line ~198), so condense
                 # with a ZERO boundary lift. Lifting by g here corrupts every interior value.
-                J_bc, res_bc = self._apply_bc_to_system(J, -residual, homogeneous=True)
+                J_bc, res_bc = self._apply_bc_to_system(J, -residual, homogeneous=True, t=t)
                 delta = np.zeros(N)
                 delta[interior] = spsolve(J_bc, res_bc)
             else:
@@ -359,7 +362,8 @@ class WeakFormHJBSolver(BaseHJBSolver):
         U[Nt] = U_terminal
 
         A_system = self._M / dt + D * self._K
-        A_extra, rhs_extra = self._weak_bc_terms(D)
+        # The Nitsche block is the same at every level; its data load is read at each level's time, below.
+        A_extra, rhs_extra = self._weak_bc_terms(D, (Nt - 1) * dt)
         weak_bc = A_extra is not None
         if weak_bc:
             A_system = A_system + A_extra
@@ -410,14 +414,15 @@ class WeakFormHJBSolver(BaseHJBSolver):
                     rhs = rhs + rhs_robin
 
                 if weak_bc:
+                    _, rhs_extra = self._weak_bc_terms(D, n * dt)
                     if rhs_extra is not None:
                         rhs = rhs + rhs_extra
                     U[n] = spsolve(A_system, rhs)
                 elif self._is_pure_neumann():
                     U[n] = spsolve(A_system, rhs)
                 else:
-                    A_bc, rhs_bc = self._apply_bc_to_system(A_system, rhs)
-                    d_dofs, d_vals = self._dirichlet_dofs_and_values()
+                    A_bc, rhs_bc = self._apply_bc_to_system(A_system, rhs, t=n * dt)
+                    d_dofs, d_vals = self._dirichlet_dofs_and_values(n * dt)
                     interior = np.setdiff1d(np.arange(N), d_dofs)
                     U[n, interior] = spsolve(A_bc, rhs_bc)
                     U[n, d_dofs] = d_vals

@@ -87,10 +87,11 @@ def test_the_accessor_passes_its_point_as_x_of_shape_d():
     assert bc.get_bc_value_at_boundary("x_max", time=0.5, point=np.array([0.9])) == pytest.approx(9.5)
 
 
-def test_an_accessor_given_no_time_refuses_a_value_that_declares_t_and_says_to_pass_one():
+def test_an_accessor_given_no_time_or_no_point_refuses_a_value_that_declares_it():
     """`get_bc_value_at_boundary` and `BCSegment.get_value` read a time-dependent value at t = 0 when given no time,
     which is how FP-FDM read every step at the initial time (#2535). With none, they now refuse it, and the advice
-    runs: the same call with a time reads g at it. A constant, or g(x), needs no time."""
+    runs: the same call with a time reads g at it. A constant, or g(x), needs no time. Given no point, the accessor
+    refuses g(x) and reads it once given one (#2512 row B2)."""
     bc = BoundaryConditions(dimension=1, segments=[_segment(lambda t: 0.25 + t)], default_bc=BCType.NO_FLUX)
     with pytest.raises(NotImplementedError, match=r"declares t; pass time= to read it at a time"):
         bc.get_bc_value_at_boundary("x_max")
@@ -102,6 +103,8 @@ def test_an_accessor_given_no_time_refuses_a_value_that_declares_t_and_says_to_p
     for value, expected in ((0.3, 0.3), (lambda x: 2.0 * x[0], 2.0)):
         no_time = BoundaryConditions(dimension=1, segments=[_segment(value)], default_bc=BCType.NO_FLUX)
         assert no_time.get_bc_value_at_boundary("x_max", point=np.array([1.0])) == pytest.approx(expected)
+    with pytest.raises(NotImplementedError, match=r"declares x, but BoundaryConditions.get_bc_value_at_boundary"):
+        no_time.get_bc_value_at_boundary("x_max", time=0.5)
 
 
 # `BCSegment.get_value(point=[0.9], t=0.5)`, HJB-GFDM's Dirichlet read: the callable, the value b10b9e65 read, and
@@ -290,8 +293,9 @@ def test_fdm_advises_g_of_t_and_reads_it():
     assert _fdm_ghost_wall(_fdm_bc(lambda t: 0.25 + t)) == pytest.approx(0.75, abs=1e-12)
 
 
-def test_fem_dirichlet_advises_g_of_x_and_reads_it():
-    """FEM's Dirichlet assembly has a point and no time: it advises g(x), and g(x) reads at the DOF x = 1."""
+def test_fem_dirichlet_reads_its_level_time_and_advises_g_of_x_without_one():
+    """FEM's Dirichlet assembly reads a value at the DOF x = 1 and at the time of the level it solves for. Given no
+    time, it refuses a value that declares t and advises g(x) (#2512 row B2)."""
     import skfem
 
     from mfgarchon.alg.numerical.fem.bc_adapter import _evaluate_segment_values
@@ -299,16 +303,25 @@ def test_fem_dirichlet_advises_g_of_x_and_reads_it():
     basis = skfem.Basis(skfem.MeshLine(np.linspace(0.0, 1.0, 5)), skfem.ElementLineP1())
     dof = int(np.argmax(basis.doflocs[0]))
     with pytest.raises(NotImplementedError, match=r"declares t, but the FEM Dirichlet .* write it as g\(x\)"):
-        _evaluate_segment_values(_segment(lambda t: t), basis, [dof])
-    assert _evaluate_segment_values(_segment(lambda x: 0.5 + x[0]), basis, [dof]) == pytest.approx([1.5], abs=1e-12)
+        _evaluate_segment_values(_segment(lambda t: t), basis, [dof], None)
+    assert _evaluate_segment_values(_segment(lambda x: 0.5 + x[0]), basis, [dof], None) == pytest.approx(
+        [1.5], abs=1e-12
+    )
+    assert _evaluate_segment_values(_segment(lambda t, x: t + x[0]), basis, [dof], 0.5) == pytest.approx(
+        [1.5], abs=1e-12
+    )
 
 
 def test_nitsche_receives_the_owners_value_at_each_point():
-    """Meshless Galerkin's Nitsche assembly reads g(x) per boundary point, the whole point: ``x[0] + 10 x[1]``."""
+    """Meshless Galerkin's Nitsche assembly reads g per boundary point, the whole point, ``x[0] + 10 x[1]``, and at
+    the time it is given."""
     from mfgarchon.alg.numerical.meshless_galerkin.nitsche import _evaluate_g
 
-    g = _evaluate_g(_segment(lambda x: x[0] + 10.0 * x[1]), np.array([[1.0, 0.0], [1.0, 0.5]]))
+    points = np.array([[1.0, 0.0], [1.0, 0.5]])
+    g = _evaluate_g(_segment(lambda x: x[0] + 10.0 * x[1]), points, None)
     np.testing.assert_allclose(g, [1.0, 6.0], rtol=0, atol=1e-12)
+    g = _evaluate_g(_segment(lambda t, x: t + x[0] + 10.0 * x[1]), points, 0.5)
+    np.testing.assert_allclose(g, [1.5, 6.5], rtol=0, atol=1e-12)
 
 
 def test_fem_passes_each_dof_as_x_of_shape_d():

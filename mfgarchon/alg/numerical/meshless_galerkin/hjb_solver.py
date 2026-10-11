@@ -26,11 +26,12 @@ from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
 from mfgarchon.alg.numerical.meshless_galerkin.nitsche import refuse_what_nitsche_cannot_place
 from mfgarchon.alg.numerical.weak_form_hjb_solver import WeakFormHJBSolver
-from mfgarchon.geometry.boundary.types import BCType
+from mfgarchon.geometry.boundary.types import BCType, _declares_time
 from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+    from scipy import sparse
 
     from mfgarchon.core.mfg_problem import MFGProblem
 
@@ -71,7 +72,7 @@ class MeshlessGalerkinHJBSolver(WeakFormHJBSolver):
         self._n_gauss = n_gauss
         self._nitsche_penalty = nitsche_penalty
         self._nitsche_cache: tuple | None = None
-        self._nitsche_cache_D: float | None = None
+        self._nitsche_cache_key: tuple[float, float | None] | None = None
         # Bug-B recipe (Issue #1145), opt-in. Default Picard / no stabilization keeps
         # behaviour byte-identical; a coupled solve that converges needs BOTH enabled:
         # the Picard path treats the quadratic Hamiltonian explicitly and self-amplifies
@@ -113,30 +114,37 @@ class MeshlessGalerkinHJBSolver(WeakFormHJBSolver):
 
         return places_no_dirichlet_face(self._bc, self._disc.dim)
 
-    def _weak_bc_terms(self, D: float):
-        """Symmetric Nitsche Dirichlet terms ``u = g`` for the HJB diffusion block.
+    def _weak_bc_terms(self, D: float, t: float | None = None) -> tuple[sparse.csr_matrix | None, NDArray | None]:
+        """Symmetric Nitsche Dirichlet terms ``u = g`` for the HJB diffusion block, ``g`` read at ``t``.
 
         Returns ``(N_nitsche, rhs_data)`` to add to ``M/dt + D*K`` and the RHS, or
         ``(None, None)`` if no Dirichlet face is placed (then the natural
-        Neumann/no-flux path is used). Cached: the block depends only on ``D``, which
-        is constant across a solve."""
-        if self._nitsche_cache is not None and self._nitsche_cache_D == D:
+        Neumann/no-flux path is used). Cached on ``D``, which is constant across a solve, and on ``t`` only
+        when a Dirichlet value declares it, since only then does the data load move with the level
+        (#2512 row B2)."""
+        reads_t = self._bc is not None and any(
+            s.bc_type == BCType.DIRICHLET and _declares_time(s.value, s) for s in self._bc.segments
+        )
+        key = (D, t if reads_t else None)
+        if self._nitsche_cache is not None and self._nitsche_cache_key == key:
             return self._nitsche_cache
         from mfgarchon.alg.numerical.meshless_galerkin.nitsche import assemble_nitsche_terms
 
-        terms = assemble_nitsche_terms(self._disc, self._bc, D, self._nitsche_penalty, self._n_gauss)
+        terms = assemble_nitsche_terms(self._disc, self._bc, D, self._nitsche_penalty, self._n_gauss, t)
         self._nitsche_cache = terms
-        self._nitsche_cache_D = D
+        self._nitsche_cache_key = key
         return terms
 
-    def _dirichlet_dofs_and_values(self):
+    def _dirichlet_dofs_and_values(self, t: float | None = None) -> tuple[NDArray, NDArray]:
         raise NotImplementedError(
             "MeshlessGalerkinHJBSolver imposes Dirichlet BC weakly via Nitsche (_weak_bc_terms), not "
             "nodal condensation -- its MLS basis is non-interpolatory. This condensation hook is "
             "unreachable for Dirichlet/Neumann; reaching it means an unsupported BC type (e.g. Robin)."
         )
 
-    def _apply_bc_to_system(self, matrix, rhs):
+    def _apply_bc_to_system(
+        self, matrix: sparse.csr_matrix, rhs: NDArray, homogeneous: bool = False, t: float | None = None
+    ) -> tuple[sparse.csr_matrix, NDArray]:
         raise NotImplementedError(
             "MeshlessGalerkinHJBSolver imposes Dirichlet BC weakly via Nitsche (_weak_bc_terms), not "
             "nodal condensation. Reaching this hook means an unsupported BC type (e.g. Robin)."

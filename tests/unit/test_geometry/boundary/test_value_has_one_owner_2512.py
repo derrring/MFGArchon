@@ -272,11 +272,6 @@ def test_a_planted_coefficient_reader_is_found(package_copy, planted):
 # unseen: a negated test whose ``else`` calls (``if not callable(g): ... else: g(x)``), an early return before the
 # call, and ``callable(g) and g(x)``. No census decoder uses these shapes (review 1 of #2603).
 CALLABLE_CALLS_ALLOWED = {
-    # Removed by B2b-2b: HJB-SL's D6 probes the BC's own accessor, and its fallback is reached only by swallowed errors.
-    (
-        "mfgarchon/geometry/boundary/applicator_interpolation.py",
-        "_get_bc_value",
-    ): "removed by B2b-2b: D6's method probe",
     # Not a decode: #2597's translator wraps a deprecated dict's callable as g(x), and the owner calls the wrapper.
     ("mfgarchon/alg/numerical/hjb_solvers/hjb_gfdm.py", "_boundary_conditions_from_dict"): (
         "wraps for the owner: #2597's dict translator"

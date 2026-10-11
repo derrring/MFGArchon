@@ -106,15 +106,17 @@ class FPFEMSolver(WeakFormFPSolver):
 
         return is_pure_neumann(self._bc)
 
-    def _dirichlet_dofs_and_values(self) -> tuple[NDArray, NDArray]:
+    def _dirichlet_dofs_and_values(self, t: float | None = None) -> tuple[NDArray, NDArray]:
         from .bc_adapter import get_dirichlet_dofs_and_values
 
-        return get_dirichlet_dofs_and_values(self._basis, self._bc)
+        return get_dirichlet_dofs_and_values(self._basis, self._bc, t=t)
 
-    def _apply_bc_to_system(self, matrix, rhs):
+    def _apply_bc_to_system(
+        self, matrix: sparse.csr_matrix, rhs: NDArray, t: float | None = None
+    ) -> tuple[sparse.csr_matrix, NDArray]:
         from .bc_adapter import apply_bc_to_fem_system
 
-        return apply_bc_to_fem_system(matrix, rhs, self._basis, self._bc)
+        return apply_bc_to_fem_system(matrix, rhs, self._basis, self._bc, t=t)
 
     #: Issue #2294. This solver's natural boundary condition is the total flux ``J.n = 0``, not
     #: ``dm/dn = 0``, because ``_build_advection`` never integrates ``div(v m)`` by parts onto the

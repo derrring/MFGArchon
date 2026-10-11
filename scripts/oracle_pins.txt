@@ -138,27 +138,36 @@ row grid/B1_face_segment            -
 # B2a lands the guard as a ratchet and the family pins. B2b fills the row when
 #   (a) the guard's allowlist holds no decoder, under a guard that covers both of the census's predicates: today's
 #       `.value` reads, and a value passed into a helper that tests `callable(v)` and calls it (D5, D16, D22-D26).
-#       The guard covers both since B2b-2a. B2b-2b-i routes D8, so its first-predicate allowance is gone; the second
-#       predicate's still holds D6, naming B2b-2b-ii as its removal;
+#       The guard covers both since B2b-2a. B2b-2b-i routed D8 and B2b-2b-ii routes D6, so neither allowlist holds a
+#       decoder: met by B2b-2b-ii;
 #   (b) #2535 and #2538, which the row closes (#2512 comment 6054006841), #2605 and #2543's time half are closed,
 #       and no library reader reads a time it was not given: an owner call's t comes from the caller; a signature
 #       default forwarded to the owner is None; and an operator cached across steps reads the step's time, not its
 #       construction time (#2543) (audit session rulings, 2026-10-12). D1 reads no time it is not given (`None`,
-#       refused for a value that declares t), and a g(t) oracle reaches every reader handed a time, FP-FDM's D8 and
-#       D9 and HJB-SL's D6, as a call counter on the owner shows (every t HJB-SL's nD path passes is the step's
-#       time). B2b-2b-i meets FP-FDM's half and closes #2535: D8 and D9 read the level's time and the node, under
-#       `test_fp_fdm_dirichlet_time_2535.py`'s exact oracle and time recorder. B2b-2b-ii takes HJB-SL's D6, #2538,
-#       the six readers whose `time=0.0` default reaches the owner (HJB-WENO's ghost fill among them, #2605),
-#       #2543's time half, and the guard's check of such defaults. The guard cannot see construction-time binding,
-#       so only #2543's oracle covers it. #2543's other half, a replaced BC object solved stale, is #2475's class,
-#       a BC captured at construction, not value form or time, and is not this row's. No grid row here owns it,
-#       and neither does #2512's table of seven conventions;
+#       refused for a value that declares t), and a g(t) oracle reaches every reader handed a time:
+#       - B2b-2b-i: FP-FDM's D8 and D9 read the level's time and the node, under
+#         `test_fp_fdm_dirichlet_time_2535.py`'s exact oracle and time recorder. It closes #2535.
+#       - B2b-2b-ii: HJB-SL's D6 reads through the accessor, with no probe and no fallback, under
+#         `test_hjb_sl_boundary_time_2453.py`'s per-step time counter. FEM's Dirichlet DOFs, HJB and FP, read the
+#         level's time, and HJB-GFDM's rows are pinned at theirs, under `test_dirichlet_value_at_its_level_2512.py`'s
+#         exact oracle. Meshless Nitsche reads each level's data load at its time, under the same file's recorder.
+#         It closes #2538.
+#       - Three readers have no time to pass and refuse a value that declares t: the FDM calculator route
+#         (`bc_to_topology_calculator`), `MeshfreeApplicator.apply_field_bc`, and the BC resolver's passthrough
+#         (`resolve_bc`).
+#       - B2b-2b-iii takes the six readers whose `time=0.0` default reaches the owner (HJB-WENO's ghost fill among
+#         them, #2605), #2543's time half, and the guard's check of such defaults.
+#       The guard cannot see construction-time binding, so only #2543's oracle covers it. #2543's other half, a
+#       replaced BC object solved stale, is #2475's class, a BC captured at construction, not value form or time,
+#       and is not this row's. No grid row here owns it, and neither does #2512's table of seven conventions;
 #   (c) a Robin segment's alpha and beta are read through the owner's constant contract, a callable one refused
 #       naming #1237, and the readers' own float() and getattr defaults removed. Met by B2b-1: one reader,
 #       `segment_robin_coefficients`, and the guard's coefficient check.
 # (Audit session rulings, 2026-10-11, correcting the plan's section 5 in #2512 comment 6104689754.)
 row grid/B2_value_form_and_time     tests/unit/test_geometry/boundary/test_value_has_one_owner_2512.py
 row grid/B2_value_form_and_time     tests/unit/test_geometry/boundary/test_boundary_value_owner_2512.py
+row grid/B2_value_form_and_time     tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py
+row grid/B2_value_form_and_time     tests/unit/test_alg/test_dirichlet_value_at_its_level_2512.py
 row grid/B2_value_form_and_time     -
 # Row B3's guard covers the coupling layer too: BlockIterator's "auto" adjoint mode, one of the two readers
 # it awaited, is removed, and RegimeSwitchingIterator's fallback reads the FP solver's owner path (#2529).
