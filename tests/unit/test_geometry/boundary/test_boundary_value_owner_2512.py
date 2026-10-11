@@ -155,15 +155,108 @@ def test_each_fdm_reader_receives_the_owners_value_at_its_time(reader):
         (True, r"\(what its callable returned\) has a boolean value"),
         (np.complex128(1j), r"\(what its callable returned\) has a complex value"),
         (None, r"its value returned None at one point, .* does the function lack a `return`"),
+        (np.array([True], dtype=object), r"\(what its callable returned\) has a boolean value"),
+        (np.array([None], dtype=object), r"its value returned None at one point, .* does the function lack a `return`"),
     ],
-    ids=["nan", "True", "imaginary", "None"],
+    ids=["nan", "True", "imaginary", "None", "object-True", "object-None"],
 )
 def test_what_a_callable_returns_is_read_as_a_constant_is(returned, message):
     """One reading of a value, whether given or returned. At this FDM wall b10b9e65 imposed NaN, 1.0 and 0.0 (with a
     ComplexWarning) for the first three, and None raised a bare TypeError; ``None`` is refused rather than read as 0,
-    since a function with no ``return`` gives it."""
+    since a function with no ``return`` gives it. A one-element array is unwrapped before any rule reads it (review 1
+    of #2598), so an object array holding True or None is read as True or None."""
     with pytest.raises(NotImplementedError, match=message):
         _fdm_ghost_wall(_fdm_bc(lambda t: returned))
+
+
+def test_a_one_element_object_array_holding_true_is_a_boolean():
+    """Review 1 of #2598: the boolean test ran before the unwrap, so the head read this as 1.0 at every reader."""
+    with pytest.raises(NotImplementedError, match="has a boolean value"):
+        _fdm_ghost_wall(_fdm_bc(np.array([True], dtype=object)))
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(np.ma.masked_all(1), 0.0), (np.ma.array([0.7]), 0.7)],
+    ids=["fully-masked", "unmasked"],
+)
+def test_a_one_element_masked_array_is_its_element(value, expected):
+    """Ruling (a) holds for a masked array too: its one element is read, and a masked element is zero."""
+    assert _fdm_ghost_wall(_fdm_bc(value)) == pytest.approx(expected, abs=1e-12)
+
+
+def test_a_default_does_not_make_x_optional_where_a_reader_has_no_point():
+    """A default for x reads one fixed position, not the face: at the right wall x = 1, ``x=0`` would be a silent
+    misread, so FDM refuses it as it refuses any x (audit session ruling, 2026-10-11)."""
+    with pytest.raises(NotImplementedError, match=r"declares x, with a default, but the FDM .* write it as g\(t\)"):
+        _fdm_ghost_wall(_fdm_bc(lambda t, x=0.0: t))
+
+
+def _cubic_spline():
+    from scipy.interpolate import CubicSpline
+
+    return CubicSpline([0.0, 0.5, 1.0], [0.0, 1.0, 4.0])
+
+
+def _interp1d():
+    from scipy.interpolate import interp1d
+
+    return interp1d([0.0, 0.5, 1.0], [0.0, 1.0, 4.0])
+
+
+class _CallableInstance:
+    def __call__(self, t, x):
+        return t
+
+
+@pytest.mark.parametrize(
+    "make",
+    [_cubic_spline, _interp1d, _CallableInstance, lambda: __import__("math").sin, lambda: np.sin],
+    ids=["CubicSpline", "interp1d", "instance", "builtin", "ufunc"],
+)
+def test_a_callable_that_is_not_a_function_you_write_is_refused_when_the_segment_is_built(make):
+    """User ruling, 2026-10-11 (rule C): a boundary value is a def or a lambda, or a partial of one. Another callable's
+    parameter names were not written against the slots: a SciPy interpolant takes ``(x, ...)``, so one built over time
+    data would be read as g(x), time data at the position. b10b9e65 called FDM's value as ``value(time)`` and read it."""
+    with pytest.raises(TypeError, match=r"not a function you write: a boundary value is a def or a lambda"):
+        _segment(make())
+
+
+def test_the_advised_wrap_of_an_interpolant_over_time_reads_it_at_the_time():
+    """The wrap the refusal advises: ``lambda t: s(t)`` reads the spline through (0, 0), (0.5, 1), (1, 4) at t = 0.5."""
+    spline = _cubic_spline()
+    assert _fdm_ghost_wall(_fdm_bc(lambda t: spline(t))) == pytest.approx(1.0, abs=1e-12)
+
+
+def test_a_partial_of_a_function_is_a_function_you_write():
+    import functools
+
+    assert _fdm_ghost_wall(_fdm_bc(functools.partial(lambda a, t: a + t, a=0.25))) == pytest.approx(0.75, abs=1e-12)
+
+
+def test_a_positional_only_function_is_refused_and_its_advised_wrap_reads():
+    """``def f(t, /)`` is a function but cannot be called by name; the refusal advises a wrap, and the wrap of a builtin
+    reads sin(0.5) at the FDM wall."""
+    import math
+
+    with pytest.raises(TypeError, match=r"takes \(t, /\), with positional-only parameters.*`lambda t: f\(t\)`"):
+        _segment(eval("lambda t, /: t"))
+    assert _fdm_ghost_wall(_fdm_bc(lambda t: math.sin(t))) == pytest.approx(math.sin(0.5), abs=1e-12)
+
+
+def test_a_legacy_callable_left_value_is_read_through_the_owner():
+    """Review 1 of #2598 (R1): the legacy branch of `_compat._get_bc_type_and_value` handed ``left_value`` raw to a
+    ghost helper whose decode B2a removed, so a callable raised a bare TypeError; b10b9e65 read g(t), ghost 0.5."""
+    import warnings
+
+    from mfgarchon.geometry.boundary import get_ghost_values_nd
+    from mfgarchon.geometry.boundary.fdm_bc_1d import BoundaryConditions as LegacyBoundaryConditions1D
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        legacy = LegacyBoundaryConditions1D(type="dirichlet", left_value=lambda t: 0.25 + t, right_value=0.0)
+        ghosts = get_ghost_values_nd(np.ones(5), legacy, (0.25,), time=0.5)
+    assert ghosts[(0, 0)] == pytest.approx(0.5, abs=1e-12)  # 2 g(0.5) - u = 2 * 0.75 - 1
 
 
 def test_nitsche_receives_the_owners_value_at_each_point():

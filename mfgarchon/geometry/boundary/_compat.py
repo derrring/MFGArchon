@@ -415,7 +415,17 @@ def _get_bc_type_and_value(
         if bc_type_str == "periodic":
             return BCType.PERIODIC, None
         elif bc_type_str == "dirichlet":
-            return BCType.DIRICHLET, boundary_conditions.left_value
+            from .types import boundary_value
+
+            # Through the one owner too (#2512 row B2): `_compute_ghost_pair` no longer decodes what it is handed.
+            value = boundary_value(
+                boundary_conditions.left_value,
+                kind="BoundaryConditions1DFDM.left_value",
+                t=time,
+                x=None,
+                where="get_ghost_values_nd (legacy)",
+            )
+            return BCType.DIRICHLET, value
         elif bc_type_str in ["no_flux", "neumann"]:
             return BCType.NO_FLUX, 0.0
         else:

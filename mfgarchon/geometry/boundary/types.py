@@ -10,6 +10,7 @@ These types are used by the BoundaryConditions class in conditions.py.
 
 from __future__ import annotations
 
+import functools
 import inspect
 import numbers
 from dataclasses import dataclass
@@ -823,6 +824,8 @@ class BCSegment:
 
         Raises:
             NotImplementedError: If the value is a provider and ``state`` is not given, or a value the owner refuses.
+            TypeError: If a callable value, reassigned after the segment was built, cannot be bound by name.
+            ValueError: If ``point`` is not one point of shape ``(d,)``.
         """
         # Until row B2's second half, `t` keeps its 0.0 default; HJB-GFDM, the one caller, passes its time.
         return segment_value(self, t=t, x=np.asarray(point, dtype=float), where="BCSegment.get_value", state=state)
@@ -855,9 +858,40 @@ def bind_boundary_value(fn: Callable[..., Any]) -> BoundCallable:
     """Bind a boundary value callable to ``(t, x)`` by its parameter names, and refuse it otherwise.
 
     Stricter than `bind_user_callable` for a reordered role, which binds ``(t, pos)`` positionally since ``t`` is in
-    place: a boundary value's parameters must all be named after the slots (user ruling, #2512 row B2), so one
-    named otherwise -- or whose signature cannot be read, so its names are unknown -- is refused.
+    place: a boundary value is called by name only (user ruling, #2512 row B2), so one with a parameter named
+    otherwise and no default is refused, and so is one that cannot be called by name -- a positional-only
+    parameter, or a signature that cannot be read. A parameter named otherwise with a default keeps its default.
+
+    It is a function the user writes, a ``def`` or a ``lambda``, or a ``functools.partial`` of one (user ruling,
+    2026-10-11): another callable's parameter names were not written against the slots. A SciPy interpolant takes
+    ``(x, ...)`` and would read time data at the position; a class instance, a bound method, a builtin, a ufunc, a
+    vectorized or jax-wrapped function are refused the same way, with the wrap that makes each one a function.
     """
+    name = getattr(fn, "__qualname__", fn)
+    target = fn
+    while isinstance(target, functools.partial):
+        target = target.func
+    if not inspect.isfunction(target):
+        raise TypeError(
+            f"boundary value {name!r} is of type {type(fn).__name__}, not a function you write: a boundary value is a "
+            "def or a lambda, whose parameter names declare what it reads. Wrap other callables, such as "
+            "`lambda t: s(t)` for an interpolant over time or `lambda t: np.sin(t)` (#2512 row B2)."
+        )
+    try:
+        declared = list(inspect.signature(fn).parameters.values())
+    except (TypeError, ValueError):
+        declared = None
+    if declared is None or any(p.kind is inspect.Parameter.POSITIONAL_ONLY for p in declared):
+        # `def f(t, /)`: renaming cannot help, wrapping does.
+        what = (
+            "has no signature Python can read"
+            if declared is None
+            else f"takes {inspect.signature(fn)}, with positional-only parameters"
+        )
+        raise TypeError(
+            f"boundary value {name!r} {what}, so it cannot be called by name: wrap it in a function that names what "
+            "it reads, such as `lambda t: f(t)` or `lambda x: f(x[0])` (#2512 row B2)."
+        )
     bound = bind_user_callable(fn, BOUNDARY_VALUE_SLOTS, role="boundary value")
     if bound.binding != "keyword":
         try:
@@ -865,11 +899,20 @@ def bind_boundary_value(fn: Callable[..., Any]) -> BoundCallable:
         except (TypeError, ValueError):
             params = "an unreadable signature"
         raise TypeError(
-            f"boundary value {getattr(fn, '__qualname__', fn)!r} takes ({params}), whose parameters are not all "
+            f"boundary value {name!r} takes ({params}), whose parameters are not all "
             "named after the slots: a boundary value names them t, x, time first (#2378 phase 5, #2375 ruling 8), "
             "and is called by name."
         )
     return bound
+
+
+def _with_default(fn: Callable[..., Any], *names: str) -> str:
+    """The words ", with a default" when ``fn`` gives the parameter of one of ``names`` a default, else none."""
+    parameters = inspect.signature(fn).parameters
+    for name in names:
+        if name in parameters and parameters[name].default is not inspect.Parameter.empty:
+            return ", with a default"
+    return ""
 
 
 def segment_value(
@@ -930,16 +973,19 @@ def boundary_value(
         bound = binding if binding is not None else bind_boundary_value(value)
         if "t" in bound.passes and t is None:
             raise NotImplementedError(
-                f"{kind}: its value declares t, but {where} has no time to pass it (#2512 row B2)."
+                f"{kind}: its value declares t{_with_default(bound.fn, 't', 'time')}, but {where} has no time to pass "
+                "it; write it as g(x) if it does not vary in time (#2512 row B2)."
             )
         if "x" in bound.passes and x is None:
+            # A default for x would read one fixed position, not the face, so it does not make x optional here.
             raise NotImplementedError(
-                f"{kind}: its value declares x, but {where} reads one value for the whole face and has no point to "
-                "pass it; a value that varies along the face is not supported there (#2512 row B2)."
+                f"{kind}: its value declares x{_with_default(bound.fn, 'x')}, but {where} reads one value for the "
+                "whole face and has no point to pass it; a value that varies along the face is not supported there, "
+                "so write it as g(t) if it does not vary along the face (#2512 row B2)."
             )
         if x is not None and np.ndim(x) != 1:
             raise ValueError(f"{where} passed x of shape {np.shape(x)}; a boundary value takes one point, shape (d,).")
-        returned = bound(t=t, x=x)
+        returned = _one_element(bound(t=t, x=x))
         if returned is None:
             raise NotImplementedError(
                 f"{kind}: its value returned None at one point, which {where} cannot read; does the function lack a "
@@ -955,10 +1001,20 @@ def boundary_value(
     return _read_constant(value, kind=kind, where=where)
 
 
+def _one_element(value: Any) -> Any:
+    """The element of a size-1 array; anything else unchanged."""
+    if isinstance(value, np.ndarray) and value.size == 1:
+        return value.reshape(-1)[0]
+    return value
+
+
 def _read_constant(value: Any, *, kind: str, where: str) -> float:
     """A constant boundary value, or what a callable one returned at a point: `boundary_value`'s contract."""
     from mfgarchon.geometry.boundary.bc_utils import _describe_bc_value
 
+    # A size-1 array, of any shape, is its element (#2512 row B2, ruling), read by every rule below: an object array
+    # holding True is a boolean, and a masked element is zero.
+    value = _one_element(value)
     if isinstance(value, (bool, np.bool_)) or (isinstance(value, np.ndarray) and value.dtype == np.bool_):
         raise NotImplementedError(
             f"{kind} has a boolean value, which is not a boundary datum: give a real number, a real array of one "
@@ -970,8 +1026,6 @@ def _read_constant(value: Any, *, kind: str, where: str) -> float:
         raise NotImplementedError(f"{kind} has a complex value {value!r}; {where} takes a real boundary datum.")
     if _describe_bc_value(value) is None:
         return 0.0
-    if isinstance(value, np.ndarray) and value.size == 1:
-        value = value.reshape(-1)[0]  # a size-1 array, of any shape, is its element (#2512 row B2, ruling)
     real = isinstance(value, numbers.Real) or (
         isinstance(value, np.ndarray)
         and value.ndim == 0

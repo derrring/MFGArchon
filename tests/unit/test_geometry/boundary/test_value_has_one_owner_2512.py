@@ -5,18 +5,31 @@ module decodes a value itself (audit session ruling, 2026-10-09, #2512 comment 6
 
 **Population.** Every module under `mfgarchon/`, except `applicator_graph.py`, whose node values are row N2.
 
-**A raw decode** is a call of ``<x>.value`` or ``<x>.default_value``, or a numeric conversion of one (``float``,
-``int``, ``complex``, ``np.asarray``, ``np.array``, ``np.full``, ``np.full_like``), directly or through a name
-assigned from one in the same function. ``<x>.bc_type.value`` and the like are enum reads, not values.
+**A value read** is ``<x>.value`` or ``<x>.default_value``, or ``getattr(<x>, "value"[, default])``, as D17-D19
+read it; ``<x>.bc_type.value`` and the like are enum reads, not values. A name assigned in the same function from a
+value read, or from a conditional or boolean expression over one (D10's ``seg.value if ... else 0.0``), carries it.
+
+**A raw decode** of a value read or a carried name is: a call of it; a numeric conversion of it as the first argument
+(``float``, ``int``, ``complex``, ``np.asarray``, ``np.array``); or a store of it into an array or a mapping, as D12
+wrote ``field[on_boundary] = bc_value``. These are the shapes the census's decoders D1-D21 use (#2512 comment
+6104689754). On b10b9e65, with no allowance, the guard flags 16 of them; the other five are the blind spots below,
+and D9, which decodes no ``.value`` itself but reads through D1.
 
 **Allowed**, each by file and function, so a moved line does not reopen the question: the readers row B2's second
 half routes, each removed from the list then; and an attribute named ``value`` that is not a boundary value. The
 owner needs no allowance: it receives the value as a parameter. An allowance that covers no site fails the guard,
 so a routed reader cannot leave its name behind for the next one.
 
-**Out of scope**, as the other structural guards say of their own shapes: the dataflow is within one function,
-so a value passed to a helper that decodes it there is not followed. The census that found five such decoders by
-a second predicate is #2512 comment 6104689754.
+**Known blind spots**, as the other structural guards state theirs (audit session ruling, 2026-10-11: the census's
+shapes are the criterion, since an AST guard cannot be complete over Python syntax):
+- the census's second predicate, ``if callable(v): v(...)`` on a value passed into a helper (D5, D16, D22-D26), and a
+  raw value returned or copied for a caller to decode (D14, D21): the dataflow is within one function; row B2's
+  second half extends the guard to the second predicate before the row is met;
+- names carried through a second name (``f = seg.value; g = f``), an annotated assignment, a walrus, or tuple
+  unpacking;
+- arithmetic on a value (``seg.value * h``), ``np.full``'s fill value, ``np.float64(...)``, ``.value.__call__``, and
+  module-level code.
+None of these is a shape a census decoder uses.
 """
 
 from __future__ import annotations
@@ -37,7 +50,7 @@ PACKAGE = Path("mfgarchon")
 EXCLUDED = {"mfgarchon/geometry/boundary/applicator_graph.py"}  # row N2
 VALUE_ATTRS = frozenset({"value", "default_value"})
 ENUM_HOLDERS = frozenset({"bc_type", "default_bc", "type", "kind", "math_type"})
-CONVERT = frozenset({"float", "int", "complex", "asarray", "array", "full", "full_like"})
+CONVERT = frozenset({"float", "int", "complex", "asarray", "array"})
 ALLOWED = {
     # Row B2's second half routes these (#2512 comment 6104689754); remove each from this list when it does.
     ("mfgarchon/alg/numerical/fp_solvers/fp_fdm_time_stepping.py", "_get_dirichlet_value_at_point"): (
@@ -49,36 +62,55 @@ ALLOWED = {
 }
 
 
-def _is_value_attr(node: ast.AST) -> bool:
+def _is_value_read(node: ast.AST) -> bool:
+    if isinstance(node, ast.Attribute):
+        return (
+            node.attr in VALUE_ATTRS
+            and isinstance(node.ctx, ast.Load)
+            and not (isinstance(node.value, ast.Attribute) and node.value.attr in ENUM_HOLDERS)
+        )
     return (
-        isinstance(node, ast.Attribute)
-        and node.attr in VALUE_ATTRS
-        and isinstance(node.ctx, ast.Load)
-        and not (isinstance(node.value, ast.Attribute) and node.value.attr in ENUM_HOLDERS)
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+        and len(node.args) >= 2
+        and isinstance(node.args[1], ast.Constant)
+        and node.args[1].value in VALUE_ATTRS
     )
 
 
+def _over(node: ast.AST, test) -> bool:
+    """``node`` passes ``test``, or is a conditional or boolean expression one of whose results does."""
+    if isinstance(node, ast.IfExp):
+        return _over(node.body, test) or _over(node.orelse, test)
+    if isinstance(node, ast.BoolOp):
+        return any(_over(value, test) for value in node.values)
+    return test(node)
+
+
 def raw_decodes(scope: ast.AST) -> list[int]:
-    """Lines in ``scope`` that call or convert a boundary value, directly or through a name assigned from one."""
+    """Lines in ``scope`` that call, convert or store a boundary value, directly or through a carried name."""
     nodes = list(own_nodes(scope))
     carried = {
         target.id
         for node in nodes
-        if isinstance(node, ast.Assign) and _is_value_attr(node.value)
+        if isinstance(node, ast.Assign) and _over(node.value, _is_value_read)
         for target in node.targets
         if isinstance(target, ast.Name)
     }
 
     def valueish(node: ast.AST) -> bool:
-        return _is_value_attr(node) or (isinstance(node, ast.Name) and node.id in carried)
+        return _over(node, lambda n: _is_value_read(n) or (isinstance(n, ast.Name) and n.id in carried))
 
     lines = []
     for node in nodes:
-        if not isinstance(node, ast.Call):
-            continue
-        callee = node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", None)
-        if valueish(node.func) or (callee in CONVERT and node.args and valueish(node.args[0])):
-            lines.append(node.lineno)
+        if isinstance(node, ast.Call):
+            callee = node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", None)
+            if valueish(node.func) or (callee in CONVERT and node.args and valueish(node.args[0])):
+                lines.append(node.lineno)
+        elif isinstance(node, ast.Assign) and any(isinstance(t, ast.Subscript) for t in node.targets):
+            if valueish(node.value):
+                lines.append(node.lineno)
     return lines
 
 
@@ -126,8 +158,18 @@ def test_every_allowance_still_covers_a_site():
         ("def _rival(segment, time):\n    return segment.value(time)\n", "a call"),
         ("def _rival(bc):\n    return float(bc.default_value)\n", "a conversion of the default"),
         ("def _rival(segment, time):\n    g = segment.value\n    return g(time)\n", "a call through a name"),
+        ("def _rival(segment):\n    g = getattr(segment, 'value', 0.0)\n    return float(g)\n", "D17-D19's getattr"),
+        (
+            "def _rival(seg):\n    value = seg.value if not callable(seg.value) else 0.0\n    return float(value)\n",
+            "D10's conditional expression",
+        ),
+        ("def _rival(seg):\n    value = seg.value or 0.0\n    return float(value)\n", "a boolean expression"),
+        (
+            "def _rival(bc, field, idx):\n    v = bc.default_value\n    field[idx] = v / 2.0 if v else v\n",
+            "D12's store into an array",
+        ),
     ],
-    ids=["call", "convert-default", "through-a-name"],
+    ids=["call", "convert-default", "through-a-name", "getattr", "ifexp", "boolop", "store"],
 )
 def test_a_planted_rival_is_found(package_copy, planted, why):
     target = package_copy / PACKAGE / "geometry" / "boundary" / "_planted_rival.py"

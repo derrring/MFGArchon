@@ -435,7 +435,7 @@ control $\alpha$ occupies the $Du$ slot, being its conjugate variable.
 | `ControlCostBase.optimal_control` / `.lagrangian` | `(p)` / `(alpha)` |
 | volatility callable and PDE coefficient callables | `(t, x, m)` |
 | a measure field's `field_fn` / `gradient_fn` | `(t, x, mu)` |
-| a boundary value: `BCSegment.value`, `BoundaryConditions.default_value`, a meshfree `bc_value` | `(t, x)`, every parameter named |
+| a boundary value: `BCSegment.value`, `BoundaryConditions.default_value`, a meshfree `bc_value` | `(t, x)`, called by name |
 
 The order is chosen so the derivative family can grow: $D^2u$ is already a first-class object one
 layer down (§ *Derivatives*), and a signature with $m$ between $x$ and $p$ leaves nowhere to put it.
@@ -445,11 +445,18 @@ Time-first also agrees with § *Arrays, grids and time* and with `scipy.integrat
 - **On the operator family, `t` has no default** and is always passed.
 - **A time-independent callable may omit `t`.** The library still supplies it, binding the callable
   by name.
-- **A boundary value names every parameter after its slot**: `(t, x)`, `(x)`, or `(t)` (or `time`). It is bound
-  when the segment is built and refused there if a parameter is named otherwise or `x` comes first, so no
-  boundary value is ever bound positionally. `x` is one boundary point of shape `(d,)`. A reader with no point,
-  such as the FDM ghost layer, refuses one that declares `x`; one with no time refuses one that declares `t`
-  (#2512, row B2).
+- **A boundary value names its parameters after the slots**: `(t, x)`, `(x)`, or `(t)` (or `time`); any other
+  parameter needs a default, and keeps it. It is called by name, never positionally, so it is refused if `x` comes
+  before `t`, or if a parameter without a default is named otherwise. It is a function you write, a `def` or a
+  `lambda` (or a `functools.partial` of one); any other callable is refused, with the advice to wrap it, such as
+  `lambda t: s(t)` for an interpolant `s`. This is stricter than a potential or a raw Hamiltonian, which may be a
+  class instance: the readers of a boundary value differ in what they can pass, and boundary data are often time
+  series, whose interpolants name their argument `x`, so a callable whose names were not written for the slots
+  would be read at the wrong argument.
+  `BCSegment.value` is bound, and refused, when the segment is built; `BoundaryConditions.default_value`, a
+  meshfree `bc_value`, and a `value` reassigned later are bound when first read. `x` is one boundary point of shape
+  `(d,)`. A reader with no point, such as the FDM ghost layer, refuses one that declares `x`, even with a default;
+  one with no time refuses one that declares `t` (#2512, row B2).
 - **Currying the measure needs a keyword**: `partial(H, m=mu)`.
 
 *Not yet met (#2429): the per-point adapter `problem.H` / `problem.dH_dm` is not time-first and

@@ -285,8 +285,8 @@ The default averaging strategy is recommended for most MFG applications.
 
 A callable value is `g(t, x)`, time first, like every callable the library accepts (see
 `docs/user/CONVENTIONS.md`, § *Callable signatures*). It names what it reads, `(t, x)`, `(x)`, or `(t)` (or
-`time`), and the library calls it by name. One whose parameters are named otherwise, or that puts `x` before `t`,
-is refused when the segment is built (#2512).
+`time`), and the library calls it by name; any other parameter needs a default, and keeps it. One that puts `x`
+before `t`, or has a parameter without a default named otherwise, is refused when the segment is built (#2512).
 
 BCs can vary with time:
 
@@ -316,8 +316,20 @@ exit_bc = BCSegment(
 )
 ```
 
-A method that reads one value per face, such as the FDM ghost layer, has no point to pass, so it refuses a
-value that declares `x`. FEM and the meshless Galerkin path read it at each boundary point.
+Not every method can read every form. Each refuses, when it first reads the value, one that declares what it does
+not have:
+- a method that reads one value per face, such as the FDM ghost layer, has no point to pass, so it refuses a value
+  that declares `x`, even with a default: write `g(t)` if the value does not vary along the face;
+- FEM and the meshless Galerkin path read `g(x)` at each boundary point but have no time to pass yet, so they
+  refuse a value that declares `t`;
+- HJB-GFDM (through `BCSegment.get_value`) passes both, so it reads `inlet_profile(t, x)` above.
+
+A boundary value is a function you write, a `def` or a `lambda` (or a `functools.partial` of one), since its
+parameter names are what tell the library what it reads. Any other callable is refused when the segment is built:
+a SciPy interpolant, a class instance, a bound method, a builtin or NumPy ufunc, a vectorized or jax-wrapped
+function. Wrap it in a function that names what it reads. An interpolant over time data takes `(x, ...)` and would
+read the time data at the position, so for `s = CubicSpline(times, values)` or `s = interp1d(times, values)` pass
+`value=lambda t: s(t)`; for `np.sin`, `value=lambda t: np.sin(t)`.
 
 ## Lazy Dimension Binding
 

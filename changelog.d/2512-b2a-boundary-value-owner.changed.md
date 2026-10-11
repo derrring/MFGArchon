@@ -12,11 +12,18 @@
   Every one now reads through `mfgarchon.geometry.boundary.types.boundary_value`, reached for a segment through
   `segment_value`:
   - **A callable names its parameters `(t, x)`, `(x)` or `(t)`** (`time` is accepted for `t`), and is called by
-    name with what it declares. `x` is one point, an array of shape `(d,)`, `d = 1` included, and the callable
-    returns one number there.
+    name with what it declares; any other parameter needs a default, and keeps it. `x` is one point, an array of
+    shape `(d,)`, `d = 1` included, and the callable returns one number there.
   - **Refused when the segment is built:**
-    - a callable whose parameters are not all named after the slots, such as `lambda s: ...`,
+    - a callable with a parameter that has no default and is not named after a slot, such as `lambda s: ...`,
       `lambda t, pos: ...` or `lambda *args: ...`;
+    - a callable that is not a function you write (user ruling, 2026-10-11): a boundary value is a `def` or a
+      `lambda`, or a `functools.partial` of one, whose parameter names declare what it reads. A SciPy interpolant,
+      a class instance, a bound method, a builtin or NumPy ufunc (`math.sin`, `np.sin`, `abs`), `np.vectorize` and
+      a jax-wrapped function are refused, with the advice to wrap them. b10b9e65 called FDM's value as
+      `value(time)`, so it read a time interpolant, `math.sin` and `np.sin` there correctly: wrap them,
+      `value=lambda t: s(t)`, `value=lambda t: np.sin(t)`;
+    - a function that cannot be called by name, `def f(t, /)`;
     - one that puts `x` before `t`, such as `lambda x, t: ...`, which is never swapped (#2378 phase 5,
       #2375 ruling 8).
 
@@ -28,6 +35,10 @@
     have.
     - FDM reads one value per face, so `x` is refused there. It used to pass the time as `x`: HJB-FDM's ghost
       imposed 5.0 at the exit x = 1 for `lambda x: 10 * x` at t = 0.5.
+    - A slot with a default is still declared. At an FDM wall, b10b9e65 read `lambda t, x=0: 0.25 + t`,
+      `def f(t, *, x=0)` and `partial(g, x=...)` as 0.75 at t = 0.5; they are refused now, since a default for `x`
+      reads one fixed position, not the face. Write `g(t)` if the value does not vary along the face. Likewise at
+      a FEM DOF for a `t` with a default.
     - FEM, meshless Galerkin, the FDM calculator route (`bc_to_topology_calculator`),
       `MeshfreeApplicator.apply_field_bc` and the BC resolver's passthrough have no time to pass yet, so `t` is
       refused there.
@@ -49,7 +60,7 @@
     each is now refused. The BC resolver's passthrough read `np.float32(0.7)` and `np.array([0.7])` as 0.0; it now
     reads both as 0.7.
   - **What a callable returns is read as a constant is**, so the owner holds one reading of a value:
-    - a return of one element, of any shape, is that element;
+    - a return of one element, an array of any shape, masked arrays included, is that element;
     - a longer return is refused, and so are NaN, a boolean and a complex value;
     - `None` is refused, not read as 0, since a function with no `return` gives it.
 
