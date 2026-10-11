@@ -403,7 +403,7 @@ _CONTRACT = [
     ("value", "returned", "expected"), [row[1:] for row in _CONTRACT], ids=[row[0] for row in _CONTRACT]
 )
 def test_the_layered_contract(value, returned, expected):
-    """One function reads a constant and a callable's return (#2512 row B2): dtype at any depth, one unwrap, the value.
+    """One function reads a constant and a callable's return (#2512 row B2): the dtype, one unwrap, the value.
     Each review of #2598 found the next container corner of a one-layer reading; these rows pin each of them."""
     from mfgarchon.geometry.boundary.types import boundary_value
 
@@ -515,16 +515,18 @@ def test_the_fdm_uniform_ghosts_leave_a_non_robin_segments_coefficients_unread()
     np.testing.assert_array_equal(without, ghosts(BCSegment(name="d", bc_type=BCType.DIRICHLET, value=0.7)))
 
 
-def test_a_provider_valued_robin_segment_is_resolved_with_the_solver_state():
+@pytest.mark.parametrize("resolver", ["HJBResolver", "FPResolver"])
+def test_a_provider_valued_robin_segment_is_resolved_with_the_solver_state(resolver):
     """Review 1 of #2601 (C6), a regression #2598 introduced: `resolve_bc` with `HJBResolver` resolved a provider on a
     Robin segment's value with the solver state (b10b9e65: 0.37). #2598's passthrough read it with no state and
-    refused it, so the resolver's own provider branch never ran. The passthrough now passes the state to the owner."""
+    refused it, so the resolver's own provider branch never ran. The passthrough now passes the state to the owner,
+    for both resolvers: `FPResolver`, whose passthrough read the value as 0.0 at b10b9e65, too (review 2 of #2601)."""
+    from mfgarchon.geometry.boundary import resolution
     from mfgarchon.geometry.boundary.providers import ConstantProvider
-    from mfgarchon.geometry.boundary.resolution import HJBResolver, resolve_bc
 
     segment = BCSegment(
         name="r", bc_type=BCType.ROBIN, value=ConstantProvider(0.37), alpha=2.0, beta=1.0, boundary="x_max"
     )
     bc = BoundaryConditions(dimension=1, segments=[segment], default_bc=BCType.NO_FLUX)
-    (resolved,) = resolve_bc(bc, HJBResolver(), {"iteration": 0})
+    (resolved,) = resolution.resolve_bc(bc, getattr(resolution, resolver)(), {"iteration": 0})
     assert (resolved.value, resolved.alpha, resolved.beta) == (0.37, 2.0, 1.0)

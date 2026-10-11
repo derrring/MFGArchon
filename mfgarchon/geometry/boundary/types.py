@@ -952,10 +952,11 @@ def boundary_value(
     the reader and the face. It returns one number at the point.
 
     **A constant, and what a callable or a provider returns**, are read by one function, `_read_constant`, in three
-    layers: a boolean or complex leaf anywhere inside is refused, masked or not; an array of one element, of any
-    shape, is that element, once, and a value still nested is refused; then ``None`` (0 for a constant, refused
-    for a return), a masked element and whatever `_describe_bc_value` calls zero are 0, a finite real is its value,
-    and anything else, a non-finite number included, is refused. A return of more than one number is refused.
+    layers. First the dtype: an array, masked or not, must have an integer or a floating dtype, and any other array
+    is refused at the container, whatever it holds, as is a boolean or complex scalar. Then one unwrap: an array of
+    one element is that element, and a return of more than one number is refused. Then the value:
+    ``None`` (0 for a constant, refused for a return), a masked element and whatever `_describe_bc_value` calls zero
+    are 0, a finite real is its value, and anything else, a non-finite number included, is refused.
 
     **A** ``BCValueProvider`` is resolved with ``state``, and its result is read as a return is: one number, since
     a value per node is a separate capability (#2600). Without ``state`` it is refused (``NotImplementedError``): the
@@ -1030,9 +1031,11 @@ def _read_constant(
 ) -> float:
     """A constant boundary value, or what a callable or a provider returned: `boundary_value`'s contract, in layers.
 
-    1. **dtype:** an array, masked or not, must have an integer or a floating dtype; a boolean, complex, object,
-       string or time array is refused at the container, and so is a boolean or complex scalar.
-    2. **one unwrap:** an array of one element, of any shape, masked or not, is that element. A returned array of
+    1. **dtype:** an array, masked or not, must have an integer or a floating dtype, and any other array is refused
+       at the container; so is a boolean or complex scalar.
+    2. **one unwrap:** an array of one element, of any shape, masked or not, is that element; a masked
+       ``np.matrix`` is the exception: it stays two-dimensional, so layer 3 reads it whole, as 0 if it is masked or
+       zero and refused otherwise. A returned array of
        more than one element is refused here too, since a callable returns one number at a point.
     3. **the value:** ``None`` is 0 for a constant and refused for a return, which a function with no ``return``
        gives; a masked element is 0, and so is whatever `_describe_bc_value` calls zero; a finite real is its

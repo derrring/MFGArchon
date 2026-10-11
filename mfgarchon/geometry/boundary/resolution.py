@@ -194,7 +194,9 @@ class HJBResolver:
     Resolution rules:
         - NO_FLUX, REFLECTING -> NEUMANN(g=0): value function has zero normal
           gradient at reflecting walls (optimal control points inward).
-        - BCValueProvider in segment.value -> resolve to concrete Robin BC.
+        - A BCValueProvider in segment.value is resolved with ``solver_state``: on a passthrough
+          segment by `boundary_value`, keeping the segment's type; on NO_FLUX or REFLECTING, to
+          ROBIN(alpha=0, beta=1) carrying the computed value.
         - All other types: passthrough.
     """
 

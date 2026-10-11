@@ -57,7 +57,7 @@
     - refused: every boolean, every complex value (0 included), an array of more than one element that is not
       all zero, any other type, and a non-finite number.
 
-    The contract is read in layers, at any depth: see the entry for row B2's second half (#2512).
+    The contract is read in three layers: see the entry for row B2's second half (#2512).
 
     At a Dirichlet exit, HJB-FDM's ghost imposed 1.0 for `True`, 0.0 for `np.complex128(1j)` and NaN for `nan`;
     each is now refused. The BC resolver's passthrough read `np.float32(0.7)` and `np.array([0.7])` as 0.0; it now
