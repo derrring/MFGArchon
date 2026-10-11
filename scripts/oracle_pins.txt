@@ -133,10 +133,13 @@ pin    fp_fem/shared_robin_refused tests/unit/test_alg/test_fp_refuses_a_shared_
 # The (b) rows
 row grid/B1_face_segment            -
 # Row B2 is not met by its first half (B2a): one evaluation of a segment's value is its target, and a decoder is
-# still allowlisted (FP-FDM's `_get_dirichlet_value_at_point`, D8) and GFDM's dict channel is unrouted (#2597).
+# still allowlisted (FP-FDM's `_get_dirichlet_value_at_point`, D8). B2b-2a translates GFDM's dict channel into a
+# BoundaryConditions (#2597), removing D25/D26, and extends the guard to the census's second predicate.
 # B2a lands the guard as a ratchet and the family pins. B2b fills the row when
 #   (a) the guard's allowlist holds no decoder, under a guard that covers both of the census's predicates: today's
-#       `.value` reads, and a value passed into a helper that tests `callable(v)` and calls it (D5, D16, D22-D26);
+#       `.value` reads, and a value passed into a helper that tests `callable(v)` and calls it (D5, D16, D22-D26).
+#       The guard covers both since B2b-2a; its allowlists still hold D8 (first predicate) and D6 (second), each
+#       naming B2b-2b as its removal;
 #   (b) #2535 and #2538, which the row closes (#2512 comment 6054006841), are closed: D1 has no time default, so a
 #       reader with no time cannot pass one, and a g(t) oracle reaches every reader handed a time, FP-FDM's D8 and
 #       D9 and HJB-SL's D6, as a call counter on the owner shows (every t HJB-SL's nD path passes is the step's

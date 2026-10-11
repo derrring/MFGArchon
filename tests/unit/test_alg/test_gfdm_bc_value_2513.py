@@ -19,6 +19,8 @@ flat (Howard); per-face Dirichlet 7.0e-1 flat (Newton). After the fix every case
 second order on the default (no ghost-node) path.
 """
 
+from types import SimpleNamespace
+
 import pytest
 
 import numpy as np
@@ -83,7 +85,7 @@ def _per_face(bc_type: BCType, g_left: float, g_right: float) -> BoundaryConditi
     )
 
 
-def _solve(kind: str, bc, g_left: float, g_right: float, nx: int, nt: int = 20, **solver_kw):
+def _solve(kind: str, bc, g_left: float, g_right: float, nx: int, nt: int = 20, solver_bc=None, **solver_kw):
     u, derivs = _exact(kind, g_left, g_right)
     x = np.linspace(0.0, L, nx)
 
@@ -99,6 +101,8 @@ def _solve(kind: str, bc, g_left: float, g_right: float, nx: int, nt: int = 20, 
         u_terminal=lambda xx: u(T, np.asarray(xx, dtype=float)),
     )
     problem = MFGProblem(geometry=grid, components=comps, T=T, Nt=nt, volatility=SIGMA)
+    if solver_bc is not None:
+        solver_kw = {**solver_kw, "boundary_conditions": solver_bc}
     solver = HJBGFDMSolver(problem, collocation_points=x.reshape(-1, 1), delta=3.0 * L / (nx - 1), **solver_kw)
     u_T = u(T, x)
     U = solver.solve_hjb_system(
@@ -153,7 +157,7 @@ def test_a_uniform_robin_with_no_value_term_is_the_neumann_condition(inner: str)
     np.testing.assert_array_equal(robin, neumann)
 
 
-def test_a_bc_value_no_row_reads_is_refused_not_solved_as_zero():
+def _small_problem():
     grid = TensorProductGrid(
         bounds=[(0.0, L)], Nx_points=[11], boundary_conditions=dirichlet_bc(dimension=1, value=0.0)
     )
@@ -162,8 +166,13 @@ def test_a_bc_value_no_row_reads_is_refused_not_solved_as_zero():
         m_initial=lambda xx: np.ones_like(np.asarray(xx, dtype=float)) / L,
         u_terminal=lambda xx: np.zeros_like(np.asarray(xx, dtype=float)),
     )
-    problem = MFGProblem(geometry=grid, components=comps, T=T, Nt=4, volatility=SIGMA)
-    x = np.linspace(0.0, L, 11).reshape(-1, 1)
+    return MFGProblem(geometry=grid, components=comps, T=T, Nt=4, volatility=SIGMA), np.linspace(0.0, L, 11).reshape(
+        -1, 1
+    )
+
+
+def test_a_bc_value_no_row_reads_is_refused_not_solved_as_zero():
+    problem, x = _small_problem()
     refused = ({"value": 0.3}, {"values": 0.2, "value": 0.3})
     accepted = ({"value": 0.0}, {"values": 0.3}, {"values": 0.3, "value": 0.3})
     for extra in refused:
@@ -171,3 +180,69 @@ def test_a_bc_value_no_row_reads_is_refused_not_solved_as_zero():
             HJBGFDMSolver(problem, collocation_points=x, boundary_conditions={"type": "dirichlet", **extra}, **_NEWTON)
     for extra in accepted:
         HJBGFDMSolver(problem, collocation_points=x, boundary_conditions={"type": "dirichlet", **extra}, **_NEWTON)
+
+
+@pytest.mark.parametrize("form", ["number", "callable"])
+@pytest.mark.parametrize("kind", ["neumann", "dirichlet"])
+def test_a_dict_bc_solves_as_the_boundary_conditions_it_spells(kind: str, form: str):
+    """The dict form is deprecated (#2597) and translated at entry into the BoundaryConditions its warning names; the
+    policy's equivalence test, the two solve identically. A Neumann dict's "values" was read only as an index dict,
+    so a number or a callable was solved as 0 (#2520): at bddb45d9 the Neumann rows equal neumann_bc(value=0)'s."""
+    make = neumann_bc if kind == "neumann" else dirichlet_bc
+    values = G if form == "number" else (lambda point: G)
+    with pytest.warns(
+        DeprecationWarning,
+        match=r"A dict for parameter 'boundary_conditions' in 'HJBGFDMSolver.__init__' is deprecated since v0\.22\.0\. "
+        r"Use a BoundaryConditions instead\. Will be removed in v0\.25\.0\.",
+    ):
+        # The grid carries g = 0, so a dict the solver ignored would solve as that BC, not as the one it spells.
+        from_dict, _ = _solve(
+            kind, make(dimension=1, value=0.0), G, G, nx=21, solver_bc={"type": kind, "values": values}, **_NEWTON
+        )
+    from_bc, _ = _solve(kind, make(dimension=1, value=G), G, G, nx=21, **_NEWTON)
+    np.testing.assert_array_equal(from_dict, from_bc)
+
+
+def test_a_dict_bc_the_translation_cannot_spell_is_refused():
+    """#2597: what a BoundaryConditions has no form for is refused when the dict is translated, by name. A no-flux or
+    periodic dict with no value, or a zero one, still translates, as the deprecated form keeps working."""
+    problem, x = _small_problem()
+    refused = (
+        ({"type": "dirichlet", "values": [0.1] * 11}, NotImplementedError, r'per-point "values" \(a list\).*#2600'),
+        ({"type": "dirichlet", "values": np.full(11, 0.1)}, NotImplementedError, r'per-point "values" \(a ndarray\)'),
+        ({"type": "neumann", "values": {0: 0.1}}, NotImplementedError, r'per-point "values" \(a dict\)'),
+        (
+            {"type": "robin", "values": 0.1},
+            NotImplementedError,
+            r"takes only alpha = 0, beta = 1.*neumann_bc\(value=g\)",
+        ),
+        ({"type": "no_flux", "values": 0.1}, NotImplementedError, r"\['values'\] = \[0\.1\].*#2513"),
+        ({"type": "mixed"}, ValueError, r"unknown dict BC type 'mixed'"),
+        ({"values": 0.1}, ValueError, r'needs a "type" string.*it has None'),
+        ({"type": None}, ValueError, r'needs a "type" string.*it has None'),
+        ({"type": BCType.DIRICHLET, "values": 0.1}, ValueError, r'needs a "type" string.*it has <BCType\.DIRICHLET'),
+    )
+    for bc, error, message in refused:
+        with (
+            pytest.warns(DeprecationWarning, match="A dict for parameter 'boundary_conditions'"),
+            pytest.raises(error, match=message),
+        ):
+            HJBGFDMSolver(problem, collocation_points=x, boundary_conditions=bc, **_NEWTON)
+    accepted = (
+        {"type": "no_flux"},
+        {"type": "no_flux", "values": 0},
+        {"type": "periodic"},
+        {"type": "periodic", "values": 0.0},
+        {"type": "dirichlet", "values": np.array(0.1)},  # one element, zero-dimensional or not: the value
+        {"type": "dirichlet", "values": np.array([0.1])},
+    )
+    for bc in accepted:
+        with pytest.warns(DeprecationWarning, match="A dict for parameter 'boundary_conditions'"):
+            HJBGFDMSolver(problem, collocation_points=x, boundary_conditions=bc, **_NEWTON)
+    # Not a dict and not a BoundaryConditions: refused at entry, by name, rather than read in part (#1559).
+    with pytest.raises(
+        TypeError, match=r"Unsupported boundary_conditions type: SimpleNamespace\. Expected BoundaryConditions"
+    ):
+        HJBGFDMSolver(
+            problem, collocation_points=x, boundary_conditions=SimpleNamespace(type="dirichlet", values=0.7), **_NEWTON
+        )

@@ -221,6 +221,8 @@ def deprecated_value(
     deprecated_values: dict[Any, Any],
     since: str,
     removal: str = "v0.25.0",
+    deprecated_on: str | None = None,
+    removal_blockers: list[str] | None = None,
 ) -> Callable[[F], F]:
     """
     Mark specific parameter values as deprecated, with automatic remapping.
@@ -229,12 +231,23 @@ def deprecated_value(
     or replaced. The decorator automatically remaps deprecated values to their
     replacements and issues a warning.
 
+    A key is matched in one of two ways:
+
+    - **a value** (hashable), by equality: the passed value is replaced by the mapped one after the warning;
+    - **a type**, by ``isinstance``: the warning names the type and the replacement, and the value is passed
+      through unchanged, so the function body translates it. This is for a deprecated *form* of an argument,
+      such as a dict where an object is now expected.
+
     Args:
         param_name: Name of the parameter whose values are deprecated
-        deprecated_values: Mapping of {old_value: new_value}. When old_value is
-            passed, it is silently replaced with new_value after warning.
+        deprecated_values: Mapping of {old_value: new_value}, or {old_type: replacement name}. When old_value is
+            passed, it is replaced with new_value after warning; an instance of old_type is passed through.
         since: Version when deprecation started (e.g., "v0.17.0")
         removal: Version when deprecated values will stop working
+        deprecated_on: ISO date (``YYYY-MM-DD``) this deprecation was added. Optional; enables
+            the 6-month removal criterion when set.
+        removal_blockers: Conditions preventing removal (default: the standard checklist, as for
+            `deprecated_parameter`).
 
     Example:
         >>> @deprecated_value(
@@ -252,6 +265,9 @@ def deprecated_value(
         remapped value directly -- no manual redirect logic needed.
     """
 
+    if removal_blockers is None:
+        removal_blockers = ["internal_usage", "equivalence_test", "migration_docs"]
+
     def decorator(func: F) -> F:
         # Store value deprecation metadata
         if getattr(func, "_deprecated_values", None) is None:
@@ -263,33 +279,50 @@ def deprecated_value(
                 "values": deprecated_values,
                 "since": since,
                 "removal": removal,
+                "deprecated_on": deprecated_on,
+                "removal_blockers": removal_blockers,
             }
         )
 
         sig = inspect.signature(func)
+        type_keys = [k for k in deprecated_values if isinstance(k, type)]
 
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
+            # Only the bind and the lookup are guarded: a bad bind is left to `func` to report, and an
+            # unhashable value matches no value key. `func` is called once, outside, so a TypeError it raises
+            # reaches the caller instead of running it a second time with the unremapped arguments.
+            form, matched, new_value = None, False, None
             try:
                 bound = sig.bind(*args, **kwargs)
                 bound.apply_defaults()
-
                 if param_name in bound.arguments:
                     value = bound.arguments[param_name]
-                    if value in deprecated_values:
-                        new_value = deprecated_values[value]
-                        warnings.warn(
-                            f"Value '{value}' for parameter '{param_name}' in "
-                            f"'{func.__qualname__}' is deprecated since {since}. "
-                            f"Use '{new_value}' instead. "
-                            f"Will be removed in {removal}.",
-                            DeprecationWarning,
-                            stacklevel=2,
-                        )
-                        bound.arguments[param_name] = new_value
-                        return func(*bound.args, **bound.kwargs)
+                    form = next((k for k in type_keys if isinstance(value, k)), None)
+                    if form is None and value in deprecated_values:
+                        matched, new_value = True, deprecated_values[value]
             except TypeError:
-                pass
+                form, matched = None, False
+            if form is not None:
+                warnings.warn(
+                    f"A {form.__name__} for parameter '{param_name}' in '{func.__qualname__}' is deprecated "
+                    f"since {since}. Use a {deprecated_values[form]} instead. Will be removed in {removal}.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                    skip_file_prefixes=WRAPPER_FRAMES,
+                )
+            elif matched:
+                warnings.warn(
+                    f"Value '{value}' for parameter '{param_name}' in "
+                    f"'{func.__qualname__}' is deprecated since {since}. "
+                    f"Use '{new_value}' instead. "
+                    f"Will be removed in {removal}.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                    skip_file_prefixes=WRAPPER_FRAMES,
+                )
+                bound.arguments[param_name] = new_value
+                return func(*bound.args, **bound.kwargs)
 
             return func(*args, **kwargs)
 
@@ -707,7 +740,7 @@ def _scan_object(obj: Any, name: str, module_name: str, results: list[dict[str, 
     dep_values = getattr(obj, "_deprecated_values", None)
     if dep_values:
         for v in dep_values:
-            old_vals = ", ".join(str(k) for k in v["values"])
+            old_vals = ", ".join(k.__name__ if isinstance(k, type) else str(k) for k in v["values"])
             new_vals = ", ".join(str(val) for val in v["values"].values())
             results.append(
                 {

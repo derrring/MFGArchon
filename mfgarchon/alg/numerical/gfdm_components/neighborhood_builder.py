@@ -404,8 +404,11 @@ class NeighborhoodBuilder:
                         }
                     )
 
-                # Warn if still insufficient neighbors or depth
+                # Warn if still insufficient neighbors or depth. Past `deprecated_value`'s wrapper: HJBGFDMSolver's
+                # __init__ calls this directly, and its wrapper is a frame of its own (#2579, #2597).
                 import warnings as _warnings
+
+                from mfgarchon.utils.deprecation import WRAPPER_FRAMES
 
                 if real_neighbor_count < self.k_min:
                     _warnings.warn(
@@ -414,6 +417,7 @@ class NeighborhoodBuilder:
                         f"Only found {real_neighbor_count} neighbors. GFDM approximation may be poor.",
                         UserWarning,
                         stacklevel=3,
+                        skip_file_prefixes=WRAPPER_FRAMES,
                     )
                 elif is_boundary and deep_count < k_deep:
                     _warnings.warn(
@@ -423,6 +427,7 @@ class NeighborhoodBuilder:
                         f"Normal derivative approximation may be inaccurate.",
                         UserWarning,
                         stacklevel=3,
+                        skip_file_prefixes=WRAPPER_FRAMES,
                     )
 
                 # Store adapted neighborhood

@@ -1,7 +1,7 @@
 # Deprecation Modernization Guide
 
 **Auto-generated** by `scripts/generate_deprecation_guide.py`
-**Total deprecated items**: 104
+**Total deprecated items**: 105
 **Versions covered**: v0.22.0, v0.21.0, v0.20.0, v0.19.2, v0.19.0, v0.18.6, v0.18.0, v0.17.0, v0.16.11, v0.12.0
 
 ---
@@ -43,7 +43,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 ## Deprecated since v0.22.0
 
-*63 items*
+*64 items*
 
 ### Parameters
 
@@ -116,6 +116,10 @@ It does mean a migration you read on one row **does not transfer** to another so
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `solve_fp_nd_full_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `solve_hjb_system_backward()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma_at_n=` in `solve_hjb_timestep_newton()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
+
+### Value
+
+- **`HJBGFDMSolver.__init__.boundary_conditions`** (value) — use `values [dict] -> [BoundaryConditions]` instead (remove by v0.25.0)
 
 ---
 
