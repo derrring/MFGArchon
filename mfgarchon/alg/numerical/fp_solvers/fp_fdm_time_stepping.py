@@ -285,18 +285,16 @@ def _get_bc_type(boundary_conditions: Any) -> str | None:
     """
     Get BC type string from boundary conditions object.
 
-    Supports both:
-    - Unified BoundaryConditions (conditions.py) with .type property
-    - Legacy BoundaryConditions1DFDM (fdm_bc_1d.py) with .type attribute
-
     Args:
         boundary_conditions: Any BC object
 
     Returns:
         BC type string (e.g., "periodic", "dirichlet", "no_flux") or None
     """
-    if boundary_conditions is None:
-        return None
+    from mfgarchon.geometry.boundary import BoundaryConditions
+
+    if not isinstance(boundary_conditions, BoundaryConditions):
+        return None  # None, or an object FP-FDM cannot honour: its dispatch refuses the latter (#1559)
 
     # Issue #543 Phase 2: Replace hasattr with try/except
     # Unified BC: has is_uniform property and type property
@@ -313,18 +311,11 @@ def _get_bc_type(boundary_conditions: Any) -> str | None:
         except (AttributeError, TypeError):
             pass
         return None
-    except AttributeError:
-        # Legacy BC: type is a direct attribute
-        return getattr(boundary_conditions, "type", None)
 
 
 def _get_bc_value(boundary_conditions: Any, face: BoundaryFace) -> float:
     """
-    Get BC value at a specific boundary.
-
-    Supports both:
-    - Unified BoundaryConditions with get_bc_value_at_boundary()
-    - Legacy BoundaryConditions1DFDM with left_value/right_value
+    Get BC value at a specific boundary, through `BoundaryConditions.get_bc_value_at_boundary`.
 
     Issue #946: Uses BoundaryFace instead of string identifiers for internal dispatch.
 
@@ -335,17 +326,7 @@ def _get_bc_value(boundary_conditions: Any, face: BoundaryFace) -> float:
     Returns:
         BC value at the specified boundary
     """
-    # Try unified BC first (modern API) — still takes string
-    try:
-        return boundary_conditions.get_bc_value_at_boundary(face.to_string())
-    except AttributeError:
-        # Fall back to legacy BC: use left_value/right_value
-        if face.side == "min":
-            return getattr(boundary_conditions, "left_value", 0.0)
-        elif face.side == "max":
-            return getattr(boundary_conditions, "right_value", 0.0)
-
-    return 0.0
+    return boundary_conditions.get_bc_value_at_boundary(face.to_string())
 
 
 if TYPE_CHECKING:
@@ -661,7 +642,7 @@ def _refuse_partial_periodic(boundary_conditions: Any, dimension: int) -> None:
         if boundary_conditions.is_uniform:
             return
     except AttributeError:
-        return  # a legacy fdm_bc_1d BC: refused per type in `solve_timestep_full_nd` (#1559)
+        return  # not a BoundaryConditions: refused in `solve_timestep_full_nd` (#1559)
     refuse_unplaceable_segments(boundary_conditions, dimension, consumer="FPFDMSolver")
     periodic = periodic_faces(boundary_conditions, dimension)
     if any(periodic) and not all(periodic):
@@ -1467,7 +1448,7 @@ def solve_timestep_full_nd(
     try:
         wraps_everywhere = periodic_on_every_face(boundary_conditions, ndim)
     except AttributeError:
-        wraps_everywhere = False  # legacy fdm_bc_1d BC, refused per type below unless no-flux (#1559)
+        wraps_everywhere = False  # not a BoundaryConditions: refused below (#1559)
 
     # Nodes that an inclusive periodic wrap makes duplicates of another node (Issue #1822).
     # They get a constraint row instead of a stencil row: they are not unknowns.
@@ -1512,42 +1493,12 @@ def solve_timestep_full_nd(
             )
             is_uniform = boundary_conditions.is_uniform
         except AttributeError:
-            # Legacy BoundaryConditions1D from fdm_bc_1d: has .type string but no .is_uniform
-            legacy_type = getattr(boundary_conditions, "type", None)
-            if legacy_type is None:
-                raise TypeError(
-                    f"Unsupported boundary_conditions type: {type(boundary_conditions).__name__}. "
-                    "Expected BoundaryConditions from mfgarchon.geometry.boundary."
-                ) from None
-            # Only legacy neumann/no_flux are correctly honored here (they ARE no-flux). Fail loud
-            # (Issue #1559) for every other legacy type -- dirichlet, robin, AND periodic -- instead
-            # of silently coercing to no-flux. _is_dirichlet_at_point cannot see a legacy BC (no
-            # is_uniform, so it returns False), so a legacy dirichlet is silently assembled as no-flux;
-            # and despite the old "relies on no-flux + interior wrapping" claim, a legacy periodic gets
-            # NO wrap here -- it is byte-identical to legacy no_flux and differs from canonical
-            # periodic_bc by O(1) once mass reaches the wall (verified with an off-center bump).
-            # Canonical periodic_bc / dirichlet_bc DO assemble correctly; use those.
-            # ~~robin_bc was recommended here too~~ [CORRECTED 2026-08-16, #1975] -- switching to
-            # the canonical BC does not make a Robin wall work ON THIS PATH. The dispatch below
-            # routes a boundary point of a MIXED bc to the no-flux handler, so a ROBIN segment
-            # assembles byte-identically to no-flux (measured at alpha=3.2 and alpha=999).
-            # Recommending it here sent users from a loud failure to a silent one. It IS honoured
-            # by FPFEMSolver, which reads the coefficients in weak form -- hence the pointer below
-            # rather than a bare removal.
-            if legacy_type not in ("neumann", "no_flux"):
-                raise NotImplementedError(
-                    f"Legacy fdm_bc_1d BoundaryConditions(type={legacy_type!r}) is not honored by the "
-                    f"FP-FDM time-stepping assembly (only neumann/no_flux are); it would be silently "
-                    f"assembled as no-flux (a legacy 'periodic' does NOT wrap). Use "
-                    f"mfgarchon.geometry.boundary (periodic_bc / dirichlet_bc / no_flux_bc) "
-                    f"with the modern BoundaryConditions instead (Issue #1559). robin_bc is NOT in "
-                    f"that list on purpose: this assembly reads none of a ROBIN segment's "
-                    f"coefficients, so it would be a no-flux wall wearing a label. For a "
-                    f"reflecting wall you want no_flux_bc on a conservative scheme, which imposes "
-                    f"J.n = 0 structurally; a GENERAL Robin needs FPFEMSolver (Issue #1975)."
-                ) from None
-            is_no_flux = True
-            is_uniform = False
+            # An object FP-FDM cannot honour fails loud, whatever it carries (#1559): the legacy fdm_bc_1d class,
+            # which this branch once routed per type, is removed, and nothing else without `is_uniform` is read.
+            raise TypeError(
+                f"Unsupported boundary_conditions type: {type(boundary_conditions).__name__}. "
+                "Expected BoundaryConditions from mfgarchon.geometry.boundary (periodic_bc, dirichlet_bc, no_flux_bc)."
+            ) from None
 
         # Dispatch to scheme-specific assembly function (Issue #859)
         if is_boundary and _is_dirichlet_at_point(boundary_conditions, multi_idx, shape):

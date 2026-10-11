@@ -2482,8 +2482,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         """Refuse a nonzero value carried where no BC row reads it (#2513).
 
         The rows read a value from a `BoundaryConditions` segment or from a dict's ``"values"``. A
-        dict's ``"value"`` and a legacy `fdm_bc_1d.BoundaryConditions`' ``left_value`` /
-        ``right_value`` reach no row, so a nonzero one was solved as 0. A zero one means what it says.
+        dict's ``"value"``, or another object's ``value``, reaches no row, so a nonzero one was solved
+        as 0. A zero one means what it says.
         """
         if isinstance(bc, BoundaryConditions):
             return
@@ -2500,7 +2500,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             )
             carried = {} if agrees else {"value": value}
         else:
-            carried = {name: getattr(bc, name, None) for name in ("value", "left_value", "right_value")}
+            carried = {"value": getattr(bc, "value", None)}
         unread = {
             k: v
             for k, v in carried.items()

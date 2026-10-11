@@ -32,7 +32,6 @@ from mfgarchon.utils.deprecation import deprecated
 from mfgarchon.utils.mfg_logging import get_logger
 
 from .conditions import BoundaryConditions
-from .fdm_bc_1d import BoundaryConditions as BoundaryConditions1DFDM
 
 # GhostCellConfig moved to ghost_cells.py (canonical location).
 # Re-exported here for backward compatibility.
@@ -40,9 +39,6 @@ from .ghost_cells import GhostCellConfig, ghost_cell_neumann, ghost_cell_robin
 from .types import BCType
 
 logger = get_logger(__name__)
-
-# Backward compatibility alias
-LegacyBoundaryConditions1D = BoundaryConditions1DFDM
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -89,7 +85,7 @@ def _get_boundary_name_nd(axis: int, side: str, dimension: int) -> str:
 )
 def get_ghost_values_nd(
     field: NDArray[np.floating],
-    boundary_conditions: BoundaryConditions | LegacyBoundaryConditions1D,
+    boundary_conditions: BoundaryConditions,
     spacing: tuple[float, ...] | NDArray[np.floating],
     config: GhostCellConfig | None = None,
     time: float = 0.0,
@@ -408,31 +404,10 @@ def _get_bc_value_at_boundary(
 
 
 def _get_bc_type_and_value(
-    boundary_conditions: BoundaryConditions | LegacyBoundaryConditions1D,
+    boundary_conditions: BoundaryConditions,
     time: float,
 ) -> tuple[BCType, float | None]:
-    """Extract BC type and value from unified or legacy BC specification."""
-    if isinstance(boundary_conditions, LegacyBoundaryConditions1D):
-        bc_type_str = boundary_conditions.type.lower()
-        if bc_type_str == "periodic":
-            return BCType.PERIODIC, None
-        elif bc_type_str == "dirichlet":
-            from .types import boundary_value
-
-            # Through the one owner too (#2512 row B2): `_compute_ghost_pair` no longer decodes what it is handed.
-            value = boundary_value(
-                boundary_conditions.left_value,
-                kind="BoundaryConditions1DFDM.left_value",
-                t=time,
-                x=None,
-                where="get_ghost_values_nd (legacy)",
-            )
-            return BCType.DIRICHLET, value
-        elif bc_type_str in ["no_flux", "neumann"]:
-            return BCType.NO_FLUX, 0.0
-        else:
-            return BCType.NO_FLUX, 0.0
-
+    """Extract BC type and value from a BoundaryConditions."""
     if not isinstance(boundary_conditions, BoundaryConditions):
         raise TypeError(f"Unsupported BC type: {type(boundary_conditions)}")
 

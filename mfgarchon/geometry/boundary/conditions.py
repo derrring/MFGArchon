@@ -812,9 +812,6 @@ class BoundaryConditions:
         Raises:
             ValueError: If required values are missing for a BC type.
 
-        Note:
-            This method provides backward compatibility with the old
-            fdm_bc_1d.BoundaryConditions.validate_values() method.
         """
         for segment in self.segments:
             bc_type = segment.bc_type
@@ -1073,9 +1070,7 @@ def periodic_axis_span(bc: Any, n: int, dimension: int | None = None) -> int | N
     try:
         wraps = periodic_on_every_face(bc, dimension)
     except AttributeError:
-        # Legacy fdm_bc_1d BoundaryConditions1D: has .type but no .is_uniform, and this assembly
-        # does not honour its 'periodic' anyway (see the Issue #1559 note in fp_fdm_time_stepping).
-        return None
+        return None  # not a BoundaryConditions: FP-FDM's dispatch refuses it (#1559)
     if not wraps:
         return None
     return n - repeated_endpoint_count(getattr(bc, "periodic_convention", None))

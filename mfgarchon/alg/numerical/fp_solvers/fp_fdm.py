@@ -23,7 +23,6 @@ from mfgarchon.utils.pde_coefficients import (
 
 from .base_fp import BaseFPSolver
 from .fp_fdm_time_stepping import (
-    _get_bc_type,
     _refuse_partial_periodic,
 )
 from .fp_fdm_time_stepping import (
@@ -366,7 +365,10 @@ class FPFDMSolver(BaseFPSolver):
             # list over a periodic default (#2495).
             periodic = periodic_on_every_face(boundary_conditions, ndim)
         except AttributeError:
-            periodic = _get_bc_type(boundary_conditions) == "periodic"  # legacy fdm_bc_1d BC
+            raise TypeError(  # an object FP-FDM cannot honour fails loud (#1559)
+                f"Unsupported boundary_conditions type: {type(boundary_conditions).__name__}. "
+                "Expected BoundaryConditions from mfgarchon.geometry.boundary."
+            ) from None
 
         rows: list[int] = []
         cols: list[int] = []

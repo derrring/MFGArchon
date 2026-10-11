@@ -286,21 +286,6 @@ def test_fem_dirichlet_advises_g_of_x_and_reads_it():
     assert _evaluate_segment_values(_segment(lambda x: 0.5 + x[0]), basis, [dof]) == pytest.approx([1.5], abs=1e-12)
 
 
-def test_a_legacy_callable_left_value_is_read_through_the_owner():
-    """Review 1 of #2598 (R1): the legacy branch of `_compat._get_bc_type_and_value` handed ``left_value`` raw to a
-    ghost helper whose decode B2a removed, so a callable raised a bare TypeError; b10b9e65 read g(t), ghost 0.5."""
-    import warnings
-
-    from mfgarchon.geometry.boundary import get_ghost_values_nd
-    from mfgarchon.geometry.boundary.fdm_bc_1d import BoundaryConditions as LegacyBoundaryConditions1D
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        legacy = LegacyBoundaryConditions1D(type="dirichlet", left_value=lambda t: 0.25 + t, right_value=0.0)
-        ghosts = get_ghost_values_nd(np.ones(5), legacy, (0.25,), time=0.5)
-    assert ghosts[(0, 0)] == pytest.approx(0.5, abs=1e-12)  # 2 g(0.5) - u = 2 * 0.75 - 1
-
-
 def test_nitsche_receives_the_owners_value_at_each_point():
     """Meshless Galerkin's Nitsche assembly reads g(x) per boundary point, the whole point: ``x[0] + 10 x[1]``."""
     from mfgarchon.alg.numerical.meshless_galerkin.nitsche import _evaluate_g

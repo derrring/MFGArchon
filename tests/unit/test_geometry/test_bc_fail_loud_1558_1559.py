@@ -64,31 +64,22 @@ def _small_1d_problem(n=11):
     return MFGProblem(geometry=grid, T=0.1, Nt=2, volatility=0.3, components=comps)
 
 
-def test_legacy_mishandled_bc_fails_loud():
-    """#1559: the FP-FDM time-stepping assembly treated ANY legacy fdm_bc_1d BoundaryConditions as
-    no-flux (the except-AttributeError branch). _is_dirichlet_at_point can't see a legacy BC (no
-    is_uniform -> returns False), so a legacy dirichlet was silently assembled as no-flux; a legacy
-    'periodic' likewise gets NO wrap (byte-identical to legacy no_flux, O(1) off canonical periodic
-    once mass reaches the wall). It must raise for legacy dirichlet/robin/periodic; only legacy
-    neumann/no_flux (which ARE no-flux) still assemble."""
+def test_an_object_fp_fdm_cannot_honour_fails_loud():
+    """#1559: FP-FDM's time-stepping assembly treated a BC object without ``is_uniform`` -- the legacy fdm_bc_1d
+    class -- as no-flux, so a legacy dirichlet was assembled as a no-flux wall and a legacy periodic did not wrap.
+    The class is removed (0.22.0, user ruling), and the statement stays: an object FP-FDM cannot honour fails loud.
+    Pinned with a duck-typed object shaped like the old class."""
+    from types import SimpleNamespace
+
     from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
-    from mfgarchon.geometry.boundary.fdm_bc_1d import BoundaryConditions as LegacyBC
 
     prob = _small_1d_problem()
     n = 11
-    m0 = np.ones(n)
-    drift = np.zeros((prob.Nt + 1, n))
     solver = FPFDMSolver(prob)
-
-    for legacy_type in ("dirichlet", "periodic"):
-        solver.boundary_conditions = LegacyBC(type=legacy_type, left_value=0.0, right_value=0.0)
-        with pytest.raises(NotImplementedError, match="1559"):
-            solver.solve_fp_system(m0.copy(), drift_field=drift, volatility=0.3)
-
-    # Legacy neumann/no_flux ARE no-flux -> still assemble (finite, no raise).
-    solver.boundary_conditions = LegacyBC(type="neumann", left_value=0.0, right_value=0.0)
-    M = solver.solve_fp_system(m0.copy(), drift_field=drift, volatility=0.3)
-    assert np.all(np.isfinite(M))
+    for legacy_type in ("dirichlet", "periodic", "neumann"):
+        solver.boundary_conditions = SimpleNamespace(type=legacy_type, left_value=0.0, right_value=0.0)
+        with pytest.raises(TypeError, match=r"Unsupported boundary_conditions type: SimpleNamespace"):
+            solver.solve_fp_system(np.ones(n), drift_field=np.zeros((prob.Nt + 1, n)), volatility=0.3)
 
 
 def test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmless():
@@ -213,3 +204,39 @@ def test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmles
             f"{mass_0:.9f}. A leak makes the two BCs differ more, so the comparison above would "
             f"read it as success."
         )
+
+
+def test_the_removed_legacy_names_say_what_replaces_them():
+    """The legacy 1-D class (fdm_bc_1d) is removed in 0.22.0 by user ruling (deprecated since 0.14.0, #869). Its two
+    names raise an AttributeError naming the unified API, not a bare "no attribute"."""
+    import mfgarchon.geometry.boundary as boundary
+
+    for name in ("BoundaryConditions1DFDM", "LegacyBoundaryConditions1D"):
+        with pytest.raises(
+            AttributeError, match=r"is removed .*#869.* Use mfgarchon\.geometry\.boundary\.BoundaryConditions"
+        ):
+            getattr(boundary, name)
+
+
+def test_a_1d_grid_builds_the_unified_bc_and_no_flux_is_a_zero_total_flux():
+    """A 1-D grid's `get_boundary_handler` built the legacy class; it builds the unified one, by the factory every
+    dimension uses. Its "no_flux" was a legacy Neumann wall and is NO_FLUX now, the zero total flux (#2512 B3)."""
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import BCType, BoundaryConditions, no_flux_bc
+
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1))
+    grid.boundary_conditions = None  # the only way to reach the bc_type default: the constructor requires a BC
+    expected = {
+        "periodic": BCType.PERIODIC,
+        "dirichlet_zero": BCType.DIRICHLET,
+        "neumann_zero": BCType.NEUMANN,
+        "no_flux": BCType.NO_FLUX,
+    }
+    for bc_type, kind in expected.items():
+        bc = grid.get_boundary_handler(bc_type)
+        assert isinstance(bc, BoundaryConditions), (bc_type, type(bc))
+        assert {seg.bc_type for seg in bc.segments} | ({bc.default_bc} - {None}) == {kind}, bc_type
+    with pytest.raises(
+        ValueError, match=r"custom_conditions is refused: in 1-D it built the legacy fdm_bc_1d class, which is removed"
+    ):
+        grid.get_boundary_handler("periodic", custom_conditions={"type": "periodic"})

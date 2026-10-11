@@ -262,15 +262,13 @@ def __getattr__(name: str):
         mod = importlib.import_module(f".{module_name}", __name__)
         return getattr(mod, attr_name)
 
-    # Legacy aliases
-    if name == "BoundaryConditions1DFDM":
-        from .fdm_bc_1d import BoundaryConditions
-
-        return BoundaryConditions
-    if name == "LegacyBoundaryConditions1D":
-        from .fdm_bc_1d import BoundaryConditions
-
-        return BoundaryConditions
+    if name in ("BoundaryConditions1DFDM", "LegacyBoundaryConditions1D"):
+        raise AttributeError(
+            f"{name}, the legacy 1-D FDM boundary-condition class (fdm_bc_1d), is removed (deprecated since 0.14.0, "
+            "#869; removed in 0.22.0 by user ruling, ahead of the v1.0.0 its docstring promised). Use "
+            "mfgarchon.geometry.boundary.BoundaryConditions, built with periodic_bc, dirichlet_bc, neumann_bc, "
+            "no_flux_bc or robin_bc."
+        )
     if name == "get_ghost_values_nd":
         from ._compat import get_ghost_values_nd
 

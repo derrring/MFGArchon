@@ -19,7 +19,7 @@ correct at the only depth anything uses.
 `PreallocatedGhostBuffer` -- `_apply_linear_reflection`'s DIRICHLET branch and the per-face
 `_apply_ghost_for_face` -- and both are reversed at both walls (`reversed(got) == want`, magnitudes
 1.1 to 3.4 at g = 2..4). Those are #1966 Defect 2 and are not fixed here. `_update_ghosts_legacy`
-carries the construct as well. The claim this file used to make -- "third and last copy" -- was
+carried the construct as well, until the legacy class it served was removed in 0.22.0. The claim this file used to make -- "third and last copy" -- was
 wrong, and it was wrong in the same way #1969's "the loop has two copies" was.
 
 The fix steps the *interior* slice backwards rather than reversing the calculator's output. The
