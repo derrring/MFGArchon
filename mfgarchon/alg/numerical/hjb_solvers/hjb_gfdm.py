@@ -36,6 +36,7 @@ from mfgarchon.geometry.boundary.conditions import BoundaryConditions
 from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL
 from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace
 from mfgarchon.types.callable_protocols import evaluate_solver_source
+from mfgarchon.utils.deprecation import deprecated_value
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.qp_utils import QPCache, QPSolver
 from mfgarchon.utils.pde_coefficients import (
@@ -253,6 +254,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         kwargs.update(extra)
         return cls(problem, collocation_points, **kwargs)
 
+    @deprecated_value("boundary_conditions", {dict: "BoundaryConditions"}, since="v0.22.0", deprecated_on="2026-10-11")
     def __init__(
         self,
         problem: MFGProblem,
@@ -349,7 +351,8 @@ class HJBGFDMSolver(BaseHJBSolver):
             max_newton_iterations: Maximum Newton iterations (new parameter name)
             newton_tolerance: Newton convergence tolerance.
             boundary_indices: Indices of boundary collocation points
-            boundary_conditions: Dictionary or BoundaryConditions object specifying boundary conditions
+            boundary_conditions: A BoundaryConditions. A dict, ``{"type": ..., "values": ...}``, is deprecated since
+                v0.22.0 (#2597) and is translated to the BoundaryConditions it spells (`_boundary_conditions_from_dict`).
             monotonicity_scheme: Which monotonicity construction to enforce on the GFDM
                 Laplacian (and, for joint_socp, the per-edge cone on the gradient stencil):
                 - "none": no constraints (fastest; no monotonicity guarantee).
@@ -663,6 +666,10 @@ class HJBGFDMSolver(BaseHJBSolver):
             self.boundary_indices = self._detect_boundary_indices(collocation_points)
         # Get BC from parameter, or from problem geometry (Issue #542 fix, Issue #527 centralized BC)
         if boundary_conditions is not None:
+            if isinstance(boundary_conditions, dict):
+                # The deprecated dict form (#2597), translated once into the BoundaryConditions it spells, so every
+                # reader below reads one form.
+                boundary_conditions = self._boundary_conditions_from_dict(boundary_conditions, self.dimension)
             self._refuse_unread_legacy_bc_value(boundary_conditions)
             self.boundary_conditions = boundary_conditions
             # Explicit param is the caller's authoritative static choice; never
@@ -1186,10 +1193,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         # No BC specified - return None (validation deferred to solve time)
         if self.boundary_conditions is None:
             return None
-
-        # Try dictionary access first (doesn't trigger property)
-        if isinstance(self.boundary_conditions, dict):
-            return self.boundary_conditions.get(property_name)
 
         # Try attribute access (may raise ValueError for mixed BC properties)
         try:
@@ -1880,34 +1883,10 @@ class HJBGFDMSolver(BaseHJBSolver):
                 # Legacy fallback
                 u_neighbors = self._get_values_with_ghosts(u_values, neighbor_indices, point_idx=point_idx)
         else:
-            # Handle legacy ghost particles based on BC type
-            # - Neumann/no-flux: u_ghost = u_center (mirror value)
-            # - Dirichlet: u_ghost = BC value (if available)
-            bc_type = self._get_boundary_condition_property("type")
-            bc_values = self._get_boundary_condition_property("values")
-
-            u_neighbors = []
-            for idx in neighbor_indices:  # type: ignore[attr-defined]
-                if idx >= 0:
-                    # Regular neighbor
-                    u_neighbors.append(u_values[idx])
-                else:
-                    # Legacy ghost particle: value depends on BC type
-                    if bc_type == "dirichlet" and bc_values is not None:
-                        # Dirichlet BC: use prescribed value
-                        # Note: bc_values may be scalar, array, or callable
-                        if callable(bc_values):
-                            x_pos = self.collocation_points[point_idx]
-                            u_neighbors.append(bc_values(x_pos))
-                        elif isinstance(bc_values, (list, tuple, np.ndarray)):
-                            # Array-like: use value at this point
-                            u_neighbors.append(bc_values[point_idx] if point_idx < len(bc_values) else 0.0)
-                        else:
-                            # Scalar
-                            u_neighbors.append(float(bc_values))
-                    else:
-                        # Neumann/no-flux: mirror u_center
-                        u_neighbors.append(u_center)
+            # Legacy ghost particles are created only at Neumann and no-flux points, and each takes the mirror
+            # value it was created for. A Dirichlet arm read the deprecated dict's "values"; it went with the dict
+            # (#2597): GFDM imposes Dirichlet through its boundary row.
+            u_neighbors = np.array([u_values[idx] if idx >= 0 else u_center for idx in neighbor_indices])  # type: ignore[attr-defined]
 
         u_neighbors = np.array(u_neighbors)  # type: ignore[assignment]
 
@@ -2481,26 +2460,16 @@ class HJBGFDMSolver(BaseHJBSolver):
     def _refuse_unread_legacy_bc_value(bc: Any) -> None:
         """Refuse a nonzero value carried where no BC row reads it (#2513).
 
-        The rows read a value from a `BoundaryConditions` segment or from a dict's ``"values"``. A
-        dict's ``"value"``, or another object's ``value``, reaches no row, so a nonzero one was solved
-        as 0. A zero one means what it says.
+        The rows read a value from a `BoundaryConditions` segment. Another object's ``value`` reaches no row, so a
+        nonzero one was solved as 0. A zero one means what it says. A dict is translated before this, by
+        `_boundary_conditions_from_dict`, which applies the same check to its ``"value"``.
         """
         if isinstance(bc, BoundaryConditions):
             return
-        if isinstance(bc, dict):
-            # "values" is the key the rows read; a "value" equal to it says nothing they miss.
-            value, values = bc.get("value"), bc.get("values")
-            agrees = "values" in bc and (
-                value is values
-                or (
-                    not callable(value)
-                    and not callable(values)
-                    and np.array_equal(np.asarray(value), np.asarray(values))
-                )
-            )
-            carried = {} if agrees else {"value": value}
-        else:
-            carried = {"value": getattr(bc, "value", None)}
+        HJBGFDMSolver._refuse_unread({"value": getattr(bc, "value", None)})
+
+    @staticmethod
+    def _refuse_unread(carried: dict[str, Any]) -> None:
         unread = {
             k: v
             for k, v in carried.items()
@@ -2512,6 +2481,66 @@ class HJBGFDMSolver(BaseHJBSolver):
                 f"boundary row reads, so it would be solved as 0 (#2513). Pass a BoundaryConditions "
                 f"(e.g. dirichlet_bc(value=...) or per-face BCSegments)."
             )
+
+    @staticmethod
+    def _boundary_conditions_from_dict(bc: dict, dimension: int) -> BoundaryConditions:
+        """The `BoundaryConditions` a deprecated dict BC spells (#2597, since v0.22.0).
+
+        ``{"type": t, "values": g}`` becomes ``dirichlet_bc``, ``neumann_bc``, ``no_flux_bc`` or ``periodic_bc`` of
+        the solver's dimension, with ``g`` as the value:
+
+        - a number is the value, and a missing ``"values"`` is 0, as the rows read it;
+        - a callable keeps its old call, by the point alone, so it is wrapped as ``g(x)``. What it returns now meets
+          the value contract, so ``None``, a boolean or more than one number is refused;
+        - a per-point ``"values"`` (a list, tuple, array, or a dict by point index) is refused: a value per node is
+          a planned capability (#2600).
+
+        A Neumann ``"values"`` was read only as an index dict, so a number or a callable was solved as 0 (#2520); it
+        is now the Neumann datum, as it is for ``neumann_bc(value=g)``. The dict's ``"value"`` is checked against
+        ``"values"`` as #2513 ruled. A Robin dict, which carried no coefficients and was refused at the row, is
+        refused here, and so is a value on a no-flux or periodic dict, which no row reads.
+        """
+        from mfgarchon.geometry.boundary import dirichlet_bc, neumann_bc, no_flux_bc, periodic_bc
+
+        # "values" is the key the rows read; a "value" equal to it says nothing they miss (#2513).
+        value, values = bc.get("value"), bc.get("values")
+        agrees = "values" in bc and (
+            value is values
+            or (not callable(value) and not callable(values) and np.array_equal(np.asarray(value), np.asarray(values)))
+        )
+        HJBGFDMSolver._refuse_unread({} if agrees else {"value": value})
+
+        kind = str(bc.get("type") or "neumann").lower()
+        if kind == "robin":
+            raise NotImplementedError(
+                "HJBGFDMSolver: a dict BC of type 'robin' carries no coefficients, and HJB-GFDM's Robin row takes "
+                "only alpha = 0, beta = 1, the condition n.grad u = g, which is the Neumann condition: pass "
+                "neumann_bc(value=g) (#2597)."
+            )
+        factories: dict[str, Callable[..., BoundaryConditions]] = {
+            "dirichlet": dirichlet_bc,
+            "neumann": neumann_bc,
+            "no_flux": no_flux_bc,
+            "periodic": periodic_bc,
+        }
+        if kind not in factories:
+            raise ValueError(f"HJBGFDMSolver: unknown dict BC type {kind!r}; supported: {sorted(factories)} (#2597).")
+        if isinstance(values, (list, tuple, dict, np.ndarray)):
+            raise NotImplementedError(
+                f'HJBGFDMSolver: a dict BC\'s per-point "values" (a {type(values).__name__}) is not accepted since '
+                "v0.22.0 (#2597). Give one number or a callable g(x) per face, in a BoundaryConditions; a value per "
+                "node is a planned capability (#2600)."
+            )
+        if kind in ("no_flux", "periodic"):
+            HJBGFDMSolver._refuse_unread({"values": values})
+            return factories[kind](dimension=dimension)
+        if values is None:
+            g: Any = 0.0
+        elif callable(values):
+            g = lambda x: values(x)  # noqa: E731 -- the old call, by the point alone
+        else:
+            g = values
+        return factories[kind](value=g, dimension=dimension)
 
     def _classify_boundary_point(self, i: int, local_idx: int, use_per_point_bc: bool, global_bc_type, legacy_normals):
         """Resolve ``(bc_enum, segment, normal)`` for boundary point ``i``.
@@ -2554,7 +2583,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         normal,
         dimension: int,
         n: int,
-        legacy_bc_values,
         current_time: float,
     ) -> tuple[np.ndarray, float]:
         """Build the value-form BC row (coefficients + target) for boundary point ``i``.
@@ -2570,11 +2598,9 @@ class HJBGFDMSolver(BaseHJBSolver):
             case BCType.DIRICHLET:
                 new_row = np.zeros(n)
                 new_row[i] = 1.0
-                bc_target = self._eval_bc_dirichlet_value(i, segment, legacy_bc_values, current_time)
+                bc_target = self._eval_bc_dirichlet_value(i, segment, current_time)
             case BCType.NEUMANN | BCType.NO_FLUX:
-                new_row, bc_target = self._build_neumann_bc_row(
-                    i, normal, dimension, segment, legacy_bc_values, current_time
-                )
+                new_row, bc_target = self._build_neumann_bc_row(i, normal, dimension, segment, current_time)
             case BCType.PERIODIC:
                 raise NotImplementedError(
                     f"PERIODIC BC at boundary point {i} not supported by HJBGFDMSolver "
@@ -2612,9 +2638,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                         f"not apply a 1/beta scaling. Only beta=1 (the condition n.grad u = g) "
                         f"is supported (Issue #1118 PR2b)."
                     )
-                new_row, bc_target = self._build_neumann_bc_row(
-                    i, normal, dimension, segment, legacy_bc_values, current_time
-                )
+                new_row, bc_target = self._build_neumann_bc_row(i, normal, dimension, segment, current_time)
             case _:
                 raise ValueError(
                     f"Unhandled BCType {bc_enum!r} at boundary point {i}. "
@@ -2640,7 +2664,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         except AttributeError:
             use_per_point_bc = False
         global_bc_type = self._get_boundary_condition_property("type") if not use_per_point_bc else None
-        legacy_bc_values = self._get_boundary_condition_property("values") if not use_per_point_bc else None
         legacy_normals = self._bc_config.get("normals", None) if not use_per_point_bc and self._bc_config else None
         dimension = self.dimension
         n = self.n_points
@@ -2659,9 +2682,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 and i in self._boundary_handler.ghost_node_map
             ):
                 continue  # symmetric ghost stencils enforce the BC structurally; PDE row stands
-            row, target = self._bc_row_for_point(
-                i, bc_enum, segment, normal, dimension, n, legacy_bc_values, current_time
-            )
+            row, target = self._bc_row_for_point(i, bc_enum, segment, normal, dimension, n, current_time)
             rows[i] = (row, target)
         return rows
 
@@ -2720,7 +2741,6 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         # Legacy uniform-BC scaffold
         global_bc_type = self._get_boundary_condition_property("type") if not use_per_point_bc else None
-        legacy_bc_values = self._get_boundary_condition_property("values") if not use_per_point_bc else None
         legacy_normals = self._bc_config.get("normals", None) if not use_per_point_bc and self._bc_config else None
 
         dimension = self.dimension
@@ -2751,9 +2771,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             # subtraction, so the Howard value-form path (Issue #1118 PR2) reuses the SAME
             # coefficient source. Here we form the #1116 residual: F_bc(u_current) - target.
             # (Dirichlet's row is e_i, so `new_row @ u_current == u_current[i]` — unchanged.)
-            new_row, bc_target = self._bc_row_for_point(
-                i, bc_enum, segment, normal, dimension, n, legacy_bc_values, current_time
-            )
+            new_row, bc_target = self._bc_row_for_point(i, bc_enum, segment, normal, dimension, n, current_time)
             new_rhs = float(new_row @ u_current) - bc_target
 
             # --- Atomic row replacement ---
@@ -2766,22 +2784,14 @@ class HJBGFDMSolver(BaseHJBSolver):
         self,
         point_idx: int,
         segment: BCSegment | None,
-        legacy_bc_values,
         current_time: float,
     ) -> float:
-        """Resolve a Dirichlet RHS value for boundary point ``point_idx``.
-
-        Prefers ``segment.get_value(point, t)`` when a segment is supplied
-        (pre-classified path); falls back to legacy ``bc_values`` (dict,
-        callable, or scalar) for the uniform-BC path.
+        """Resolve a Dirichlet RHS value for boundary point ``point_idx``: ``segment.get_value(point, t)``, or 0 with no
+        segment, which only a solver with no BC reaches.
         """
         if segment is not None:
             return float(segment.get_value(self.collocation_points[point_idx], t=current_time))
-        if isinstance(legacy_bc_values, dict):
-            return float(legacy_bc_values.get(point_idx, 0.0))
-        if callable(legacy_bc_values):
-            return float(legacy_bc_values(self.collocation_points[point_idx]))
-        return float(legacy_bc_values) if legacy_bc_values else 0.0
+        return 0.0
 
     def _build_neumann_bc_row(
         self,
@@ -2789,7 +2799,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         normal: np.ndarray,
         dimension: int,
         segment: BCSegment | None,
-        legacy_bc_values,
         current_time: float,
     ) -> tuple[np.ndarray, float]:
         """Build the (row, rhs) for a Neumann / no-flux BC at ``point_idx``.
@@ -2838,13 +2847,10 @@ class HJBGFDMSolver(BaseHJBSolver):
                 center_weight -= w
         new_row[point_idx] = center_weight
 
-        # RHS: segment.get_value at this point, or legacy dict lookup, else 0
-        if segment is not None:
-            rhs = float(segment.get_value(self.collocation_points[point_idx], t=current_time))
-        elif isinstance(legacy_bc_values, dict):
-            rhs = float(legacy_bc_values.get(point_idx, 0.0))
-        else:
-            rhs = 0.0
+        # RHS: segment.get_value at this point, or 0 with no segment
+        rhs = (
+            float(segment.get_value(self.collocation_points[point_idx], t=current_time)) if segment is not None else 0.0
+        )
 
         return new_row, rhs
 
@@ -3976,7 +3982,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         global_bc_type = self._get_boundary_condition_property("type") if not use_per_point_bc else None
         if not use_per_point_bc and str(global_bc_type or "").lower() != "dirichlet":
             return u
-        legacy_bc_values = self._get_boundary_condition_property("values") if not use_per_point_bc else None
         legacy_normals = self._bc_config.get("normals", None) if not use_per_point_bc and self._bc_config else None
         current_time = time_idx * (self.problem.T / self.problem.Nt) if getattr(self.problem, "Nt", 0) > 0 else 0.0
 
@@ -3986,7 +3991,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 i, local_idx, use_per_point_bc, global_bc_type, legacy_normals
             )
             if bc_enum == BCType.DIRICHLET:
-                u[i] = self._eval_bc_dirichlet_value(i, segment, legacy_bc_values, current_time)
+                u[i] = self._eval_bc_dirichlet_value(i, segment, current_time)
 
         return u
 
