@@ -54,7 +54,8 @@ from .types import BCType
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-# The face types whose enforcement reads the value: Dirichlet's u, Neumann's du/dn.
+# The face types whose enforcement reads the value: Dirichlet's u, Neumann's du/dn. Not Robin, whose enforcement below
+# hard-codes its coefficients and reads no value (#2374); it joins this set when it reads the segment's.
 _VALUED = frozenset({"dirichlet", "neumann"})
 
 

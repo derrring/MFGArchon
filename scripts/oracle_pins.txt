@@ -150,11 +150,13 @@ row grid/B1_face_segment            -
 #       - B2b-2b-ii: HJB-SL's D6 reads through the accessor, with no probe and no fallback, under
 #         `test_hjb_sl_boundary_time_2453.py`'s per-step time counter. FEM's Dirichlet DOFs, HJB and FP, read the
 #         level's time, and HJB-GFDM's rows are pinned at theirs, under `test_dirichlet_value_at_its_level_2512.py`'s
-#         exact oracle. Meshless Nitsche reads each level's data load at its time, under the same file's recorder.
+#         exact oracle. Meshless Nitsche reads each level's data load at its time: the same file checks that the
+#         wall holds g(t_n) at each level.
 #         It closes #2538.
-#       - Three readers have no time to pass and refuse a value that declares t: the FDM calculator route
-#         (`bc_to_topology_calculator`), `MeshfreeApplicator.apply_field_bc`, and the BC resolver's passthrough
-#         (`resolve_bc`).
+#       - Four readers have no time to pass and refuse a value that declares t: the FDM calculator route
+#         (`bc_to_topology_calculator`), `MeshfreeApplicator.apply_field_bc`, the BC resolver's passthrough
+#         (`resolve_bc`), and FEM's Robin and Neumann load (`assemble_robin_terms`), one constant per segment
+#         (#1237).
 #       - B2b-2b-iii takes the six readers whose `time=0.0` default reaches the owner (HJB-WENO's ghost fill among
 #         them, #2605), #2543's time half, and the guard's check of such defaults.
 #       The guard cannot see construction-time binding, so only #2543's oracle covers it. #2543's other half, a

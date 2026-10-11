@@ -13,8 +13,8 @@ wall read one level off misses by c dt.
 Measured at `91f90824` (main): FEM and meshless Nitsche refused every g(t, x), since they had no time to pass. HJB-GFDM
 already read each level at its own time. Its cases pin that.
 
-Meshless Nitsche imposes the wall weakly, so it has no roundoff oracle. Its case pins the clock instead: every level's
-data load is read at that level's time, on both arms of the step.
+Meshless Nitsche imposes the wall weakly, so it has no roundoff oracle. Its case checks instead that the wall tracks
+g(t_n) at each level, on both arms of the step, and that g is read at t_0 .. t_{Nt-1} and nowhere else.
 """
 
 from __future__ import annotations
@@ -141,14 +141,16 @@ def test_gfdm_reads_a_dirichlet_value_at_its_level(d, inner):
 
 @pytest.mark.parametrize("newton", [False, True], ids=["picard", "newton"])
 def test_meshless_nitsche_reads_its_data_at_each_level(newton):
-    """The Nitsche data load of level n is read at t_n, n = 0 .. Nt - 1: the block is assembled once, the load
-    again at every level whose value declares t."""
-    nt, nx = 4, 11
+    """Each level's wall holds g at that level's time, g rising by 2 per unit time: within 0.05, where a load one
+    level off misses by 2 dt = 0.25. Measured at 6d1dd200, the miss is at most 0.0057 (Picard) and 0.0043 (Newton).
+    With every level served the first level's load, it is 0.75. The block is the same at every level. The terms
+    are assembled again at each level only because the value declares t."""
+    nt, nx, rate = 4, 11, 2.0
     times = []
 
     def g(t, x):
         times.append(round(float(t), 12))
-        return A0 + 0.25 * t + 0.7 * x[0]
+        return A0 + rate * t + 0.7 * x[0]
 
     grid = TensorProductGrid(
         bounds=[(0.0, 1.0)], Nx_points=[nx], boundary_conditions=dirichlet_bc(dimension=1, value=g)
@@ -157,10 +159,15 @@ def test_meshless_nitsche_reads_its_data_at_each_level(newton):
     xs = np.linspace(0.0, 1.0, nx)[:, None]
     solver = MeshlessGalerkinHJBSolver(problem, xs, delta=0.35)
     times.clear()
-    solver.solve_hjb_system(
-        M_density=np.ones((nt + 1, nx)),
-        U_terminal=A0 + 0.25 * T + 0.7 * xs[:, 0],
-        U_coupling_prev=np.zeros((nt + 1, nx)),
-        use_newton=newton,
+    U = np.asarray(
+        solver.solve_hjb_system(
+            M_density=np.ones((nt + 1, nx)),
+            U_terminal=A0 + rate * T + 0.7 * xs[:, 0],
+            U_coupling_prev=np.zeros((nt + 1, nx)),
+            use_newton=newton,
+        )
     )
-    assert sorted(set(times)) == [round(k * T / nt, 12) for k in range(nt)]
+    levels = np.linspace(0.0, T, nt + 1)[:nt]
+    walls = U[:nt][:, [0, -1]] - (A0 + rate * levels[:, None] + np.array([0.0, 0.7]))
+    assert np.abs(walls).max() < 0.05, walls
+    assert sorted(set(times)) == [round(t, 12) for t in levels]
