@@ -107,6 +107,7 @@ from .types import (
     PeriodicGridConvention,
     parse_boundary_face,
     repeated_endpoint_count,
+    segment_robin_coefficients,
     segment_value,
 )
 
@@ -497,10 +498,9 @@ def bc_to_topology_calculator(
     elif bc_type == BCType.NO_FLUX:
         return BoundedTopology(dimension, shape), _get_no_flux_calculator()
     elif bc_type == BCType.ROBIN:
-        # Issue #543: Use getattr() instead of hasattr for optional Robin BC coefficients
-        alpha = getattr(seg, "alpha", 1.0)
-        beta = getattr(seg, "beta", 0.0)
-        rhs = segment_value(seg, t=None, x=None, where="the FDM calculator route (bc_to_topology_calculator)")
+        where = "the FDM calculator route (bc_to_topology_calculator)"
+        alpha, beta = segment_robin_coefficients(seg, where=where)
+        rhs = segment_value(seg, t=None, x=None, where=where)
         return BoundedTopology(dimension, shape), RobinCalculator(alpha, beta, rhs, grid_type)
     elif bc_type == BCType.EXTRAPOLATION_LINEAR:
         return BoundedTopology(dimension, shape), LinearExtrapolationCalculator()
@@ -1365,8 +1365,10 @@ class PreallocatedGhostBuffer:
             # Issue #1255 (C), 2026-06-10 audit: pass seg.alpha/seg.beta so that
             # uniform Robin(alpha, beta, value) is not silently treated as
             # Robin(0, 1, value) (pure-Neumann special case).
-            value = segment_value(seg, t=time, x=None, where="the FDM ghost layer of every face")
-            self._update_ghosts_uniform(seg.bc_type, value, time, seg.alpha, seg.beta)
+            where = "the FDM ghost layer of every face"
+            value = segment_value(seg, t=time, x=None, where=where)
+            alpha, beta = segment_robin_coefficients(seg, where=where)
+            self._update_ghosts_uniform(seg.bc_type, value, time, alpha, beta)
         else:
             # Mixed BC requires more complex per-point updates
             self._update_ghosts_mixed(bc, time)
@@ -1844,8 +1846,9 @@ class PreallocatedGhostBuffer:
 
         elif bc_type == BCType.ROBIN:
             # alpha*u + beta*du/dn = g, du/dn outward (#625, #2063), about the wall node (#1935).
-            alpha = getattr(segment, "alpha", 0.0)
-            beta = getattr(segment, "beta", 1.0)
+            alpha, beta = segment_robin_coefficients(
+                segment, where=f"the FDM ghost layer of face {BoundaryFace(axis, side).to_string()}"
+            )
             dx = None if self._grid_spacing is None else self._grid_spacing[axis]
             _write_wall_ghosts(buf, axis, side, g, dx, v, alpha, beta)
 

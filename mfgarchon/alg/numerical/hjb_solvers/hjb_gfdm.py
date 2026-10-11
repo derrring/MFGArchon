@@ -2591,8 +2591,12 @@ class HJBGFDMSolver(BaseHJBSolver):
                 # alpha*u term the normal-derivative row cannot represent, and beta != 1 would
                 # need a 1/beta scaling the builder does not apply — both are reachable via the
                 # BCSegment API and would be silently mis-solved, so fail loud instead.
-                alpha = getattr(segment, "alpha", 1.0) if segment is not None else 1.0
-                beta = getattr(segment, "beta", 0.0) if segment is not None else 0.0
+                if segment is not None:
+                    from mfgarchon.geometry.boundary.types import segment_robin_coefficients
+
+                    alpha, beta = segment_robin_coefficients(segment, where=f"HJB-GFDM's Robin row of {segment.name!r}")
+                else:
+                    alpha, beta = 1.0, 0.0
                 if abs(alpha) > 0.0:
                     raise NotImplementedError(
                         f"ROBIN BC with alpha={alpha!r} at boundary point {i} is not supported "

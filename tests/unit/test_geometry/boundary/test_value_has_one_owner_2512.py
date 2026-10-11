@@ -184,3 +184,85 @@ def test_an_enum_value_is_not_a_boundary_value(package_copy):
     target = package_copy / PACKAGE / "geometry" / "boundary" / "_planted_rival.py"
     planted = "def _not_a_rival(segment):\n    return float(segment.bc_type.value == 'dirichlet')\n"
     assert not any("_planted_rival.py" in site for site in planted_scan(scan, package_copy, target, planted))
+
+
+# Row B2's second half (B2b-1): a Robin segment's alpha and beta have one reader, `types.segment_robin_coefficients`.
+# Any read of ``<x>.alpha``/``<x>.beta``, or ``getattr(<x>, "alpha"|"beta", ...)``, outside the functions below fails,
+# so a reader that takes a coefficient with its own default or its own float() is found. Allowed by file and function:
+COEFFICIENT_READS_ALLOWED = {
+    # Classifiers of a segment, which read no number: validation, and the particle wall's action by the sign of beta.
+    ("mfgarchon/geometry/boundary/conditions.py", "validate_values"): "a None check",
+    ("mfgarchon/geometry/boundary/applicator_particle.py", "apply"): "classifies the wall by beta",
+    ("mfgarchon/geometry/boundary/applicator_particle.py", "apply_with_flux_limits"): "classifies the wall by beta",
+    # A `ResolvedBC`, which the owner already read (`resolution._resolve_passthrough`).
+    ("mfgarchon/geometry/boundary/resolution.py", "<module>"): "ResolvedBC",
+    ("mfgarchon/geometry/boundary/resolution.py", "resolved_bc_to_calculator"): "ResolvedBC",
+    ("mfgarchon/geometry/boundary/resolution.py", "to_boundary_conditions"): "ResolvedBC",
+    # Attributes named alpha or beta that are not Robin coefficients.
+    ("mfgarchon/alg/numerical/adjoint/operators.py", "build_diffusion_matrix_1d"): "a stencil's alpha",
+    ("mfgarchon/alg/numerical/coupling/anderson_acceleration.py", "_compute_aa_step_qr"): "Anderson's damping",
+    ("mfgarchon/alg/numerical/coupling/anderson_acceleration.py", "update"): "Anderson's damping",
+    ("mfgarchon/alg/numerical/pde_solvers/implicit_heat.py", "<module>"): "a diffusivity",
+    ("mfgarchon/alg/numerical/pde_solvers/implicit_heat.py", "__repr__"): "a diffusivity",
+    ("mfgarchon/alg/numerical/pde_solvers/implicit_heat.py", "_build_system_matrices"): "a diffusivity",
+    ("mfgarchon/alg/numerical/pde_solvers/implicit_heat.py", "get_cfl_number"): "a diffusivity",
+}
+
+
+def coefficient_reads(scope: ast.AST) -> list[int]:
+    lines = []
+    for node in own_nodes(scope):
+        if (isinstance(node, ast.Attribute) and node.attr in ("alpha", "beta") and isinstance(node.ctx, ast.Load)) or (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value in ("alpha", "beta")
+        ):
+            lines.append(node.lineno)
+    return lines
+
+
+def coefficient_scan(root: Path, allowed: Mapping[tuple[str, str], str] = COEFFICIENT_READS_ALLOWED):
+    """``(population, sites)``: every coefficient read outside ``allowed``, module level included."""
+    population, sites = [], []
+    for path in sorted((root / PACKAGE).rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        if rel in EXCLUDED:
+            continue
+        population.append(rel)
+        tree = ast.parse(path.read_text())
+        scopes = [(tree, "<module>")] + [
+            (n, getattr(n, "name", "<lambda>")) for n in ast.walk(tree) if isinstance(n, FUNCTIONS)
+        ]
+        for scope, name in scopes:
+            if (rel, name) not in allowed:
+                sites.extend(f"{rel}:{line}: in {name}" for line in coefficient_reads(scope))
+    return population, sorted(set(sites))
+
+
+def test_every_robin_coefficient_is_read_by_the_owner():
+    population, sites = coefficient_scan(REPO)
+    assert len(population) > 100, f"the population looks truncated: {len(population)} modules"
+    assert sites == [], "a Robin coefficient read outside `types.segment_robin_coefficients`:\n" + "\n".join(sites)
+
+
+def test_every_coefficient_allowance_still_covers_a_read():
+    _, sites = coefficient_scan(REPO, allowed={})
+    covered = {(site.split(":")[0], site.rsplit(" in ", 1)[1]) for site in sites}
+    assert set(COEFFICIENT_READS_ALLOWED) <= covered, sorted(set(COEFFICIENT_READS_ALLOWED) - covered)
+
+
+@pytest.mark.parametrize(
+    "planted",
+    [
+        "def _rival(seg):\n    return float(seg.alpha)\n",
+        "def _rival(seg):\n    return getattr(seg, 'beta', 0.0)\n",
+    ],
+    ids=["float", "getattr-default"],
+)
+def test_a_planted_coefficient_reader_is_found(package_copy, planted):
+    target = package_copy / PACKAGE / "geometry" / "boundary" / "_planted_rival.py"
+    sites = planted_scan(coefficient_scan, package_copy, target, planted)
+    assert any("_planted_rival.py" in site for site in sites), sites

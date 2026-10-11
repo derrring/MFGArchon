@@ -257,7 +257,7 @@ def refuse_unplaceable_segments(
 
 def _ghost_effect(segment: Any, time: float) -> tuple:
     """What the FDM ghosts impose for ``segment``: its arm in `_write_wall_ghosts`, and the datum that arm reads."""
-    from .types import BCType, segment_value
+    from .types import BCType, segment_robin_coefficients, segment_value
 
     bc_type = segment.bc_type
     where = f"the FDM ghost check of segment {segment.name!r}"
@@ -268,7 +268,8 @@ def _ghost_effect(segment: Any, time: float) -> tuple:
     if bc_type in (BCType.NO_FLUX, BCType.REFLECTING):
         return ("flux", 0.0)
     if bc_type == BCType.ROBIN:
-        return ("robin", float(segment.alpha), float(segment.beta), segment_value(segment, t=time, x=None, where=where))
+        alpha, beta = segment_robin_coefficients(segment, where=where)
+        return ("robin", alpha, beta, segment_value(segment, t=time, x=None, where=where))
     return (bc_type.value,)
 
 

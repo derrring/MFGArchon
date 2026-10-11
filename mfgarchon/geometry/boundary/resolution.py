@@ -169,14 +169,16 @@ def _resolve_passthrough(seg: BCSegment) -> ResolvedBC | None:
     if math_type is None:
         return None
 
-    from .types import segment_value
+    from .types import segment_robin_coefficients, segment_value
 
-    value = segment_value(seg, t=None, x=None, where=f"the BC resolver's passthrough of segment {seg.name!r}")
+    where = f"the BC resolver's passthrough of segment {seg.name!r}"
+    value = segment_value(seg, t=None, x=None, where=where)
+    alpha, beta = segment_robin_coefficients(seg, where=where)
     return ResolvedBC(
         math_type=math_type,
         value=value,
-        alpha=getattr(seg, "alpha", 1.0),
-        beta=getattr(seg, "beta", 0.0),
+        alpha=alpha,
+        beta=beta,
         segment_name=seg.name,
         original_bc_type=seg.bc_type,
     )
@@ -203,12 +205,15 @@ class HJBResolver:
         if result is not None:
             # For passthrough Robin with a provider value, resolve it
             if result.math_type == MathBCType.ROBIN and is_provider(segment.value):
-                resolved_value = segment.value.compute(solver_state)
+                from .types import segment_robin_coefficients, segment_value
+
+                where = f"the HJB resolver's Robin segment {segment.name!r}"
+                alpha, beta = segment_robin_coefficients(segment, where=where, state=solver_state)
                 return ResolvedBC(
                     math_type=MathBCType.ROBIN,
-                    value=float(resolved_value),
-                    alpha=getattr(segment, "alpha", 0.0),
-                    beta=getattr(segment, "beta", 1.0),
+                    value=segment_value(segment, t=None, x=None, where=where, state=solver_state),
+                    alpha=alpha,
+                    beta=beta,
                     segment_name=segment.name,
                     original_bc_type=segment.bc_type,
                 )

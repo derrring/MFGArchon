@@ -392,7 +392,7 @@ def assemble_robin_terms(
     from skfem import BilinearForm, FacetBasis, LinearForm
 
     from mfgarchon.geometry.boundary.bc_utils import describe_inhomogeneous_bc_data
-    from mfgarchon.geometry.boundary.types import BCType, segment_value
+    from mfgarchon.geometry.boundary.types import BCType, segment_robin_coefficients, segment_value
 
     def _is_inhomogeneous(*segments):
         """Is any of these boundary data NOT verifiably zero?
@@ -451,7 +451,8 @@ def assemble_robin_terms(
         kind = "Robin" if segment.bc_type == BCType.ROBIN else "Neumann"
 
         # The load is a constant g per segment (#1237): read by the one owner, with no time or point to pass.
-        g = segment_value(segment, t=None, x=None, where=f"the FEM {kind} load of segment {segment.name!r}")
+        where = f"the FEM {kind} load of segment {segment.name!r}, one constant per segment (#1237),"
+        g = segment_value(segment, t=None, x=None, where=where)
 
         if segment.bc_type == BCType.NEUMANN:
             # Issue #2294: `du/dn = g` is `ROBIN(alpha=0, beta=1, g)` -- the same mathematical
@@ -472,19 +473,9 @@ def assemble_robin_terms(
                 )
             alpha, beta = 0.0, 1.0
         else:
-            # Issue #1979: guard alpha and beta the way `g` is guarded above. Without this, a
-            # provider-valued coefficient reaches float() and raises a bare builtin TypeError --
-            # unnamed, ungreppable, and silent about what the caller should do instead.
-            for _name, _coeff in (("alpha", getattr(segment, "alpha", 1.0)), ("beta", getattr(segment, "beta", 0.0))):
-                if not isinstance(_coeff, (int, float)):
-                    raise NotImplementedError(
-                        f"Robin segment '{segment.name}' has a non-constant {_name} "
-                        f"({type(_coeff).__name__}). Only a constant {_name} is implemented for the "
-                        "FEM Robin operator augmentation; callable / BCValueProvider coefficients "
-                        "are deferred (Issue #1237)."
-                    )
-            alpha = float(getattr(segment, "alpha", 1.0))
-            beta = float(getattr(segment, "beta", 0.0))
+            # The coefficients are read by the one owner (#2512 row B2): a constant each, by the constant contract; a
+            # callable refused naming #1237, and a provider with no iteration state to resolve it refused (#1979).
+            alpha, beta = segment_robin_coefficients(segment, where=where)
             if beta == 0.0:
                 raise NotImplementedError(
                     f"Robin segment '{segment.name}' has beta=0, i.e. a pure Dirichlet condition "

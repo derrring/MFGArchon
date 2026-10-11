@@ -278,7 +278,9 @@ def _robin_coefficients(boundary_conditions, boundary: str | None = None) -> tup
         if seg.bc_type != BCType.ROBIN:
             continue
         if boundary is None or seg.boundary is None or boundary_conditions._segment_covers(seg, boundary):
-            return float(seg.alpha), float(seg.beta)
+            from .types import segment_robin_coefficients
+
+            return segment_robin_coefficients(seg, where="get_ghost_values_nd (Robin)")
     raise ValueError(
         f"get_ghost_values_nd: a ROBIN condition governs {boundary or 'this boundary'} but no "
         "BCSegment carries its alpha/beta. They live on the segment, not on BoundaryConditions."

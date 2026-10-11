@@ -39,7 +39,7 @@ from mfgarchon.geometry.protocol import GeometryProtocol
 # Import base class for inheritance
 from .applicator_base import BaseMeshfreeApplicator
 from .applicator_particle import particle_action_for_bc_type
-from .types import BCType, boundary_value
+from .types import BCType, boundary_value, segment_robin_coefficients
 
 
 def _robin_alpha_beta(boundary_conditions) -> tuple[float, float]:
@@ -53,7 +53,7 @@ def _robin_alpha_beta(boundary_conditions) -> tuple[float, float]:
     robin_seg = next((s for s in boundary_conditions.segments if s.bc_type == BCType.ROBIN), None)
     if robin_seg is None:
         raise ValueError("Robin BC resolved but no BCSegment carries the Robin alpha/beta coefficients.")
-    return float(robin_seg.alpha), float(robin_seg.beta)
+    return segment_robin_coefficients(robin_seg, where="the meshfree applicator")
 
 
 class MeshfreeApplicator(BaseMeshfreeApplicator):

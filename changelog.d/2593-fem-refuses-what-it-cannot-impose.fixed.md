@@ -1,7 +1,7 @@
 - **`HJBFEMSolver` and `FPFEMSolver` refuse, at construction, a boundary condition the FEM adapter would misread in silence** (#2593). The adapter imposes conditions segment by segment. Measured below on a 16-element mesh of [0, 1], with the wall on x_min and the exit on x_max.
   - **A Dirichlet value it cannot read.** It read as 0 every constant that is not an instance of Python's `int` or `float`, so HJB-FEM held u = 0.0000 at an exit given as `np.float32(0.7)` or as the string `"0.7"`. (`np.float64`, a `float` subclass, was read correctly, and `True` as 1.0.) Now:
     - a finite real number, NumPy scalars included, or a finite real array of one element, of any shape, is its value, and HJB-FEM holds 0.7000 there;
-    - every boolean is refused, `False` included (a fully masked one-element array is 0 whatever its dtype, #2512);
+    - every boolean is refused, `False` included, wherever it sits in an array (#2512);
     - whatever the library's test for a verifiably zero datum (`_describe_bc_value`) reads as zero is 0: `None` and an all-zero array, and also `"0"`, `Decimal("0")` and a fully masked array;
     - a callable `g(x)`, its parameter named `x`, is read at each DOF (#2512 row B2: a boundary value is called by name);
     - anything else is refused: any other string or `Decimal`, every complex value, 0 included, a provider, an array of more than one element that is not all zero, a non-finite number.

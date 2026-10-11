@@ -949,19 +949,16 @@ def boundary_value(
     what it declares: ``(t, x)``, ``(x)``, ``(t)`` or ``(time)``. ``x`` is one point, a 1-D array of shape
     ``(d,)``, ``d = 1`` included. A reader with no time passes ``t=None``, and one with no point ``x=None``. A
     callable that declares what its reader lacks is refused there, at first use, and the message names ``where``,
-    the reader and the face. It returns one number at the point, read as a constant is below: a return of one
-    element, of any shape, is that element, and a longer one is refused, as is ``None``, which a function with no
-    ``return`` gives. A return is unwrapped once more than a constant, so one nested two object levels deep is read
-    a level deeper than the same constant (review 2 of #2598, M4; B2b's layered contract closes it).
+    the reader and the face. It returns one number at the point.
 
-    **A constant** (#2593): ``None``, and whatever `_describe_bc_value` calls zero, is 0. A boolean is refused. A
-    finite real number is its value, and so is a size-1 real array of any shape, read as its element. A complex
-    value is refused, zero included. Anything else -- a string, a ``Decimal``, a larger array that is not all zero
-    -- is refused, and so is a non-finite number. These rules read one object level: a fully masked one-element
-    array is 0 whatever its dtype, boolean and complex included, and a value nested deeper in object arrays is
-    read as `_describe_bc_value` sees it (review 2 of #2598, M3a, M3b; B2b's layered contract closes both).
+    **A constant, and what a callable or a provider returns**, are read by one function, `_read_constant`, in three
+    layers: a boolean or complex leaf anywhere inside is refused, masked or not; an array of one element, of any
+    shape, is that element, once, and a value still nested is refused; then ``None`` (0 for a constant, refused
+    for a return), a masked element and whatever `_describe_bc_value` calls zero are 0, a finite real is its value,
+    and anything else, a non-finite number included, is refused. A return of more than one number is refused.
 
-    **A** ``BCValueProvider`` is resolved with ``state``. Without one it is refused (``NotImplementedError``): the
+    **A** ``BCValueProvider`` is resolved with ``state``, and its result is read as a return is: one number, since
+    a value per node is a separate capability (#2600). Without ``state`` it is refused (``NotImplementedError``): the
     coupling layer resolves providers before a solve (`with_resolved_providers`).
     """
     if is_provider(value):
@@ -971,8 +968,10 @@ def boundary_value(
                 "iteration state to resolve it with: providers are resolved by the coupling layer before a solve "
                 "(with_resolved_providers)."
             )
-        result = value.compute(state)
-        return float(result) if np.isscalar(result) else result
+        # A provider returns one number, read as a return is (#2512 row B2; one value per node is #2600).
+        return _read_constant(
+            value.compute(state), kind=f"{kind} (what its provider computed)", where=where, returned=True
+        )
     if callable(value):
         bound = binding if binding is not None else bind_boundary_value(value)
         if "t" in bound.passes and t is None:
@@ -991,46 +990,79 @@ def boundary_value(
             )
         if x is not None and np.ndim(x) != 1:
             raise ValueError(f"{where} passed x of shape {np.shape(x)}; a boundary value takes one point, shape (d,).")
-        returned = _one_element(bound(t=t, x=x))
-        if returned is None:
-            raise NotImplementedError(
-                f"{kind}: its value returned None at one point, which {where} cannot read; does the function lack a "
-                "`return`? (#2512 row B2)"
-            )
-        if np.size(returned) != 1:
-            raise NotImplementedError(
-                f"{kind}: its value returned {np.size(returned)} numbers, shape {np.shape(returned)}, at one point; "
-                f"{where} reads one number per point (#2512 row B2)."
-            )
-        # The return is read as a constant is, one object level down (#2512 row B2; M4 of review 2 of #2598).
-        return _read_constant(returned, kind=f"{kind} (what its callable returned)", where=where)
+        return _read_constant(bound(t=t, x=x), kind=f"{kind} (what its callable returned)", where=where, returned=True)
     return _read_constant(value, kind=kind, where=where)
 
 
-def _one_element(value: Any) -> Any:
-    """The element of a size-1 array; anything else unchanged."""
-    if isinstance(value, np.ndarray) and value.size == 1:
-        return value.reshape(-1)[0]
-    return value
+def _boolean_or_complex_leaf(value: Any) -> str | None:
+    """ "boolean" or "complex" if such a leaf lies anywhere inside ``value``, else None.
+
+    Walks arrays, masked or not, and the elements of object arrays, at any depth. It recurses on elements and never
+    on ``reshape(-1)[0]``, which returns ``np.ma.masked`` and an ``np.matrix`` unchanged, so it ends.
+    """
+    if isinstance(value, (bool, np.bool_)):
+        return "boolean"
+    if isinstance(value, (complex, np.complexfloating)):
+        return "complex"
+    if isinstance(value, np.ndarray):
+        if value.dtype == np.bool_:
+            return "boolean"
+        if np.iscomplexobj(value):
+            return "complex"
+        if value.dtype == object:
+            for element in np.ma.getdata(value).ravel():
+                found = _boolean_or_complex_leaf(element)
+                if found is not None:
+                    return found
+    return None
 
 
-def _read_constant(value: Any, *, kind: str, where: str) -> float:
-    """A constant boundary value, or what a callable one returned at a point: `boundary_value`'s contract."""
+def _read_constant(value: Any, *, kind: str, where: str, returned: bool = False) -> float:
+    """A constant boundary value, or what a callable or a provider returned: `boundary_value`'s contract, in layers.
+
+    1. **dtype, at any depth:** a boolean or a complex leaf anywhere inside the value, masked or not, is refused.
+    2. **one unwrap:** an array of one element, of any shape, masked or not, is that element, once. An element that is
+       still an array is refused: a value nested in arrays is not read. A returned array of more than one element
+       is refused here too, since a callable returns one number at a point.
+    3. **the value:** ``None`` is 0 for a constant and refused for a return, which a function with no ``return``
+       gives; a masked element is 0, and so is whatever `_describe_bc_value` calls zero; a finite real is its
+       value; anything else, and a non-finite number, is refused.
+
+    One function for constants and returns, so a value reads the same whichever way it arrives (#2512 row B2; the
+    layers close reviews 1 and 2 of #2598, one class rather than one corner at a time).
+    """
     from mfgarchon.geometry.boundary.bc_utils import _describe_bc_value
 
-    # A size-1 array, of any shape, is its element (#2512 row B2, ruling), read by every rule below: an object array
-    # holding True is a boolean, and a masked element is zero.
-    value = _one_element(value)
-    if isinstance(value, (bool, np.bool_)) or (isinstance(value, np.ndarray) and value.dtype == np.bool_):
+    leaf = _boolean_or_complex_leaf(value)
+    if leaf == "boolean":
         raise NotImplementedError(
             f"{kind} has a boolean value, which is not a boundary datum: give a real number, a real array of one "
             "element, or a callable g(t, x) (#2593)."
         )
-    if np.iscomplexobj(value):
+    if leaf == "complex":
         # Before the zero test: `_describe_bc_value` reads np.complex128(1j) as zero, since `float()` drops the
         # imaginary part, so a purely imaginary datum would become 0 in silence (#2512 row B2).
         raise NotImplementedError(f"{kind} has a complex value {value!r}; {where} takes a real boundary datum.")
-    if _describe_bc_value(value) is None:
+    if returned and isinstance(value, np.ndarray) and value.size != 1:
+        raise NotImplementedError(
+            f"{kind}: its value returned {value.size} numbers, shape {value.shape}, at one point; {where} reads one "
+            "number per point (#2512 row B2)."
+        )
+    if isinstance(value, np.ndarray) and value.size == 1:
+        value = np.ma.asarray(value).reshape(-1)[0] if np.ma.isMaskedArray(value) else np.asarray(value).reshape(-1)[0]
+        if isinstance(value, np.ndarray) and value is not np.ma.masked:
+            raise NotImplementedError(
+                f"{kind} has an array inside an array; {where} reads a number, or an array of one number, not a "
+                "nested one (#2512 row B2)."
+            )
+    if value is None:
+        if returned:
+            raise NotImplementedError(
+                f"{kind}: its value returned None at one point, which {where} cannot read; does the function lack a "
+                "`return`? (#2512 row B2)"
+            )
+        return 0.0
+    if value is np.ma.masked or _describe_bc_value(value) is None:
         return 0.0
     real = isinstance(value, numbers.Real) or (
         isinstance(value, np.ndarray)
@@ -1050,6 +1082,37 @@ def _read_constant(value: Any, *, kind: str, where: str) -> float:
             "(#2593)."
         )
     return constant
+
+
+def segment_robin_coefficients(
+    segment: BCSegment, *, where: str, state: dict[str, Any] | None = None
+) -> tuple[float, float]:
+    """The one reading of a segment's Robin coefficients ``(alpha, beta)``, for every reader (#2512 row B2).
+
+    Each is a constant, read by `boundary_value`'s constant contract, or a provider resolved with ``state``. A
+    callable coefficient is refused: no reader evaluates one per point or per time (#1237). ``None`` is refused
+    rather than read as 0, as `BoundaryConditions` validation refuses it for a Robin segment.
+    """
+    coefficients = []
+    for name in ("alpha", "beta"):
+        coefficient = getattr(segment, name)
+        kind = f"{segment.bc_type.name.title()} segment {segment.name!r}'s {name}"
+        if coefficient is None:
+            raise NotImplementedError(f"{kind} is None; {where} needs a number (#2512 row B2).")
+        if callable(coefficient) and not is_provider(coefficient):
+            raise NotImplementedError(
+                f"{kind} is a callable; a Robin coefficient is one constant per segment, since no reader evaluates "
+                f"one per point or per time, so {where} cannot read it (#1237)."
+            )
+        if isinstance(coefficient, np.ndarray) and coefficient.size > 1:
+            # A provider may resolve a coefficient to a field along the wall (`with_resolved_providers` keeps it); no
+            # reader takes one yet. A planned capability, not a malformed input.
+            raise NotImplementedError(
+                f"{kind} is a field of {coefficient.size} values along the wall; {where} reads one number per "
+                "segment. A coefficient per node is a planned capability, tracked in #2600."
+            )
+        coefficients.append(boundary_value(coefficient, kind=kind, t=None, x=None, where=where, state=state))
+    return coefficients[0], coefficients[1]
 
 
 def create_standard_boundary_names(dimension: int) -> dict[str, str]:

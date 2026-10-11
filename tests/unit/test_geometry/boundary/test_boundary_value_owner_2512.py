@@ -333,3 +333,118 @@ def test_an_fdm_ghost_refuses_a_value_that_declares_x_at_first_use_naming_itself
     )
     with pytest.raises(NotImplementedError, match=r"declares x, but the FDM .* face x_max"):
         pad_array_with_ghosts(np.ones(5), bc, time=0.5, spacing=(0.25,))
+
+
+def _nested(value):
+    """A one-element object array holding ``value``, which may itself be one."""
+    array = np.empty(1, dtype=object)
+    array[0] = value
+    return array
+
+
+_BOOLEAN, _COMPLEX = r"has a boolean value", r"has a complex value"
+_NESTED, _NONE = r"has an array inside an array", r"returned None at one point, .* does the function lack a `return`"
+# The layered contract (#2512 row B2's second half), with literal expectations: a number is what reads, a pattern is
+# the refusal. Rows are named by the review finding they pin, or by the layer outcome they show. ``returned`` reads the
+# value as a callable's return.
+_CONTRACT = [
+    # Layer 1, dtype at any depth.
+    ("True", True, False, _BOOLEAN),
+    ("1j", 1j, False, _COMPLEX),
+    ("review-1 blocker: object [True]", _nested(True), False, _BOOLEAN),
+    ("M3a: fully masked [True]", np.ma.array([True], mask=[True]), False, _BOOLEAN),
+    ("M3a: fully masked [1j]", np.ma.array([1j], mask=[True]), False, _COMPLEX),
+    ("M3b: doubly nested False", _nested(_nested(False)), False, _BOOLEAN),
+    ("M3b: doubly nested 0j", _nested(_nested(0j)), False, _COMPLEX),
+    # Layer 2, one unwrap.
+    ("one element of shape (1, 1)", np.array([[0.7]]), False, 0.7),
+    ("object [0.7]", _nested(0.7), False, 0.7),
+    ("masked [0.7], unmasked", np.ma.array([0.7]), False, 0.7),
+    ("M4: doubly nested 0.7, constant", _nested(_nested(0.7)), False, _NESTED),
+    ("M4: doubly nested 0.7, returned", _nested(_nested(0.7)), True, _NESTED),
+    ("a return of two numbers", np.array([1.0, 2.0]), True, r"returned 2 numbers, shape \(2,\), at one point"),
+    # Layer 3, the value.
+    ("None, constant", None, False, 0.0),
+    ("None, returned", None, True, _NONE),
+    ("review 1: object [None], returned", _nested(None), True, _NONE),
+    ("fully masked, one element", np.ma.masked_all(1), False, 0.0),
+    ("fully masked, three elements", np.ma.masked_all(3), False, 0.0),
+    ("all zero, three elements", np.zeros(3), False, 0.0),
+    ('"0"', "0", False, 0.0),
+    ("float32 0.5", np.float32(0.5), False, 0.5),
+    ('"0.7"', "0.7", False, r"has a value of type str"),
+    ("nan", float("nan"), False, r"has a non-finite value nan"),
+]
+
+
+@pytest.mark.parametrize(
+    ("value", "returned", "expected"), [row[1:] for row in _CONTRACT], ids=[row[0] for row in _CONTRACT]
+)
+def test_the_layered_contract(value, returned, expected):
+    """One function reads a constant and a callable's return (#2512 row B2): dtype at any depth, one unwrap, the value.
+    Each review of #2598 found the next container corner of a one-layer reading; these rows pin each of them."""
+    from mfgarchon.geometry.boundary.types import boundary_value
+
+    read = (lambda t: value) if returned else value
+    if isinstance(expected, str):
+        with pytest.raises(NotImplementedError, match=expected):
+            boundary_value(read, kind="k", t=0.5, x=None, where="w")
+    else:
+        assert boundary_value(read, kind="k", t=0.5, x=None, where="w") == pytest.approx(expected, abs=1e-7)
+
+
+def test_a_provider_returns_one_number_read_as_a_return_is():
+    """A provider's result is read as a callable's return (#2512 row B2): one number. A value per node is #2600."""
+    from mfgarchon.geometry.boundary.providers import BaseBCValueProvider
+    from mfgarchon.geometry.boundary.types import boundary_value
+
+    class _Provider(BaseBCValueProvider):
+        def __init__(self, result):
+            self.result = result
+
+        def compute(self, state):
+            return self.result
+
+    assert boundary_value(_Provider(np.float64(0.3)), kind="k", t=0.5, x=None, where="w", state={}) == 0.3
+    for result, refusal in ((np.array([0.1, 0.2]), r"returned 2 numbers"), (True, _BOOLEAN), (None, _NONE)):
+        with pytest.raises(NotImplementedError, match=refusal):
+            boundary_value(_Provider(result), kind="k", t=0.5, x=None, where="w", state={})
+
+
+def test_a_robin_coefficient_is_read_by_one_reader_and_a_callable_or_a_field_is_refused():
+    """`segment_robin_coefficients` (#2512 row B2): a constant each, by the constant contract. A callable is refused
+    naming #1237, and a field from a provider naming #2600, the per-node capability no reader has yet."""
+    from mfgarchon.geometry.boundary.types import segment_robin_coefficients
+
+    def robin(alpha, beta):
+        return BCSegment(name="r", bc_type=BCType.ROBIN, value=0.0, alpha=alpha, beta=beta, boundary="x_max")
+
+    assert segment_robin_coefficients(robin(np.float32(2.0), np.array([0.5])), where="w") == (2.0, 0.5)
+    for alpha, refusal in (
+        (lambda t: 1.0, r"is a callable; a Robin coefficient is one constant per segment.*\(#1237\)"),
+        (np.array([1.0, 2.0]), r"is a field of 2 values along the wall.*#2600"),
+        (True, r"has a boolean value"),
+        (1j, r"has a complex value"),
+        (float("nan"), r"has a non-finite value"),
+        (None, r"'s alpha is None"),
+    ):
+        with pytest.raises(NotImplementedError, match=refusal):
+            segment_robin_coefficients(robin(alpha, 1.0), where="w")
+
+
+def test_the_fem_robin_load_refuses_a_callable_naming_1237():
+    """FEM's Robin and Neumann loads are one constant per segment (#1237; the user's coverage-not-every-axis
+    ruling): a callable g declares what the load cannot pass, and the refusal names #1237."""
+    import skfem
+
+    from mfgarchon.alg.numerical.fem.bc_adapter import assemble_robin_terms
+
+    mesh = skfem.MeshLine(np.linspace(0.0, 1.0, 5)).with_boundaries({"x_max": lambda x: np.isclose(x[0], 1.0)})
+    basis = skfem.Basis(mesh, skfem.ElementLineP1())
+    bc = BoundaryConditions(
+        dimension=1,
+        segments=[BCSegment(name="r", bc_type=BCType.ROBIN, value=lambda t: t, alpha=1.0, beta=1.0, boundary="x_max")],
+        default_bc=BCType.NO_FLUX,
+    )
+    with pytest.raises(NotImplementedError, match=r"declares t, but the FEM Robin load .*\(#1237\).* a constant"):
+        assemble_robin_terms(basis, bc, 0.125, natural_bc="gradient")
