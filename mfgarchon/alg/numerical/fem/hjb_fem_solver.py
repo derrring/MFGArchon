@@ -172,15 +172,17 @@ class HJBFEMSolver(WeakFormHJBSolver):
 
         return is_pure_neumann(self._bc)
 
-    def _dirichlet_dofs_and_values(self) -> tuple[NDArray, NDArray]:
+    def _dirichlet_dofs_and_values(self, t: float | None = None) -> tuple[NDArray, NDArray]:
         from .bc_adapter import get_dirichlet_dofs_and_values
 
-        return get_dirichlet_dofs_and_values(self._basis, self._bc)
+        return get_dirichlet_dofs_and_values(self._basis, self._bc, t=t)
 
-    def _apply_bc_to_system(self, matrix, rhs, homogeneous=False):
+    def _apply_bc_to_system(
+        self, matrix: sparse.csr_matrix, rhs: NDArray, homogeneous: bool = False, t: float | None = None
+    ) -> tuple[sparse.csr_matrix, NDArray]:
         from .bc_adapter import apply_bc_to_fem_system
 
-        return apply_bc_to_fem_system(matrix, rhs, self._basis, self._bc, homogeneous=homogeneous)
+        return apply_bc_to_fem_system(matrix, rhs, self._basis, self._bc, homogeneous=homogeneous, t=t)
 
     def _robin_operator_terms(self, D: float):
         """Robin boundary operator augmentation (Issue #1237): the D-scaled boundary mass

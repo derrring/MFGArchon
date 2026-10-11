@@ -239,15 +239,16 @@ def _segment_quadrature(faces, disc, bounds, n_gauss):
     return boundary_tensor_gauss(bounds, faces, n_cells=n_cells, n_gauss=n_gauss)
 
 
-def _evaluate_g(segment, x_b: NDArray) -> NDArray:
-    """A segment's prescribed Dirichlet value at boundary points, read by the one owner (`segment_value`, #2512
-    row B2): a constant, or a callable ``g(x)`` -- this assembly has no time to pass."""
+def _evaluate_g(segment, x_b: NDArray, t: float | None) -> NDArray:
+    """A segment's prescribed Dirichlet value at boundary points and at ``t``, read by the one owner
+    (`segment_value`, #2512 row B2): a constant, or a callable ``g(t, x)``, ``g(x)`` or ``g(t)``. One that declares
+    ``t`` is refused when no time is given."""
     from mfgarchon.geometry.boundary.types import segment_value
 
     where = f"the meshless Nitsche assembly of segment {segment.name!r}"
     if callable(segment.value):
-        return np.array([segment_value(segment, t=None, x=x, where=where) for x in x_b], dtype=np.float64)
-    return np.full(x_b.shape[0], segment_value(segment, t=None, x=None, where=where), dtype=np.float64)
+        return np.array([segment_value(segment, t=t, x=x, where=where) for x in x_b], dtype=np.float64)
+    return np.full(x_b.shape[0], segment_value(segment, t=t, x=None, where=where), dtype=np.float64)
 
 
 def assemble_nitsche_terms(
@@ -256,8 +257,9 @@ def assemble_nitsche_terms(
     D: float,
     gamma: float,
     n_gauss: int,
+    t: float | None = None,
 ) -> tuple[sparse.csr_matrix | None, NDArray | None]:
-    """Symmetric Nitsche operator block and Dirichlet-data RHS for the weak form.
+    """Symmetric Nitsche operator block and Dirichlet-data RHS for the weak form, the data read at ``t``.
 
     Args:
         disc: the meshless discretization (provides ``rho`` and ``boundary_shape_data``).
@@ -285,7 +287,7 @@ def assemble_nitsche_terms(
         xs.append(x_b)
         ws.append(w_b)
         ns.append(n_b)
-        gs.append(_evaluate_g(s, x_b))
+        gs.append(_evaluate_g(s, x_b, t))
 
     x_b = np.vstack(xs)
     w_b = np.concatenate(ws)

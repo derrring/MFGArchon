@@ -49,6 +49,8 @@ def apply_bc_to_fem_system(
     basis: skfem.Basis,
     bc: BoundaryConditions | None,
     homogeneous: bool = False,
+    *,
+    t: float | None = None,
 ) -> tuple[sparse.csr_matrix, NDArray]:
     """
     Apply BoundaryConditions to assembled FEM system (A, rhs).
@@ -67,6 +69,8 @@ def apply_bc_to_fem_system(
         rhs: Right-hand side vector (N_dof,)
         basis: scikit-fem Basis
         bc: MFGArchon BoundaryConditions (or None for default no-flux)
+        t: The time of the level solved for, at which a Dirichlet value is read (#2512 row B2). With none, a
+            value that declares ``t`` is refused; a constant or ``g(x)`` needs none.
 
     Returns:
         (A_modified, rhs_modified) — may be condensed (smaller) or same size
@@ -85,7 +89,7 @@ def apply_bc_to_fem_system(
         if segment.bc_type in (BCType.DIRICHLET,):
             # Find DOFs on this boundary segment
             dofs = _find_segment_dofs(mesh, basis, segment)
-            values = _evaluate_segment_values(segment, basis, dofs)
+            values = _evaluate_segment_values(segment, basis, dofs, t)
             dirichlet_dofs.extend(dofs)
             dirichlet_values.extend(values)
 
@@ -157,9 +161,12 @@ def apply_bc_to_fem_system(
 def get_dirichlet_dofs_and_values(
     basis: skfem.Basis,
     bc: BoundaryConditions | None,
+    *,
+    t: float | None = None,
 ) -> tuple[NDArray, NDArray]:
     """
-    Extract Dirichlet DOF indices and values from BoundaryConditions.
+    Extract Dirichlet DOF indices and values from BoundaryConditions, the values read at ``t`` (as in
+    `apply_bc_to_fem_system`).
 
     Returns:
         (dof_indices, values) — empty arrays if no Dirichlet BC.
@@ -176,7 +183,7 @@ def get_dirichlet_dofs_and_values(
     for segment in bc.segments:
         if segment.bc_type == BCType.DIRICHLET:
             dofs = _find_segment_dofs(mesh, basis, segment)
-            values = _evaluate_segment_values(segment, basis, dofs)
+            values = _evaluate_segment_values(segment, basis, dofs, t)
             dirichlet_dofs.extend(dofs)
             dirichlet_values.extend(values)
 
@@ -311,11 +318,12 @@ def _evaluate_segment_values(
     segment,
     basis: skfem.Basis,
     dofs: list[int],
+    t: float | None,
 ) -> list[float]:
     """The segment's Dirichlet value at the given DOFs, read by the one owner (`segment_value`, #2512 row B2).
 
-    A callable is ``g(x)`` here, at each DOF -- the assembly has no time to pass, so one that declares ``t`` is
-    refused. A constant follows the owner's rules (#2593): a real number or a real array of one element is its value, ``None``
+    A callable is ``g(t, x)``, ``g(x)`` or ``g(t)``, read at each DOF and at the time of the level solved for;
+    one that declares ``t`` is refused when no time is given. A constant follows the owner's rules (#2593): a real number or a real array of one element is its value, ``None``
     and what `_describe_bc_value` calls zero are 0, and anything else is refused.
     """
     from mfgarchon.geometry.boundary.types import segment_value
@@ -326,8 +334,8 @@ def _evaluate_segment_values(
         # DOF), NOT mesh.p (vertex coordinates only). For P2 the boundary DOF set includes edge-midpoint
         # indices >= n_vertices, so mesh.p[:, dofs] was out of bounds / wrong-coordinate.
         coords = basis.doflocs[:, dofs].T  # (n_dofs, dim)
-        return [segment_value(segment, t=None, x=x, where=where) for x in coords]
-    return [segment_value(segment, t=None, x=None, where=where)] * len(dofs)
+        return [segment_value(segment, t=t, x=x, where=where) for x in coords]
+    return [segment_value(segment, t=t, x=None, where=where)] * len(dofs)
 
 
 def _find_segment_facets(mesh: skfem.Mesh, segment) -> NDArray:

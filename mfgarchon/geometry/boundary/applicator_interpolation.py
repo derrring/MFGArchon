@@ -49,10 +49,14 @@ from .enforcement import (
     enforce_periodic_value_nd,
     enforce_robin_value_nd,
 )
-from .types import BCType, segment_value
+from .types import BCType
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
+# The face types whose enforcement reads the value: Dirichlet's u, Neumann's du/dn. Not Robin, whose enforcement below
+# hard-codes its coefficients and reads no value (#2374); it joins this set when it reads the segment's.
+_VALUED = frozenset({"dirichlet", "neumann"})
 
 
 class InterpolationApplicator(BaseBCApplicator):
@@ -173,9 +177,10 @@ class InterpolationApplicator(BaseBCApplicator):
             bc_type_min, bc_type_max = bc_types[axis]
             h = None if h_per_axis is None else float(h_per_axis[axis])
 
-            # The segment's value: Dirichlet's u, or Neumann's du/dn
-            g_min = self._get_bc_value(boundary_conditions, axis, "min", time)
-            g_max = self._get_bc_value(boundary_conditions, axis, "max", time)
+            # The segment's value: Dirichlet's u, or Neumann's du/dn. Read only where the face's type uses it, so
+            # a zero-flux-only BC's region, typed no-flux above, is never read: the accessor cannot place it.
+            g_min = self._get_bc_value(boundary_conditions, axis, "min", time) if bc_type_min in _VALUED else None
+            g_max = self._get_bc_value(boundary_conditions, axis, "max", time) if bc_type_max in _VALUED else None
 
             # Enforce BC at min boundary (index 0 along this axis)
             self._enforce_boundary_1d(field, axis, "min", bc_type_min, g_min, self._extrapolation_order, h)
@@ -313,35 +318,13 @@ class InterpolationApplicator(BaseBCApplicator):
         axis: int,
         side: str,
         time: float,
-    ) -> float | None:
-        """
-        Get BC value for Dirichlet BC at specified boundary.
-
-        Returns None if BC is not Dirichlet or value not specified.
-        """
+    ) -> float:
+        """The BC's value on one face, at ``time``, read through `BoundaryConditions.get_bc_value_at_boundary`
+        (#2512 row B2, D6). A refusal reaches the caller: a fallback that matched any segment with no ``boundary``
+        to every face used to catch it, which applied a region-placed segment to every face (#2472's shape)."""
         axis_names = ["x", "y", "z", "w"]
         axis_name = axis_names[axis] if axis < len(axis_names) else f"d{axis}"
-        boundary_name = f"{axis_name}_{side}"
-
-        # Unified BoundaryConditions
-        # Try to get value from get_bc_value_at_boundary if available
-        # Issue #643: getattr+callable pattern
-        get_bc_value_method = getattr(bc, "get_bc_value_at_boundary", None)
-        if get_bc_value_method is not None and callable(get_bc_value_method):
-            try:
-                value = get_bc_value_method(boundary_name, time=time)
-                return float(value) if value is not None else None
-            except (AttributeError, ValueError, KeyError):
-                pass
-
-        # Fall back to segment iteration
-        for seg in bc.segments:
-            boundary = seg.boundary
-            matches = boundary is None or (isinstance(boundary, str) and boundary.lower() == boundary_name)
-            if matches:
-                return segment_value(seg, t=time, x=None, where=f"the interpolation applicator on face {boundary_name}")
-
-        return None
+        return float(bc.get_bc_value_at_boundary(f"{axis_name}_{side}", time=time))
 
     def clamp_query_points(
         self,

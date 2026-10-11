@@ -210,15 +210,15 @@ class _ExitKeepsTheValue(FPFEMSolver):
     def _shared(self):
         return self.problem.geometry.boundary_conditions
 
-    def _apply_bc_to_system(self, matrix, rhs):
+    def _apply_bc_to_system(self, matrix, rhs, t=None):
         from mfgarchon.alg.numerical.fem.bc_adapter import apply_bc_to_fem_system
 
-        return apply_bc_to_fem_system(matrix, rhs, self._basis, self._shared())
+        return apply_bc_to_fem_system(matrix, rhs, self._basis, self._shared(), t=t)
 
-    def _dirichlet_dofs_and_values(self):
+    def _dirichlet_dofs_and_values(self, t=None):
         from mfgarchon.alg.numerical.fem.bc_adapter import get_dirichlet_dofs_and_values
 
-        return get_dirichlet_dofs_and_values(self._basis, self._shared())
+        return get_dirichlet_dofs_and_values(self._basis, self._shared(), t=t)
 
 
 def _geometry(cell: Cell, n: int):
