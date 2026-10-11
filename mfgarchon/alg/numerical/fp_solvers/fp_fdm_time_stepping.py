@@ -999,9 +999,9 @@ def solve_fp_nd_full_system(
     M_solution[0] = m_initial_condition.copy()
 
     # A 1-D BC whose segments are all Dirichlet holds its Dirichlet walls at g(0) at level 0 too, read at the wall
-    # node; a mixed BC keeps the caller's initial density there (#1258's pin). Every later level is the implicit
-    # step's, whose rows hold g(t_{k+1}); the explicit steps refuse a Dirichlet wall. A post-step overwrite, which
-    # wrote such a BC onto both walls, a no-flux default included, is gone (#2535).
+    # node; a BC with a non-Dirichlet segment keeps the caller's initial density there (#1258's pin). Every later
+    # level is the implicit step's, whose rows hold g(t_{k+1}); the explicit steps refuse a Dirichlet wall. A
+    # post-step overwrite, which wrote such a BC onto both walls, a no-flux default included, is gone (#2535).
     if ndim == 1 and _get_bc_type(boundary_conditions) == "dirichlet":
         for index, face, wall_node in _dirichlet_walls_1d(boundary_conditions, grid):
             M_solution[0, index] = _get_bc_value(boundary_conditions, face, time=0.0, point=wall_node)

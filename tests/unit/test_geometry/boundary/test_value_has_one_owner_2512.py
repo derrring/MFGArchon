@@ -371,9 +371,11 @@ def test_a_planted_callable_decode_is_found(package_copy, planted):
 # the initial time. A site is a call of `segment_value` or `boundary_value` with ``t=`` a numeric literal, or of
 # `get_bc_value_at_boundary` with ``time=`` one. Blind spots: a literal passed positionally, through a name, or
 # through a helper that forwards its own parameter (FP-FDM's level-0 write passes ``time=0.0`` to `_get_bc_value`,
-# which is t_0, not a default); and a signature default forwarded to the owner, ``def f(..., time=0.0)`` passing
-# ``t=time``, which reads t = 0 for every caller that omits it. Six readers do so at this check's landing, HJB-WENO's
-# ghost fill among them (#2605); their check is B2b-2b-ii's.
+# which is t_0, not a default); a negative literal, ``t=-0.0``, which is a unary minus, not a constant; a call
+# outside a function or lambda body, as in the other checks here; `BCSegment.get_value`'s ``t=``, which is not
+# checked, since `NodeBC.get_value` shares its name; and a signature default forwarded to the owner,
+# ``def f(..., time=0.0)`` passing ``t=time``, which reads t = 0 for every caller that omits it. Six readers do so
+# at this check's landing, HJB-WENO's ghost fill among them (#2605); their check is B2b-2b-ii's.
 _TIME_KEYWORDS = {"segment_value": "t", "boundary_value": "t", "get_bc_value_at_boundary": "time"}
 
 
