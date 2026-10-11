@@ -723,11 +723,8 @@ class TestHJBFDMSolverGhostValueBC:
             call_times.clear()
             _ = get_ghost_values_nd(field, bc, spacing, time=t)
 
-            # Verify the function was called with correct time
-            # (Called once per dimension for Dirichlet)
-            assert len(call_times) == 2, f"Expected 2 calls at t={t}, got {len(call_times)}"
-            for call_t in call_times:
-                assert call_t == t, f"Expected time {t}, got {call_t}"
+            # Read once per ghost update, at that time, through the one owner (#2512 row B2); before, once per axis.
+            assert call_times == [t], f"expected one read at t={t}, got {call_times}"
 
     def test_hjb_solver_time_varying_bc(self):
         """Test HJB solver with time-varying Dirichlet BC (Issue #496)."""

@@ -174,16 +174,18 @@ def test_meshless_refuses_an_explicit_density(value):
 # any value but a plain int or float as 0: np.float32(0.7) held m = 0 (#2593, review 1). HJB-FEM reads the same
 # adapter from the shared BC, so it held u = 0 there on main. A value is now a callable g(x), a finite real number
 # or a finite 0-d real array, and anything else is refused at construction.
-_READABLE = [0.7, np.float32(0.7), np.int64(1), np.array(0.7), Fraction(7, 10), lambda x: 0.7]
-_READABLE_IDS = ["float", "float32", "int64", "0-d", "Fraction", "callable"]
+# A size-1 array is its element (#2512 row B2, ruling): FEM refused it until then.
+_READABLE = [0.7, np.float32(0.7), np.int64(1), np.array(0.7), np.array([0.7]), Fraction(7, 10), lambda x: 0.7]
+_READABLE_IDS = ["float", "float32", "int64", "0-d", "size-1", "Fraction", "callable"]
 _UNREADABLE = [
     ConstantProvider(0.7),
     "0.7",
-    np.array([0.7]),
+    np.array([0.7, 0.7]),
     Decimal("0.7"),
     float("nan"),
     np.inf,
     np.array(0.7 + 0j),
+    np.complex128(1j),
     True,
     np.True_,
     np.array(True),
@@ -193,11 +195,12 @@ _UNREADABLE = [
 _UNREADABLE_IDS = [
     "provider",
     "str",
-    "1-d",
+    "2-element",
     "Decimal",
     "nan",
     "inf",
     "complex",
+    "imaginary",
     "bool",
     "np.bool_",
     "0-d bool",
@@ -207,7 +210,9 @@ _UNREADABLE_IDS = [
 
 
 def _as_number(value) -> float:
-    return float(value(np.zeros(1))) if callable(value) else float(value)
+    if callable(value):
+        return float(value(np.zeros(1)))
+    return float(np.asarray(value).reshape(-1)[0]) if isinstance(value, np.ndarray) else float(value)
 
 
 @pytest.mark.parametrize("value", _READABLE, ids=_READABLE_IDS)
@@ -241,7 +246,9 @@ def test_fem_refuses_a_dirichlet_value_it_cannot_read(route, value):
     else:
         problem = _problem(_mesh(1), _exit(1, value))
         build = lambda: HJBFEMSolver(problem)  # noqa: E731
-    with pytest.raises(NotImplementedError, match=r"Dirichlet segment 'exit' has a (value of type|non-finite|boolean)"):
+    with pytest.raises(
+        NotImplementedError, match=r"Dirichlet segment 'exit' has a (value of type|non-finite|boolean|complex)"
+    ):
         build()
 
 

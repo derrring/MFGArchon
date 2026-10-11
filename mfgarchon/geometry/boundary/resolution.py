@@ -169,7 +169,9 @@ def _resolve_passthrough(seg: BCSegment) -> ResolvedBC | None:
     if math_type is None:
         return None
 
-    value = float(seg.value) if isinstance(seg.value, (int, float)) else 0.0
+    from .types import segment_value
+
+    value = segment_value(seg, t=None, x=None, where=f"the BC resolver's passthrough of segment {seg.name!r}")
     return ResolvedBC(
         math_type=math_type,
         value=value,

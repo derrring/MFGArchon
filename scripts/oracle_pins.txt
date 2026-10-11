@@ -132,6 +132,20 @@ pin    fp_fem/shared_robin_refused tests/unit/test_alg/test_fp_refuses_a_shared_
 
 # The (b) rows
 row grid/B1_face_segment            -
+# Row B2 is not met by its first half (B2a): one evaluation of a segment's value is its target, and a decoder is
+# still allowlisted (FP-FDM's `_get_dirichlet_value_at_point`, D8) and GFDM's dict channel is unrouted (#2597).
+# B2a lands the guard as a ratchet and the family pins. B2b fills the row when
+#   (a) the guard's allowlist holds no decoder, under a guard that covers both of the census's predicates: today's
+#       `.value` reads, and a value passed into a helper that tests `callable(v)` and calls it (D5, D16, D22-D26);
+#   (b) #2535 and #2538, which the row closes (#2512 comment 6054006841), are closed: D1 has no time default, so a
+#       reader with no time cannot pass one, and an FP-FDM oracle on g(t) reaches every FP-FDM reader handed a time
+#       (D6, D8, D9), as a call counter on the owner shows. Today D9 and D8's mixed path are routed but read t = 0
+#       through D1's default, which (a) alone cannot see;
+#   (c) a Robin segment's alpha and beta are read through the owner's constant contract, a callable one refused
+#       naming #1237, and the readers' own float() and getattr defaults removed.
+# (Audit session rulings, 2026-10-11, correcting the plan's section 5 in #2512 comment 6104689754.)
+row grid/B2_value_form_and_time     tests/unit/test_geometry/boundary/test_value_has_one_owner_2512.py
+row grid/B2_value_form_and_time     tests/unit/test_geometry/boundary/test_boundary_value_owner_2512.py
 row grid/B2_value_form_and_time     -
 # Row B3's guard covers the coupling layer too: BlockIterator's "auto" adjoint mode, one of the two readers
 # it awaited, is removed, and RegimeSwitchingIterator's fallback reads the FP solver's owner path (#2529).

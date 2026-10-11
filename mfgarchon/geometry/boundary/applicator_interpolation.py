@@ -49,7 +49,7 @@ from .enforcement import (
     enforce_periodic_value_nd,
     enforce_robin_value_nd,
 )
-from .types import BCType
+from .types import BCType, segment_value
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -348,10 +348,7 @@ class InterpolationApplicator(BaseBCApplicator):
             boundary = seg.boundary
             matches = boundary is None or (isinstance(boundary, str) and boundary.lower() == boundary_name)
             if matches:
-                if callable(seg.value):
-                    return float(seg.value(time))
-                elif seg.value is not None:
-                    return float(seg.value)
+                return segment_value(seg, t=time, x=None, where=f"the interpolation applicator on face {boundary_name}")
 
         return None
 

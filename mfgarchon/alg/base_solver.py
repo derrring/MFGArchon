@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from mfgarchon.utils.deprecation import deprecated
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
@@ -487,6 +489,11 @@ class BaseOptimizationSolver(BaseMFGSolver):
     def compute_gradient(self, variables: Any) -> Any:
         """Compute the gradient of the objective function."""
 
+    @deprecated(
+        since="v0.22.0",
+        replacement="BoundaryConditions.segments, read through mfgarchon.geometry.boundary.types.segment_value",
+        reason="it has no caller, and it passes each segment's raw value outward unread (#2512 row B2)",
+    )
     def get_domain_constraints(self) -> list[dict[str, Any]]:
         """
         Generate optimization constraints from boundary conditions.
@@ -619,6 +626,12 @@ class BaseNeuralSolver(BaseMFGSolver):
 
         return np.vstack(boundary_points)
 
+    @deprecated(
+        since="v0.22.0",
+        replacement="mfgarchon.geometry.boundary.types.segment_value",
+        reason="it has no caller, and for a BoundaryConditions it always returns None: it reads attributes that "
+        "class does not have (#2512 row B2)",
+    )
     def get_boundary_target_values(
         self,
         boundary_points: NDArray[np.floating],
@@ -644,14 +657,21 @@ class BaseNeuralSolver(BaseMFGSolver):
         except (AttributeError, NotImplementedError):
             pass
 
-        # Try scalar value
         try:
             value = bc.value
-            if callable(value):
-                return np.array([value(p, time) for p in boundary_points])
-            return np.full(len(boundary_points), value)
         except AttributeError:
             return None
+        # Read through the one owner (#2512 row B2): a callable is g(t, x), time first, one point at a time.
+        from mfgarchon.geometry.boundary.types import boundary_value
+
+        return np.array(
+            [
+                boundary_value(
+                    value, kind="bc.value", t=time, x=np.asarray(p, dtype=float), where="get_boundary_target_values"
+                )
+                for p in boundary_points
+            ]
+        )
 
 
 class BaseRLSolver(BaseMFGSolver):

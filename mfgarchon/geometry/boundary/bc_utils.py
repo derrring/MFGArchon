@@ -257,18 +257,18 @@ def refuse_unplaceable_segments(
 
 def _ghost_effect(segment: Any, time: float) -> tuple:
     """What the FDM ghosts impose for ``segment``: its arm in `_write_wall_ghosts`, and the datum that arm reads."""
-    from .applicator_fdm import segment_value
-    from .types import BCType
+    from .types import BCType, segment_value
 
     bc_type = segment.bc_type
+    where = f"the FDM ghost check of segment {segment.name!r}"
     if bc_type == BCType.DIRICHLET:
-        return ("dirichlet", float(segment_value(segment, time)))
+        return ("dirichlet", segment_value(segment, t=time, x=None, where=where))
     if bc_type == BCType.NEUMANN:
-        return ("flux", float(segment_value(segment, time)))
+        return ("flux", segment_value(segment, t=time, x=None, where=where))
     if bc_type in (BCType.NO_FLUX, BCType.REFLECTING):
         return ("flux", 0.0)
     if bc_type == BCType.ROBIN:
-        return ("robin", float(segment.alpha), float(segment.beta), float(segment_value(segment, time)))
+        return ("robin", float(segment.alpha), float(segment.beta), segment_value(segment, t=time, x=None, where=where))
     return (bc_type.value,)
 
 
@@ -358,7 +358,9 @@ def _describe_bc_value(value: Any) -> object | None:
 
     ``float()`` is reached only for things it accepts: an array or a provider would otherwise raise
     TypeError out of a capability gate, and an all-zero array is a legitimate ``g = 0`` that must not
-    crash.
+    crash. A complex value, zero included, is not verifiably zero: a boundary datum is real, and ``float()``
+    on a NumPy complex scalar drops the imaginary part, which read ``np.complex128(1j)`` as zero. The value
+    owner (`types.boundary_value`) refuses complex too, so the two give one verdict (#2512 row B2).
     """
     import numpy as np
 
@@ -370,6 +372,8 @@ def _describe_bc_value(value: Any) -> object | None:
         return "<provider>"
     if callable(value):
         return "<callable>"
+    if np.iscomplexobj(value):
+        return f"<complex {value!r}>"
     if isinstance(value, np.ndarray):
         return None if not value.any() else "<array>"
     try:

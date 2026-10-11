@@ -69,6 +69,9 @@ class Slots:
 POTENTIAL_SLOTS = Slots(("t", "x"))
 # `u_terminal` / `m_initial`: read at T and at 0 when they declare time (#2431).
 CONDITION_SLOTS = Slots(("t", "x"))
+# A boundary segment's value g: time first, so a reader that called it (x, t) before #2512 row B2 refuses rather
+# than swaps a callable written in that order (user ruling).
+BOUNDARY_VALUE_SLOTS = Slots(("t", "x"))
 SOURCE_TERM_SLOTS = Slots(("t", "x", "v", "m"), aliases={"m_t": "m", "v_t": "v"}, unmoved=("v",), swapped=("v", "m"))
 MEASURE_FIELD_SLOTS = Slots(("t", "x", "mu"))
 HAMILTONIAN_SLOTS = Slots(("t", "x", "p", "m"), unmoved=("p",), swapped=("p", "m"), required=("t", "x", "p", "m"))
@@ -188,6 +191,10 @@ def bind_user_callable(
             f": none of its parameters is named after a slot whose position #2375 ruling 8 changed, so they "
             f"read the same in the old order and the new. Name them {', '.join(order_)}."
         )
+    elif slots.reordered:
+        # A reordered role binds a positional callable only if a parameter name says which order it is in, so
+        # "take them positionally" would lead an unnamed callable into the refusal above (#2512 row B2).
+        why = f". Name its parameters {', '.join(order_)}, time first (#2378 phase 5, #2375 ruling 8)."
     else:
         why = f". Name its parameters {', '.join(order_)}, or take exactly {len(order_)} positionally in that order."
     raise TypeError(

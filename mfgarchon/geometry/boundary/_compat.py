@@ -153,7 +153,7 @@ def get_ghost_values_nd(
 
     if not is_mixed:
         # Uniform BC - same type on all boundaries
-        bc_type, bc_value = _get_bc_type_and_value(boundary_conditions)
+        bc_type, bc_value = _get_bc_type_and_value(boundary_conditions, time)
 
         for axis in range(d):
             dx = spacing[axis]
@@ -299,9 +299,7 @@ def _compute_ghost_pair(
     beta: float = 0.0,
 ) -> tuple[NDArray, NDArray]:
     """Compute ghost values for both boundaries with same BC type."""
-    g = bc_value if bc_value is not None else 0.0
-    if callable(g):
-        g = g(time)
+    g = bc_value  # read by the owner before it gets here, `segment_value` or `boundary_value` (#2512 row B2)
 
     if bc_type == BCType.PERIODIC:
         return u_int_right.copy(), u_int_left.copy()
@@ -362,9 +360,7 @@ def _compute_single_ghost(
         time: Current time
         config: Ghost cell configuration
     """
-    g = bc_value if bc_value is not None else 0.0
-    if callable(g):
-        g = g(time)
+    g = bc_value  # read by the owner before it gets here, `segment_value` or `boundary_value` (#2512 row B2)
 
     if bc_type == BCType.PERIODIC:
         # For mixed BC with periodic, this shouldn't normally happen
@@ -400,20 +396,18 @@ def _get_bc_value_at_boundary(
     time: float,
 ) -> float | None:
     """Get BC value at a specific boundary for mixed BCs."""
-    # Find segment that matches this boundary
+    from .types import boundary_value, segment_value
+
+    where = f"get_ghost_values_nd on face {boundary}"
     for segment in bc.segments:
         if segment.boundary == boundary:
-            val = segment.value
-            if callable(val):
-                return val(time)
-            return val
-
-    # Fall back to default value
-    return bc.default_value
+            return segment_value(segment, t=time, x=None, where=where)
+    return boundary_value(bc.default_value, kind="default_value", t=time, x=None, where=where)
 
 
 def _get_bc_type_and_value(
     boundary_conditions: BoundaryConditions | LegacyBoundaryConditions1D,
+    time: float,
 ) -> tuple[BCType, float | None]:
     """Extract BC type and value from unified or legacy BC specification."""
     if isinstance(boundary_conditions, LegacyBoundaryConditions1D):
@@ -421,7 +415,17 @@ def _get_bc_type_and_value(
         if bc_type_str == "periodic":
             return BCType.PERIODIC, None
         elif bc_type_str == "dirichlet":
-            return BCType.DIRICHLET, boundary_conditions.left_value
+            from .types import boundary_value
+
+            # Through the one owner too (#2512 row B2): `_compute_ghost_pair` no longer decodes what it is handed.
+            value = boundary_value(
+                boundary_conditions.left_value,
+                kind="BoundaryConditions1DFDM.left_value",
+                t=time,
+                x=None,
+                where="get_ghost_values_nd (legacy)",
+            )
+            return BCType.DIRICHLET, value
         elif bc_type_str in ["no_flux", "neumann"]:
             return BCType.NO_FLUX, 0.0
         else:
@@ -430,10 +434,8 @@ def _get_bc_type_and_value(
     if not isinstance(boundary_conditions, BoundaryConditions):
         raise TypeError(f"Unsupported BC type: {type(boundary_conditions)}")
 
-    if boundary_conditions.is_uniform:
-        seg = boundary_conditions.segments[0]
-        return seg.bc_type, seg.value
+    from .types import segment_value
 
-    # Mixed BC - return default type (first segment)
+    # Uniform, or mixed read by its first segment, as before; the value through the one owner (#2512 row B2).
     seg = boundary_conditions.segments[0]
-    return seg.bc_type, seg.value
+    return seg.bc_type, segment_value(seg, t=time, x=None, where="get_ghost_values_nd (uniform)")

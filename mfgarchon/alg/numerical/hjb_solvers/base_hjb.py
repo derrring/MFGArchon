@@ -202,7 +202,7 @@ def _get_bc_info_1d(
     Returns:
         Tuple (BCType, value, alpha, beta)
     """
-    from mfgarchon.geometry.boundary.types import BoundaryFace
+    from mfgarchon.geometry.boundary.types import BoundaryFace, segment_value
 
     target_face = BoundaryFace(0, "min" if side == "left" else "max")
     default_alpha, default_beta = 1.0, 0.0
@@ -212,10 +212,9 @@ def _get_bc_info_1d(
     for seg in bc.segments:
         seg_face = seg.face
         if seg_face is not None and seg_face == target_face:
-            value = seg.value
-            if callable(value):
-                value = value(time)
-            value = value if value is not None else 0.0
+            value = segment_value(
+                seg, t=time, x=None, where=f"the 1-D HJB boundary read of face {target_face.to_string()}"
+            )
             alpha = getattr(seg, "alpha", default_alpha)
             beta = getattr(seg, "beta", default_beta)
             return seg.bc_type, value, alpha, beta

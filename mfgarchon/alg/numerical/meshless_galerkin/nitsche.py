@@ -239,31 +239,15 @@ def _segment_quadrature(faces, disc, bounds, n_gauss):
     return boundary_tensor_gauss(bounds, faces, n_cells=n_cells, n_gauss=n_gauss)
 
 
-def _evaluate_g(value, x_b: NDArray) -> NDArray:
-    """Prescribed Dirichlet value at boundary points: a real number, a callable ``g(x)``, or anything the
-    one owner of "verifiably zero" (`bc_utils._describe_bc_value`) counts as zero -- ``None``,
-    ``np.int64(0)``, ``np.zeros(1)``. The FP reads the translated BC, which leaves such a value as it is,
-    so a narrower test here would refuse a zero the translator already accepted."""
-    import numbers
+def _evaluate_g(segment, x_b: NDArray) -> NDArray:
+    """A segment's prescribed Dirichlet value at boundary points, read by the one owner (`segment_value`, #2512
+    row B2): a constant, or a callable ``g(x)`` -- this assembly has no time to pass."""
+    from mfgarchon.geometry.boundary.types import segment_value
 
-    from mfgarchon.geometry.boundary.bc_utils import _describe_bc_value
-
-    if np.iscomplexobj(value):
-        # `float()` on a NumPy complex drops the imaginary part with only a ComplexWarning, and
-        # `_describe_bc_value` reads 1j as zero that way: refused, not truncated.
-        raise NotImplementedError(
-            f"Dirichlet value {value!r} is complex; the meshless Nitsche path takes a real g (#2490)."
-        )
-    if _describe_bc_value(value) is None:
-        return np.zeros(x_b.shape[0])
-    if isinstance(value, numbers.Real) or (isinstance(value, np.ndarray) and value.size == 1):
-        return np.full(x_b.shape[0], float(np.asarray(value).reshape(-1)[0]))
-    if callable(value):
-        return np.array([float(value(x)) for x in x_b], dtype=np.float64)
-    raise NotImplementedError(
-        f"Dirichlet value of type {type(value).__name__} is unsupported in the meshless Nitsche "
-        "path; use a float or a callable g(x) (#1138)."
-    )
+    where = f"the meshless Nitsche assembly of segment {segment.name!r}"
+    if callable(segment.value):
+        return np.array([segment_value(segment, t=None, x=x, where=where) for x in x_b], dtype=np.float64)
+    return np.full(x_b.shape[0], segment_value(segment, t=None, x=None, where=where), dtype=np.float64)
 
 
 def assemble_nitsche_terms(
@@ -301,7 +285,7 @@ def assemble_nitsche_terms(
         xs.append(x_b)
         ws.append(w_b)
         ns.append(n_b)
-        gs.append(_evaluate_g(s.value, x_b))
+        gs.append(_evaluate_g(s, x_b))
 
     x_b = np.vstack(xs)
     w_b = np.concatenate(ws)

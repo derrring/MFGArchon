@@ -39,7 +39,7 @@ from mfgarchon.geometry.protocol import GeometryProtocol
 # Import base class for inheritance
 from .applicator_base import BaseMeshfreeApplicator
 from .applicator_particle import particle_action_for_bc_type
-from .types import BCType
+from .types import BCType, boundary_value
 
 
 def _robin_alpha_beta(boundary_conditions) -> tuple[float, float]:
@@ -226,7 +226,7 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
         field: NDArray[np.floating],
         points: NDArray[np.floating],
         bc_type: Literal["dirichlet", "neumann", "penalty"] = "dirichlet",
-        bc_value: float | Callable[[NDArray], float] = 0.0,
+        bc_value: float | Callable[..., float] = 0.0,
         penalty_weight: float = 1e6,
     ) -> NDArray[np.floating]:
         """
@@ -239,7 +239,10 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
                 - "dirichlet": Set field to bc_value at boundary
                 - "neumann": Set normal derivative to bc_value (requires additional ops)
                 - "penalty": Add penalty term pushing field toward bc_value
-            bc_value: Boundary value (float or callable(points) -> float)
+            bc_value: Boundary value: a number, or a function ``g(x)`` of one point ``x`` of shape ``(d,)``, a def
+                or a lambda. Its parameter must be named ``x``: it is bound by name (#2512 row B2), and this method
+                has no time to pass, so one that declares ``t`` is refused. Another callable, such as a SciPy
+                interpolant over space, is refused too; wrap it, ``lambda x: s(x[0])``.
             penalty_weight: Weight for penalty method
 
         Returns:
@@ -260,11 +263,18 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
             return field
 
         # Get boundary value
+        # Read through the one owner (#2512 row B2): a callable is g(x) here -- this reader has no time.
+        where = "MeshfreeApplicator.apply_field_bc"
         if callable(bc_value):
             boundary_points = points[on_boundary]
-            boundary_values = np.array([bc_value(p) for p in boundary_points])
+            boundary_values = np.array(
+                [
+                    boundary_value(bc_value, kind="bc_value", t=None, x=np.asarray(p, dtype=float), where=where)
+                    for p in boundary_points
+                ]
+            )
         else:
-            boundary_values = bc_value
+            boundary_values = boundary_value(bc_value, kind="bc_value", t=None, x=None, where=where)
 
         if bc_type == "dirichlet":
             field[on_boundary] = boundary_values
@@ -387,9 +397,9 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
 
         if bc_type == BCType.DIRICHLET:
             # Get Dirichlet value
-            bc_value = boundary_conditions.default_value
-            if bc_value is None:
-                bc_value = 0.0
+            bc_value = boundary_value(
+                boundary_conditions.default_value, kind="default_value", t=time, x=None, where="the meshfree applicator"
+            )
             field[on_boundary] = bc_value
 
         elif bc_type == BCType.NEUMANN:
@@ -403,9 +413,9 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
             # Robin BC: α*u + β*du/dn = g
             # For meshfree without derivative info, use penalty approximation
             alpha, beta = _robin_alpha_beta(boundary_conditions)
-            bc_value = boundary_conditions.default_value
-            if bc_value is None:
-                bc_value = 0.0
+            bc_value = boundary_value(
+                boundary_conditions.default_value, kind="default_value", t=time, x=None, where="the meshfree applicator"
+            )
 
             if np.isclose(beta, 0.0):
                 # Pure Dirichlet: u = g/α

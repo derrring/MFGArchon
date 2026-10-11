@@ -338,12 +338,28 @@ def test_the_public_factory_path_assembles():
         ("5", False),
         (b"5", False),
         (np.array("5"), False),
-        (np.array([5.0]), False),
+        (np.array([5.0]), True),  # a size-1 array is its element (#2512 row B2, ruling)
+        (np.array([5.0, 5.0]), False),
         (Decimal("0.5"), False),
         (float("nan"), False),
         (np.float64("inf"), False),
     ],
-    ids=["5.0", "f64", "f32", "i64", "arr0d", "frac", "str", "bytes", "strarr", "arr1d", "decimal", "nan", "inf"],
+    ids=[
+        "5.0",
+        "f64",
+        "f32",
+        "i64",
+        "arr0d",
+        "frac",
+        "str",
+        "bytes",
+        "strarr",
+        "arr1d",
+        "arr2",
+        "decimal",
+        "nan",
+        "inf",
+    ],
 )
 def test_the_value_guard_admits_real_numbers_and_nothing_else(value, accepted):
     """The guard itself, which an adversarial review found pinned by NOTHING -- 4 of 4 mutations
@@ -355,7 +371,8 @@ def test_the_value_guard_admits_real_numbers_and_nothing_else(value, accepted):
     a branch.** So this one carries non-zero values, which is the only way to reach the guard at all.
 
     What it pins: real numbers in (including numpy scalars, 0-d numeric arrays and `Fraction`),
-    string-shaped and non-real carriers out (`Decimal` is not `numbers.Real`), 1-d arrays out, and
+    string-shaped and non-real carriers out (`Decimal` is not `numbers.Real`), a size-1 array in as its element
+    (#2512 row B2) and a longer one out, and
     **non-finite out** -- a NaN datum otherwise assembles a NaN load and every downstream solve
     returns NaN with no error.
     """
@@ -376,7 +393,8 @@ def test_the_value_guard_admits_real_numbers_and_nothing_else(value, accepted):
         assert rhs is not None, f"{value!r} is a real number and must assemble a load"
         assert np.isfinite(rhs).all(), f"{value!r} assembled a non-finite load: {rhs.sum()}"
     else:
-        with pytest.raises(NotImplementedError, match="non-constant value"):
+        # The value is read by the one owner (#2512 row B2), which names what it cannot read.
+        with pytest.raises(NotImplementedError, match=r"has a (value of type|non-finite)"):
             assemble_robin_terms(basis, bc, 0.125, natural_bc="gradient")
 
 
