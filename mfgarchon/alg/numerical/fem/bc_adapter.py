@@ -475,7 +475,9 @@ def assemble_robin_terms(
         else:
             # The coefficients are read by the one owner (#2512 row B2): a constant each, by the constant contract; a
             # callable refused naming #1237, and a provider with no iteration state to resolve it refused (#1979).
-            alpha, beta = segment_robin_coefficients(segment, where=where)
+            alpha, beta = segment_robin_coefficients(
+                segment, where=f"the FEM Robin operator of segment {segment.name!r}"
+            )
             if beta == 0.0:
                 raise NotImplementedError(
                     f"Robin segment '{segment.name}' has beta=0, i.e. a pure Dirichlet condition "

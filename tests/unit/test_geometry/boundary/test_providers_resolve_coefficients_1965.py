@@ -115,9 +115,10 @@ def test_a_coefficient_provider_may_return_a_field(state):
     """The reason the `float()` coercion had to go. The Robin coefficient of a reflecting FP wall
     varies along the boundary; a scalar cannot hold it.
 
-    This pins the resolution side only: `with_resolved_providers` keeps the field. Every reader refuses it, through
-    `segment_robin_coefficients`, until #2600 builds the per-node capability (#2512 row B2), so this is not evidence
-    that a field coefficient is solved with end to end."""
+    This pins the resolution side only: `with_resolved_providers` keeps the field. Every reader of a Robin coefficient
+    refuses it, through `segment_robin_coefficients`, until #2600 builds the per-node capability (#2512 row B2), so
+    this is not evidence that a field coefficient is solved with end to end. (The particle applicator's classifier,
+    which reads only beta's sign, is not such a reader.)"""
     seg = _one_segment(alpha=_FieldProvider()).with_resolved_providers(state).segments[0]
 
     assert isinstance(seg.alpha, np.ndarray), "a field coefficient must survive resolution"

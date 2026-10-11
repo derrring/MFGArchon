@@ -1367,7 +1367,8 @@ class PreallocatedGhostBuffer:
             # Robin(0, 1, value) (pure-Neumann special case).
             where = "the FDM ghost layer of every face"
             value = segment_value(seg, t=time, x=None, where=where)
-            alpha, beta = segment_robin_coefficients(seg, where=where)
+            # Only a Robin segment's coefficients are read: `_update_ghosts_uniform` uses them in its Robin arm alone.
+            alpha, beta = segment_robin_coefficients(seg, where=where) if seg.bc_type == BCType.ROBIN else (1.0, 0.0)
             self._update_ghosts_uniform(seg.bc_type, value, time, alpha, beta)
         else:
             # Mixed BC requires more complex per-point updates

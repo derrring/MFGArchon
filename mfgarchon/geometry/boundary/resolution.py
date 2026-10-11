@@ -160,7 +160,7 @@ _PASSTHROUGH_MAP: dict[BCType, MathBCType] = {
 }
 
 
-def _resolve_passthrough(seg: BCSegment) -> ResolvedBC | None:
+def _resolve_passthrough(seg: BCSegment, state: dict[str, Any] | None = None) -> ResolvedBC | None:
     """Resolve BC types that are equation-independent.
 
     Returns None if the BCType requires equation-specific resolution.
@@ -172,8 +172,12 @@ def _resolve_passthrough(seg: BCSegment) -> ResolvedBC | None:
     from .types import segment_robin_coefficients, segment_value
 
     where = f"the BC resolver's passthrough of segment {seg.name!r}"
-    value = segment_value(seg, t=None, x=None, where=where)
-    alpha, beta = segment_robin_coefficients(seg, where=where)
+    value = segment_value(seg, t=None, x=None, where=where, state=state)
+    # Only a Robin segment's coefficients are read; a resolved BC of another type carries the field defaults, which
+    # its consumers read only in their Robin arm.
+    alpha, beta = (
+        segment_robin_coefficients(seg, where=where, state=state) if seg.bc_type == BCType.ROBIN else (1.0, 0.0)
+    )
     return ResolvedBC(
         math_type=math_type,
         value=value,
@@ -201,22 +205,11 @@ class HJBResolver:
     ) -> ResolvedBC:
         """Resolve a BCSegment for HJB equation."""
         # Check passthrough types first
-        result = _resolve_passthrough(segment)
+        # A provider on a passthrough segment (a Robin value, say) is resolved there, with the state, by the one owner
+        # (#2512 row B2). #2598 read it with no state, so the provider was refused and this resolver's own provider
+        # branch never ran (review 1 of #2601, C6); b10b9e65 resolved it here.
+        result = _resolve_passthrough(segment, state=solver_state)
         if result is not None:
-            # For passthrough Robin with a provider value, resolve it
-            if result.math_type == MathBCType.ROBIN and is_provider(segment.value):
-                from .types import segment_robin_coefficients, segment_value
-
-                where = f"the HJB resolver's Robin segment {segment.name!r}"
-                alpha, beta = segment_robin_coefficients(segment, where=where, state=solver_state)
-                return ResolvedBC(
-                    math_type=MathBCType.ROBIN,
-                    value=segment_value(segment, t=None, x=None, where=where, state=solver_state),
-                    alpha=alpha,
-                    beta=beta,
-                    segment_name=segment.name,
-                    original_bc_type=segment.bc_type,
-                )
             return result
 
         # Equation-specific: NO_FLUX and REFLECTING
@@ -316,7 +309,7 @@ class FPResolver:
                 cannot be allowed to be the silent option.
         """
         # Check passthrough types first
-        result = _resolve_passthrough(segment)
+        result = _resolve_passthrough(segment, state=solver_state)
         if result is not None:
             return result
 
