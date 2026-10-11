@@ -196,12 +196,13 @@ def is_pure_neumann(bc: BoundaryConditions | None) -> bool:
 
 
 def _segment_boundary_facets(mesh: skfem.Mesh, segment: BCSegment) -> NDArray:
-    """The boundary facets a segment's DOFs come from: its named boundary, or the whole boundary for ``None``.
+    """The boundary facets a segment governs: its named boundary, or the whole boundary for ``None``.
 
-    One rule for the Dirichlet DOFs (`_find_segment_dofs`) and for what a ``default_bc`` is left to govern
-    (`refuse_what_fem_cannot_impose`). Only the ``boundary`` name is read. A segment also placed by
-    ``region``, ``region_name``, ``sdf_region`` or ``normal_direction`` resolves as its ``boundary`` face
-    if it names one -- the whole face, not the placed part -- and as the whole boundary if it names none.
+    One rule for the Dirichlet DOFs (`_find_segment_dofs`), the ROBIN and NEUMANN(g) facets
+    (`_find_segment_facets`), and what a ``default_bc`` is left to govern (`refuse_what_fem_cannot_impose`).
+    Only the ``boundary`` name is read. A segment also placed by ``region``, ``region_name``, ``sdf_region`` or
+    ``normal_direction`` resolves as its ``boundary`` face if it names one -- the whole face, not the placed
+    part -- and as the whole boundary if it names none.
 
     A name must be a tag that holds facets. A tag the mesh carries with no facet in it is refused as a missing
     one: the axis tags are placed by bounding box (`mesh_adapter._tag_axis_aligned_boundaries`), so on a domain
@@ -370,21 +371,14 @@ def dirichlet_constant(segment: BCSegment) -> float:
 
 
 def _find_segment_facets(mesh: skfem.Mesh, segment) -> NDArray:
-    """Return the boundary-facet indices for a BCSegment on the skfem mesh.
+    """Boundary-facet indices for a BCSegment (for ``FacetBasis``), from `_segment_boundary_facets`.
 
-    Mirrors :func:`_find_segment_dofs` but returns FACET indices (for ``FacetBasis``),
-    not DOF indices: a Robin term integrates over facets, not nodes. Uses the
-    ``segment.boundary`` name to look up ``mesh.boundaries`` (axis-aligned walls are tagged
-    by ``meshdata_to_skfem``; #607), falling back to all boundary facets when the mesh is
-    untagged or the name is unknown.
+    Mirrors :func:`_find_segment_dofs` but returns FACET indices: a Robin term integrates over facets, not nodes.
+    One facet rule for every segment type (#2595, rows 2 and 7). This used to fall back to the whole boundary on a
+    name the mesh does not tag, or on any name when the mesh is untagged, and to place nothing on a tag that holds
+    no facet; each of those raises now.
     """
-    boundary_name = getattr(segment, "boundary", None)
-
-    if boundary_name and mesh.boundaries and boundary_name in mesh.boundaries:
-        return np.asarray(mesh.boundaries[boundary_name], dtype=np.int64)
-
-    # Fallback: integrate over the whole boundary.
-    return np.asarray(mesh.boundary_facets(), dtype=np.int64)
+    return np.asarray(_segment_boundary_facets(mesh, segment), dtype=np.int64)
 
 
 def assemble_robin_terms(
