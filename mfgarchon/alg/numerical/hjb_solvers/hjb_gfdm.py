@@ -36,7 +36,7 @@ from mfgarchon.geometry.boundary.conditions import BoundaryConditions
 from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL
 from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace
 from mfgarchon.types.callable_protocols import evaluate_solver_source
-from mfgarchon.utils.deprecation import deprecated_value
+from mfgarchon.utils.deprecation import WRAPPER_FRAMES, deprecated_value
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.qp_utils import QPCache, QPSolver
 from mfgarchon.utils.pde_coefficients import (
@@ -254,7 +254,14 @@ class HJBGFDMSolver(BaseHJBSolver):
         kwargs.update(extra)
         return cls(problem, collocation_points, **kwargs)
 
-    @deprecated_value("boundary_conditions", {dict: "BoundaryConditions"}, since="v0.22.0", deprecated_on="2026-10-11")
+    @deprecated_value(
+        "boundary_conditions",
+        {dict: "BoundaryConditions"},
+        since="v0.22.0",
+        deprecated_on="2026-10-11",
+        # The equivalence test is `test_a_dict_bc_solves_as_the_boundary_conditions_it_spells` (#2597).
+        removal_blockers=["internal_usage", "migration_docs"],
+    )
     def __init__(
         self,
         problem: MFGProblem,
@@ -546,6 +553,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 "to suppress this warning if the bare scheme is intentional.",
                 UserWarning,
                 stacklevel=2,
+                skip_file_prefixes=WRAPPER_FRAMES,  # past `deprecated_value`'s wrapper (#2579)
             )
 
         if monotonicity_scheme is not None or monotonicity_application is not None:
@@ -603,6 +611,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                     f"'precompute'. Adaptive/always strategies are tracked for a "
                     f"follow-up PR.",
                     stacklevel=2,
+                    skip_file_prefixes=WRAPPER_FRAMES,  # past `deprecated_value`'s wrapper (#2579)
                 )
 
         # Method name
@@ -802,6 +811,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                     f"Using k_min={n_derivatives_required} instead.",
                     UserWarning,
                     stacklevel=2,
+                    skip_file_prefixes=WRAPPER_FRAMES,  # past `deprecated_value`'s wrapper (#2579)
                 )
                 self.k_min = n_derivatives_required
             else:
@@ -849,6 +859,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 "Ghost nodes take precedence and LCR will be disabled for boundary points.",
                 UserWarning,
                 stacklevel=2,
+                skip_file_prefixes=WRAPPER_FRAMES,  # past `deprecated_value`'s wrapper (#2579)
             )
 
         # Wind-dependent BC requires ghost nodes

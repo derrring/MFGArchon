@@ -199,7 +199,8 @@ def test_a_dict_bc_solves_as_the_boundary_conditions_it_spells(kind: str, form: 
 
 
 def test_a_dict_bc_the_translation_cannot_spell_is_refused():
-    """#2597: what a BoundaryConditions has no form for is refused when the dict is translated, by name."""
+    """#2597: what a BoundaryConditions has no form for is refused when the dict is translated, by name. A no-flux or
+    periodic dict with no value, or a zero one, still translates, as the deprecated form keeps working."""
     problem, x = _small_problem()
     refused = (
         ({"type": "dirichlet", "values": [0.1] * 11}, NotImplementedError, r'per-point "values" \(a list\).*#2600'),
@@ -218,4 +219,13 @@ def test_a_dict_bc_the_translation_cannot_spell_is_refused():
             pytest.warns(DeprecationWarning, match="A dict for parameter 'boundary_conditions'"),
             pytest.raises(error, match=message),
         ):
+            HJBGFDMSolver(problem, collocation_points=x, boundary_conditions=bc, **_NEWTON)
+    accepted = (
+        {"type": "no_flux"},
+        {"type": "no_flux", "values": 0},
+        {"type": "periodic"},
+        {"type": "periodic", "values": 0.0},
+    )
+    for bc in accepted:
+        with pytest.warns(DeprecationWarning, match="A dict for parameter 'boundary_conditions'"):
             HJBGFDMSolver(problem, collocation_points=x, boundary_conditions=bc, **_NEWTON)

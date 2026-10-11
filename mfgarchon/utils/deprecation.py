@@ -222,6 +222,7 @@ def deprecated_value(
     since: str,
     removal: str = "v0.25.0",
     deprecated_on: str | None = None,
+    removal_blockers: list[str] | None = None,
 ) -> Callable[[F], F]:
     """
     Mark specific parameter values as deprecated, with automatic remapping.
@@ -245,6 +246,8 @@ def deprecated_value(
         removal: Version when deprecated values will stop working
         deprecated_on: ISO date (``YYYY-MM-DD``) this deprecation was added. Optional; enables
             the 6-month removal criterion when set.
+        removal_blockers: Conditions preventing removal (default: the standard checklist, as for
+            `deprecated_parameter`).
 
     Example:
         >>> @deprecated_value(
@@ -262,6 +265,9 @@ def deprecated_value(
         remapped value directly -- no manual redirect logic needed.
     """
 
+    if removal_blockers is None:
+        removal_blockers = ["internal_usage", "equivalence_test", "migration_docs"]
+
     def decorator(func: F) -> F:
         # Store value deprecation metadata
         if getattr(func, "_deprecated_values", None) is None:
@@ -274,6 +280,7 @@ def deprecated_value(
                 "since": since,
                 "removal": removal,
                 "deprecated_on": deprecated_on,
+                "removal_blockers": removal_blockers,
             }
         )
 
