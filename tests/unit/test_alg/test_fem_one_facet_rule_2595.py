@@ -67,7 +67,7 @@ def _bc(dimension: int, *segments: BCSegment) -> BoundaryConditions:
 
 def _solve(route: str, domain, bc: BoundaryConditions):
     """HJB-FEM with ``bc`` as the shared BC (u(t, x), terminal 0, M = 1), or FP-FEM with ``bc`` as its own BC and a
-    no-flux shared one (m(t, x), m0 = 1). Returns the DOF x-coordinates and the field at every time level."""
+    no-flux shared one (m(t, x), m0 = 1). Returns the solver and the field at every time level."""
     from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
     from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
     from mfgarchon.geometry.meshes.mesh_1d import Mesh1D
@@ -88,7 +88,7 @@ def _solve(route: str, domain, bc: BoundaryConditions):
         solver = FPFEMSolver(problem, order=1, boundary_conditions=bc)
         n = solver._disc.dof_coordinates.shape[0]
         field = solver.solve_fp_system(M_initial=np.ones(n), potential_field=None)
-    return solver._disc.dof_coordinates[:, 0], np.asarray(field)
+    return solver, np.asarray(field)
 
 
 @pytest.mark.parametrize(("route", "kind"), _REACH, ids=_REACH_IDS)
@@ -102,8 +102,9 @@ def test_a_load_named_by_an_alias_is_refused_and_one_named_by_its_tag_stays_on_i
     ):
         _solve(route, _interval, _bc(1, _segment(kind, "left")))
 
-    x, base = _solve(route, _interval, _bc(1))
+    solver, base = _solve(route, _interval, _bc(1))
     _, named = _solve(route, _interval, _bc(1, _segment(kind, "x_min")))
+    x = solver._disc.dof_coordinates[:, 0]
     moved = np.abs(named - base).max(axis=0)
     assert moved[np.isclose(x, 0.0)][0] > 0.04
     assert moved[np.isclose(x, 1.0)][0] < 1e-3
@@ -112,11 +113,20 @@ def test_a_load_named_by_an_alias_is_refused_and_one_named_by_its_tag_stays_on_i
 @pytest.mark.parametrize(("route", "kind"), _REACH, ids=_REACH_IDS)
 def test_a_load_named_by_an_empty_tag_is_refused_and_the_tagged_one_is_placed(route, kind):
     """Row 7. On the disc "x_max" is a tag with no facet in it: the load used to be placed nowhere (the solution moved
-    by exactly 0), and it now raises with the advice to tag the mesh. Tagged and named "region_1", the load is placed:
-    it moves the solution by 6.0e-2 to 2.4e-1, measured."""
+    by exactly 0), and it now raises with the advice to tag the mesh. Tagged and named "region_1", the load is placed
+    on that tag and not beyond it. Measured over every time level: it moves the tag's DOFs by 6.0e-2 to 2.4e-1, the
+    27 boundary DOFs outside the tag by at most 13% of that (the most next to the tag, by diffusion), and the far
+    wall x < -0.9 by at most 1.3e-10. A load spread over the whole boundary moves the complement as much as the tag,
+    which the 25% bound separates (#2596, review 1)."""
     with pytest.raises(ValueError, match=r"none of its tags holds a facet.*Tag the mesh before naming a face"):
         _solve(route, _disc(tag_right=False), _bc(2, _segment(kind, "x_max")))
 
     _, base = _solve(route, _disc(tag_right=True), _bc(2))
-    _, tagged = _solve(route, _disc(tag_right=True), _bc(2, _segment(kind, "region_1")))
-    assert np.abs(tagged - base).max() > 0.04
+    solver, tagged = _solve(route, _disc(tag_right=True), _bc(2, _segment(kind, "region_1")))
+    moved = np.abs(tagged - base).max(axis=0)
+    on_tag = solver._basis.get_dofs(solver._skfem_mesh.boundaries["region_1"]).flatten()
+    complement = np.setdiff1d(solver._basis.get_dofs(solver._skfem_mesh.boundary_facets()).flatten(), on_tag)
+    far_wall = complement[solver._basis.doflocs[0, complement] < -0.9]
+    assert moved[on_tag].max() > 0.04
+    assert moved[complement].max() < 0.25 * moved[on_tag].max()
+    assert moved[far_wall].max() < 1e-6

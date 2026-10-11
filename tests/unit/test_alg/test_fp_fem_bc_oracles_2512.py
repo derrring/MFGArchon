@@ -277,7 +277,8 @@ def _wall_flux(cell: Cell, solver, m_h) -> float:
 
 
 def _robin_residual(cell: Cell, solver, m_h) -> float:
-    """``||J_h.n - (D/beta)(alpha m_h - g)||_{L2}`` over the boundary, face by face, with ``J_h = v m_h - D grad m_h``."""
+    """``||J_h.n - (D/beta)(alpha m_h - g)||_{L2}`` over the boundary, face by face, with
+    ``J_h = v m_h - D grad m_h``."""
     mesh, v = solver._skfem_mesh, VEL[: cell.dim]
     total = 0.0
     for segment in cell.faces():
@@ -309,7 +310,8 @@ MEASURED = {
     "robin_1d": (4.8605e-02, 1.2051e-02, 3.0065e-03),
     "robin_2d": (3.6748e-01, 9.7395e-02, 2.4890e-02),
 }
-# ||J_h.n|| on the no-flux boundary at T, per level, measured at 1290195a.
+# ||J_h.n|| on the no-flux boundary at T, per level, measured at 1290195a; the reflecting rows on PR 2b, equal to the
+# no-flux ones bit for bit.
 MEASURED_WALL_FLUX = {
     "no_flux_1d": (7.5829e-02, 3.8183e-02, 1.9238e-02),
     "no_flux_2d": (1.8420e-01, 9.4860e-02, 4.7817e-02),

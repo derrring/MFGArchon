@@ -116,7 +116,7 @@ def meshdata_to_skfem(mesh_data: MeshData) -> skfem.Mesh:
     # Issue #607: tag axis-aligned wall facets as named boundaries (x_min/x_max/...) matching the
     # BoundaryFace naming, so a BCSegment(boundary="x_min") resolves to the right facet set. This
     # is the unified segment->facet specification for axis-aligned (box) mesh domains; without it
-    # mesh.boundaries is None and the FEM bc_adapter falls back to the entire boundary.
+    # mesh.boundaries is None and the FEM bc_adapter refuses every named segment (#2595).
     mesh = _tag_axis_aligned_boundaries(mesh)
 
     return mesh

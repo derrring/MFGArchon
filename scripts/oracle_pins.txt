@@ -110,6 +110,8 @@ oracle fp_fem/no_flux_2d            tests/unit/test_alg/test_fp_fem_bc_oracles_2
 # The reflecting cells solve as the NO_FLUX cells, bit for bit: each lists its own exact density and wall under
 # REFLECTING segments and both targets of the NO_FLUX cell it routes to (#2512 comment 6079979873). The robin cells
 # are the FP's own ROBIN, J.n = (D/beta)(alpha m - g), with alpha m + beta dm/dn = g as the rival.
+# The robin cells check the condition on a boundary state constant in time (m_h = Q0 is an exact discrete steady
+# state); the time level of the boundary terms is unpinned: the lagged-mass mutation survives (#2596).
 oracle fp_fem/reflecting_1d         tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[no_flux_1d]
 oracle fp_fem/reflecting_1d         tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_the_wall_carries_no_total_flux_and_a_neumann_wall_misses[no_flux_1d]
 oracle fp_fem/reflecting_1d         tests/unit/test_alg/test_fp_fem_bc_oracles_2512.py::test_an_exact_density_is_reproduced_at_second_order[reflecting_1d]

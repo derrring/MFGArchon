@@ -196,12 +196,13 @@ def is_pure_neumann(bc: BoundaryConditions | None) -> bool:
 
 
 def _segment_boundary_facets(mesh: skfem.Mesh, segment: BCSegment) -> NDArray:
-    """The boundary facets a segment's DOFs come from: its named boundary, or the whole boundary for ``None``.
+    """The boundary facets a segment governs: its named boundary, or the whole boundary for ``None``.
 
     One rule for the Dirichlet DOFs (`_find_segment_dofs`), the ROBIN and NEUMANN(g) facets
-    (`_find_segment_facets`), and what a ``default_bc`` is left to govern (`refuse_what_fem_cannot_impose`). Only the ``boundary`` name is read. A segment also placed by
-    ``region``, ``region_name``, ``sdf_region`` or ``normal_direction`` resolves as its ``boundary`` face
-    if it names one -- the whole face, not the placed part -- and as the whole boundary if it names none.
+    (`_find_segment_facets`), and what a ``default_bc`` is left to govern (`refuse_what_fem_cannot_impose`).
+    Only the ``boundary`` name is read. A segment also placed by ``region``, ``region_name``, ``sdf_region`` or
+    ``normal_direction`` resolves as its ``boundary`` face if it names one -- the whole face, not the placed
+    part -- and as the whole boundary if it names none.
 
     A name must be a tag that holds facets. A tag the mesh carries with no facet in it is refused as a missing
     one: the axis tags are placed by bounding box (`mesh_adapter._tag_axis_aligned_boundaries`), so on a domain
