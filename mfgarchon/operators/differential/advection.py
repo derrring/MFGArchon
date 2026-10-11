@@ -63,7 +63,7 @@ def velocity_boundary_conditions(bc: BoundaryConditions) -> BoundaryConditions:
     from mfgarchon.geometry.boundary import BCType, BoundaryConditions
 
     if not isinstance(bc, BoundaryConditions):
-        # The deprecated `fdm_bc_1d` class carries no segments to rewrite; it keeps the padding it had.
+        # An object that is not a BoundaryConditions carries no segments to rewrite; it keeps the padding it had.
         return bc
     segments = [
         seg if seg.bc_type == BCType.PERIODIC else replace(seg, bc_type=BCType.NEUMANN, value=0.0)

@@ -54,8 +54,6 @@ from .types import BCType, segment_value
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from .fdm_bc_1d import BoundaryConditions as BoundaryConditions1DFDM
-
 
 class InterpolationApplicator(BaseBCApplicator):
     """
@@ -114,7 +112,7 @@ class InterpolationApplicator(BaseBCApplicator):
     def enforce_values(
         self,
         field: NDArray[np.floating],
-        boundary_conditions: BoundaryConditions | BoundaryConditions1DFDM,
+        boundary_conditions: BoundaryConditions,
         spacing: NDArray[np.floating] | tuple[float, ...] | float | None = None,
         time: float = 0.0,
     ) -> NDArray[np.floating]:
@@ -162,7 +160,7 @@ class InterpolationApplicator(BaseBCApplicator):
         ndim = field.ndim
         if self._dimension is not None and ndim != self._dimension:
             raise ValueError(f"Field dimension ({ndim}) does not match applicator dimension ({self._dimension})")
-        if isinstance(boundary_conditions, BoundaryConditions):  # the legacy 1-D object carries no types to check
+        if isinstance(boundary_conditions, BoundaryConditions):  # anything else is refused just below
             self._validate_bc_support(boundary_conditions)  # #1948
 
         # Get BC types for each boundary
@@ -238,7 +236,7 @@ class InterpolationApplicator(BaseBCApplicator):
 
     def _get_bc_types_per_boundary(
         self,
-        bc: BoundaryConditions | BoundaryConditions1DFDM,
+        bc: BoundaryConditions,
         ndim: int,
     ) -> list[tuple[str, str]]:
         """
@@ -246,11 +244,11 @@ class InterpolationApplicator(BaseBCApplicator):
 
         Returns list of (bc_type_min, bc_type_max) tuples for each dimension.
         """
-        # Handle legacy 1D BC type
         if not isinstance(bc, BoundaryConditions):
-            # Legacy BoundaryConditions from fdm_bc_1d
-            bc_type = getattr(bc, "type", "neumann").lower()
-            return [(bc_type, bc_type)] * ndim
+            raise TypeError(
+                f"The interpolation applicator takes a BoundaryConditions, not a {type(bc).__name__} (the legacy "
+                "fdm_bc_1d class is removed)."
+            )
 
         # One resolver for the type and the value. `get_bc_type_at_boundary` resolves an alias
         # ("left") and an uncovered face's default_bc exactly as `_get_bc_value`'s
@@ -311,7 +309,7 @@ class InterpolationApplicator(BaseBCApplicator):
 
     def _get_bc_value(
         self,
-        bc: BoundaryConditions | BoundaryConditions1DFDM,
+        bc: BoundaryConditions,
         axis: int,
         side: str,
         time: float,
@@ -324,13 +322,6 @@ class InterpolationApplicator(BaseBCApplicator):
         axis_names = ["x", "y", "z", "w"]
         axis_name = axis_names[axis] if axis < len(axis_names) else f"d{axis}"
         boundary_name = f"{axis_name}_{side}"
-
-        # Handle legacy 1D BC
-        if not isinstance(bc, BoundaryConditions):
-            if side == "min":
-                return getattr(bc, "left_value", None)
-            else:
-                return getattr(bc, "right_value", None)
 
         # Unified BoundaryConditions
         # Try to get value from get_bc_value_at_boundary if available

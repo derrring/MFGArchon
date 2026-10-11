@@ -22,7 +22,6 @@ def get_bc_type_string(boundary_conditions: Any) -> str | None:
 
     Supports:
     - Unified BoundaryConditions (conditions.py) with .type property
-    - Legacy BoundaryConditions1DFDM with .type attribute
     - Mixed BC (returns first segment's type)
 
     Args:

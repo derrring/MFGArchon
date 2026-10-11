@@ -16,7 +16,7 @@ from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
 if TYPE_CHECKING:
     from mfgarchon.backends.base_backend import BaseBackend
     from mfgarchon.core.mfg_problem import MFGProblem
-    from mfgarchon.geometry.boundary.fdm_bc_1d import BoundaryConditions
+    from mfgarchon.geometry.boundary import BoundaryConditions
 
 
 class ParticleStrategy(ABC):

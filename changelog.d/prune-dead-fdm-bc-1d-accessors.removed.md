@@ -11,4 +11,4 @@
   points are exactly the Dirichlet unknowns. The one branch that is true — periodic sheds the
   repeated endpoint — already has a live, single-sourced owner in `repeated_endpoint_count` /
   `periodic_axis_span` (Issue #1822), so nothing was lost. Refs #1559, whose evidence cites two of
-  the removed names.
+  the removed names. The class itself is removed in this release; see the #869 entry.

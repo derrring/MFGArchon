@@ -94,7 +94,6 @@ from .applicator_base import (
 )
 from .conditions import BoundaryConditions, region_name_governs_face
 from .enforcement import enforce_dirichlet_value_nd, enforce_neumann_value_nd
-from .fdm_bc_1d import BoundaryConditions as BoundaryConditions1DFDM
 from .ghost_cells import (
     GhostCellConfig,
     ghost_cell_linear_extrapolation,
@@ -112,9 +111,6 @@ from .types import (
 )
 
 logger = get_logger(__name__)
-
-# Backward compatibility alias
-LegacyBoundaryConditions1D = BoundaryConditions1DFDM
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -198,7 +194,7 @@ class FDMApplicator(BaseStructuredApplicator):
     def apply(
         self,
         field: NDArray[np.floating],
-        boundary_conditions: BoundaryConditions | LegacyBoundaryConditions1D,
+        boundary_conditions: BoundaryConditions,
         grid_spacing: float | tuple[float, ...] | None = None,
         domain_bounds: NDArray[np.floating] | None = None,
         time: float = 0.0,
@@ -403,7 +399,7 @@ class FDMApplicator(BaseStructuredApplicator):
 
 
 def bc_to_topology_calculator(
-    bc: BoundaryConditions | LegacyBoundaryConditions1D,
+    bc: BoundaryConditions,
     shape: tuple[int, ...],
     grid_type: GridType = GridType.CELL_CENTERED,
     use_zero_flux: bool = False,
@@ -413,7 +409,7 @@ def bc_to_topology_calculator(
     """
     Convert BoundaryConditions to Topology + Calculator pair.
 
-    This is the bridge between the legacy BoundaryConditions API and the new
+    This is the bridge between the BoundaryConditions API and the
     Topology/Calculator composition architecture (Issue #516).
 
     **For NO_FLUX BC type, two physics-based options:**
@@ -421,7 +417,7 @@ def bc_to_topology_calculator(
     - `use_zero_flux=True`: ZeroFluxCalculator (J·n = 0, mass conservation)
 
     Args:
-        bc: Boundary condition specification (unified or legacy)
+        bc: Boundary condition specification
         shape: Grid shape (interior points)
         grid_type: Grid type for ghost cell formulas
         use_zero_flux: If True, NO_FLUX BC uses ZeroFluxCalculator (J·n=0)
@@ -458,20 +454,6 @@ def bc_to_topology_calculator(
             return ZeroFluxCalculator(drift_velocity, diffusion_coeff, grid_type)
         else:
             return ZeroGradientCalculator(grid_type)
-
-    # Handle legacy BoundaryConditions from bc_1d module
-    if isinstance(bc, LegacyBoundaryConditions1D):
-        bc_type_str = bc.type.lower()
-        if bc_type_str == "periodic":
-            return PeriodicTopology(dimension, shape), None
-        elif bc_type_str == "dirichlet":
-            value = bc.left_value if bc.left_value is not None else 0.0
-            return BoundedTopology(dimension, shape), DirichletCalculator(value, grid_type)
-        elif bc_type_str in ("neumann", "no_flux"):
-            return BoundedTopology(dimension, shape), _get_no_flux_calculator()
-        else:
-            # Default to zero gradient
-            return BoundedTopology(dimension, shape), _get_no_flux_calculator()
 
     # Handle unified BoundaryConditions
     if not isinstance(bc, BoundaryConditions):
@@ -515,7 +497,7 @@ def bc_to_topology_calculator(
 
 
 def create_ghost_buffer_from_bc(
-    bc: BoundaryConditions | LegacyBoundaryConditions1D,
+    bc: BoundaryConditions,
     shape: tuple[int, ...],
     dx: float | tuple[float, ...],
     ghost_depth: int = 1,
@@ -1211,7 +1193,7 @@ class PreallocatedGhostBuffer:
     def __init__(
         self,
         interior_shape: tuple[int, ...],
-        boundary_conditions: BoundaryConditions | LegacyBoundaryConditions1D,
+        boundary_conditions: BoundaryConditions,
         domain_bounds: NDArray[np.floating] | None = None,
         dtype: np.dtype = np.float64,
         ghost_depth: int = 1,
@@ -1350,12 +1332,6 @@ class PreallocatedGhostBuffer:
             time: Current time for time-dependent BCs
         """
         bc = self._boundary_conditions
-
-        # Get BC type for dispatch
-        if isinstance(bc, LegacyBoundaryConditions1D):
-            bc_type_str = bc.type.lower()
-            self._update_ghosts_legacy(bc_type_str)
-            return
 
         if not isinstance(bc, BoundaryConditions):
             raise TypeError(f"Unsupported BC type: {type(bc)}")
@@ -1717,53 +1693,6 @@ class PreallocatedGhostBuffer:
 
                 full_index[axis] = ghost_idx
                 buf[tuple(full_index)] = ghost_value
-
-    def _update_ghosts_legacy(self, bc_type_str: str) -> None:
-        """Update ghost cells for legacy BC type."""
-        d = self._dimension
-        g = self._ghost_depth
-        buf = self._buffer
-
-        if bc_type_str == "periodic":
-            for axis in range(d):
-                lo_ghost = [slice(None)] * d
-                lo_ghost[axis] = slice(0, g)
-                hi_interior = [slice(None)] * d
-                hi_interior[axis] = slice(-2 * g, -g)
-                buf[tuple(lo_ghost)] = buf[tuple(hi_interior)]
-
-                hi_ghost = [slice(None)] * d
-                hi_ghost[axis] = slice(-g, None)
-                lo_interior = [slice(None)] * d
-                lo_interior[axis] = slice(g, 2 * g)
-                buf[tuple(hi_ghost)] = buf[tuple(lo_interior)]
-
-        elif bc_type_str in ["no_flux", "neumann"]:
-            # Reflect interior values about boundary (same as BCType.NEUMANN above)
-            for axis in range(d):
-                for k in range(g):
-                    lo_ghost = [slice(None)] * d
-                    lo_ghost[axis] = k
-                    lo_interior = [slice(None)] * d
-                    lo_interior[axis] = 2 * g - k
-                    buf[tuple(lo_ghost)] = buf[tuple(lo_interior)]
-
-                for k in range(g):
-                    hi_ghost = [slice(None)] * d
-                    hi_ghost[axis] = -(k + 1)
-                    hi_interior = [slice(None)] * d
-                    hi_interior[axis] = -(2 * g + k + 1)  # Fixed to match BCType.NEUMANN
-                    buf[tuple(hi_ghost)] = buf[tuple(hi_interior)]
-
-        elif bc_type_str == "dirichlet":
-            bc = self._boundary_conditions
-            # Issue #543: Use getattr() instead of hasattr for optional legacy attribute
-            v = getattr(bc, "left_value", None)
-            v = v if v is not None else 0.0
-            # The odd reflection about the wall node, as the modern Dirichlet branches (#1968).
-            for axis in range(d):
-                for side in ("min", "max"):
-                    _write_wall_ghosts(buf, axis, side, g, None, v, alpha=1.0, beta=0.0)
 
     def _update_ghosts_mixed(self, bc: BoundaryConditions, time: float) -> None:
         """

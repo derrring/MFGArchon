@@ -994,12 +994,14 @@ class TensorProductGrid(
             bc_type: Standard boundary condition type (only used if no BC stored). Supported:
                 - "periodic": Periodic on all boundaries
                 - "dirichlet_zero": Zero Dirichlet on all boundaries
-                - "neumann_zero" / "no_flux": Zero Neumann (no-flux) on all boundaries
-                - "neumann": Zero Neumann (nD only)
+                - "neumann_zero": zero Neumann on all boundaries; "no_flux": NO_FLUX, a zero total flux (#2512 B3)
+                - "neumann": Zero Neumann
                 An unrecognized bc_type raises ValueError (Issue #1558) rather than silently
                 defaulting to periodic (1D) / neumann (nD). Per-axis / mixed BC are NOT created
                 here -- build a BoundaryConditions and store it on the grid (Priority 1) instead.
-            custom_conditions: Optional dict with custom BC specifications (1D only)
+            custom_conditions: Refused when the bc_type default is reached. In 1-D it built the legacy class,
+                removed in 0.22.0, for an unrecognized bc_type and was ignored otherwise; in nD it was always
+                ignored. Build a BoundaryConditions and store it instead.
 
         Returns:
             Boundary condition handler appropriate for grid dimension
@@ -1023,40 +1025,19 @@ class TensorProductGrid(
         if self._boundary_conditions is not None:
             return self._boundary_conditions
 
-        # Priority 2: Create BC from parameters
-        # Special case: 1D uses different BC interface
-        if self._dimension == 1:
-            return self._create_bc_1d(bc_type, custom_conditions)
-
-        # Generic nD dispatch (D >= 2)
+        # Priority 2: Create BC from parameters, by one factory for every dimension. 1-D built the legacy fdm_bc_1d
+        # class here, removed in 0.22.0 by user ruling; its "no_flux" was a Neumann wall, and is NO_FLUX now (#2512 B3).
+        if custom_conditions is not None:
+            raise ValueError(
+                "custom_conditions is refused: in 1-D it built the legacy fdm_bc_1d class, which is removed "
+                "(deprecated since 0.14.0, #869; removed in 0.22.0 by user ruling), and otherwise it was ignored. "
+                "Build a BoundaryConditions with periodic_bc, dirichlet_bc, neumann_bc, no_flux_bc or robin_bc, or "
+                "from one BCSegment per face, and store it on the grid."
+            )
         return self._create_bc_nd(bc_type)
 
-    def _create_bc_1d(self, bc_type: str, custom_conditions: dict | None):
-        """Create 1D boundary conditions (uses dataclass interface)."""
-        from mfgarchon.geometry.boundary.fdm_bc_1d import BoundaryConditions
-
-        bc_map = {
-            "periodic": {"type": "periodic"},
-            "dirichlet_zero": {"type": "dirichlet", "left_value": 0.0, "right_value": 0.0},
-            "neumann_zero": {"type": "neumann", "left_value": 0.0, "right_value": 0.0},
-            "no_flux": {"type": "neumann", "left_value": 0.0, "right_value": 0.0},
-        }
-
-        if bc_type in bc_map:
-            return BoundaryConditions(**bc_map[bc_type])
-        elif custom_conditions:
-            return BoundaryConditions(**custom_conditions)
-        else:
-            # Fail loud (Issue #1558): an unrecognized bc_type previously fell through to a
-            # periodic "safe default", silently substituting the wrong BC. Periodic on a domain
-            # meant to reflect/absorb is a different problem, not a safe default.
-            raise ValueError(
-                f"Unsupported 1D bc_type {bc_type!r}. Supported: {sorted(bc_map)}. For per-axis "
-                f"or mixed BC, build a BoundaryConditions and store it on the grid instead."
-            )
-
     def _create_bc_nd(self, bc_type: str):
-        """Create nD boundary conditions using unified BC framework."""
+        """Create boundary conditions of any dimension using the unified BC framework."""
         from mfgarchon.geometry.boundary import (
             dirichlet_bc,
             neumann_bc,
