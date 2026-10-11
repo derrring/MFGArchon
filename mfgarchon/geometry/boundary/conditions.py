@@ -43,8 +43,10 @@ from .types import (
     BoundaryFace,
     PeriodicGridConvention,
     _compute_sdf_gradient,
+    boundary_value,
     parse_boundary_face,
     repeated_endpoint_count,
+    segment_value,
 )
 
 if TYPE_CHECKING:
@@ -504,26 +506,19 @@ class BoundaryConditions:
         Returns:
             BC value at the specified boundary
         """
-        # For uniform BCs, return the single value
+        # Read through the one owner (#2512 row B2): a callable value is g(t, x), time first, by name. Until row B2's
+        # second half, `time` keeps its 0.0 default, which is where FP-FDM's t = 0 read enters (#2535).
+        where = f"BoundaryConditions.get_bc_value_at_boundary({boundary!r})"
         if self.is_uniform:
-            seg = self.segments[0]
-            if callable(seg.value):
-                if point is not None:
-                    return seg.value(point, time)
-                return seg.value(time)
-            return seg.value
+            return segment_value(self.segments[0], t=time, x=point, where=where)
 
         # For mixed BCs, find the highest priority segment
         for segment in self.segments:
             if self._segment_covers(segment, boundary):
-                if callable(segment.value):
-                    if point is not None:
-                        return segment.value(point, time)
-                    return segment.value(time)
-                return segment.value
+                return segment_value(segment, t=time, x=point, where=where)
 
-        # No match - return default value
-        return self.default_value
+        # No match - the default value
+        return boundary_value(self.default_value, kind="default_value", t=time, x=point, where=where)
 
     def identify_boundary_face(
         self,
@@ -961,7 +956,7 @@ def uniform_bc(
 
     Args:
         bc_type: BC type ("periodic", "dirichlet", "neumann", "robin", "no_flux")
-        value: BC value (constant or callable(point, time))
+        value: BC value (constant, or a callable g(t, x) named by its parameters: (t, x), (x) or (t))
         dimension: Spatial dimension. If None, dimension will be inferred when
             BC is attached to a Geometry (lazy binding).
         domain_bounds: Optional domain bounds array (dimension, 2)
@@ -1112,7 +1107,7 @@ def dirichlet_bc(
     Create Dirichlet boundary conditions (u = value at boundary).
 
     Args:
-        value: Boundary value (constant or callable(point, time))
+        value: Boundary value (constant, or a callable g(t, x) named by its parameters: (t, x), (x) or (t))
         dimension: Spatial dimension. If None, dimension will be inferred when
             BC is attached to a Geometry (lazy binding).
         domain_bounds: Optional domain bounds
@@ -1142,7 +1137,7 @@ def neumann_bc(
       solver refuses it. Pass ``no_flux_bc()`` for a reflecting FP wall.
 
     Args:
-        value: Normal derivative value (constant or callable(point, time))
+        value: Normal derivative value (constant, or a callable g(t, x) named by its parameters: (t, x), (x) or (t))
         dimension: Spatial dimension. If None, dimension will be inferred when
             BC is attached to a Geometry (lazy binding).
         domain_bounds: Optional domain bounds

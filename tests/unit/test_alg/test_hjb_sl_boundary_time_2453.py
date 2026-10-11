@@ -113,9 +113,9 @@ def test_boundary_data_is_read_at_the_steps_own_time(case, monkeypatch):
     events = []
     _tag_by_step(monkeypatch, events)
 
-    def value(*args, **kw):
-        t = float(kw.get("time", args[-1] if args else 0.0))
-        events.append(("read", t))
+    def value(t):
+        # A boundary value declares what it reads by name, time first (#2512 row B2): this one reads t.
+        events.append(("read", float(t)))
         return 0.05 * t
 
     n = {1: 21, 2: 9}[dim]

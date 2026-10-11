@@ -341,7 +341,9 @@ class TestRobinFailLoud:
                 BCSegment(name="L", bc_type=BCType.ROBIN, alpha=1.0, beta=1.0, value=lambda x: x[0], boundary="x_min")
             ],
         )
-        with pytest.raises(NotImplementedError, match="non-constant"):
+        # The FEM Robin load is one constant g per segment (#1237): the owner refuses a g that declares x there
+        # (#2512 row B2).
+        with pytest.raises(NotImplementedError, match="declares x, but the FEM Robin load"):
             assemble_robin_terms(basis, bc, D=0.5)
 
     def test_periodic_still_fails_loud(self):

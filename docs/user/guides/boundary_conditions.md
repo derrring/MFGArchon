@@ -283,6 +283,11 @@ The default averaging strategy is recommended for most MFG applications.
 
 ## Time-Dependent BCs
 
+A callable value is `g(t, x)`, time first, like every callable the library accepts (see
+`docs/user/CONVENTIONS.md`, § *Callable signatures*). It names what it reads, `(t, x)`, `(x)`, or `(t)` (or
+`time`), and the library calls it by name. One whose parameters are named otherwise, or that puts `x` before `t`,
+is refused when the segment is built (#2512).
+
 BCs can vary with time:
 
 ```python
@@ -296,13 +301,12 @@ bc = dirichlet_bc(dimension=2, value=inlet_profile)
 padded = pad_array_with_ghosts(field, bc, time=0.5, spacing=(dy, dx))
 ```
 
-For spatially-varying BCs:
+For spatially-varying BCs, `x` is one boundary point, an array of shape `(d,)`:
 
 ```python
-# Function of position and time
-def inlet_profile(point, time):
-    x, y = point
-    return np.sin(np.pi * y) * np.exp(-time)
+# Function of time and position
+def inlet_profile(t, x):
+    return np.sin(np.pi * x[1]) * np.exp(-t)
 
 exit_bc = BCSegment(
     name="exit",
@@ -311,6 +315,9 @@ exit_bc = BCSegment(
     boundary="x_max",
 )
 ```
+
+A method that reads one value per face, such as the FDM ghost layer, has no point to pass, so it refuses a
+value that declares `x`. FEM and the meshless Galerkin path read it at each boundary point.
 
 ## Lazy Dimension Binding
 

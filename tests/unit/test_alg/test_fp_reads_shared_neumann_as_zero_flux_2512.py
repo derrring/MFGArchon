@@ -278,6 +278,9 @@ def test_the_refusals_advice_runs(family):
     ("shared", "what"),
     [
         (lambda: neumann_bc(value=lambda t: 0.7, dimension=1), "<callable>"),
+        # `float()` drops the imaginary part, so the zero owner read this as zero and the FP as NO_FLUX: a complex
+        # value is never verifiably zero (#2512 row B2).
+        (lambda: neumann_bc(value=np.complex128(1j), dimension=1), "<complex"),
         (
             lambda: BoundaryConditions(
                 dimension=1,
@@ -291,10 +294,11 @@ def test_the_refusals_advice_runs(family):
             "default_bc=NEUMANN, the fall-through",
         ),
     ],
-    ids=["callable", "fall-through"],
+    ids=["callable", "imaginary", "fall-through"],
 )
 def test_a_value_not_provably_zero_is_refused(shared, what):
-    """A callable is not assumed zero, and the default_bc fall-through is a value too (#1686)."""
+    """A callable is not assumed zero, nor is a complex value, and the default_bc fall-through is a value too
+    (#1686)."""
     with pytest.raises(NotImplementedError, match=SHARED_REFUSAL) as excinfo:
         FPFDMSolver(_grid_problem(shared(), 1))
     assert what in str(excinfo.value)

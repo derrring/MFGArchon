@@ -351,7 +351,7 @@ class TestAgainstAPackageGeometry:
         assert on_boundary.any(), "no boundary points detected, so the assertion below is vacuous"
 
         bc = BoundaryConditions(
-            segments=[BCSegment(name="d", bc_type=BCType.DIRICHLET, value=lambda p, t: 42.0)],
+            segments=[BCSegment(name="d", bc_type=BCType.DIRICHLET, value=lambda t, x: 42.0)],
             dimension=2,
             default_bc=BCType.DIRICHLET,
         )

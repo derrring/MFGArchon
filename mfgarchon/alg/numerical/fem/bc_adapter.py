@@ -30,7 +30,6 @@ Issue #1237: Robin BC via weak-form operator augmentation
 
 from __future__ import annotations
 
-import numbers
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -273,7 +272,7 @@ def _find_segment_dofs(
 def refuse_what_fem_cannot_impose(mesh: skfem.Mesh, bc: BoundaryConditions | None, consumer: str) -> None:
     """Refuse, at construction, what the FEM adapter would otherwise misread in silence (#2593).
 
-    - **A Dirichlet value it cannot read** (`dirichlet_constant`). It used to become 0.
+    - **A Dirichlet value it cannot read** (`segment_value`, #2512 row B2). It used to become 0.
     - **A DIRICHLET ``default_bc`` left to govern boundary facets no segment claims.** The adapter imposes
       conditions segment by segment and never reads ``default_bc``, so those facets got the natural condition
       instead: a silent wall where an exit or a prescribed value was asked for.
@@ -285,13 +284,13 @@ def refuse_what_fem_cannot_impose(mesh: skfem.Mesh, bc: BoundaryConditions | Non
     whole ``boundary`` face, or the whole boundary if it names none, which this check cannot see past (#2595).
     ``dirichlet_bc(g)`` passes, since its segment names the whole boundary.
     """
-    from mfgarchon.geometry.boundary.types import BCType
+    from mfgarchon.geometry.boundary.types import BCType, segment_value
 
     if bc is None:
         return
     for segment in bc.segments:
         if segment.bc_type == BCType.DIRICHLET and not callable(segment.value):
-            dirichlet_constant(segment)
+            segment_value(segment, t=None, x=None, where=f"{consumer}, Dirichlet segment {segment.name!r}")
     if bc.default_bc != BCType.DIRICHLET:
         return
     claimed: set[int] = set()
@@ -313,61 +312,22 @@ def _evaluate_segment_values(
     basis: skfem.Basis,
     dofs: list[int],
 ) -> list[float]:
-    """The segment's Dirichlet value at the given DOFs, refusing a value it cannot read.
+    """The segment's Dirichlet value at the given DOFs, read by the one owner (`segment_value`, #2512 row B2).
 
-    A callable is read as ``value(x)`` at each DOF, with no time argument, and its values are not checked.
-    Anything else is a constant, read by `dirichlet_constant`. This used to read as 0 every constant that is
-    not an ``int`` or ``float`` instance, so ``np.float32(0.7)`` held 0 (#2593). The FDM ghost path
-    (`applicator_fdm.segment_value`) reads a callable as ``value(t)`` and checks no type: the two disagree
-    until #2512's row B2 gives the value one owner.
+    A callable is ``g(x)`` here, at each DOF -- the assembly has no time to pass, so one that declares ``t`` is
+    refused. A constant follows the owner's rules (#2593): a real number or a real array of one element is its value, ``None``
+    and what `_describe_bc_value` calls zero are 0, and anything else is refused.
     """
-    value = getattr(segment, "value", 0.0)
+    from mfgarchon.geometry.boundary.types import segment_value
 
-    if callable(value):
+    where = f"the FEM Dirichlet DOFs of segment {segment.name!r}"
+    if callable(segment.value):
         # Issue #1489 (F5): evaluate at the DOF coordinates via basis.doflocs (a coordinate for EVERY
         # DOF), NOT mesh.p (vertex coordinates only). For P2 the boundary DOF set includes edge-midpoint
         # indices >= n_vertices, so mesh.p[:, dofs] was out of bounds / wrong-coordinate.
         coords = basis.doflocs[:, dofs].T  # (n_dofs, dim)
-        return [float(value(x)) for x in coords]
-    return [dirichlet_constant(segment)] * len(dofs)
-
-
-def dirichlet_constant(segment: BCSegment) -> float:
-    """A non-callable Dirichlet value as a float (#2593).
-
-    A boolean is refused first, ``False`` included. Then anything the library's one owner of "verifiably zero"
-    reads as zero is 0 (`_describe_bc_value`: ``None``, an all-zero array, and also ``"0"``, ``Decimal("0")``
-    and a complex 0). Otherwise a finite real number or a finite 0-d real array is its value, and anything else
-    is refused.
-    """
-    from mfgarchon.geometry.boundary.bc_utils import _describe_bc_value
-
-    value = getattr(segment, "value", 0.0)
-    if isinstance(value, (bool, np.bool_)) or (isinstance(value, np.ndarray) and value.dtype == np.bool_):
-        raise NotImplementedError(
-            f"Dirichlet segment '{getattr(segment, 'name', '?')}' has a boolean value, which is not a boundary "
-            "datum: give a real number, a 0-d real array, or a callable g(x) (#2593)."
-        )
-    if _describe_bc_value(value) is None:
-        return 0.0
-    real = isinstance(value, numbers.Real) or (
-        isinstance(value, np.ndarray)
-        and value.ndim == 0
-        and np.issubdtype(value.dtype, np.number)
-        and not np.iscomplexobj(value)
-    )
-    if not real:
-        raise NotImplementedError(
-            f"Dirichlet segment '{getattr(segment, 'name', '?')}' has a value of type {type(value).__name__}, "
-            "which the FEM path cannot read: give a real number, a 0-d real array, or a callable g(x) (#2593)."
-        )
-    constant = float(value)
-    if not np.isfinite(constant):
-        raise NotImplementedError(
-            f"Dirichlet segment '{getattr(segment, 'name', '?')}' has a non-finite value {constant}; the FEM "
-            "path would impose it and return a non-finite solution (#2593)."
-        )
-    return constant
+        return [segment_value(segment, t=None, x=x, where=where) for x in coords]
+    return [segment_value(segment, t=None, x=None, where=where)] * len(dofs)
 
 
 def _find_segment_facets(mesh: skfem.Mesh, segment) -> NDArray:
@@ -432,7 +392,7 @@ def assemble_robin_terms(
     from skfem import BilinearForm, FacetBasis, LinearForm
 
     from mfgarchon.geometry.boundary.bc_utils import describe_inhomogeneous_bc_data
-    from mfgarchon.geometry.boundary.types import BCType
+    from mfgarchon.geometry.boundary.types import BCType, segment_value
 
     def _is_inhomogeneous(*segments):
         """Is any of these boundary data NOT verifiably zero?
@@ -490,37 +450,8 @@ def assemble_robin_terms(
 
         kind = "Robin" if segment.bc_type == BCType.ROBIN else "Neumann"
 
-        g = getattr(segment, "value", 0.0)
-        try:
-            # `float()` alone is WIDER than the `isinstance(g, (int, float))` it replaces: it takes
-            # `"5"`, `b"5"`, `np.array("5")`, `Decimal`. Widening one guard while fixing another is
-            # how a fix ships a second defect, and a first attempt here caught only the plain `str`.
-            # The widening that IS wanted is numeric dtypes -- np.float32, np.int64, a 0-d float
-            # array -- so the test is "is this a real number", not "can float() parse it".
-            # `Fraction` is admitted deliberately: it IS a real number, and a rational boundary datum
-            # is a legitimate thing to write. `Decimal` is not `numbers.Real` and stays out.
-            # Only the DTYPE is checked, not the rank: `numpy>=2.0` (pyproject.toml:38) removed
-            # size-1 array coercion, so `float()` already raises TypeError for every non-0-d array
-            # -- measured on 1-d/1-elem, 1-d/2-elem and 2-d. A rank check here was unreachable, and
-            # a mutation deleting it survived the suite, which is what unreachable looks like from
-            # the outside. The dtype check is NOT redundant: `float(np.array("5"))` succeeds.
-            if isinstance(g, np.ndarray) and not np.issubdtype(g.dtype, np.number):
-                raise TypeError(f"boundary value is a {g.dtype} array")
-            if not isinstance(g, (np.ndarray, numbers.Real)):
-                raise TypeError(f"boundary value is not a real number: {type(g).__name__}")
-            g = float(g)
-            # A non-finite datum assembles a NaN load and every downstream solve returns NaN with no
-            # error -- the failure this module's guards exist to convert into a refusal. `main`
-            # already admitted `float("nan")` and `np.float64("nan")` (np.float64 subclasses float),
-            # so this closes a pre-existing path as well as the 0-d-array one the widening opened.
-            if not np.isfinite(g):
-                raise TypeError(f"boundary value is not finite: {g}")
-        except (TypeError, ValueError):
-            raise NotImplementedError(
-                f"{kind} segment '{segment.name}' has a non-constant value ({type(g).__name__}). "
-                f"Only a constant g is implemented for the FEM {kind} boundary load; callable / "
-                "BCValueProvider data is deferred (Issue #1237)."
-            ) from None
+        # The load is a constant g per segment (#1237): read by the one owner, with no time or point to pass.
+        g = segment_value(segment, t=None, x=None, where=f"the FEM {kind} load of segment {segment.name!r}")
 
         if segment.bc_type == BCType.NEUMANN:
             # Issue #2294: `du/dn = g` is `ROBIN(alpha=0, beta=1, g)` -- the same mathematical

@@ -39,7 +39,8 @@ import numpy as np
 
 from .applicator_base import GridType
 from .applicator_meshfree import MeshfreeApplicator, _robin_alpha_beta
-from .types import BCType
+from .providers import is_provider
+from .types import BCType, boundary_value, segment_value
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -269,17 +270,24 @@ class ImplicitApplicator(MeshfreeApplicator):
         if bc_type in (BCType.NO_FLUX, BCType.REFLECTING):
             return 0.0
 
+        # Read through the one owner (#2512 row B2): a callable is g(t, x), time first, one point at a time.
+        where = f"the implicit applicator's {bc_type.name} boundary"
         uniform_segment = bc.segments[0] if bc.is_uniform else None
         if uniform_segment is not None and uniform_segment.bc_type == bc_type:
             value = uniform_segment.value
+
+            def read(point):
+                return segment_value(uniform_segment, t=time, x=point, where=where)
+
         else:
             value = bc.default_value
 
-        if callable(value):
-            # Time-dependent or space-dependent BC
-            return np.array([value(p, time) for p in points])
+            def read(point):
+                return boundary_value(value, kind="default_value", t=time, x=point, where=where)
 
-        return value
+        if callable(value) and not is_provider(value):
+            return np.array([read(np.asarray(p, dtype=float)) for p in points])
+        return read(None)
 
     def _apply_dirichlet(
         self,

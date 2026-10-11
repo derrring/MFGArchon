@@ -10,6 +10,8 @@ These types are used by the BoundaryConditions class in conditions.py.
 
 from __future__ import annotations
 
+import inspect
+import numbers
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -19,10 +21,15 @@ import numpy as np
 from mfgarchon.geometry.boundary.providers import is_provider
 from mfgarchon.geometry.boundary.tolerances import SDF_BOUNDARY_TOL
 from mfgarchon.geometry.protocols import SupportsRegionMarking
+from mfgarchon.types.callable_protocols import BOUNDARY_VALUE_SLOTS, bind_user_callable
 from mfgarchon.utils.deprecation import deprecated
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from numpy.typing import NDArray
+
+    from mfgarchon.types.callable_protocols import BoundCallable
 
     from .providers import BCValueProvider
 
@@ -401,7 +408,7 @@ class BCSegment:
     Attributes:
         name: Human-readable identifier for this segment
         bc_type: Type of boundary condition (Dirichlet, Neumann, etc.)
-        value: BC value (constant or function of (x, t))
+        value: BC value: a constant, a callable g(t, x) named by its parameters ((t, x), (x) or (t)), or a provider
         boundary: Boundary location identifier (e.g., "left", "right", "x_min", "x_max")
         region: Axis-specific ranges defining segment extent
         sdf_region: SDF function defining segment region (phi < 0 means in segment)
@@ -455,8 +462,9 @@ class BCSegment:
 
     name: str
     bc_type: BCType
-    # BC value: static float, callable f(x,t), or BCValueProvider (Issue #625)
-    # Providers are resolved by FixedPointIterator with current iteration state
+    # BC value: a constant, a callable g(t, x) -- time first, bound by its parameter names (#2512 row B2) -- or a
+    # BCValueProvider (Issue #625), resolved by the coupling layer with the current iteration state.
+    # Read it through `segment_value`, the one reading of it.
     value: float | Callable | BCValueProvider = 0.0
 
     # Robin BC coefficients: alpha*u + beta*du/dn = g
@@ -557,6 +565,27 @@ class BCSegment:
                 f"Use either: (1) rectangular domain (boundary, region), "
                 f"(2) SDF domain (sdf_region, normal_direction), or (3) marked regions (region_name)."
             )
+        # Bind a callable value now, so one written (x, t) or with unnamed parameters is refused when the segment is
+        # built, not when a solver first reads it (#2512 row B2, user ruling).
+        if callable(self.value) and not is_provider(self.value):
+            self.value_binding()
+
+    def value_binding(self) -> BoundCallable:
+        """The binding of this segment's callable value to ``(t, x)``, made once per value object.
+
+        Keyed on the value's identity, so a ``value`` reassigned after construction is bound afresh rather than
+        read through the binding of the callable it replaced.
+        """
+        value = self.value
+        if not callable(value):
+            raise TypeError(
+                f"BCSegment '{self.name}' has a value of type {type(value).__name__}, not a callable to bind."
+            )
+        cached = self.__dict__.get("_value_binding")
+        if cached is None or cached.fn is not value:
+            cached = bind_boundary_value(value)
+            self.__dict__["_value_binding"] = cached
+        return cached
 
     def matches_point(
         self,
@@ -788,77 +817,15 @@ class BCSegment:
         Returns:
             BC value at this point and time
 
-        Note:
-            Value resolution order:
-            1. BCValueProvider: resolved via provider.compute(state)
-            2. Callable: tries multiple signature patterns (see below)
-            3. Float: returned directly
-
-            For callable values, tries multiple signature patterns:
-            1. value(point, t) - generic array interface
-            2. value(*point, t) - coordinate expansion
-            3. value(point) - no time dependency
-            4. Falls back to 0.0 if all fail
+        Read through the one owner, `segment_value` (#2512 row B2): a callable is g(t, x), bound by its parameter
+        names, so ``point`` is passed as ``x`` and ``t`` as ``t``; a constant follows the owner's rules; a provider
+        is computed from ``state`` and refused without it.
 
         Raises:
-            ValueError: If value is a provider but state is not provided
+            NotImplementedError: If the value is a provider and ``state`` is not given, or a value the owner refuses.
         """
-        # Check for BCValueProvider first (Issue #625)
-        if is_provider(self.value):
-            if state is None:
-                raise ValueError(
-                    f"BCSegment '{self.name}' has a BCValueProvider value but no state "
-                    f"was provided to get_value(). Providers require iteration state "
-                    f"for resolution. Either pass state dict or use resolve_provider() "
-                    f"in the coupling iterator."
-                )
-            result = self.value.compute(state)
-            return float(result) if np.isscalar(result) else result
-
-        if callable(self.value):
-            # Strategy 1: Try generic array interface first (safest)
-            try:
-                result = self.value(point, t)
-                return float(result)
-            except (TypeError, ValueError):
-                pass
-
-            # Strategy 2: Try coordinate expansion (*point, t)
-            # Works for value(x, t), value(x, y, t), value(x, y, z, t), etc.
-            try:
-                coords = (*tuple(point), t)
-                result = self.value(*coords)
-                return float(result)
-            except (TypeError, ValueError):
-                pass
-
-            # Strategy 3: Try without time (stationary BC)
-            try:
-                result = self.value(point)
-                return float(result)
-            except (TypeError, ValueError):
-                pass
-
-            # Strategy 4: Try coordinate expansion without time
-            try:
-                result = self.value(*point)
-                return float(result)
-            except (TypeError, ValueError):
-                pass
-
-            # If all strategies fail, return zero and warn
-            import warnings
-
-            warnings.warn(
-                f"BCSegment '{self.name}': Could not evaluate callable value. "
-                f"Tried signatures: value(point, t), value(*point, t), value(point), value(*point). "
-                f"Returning 0.0 as fallback.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            return 0.0
-
-        return float(self.value)
+        # Until row B2's second half, `t` keeps its 0.0 default; HJB-GFDM, the one caller, passes its time.
+        return segment_value(self, t=t, x=np.asarray(point, dtype=float), where="BCSegment.get_value", state=state)
 
     def __str__(self) -> str:
         """String representation."""
@@ -882,6 +849,135 @@ class BCSegment:
             parts.append(f"(priority={self.priority})")
 
         return " ".join(parts)
+
+
+def bind_boundary_value(fn: Callable[..., Any]) -> BoundCallable:
+    """Bind a boundary value callable to ``(t, x)`` by its parameter names, and refuse it otherwise.
+
+    Stricter than `bind_user_callable` for a reordered role, which binds ``(t, pos)`` positionally since ``t`` is in
+    place: a boundary value's parameters must all be named after the slots (user ruling, #2512 row B2), so one
+    named otherwise -- or whose signature cannot be read, so its names are unknown -- is refused.
+    """
+    bound = bind_user_callable(fn, BOUNDARY_VALUE_SLOTS, role="boundary value")
+    if bound.binding != "keyword":
+        try:
+            params = ", ".join(inspect.signature(fn).parameters)
+        except (TypeError, ValueError):
+            params = "an unreadable signature"
+        raise TypeError(
+            f"boundary value {getattr(fn, '__qualname__', fn)!r} takes ({params}), whose parameters are not all "
+            "named after the slots: a boundary value names them t, x, time first (#2378 phase 5, #2375 ruling 8), "
+            "and is called by name."
+        )
+    return bound
+
+
+def segment_value(
+    segment: BCSegment, *, t: float | None, x: NDArray | None, where: str, state: dict[str, Any] | None = None
+) -> Any:
+    """The one reading of a boundary segment's value, for every reader (#2512 row B2): `boundary_value`, with the
+    binding the segment made of a callable value when it was built."""
+    return boundary_value(
+        segment.value,
+        kind=f"{segment.bc_type.name.title()} segment '{segment.name}'",
+        t=t,
+        x=x,
+        where=where,
+        state=state,
+        binding=segment.value_binding() if callable(segment.value) and not is_provider(segment.value) else None,
+    )
+
+
+def boundary_value(
+    value: Any,
+    *,
+    kind: str,
+    t: float | None,
+    x: NDArray | None,
+    where: str,
+    state: dict[str, Any] | None = None,
+    binding: BoundCallable | None = None,
+) -> Any:
+    """The one reading of a boundary value -- a segment's, or a ``default_value`` (#2512 row B2).
+
+    **A callable** is ``g(t, x)``, time first (#2378 phase 5, #2375 ruling 8; user ruling for boundary values). It
+    is bound by its parameter names when the segment is built (`BCSegment.value_binding`) and called by keyword with
+    what it declares: ``(t, x)``, ``(x)``, ``(t)`` or ``(time)``. ``x`` is one point, a 1-D array of shape
+    ``(d,)``, ``d = 1`` included. A reader with no time passes ``t=None``, and one with no point ``x=None``. A
+    callable that declares what its reader lacks is refused there, at first use, and the message names ``where``,
+    the reader and the face. It returns one number at the point; a return of one element, of any shape, is read as
+    that element, and a longer one is refused.
+
+    **A constant** (#2593): ``None``, and whatever `_describe_bc_value` calls zero, is 0. A boolean is refused. A
+    finite real number is its value, and so is a size-1 real array of any shape, read as its element. A complex
+    value is refused, zero included. Anything else -- a string, a ``Decimal``, a larger array that is not all zero
+    -- is refused, and so is a non-finite number.
+
+    **A** ``BCValueProvider`` is resolved with ``state``. Without one it is refused (``NotImplementedError``): the
+    coupling layer resolves providers before a solve (`with_resolved_providers`).
+    """
+    from mfgarchon.geometry.boundary.bc_utils import _describe_bc_value
+
+    if is_provider(value):
+        if state is None:
+            raise NotImplementedError(
+                f"{kind} has a value of type {type(value).__name__}, a BCValueProvider, and {where} has no "
+                "iteration state to resolve it with: providers are resolved by the coupling layer before a solve "
+                "(with_resolved_providers)."
+            )
+        result = value.compute(state)
+        return float(result) if np.isscalar(result) else result
+    if callable(value):
+        bound = binding if binding is not None else bind_boundary_value(value)
+        if "t" in bound.passes and t is None:
+            raise NotImplementedError(
+                f"{kind}: its value declares t, but {where} has no time to pass it (#2512 row B2)."
+            )
+        if "x" in bound.passes and x is None:
+            raise NotImplementedError(
+                f"{kind}: its value declares x, but {where} reads one value for the whole face and has no point to "
+                "pass it; a value that varies along the face is not supported there (#2512 row B2)."
+            )
+        if x is not None and np.ndim(x) != 1:
+            raise ValueError(f"{where} passed x of shape {np.shape(x)}; a boundary value takes one point, shape (d,).")
+        result = np.asarray(bound(t=t, x=x))
+        if result.size != 1:
+            raise NotImplementedError(
+                f"{kind}: its value returned {result.size} numbers, shape {result.shape}, at one point; {where} reads "
+                "one number per point (#2512 row B2)."
+            )
+        return float(result.reshape(()))  # one element, of any shape, as a constant's is read
+    if isinstance(value, (bool, np.bool_)) or (isinstance(value, np.ndarray) and value.dtype == np.bool_):
+        raise NotImplementedError(
+            f"{kind} has a boolean value, which is not a boundary datum: give a real number, a real array of one "
+            "element, or a callable g(t, x) (#2593)."
+        )
+    if np.iscomplexobj(value):
+        # Before the zero test: `_describe_bc_value` reads np.complex128(1j) as zero, since `float()` drops the
+        # imaginary part, so a purely imaginary datum would become 0 in silence (#2512 row B2).
+        raise NotImplementedError(f"{kind} has a complex value {value!r}; {where} takes a real boundary datum.")
+    if _describe_bc_value(value) is None:
+        return 0.0
+    if isinstance(value, np.ndarray) and value.size == 1:
+        value = value.reshape(-1)[0]  # a size-1 array, of any shape, is its element (#2512 row B2, ruling)
+    real = isinstance(value, numbers.Real) or (
+        isinstance(value, np.ndarray)
+        and value.ndim == 0
+        and np.issubdtype(value.dtype, np.number)
+        and not np.iscomplexobj(value)
+    )
+    if not real:
+        raise NotImplementedError(
+            f"{kind} has a value of type {type(value).__name__}, which {where} cannot read: give a real number, a "
+            "real array of one element, or a callable g(t, x) (#2593)."
+        )
+    constant = float(value)
+    if not np.isfinite(constant):
+        raise NotImplementedError(
+            f"{kind} has a non-finite value {constant}; {where} would impose it and return a non-finite solution "
+            "(#2593)."
+        )
+    return constant
 
 
 def create_standard_boundary_names(dimension: int) -> dict[str, str]:

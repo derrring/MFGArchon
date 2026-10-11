@@ -107,6 +107,7 @@ from .types import (
     PeriodicGridConvention,
     parse_boundary_face,
     repeated_endpoint_count,
+    segment_value,
 )
 
 logger = get_logger(__name__)
@@ -327,11 +328,9 @@ class FDMApplicator(BaseStructuredApplicator):
 
             # Apply BC to each boundary
             for dim, side in boundaries_to_apply:
-                # Get BC value (time-dependent or constant)
-                if callable(segment.value):
-                    bc_value = segment.value(time)
-                else:
-                    bc_value = segment.value
+                bc_value = segment_value(
+                    segment, t=time, x=None, where=f"FDM enforce_values on face {BoundaryFace(dim, side).to_string()}"
+                )
 
                 h = spacing_tuple[dim]
 
@@ -490,19 +489,19 @@ def bc_to_topology_calculator(
     if bc_type == BCType.PERIODIC:
         return PeriodicTopology(dimension, shape), None
     elif bc_type == BCType.DIRICHLET:
-        value = seg.value if not callable(seg.value) else 0.0
-        return BoundedTopology(dimension, shape), DirichletCalculator(float(value), grid_type)
+        value = segment_value(seg, t=None, x=None, where="the FDM calculator route (bc_to_topology_calculator)")
+        return BoundedTopology(dimension, shape), DirichletCalculator(value, grid_type)
     elif bc_type == BCType.NEUMANN:
-        flux = seg.value if not callable(seg.value) else 0.0
-        return BoundedTopology(dimension, shape), NeumannCalculator(float(flux), grid_type)
+        flux = segment_value(seg, t=None, x=None, where="the FDM calculator route (bc_to_topology_calculator)")
+        return BoundedTopology(dimension, shape), NeumannCalculator(flux, grid_type)
     elif bc_type == BCType.NO_FLUX:
         return BoundedTopology(dimension, shape), _get_no_flux_calculator()
     elif bc_type == BCType.ROBIN:
         # Issue #543: Use getattr() instead of hasattr for optional Robin BC coefficients
         alpha = getattr(seg, "alpha", 1.0)
         beta = getattr(seg, "beta", 0.0)
-        rhs = seg.value if not callable(seg.value) else 0.0
-        return BoundedTopology(dimension, shape), RobinCalculator(alpha, beta, float(rhs), grid_type)
+        rhs = segment_value(seg, t=None, x=None, where="the FDM calculator route (bc_to_topology_calculator)")
+        return BoundedTopology(dimension, shape), RobinCalculator(alpha, beta, rhs, grid_type)
     elif bc_type == BCType.EXTRAPOLATION_LINEAR:
         return BoundedTopology(dimension, shape), LinearExtrapolationCalculator()
     elif bc_type == BCType.EXTRAPOLATION_QUADRATIC:
@@ -1130,14 +1129,6 @@ def face_segment(bc: BoundaryConditions, target_face: BoundaryFace, geometry: An
     return segment
 
 
-def segment_value(segment: BCSegment, time: float) -> Any:
-    """The datum a face's ghost reads from ``segment`` at ``time``: ``value(time)`` for a callable, 0 for None."""
-    value = segment.value
-    if callable(value):
-        return value(time)
-    return value if value is not None else 0.0
-
-
 def dirichlet_wall_rows(
     bc: BoundaryConditions | None, shape: tuple[int, ...], time: float = 0.0, geometry: Any = None
 ) -> tuple[NDArray[np.bool_], NDArray[np.float64]]:
@@ -1163,7 +1154,15 @@ def dirichlet_wall_rows(
             segment = face_segment(bc, BoundaryFace(axis, side), geometry)
             if segment.bc_type == BCType.DIRICHLET:
                 rank = next((i for i, seg in enumerate(bc.segments) if seg is segment), len(bc.segments))
-                claims.append((rank, axis, side, segment_value(segment, time)))
+                face_name = BoundaryFace(axis, side).to_string()
+                claims.append(
+                    (
+                        rank,
+                        axis,
+                        side,
+                        segment_value(segment, t=time, x=None, where=f"the FDM Dirichlet rows of face {face_name}"),
+                    )
+                )
     for _, axis, side, g in sorted(claims, key=lambda claim: claim[0]):
         face: list[int | slice] = [slice(None)] * len(shape)
         face[axis] = 0 if side == "min" else -1
@@ -1366,7 +1365,8 @@ class PreallocatedGhostBuffer:
             # Issue #1255 (C), 2026-06-10 audit: pass seg.alpha/seg.beta so that
             # uniform Robin(alpha, beta, value) is not silently treated as
             # Robin(0, 1, value) (pure-Neumann special case).
-            self._update_ghosts_uniform(seg.bc_type, seg.value, time, seg.alpha, seg.beta)
+            value = segment_value(seg, t=time, x=None, where="the FDM ghost layer of every face")
+            self._update_ghosts_uniform(seg.bc_type, value, time, seg.alpha, seg.beta)
         else:
             # Mixed BC requires more complex per-point updates
             self._update_ghosts_mixed(bc, time)
@@ -1423,11 +1423,7 @@ class PreallocatedGhostBuffer:
         g = self._ghost_depth
         buf = self._buffer
 
-        # Evaluate value if callable
-        if callable(value):
-            v = value(time)
-        else:
-            v = value if value is not None else 0.0
+        v = value  # read by `segment_value` in `update_ghosts` (#2512 row B2)
 
         if bc_type == BCType.PERIODIC:
             convention = self._periodic_convention_in_force()
@@ -1531,11 +1527,7 @@ class PreallocatedGhostBuffer:
         d = self._dimension
         buf = self._buffer
 
-        # Evaluate value if callable
-        if callable(value):
-            v = value(time)
-        else:
-            v = value if value is not None else 0.0
+        v = value  # read by `segment_value` in `update_ghosts` (#2512 row B2)
 
         # Only support Neumann and Dirichlet for now
         if bc_type == BCType.PERIODIC:
@@ -1813,7 +1805,9 @@ class PreallocatedGhostBuffer:
         d = self._dimension
         bc_type = segment.bc_type
 
-        v = segment_value(segment, time)
+        v = segment_value(
+            segment, t=time, x=None, where=f"the FDM ghost layer of face {BoundaryFace(axis, side).to_string()}"
+        )
 
         # Get slices for this face
         if side == "min":
