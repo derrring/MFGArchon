@@ -19,6 +19,8 @@ flat (Howard); per-face Dirichlet 7.0e-1 flat (Newton). After the fix every case
 second order on the default (no ghost-node) path.
 """
 
+from types import SimpleNamespace
+
 import pytest
 
 import numpy as np
@@ -186,15 +188,18 @@ def test_a_dict_bc_solves_as_the_boundary_conditions_it_spells(kind: str, form: 
     """The dict form is deprecated (#2597) and translated at entry into the BoundaryConditions its warning names; the
     policy's equivalence test, the two solve identically. A Neumann dict's "values" was read only as an index dict,
     so a number or a callable was solved as 0 (#2520): at bddb45d9 the Neumann rows equal neumann_bc(value=0)'s."""
-    bc = (neumann_bc if kind == "neumann" else dirichlet_bc)(dimension=1, value=G)
+    make = neumann_bc if kind == "neumann" else dirichlet_bc
     values = G if form == "number" else (lambda point: G)
     with pytest.warns(
         DeprecationWarning,
         match=r"A dict for parameter 'boundary_conditions' in 'HJBGFDMSolver.__init__' is deprecated since v0\.22\.0\. "
         r"Use a BoundaryConditions instead\. Will be removed in v0\.25\.0\.",
     ):
-        from_dict, _ = _solve(kind, bc, G, G, nx=21, solver_bc={"type": kind, "values": values}, **_NEWTON)
-    from_bc, _ = _solve(kind, bc, G, G, nx=21, **_NEWTON)
+        # The grid carries g = 0, so a dict the solver ignored would solve as that BC, not as the one it spells.
+        from_dict, _ = _solve(
+            kind, make(dimension=1, value=0.0), G, G, nx=21, solver_bc={"type": kind, "values": values}, **_NEWTON
+        )
+    from_bc, _ = _solve(kind, make(dimension=1, value=G), G, G, nx=21, **_NEWTON)
     np.testing.assert_array_equal(from_dict, from_bc)
 
 
@@ -213,6 +218,8 @@ def test_a_dict_bc_the_translation_cannot_spell_is_refused():
         ),
         ({"type": "no_flux", "values": 0.1}, NotImplementedError, r"\['values'\] = \[0\.1\].*#2513"),
         ({"type": "mixed"}, ValueError, r"unknown dict BC type 'mixed'"),
+        ({"values": 0.1}, ValueError, r'needs a "type" string.*it has None'),
+        ({"type": None}, ValueError, r'needs a "type" string.*it has None'),
     )
     for bc, error, message in refused:
         with (
@@ -225,7 +232,15 @@ def test_a_dict_bc_the_translation_cannot_spell_is_refused():
         {"type": "no_flux", "values": 0},
         {"type": "periodic"},
         {"type": "periodic", "values": 0.0},
+        {"type": "dirichlet", "values": np.array(0.1)},  # one element: the value, as the rows read it
     )
     for bc in accepted:
         with pytest.warns(DeprecationWarning, match="A dict for parameter 'boundary_conditions'"):
             HJBGFDMSolver(problem, collocation_points=x, boundary_conditions=bc, **_NEWTON)
+    # Not a dict and not a BoundaryConditions: refused at entry, by name, rather than read in part (#1559).
+    with pytest.raises(
+        TypeError, match=r"Unsupported boundary_conditions type: SimpleNamespace\. Expected BoundaryConditions"
+    ):
+        HJBGFDMSolver(
+            problem, collocation_points=x, boundary_conditions=SimpleNamespace(type="dirichlet", values=0.7), **_NEWTON
+        )

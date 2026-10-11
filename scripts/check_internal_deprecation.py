@@ -214,6 +214,7 @@ SENTINELS = {
     "parameter": "FPFDMSolver.solve_fp_system.velocity_field",
     "property": "num_points",
     "retired_parameters": "FPFDMSolver.solve_fp_system",
+    "value": "HJBGFDMSolver.__init__.boundary_conditions",
 }
 
 

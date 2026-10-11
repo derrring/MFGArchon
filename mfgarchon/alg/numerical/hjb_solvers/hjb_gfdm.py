@@ -679,7 +679,12 @@ class HJBGFDMSolver(BaseHJBSolver):
                 # The deprecated dict form (#2597), translated once into the BoundaryConditions it spells, so every
                 # reader below reads one form.
                 boundary_conditions = self._boundary_conditions_from_dict(boundary_conditions, self.dimension)
-            self._refuse_unread_legacy_bc_value(boundary_conditions)
+            elif not isinstance(boundary_conditions, BoundaryConditions):
+                # Anything else read some of its attributes and dropped the rest (#2513, #1559).
+                raise TypeError(
+                    f"Unsupported boundary_conditions type: {type(boundary_conditions).__name__}. Expected "
+                    "BoundaryConditions from mfgarchon.geometry.boundary, or None to use the problem's (#2597)."
+                )
             self.boundary_conditions = boundary_conditions
             # Explicit param is the caller's authoritative static choice; never
             # re-read from geometry at solve time (Issue #1118 BC refresh).
@@ -2468,18 +2473,6 @@ class HJBGFDMSolver(BaseHJBSolver):
     }
 
     @staticmethod
-    def _refuse_unread_legacy_bc_value(bc: Any) -> None:
-        """Refuse a nonzero value carried where no BC row reads it (#2513).
-
-        The rows read a value from a `BoundaryConditions` segment. Another object's ``value`` reaches no row, so a
-        nonzero one was solved as 0. A zero one means what it says. A dict is translated before this, by
-        `_boundary_conditions_from_dict`, which applies the same check to its ``"value"``.
-        """
-        if isinstance(bc, BoundaryConditions):
-            return
-        HJBGFDMSolver._refuse_unread({"value": getattr(bc, "value", None)})
-
-    @staticmethod
     def _refuse_unread(carried: dict[str, Any]) -> None:
         unread = {
             k: v
@@ -2521,22 +2514,30 @@ class HJBGFDMSolver(BaseHJBSolver):
         )
         HJBGFDMSolver._refuse_unread({} if agrees else {"value": value})
 
-        kind = str(bc.get("type") or "neumann").lower()
-        if kind == "robin":
-            raise NotImplementedError(
-                "HJBGFDMSolver: a dict BC of type 'robin' carries no coefficients, and HJB-GFDM's Robin row takes "
-                "only alpha = 0, beta = 1, the condition n.grad u = g, which is the Neumann condition: pass "
-                "neumann_bc(value=g) (#2597)."
-            )
         factories: dict[str, Callable[..., BoundaryConditions]] = {
             "dirichlet": dirichlet_bc,
             "neumann": neumann_bc,
             "no_flux": no_flux_bc,
             "periodic": periodic_bc,
         }
+        kind = bc.get("type")
+        if not isinstance(kind, str):
+            # A dict with no "type" was refused at the solve ("Boundary conditions required ... but not specified").
+            raise ValueError(
+                f'HJBGFDMSolver: a dict BC needs a "type" string, one of {sorted(factories)}; it has {kind!r} (#2597).'
+            )
+        kind = kind.lower()
+        if kind == "robin":
+            raise NotImplementedError(
+                "HJBGFDMSolver: a dict BC of type 'robin' carries no coefficients, and HJB-GFDM's Robin row takes "
+                "only alpha = 0, beta = 1, the condition n.grad u = g, which is the Neumann condition: pass "
+                "neumann_bc(value=g) (#2597)."
+            )
         if kind not in factories:
             raise ValueError(f"HJBGFDMSolver: unknown dict BC type {kind!r}; supported: {sorted(factories)} (#2597).")
-        if isinstance(values, (list, tuple, dict, np.ndarray)):
+        if isinstance(values, np.ndarray) and values.size == 1:
+            pass  # one element, read as its element by the owner, as the rows read it
+        elif isinstance(values, (list, tuple, dict, np.ndarray)):
             raise NotImplementedError(
                 f'HJBGFDMSolver: a dict BC\'s per-point "values" (a {type(values).__name__}) is not accepted since '
                 "v0.22.0 (#2597). Give one number or a callable g(x) per face, in a BoundaryConditions; a value per "

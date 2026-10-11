@@ -272,7 +272,9 @@ def test_a_planted_coefficient_reader_is_found(package_copy, planted):
 # else ...``, guarding a call of the tested expression, is how D5, D16 and D22-D26 decoded a value passed into a helper.
 # Any such site outside the functions below fails, whatever ``v`` is: the allowance names each one, with its class.
 # Population, function scopes and blind spots as for the first predicate: module-level code is not scanned, and a
-# callable test that guards no call of the same expression (``g = v if callable(v) else ...``) is not a site.
+# callable test that guards no call of the same expression (``g = v if callable(v) else ...``) is not a site. Also
+# unseen: a negated test whose ``else`` calls (``if not callable(g): ... else: g(x)``), an early return before the
+# call, and ``callable(g) and g(x)``. No census decoder uses these shapes (review 1 of #2603).
 CALLABLE_CALLS_ALLOWED = {
     # Removed by B2b-2b: HJB-SL's D6 probes the BC's own accessor, and its fallback is reached only by swallowed errors.
     (

@@ -52,3 +52,45 @@ def test_a_type_key_warns_and_passes_through_a_value_key_remaps_and_the_function
         with pytest.raises(TypeError, match="raised by the function body"):
             build("old_boom")  # remapped to "boom", which raises in the body
     assert calls == ["boom"]  # once: the TypeError is not swallowed into a second call with "old_boom"
+
+
+def test_a_warning_raised_while_hjb_gfdm_is_constructed_names_the_constructing_line():
+    """`deprecated_value` wraps `HJBGFDMSolver.__init__`, a frame of its own, so a warning in `__init__` or in what it
+    calls directly, at a stacklevel that named the caller, named `deprecation.py` instead. Those skip `WRAPPER_FRAMES`
+    (#2579). Recorded by ``warning.filename``, which `pytest.warns` does not check: the dict's own deprecation, the
+    no-`monotonicity_scheme` warning in `__init__`, and the neighbourhood builder's (review 1 of #2603)."""
+    import numpy as np
+
+    from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+    from mfgarchon.core.mfg_components import MFGComponents
+    from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import dirichlet_bc
+
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=dirichlet_bc(dimension=1))
+    comps = MFGComponents(
+        hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
+        m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)),
+        u_terminal=lambda x: np.zeros_like(np.asarray(x, dtype=float)),
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        problem = MFGProblem(geometry=grid, components=comps, T=1.0, Nt=4, volatility=0.5)
+    x = np.linspace(0.0, 1.0, 11).reshape(-1, 1)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        HJBGFDMSolver(
+            problem,
+            collocation_points=x,
+            adaptive_neighborhoods=True,
+            k_min=9,
+            boundary_conditions={"type": "dirichlet"},
+        )
+    kinds = {"A dict for parameter": [], "no `monotonicity_scheme`": [], "Could not find 9 neighbors": []}
+    for w in caught:
+        for marker, found in kinds.items():
+            if marker in str(w.message):
+                found.append(w.filename)
+    assert all(kinds.values()), {marker: len(found) for marker, found in kinds.items()}
+    assert {marker: set(found) for marker, found in kinds.items()} == {marker: {__file__} for marker in kinds}
