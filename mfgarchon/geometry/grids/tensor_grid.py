@@ -1031,8 +1031,8 @@ class TensorProductGrid(
             raise ValueError(
                 "custom_conditions is refused: in 1-D it built the legacy fdm_bc_1d class, which is removed "
                 "(deprecated since 0.14.0, #869; removed in 0.22.0 by user ruling), and otherwise it was ignored. "
-                "Build a BoundaryConditions with periodic_bc, dirichlet_bc, neumann_bc, no_flux_bc or robin_bc, and "
-                "store it on the grid."
+                "Build a BoundaryConditions with periodic_bc, dirichlet_bc, neumann_bc, no_flux_bc or robin_bc, or "
+                "from one BCSegment per face, and store it on the grid."
             )
         return self._create_bc_nd(bc_type)
 

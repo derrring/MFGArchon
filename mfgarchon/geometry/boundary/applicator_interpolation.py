@@ -160,7 +160,7 @@ class InterpolationApplicator(BaseBCApplicator):
         ndim = field.ndim
         if self._dimension is not None and ndim != self._dimension:
             raise ValueError(f"Field dimension ({ndim}) does not match applicator dimension ({self._dimension})")
-        if isinstance(boundary_conditions, BoundaryConditions):  # the legacy 1-D object carries no types to check
+        if isinstance(boundary_conditions, BoundaryConditions):  # anything else is refused just below
             self._validate_bc_support(boundary_conditions)  # #1948
 
         # Get BC types for each boundary

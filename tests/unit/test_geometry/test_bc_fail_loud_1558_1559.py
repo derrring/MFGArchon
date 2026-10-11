@@ -67,19 +67,26 @@ def _small_1d_problem(n=11):
 def test_an_object_fp_fdm_cannot_honour_fails_loud():
     """#1559: FP-FDM's time-stepping assembly treated a BC object without ``is_uniform`` -- the legacy fdm_bc_1d
     class -- as no-flux, so a legacy dirichlet was assembled as a no-flux wall and a legacy periodic did not wrap.
-    The class is removed (0.22.0, user ruling), and the statement stays: an object FP-FDM cannot honour fails loud.
+    The class is removed (0.22.0, user ruling), and the statement stays: an object FP-FDM cannot honour fails loud,
+    in the time stepping and in `build_advection_operator`, and so does the interpolation applicator's type read.
     Pinned with a duck-typed object shaped like the old class."""
     from types import SimpleNamespace
 
     from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+    from mfgarchon.geometry.boundary.applicator_interpolation import InterpolationApplicator
 
     prob = _small_1d_problem()
     n = 11
     solver = FPFDMSolver(prob)
     for legacy_type in ("dirichlet", "periodic", "neumann"):
-        solver.boundary_conditions = SimpleNamespace(type=legacy_type, left_value=0.0, right_value=0.0)
+        legacy = SimpleNamespace(type=legacy_type, left_value=0.0, right_value=0.0)
+        solver.boundary_conditions = legacy
         with pytest.raises(TypeError, match=r"Unsupported boundary_conditions type: SimpleNamespace"):
             solver.solve_fp_system(np.ones(n), drift_field=np.zeros((prob.Nt + 1, n)), volatility=0.3)
+        with pytest.raises(TypeError, match=r"Unsupported boundary_conditions type: SimpleNamespace"):
+            solver.build_advection_operator(np.zeros(n))
+        with pytest.raises(TypeError, match=r"takes a BoundaryConditions, not a SimpleNamespace"):
+            InterpolationApplicator().enforce_values(np.ones(n), legacy)
 
 
 def test_periodic_and_no_flux_diverge_by_o1_which_is_why_coercion_is_not_harmless():

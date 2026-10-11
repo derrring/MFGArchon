@@ -409,7 +409,7 @@ def bc_to_topology_calculator(
     """
     Convert BoundaryConditions to Topology + Calculator pair.
 
-    This is the bridge between the legacy BoundaryConditions API and the new
+    This is the bridge between the BoundaryConditions API and the
     Topology/Calculator composition architecture (Issue #516).
 
     **For NO_FLUX BC type, two physics-based options:**
@@ -417,7 +417,7 @@ def bc_to_topology_calculator(
     - `use_zero_flux=True`: ZeroFluxCalculator (J·n = 0, mass conservation)
 
     Args:
-        bc: Boundary condition specification (unified or legacy)
+        bc: Boundary condition specification
         shape: Grid shape (interior points)
         grid_type: Grid type for ghost cell formulas
         use_zero_flux: If True, NO_FLUX BC uses ZeroFluxCalculator (J·n=0)

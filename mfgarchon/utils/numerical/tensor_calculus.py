@@ -967,20 +967,15 @@ def _is_no_flux(bc: BoundaryConditions | None) -> bool:
     if bc is None:
         return False
 
-    # Uniformity is asked FIRST because `BoundaryConditions.type` raises `ValueError` on a mixed
-    # BC ("type property only valid for uniform BCs"), and a `getattr(bc, "type", None)` does not
-    # absorb that -- only `AttributeError`. Reading `.type` first crashed a mixed-BC call that
-    # works on main, which is a regression this ordering avoids rather than a case it handles.
-    segments = getattr(bc, "segments", None)
-    if segments is not None:
-        if not getattr(bc, "is_uniform", False) or not segments:
-            return False
-        from mfgarchon.geometry.boundary import BCType
+    # Uniformity is asked before the first segment is read, and `.type` is not read at all: it raises
+    # `ValueError` on a mixed BC. An object without `segments` fails loud (#1559): the legacy fdm_bc_1d
+    # class, the only one this read by its `.type`, is removed.
+    segments = bc.segments
+    if not bc.is_uniform or not segments:
+        return False
+    from mfgarchon.geometry.boundary import BCType
 
-        return segments[0].bc_type == BCType.NO_FLUX
-
-    bc_type = getattr(bc, "type", None)
-    return isinstance(bc_type, str) and bc_type.lower() == "no_flux"
+    return segments[0].bc_type == BCType.NO_FLUX
 
 
 def _tensor_diffusion_2d(

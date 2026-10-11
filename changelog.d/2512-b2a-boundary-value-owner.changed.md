@@ -75,7 +75,8 @@
     through the owner too**, since the ghost helper it feeds lost its own decode. A callable is read by name, and
     the constant contract applies. b10b9e65 imposed ghosts from `True` as 1.0, broadcast a 2-element array, and
     imposed NaN; it read `lambda s` and `np.sin` with the time, and `lambda x` with the time as `x`. Each is now
-    refused. The other legacy readers are unchanged.
+    refused. The other legacy readers are unchanged. The class is removed in this release, with this route; see
+    the #869 entry.
   - **The FP's shared-Neumann reader refuses a complex value.** It read `np.complex128(1j)` as zero flux, since
     `float()` drops the imaginary part.
   - **A `BCValueProvider`** read by a reader with no iteration state is refused with `NotImplementedError`,

@@ -1,5 +1,6 @@
 - **The ghost buffer's Dirichlet ghost is node-centred, like the rest of it** (Issue #1968). `TensorProductGrid` puts a node on the wall, and #1935 made the Neumann, no-flux, reflecting and Robin ghosts mirror about it. The Dirichlet ghost still used the cell relation `2g − u_wall`: first order against the node oracle $u(-h)$, 0.118 / 0.061 / 0.031 at 9 / 17 / 33 points on $u = e^x$. It is now the odd reflection through the node beside the wall, `2g − u_1`, second order. This covers:
-  - the uniform and per-face `PreallocatedGhostBuffer` branches, and the legacy `fdm_bc_1d` input;
+  - the uniform and per-face `PreallocatedGhostBuffer` branches, and the legacy `fdm_bc_1d` input, which this release
+    removes (see the #869 entry);
   - Robin with β = 0, the same condition.
 - **HJB-FDM's Dirichlet solves change, and the centred ones now converge.** Its Newton reads this ghost in the wall row before overwriting the wall node. Measured against manufactured solutions:
   - 1-D, $u = 0.2 + \sin(\pi x) e^x (1 + t)$, σ = 0.5, T = 0.25, Nt = 400, 17 / 33 / 65 points:

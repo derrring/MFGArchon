@@ -266,8 +266,9 @@ def __getattr__(name: str):
         raise AttributeError(
             f"{name}, the legacy 1-D FDM boundary-condition class (fdm_bc_1d), is removed (deprecated since 0.14.0, "
             "#869; removed in 0.22.0 by user ruling, ahead of the v1.0.0 its docstring promised). Use "
-            "mfgarchon.geometry.boundary.BoundaryConditions, built with periodic_bc, dirichlet_bc, neumann_bc, "
-            "no_flux_bc or robin_bc."
+            "mfgarchon.geometry.boundary.BoundaryConditions: periodic_bc, dirichlet_bc, neumann_bc, no_flux_bc or "
+            "robin_bc build one condition on every wall, and one BCSegment per face (boundary='x_min', 'x_max') "
+            "gives each wall its own value, as left_value and right_value did."
         )
     if name == "get_ghost_values_nd":
         from ._compat import get_ghost_values_nd

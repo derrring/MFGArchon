@@ -998,7 +998,7 @@ def solve_fp_nd_full_system(
     M_solution[0] = m_initial_condition.copy()
 
     # Enforce Dirichlet BC on initial condition (for 1D problems)
-    # Uses helper functions for unified/legacy BC compatibility
+    # through the BoundaryConditions helpers above
     bc_type = _get_bc_type(boundary_conditions)
     if bc_type == "dirichlet" and ndim == 1:
         M_solution[0, 0] = _get_bc_value(boundary_conditions, BoundaryFace(0, "min"))
@@ -1212,7 +1212,7 @@ def solve_fp_nd_full_system(
                 )
             M_solution[k + 1] = np.maximum(M_solution[k + 1], 0)
 
-        # Enforce Dirichlet BC (using unified/legacy compatible helper)
+        # Enforce Dirichlet BC
         if bc_type == "dirichlet" and ndim == 1:
             M_solution[k + 1, 0] = _get_bc_value(boundary_conditions, BoundaryFace(0, "min"))
             M_solution[k + 1, -1] = _get_bc_value(boundary_conditions, BoundaryFace(0, "max"))
