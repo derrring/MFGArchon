@@ -260,7 +260,9 @@ class FPSLSolver(BaseFPSolver):
         Through :func:`per_axis_operations`, which refuses an axis whose two faces disagree; a different
         operation on each axis, such as no-flux walls in x and periodic in y, is honoured axis by axis.
         """
-        return per_axis_operations(self.get_boundary_conditions(), self.dimension, consumer="FPSLSolver")
+        return per_axis_operations(
+            self.get_boundary_conditions(), self.dimension, consumer="FPSLSolver", geometry=self.problem.geometry
+        )
 
     def _get_diffusion_bc_types(self) -> tuple[str, ...]:
         """The implicit diffusion's boundary on each axis, 'periodic' or 'neumann'.

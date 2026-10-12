@@ -134,9 +134,9 @@ def _segment_faces(segment, d: int) -> list[tuple[int, str]]:
     figure, where x_max alone gives 0.8326. A Dirichlet ``sdf_region`` was integrated on its zero level
     set -- for a ball centred on a corner of the unit square, a quarter circle inside the domain.
 
-    `bc_utils.refuse_unplaceable_segments` refuses a related set for the readers that take one condition
-    per face (the semi-Lagrangian pair, FP-FDM's periodicity), with a different policy: it also refuses
-    ``"all"`` and ``region_name`` segments, which this path can place.
+    The readers that take one condition per face (the semi-Lagrangian pair, FP-FDM's periodicity) read the
+    face owner, `BoundaryConditions.segment_for_face`, which places these fields where it can and refuses the
+    rest (#2512 row B1); this path moves to it in that row's stage B1c.
     """
     from mfgarchon.geometry.boundary.types import BCType, parse_boundary_face
 

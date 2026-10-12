@@ -162,30 +162,44 @@ def _region_only_exit():
 
 
 @pytest.mark.parametrize(
-    ("make_bc", "message"),
+    ("make_bc", "error", "message"),
     [
-        (_half_periodic, "periodic on one face only"),
-        (_region_named_mix, "have no `boundary`"),
-        (_region_only_exit, "have no `boundary`"),
+        (_half_periodic, NotImplementedError, "periodic on one face only"),
+        (_region_only_exit, ValueError, "covers part of the x_max face"),
     ],
-    ids=["half-periodic-axis", "region-named-mix", "region-only-exit"],
+    ids=["half-periodic-axis", "region-only-exit"],
 )
-def test_a_boundary_whose_axes_cannot_be_read_per_face_is_refused(make_bc, message):
+def test_a_boundary_whose_axes_cannot_be_read_per_face_is_refused(make_bc, error, message):
     """Two shapes the per-face reading cannot settle, refused rather than guessed.
 
-    An axis periodic on one face has no answer: the ghosts would wrap one wall and mirror the other. A
-    segment with no ``boundary`` covers every face for `get_bc_type_at_boundary`, while the ghosts' resolver
-    matches it to a face only through its region name, so in a periodic mix the two disagree: this BC, read
-    in segment order, closed the periodic seam or left the walls on the ghost, a drift difference of 0.36.
-    The exit, given only a region, is read by the ghosts as nowhere -- every face periodic -- and by the
-    accessor as every face.
+    An axis periodic on one face has no answer: the ghosts would wrap one wall and mirror the other. The exit,
+    given only a region, covers part of x_max and is not periodic where the periodic default governs the rest:
+    the face owner refuses it (#2512 row B1). Before the owner, the ghosts read it as nowhere -- every face
+    periodic -- and the accessor as every face.
     """
     from mfgarchon.operators.differential.gradient import value_gradient
 
     grid = TensorProductGrid(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[9, 9], boundary_conditions=make_bc())
     x, _ = np.meshgrid(*grid.coordinates, indexing="ij")
-    with pytest.raises(NotImplementedError, match=message):
+    with pytest.raises(error, match=message):
         value_gradient(grid, x**2, time=0.0)
+
+
+def test_region_named_faces_are_read_as_their_faces():
+    """Walls and seam placed by face-label region names are a channel, read the same way by every reader.
+
+    This was refused while the ghosts' resolver and `get_bc_type_at_boundary` disagreed on a segment with no
+    ``boundary``: in segment order it closed the seam or left the walls on the ghost, a drift difference of 0.36.
+    The face owner (#2512 row B1) reads ``region_name="x_min"`` as the x_min face for every reader, so x is closed
+    and y periodic: on u = x**2 the closed axis gives 2x exactly (walls included) and the periodic one 0.
+    """
+    from mfgarchon.operators.differential.gradient import value_gradient
+
+    grid = TensorProductGrid(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[9, 9], boundary_conditions=_region_named_mix())
+    x, _ = np.meshgrid(*grid.coordinates, indexing="ij")
+    gx, gy = value_gradient(grid, x**2, time=0.0)
+    np.testing.assert_allclose(gx, 2 * x, rtol=0, atol=1e-11, err_msg="the closed axis is not closed")
+    np.testing.assert_allclose(gy, 0.0, rtol=0, atol=1e-11, err_msg="the periodic axis is not periodic")
 
 
 def test_a_uniform_periodic_boundary_is_periodic_whatever_its_default():

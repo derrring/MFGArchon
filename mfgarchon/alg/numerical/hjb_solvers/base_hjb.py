@@ -207,53 +207,16 @@ def _get_bc_info_1d(
     """
     from mfgarchon.geometry.boundary.types import BCType, BoundaryFace, segment_robin_coefficients, segment_value
 
+    # The face owner's segment (#2512 row B1), the one the residual's ghosts impose: its type, value and
+    # (for ROBIN) coefficients come from that one segment. This read placed a `boundary=` segment ahead of
+    # any other, whatever the priority, so the wall rows and the ghosts could impose different conditions
+    # in one solve (#2624); and it gave a ROBIN default the coefficients (1, 0), which are a Dirichlet wall.
     target_face = BoundaryFace(0, "min" if side == "left" else "max")
-    default_alpha, default_beta = 1.0, 0.0
-
-    # Priority 1: segment-based access (supports Robin with alpha/beta).
-    # Issue #946: match via seg.face instead of string comparison.
-    for seg in bc.segments:
-        seg_face = seg.face
-        if seg_face is not None and seg_face == target_face:
-            value = segment_value(
-                seg,
-                t=time,
-                time_keyword="time",
-                x=None,
-                where=f"the 1-D HJB boundary read of face {target_face.to_string()}",
-            )
-            # Only a Robin segment's coefficients are read; the 1-D HJB uses them in its Robin arm alone.
-            alpha, beta = (
-                segment_robin_coefficients(seg, where=f"the 1-D HJB boundary read of face {target_face.to_string()}")
-                if seg.bc_type == BCType.ROBIN
-                else (default_alpha, default_beta)
-            )
-            return seg.bc_type, value, alpha, beta
-
-    # Priority 2: no segment carries this face -- fall back to the uniform default.
-    #
-    # Issue #1685: this branch read `bc.default_type` and `bc.get_boundary_type()`, neither of
-    # which exists (the real names are `default_bc` and `get_bc_type_at_boundary`). Both raised
-    # AttributeError into a bare `except: pass`, so every BC whose segments carry no face --
-    # i.e. everything built by the `uniform_bc()` family, including `dirichlet_bc(value=7.0)`
-    # and `periodic_bc()` -- silently resolved to Neumann-0 and the solve ran on boundary data
-    # the caller never asked for. The exception handlers are gone with the misspellings: a
-    # BoundaryConditions object that cannot answer these is a bug, not a fallback case.
-    # Both the type and the value go through the accessor, not through `bc.default_bc`.
-    # Reading the type from the raw attribute pairs it with a value that may come from a
-    # different segment -- e.g. default_bc=NEUMANN beside a faceless DIRICHLET segment with
-    # value=9.0 resolves to (NEUMANN, 9.0), applying du/dn = 9.0 where the caller declared
-    # u = 9.0. It also returns None when `default_bc` is unset (its declared type is
-    # `BCType | None`) and bypasses `_resolve_default_bc`, the Issue #1100 diagnostic.
-    boundary_key = target_face.to_string()
-    bc_type = bc.get_bc_type_at_boundary(boundary_key)
-    default_value = bc.get_bc_value_at_boundary(boundary_key, time=time)
-    return (
-        bc_type,
-        0.0 if default_value is None else default_value,
-        default_alpha,
-        default_beta,
-    )
+    where = f"the 1-D HJB boundary read of face {target_face.to_string()}"
+    seg = bc.segment_for_face(target_face)
+    value = segment_value(seg, t=time, time_keyword="time", x=None, where=where)
+    alpha, beta = segment_robin_coefficients(seg, where=where) if seg.bc_type == BCType.ROBIN else (1.0, 0.0)
+    return seg.bc_type, value, alpha, beta
 
 
 class BaseHJBSolver(BaseNumericalSolver):

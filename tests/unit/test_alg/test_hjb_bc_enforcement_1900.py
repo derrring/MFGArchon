@@ -231,22 +231,17 @@ def test_the_surviving_enforcement_uses_the_grids_own_spacing():
     )
 
 
-def test_a_uniform_robin_bc_loses_its_alpha_and_beta_before_reaching_the_enforcement():
-    """`robin_bc()` is silently enforced as Dirichlet, because its coefficients never arrive.
+def test_a_uniform_robin_bc_keeps_its_alpha_and_beta_at_the_enforcement():
+    """A uniform `robin_bc()` reaches the 1-D HJB enforcement with its own coefficients.
 
-    `robin_bc(dimension=1, alpha=1, beta=1, value=g)` builds ONE segment named "uniform" whose
-    `face` is None. `_get_bc_info_1d`'s priority-1 loop requires `seg.face is not None and
-    seg.face == target_face`, so it never matches, and priority 2 returns the hardcoded
-    `default_alpha, default_beta = 1.0, 0.0` -- discarding the segment's real coefficients. With
-    beta = 0 the enforcement's `denom = alpha + beta/dx` is 1 and `u[0] = (g + 0)/1 = g`, i.e.
-    Dirichlet. Measured: the segment carries (1.0, 1.0) and the accessor returns (1.0, 0.0); with
-    alpha=2, beta=-1 it still returns (1.0, 0.0).
+    `robin_bc(dimension=1, alpha=1, beta=1, value=g)` builds ONE segment named "uniform" whose `face` is
+    None. `_get_bc_info_1d` used to require `seg.face is not None and seg.face == target_face`, so it never
+    matched, and its fallback returned the hardcoded `1.0, 0.0` -- with beta = 0 the enforcement's
+    `u[0] = (g + 0)/1 = g`, a Dirichlet wall. Measured then: the segment carried (2.0, -1.0) and the
+    accessor returned (1.0, 0.0). It now reads the face owner's segment (#2512 row B1), whose coefficients
+    are the segment's.
 
-    A FACED segment works correctly, which is why this was invisible -- the CLAUDE.md example for
-    adjoint-consistent BCs used `boundary="x_min"` (that section went with the provider, #2422).
-
-    xfail(strict=True): this asserts the CORRECT behaviour, so it reddens the day the accessor is
-    fixed and the marker has to come off. Filed separately from #1900.
+    Was a strict xfail pinning the correct behaviour; the marker came off when the owner fixed it.
     """
     bc = robin_bc(dimension=1, alpha=2.0, beta=-1.0, value=1.0)
     assert [(s.alpha, s.beta) for s in bc.segments] == [(2.0, -1.0)], "constructor no longer stores them"
@@ -255,9 +250,3 @@ def test_a_uniform_robin_bc_loses_its_alpha_and_beta_before_reaching_the_enforce
         f"a uniform robin_bc reaches the enforcement as alpha={alpha}, beta={beta} -- "
         f"beta=0 collapses the Robin formula to Dirichlet"
     )
-
-
-test_a_uniform_robin_bc_loses_its_alpha_and_beta_before_reaching_the_enforcement = pytest.mark.xfail(
-    strict=True,
-    reason="verified defect: uniform robin_bc segments carry no face, so alpha/beta are replaced by defaults",
-)(test_a_uniform_robin_bc_loses_its_alpha_and_beta_before_reaching_the_enforcement)

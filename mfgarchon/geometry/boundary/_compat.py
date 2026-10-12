@@ -24,7 +24,7 @@ unrecognised type and three of which fell through silently.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -36,7 +36,7 @@ from .conditions import BoundaryConditions
 # GhostCellConfig moved to ghost_cells.py (canonical location).
 # Re-exported here for backward compatibility.
 from .ghost_cells import GhostCellConfig, ghost_cell_neumann, ghost_cell_robin
-from .types import BCType
+from .types import BCType, BoundaryFace
 
 logger = get_logger(__name__)
 
@@ -53,30 +53,6 @@ if TYPE_CHECKING:
 # `get_ghost_values_nd` stays because it is still reachable as an attribute of
 # `mfgarchon.geometry.boundary`, and its removal is declared for v0.25.0.
 # =============================================================================
-
-
-def _get_boundary_name_nd(axis: int, side: str, dimension: int) -> str:
-    """
-    Get boundary name for axis and side in arbitrary dimension.
-
-    Args:
-        axis: Axis index (0, 1, 2, ...)
-        side: "min" or "max"
-        dimension: Total dimension
-
-    Returns:
-        Boundary name string (e.g., "x_min", "y_max", "dim3_min")
-    """
-    if dimension <= 3:
-        axis_names = ["x", "y", "z"]
-        return f"{axis_names[axis]}_{side}"
-    else:
-        # For d > 3, use generic naming
-        if axis < 3:
-            axis_names = ["x", "y", "z"]
-            return f"{axis_names[axis]}_{side}"
-        else:
-            return f"dim{axis}_{side}"
 
 
 @deprecated(
@@ -149,7 +125,10 @@ def get_ghost_values_nd(
 
     if not is_mixed:
         # Uniform BC - same type on all boundaries
-        bc_type, bc_value = _get_bc_type_and_value(boundary_conditions, time)
+        if not isinstance(boundary_conditions, BoundaryConditions):
+            raise TypeError(f"Unsupported BC type: {type(boundary_conditions)}")
+        # A uniform BC is one segment on every face; asked on the first face, as a face
+        bc_type, bc_value, alpha, beta = _face_condition(boundary_conditions, BoundaryFace(0, "min"), time)
 
         for axis in range(d):
             dx = spacing[axis]
@@ -172,7 +151,6 @@ def get_ghost_values_nd(
             slices_prev_right[axis] = -2 if shape_axis > 1 else -1
             u_prev_right = field[tuple(slices_prev_right)]
 
-            alpha, beta = _robin_coefficients(boundary_conditions) if bc_type == BCType.ROBIN else (1.0, 0.0)
             ghosts[(axis, 0)], ghosts[(axis, 1)] = _compute_ghost_pair(
                 bc_type,
                 bc_value,
@@ -211,24 +189,17 @@ def get_ghost_values_nd(
             slices_prev_right[axis] = -2 if shape_axis > 1 else -1
             u_prev_right = field[tuple(slices_prev_right)]
 
-            # Get boundary names for this axis
-            boundary_min = _get_boundary_name_nd(axis, "min", d)
-            boundary_max = _get_boundary_name_nd(axis, "max", d)
+            # The axis's two faces, asked of the owner as faces: no name is built (#2628)
+            boundary_min = BoundaryFace(axis, "min")
+            boundary_max = BoundaryFace(axis, "max")
 
-            # Get BC type at each boundary
-            bc_type_left = boundary_conditions.get_bc_type_at_boundary(boundary_min)
-            bc_type_right = boundary_conditions.get_bc_type_at_boundary(boundary_max)
-
-            # Get BC value at each boundary (need a representative point)
-            # For 1D: just use the boundary coordinate
-            # For nD: use center of the boundary face
-            bc_value_left = _get_bc_value_at_boundary(boundary_conditions, boundary_min, time)
-            bc_value_right = _get_bc_value_at_boundary(boundary_conditions, boundary_max, time)
+            # One segment per face, from the owner (#2512 row B1): its type, value and Robin
+            # coefficients come from that one segment, not from three resolvers that could each pick a
+            # different one.
+            bc_type_left, bc_value_left, alpha_l, beta_l = _face_condition(boundary_conditions, boundary_min, time)
+            bc_type_right, bc_value_right, alpha_r, beta_r = _face_condition(boundary_conditions, boundary_max, time)
 
             # Compute ghost for left boundary
-            alpha_l, beta_l = (
-                _robin_coefficients(boundary_conditions, boundary_min) if bc_type_left == BCType.ROBIN else (1.0, 0.0)
-            )
             ghosts[(axis, 0)] = _compute_single_ghost(
                 bc_type_left,
                 bc_value_left,
@@ -242,9 +213,6 @@ def get_ghost_values_nd(
             )
 
             # Compute ghost for right boundary
-            alpha_r, beta_r = (
-                _robin_coefficients(boundary_conditions, boundary_max) if bc_type_right == BCType.ROBIN else (1.0, 0.0)
-            )
             ghosts[(axis, 1)] = _compute_single_ghost(
                 bc_type_right,
                 bc_value_right,
@@ -260,27 +228,23 @@ def get_ghost_values_nd(
     return ghosts
 
 
-def _robin_coefficients(boundary_conditions, boundary: str | None = None) -> tuple[float, float]:
-    """Read Robin (alpha, beta) for a boundary, or the defaults if no Robin segment governs it.
+def _face_condition(
+    boundary_conditions, boundary: BoundaryFace, time: float | None
+) -> tuple[BCType, Any, float, float]:
+    """The condition on one face: the owner's segment, its value, and its Robin coefficients if ROBIN.
 
-    #1961: this module's two ghost helpers took only (bc_type, bc_value), so a Robin condition
-    arrived with its coefficients already discarded and both branches returned the adjacent
-    interior cell -- the impermeable-wall mirror. Measured on three coefficient sets, the ghost
-    was 3.10000 every time, and the residual of the condition the caller wrote ranged over
-    1.7 to 5.2.
+    #1961: a Robin condition must arrive with its own coefficients, not the defaults (1, 0), which make
+    it a Dirichlet wall.
     """
-    segments = getattr(boundary_conditions, "segments", None) or []
-    for seg in segments:
-        if seg.bc_type != BCType.ROBIN:
-            continue
-        if boundary is None or seg.boundary is None or boundary_conditions._segment_covers(seg, boundary):
-            from .types import segment_robin_coefficients
+    from .types import segment_robin_coefficients, segment_value
 
-            return segment_robin_coefficients(seg, where="get_ghost_values_nd (Robin)")
-    raise ValueError(
-        f"get_ghost_values_nd: a ROBIN condition governs {boundary or 'this boundary'} but no "
-        "BCSegment carries its alpha/beta. They live on the segment, not on BoundaryConditions."
-    )
+    where = f"get_ghost_values_nd on face {boundary.to_string()}"
+    segment = boundary_conditions.segment_for_face(boundary)
+    value = segment_value(segment, t=time, x=None, where=where, time_keyword="time")
+    if segment.bc_type == BCType.ROBIN:
+        alpha, beta = segment_robin_coefficients(segment, where=f"{where} (Robin)")
+        return segment.bc_type, value, alpha, beta
+    return segment.bc_type, value, 1.0, 0.0
 
 
 def _compute_ghost_pair(
@@ -386,33 +350,3 @@ def _compute_single_ghost(
 
     else:
         return u_neighbor.copy()
-
-
-def _get_bc_value_at_boundary(
-    bc: BoundaryConditions,
-    boundary: str,
-    time: float,
-) -> float | None:
-    """Get BC value at a specific boundary for mixed BCs."""
-    from .types import boundary_value, segment_value
-
-    where = f"get_ghost_values_nd on face {boundary}"
-    for segment in bc.segments:
-        if segment.boundary == boundary:
-            return segment_value(segment, t=time, x=None, where=where, time_keyword="time")
-    return boundary_value(bc.default_value, kind="default_value", t=time, x=None, where=where, time_keyword="time")
-
-
-def _get_bc_type_and_value(
-    boundary_conditions: BoundaryConditions,
-    time: float,
-) -> tuple[BCType, float | None]:
-    """Extract BC type and value from a BoundaryConditions."""
-    if not isinstance(boundary_conditions, BoundaryConditions):
-        raise TypeError(f"Unsupported BC type: {type(boundary_conditions)}")
-
-    from .types import segment_value
-
-    # Uniform, or mixed read by its first segment, as before; the value through the one owner (#2512 row B2).
-    seg = boundary_conditions.segments[0]
-    return seg.bc_type, segment_value(seg, t=time, x=None, where="get_ghost_values_nd (uniform)", time_keyword="time")

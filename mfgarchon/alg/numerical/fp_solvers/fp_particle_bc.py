@@ -28,19 +28,9 @@ if TYPE_CHECKING:
     from mfgarchon.geometry import BoundaryConditions
     from mfgarchon.geometry.implicit import ImplicitDomain
 
-from mfgarchon.geometry.boundary.types import BCType
+from mfgarchon.geometry.boundary.types import BCType, BoundaryFace
 
 # Mapping from dimension index to boundary name prefix
-_DIM_TO_AXIS_PREFIX = {0: "x", 1: "y", 2: "z"}
-
-
-def _get_axis_prefix(dim_idx: int) -> str:
-    """Get axis prefix for dimension index (x, y, z, dim3, dim4, ...)."""
-    if dim_idx < 3:
-        return _DIM_TO_AXIS_PREFIX[dim_idx]
-    return f"dim{dim_idx}"
-
-
 # =============================================================================
 # Topology Detection (unified)
 # =============================================================================
@@ -109,13 +99,10 @@ def get_topology_per_dimension(
         return topologies  # Method doesn't exist, use default bounded
 
     for d in range(dimension):
-        axis_prefix = _get_axis_prefix(d)
-        min_boundary = f"{axis_prefix}_min"
-        max_boundary = f"{axis_prefix}_max"
-
         try:
-            bc_min = bc.get_bc_type_at_boundary(min_boundary)
-            bc_max = bc.get_bc_type_at_boundary(max_boundary)
+            # Asked as faces, so no name is built (#2628)
+            bc_min = bc.get_bc_type_at_boundary(BoundaryFace(d, "min"))
+            bc_max = bc.get_bc_type_at_boundary(BoundaryFace(d, "max"))
 
             # Periodic topology requires both boundaries to be periodic
             if bc_min == BCType.PERIODIC and bc_max == BCType.PERIODIC:
@@ -167,8 +154,7 @@ def needs_segment_aware_bc(boundary_conditions: BoundaryConditions | str | None)
     is_uniform = getattr(bc, "is_uniform", False)
     if is_uniform:
         # Uniform BC - use fast path unless it's DIRICHLET (absorbing)
-        segments = getattr(bc, "segments", [])
-        return len(segments) > 0 and segments[0].bc_type == BCType.DIRICHLET
+        return bc.uniform_segment.bc_type == BCType.DIRICHLET
 
     # Mixed BC with segments - need segment-aware handling
     segments = getattr(bc, "segments", [])

@@ -6,7 +6,6 @@ Issue #702: Shared BC type detection and operation mapping for FDM, SL, GFDM, et
 This module provides utilities that replace duplicated BC handling logic in:
 - fp_fdm_time_stepping._get_bc_type()
 - fp_semi_lagrangian_adjoint._axis_operations()
-- hjb_semi_lagrangian._get_bc_type_string()
 
 All solvers should import from this module for consistent BC handling.
 """
@@ -21,14 +20,20 @@ def get_bc_type_string(boundary_conditions: Any) -> str | None:
     Extract BC type string from any BoundaryConditions object.
 
     Supports:
-    - Unified BoundaryConditions (conditions.py) with .type property
-    - Mixed BC (returns first segment's type)
+    - Unified BoundaryConditions (conditions.py) with .type property: a uniform BC's one segment, read
+      through the owner (:attr:`BoundaryConditions.uniform_segment`). Any other BoundaryConditions has no
+      single type, and ``.type`` raises ``ValueError``: the first segment's type, which this returned
+      until #2512 row B1, governs no particular face (#1697).
+    - A legacy BC object: its ``.type`` attribute, or ``None``
 
     Args:
         boundary_conditions: Any BC object
 
     Returns:
         BC type string (e.g., "periodic", "dirichlet", "no_flux") or None
+
+    Raises:
+        ValueError: for a BoundaryConditions that is not uniform.
 
     Example:
         >>> from mfgarchon.geometry.boundary import no_flux_bc
@@ -39,34 +44,12 @@ def get_bc_type_string(boundary_conditions: Any) -> str | None:
     if boundary_conditions is None:
         return None
 
-    # Try unified BC .type property
-    try:
-        bc_type = boundary_conditions.type
-        if bc_type is not None:
-            return bc_type.lower() if isinstance(bc_type, str) else bc_type
+    # A BoundaryConditions's `.type` raises ValueError unless it is uniform; that raise is the answer, not a
+    # signal to fall back on a segment.
+    bc_type = getattr(boundary_conditions, "type", None)
+    if bc_type is None:
         return None
-    except ValueError:
-        # Mixed BC - type property raises ValueError, try segments
-        pass
-    except AttributeError:
-        # No .type attribute
-        pass
-
-    # Try segments for mixed BC
-    try:
-        from .types import BCType
-
-        segments = boundary_conditions.segments
-        if segments:
-            first_type = segments[0].bc_type
-            if isinstance(first_type, BCType):
-                return first_type.value
-            return str(first_type).lower()
-    except (AttributeError, ImportError):
-        pass
-
-    # Legacy BC: direct attribute
-    return getattr(boundary_conditions, "type", None)
+    return bc_type.lower() if isinstance(bc_type, str) else bc_type
 
 
 def bc_type_to_geometric_operation(bc_type: str | None) -> str:
@@ -108,14 +91,13 @@ def bc_type_to_geometric_operation(bc_type: str | None) -> str:
 def geometric_operations(boundary_conditions: Any) -> set[str]:
     """Every distinct geometric operation ``boundary_conditions`` asks for.
 
-    Unlike :func:`get_bc_type_string`, which returns the FIRST segment's type, this reports the
-    whole set. A set of size > 1 means the BC cannot be honoured by a fold that applies one
-    operation to every axis.
+    Unlike :func:`get_bc_type_string`, which answers only for a uniform BC, this reports the whole
+    set. A set of size > 1 means the BC cannot be honoured by a fold that applies one operation to
+    every axis.
 
-    ``default_bc`` is included deliberately. ``get_bc_type_string`` never reads it, so a
-    partially-covering segment list plus a differing default produces the same silent collapse
-    **with no permutation available** -- a guard that unions only over ``segments`` lets that form
-    straight through (Issue #1697). The exception is a uniform BC: its one unrestricted segment
+    ``default_bc`` is included deliberately: a partially-covering segment list plus a differing
+    default asks for two operations **with no permutation available** -- a guard that unions only
+    over ``segments`` lets that form straight through (Issue #1697). The exception is a uniform BC: its one unrestricted segment
     covers every face, so the face-level readers (`get_bc_type_at_boundary`, the FDM ghost path)
     never reach its default, and counting it made one periodic segment over a NO_FLUX default read as
     mixed (Issue #2472). Some per-point readers do consult a uniform BC's default; that is #2490.
@@ -175,140 +157,20 @@ def declares_periodic(boundary_conditions: Any) -> bool:
     return getattr(boundary_conditions, "default_bc", None) is BCType.PERIODIC
 
 
-def refuse_unplaceable_segments(
-    boundary_conditions: Any, dimension: int, *, consumer: str, ghosts: bool = False, time: float | None = None
-) -> None:
-    """Refuse, in a mix of operations, a segment the face reader cannot place. #2467, #1953, #2490.
-
-    ``get_bc_type_at_boundary`` answers one type per face, and four kinds of segment make that answer
-    something other than what the BC says: one with no ``boundary``, which it applies to every face --
-    ``sdf_region``, ``normal_direction`` and ``region_name`` segments are all of this kind, since none
-    of them can carry a ``boundary``; one with ``boundary="all"``, which it applies to no face; one whose
-    ``boundary`` names no face of this domain, which it drops; and one whose ``region`` restricts it to
-    part of a face, which it stretches over the whole face. A uniform BC is not affected, nor one asking for
-    a single operation with a ``default_bc``: every face then reads that operation whatever the reader
-    does. Without a default it is: a face no segment truly reaches has no condition at all, and the face
-    reader would hand it the misplaced segment's -- a periodic one placed by ``normal_direction`` then
-    wraps every face, where HJB-FDM's ghosts find no BC and raise.
-
-    One owner for every consumer that reads a BC face by face: the semi-Lagrangian pair through
-    :func:`per_axis_operations`, FP-FDM's periodicity (#2495), and -- with ``ghosts=True`` -- n-D HJB-FDM,
-    which is held by the FDM ghosts alone (#2537).
-
-    ``ghosts=True`` is for a consumer that imposes each face's datum through the ghost resolver
-    (`applicator_fdm.face_segment`), which places a segment with no ``boundary`` on no face. For it the
-    single-operation exemption does not hold, since data differ where operations agree. A segment with
-    no ``boundary`` is refused only on a face where the ghosts' effect differs from what
-    ``get_bc_type_at_boundary``'s segment means there. The effect is a Dirichlet value, a flux, or a wrap,
-    read at ``time``; NO_FLUX and a value-less NEUMANN are the same zero flux. So a face-label
-    ``region_name``, or a wall equal to the default it falls to, passes. The other three kinds are refused
-    in any BC that is not uniform.
-    """
-    if boundary_conditions is None or getattr(boundary_conditions, "segments", None) is None:
-        return
-    mixed = len(geometric_operations(boundary_conditions)) > 1
-    if boundary_conditions.is_uniform:
-        return
-    if not ghosts and not mixed and getattr(boundary_conditions, "default_bc", None) is not None:
-        return
-    if ghosts:
-        where = "where the FDM ghosts impose each face's datum"
-        _refuse_what_the_ghosts_do_not_impose(boundary_conditions, dimension, consumer, time)
-        unbounded = []
-    else:
-        where = "in a mix of geometric operations" if mixed else "with no `default_bc` for the faces they miss"
-        unbounded = [seg.name for seg in boundary_conditions.segments if seg.boundary is None]
-    if unbounded:
-        raise NotImplementedError(
-            f"{consumer}: segments {unbounded} have no `boundary` {where}, so "
-            "the faces they cover cannot be read per axis. Give each one the face it lies on with "
-            "`boundary=` (#2467)."
-        )
-    everywhere = [seg.name for seg in boundary_conditions.segments if seg.boundary == "all"]
-    if everywhere:
-        raise NotImplementedError(
-            f"{consumer}: segments {everywhere} use boundary='all' {where}, and "
-            "the face reader applies 'all' to no face (#1953), so it cannot be read per axis. Name the "
-            "faces each one covers."
-        )
-    from .types import parse_boundary_face
-
-    nowhere = [
-        f"{seg.name} ({type(seg.boundary).__name__} {seg.boundary!r})"
-        for seg in boundary_conditions.segments
-        if seg.boundary is not None  # with ghosts=True a segment with no `boundary` was judged above
-        and ((face := parse_boundary_face(seg.boundary)) is None or not 0 <= face.axis < dimension)
-    ]
-    if nowhere:
-        raise NotImplementedError(
-            f"{consumer}: segments {nowhere} name no face of this {dimension}-D domain {where}, "
-            "so the face reader drops them and the default takes their place. Name "
-            "a face such as 'x_min' or 'axis0_max'."
-        )
-    partial = [seg.name for seg in boundary_conditions.segments if seg.region is not None]
-    if partial:
-        raise NotImplementedError(
-            f"{consumer}: segments {partial} cover part of a face (`region`) {where}, "
-            "and the face reader would "
-            "give each of them its whole face (#2490)."
-        )
-
-
-def _ghost_effect(segment: Any, time: float) -> tuple:
-    """What the FDM ghosts impose for ``segment``: its arm in `_write_wall_ghosts`, and the datum that arm reads."""
-    from .types import BCType, segment_robin_coefficients, segment_value
-
-    bc_type = segment.bc_type
-    where = f"the FDM ghost check of segment {segment.name!r}"
-    if bc_type == BCType.DIRICHLET:
-        return ("dirichlet", segment_value(segment, t=time, x=None, where=where, time_keyword="time"))
-    if bc_type == BCType.NEUMANN:
-        return ("flux", segment_value(segment, t=time, x=None, where=where, time_keyword="time"))
-    if bc_type in (BCType.NO_FLUX, BCType.REFLECTING):
-        return ("flux", 0.0)
-    if bc_type == BCType.ROBIN:
-        alpha, beta = segment_robin_coefficients(segment, where=where)
-        return ("robin", alpha, beta, segment_value(segment, t=time, x=None, where=where, time_keyword="time"))
-    return (bc_type.value,)
-
-
-def _refuse_what_the_ghosts_do_not_impose(boundary_conditions: Any, dimension: int, consumer: str, time: float) -> None:
-    """The ``ghosts=True`` half of `refuse_unplaceable_segments`: compare, per face, the effect of the segment
-    ``get_bc_type_at_boundary`` resolves (its mixed branch, `_segment_covers` in priority order) with the
-    effect of the one the ghosts impose (`face_segment`)."""
-    from .applicator_fdm import face_segment
-    from .types import BoundaryFace
-
-    clashes = []
-    for axis in range(dimension):
-        for side in ("min", "max"):
-            face = BoundaryFace(axis, side)
-            name = face.to_string()
-            imposed = face_segment(boundary_conditions, face)
-            declared = next(
-                (seg for seg in boundary_conditions.segments if boundary_conditions._segment_covers(seg, name)), None
-            )
-            if declared is None or declared is imposed:
-                continue
-            want, got = _ghost_effect(declared, time), _ghost_effect(imposed, time)
-            if want != got:
-                clashes.append(f"{name}: '{declared.name}' declares {want}, the ghosts impose {got} ('{imposed.name}')")
-    if clashes:
-        raise NotImplementedError(
-            f"{consumer}: segments with no `boundary` cover every face for get_bc_type_at_boundary but reach no "
-            f"face through the FDM ghosts, which give it `default_bc`, so the solve would impose something else: "
-            + "; ".join(clashes)
-            + ". Give each segment the face it lies on with `boundary=` (#2537, #2467)."
-        )
-
-
-def per_axis_operations(boundary_conditions: Any, dimension: int, *, consumer: str) -> tuple[str, ...]:
-    """The geometric operation on each axis, read face by face. #1560, #1697.
+def per_axis_operations(
+    boundary_conditions: Any, dimension: int, *, consumer: str, geometry: Any = None
+) -> tuple[str, ...]:
+    """The geometric operation on each axis, read face by face from the owner. #1560, #1697, #2512 row B1.
 
     The per-axis owner for the semi-Lagrangian pair: axis ``d``'s operation is
-    :func:`bc_type_to_geometric_operation` of ``get_bc_type_at_boundary("axis<d>_min")`` and of
-    ``"axis<d>_max"``. No-flux on one axis and periodic on another is then two operations, one per axis,
-    instead of the first segment's applied to both.
+    :func:`bc_type_to_geometric_operation` of the segment :meth:`BoundaryConditions.segment_for_face`
+    gives each of its two faces. No-flux on one axis and periodic on another is then two operations, one
+    per axis, instead of the first segment's applied to both. Where a segment covers part of a face, the
+    owner accepts it only if it asks for the same operation as the segment governing the rest of the face:
+    this consumer applies one operation per face, so a sub-face segment changes nothing only then.
+
+    ``geometry`` is the grid the consumer solves on, which tells the owner how far a ``region`` or
+    ``sdf_region`` placement covers each face.
 
     ``None`` and a legacy BC without ``segments`` carry no per-face information: their one operation, from
     :func:`get_bc_type_string`, applies to every axis.
@@ -316,25 +178,28 @@ def per_axis_operations(boundary_conditions: Any, dimension: int, *, consumer: s
     Raises:
         NotImplementedError: when an axis's two faces ask for different operations. A fold has one rule per
             axis, so periodic on one face only, or reflect on one and clamp on the other, is refused rather
-            than resolved by whichever face is read first. Also, in a mix of operations, for a segment the
-            face reader cannot place: one with no ``boundary``, whose faces cannot be told apart (#2467) --
-            ``sdf_region``, ``normal_direction`` and ``region_name`` segments are all of this kind, since
-            none of them can carry a ``boundary``; one with ``boundary="all"``, which the face reader
-            applies to no face (#1953); one whose ``boundary`` names no face of this domain -- a misspelt
-            name, a Gmsh tag, an axis past its dimension -- which the face reader drops and the default
-            replaces; and one whose ``region`` restricts it to part of a face, which the face reader
-            stretches over the whole face (#2490).
+            than resolved by whichever face is read first.
+        ValueError: from the owner, for a placement it cannot represent on a face (#2512 row B1).
     """
+    from .types import BoundaryFace
+
     if boundary_conditions is None or getattr(boundary_conditions, "segments", None) is None:
         return (bc_type_to_geometric_operation(get_bc_type_string(boundary_conditions)),) * dimension
-    refuse_unplaceable_segments(boundary_conditions, dimension, consumer=consumer)
+    # Refuses the #1691 rename signature -- `segments` with `default_bc` renamed away -- by name, before
+    # the per-face read would fail on it for a different reason (#2284).
+    geometric_operations(boundary_conditions)
+
+    def operation(segment: Any) -> str:
+        return bc_type_to_geometric_operation(str(segment.bc_type.value))
+
+    def same_operation(part: Any, governing: Any) -> bool:
+        return operation(part) == operation(governing)
+
     operations = []
     for axis in range(dimension):
         ops = [
-            bc_type_to_geometric_operation(
-                str(getattr(t, "value", t))
-                if (t := boundary_conditions.get_bc_type_at_boundary(f"axis{axis}_{side}")) is not None
-                else None
+            operation(
+                boundary_conditions.segment_for_face(BoundaryFace(axis, side), geometry, equivalent=same_operation)
             )
             for side in ("min", "max")
         ]

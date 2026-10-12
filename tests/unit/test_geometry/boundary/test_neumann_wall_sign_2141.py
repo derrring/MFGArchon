@@ -173,13 +173,13 @@ def test_a_segment_on_part_of_the_boundary_is_refused_not_spread():
     """The applicator imposes one condition per face, and the shared face resolver gives a segment with no
     face string every face it is asked about. So a Dirichlet outlet patch over Neumann walls would have
     been imposed on the whole boundary (measured in #2466's review: 32 of 32 boundary nodes set to the
-    outlet value). It is refused instead."""
+    outlet value). It is refused instead, by the face owner (#2512 row B1)."""
     outlet = BCSegment(
         name="outlet", bc_type=BCType.DIRICHLET, value=0.0, region={"x": (0.9, 1.0), "y": (0.4, 0.6)}, priority=1
     )
     walls = BCSegment(name="walls", bc_type=BCType.NEUMANN, value=0.0, priority=0)
     bc = BoundaryConditions(segments=[outlet, walls], dimension=2, domain_bounds=np.array([[0.0, 1.0], [0.0, 1.0]]))
-    with pytest.raises(NotImplementedError, match="part of the boundary"):
+    with pytest.raises(ValueError, match="covers part of the x_max face"):
         InterpolationApplicator(dimension=2).enforce_values(np.ones((9, 9)), bc, spacing=np.array([0.125, 0.125]))
 
 

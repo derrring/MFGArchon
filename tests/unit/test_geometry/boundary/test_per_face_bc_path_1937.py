@@ -100,22 +100,25 @@ def _walls_carrying_the_dirichlet_ghost(bc: BoundaryConditions) -> int:
     return sum(1 for w in walls if np.allclose(w, 13.0))
 
 
-@pytest.mark.parametrize("exit_priority", [1, -5])
-def test_an_unclaimed_wall_takes_default_bc_and_not_the_first_segment(exit_priority):
-    """`_update_ghosts_mixed` fell back to `bc.segments[0]`, and segments sort priority-descending,
-    so the highest-priority segment became the fallback for every wall it had not claimed.
+def test_an_unclaimed_wall_takes_default_bc_and_not_the_first_segment():
+    """`_update_ghosts_mixed` fell back to `bc.segments[0]`, and segments sort priority-descending, so the
+    highest-priority segment became the fallback for every wall it had not claimed: with the exit at priority 1,
+    4 of 4 walls carried its Dirichlet ghost against the reverted code. The exit holds x_min only; the walls
+    segment, global, governs the rest."""
+    assert _walls_carrying_the_dirichlet_ghost(_mixed_exit_and_walls(1)) == 1
 
-    Both priorities are asserted to give the same answer, and only one of them detects anything.
-    Measured against the reverted code: `exit_priority=1` gives 4 of 4 and fails; `exit_priority=-5`
-    gives 1 of 4 and **passes**, because at that priority the exit sorts last and `segments[0]` is
-    the walls segment, so the old fallback happens to coincide with the correct answer.
 
-    The `-5` row is therefore a control, not a detector, and it is kept for what it shows: a result
-    that moves with segment sort order is a fingerprint of the fallback rather than of any boundary
-    condition. Anyone tempted to drop the `1` row as redundant should note that it is the only row
-    that fails when the fallback returns.
+def test_an_exit_its_own_walls_outrank_on_every_face_is_refused():
+    """With the exit at priority -5 under the global walls segment at 0, the walls govern every face, x_min
+    included: the order on a face is priority first (#2512 row B1). The exit governs nothing, so its condition
+    would be dropped, and the face owner refuses it by name rather than solving a closed box.
+
+    This row used to assert 1 Dirichlet wall, because the old ghost reader gave a segment with no `boundary` no
+    face at all. Census row (B1a PR body): signature exit DIRICHLET x_min priority -5 + walls NO_FLUX unplaced
+    priority 0, classified "(c) shadowed segment" against both the old ghost reader and the old accessor.
     """
-    assert _walls_carrying_the_dirichlet_ghost(_mixed_exit_and_walls(exit_priority)) == 1
+    with pytest.raises(ValueError, match=r"'exit' \(priority -5\) -- x_min: 'walls' \(priority 0\) outranks it"):
+        _walls_carrying_the_dirichlet_ghost(_mixed_exit_and_walls(-5))
 
 
 def test_the_wall_count_probe_can_produce_both_answers():

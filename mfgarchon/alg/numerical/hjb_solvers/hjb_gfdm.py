@@ -2581,7 +2581,9 @@ class HJBGFDMSolver(BaseHJBSolver):
         else:
             normal = self._compute_outward_normal(i)
         segment = (
-            self.boundary_conditions.segments[0] if isinstance(self.boundary_conditions, BoundaryConditions) else None
+            self.boundary_conditions.uniform_segment
+            if isinstance(self.boundary_conditions, BoundaryConditions)
+            else None
         )
         return bc_enum, segment, normal
 

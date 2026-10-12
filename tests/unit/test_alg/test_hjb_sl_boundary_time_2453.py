@@ -22,9 +22,12 @@ step functions receive their index, and the CFL schedule, which runs just before
 of the next step entered. Every read must be at its tag's time. Mutation-verified: each call site
 reverted alone to t = 0, or moved to the next or the previous step's time, fails its path's case.
 
-Since #2467 the gradient discards what its ghosts hold at a non-periodic wall: its reads still happen, on
-this clock, and reach nothing. The post-step enforcement's reads still reach U. The 2-D whole step has no
-post-step enforcement, so its case now pins only reads whose values are discarded.
+Since #2467 the gradient discards what its ghosts hold at a non-periodic wall, and since #2512 row B1 it reads
+nothing there: it asks the face owner for each face's periodicity only. Those discarded reads were what covered
+every step of the two 2-D ADI cases -- 44 of the whole step's 56 reads and 206 of the sub-stepped case's 554,
+measured at 1052ec62 by the call site of each read. What remains are the post-step enforcement's reads, which
+reach U: 12 and 348, unchanged, in steps 9 and 6-9 of the ten. For those two cases the pin is that reads happen
+and each is at its step's time; every other case still reads in every step.
 """
 
 from __future__ import annotations
@@ -106,6 +109,10 @@ def _reads_with_their_step(events):
     return tagged
 
 
+#: The cases whose reads do not reach every step: their every-step reads were the gradient's (see the docstring).
+_NOT_EVERY_STEP = {"2d-adi-whole", "2d-adi-substep"}
+
+
 @pytest.mark.parametrize("case", list(CASES))
 def test_boundary_data_is_read_at_the_steps_own_time(case, monkeypatch):
     dim, hamiltonian, kwargs, amp = CASES[case]
@@ -138,7 +145,11 @@ def test_boundary_data_is_read_at_the_steps_own_time(case, monkeypatch):
         )
 
     tagged = _reads_with_their_step(events)
-    assert {n for _, n in tagged} == set(range(NT)), "some step read no boundary value"
+    steps = {n for _, n in tagged}
+    if case in _NOT_EVERY_STEP:
+        assert steps, "no step read a boundary value"
+    else:
+        assert steps == set(range(NT)), "some step read no boundary value"
     wrong = [(t, n) for t, n in tagged if not np.isclose(t, n * problem.dt, rtol=0, atol=1e-12)]
     assert not wrong, (
         f"{len(wrong)} of {len(tagged)} boundary reads are not at their step's time; first: read at "

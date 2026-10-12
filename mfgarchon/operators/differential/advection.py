@@ -362,8 +362,8 @@ class AdvectionOperator(LinearOperator):
         # periodic, so a periodic BoundaryConditions raised despite periodic being supported.
         periodic = self.bc is None
         if not periodic:
-            ok = isinstance(self.bc, BoundaryConditions) and self.bc.is_uniform
-            seg_type = self.bc.segments[0].bc_type if ok else None
+            segment = self.bc.uniform_segment if isinstance(self.bc, BoundaryConditions) else None
+            seg_type = segment.bc_type if segment is not None else None
             if seg_type == BCType.PERIODIC:
                 periodic = True
             elif seg_type not in (BCType.NO_FLUX, BCType.NEUMANN, BCType.REFLECTING):

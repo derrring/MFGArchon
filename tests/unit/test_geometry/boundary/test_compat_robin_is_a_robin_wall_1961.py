@@ -136,7 +136,10 @@ def test_a_robin_condition_without_coefficients_refuses():
         domain_bounds=np.array([[0.0, 1.0], [0.0, 1.0]]),
     )
     assert not bc.is_uniform, "the premise is that the per-face path runs"
-    assert bc.get_bc_type_at_boundary("y_min") is BCType.ROBIN, "and that a face falls through to it"
+    # A face that falls through to the ROBIN default is refused by every reader, the accessor included: the face
+    # owner (#2512 row B1) has one refusal for it. (The accessor used to return ROBIN here and the ghosts to raise.)
+    with pytest.raises(ValueError, match="alpha/beta"):
+        bc.get_bc_type_at_boundary("y_min")
 
     def _call() -> None:
         with warnings.catch_warnings():

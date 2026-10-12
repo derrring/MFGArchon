@@ -272,7 +272,7 @@ class ImplicitApplicator(MeshfreeApplicator):
 
         # Read through the one owner (#2512 row B2): a callable is g(t, x), time first, one point at a time.
         where = f"the implicit applicator's {bc_type.name} boundary"
-        uniform_segment = bc.segments[0] if bc.is_uniform else None
+        uniform_segment = bc.uniform_segment
         if uniform_segment is not None and uniform_segment.bc_type == bc_type:
             value = uniform_segment.value
 

@@ -113,13 +113,14 @@ except ImportError:
     JAX_AVAILABLE = False
 
 
-def _axis_operations(bc, dimension: int) -> tuple[str, ...]:
+def _axis_operations(bc, dimension: int, geometry=None) -> tuple[str, ...]:
     """The fold's geometric operation on each axis, read face by face (#1560).
 
     Through :func:`per_axis_operations`, which refuses an axis whose two faces disagree; a different
     operation on each axis, such as no-flux walls in x and periodic in y, is honoured axis by axis.
+    ``geometry`` is the grid solved on, which the face owner reads a ``region`` placement against.
     """
-    return per_axis_operations(bc, dimension, consumer="HJBSemiLagrangianSolver")
+    return per_axis_operations(bc, dimension, consumer="HJBSemiLagrangianSolver", geometry=geometry)
 
 
 class HJBSemiLagrangianSolver(BaseHJBSolver):
@@ -416,7 +417,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # Issue #1560: the fold and the ADI diffusion take one geometric operation per axis. An axis whose
         # two faces disagree is refused, here and at every point of use, because the BC can be unset here
         # and set later.
-        _axis_operations(self.get_boundary_conditions(), self.dimension)
+        _axis_operations(self.get_boundary_conditions(), self.dimension, self.problem.geometry)
 
     # _detect_dimension() inherited from BaseNumericalSolver (Issue #633)
 
@@ -878,75 +879,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
     # BaseMFGSolver.get_boundary_conditions() from base_solver.py:175-234.
     # All callers now use the inherited get_boundary_conditions().
 
-    def _get_bc_type_string(self, bc) -> str | None:
-        """
-        Extract BC type string from BoundaryConditions object.
-
-        Args:
-            bc: BoundaryConditions object or None
-
-        Returns:
-            BC type string ("periodic", "dirichlet", "neumann") or None
-
-        Note:
-            Issue #545: Replace hasattr pattern for BCType enum value extraction.
-            Used in characteristic tracing and diffusion term computation.
-        """
-        if bc is None:
-            return None
-
-        # Try to get default_bc attribute
-        try:
-            bc_type_enum = bc.default_bc
-            if bc_type_enum is None:
-                return None
-
-            # Try to get .value attribute (BCType enum)
-            try:
-                return bc_type_enum.value
-            except AttributeError:
-                # Fall back to string conversion
-                return str(bc_type_enum)
-        except AttributeError:
-            return None
-
-    def _get_per_boundary_bc_types(self, bc) -> tuple[str | None, str | None]:
-        """
-        Get BC type strings for each boundary (1D: xmin and xmax).
-
-        For mixed BCs (e.g., Neumann at x=0, Dirichlet at x=L), this method
-        queries the BC type at each boundary separately.
-
-        Args:
-            bc: BoundaryConditions object or None
-
-        Returns:
-            Tuple of (bc_type_at_xmin, bc_type_at_xmax)
-
-        Note:
-            For uniform BCs, both values will be the same.
-            For mixed BCs, values may differ per boundary.
-        """
-        if bc is None:
-            return (None, None)
-
-        # Try to use get_bc_type_at_boundary method for per-boundary queries
-        try:
-            bc_type_min_enum = bc.get_bc_type_at_boundary("x_min")
-            bc_type_max_enum = bc.get_bc_type_at_boundary("x_max")
-
-            # Extract string values from BCType enums
-            bc_type_min = bc_type_min_enum.value if bc_type_min_enum is not None else None
-            bc_type_max = bc_type_max_enum.value if bc_type_max_enum is not None else None
-
-            return (bc_type_min, bc_type_max)
-        except AttributeError:
-            pass
-
-        # Fallback: use uniform BC type for both boundaries
-        bc_type = self._get_bc_type_string(bc)
-        return (bc_type, bc_type)
-
     def _enforce_boundary_conditions(self, U: np.ndarray, time: float) -> np.ndarray:
         """
         Enforce boundary conditions on solution array (dimension-agnostic).
@@ -976,7 +908,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         # Use InterpolationApplicator for dimension-agnostic BC enforcement, at the grid's spacing:
         # a Neumann value is imposed as u[wall] = u[neighbour] + g*h (#2141).
-        return self.interp_bc_applicator.enforce_values(U, bc, spacing=np.atleast_1d(self.dx), time=time)
+        return self.interp_bc_applicator.enforce_values(
+            U, bc, spacing=np.atleast_1d(self.dx), time=time, geometry=self.problem.geometry
+        )
 
     @retired_volatility_keywords
     def solve_hjb_system(
@@ -1015,7 +949,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # The per-axis read (#1560) at its point of use, ahead of the first gradient: a BC set on the geometry
         # after construction otherwise meets `value_gradient`'s refusal first, whose message is about an axis,
         # not about which BC this solver can honour (#2467).
-        _axis_operations(self.get_boundary_conditions(), self.dimension)
+        _axis_operations(self.get_boundary_conditions(), self.dimension, self.problem.geometry)
 
         # Issue #1316: this solver takes its volatility from the problem, once, at construction
         # (self._volatility), and threads it to the advection-diffusion split and its implicit
@@ -1342,7 +1276,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 x_departures = self.x_grid - vel * self.dt
 
                 # Apply boundary conditions (vectorized)
-                bc_op = _axis_operations(self.get_boundary_conditions(), 1)[0]
+                bc_op = _axis_operations(self.get_boundary_conditions(), 1, self.problem.geometry)[0]
                 bounds = self.problem.geometry.get_bounds()
                 xmin, xmax = bounds[0][0], bounds[1][0]
                 # Issue #1161: mirror-reflect out-of-bounds feet (no-flux/Neumann), not
@@ -1387,7 +1321,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             if bc:
                 time = time_idx * self.dt
                 U_current = self.bc_applicator.enforce_values(
-                    U_current, boundary_conditions=bc, spacing=(self.dx,), time=time
+                    U_current, boundary_conditions=bc, spacing=(self.dx,), time=time, geometry=self.problem.geometry
                 )
 
             return U_current
@@ -1791,7 +1725,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # wrap for periodic. fold_into_domain is the correct per-axis fold
         # (identity in-bounds); the earlier center-flip mirrored about the midpoint.
         bc = self.get_boundary_conditions()
-        bc_op = _axis_operations(bc, d)
+        bc_op = _axis_operations(bc, d, self.problem.geometry)
         bounds = self.problem.geometry.get_bounds()
         x_min = np.asarray(bounds[0], dtype=float)
         x_max = np.asarray(bounds[1], dtype=float)
@@ -1860,7 +1794,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         if d == 1:
             if bc:
                 U_current = self.bc_applicator.enforce_values(
-                    U_current, boundary_conditions=bc, spacing=(self.dx,), time=t_step
+                    U_current, boundary_conditions=bc, spacing=(self.dx,), time=t_step, geometry=self.problem.geometry
                 )
             return U_current
 
@@ -1959,7 +1893,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         # Boundary fold for the stochastic departures (reflect = no-flux/Neumann, the CS
         # setting; wrap = periodic; clamp otherwise). Shared with the stochastic SL path.
         bc = self.get_boundary_conditions()
-        bc_op = _axis_operations(bc, d)
+        bc_op = _axis_operations(bc, d, self.problem.geometry)
         bounds = self.problem.geometry.get_bounds()
         x_min = np.asarray(bounds[0], dtype=float)
         x_max = np.asarray(bounds[1], dtype=float)
@@ -2217,7 +2151,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             if bc:
                 time = time_idx * self.dt
                 U_current = self.bc_applicator.enforce_values(
-                    U_current, boundary_conditions=bc, spacing=(self.dx,), time=time
+                    U_current, boundary_conditions=bc, spacing=(self.dx,), time=time, geometry=self.problem.geometry
                 )
 
             return U_current
@@ -2238,7 +2172,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 grid_shape = U_next_shaped.shape
 
             U_star = np.zeros_like(U_next_shaped)
-            axis_ops = _axis_operations(self.get_boundary_conditions(), self.dimension)
+            axis_ops = _axis_operations(self.get_boundary_conditions(), self.dimension, self.problem.geometry)
 
             for multi_idx in np.ndindex(grid_shape):
                 x_current = np.array([self.grid.coordinates[d][multi_idx[d]] for d in range(self.dimension)])
@@ -2275,7 +2209,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         bounds = self.problem.geometry.get_bounds()
         xmin, xmax = bounds[0][0], bounds[1][0]
 
-        bc_op = _axis_operations(self.get_boundary_conditions(), 1)[0]
+        bc_op = _axis_operations(self.get_boundary_conditions(), 1, self.problem.geometry)[0]
 
         return apply_boundary_conditions_1d(x, xmin=xmin, xmax=xmax, bc_type=bc_op)
 
@@ -2477,7 +2411,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
             # Apply boundary conditions
             # Issue #702: Use centralized bc_utils for consistent BC handling
-            bc_op = _axis_operations(self.get_boundary_conditions(), 1)[0]
+            bc_op = _axis_operations(self.get_boundary_conditions(), 1, self.problem.geometry)[0]
 
             bounds = self.problem.geometry.get_bounds()
             xmin, xmax = bounds[0][0], bounds[1][0]
@@ -2501,7 +2435,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             )
 
             # Issue #702 / #1560: one operation per axis, from the per-axis owner.
-            bc_op = _axis_operations(self.get_boundary_conditions(), self.dimension)
+            bc_op = _axis_operations(self.get_boundary_conditions(), self.dimension, self.problem.geometry)
 
             return apply_boundary_conditions_nd(
                 x_departure,
@@ -2578,116 +2512,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                     grid_coords,
                     grid_shape,
                 )
-
-    def _compute_diffusion_term(self, U_values: np.ndarray, idx: int | tuple) -> float:
-        """
-        Compute discrete Laplacian (diffusion term) at grid point (supports 1D and nD).
-
-        1D: Uses standard finite difference (U[i+1] - 2*U[i] + U[i-1]) / dx²
-        nD: Computes Laplacian as sum over dimensions: Δu = Σ_d ∂²u/∂x_d²
-
-        Args:
-            U_values: Value function array
-                - 1D: shape (Nx,)
-                - nD: shape matching grid.num_points
-            idx: Grid point index
-                - 1D: scalar integer i
-                - nD: tuple of indices, e.g., (i, j) for 2D
-
-        Returns:
-            Discrete Laplacian value
-        """
-        if self.dimension == 1:
-            # 1D Laplacian: Use existing logic
-            i = int(idx)
-            Nx = len(U_values)
-
-            if Nx <= 2:
-                return 0.0
-
-            # Handle boundary points - get BC type once
-            # Issue #545: Use centralized BC retrieval (NO hasattr)
-            bc = self.get_boundary_conditions()
-            bc_type = self._get_bc_type_string(bc)
-
-            if i == 0:
-                if bc_type == "periodic":
-                    laplacian = (U_values[1] - 2 * U_values[0] + U_values[-1]) / self.dx**2
-                else:
-                    laplacian = (U_values[1] - U_values[0]) / self.dx**2
-
-            elif i == Nx - 1:
-                if bc_type == "periodic":
-                    laplacian = (U_values[0] - 2 * U_values[-1] + U_values[-2]) / self.dx**2
-                else:
-                    laplacian = (U_values[-1] - U_values[-2]) / self.dx**2
-
-            else:
-                # Central difference for interior points
-                laplacian = (U_values[i + 1] - 2 * U_values[i] + U_values[i - 1]) / self.dx**2
-
-            return laplacian
-
-        else:
-            # nD Laplacian: Sum of second derivatives in each dimension
-            # Δu = ∂²u/∂x₁² + ∂²u/∂x₂² + ...
-
-            # Ensure U_values is reshaped to grid shape
-            if U_values.ndim == 1:
-                U_shaped = U_values.reshape(self._grid_shape)
-            else:
-                U_shaped = U_values
-
-            # Get multi-index
-            if isinstance(idx, (tuple, list)):
-                multi_idx = tuple(idx)
-            else:
-                # Convert flat index to multi-index
-                multi_idx = self.grid.get_multi_index(int(idx))
-
-            laplacian = 0.0
-
-            # Compute second derivative in each dimension
-            for d in range(self.dimension):
-                # Check if we're at a boundary in this dimension
-                at_lower_bound = multi_idx[d] == 0
-                at_upper_bound = multi_idx[d] == self._grid_shape[d] - 1
-
-                # Create index tuples for neighbors
-                idx_center = list(multi_idx)
-                idx_plus = list(multi_idx)
-                idx_minus = list(multi_idx)
-
-                if at_lower_bound or at_upper_bound:
-                    # Boundary: use one-sided difference (assume Neumann BC)
-                    if at_lower_bound:
-                        idx_plus[d] = multi_idx[d] + 1
-                        u_center = U_shaped[tuple(idx_center)]
-                        u_plus = U_shaped[tuple(idx_plus)]
-                        # One-sided: (u_plus - u_center) / dx²
-                        second_deriv = (u_plus - u_center) / self.dx[d] ** 2
-                    else:  # at_upper_bound
-                        idx_minus[d] = multi_idx[d] - 1
-                        u_center = U_shaped[tuple(idx_center)]
-                        u_minus = U_shaped[tuple(idx_minus)]
-                        # One-sided: (u_center - u_minus) / dx²
-                        second_deriv = (u_center - u_minus) / self.dx[d] ** 2
-
-                else:
-                    # Interior: central difference
-                    idx_plus[d] = multi_idx[d] + 1
-                    idx_minus[d] = multi_idx[d] - 1
-
-                    u_center = U_shaped[tuple(idx_center)]
-                    u_plus = U_shaped[tuple(idx_plus)]
-                    u_minus = U_shaped[tuple(idx_minus)]
-
-                    # Central: (u_plus - 2*u_center + u_minus) / dx²
-                    second_deriv = (u_plus - 2 * u_center + u_minus) / self.dx[d] ** 2
-
-                laplacian += second_deriv
-
-            return float(laplacian)
 
     def _sl_value_update(
         self,
@@ -2890,7 +2714,9 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
     def _get_diffusion_bc_types(self) -> tuple[str, ...]:
         """The diffusion step's boundary on each axis, 'neumann' or 'periodic' (#1560)."""
-        return per_axis_diffusion_types(_axis_operations(self.get_boundary_conditions(), self.dimension))
+        return per_axis_diffusion_types(
+            _axis_operations(self.get_boundary_conditions(), self.dimension, self.problem.geometry)
+        )
 
     def _adi_diffusion_step(self, U_star: np.ndarray, dt: float) -> np.ndarray:
         """
@@ -3094,28 +2920,37 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         Determine BC type for a specific grid point.
 
         Args:
-            point_idx: Index of grid point
+            point_idx: Flat index of a grid point, as :meth:`get_boundary_indices` gives it
 
         Returns:
-            BC type string: "periodic", "dirichlet", "neumann", or "none"
+            BC type string ("periodic", "dirichlet", "neumann", "no_flux", "robin"), or "none" for an
+            interior point or a problem with no BC.
 
         Note:
-            For Semi-Lagrangian solver with uniform BCs, returns the same
-            BC type for all boundary points. Mixed BC support would require
-            querying BC segments based on point spatial coordinates.
+            Read through the owner (#2512 row B1): the segment governing the point's face, or at a corner
+            :meth:`BoundaryConditions.segment_for_corner`. Until then this returned ``default_bc``'s type
+            for every point, so a BC spelled per face read as its default, and an interior point read as a
+            boundary one.
         """
+        from mfgarchon.geometry.boundary.types import BoundaryFace
+
         bc = self.get_boundary_conditions()
         if bc is None:
             return "none"
-
-        # For uniform BC (most common case)
-        bc_type_str = self._get_bc_type_string(bc)
-        if bc_type_str is not None:
-            return bc_type_str
-
-        # For mixed BC, would need to query BC segments
-        # (Semi-Lagrangian typically uses uniform BC)
-        return "none"
+        shape = (len(self.x_grid),) if self.dimension == 1 else self._grid_shape
+        index = np.unravel_index(int(point_idx), shape)
+        faces = [
+            BoundaryFace(axis, side)
+            for axis, (i, n) in enumerate(zip(index, shape, strict=True))
+            for side, edge in (("min", 0), ("max", n - 1))
+            if i == edge
+        ]
+        if not faces:
+            return "none"
+        geometry = self.problem.geometry
+        if len(faces) == 1:
+            return bc.segment_for_face(faces[0], geometry).bc_type.value
+        return bc.segment_for_corner(faces, geometry).bc_type.value
 
     def get_solver_info(self) -> dict[str, Any]:
         """Return solver configuration information."""

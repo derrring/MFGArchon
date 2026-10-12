@@ -918,18 +918,9 @@ def _tensor_diffusion_1d(
     # For tensor diffusion with no-flux BC, use mode='edge' for flux conservation.
     # Rationale: Same as 2D case - divergence-form diffusion needs FLUX-based ghost cells.
     if bc is not None:
-        from mfgarchon.geometry.boundary import BCType
-
-        # Check if this is a uniform no-flux/Neumann BC
-        is_noflux = False
-        try:
-            bc_type_str = bc.type.lower()
-            is_noflux = bc_type_str in ["no_flux", "neumann"]
-        except AttributeError:
-            # Unified BC without .type attribute - check segments
-            if bc.is_uniform and len(bc.segments) > 0:
-                seg = bc.segments[0]
-                is_noflux = seg.bc_type in [BCType.NO_FLUX, BCType.NEUMANN]
+        # Check if this is a uniform no-flux/Neumann BC. `.type` is a uniform BC's one segment, read through the
+        # owner (`BoundaryConditions.uniform_segment`), and raises for any other BC (#2512 row B1).
+        is_noflux = bc.type.lower() in ["no_flux", "neumann"]
 
         if is_noflux:
             # Use mode='edge' for flux conservation (zero flux at boundary)
@@ -955,27 +946,41 @@ def _tensor_diffusion_1d(
         return (flux[1:] - flux[:-1]) / dx
 
 
-def _is_no_flux(bc: BoundaryConditions | None) -> bool:
-    """Is this a uniform zero-flux wall, the case whose boundary face flux must vanish (#2232)?
+def _is_no_flux(bc: BoundaryConditions | None, dimension: int, tensor: NDArray) -> bool:
+    """Does every wall face resolve to a zero-flux wall, the case whose boundary face flux must vanish (#2232)?
 
-    NEUMANN is deliberately NOT included, and that exclusion is the point of the issue. Homogeneous
-    Neumann states ``dm/dn = 0``; no-flux states ``(D grad m).n = 0``. With a diagonal tensor the two
-    coincide, which is why the library had been treating them as one condition. With an off-diagonal
-    tensor they are different conditions and only the second is a conservation law -- so a caller
-    who asked for NEUMANN keeps the gradient condition it asked for, unchanged.
+    Read face by face from the face owner (#2512 row B1), so a uniform ``no_flux_bc`` and the same no-flux
+    spelt one segment per face give one answer (#2626: the per-face spelling read False here and leaked mass
+    once ``tensor`` had cross terms). The kernels apply ``zero_wall_flux`` to every wall at once, so a BC that
+    is zero-flux on some faces only is refused when ``tensor`` has an off-diagonal entry (#2632); with a diagonal
+    ``tensor`` there is no cross flux to zero, and it reads False.
+
+    NEUMANN is deliberately NOT included, and that exclusion is the point of #2232. Homogeneous Neumann
+    states ``dm/dn = 0``; no-flux states ``(D grad m).n = 0``. With a diagonal tensor the two coincide. With
+    an off-diagonal tensor they are different conditions and only the second is a conservation law -- so a
+    caller who asked for NEUMANN keeps the gradient condition it asked for, unchanged.
     """
-    if bc is None:
+    from mfgarchon.geometry.boundary import BCType, BoundaryConditions, BoundaryFace
+
+    if not isinstance(bc, BoundaryConditions):
         return False
 
-    # Uniformity is asked before the first segment is read, and `.type` is not read at all: it raises
-    # `ValueError` on a mixed BC. An object without `segments` fails loud (#1559): the legacy fdm_bc_1d
-    # class, the only one this read by its `.type`, is removed.
-    segments = bc.segments
-    if not bc.is_uniform or not segments:
-        return False
-    from mfgarchon.geometry.boundary import BCType
-
-    return segments[0].bc_type == BCType.NO_FLUX
+    faces = [BoundaryFace(axis, side) for axis in range(dimension) for side in ("min", "max")]
+    no_flux = [bc.segment_for_face(face).bc_type == BCType.NO_FLUX for face in faces]
+    if all(no_flux):
+        return True
+    if any(no_flux):
+        sig = np.asarray(tensor)
+        off_diagonal = sig[..., ~np.eye(dimension, dtype=bool)] if sig.ndim >= 2 else np.zeros(0)
+        if np.any(off_diagonal != 0.0):
+            walls = ", ".join(f.to_string() for f, nf in zip(faces, no_flux, strict=True) if nf)
+            raise NotImplementedError(
+                f"Tensor diffusion: the walls {walls} are no-flux and the others are not, and the diffusion "
+                "tensor has off-diagonal entries. This kernel zeroes the cross flux on every wall or on none, so "
+                "it cannot honour no-flux on some walls only: either reading would leak mass or block a flux "
+                "the BC allows. Use a BC that is no-flux on every wall, or a diagonal tensor (#2632)."
+            )
+    return False
 
 
 def _tensor_diffusion_2d(
@@ -1016,17 +1021,8 @@ def _tensor_diffusion_2d(
             # Mixed BC - use unified interface (may not be uniform no-flux)
             u_padded = pad_array_with_ghosts(u, bc, ghost_depth=1, time=time, spacing=(dx, dy))
         else:
-            # Not a BoundaryConditions: read by its .type, if it has one
-            try:
-                bc_type_str = bc.type.lower()
-                is_noflux = bc_type_str in ["no_flux", "neumann"]
-            except AttributeError:
-                # Unified BC without .type attribute - check segments
-                if bc.is_uniform and len(bc.segments) > 0:
-                    from mfgarchon.geometry.boundary import BCType
-
-                    seg = bc.segments[0]
-                    is_noflux = seg.bc_type in [BCType.NO_FLUX, BCType.NEUMANN]
+            # Not a BoundaryConditions: read by its .type
+            is_noflux = bc.type.lower() in ["no_flux", "neumann"]
 
             if is_noflux:
                 # Use mode='edge' for flux conservation (zero flux at boundary)
@@ -1038,7 +1034,7 @@ def _tensor_diffusion_2d(
         # Default to periodic if no BC specified
         u_padded = np.pad(u, 1, mode="wrap")
 
-    zero_wall_flux = _is_no_flux(bc)
+    zero_wall_flux = _is_no_flux(bc, 2, Sigma_full)
 
     # Use JIT kernel if available
     if USE_NUMBA and NUMBA_AVAILABLE:
@@ -1110,7 +1106,7 @@ def _tensor_diffusion_nd(
     else:
         u_padded = np.pad(u, 1, mode="wrap")
 
-    zero_wall_flux = _is_no_flux(bc)
+    zero_wall_flux = _is_no_flux(bc, d, Sigma_full)
     result = np.zeros(shape, dtype=u.dtype)
 
     for i in range(d):
