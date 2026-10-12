@@ -195,7 +195,7 @@ def deprecated_parameter(
                 # Past every wrapper of this module, not just this one: under a stacked decorator the
                 # frame above an inner wrapper is the outer wrapper (another `deprecated_parameter`, or
                 # `retired_parameters`), and a warning attributed there names this module, which the suite's
-                # `ignore::DeprecationWarning:mfgarchon.*` filters (pytest.ini and tests/conftest.py) drop -- the
+                # `ignore::DeprecationWarning:mfgarchon.*` filter (pytest.ini) drops -- the
                 # call site was invisible to the gate (#2579).
                 warnings.warn(
                     f"Parameter '{param_name}' in '{func.__name__}' is deprecated "

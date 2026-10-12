@@ -56,4 +56,4 @@
   mutation now reddens three tests.
 
   The warning baseline gains one identity, from the new test file: the legacy-API deprecation,
-  which is already recorded for many other test files.
+  which is already recorded for many other test files. **[#2184, 2026-10-12: the components= form is not deprecated; it warns with a `PendingDeprecationWarning`.]**

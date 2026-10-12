@@ -3,6 +3,13 @@
 **Status**: ✅ Complete as of v0.16.0
 **Date**: 2025-12-11
 
+> **Status (2026-10-12): partly stale.** Its code blocks do not run as written at 0.22.0.dev0: a
+> `TensorProductGrid` needs `boundary_conditions=`, and an `MFGProblem` built without `model=`, `domain=` and
+> `conditions=` needs `components=` (#2573). Its "new" geometry-first API and its "old" `spatial_bounds=` API are
+> both routes of the components= form, which the model/domain/conditions form is planned to replace; nothing needs
+> to change now (#2184). For the current way to assemble a problem see [`CONVENTIONS.md`](CONVENTIONS.md)
+> § *Component ownership*.
+
 ---
 
 ## Overview
@@ -54,7 +61,7 @@ geometry = TensorProductGrid(
 problem = MFGProblem(geometry=geometry, T=1.0, Nt=100, volatility=0.1)
 ```
 
-**Old API** (still works; like every route of the components= form it emits a `PendingDeprecationWarning`, and nothing needs to change now -- #2184):
+**Old API** (like every route of the components= form, it emits a `PendingDeprecationWarning`; nothing needs to change now -- #2184):
 ```python
 problem = MFGProblem(
     spatial_bounds=[(0.0, 10.0), (0.0, 5.0)],
@@ -254,7 +261,7 @@ grid = problem.xSpace     # Use problem.geometry.get_spatial_grid() instead
 
 ### Phase 3: Restriction (planned; no release is named, since no interface is fixed yet)
 - Old manual grid construction restricted (requires explicit flag)
-- Geometry-first API becomes mandatory for new code
+- ~~Geometry-first API becomes mandatory for new code~~ [SUPERSEDED 2026-10-12: the geometry-first API is a route of the components= form, which the model/domain/conditions form is planned to replace; nothing needs to change now. SUPERSEDED-BY: #2184]
 
 ## Testing Your Migration
 

@@ -3,7 +3,7 @@
   pre-commit's writer. **Suppressing a listing makes ignoring it cheaper, so on its own that was a
   regression in attention, not a fix.** "The count is still in the tail" is not a defence: a number
   scrolls past exactly the way 6,030 lines did, and the evidence is that the listing was printed in
-  full every run for a year while none of the 456 deprecated calls it reported were retired.
+  full every run for a year while none of the 456 deprecated calls it reported were retired. **[#2184, 2026-10-12: the components= form is not deprecated; it warns with a `PendingDeprecationWarning`.]**
 
   `tests/conftest.py` now writes a census during the gate's own suite run — no second run, and no
   per-worker merge, because the controller's `terminalreporter.stats["warnings"]` is complete under

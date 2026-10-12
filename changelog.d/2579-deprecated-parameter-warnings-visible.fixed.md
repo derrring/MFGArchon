@@ -4,7 +4,8 @@
   - Under any other wrapper from `mfgarchon/utils/deprecation.py`, the warning was attributed to that
     wrapper's frame. The suite's two module filters then dropped it: pytest.ini's
     `ignore::DeprecationWarning:mfgarchon.*`, and the same filter in `tests/conftest.py`'s autouse
-    `suppress_warnings` fixture. Both stay. The other
+    `suppress_warnings` fixture. Both stay. **[#2184, 2026-10-12: the conftest copy is deleted; pytest.ini holds
+    the filter alone.]** The other
     wrapper is either a second `@deprecated_parameter` or `retired_parameters`, which
     `retired_volatility_keywords` uses.
     - Measured at the base: 10 (function, parameter) pairs in 7 functions were hidden this way.

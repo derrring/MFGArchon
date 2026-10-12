@@ -4,8 +4,8 @@ Two filters hid it. pytest.ini's ``ignore:Parameter.*is deprecated:DeprecationWa
 `@deprecated_parameter` warning; it is deleted. And under any other wrapper from `mfgarchon/utils/deprecation.py`
 -- a second `@deprecated_parameter`, or `retired_parameters` (which `retired_volatility_keywords` uses) -- the
 frame above the wrapper is that wrapper, so a plain ``stacklevel=2`` attributed the warning to deprecation.py,
-which the suite's two surviving module filters drop: pytest.ini's ``ignore::DeprecationWarning:mfgarchon.*`` and
-the same filter in ``tests/conftest.py``'s autouse ``suppress_warnings`` fixture. Measured at the base: 10
+which the suite's module filter drops: pytest.ini's ``ignore::DeprecationWarning:mfgarchon.*`` (a copy of it in
+``tests/conftest.py``'s autouse ``suppress_warnings`` fixture was deleted by #2184). Measured at the base: 10
 (function, parameter) pairs in 7 functions were attributed there. The decorator now skips every frame of its own
 module (`WRAPPER_FRAMES`).
 

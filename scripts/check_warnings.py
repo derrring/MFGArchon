@@ -39,7 +39,7 @@ CALL SITE: one API's warning raised from 153 test files is 153 identities. The 2
 (kind, message) pairs across 189 files, the largest group being 153 sharing
 `Legacy MFGProblem(geometry=, components=` (#2119's measurement; since #2184 that warning is the
 components= form's PendingDeprecationWarning, which is not a deprecation). That is the intended behaviour, not an artifact -- a
-new test reaching for a deprecated API should turn this red, and it only can if the caller is part
+new test reaching for an API that warns should turn this red, and it only can if the caller is part
 of the key.
 
 BIDIRECTIONAL, like the other four baselines. A new identity is a regression. A DISAPPEARED one is

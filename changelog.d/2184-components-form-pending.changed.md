@@ -9,7 +9,8 @@
   `docs/user/GEOMETRY_FIRST_API_GUIDE.md` and the test comments that called the form deprecated now say the same.
 
   **Who is affected.** `PendingDeprecationWarning` is not a subclass of `DeprecationWarning`. Python's default
-  filters ignore it; pytest shows it.
+  filters ignore it; pytest shows it unless warning options are set (`-W`, `PYTHONWARNINGS`), in which case it adds
+  none of its own filters.
   - A call made from code in `__main__` -- a script's top level or a function the script defines -- printed the
     old `DeprecationWarning` under Python's default filters (they show one attributed to `__main__`), and now prints
     nothing. `-W default::PendingDeprecationWarning` shows the new one. `-W error::DeprecationWarning:__main__`
@@ -18,7 +19,8 @@
     category check under `warnings.catch_warnings` -- no longer matches it: the constructor emits no
     `DeprecationWarning` now.
   - A downstream test suite run by pytest with no warning filter of its own still sees the call's warning in its
-    summary, as a `PendingDeprecationWarning`.
+    summary, as a `PendingDeprecationWarning`. Run under `PYTHONWARNINGS=default::DeprecationWarning`, it saw the
+    old `DeprecationWarning` and now sees nothing.
   - A call from inside an imported module was already silent under Python's default filters, and still is. That
     includes the library's own subclasses that use the form, `StochasticMFGProblem`, `MultiPopulationMFGProblem` and
     `NetworkMFGProblem`, whose warning is attributed to the library.
