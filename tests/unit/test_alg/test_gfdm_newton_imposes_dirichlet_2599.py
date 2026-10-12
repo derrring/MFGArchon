@@ -112,7 +112,7 @@ def test_newton_says_when_it_runs_out_of_iterations(iterations, caplog):
     with caplog.at_level("WARNING", logger="mfgarchon"):
         _solve_1d("constant", **kwargs)
     warned = [r for r in caplog.records if "HJB-GFDM Newton did not converge" in r.getMessage()]
-    assert bool(warned) == (iterations == 1), [r.getMessage() for r in warned][:2]
+    assert len(warned) == (NT if iterations == 1 else 0), [r.getMessage() for r in warned][:2]
 
 
 @pytest.mark.parametrize("inner", ["newton", "howard"])

@@ -14,6 +14,10 @@
     which no trial's projection moved u, 290 of 300 iterations ended at the floor (375122e5). Every step ran all 30
     iterations and stopped between 6.3e-01 and 2.8e-04 against a tolerance of 1e-6. Each step now converges in 2
     or 3 iterations, to at most 9.4e-10. The golden was regenerated: max |dU| 2.353e-02.
+  - **Who is affected.** `inner_solver="newton"` is HJB-GFDM's default, so default HJB-GFDM results computed
+    before this fix may be unconverged, whatever their boundary condition: on the golden, 290 of 300 iterations
+    ended at the line search's floor, and the Neumann wall above ended every step at 0.42. Runs with
+    `inner_solver="howard"` are unaffected; their solves are bit-identical across the fix.
   - **A step that runs out of iterations says so.** It logs a warning naming the time index, the residual with its
     boundary rows, and the tolerance. Steps that still do not converge include a zero terminal against walls of 0.7
     and 0.4, and the 2-D Newton cases above, as on 52219be2, where they were silent. #2610 records them: at the
