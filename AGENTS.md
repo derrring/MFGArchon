@@ -399,8 +399,7 @@ The paragraph above is the target: fix a defect at the level of its class, at th
 
 1. the defect class, named;
 2. its population: the predicate, the count at a stated sha, and a control the predicate must find;
-3. whether the change fixes the class or one instance;
-4. each function the change edits that `git log -L` shows was already edited twice or more.
+3. whether the change fixes the class or one instance.
 
 An instance fix is admitted when its class line names which of these holds:
 - the census shows the class has one member;
