@@ -199,7 +199,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         domain: GeometryProtocol | None = None,  # Spatial geometry
         conditions: Any | None = None,  # Conditions instance (time + IC/TC)
         constraints: list | None = None,  # Optional constraints (future)
-        # === Legacy parameters (all below deprecated in favor of model/domain/conditions) ===
+        # === The components= form (planned to be replaced by model/domain/conditions; #2184) ===
         # N-D grid parameters
         spatial_bounds: list[tuple[float, float]] | None = None,
         spatial_discretization: list[int] | None = None,
@@ -463,11 +463,14 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             self._v1_conditions = None
             self._v1_constraints = None
 
-            # Issue #875: Deprecation warning for legacy API path
+            # The components= form is planned to be replaced, and is not deprecated: the model/domain/conditions
+            # form is not fixed yet, so a caller is not told to migrate to it and no removal clock runs (user ruling,
+            # 2026-10-12, #2184 option A). The legacy path is not in the deprecation registry. The form is named
+            # generically: a list of its routes (geometry=, spatial_bounds=, network=) names the wrong one to someone.
             warnings.warn(
-                "Legacy MFGProblem(geometry=, components=, volatility=, T=, Nt=) is deprecated. "
-                "Use MFGProblem(model=Model(...), domain=grid, conditions=Conditions(...), Nt=50).",
-                DeprecationWarning,
+                "The components= form of MFGProblem is planned to be replaced by the model/domain/conditions "
+                "form, MFGProblem(model=, domain=, conditions=). Nothing needs to change now.",
+                PendingDeprecationWarning,
                 stacklevel=2,
             )
 

@@ -1,10 +1,10 @@
 # Legacy Parameters Migration Guide
 
-> **Status (2026-09-29): partly stale.** The "After" examples below build problems with the legacy
-> constructor `MFGProblem(geometry=..., diffusion=...)`, which is itself deprecated, and several
-> "Before" forms now raise rather than warn. For the current way to assemble a problem see
-> [`CONVENTIONS.md`](CONVENTIONS.md) § *Component ownership*; for what is retired or deprecated,
-> § *Names*.
+> **Status (2026-09-29): partly stale.** The "After" examples below build problems with the legacy constructor
+> `MFGProblem(geometry=..., diffusion=...)` — the components= form, which the model/domain/conditions form is
+> planned to replace (#2184) — and several "Before" forms now raise rather than warn. For the current way to
+> assemble a problem see [`CONVENTIONS.md`](CONVENTIONS.md) § *Component ownership*; for what is retired or
+> deprecated, § *Names*.
 
 **Issue**: #544
 **Target Version**: v0.18.0

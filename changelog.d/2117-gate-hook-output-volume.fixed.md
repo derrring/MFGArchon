@@ -23,7 +23,7 @@
   12.3×**. It suppresses the listing, not the warnings: the tail still reads `N passed, M warnings`
   (`-p no:warnings` would drop the count, which is why it is not used). What that listing was
   carrying is a backlog, not noise — 456 of its lines are this repository's own tests calling its
-  own deprecated `MFGProblem(geometry=, ...)`, across 103 files. Filed as #2119.
+  own deprecated `MFGProblem(geometry=, ...)`, across 103 files. Filed as #2119. **[#2184, 2026-10-12: the components= form is not deprecated; it warns with a `PendingDeprecationWarning`.]**
 
   **The adapter stays, as defence in depth rather than the fix.** Review measured three failing
   tests adding 5,022 bytes — about 1,674 per failure — against the 30,896 bytes of headroom that

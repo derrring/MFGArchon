@@ -933,12 +933,12 @@ def cleanup_numpy_state():
 
 @pytest.fixture(autouse=True)
 def suppress_warnings():
-    """Suppress known warnings during testing."""
-    import warnings
+    """Reset every warning filter at each test's teardown. The filters themselves are `pytest.ini`'s `filterwarnings`;
+    two copies of its first two lines lived here, applied to the test call alone, and are gone (#2184).
 
-    # Suppress specific warnings that are expected during testing
-    warnings.filterwarnings("ignore", category=DeprecationWarning, module="mfgarchon.*")
-    warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
+    A side effect of the reset: a fixture torn down after it -- class-, module- or session-scoped, or a function-scoped
+    one set up before it, such as `cleanup_numpy_state` above -- runs with none of `pytest.ini`'s filters."""
+    import warnings
 
     yield
 

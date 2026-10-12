@@ -31,7 +31,8 @@ def M0(x):
 
 
 def _via_bounds():
-    # `spatial_discretization=` exists only on the legacy constructor, so this path warns that it is deprecated.
+    # `spatial_discretization=` exists only on the legacy constructor, so this path emits that form's
+    # PendingDeprecationWarning (#2184).
     components = MFGComponents(m_initial=M0, u_terminal=lambda x: 0.0, hamiltonian=HAMILTONIAN)
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="initial density mass")

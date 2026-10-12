@@ -799,9 +799,9 @@ change through `dataclasses.replace`. There are no per-field shortcuts.
 is declared but no `MFGProblem` accepts it; and `Model` defaults the volatility to `0.1` where the
 legacy constructor gives `0.0`.*
 
-A **legacy constructor** — `MFGProblem(geometry=, components=, T=, Nt=, …)` — still exists and emits
-a `DeprecationWarning`. It is the migration surface, and new code does not use it. `volatility=`,
-`volatility_kind=` and `diffusion=` as `MFGProblem` keywords exist only there.
+A **legacy constructor**, the components= form `MFGProblem(geometry=, components=, T=, Nt=, …)`, also exists. It
+emits a `PendingDeprecationWarning`: the model/domain/conditions form is planned to replace it, and nothing needs
+to change now (#2184). `volatility=`, `volatility_kind=` and `diffusion=` as `MFGProblem` keywords exist only there.
 
 ---
 

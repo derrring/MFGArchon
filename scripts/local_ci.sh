@@ -708,7 +708,7 @@ if [[ $FAST -eq 0 ]]; then
   # 0.53x a 64 KB pipe instead of 12.3x, and #2117's failure mode has nothing to grow into.
   #
   # It is a REPORT of a backlog, not a signal: 456 of those lines are this repository's own tests
-  # calling its own deprecated `MFGProblem(geometry=, components=, ...)`. Printing the list every
+  # calling its own components= form, `MFGProblem(geometry=, components=, ...)`. Printing the list every
   # run for a year has not retired one of them; #2119 is where they get counted instead.
   # MFGARCHON_WARNING_CENSUS: `tests/conftest.py` writes the identities this run emitted, so the
   # ratchet below costs no second suite run. Measured: the controller's warning stats are complete
