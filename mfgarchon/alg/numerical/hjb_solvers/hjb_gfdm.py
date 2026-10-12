@@ -2743,7 +2743,9 @@ class HJBGFDMSolver(BaseHJBSolver):
         if len(self.boundary_indices) == 0:
             return jacobian_sparse, residual
 
-        jac_lil = jacobian_sparse.tolil()
+        # With no Jacobian, only the residual's boundary rows are formed: the residual the Newton step solves,
+        # which its convergence test reads (#2599).
+        jac_lil = jacobian_sparse.tolil() if jacobian_sparse is not None else None
         residual_bc = residual.copy()
 
         try:
@@ -2787,10 +2789,11 @@ class HJBGFDMSolver(BaseHJBSolver):
             new_rhs = float(new_row @ u_current) - bc_target
 
             # --- Atomic row replacement ---
-            jac_lil[i, :] = new_row
+            if jac_lil is not None:
+                jac_lil[i, :] = new_row
             residual_bc[i] = new_rhs
 
-        return jac_lil.tocsr(), residual_bc
+        return (jac_lil.tocsr() if jac_lil is not None else None), residual_bc
 
     def _eval_bc_dirichlet_value(
         self,
@@ -3797,46 +3800,21 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Compute actual time for batch Hamiltonian calls
         current_time = time_idx * (self.problem.T / self.problem.Nt)
 
-        # Closure: compute residual norm at any candidate u_trial (used by
-        # backtracking line search). Routes through the same path-selection as
-        # the Newton step itself, so residual evaluation is consistent.
-        def _residual_norm(u_trial: np.ndarray) -> float:
+        # The one residual Newton reads (#2599): the PDE residual with its boundary rows replaced by the BC's, so a
+        # Dirichlet point reads u - g. The convergence test, the Armijo merit and the line search's trial norm all call
+        # it. The convergence test used to read the PDE residual alone, which vanishes for a constant iterate with no
+        # source: the step stopped before any boundary row was formed and returned the terminal unchanged. The merit
+        # read the same PDE-only norm while each trial's walls were projected to g, so it compared a different function
+        # across the step, backtracked to its floor, and every step ran out of iterations. Returns the derivatives the
+        # PDE residual was computed from, the PDE residual (whose boundary rows the Jacobian's row replacement
+        # overwrites), and the norm of the residual with its boundary rows.
+        def _residual(u_trial: np.ndarray) -> tuple[Any, np.ndarray, float]:
+            derivs: Any
             if use_hamiltonian_batch:
-                g_u, l_u = self._compute_derivatives_vectorized(u_trial)
-                r = self._compute_hjb_residual_hamiltonian(
+                grad_u, lap_u = self._compute_derivatives_vectorized(u_trial)
+                derivs = (grad_u, lap_u)
+                pde = self._compute_hjb_residual_hamiltonian(
                     u_trial,
-                    u_n_plus_1,
-                    m_n_plus_1,
-                    g_u,
-                    l_u,
-                    H_class,
-                    current_time,
-                    additive_source=additive_source,
-                )
-            else:
-                derivs = self._approximate_all_derivatives_cached(u_trial)
-                r = self._compute_hjb_residual_with_cache(
-                    u_trial,
-                    u_n_plus_1,
-                    m_n_plus_1,
-                    time_idx,
-                    derivs,
-                    additive_source=additive_source,
-                )
-            return float(np.linalg.norm(r))
-
-        # Armijo backtracking parameters (Nocedal-Wright §3.1)
-        ARMIJO_C1 = 1e-4  # sufficient-decrease constant
-        BACKTRACK_FACTOR = 0.5  # geometric step reduction
-        MIN_ALPHA = 1e-6  # give up below this α
-
-        for _newton_iter in range(self.max_newton_iterations):
-            if use_hamiltonian_batch:
-                # Batch Hamiltonian path: H(t, x, p, m) vectorized (Issue #775)
-                grad_u, lap_u = self._compute_derivatives_vectorized(u_current)
-
-                residual = self._compute_hjb_residual_hamiltonian(
-                    u_current,
                     u_n_plus_1,
                     m_n_plus_1,
                     grad_u,
@@ -3845,33 +3823,36 @@ class HJBGFDMSolver(BaseHJBSolver):
                     current_time,
                     additive_source=additive_source,
                 )
-
-                if np.linalg.norm(residual) < self.newton_tolerance:
-                    break
-
-                jacobian_sparse = self._compute_hjb_jacobian_hamiltonian(
-                    grad_u,
-                    m_n_plus_1,
-                    H_class,
-                    current_time,
-                )
             else:
-                # Per-point path for QP mode or legacy custom without hamiltonian_class
-                all_derivs = self._approximate_all_derivatives_cached(u_current)
-
-                residual = self._compute_hjb_residual_with_cache(
-                    u_current,
+                cached = self._approximate_all_derivatives_cached(u_trial)
+                derivs = cached
+                pde = self._compute_hjb_residual_with_cache(
+                    u_trial,
                     u_n_plus_1,
                     m_n_plus_1,
                     time_idx,
-                    all_derivs,
+                    cached,
                     additive_source=additive_source,
                 )
+            _, residual_with_bc = self._apply_boundary_conditions_to_sparse_system(None, pde, time_idx, u_trial)
+            return derivs, pde, float(np.linalg.norm(residual_with_bc))
 
-                if np.linalg.norm(residual) < self.newton_tolerance:
-                    break
+        # Armijo backtracking parameters (Nocedal-Wright §3.1)
+        ARMIJO_C1 = 1e-4  # sufficient-decrease constant
+        BACKTRACK_FACTOR = 0.5  # geometric step reduction
+        MIN_ALPHA = 1e-6  # give up below this α
 
-                jacobian_sparse = self._compute_hjb_jacobian_sparse(u_current, m_n_plus_1, time_idx, all_derivs)
+        r0_norm = float("nan")
+        for _newton_iter in range(self.max_newton_iterations):
+            derivs, residual, r0_norm = _residual(u_current)
+            if r0_norm < self.newton_tolerance:
+                break
+            if use_hamiltonian_batch:
+                # Batch Hamiltonian path: H(t, x, p, m) vectorized (Issue #775)
+                jacobian_sparse = self._compute_hjb_jacobian_hamiltonian(derivs[0], m_n_plus_1, H_class, current_time)
+            else:
+                # Per-point path for QP mode or legacy custom without hamiltonian_class
+                jacobian_sparse = self._compute_hjb_jacobian_sparse(u_current, m_n_plus_1, time_idx, derivs)
 
             # Issue #1074: diagnostic DMP guard (no-op unless check_dmp=True). Numerically inert.
             self._maybe_warn_dmp(u_current)
@@ -3902,11 +3883,10 @@ class HJBGFDMSolver(BaseHJBSolver):
             # Replaces a hardcoded `max_step=10` cap that was too restrictive
             # for stiff problems with |U|=O(100) and too permissive elsewhere
             # (Issue: HJB Newton non-convergence at high Pe).
-            r0_norm = float(np.linalg.norm(residual))
             alpha = 1.0
             u_trial = u_current + alpha * delta_u
             u_trial = self._apply_boundary_conditions_to_solution(u_trial, time_idx)
-            r_trial_norm = _residual_norm(u_trial)
+            r_trial_norm = _residual(u_trial)[2]
             # Guard against NaN/Inf from too-aggressive steps
             if not np.isfinite(r_trial_norm):
                 r_trial_norm = float("inf")
@@ -3914,7 +3894,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 alpha *= BACKTRACK_FACTOR
                 u_trial = u_current + alpha * delta_u
                 u_trial = self._apply_boundary_conditions_to_solution(u_trial, time_idx)
-                r_trial_norm = _residual_norm(u_trial)
+                r_trial_norm = _residual(u_trial)[2]
                 if not np.isfinite(r_trial_norm):
                     r_trial_norm = float("inf")
 
@@ -3922,6 +3902,16 @@ class HJBGFDMSolver(BaseHJBSolver):
             # we still apply the smallest tested step rather than zero, so
             # Newton makes some progress even when sufficient-decrease fails.
             u_current = u_trial
+        else:
+            # Ran out of iterations: the iterate is returned, but it is not a root, and that is said (#2599). HJB-FEM's
+            # Newton reports the same; this one returned its last iterate in silence, which hid #2599.
+            r0_norm = _residual(u_current)[2]
+            if not r0_norm < self.newton_tolerance:
+                logger.warning(
+                    f"HJB-GFDM Newton did not converge in {self.max_newton_iterations} iterations at time index "
+                    f"{time_idx}: residual {r0_norm:.2e} (boundary rows included) against tolerance "
+                    f"{self.newton_tolerance:.1e}."
+                )
 
         return u_current
 
