@@ -651,7 +651,7 @@ class BoundaryHandler(Protocol):
         self,
         values: NDArray,
         bc: BoundaryConditions,
-        time: float = 0.0,
+        time: float | None = None,
     ) -> NDArray:
         """
         Apply boundary conditions to solution values.

@@ -152,7 +152,7 @@ class DiffusionOperator(LinearOperator):
         spacings: Sequence[float],
         field_shape: tuple[int, ...] | int,
         bc: BoundaryConditions | None = None,
-        time: float = 0.0,
+        time: float | None = None,
     ) -> DiffusionOperator:
         """Construct from SDE **volatility** σ (a standard deviation), converting σ→D through the
         single-source :func:`diffusion_from_volatility` (Issue #811, RFC #1596).

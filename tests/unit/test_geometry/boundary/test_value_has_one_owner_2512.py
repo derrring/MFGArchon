@@ -51,8 +51,9 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 PACKAGE = Path("mfgarchon")
-# Rows N1/N2: node values, and `GraphApplicator.apply`/`apply_fp`/`apply_hjb` reading a callable graph value at
-# t = 0 when given no t, which the manifest's N1/N2 comment carries.
+# Rows N1/N2: node values, and `GraphApplicator.apply`/`apply_fp`/`apply_hjb` reading a callable node value at t = 0
+# when given no t, as `apply_direct`/`apply_edge_direct` do at their default, which the manifest's N1/N2 comment
+# carries.
 EXCLUDED = {"mfgarchon/geometry/boundary/applicator_graph.py"}
 VALUE_ATTRS = frozenset({"value", "default_value"})
 ENUM_HOLDERS = frozenset({"bc_type", "default_bc", "type", "kind", "math_type"})
@@ -434,20 +435,23 @@ def test_a_planted_literal_time_is_found(package_copy, planted):
 #
 # **Predicate.** A name *reaches the owner* if it is `segment_value`, `boundary_value` or `get_bc_value_at_boundary`,
 # or a function that passes one of its own time parameters, by name, to a call of a name that reaches the owner, or a
-# class one of whose methods stores a time parameter on ``self``: each such class at 375122e5 hands that attribute to
-# the ghost fill or `laplacian_with_bc` when it is applied, so constructing it with a time is reading at that time.
-# Nested defs and lambdas are entered, so a closure that forwards its outer function's time counts. A *member* is a
+# class one of whose methods stores a time parameter on ``self`` (each such class at 375122e5 hands that attribute to
+# the ghost fill or `laplacian_with_bc` when it is applied), or whose ``__init__`` passes its time on to a name that
+# reaches the owner. Constructing such a class with a time is reading at that time, and ``cls(...)``,
+# ``type(self)(...)`` and ``self.__class__(...)`` construct the class they are written in. Nested defs and lambdas are
+# entered, so a closure that forwards its outer function's time counts. A *member* is a
 # function with a numeric time default that passes that parameter to a call of a name that reaches the owner. A
 # *storer* is a function with a numeric time default that stores that parameter on ``self``: an operator that keeps
 # its time and later hands it to the ghost fill.
 #
-# **Count, by this predicate.** At 375122e5 it found 41 members and 7 storers.
-# - Of the 41, 31 reach the owner through functions and 10 through a storer's constructor.
+# **Count, by this predicate.** At 375122e5 it found 43 members and 7 storers.
+# - Of the 43, 31 reach the owner through functions and 12 through a class's constructor, two of them as ``cls(...)``
+#   (`DiffusionOperator.from_volatility`, `NormalDerivOperator.from_axis`).
 # - `applicator_graph.py` is outside the population (row N2), so its three are not among them.
 # - At this head it finds only the five in `TIME_DEFAULTS_ALLOWED`.
 # - The 12 private members left the population by losing the default: their time is keyword-only and required, and
 #   every production caller passes it.
-# - The other 24 members and the 7 storers default to ``None``: 29 definitions, since two storers' constructors also
+# - The other 26 members and the 7 storers default to ``None``: 31 definitions, since two storers' constructors also
 #   forward into a third.
 #
 # **Blind spots:**
@@ -456,8 +460,11 @@ def test_a_planted_literal_time_is_found(package_copy, planted):
 #   A same-named function that does reach the owner, called on an object that does not, is the same false positive.
 # - A parameter renamed or aliased before the call (``tt = time``), passed inside a container or ``**kwargs``, or
 #   through dynamic dispatch (``getattr``, a callback).
-# - A storer that keeps the time anywhere but a ``self`` attribute in the same function (a dict, a property, a later
-#   method).
+# - A time kept other than as a ``self`` attribute in the same function: in a container, a property or a later
+#   method, or on another object (``op.time = time``, as `HJBFDMSolver` sets its cached Laplacian's inside a function
+#   whose time is required). A ``self`` store is caught whole, annotated, or as one element of a tuple assignment.
+# - A time passed on transformed (``float(time)``, ``time + dt``), which is a call of something else, or an
+#   expression.
 # - A default that is not a numeric literal (a named constant, a negative literal), a time parameter with another
 #   name (``t_now=0.0``), and code outside a function body.
 _TIME_PARAMETERS = frozenset({"t", "time", "current_time"})
@@ -492,65 +499,98 @@ def _time_parameters(scope: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[set
     return names, numeric
 
 
-def _callees_given(scope: ast.AST, names: set[str]) -> set[str]:
+def _callee(func: ast.AST, owner_class: str | None) -> str | None:
+    """The bare name a call reaches. Inside a class, ``cls(...)``, ``type(self)(...)`` and ``self.__class__(...)``
+    construct the enclosing class, so they reach its name."""
+    if owner_class is not None and (
+        (isinstance(func, ast.Name) and func.id == "cls")
+        or (isinstance(func, ast.Call) and isinstance(func.func, ast.Name) and func.func.id == "type")
+        or (isinstance(func, ast.Attribute) and func.attr == "__class__")
+    ):
+        return owner_class
+    return func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+
+
+def _callees_given(scope: ast.AST, names: set[str], owner_class: str | None = None) -> set[str]:
     """The bare names of the calls in ``scope``, nested scopes included, that are passed one of ``names``."""
     callees = set()
     for node in ast.walk(scope):
         if isinstance(node, ast.Call):
             passed = list(node.args) + [kw.value for kw in node.keywords]
             if any(isinstance(a, ast.Name) and a.id in names for a in passed):
-                callee = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", None)
+                callee = _callee(node.func, owner_class)
                 if callee is not None:
                     callees.add(callee)
     return callees
 
 
+def _is_self_attribute(target: ast.AST) -> bool:
+    return isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "self"
+
+
 def _stores_on_self(scope: ast.AST, names: set[str]) -> bool:
-    return any(
-        isinstance(node, ast.Assign)
-        and isinstance(node.value, ast.Name)
-        and node.value.id in names
-        and any(
-            isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id == "self"
-            for t in node.targets
-        )
-        for node in ast.walk(scope)
-    )
+    """``scope`` stores one of ``names`` on a ``self`` attribute: ``self.x = time``, ``self.x: float = time``, or one
+    element of a tuple assignment, ``self.bc, self.x = bc, time``."""
+    for node in ast.walk(scope):
+        if isinstance(node, ast.AnnAssign) and _is_self_attribute(node.target):
+            pairs = [(node.target, node.value)]
+        elif isinstance(node, ast.Assign):
+            pairs = [(t, node.value) for t in node.targets]
+            pairs += [
+                (t, v)
+                for t in node.targets
+                if isinstance(t, ast.Tuple) and isinstance(node.value, ast.Tuple)
+                for t, v in zip(t.elts, node.value.elts, strict=False)
+            ]
+        else:
+            continue
+        if any(_is_self_attribute(t) and isinstance(v, ast.Name) and v.id in names for t, v in pairs):
+            return True
+    return False
 
 
 def time_default_scan(
     root: Path, allowed: Mapping[tuple[str, str], str] = TIME_DEFAULTS_ALLOWED
 ) -> tuple[list[str], list[str]]:
     """``(population, sites)``: the members and storers outside ``allowed``, each ``path:line: in function``."""
-    population, timed, storing_classes = [], [], set()
+    population, timed, storing_classes, initializers = [], [], set(), []
     for path in sorted((root / PACKAGE).rglob("*.py")):
         rel = path.relative_to(root).as_posix()
         if rel in EXCLUDED:
             continue
         population.append(rel)
         tree = ast.parse(path.read_text())
+        owner = {
+            id(method): node.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ClassDef)
+            for method in node.body
+            if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 names, numeric = _time_parameters(node)
                 if names:
-                    timed.append((rel, node, names, numeric, _callees_given(node, names)))
-            elif isinstance(node, ast.ClassDef):
-                for method in node.body:
-                    if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        names, _ = _time_parameters(method)
-                        if names and _stores_on_self(method, names):
-                            storing_classes.add(node.name)
+                    callees = _callees_given(node, names, owner.get(id(node)))
+                    timed.append((rel, node, names, numeric, callees, owner.get(id(node))))
+                    if node.name == "__init__" and id(node) in owner:
+                        initializers.append((owner[id(node)], callees))
+                    if id(node) in owner and _stores_on_self(node, names):
+                        storing_classes.add(owner[id(node)])
+    # A class reaches the owner when one of its methods stores a time on `self`, or its `__init__` passes a time on
+    # to a name that reaches it; constructing it, `cls(...)` included, then reads at the time it is given.
     reaches = set(_TIME_KEYWORDS) | storing_classes
     grew = True
     while grew:
         before = len(reaches)
-        reaches |= {node.name for _, node, _, _, callees in timed if callees & reaches}
+        reaches |= {node.name for _, node, _, _, callees, _ in timed if callees & reaches}
+        reaches |= {cls for cls, callees in initializers if callees & reaches}
         grew = len(reaches) > before
     sites = []
-    for rel, node, _, numeric, _ in timed:
+    for rel, node, _, numeric, _, owner_class in timed:
         if not numeric or (rel, node.name) in allowed:
             continue
-        if _callees_given(node, numeric) & reaches:
+        if _callees_given(node, numeric, owner_class) & reaches:
             sites.append(f"{rel}:{node.lineno}: in {node.name}")
         if _stores_on_self(node, numeric):
             sites.append(f"{rel}:{node.lineno}: in {node.name} (stores it)")
@@ -591,8 +631,22 @@ def test_the_time_default_allowance_is_exactly_its_members():
         "        self.time = time\n",
         "class _RivalOperator:\n    def __init__(self, bc, time=None):\n        self.time = time\n\n\n"
         "def _rival(bc, time=0.0):\n    return _RivalOperator(bc, time=time)\n",
+        "class _RivalOperator:\n    def __init__(self, bc, time=None):\n        self.time = time\n\n"
+        "    @classmethod\n    def make(cls, bc, time=0.0):\n        return cls(bc, time=time)\n",
+        "class _Rival:\n    def __init__(self, bc, time=0.0):\n        self.time: float = time\n",
+        "class _Rival:\n    def __init__(self, bc, time=0.0):\n        self.bc, self.time = bc, time\n",
     ],
-    ids=["owner", "accessor", "two calls deep", "a closure", "a storer", "into a storer"],
+    ids=[
+        "owner",
+        "accessor",
+        "two calls deep",
+        "a closure",
+        "a storer",
+        "into a storer",
+        "cls() constructor",
+        "annotated store",
+        "tuple store",
+    ],
 )
 def test_a_planted_default_time_is_found(package_copy, planted):
     target = package_copy / PACKAGE / "geometry" / "boundary" / "_planted_rival.py"

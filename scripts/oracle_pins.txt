@@ -164,9 +164,9 @@ row grid/B1_face_segment            -
 #         A reader that takes a time but was given none names it in its refusal of a value that declares t
 #         (`boundary_value`'s `time_keyword`), the owner's one wording for D1, `get_value`, FEM, Nitsche and the six.
 #       - B2b-2b-iv: a time default that reaches the owner through any chain of calls, or that an operator stores and
-#         later hands on, is None (29 definitions: 22 functions and the 7 operators that store it) or required (12
+#         later hands on, is None (31 definitions: 24 functions and the 7 operators that store it) or required (12
 #         private functions, every production caller passing the time). This holds under the guard's transitive default
-#         check, which counts 41 such functions and 7 storers at 375122e5, and 5 now. `laplacian_with_bc`, and an
+#         check, which counts 43 such functions and 7 storers at 375122e5, and 5 now. `laplacian_with_bc`, and an
 #         operator built with no time, refuse a value that declares t and say to pass `time=`, under
 #         `test_boundary_value_owner_2512.py`. Met by B2b-2b-iv, with one listed exception: five public HJB functions
 #         whose time is also H's keep a numeric default, which #2612 deprecates (`compute_hjb_residual`,
@@ -204,9 +204,10 @@ row grid/B8_no_image_raises         -
 #   refusing a swap loudly.
 row grid/B9_bc_read_at_solve_time   -
 # Rows N1 and N2 inherit an item from B2b-2b-iv (audit session ruling, 2026-10-12): `GraphApplicator.apply`,
-#   `apply_fp` and `apply_hjb` take `t=0`, so given no t they read a callable node or edge value at t = 0, in silence.
-#   They reach no owner (`NodeBC.get_value` and `EdgeBC.get_value` call the value directly), and B2's guard, whose
-#   population leaves out `applicator_graph.py`, does not see them.
+#   `apply_fp` and `apply_hjb` take `t=0`, so given no t they read a callable node value at t = 0, in silence. They read
+#   no edge value: `_edge_bcs` is stored and never read. `apply_direct` and `apply_edge_direct` take `t=0.0` and call a
+#   callable value at it the same way. None of them reaches the owner (`NodeBC.get_value` calls the value directly),
+#   and B2's guard, whose population leaves out `applicator_graph.py`, does not see them.
 row network/N1_graph_bc_alphabet    -
 row network/N2_node_bc_arity        -
 

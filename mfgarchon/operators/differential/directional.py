@@ -405,7 +405,7 @@ class NormalDerivOperator(DirectDerivOperator):
         field_shape: tuple[int, ...],
         scheme: Literal["central", "upwind", "one_sided"] = "central",
         bc: BoundaryConditions | None = None,
-        time: float = 0.0,
+        time: float | None = None,
     ) -> NormalDerivOperator:
         """
         Create NormalDerivOperator for axis-aligned boundary.
