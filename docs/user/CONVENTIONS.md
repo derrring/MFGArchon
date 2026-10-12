@@ -322,7 +322,7 @@ refuses a field, a tensor or a callable by name rather than averaging it.
 
 ### Where the volatility is supplied
 
-In the v1.0 API the volatility belongs to the model: `Model(volatility=..., volatility_kind=...)`.
+In the model/domain/conditions form the volatility belongs to the model: `Model(volatility=..., volatility_kind=...)`.
 The `Model` has no `diffusion` field.
 
 The legacy constructor (§ *Component ownership*) takes `volatility=` or `diffusion=`, which are

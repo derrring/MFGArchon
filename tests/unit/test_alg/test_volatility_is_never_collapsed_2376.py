@@ -43,7 +43,7 @@ def _components(dim=1):
 
 
 def _v1_problem(bounds, nx_points, **volatility):
-    """The v1.0 constructor: the volatility and its kind sit on the Model (#2375 ruling 6)."""
+    """The model/domain/conditions form: the volatility and its kind sit on the Model (#2375 ruling 6)."""
     dim = len(bounds)
     if dim == 1:
         conditions = Conditions(

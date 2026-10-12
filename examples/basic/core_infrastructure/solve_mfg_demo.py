@@ -30,7 +30,7 @@ from mfgarchon.types import NumericalScheme
 
 
 def build_problem(Nx: int = 20, Nt: int = 10) -> MFGProblem:
-    """Build a small, well-posed 1D LQ-MFG problem (v1.0 API).
+    """Build a small, well-posed 1D LQ-MFG problem (model/domain/conditions form).
 
     - model: separable Hamiltonian with quadratic control cost and a weak
       congestion coupling, plus volatility sigma.

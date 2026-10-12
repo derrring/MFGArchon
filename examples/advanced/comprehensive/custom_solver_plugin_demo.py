@@ -500,7 +500,7 @@ if __name__ == "__main__":
     print("Example Solver Plugin Demonstration")
     print("=" * 70)
 
-    # Create test problem using modern v1.0 API (Model + Conditions + domain).
+    # Create test problem in the model/domain/conditions form.
     from mfgarchon import Conditions, MFGProblem, Model
     from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
     from mfgarchon.core.plugin_system import get_plugin_manager

@@ -183,7 +183,7 @@ geometry = TensorProductGrid(
 #   m_normalized = m_raw / (np.sum(m_raw) * dx)  # Now ∫m dx = 1
 #
 # Class-based Hamiltonian: H = (1/2)|p|² + V(x) + coupling * m
-# Coupling is part of the Hamiltonian in v1.0 (no separate coupling_coefficient).
+# The density coupling is part of the Hamiltonian; it has no separate parameter.
 hamiltonian = SeparableHamiltonian(
     control_cost=QuadraticControlCost(control_cost=1.0),
     potential=hamiltonian_potential,  # V(t, x) = potential_field(x)
@@ -191,7 +191,7 @@ hamiltonian = SeparableHamiltonian(
     coupling_dm=lambda m: coupling_coefficient,  # dH/dm = coupling_coefficient
 )
 
-# v1.0 API: Model holds game rules, Conditions holds IC/TC + time horizon
+# Model holds game rules, Conditions holds IC/TC + time horizon
 model = Model(hamiltonian=hamiltonian, volatility=sigma)
 conditions = Conditions(
     u_terminal=terminal_condition,

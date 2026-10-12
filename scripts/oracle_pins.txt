@@ -208,6 +208,11 @@ row grid/B9_bc_read_at_solve_time   -
 #   no edge value: `_edge_bcs` is stored and never read. `apply_direct` and `apply_edge_direct` take `t=0.0` and call a
 #   callable value at it the same way. None of them reaches the owner (`NodeBC.get_value` calls the value directly),
 #   and B2's guard, whose population leaves out `applicator_graph.py`, does not see them.
+# They also inherit an item from #1544 (#2617; audit session ruling, 2026-10-12): the policy-iteration path
+#   (`NetworkPolicyIterationHJBSolver.solve_hjb_system`, `hjb_network.py:395` at 1a036677) imposes the node BCs by
+#   overwriting U[n] after each time step's policy iteration, so the interior rows of its solves used unpinned neighbour
+#   values. The coupling ran through L^pi at D = 0 already, and the viscous term D L adds a second one. #2617's
+#   review 1 reported it as a pre-existing first-order lag.
 row network/N1_graph_bc_alphabet    -
 row network/N2_node_bc_arity        -
 

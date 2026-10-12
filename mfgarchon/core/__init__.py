@@ -62,7 +62,7 @@ __all__ = [
     # Base MFG problem
     "MFGProblem",
     "MFGComponents",
-    # API v1.0 classes (Issue #875)
+    # The model/domain/conditions form (Issue #875)
     "Model",
     "Conditions",
     "ErgodicConditions",

@@ -43,7 +43,7 @@ from mfgarchon.types import NumericalScheme
 
 
 def _problem():
-    """v1.0 API, and a density whose grid-measure mass is exactly 1.
+    """The model/domain/conditions form, and a density whose grid-measure mass is exactly 1.
 
     Both matter to the warnings ratchet: the legacy ``MFGProblem(geometry=, components=)``
     form emits a DeprecationWarning, and an unnormalised ``m_initial`` emits the #1887

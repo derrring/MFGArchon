@@ -77,7 +77,7 @@ def terminal_cost_2d(xy):
     return (xy[:, 0] - 0.5) ** 2 + (xy[:, 1] - 0.3) ** 2
 
 
-# v1.0 API: Model holds game rules, Conditions holds IC/TC + time horizon
+# Model holds game rules, Conditions holds IC/TC + time horizon
 model = Model(hamiltonian=hamiltonian, volatility=0.1)
 conditions = Conditions(
     u_terminal=terminal_cost_2d,

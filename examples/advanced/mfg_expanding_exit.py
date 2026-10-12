@@ -131,7 +131,7 @@ def create_mfg_problem(phi_current: np.ndarray) -> MFGProblem:
     Exit defined by: phi(x) <= 0
     Terminal cost: 0 inside exit, large outside
 
-    Uses Model + Conditions + SeparableHamiltonian (v1.0 API).
+    Uses Model + Conditions + SeparableHamiltonian (the model/domain/conditions form).
     The running cost g(m) = 1 + w*m is split:
     - constant 1: absorbed into base HJB structure
     - density-dependent w*m: the coupling term in SeparableHamiltonian
