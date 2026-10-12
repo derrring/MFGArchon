@@ -352,7 +352,7 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
         field: NDArray[np.floating],
         boundary_conditions: BoundaryConditions,
         points: NDArray[np.floating],
-        time: float = 0.0,
+        time: float | None = None,
     ) -> NDArray[np.floating]:
         """
         Apply boundary conditions to field values using unified BoundaryConditions.

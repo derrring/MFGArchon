@@ -614,7 +614,9 @@ class HJBWENOSolver(BaseHJBSolver):
 
         return u_left, u_right
 
-    def solve_hjb_step(self, u_current: np.ndarray, m_current: np.ndarray, dt: float) -> np.ndarray:
+    def solve_hjb_step(
+        self, u_current: np.ndarray, m_current: np.ndarray, dt: float, time: float | None = None
+    ) -> np.ndarray:
         """
         Solve one 1D backward time step of the HJB equation (axis 0).
 
@@ -625,11 +627,13 @@ class HJBWENOSolver(BaseHJBSolver):
             u_current: Current value function
             m_current: Current density
             dt: Time step size
+            time: The time the step starts from, the later end of the interval: each stage reads the boundary
+                value at its own time from it (#2605). With none, a value that declares ``t`` is refused.
 
         Returns:
             u_new: Updated value function after one time step
         """
-        return self._solve_hjb_step_axis(u_current, m_current, dt, axis=0)
+        return self._solve_hjb_step_axis(u_current, m_current, dt, axis=0, t_now=time)
 
     def _solve_hjb_step_axis(
         self,
@@ -655,27 +659,28 @@ class HJBWENOSolver(BaseHJBSolver):
         # (1.445e-3 -> 9.16e-5 over 16x refinement, EOC 1.00), hiding the spatial order the study
         # exists to measure. Backward marching mirrors the forward SSP-RK3 stage times
         # t, t + dt, t + dt/2 into t, t - dt, t - dt/2.
-        # Offsets rather than absolute stage times, so `t_now` is never arithmetic'd when there
-        # is no source. The previous form guarded each call site with `None if t_now is None`,
-        # which was dead on every reachable path and, had it fired, would only have handed `None`
-        # to the caller's source_fn.
+        # The boundary value is read on the same clock (#2605): each stage's ghosts at that stage's time. With no
+        # `t_now`, a value that declares t is refused at the ghost fill; a constant needs none.
         def src(dt_offset):
             if source_fn is None:
                 return 0.0
             return np.asarray(source_fn(t_now + dt_offset), dtype=float).reshape(u.shape)
 
+        def rhs(field, dt_offset):
+            return self._compute_hjb_rhs_axis(field, m, axis, None if t_now is None else t_now + dt_offset)
+
         if self.time_integration == "tvd_rk3":
             # Stage 1
-            k1 = self._compute_hjb_rhs_axis(u, m, axis) + src(0.0)
+            k1 = rhs(u, 0.0) + src(0.0)
             u1 = u + dt * k1
             # Stage 2
-            k2 = self._compute_hjb_rhs_axis(u1, m, axis) + src(-dt)
+            k2 = rhs(u1, -dt) + src(-dt)
             u2 = (3 / 4) * u + (1 / 4) * u1 + (1 / 4) * dt * k2
             # Stage 3
-            k3 = self._compute_hjb_rhs_axis(u2, m, axis) + src(-0.5 * dt)
+            k3 = rhs(u2, -0.5 * dt) + src(-0.5 * dt)
             return (1 / 3) * u + (2 / 3) * u2 + (2 / 3) * dt * k3
         elif self.time_integration == "explicit_euler":
-            return u + dt * (self._compute_hjb_rhs_axis(u, m, axis) + src(0.0))
+            return u + dt * (rhs(u, 0.0) + src(0.0))
         else:
             raise ValueError(f"Unknown time integration: {self.time_integration}")
 
@@ -735,7 +740,7 @@ class HJBWENOSolver(BaseHJBSolver):
             "(Issue #1071, fail-fast)."
         )
 
-    def _compute_hjb_rhs_axis(self, u: np.ndarray, m: np.ndarray, axis: int) -> np.ndarray:
+    def _compute_hjb_rhs_axis(self, u: np.ndarray, m: np.ndarray, axis: int, time: float | None) -> np.ndarray:
         """Right-hand side of the HJB equation along a single ``axis``.
 
         Implements the monotone Hamilton-Jacobi discretisation (Issue #1200):
@@ -759,9 +764,10 @@ class HJBWENOSolver(BaseHJBSolver):
         dx = self.grid_spacing[axis]
         g = self.ghost_depth
 
-        # BC-aware ghost padding on every axis; the line along `axis` is then exact.
+        # BC-aware ghost padding on every axis, the boundary value read at the stage's `time` (#2605); the line
+        # along `axis` is then exact.
         self.ghost_buffer.interior[:] = u
-        self.ghost_buffer.update_ghosts()
+        self.ghost_buffer.update_ghosts(time=time)
         u_padded = self.ghost_buffer.padded
 
         # One-sided HJ-WENO5 derivatives along `axis`.
@@ -1014,25 +1020,28 @@ class HJBWENOSolver(BaseHJBSolver):
             )
         return u
 
-    def _step_nd_split(self, u: np.ndarray, m: np.ndarray, dt: float) -> np.ndarray:
-        """One dimensional-split step of size ``dt`` (Strang or Godunov), any dim.
+    def _step_nd_split(self, u: np.ndarray, m: np.ndarray, dt: float, t_now: float) -> np.ndarray:
+        """One dimensional-split step of size ``dt`` (Strang or Godunov), any dim, backward from ``t_now``.
 
         Each axis is advanced by the single unified operator ``_solve_hjb_step_axis``
         (Issue #1200). Strang splitting sweeps axes ``0..d-2`` at half step, the last
         axis ``d-1`` at full step, then ``0..d-2`` again at half step (second-order in
-        time); Godunov sweeps each axis once at full step (first-order).
+        time); Godunov sweeps each axis once at full step (first-order). Each sweep reads the boundary value
+        over the interval it covers (#2605): Strang's first half steps over [t_now, t_now - dt/2], its full step
+        over [t_now, t_now - dt], its second half steps over [t_now - dt/2, t_now - dt]; Godunov's every sweep
+        over [t_now, t_now - dt].
         """
         if self.splitting_method == "strang":
             u_temp = u.copy()
             for dim_idx in range(self.dimension - 1):
-                u_temp = self._solve_hjb_step_axis(u_temp, m, dt / 2, dim_idx)
-            u_temp = self._solve_hjb_step_axis(u_temp, m, dt, self.dimension - 1)
+                u_temp = self._solve_hjb_step_axis(u_temp, m, dt / 2, dim_idx, t_now=t_now)
+            u_temp = self._solve_hjb_step_axis(u_temp, m, dt, self.dimension - 1, t_now=t_now)
             for dim_idx in range(self.dimension - 2, -1, -1):
-                u_temp = self._solve_hjb_step_axis(u_temp, m, dt / 2, dim_idx)
+                u_temp = self._solve_hjb_step_axis(u_temp, m, dt / 2, dim_idx, t_now=t_now - dt / 2)
             return u_temp
         u_new = u.copy()
         for dim_idx in range(self.dimension):
-            u_new = self._solve_hjb_step_axis(u_new, m, dt, dim_idx)
+            u_new = self._solve_hjb_step_axis(u_new, m, dt, dim_idx, t_now=t_now)
         return u_new
 
     def _solve_hjb_system_1d(
@@ -1077,20 +1086,18 @@ class HJBWENOSolver(BaseHJBSolver):
             # Current value function (start with final condition)
             u_current = U_solved[t_idx + 1, :].copy()
 
-            # Sub-step over the full interval dt under the CFL/diffusion limit (Issue #1180)
-            if source_term is None:
-                step_fn = self.solve_hjb_step
-            else:
-                # `_advance_full_interval` marches backward from the later endpoint of this
-                # interval, so the clock starts at (t_idx + 1) * dt and decreases by each
-                # accepted sub-step. `solve_hjb_step` returns u + dt_sub * k with k = -u_t,
-                # so the forcing enters with the same sign as k.
-                clock = [(t_idx + 1) * dt]
+            # Sub-step over the full interval dt under the CFL/diffusion limit (Issue #1180).
+            # `_advance_full_interval` marches backward from the later endpoint of this interval, so the clock
+            # starts at (t_idx + 1) * dt and decreases by each accepted sub-step: the source's clock (the step
+            # returns u + dt_sub * k with k = -u_t, so the forcing enters with the same sign as k) and the
+            # boundary value's (#2605).
+            clock = [(t_idx + 1) * dt]
+            source_fn = forcing if source_term is not None else None
 
-                def step_fn(u, m, dt_sub, _clock=clock):
-                    u_next = self._solve_hjb_step_axis(u, m, dt_sub, 0, source_fn=forcing, t_now=_clock[0])
-                    _clock[0] -= dt_sub
-                    return u_next
+            def step_fn(u, m, dt_sub, _clock=clock, _source=source_fn):
+                u_next = self._solve_hjb_step_axis(u, m, dt_sub, 0, source_fn=_source, t_now=_clock[0])
+                _clock[0] -= dt_sub
+                return u_next
 
             U_solved[t_idx, :] = self._advance_full_interval(
                 u_current, m_current, dt, self._compute_dt_stable_1d, step_fn
@@ -1138,9 +1145,17 @@ class HJBWENOSolver(BaseHJBSolver):
             u_current = U_solved[time_idx + 1, ...]
             m_current = M_density_evolution_from_FP[time_idx, ...]
 
-            # Sub-step the full directional-split sequence over the whole interval dt (#1180)
+            # Sub-step the full directional-split sequence over the whole interval dt (#1180), on a clock that
+            # starts at the interval's later end and decreases by each accepted sub-step (#2605)
+            clock = [(time_idx + 1) * dt]
+
+            def split_step(u, m, dt_sub, _clock=clock):
+                u_next = self._step_nd_split(u, m, dt_sub, _clock[0])
+                _clock[0] -= dt_sub
+                return u_next
+
             U_solved[time_idx, ...] = self._advance_full_interval(
-                u_current, m_current, dt, self._compute_dt_stable_nd, self._step_nd_split
+                u_current, m_current, dt, self._compute_dt_stable_nd, split_step
             )
 
         return U_solved

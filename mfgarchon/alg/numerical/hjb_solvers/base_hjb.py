@@ -184,7 +184,7 @@ def _compute_laplacian_1d(
 def _get_bc_info_1d(
     bc: BoundaryConditions,
     side: str,
-    time: float = 0.0,
+    time: float | None = None,
 ) -> tuple:
     """
     Extract full BC info for a given side from BoundaryConditions (Issue #638).

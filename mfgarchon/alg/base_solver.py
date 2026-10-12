@@ -635,7 +635,7 @@ class BaseNeuralSolver(BaseMFGSolver):
     def get_boundary_target_values(
         self,
         boundary_points: NDArray[np.floating],
-        time: float = 0.0,
+        time: float | None = None,
     ) -> NDArray[np.floating] | None:
         """
         Get target BC values at given boundary points.

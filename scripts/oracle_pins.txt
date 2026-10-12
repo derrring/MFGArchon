@@ -157,8 +157,13 @@ row grid/B1_face_segment            -
 #         (`bc_to_topology_calculator`), `MeshfreeApplicator.apply_field_bc`, the BC resolver's passthrough
 #         (`resolve_bc`), and FEM's Robin and Neumann load (`assemble_robin_terms`), one constant per segment
 #         (#1237).
-#       - B2b-2b-iii takes the six readers whose `time=0.0` default reaches the owner (HJB-WENO's ghost fill among
-#         them, #2605), #2543's time half, and the guard's check of such defaults.
+#       - B2b-2b-iii: the six readers whose `time=0.0` default reached the owner default to None, under the guard's
+#         default check. HJB-WENO's ghost fill reads each RK stage at its time, under
+#         `test_hjb_weno_boundary_time_2605.py`'s order oracle and split-path clock; it closes #2605. n-D HJB-FDM's
+#         cached Laplacian reads the step's time, under `test_hjb_fdm_laplacian_time_2543.py`; it closes #2543's
+#         time half. The FEM and Nitsche refusals of a value that declares t, given no `t=`, say to pass one.
+#       - B2b-2b-iv takes the defaults forwarded to the owner through helpers, and the guard's transitive check
+#         (audit session ruling, 2026-10-12).
 #       The guard cannot see construction-time binding, so only #2543's oracle covers it. #2543's other half, a
 #       replaced BC object solved stale, is #2475's class, a BC captured at construction, not value form or time,
 #       and is not this row's. No grid row here owns it, and neither does #2512's table of seven conventions;
@@ -170,6 +175,8 @@ row grid/B2_value_form_and_time     tests/unit/test_geometry/boundary/test_value
 row grid/B2_value_form_and_time     tests/unit/test_geometry/boundary/test_boundary_value_owner_2512.py
 row grid/B2_value_form_and_time     tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py
 row grid/B2_value_form_and_time     tests/unit/test_alg/test_dirichlet_value_at_its_level_2512.py
+row grid/B2_value_form_and_time     tests/unit/test_alg/test_hjb_weno_boundary_time_2605.py
+row grid/B2_value_form_and_time     tests/unit/test_alg/test_hjb_fdm_laplacian_time_2543.py
 row grid/B2_value_form_and_time     -
 # Row B3's guard covers the coupling layer too: BlockIterator's "auto" adjoint mode, one of the two readers
 # it awaited, is removed, and RegimeSwitchingIterator's fallback reads the FP solver's owner path (#2529).

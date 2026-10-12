@@ -248,7 +248,7 @@ class FDMApplicator(BaseStructuredApplicator):
         field: NDArray[np.floating],
         boundary_conditions: BoundaryConditions,
         spacing: tuple[float, ...] | NDArray[np.floating],
-        time: float = 0.0,
+        time: float | None = None,
     ) -> NDArray[np.floating]:
         """
         Enforce boundary condition values on solution array (Issue #542).
@@ -1112,7 +1112,7 @@ def face_segment(bc: BoundaryConditions, target_face: BoundaryFace, geometry: An
 
 
 def dirichlet_wall_rows(
-    bc: BoundaryConditions | None, shape: tuple[int, ...], time: float = 0.0, geometry: Any = None
+    bc: BoundaryConditions | None, shape: tuple[int, ...], time: float | None = None, geometry: Any = None
 ) -> tuple[NDArray[np.bool_], NDArray[np.float64]]:
     """The nodes whose equation is ``u - g = 0``, and their ``g``: every node of a face whose ghost is Dirichlet.
 
@@ -1321,7 +1321,7 @@ class PreallocatedGhostBuffer:
         declared = getattr(self._boundary_conditions, "periodic_convention", None)
         return declared if declared is not None else PeriodicGridConvention.ENDPOINT_EXCLUSIVE
 
-    def update_ghosts(self, time: float = 0.0) -> None:
+    def update_ghosts(self, time: float | None = None) -> None:
         """
         Update ghost cells in-place based on current interior values.
 

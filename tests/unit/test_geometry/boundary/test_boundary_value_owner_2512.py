@@ -293,17 +293,23 @@ def test_fdm_advises_g_of_t_and_reads_it():
     assert _fdm_ghost_wall(_fdm_bc(lambda t: 0.25 + t)) == pytest.approx(0.75, abs=1e-12)
 
 
-def test_fem_dirichlet_reads_its_level_time_and_advises_g_of_x_without_one():
+def test_fem_dirichlet_reads_its_level_time_and_says_to_pass_one_without_it():
     """FEM's Dirichlet assembly reads a value at the DOF x = 1 and at the time of the level it solves for. Given no
-    time, it refuses a value that declares t and advises g(x) (#2512 row B2)."""
+    time, it refuses a value that declares t and says to pass `t=`. The advice runs: `get_dirichlet_dofs_and_values`
+    with `t=0.5` reads g(0.5) (#2512 row B2)."""
     import skfem
 
-    from mfgarchon.alg.numerical.fem.bc_adapter import _evaluate_segment_values
+    from mfgarchon.alg.numerical.fem.bc_adapter import _evaluate_segment_values, get_dirichlet_dofs_and_values
 
     basis = skfem.Basis(skfem.MeshLine(np.linspace(0.0, 1.0, 5)), skfem.ElementLineP1())
     dof = int(np.argmax(basis.doflocs[0]))
-    with pytest.raises(NotImplementedError, match=r"declares t, but the FEM Dirichlet .* write it as g\(x\)"):
+    with pytest.raises(NotImplementedError, match=r"the FEM Dirichlet assembly .* declares t; pass t= to read it"):
         _evaluate_segment_values(_segment(lambda t: t), basis, [dof], None)
+    bc = BoundaryConditions(dimension=1, segments=[_segment(lambda t: 0.25 + t, boundary=None)])
+    with pytest.raises(NotImplementedError, match=r"pass t= to read it at a time"):
+        get_dirichlet_dofs_and_values(basis, bc)
+    _, values = get_dirichlet_dofs_and_values(basis, bc, t=0.5)
+    np.testing.assert_allclose(values, 0.75, rtol=0, atol=1e-12)
     assert _evaluate_segment_values(_segment(lambda x: 0.5 + x[0]), basis, [dof], None) == pytest.approx(
         [1.5], abs=1e-12
     )
@@ -314,12 +320,14 @@ def test_fem_dirichlet_reads_its_level_time_and_advises_g_of_x_without_one():
 
 def test_nitsche_receives_the_owners_value_at_each_point():
     """Meshless Galerkin's Nitsche assembly reads g per boundary point, the whole point, ``x[0] + 10 x[1]``, and at
-    the time it is given."""
+    the time it is given. Given none, it refuses a value that declares t and says to pass `t=`."""
     from mfgarchon.alg.numerical.meshless_galerkin.nitsche import _evaluate_g
 
     points = np.array([[1.0, 0.0], [1.0, 0.5]])
     g = _evaluate_g(_segment(lambda x: x[0] + 10.0 * x[1]), points, None)
     np.testing.assert_allclose(g, [1.0, 6.0], rtol=0, atol=1e-12)
+    with pytest.raises(NotImplementedError, match=r"the meshless Nitsche assembly .* declares t; pass t= to read it"):
+        _evaluate_g(_segment(lambda t, x: t + x[0] + 10.0 * x[1]), points, None)
     g = _evaluate_g(_segment(lambda t, x: t + x[0] + 10.0 * x[1]), points, 0.5)
     np.testing.assert_allclose(g, [1.5, 6.5], rtol=0, atol=1e-12)
 
