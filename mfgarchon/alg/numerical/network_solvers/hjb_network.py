@@ -29,36 +29,35 @@ import scipy.sparse as sp
 from scipy.sparse.linalg import spsolve
 
 from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
-from mfgarchon.utils.pde_coefficients import resolve_volatility_override, retired_volatility_keywords
+from mfgarchon.utils.pde_coefficients import (
+    diffusion_from_volatility,
+    resolve_volatility_override,
+    retired_volatility_keywords,
+)
 
 if TYPE_CHECKING:
     from mfgarchon.extensions.topology import NetworkMFGProblem
 
 
-def _reject_nonzero_volatility(
+def _network_diffusion(
     volatility: float | np.ndarray | None, volatility_kind: str | None, *, problem: Any, consumer: str
-) -> None:
-    """Fail loud if a diffusive volatility is requested (Issue #1544).
+) -> float:
+    """The viscous term's ``D = sigma^2/2`` for a network HJB solve (Issue #1544).
 
-    The network HJB solvers have NO viscous term -- they solve the deterministic-control game on the
-    graph and ignore the volatility (the stored graph Laplacian is unused). A nonzero volatility
-    would produce a value function inconsistent with the diffusive network FP forward equation
-    (``D * Lap_G(m)``), i.e. a non-adjoint, self-consistent WRONG equilibrium -- consistent only at
-    D = 0. Reject it instead of silently ignoring it, until the ``+ D * Lap_G(u)`` viscous term is
-    implemented (the natural fix). The override is read by the one rule every solver uses (#2378):
-    the network problem carries no volatility, so there is no problem-level one to fall back to.
+    The volatility is the one a solve reads (#2378): the per-solve override, else the problem's own, which is 0.0 on
+    a ``NetworkMFGProblem``. The HJB is ``-u_t - D Lap_G(u) + H = 0`` with ``Lap_G = -L``, ``L = deg - A`` the
+    problem's graph Laplacian, the operator ``FPNetworkSolver`` applies as ``D Lap_G(m)``. A scalar only, as that
+    solver takes; an array or callable volatility is refused, as there.
     """
-    if volatility is None and volatility_kind is None:
-        return
     volatility, _ = resolve_volatility_override(volatility, volatility_kind, problem=problem, consumer=consumer)
-    if np.any(np.asarray(volatility, dtype=float) != 0.0):
+    if volatility is None:
+        return 0.0
+    if isinstance(volatility, np.ndarray) or callable(volatility):
         raise NotImplementedError(
-            "Network HJB solver has no viscous (diffusion) term, so it cannot honor a nonzero "
-            "volatility; solving anyway would give a value function inconsistent with the "
-            "diffusive network FP (D*Lap_G(m)) -- a non-adjoint, self-consistent wrong equilibrium. "
-            "Use volatility=None / 0 (deterministic-control graph game, D=0); a diffusive graph "
-            "HJB (+ D*Lap_G(u)) is not yet implemented (Issue #1544)."
+            f"{consumer} takes a scalar volatility, as FPNetworkSolver does: a spatially varying or callable "
+            "one is not supported on a network (Issue #1544)."
         )
+    return float(diffusion_from_volatility(float(volatility)))
 
 
 class NetworkHJBSolver(BaseHJBSolver):
@@ -176,14 +175,15 @@ class NetworkHJBSolver(BaseHJBSolver):
             M_density: (Nt+1, num_nodes) density evolution from FP solver
             U_terminal: Terminal condition u(T, i)
             U_coupling_prev: Previous Picard iterate for coupling
-            volatility: Must be None / 0 -- the network HJB has no viscous term (Issue #1544);
-                a nonzero value is rejected rather than silently ignored.
+            volatility: The SDE volatility sigma, a scalar; the viscous term is ``D Lap_G(u)``, D = sigma^2/2
+                (Issue #1544). None reads the problem's, 0.0 on a NetworkMFGProblem. For a coupled solve, pass
+                the same sigma to ``FPNetworkSolver.solve_fp_system``.
             volatility_kind: "field" or "tensor" for an array volatility (#2378).
 
         Returns:
             (Nt+1, num_nodes) value function evolution
         """
-        _reject_nonzero_volatility(
+        diffusion = _network_diffusion(
             volatility, volatility_kind, problem=self.network_problem, consumer="NetworkHJBSolver.solve_hjb_system"
         )
         # Validate required parameters
@@ -195,7 +195,7 @@ class NetworkHJBSolver(BaseHJBSolver):
         # Extract dimensions from input
         # M_density has shape (n_time_points, num_nodes) where n_time_points = problem.Nt + 1
         n_time_points = M_density.shape[0]
-        return self._solve_ode(U_terminal, M_density, n_time_points)
+        return self._solve_ode(U_terminal, M_density, n_time_points, diffusion)
 
     def _evaluate_hamiltonian_batch(self, u: np.ndarray, m: np.ndarray, t: float) -> np.ndarray:
         """Evaluate Hamiltonian at all nodes (Issue #960).
@@ -228,11 +228,13 @@ class NetworkHJBSolver(BaseHJBSolver):
         U_terminal: np.ndarray,
         M_density: np.ndarray,
         n_time_points: int,
+        diffusion: float,
     ) -> np.ndarray:
         """Solve HJB backward via scipy.integrate.solve_ivp (Issue #960).
 
         Reformulates the backward HJB system as an ODE:
-            du/ds = -H(u, m(T-s), T-s),  s in [0, T],  u(0) = U_terminal
+            du/ds = -H(u, m(T-s), T-s) - D L u,  s in [0, T],  u(0) = U_terminal
+        with ``D L u = -D Lap_G(u)`` the viscous term (Issue #1544), absent at D = 0.
 
         where s = T - t is the reversed time variable.
 
@@ -253,7 +255,8 @@ class NetworkHJBSolver(BaseHJBSolver):
             m = M_density[t_idx, :]
             # -u_t + H = 0 with H = control - V - f (#2375 rulings 3-4: the sign lives in H, and H is
             # added whole). In reversed time s = T - t this is du/ds = -H.
-            return -self._evaluate_hamiltonian_batch(u_flat, m, t_physical)
+            du = -self._evaluate_hamiltonian_batch(u_flat, m, t_physical)
+            return du - diffusion * (self.laplacian_matrix @ u_flat) if diffusion else du
 
         sol = solve_ivp(
             rhs,
@@ -357,8 +360,8 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
         volatility: float | np.ndarray | None = None,
         volatility_kind: str | None = None,
     ) -> np.ndarray:
-        """Solve HJB using policy iteration."""
-        _reject_nonzero_volatility(
+        """Solve HJB using policy iteration; ``volatility`` as `NetworkHJBSolver.solve_hjb_system` reads it."""
+        diffusion = _network_diffusion(
             volatility,
             volatility_kind,
             problem=self.network_problem,
@@ -385,19 +388,19 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
             t = self.times[n]
             m_current = M_density[n, :]
 
-            U[n, :] = self._policy_iteration_step(U[n + 1, :], m_current, t)
+            U[n, :] = self._policy_iteration_step(U[n + 1, :], m_current, t, diffusion)
 
             # Apply boundary conditions
             U[n, :] = self.network_problem.apply_boundary_conditions(U[n, :], t)
 
         return U
 
-    def _policy_iteration_step(self, u_next: np.ndarray, m: np.ndarray, t: float) -> np.ndarray:
+    def _policy_iteration_step(self, u_next: np.ndarray, m: np.ndarray, t: float, diffusion: float) -> np.ndarray:
         """Single backward time step via Howard policy iteration (Issue #1474).
 
         The "policy" is the full transition-rate vector ``alpha*(u) = H.optimal_control`` (not a single
         dominant action). Each iteration solves the linear
-        policy-evaluation ``(I/dt + L^pi) u = u_next/dt + s*c(alpha) + source`` (``s = +1``; only
+        policy-evaluation ``(I/dt + L^pi + D L) u = u_next/dt + s*c(alpha) + source`` (``s = +1``; only
         the control cost and the source both enter unflipped) then recomputes the rates, until
         they stabilize. At the fixed point this is the backward-Euler discretization of the same HJB the
         RK45 path integrates: the envelope identity (generator action ``= 2*s*H_control``, ``c =
@@ -406,7 +409,7 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
         self._initialize_policy(u_next, m, t)
         u_current = u_next.copy()
         for _policy_iter in range(self.max_policy_iterations):
-            u_new = self._policy_evaluation(u_next, m, t)
+            u_new = self._policy_evaluation(u_next, m, t, diffusion)
             old_rates = self.current_rates
             self._policy_improvement(u_new, m, t)
             u_current = u_new
@@ -431,8 +434,11 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
     def _policy_improvement(self, u: np.ndarray, m: np.ndarray, t: float) -> None:
         self.current_rates = self._rates_at(u, m, t)
 
-    def _policy_evaluation(self, u_next: np.ndarray, m: np.ndarray, t: float) -> np.ndarray:
-        """Solve ``(I/dt + L^pi) u = u_next/dt + c(alpha) + source`` for the frozen rate policy.
+    def _policy_evaluation(self, u_next: np.ndarray, m: np.ndarray, t: float, diffusion: float) -> np.ndarray:
+        """Solve ``(I/dt + L^pi + D L) u = u_next/dt + c(alpha) + source`` for the frozen rate policy.
+
+        ``D L`` is the viscous term (Issue #1544), L the problem's graph Laplacian; it keeps the matrix an M-matrix
+        (off-diagonals <= 0, rows summing to 0), and is not added at D = 0.
 
         ``L^pi = -Q^pi`` is the policy-weighted graph Laplacian (``A_ii = 1/dt + sum_j alpha_ij``,
         ``A_ij = -alpha_ij``) — a strictly diagonally-dominant M-matrix, non-singular for any
@@ -458,7 +464,8 @@ class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
             # to (u_i - u_next)/dt = -H_control + V + f = -H, matching the RK45 integration. The A
             # matrix is unchanged (an M-matrix for any alpha >= 0).
             b[i] = u_next[i] / self.dt + control_cost + source[i]
-        return np.asarray(spsolve(A.tocsr(), b))
+        A_csr = A.tocsr() + diffusion * self.laplacian_matrix if diffusion else A.tocsr()
+        return np.asarray(spsolve(A_csr, b))
 
     def _policies_equal(self, rates1: dict[int, np.ndarray], rates2: dict[int, np.ndarray]) -> bool:
         """Two rate policies are equal when every node's rate vector matches."""
