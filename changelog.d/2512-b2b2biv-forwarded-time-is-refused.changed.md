@@ -29,10 +29,11 @@
 - **The implicit applicator, the n-D ghost values and the FDM ghost check now say to pass `time=`** when they refuse
   a value that declares `t`. The implicit applicator had advised writing it as `g(x)`, and the other two, which read
   with no point, a constant.
-- **Who is affected** (#2615). A solver that builds such an operator from its BC without a time read a time-dependent
-  value at t = 0 without notice; it is now refused. Measured on 6404fdc5 and this release's head with g(t) = 0.5 + t:
-  `ImplicitHeatSolver` with a Dirichlet g(t) solved, reading g(0), and now refuses. FP-FDM's tensor-volatility and
-  callable-drift paths were reached only with a Dirichlet value, which their advection refused already. FP-FDM's
-  default path with a Dirichlet g(t) is unaffected: mass at T 8.483901 in 1-D and 80.026579 in 2-D, on both. The
+- **Who is affected** (#2615). A solver that builds such an operator from its BC without a time, and applies it to a
+  value that declares t, read that value at t = 0 without notice; it is now refused. Measured on 6404fdc5 and this
+  release's head: `ImplicitHeatSolver` with a Dirichlet g(t) = 0.5 + t solved, reading g(0), and now refuses.
+  FP-FDM's tensor-volatility and callable-drift paths were reached only with a Dirichlet value, which their advection
+  refused already. FP-FDM's default path is unaffected: with a Dirichlet g(t) = 0.5 + 0.1 t (11 points a side,
+  T = 0.5, Nt = 5, no drift), mass at T is 8.483901 in 1-D and 80.026579 in 2-D, on both. The
   refusal says that a caller with a time passes it as `time=`, and that a solver building the operator without one
   does not yet support a time-dependent value there.

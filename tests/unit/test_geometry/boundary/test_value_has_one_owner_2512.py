@@ -438,7 +438,10 @@ def test_a_planted_literal_time_is_found(package_copy, planted):
 # class one of whose methods stores a time parameter on ``self`` (each such class at 375122e5 hands that attribute to
 # the ghost fill or `laplacian_with_bc` when it is applied), or whose ``__init__`` passes its time on to a name that
 # reaches the owner. Constructing such a class with a time is reading at that time, and ``cls(...)``,
-# ``type(self)(...)`` and ``self.__class__(...)`` construct the class they are written in. Nested defs and lambdas are
+# ``type(obj)(...)`` and ``obj.__class__(...)`` are read as constructing the class they are written in, whatever
+# ``obj`` is (a false positive at worst; none at this head). A class reaches through its own ``__init__``: a
+# ``super().__init__`` into a storing base counts only because the bare name ``__init__`` reaches, which is how
+# `NormalDerivOperator.from_axis` is found. Nested defs and lambdas are
 # entered, so a closure that forwards its outer function's time counts. A *member* is a
 # function with a numeric time default that passes that parameter to a call of a name that reaches the owner. A
 # *storer* is a function with a numeric time default that stores that parameter on ``self``: an operator that keeps
@@ -465,6 +468,8 @@ def test_a_planted_literal_time_is_found(package_copy, planted):
 #   whose time is required). A ``self`` store is caught whole, annotated, or as one element of a tuple assignment.
 # - A time passed on transformed (``float(time)``, ``time + dt``), which is a call of something else, or an
 #   expression.
+# - A subclass with no ``__init__`` of its own (``class _Sub(_Base): pass``) constructed with a time, where only the
+#   base stores it: the subclass's name does not reach. There is no instance at this head.
 # - A default that is not a numeric literal (a named constant, a negative literal), a time parameter with another
 #   name (``t_now=0.0``), and code outside a function body.
 _TIME_PARAMETERS = frozenset({"t", "time", "current_time"})
