@@ -126,9 +126,10 @@ class FPNetworkSolver(BaseFPSolver):
             problem: Network MFG problem instance
             scheme: Time discretization ("explicit" or "implicit"). "upwind"/"flow" were removed
                 (Issue #1541): "upwind" was an identity map and "flow" was never implemented.
-            diffusion_coefficient: Network diffusion coefficient D = σ²/2. If None (default), falls
-                back to 0.1 with a warning (Issue #1532) — pass it explicitly (or `volatility`
-                to solve_fp_system) for correct physics.
+            diffusion_coefficient: Network diffusion coefficient D = σ²/2, for this FP solver only:
+                `NetworkHJBSolver` does not read it. If None (default), falls back to 0.1 with a warning
+                (Issue #1532). For a coupled solve, pass the same `volatility=σ` to `solve_fp_system`
+                and to `NetworkHJBSolver.solve_hjb_system`, so both read one D (Issue #1544).
             cfl_factor: CFL stability factor for explicit schemes
             max_iterations: Maximum iterations for implicit schemes
             tolerance: Convergence tolerance
@@ -350,9 +351,10 @@ class FPNetworkSolver(BaseFPSolver):
             if self._diffusion_was_defaulted:
                 warnings.warn(
                     "FPNetworkSolver: network diffusion defaulted to D=0.1, decoupled from the "
-                    "problem's physics (NetworkMFGProblem carries no sigma). Pass "
-                    "diffusion_coefficient=... at construction or volatility=sigma to "
-                    "solve_fp_system for correct physics (Issue #1532).",
+                    "problem's physics (NetworkMFGProblem carries no sigma). For a coupled solve, pass "
+                    "the same volatility=sigma to solve_fp_system and to NetworkHJBSolver.solve_hjb_system; "
+                    "diffusion_coefficient= is this solver's only, and the HJB does not read it "
+                    "(Issues #1532, #1544).",
                     UserWarning,
                     stacklevel=2,
                 )

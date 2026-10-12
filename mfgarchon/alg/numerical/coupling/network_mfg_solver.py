@@ -6,8 +6,9 @@ for network/graph structures, combining NetworkHJBSolver and FPNetworkSolver
 with fixed-point iteration.
 
 Mathematical Framework:
-- Network HJB: -∂u/∂t + H_i(m, ∇_G u, t) = 0
+- Network HJB: -∂u/∂t - σ²/2 Δ_G u + H_i(m, ∇_G u, t) = 0
 - Network FP: ∂m/∂t - div_G(m ∇_G H_p) - σ²/2 Δ_G m = 0
+  with one σ for both: pass the same volatility=σ to each solve (Issue #1544)
 - Fixed-point coupling: Iterate between HJB and FP until convergence
 
 Key Features:
