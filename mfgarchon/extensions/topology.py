@@ -367,11 +367,13 @@ class NetworkMFGProblem(MFGProblem):
     Mathematical formulation:
 
     HJB equation (discrete):
-    -∂u/∂t + H_i(m, ∇_G u, t) = 0 at node i
-    u(T, i) = g(i)                  terminal condition
+    -∂u/∂t - σ²/2 Δ_G u + H_i(m, ∇_G u, t) = 0 at node i
+    u(T, i) = g(i)                                       terminal condition
 
     Fokker-Planck equation (discrete):
-    ∂m/∂t - div_G(m ∇_G H_p) - Δ_G m = 0  on network
+    ∂m/∂t - div_G(m ∇_G H_p) - σ²/2 Δ_G m = 0  on network
+
+    with one σ for both: pass the same volatility= to each solve (#1544)
     m(0, i) = m_0(i)                        initial condition
 
     where:

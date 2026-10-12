@@ -5,8 +5,8 @@ This module implements Hamilton-Jacobi-Bellman equation solvers
 for Mean Field Games on network structures.
 
 Mathematical formulation:
--∂u/∂t + H_i(m, ∇_G u, t) = 0 at node i
-u(T, i) = g(i)                  terminal condition
+-∂u/∂t - σ²/2 Δ_G u + H_i(m, ∇_G u, t) = 0 at node i   (Δ_G = -L, L = deg - A; σ from volatility=, #1544)
+u(T, i) = g(i)                                       terminal condition
 
 where:
 - H_i: Hamiltonian at node i
@@ -65,9 +65,10 @@ class NetworkHJBSolver(BaseHJBSolver):
     HJB solver for Mean Field Games on networks.
 
     Solves the discrete HJB equation:
-    -∂u/∂t + H_i(m, ∇_G u, t) = 0
+    -∂u/∂t - σ²/2 Δ_G u + H_i(m, ∇_G u, t) = 0
 
-    with network-specific Hamiltonians and discrete operators.
+    with σ the solve's volatility (0 unless volatility= is given; #1544), network-specific Hamiltonians and
+    discrete operators.
 
     Required Geometry Traits (Issue #596 Phase 2.4):
         - SupportsGraphLaplacian: Discrete Laplacian L = D - A for diffusion operators
