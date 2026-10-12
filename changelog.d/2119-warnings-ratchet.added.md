@@ -13,7 +13,7 @@
 
   **An identity is per call site**, which is why 225 reads larger than it is: those 225 are 44
   distinct `(kind, message)` pairs across 189 files, the biggest group being 153 files sharing
-  `Legacy MFGProblem(geometry=, components=`. That is the design, not an artifact — a new test
+  `Legacy MFGProblem(geometry=, components=` **[#2184, 2026-10-12: the components= form is not deprecated; it warns with a `PendingDeprecationWarning`.]**. That is the design, not an artifact — a new test
   reaching for a deprecated API should turn the gate red, and it can only do that if the caller is
   part of the key.
 

@@ -933,16 +933,10 @@ def cleanup_numpy_state():
 
 @pytest.fixture(autouse=True)
 def suppress_warnings():
-    """Suppress known warnings during testing."""
+    """Reset the warning filters after each test. The filters themselves are `pytest.ini`'s `filterwarnings`,
+    which pytest applies in every phase; two copies of its first two lines lived here, applied to the test call
+    alone, and are gone (#2184)."""
     import warnings
-
-    # Suppress specific warnings that are expected during testing
-    warnings.filterwarnings("ignore", category=DeprecationWarning, module="mfgarchon.*")
-    warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
-    # Except the library's own: the components= form's PendingDeprecationWarning (#2184). Without this the
-    # line above drops it, so the warning census stops seeing it -- its identities read as GONE, which the census
-    # records as progress -- and a new test or module that reaches for the components= form is no longer seen.
-    warnings.filterwarnings("always", category=PendingDeprecationWarning, message="The components= form")
 
     yield
 

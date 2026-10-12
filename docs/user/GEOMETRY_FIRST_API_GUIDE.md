@@ -54,7 +54,7 @@ geometry = TensorProductGrid(
 problem = MFGProblem(geometry=geometry, T=1.0, Nt=100, volatility=0.1)
 ```
 
-**Old API** (deprecated, still works):
+**Old API** (still works; like every route of the components= form it emits a `PendingDeprecationWarning`, and nothing needs to change now -- #2184):
 ```python
 problem = MFGProblem(
     spatial_bounds=[(0.0, 10.0), (0.0, 5.0)],
@@ -247,8 +247,8 @@ grid = problem.xSpace     # Use problem.geometry.get_spatial_grid() instead
 - Convert `examples/basic/` to use geometry-first API
 - Keep old API examples in `examples/legacy/` for reference
 
-### Phase 2: Deprecation Period (v0.10.x - v0.99.x)
-- Old API emits `DeprecationWarning`
+### Phase 2: Both APIs supported (v0.10.x onward)
+- Old API emits a `PendingDeprecationWarning`, as every route of the components= form does: the model/domain/conditions form is planned to replace them, and nothing needs to change now (#2184)
 - Both APIs fully functional
 - Update documentation to show new API first
 
