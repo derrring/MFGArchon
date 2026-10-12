@@ -95,14 +95,14 @@ def test_an_accessor_given_no_time_or_no_point_refuses_a_value_that_declares_it(
     bc = BoundaryConditions(dimension=1, segments=[_segment(lambda t: 0.25 + t)], default_bc=BCType.NO_FLUX)
     with pytest.raises(
         NotImplementedError,
-        match=r"declares t, but BoundaryConditions.get_bc_value_at_boundary.* given no time; pass time= to read it",
+        match=r"declares t, but BoundaryConditions.get_bc_value_at_boundary.* given no time\. A caller that has one passes it as time=",
     ):
         bc.get_bc_value_at_boundary("x_max")
     assert bc.get_bc_value_at_boundary("x_max", time=0.5) == pytest.approx(0.75)
     segment = bc.segments[0]
     with pytest.raises(
         NotImplementedError,
-        match=r"declares t, but BCSegment.get_value was given no time; pass t= to read it at a time",
+        match=r"declares t, but BCSegment.get_value was given no time\. A caller that has one passes it as t=",
     ):
         segment.get_value(np.array([1.0]))
     assert segment.get_value(np.array([1.0]), t=0.5) == pytest.approx(0.75)
@@ -252,7 +252,9 @@ def test_a_reader_given_no_time_says_to_pass_its_time(reader):
     which the advice then runs with (#2512 row B2, #2605). Dropping the keyword at any site `_timed_readers` holds turns
     its case red."""
     call = _timed_readers()[reader]
-    with pytest.raises(NotImplementedError, match=r"declares t, but .* was given no time; pass time= to read it"):
+    with pytest.raises(
+        NotImplementedError, match=r"declares t, but .* was given no time\. A caller that has one passes it as time="
+    ):
         call()
     result = call(time=0.5)
     if result is not None:
@@ -274,7 +276,9 @@ def test_an_operator_given_no_time_refuses_and_its_advice_runs(entry):
         apply = lambda bc, **kw: laplacian_with_bc(u, [0.125], bc, **kw)  # noqa: E731
     else:
         apply = lambda bc, **kw: LaplacianOperator([0.125], (9,), bc=bc, **kw)(u)  # noqa: E731
-    with pytest.raises(NotImplementedError, match=r"declares t, but .* was given no time; pass time= to read it"):
+    with pytest.raises(
+        NotImplementedError, match=r"declares t, but .* was given no time\. A caller that has one passes it as time="
+    ):
         apply(timed)
     np.testing.assert_array_equal(apply(timed, time=0.5), apply(held))
     assert not np.array_equal(apply(timed, time=0.5), apply(timed, time=0.0)), "g(t) does not reach the result"
@@ -477,11 +481,12 @@ def test_fem_dirichlet_reads_its_level_time_and_says_to_pass_one_without_it():
     basis = skfem.Basis(skfem.MeshLine(np.linspace(0.0, 1.0, 5)), skfem.ElementLineP1())
     dof = int(np.argmax(basis.doflocs[0]))
     with pytest.raises(
-        NotImplementedError, match=r"declares t, but the FEM Dirichlet assembly .* given no time; pass t= to read it"
+        NotImplementedError,
+        match=r"declares t, but the FEM Dirichlet assembly .* given no time\. A caller that has one passes it as t=",
     ):
         _evaluate_segment_values(_segment(lambda t: t), basis, [dof], None)
     bc = BoundaryConditions(dimension=1, segments=[_segment(lambda t: 0.25 + t, boundary=None)])
-    with pytest.raises(NotImplementedError, match=r"pass t= to read it at a time"):
+    with pytest.raises(NotImplementedError, match=r"passes it as t="):
         get_dirichlet_dofs_and_values(basis, bc)
     _, values = get_dirichlet_dofs_and_values(basis, bc, t=0.5)
     np.testing.assert_allclose(values, 0.75, rtol=0, atol=1e-12)
@@ -502,7 +507,8 @@ def test_nitsche_receives_the_owners_value_at_each_point():
     g = _evaluate_g(_segment(lambda x: x[0] + 10.0 * x[1]), points, None)
     np.testing.assert_allclose(g, [1.0, 6.0], rtol=0, atol=1e-12)
     with pytest.raises(
-        NotImplementedError, match=r"declares t, but the meshless Nitsche assembly .* given no time; pass t= to read it"
+        NotImplementedError,
+        match=r"declares t, but the meshless Nitsche assembly .* given no time\. A caller that has one passes it as t=",
     ):
         _evaluate_g(_segment(lambda t, x: t + x[0] + 10.0 * x[1]), points, None)
     g = _evaluate_g(_segment(lambda t, x: t + x[0] + 10.0 * x[1]), points, 0.5)
