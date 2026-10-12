@@ -34,6 +34,15 @@ from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
+# NOTE: solver_golden_gfdm_hjb.npz was regenerated 2026-10-12 for #2599. HJB-GFDM's Newton tested convergence,
+# and measured its line search, on the PDE residual alone, where the step solves the residual with its boundary
+# rows: Armijo's merit was not the function the Newton direction descends, and 290 of the 300 iterations on this
+# no-flux fixture backtracked to its floor, with no trial moved by a projection. On this fixture every
+# step ran all 30 iterations and stopped at a residual (boundary rows included) of 6.3e-01, 5.6e-01, ..., 2.8e-04,
+# against a tolerance of 1e-6: the old fixture was not a root. Now every step converges in 2 or 3 iterations, to
+# at most 9.4e-10. max|dU| 2.353e-02, in 210 of 231 elements. The FDM fixture is untouched, and both
+# `*_is_sensitive_to_control_cost` gates still pass.
+#
 # NOTE: solver_golden_lq_fdm.npz was regenerated 2026-10-03 for #1935: the FDM ghost mirrors about the
 # wall node, where it copied the wall node and so returned u''/2 in the Laplacian's wall row at every h
 # (order 0.00 on u = cos(pi x), now 2.00). max|dU| 3.784e-04 (rel 9.5e-03) at (t=0, col 0), wall columns

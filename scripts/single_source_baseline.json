@@ -39,7 +39,7 @@
       "name": "hjb_residual_norm_handrolled",
       "quantity": "grid-scaled HJB residual norm, ||F|| * sqrt(dx)",
       "owner": "hjb_residual_norm -- mfgarchon/alg/numerical/hjb_solvers/base_hjb.py:1057",
-      "pattern": "np\\.linalg\\.norm\\(\\s*residual\\s*\\)",
+      "pattern": "np\\.linalg\\.norm\\(\\s*(residual|residual_bc|residual_with_bc|r_with_bc)\\s*\\)",
       "include": [
         "mfgarchon/**/*.py"
       ],
@@ -48,8 +48,8 @@
         "mfgarchon/alg/reinforcement/**"
       ],
       "sentinel_file": "mfgarchon/alg/numerical/hjb_solvers/base_hjb.py",
-      "count": 5,
-      "note": "The owner was added in #1894 after a second caller dropped the sqrt(dx): the resulting 4.5x norm mismatch made Armijo reject every step while reporting the starting iterate's residual, which read as a five-order improvement. Of the current sites, one is the owner, three are hjb_gfdm comparing an unscaled norm against newton_tolerance (#1896 item 5), and one is base_variational scaling by sqrt(dx*dt) -- a space-time norm, distinct by design. The closing paren in the pattern is load-bearing: without it the two anderson_acceleration sites match on `residual_flat`, which is the Picard residual, a different quantity. The count is the ratchet; that classification is a map and will need re-reading when it moves.",
+      "count": 3,
+      "note": "The owner was added in #1894 after a second caller dropped the sqrt(dx): the resulting 4.5x norm mismatch made Armijo reject every step while reporting the starting iterate's residual, which read as a five-order improvement. Of the current three sites, one is the owner; one is hjb_gfdm's unscaled Newton norm (#1896 item 5), which since #2599 has one owner, `_residual` in `_solve_timestep`, that the convergence test, the Armijo merit and the trial norm all call: the residual with its boundary rows (`residual_with_bc`); and one is base_variational scaling by sqrt(dx*dt) -- a space-time norm, distinct by design. At 52219be2 hjb_gfdm hand-rolled four: three of `residual`, which the pattern then matched, and the trial norm of `r`, which it did not. The pattern names the variables #2599 renamed, so that its rename cannot drop a rival: under it, 52219be2 counts 5 and #2599's head 3. The closing paren in the pattern is load-bearing: without it the two anderson_acceleration sites match on `residual_flat`, which is the Picard residual, a different quantity. The count is the ratchet; that classification is a map and will need re-reading when it moves.",
       "sentinel_symbol": "hjb_residual_norm"
     },
     {
