@@ -252,7 +252,7 @@ grid = problem.xSpace     # Use problem.geometry.get_spatial_grid() instead
 - Both APIs fully functional
 - Update documentation to show new API first
 
-### Phase 3: Restriction (v1.0.0+)
+### Phase 3: Restriction (planned; no release is named, since no interface is fixed yet)
 - Old manual grid construction restricted (requires explicit flag)
 - Geometry-first API becomes mandatory for new code
 
