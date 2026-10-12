@@ -107,7 +107,9 @@ def test_a_time_dependent_neumann_value_converges_at_second_order():
     assert np.log2(errors[1] / errors[2]) > 1.8, errors
 
 
-@pytest.mark.parametrize(("d", "splitting"), [(1, "strang"), (2, "strang"), (2, "godunov")])
+@pytest.mark.parametrize(
+    ("d", "splitting"), [(1, "strang"), (2, "strang"), (2, "godunov")], ids=["1-D", "2-D Strang", "2-D Godunov"]
+)
 def test_every_path_reads_the_value_over_the_whole_interval(d, splitting):
     """With no source: the 1-D loop, which kept no clock without one, and the dimensional split under each method."""
     times = []

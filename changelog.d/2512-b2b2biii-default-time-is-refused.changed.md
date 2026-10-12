@@ -12,8 +12,6 @@
   - This covers the six readers above, `BoundaryConditions.get_bc_value_at_boundary` and `BCSegment.get_value`.
   - It also covers FEM's Dirichlet assembly (`fem.bc_adapter.apply_bc_to_fem_system`, `get_dirichlet_dofs_and_values`)
     and meshless Galerkin's Nitsche assembly (`nitsche.assemble_nitsche_terms`), which take `t=`.
-  - The six and the two assemblies had advised writing the value as a constant or as g(x), which drops the time a
-    caller has.
   - A reader with no time to take still advises a value that needs none.
   - Each solver passes its level's time to these. The exception is meshless Galerkin's FP: its Nitsche data are 0,
     an exit, and need none.

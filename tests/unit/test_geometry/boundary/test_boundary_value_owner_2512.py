@@ -113,27 +113,99 @@ def test_an_accessor_given_no_time_or_no_point_refuses_a_value_that_declares_it(
         no_time.get_bc_value_at_boundary("x_max", time=0.5)
 
 
-@pytest.mark.parametrize("reader", ["update_ghosts", "enforce_values", "dirichlet_wall_rows", "_get_bc_info_1d"])
-def test_a_reader_given_no_time_says_to_pass_its_time(reader):
-    """A reader whose time defaulted to 0.0 now refuses a value that declares t when given none, and names its own
-    time parameter, which the advice then runs with (#2512 row B2, #2605)."""
-    from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _get_bc_info_1d
-    from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator, PreallocatedGhostBuffer, dirichlet_wall_rows
+def _timed_readers():
+    """Each site that names its reader's time keyword, one case per branch: (call, the values a time of 0.5 gives or
+    None if it returns nothing to read). The value is g(t) = 0.25 + t, so 0.75 at t = 0.5."""
+    import warnings
+    from types import SimpleNamespace
 
-    bc = BoundaryConditions(dimension=1, segments=[_segment(lambda t: 0.25 + t, boundary=None)])
-    calls = {
-        "update_ghosts": lambda **kw: PreallocatedGhostBuffer(
-            interior_shape=(5,), boundary_conditions=bc, domain_bounds=np.array([[0.0, 1.0]])
-        ).update_ghosts(**kw),
-        "enforce_values": lambda **kw: FDMApplicator(dimension=1).enforce_values(np.ones(5), bc, (0.25,), **kw),
-        "dirichlet_wall_rows": lambda **kw: dirichlet_wall_rows(bc, (5,), **kw)[1],
-        "_get_bc_info_1d": lambda **kw: _get_bc_info_1d(bc, "left", **kw)[1],
+    from mfgarchon.alg.base_solver import BaseNeuralSolver
+    from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _get_bc_info_1d
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import no_flux_bc
+    from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator, PreallocatedGhostBuffer, dirichlet_wall_rows
+    from mfgarchon.geometry.boundary.applicator_meshfree import MeshfreeApplicator
+
+    def g(t):
+        return 0.25 + t
+
+    def face(value, name, kind, boundary, **kw):
+        return BCSegment(name=name, bc_type=kind, value=value, boundary=boundary, **kw)
+
+    uniform = BoundaryConditions(dimension=1, segments=[_segment(g, boundary=None)])
+    mixed = BoundaryConditions(
+        dimension=1,
+        segments=[face(g, "L", BCType.NEUMANN, "x_min"), face(0.0, "R", BCType.NEUMANN, "x_max")],
+    )
+    on_x_min = BoundaryConditions(
+        dimension=1, segments=[face(g, "L", BCType.DIRICHLET, "x_min")], default_bc=BCType.NO_FLUX
+    )
+    default_g = BoundaryConditions(
+        dimension=1,
+        segments=[face(0.0, "R", BCType.DIRICHLET, "x_max")],
+        default_bc=BCType.DIRICHLET,
+        default_value=g,
+    )
+    dirichlet_default = BoundaryConditions(dimension=1, segments=[], default_bc=BCType.DIRICHLET, default_value=g)
+    robin_default = BoundaryConditions(
+        dimension=1,
+        segments=[face(0.0, "r", BCType.ROBIN, "x_max", alpha=1.0, beta=0.0)],
+        default_bc=BCType.ROBIN,
+        default_value=g,
+    )
+    bounds = np.array([[0.0, 1.0]])
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[5], boundary_conditions=no_flux_bc(dimension=1))
+    points = np.linspace(0.0, 1.0, 5).reshape(-1, 1)
+
+    def neural(**kw):
+        solver = SimpleNamespace(get_boundary_conditions=lambda: SimpleNamespace(value=g))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            return BaseNeuralSolver.get_boundary_target_values(solver, np.array([[0.0], [1.0]]), **kw)
+
+    return {
+        "update_ghosts": lambda **kw: PreallocatedGhostBuffer((5,), uniform, domain_bounds=bounds).update_ghosts(**kw),
+        "update_ghosts, mixed": lambda **kw: PreallocatedGhostBuffer((5,), mixed, domain_bounds=bounds).update_ghosts(
+            **kw
+        ),
+        "enforce_values": lambda **kw: FDMApplicator(dimension=1).enforce_values(np.ones(5), uniform, (0.25,), **kw),
+        "dirichlet_wall_rows": lambda **kw: dirichlet_wall_rows(uniform, (5,), **kw)[1],
+        "_get_bc_info_1d, a face segment": lambda **kw: _get_bc_info_1d(on_x_min, "left", **kw)[1],
+        "get_bc_value_at_boundary, the default value": lambda **kw: default_g.get_bc_value_at_boundary("x_min", **kw),
+        "MeshfreeApplicator.apply, Dirichlet": lambda **kw: MeshfreeApplicator(grid).apply(
+            np.zeros(5), dirichlet_default, points, **kw
+        ),
+        "MeshfreeApplicator.apply, Robin": lambda **kw: MeshfreeApplicator(grid).apply(
+            np.zeros(5), robin_default, points, **kw
+        ),
+        "get_boundary_target_values": neural,
     }
+
+
+@pytest.mark.parametrize(
+    "reader",
+    [
+        "update_ghosts",
+        "update_ghosts, mixed",
+        "enforce_values",
+        "dirichlet_wall_rows",
+        "_get_bc_info_1d, a face segment",
+        "get_bc_value_at_boundary, the default value",
+        "MeshfreeApplicator.apply, Dirichlet",
+        "MeshfreeApplicator.apply, Robin",
+        "get_boundary_target_values",
+    ],
+)
+def test_a_reader_given_no_time_says_to_pass_its_time(reader):
+    """A reader whose time defaulted to 0.0 refuses a value that declares t when given none, and names its own time
+    parameter, which the advice then runs with (#2512 row B2, #2605). One case per site that names the keyword, so a
+    site whose keyword is dropped goes red here (review 2 of #2609)."""
+    call = _timed_readers()[reader]
     with pytest.raises(NotImplementedError, match=r"declares t, but .* was given no time; pass time= to read it"):
-        calls[reader]()
-    result = calls[reader](time=0.5)
-    if reader in ("dirichlet_wall_rows", "_get_bc_info_1d"):
-        assert np.asarray(result).max() == pytest.approx(0.75)
+        call()
+    result = call(time=0.5)
+    if result is not None:
+        assert np.isclose(np.ravel(np.asarray(result, dtype=float)), 0.75).any(), result
 
 
 # `BCSegment.get_value(point=[0.9], t=0.5)`, HJB-GFDM's Dirichlet read: the callable, the value b10b9e65 read, and
