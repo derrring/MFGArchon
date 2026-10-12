@@ -939,6 +939,10 @@ def suppress_warnings():
     # Suppress specific warnings that are expected during testing
     warnings.filterwarnings("ignore", category=DeprecationWarning, module="mfgarchon.*")
     warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
+    # Except the library's own: the components= form's PendingDeprecationWarning (#2184). Without this the
+    # line above drops it, so the warning census stops seeing it -- its identities read as GONE, which the census
+    # records as progress -- and a new test or module that reaches for the components= form is no longer seen.
+    warnings.filterwarnings("always", category=PendingDeprecationWarning, message="The components= form")
 
     yield
 

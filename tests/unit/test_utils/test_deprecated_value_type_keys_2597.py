@@ -74,9 +74,7 @@ def test_a_warning_raised_while_hjb_gfdm_is_constructed_names_the_constructing_l
         m_initial=lambda x: np.ones_like(np.asarray(x, dtype=float)),
         u_terminal=lambda x: np.zeros_like(np.asarray(x, dtype=float)),
     )
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        problem = MFGProblem(geometry=grid, components=comps, T=1.0, Nt=4, volatility=0.5)
+    problem = MFGProblem(geometry=grid, components=comps, T=1.0, Nt=4, volatility=0.5)
     x = np.linspace(0.0, 1.0, 11).reshape(-1, 1)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")

@@ -52,12 +52,12 @@ def _problem(grid: TensorProductGrid, centre: float, share: float) -> MFGProblem
     """A 1-D Gaussian scaled so that its integral on THIS grid is exactly `share`.
 
     Built on the model/domain/conditions form, and the reason is narrower than it first looks. It
-    keeps this file from adding a DeprecationWarning identity to the warning ratchet -- but "the
+    keeps this file from adding a PendingDeprecationWarning identity to the warning ratchet -- but "the
     legacy constructor warns" is NOT on its own a reason to prefer that form, because
     `Model`/`Conditions` cannot yet express everything `MFGComponents` can. So the conversion here
     rests on having CHECKED that the two paths build the same object for this fixture -- Nt, T, sigma,
     dimension, spatial_shape, initial_mass, initial_mass_measure and `m_initial` all identical --
-    not on the deprecation being authoritative.
+    not on the planned replacement being authoritative.
 
     The tier-3 mass warning is filtered rather than recorded: it fires by construction on every
     fixture below, since a share of 0.3 is the whole point, and it is pinned where it belongs, in
