@@ -25,11 +25,14 @@
       segment says 'the rest' -- or pass default_bc= with the condition every location no segment governs
       should get (#2512 row B1).";
     - a ROBIN `default_bc`, which carries no alpha and no beta.
-  - **Who is affected.** Measured over the test suite's own 25,489 BC constructions, outside this change's own tests:
-    - 56 that an old reader resolved are now refused: 19 for a shadowed segment, 16 for a ROBIN `default_bc`, 10
-      for a `boundary` that names no face, 8 for a partial cover and 3 for an unset `default_bc`;
-    - 19 resolve a face to a different segment than the old ghost reader gave it;
-    - 19 more use `region` or `sdf_region` and are decided only on the solver's grid.
+  - **Who is affected.** Only readers in the FDM family and the uniform shortcuts ask the owner yet; the FEM,
+    GFDM, meshless, implicit and particle readers keep their own rules until the later stages of #2512 row B1.
+    Measured over the test suite's own BC constructions that those readers read (3,512, outside this change's
+    own tests):
+    - 15 that an old reader resolved are now refused: 8 for a partial cover, 3 for an unset `default_bc`, 2 for a
+      ROBIN `default_bc`, 1 for a shadowed segment and 1 for a `boundary` that names no face;
+    - 12 resolve a face to a different segment than the old ghost reader gave it;
+    - 3 more use `region` and are decided on the solver's grid.
     - The 1-D HJB-FDM hybrid of #2624 is now refused, naming the outranked segment.
   - **API changes.**
     - `BoundaryConditions.uniform_segment` is the segment that governs every face when all faces carry one
