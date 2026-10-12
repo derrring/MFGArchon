@@ -36,7 +36,8 @@ from mfgarchon.geometry.boundary import no_flux_bc
 
 # NOTE: solver_golden_gfdm_hjb.npz was regenerated 2026-10-12 for #2599. HJB-GFDM's Newton tested convergence,
 # and measured its line search, on the PDE residual alone, where the step solves the residual with its boundary
-# rows: Armijo compared a different function across each step and backtracked to its floor. On this fixture every
+# rows: Armijo's merit was not the function the Newton direction descends, and 290 of the 300 iterations on this
+# no-flux fixture backtracked to its floor, with no trial moved by a projection. On this fixture every
 # step ran all 30 iterations and stopped at a residual (boundary rows included) of 6.3e-01, 5.6e-01, ..., 2.8e-04,
 # against a tolerance of 1e-6: the old fixture was not a root. Now every step converges in 2 or 3 iterations, to
 # at most 9.4e-10. max|dU| 2.353e-02, in 210 of 231 elements. The FDM fixture is untouched, and both

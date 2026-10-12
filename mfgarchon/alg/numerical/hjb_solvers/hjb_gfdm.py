@@ -3801,11 +3801,13 @@ class HJBGFDMSolver(BaseHJBSolver):
         # The one residual Newton reads (#2599): the PDE residual with its boundary rows replaced by the BC's, so a
         # Dirichlet point reads u - g. The convergence test, the Armijo merit and the line search's trial norm all call
         # it. The convergence test used to read the PDE residual alone, which vanishes for a constant iterate with no
-        # source: the step stopped before any boundary row was formed and returned the terminal unchanged. The merit
-        # read the same PDE-only norm while each trial's walls were projected to g, so it compared a different function
-        # across the step, backtracked to its floor, and every step ran out of iterations. Returns the derivatives the
-        # PDE residual was computed from, the PDE residual (whose boundary rows the Jacobian's row replacement
-        # overwrites), and the norm of the residual with its boundary rows.
+        # source: the step stopped before any boundary row was formed and returned the terminal unchanged, imposing no
+        # boundary value. The merit read the same PDE-only norm. That norm holds the PDE rows at the boundary points,
+        # which the step replaces with the BC's, so the Newton direction, which solves the replaced system, need not
+        # descend it: the search backtracked to its floor and steps ran out of iterations, with any BC. On the no-flux
+        # regression golden, 290 of 300 iterations ended there, and no projection moved a trial. Returns the
+        # derivatives the PDE residual was computed from, the PDE residual (whose boundary rows the Jacobian's row
+        # replacement overwrites), and the norm of the residual with its boundary rows.
         def _residual(u_trial: np.ndarray) -> tuple[Any, np.ndarray, float]:
             derivs: Any
             if use_hamiltonian_batch:
@@ -3840,7 +3842,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         BACKTRACK_FACTOR = 0.5  # geometric step reduction
         MIN_ALPHA = 1e-6  # give up below this α
 
-        r0_norm = float("nan")
         for _newton_iter in range(self.max_newton_iterations):
             derivs, residual, r0_norm = _residual(u_current)
             if r0_norm < self.newton_tolerance:
@@ -3906,7 +3907,8 @@ class HJBGFDMSolver(BaseHJBSolver):
             r0_norm = _residual(u_current)[2]
             if not r0_norm < self.newton_tolerance:
                 logger.warning(
-                    f"HJB-GFDM Newton did not converge in {self.max_newton_iterations} iterations at time index "
+                    f"HJB-GFDM Newton did not converge in {self.max_newton_iterations} "
+                    f"iteration{'' if self.max_newton_iterations == 1 else 's'} at time index "
                     f"{time_idx}: residual {r0_norm:.2e} (boundary rows included) against tolerance "
                     f"{self.newton_tolerance:.1e}."
                 )

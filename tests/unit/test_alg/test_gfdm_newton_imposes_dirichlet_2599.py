@@ -4,8 +4,9 @@ The step tested convergence, and measured its Armijo line search, on the PDE res
 replaces each boundary row with the BC's, u - g at a Dirichlet point. Two failures followed:
 - **A spatially constant iterate with no source has a zero PDE residual.** The step stopped at iteration 0 and
   returned the terminal unchanged, imposing no Dirichlet value.
-- **A trial's walls are projected to g, so the merit compared a different function across each step.** The search
-  backtracked to its floor, and every step ran all 30 iterations without converging, silently.
+- **The merit read the PDE residual at the boundary points too, whose rows the step replaces with the BC's.** The
+  Newton direction solves the replaced system and need not descend that merit, with any BC: the search backtracked to
+  its floor, and steps ran out of iterations without converging, silently.
 
 Measured at 52219be2 (main), on the issue's 1-D fixture:
 
@@ -13,10 +14,10 @@ Measured at 52219be2 (main), on the issue's 1-D fixture:
 |---|---|---|
 | 0 | 0, 0 | not formed |
 | 0.1 | 0.1, 0.1 | not formed |
-| 0.1 + 0.05 x | 0.7, 0.4 | 3e-2 to 7e-3 |
+| 0.1 + 0.05 x | 0.7, 0.4 | 3.0e-2 to 5.2e-3 (at 375122e5) |
 
 In 2-D (6 x 6, g = x + 2y), the max |U - g| on the boundary was 2.9 under Newton with a constant terminal, and 0
-under Howard. Both now read the residual with its boundary rows, and every case here imposes g.
+under Howard. Newton now reads the residual with its boundary rows, and every case here imposes g; Howard is unchanged.
 
 Convergence is not uniform. The constant and linear 1-D cases converge at every step, to below 1e-6, and a step
 that does not now says so. Others still do not converge, and are now logged (#2610):
@@ -98,15 +99,15 @@ def test_each_level_is_a_root_of_the_system_its_step_solves(terminal):
     H = solver.problem.hamiltonian_class
     for n in range(NT):
         grad, lap = solver._compute_derivatives_vectorized(U[n])
-        pde = solver._compute_hjb_residual_hamiltonian(U[n], U[n + 1], M[n + 1], grad, lap, H, n * T / NT)
+        pde = solver._compute_hjb_residual_hamiltonian(U[n], U[n + 1], M[n], grad, lap, H, n * T / NT)  # as the solver
         _, residual = solver._apply_boundary_conditions_to_sparse_system(None, pde, n, U[n])
         assert np.linalg.norm(residual) < solver.newton_tolerance, (n, np.linalg.norm(residual))
 
 
 @pytest.mark.parametrize("iterations", [1, None], ids=["one iteration", "the default"])
 def test_newton_says_when_it_runs_out_of_iterations(iterations, caplog):
-    """It returned its last iterate in silence, which hid #2599. The constant case needs three iterations a step: given
-    one, it warns; given the default, it does not."""
+    """It returned its last iterate in silence, which hid #2599. The constant case needs 2 to 4 iterations a step: given
+    one, every step warns; given the default, none does."""
     kwargs = {} if iterations is None else {"max_newton_iterations": iterations}
     with caplog.at_level("WARNING", logger="mfgarchon"):
         _solve_1d("constant", **kwargs)
