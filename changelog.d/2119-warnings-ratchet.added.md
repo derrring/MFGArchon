@@ -3,7 +3,7 @@
   pre-commit's writer. **Suppressing a listing makes ignoring it cheaper, so on its own that was a
   regression in attention, not a fix.** "The count is still in the tail" is not a defence: a number
   scrolls past exactly the way 6,030 lines did, and the evidence is that the listing was printed in
-  full every run for a year while none of the 456 deprecated calls it reported were retired.
+  full every run for a year while none of the 456 deprecated calls it reported were retired. **[#2184, 2026-10-12: the components= form is not deprecated; it warns with a `PendingDeprecationWarning`.]**
 
   `tests/conftest.py` now writes a census during the gate's own suite run — no second run, and no
   per-worker merge, because the controller's `terminalreporter.stats["warnings"]` is complete under
@@ -13,7 +13,7 @@
 
   **An identity is per call site**, which is why 225 reads larger than it is: those 225 are 44
   distinct `(kind, message)` pairs across 189 files, the biggest group being 153 files sharing
-  `Legacy MFGProblem(geometry=, components=`. That is the design, not an artifact — a new test
+  `Legacy MFGProblem(geometry=, components=` **[#2184, 2026-10-12: the components= form is not deprecated; it warns with a `PendingDeprecationWarning`.]**. That is the design, not an artifact — a new test
   reaching for a deprecated API should turn the gate red, and it can only do that if the caller is
   part of the key.
 

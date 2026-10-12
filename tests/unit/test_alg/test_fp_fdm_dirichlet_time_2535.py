@@ -16,8 +16,6 @@ The BC goes to the FP's own channel, `FPFDMSolver(..., boundary_conditions=bc)`.
 
 from __future__ import annotations
 
-import warnings
-
 import pytest
 
 import numpy as np
@@ -40,9 +38,7 @@ def _problem(d: int, n: int) -> MFGProblem:
         m_initial=lambda x: 1.0,
         u_terminal=lambda x: 0.0,
     )
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        return MFGProblem(geometry=grid, components=comps, T=T, Nt=NT, volatility=SIGMA)
+    return MFGProblem(geometry=grid, components=comps, T=T, Nt=NT, volatility=SIGMA)
 
 
 @pytest.mark.parametrize("d", [1, 2])

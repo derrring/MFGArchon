@@ -41,7 +41,7 @@ def _problem():
     """The model/domain/conditions form, and a density whose grid-measure mass is exactly 1.
 
     Both matter to the warnings ratchet: the legacy ``MFGProblem(geometry=, components=)``
-    form emits a DeprecationWarning, and an unnormalised ``m_initial`` emits the #1887
+    form emits a PendingDeprecationWarning (#2184), and an unnormalised ``m_initial`` emits the #1887
     "mass is not 1" UserWarning. A new test should not be the thing that teaches either.
     """
     return MFGProblem(
