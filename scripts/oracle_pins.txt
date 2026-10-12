@@ -157,11 +157,17 @@ row grid/B1_face_segment            -
 #         (`bc_to_topology_calculator`), `MeshfreeApplicator.apply_field_bc`, the BC resolver's passthrough
 #         (`resolve_bc`), and FEM's Robin and Neumann load (`assemble_robin_terms`), one constant per segment
 #         (#1237).
-#       - B2b-2b-iii takes the six readers whose `time=0.0` default reaches the owner (HJB-WENO's ghost fill among
-#         them, #2605), #2543's time half, and the guard's check of such defaults.
+#       - B2b-2b-iii: the six readers whose `time=0.0` default reached the owner default to None, under the guard's
+#         default check. HJB-WENO's ghost fill reads each RK stage at its time, under
+#         `test_hjb_weno_boundary_time_2605.py`'s order oracle and split-path clock; it closes #2605. n-D HJB-FDM's
+#         cached Laplacian reads the step's time, under `test_hjb_fdm_laplacian_time_2543.py`; it closes #2543.
+#         A reader that takes a time but was given none names it in its refusal of a value that declares t
+#         (`boundary_value`'s `time_keyword`), the owner's one wording for D1, `get_value`, FEM, Nitsche and the six.
+#       - B2b-2b-iv takes the defaults forwarded to the owner through helpers, and the guard's transitive check
+#         (audit session ruling, 2026-10-12).
 #       The guard cannot see construction-time binding, so only #2543's oracle covers it. #2543's other half, a
 #       replaced BC object solved stale, is #2475's class, a BC captured at construction, not value form or time,
-#       and is not this row's. No grid row here owns it, and neither does #2512's table of seven conventions;
+#       and is not this row's: it is row B9's (user ruling, 2026-10-12);
 #   (c) a Robin segment's alpha and beta are read through the owner's constant contract, a callable one refused
 #       naming #1237, and the readers' own float() and getattr defaults removed. Met by B2b-1: one reader,
 #       `segment_robin_coefficients`, and the guard's coefficient check.
@@ -170,6 +176,8 @@ row grid/B2_value_form_and_time     tests/unit/test_geometry/boundary/test_value
 row grid/B2_value_form_and_time     tests/unit/test_geometry/boundary/test_boundary_value_owner_2512.py
 row grid/B2_value_form_and_time     tests/unit/test_alg/test_fp_fdm_dirichlet_time_2535.py
 row grid/B2_value_form_and_time     tests/unit/test_alg/test_dirichlet_value_at_its_level_2512.py
+row grid/B2_value_form_and_time     tests/unit/test_alg/test_hjb_weno_boundary_time_2605.py
+row grid/B2_value_form_and_time     tests/unit/test_alg/test_hjb_fdm_laplacian_time_2543.py
 row grid/B2_value_form_and_time     -
 # Row B3's guard covers the coupling layer too: BlockIterator's "auto" adjoint mode, one of the two readers
 # it awaited, is removed, and RegimeSwitchingIterator's fallback reads the FP solver's owner path (#2529).
@@ -180,6 +188,15 @@ row grid/B5_wall_stencil            -
 row grid/B6_low_wall_sign           -
 row grid/B7_inhomogeneous_value     -
 row grid/B8_no_image_raises         -
+# Row B9 (user ruling, 2026-10-12): a solver reads the BC it solves at solve time, or refuses a swap. It owns #2475
+#   (five grid solvers solve the BC captured at construction) and #2543's replaced-BC-object half (n-D HJB-FDM's
+#   `_get_laplacian_op` caches its operator, with the BC, on first use). It is #2512's table's convention 8. It is
+#   queued after B4-B8 and does not block B2. The contract is decided when the row is reached; the audit session's
+#   RECOMMENDATION, recorded as one: every solver reads its BC at solve time through the one accessor
+#   (`get_boundary_conditions`, checked at every read since #1699), and a solver with a cached operator rebuilds it
+#   when the BC object's identity changes; the alternative is freeze-and-refuse, capturing at construction and
+#   refusing a swap loudly.
+row grid/B9_bc_read_at_solve_time   -
 row network/N1_graph_bc_alphabet    -
 row network/N2_node_bc_arity        -
 

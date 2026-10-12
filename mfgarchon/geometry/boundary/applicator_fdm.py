@@ -248,7 +248,7 @@ class FDMApplicator(BaseStructuredApplicator):
         field: NDArray[np.floating],
         boundary_conditions: BoundaryConditions,
         spacing: tuple[float, ...] | NDArray[np.floating],
-        time: float = 0.0,
+        time: float | None = None,
     ) -> NDArray[np.floating]:
         """
         Enforce boundary condition values on solution array (Issue #542).
@@ -326,7 +326,11 @@ class FDMApplicator(BaseStructuredApplicator):
             # Apply BC to each boundary
             for dim, side in boundaries_to_apply:
                 bc_value = segment_value(
-                    segment, t=time, x=None, where=f"FDM enforce_values on face {BoundaryFace(dim, side).to_string()}"
+                    segment,
+                    t=time,
+                    time_keyword="time",
+                    x=None,
+                    where=f"FDM enforce_values on face {BoundaryFace(dim, side).to_string()}",
                 )
 
                 h = spacing_tuple[dim]
@@ -1112,7 +1116,7 @@ def face_segment(bc: BoundaryConditions, target_face: BoundaryFace, geometry: An
 
 
 def dirichlet_wall_rows(
-    bc: BoundaryConditions | None, shape: tuple[int, ...], time: float = 0.0, geometry: Any = None
+    bc: BoundaryConditions | None, shape: tuple[int, ...], time: float | None = None, geometry: Any = None
 ) -> tuple[NDArray[np.bool_], NDArray[np.float64]]:
     """The nodes whose equation is ``u - g = 0``, and their ``g``: every node of a face whose ghost is Dirichlet.
 
@@ -1142,7 +1146,13 @@ def dirichlet_wall_rows(
                         rank,
                         axis,
                         side,
-                        segment_value(segment, t=time, x=None, where=f"the FDM Dirichlet rows of face {face_name}"),
+                        segment_value(
+                            segment,
+                            t=time,
+                            time_keyword="time",
+                            x=None,
+                            where=f"the FDM Dirichlet rows of face {face_name}",
+                        ),
                     )
                 )
     for _, axis, side, g in sorted(claims, key=lambda claim: claim[0]):
@@ -1321,7 +1331,7 @@ class PreallocatedGhostBuffer:
         declared = getattr(self._boundary_conditions, "periodic_convention", None)
         return declared if declared is not None else PeriodicGridConvention.ENDPOINT_EXCLUSIVE
 
-    def update_ghosts(self, time: float = 0.0) -> None:
+    def update_ghosts(self, time: float | None = None) -> None:
         """
         Update ghost cells in-place based on current interior values.
 
@@ -1342,7 +1352,7 @@ class PreallocatedGhostBuffer:
             # uniform Robin(alpha, beta, value) is not silently treated as
             # Robin(0, 1, value) (pure-Neumann special case).
             where = "the FDM ghost layer of every face"
-            value = segment_value(seg, t=time, x=None, where=where)
+            value = segment_value(seg, t=time, time_keyword="time", x=None, where=where)
             # Only a Robin segment's coefficients are read: `_update_ghosts_uniform` uses them in its Robin arm alone.
             alpha, beta = segment_robin_coefficients(seg, where=where) if seg.bc_type == BCType.ROBIN else (1.0, 0.0)
             self._update_ghosts_uniform(seg.bc_type, value, time, alpha, beta)
@@ -1354,7 +1364,7 @@ class PreallocatedGhostBuffer:
         self,
         bc_type: BCType,
         value: float | None,
-        time: float,
+        time: float | None,
         alpha: float = 0.0,
         beta: float = 1.0,
     ) -> None:
@@ -1382,7 +1392,7 @@ class PreallocatedGhostBuffer:
         self,
         bc_type: BCType,
         value: float | None,
-        time: float,
+        time: float | None,
         alpha: float = 0.0,
         beta: float = 1.0,
     ) -> None:
@@ -1478,7 +1488,7 @@ class PreallocatedGhostBuffer:
         self,
         bc_type: BCType,
         value: float | None,
-        time: float,
+        time: float | None,
     ) -> None:
         """
         Apply polynomial extrapolation for order > 2 ghost cell reconstruction.
@@ -1694,7 +1704,7 @@ class PreallocatedGhostBuffer:
                 full_index[axis] = ghost_idx
                 buf[tuple(full_index)] = ghost_value
 
-    def _update_ghosts_mixed(self, bc: BoundaryConditions, time: float) -> None:
+    def _update_ghosts_mixed(self, bc: BoundaryConditions, time: float | None) -> None:
         """
         Update ghost cells for mixed BCs (different types on different boundaries).
 
@@ -1720,7 +1730,7 @@ class PreallocatedGhostBuffer:
         axis: int,
         side: str,
         segment: BCSegment,
-        time: float,
+        time: float | None,
         g: int,
     ) -> None:
         """
@@ -1738,7 +1748,11 @@ class PreallocatedGhostBuffer:
         bc_type = segment.bc_type
 
         v = segment_value(
-            segment, t=time, x=None, where=f"the FDM ghost layer of face {BoundaryFace(axis, side).to_string()}"
+            segment,
+            t=time,
+            time_keyword="time",
+            x=None,
+            where=f"the FDM ghost layer of face {BoundaryFace(axis, side).to_string()}",
         )
 
         # Get slices for this face

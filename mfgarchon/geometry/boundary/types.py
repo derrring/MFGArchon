@@ -828,12 +828,9 @@ class BCSegment:
             TypeError: If a callable value, reassigned after the segment was built, cannot be bound by name.
             ValueError: If ``point`` is not one point of shape ``(d,)``.
         """
-        if t is None and _declares_time(self.value, self):
-            raise NotImplementedError(
-                f"BCSegment.get_value: segment {self.name!r}'s value declares t; pass t= to read it at a time "
-                "(#2512 row B2)."
-            )
-        return segment_value(self, t=t, x=np.asarray(point, dtype=float), where="BCSegment.get_value", state=state)
+        return segment_value(
+            self, t=t, x=np.asarray(point, dtype=float), where="BCSegment.get_value", state=state, time_keyword="t"
+        )
 
     def __str__(self) -> str:
         """String representation."""
@@ -930,7 +927,13 @@ def _with_default(fn: Callable[..., Any], *names: str) -> str:
 
 
 def segment_value(
-    segment: BCSegment, *, t: float | None, x: NDArray | None, where: str, state: dict[str, Any] | None = None
+    segment: BCSegment,
+    *,
+    t: float | None,
+    x: NDArray | None,
+    where: str,
+    state: dict[str, Any] | None = None,
+    time_keyword: str | None = None,
 ) -> Any:
     """The one reading of a boundary segment's value, for every reader (#2512 row B2): `boundary_value`, with the
     binding the segment made of a callable value when it was built."""
@@ -942,6 +945,7 @@ def segment_value(
         where=where,
         state=state,
         binding=segment.value_binding() if callable(segment.value) and not is_provider(segment.value) else None,
+        time_keyword=time_keyword,
     )
 
 
@@ -954,6 +958,7 @@ def boundary_value(
     where: str,
     state: dict[str, Any] | None = None,
     binding: BoundCallable | None = None,
+    time_keyword: str | None = None,
 ) -> Any:
     """The one reading of a boundary value -- a segment's, or a ``default_value`` (#2512 row B2).
 
@@ -962,7 +967,9 @@ def boundary_value(
     what it declares: ``(t, x)``, ``(x)``, ``(t)`` or ``(time)``. ``x`` is one point, a 1-D array of shape
     ``(d,)``, ``d = 1`` included. A reader with no time passes ``t=None``, and one with no point ``x=None``. A
     callable that declares what its reader lacks is refused there, at first use, and the message names ``where``,
-    the reader and the face. It returns one number at the point.
+    the reader and the face. A reader that takes a time but was given none names its parameter in ``time_keyword``,
+    and the refusal says to pass it; a reader with no time to take advises a value that needs none. It returns one
+    number at the point.
 
     **A constant, and what a callable or a provider returns**, are read by one function, `_read_constant`, in three
     layers. First the dtype: an array, masked or not, must have an integer or a floating dtype, and any other array
@@ -993,6 +1000,11 @@ def boundary_value(
     if callable(value):
         bound = binding if binding is not None else bind_boundary_value(value)
         if "t" in bound.passes and t is None:
+            if time_keyword is not None:
+                raise NotImplementedError(
+                    f"{kind}: its value declares t{_with_default(bound.fn, 't', 'time')}, but {where} was given no "
+                    f"time; pass {time_keyword}= to read it at a time (#2512 row B2)."
+                )
             raise NotImplementedError(
                 f"{kind}: its value declares t{_with_default(bound.fn, 't', 'time')}, but {where} has no time to pass "
                 f"it; write it as {'a constant, since it has no point either' if x is None else 'g(x) if it does not vary in time'} "

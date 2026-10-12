@@ -93,11 +93,17 @@ def test_an_accessor_given_no_time_or_no_point_refuses_a_value_that_declares_it(
     runs: the same call with a time reads g at it. A constant, or g(x), needs no time. Given no point, the accessor
     refuses g(x) and reads it once given one (#2512 row B2)."""
     bc = BoundaryConditions(dimension=1, segments=[_segment(lambda t: 0.25 + t)], default_bc=BCType.NO_FLUX)
-    with pytest.raises(NotImplementedError, match=r"declares t; pass time= to read it at a time"):
+    with pytest.raises(
+        NotImplementedError,
+        match=r"declares t, but BoundaryConditions.get_bc_value_at_boundary.* given no time; pass time= to read it",
+    ):
         bc.get_bc_value_at_boundary("x_max")
     assert bc.get_bc_value_at_boundary("x_max", time=0.5) == pytest.approx(0.75)
     segment = bc.segments[0]
-    with pytest.raises(NotImplementedError, match=r"declares t; pass t= to read it at a time"):
+    with pytest.raises(
+        NotImplementedError,
+        match=r"declares t, but BCSegment.get_value was given no time; pass t= to read it at a time",
+    ):
         segment.get_value(np.array([1.0]))
     assert segment.get_value(np.array([1.0]), t=0.5) == pytest.approx(0.75)
     for value, expected in ((0.3, 0.3), (lambda x: 2.0 * x[0], 2.0)):
@@ -105,6 +111,103 @@ def test_an_accessor_given_no_time_or_no_point_refuses_a_value_that_declares_it(
         assert no_time.get_bc_value_at_boundary("x_max", point=np.array([1.0])) == pytest.approx(expected)
     with pytest.raises(NotImplementedError, match=r"declares x, but BoundaryConditions.get_bc_value_at_boundary"):
         no_time.get_bc_value_at_boundary("x_max", time=0.5)
+
+
+def _timed_readers():
+    """Nine of the thirteen reachable sites that name their reader's time keyword, one case per branch, each a callable
+    taking the reader's keywords. A call with a time of 0.5 returns values holding g(0.5) = 0.75, g(t) = 0.25 + t, or
+    None for the ghost fill, which returns nothing to read. The other four sites (D1's segment branch,
+    `BCSegment.get_value`, FEM's and Nitsche's assemblies) are pinned by the accessor, FEM and Nitsche tests."""
+    import warnings
+    from types import SimpleNamespace
+
+    from mfgarchon.alg.base_solver import BaseNeuralSolver
+    from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _get_bc_info_1d
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.boundary import no_flux_bc
+    from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator, PreallocatedGhostBuffer, dirichlet_wall_rows
+    from mfgarchon.geometry.boundary.applicator_meshfree import MeshfreeApplicator
+
+    def g(t):
+        return 0.25 + t
+
+    def face(value, name, kind, boundary, **kw):
+        return BCSegment(name=name, bc_type=kind, value=value, boundary=boundary, **kw)
+
+    uniform = BoundaryConditions(dimension=1, segments=[_segment(g, boundary=None)])
+    mixed = BoundaryConditions(
+        dimension=1,
+        segments=[face(g, "L", BCType.NEUMANN, "x_min"), face(0.0, "R", BCType.NEUMANN, "x_max")],
+    )
+    on_x_min = BoundaryConditions(
+        dimension=1, segments=[face(g, "L", BCType.DIRICHLET, "x_min")], default_bc=BCType.NO_FLUX
+    )
+    default_g = BoundaryConditions(
+        dimension=1,
+        segments=[face(0.0, "R", BCType.DIRICHLET, "x_max")],
+        default_bc=BCType.DIRICHLET,
+        default_value=g,
+    )
+    dirichlet_default = BoundaryConditions(dimension=1, segments=[], default_bc=BCType.DIRICHLET, default_value=g)
+    robin_default = BoundaryConditions(
+        dimension=1,
+        segments=[face(0.0, "r", BCType.ROBIN, "x_max", alpha=1.0, beta=0.0)],
+        default_bc=BCType.ROBIN,
+        default_value=g,
+    )
+    bounds = np.array([[0.0, 1.0]])
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[5], boundary_conditions=no_flux_bc(dimension=1))
+    points = np.linspace(0.0, 1.0, 5).reshape(-1, 1)
+
+    def neural(**kw):
+        solver = SimpleNamespace(get_boundary_conditions=lambda: SimpleNamespace(value=g))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            return BaseNeuralSolver.get_boundary_target_values(solver, np.array([[0.0], [1.0]]), **kw)
+
+    return {
+        "update_ghosts": lambda **kw: PreallocatedGhostBuffer((5,), uniform, domain_bounds=bounds).update_ghosts(**kw),
+        "update_ghosts, mixed": lambda **kw: PreallocatedGhostBuffer((5,), mixed, domain_bounds=bounds).update_ghosts(
+            **kw
+        ),
+        "enforce_values": lambda **kw: FDMApplicator(dimension=1).enforce_values(np.ones(5), uniform, (0.25,), **kw),
+        "dirichlet_wall_rows": lambda **kw: dirichlet_wall_rows(uniform, (5,), **kw)[1],
+        "_get_bc_info_1d, a face segment": lambda **kw: _get_bc_info_1d(on_x_min, "left", **kw)[1],
+        "get_bc_value_at_boundary, the default value": lambda **kw: default_g.get_bc_value_at_boundary("x_min", **kw),
+        "MeshfreeApplicator.apply, Dirichlet": lambda **kw: MeshfreeApplicator(grid).apply(
+            np.zeros(5), dirichlet_default, points, **kw
+        ),
+        "MeshfreeApplicator.apply, Robin": lambda **kw: MeshfreeApplicator(grid).apply(
+            np.zeros(5), robin_default, points, **kw
+        ),
+        "get_boundary_target_values": neural,
+    }
+
+
+@pytest.mark.parametrize(
+    "reader",
+    [
+        "update_ghosts",
+        "update_ghosts, mixed",
+        "enforce_values",
+        "dirichlet_wall_rows",
+        "_get_bc_info_1d, a face segment",
+        "get_bc_value_at_boundary, the default value",
+        "MeshfreeApplicator.apply, Dirichlet",
+        "MeshfreeApplicator.apply, Robin",
+        "get_boundary_target_values",
+    ],
+)
+def test_a_reader_given_no_time_says_to_pass_its_time(reader):
+    """A reader that takes a time refuses a value that declares t when given none, and names its own time parameter,
+    which the advice then runs with (#2512 row B2, #2605). Dropping the keyword at any of the nine sites
+    `_timed_readers` holds turns its case red (reviews 2 and 3 of #2609)."""
+    call = _timed_readers()[reader]
+    with pytest.raises(NotImplementedError, match=r"declares t, but .* was given no time; pass time= to read it"):
+        call()
+    result = call(time=0.5)
+    if result is not None:
+        assert np.isclose(np.ravel(np.asarray(result, dtype=float)), 0.75).any(), result
 
 
 # `BCSegment.get_value(point=[0.9], t=0.5)`, HJB-GFDM's Dirichlet read: the callable, the value b10b9e65 read, and
@@ -293,17 +396,25 @@ def test_fdm_advises_g_of_t_and_reads_it():
     assert _fdm_ghost_wall(_fdm_bc(lambda t: 0.25 + t)) == pytest.approx(0.75, abs=1e-12)
 
 
-def test_fem_dirichlet_reads_its_level_time_and_advises_g_of_x_without_one():
+def test_fem_dirichlet_reads_its_level_time_and_says_to_pass_one_without_it():
     """FEM's Dirichlet assembly reads a value at the DOF x = 1 and at the time of the level it solves for. Given no
-    time, it refuses a value that declares t and advises g(x) (#2512 row B2)."""
+    time, it refuses a value that declares t and says to pass `t=`. The advice runs: `get_dirichlet_dofs_and_values`
+    with `t=0.5` reads g(0.5) (#2512 row B2)."""
     import skfem
 
-    from mfgarchon.alg.numerical.fem.bc_adapter import _evaluate_segment_values
+    from mfgarchon.alg.numerical.fem.bc_adapter import _evaluate_segment_values, get_dirichlet_dofs_and_values
 
     basis = skfem.Basis(skfem.MeshLine(np.linspace(0.0, 1.0, 5)), skfem.ElementLineP1())
     dof = int(np.argmax(basis.doflocs[0]))
-    with pytest.raises(NotImplementedError, match=r"declares t, but the FEM Dirichlet .* write it as g\(x\)"):
+    with pytest.raises(
+        NotImplementedError, match=r"declares t, but the FEM Dirichlet assembly .* given no time; pass t= to read it"
+    ):
         _evaluate_segment_values(_segment(lambda t: t), basis, [dof], None)
+    bc = BoundaryConditions(dimension=1, segments=[_segment(lambda t: 0.25 + t, boundary=None)])
+    with pytest.raises(NotImplementedError, match=r"pass t= to read it at a time"):
+        get_dirichlet_dofs_and_values(basis, bc)
+    _, values = get_dirichlet_dofs_and_values(basis, bc, t=0.5)
+    np.testing.assert_allclose(values, 0.75, rtol=0, atol=1e-12)
     assert _evaluate_segment_values(_segment(lambda x: 0.5 + x[0]), basis, [dof], None) == pytest.approx(
         [1.5], abs=1e-12
     )
@@ -314,12 +425,16 @@ def test_fem_dirichlet_reads_its_level_time_and_advises_g_of_x_without_one():
 
 def test_nitsche_receives_the_owners_value_at_each_point():
     """Meshless Galerkin's Nitsche assembly reads g per boundary point, the whole point, ``x[0] + 10 x[1]``, and at
-    the time it is given."""
+    the time it is given. Given none, it refuses a value that declares t and says to pass `t=`."""
     from mfgarchon.alg.numerical.meshless_galerkin.nitsche import _evaluate_g
 
     points = np.array([[1.0, 0.0], [1.0, 0.5]])
     g = _evaluate_g(_segment(lambda x: x[0] + 10.0 * x[1]), points, None)
     np.testing.assert_allclose(g, [1.0, 6.0], rtol=0, atol=1e-12)
+    with pytest.raises(
+        NotImplementedError, match=r"declares t, but the meshless Nitsche assembly .* given no time; pass t= to read it"
+    ):
+        _evaluate_g(_segment(lambda t, x: t + x[0] + 10.0 * x[1]), points, None)
     g = _evaluate_g(_segment(lambda t, x: t + x[0] + 10.0 * x[1]), points, 0.5)
     np.testing.assert_allclose(g, [1.5, 6.5], rtol=0, atol=1e-12)
 

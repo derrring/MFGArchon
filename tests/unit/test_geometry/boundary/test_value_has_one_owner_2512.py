@@ -369,8 +369,7 @@ def test_a_planted_callable_decode_is_found(package_copy, planted):
 # which is t_0, not a default); a negative literal, ``t=-0.0``, which is a unary minus, not a constant; a call
 # outside a function or lambda body, as in the other checks here; `BCSegment.get_value`'s ``t=``, which is not
 # checked, since `NodeBC.get_value` shares its name; and a signature default forwarded to the owner,
-# ``def f(..., time=0.0)`` passing ``t=time``, which reads t = 0 for every caller that omits it. Six readers do so
-# at this check's landing, HJB-WENO's ghost fill among them (#2605); their check is B2b-2b-ii's.
+# ``def f(..., time=0.0)`` passing ``t=time``, which reads t = 0 for every caller that omits it: the next check's.
 _TIME_KEYWORDS = {"segment_value": "t", "boundary_value": "t", "get_bc_value_at_boundary": "time"}
 
 
@@ -422,3 +421,78 @@ def test_no_reader_gives_the_owner_a_literal_time():
 def test_a_planted_literal_time_is_found(package_copy, planted):
     target = package_copy / PACKAGE / "geometry" / "boundary" / "_planted_rival.py"
     assert any("_planted_rival.py" in site for site in planted_scan(time_literal_scan, package_copy, target, planted))
+
+
+# Row B2's second half (B2b-2b-iii): no reader gives the owner a default time. A function whose ``t``, ``time`` or
+# ``current_time`` defaults to a number and is passed to the owner reads t = 0 for every caller that omits it, in
+# silence: six readers did at 52219be2, and HJB-WENO's ghost fill relied on it at every stage (#2605). Such a default
+# is ``None``, which the owner refuses for a value that declares t. A site is a function with that default whose own
+# body passes the parameter, by name, to `segment_value`, `boundary_value` or `get_bc_value_at_boundary`.
+# Blind spots: a default forwarded through a helper rather than to the owner directly (the transitive check is
+# B2b-2b-iv's); a default that is not a numeric literal (a named constant, a negative literal); a time parameter
+# with another name (``t_now=0.0``); a parameter renamed or aliased before the call (``tt = time``); a nested def or
+# lambda that passes the outer function's parameter, since a scope's own nodes stop at a nested one; and, as in the
+# other checks here, code outside a function body. A wider scan run at 52219be2 and at this check's landing, which
+# entered nested scopes, took any parameter name and allowed a negative literal, found no time site beyond the eight
+# (review 1 of #2609).
+_TIME_PARAMETERS = frozenset({"t", "time", "current_time"})
+
+
+def time_defaults(scope: ast.AST) -> list[int]:
+    """Lines in ``scope`` whose numeric time default is passed to the owner, or `get_bc_value_at_boundary`."""
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        return []
+    args = scope.args
+    positional = args.posonlyargs + args.args
+    defaults = dict(
+        zip([a.arg for a in positional[len(positional) - len(args.defaults) :]], args.defaults, strict=True)
+    )
+    defaults.update({a.arg: d for a, d in zip(args.kwonlyargs, args.kw_defaults, strict=True) if d is not None})
+    numeric = {
+        name
+        for name, default in defaults.items()
+        if name in _TIME_PARAMETERS
+        and isinstance(default, ast.Constant)
+        and isinstance(default.value, (int, float))
+        and not isinstance(default.value, bool)
+    }
+    lines = []
+    for node in own_nodes(scope):
+        if isinstance(node, ast.Call):
+            name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", None)
+            passed = list(node.args) + [kw.value for kw in node.keywords]
+            if name in _TIME_KEYWORDS and any(isinstance(a, ast.Name) and a.id in numeric for a in passed):
+                lines.append(node.lineno)
+    return lines
+
+
+def time_default_scan(root: Path) -> tuple[list[str], list[str]]:
+    population, sites = [], []
+    for path in sorted((root / PACKAGE).rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        if rel in EXCLUDED:
+            continue
+        population.append(rel)
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, FUNCTIONS):
+                sites.extend(f"{rel}:{line}: in {getattr(node, 'name', '<lambda>')}" for line in time_defaults(node))
+    return population, sorted(set(sites))
+
+
+def test_no_reader_gives_the_owner_a_default_time():
+    population, sites = time_default_scan(REPO)
+    assert len(population) > 100, f"the population looks truncated: {len(population)} modules"
+    assert sites == [], "a numeric default time handed to the owner (#2512 row B2, #2605):\n" + "\n".join(sites)
+
+
+@pytest.mark.parametrize(
+    "planted",
+    [
+        "def _rival(segment, time=0.0):\n    return segment_value(segment, t=time, x=None, where='w')\n",
+        "def _rival(bc, t=0):\n    return bc.get_bc_value_at_boundary('x_min', t)\n",
+    ],
+    ids=["owner", "accessor"],
+)
+def test_a_planted_default_time_is_found(package_copy, planted):
+    target = package_copy / PACKAGE / "geometry" / "boundary" / "_planted_rival.py"
+    assert any("_planted_rival.py" in site for site in planted_scan(time_default_scan, package_copy, target, planted))

@@ -352,7 +352,7 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
         field: NDArray[np.floating],
         boundary_conditions: BoundaryConditions,
         points: NDArray[np.floating],
-        time: float = 0.0,
+        time: float | None = None,
     ) -> NDArray[np.floating]:
         """
         Apply boundary conditions to field values using unified BoundaryConditions.
@@ -398,7 +398,12 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
         if bc_type == BCType.DIRICHLET:
             # Get Dirichlet value
             bc_value = boundary_value(
-                boundary_conditions.default_value, kind="default_value", t=time, x=None, where="the meshfree applicator"
+                boundary_conditions.default_value,
+                kind="default_value",
+                t=time,
+                time_keyword="time",
+                x=None,
+                where="the meshfree applicator",
             )
             field[on_boundary] = bc_value
 
@@ -414,7 +419,12 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
             # For meshfree without derivative info, use penalty approximation
             alpha, beta = _robin_alpha_beta(boundary_conditions)
             bc_value = boundary_value(
-                boundary_conditions.default_value, kind="default_value", t=time, x=None, where="the meshfree applicator"
+                boundary_conditions.default_value,
+                kind="default_value",
+                t=time,
+                time_keyword="time",
+                x=None,
+                where="the meshfree applicator",
             )
 
             if np.isclose(beta, 0.0):

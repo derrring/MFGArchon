@@ -1091,7 +1091,11 @@ class HJBFDMSolver(BaseHJBSolver):
             # Diffusion term: -(sigma^2/2) * Laplacian(U) (Issue #787)
             # Follows the 1D pattern in base_hjb's compute_hjb_residual
             sigma = _volatility_at_n(self.problem, volatility_at_n)
-            lap_u = self._get_laplacian_op()(U).ravel()
+            # The cached operator reads its BC at its own `time`: set it to this step's, or a time-dependent value is
+            # read at the time the operator was built, t = 0, while the gradient reads the step's (#2543).
+            laplacian = self._get_laplacian_op()
+            laplacian.time = time
+            lap_u = laplacian(U).ravel()
             # A per-point D comes on the grid's shape; the Laplacian is flat.
             D = np.ravel(diffusion_from_volatility(sigma, kind="field"))
             H_values_flat = H_convective - (D if D.size > 1 else D.item()) * lap_u

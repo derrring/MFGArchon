@@ -334,8 +334,8 @@ def _evaluate_segment_values(
         # DOF), NOT mesh.p (vertex coordinates only). For P2 the boundary DOF set includes edge-midpoint
         # indices >= n_vertices, so mesh.p[:, dofs] was out of bounds / wrong-coordinate.
         coords = basis.doflocs[:, dofs].T  # (n_dofs, dim)
-        return [segment_value(segment, t=t, x=x, where=where) for x in coords]
-    return [segment_value(segment, t=t, x=None, where=where)] * len(dofs)
+        return [segment_value(segment, t=t, x=x, where=where, time_keyword="t") for x in coords]
+    return [segment_value(segment, t=t, x=None, where=where, time_keyword="t")] * len(dofs)
 
 
 def _find_segment_facets(mesh: skfem.Mesh, segment) -> NDArray:

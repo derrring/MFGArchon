@@ -247,8 +247,10 @@ def _evaluate_g(segment, x_b: NDArray, t: float | None) -> NDArray:
 
     where = f"the meshless Nitsche assembly of segment {segment.name!r}"
     if callable(segment.value):
-        return np.array([segment_value(segment, t=t, x=x, where=where) for x in x_b], dtype=np.float64)
-    return np.full(x_b.shape[0], segment_value(segment, t=t, x=None, where=where), dtype=np.float64)
+        return np.array(
+            [segment_value(segment, t=t, x=x, where=where, time_keyword="t") for x in x_b], dtype=np.float64
+        )
+    return np.full(x_b.shape[0], segment_value(segment, t=t, x=None, where=where, time_keyword="t"), dtype=np.float64)
 
 
 def assemble_nitsche_terms(
