@@ -13,5 +13,6 @@
     golden was regenerated: max |dU| 2.353e-02.
   - **A step that runs out of iterations says so.** It logs a warning naming the time index, the residual with its
     boundary rows, and the tolerance. Steps that still do not converge include a zero terminal against walls of 0.7
-    and 0.4, and the 2-D Newton cases above, as on 52219be2, where they were silent.
+    and 0.4, and the 2-D Newton cases above, as on 52219be2, where they were silent. #2610 records them: at the
+    first such step of the zero terminal, the step's system has no root near any start tried.
   - The residual is still unscaled against `DEFAULT_NEWTON_TOLERANCE` (#1885).

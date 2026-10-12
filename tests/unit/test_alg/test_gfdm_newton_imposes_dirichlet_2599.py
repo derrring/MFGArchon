@@ -19,7 +19,7 @@ In 2-D (6 x 6, g = x + 2y), the max |U - g| on the boundary was 2.9 under Newton
 under Howard. Both now read the residual with its boundary rows, and every case here imposes g.
 
 Convergence is not uniform. The constant and linear 1-D cases converge at every step, to below 1e-6, and a step
-that does not now says so. Others still do not converge, and are now logged:
+that does not now says so. Others still do not converge, and are now logged (#2610):
 - the zero terminal, where the walls jump from 0 to 0.7 and 0.4: 8 of 10 steps, final residual about 4;
 - the 2-D Newton cases: 10 of 10 steps, about 29.
 On 52219be2 every step of each of these ended unconverged too, in silence: 0.81 for the zero terminal, and 7.5 and
