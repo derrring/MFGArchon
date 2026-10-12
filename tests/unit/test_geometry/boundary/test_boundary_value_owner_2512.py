@@ -182,7 +182,10 @@ def _timed_readers():
         return ImplicitApplicator(geometry=sphere).apply(np.zeros(len(on_sphere)), bc, on_sphere, **kw)
 
     def ghost_values(bc, **kw):
-        return np.concatenate([np.ravel(v) for v in get_ghost_values_nd(held, bc, (0.25,), **kw).values()])
+        with warnings.catch_warnings():  # deprecated, and still reachable with no time
+            warnings.simplefilter("ignore", DeprecationWarning)
+            ghosts = get_ghost_values_nd(held, bc, (0.25,), **kw)
+        return np.concatenate([np.ravel(v) for v in ghosts.values()])
 
     def neural(**kw):
         solver = SimpleNamespace(get_boundary_conditions=lambda: SimpleNamespace(value=g))
