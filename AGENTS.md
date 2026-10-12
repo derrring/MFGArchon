@@ -398,13 +398,13 @@ maintainer explicitly chooses a minor release; do not add compatibility shims fo
 The paragraph above states the target. A **local patch** fixes a defect where it was found while other members of its class remain, which that paragraph rules out. The level is chosen when the work is planned, so the plan and the PR body of every defect fix carry a **class line**:
 
 1. the defect class, named;
-2. its population: the predicate, a control the predicate must find, and the count at the base sha and at the head sha;
-3. class fix (head count 0) or partial fix; for a partial fix, which admission below holds and where the remaining members are tracked.
+2. its population: the predicate, counting members that are still defective (a site kept with a pin showing it matches the owner is not a member); a control the predicate must find at both shas, outside the count; and the count at the base sha and at the head sha;
+3. class fix (head count 0) or partial fix; for a partial fix, which admission below holds, and the issue where the remaining members are listed.
 
 A partial fix is admitted only when:
-- it is one stage of a class fix whose remaining stages are named, in order, in an approved plan;
-- the class fix waits on a decision, or on code outside this repository, and the issue that tracks it is named; or
-- it is a one-line truth repair (a false message or comment), and the class's other members are listed in the PR body or an issue.
+- it is one stage of a class fix whose remaining stages are named, in order, in an issue comment that records the plan's approval and that the class line links;
+- the class fix waits on a ruling that is not the author's to make, or on code outside this repository, and the issue that records it as open is named; or
+- it is a one-line truth repair (a false message or comment), and the class's other members are listed in an issue.
 
 Urgency is not an admission: it changes the order of work, not its level. Nor is "keep changes minimal + focused" (§ *Bug fixes from research*): that bounds a change to its defect's class.
 
@@ -427,7 +427,7 @@ Do **not** edit: `mfgarchon/__init__.py` (reads `importlib.metadata`), `workflow
 - **Before merge**: the **local** full suite is authoritative — `./scripts/local_ci.sh` (see *Pre-commit / pre-merge checks*). GitHub's PR checks are a fast tier only and green there is **not** sufficient.
 - **Review before merge (MANDATORY)**: run an **independent adversarial review** of the PR before merging — a fresh reviewer (subagent / cross-model / worktree-isolated), *not* just author self-review. Merge only when it returns MERGE-OK, or after fixing every blocker it raises and re-reviewing. Local-green ≠ correct. A review blocks only on substance (user ruling, 2026-10-08):
   - **Blocker**: a behaviour defect in the diff; a user-facing false statement (docs, error message, changelog) that would lead a user to solve a different problem; or a claimed fix with no pin that goes red without it; or a partial fix that no admission in § *Local patches are the anti-pattern* covers, whatever its class line says. Fix it, then re-review. For a user-facing false statement, the re-review reads only the corrected text, since a corrected statement needs a second reader too. It counts as the next of the PR's three reviews.
-  - **Must-fix, no re-review**: a false number or claim in a test docstring, a comment or the PR body, or in user-facing text where it would not lead a user to solve a different problem; or a missing class line, or a false number in one. Correct it, re-run the check, state the command and its output in the PR, and merge without another review round.
+  - **Must-fix, no re-review**: a false number or claim in a test docstring, a comment or the PR body, or in user-facing text where it would not lead a user to solve a different problem; or a missing or incomplete class line, or a false number in one. Correct it, re-run the check, state the command and its output in the PR, and merge without another review round.
   - **Should-fix**: wording, clarity, style. Fix it or file it; it never blocks.
   - A review whose findings are all must-fix or should-fix returns MERGE-OK, and the must-fix corrections are a condition of merging.
   - A prose-only must-fix or should-fix correction is not a diff change that triggers the next review.
