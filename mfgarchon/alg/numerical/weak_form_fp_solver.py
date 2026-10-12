@@ -321,10 +321,11 @@ class WeakFormFPSolver(BaseFPSolver):
         )
         dt = self.problem.dt
         D = self._diffusion_coefficient(volatility)
-        # The forward step imposes a Dirichlet wall when the BC is not pure Neumann: by Nitsche terms (meshless
-        # Galerkin, whose pure-Neumann test is placement-aware) or by condensing onto the DIRICHLET segments' DOFs
-        # (FEM). This step does neither, so it would drop the wall in silence; refused, as FP-FDM's is (#2531, #2608).
-        # The test reads the BC's types only, no value, and `time` is passed to nothing. FEM condenses every DIRICHLET
+        # The forward step imposes a Dirichlet wall only when the BC is not pure Neumann, and then by Nitsche terms
+        # (meshless Galerkin, whose pure-Neumann test reads where its Dirichlet segments land, priority included) or by
+        # condensing onto the DIRICHLET segments' DOFs (FEM). This step does neither, so it would drop the wall in
+        # silence; refused, as FP-FDM's is (#2531, #2608). The test reads no boundary value: the BC's types and, for
+        # meshless, where its Dirichlet segments land; `time` is passed to nothing. FEM condenses every DIRICHLET
         # segment whatever its priority (#2595 row 1), and this test follows it; it changes when #2595 does.
         from mfgarchon.geometry.boundary import BCType
 
