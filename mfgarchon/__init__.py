@@ -132,7 +132,7 @@ __all__ = [
     "KDENormalization",
     "MFGComponents",
     "MFGProblem",
-    # API v1.0 classes (Issue #875)
+    # The model/domain/conditions form (Issue #875)
     "Model",
     "Conditions",
     "ErgodicConditions",

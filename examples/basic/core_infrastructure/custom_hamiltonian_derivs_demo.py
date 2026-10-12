@@ -113,7 +113,7 @@ def create_custom_problem(
         coupling_dm=coupling_dm,
     )
 
-    # v1.0 API: Model holds game rules, Conditions holds IC/TC + time horizon
+    # Model holds game rules, Conditions holds IC/TC + time horizon
     model = Model(hamiltonian=hamiltonian, volatility=sigma)
     conditions = Conditions(
         u_terminal=lambda x: 0.0,

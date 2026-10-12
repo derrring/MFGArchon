@@ -62,7 +62,7 @@ def scenario_porous_medium():
         """Diffusion proportional to density."""
         return 0.1 * m
 
-    # Create problem with v1.0 API
+    # Create problem in the model/domain/conditions form
     domain = TensorProductGrid(
         bounds=[(0.0, 1.0)],
         Nx_points=[101],

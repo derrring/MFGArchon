@@ -70,7 +70,7 @@ class TestLQCommonNoiseAnalytical:
             """
             return 0.5 * p**2 + 0.5 * x**2 + alpha * theta * x
 
-        # Create stochastic problem with v1.0 API components
+        # Create stochastic problem with model/domain/conditions components
         geometry = TensorProductGrid(bounds=[(-2.0, 2.0)], boundary_conditions=no_flux_bc(dimension=1), Nx_points=[42])
         hamiltonian = SeparableHamiltonian(
             control_cost=QuadraticControlCost(control_cost=1.0),

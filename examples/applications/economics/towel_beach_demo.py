@@ -165,7 +165,7 @@ def create_towel_beach_problem(
         boundary_conditions=neumann_bc(dimension=1),
     )
 
-    # Create problem with v1.0 API
+    # Create problem in the model/domain/conditions form
     problem = MFGProblem(
         model=model,
         domain=domain,

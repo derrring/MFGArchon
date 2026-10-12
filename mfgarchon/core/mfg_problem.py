@@ -194,7 +194,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
     def __init__(
         self,
-        # === API v1.0 parameters (Issue #875) ===
+        # === The model/domain/conditions form (Issue #875) ===
         model: Any | None = None,  # Model instance (game rules)
         domain: GeometryProtocol | None = None,  # Spatial geometry
         conditions: Any | None = None,  # Conditions instance (time + IC/TC)
@@ -373,7 +373,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             raise TypeError(
                 "MFGProblem(sigma=...) is retired (#2375 ruling 6). Pass volatility= -- the SDE "
                 "volatility Sigma, with volatility_kind='field' or 'tensor' for an array -- or "
-                "diffusion= -- the PDE coefficient A = 1/2 Sigma Sigma^T. On the v1.0 API it is "
+                "diffusion= -- the PDE coefficient A = 1/2 Sigma Sigma^T. In the model/domain/conditions form it is "
                 "Model(volatility=...)."
             )
         if "gamma" in kwargs:
@@ -385,7 +385,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             )
 
         # =====================================================================
-        # API v1.0 path (Issue #875): Model + Domain + Conditions
+        # The model/domain/conditions form (Issue #875): Model + Domain + Conditions
         # =====================================================================
         from mfgarchon.core.model import Conditions as _Conditions
         from mfgarchon.core.model import Model as _Model
@@ -398,7 +398,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                     n for n, v in [("model", model), ("domain", domain), ("conditions", conditions)] if v is None
                 ]
                 raise ValueError(
-                    f"API v1.0 requires all three: model, domain, conditions. Missing: {', '.join(_missing)}"
+                    f"MFGProblem(model=, domain=, conditions=) requires all three. Missing: {', '.join(_missing)}"
                 )
             if not isinstance(model, _Model):
                 raise TypeError(f"model must be a Model instance, got {type(model).__name__}")
@@ -406,7 +406,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 raise TypeError(f"conditions must be a Conditions instance, got {type(conditions).__name__}")
 
             # Check for conflicting legacy parameters
-            # Note: Nt is allowed with v1.0 API — sets construction default
+            # Note: Nt is allowed in the model/domain/conditions form — sets construction default
             # (can be overridden at solve() time)
             _legacy_params = {
                 n: v
@@ -426,7 +426,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             }
             if _legacy_params:
                 raise ValueError(
-                    f"Cannot mix API v1.0 (model/domain/conditions) with legacy parameters. "
+                    f"Cannot mix the model/domain/conditions form with legacy parameters. "
                     f"Got legacy parameters: {', '.join(_legacy_params.keys())}"
                 )
 
@@ -454,7 +454,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             # Drift-only models: pass drift through
             if model.drift_field is not None:
                 drift = model.drift_field
-            # Store v1.0 objects for solve() and with_*() methods
+            # Store the model/domain/conditions objects for solve() and with_*() methods
             self._v1_model = model
             self._v1_conditions = conditions
             self._v1_constraints = constraints
@@ -466,9 +466,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             # Issue #875: Deprecation warning for legacy API path
             warnings.warn(
                 "Legacy MFGProblem(geometry=, components=, volatility=, T=, Nt=) is deprecated. "
-                "Use the v1.0 API: MFGProblem(model=Model(...), domain=grid, "
-                "conditions=Conditions(...), Nt=50). "
-                "Legacy support will be removed in v1.0.0.",
+                "Use MFGProblem(model=Model(...), domain=grid, conditions=Conditions(...), Nt=50).",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -2527,7 +2525,7 @@ See: docs/user/CONVENTIONS.md, section 2 (the cost channels and their signs)"""
 
         # Issue #875: Nt override at solve() time
         if Nt is not None and Nt != self.Nt:
-            # Nt deeply affects solver setup. For v1.0 API, reconstruct
+            # Nt deeply affects solver setup. For the model/domain/conditions form, reconstruct
             # with the correct Nt and delegate solve to the new problem.
             if self._v1_model is not None:
                 new_problem = MFGProblem(
@@ -2550,8 +2548,8 @@ See: docs/user/CONVENTIONS.md, section 2 (the cost channels and their signs)"""
             else:
                 raise ValueError(
                     f"solve(Nt={Nt}) differs from construction Nt={self.Nt}. "
-                    "Nt override at solve time is only supported for v1.0 API problems "
-                    "(created with model/domain/conditions). For legacy problems, "
+                    "Nt override at solve time is only supported for problems created with "
+                    "model/domain/conditions. For legacy problems, "
                     "reconstruct with the desired Nt."
                 )
 
@@ -2716,16 +2714,16 @@ See: docs/user/CONVENTIONS.md, section 2 (the cost channels and their signs)"""
         return solver.solve(verbose=verbose)
 
     # ==========================================================================
-    # API v1.0: Parameter Variation Helpers (Issue #875)
+    # Parameter Variation Helpers for the model/domain/conditions form (Issue #875)
     # ==========================================================================
 
     def with_model(self, model: Any) -> MFGProblem:
         """Return new problem with different model (game rules).
 
-        Requires that this problem was created with the v1.0 API.
+        Requires that this problem was created with model/domain/conditions.
         """
         if self._v1_model is None:
-            raise ValueError("with_model() requires a problem created with API v1.0 (model/domain/conditions)")
+            raise ValueError("with_model() requires a problem created with model/domain/conditions")
         return MFGProblem(
             model=model,
             domain=self.geometry,
@@ -2737,7 +2735,7 @@ See: docs/user/CONVENTIONS.md, section 2 (the cost channels and their signs)"""
     def with_domain(self, domain: Any) -> MFGProblem:
         """Return new problem with different domain (spatial geometry)."""
         if self._v1_model is None:
-            raise ValueError("with_domain() requires a problem created with API v1.0 (model/domain/conditions)")
+            raise ValueError("with_domain() requires a problem created with model/domain/conditions")
         return MFGProblem(
             model=self._v1_model,
             domain=domain,
@@ -2749,7 +2747,7 @@ See: docs/user/CONVENTIONS.md, section 2 (the cost channels and their signs)"""
     def with_conditions(self, conditions: Any) -> MFGProblem:
         """Return new problem with different conditions (time + IC/TC)."""
         if self._v1_model is None:
-            raise ValueError("with_conditions() requires a problem created with API v1.0 (model/domain/conditions)")
+            raise ValueError("with_conditions() requires a problem created with model/domain/conditions")
         return MFGProblem(
             model=self._v1_model,
             domain=self.geometry,

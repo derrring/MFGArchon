@@ -77,6 +77,8 @@ There is no factory to reach for. `create_standard_solver` does not exist and
 `create_accurate_solver` raise on call; `create_solver` is deprecated in favour of the
 same three modes (#580).
 
+No interface is fixed for v1.0 yet, so user-facing text does not call any constructor form "the v1.0 API" (user ruling, 2026-10-12). `MFGProblem(model=Model(...), domain=..., conditions=Conditions(...))` is "the model/domain/conditions form", and `MFGProblem(geometry=, components=, ...)` is "the components= form".
+
 ### Import style
 ```python
 from mfgarchon import MFGProblem, BoundaryConditions

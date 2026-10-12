@@ -136,7 +136,7 @@ def _m_initial(x):
 
 
 def _problem(**source_fields):
-    """Built through the v1.0 API on purpose: the legacy keyword form warns, and #2203 is already
+    """Built through the model/domain/conditions form on purpose: the legacy keyword form warns, and #2203 is already
     open against the two fixtures that still use it. A third would be a third."""
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[_N], boundary_conditions=no_flux_bc(dimension=1))
     return MFGProblem(

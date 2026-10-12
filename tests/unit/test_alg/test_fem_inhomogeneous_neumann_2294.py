@@ -90,7 +90,7 @@ def _problem(segments):
         coupling=lambda m: 0.0 * np.asarray(m),
         coupling_dm=lambda m: 0.0 * np.asarray(m),
     )
-    # The v1.0 API, not the legacy `MFGProblem(geometry=, components=, ...)`. That form is
+    # The model/domain/conditions form, not the legacy `MFGProblem(geometry=, components=, ...)`. That form is
     # deprecated, and the warning census gates on it: a new file using it adds a warning identity
     # and turns the gate red, which is #2119 working as intended.
     return MFGProblem(

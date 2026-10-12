@@ -1,5 +1,5 @@
 """
-Model and Conditions classes for MFGArchon API v1.0.
+Model and Conditions classes: the model/domain/conditions form of MFGProblem.
 
 These dataclasses separate the mathematical description of an MFG problem
 into orthogonal components:
@@ -131,7 +131,7 @@ class Conditions:
     is no longer orthogonal to Domain.
 
     A density with no closed form -- a KDE, a measured histogram, a previous
-    solve's output -- currently has no v1.0 expression. `lambda _x: snapshot` does
+    solve's output -- currently has no expression on `Conditions`. `lambda _x: snapshot` does
     NOT work: the signature validator evaluates it and refuses the array it gets
     back. That gap is real and wants a constructor that ADMITS it is grid-bound,
     not a relaxation of this rule.
@@ -166,7 +166,7 @@ class Conditions:
                 "one-liner is 1-D only: in n-D build the field on `domain.meshgrid(indexing='ij')` "
                 "first, or `integrate` refuses the shape. "
                 "If your density has no closed form (a KDE, a histogram, a previous solve), there "
-                "is no v1.0 way to pass it yet; `lambda _x: array` is rejected by the signature "
+                "is no way to pass it to Conditions yet; `lambda _x: array` is rejected by the signature "
                 "check, not accepted."
             )
         if self.u_terminal is not None and not callable(self.u_terminal):
