@@ -197,14 +197,20 @@ class FPParticleSolver(BaseFPSolver):
         self.num_particles = num_particles
         self.fp_method_name = "Particle"
 
-        # Issue #1838. Every numpy draw this solver makes goes through `self._rng`, which is either
-        # the global numpy state or a private Generator. The torch sampling path does not use it at
-        # all -- it takes a seed derived from `self._rng` and drives a local `torch.Generator`, for
-        # the same reason: see sample_from_density_gpu.
+        # Issue #1838. `self._rng` is either a private Generator or the global numpy state.
         #
-        #   seed=None  -> `np.random`, the global stream. Nine files here seed it and then build
-        #                 this solver, so the default is backward compatibility and nothing more.
-        #   seed=<int> -> a private Generator, independent of anything else touching np.random.
+        #   seed=<int> -> a private Generator, independent of anything else touching np.random. Every
+        #                 draw derives from it: the numpy draws directly, and the initial-sample
+        #                 samplers through a seed taken from it (sample_from_density's RandomState,
+        #                 sample_from_density_gpu's local `torch.Generator`).
+        #   seed=None  -> `np.random`, the global stream, for the Brownian increments on every path.
+        #                 The initial sample is another matter, and differs by path (#2620):
+        #                 - 1-D ndarray drift (`_solve_fp_system_cpu`): `self._rng`, so np.random.seed
+        #                   reaches it. Nine files here seed the global stream and then build this
+        #                   solver; this default is backward compatibility for them and nothing more.
+        #                 - nD CPU and callable drift: sample_from_density(seed=None) builds
+        #                   RandomState(None) from OS entropy, which np.random.seed does not reach.
+        #                 - GPU: torch's global stream, which torch.manual_seed reaches.
         #
         # One code path serves both: `choice`, `uniform`, `normal` and `standard_normal` exist on
         # the module and on Generator with the same keywords. `randn` does NOT exist on Generator,

@@ -1,6 +1,7 @@
-`FPParticleSolver` accepts `seed=`, so a stochastic solve can be repeated. Every numpy draw it makes
-goes through one owner, `self._rng` — a private `np.random.Generator` when `seed` is given, the
-global `np.random` module when it is not.
+`FPParticleSolver` accepts `seed=`, so a stochastic solve can be repeated. With a seed, every draw it
+makes derives from one owner, `self._rng`, a private `np.random.Generator`. Without one, `self._rng`
+is the global `np.random` module, and where the initial particle sample comes from depends on the
+solve path (below).
 
 The torch sampling path is the exception and needed its own fix. It takes a seed derived from
 `self._rng` and, until independent review, honoured it with `torch.manual_seed` — the
@@ -19,10 +20,11 @@ code path serves both, because `choice`, `uniform`, `normal` and `standard_norma
 module and on `Generator` with the same keywords.
 
 The scope of that compatibility claim is one solve path, the 1D ndarray-drift one those nine files
-use. On the other three `sample_from_density` builds `np.random.RandomState(None)`, which seeds from
-OS entropy rather than from the global stream, so an unseeded solve there does not follow
-`np.random.seed`. Unchanged by this PR — `main` passes `seed=None` there unconditionally — and now
-stated where it was previously implied.
+use. On the nD CPU path and the callable-drift path, `sample_from_density` builds
+`np.random.RandomState(None)`, which seeds from OS entropy rather than from the global stream, so an
+unseeded solve there does not follow `np.random.seed`. The GPU path samples from torch's global
+stream, which `torch.manual_seed` reaches and `np.random.seed` does not. Unchanged by this PR — `main`
+passes `seed=None` there unconditionally — and now stated where it was previously implied (#2620).
 
 **What this unblocks.** The #1822 capability matrix could not classify this solver in *either*
 direction — three trials of one identical configuration returned `monotone = False, False, True`.
