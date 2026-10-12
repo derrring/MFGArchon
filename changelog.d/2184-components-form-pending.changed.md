@@ -9,8 +9,8 @@
   `docs/user/GEOMETRY_FIRST_API_GUIDE.md` and the test comments that called the form deprecated now say the same.
 
   **Who is affected.** `PendingDeprecationWarning` is not a subclass of `DeprecationWarning`. Python's default
-  filters ignore it; pytest shows it unless warning options are set (`-W`, `PYTHONWARNINGS`), in which case it adds
-  none of its own filters.
+  filters ignore it; pytest shows it unless Python's own warning options are set (`python -W`, `PYTHONWARNINGS`), in
+  which case it adds none of its own filters. pytest's `-W` is not one of them.
   - A call made from code in `__main__` -- a script's top level or a function the script defines -- printed the
     old `DeprecationWarning` under Python's default filters (they show one attributed to `__main__`), and now prints
     nothing. `-W default::PendingDeprecationWarning` shows the new one. `-W error::DeprecationWarning:__main__`

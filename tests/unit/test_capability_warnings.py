@@ -104,7 +104,7 @@ def test_environment_noise_is_not_recorded():
 
     def noisy():
         warnings.warn("Optimal transport solvers require POT", ImportWarning, stacklevel=1)
-        warnings.warn("Legacy MFGProblem(...) is deprecated", DeprecationWarning, stacklevel=1)
+        warnings.warn("an old keyword is deprecated", DeprecationWarning, stacklevel=1)
         warnings.warn("something the solver said", RuntimeWarning, stacklevel=1)
         return "PASS", {"all_finite": True}
 

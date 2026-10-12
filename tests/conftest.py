@@ -933,9 +933,11 @@ def cleanup_numpy_state():
 
 @pytest.fixture(autouse=True)
 def suppress_warnings():
-    """Reset every warning filter after each test, so a module- or session-scoped fixture's teardown that runs
-    after it sees none of `pytest.ini`'s. The filters themselves are `pytest.ini`'s `filterwarnings`; two copies
-    of its first two lines lived here, applied to the test call alone, and are gone (#2184)."""
+    """Reset every warning filter at each test's teardown. The filters themselves are `pytest.ini`'s `filterwarnings`;
+    two copies of its first two lines lived here, applied to the test call alone, and are gone (#2184).
+
+    A side effect of the reset: a fixture torn down after it -- class-, module- or session-scoped, or a function-scoped
+    one set up before it, such as `cleanup_numpy_state` above -- runs with none of `pytest.ini`'s filters."""
     import warnings
 
     yield
