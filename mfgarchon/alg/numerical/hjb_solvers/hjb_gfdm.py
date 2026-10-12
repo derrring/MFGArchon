@@ -874,11 +874,9 @@ class HJBGFDMSolver(BaseHJBSolver):
                 "Wind-dependent BC is a modification of the ghost nodes method."
             )
 
-        # DEBUG: Print wind-BC configuration once at initialization
+        # The detected boundary, not the constructor's parameter, which is None by default (#2604).
         if self._use_wind_dependent_bc:
-            import sys
-
-            print(f"\n[Wind-BC INIT] Enabled with {len(boundary_indices)} boundary points", flush=True, file=sys.stderr)
+            logger.info(f"Wind-dependent BC enabled with {len(self.boundary_indices)} boundary points")
 
         # Create differential operator using Strategy Pattern
         if use_new_infrastructure:
