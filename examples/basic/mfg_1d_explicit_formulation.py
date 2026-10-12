@@ -183,7 +183,7 @@ geometry = TensorProductGrid(
 #   m_normalized = m_raw / (np.sum(m_raw) * dx)  # Now ∫m dx = 1
 #
 # Class-based Hamiltonian: H = (1/2)|p|² + V(x) + coupling * m
-# Coupling is part of the Hamiltonian (no separate coupling_coefficient).
+# The density coupling is part of the Hamiltonian; it has no separate parameter.
 hamiltonian = SeparableHamiltonian(
     control_cost=QuadraticControlCost(control_cost=1.0),
     potential=hamiltonian_potential,  # V(t, x) = potential_field(x)

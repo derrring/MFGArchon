@@ -210,7 +210,7 @@ row grid/B9_bc_read_at_solve_time   -
 #   and B2's guard, whose population leaves out `applicator_graph.py`, does not see them.
 # They also inherit an item from #1544 (#2617; audit session ruling, 2026-10-12): the policy-iteration path
 #   (`NetworkPolicyIterationHJBSolver.solve_hjb_system`, `hjb_network.py:395` at 1a036677) imposes the node BCs by
-#   overwriting U[n] after each step's linear solve, so the interior rows of that solve used unpinned neighbour
+#   overwriting U[n] after each time step's policy iteration, so the interior rows of its solves used unpinned neighbour
 #   values. The coupling ran through L^pi at D = 0 already, and the viscous term D L adds a second one. #2617's
 #   review 1 reported it as a pre-existing first-order lag.
 row network/N1_graph_bc_alphabet    -

@@ -205,7 +205,7 @@ class FPParticleSolver(BaseFPSolver):
         #                 sample_from_density_gpu's local `torch.Generator`).
         #   seed=None  -> `np.random`, the global stream, for the Brownian increments on every path.
         #                 The initial sample is another matter, and differs by path (#2620):
-        #                 - 1-D ndarray drift (`_solve_fp_system_cpu`): `self._rng`, so np.random.seed
+        #                 - 1-D (`_solve_fp_system_cpu`; ndarray or no drift): `self._rng`, so np.random.seed
         #                   reaches it. Nine files here seed the global stream and then build this
         #                   solver; this default is backward compatibility for them and nothing more.
         #                 - nD CPU and callable drift: sample_from_density(seed=None) builds
