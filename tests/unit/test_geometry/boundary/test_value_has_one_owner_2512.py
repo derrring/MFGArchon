@@ -3,7 +3,8 @@
 The owner is `types.boundary_value`, reached through `types.segment_value` for a segment. This guard fails if a
 module decodes a value itself (audit session ruling, 2026-10-09, #2512 comment 6073690080).
 
-**Population.** Every module under `mfgarchon/`, except `applicator_graph.py`, whose node values are row N2.
+**Population.** Every module under `mfgarchon/`, except `applicator_graph.py`, whose node values, and whose t = 0
+read of a callable graph value, are rows N1/N2.
 
 **A value read** is ``<x>.value`` or ``<x>.default_value``, or ``getattr(<x>, "value"[, default])``, as D17-D19
 read it; ``<x>.bc_type.value`` and the like are enum reads, not values. A name assigned in the same function from a
@@ -50,7 +51,10 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 PACKAGE = Path("mfgarchon")
-EXCLUDED = {"mfgarchon/geometry/boundary/applicator_graph.py"}  # row N2
+# Rows N1/N2: node values, and `GraphApplicator.apply`/`apply_fp`/`apply_hjb` reading a callable node value at t = 0
+# when given no t, as `apply_direct`/`apply_edge_direct` do at their default, which the manifest's N1/N2 comment
+# carries.
+EXCLUDED = {"mfgarchon/geometry/boundary/applicator_graph.py"}
 VALUE_ATTRS = frozenset({"value", "default_value"})
 ENUM_HOLDERS = frozenset({"bc_type", "default_bc", "type", "kind", "math_type"})
 CONVERT = frozenset({"float", "int", "complex", "asarray", "array"})
@@ -423,27 +427,68 @@ def test_a_planted_literal_time_is_found(package_copy, planted):
     assert any("_planted_rival.py" in site for site in planted_scan(time_literal_scan, package_copy, target, planted))
 
 
-# Row B2's second half (B2b-2b-iii): no reader gives the owner a default time. A function whose ``t``, ``time`` or
-# ``current_time`` defaults to a number and is passed to the owner reads t = 0 for every caller that omits it, in
-# silence: six readers did at 52219be2, and HJB-WENO's ghost fill relied on it at every stage (#2605). Such a default
-# is ``None``, which the owner refuses for a value that declares t. A site is a function with that default whose own
-# body passes the parameter, by name, to `segment_value`, `boundary_value` or `get_bc_value_at_boundary`.
-# Blind spots: a default forwarded through a helper rather than to the owner directly (the transitive check is
-# B2b-2b-iv's); a default that is not a numeric literal (a named constant, a negative literal); a time parameter
-# with another name (``t_now=0.0``); a parameter renamed or aliased before the call (``tt = time``); a nested def or
-# lambda that passes the outer function's parameter, since a scope's own nodes stop at a nested one; and, as in the
-# other checks here, code outside a function body. A wider scan run at 52219be2 and at this check's landing, which
-# entered nested scopes, took any parameter name and allowed a negative literal, found no time site beyond the eight
-# (review 1 of #2609).
+# Row B2's second half (B2b-2b-iii, transitive since B2b-2b-iv): no reader gives the owner a default time, directly
+# or through any chain of calls. A function whose ``t``, ``time`` or ``current_time`` defaults to a number and reaches
+# the owner reads t = 0 for every caller that omits it, in silence: HJB-WENO's ghost fill relied on it at every stage
+# (#2605). Such a default is ``None``, which the owner refuses for a value that declares t, or the parameter is
+# required.
+#
+# **Predicate.** A name *reaches the owner* if it is `segment_value`, `boundary_value` or `get_bc_value_at_boundary`,
+# or a function that passes one of its own time parameters, by name, to a call of a name that reaches the owner, or a
+# class one of whose methods stores a time parameter on ``self`` (each such class at 375122e5 hands that attribute to
+# the ghost fill or `laplacian_with_bc` when it is applied), or whose ``__init__`` passes its time on to a name that
+# reaches the owner. Constructing such a class with a time is reading at that time, and ``cls(...)``,
+# ``type(obj)(...)`` and ``obj.__class__(...)`` are read as constructing the class they are written in, whatever
+# ``obj`` is (a false positive at worst; none at this head). A class reaches through its own ``__init__``: a
+# ``super().__init__`` into a storing base counts only because the bare name ``__init__`` reaches, which is how
+# `NormalDerivOperator.from_axis` is found. Nested defs and lambdas are
+# entered, so a closure that forwards its outer function's time counts. A *member* is a
+# function with a numeric time default that passes that parameter to a call of a name that reaches the owner. A
+# *storer* is a function with a numeric time default that stores that parameter on ``self``: an operator that keeps
+# its time and later hands it to the ghost fill.
+#
+# **Count, by this predicate.** At 375122e5 it found 43 members and 7 storers.
+# - Of the 43, 31 reach the owner through functions and 12 through a class's constructor, two of them as ``cls(...)``
+#   (`DiffusionOperator.from_volatility`, `NormalDerivOperator.from_axis`).
+# - `applicator_graph.py` is outside the population (row N2), so its three are not among them.
+# - At this head it finds only the five in `TIME_DEFAULTS_ALLOWED`.
+# - The 12 private members left the population by losing the default: their time is keyword-only and required, and
+#   every production caller passes it.
+# - The other 26 members and the 7 storers default to ``None``: 31 definitions, since two storers' constructors also
+#   forward into a third.
+#
+# **Blind spots:**
+# - Callees are matched by bare name. A chain can pass through a same-named function that does not reach the owner;
+#   that is a false positive, and the reason `applicator_graph.py`'s `NodeBC.get_value` is outside the population.
+#   A same-named function that does reach the owner, called on an object that does not, is the same false positive.
+# - A parameter renamed or aliased before the call (``tt = time``), passed inside a container or ``**kwargs``, or
+#   through dynamic dispatch (``getattr``, a callback).
+# - A time kept other than as a ``self`` attribute in the same function: in a container, a property or a later
+#   method, or on another object (``op.time = time``, as `HJBFDMSolver` sets its cached Laplacian's inside a function
+#   whose time is required). A ``self`` store is caught whole, annotated, or as one element of a tuple assignment.
+# - A time passed on transformed (``float(time)``, ``time + dt``), which is a call of something else, or an
+#   expression.
+# - A subclass with no ``__init__`` of its own (``class _Sub(_Base): pass``) constructed with a time, where only the
+#   base stores it: the subclass's name does not reach. There is no instance at this head.
+# - A default that is not a numeric literal (a named constant, a negative literal), a time parameter with another
+#   name (``t_now=0.0``), and code outside a function body.
 _TIME_PARAMETERS = frozenset({"t", "time", "current_time"})
+# The five public members whose time is also the Hamiltonian's, where ``None`` cannot be evaluated: #2612 deprecates
+# omitting it, and removes each from here when the deprecation ends.
+TIME_DEFAULTS_ALLOWED = {
+    ("mfgarchon/alg/numerical/hjb_solvers/base_hjb.py", "compute_hjb_residual"): "H's time too (#2612)",
+    ("mfgarchon/alg/numerical/hjb_solvers/base_hjb.py", "compute_hjb_jacobian"): "H's time too (#2612)",
+    ("mfgarchon/alg/numerical/hjb_solvers/base_hjb.py", "newton_hjb_step"): "H's time too (#2612)",
+    ("mfgarchon/alg/numerical/hjb_solvers/base_hjb.py", "solve_hjb_timestep_newton"): "H's time too (#2612)",
+    ("mfgarchon/alg/numerical/hjb_solvers/hjb_fdm.py", "build_linearized_operator"): "H's time too (#2612)",
+}
 
 
-def time_defaults(scope: ast.AST) -> list[int]:
-    """Lines in ``scope`` whose numeric time default is passed to the owner, or `get_bc_value_at_boundary`."""
-    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-        return []
+def _time_parameters(scope: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[set[str], set[str]]:
+    """``scope``'s time parameters, and those of them that default to a number."""
     args = scope.args
     positional = args.posonlyargs + args.args
+    names = {a.arg for a in positional + args.kwonlyargs if a.arg in _TIME_PARAMETERS}
     defaults = dict(
         zip([a.arg for a in positional[len(positional) - len(args.defaults) :]], args.defaults, strict=True)
     )
@@ -451,38 +496,130 @@ def time_defaults(scope: ast.AST) -> list[int]:
     numeric = {
         name
         for name, default in defaults.items()
-        if name in _TIME_PARAMETERS
+        if name in names
         and isinstance(default, ast.Constant)
         and isinstance(default.value, (int, float))
         and not isinstance(default.value, bool)
     }
-    lines = []
-    for node in own_nodes(scope):
+    return names, numeric
+
+
+def _callee(func: ast.AST, owner_class: str | None) -> str | None:
+    """The bare name a call reaches. Inside a class, ``cls(...)``, ``type(self)(...)`` and ``self.__class__(...)``
+    construct the enclosing class, so they reach its name."""
+    if owner_class is not None and (
+        (isinstance(func, ast.Name) and func.id == "cls")
+        or (isinstance(func, ast.Call) and isinstance(func.func, ast.Name) and func.func.id == "type")
+        or (isinstance(func, ast.Attribute) and func.attr == "__class__")
+    ):
+        return owner_class
+    return func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+
+
+def _callees_given(scope: ast.AST, names: set[str], owner_class: str | None = None) -> set[str]:
+    """The bare names of the calls in ``scope``, nested scopes included, that are passed one of ``names``."""
+    callees = set()
+    for node in ast.walk(scope):
         if isinstance(node, ast.Call):
-            name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", None)
             passed = list(node.args) + [kw.value for kw in node.keywords]
-            if name in _TIME_KEYWORDS and any(isinstance(a, ast.Name) and a.id in numeric for a in passed):
-                lines.append(node.lineno)
-    return lines
+            if any(isinstance(a, ast.Name) and a.id in names for a in passed):
+                callee = _callee(node.func, owner_class)
+                if callee is not None:
+                    callees.add(callee)
+    return callees
 
 
-def time_default_scan(root: Path) -> tuple[list[str], list[str]]:
-    population, sites = [], []
+def _is_self_attribute(target: ast.AST) -> bool:
+    return isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "self"
+
+
+def _stores_on_self(scope: ast.AST, names: set[str]) -> bool:
+    """``scope`` stores one of ``names`` on a ``self`` attribute: ``self.x = time``, ``self.x: float = time``, or one
+    element of a tuple assignment, ``self.bc, self.x = bc, time``."""
+    for node in ast.walk(scope):
+        if isinstance(node, ast.AnnAssign) and _is_self_attribute(node.target):
+            pairs = [(node.target, node.value)]
+        elif isinstance(node, ast.Assign):
+            pairs = [(t, node.value) for t in node.targets]
+            pairs += [
+                (t, v)
+                for t in node.targets
+                if isinstance(t, ast.Tuple) and isinstance(node.value, ast.Tuple)
+                for t, v in zip(t.elts, node.value.elts, strict=False)
+            ]
+        else:
+            continue
+        if any(_is_self_attribute(t) and isinstance(v, ast.Name) and v.id in names for t, v in pairs):
+            return True
+    return False
+
+
+def time_default_scan(
+    root: Path, allowed: Mapping[tuple[str, str], str] = TIME_DEFAULTS_ALLOWED
+) -> tuple[list[str], list[str]]:
+    """``(population, sites)``: the members and storers outside ``allowed``, each ``path:line: in function``."""
+    population, timed, storing_classes, initializers = [], [], set(), []
     for path in sorted((root / PACKAGE).rglob("*.py")):
         rel = path.relative_to(root).as_posix()
         if rel in EXCLUDED:
             continue
         population.append(rel)
-        for node in ast.walk(ast.parse(path.read_text())):
-            if isinstance(node, FUNCTIONS):
-                sites.extend(f"{rel}:{line}: in {getattr(node, 'name', '<lambda>')}" for line in time_defaults(node))
+        tree = ast.parse(path.read_text())
+        owner = {
+            id(method): node.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ClassDef)
+            for method in node.body
+            if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                names, numeric = _time_parameters(node)
+                if names:
+                    callees = _callees_given(node, names, owner.get(id(node)))
+                    timed.append((rel, node, names, numeric, callees, owner.get(id(node))))
+                    if node.name == "__init__" and id(node) in owner:
+                        initializers.append((owner[id(node)], callees))
+                    if id(node) in owner and _stores_on_self(node, names):
+                        storing_classes.add(owner[id(node)])
+    # A class reaches the owner when one of its methods stores a time on `self`, or its `__init__` passes a time on
+    # to a name that reaches it; constructing it, `cls(...)` included, then reads at the time it is given.
+    reaches = set(_TIME_KEYWORDS) | storing_classes
+    grew = True
+    while grew:
+        before = len(reaches)
+        reaches |= {node.name for _, node, _, _, callees, _ in timed if callees & reaches}
+        reaches |= {cls for cls, callees in initializers if callees & reaches}
+        grew = len(reaches) > before
+    sites = []
+    for rel, node, _, numeric, _, owner_class in timed:
+        if not numeric or (rel, node.name) in allowed:
+            continue
+        if _callees_given(node, numeric, owner_class) & reaches:
+            sites.append(f"{rel}:{node.lineno}: in {node.name}")
+        if _stores_on_self(node, numeric):
+            sites.append(f"{rel}:{node.lineno}: in {node.name} (stores it)")
     return population, sorted(set(sites))
 
 
 def test_no_reader_gives_the_owner_a_default_time():
     population, sites = time_default_scan(REPO)
     assert len(population) > 100, f"the population looks truncated: {len(population)} modules"
-    assert sites == [], "a numeric default time handed to the owner (#2512 row B2, #2605):\n" + "\n".join(sites)
+    assert sites == [], (
+        f"{len(sites)} numeric default time(s) handed to the owner, directly or through a chain of calls, or stored "
+        "(#2512 row B2, #2605):\n" + "\n".join(sites)
+    )
+
+
+def test_the_time_default_allowance_is_exactly_its_members():
+    """The allowance names the five members left, by the predicate's own count; one that no longer reaches the owner,
+    or has lost its default, must leave it, so the count of members falls with #2612."""
+    _, sites = time_default_scan(REPO, allowed={})
+    members = {(site.split(":")[0], site.rsplit(" in ", 1)[1]) for site in sites}
+    assert members == set(TIME_DEFAULTS_ALLOWED), (
+        f"the predicate finds {len(members)} member(s); the allowance names {len(TIME_DEFAULTS_ALLOWED)}",
+        sorted(members ^ set(TIME_DEFAULTS_ALLOWED)),
+    )
 
 
 @pytest.mark.parametrize(
@@ -490,8 +627,31 @@ def test_no_reader_gives_the_owner_a_default_time():
     [
         "def _rival(segment, time=0.0):\n    return segment_value(segment, t=time, x=None, where='w')\n",
         "def _rival(bc, t=0):\n    return bc.get_bc_value_at_boundary('x_min', t)\n",
+        "def _rival(bc, time=0.0):\n    return _rival_middle(bc, time)\n\n\n"
+        "def _rival_middle(bc, time):\n    return _rival_inner(bc, time=time)\n\n\n"
+        "def _rival_inner(bc, time):\n    return segment_value(bc.segments[0], t=time, x=None, where='w')\n",
+        "def _rival(u, bc, time=0.0):\n    def step(v):\n        return pad_array_with_ghosts(v, bc, time=time)\n"
+        "    return step(u)\n",
+        "class _Rival:\n    def __init__(self, bc, time=0.0):\n        self.bc, self.time = bc, None\n"
+        "        self.time = time\n",
+        "class _RivalOperator:\n    def __init__(self, bc, time=None):\n        self.time = time\n\n\n"
+        "def _rival(bc, time=0.0):\n    return _RivalOperator(bc, time=time)\n",
+        "class _RivalOperator:\n    def __init__(self, bc, time=None):\n        self.time = time\n\n"
+        "    @classmethod\n    def make(cls, bc, time=0.0):\n        return cls(bc, time=time)\n",
+        "class _Rival:\n    def __init__(self, bc, time=0.0):\n        self.time: float = time\n",
+        "class _Rival:\n    def __init__(self, bc, time=0.0):\n        self.bc, self.time = bc, time\n",
     ],
-    ids=["owner", "accessor"],
+    ids=[
+        "owner",
+        "accessor",
+        "two calls deep",
+        "a closure",
+        "a storer",
+        "into a storer",
+        "cls() constructor",
+        "annotated store",
+        "tuple store",
+    ],
 )
 def test_a_planted_default_time_is_found(package_copy, planted):
     target = package_copy / PACKAGE / "geometry" / "boundary" / "_planted_rival.py"

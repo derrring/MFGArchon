@@ -1003,7 +1003,8 @@ def boundary_value(
             if time_keyword is not None:
                 raise NotImplementedError(
                     f"{kind}: its value declares t{_with_default(bound.fn, 't', 'time')}, but {where} was given no "
-                    f"time; pass {time_keyword}= to read it at a time (#2512 row B2)."
+                    f"time. A caller that has one passes it as {time_keyword}=; a solver that reaches {where} without "
+                    "one does not yet support a time-dependent value there (#2615; #2512 row B2)."
                 )
             raise NotImplementedError(
                 f"{kind}: its value declares t{_with_default(bound.fn, 't', 'time')}, but {where} has no time to pass "

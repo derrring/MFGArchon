@@ -570,7 +570,7 @@ def laplacian_with_bc(
     u: NDArray,
     spacings: list[float] | tuple[float, ...],
     bc: BoundaryConditions | None = None,
-    time: float = 0.0,
+    time: float | None = None,
 ) -> NDArray:
     """
     Compute Laplacian with boundary condition handling.
@@ -624,7 +624,7 @@ def weighted_laplacian_with_bc(
     spacings: list[float] | tuple[float, ...],
     axis_weights: NDArray,
     bc: BoundaryConditions | None = None,
-    time: float = 0.0,
+    time: float | None = None,
 ) -> NDArray:
     """
     Compute weighted Laplacian with boundary condition handling.

@@ -102,7 +102,7 @@ def gradient(
     scheme: GradientScheme = "central",
     bc: BoundaryConditions | None = None,
     backend: ArrayBackend | None = None,
-    time: float = 0.0,
+    time: float | None = None,
 ) -> list[NDArray]:
     """
     Compute spatial gradient ∇u on regular grid.
@@ -230,7 +230,7 @@ def divergence(
     spacings: list[float] | tuple[float, ...],
     bc: BoundaryConditions | None = None,
     backend: ArrayBackend | None = None,
-    time: float = 0.0,
+    time: float | None = None,
 ) -> NDArray:
     """
     Compute divergence ∇·F of a vector field.
@@ -299,7 +299,7 @@ def laplacian(
     spacings: list[float] | tuple[float, ...],
     bc: BoundaryConditions | None = None,
     backend: ArrayBackend | None = None,
-    time: float = 0.0,
+    time: float | None = None,
 ) -> NDArray:
     """
     Compute Laplacian Δu = ∇·∇u on regular grid.
@@ -363,7 +363,7 @@ def hessian(
     spacings: list[float] | tuple[float, ...],
     bc: BoundaryConditions | None = None,
     backend: ArrayBackend | None = None,
-    time: float = 0.0,
+    time: float | None = None,
 ) -> NDArray:
     """
     Compute Hessian tensor ∇²u = [∂²u/∂xᵢ∂xⱼ].
@@ -451,7 +451,7 @@ def diffusion(
     bc: BoundaryConditions | None = None,
     backend: ArrayBackend | None = None,
     domain_bounds: NDArray | None = None,
-    time: float = 0.0,
+    time: float | None = None,
 ) -> NDArray:
     """
     Compute diffusion ∇·(Σ∇u) with automatic dispatch based on coefficient type.
@@ -576,7 +576,7 @@ def tensor_diffusion(
     spacings: list[float] | tuple[float, ...],
     bc: BoundaryConditions | None = None,
     domain_bounds: NDArray | None = None,
-    time: float = 0.0,
+    time: float | None = None,
 ) -> NDArray:
     """
     Compute anisotropic diffusion ∇·(Σ∇u).
@@ -612,7 +612,7 @@ def advection(
     method: AdvectionMethod = "upwind",
     bc: BoundaryConditions | None = None,
     backend: ArrayBackend | None = None,
-    time: float = 0.0,
+    time: float | None = None,
 ) -> NDArray:
     """
     Compute advection term for transport equation.

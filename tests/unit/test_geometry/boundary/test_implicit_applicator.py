@@ -355,7 +355,8 @@ class TestAgainstAPackageGeometry:
             dimension=2,
             default_bc=BCType.DIRICHLET,
         )
-        result = applicator.apply(np.ones(len(points)), bc, points)
+        # The value declares t; since 2b-iv this applicator, given no time, refuses it (#2512 row B2).
+        result = applicator.apply(np.ones(len(points)), bc, points, time=0.0)
 
         np.testing.assert_allclose(result[on_boundary], 42.0, atol=1e-12)
 

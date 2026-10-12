@@ -107,7 +107,7 @@ class DivergenceOperator(LinearOperator):
         spacings: Sequence[float],
         field_shape: tuple[int, ...] | int,
         bc: BoundaryConditions | None = None,
-        time: float = 0.0,
+        time: float | None = None,
     ):
         """
         Initialize divergence operator.
@@ -116,7 +116,7 @@ class DivergenceOperator(LinearOperator):
             spacings: Grid spacing per dimension [h₀, h₁, ..., hd₋₁]
             field_shape: Shape of scalar field arrays (Nx, Ny, ...) or Nx for 1D
             bc: Boundary conditions (None for periodic/wrap)
-            time: Time for time-dependent BCs (default 0.0)
+            time: Time for time-dependent BCs (None, the default, reads a constant or g(x) value and refuses one that declares t (#2512))
 
         Note:
             The vector field input has shape (dimension, Nx, Ny, ...).

@@ -168,7 +168,7 @@ class AdvectionOperator(LinearOperator):
         scheme: Literal["upwind", "centered"] = "upwind",
         form: Literal["gradient", "divergence"] = "divergence",
         bc: BoundaryConditions | None = None,
-        time: float = 0.0,
+        time: float | None = None,
         mass_conservative: bool = False,
     ):
         """
@@ -185,7 +185,7 @@ class AdvectionOperator(LinearOperator):
                 - "gradient": v·∇m (non-conservative, for HJB)
                 - "divergence": ∇·(vm) (conservative, for FP)
             bc: Boundary conditions (None for periodic/wrap)
-            time: Time for time-dependent BCs (default 0.0)
+            time: Time for time-dependent BCs (None, the default, reads a constant or g(x) value and refuses one that declares t (#2512))
             mass_conservative: If True (only for ``form="divergence"``, ``scheme="upwind"``),
                 use a finite-volume flux-difference discretisation that is discretely
                 mass-conservative at no-flux walls — the advective flux through a no-flux

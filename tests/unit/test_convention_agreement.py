@@ -144,10 +144,12 @@ class TestSigmaToDiffusionAgreement:
         xx, yy = np.meshgrid(np.linspace(0, 1, 11), np.linspace(0, 1, 11), indexing="ij")
         u = (xx**2 + 0.5 * yy**2).ravel()  # nonzero, unequal second derivatives per axis
         m = np.ones_like(u)
-        grads = solver._compute_gradients_nd(u)
+        grads = solver._compute_gradients_nd(u, time=0.0)
         sigma = 0.3
-        h_scalar = solver._evaluate_hamiltonian_vectorized(u, m, grads, volatility_at_n=sigma)
-        h_tensor = solver._evaluate_hamiltonian_vectorized(u, m, grads, volatility_tensor_at_n=np.diag([sigma, sigma]))
+        h_scalar = solver._evaluate_hamiltonian_vectorized(u, m, grads, volatility_at_n=sigma, time=0.0)
+        h_tensor = solver._evaluate_hamiltonian_vectorized(
+            u, m, grads, volatility_tensor_at_n=np.diag([sigma, sigma]), time=0.0
+        )
         np.testing.assert_allclose(h_tensor, h_scalar, rtol=0, atol=1e-13)  # was ~3.3x off (sigma vs sigma^2)
 
 

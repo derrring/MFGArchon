@@ -49,11 +49,11 @@ leg_c = legacy_central(U, Dx, Nx)
 leg_u = legacy_upwind(U, Dx, Nx)
 
 variants = {
-    "bc=None central": B._compute_gradient_array_1d(U, Dx, bc=None, upwind=False),
-    "neumann central": B._compute_gradient_array_1d(U, Dx, bc=neumann_bc(dimension=1), upwind=False),
-    "no_flux central": B._compute_gradient_array_1d(U, Dx, bc=no_flux_bc(dimension=1), upwind=False),
-    "dirichlet central": B._compute_gradient_array_1d(U, Dx, bc=dirichlet_bc(0.0, dimension=1), upwind=False),
-    "periodic central": B._compute_gradient_array_1d(U, Dx, bc=periodic_bc(dimension=1), upwind=False),
+    "bc=None central": B._compute_gradient_array_1d(U, Dx, bc=None, upwind=False, time=0.0),
+    "neumann central": B._compute_gradient_array_1d(U, Dx, bc=neumann_bc(dimension=1), upwind=False, time=0.0),
+    "no_flux central": B._compute_gradient_array_1d(U, Dx, bc=no_flux_bc(dimension=1), upwind=False, time=0.0),
+    "dirichlet central": B._compute_gradient_array_1d(U, Dx, bc=dirichlet_bc(0.0, dimension=1), upwind=False, time=0.0),
+    "periodic central": B._compute_gradient_array_1d(U, Dx, bc=periodic_bc(dimension=1), upwind=False, time=0.0),
 }
 
 np.set_printoptions(precision=4, suppress=True, linewidth=160)

@@ -197,7 +197,7 @@ class FDMApplicator(BaseStructuredApplicator):
         boundary_conditions: BoundaryConditions,
         grid_spacing: float | tuple[float, ...] | None = None,
         domain_bounds: NDArray[np.floating] | None = None,
-        time: float = 0.0,
+        time: float | None = None,
         geometry=None,  # Type: SupportsRegionMarking | None (Issue #596 Phase 2.5)
     ) -> NDArray[np.floating]:
         """
@@ -1914,7 +1914,7 @@ def pad_array_with_ghosts(
     array: NDArray[np.floating],
     bc: BoundaryConditions,
     ghost_depth: int = 1,
-    time: float = 0.0,
+    time: float | None = None,
     geometry: object | None = None,
     periodic_convention: PeriodicGridConvention | None = None,
     spacing: float | Sequence[float] | None = None,

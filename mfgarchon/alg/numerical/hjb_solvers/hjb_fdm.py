@@ -784,7 +784,8 @@ class HJBFDMSolver(BaseHJBSolver):
         U_guess: NDArray,
         volatility_at_n: float | NDArray | None = None,
         volatility_tensor_at_n: NDArray | None = None,
-        time: float = 0.0,
+        *,
+        time: float,
         constraint: ConstraintProtocol | None = None,
         source_term: NDArray | None = None,
         t_idx: int = -1,
@@ -928,7 +929,7 @@ class HJBFDMSolver(BaseHJBSolver):
 
         return U_solution
 
-    def _compute_gradients_nd(self, U: NDArray, time: float = 0.0) -> dict[int, NDArray]:
+    def _compute_gradients_nd(self, U: NDArray, *, time: float) -> dict[int, NDArray]:
         """Compute gradients using trait-based geometry operators (Issue #596 Phase 2.1).
 
         Uses geometry.get_gradient_operator() which automatically handles:
@@ -972,7 +973,7 @@ class HJBFDMSolver(BaseHJBSolver):
 
         return gradients
 
-    def _one_sided_differences_nd(self, U: NDArray, time: float = 0.0) -> dict[int, tuple[NDArray, NDArray]]:
+    def _one_sided_differences_nd(self, U: NDArray, *, time: float) -> dict[int, tuple[NDArray, NDArray]]:
         """``{d: (backward, forward)}`` differences along each axis, with the geometry's BC ghost padding (#2313)."""
         backward_ops = self.problem.geometry.get_gradient_operator(scheme="backward", time=time)
         forward_ops = self.problem.geometry.get_gradient_operator(scheme="forward", time=time)
@@ -985,7 +986,8 @@ class HJBFDMSolver(BaseHJBSolver):
         gradients: dict[int, NDArray],
         volatility_at_n: float | NDArray | None = None,
         volatility_tensor_at_n: NDArray | None = None,
-        time: float = 0.0,
+        *,
+        time: float,
     ) -> NDArray:
         """Evaluate Hamiltonian at all grid points with variable diffusion support.
 
@@ -1000,7 +1002,7 @@ class HJBFDMSolver(BaseHJBSolver):
                        Key d = dU/dxd.
             volatility_at_n: Scalar volatility coefficient (sigma)
             volatility_tensor_at_n: The volatility tensor Sigma, diagonal only; D = Sigma_ii^2/2 per axis.
-            time: Current time for time-dependent Hamiltonians (default 0.0)
+            time: Current time for time-dependent Hamiltonians (required)
         """
         return self._evaluate_hamiltonian_vectorized(
             U, M, gradients, volatility_at_n, volatility_tensor_at_n, time=time
@@ -1013,7 +1015,8 @@ class HJBFDMSolver(BaseHJBSolver):
         gradients: dict[int, NDArray],
         volatility_at_n=None,
         volatility_tensor_at_n=None,
-        time: float = 0.0,
+        *,
+        time: float,
     ) -> NDArray:
         """
         Vectorized Hamiltonian evaluation across all grid points.
@@ -1110,7 +1113,7 @@ class HJBFDMSolver(BaseHJBSolver):
         self,
         U: NDArray,
         coupling_coefficient: float | None = None,
-        time: float = 0.0,
+        time: float | None = None,
     ) -> sparse.csr_matrix:
         """
         Build upwind advection matrix from value function gradient.
@@ -1158,15 +1161,16 @@ class HJBFDMSolver(BaseHJBSolver):
             - build_linearized_operator(): the exact derivative, whose transpose the strict-adjoint FP step uses
         """
         if self.dimension == 1:
-            return self._build_advection_matrix_1d(U, coupling_coefficient, time)
+            return self._build_advection_matrix_1d(U, coupling_coefficient, time=time)
         else:
-            return self._build_advection_matrix_nd(U, coupling_coefficient, time)
+            return self._build_advection_matrix_nd(U, coupling_coefficient, time=time)
 
     def _build_advection_matrix_1d(
         self,
         U: NDArray,
         coupling_coefficient: float | None = None,
-        time: float = 0.0,
+        *,
+        time: float,
     ) -> sparse.csr_matrix:
         """Build 1D upwind advection matrix.
 
@@ -1250,7 +1254,8 @@ class HJBFDMSolver(BaseHJBSolver):
         self,
         U: NDArray,
         coupling_coefficient: float | None = None,
-        time: float = 0.0,
+        *,
+        time: float,
     ) -> sparse.csr_matrix:
         """Build nD upwind advection matrix.
 
@@ -1394,15 +1399,16 @@ class HJBFDMSolver(BaseHJBSolver):
                     f"or a Neumann/no-flux BC on the strict-adjoint path (Issue #1564 / RFC #1574)."
                 )
         if self.dimension == 1:
-            return self._build_linearized_operator_1d(U, M, time)
+            return self._build_linearized_operator_1d(U, M, time=time)
         else:
-            return self._build_linearized_operator_nd(U, M, time)
+            return self._build_linearized_operator_nd(U, M, time=time)
 
     def _build_linearized_operator_1d(
         self,
         U: NDArray,
         M: NDArray,
-        time: float = 0.0,
+        *,
+        time: float,
     ) -> sparse.csr_matrix:
         """Build 1D linearized HJB advection operator.
 
@@ -1473,7 +1479,8 @@ class HJBFDMSolver(BaseHJBSolver):
         self,
         U: NDArray,
         M: NDArray,
-        time: float = 0.0,
+        *,
+        time: float,
     ) -> sparse.csr_matrix:
         """Build nD linearized HJB advection operator.
 

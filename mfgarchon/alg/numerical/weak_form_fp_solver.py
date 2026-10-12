@@ -321,6 +321,21 @@ class WeakFormFPSolver(BaseFPSolver):
         )
         dt = self.problem.dt
         D = self._diffusion_coefficient(volatility)
+        # The forward step imposes a Dirichlet wall only when the BC is not pure Neumann, and then by Nitsche terms
+        # (meshless Galerkin, whose pure-Neumann test reads where its Dirichlet segments land, priority included) or by
+        # condensing onto the DIRICHLET segments' DOFs (FEM). This step does neither, so it would drop the wall in
+        # silence; refused, as FP-FDM's is (#2531, #2608). The test reads no boundary value: the BC's types and, for
+        # meshless, where its Dirichlet segments land; `time` is passed to nothing. FEM condenses every DIRICHLET
+        # segment whatever its priority (#2595 row 1), and this test follows it; it changes when #2595 does.
+        from mfgarchon.geometry.boundary import BCType
+
+        segments = self._bc.segments if self._bc is not None else []
+        if not self._is_pure_neumann() and any(seg.bc_type == BCType.DIRICHLET for seg in segments):
+            raise NotImplementedError(
+                f"{type(self).__name__}.solve_fp_step_adjoint_mode imposes no Dirichlet wall, so an absorbing exit "
+                "or a prescribed density would not hold its value (#2608, as #2531 for FP-FDM). With BlockIterator, "
+                "adjoint_mode='off' solves the FP side through solve_fp_system, which does."
+            )
 
         A_system = self._M / dt + A_advection_T + D * self._K
         rhs = (self._M / dt) @ M_current.ravel()

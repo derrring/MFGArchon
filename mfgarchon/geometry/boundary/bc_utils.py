@@ -176,7 +176,7 @@ def declares_periodic(boundary_conditions: Any) -> bool:
 
 
 def refuse_unplaceable_segments(
-    boundary_conditions: Any, dimension: int, *, consumer: str, ghosts: bool = False, time: float = 0.0
+    boundary_conditions: Any, dimension: int, *, consumer: str, ghosts: bool = False, time: float | None = None
 ) -> None:
     """Refuse, in a mix of operations, a segment the face reader cannot place. #2467, #1953, #2490.
 
@@ -261,14 +261,14 @@ def _ghost_effect(segment: Any, time: float) -> tuple:
     bc_type = segment.bc_type
     where = f"the FDM ghost check of segment {segment.name!r}"
     if bc_type == BCType.DIRICHLET:
-        return ("dirichlet", segment_value(segment, t=time, x=None, where=where))
+        return ("dirichlet", segment_value(segment, t=time, x=None, where=where, time_keyword="time"))
     if bc_type == BCType.NEUMANN:
-        return ("flux", segment_value(segment, t=time, x=None, where=where))
+        return ("flux", segment_value(segment, t=time, x=None, where=where, time_keyword="time"))
     if bc_type in (BCType.NO_FLUX, BCType.REFLECTING):
         return ("flux", 0.0)
     if bc_type == BCType.ROBIN:
         alpha, beta = segment_robin_coefficients(segment, where=where)
-        return ("robin", alpha, beta, segment_value(segment, t=time, x=None, where=where))
+        return ("robin", alpha, beta, segment_value(segment, t=time, x=None, where=where, time_keyword="time"))
     return (bc_type.value,)
 
 

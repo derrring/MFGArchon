@@ -95,7 +95,7 @@ class PartialDerivOperator(LinearOperator):
         field_shape: tuple[int, ...],
         scheme: Literal["central", "upwind", "backward", "forward", "one_sided", "weno5"] = "central",
         bc: BoundaryConditions | None = None,
-        time: float = 0.0,
+        time: float | None = None,
     ):
         """
         Initialize partial derivative operator.
@@ -110,7 +110,7 @@ class PartialDerivOperator(LinearOperator):
                 - "one_sided": 2nd-order one-sided at edges (forward at left, backward at right)
                 - "weno5": 5th-order WENO reconstruction (high-order, shock-capturing)
             bc: Boundary conditions (None for periodic)
-            time: Time for time-dependent BCs (default 0.0)
+            time: Time for time-dependent BCs (None, the default, reads a constant or g(x) value and refuses one that declares t (#2512))
 
         Raises:
             ValueError: If direction >= len(field_shape)
@@ -290,7 +290,7 @@ class GradientOperator:
         field_shape: tuple[int, ...],
         scheme: Literal["central", "upwind", "backward", "forward", "one_sided", "weno5"] = "central",
         bc: BoundaryConditions | None = None,
-        time: float = 0.0,
+        time: float | None = None,
     ):
         """
         Initialize gradient operator.
@@ -305,7 +305,7 @@ class GradientOperator:
                 - "one_sided": 2nd-order one-sided at edges (forward at left, backward at right)
                 - "weno5": 5th-order WENO reconstruction
             bc: Boundary conditions (None for periodic)
-            time: Time for time-dependent BCs (default 0.0)
+            time: Time for time-dependent BCs (None, the default, reads a constant or g(x) value and refuses one that declares t (#2512))
         """
         self.spacings = list(spacings)
         self.field_shape = tuple(field_shape)
