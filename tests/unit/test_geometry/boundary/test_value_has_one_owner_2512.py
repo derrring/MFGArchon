@@ -447,7 +447,8 @@ def test_a_planted_literal_time_is_found(package_copy, planted):
 # - At this head it finds only the five in `TIME_DEFAULTS_ALLOWED`.
 # - The 12 private members left the population by losing the default: their time is keyword-only and required, and
 #   every production caller passes it.
-# - The 24 public members and the 7 storers default to ``None``.
+# - The other 24 members and the 7 storers default to ``None``: 29 definitions, since two storers' constructors also
+#   forward into a third.
 #
 # **Blind spots:**
 # - Callees are matched by bare name. A chain can pass through a same-named function that does not reach the owner;

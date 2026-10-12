@@ -164,9 +164,9 @@ row grid/B1_face_segment            -
 #         A reader that takes a time but was given none names it in its refusal of a value that declares t
 #         (`boundary_value`'s `time_keyword`), the owner's one wording for D1, `get_value`, FEM, Nitsche and the six.
 #       - B2b-2b-iv: a time default that reaches the owner through any chain of calls, or that an operator stores
-#         and later hands on, is None (24 public functions, 7 operators) or required (12 private functions, every
-#         production caller passing the time). This holds under the guard's transitive default check, which counts
-#         41 such functions and 7 storers at 375122e5, and 5 now. `laplacian_with_bc`, and an operator built with no
+#         and later hands on, is None (29 definitions: 22 functions and the 7 operators that store it) or required
+#         (12 private functions, every production caller passing the time). This holds under the guard's transitive
+#         default check, which counts 41 such functions and 7 storers at 375122e5, and 5 now. `laplacian_with_bc`, and an operator built with no
 #         time, refuse a value that declares t and say to pass `time=`, under `test_boundary_value_owner_2512.py`.
 #         Met by B2b-2b-iv, with one listed exception: five public HJB functions whose time is also H's keep a
 #         numeric default, which #2612 deprecates (`compute_hjb_residual`, `compute_hjb_jacobian`, `newton_hjb_step`,
