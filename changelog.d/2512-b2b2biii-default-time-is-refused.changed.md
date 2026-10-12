@@ -6,7 +6,14 @@
   - `applicator_fdm.dirichlet_wall_rows`;
   - `base_hjb._get_bc_info_1d`;
   - the deprecated `BaseNeuralSolver.get_boundary_target_values`.
-- **FEM's Dirichlet assembly and meshless Galerkin's Nitsche assembly, called with no `t=` on a value that declares
-  `t`, now say to pass one** (#2512, row B2). They had advised writing the value as g(x), which drops the time a
-  caller has. The functions are `fem.bc_adapter.apply_bc_to_fem_system` and `get_dirichlet_dofs_and_values`, and
-  `nitsche.assemble_nitsche_terms`. The solvers always pass the time.
+- **A reader that takes a time but was given none now says to pass it, by its own parameter name, when it refuses a
+  value that declares `t`** (#2512, row B2). For example: "… declares t, but … was given no time; pass time= to read it
+  at a time".
+  - This covers the six readers above, `BoundaryConditions.get_bc_value_at_boundary` and `BCSegment.get_value`.
+  - It also covers FEM's Dirichlet assembly (`fem.bc_adapter.apply_bc_to_fem_system`, `get_dirichlet_dofs_and_values`)
+    and meshless Galerkin's Nitsche assembly (`nitsche.assemble_nitsche_terms`), which take `t=`.
+  - The six and the two assemblies had advised writing the value as a constant or as g(x), which drops the time a
+    caller has.
+  - A reader with no time to take still advises a value that needs none.
+  - Each solver passes its level's time to these. The exception is meshless Galerkin's FP: its Nitsche data are 0,
+    an exit, and need none.

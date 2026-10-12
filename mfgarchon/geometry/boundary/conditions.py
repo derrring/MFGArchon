@@ -43,7 +43,6 @@ from .types import (
     BoundaryFace,
     PeriodicGridConvention,
     _compute_sdf_gradient,
-    _declares_time,
     boundary_value,
     parse_boundary_face,
     repeated_endpoint_count,
@@ -517,12 +516,11 @@ class BoundaryConditions:
         else:
             # For mixed BCs, the highest priority segment that covers the boundary, or none: the default value
             segment = next((s for s in self.segments if self._segment_covers(s, boundary)), None)
-        value = segment.value if segment is not None else self.default_value
-        if time is None and _declares_time(value, segment):
-            raise NotImplementedError(f"{where}: the value declares t; pass time= to read it at a time (#2512 row B2).")
         if segment is not None:
-            return segment_value(segment, t=time, x=point, where=where)
-        return boundary_value(self.default_value, kind="default_value", t=time, x=point, where=where)
+            return segment_value(segment, t=time, x=point, where=where, time_keyword="time")
+        return boundary_value(
+            self.default_value, kind="default_value", t=time, x=point, where=where, time_keyword="time"
+        )
 
     def identify_boundary_face(
         self,

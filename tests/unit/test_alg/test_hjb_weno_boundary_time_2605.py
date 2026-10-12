@@ -21,8 +21,9 @@ stage at the step's start time also gave second order, with errors 0.68 times th
 keeps the time error far below the spatial one, so this oracle does not discriminate between the two stage-time
 conventions. It discriminates t = 0 from either.
 
-**Clock (2-D).** The multi-D path is a dimensional split and takes no source (#1991), so it has no exact solution.
-Its case pins the clock: the value is read over [0, T] and nowhere else, at both ends.
+**Clock, with no source.** The 1-D loop kept a clock only with a source, and the multi-D path, a dimensional split,
+takes none (#1991). So the ordinary path has no exact solution here, and its case pins the clock: the value is read
+over [0, T] and nowhere else, at both ends, in 1-D and under each split.
 """
 
 from __future__ import annotations
@@ -106,8 +107,9 @@ def test_a_time_dependent_neumann_value_converges_at_second_order():
     assert np.log2(errors[1] / errors[2]) > 1.8, errors
 
 
-@pytest.mark.parametrize("splitting", ["strang", "godunov"])
-def test_the_split_path_reads_the_value_over_the_whole_interval(splitting):
+@pytest.mark.parametrize(("d", "splitting"), [(1, "strang"), (2, "strang"), (2, "godunov")])
+def test_every_path_reads_the_value_over_the_whole_interval(d, splitting):
+    """With no source: the 1-D loop, which kept no clock without one, and the dimensional split under each method."""
     times = []
 
     def g(t):
@@ -115,10 +117,11 @@ def test_the_split_path_reads_the_value_over_the_whole_interval(splitting):
         return 0.1 * t
 
     n = 9
-    solver = HJBWENOSolver(_problem(neumann_bc(dimension=2, value=g), d=2, n=n), splitting_method=splitting)
+    shape = (n,) * d
+    solver = HJBWENOSolver(_problem(neumann_bc(dimension=d, value=g), d=d, n=n), splitting_method=splitting)
     times.clear()
     solver.solve_hjb_system(
-        M_density=np.ones((NT + 1, n, n)), U_terminal=np.zeros((n, n)), U_coupling_prev=np.zeros((NT + 1, n, n))
+        M_density=np.ones((NT + 1, *shape)), U_terminal=np.zeros(shape), U_coupling_prev=np.zeros((NT + 1, *shape))
     )
     assert min(times) == pytest.approx(0.0, abs=1e-12)
     assert max(times) == pytest.approx(T, abs=1e-12)

@@ -326,18 +326,16 @@ def _evaluate_segment_values(
     one that declares ``t`` is refused when no time is given. A constant follows the owner's rules (#2593): a real number or a real array of one element is its value, ``None``
     and what `_describe_bc_value` calls zero are 0, and anything else is refused.
     """
-    from mfgarchon.geometry.boundary.types import _declares_time, segment_value
+    from mfgarchon.geometry.boundary.types import segment_value
 
     where = f"the FEM Dirichlet assembly of segment {segment.name!r}"
-    if t is None and _declares_time(segment.value, segment):
-        raise NotImplementedError(f"{where}: the value declares t; pass t= to read it at a time (#2512 row B2).")
     if callable(segment.value):
         # Issue #1489 (F5): evaluate at the DOF coordinates via basis.doflocs (a coordinate for EVERY
         # DOF), NOT mesh.p (vertex coordinates only). For P2 the boundary DOF set includes edge-midpoint
         # indices >= n_vertices, so mesh.p[:, dofs] was out of bounds / wrong-coordinate.
         coords = basis.doflocs[:, dofs].T  # (n_dofs, dim)
-        return [segment_value(segment, t=t, x=x, where=where) for x in coords]
-    return [segment_value(segment, t=t, x=None, where=where)] * len(dofs)
+        return [segment_value(segment, t=t, x=x, where=where, time_keyword="t") for x in coords]
+    return [segment_value(segment, t=t, x=None, where=where, time_keyword="t")] * len(dofs)
 
 
 def _find_segment_facets(mesh: skfem.Mesh, segment) -> NDArray:

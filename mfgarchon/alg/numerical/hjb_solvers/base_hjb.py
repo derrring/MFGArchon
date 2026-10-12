@@ -213,7 +213,11 @@ def _get_bc_info_1d(
         seg_face = seg.face
         if seg_face is not None and seg_face == target_face:
             value = segment_value(
-                seg, t=time, x=None, where=f"the 1-D HJB boundary read of face {target_face.to_string()}"
+                seg,
+                t=time,
+                time_keyword="time",
+                x=None,
+                where=f"the 1-D HJB boundary read of face {target_face.to_string()}",
             )
             # Only a Robin segment's coefficients are read; the 1-D HJB uses them in its Robin arm alone.
             alpha, beta = (

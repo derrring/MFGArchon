@@ -10,7 +10,7 @@
     - at 52219be2: 2.21e-2, 4.26e-2, 4.63e-2, which does not converge;
     - now: 1.82e-3, 8.05e-4, 2.13e-4.
 
-    At n = 21 to 161 the order is 2.00, the same as with b constant, so stage-time boundary data costs no order
-    here.
+    From n = 21 to 161 the EOC is 1.92, 1.99, 2.00, as with b constant (1.91, 1.99, 2.00), so stage-time boundary
+    data costs no order here.
   - `HJBWENOSolver.solve_hjb_step` takes `time`, the time the step starts from. Without it, a value that declares
     `t` is refused.

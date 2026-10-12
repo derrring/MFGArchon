@@ -243,14 +243,14 @@ def _evaluate_g(segment, x_b: NDArray, t: float | None) -> NDArray:
     """A segment's prescribed Dirichlet value at boundary points and at ``t``, read by the one owner
     (`segment_value`, #2512 row B2): a constant, or a callable ``g(t, x)``, ``g(x)`` or ``g(t)``. One that declares
     ``t`` is refused when no time is given."""
-    from mfgarchon.geometry.boundary.types import _declares_time, segment_value
+    from mfgarchon.geometry.boundary.types import segment_value
 
     where = f"the meshless Nitsche assembly of segment {segment.name!r}"
-    if t is None and _declares_time(segment.value, segment):
-        raise NotImplementedError(f"{where}: the value declares t; pass t= to read it at a time (#2512 row B2).")
     if callable(segment.value):
-        return np.array([segment_value(segment, t=t, x=x, where=where) for x in x_b], dtype=np.float64)
-    return np.full(x_b.shape[0], segment_value(segment, t=t, x=None, where=where), dtype=np.float64)
+        return np.array(
+            [segment_value(segment, t=t, x=x, where=where, time_keyword="t") for x in x_b], dtype=np.float64
+        )
+    return np.full(x_b.shape[0], segment_value(segment, t=t, x=None, where=where, time_keyword="t"), dtype=np.float64)
 
 
 def assemble_nitsche_terms(

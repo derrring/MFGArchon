@@ -398,7 +398,12 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
         if bc_type == BCType.DIRICHLET:
             # Get Dirichlet value
             bc_value = boundary_value(
-                boundary_conditions.default_value, kind="default_value", t=time, x=None, where="the meshfree applicator"
+                boundary_conditions.default_value,
+                kind="default_value",
+                t=time,
+                time_keyword="time",
+                x=None,
+                where="the meshfree applicator",
             )
             field[on_boundary] = bc_value
 
@@ -414,7 +419,12 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
             # For meshfree without derivative info, use penalty approximation
             alpha, beta = _robin_alpha_beta(boundary_conditions)
             bc_value = boundary_value(
-                boundary_conditions.default_value, kind="default_value", t=time, x=None, where="the meshfree applicator"
+                boundary_conditions.default_value,
+                kind="default_value",
+                t=time,
+                time_keyword="time",
+                x=None,
+                where="the meshfree applicator",
             )
 
             if np.isclose(beta, 0.0):

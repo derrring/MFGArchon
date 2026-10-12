@@ -429,8 +429,12 @@ def test_a_planted_literal_time_is_found(package_copy, planted):
 # is ``None``, which the owner refuses for a value that declares t. A site is a function with that default whose own
 # body passes the parameter, by name, to `segment_value`, `boundary_value` or `get_bc_value_at_boundary`.
 # Blind spots: a default forwarded through a helper rather than to the owner directly (the transitive check is
-# B2b-2b-iv's); a default that is not a numeric literal (a named constant, a negative literal); a parameter renamed
-# or aliased before the call (``tt = time``); and, as in the other checks here, code outside a function body.
+# B2b-2b-iv's); a default that is not a numeric literal (a named constant, a negative literal); a time parameter
+# with another name (``t_now=0.0``); a parameter renamed or aliased before the call (``tt = time``); a nested def or
+# lambda that passes the outer function's parameter, since a scope's own nodes stop at a nested one; and, as in the
+# other checks here, code outside a function body. A wider scan run at 52219be2 and at this check's landing, which
+# entered nested scopes, took any parameter name and allowed a negative literal, found no time site beyond the eight
+# (review 1 of #2609).
 _TIME_PARAMETERS = frozenset({"t", "time", "current_time"})
 
 
