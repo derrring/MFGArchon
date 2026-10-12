@@ -741,7 +741,7 @@ class BoundaryConditions:
             )
         bounds = np.asarray(self.domain_bounds, dtype=float)
         tol = SDF_BOUNDARY_TOL
-        partial = False
+        part_of_face = False
         for key, (low, high) in segment.region.items():
             axis = _region_axis(segment, key, bounds.shape[0])
             b_low, b_high = bounds[axis]
@@ -752,8 +752,8 @@ class BoundaryConditions:
             elif high <= b_low + tol or low >= b_high - tol:
                 return "none"
             elif not (low <= b_low + tol and high >= b_high - tol):
-                partial = True
-        return "partial" if partial else "whole"
+                part_of_face = True
+        return "partial" if part_of_face else "whole"
 
     def _segment_for_tag(self, tag: Any) -> BCSegment:
         """A name that is no box face (a mesh tag): governed by equal name, or by an unplaced segment."""

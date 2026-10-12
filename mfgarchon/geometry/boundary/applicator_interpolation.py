@@ -177,7 +177,8 @@ class InterpolationApplicator(BaseBCApplicator):
         # faces are written: where faces share nodes, the owner's corner choice is written last.
         for face, bc_type, value in self._face_conditions(boundary_conditions, ndim, geometry, time):
             h = None if h_per_axis is None else float(h_per_axis[face.axis])
-            self._enforce_boundary_1d(field, face.axis, face.side, bc_type, value, self._extrapolation_order, h)
+            side: Literal["min", "max"] = "min" if face.side == "min" else "max"
+            self._enforce_boundary_1d(field, face.axis, side, bc_type, value, self._extrapolation_order, h)
 
         return field
 

@@ -1071,9 +1071,9 @@ def dirichlet_wall_rows(
                     )
                 )
     for _, axis, side, g in sorted(claims, key=lambda claim: claim[0]):
-        face: list[int | slice] = [slice(None)] * len(shape)
-        face[axis] = 0 if side == "min" else -1
-        index = tuple(face)
+        wall: list[int | slice] = [slice(None)] * len(shape)
+        wall[axis] = 0 if side == "min" else -1
+        index = tuple(wall)
         values[index] = np.where(mask[index], values[index], g)
         mask[index] = True
     return mask, values

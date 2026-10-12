@@ -135,7 +135,9 @@ def _periodic_by_normal(default_bc=BCType.NO_FLUX):
     ("bc_factory", "error", "refusal"),
     [
         pytest.param(_channel, NotImplementedError, "periodic on some faces", id="channel"),
-        pytest.param(_periodic_by_normal, NotImplementedError, "periodic on some faces", id="periodic-by-normal-direction"),
+        pytest.param(
+            _periodic_by_normal, NotImplementedError, "periodic on some faces", id="periodic-by-normal-direction"
+        ),
         pytest.param(
             lambda: _periodic_by_normal(default_bc=None),
             ValueError,
