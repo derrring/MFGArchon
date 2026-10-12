@@ -19,7 +19,7 @@ from scipy import sparse
 
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
-from mfgarchon.geometry.boundary import dirichlet_bc, no_flux_bc, robin_bc
+from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, dirichlet_bc, no_flux_bc, robin_bc
 
 REFUSAL = r"solve_fp_step_adjoint_mode imposes no Dirichlet wall.*adjoint_mode='off'"
 
@@ -72,12 +72,34 @@ def test_the_adjoint_step_refuses_a_dirichlet_wall(build):
         _adjoint_step(build())
 
 
+def _overridden_dirichlet():
+    """A Dirichlet segment with no face, which a no-flux segment of higher priority overrides on each face: meshless
+    Galerkin places no Dirichlet face, so its forward step builds no Nitsche block and has no wall."""
+    return BoundaryConditions(
+        dimension=1,
+        segments=[
+            BCSegment(name="d", bc_type=BCType.DIRICHLET, value=0.0, priority=-1),
+            BCSegment(name="lo", bc_type=BCType.NO_FLUX, boundary="x_min", priority=1),
+            BCSegment(name="hi", bc_type=BCType.NO_FLUX, boundary="x_max", priority=1),
+        ],
+    )
+
+
 @pytest.mark.parametrize(
-    "bc", [no_flux_bc(dimension=1), robin_bc(dimension=1, alpha=1.0, beta=1.0, value=0.0)], ids=["no-flux", "Robin"]
+    ("build", "bc"),
+    [
+        (_fem, no_flux_bc(dimension=1)),
+        (_fem, robin_bc(dimension=1, alpha=1.0, beta=1.0, value=0.0)),
+        (_meshless, no_flux_bc(dimension=1)),
+        (_meshless, _overridden_dirichlet()),
+    ],
+    ids=["FP-FEM no-flux", "FP-FEM Robin", "meshless no-flux", "meshless, a Dirichlet overridden on every face"],
 )
-def test_a_bc_with_no_dirichlet_wall_is_solved_as_before(bc):
-    """Robin is carried by the step's own boundary mass (#1237), so it is not a wall this step drops."""
-    solver = _fem(bc)
+def test_a_bc_with_no_dirichlet_wall_is_solved_as_before(build, bc):
+    """Robin is carried by FP-FEM's own boundary mass (#1237), so it is not a wall this step drops. A Dirichlet segment
+    every face of which a higher priority overrides is no wall for meshless Galerkin; a test on the BC's types alone
+    would refuse it."""
+    solver = build(bc)
     m = _adjoint_step(solver)
     assert m.shape == (solver.n_dof,)
     assert np.isfinite(m).all()
