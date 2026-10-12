@@ -127,7 +127,7 @@ class TestHJBFDM2DBasic:
         U = X**2 + Y**2
 
         # Compute gradients
-        gradients = solver._compute_gradients_nd(U)
+        gradients = solver._compute_gradients_nd(U, time=0.0)
 
         # Check gradient keys (new format uses integer dimension indices)
         # Key -1 = function value U, Key 0 = ∂u/∂x₀, Key 1 = ∂u/∂x₁

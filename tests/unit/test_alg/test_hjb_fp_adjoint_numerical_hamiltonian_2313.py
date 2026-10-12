@@ -129,7 +129,7 @@ def test_the_default_momentum_is_engquist_osher_at_a_local_maximum():
     At a maximum with a+ = -b- = 1 the two presets differ by construction: sqrt(2) against 1.
     """
     backward, forward = np.array([1.0]), np.array([-1.0])
-    default = _compute_gradient_array_1d(np.array([-1.0, 0.0, -1.0]), 1.0, bc=None, upwind=True)[1]
+    default = _compute_gradient_array_1d(np.array([-1.0, 0.0, -1.0]), 1.0, bc=None, upwind=True, time=0.0)[1]
     assert default == pytest.approx(float(upwind_momentum(backward, forward, "engquist_osher")[0]))
     assert default != pytest.approx(float(upwind_momentum(backward, forward, "rouy_tourin")[0]))
 
@@ -151,7 +151,9 @@ def _hamiltonian_columns(solver, problem, u, m, preset: str) -> np.ndarray:
             )  # fmt: skip
             return np.asarray(residual, dtype=float) - state / problem.dt
         gradients = solver._compute_gradients_nd(state.reshape(u.shape), time=0.0)
-        return np.asarray(solver._evaluate_hamiltonian_nd(state.reshape(u.shape), m, gradients), dtype=float).ravel()
+        return np.asarray(
+            solver._evaluate_hamiltonian_nd(state.reshape(u.shape), m, gradients, time=0.0), dtype=float
+        ).ravel()
 
     columns = np.zeros((total, total))
     for j in range(total):

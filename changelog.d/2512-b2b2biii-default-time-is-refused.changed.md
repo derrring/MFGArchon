@@ -7,8 +7,8 @@
   - `base_hjb._get_bc_info_1d`;
   - the deprecated `BaseNeuralSolver.get_boundary_target_values`.
 - **A reader that takes a time but was given none now says to pass it, by its own parameter name, when it refuses a
-  value that declares `t`** (#2512, row B2). For example: "… declares t, but … was given no time; pass time= to read it
-  at a time".
+  value that declares `t`** (#2512, row B2). For example: "… declares t, but … was given no time. A caller that has one
+  passes it as time=; a solver that reaches … without one does not yet support a time-dependent value there (#2615)".
   - This covers the six readers above, `BoundaryConditions.get_bc_value_at_boundary` and `BCSegment.get_value`.
   - It also covers FEM's Dirichlet assembly (`fem.bc_adapter.apply_bc_to_fem_system`, `get_dirichlet_dofs_and_values`)
     and meshless Galerkin's Nitsche assembly (`nitsche.assemble_nitsche_terms`), which take `t=`.

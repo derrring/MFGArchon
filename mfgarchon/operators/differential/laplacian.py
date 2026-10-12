@@ -92,7 +92,7 @@ class LaplacianOperator(LinearOperator):
         field_shape: tuple[int, ...] | int,
         bc: BoundaryConditions | None = None,
         order: int = 2,
-        time: float = 0.0,
+        time: float | None = None,
         mass_conservative: bool = False,
         coefficient_field: NDArray | None = None,
     ):
@@ -104,7 +104,7 @@ class LaplacianOperator(LinearOperator):
             field_shape: Shape of field arrays (Nx, Ny, ...) or Nx for 1D
             bc: Boundary conditions (None for periodic/wrap)
             order: Discretization order (currently only order=2 supported)
-            time: Time for time-dependent BCs (default 0.0)
+            time: Time for time-dependent BCs (None, the default, reads a constant or g(x) value and refuses one that declares t (#2512))
             mass_conservative: Gates ``coefficient_field`` only. It used to select between two
                 wall stencils and no longer does: since #2145 both emit ``diag -2/h²,
                 neighbor +2/h²`` and ``as_scipy_sparse()`` returns byte-identical matrices

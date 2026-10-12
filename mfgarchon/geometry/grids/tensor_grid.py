@@ -1635,7 +1635,7 @@ class TensorProductGrid(
         direction: int | None = None,
         order: int = 2,
         scheme: str = "central",
-        time: float = 0.0,
+        time: float | None = None,
         bc: BoundaryConditions | None = None,
     ):
         """
@@ -1647,7 +1647,7 @@ class TensorProductGrid(
             direction: Specific direction (0=x, 1=y, 2=z). If None, return all directions.
             order: Discretization order (not used yet, reserved for future)
             scheme: Difference scheme ("central", "upwind", "one_sided")
-            time: Time for time-dependent boundary conditions (default 0.0)
+            time: Time for time-dependent boundary conditions (None, the default, reads a constant or g(x) value and refuses one that declares t (#2512))
             bc: Boundary conditions to use (None uses grid's default BC).  Mirrors the
                 ``bc=`` parameter of ``get_laplacian_operator`` so callers with a
                 solver-level BC override can thread it in without mutating the grid.
