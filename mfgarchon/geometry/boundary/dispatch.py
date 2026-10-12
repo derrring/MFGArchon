@@ -151,7 +151,7 @@ def apply_bc(
     field: NDArray[np.floating],
     boundary_conditions: BoundaryConditions,
     *,
-    time: float = 0.0,
+    time: float | None = None,
     discretization: DiscretizationType | str = DiscretizationType.FDM,
     ghost_depth: int = 1,
     points: NDArray[np.floating] | None = None,
@@ -168,7 +168,7 @@ def apply_bc(
         geometry: Geometry object implementing GeometryProtocol
         field: Field array to apply BCs to (interior values)
         boundary_conditions: BC specification
-        time: Time for time-dependent BCs (default: 0.0)
+        time: Time for time-dependent BCs (None, the default, reads a constant or g(x) value and refuses one that declares t (#2512))
         discretization: Discretization method (default: FDM)
         ghost_depth: Ghost cell depth for FDM (default: 1)
         points: Collocation points for meshfree methods (optional).

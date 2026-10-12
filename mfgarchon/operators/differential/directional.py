@@ -89,7 +89,7 @@ class DirectDerivOperator(LinearOperator):
         field_shape: tuple[int, ...],
         scheme: Literal["central", "upwind", "one_sided"] = "central",
         bc: BoundaryConditions | None = None,
-        time: float = 0.0,
+        time: float | None = None,
     ):
         """
         Initialize directional derivative operator.
@@ -105,7 +105,7 @@ class DirectDerivOperator(LinearOperator):
                 - "upwind": Godunov upwind (monotone, 1st-order)
                 - "one_sided": 2nd-order one-sided at edges (forward at left, backward at right)
             bc: Boundary conditions (None for periodic)
-            time: Time for time-dependent BCs (default 0.0)
+            time: Time for time-dependent BCs (None, the default, reads a constant or g(x) value and refuses one that declares t (#2512))
 
         Raises:
             ValueError: If direction shape is incompatible with field_shape
@@ -274,7 +274,7 @@ class NormalDerivOperator(DirectDerivOperator):
         field_shape: tuple[int, ...],
         scheme: Literal["central", "upwind", "one_sided"] = "central",
         bc: BoundaryConditions | None = None,
-        time: float = 0.0,
+        time: float | None = None,
         normal_source: str = "explicit",
     ):
         """
@@ -289,7 +289,7 @@ class NormalDerivOperator(DirectDerivOperator):
             field_shape: Shape of field arrays (Nx, Ny, ...)
             scheme: Difference scheme for gradient computation
             bc: Boundary conditions (None for periodic)
-            time: Time for time-dependent BCs (default 0.0)
+            time: Time for time-dependent BCs (None, the default, reads a constant or g(x) value and refuses one that declares t (#2512))
             normal_source: How normal was computed ("explicit", "sdf", "axis")
 
         Raises:
@@ -335,7 +335,7 @@ class NormalDerivOperator(DirectDerivOperator):
         spacings: Sequence[float],
         scheme: Literal["central", "upwind", "one_sided"] = "central",
         bc: BoundaryConditions | None = None,
-        time: float = 0.0,
+        time: float | None = None,
     ) -> NormalDerivOperator:
         """
         Create NormalDerivOperator from signed distance function.

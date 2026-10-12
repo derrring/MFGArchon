@@ -118,7 +118,7 @@ class InterpolationApplicator(BaseBCApplicator):
         field: NDArray[np.floating],
         boundary_conditions: BoundaryConditions,
         spacing: NDArray[np.floating] | tuple[float, ...] | float | None = None,
-        time: float = 0.0,
+        time: float | None = None,
     ) -> NDArray[np.floating]:
         """
         Enforce boundary condition values on field after interpolation.

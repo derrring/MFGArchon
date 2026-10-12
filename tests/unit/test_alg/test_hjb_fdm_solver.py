@@ -653,7 +653,7 @@ class TestHJBFDMSolverGhostValueBC:
         U_test = np.random.rand(Nx, Ny)
 
         # Call _compute_gradients_nd which should use ghost values
-        gradients = solver._compute_gradients_nd(U_test)
+        gradients = solver._compute_gradients_nd(U_test, time=0.0)
 
         # Check gradient structure
         assert 0 in gradients  # x gradient
@@ -982,7 +982,7 @@ class TestBoundaryGradientBCAware1384:
         dx = x[1] - x[0]
         U = x**2  # asymmetric on [0,1]; analytic du/dx = 2x (0 at left, 2 at right)
         legacy = self._legacy_periodic_grad(U, dx)
-        bc_aware = base_hjb._compute_gradient_array_1d(U, dx, bc=_nf(dimension=1), upwind=False)
+        bc_aware = base_hjb._compute_gradient_array_1d(U, dx, bc=_nf(dimension=1), upwind=False, time=0.0)
         # interior agrees to <=1 ULP (only the boundary stencil changes)
         assert np.allclose(bc_aware[1:-1], legacy[1:-1], rtol=0, atol=1e-12)
         # boundary is materially different: legacy wraps to the opposite end (~ -9.97)
@@ -1018,7 +1018,7 @@ class TestBoundaryGradientBCAware1384:
         # The field lives on np.linspace(0, 1, Nx) -- endpoint-inclusive -- and this BC is built
         # bare, so it says which layout it is for; a grid would otherwise bind that (Issue #1822).
         bc = _pb(dimension=1, convention=PeriodicGridConvention.ENDPOINT_INCLUSIVE)
-        bc_aware = base_hjb._compute_gradient_array_1d(U, dx, bc=bc, upwind=False)
+        bc_aware = base_hjb._compute_gradient_array_1d(U, dx, bc=bc, upwind=False, time=0.0)
 
         # A central difference on this grid is O(h^2); at Nx=21 that is ~0.10 for this field, and
         # the tolerance is set from the INTERIOR error so the endpoints cannot hide behind a

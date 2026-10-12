@@ -114,7 +114,7 @@ class ImplicitApplicator(MeshfreeApplicator):
         field: NDArray[np.floating],
         boundary_conditions: BoundaryConditions,
         points: NDArray[np.floating],
-        time: float = 0.0,
+        time: float | None = None,
         *,
         spacing: NDArray[np.floating] | tuple[float, ...] | float | None = None,
     ) -> NDArray[np.floating]:
@@ -130,7 +130,7 @@ class ImplicitApplicator(MeshfreeApplicator):
             field: Field values at points (shape: (N,) or (N, components))
             boundary_conditions: BC specification
             points: Spatial coordinates (shape: (N, dim))
-            time: Time for time-dependent BCs (default: 0.0)
+            time: Time for time-dependent BCs (None, the default, reads a constant or g(x) value and refuses one that declares t (#2512))
             spacing: Grid spacing for gradient estimation (optional)
 
         Returns:
@@ -277,13 +277,13 @@ class ImplicitApplicator(MeshfreeApplicator):
             value = uniform_segment.value
 
             def read(point):
-                return segment_value(uniform_segment, t=time, x=point, where=where)
+                return segment_value(uniform_segment, t=time, x=point, where=where, time_keyword="time")
 
         else:
             value = bc.default_value
 
             def read(point):
-                return boundary_value(value, kind="default_value", t=time, x=point, where=where)
+                return boundary_value(value, kind="default_value", t=time, x=point, where=where, time_keyword="time")
 
         if callable(value) and not is_provider(value):
             return np.array([read(np.asarray(p, dtype=float)) for p in points])

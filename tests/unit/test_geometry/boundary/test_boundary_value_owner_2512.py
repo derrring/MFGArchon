@@ -114,10 +114,11 @@ def test_an_accessor_given_no_time_or_no_point_refuses_a_value_that_declares_it(
 
 
 def _timed_readers():
-    """Nine of the thirteen reachable sites that name their reader's time keyword, one case per branch, each a callable
-    taking the reader's keywords. A call with a time of 0.5 returns values holding g(0.5) = 0.75, g(t) = 0.25 + t, or
-    None for the ghost fill, which returns nothing to read. The other four sites (D1's segment branch,
-    `BCSegment.get_value`, FEM's and Nitsche's assemblies) are pinned by the accessor, FEM and Nitsche tests."""
+    """The reachable sites that name their reader's time keyword, one case per branch, each a callable taking the
+    reader's keywords. A call with a time of 0.5 returns values holding g(0.5) = 0.75, g(t) = 0.25 + t, or None for the
+    ghost fill, which returns nothing to read. Four more sites (D1's segment branch, `BCSegment.get_value`, FEM's and
+    Nitsche's assemblies) are pinned by the accessor, FEM and Nitsche tests. The implicit applicator's, the n-D ghost
+    values' and the FDM ghost check's became reachable when their readers' time defaulted to None (2b-iv)."""
     import warnings
     from types import SimpleNamespace
 
@@ -125,8 +126,12 @@ def _timed_readers():
     from mfgarchon.alg.numerical.hjb_solvers.base_hjb import _get_bc_info_1d
     from mfgarchon.geometry import TensorProductGrid
     from mfgarchon.geometry.boundary import no_flux_bc
+    from mfgarchon.geometry.boundary._compat import get_ghost_values_nd
     from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator, PreallocatedGhostBuffer, dirichlet_wall_rows
+    from mfgarchon.geometry.boundary.applicator_implicit import ImplicitApplicator
     from mfgarchon.geometry.boundary.applicator_meshfree import MeshfreeApplicator
+    from mfgarchon.geometry.boundary.bc_utils import _ghost_effect
+    from mfgarchon.geometry.implicit.hypersphere import Hypersphere
 
     def g(t):
         return 0.25 + t
@@ -159,6 +164,26 @@ def _timed_readers():
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[5], boundary_conditions=no_flux_bc(dimension=1))
     points = np.linspace(0.0, 1.0, 5).reshape(-1, 1)
 
+    sphere = Hypersphere(center=np.array([0.5, 0.5]), radius=0.4)
+    theta = np.linspace(0.0, 2.0 * np.pi, 13)[:-1]
+    on_sphere = np.column_stack([0.5 + 0.4 * np.cos(theta), 0.5 + 0.4 * np.sin(theta)])
+    implicit_uniform = BoundaryConditions(
+        dimension=2, segments=[face(g, "d", BCType.DIRICHLET, None)], default_bc=BCType.DIRICHLET
+    )
+    implicit_default = BoundaryConditions(
+        dimension=2,
+        segments=[face(0.0, "L", BCType.DIRICHLET, "x_min"), face(0.0, "R", BCType.DIRICHLET, "x_max")],
+        default_bc=BCType.DIRICHLET,
+        default_value=g,
+    )
+    held = np.full(5, 0.75)  # g(0.5): the field a Dirichlet ghost reproduces, so the ghost holds g(0.5) either way
+
+    def implicit(bc, **kw):
+        return ImplicitApplicator(geometry=sphere).apply(np.zeros(len(on_sphere)), bc, on_sphere, **kw)
+
+    def ghost_values(bc, **kw):
+        return np.concatenate([np.ravel(v) for v in get_ghost_values_nd(held, bc, (0.25,), **kw).values()])
+
     def neural(**kw):
         solver = SimpleNamespace(get_boundary_conditions=lambda: SimpleNamespace(value=g))
         with warnings.catch_warnings():
@@ -181,6 +206,19 @@ def _timed_readers():
             np.zeros(5), robin_default, points, **kw
         ),
         "get_boundary_target_values": neural,
+        "ImplicitApplicator.apply, a uniform segment": lambda **kw: implicit(implicit_uniform, **kw),
+        "ImplicitApplicator.apply, the default value": lambda **kw: implicit(implicit_default, **kw),
+        "get_ghost_values_nd, uniform": lambda **kw: ghost_values(uniform, **kw),
+        "get_ghost_values_nd, a face segment": lambda **kw: ghost_values(on_x_min, **kw),
+        "get_ghost_values_nd, the default value": lambda **kw: ghost_values(default_g, **kw),
+        # `refuse_unplaceable_segments(time=None)` hands its time to the check as is.
+        "the FDM ghost check, Dirichlet": lambda time=None: _ghost_effect(face(g, "s", BCType.DIRICHLET, None), time)[
+            1
+        ],
+        "the FDM ghost check, Neumann": lambda time=None: _ghost_effect(face(g, "s", BCType.NEUMANN, None), time)[1],
+        "the FDM ghost check, Robin": lambda time=None: _ghost_effect(
+            face(g, "s", BCType.ROBIN, None, alpha=1.0, beta=1.0), time
+        )[3],
     }
 
 
@@ -196,18 +234,47 @@ def _timed_readers():
         "MeshfreeApplicator.apply, Dirichlet",
         "MeshfreeApplicator.apply, Robin",
         "get_boundary_target_values",
+        "ImplicitApplicator.apply, a uniform segment",
+        "ImplicitApplicator.apply, the default value",
+        "get_ghost_values_nd, uniform",
+        "get_ghost_values_nd, a face segment",
+        "get_ghost_values_nd, the default value",
+        "the FDM ghost check, Dirichlet",
+        "the FDM ghost check, Neumann",
+        "the FDM ghost check, Robin",
     ],
 )
 def test_a_reader_given_no_time_says_to_pass_its_time(reader):
     """A reader that takes a time refuses a value that declares t when given none, and names its own time parameter,
-    which the advice then runs with (#2512 row B2, #2605). Dropping the keyword at any of the nine sites
-    `_timed_readers` holds turns its case red (reviews 2 and 3 of #2609)."""
+    which the advice then runs with (#2512 row B2, #2605). Dropping the keyword at any site `_timed_readers` holds turns
+    its case red."""
     call = _timed_readers()[reader]
     with pytest.raises(NotImplementedError, match=r"declares t, but .* was given no time; pass time= to read it"):
         call()
     result = call(time=0.5)
     if result is not None:
         assert np.isclose(np.ravel(np.asarray(result, dtype=float)), 0.75).any(), result
+
+
+@pytest.mark.parametrize("entry", ["laplacian_with_bc", "LaplacianOperator"])
+def test_an_operator_given_no_time_refuses_and_its_advice_runs(entry):
+    """`laplacian_with_bc`, and an operator that stores its time, read a value that declares t at the time they are
+    given. With none, the default since 2b-iv, they refuse at the first read and say to pass `time=`. With `time=0.5`
+    they give what g(0.5) = 0.75 as a constant gives. At 375122e5 both read g(0) with no time, in silence."""
+    from mfgarchon.geometry.boundary import dirichlet_bc
+    from mfgarchon.operators.differential.laplacian import LaplacianOperator
+    from mfgarchon.operators.stencils.finite_difference import laplacian_with_bc
+
+    u = np.linspace(0.0, 1.0, 9) ** 2
+    timed, held = dirichlet_bc(dimension=1, value=lambda t: 0.25 + t), dirichlet_bc(dimension=1, value=0.75)
+    if entry == "laplacian_with_bc":
+        apply = lambda bc, **kw: laplacian_with_bc(u, [0.125], bc, **kw)  # noqa: E731
+    else:
+        apply = lambda bc, **kw: LaplacianOperator([0.125], (9,), bc=bc, **kw)(u)  # noqa: E731
+    with pytest.raises(NotImplementedError, match=r"declares t, but .* was given no time; pass time= to read it"):
+        apply(timed)
+    np.testing.assert_array_equal(apply(timed, time=0.5), apply(held))
+    assert not np.array_equal(apply(timed, time=0.5), apply(timed, time=0.0)), "g(t) does not reach the result"
 
 
 # `BCSegment.get_value(point=[0.9], t=0.5)`, HJB-GFDM's Dirichlet read: the callable, the value b10b9e65 read, and

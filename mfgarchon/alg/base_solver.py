@@ -421,7 +421,7 @@ class BaseNumericalSolver(BaseMFGSolver):
     def apply_boundary_conditions(
         self,
         field: NDArray[np.floating],
-        time: float = 0.0,
+        time: float | None = None,
     ) -> NDArray[np.floating]:
         """
         Apply boundary conditions to a field using unified dispatch.
@@ -431,7 +431,7 @@ class BaseNumericalSolver(BaseMFGSolver):
 
         Args:
             field: Field array to apply BCs to (interior values)
-            time: Time for time-dependent BCs (default: 0.0)
+            time: Time for time-dependent BCs (None, the default, reads a constant or g(x) value and refuses one that declares t (#2512))
 
         Returns:
             Field with BCs applied (may be padded for FDM methods)

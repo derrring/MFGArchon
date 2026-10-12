@@ -40,7 +40,8 @@ _DX = 0.05
 
 
 def _pad(bc):
-    return np.asarray(pad_array_with_ghosts(_FIELD, bc, ghost_depth=1, spacing=_DX)).ravel()
+    # `lambda t: 2.0` declares t, and since 2b-iv a ghost padding given no time refuses it (#2512 row B2).
+    return np.asarray(pad_array_with_ghosts(_FIELD, bc, ghost_depth=1, spacing=_DX, time=0.0)).ravel()
 
 
 def _mixed_with_default(default_bc, default_value=0.0):

@@ -88,7 +88,7 @@ def get_ghost_values_nd(
     boundary_conditions: BoundaryConditions,
     spacing: tuple[float, ...] | NDArray[np.floating],
     config: GhostCellConfig | None = None,
-    time: float = 0.0,
+    time: float | None = None,
 ) -> dict[tuple[int, int], NDArray[np.floating]]:
     """
     Compute ghost values for each boundary without padding the array.
@@ -114,7 +114,7 @@ def get_ghost_values_nd(
         boundary_conditions: BC specification (unified or legacy)
         spacing: Grid spacing for each dimension, tuple or array of length d
         config: Ghost cell configuration (grid type)
-        time: Current time for time-dependent BC values (default: 0.0)
+        time: Current time for time-dependent BC values (None, the default, reads a constant or g(x) value and refuses one that declares t (#2512))
 
     Returns:
         Dictionary mapping (dimension, side) to ghost value arrays:
@@ -399,8 +399,8 @@ def _get_bc_value_at_boundary(
     where = f"get_ghost_values_nd on face {boundary}"
     for segment in bc.segments:
         if segment.boundary == boundary:
-            return segment_value(segment, t=time, x=None, where=where)
-    return boundary_value(bc.default_value, kind="default_value", t=time, x=None, where=where)
+            return segment_value(segment, t=time, x=None, where=where, time_keyword="time")
+    return boundary_value(bc.default_value, kind="default_value", t=time, x=None, where=where, time_keyword="time")
 
 
 def _get_bc_type_and_value(
@@ -415,4 +415,4 @@ def _get_bc_type_and_value(
 
     # Uniform, or mixed read by its first segment, as before; the value through the one owner (#2512 row B2).
     seg = boundary_conditions.segments[0]
-    return seg.bc_type, segment_value(seg, t=time, x=None, where="get_ghost_values_nd (uniform)")
+    return seg.bc_type, segment_value(seg, t=time, x=None, where="get_ghost_values_nd (uniform)", time_keyword="time")

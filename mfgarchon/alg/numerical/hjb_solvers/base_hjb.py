@@ -76,7 +76,8 @@ def _one_sided_differences_1d(
     U_array: np.ndarray,
     Dx: float,
     bc: BoundaryConditions | None = None,
-    time: float = 0.0,
+    *,
+    time: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """``(backward, forward)`` differences of a 1D array, with the same ghost padding the gradient uses (#2313).
 
@@ -94,7 +95,8 @@ def _compute_gradient_array_1d(
     Dx: float,
     bc: BoundaryConditions | None = None,
     upwind: bool = False,
-    time: float = 0.0,
+    *,
+    time: float,
     numerical_hamiltonian: NumericalHamiltonian = DEFAULT_NUMERICAL_HAMILTONIAN,
 ) -> np.ndarray:
     """
@@ -153,7 +155,8 @@ def _compute_laplacian_1d(
     Dx: float,
     bc: BoundaryConditions | None = None,
     domain_bounds: np.ndarray | None = None,
-    time: float = 0.0,
+    *,
+    time: float,
 ) -> np.ndarray:
     """
     Compute Laplacian for entire 1D array using BC-aware computation.

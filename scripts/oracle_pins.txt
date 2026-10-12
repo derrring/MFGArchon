@@ -163,8 +163,14 @@ row grid/B1_face_segment            -
 #         cached Laplacian reads the step's time, under `test_hjb_fdm_laplacian_time_2543.py`; it closes #2543.
 #         A reader that takes a time but was given none names it in its refusal of a value that declares t
 #         (`boundary_value`'s `time_keyword`), the owner's one wording for D1, `get_value`, FEM, Nitsche and the six.
-#       - B2b-2b-iv takes the defaults forwarded to the owner through helpers, and the guard's transitive check
-#         (audit session ruling, 2026-10-12).
+#       - B2b-2b-iv: a time default that reaches the owner through any chain of calls, or that an operator stores
+#         and later hands on, is None (24 public functions, 7 operators) or required (12 private functions, every
+#         production caller passing the time). This holds under the guard's transitive default check, which counts
+#         41 such functions and 7 storers at 375122e5, and 5 now. `laplacian_with_bc`, and an operator built with no
+#         time, refuse a value that declares t and say to pass `time=`, under `test_boundary_value_owner_2512.py`.
+#         Met by B2b-2b-iv, with one listed exception: five public HJB functions whose time is also H's keep a
+#         numeric default, which #2612 deprecates (`compute_hjb_residual`, `compute_hjb_jacobian`, `newton_hjb_step`,
+#         `solve_hjb_timestep_newton`, `HJBFDMSolver.build_linearized_operator`; audit session ruling, 2026-10-12).
 #       The guard cannot see construction-time binding, so only #2543's oracle covers it. #2543's other half, a
 #       replaced BC object solved stale, is #2475's class, a BC captured at construction, not value form or time,
 #       and is not this row's: it is row B9's (user ruling, 2026-10-12);
@@ -178,7 +184,6 @@ row grid/B2_value_form_and_time     tests/unit/test_alg/test_fp_fdm_dirichlet_ti
 row grid/B2_value_form_and_time     tests/unit/test_alg/test_dirichlet_value_at_its_level_2512.py
 row grid/B2_value_form_and_time     tests/unit/test_alg/test_hjb_weno_boundary_time_2605.py
 row grid/B2_value_form_and_time     tests/unit/test_alg/test_hjb_fdm_laplacian_time_2543.py
-row grid/B2_value_form_and_time     -
 # Row B3's guard covers the coupling layer too: BlockIterator's "auto" adjoint mode, one of the two readers
 # it awaited, is removed, and RegimeSwitchingIterator's fallback reads the FP solver's owner path (#2529).
 row grid/B3_fp_view_of_shared_bc    tests/unit/test_alg/test_fp_reads_the_shared_bc_through_its_owner_2512.py
@@ -197,6 +202,10 @@ row grid/B8_no_image_raises         -
 #   when the BC object's identity changes; the alternative is freeze-and-refuse, capturing at construction and
 #   refusing a swap loudly.
 row grid/B9_bc_read_at_solve_time   -
+# Rows N1 and N2 inherit an item from B2b-2b-iv (audit session ruling, 2026-10-12): `GraphApplicator.apply`,
+#   `apply_fp` and `apply_hjb` take `t=0`, so given no t they read a callable node or edge value at t = 0, in silence.
+#   They reach no owner (`NodeBC.get_value` and `EdgeBC.get_value` call the value directly), and B2's guard, whose
+#   population leaves out `applicator_graph.py`, does not see them.
 row network/N1_graph_bc_alphabet    -
 row network/N2_node_bc_arity        -
 
