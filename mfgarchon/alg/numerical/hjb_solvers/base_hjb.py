@@ -188,6 +188,7 @@ def _get_bc_info_1d(
     bc: BoundaryConditions,
     side: str,
     time: float | None = None,
+    geometry: Any = None,
 ) -> tuple:
     """
     Extract full BC info for a given side from BoundaryConditions (Issue #638).
@@ -201,6 +202,7 @@ def _get_bc_info_1d(
         bc: Boundary conditions object
         side: "left" or "right"
         time: Current time for time-dependent BCs
+        geometry: The solver's grid, on which the owner decides a region or sdf_region placement
 
     Returns:
         Tuple (BCType, value, alpha, beta)
@@ -213,7 +215,7 @@ def _get_bc_info_1d(
     # in one solve (#2624); and it gave a ROBIN default the coefficients (1, 0), which are a Dirichlet wall.
     target_face = BoundaryFace(0, "min" if side == "left" else "max")
     where = f"the 1-D HJB boundary read of face {target_face.to_string()}"
-    seg = bc.segment_for_face(target_face)
+    seg = bc.segment_for_face(target_face, geometry)
     value = segment_value(seg, t=time, time_keyword="time", x=None, where=where)
     alpha, beta = segment_robin_coefficients(seg, where=where) if seg.bc_type == BCType.ROBIN else (1.0, 0.0)
     return seg.bc_type, value, alpha, beta
@@ -860,7 +862,7 @@ def compute_hjb_residual(
         if source_term is not None:
             Phi_U -= source_term
 
-        return _impose_dirichlet_rows(Phi_U, U_n_current_newton_iterate, bc, current_time)
+        return _impose_dirichlet_rows(Phi_U, U_n_current_newton_iterate, bc, current_time, problem.geometry)
 
     # Fallback: per-point loop for backend != None or missing precomputed_grad
     for i in range(Nx):
@@ -910,17 +912,19 @@ def compute_hjb_residual(
     if source_term is not None:
         Phi_U -= source_term
 
-    return _impose_dirichlet_rows(Phi_U, U_n_current_newton_iterate, bc, current_time)
+    return _impose_dirichlet_rows(Phi_U, U_n_current_newton_iterate, bc, current_time, problem.geometry)
 
 
-def _impose_dirichlet_rows(Phi_U: np.ndarray, U: np.ndarray, bc: BoundaryConditions | None, time: float) -> np.ndarray:
+def _impose_dirichlet_rows(
+    Phi_U: np.ndarray, U: np.ndarray, bc: BoundaryConditions | None, time: float, geometry: Any = None
+) -> np.ndarray:
     """Replace each Dirichlet wall row of the residual with ``u_wall - g`` (see `_dirichlet_wall_values`)."""
-    for idx, g in _dirichlet_wall_values(bc, time):
+    for idx, g in _dirichlet_wall_values(bc, time, geometry):
         Phi_U[idx] = U[idx] - g
     return Phi_U
 
 
-def _dirichlet_wall_values(bc: BoundaryConditions | None, time: float) -> list[tuple[int, float]]:
+def _dirichlet_wall_values(bc: BoundaryConditions | None, time: float, geometry: Any = None) -> list[tuple[int, float]]:
     """``(index, g)`` for each 1-D wall node carrying a Dirichlet condition.
 
     A prescribed node has no PDE row: its equation is ``u_wall - g = 0``. The residual and the
@@ -935,7 +939,7 @@ def _dirichlet_wall_values(bc: BoundaryConditions | None, time: float) -> list[t
 
     walls = []
     for idx, side in ((0, "left"), (-1, "right")):
-        bc_type, value, _, _ = _get_bc_info_1d(bc, side, time)
+        bc_type, value, _, _ = _get_bc_info_1d(bc, side, time, geometry)
         if bc_type == BCType.DIRICHLET:
             walls.append((idx, float(value)))
     return walls
@@ -1371,7 +1375,7 @@ def compute_hjb_jacobian(
             Jac[_i, _j] += _v
         Jac = Jac.tocsr()
 
-    dirichlet_walls = _dirichlet_wall_values(bc, current_time)
+    dirichlet_walls = _dirichlet_wall_values(bc, current_time, problem.geometry)
     if dirichlet_walls:
         Jac = Jac.tolil()
         for idx, _ in dirichlet_walls:
@@ -1680,7 +1684,7 @@ def solve_hjb_timestep_newton(
         dx = float(problem.geometry.get_grid_spacing()[0])
 
         # Left boundary - Issue #638: Use _get_bc_info_1d for Robin BC support
-        left_type, left_value, left_alpha, left_beta = _get_bc_info_1d(bc, "left", current_time)
+        left_type, left_value, left_alpha, left_beta = _get_bc_info_1d(bc, "left", current_time, problem.geometry)
 
         if left_type == BCType.DIRICHLET:
             # Dirichlet: Set boundary value directly
@@ -1743,7 +1747,7 @@ def solve_hjb_timestep_newton(
             )
 
         # Right boundary - Issue #638: Use _get_bc_info_1d for Robin BC support
-        right_type, right_value, right_alpha, right_beta = _get_bc_info_1d(bc, "right", current_time)
+        right_type, right_value, right_alpha, right_beta = _get_bc_info_1d(bc, "right", current_time, problem.geometry)
 
         if right_type == BCType.DIRICHLET:
             # Dirichlet: Set boundary value directly

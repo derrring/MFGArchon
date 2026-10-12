@@ -1,51 +1,70 @@
 - **One owner decides which boundary segment governs a location, and the FDM family reads it** (#2512, row B1,
-  stage B1a; closes #2490, #2624, #2626).
+  stage B1a; closes #2624 and #2626, and fixes #2490's FDM rows).
   - **The owner.** It is `BoundaryConditions.segment_for_face`, `segment_for_corner` and `segment_for_point`.
     - On a face the order is: priority; then a placed segment before a global one (no placement field, or
       `boundary="all"`, which is every face); then declaration order.
     - At a corner one more rule comes after priority: DIRICHLET before any other condition. A point at a corner
-      and a node at it give one answer.
+      and a node at it give one answer. Under `corner_strategy="average"` or `"mollify"`, a corner whose faces
+      impose different conditions is refused, and one whose faces agree is answered.
     - `region` and `sdf_region` are read on the solver's grid, `region_name` on its marks, and
-      `normal_direction` selects the face it points out of.
+      `normal_direction` selects the face it points out of. Beside an `sdf_region`, a normal picks the face and
+      the sdf still decides how much of it the segment holds.
+    - **The grid.** A grid binds the BC it stores (`BoundaryConditions.bind_geometry`). When a reader asks without
+      a geometry -- a ghost pad inside an operator, say -- the owner decides a placement on that grid. A reader that
+      holds the grid passes it.
     - Every reader in the FDM family asks it: the HJB-FDM ghosts and Dirichlet rows, the 1-D HJB rows, FP-FDM's
       node classification, the semi-Lagrangian enforcement and per-axis operations, `value_gradient`,
       `get_ghost_values_nd`, and the tensor-diffusion kernels' no-flux test.
     - Before this, each reader had its own rule, and two of them could disagree inside one solve. #2624: a 1-D
       HJB-FDM wall solved as U(0, 0) = 1.025536, which is neither the Dirichlet 3 nor the Neumann wall it was
       given.
+  - **Readers outside the FDM family that moved with it.** `get_bc_type_at_boundary`, `get_bc_value_at_boundary`,
+    `get_bc_at_point` and `BCSegment.matches_point` now answer by the owner's rules, so the particle solver and the
+    GFDM readers that call them changed too:
+    - at a point, a placed segment beats a global one of equal priority: a particle reaching an exit on x_max,
+      beside a wall declared before it, is absorbed where it was reflected;
+    - `normal_direction` selects only the face it points out of; on a box domain it used to match every face;
+    - the particle solver's topology query reads a region or sdf placement on the solver's grid, and asks only
+      whether an axis wraps.
+    - Over the test suite these change no particle or GFDM answer; review-built cases do, and are pinned.
   - **Refused by name, where a reader used to stretch, drop or guess:**
     - a segment covering only part of a face, at a higher priority than the condition on the rest of it, when
       the two differ;
     - a segment that governs no face because something outranks it everywhere, unless it imposes the same
       condition there. Two exits that differ only in `flux_capacity` are different conditions;
+    - a segment that covers no part of the boundary at all: a `region` or `sdf_region` that holds no boundary
+      node, or a marked region on no face;
     - a face of an axis the domain lacks, refused when the BC is built if its dimension is known, and a `boundary`
       that names no face;
     - a location no segment governs when `default_bc` is unset: "…: no segment governs {where}, and default_bc
       was not specified on BoundaryConditions (#1100). Either cover {where} with a segment -- an unplaced
       segment says 'the rest' -- or pass default_bc= with the condition every location no segment governs
       should get (#2512 row B1).";
-    - a ROBIN `default_bc`, which carries no alpha and no beta.
-  - **Who is affected.** Only readers in the FDM family and the uniform shortcuts ask the owner yet; the FEM,
-    GFDM, meshless, implicit and particle readers keep their own rules until the later stages of #2512 row B1.
-    Measured over the test suite's own BC constructions that those readers read (3,512, outside this change's
-    own tests):
-    - 15 that an old reader resolved are now refused: 8 for a partial cover, 3 for an unset `default_bc`, 2 for a
-      ROBIN `default_bc`, 1 for a shadowed segment and 1 for a `boundary` that names no face;
-    - 12 resolve a face to a different segment than the old ghost reader gave it;
-    - 3 more use `region` and are decided on the solver's grid.
-    - The 1-D HJB-FDM hybrid of #2624 is now refused, naming the outranked segment.
+    - a ROBIN `default_bc`, which carries no alpha and no beta;
+    - an `sdf_region` that returns more than one value for a single point.
+  - **Who is affected**, measured over this repository's test suite and counting each BC once per test. These
+    readers read 1,072 of the suite's 3,450 BCs, and 28 of those change:
+    - 14 are refused by name: 8 partial covers, 2 unset and 2 ROBIN defaults, 1 shadowed segment, and 1
+      `boundary` that names no face;
+    - 11 have a face governed by a different segment;
+    - 3 have a `region` placement that is now read on the solver's grid.
   - **API changes.**
     - `BoundaryConditions.uniform_segment` is the segment that governs every face when all faces carry one
       condition: every segment, and `default_bc` where it can govern, imposes the same type, value,
       `flux_capacity` and Robin coefficients. It reads no placement, so it needs no geometry, and it is `None`
       when no segment is global and `default_bc` is unset or ROBIN. Uniform-only fast paths read it instead of
       `segments[0]`.
-    - `get_bc_type_string` raises `ValueError` for a BC whose faces differ. It used to return the first
-      segment's type. A BC with no segments and a `default_bc` now answers with the default's type (#1700 part
-      B).
+    - `get_bc_type_string` raises `ValueError` for a BC that `uniform_segment` does not answer: one whose
+      segments, and its `default_bc` unless a global segment exists, impose different conditions. It used to
+      return the first segment's type. A BC with no segments and a `default_bc` now answers with the default's
+      type (#1700 part B).
     - `HJBSemiLagrangianSolver.get_bc_type_for_point` reads the owner per point, and returns "none" off the
       boundary. It used to return `default_bc`'s type for every point.
-    - `InterpolationApplicator.enforce_values` and `FDMApplicator.enforce_values` take `geometry=`.
+    - New: `BoundaryConditions.bind_geometry` and `refuse_blended_corners`. `segment_for_corner` takes
+      `equivalent=`.
+    - `InterpolationApplicator.enforce_values`, `FDMApplicator.enforce_values`, `get_bc_value_at_boundary` and
+      the particle solver's `get_topology_per_dimension` take `geometry=`.
+    - `needs_segment_aware_bc` refuses a string other than the `"periodic"` sentinel, where it answered False.
   - **Tensor diffusion (#2626).**
     - A no-flux BC spelt one segment per face no longer leaks mass under an off-diagonal Σ. On #2626's fixture
       it went from −7.042e-03 to −3.928e-17, the uniform spelling's value.

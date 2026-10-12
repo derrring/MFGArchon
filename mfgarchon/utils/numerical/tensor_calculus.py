@@ -965,6 +965,9 @@ def _is_no_flux(bc: BoundaryConditions | None, dimension: int, tensor: NDArray) 
     if not isinstance(bc, BoundaryConditions):
         return False
 
+    uniform = bc.uniform_segment  # one condition on every face, read with no placement and so no geometry
+    if uniform is not None:
+        return uniform.bc_type == BCType.NO_FLUX
     faces = [BoundaryFace(axis, side) for axis in range(dimension) for side in ("min", "max")]
     no_flux = [bc.segment_for_face(face).bc_type == BCType.NO_FLUX for face in faces]
     if all(no_flux):

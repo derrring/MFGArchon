@@ -1004,8 +1004,8 @@ def dirichlet_wall_rows(
 
     A prescribed node has no PDE row. A residual that keeps one there solves it with the Dirichlet ghost, and
     writing ``g`` afterwards returns an array that is not the root the solve certified (#2474). Read through
-    `face_segment`, so a face is Dirichlet here exactly when its ghost is -- given the ``geometry`` the ghosts
-    resolve with. The FDM operators pad without one (`pad_array_with_ghosts`), and so does a caller of theirs.
+    `face_segment`, so a face is Dirichlet here exactly when its ghost is. The FDM operators pad without a geometry
+    (`pad_array_with_ghosts`); the owner then decides on the grid the BC is bound to (`bind_geometry`).
 
     A node shared by several faces (a corner, or an edge in 3-D) takes the condition
     :meth:`BoundaryConditions.segment_for_corner` gives it: ``corner_strategy="priority"`` picks the first of the
@@ -1029,14 +1029,7 @@ def dirichlet_wall_rows(
         better = rank_of[id(segment)] < best[index]
         best[index] = np.where(better, rank_of[id(segment)], best[index])
         winner[index] = np.where(better, k, winner[index])
-    if bc.corner_strategy != "priority":
-        # Where faces meet, a strategy that blends normals cannot choose between different conditions; ask the
-        # owner, which refuses that and accepts equal ones.
-        for axis in range(len(shape)):
-            for other in range(axis + 1, len(shape)):
-                for s1 in ("min", "max"):
-                    for s2 in ("min", "max"):
-                        bc.segment_for_corner([BoundaryFace(axis, s1), BoundaryFace(other, s2)], geometry)
+    bc.refuse_blended_corners(len(shape), geometry)
     for k, segment in enumerate(governing):
         if segment.bc_type != BCType.DIRICHLET:
             continue
@@ -1048,34 +1041,6 @@ def dirichlet_wall_rows(
         )
         values[where] = g
         mask |= where
-    return mask, values
-    claims = []
-    for axis in range(len(shape)):
-        for side in ("min", "max"):
-            segment = face_segment(bc, BoundaryFace(axis, side), geometry)
-            if segment.bc_type == BCType.DIRICHLET:
-                rank = next((i for i, seg in enumerate(bc.segments) if seg is segment), len(bc.segments))
-                face_name = BoundaryFace(axis, side).to_string()
-                claims.append(
-                    (
-                        rank,
-                        axis,
-                        side,
-                        segment_value(
-                            segment,
-                            t=time,
-                            time_keyword="time",
-                            x=None,
-                            where=f"the FDM Dirichlet rows of face {face_name}",
-                        ),
-                    )
-                )
-    for _, axis, side, g in sorted(claims, key=lambda claim: claim[0]):
-        wall: list[int | slice] = [slice(None)] * len(shape)
-        wall[axis] = 0 if side == "min" else -1
-        index = tuple(wall)
-        values[index] = np.where(mask[index], values[index], g)
-        mask[index] = True
     return mask, values
 
 

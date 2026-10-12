@@ -324,7 +324,7 @@ class TensorProductGrid(
         # bind_dimension returns a new BC with dimension set, or validates if already set
         boundary_conditions = boundary_conditions.bind_dimension(dimension)
         boundary_conditions = self._bind_periodic_convention(boundary_conditions)
-        self._boundary_conditions = boundary_conditions
+        self._boundary_conditions = boundary_conditions.bind_geometry(self)  # owner queries decide on it (#2512 B1)
 
         # Cache for flattened grid (computed lazily, perf optimization)
         self._flattened_cache: NDArray | None = None
@@ -828,7 +828,7 @@ class TensorProductGrid(
         if bc is not None:
             # Validate dimension if BC has one set
             bc = bc.bind_dimension(self._dimension)
-            bc = self._bind_periodic_convention(bc)
+            bc = self._bind_periodic_convention(bc).bind_geometry(self)
         self._boundary_conditions = bc
 
     @property

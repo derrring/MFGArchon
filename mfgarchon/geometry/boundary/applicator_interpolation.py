@@ -303,6 +303,7 @@ class InterpolationApplicator(BaseBCApplicator):
 
         faces = [BoundaryFace(axis, side) for axis in range(ndim) for side in ("min", "max")]
         governing = {face: bc.segment_for_face(face, geometry, equivalent=same_enforcement) for face in faces}
+        bc.refuse_blended_corners(ndim, geometry, equivalent=same_enforcement)
         result = []
         for face in sorted(faces, key=lambda f: bc._corner_key(governing[f]), reverse=True):
             segment = governing[face]

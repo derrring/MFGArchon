@@ -28,6 +28,7 @@ import pytest
 import numpy as np
 
 from mfgarchon import Conditions, MFGProblem, Model
+from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm_time_stepping import (
     _get_dirichlet_value_at_point,
     _is_dirichlet_at_point,
@@ -474,14 +475,111 @@ _FACE_READERS = {
 }
 
 
+#: Two spellings of one strip of x_max. A normal beside an sdf_region picks the face, and the sdf still decides how
+#: much of it the strip holds: read as the whole face, every reader stretched the strip (review 1 of #2634, B-1).
+_PARTIAL_STRIPS = {
+    "region": {"region": {"x": (0.9, 1.0), "y": (0.4, 0.6)}},
+    "sdf_region with normal_direction": {
+        "sdf_region": lambda x: np.abs(np.asarray(x)[..., 1] - 0.5) - 0.1,
+        "normal_direction": np.array([1.0, 0.0]),
+    },
+}
+
+
+@pytest.mark.parametrize("placement", list(_PARTIAL_STRIPS))
 @pytest.mark.parametrize("family", list(_FACE_READERS))
-def test_fixture_b_a_partial_region_is_refused_by_every_face_reader(family):
-    strip = _seg("strip", BCType.DIRICHLET, 1.0, region={"x": (0.9, 1.0), "y": (0.4, 0.6)}, priority=1)
+def test_fixture_b_a_partial_region_is_refused_by_every_face_reader(family, placement):
+    strip = _seg("strip", BCType.DIRICHLET, 1.0, priority=1, **_PARTIAL_STRIPS[placement])
     walls = _seg("walls", BCType.NEUMANN, 0.0)
     bc = BoundaryConditions(dimension=2, domain_bounds=UNIT_SQUARE, segments=[strip, walls])
     grid = _grid(bc)
     with pytest.raises(ValueError, match="'strip' covers part of the x_max face"):
         _FACE_READERS[family](bc, grid)
+
+
+def test_a_point_reader_honours_the_strip_a_face_reader_refuses():
+    """The sdf_region and normal_direction strip at the point level: the strip inside its band, the walls outside."""
+    strip = _seg("strip", BCType.DIRICHLET, 1.0, priority=1, **_PARTIAL_STRIPS["sdf_region with normal_direction"])
+    owner = _grid(
+        BoundaryConditions(dimension=2, domain_bounds=UNIT_SQUARE, segments=[strip, _seg("walls", BCType.NEUMANN)])
+    )
+    bc = owner.get_boundary_conditions()
+    assert bc.segment_for_point(np.array([1.0, 0.5]), "x_max").name == "strip"
+    assert bc.segment_for_point(np.array([1.0, 0.1]), "x_max").name == "walls"
+    with pytest.raises(ValueError, match="'strip' covers part of the x_max face"):
+        bc.segment_for_face("x_max")
+
+
+@pytest.mark.parametrize(
+    "placement",
+    [
+        {"region": {"x": (0.4, 0.6), "y": (0.4, 0.6)}},  # inside the domain, on no face
+        {"sdf_region": lambda x: np.abs(np.asarray(x)[..., 1] - 0.55) - 0.02},  # between two boundary nodes of the grid
+    ],
+    ids=["region off the boundary", "sdf between boundary nodes"],
+)
+def test_a_segment_covering_no_boundary_location_is_refused(placement):
+    """A segment no face and no part of a face holds governs nothing and is shadowed nowhere, so the shadow rule's
+    `all([])` used to let it be dropped silently (review 1 of #2634, B-3). It is refused, on the grid it is bound to."""
+    ghost = _seg("ghost", BCType.DIRICHLET, 1.0, priority=1, **placement)
+    grid = _grid(BoundaryConditions(dimension=2, default_bc=BCType.NO_FLUX, segments=[ghost]))
+    with pytest.raises(ValueError, match="segment\\(s\\) 'ghost' cover no part of the domain's boundary on this grid"):
+        grid.get_boundary_conditions().segment_for_face("x_max")
+
+
+def test_a_blending_corner_strategy_refuses_only_where_the_corners_conditions_differ():
+    """``corner_strategy="average"`` says nothing about which condition applies, so a corner whose faces impose
+    different conditions is refused by every reader that writes it, and one whose faces agree is answered by all
+    (review 1 of #2634, B-4: the point refused every corner, and the SL enforcement chose one by the corner order)."""
+    one = BoundaryConditions(
+        dimension=2, domain_bounds=UNIT_SQUARE, corner_strategy="average", segments=[_seg("w", BCType.NO_FLUX)]
+    )
+    assert one.segment_for_point(np.array([0.0, 0.0])).name == "w"
+    assert one.segment_for_corner([BoundaryFace(0, "min"), BoundaryFace(1, "min")]).name == "w"
+    mixed = BoundaryConditions(
+        dimension=2,
+        domain_bounds=UNIT_SQUARE,
+        corner_strategy="average",
+        default_bc=BCType.NO_FLUX,
+        segments=[_seg("d", BCType.DIRICHLET, 1.0, boundary="x_min")],
+    )
+    grid = _grid(mixed)
+    refusal = "the corner shared by x_min, y_min .*impose different conditions"
+    for read in _FACE_READERS.values():
+        with pytest.raises(ValueError, match=refusal):
+            read(mixed, grid)
+    with pytest.raises(ValueError, match=refusal):
+        mixed.segment_for_point(np.array([0.0, 0.0]))
+
+
+def _sdf_exit(placed_by_sdf):
+    place = {"sdf_region": lambda x: 0.95 - np.asarray(x)[..., 0]} if placed_by_sdf else {"boundary": "x_max"}
+    return [_seg("exit", BCType.DIRICHLET, 0.7, priority=1, **place), _seg("walls", BCType.NO_FLUX)]
+
+
+@pytest.mark.parametrize("placed_by_sdf", [True, False], ids=["sdf_region", "control: boundary=x_max"])
+def test_an_sdf_exit_is_decided_on_the_grid_the_solve_holds(placed_by_sdf):
+    """D2 of #2634: a placement is decided on the grid the solve holds, by either route -- HJB-FDM's 1-D Laplacian,
+    which pads its ghosts with no geometry and refused the exit, asks the grid the BC is bound to; FP-FDM, taking the
+    BC explicitly, where no grid binds it, has its readers pass the grid they hold. Both impose the exit's 0.7 at
+    x_max, as ``boundary="x_max"`` does."""
+    assert _solve_1d(_sdf_exit(placed_by_sdf))[0, -1] == pytest.approx(0.7, abs=1e-12)  # attached: the grid binds it
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[21], boundary_conditions=no_flux_bc(dimension=1))
+    problem = MFGProblem(
+        model=Model(
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.3
+        ),
+        domain=grid,
+        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.5),
+        Nt=10,
+    )
+    explicit = BoundaryConditions(dimension=1, default_bc=BCType.NO_FLUX, segments=_sdf_exit(placed_by_sdf))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        m = FPFDMSolver(problem, boundary_conditions=explicit).solve_fp_system(
+            np.ones(21), potential_field=np.zeros((11, 21))
+        )
+    assert np.asarray(m)[-1, -1] == pytest.approx(0.7, abs=1e-12)  # explicit: its readers pass the grid
 
 
 def _solve_1d(segments):
@@ -518,3 +616,179 @@ def test_fixture_c_one_wall_is_not_read_by_two_rules_in_one_solve_2624():
         3.0, abs=1e-12
     )
     assert _solve_1d([b, c])[0, 0] == pytest.approx(0.0, abs=1e-12)
+
+
+# ---- The point family through its own caller (#2634, B-2): `ParticleApplicator.apply` asks the owner at each particle
+# on the boundary (`get_bc_at_point` -> `segment_for_point`), so these read what a particle does there: absorbed by a
+# DIRICHLET exit, reflected by a wall, refused. One pin per branch of `segment_for_point` and `matches_point` that a
+# particle reaches. It does not reach the corner rule or a blended `corner_strategy` (the applicator's own
+# `_get_boundary_id`, row B1d, picks one face first), nor a `region_name` segment (it passes no geometry).
+
+_BOUNDS = [(0.0, 1.0), (0.0, 1.0)]
+
+
+def _particle_fate(segments, point, **bc_kw):
+    """'absorbed' or 'reflected' for one particle at ``point``, as the particle applicator decides it."""
+    from mfgarchon.geometry.boundary.applicator_particle import ParticleApplicator
+
+    bc = BoundaryConditions(dimension=2, domain_bounds=UNIT_SQUARE, segments=segments, **bc_kw)
+    _, absorbed, _ = ParticleApplicator().apply(np.array([point], dtype=float), bc, _BOUNDS)
+    return "absorbed" if absorbed[0] else "reflected"
+
+
+_EXIT = BCType.DIRICHLET
+
+
+@pytest.mark.parametrize(
+    ("case", "segments", "point", "fate"),
+    [
+        (
+            "priority",
+            [_seg("wall", BCType.NO_FLUX, boundary="x_max"), _seg("exit", _EXIT, priority=1, boundary="x_max")],
+            (1.0, 0.5),
+            "absorbed",
+        ),
+        (
+            "placed beats global",
+            [_seg("wall", BCType.NO_FLUX), _seg("exit", _EXIT, boundary="x_max")],
+            (1.0, 0.5),
+            "absorbed",
+        ),
+        (
+            "declaration, exit first",
+            [_seg("exit", _EXIT, boundary="x_max"), _seg("wall", BCType.NO_FLUX, boundary="x_max")],
+            (1.0, 0.5),
+            "absorbed",
+        ),
+        (
+            "declaration, wall first",
+            [_seg("wall", BCType.NO_FLUX, boundary="x_max"), _seg("exit", _EXIT, boundary="x_max")],
+            (1.0, 0.5),
+            "reflected",
+        ),
+        (
+            "region, inside",
+            [_seg("exit", _EXIT, priority=1, boundary="x_max", region={"y": (0.4, 0.6)}), _seg("wall", BCType.NO_FLUX)],
+            (1.0, 0.5),
+            "absorbed",
+        ),
+        (
+            "region, outside",
+            [_seg("exit", _EXIT, priority=1, boundary="x_max", region={"y": (0.4, 0.6)}), _seg("wall", BCType.NO_FLUX)],
+            (1.0, 0.1),
+            "reflected",
+        ),
+        (
+            "sdf_region, inside",
+            [
+                _seg(
+                    "exit",
+                    _EXIT,
+                    priority=1,
+                    sdf_region=lambda x: np.abs(np.asarray(x)[..., 1] - 0.5) - 0.1,
+                    normal_direction=np.array([1.0, 0.0]),
+                ),
+                _seg("wall", BCType.NO_FLUX),
+            ],
+            (1.0, 0.5),
+            "absorbed",
+        ),
+        (
+            "sdf_region, outside",
+            [
+                _seg(
+                    "exit",
+                    _EXIT,
+                    priority=1,
+                    sdf_region=lambda x: np.abs(np.asarray(x)[..., 1] - 0.5) - 0.1,
+                    normal_direction=np.array([1.0, 0.0]),
+                ),
+                _seg("wall", BCType.NO_FLUX),
+            ],
+            (1.0, 0.1),
+            "reflected",
+        ),
+        (
+            "normal_direction, its face",
+            [_seg("exit", _EXIT, priority=1, normal_direction=np.array([1.0, 0.0])), _seg("wall", BCType.NO_FLUX)],
+            (1.0, 0.5),
+            "absorbed",
+        ),
+        (
+            "normal_direction, another face",
+            [_seg("exit", _EXIT, priority=1, normal_direction=np.array([1.0, 0.0])), _seg("wall", BCType.NO_FLUX)],
+            (0.0, 0.5),
+            "reflected",
+        ),
+    ],
+    ids=lambda v: v if isinstance(v, str) and v not in ("absorbed", "reflected") else "",
+)
+def test_a_particle_on_the_boundary_meets_the_segment_the_owner_gives_the_point(case, segments, point, fate):
+    """What moved for the point family when its accessors became the owner (#2634, B-2), each under its ruling: placed
+    beats global at a point (it took the first segment in priority order), and ``normal_direction`` selects its face
+    in point membership (on a box domain it was not read, so it matched every face)."""
+    assert _particle_fate(segments, point) == fate, case
+
+
+@pytest.mark.parametrize("default_bc", [None, BCType.ROBIN], ids=["unset", "ROBIN"])
+def test_a_particle_where_only_the_default_would_govern_is_refused_for_an_unset_or_robin_default(default_bc):
+    with pytest.raises(ValueError, match=r"default_bc was not specified|default_bc is ROBIN"):
+        _particle_fate([_seg("exit", _EXIT, boundary="x_max")], (0.0, 0.5), default_bc=default_bc)
+
+
+def _sdf_exit_on_part_of_x_max():
+    return BoundaryConditions(
+        dimension=2,
+        default_bc=BCType.NO_FLUX,
+        segments=[
+            _seg("exit", _EXIT, priority=1, sdf_region=lambda x: np.abs(np.asarray(x)[..., 1] - 0.5) - 0.1),
+            _seg("wall", BCType.NO_FLUX),
+        ],
+    )
+
+
+def test_the_particle_topology_asks_only_whether_an_axis_wraps():
+    """`get_topology_per_dimension` reads the faces with periodicity as the equivalence, on the solver's grid: a strip
+    of a different, non-periodic condition is not a reason to refuse an axis's topology (#2634, B2), and an sdf
+    placement is decided on the grid it is given."""
+    from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import get_topology_per_dimension
+
+    strip = BoundaryConditions(
+        dimension=2,
+        default_bc=BCType.NO_FLUX,
+        segments=[_seg("strip", BCType.REFLECTING, boundary="x_max", region={"y": (0.4, 0.6)})],
+    )
+    assert get_topology_per_dimension(strip, 2, _grid(no_flux_bc(dimension=2))) == ["bounded", "bounded"]
+    sdf = _sdf_exit_on_part_of_x_max()
+    assert get_topology_per_dimension(sdf, 2, _grid(no_flux_bc(dimension=2))) == ["bounded", "bounded"]
+    with pytest.raises(ValueError, match="placed by sdf_region"):
+        get_topology_per_dimension(sdf, 2, None)  # no grid, and a BC bound to none
+
+
+def test_a_particle_solver_handed_an_sdf_placed_bc_reads_it_on_its_grid():
+    """The explicit route (#2634, D2): a BC handed to the particle solver, never attached to a grid, is read on the
+    solver's grid -- the topology query is given it."""
+    grid = _grid(no_flux_bc(dimension=2))
+    problem = MFGProblem(
+        model=Model(
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.3
+        ),
+        domain=grid,
+        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.1),
+        Nt=2,
+    )
+    from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        solver = FPParticleSolver(problem, num_particles=50, boundary_conditions=_sdf_exit_on_part_of_x_max())
+    assert solver._get_topology_per_dimension(2) == ["bounded", "bounded"]
+
+
+def test_an_sdf_returning_a_one_element_array_is_read_as_its_value_by_the_face_owner_too():
+    """`matches_point` reads an sdf's one-element array as its value; the face owner's grid mask stacked them and
+    failed to broadcast (#2634, found re-checking #2490's sdf row)."""
+    disc = _seg("D", _EXIT, sdf_region=lambda x: np.linalg.norm(np.atleast_2d(x) - np.array([1.0, 0.5]), axis=-1) - 0.2)
+    grid = _grid(BoundaryConditions(dimension=2, default_bc=BCType.NO_FLUX, segments=[disc]))
+    with pytest.raises(ValueError, match="'D' covers part of the x_max face"):
+        grid.get_boundary_conditions().segment_for_face("x_max")

@@ -322,7 +322,12 @@ def _get_bc_type(boundary_conditions: Any) -> str | None:
 
 
 def _get_bc_value(
-    boundary_conditions: Any, face: BoundaryFace, *, time: float | None = None, point: np.ndarray | None = None
+    boundary_conditions: Any,
+    face: BoundaryFace,
+    *,
+    time: float | None = None,
+    point: np.ndarray | None = None,
+    geometry: Any = None,
 ) -> float:
     """
     Get BC value at a specific boundary, through `BoundaryConditions.get_bc_value_at_boundary`, at ``time`` and
@@ -330,7 +335,7 @@ def _get_bc_value(
 
     Issue #946: Uses BoundaryFace instead of string identifiers for internal dispatch.
     """
-    return boundary_conditions.get_bc_value_at_boundary(face, time=time, point=point)
+    return boundary_conditions.get_bc_value_at_boundary(face, time=time, point=point, geometry=geometry)
 
 
 if TYPE_CHECKING:
@@ -630,9 +635,9 @@ def _refuse_partial_periodic(boundary_conditions: Any, dimension: int, geometry:
     face is periodic. A channel -- no-flux walls beside a periodic axis -- or an axis periodic on one
     face only was therefore assembled as no-flux on every face, bit for bit, with no error.
 
-    The faces are read through `get_bc_type_at_boundary`, the face owner (#2512 row B1), which places a
-    segment the same way for HJB-FDM's ghosts: a periodic segment covers exactly the faces its placement
-    holds, and one it cannot place on a face is refused there. A BC that declares
+    The faces are read through `periodic_faces`, the face owner asked with periodicity as the equivalence
+    (#2512 row B1): a periodic segment covers exactly the faces its placement holds, and a segment covering
+    part of a face is refused there unless it agrees with the rest of the face on periodicity. A BC that declares
     periodicity but shows it on no face -- a periodic default every face overrides -- is not periodic
     anywhere and is not refused.
 
@@ -1005,7 +1010,7 @@ def solve_fp_nd_full_system(
     # post-step overwrite, which wrote such a BC onto both walls, a no-flux default included, is gone (#2535).
     if ndim == 1 and _get_bc_type(boundary_conditions) == "dirichlet":
         for index, face, wall_node in _dirichlet_walls_1d(boundary_conditions, grid):
-            M_solution[0, index] = _get_bc_value(boundary_conditions, face, time=0.0, point=wall_node)
+            M_solution[0, index] = _get_bc_value(boundary_conditions, face, time=0.0, point=wall_node, geometry=grid)
 
     # Edge cases
     if Nt <= 1:
@@ -1464,7 +1469,7 @@ def solve_timestep_full_nd(
         # one. Assembling a stencil row for it solves for one cell too many on a torus one cell too
         # long, and the duplicated pair drifts apart because their neighbourhoods differ -- the
         # #1822 seam. Constrain it to the node it repeats and move on.
-        mirror = repeated_endpoint_mirror(boundary_conditions, multi_idx, shape)
+        mirror = repeated_endpoint_mirror(boundary_conditions, multi_idx, shape, grid)
         if mirror is not None:
             mirror_flat = grid.get_index(tuple(mirror))
             row_indices.extend((flat_idx, flat_idx))

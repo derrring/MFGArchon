@@ -17,7 +17,7 @@ owner cannot leave its name behind. Two kinds:
 - a reader the later stages move onto the owner: B1b (FEM), B1c (GFDM, meshless), B1d (particle), B1e (the rest);
 - a site that matches a rival form and reads no segment: another object's ``region`` mask, a table of region or
   index names, a metric's column name.
-After B1a the FDM family has no allowance at all (scan: 39 rival sites in it at 1052ec62, 0 after).
+After B1a the FDM family has no allowance at all (scan: 41 rival sites in it at 1052ec62, 0 after).
 
 **Known blind spots**, as the other structural guards state theirs:
 - a computed ``getattr`` name, ``vars(seg)``, ``seg.__dict__``;
