@@ -395,19 +395,20 @@ maintainer explicitly chooses a minor release; do not add compatibility shims fo
 
 ### Local patches are the anti-pattern ⚠️ (user ruling, 2026-10-12; #2626)
 
-The paragraph above is the target: fix a defect at the level of its class, at the owning abstraction. A **local patch** is a fix written at the site where the defect was found while other members of its class stay. It is the anti-pattern that rule exists against. The level is chosen when the work is planned, before any diff exists, so that is where it is checked: **every plan and every PR body carries a class line**:
+The paragraph above states the target. A **local patch** fixes a defect where it was found while other members of its class remain, which that paragraph rules out. The level is chosen when the work is planned, so the plan and the PR body of every defect fix carry a **class line**:
 
 1. the defect class, named;
-2. its population: the predicate, the count at a stated sha, and a control the predicate must find;
-3. whether the change fixes the class or one instance.
+2. its population: the predicate, a control the predicate must find, and the count at the base sha and at the head sha;
+3. class fix (head count 0) or partial fix; for a partial fix, which admission below holds and where the remaining members are tracked.
 
-An instance fix is admitted when its class line names which of these holds:
-- the census shows the class has one member;
-- the instance fix is itself the root-cause fix;
-- the class fix waits on a decision, and the issue that tracks it is named;
-- it is a one-line truth repair (a false message or comment) with nothing behind it to fix.
+A partial fix is admitted only when:
+- it is one stage of a class fix whose remaining stages are named, in order, in an approved plan;
+- the class fix waits on a decision, or on code outside this repository, and the issue that tracks it is named; or
+- it is a one-line truth repair (a false message or comment), and the class's other members are listed in the PR body or an issue.
 
-Urgency is not on that list: it changes the order of work, not its level.
+Urgency is not an admission: it changes the order of work, not its level. Nor is "keep changes minimal + focused" (§ *Bug fixes from research*): that bounds a change to its defect's class.
+
+The class line is checked when the plan is approved, and again at review (§ *Review before merge*).
 
 ### Version-bump checklist ⚠️ MANDATORY
 In a single commit:
@@ -425,8 +426,8 @@ Do **not** edit: `mfgarchon/__init__.py` (reads `importlib.metadata`), `workflow
 - **Changelog per PR (#1521)**: add a `changelog.d/<slug>.<category>.md` fragment (category ∈ `added/changed/deprecated/removed/fixed`) — do **not** edit `CHANGELOG.md`. Fragments are separate files, so PRs never conflict on the changelog (batched or not). See `changelog.d/README.md`.
 - **Before merge**: the **local** full suite is authoritative — `./scripts/local_ci.sh` (see *Pre-commit / pre-merge checks*). GitHub's PR checks are a fast tier only and green there is **not** sufficient.
 - **Review before merge (MANDATORY)**: run an **independent adversarial review** of the PR before merging — a fresh reviewer (subagent / cross-model / worktree-isolated), *not* just author self-review. Merge only when it returns MERGE-OK, or after fixing every blocker it raises and re-reviewing. Local-green ≠ correct. A review blocks only on substance (user ruling, 2026-10-08):
-  - **Blocker**: a behaviour defect in the diff; a user-facing false statement (docs, error message, changelog) that would lead a user to solve a different problem; or a claimed fix with no pin that goes red without it. Fix it, then re-review. For a user-facing false statement, the re-review reads only the corrected text, since a corrected statement needs a second reader too. It counts as the next of the PR's three reviews.
-  - **Must-fix, no re-review**: a false number or claim in a test docstring, a comment or the PR body, or in user-facing text where it would not lead a user to solve a different problem. Correct it, re-run the check, state the command and its output in the PR, and merge without another review round.
+  - **Blocker**: a behaviour defect in the diff; a user-facing false statement (docs, error message, changelog) that would lead a user to solve a different problem; or a claimed fix with no pin that goes red without it; or a partial fix that no admission in § *Local patches are the anti-pattern* covers, whatever its class line says. Fix it, then re-review. For a user-facing false statement, the re-review reads only the corrected text, since a corrected statement needs a second reader too. It counts as the next of the PR's three reviews.
+  - **Must-fix, no re-review**: a false number or claim in a test docstring, a comment or the PR body, or in user-facing text where it would not lead a user to solve a different problem; or a missing class line, or a false number in one. Correct it, re-run the check, state the command and its output in the PR, and merge without another review round.
   - **Should-fix**: wording, clarity, style. Fix it or file it; it never blocks.
   - A review whose findings are all must-fix or should-fix returns MERGE-OK, and the must-fix corrections are a condition of merging.
   - A prose-only must-fix or should-fix correction is not a diff change that triggers the next review.
