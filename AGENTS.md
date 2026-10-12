@@ -393,6 +393,23 @@ This repository is pre-1.0: fix a cross-cutting defect at the highest owning abs
 the redundant path instead of preserving a local fork. Breaking changes accumulate as `changelog.d/` fragments (#1521) and ship in the current `v0.MINOR.x` patch line unless the
 maintainer explicitly chooses a minor release; do not add compatibility shims for unreleased code.
 
+### Local patches are the anti-pattern ⚠️ (user ruling, 2026-10-12; #2626)
+
+The paragraph above is the target: fix a defect at the level of its class, at the owning abstraction. A **local patch** is a fix written at the site where the defect was found while other members of its class stay. It is the anti-pattern that rule exists against. The level is chosen when the work is planned, before any diff exists, so that is where it is checked: **every plan and every PR body carries a class line**:
+
+1. the defect class, named;
+2. its population: the predicate, the count at a stated sha, and a control the predicate must find;
+3. whether the change fixes the class or one instance;
+4. each function the change edits that `git log -L` shows was already edited twice or more.
+
+An instance fix is admitted when its class line names which of these holds:
+- the census shows the class has one member;
+- the instance fix is itself the root-cause fix;
+- the class fix waits on a decision, and the issue that tracks it is named;
+- it is a one-line truth repair (a false message or comment) with nothing behind it to fix.
+
+Urgency is not on that list: it changes the order of work, not its level.
+
 ### Version-bump checklist ⚠️ MANDATORY
 In a single commit:
 1. `pyproject.toml:11` — `version = "X.Y.Z"` + inline `# vX.Y.Z: <one-line scope>`.
