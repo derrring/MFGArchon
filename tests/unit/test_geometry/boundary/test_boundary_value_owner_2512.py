@@ -114,8 +114,10 @@ def test_an_accessor_given_no_time_or_no_point_refuses_a_value_that_declares_it(
 
 
 def _timed_readers():
-    """Each site that names its reader's time keyword, one case per branch: (call, the values a time of 0.5 gives or
-    None if it returns nothing to read). The value is g(t) = 0.25 + t, so 0.75 at t = 0.5."""
+    """Nine of the thirteen reachable sites that name their reader's time keyword, one case per branch, each a callable
+    taking the reader's keywords. A call with a time of 0.5 returns values holding g(0.5) = 0.75, g(t) = 0.25 + t, or
+    None for the ghost fill, which returns nothing to read. The other four sites (D1's segment branch,
+    `BCSegment.get_value`, FEM's and Nitsche's assemblies) are pinned by the accessor, FEM and Nitsche tests."""
     import warnings
     from types import SimpleNamespace
 
@@ -197,9 +199,9 @@ def _timed_readers():
     ],
 )
 def test_a_reader_given_no_time_says_to_pass_its_time(reader):
-    """A reader whose time defaulted to 0.0 refuses a value that declares t when given none, and names its own time
-    parameter, which the advice then runs with (#2512 row B2, #2605). One case per site that names the keyword, so a
-    site whose keyword is dropped goes red here (review 2 of #2609)."""
+    """A reader that takes a time refuses a value that declares t when given none, and names its own time parameter,
+    which the advice then runs with (#2512 row B2, #2605). Dropping the keyword at any of the nine sites
+    `_timed_readers` holds turns its case red (reviews 2 and 3 of #2609)."""
     call = _timed_readers()[reader]
     with pytest.raises(NotImplementedError, match=r"declares t, but .* was given no time; pass time= to read it"):
         call()
