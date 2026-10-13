@@ -249,6 +249,11 @@ def _dirichlet_segments_at_dofs(basis: skfem.Basis, bc: BoundaryConditions) -> l
         where = f"boundary facets at the mesh node {np.round(basis.doflocs[:, dofs[i]], 12).tolist()}"
         chosen = bc.segment_for_shared_node(sharing, where)
         owner[i] = next(k for k, (segment, _) in enumerate(groups) if segment is chosen)
+    for k, (segment, facets) in enumerate(groups):
+        if segment.bc_type == BCType.DIRICHLET and not (owner == k).any():
+            held = pairs[pairs[:, 1] == k, 0]
+            takers = [groups[j][0] for j in np.unique(owner[np.isin(dofs, held)])]
+            bc.refuse_a_segment_left_no_node(segment, takers, f"{len(facets)} boundary facet(s)")
     return [
         (segment, dofs[owner == k])
         for k, (segment, _) in enumerate(groups)
@@ -260,10 +265,13 @@ def refuse_what_fem_cannot_impose(basis: skfem.Basis, bc: BoundaryConditions | N
     """Refuse, at construction, what the FEM adapter would otherwise misread in silence (#2593, #2595).
 
     - **A Dirichlet value it cannot read** (`segment_value`, #2512 row B2). It used to become 0.
-    - **What the owner refuses on this mesh**: a ``boundary`` name that is no tag of the mesh and aliases no face it
-      tags, a segment that governs no facet and is not effect-neutral, ``default_bc`` unset or ROBIN where a facet
-      falls through to it, and a node shared by differently governed facets under a blending ``corner_strategy``
-      (`BoundaryConditions.segments_for_facets`, `segment_for_shared_node`).
+    - **What the owner refuses on this mesh** (`BoundaryConditions.segments_for_facets`, `segment_for_shared_node`,
+      `refuse_a_segment_left_no_node`):
+      - a ``boundary`` name that is no tag of the mesh and aliases no face it tags, and a tag that also holds facets
+        inside the domain;
+      - a segment that governs no facet, and a DIRICHLET segment the corner rule leaves no node, unless effect-neutral;
+      - ``default_bc`` unset or ROBIN where a facet falls through to it;
+      - a node shared by differently governed facets under a blending ``corner_strategy``.
     - **A facet governed by a condition this path has no imposition for** (PERIODIC, EXTRAPOLATION_*).
     """
     from mfgarchon.geometry.boundary.types import BCType, segment_value

@@ -18,22 +18,37 @@
     tag, `"right"` the `x_max` tag. `"all"` is every facet.
   - **A node shared by facets that different segments govern** takes the corner rule
     (`BoundaryConditions.segment_for_shared_node`): priority, then DIRICHLET before any other condition, then placed
-    before global, then declaration order. Two Dirichlet segments meeting at a node with different values used to be
-    refused on the condensation path and taken from the last segment declared on HJB-FEM's Newton path (#2541); both
-    paths now take the corner's segment, whose value the node holds.
+    before global, then declaration order. **Two Dirichlet values at a shared FEM node now take the corner rule
+    instead of being refused**: between two placed segments of equal priority, the one declared first holds the node.
+    They used to be refused on the condensation path and taken from the last segment declared on HJB-FEM's Newton path
+    (#2541). Where a
+    higher-priority natural segment meets a Dirichlet facet, the node is the natural segment's and is left free; it
+    used to be condensed.
   - **Refused by name**, at construction and at every read of the BC:
     - a name that is neither a tag of the mesh nor a box face the mesh tags, naming both readings: a falsy `0` or
       `""` used to be read as no name, the whole boundary;
-    - a tag that also holds facets inside the domain;
-    - a facet that falls through to a `default_bc` that is unset or ROBIN. It was solved with the natural condition.
-      Tests and code that named some faces and left the rest to that silence now say so, with `default_bc=NO_FLUX`;
+    - **a facet that falls through to a `default_bc` that is unset**, which was solved with the natural condition: an
+      FEM BC that names some faces and leaves the rest without a default is now refused,
+      "BoundaryConditions.segments_for_facets: no segment governs {n} boundary facet(s) of the mesh, and default_bc
+      was not specified on BoundaryConditions (#1100). Either cover {n} boundary facet(s) of the mesh with a segment
+      -- an unplaced segment says 'the rest' -- or pass default_bc= with the condition every location no segment
+      governs should get (#2512 row B1)." Pass
+      `default_bc=NO_FLUX` for the condition those facets were getting;
+    - a facet that falls through to a ROBIN `default_bc`, which carries no alpha and no beta;
     - a segment that governs no facet, because something outranks it everywhere it reaches or it reaches none, unless
       it imposes the same condition there. A segment on an axis tag that holds no facet, as on a disc, is one; the
       refusal names the tag and lists the tags that hold facets;
+    - a DIRICHLET segment that governs facets but whose every node the corner rule gives to segments imposing a
+      different condition, such as an exit on one facet between two higher-priority walls. P1 FEM imposed no exit there;
+    - a tag that also holds facets inside the domain, which main condensed;
     - under `corner_strategy="average"` or `"mollify"`, a node whose facets' segments impose different conditions.
   - **API changes.** `fem.bc_adapter.is_pure_neumann(mesh, bc)` and `refuse_what_fem_cannot_impose(basis, bc,
     consumer)` take the mesh and the basis. New: `BoundaryConditions.segments_for_facets`, `segment_for_shared_node`,
-    `conditions.BoundaryFacets`, and `fem.bc_adapter.has_dirichlet_dofs`. `_find_segment_dofs` and
-    `_find_segment_facets` are gone.
+    `refuse_a_segment_left_no_node`, `conditions.BoundaryFacets`, and `fem.bc_adapter.has_dirichlet_dofs`.
+    `_find_segment_dofs` and `_find_segment_facets` are gone.
+  - **The point family's readings** of `region` and `sdf_region` now go through the functions the facet entry uses
+    (`region_holds`, `sdf_region_holds`). Two answers of `BCSegment.matches_point` change: a `region` naming an axis
+    the point lacks raises even when an earlier axis already excludes the point, where it returned False; and a NaN
+    coordinate or SDF value no longer matches.
   - **Not here.** GFDM and meshless Nitsche read faces by their own rules until stage B1c, the particle solver until
     B1d.

@@ -312,13 +312,17 @@ def test_every_facet_takes_the_point_owners_answer_at_its_midpoint_and_the_face_
             else:
                 assert _same_answer(face_answers[0], governing), (segments, default, axis, side)
                 face_checks += 1
-    # Measured: (answered, refused, face checks, split faces) = (258, 183, 516, 0) in 1-D, (624, 465, 1554, 66) in 2-D
-    # and (225, 216, 1074, 12) in 3-D.
-    assert answered >= 200, answered
-    assert refused >= 150, refused
-    assert face_checks >= 500, face_checks
-    if dim > 1:
-        assert split_faces >= 10, "too few generated BCs split a face between two segments of one condition"
+    # The generator is deterministic. Measured at c0e728ca: (answered, refused, face checks, split faces) =
+    # (258, 183, 516, 0) in 1-D, (624, 465, 1554, 66) in 2-D and (225, 216, 1074, 12) in 3-D. Each count must stay within
+    # 5% of that, so an entry that refuses, or answers, a twentieth more often than measured fails here.
+    measured = {1: (258, 183, 516, 0), 2: (624, 465, 1554, 66), 3: (225, 216, 1074, 12)}[dim]
+    for name, count, expected in zip(
+        ("answered", "refused", "face checks", "split faces"),
+        (answered, refused, face_checks, split_faces),
+        measured,
+        strict=True,
+    ):
+        assert abs(count - expected) <= 0.05 * expected, (name, count, expected)
 
 
 def test_facet_normals_point_outward_on_a_curved_boundary():
@@ -435,3 +439,93 @@ def test_2305_a_neumann_load_on_the_default_channel_or_an_alias_is_assembled_whe
     _, on_the_wall = assemble_robin_terms(basis, named, 0.125, natural_bc="gradient")
     assert on_the_wall.sum() == pytest.approx(0.125 * 5.0 * 1.0, rel=1e-12)
     assert np.allclose(basis.doflocs[0, np.flatnonzero(on_the_wall)], 0.0)
+
+
+def test_a_dirichlet_segment_the_corner_rule_leaves_no_node_is_refused_and_the_advice_runs():
+    """Review 1 of #2643, B1. On the 5 x 5 square an exit on x_max governs the facet y in [0.25, 0.5] between two
+    priority-1 NO_FLUX walls placed by region; the corner rule gives both its nodes to the walls, so P1 FEM imposed no
+    exit at all, and has_dirichlet_dofs was False. It is refused, naming the walls. The advice -- the exit at the walls'
+    priority, declared after them -- keeps the facet and takes its two nodes."""
+    from mfgarchon.alg.numerical.fem.bc_adapter import get_dirichlet_dofs_and_values
+
+    def walls(priority: int) -> list[BCSegment]:
+        return [
+            BCSegment(name="w1", bc_type=BCType.NO_FLUX, boundary="x_max", region={"y": (0.0, 0.3)}, priority=priority),
+            BCSegment(
+                name="w2", bc_type=BCType.NO_FLUX, boundary="x_max", region={"y": (0.45, 1.0)}, priority=priority
+            ),
+        ]
+
+    basis = _square_basis()
+    exit_ = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=G, boundary="x_max")
+    refused = BoundaryConditions(dimension=2, segments=[exit_, *walls(1)], default_bc=BCType.NO_FLUX)
+    with pytest.raises(ValueError, match=r"segment 'exit' governs 1 boundary facet\(s\) but holds none of their nodes"):
+        get_dirichlet_dofs_and_values(basis, refused)
+    advised_exit = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=G, boundary="x_max", priority=1)
+    advised = BoundaryConditions(dimension=2, segments=[*walls(1), advised_exit], default_bc=BCType.NO_FLUX)
+    dofs, values = get_dirichlet_dofs_and_values(basis, advised)
+    np.testing.assert_allclose(basis.doflocs[:, dofs].T, [[1.0, 0.25], [1.0, 0.5]])
+    np.testing.assert_allclose(values, G)
+
+
+def test_an_exit_on_a_face_one_element_thick_between_higher_priority_walls_is_refused():
+    """Review 1 of #2643, B1's second case: on a box one element thick in y, an exit on x_max at priority 0 between
+    NO_FLUX y_min and y_max at priority 1 has both its nodes taken, and is refused. A same-condition neighbour is
+    effect-neutral: a DIRICHLET(0.7) y_min and y_max take the nodes and impose the exit's condition there."""
+    from mfgarchon.alg.numerical.fem.assembly import create_basis
+    from mfgarchon.alg.numerical.fem.bc_adapter import get_dirichlet_dofs_and_values
+    from mfgarchon.alg.numerical.fem.mesh_adapter import _tag_axis_aligned_boundaries
+
+    basis = create_basis(
+        _tag_axis_aligned_boundaries(skfem.MeshTri.init_tensor(np.linspace(0.0, 1.0, 5), np.array([0.0, 1.0]))),
+        order=1,
+    )
+    exit_ = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=G, boundary="x_max")
+
+    def sides(**condition) -> list[BCSegment]:
+        return [BCSegment(name=face, boundary=face, priority=1, **condition) for face in ("y_min", "y_max")]
+
+    with pytest.raises(ValueError, match=r"segment 'exit' governs 1 boundary facet\(s\) but holds none of their nodes"):
+        get_dirichlet_dofs_and_values(
+            basis,
+            BoundaryConditions(
+                dimension=2, segments=[exit_, *sides(bc_type=BCType.NO_FLUX)], default_bc=BCType.NO_FLUX
+            ),
+        )
+    same = BoundaryConditions(
+        dimension=2, segments=[exit_, *sides(bc_type=BCType.DIRICHLET, value=G)], default_bc=BCType.NO_FLUX
+    )
+    dofs, values = get_dirichlet_dofs_and_values(basis, same)
+    assert np.isclose(basis.doflocs[0, dofs], 1.0).sum() == 2
+    np.testing.assert_allclose(values, G)
+
+
+def test_a_region_name_is_the_mesh_tag_of_that_name():
+    """Review 1 of #2643, B2(i). On a mesh, ``region_name`` is read as the tag of that name, with no alias reading: a
+    DIRICHLET segment with ``region_name="exit_tag"`` condenses that tag's nodes (here x = 1) and no other, where main
+    ignored the field and condensed the whole boundary. A name that is no tag is refused."""
+    basis = _square_basis({"exit_tag": lambda x: np.isclose(x[0], 1.0)})
+    by_tag = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=G, region_name="exit_tag")
+    np.testing.assert_allclose(
+        _dirichlet_x(basis, BoundaryConditions(dimension=2, segments=[by_tag], default_bc=BCType.NO_FLUX)), 1.0
+    )
+    aliased = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=G, region_name="right")
+    with pytest.raises(ValueError, match=r"names region_name='right'.*a region_name is read only as a tag"):
+        _dirichlet_x(basis, BoundaryConditions(dimension=2, segments=[aliased], default_bc=BCType.NO_FLUX))
+
+
+def test_a_tag_that_also_holds_interior_facets_is_refused():
+    """Review 1 of #2643, B2(ii). A tag holding facets inside the domain -- here the line x = 1/2 -- is refused when a
+    segment names it: a boundary condition governs boundary facets, and restricting the tag to them would drop the
+    rest in silence. Main condensed the interior nodes."""
+    from mfgarchon.alg.numerical.fem.assembly import create_basis
+    from mfgarchon.alg.numerical.fem.mesh_adapter import _tag_axis_aligned_boundaries
+
+    xs = np.linspace(0.0, 1.0, 5)
+    mesh = _tag_axis_aligned_boundaries(skfem.MeshTri.init_tensor(xs, xs)).with_boundaries(
+        {"mid": lambda x: np.isclose(x[0], 0.5)}, boundaries_only=False
+    )
+    basis = create_basis(mesh, order=1)
+    named = BCSegment(name="cut", bc_type=BCType.DIRICHLET, value=G, boundary="mid")
+    with pytest.raises(ValueError, match=r"the mesh tag 'mid', which also holds facets inside the domain"):
+        _dirichlet_x(basis, BoundaryConditions(dimension=2, segments=[named], default_bc=BCType.NO_FLUX))

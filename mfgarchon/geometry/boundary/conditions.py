@@ -743,8 +743,8 @@ class BoundaryConditions:
             raise ValueError(
                 f"BoundaryConditions: these segments govern no facet of the mesh, so their conditions would be "
                 f"dropped: {where}. Order on a facet: priority, then a placed segment before a global one (no "
-                "placement, or boundary='all'), then declaration order. Raise the segment's priority, or remove it "
-                "(#2512 row B1)."
+                "placement, or boundary='all'), then declaration order. Remove it or the segment that outranks it, or "
+                "place the two on different facets (#2512 row B1)."
             )
         return [segments[k] for k in winner]
 
@@ -756,6 +756,21 @@ class BoundaryConditions:
         Dirichlet facet meeting a natural one at equal priority holds the node, and ``corner_strategy="average"`` or
         ``"mollify"`` refuses a node whose segments impose different conditions."""
         return self._corner_choice(governing, where)
+
+    def refuse_a_segment_left_no_node(self, segment: BCSegment, takers: list[BCSegment], where: str) -> None:
+        """(c) at a reader's own unit, the node (#2512 row B1, stage B1b): a DIRICHLET segment that governs facets but
+        whose every node :meth:`segment_for_shared_node` gives to other segments imposes nothing -- a single facet between
+        two higher-priority segments is one -- so it is refused unless each segment that took its nodes imposes the same
+        condition (`_same_condition`)."""
+        if all(_same_condition(segment, taker) for taker in takers):
+            return
+        raise ValueError(
+            f"BoundaryConditions: segment {segment.name!r} governs {where} but holds none of their nodes: the corner rule "
+            f"gives each to {', '.join(sorted({repr(t.name) for t in takers}))}, which impose a different condition, so "
+            "its condition would be dropped. Give it the priority of those segments and declare it after them -- it keeps "
+            "its facets by declaration order and takes their nodes, since a DIRICHLET segment takes a node before a "
+            "natural one at equal priority -- or remove it (#2512 row B1)."
+        )
 
     def _facet_cover(self, segment: BCSegment, facets: BoundaryFacets) -> np.ndarray:
         """Which rows of ``facets`` ``segment`` holds: every placement field it carries, read per facet."""
@@ -807,7 +822,8 @@ class BoundaryConditions:
             )
             raise ValueError(
                 f"BC segment {segment.name!r} names {field_name}={name!r}, which this mesh does not resolve. Read as a "
-                f"tag of the mesh, it is none (the mesh's tags: {sorted(facets.tags)}); read {as_face}. Name one of "
+                f"tag of the mesh, it is none (the mesh's tags: {sorted(facets.tags)}, of which "
+                f"{sorted(t for t, rows in facets.tags.items() if len(rows))} hold facets); read {as_face}. Name one of "
                 "the mesh's tags (#2512 row B1)."
             )
         if tag in facets.off_boundary:

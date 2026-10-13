@@ -394,8 +394,9 @@ def _normal_selects_face(segment: BCSegment, face: BoundaryFace) -> bool:
 
 def normal_holds(segment: BCSegment, normals: np.ndarray, where: str) -> np.ndarray:
     """For each outward unit normal (a row of ``normals``), is it within ``segment.normal_tolerance`` (a cosine) of
-    the segment's ``normal_direction``? The one reading of ``normal_direction`` against a known normal: a box face's
-    (`_normal_selects_face`) and a mesh facet's (`BoundaryConditions.segments_for_facets`, #2512 row B1)."""
+    the segment's ``normal_direction``? Read against a box face's normal (`_normal_selects_face`) and a mesh facet's
+    (`BoundaryConditions.segments_for_facets`, #2512 row B1). `BCSegment.matches_point` on a domain given by an SDF
+    reads the normal from the SDF's gradient instead, with its own comparison."""
     normals = np.atleast_2d(np.asarray(normals, dtype=float))
     target = np.asarray(segment.normal_direction, dtype=float).ravel()
     norm = float(np.linalg.norm(target))
