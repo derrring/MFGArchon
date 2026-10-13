@@ -259,7 +259,7 @@ class FPFDMSolver(BaseFPSolver):
         self._validate_bc_support(self.boundary_conditions)
         # Issue #2495: a BC periodic on some faces only is refused here, at hand-over, as well as by
         # every assembly entry -- this solver wraps every axis or none.
-        _refuse_partial_periodic(self.boundary_conditions, self.dimension)
+        _refuse_partial_periodic(self.boundary_conditions, self.dimension, self.problem.geometry)
 
     # _detect_dimension() inherited from BaseNumericalSolver (Issue #633)
 
@@ -359,11 +359,11 @@ class FPFDMSolver(BaseFPSolver):
         # resolved one. Reading the geometry here gave a second owner -- measured with a periodic BC passed to the
         # constructor over a no-flux geometry, the two disagree (review of #2344).
         boundary_conditions = self.boundary_conditions
-        _refuse_partial_periodic(boundary_conditions, ndim)
+        _refuse_partial_periodic(boundary_conditions, ndim, geometry)
         try:
             # Every face, however spelt -- `_get_bc_type` saw no periodicity in an empty segment
             # list over a periodic default (#2495).
-            periodic = periodic_on_every_face(boundary_conditions, ndim)
+            periodic = periodic_on_every_face(boundary_conditions, ndim, geometry)
         except AttributeError:
             raise TypeError(  # an object FP-FDM cannot honour fails loud (#1559)
                 f"Unsupported boundary_conditions type: {type(boundary_conditions).__name__}. "
@@ -767,7 +767,7 @@ class FPFDMSolver(BaseFPSolver):
         from .fp_fdm_time_stepping import _declares_dirichlet, _is_dirichlet_at_point
 
         if _declares_dirichlet(bc) and any(
-            is_boundary_point(idx, shape, len(shape)) and _is_dirichlet_at_point(bc, idx, shape)
+            is_boundary_point(idx, shape, len(shape)) and _is_dirichlet_at_point(bc, idx, shape, self.problem.geometry)
             for idx in np.ndindex(*shape)
         ):
             raise NotImplementedError(

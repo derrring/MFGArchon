@@ -20,7 +20,7 @@ import pytest
 
 import numpy as np
 
-from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc
 from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
 from mfgarchon.utils.numerical.tensor_calculus import _tensor_diffusion_2d, _tensor_diffusion_nd
 
@@ -155,3 +155,40 @@ def test_an_asymmetric_field_is_what_makes_the_leak_visible():
     for label, field in (("centred", centred), ("skewed", skewed)):
         integral = float((weights * _tensor_diffusion_2d(field, CROSS, DX, DY, bc, None, 0.0)).sum())
         assert abs(integral) < 1e-13, f"{label} field leaks: {integral:.3e}"
+
+
+def _per_face(segments: dict[str, BCType]) -> BoundaryConditions:
+    return BoundaryConditions(
+        dimension=2,
+        default_bc=BCType.NO_FLUX,
+        segments=[BCSegment(name=face, bc_type=bc_type, boundary=face) for face, bc_type in segments.items()],
+    )
+
+
+@pytest.mark.parametrize("spelling", ["uniform", "per_face"])
+def test_every_spelling_of_a_no_flux_wall_conserves_2626(spelling):
+    """#2626's own fixture: 9 x 9 nodes on [0, 1]^2, u = exp(-((x - 0.7)^2 + (y - 0.4)^2) / 0.05) (mass 0.1503), and
+    Sigma = [[0.2, 0.08], [0.08, 0.1]]. The cross-term fix above read only a uniform BC's type, so the same no-flux
+    spelt one segment per face leaked: d/dt mass = -7.042e-03 at 1052ec62, against -3.928e-17 for the uniform
+    spelling. The kernel now asks the face owner for each wall (#2512 row B1), and the two agree."""
+    n, h = 9, 1.0 / 8
+    grid_x, grid_y = np.meshgrid(np.linspace(0.0, 1.0, n), np.linspace(0.0, 1.0, n), indexing="ij")
+    field = np.exp(-((grid_x - 0.7) ** 2 + (grid_y - 0.4) ** 2) / 0.05)
+    weights = np.outer(*[np.r_[h / 2, np.full(n - 2, h), h / 2]] * 2)
+    assert abs(float((weights * field).sum()) - 0.1503) < 5e-5
+    sigma = np.array([[0.2, 0.08], [0.08, 0.1]])
+    faces = ("x_min", "x_max", "y_min", "y_max")
+    bc = no_flux_bc(dimension=2) if spelling == "uniform" else _per_face(dict.fromkeys(faces, BCType.NO_FLUX))
+    rate = float((weights * _tensor_diffusion_2d(field, sigma, h, h, bc, None, 0.0)).sum())
+    assert abs(rate) < 1e-15, f"{spelling} leaks: {rate:.3e}"
+
+
+def test_no_flux_on_some_walls_only_is_refused_under_a_cross_tensor_2626():
+    """The kernel zeroes the cross flux on every wall or on none, so a BC no-flux on some walls only cannot be
+    honoured once the tensor has cross terms; it is refused by name, naming the missing capability (#2632), rather
+    than assembled with no zeroing, which on #2626's fixture lost mass at -7.042e-03."""
+    bc = _per_face({"x_min": BCType.NO_FLUX, "x_max": BCType.NO_FLUX, "y_min": BCType.NEUMANN, "y_max": BCType.NEUMANN})
+    field = np.ones((6, 7))
+    with pytest.raises(NotImplementedError, match="#2632"):
+        _tensor_diffusion_2d(field, CROSS, DX, DY, bc, None, 0.0)
+    _tensor_diffusion_2d(field, DIAGONAL, DX, DY, bc, None, 0.0)  # a diagonal tensor has no cross flux to zero

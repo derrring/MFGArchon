@@ -53,7 +53,9 @@ def _mixed_with_default(default_bc, default_value=0.0):
 def test_a_defaulted_robin_is_refused():
     """The load-bearing test. `beta = 0` is Dirichlet, so defaulting a Robin changes the boundary
     condition's TYPE — which is not an approximation a caller can be expected to notice."""
-    with pytest.raises(NotImplementedError) as excinfo:
+    # ValueError: the face owner's one refusal for it (#2512 row B1), the type `get_bc_at_point` already used; the
+    # ghost path raised NotImplementedError for the same BC before the two readers shared an owner.
+    with pytest.raises(ValueError) as excinfo:
         _pad(_mixed_with_default(BCType.ROBIN))
 
     message = str(excinfo.value)

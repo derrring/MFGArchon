@@ -8,11 +8,11 @@ went to the no-flux handler, so the other two solved as no-flux, bit for bit, wi
 reads its ghosts per face and already agreed.
 
 FP-FDM wraps every axis or none -- a wall node is assembled by a handler that cannot wrap -- so a BC
-periodic on some faces only is refused rather than solved as no-flux on every face. So is a periodic
-segment the face reader cannot place, in a mix of operations or with no `default_bc`: one with no
-`boundary`, which that reader puts on every face, would otherwise be wrapped on faces it does not reach,
-where HJB-FDM walls them over a NO_FLUX default, or finds no BC and raises without one. A BC that
-declares periodicity but shows it on no face is no-flux, as on main.
+periodic on some faces only is refused rather than solved as no-flux on every face. The faces are read
+from the face owner (#2512 row B1), which places a periodic segment the same way for HJB-FDM's ghosts: one
+placed by `normal_direction` is on the faces its normal selects, so x-periodic segments over a NO_FLUX
+default are a channel and refused as one, and with no `default_bc` the y faces have no condition, which the
+owner refuses (#1100). A BC that declares periodicity but shows it on no face is no-flux, as on main.
 
 Mutations, each run through this file on a scratch copy of the tree:
 
@@ -22,12 +22,11 @@ Mutations, each run through this file on a scratch copy of the tree:
 - the refusal in `FPFDMSolver.__init__` removed: both construction cases fail;
 - the refusal in `solve_timestep_full_nd`, where the wall handlers are dispatched, removed: both
   assembly cases fail;
-- `refuse_unplaceable_segments` left out of that refusal: both `normal_direction` cases fail;
 - the refusal keyed on "not every face periodic" instead of "some face periodic, not all": the
   overridden-default case fails;
 - the solver's dimension ignored in favour of the BC's own: the unbound case fails;
-- `refuse_unplaceable_segments` exempting every single-operation BC, as its first version did, rather
-  than only one with a `default_bc`: both no-default cases fail.
+- (`refuse_unplaceable_segments`, which two mutations above exercised, was folded into the face owner by
+  #2512 row B1; the `normal_direction` cases now reach the channel refusal and the unset-default refusal.)
 """
 
 from __future__ import annotations
@@ -119,9 +118,8 @@ def _channel():
 
 
 def _periodic_by_normal(default_bc=BCType.NO_FLUX):
-    """Periodic in x by `normal_direction`, which carries no `boundary`: the face reader puts it on every
-    face, so read naively this BC is periodic everywhere -- while HJB-FDM walls y over a NO_FLUX default,
-    and finds no BC for y and raises without one."""
+    """Periodic in x by `normal_direction`, which carries no `boundary`: the face owner places each segment on
+    the face its normal selects, so this is a channel (x periodic, y over the default)."""
     return BoundaryConditions(
         dimension=2,
         default_bc=default_bc,
@@ -134,24 +132,29 @@ def _periodic_by_normal(default_bc=BCType.NO_FLUX):
 
 @pytest.mark.parametrize("entry", ["construction", "assembly"])
 @pytest.mark.parametrize(
-    ("bc_factory", "refusal"),
+    ("bc_factory", "error", "refusal"),
     [
-        pytest.param(_channel, "periodic on some faces", id="channel"),
-        pytest.param(_periodic_by_normal, "have no `boundary`", id="periodic-by-normal-direction"),
+        pytest.param(_channel, NotImplementedError, "periodic on some faces", id="channel"),
         pytest.param(
-            lambda: _periodic_by_normal(default_bc=None), "have no `boundary`", id="periodic-by-normal-no-default"
+            _periodic_by_normal, NotImplementedError, "periodic on some faces", id="periodic-by-normal-direction"
+        ),
+        pytest.param(
+            lambda: _periodic_by_normal(default_bc=None),
+            ValueError,
+            "default_bc was not\\s+specified",
+            id="periodic-by-normal-no-default",
         ),
     ],
 )
-def test_a_bc_periodic_on_some_faces_only_is_refused_2495(bc_factory, refusal, entry):
-    """FP-FDM cannot wrap one axis and wall another. A channel was solved as no-flux on every face; a
-    periodic segment placed by `normal_direction` would be wrapped on every face, where HJB-FDM walls it.
-    Both are refused, the second because the face reader cannot place its segments."""
+def test_a_bc_periodic_on_some_faces_only_is_refused_2495(bc_factory, error, refusal, entry):
+    """FP-FDM cannot wrap one axis and wall another. A channel was solved as no-flux on every face, and so
+    is periodic placed by `normal_direction` on the x faces: both are refused as channels. With no
+    `default_bc` the y faces have no condition at all, which the face owner refuses (#1100)."""
     if entry == "construction":
         problem, _, _ = _problem(bc_factory())
-        with pytest.raises(NotImplementedError, match=refusal):
+        with pytest.raises(error, match=refusal):
             FPFDMSolver(problem)
         return
     problem, m0, U = _problem(no_flux_bc(dimension=2))
-    with pytest.raises(NotImplementedError, match=refusal):
+    with pytest.raises(error, match=refusal):
         solve_fp_nd_full_system(m0, U, problem, boundary_conditions=bc_factory(), show_progress=False)

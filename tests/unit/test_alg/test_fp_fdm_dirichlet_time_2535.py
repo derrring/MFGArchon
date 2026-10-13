@@ -20,6 +20,7 @@ import pytest
 
 import numpy as np
 
+from mfgarchon.alg.numerical.fp_solvers import fp_fdm_time_stepping
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
@@ -57,14 +58,16 @@ def test_a_time_dependent_dirichlet_wall_is_read_at_each_level(d, monkeypatch):
         )
     else:  # uniform, g(t, x), read at the node
         bc = dirichlet_bc(dimension=2, value=lambda t, x: A + B * (x[0] ** 2 + x[1] ** 2 + 2 * d * D * t))
+    # FP-FDM reads a Dirichlet node's value from the segment governing the node, through the value owner
+    # `segment_value` (#2512 row B1); `get_bc_value_at_boundary`, which this recorded until then, is a wrapper of it.
     times = []
-    accessor = BoundaryConditions.get_bc_value_at_boundary
+    owner = fp_fdm_time_stepping.segment_value
 
-    def recording(self, boundary, time=None, point=None):
-        times.append(time)
-        return accessor(self, boundary, time=time, point=point)
+    def recording(segment, *, t=None, **kwargs):
+        times.append(t)
+        return owner(segment, t=t, **kwargs)
 
-    monkeypatch.setattr(BoundaryConditions, "get_bc_value_at_boundary", recording)
+    monkeypatch.setattr(fp_fdm_time_stepping, "segment_value", recording)
     pts = np.stack(np.meshgrid(*[np.linspace(0.0, 1.0, n)] * d, indexing="ij"), axis=-1).reshape(-1, d)
     shape = (n,) * d
     M = np.asarray(

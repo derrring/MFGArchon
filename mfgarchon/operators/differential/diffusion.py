@@ -31,7 +31,7 @@ Created: 2026-01-25 (Issue #625 - tensor_calculus migration)
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from scipy.sparse.linalg import LinearOperator
@@ -102,6 +102,7 @@ class DiffusionOperator(LinearOperator):
         field_shape: tuple[int, ...] | int,
         bc: BoundaryConditions | None = None,
         time: float | None = None,
+        geometry: Any = None,
     ):
         """
         Initialize diffusion operator.
@@ -117,6 +118,9 @@ class DiffusionOperator(LinearOperator):
             field_shape: Shape of field arrays (N₀, N₁, ...) or N for 1D
             bc: Boundary conditions (None for periodic)
             time: Time for time-dependent BCs (None, the default, reads a constant or g(x) value and refuses one that declares t (#2512))
+            geometry: The grid ``u`` lives on, on which the face owner decides a ``region`` or ``sdf_region``
+                placement for the tensor kernels (#2512 row B1); a BC read without one is decided on the grid it is
+                bound to, if any
 
         Raises:
             ValueError: If coefficient shape is invalid for the field shape
@@ -131,6 +135,7 @@ class DiffusionOperator(LinearOperator):
         self.field_shape = field_shape
         self.bc = bc
         self.time = time
+        self.geometry = geometry
         self._ndim = len(field_shape)
 
         # Validate spacings
@@ -283,7 +288,7 @@ class DiffusionOperator(LinearOperator):
         from mfgarchon.operators.stencils.finite_difference import laplacian_with_bc
 
         D = float(self.coefficient)
-        lap = laplacian_with_bc(u, self.spacings, bc=self.bc, time=self.time)
+        lap = laplacian_with_bc(u, self.spacings, bc=self.bc, time=self.time, geometry=self.geometry)
         return D * lap
 
     def _apply_tensor_diffusion(self, u: NDArray) -> NDArray:
@@ -299,7 +304,9 @@ class DiffusionOperator(LinearOperator):
         """
         from mfgarchon.utils.numerical.tensor_calculus import diffusion as tensor_calculus_diffusion
 
-        return tensor_calculus_diffusion(u, self.coefficient, self.spacings, bc=self.bc, time=self.time)
+        return tensor_calculus_diffusion(
+            u, self.coefficient, self.spacings, bc=self.bc, time=self.time, geometry=self.geometry
+        )
 
     def __repr__(self) -> str:
         """String representation for debugging."""
@@ -331,6 +338,7 @@ def apply_diffusion(
     spacings: Sequence[float],
     bc: BoundaryConditions | None = None,
     time: float | None = None,
+    geometry: Any = None,
 ) -> NDArray:
     """
     Apply diffusion operator ∇·(Σ∇u) to a field.
@@ -359,6 +367,7 @@ def apply_diffusion(
         field_shape=u.shape,
         bc=bc,
         time=time,
+        geometry=geometry,
     )
     return op(u)
 

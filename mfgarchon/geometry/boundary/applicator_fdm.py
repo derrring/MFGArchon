@@ -92,7 +92,7 @@ from .applicator_base import (
     ZeroFluxCalculator,
     ZeroGradientCalculator,
 )
-from .conditions import BoundaryConditions, region_name_governs_face
+from .conditions import BoundaryConditions, _group_nodes
 from .enforcement import enforce_dirichlet_value_nd, enforce_neumann_value_nd
 from .ghost_cells import (
     GhostCellConfig,
@@ -104,7 +104,6 @@ from .types import (
     BCType,
     BoundaryFace,
     PeriodicGridConvention,
-    parse_boundary_face,
     repeated_endpoint_count,
     segment_robin_coefficients,
     segment_value,
@@ -249,6 +248,7 @@ class FDMApplicator(BaseStructuredApplicator):
         boundary_conditions: BoundaryConditions,
         spacing: tuple[float, ...] | NDArray[np.floating],
         time: float | None = None,
+        geometry: Any = None,
     ) -> NDArray[np.floating]:
         """
         Enforce boundary condition values on solution array (Issue #542).
@@ -265,6 +265,8 @@ class FDMApplicator(BaseStructuredApplicator):
             boundary_conditions: BC specification (must be BoundaryConditions, not legacy)
             spacing: Grid spacing for each dimension (needed for Neumann BC)
             time: Current time for time-dependent BC values
+            geometry: The grid the field lives on, on which the face owner reads a ``region``, ``sdf_region``
+                or ``region_name`` placement (#2512 row B1)
 
         Returns:
             Solution array with BC enforced at boundaries (modified in-place, also returned)
@@ -293,75 +295,33 @@ class FDMApplicator(BaseStructuredApplicator):
         # Import BC types
         from mfgarchon.geometry.boundary.types import BCType
 
-        # Enforce BC for each segment
-        for segment in boundary_conditions.segments:
-            # Parse boundary identifier to get dimension and side
-            boundary_id = segment.boundary
-
-            if segment.region_name is not None:
-                # The shared resolver, not "no boundary means every face", which gave a region-named
-                # segment the whole boundary here too (#2472). This reader has no geometry.
-                boundaries_to_apply = [
-                    (d, side)
-                    for d in range(field.ndim)
-                    for side in ("min", "max")
-                    if region_name_governs_face(segment, BoundaryFace(d, side), geometry=None)
-                ]
-            # If boundary_id is None, this is a uniform BC - apply to all boundaries
-            elif boundary_id is None:
-                # Determine field dimension
-                field_ndim = field.ndim
-                # Apply to all standard boundaries (x_min, x_max, y_min, y_max, etc.)
-                boundaries_to_apply = []
-                for d in range(field_ndim):
-                    boundaries_to_apply.append((d, "min"))
-                    boundaries_to_apply.append((d, "max"))
+        # One segment per face, from the face owner (#2512 row B1). This wrote every segment in turn, in priority
+        # order, so where two segments reached one face the LOWEST priority was written last and won.
+        def write(target: NDArray[np.floating], face: BoundaryFace, segment: Any) -> None:
+            if segment.bc_type not in (BCType.DIRICHLET, BCType.NEUMANN):
+                return  # imposed elsewhere (the ghosts); nothing is written here
+            bc_value = segment_value(
+                segment, t=time, time_keyword="time", x=None, where=f"FDM enforce_values on face {face.to_string()}"
+            )
+            if segment.bc_type == BCType.DIRICHLET:
+                # Dirichlet: Set boundary values directly u(boundary) = g
+                self._apply_dirichlet_enforcement(target, face.axis, face.side, bc_value)
             else:
-                # Map boundary string to (dimension, side)
-                dim, side = self._parse_boundary_identifier(boundary_id)
-                if dim is None:
-                    continue  # Unrecognized boundary format
-                boundaries_to_apply = [(dim, side)]
+                # Neumann: Set boundary value to satisfy gradient constraint du/dn = g
+                self._apply_neumann_enforcement(target, face.axis, face.side, bc_value, spacing_tuple[face.axis])
 
-            # Apply BC to each boundary
-            for dim, side in boundaries_to_apply:
-                bc_value = segment_value(
-                    segment,
-                    t=time,
-                    time_keyword="time",
-                    x=None,
-                    where=f"FDM enforce_values on face {BoundaryFace(dim, side).to_string()}",
-                )
-
-                h = spacing_tuple[dim]
-
-                # Enforce BC based on type
-                if segment.bc_type == BCType.DIRICHLET:
-                    # Dirichlet: Set boundary values directly u(boundary) = g
-                    self._apply_dirichlet_enforcement(field, dim, side, bc_value)
-
-                elif segment.bc_type == BCType.NEUMANN:
-                    # Neumann: Set boundary value to satisfy gradient constraint ∂u/∂n = g
-                    self._apply_neumann_enforcement(field, dim, side, bc_value, h)
-
+        corners = boundary_conditions.corner_nodes(field.shape, geometry)
+        original = field.copy() if corners else None
+        for face in (BoundaryFace(d, side) for d in range(field.ndim) for side in ("min", "max")):
+            write(field, face, boundary_conditions.segment_for_face(face, geometry))
+        # Where faces share a node, the owner's choice (`corner_nodes`): its segment written along its face, at the
+        # node. A segment this applicator does not write leaves the node as it was before the faces were written.
+        written = field.copy() if corners else None
+        for face, segment, nodes in _group_nodes(corners):
+            source = written.copy() if segment.bc_type in (BCType.DIRICHLET, BCType.NEUMANN) else original
+            write(source, face, segment)
+            field[nodes] = source[nodes]
         return field
-
-    def _parse_boundary_identifier(self, boundary_id: str) -> tuple[int | None, str | None]:
-        """
-        Parse boundary identifier string to (dimension, side).
-
-        Uses BoundaryFace for dimension-agnostic parsing (Issue #946).
-
-        Args:
-            boundary_id: Boundary identifier string
-
-        Returns:
-            (dimension_index, 'min' or 'max') or (None, None) if unrecognized
-        """
-        face = parse_boundary_face(boundary_id)
-        if face is None:
-            return None, None
-        return face.axis, face.side
 
     def _apply_dirichlet_enforcement(self, field: NDArray[np.floating], dim: int, side: str, value: float) -> None:
         """
@@ -464,13 +424,12 @@ def bc_to_topology_calculator(
         raise TypeError(f"Unsupported BC type: {type(bc)}")
 
     # Only uniform BCs supported for now (mixed BC requires per-point dispatch)
-    if not bc.is_uniform:
+    seg = bc.uniform_segment
+    if seg is None:
         raise NotImplementedError(
             "Mixed BCs not yet supported in Topology/Calculator architecture. "
             "Use PreallocatedGhostBuffer for mixed BCs."
         )
-
-    seg = bc.segments[0]
     bc_type = seg.bc_type
 
     if bc_type == BCType.PERIODIC:
@@ -1035,84 +994,14 @@ def _write_wall_ghosts(
 
 
 def face_segment(bc: BoundaryConditions, target_face: BoundaryFace, geometry: Any = None) -> BCSegment:
-    """The segment whose condition the FDM ghosts impose on ``target_face``.
+    """The segment whose condition the FDM ghosts impose on ``target_face``: the owner's answer.
 
-    One resolver for the ghost path (`PreallocatedGhostBuffer._update_ghosts_mixed`) and for the rows that
-    must agree with it (`dirichlet_wall_rows`). The first segment, in priority order, that is placed on the
-    face by ``boundary`` (every alias: "left", "x_min", ..., Issue #946) or whose ``region_name`` governs it
-    (:func:`region_name_governs_face`: the geometry's region mask when the geometry defines the region, else a
-    region name that is a face label; anything else raises, Issue #2472). Failing that, a uniform BC's one
-    segment, else ``default_bc``.
-
-    A segment of a mixed BC with neither ``boundary`` nor ``region_name`` reaches no face here, while
-    ``BoundaryConditions``' own accessors give it every face (see ``value_gradient``).
+    The ghost path (`PreallocatedGhostBuffer._update_ghosts_mixed`) and the rows that must agree with it
+    (`dirichlet_wall_rows`) ask :meth:`BoundaryConditions.segment_for_face`, the one face-level placement
+    rule (#2512 row B1): aliases, ``"all"``, priority, whole-face covers, ``default_bc``, and the refusal
+    of a sub-face segment, of an unset default and of a ROBIN default all live there.
     """
-    segment = next(
-        (
-            seg
-            for seg in bc.segments
-            if (seg.boundary is not None and seg.face is not None and seg.face == target_face)
-            or (seg.region_name is not None and region_name_governs_face(seg, target_face, geometry))
-        ),
-        None,
-    )
-    if segment is None:
-        # `default_bc`, not `bc.segments[0]`. Segments are sorted priority-DESCENDING
-        # (`conditions.py:135`), so the old fallback handed every unclaimed wall the
-        # highest-priority segment -- typically the exit. Measured on the mixed-BC idiom
-        # from `BCSegment`'s own docstring (one DIRICHLET exit on x_min, default_bc
-        # NO_FLUX): 4 of 4 walls received the Dirichlet ghost, and dropping the exit's
-        # priority to -5 changed it to 1 of 4, which is the fingerprint of a sort-order
-        # fallback rather than of any BC semantics. `default_bc` exists, is documented,
-        # and `get_bc_type_at_boundary` already answers correctly on the same object.
-        #
-        # `_resolve_default_bc` raises when `default_bc` is unset (#1100) rather than
-        # guessing -- that is deliberate and it is why this is not a silent change: a BC
-        # whose segments do not cover every face and which names no default was
-        # previously given one by accident of sort order.
-        # #2042: two situations arrive here and only one of them has an answer.
-        #
-        # (a) A UNIFORM BC took this path -- exactly one segment, no boundary
-        #     restriction, so no priority ambiguity and nothing to choose between.
-        #     Forward it. This is reading the data that is present, not the
-        #     `bc.segments[0]` fallback the comment above rejects: that one fired on
-        #     MIXED BCs, where [0] means "highest priority" and handed every unclaimed
-        #     wall the exit. `is_uniform` is exactly the case where that cannot happen.
-        #     Synthesising instead drops `alpha`, `beta` and any callable value --
-        #     measured, a Robin wall became a clean Dirichlet(3.0) bit for bit.
-        if bc.is_uniform:
-            segment = bc.segments[0]
-        else:
-            default_type = bc._resolve_default_bc("face_segment")
-            # (b) A genuinely mixed BC with an unclaimed face. There is nothing to
-            #     forward: `default_value` is declared, `default_alpha`/`default_beta`
-            #     do not exist on BoundaryConditions at all. `BCSegment`'s defaults are
-            #     `alpha=1.0, beta=0.0`, and **beta = 0 IS Dirichlet** -- so defaulting
-            #     a ROBIN silently changes the boundary condition's TYPE rather than
-            #     approximating it, and the caller cannot see it happen.
-            #
-            #     There is no default Robin. This continues #1100's ruling one level
-            #     down: `_resolve_default_bc` already raises when `default_bc` is unset
-            #     "rather than guessing", and an unspecified alpha/beta is the same
-            #     incompleteness.
-            if default_type is BCType.ROBIN:
-                raise NotImplementedError(
-                    f"This boundary condition names ROBIN as its default, and face "
-                    f"{target_face} is claimed by no segment -- but a Robin needs "
-                    f"`alpha` and `beta`, and `BoundaryConditions` carries no "
-                    f"`default_alpha`/`default_beta` to take them from. Defaulting "
-                    f"them would use BCSegment's `alpha=1.0, beta=0.0`, and beta = 0 "
-                    f"is DIRICHLET -- the wall would silently become a different "
-                    f"boundary condition, not an approximate one. Add a segment "
-                    f"covering {target_face} with explicit alpha/beta, or choose a "
-                    f"default_bc that needs neither (Issue #2042)."
-                )
-            segment = BCSegment(
-                name="__default__",
-                bc_type=default_type,
-                value=bc.default_value,
-            )
-    return segment
+    return bc.segment_for_face(target_face, geometry)
 
 
 def dirichlet_wall_rows(
@@ -1122,45 +1011,36 @@ def dirichlet_wall_rows(
 
     A prescribed node has no PDE row. A residual that keeps one there solves it with the Dirichlet ghost, and
     writing ``g`` afterwards returns an array that is not the root the solve certified (#2474). Read through
-    `face_segment`, so a face is Dirichlet here exactly when its ghost is -- given the ``geometry`` the ghosts
-    resolve with. The FDM operators pad without one (`pad_array_with_ghosts`), and so does a caller of theirs.
+    `face_segment`, so a face is Dirichlet here exactly when its ghost is. The FDM operators pad without a geometry
+    (`pad_array_with_ghosts`); the owner then decides on the grid the BC is bound to (`bind_geometry`).
 
-    Where Dirichlet faces meet, the segment first in the BC's own order (priority, then declaration -- the order
-    `BoundaryConditions.get_bc_at_point` reads them in) holds the shared nodes; a synthesised ``default_bc``
-    comes last. `get_bc_at_point` itself cannot settle a corner: it matches a face-named segment only against
-    the one ``boundary_id`` its caller passes.
+    A node shared by several faces (a corner, or an edge in 3-D) takes the segment
+    :meth:`BoundaryConditions.corner_nodes` gives it: the faces are written first, then each such node from the
+    owner's corner choice among those faces' segments (#2512 row B1).
     """
     mask = np.zeros(shape, dtype=bool)
     values = np.zeros(shape, dtype=np.float64)
     if bc is None:
         return mask, values
-    claims = []
+
+    def wall_value(segment: Any) -> float:
+        return segment_value(
+            segment, t=time, time_keyword="time", x=None, where=f"the FDM Dirichlet rows of {segment.name!r}"
+        )
+
     for axis in range(len(shape)):
         for side in ("min", "max"):
             segment = face_segment(bc, BoundaryFace(axis, side), geometry)
-            if segment.bc_type == BCType.DIRICHLET:
-                rank = next((i for i, seg in enumerate(bc.segments) if seg is segment), len(bc.segments))
-                face_name = BoundaryFace(axis, side).to_string()
-                claims.append(
-                    (
-                        rank,
-                        axis,
-                        side,
-                        segment_value(
-                            segment,
-                            t=time,
-                            time_keyword="time",
-                            x=None,
-                            where=f"the FDM Dirichlet rows of face {face_name}",
-                        ),
-                    )
-                )
-    for _, axis, side, g in sorted(claims, key=lambda claim: claim[0]):
-        face: list[int | slice] = [slice(None)] * len(shape)
-        face[axis] = 0 if side == "min" else -1
-        index = tuple(face)
-        values[index] = np.where(mask[index], values[index], g)
-        mask[index] = True
+            slot: list[int | slice] = [slice(None)] * len(shape)
+            slot[axis] = 0 if side == "min" else -1
+            index = tuple(slot)
+            dirichlet = segment.bc_type == BCType.DIRICHLET
+            mask[index] = dirichlet
+            values[index] = wall_value(segment) if dirichlet else 0.0
+    for node, (_, segment) in bc.corner_nodes(shape, geometry).items():
+        dirichlet = segment.bc_type == BCType.DIRICHLET
+        mask[node] = dirichlet
+        values[node] = wall_value(segment) if dirichlet else 0.0
     return mask, values
 
 
@@ -1346,8 +1226,8 @@ class PreallocatedGhostBuffer:
         if not isinstance(bc, BoundaryConditions):
             raise TypeError(f"Unsupported BC type: {type(bc)}")
 
-        if bc.is_uniform:
-            seg = bc.segments[0]
+        seg = bc.uniform_segment
+        if seg is not None:
             # Issue #1255 (C), 2026-06-10 audit: pass seg.alpha/seg.beta so that
             # uniform Robin(alpha, beta, value) is not silently treated as
             # Robin(0, 1, value) (pure-Neumann special case).

@@ -332,16 +332,16 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         name="bc_uniform_dispatch_reads_as_mixed",
         path="mfgarchon/geometry/boundary/applicator_fdm.py",
-        # The anchor carries the line BELOW the dispatch, because `if bc.is_uniform:` alone stopped
-        # being unique on 2026-08-22: #2042 added a second branch on the same predicate inside
-        # `_update_ghosts_mixed` (since #2537, `face_segment`), at the same indentation. The harness refuses a non-unique anchor
-        # rather than mutating an arbitrary one of the two, which is how this was caught -- and the
-        # right fix is a more specific anchor, not an `and` clause added to the product code purely
-        # to dodge a string match.
-        old="        if bc.is_uniform:\n            seg = bc.segments[0]",
+        # The anchor is the owner read and the dispatch on it: since #2512 row B1 the uniform branch takes
+        # `bc.uniform_segment` rather than `segments[0]` under `if bc.is_uniform:`. It carries both lines
+        # because the dispatch alone need not stay unique -- `if bc.is_uniform:` stopped being unique on
+        # 2026-08-22, when #2042 added a second branch on that predicate at the same indentation. The
+        # harness refuses a non-unique anchor rather than mutating an arbitrary one, and the right fix is
+        # a more specific anchor, not product code changed to dodge a string match.
+        old="        seg = bc.uniform_segment\n        if seg is not None:",
         new=(
-            "        if False:  # MUTATED: uniform BC reads as mixed -- every BC takes the per-face path\n"
-            "            seg = bc.segments[0]"
+            "        seg = bc.uniform_segment\n"
+            "        if False:  # MUTATED: uniform BC reads as mixed -- every BC takes the per-face path"
         ),
         owner="PreallocatedGhostBuffer.update_ghosts routes a uniform BC to the single-segment path and a mixed BC to the per-face path (#577 Phase 3 for the mixed rewrite, #1255 (C) for the alpha/beta forwarding the uniform branch carries). The two paths are NOT equivalent: the uniform branch applies the inhomoge",
         # Re-pointed twice on 2026-08-21. The original probe used a STATIC SCALAR Neumann value

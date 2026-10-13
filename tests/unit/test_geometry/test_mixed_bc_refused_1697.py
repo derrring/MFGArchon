@@ -1,15 +1,15 @@
 """The SL pair reads a BC face by face, because the one-type accessor collapses a mixed BC (#1560, #1697).
 
-``get_bc_type_string`` returns the FIRST segment's type: ``BoundaryConditions.type`` deliberately
-raises ``ValueError`` for a mixed BC, ``bc_utils`` swallows that raise, and execution falls through
-to ``segments[0].bc_type``. The one signal that the BC is mixed is discarded, and the fold then
-applies that single operation to every axis.
+Until #2512 row B1, ``get_bc_type_string`` returned the FIRST segment's type: ``BoundaryConditions.type``
+deliberately raises ``ValueError`` for a mixed BC, ``bc_utils`` swallowed that raise, and execution fell
+through to ``segments[0].bc_type``. The one signal that the BC is mixed was discarded, and the fold then
+applied that single operation to every axis. The accessor now passes the raise on.
 
-Two levers produce the collapse, and a guard that handles only the first is insufficient:
+Two levers produced the collapse, and a guard that handles only the first is insufficient:
 
-1. **Segment order.** Reordering the list flips the surviving type.
-2. **``default_bc``.** ``get_bc_type_string`` never reads it, so a partially-covering segment list
-   plus a differing default collapses identically **with no permutation available**. A guard that
+1. **Segment order.** Reordering the list flipped the surviving type.
+2. **``default_bc``.** ``get_bc_type_string`` never read it, so a partially-covering segment list
+   plus a differing default collapsed identically **with no permutation available**. A guard that
    unions only over ``segments`` lets this straight through.
 
 HJB-SL and FP-SL therefore do not read that accessor for a segmented BC. `bc_utils.per_axis_operations`
@@ -30,6 +30,7 @@ from mfgarchon.geometry.boundary import (
     BCSegment,
     BCType,
     BoundaryConditions,
+    bc_utils,
     no_flux_bc,
     periodic_bc,
 )
@@ -40,42 +41,6 @@ from mfgarchon.geometry.boundary.bc_utils import (
 )
 
 CONSUMER = {"consumer": "TestSolver"}
-
-_OBSERVED_1700B = "`get_bc_type_string` no longer raises on a segment-free BC."
-
-_CAUSES_1700B = {
-    "#1700 part B landed": (
-        "which this assertion exists to notice -- that issue calls the configuration legitimate, so "
-        "the ValueError is a defect and its removal is progress. Do NOT restore the raise. Delete, in "
-        "this order: (1) this assertion and its comment block; (2) the `_OBSERVED_1700B` and "
-        "`_CAUSES_1700B` constants; (3) the docstring paragraph beginning "
-        '"The last assertion pins an open defect"; (4) in the docstring\'s SECOND paragraph, the '
-        'clause ", the very lookup that raises `ValueError` on it" and rewrite what remains. Then '
-        "the second assertion no longer tells the per-axis owner from a lookup that stopped raising: "
-        "monkeypatch `bc_utils.get_bc_type_string` to raise inside this test so that it still does, "
-        "or rename the test to what it then pins -- a segment-free BC reads as its default's operation"
-    ),
-    # NOT "renamed": renaming `get_bc_type_string` aborts collection, so the pin could never print
-    # that cause -- and naming a cause the pin cannot observe is what this fixture exists to prevent,
-    # caught in the #2290 review inside the diff that introduced the fixture (#2288).
-    #
-    # What aborts is this module's own `from mfgarchon.geometry.boundary.bc_utils import (...)`, not
-    # the boundary package's re-export: `boundary/__init__.py` resolves it through a lazy
-    # `__getattr__` that is never consulted. Traced by applying the rename and reading the traceback,
-    # which is the only way any version of this comment has been right: the one frame is that import
-    # statement, and conftest loads.
-    #
-    # Until #1756 the abort came earlier and took the whole session with it: conftest's import of
-    # `mfgarchon` reached the name eagerly through `fp_semi_lagrangian.py`, which #1756 deleted.
-    #
-    # Two earlier versions of this comment named chains with hops that do not exist -- one of them
-    # written to correct the other, and taken from a review rather than re-run. Both got the
-    # conclusion right and the mechanism wrong, in the comment explaining why unobserved causal
-    # claims are refused. Corrected in #2290 from the traceback above.
-    "the lookup was re-routed internally, still importable under this name": (
-        "the refusal is owed by whatever now resolves a segment-free BC; re-point this assertion"
-    ),
-}
 
 
 def _seg(name, bc_type, boundary):
@@ -91,35 +56,41 @@ def _two_segments(first_periodic=False):
     )
 
 
-def test_the_raise_that_marks_a_bc_mixed_is_swallowed_by_the_accessor():
-    """Pins the root cause, so a future 'fix' that only patches a solver is visibly partial."""
+def test_the_accessor_passes_on_the_raise_that_marks_a_bc_mixed():
+    """The root cause, closed where it lived (#2512 row B1): the raise that marks a BC mixed is the answer.
+
+    Until then the accessor swallowed it and returned the first segment's type, which is why this pin
+    exists: a 'fix' that only patched a solver would have left it green.
+    """
     mixed = _two_segments()
 
     with pytest.raises(ValueError, match="only valid for uniform BCs"):
         _ = mixed.type
+    with pytest.raises(ValueError, match="only valid for uniform BCs"):
+        get_bc_type_string(mixed)
 
-    # ... yet the accessor returns a plain answer, having discarded the one signal it had.
-    assert get_bc_type_string(mixed) == "no_flux"
 
-
-def test_segment_order_changes_what_the_accessor_returns():
-    """Lever 1. This is the form the issue was originally filed against."""
-    assert get_bc_type_string(_two_segments(first_periodic=False)) == "no_flux"
-    assert get_bc_type_string(_two_segments(first_periodic=True)) == "periodic"
+def test_segment_order_no_longer_reaches_the_accessor():
+    """Lever 1, the form the issue was originally filed against: either order is refused, not answered."""
+    for first_periodic in (False, True):
+        with pytest.raises(ValueError, match="only valid for uniform BCs"):
+            get_bc_type_string(_two_segments(first_periodic=first_periodic))
 
 
 def test_default_bc_is_a_second_lever_with_no_permutation_available():
     """Lever 2, and the reason a segments-only guard is insufficient.
 
     Neither BC below is a reordering of the other -- each has exactly one segment -- yet they
-    collapse to different operations. A guard unioning only over ``segments`` sees a single element
+    collapsed to different operations until #2512 row B1. A guard unioning only over ``segments`` sees a single element
     in both cases and permits them.
     """
     a = BoundaryConditions(dimension=2, default_bc=BCType.PERIODIC, segments=[_seg("w", BCType.NO_FLUX, "x_min")])
     b = BoundaryConditions(dimension=2, default_bc=BCType.NO_FLUX, segments=[_seg("p", BCType.PERIODIC, "y_min")])
 
-    assert get_bc_type_string(a) == "no_flux"
-    assert get_bc_type_string(b) == "periodic"
+    # Until #2512 row B1 the accessor answered "no_flux" and "periodic" here; neither is the BC's type.
+    for bc in (a, b):
+        with pytest.raises(ValueError, match="only valid for uniform BCs"):
+            get_bc_type_string(bc)
 
     # What a segments-only guard would see: one element each, so no disagreement.
     for bc in (a, b):
@@ -158,40 +129,27 @@ def test_an_axis_whose_faces_disagree_is_refused(bc_factory):
             lambda: BoundaryConditions(
                 dimension=2,
                 default_bc=BCType.NO_FLUX,
+                domain_bounds=np.array([[0.0, 1.0], [0.0, 1.0]]),
                 segments=[
                     BCSegment(name=f"y{s}", bc_type=BCType.PERIODIC, boundary=f"y_{s}", region={"x": (0.0, 0.5)})
                     for s in ("min", "max")
                 ],
             ),
-            "cover part of a face",
+            "covers part of the",
             id="seam-on-half-of-each-face",
         ),
         pytest.param(
             lambda: BoundaryConditions(
                 dimension=2,
                 default_bc=BCType.PERIODIC,
+                domain_bounds=np.array([[0.0, 1.0], [0.0, 1.0]]),
                 segments=[
                     BCSegment(name=f"x{s}", bc_type=BCType.NO_FLUX, boundary=f"x_{s}", region={"y": (0.25, 0.75)})
                     for s in ("min", "max")
                 ],
             ),
-            "cover part of a face",
+            "covers part of the",
             id="partial-barrier-on-a-seam",
-        ),
-        pytest.param(
-            lambda: BoundaryConditions(
-                dimension=2,
-                default_bc=BCType.NO_FLUX,
-                segments=[
-                    BCSegment(name="seam", bc_type=BCType.PERIODIC, boundary="all", priority=0),
-                    *(
-                        BCSegment(name=f"x{s}", bc_type=BCType.NO_FLUX, boundary=f"x_{s}", priority=1)
-                        for s in ("min", "max")
-                    ),
-                ],
-            ),
-            "boundary='all'",
-            id="seam-everywhere-walls-over-it",
         ),
         pytest.param(
             lambda: BoundaryConditions(
@@ -199,20 +157,20 @@ def test_an_axis_whose_faces_disagree_is_refused(bc_factory):
                 default_bc=BCType.PERIODIC,
                 segments=[_seg(f"x{s}", BCType.NO_FLUX, f"X_{s.upper()}") for s in ("min", "max")],
             ),
-            "name no face",
+            "names no face of a box domain",
             id="walls-misspelt-over-a-periodic-default",
         ),
     ],
 )
 def test_a_segment_the_face_reader_cannot_place_is_refused_in_a_mix(bc_factory, refusal):
-    """In a mix of operations the per-axis read must know which operation each face carries, and the face
-    reader misplaces three kinds of segment. It gives a ``region``-restricted one its whole face (#2490), so a
-    periodic seam on half of each face would be solved as the full channel and a barrier on part of a seam
-    as a full wall. It applies ``boundary="all"`` to no face (#1953), so the third BC -- periodic in
-    y once the x walls take priority -- would be solved as a closed box. And it drops a segment whose
-    ``boundary`` names no face of the domain, so walls spelt ``"X_MIN"`` over a periodic default would be
-    solved as a fully periodic domain. Each is refused."""
-    with pytest.raises(NotImplementedError, match=refusal):
+    """The per-axis read takes each face's operation from the face owner (#2512 row B1), which refuses what it
+    cannot represent. A ``region``-restricted segment covering part of a face with a different operation is
+    refused: a periodic seam on half of each face would otherwise be solved as the full channel, and a
+    barrier on part of a seam as a full wall (#2490). A segment whose ``boundary`` names no face of the
+    domain is refused rather than dropped, so walls spelt ``"X_MIN"`` over a periodic default are not solved
+    as a fully periodic domain. (``boundary="all"`` is every face, so a seam on "all" under x walls is the
+    channel; that case is in the next test.)"""
+    with pytest.raises(ValueError, match=refusal):
         per_axis_operations(bc_factory(), 2, **CONSUMER)
 
 
@@ -252,10 +210,26 @@ def test_a_segment_the_face_reader_cannot_place_is_refused_in_a_mix(bc_factory, 
             lambda: BoundaryConditions(
                 dimension=2,
                 default_bc=BCType.NO_FLUX,
+                domain_bounds=np.array([[0.0, 1.0], [0.0, 1.0]]),
                 segments=[BCSegment(name="n", bc_type=BCType.NEUMANN, boundary="x_min", region={"y": (0.0, 0.5)})],
             ),
             ("reflect", "reflect"),
             id="part-of-a-face-with-one-operation",
+        ),
+        pytest.param(
+            lambda: BoundaryConditions(
+                dimension=2,
+                default_bc=BCType.NO_FLUX,
+                segments=[
+                    BCSegment(name="seam", bc_type=BCType.PERIODIC, boundary="all", priority=0),
+                    *(
+                        BCSegment(name=f"x{s}", bc_type=BCType.NO_FLUX, boundary=f"x_{s}", priority=1)
+                        for s in ("min", "max")
+                    ),
+                ],
+            ),
+            ("reflect", "periodic"),
+            id="seam-everywhere-walls-over-it",
         ),
         pytest.param(lambda: None, ("clamp", "clamp"), id="none"),
     ],
@@ -404,34 +378,28 @@ def test_an_object_carrying_neither_field_is_not_a_segmented_bc():
     assert geometric_operations(None) == set()
 
 
-def test_the_per_axis_owner_does_not_read_the_lookup_2284(still_refused):
+def test_the_per_axis_owner_does_not_read_the_lookup_2284(monkeypatch):
     """A segment-free BC reaches the SL pair as its default's operation on every axis.
 
     It asks for one operation on every face, and `per_axis_operations` reads it face by face, so it
-    answers without `get_bc_type_string`, the very lookup that raises `ValueError` on it. Until
-    #2284 the solvers' guard and that lookup were one function, and a caller that wanted only the
-    refusal inherited the raise; reading faces keeps the two apart for good.
+    answers without `get_bc_type_string`. Until #2284 the solvers' guard and that lookup were one
+    function, and a caller that wanted only the refusal inherited the lookup's answer; reading faces
+    keeps the two apart for good. The lookup is made to raise here, so a per-axis read that went back
+    through it would fail this test.
 
-    **The last assertion pins an open defect, deliberately, and retires with it.** That `ValueError`
-    is #1700 part B, which calls an empty segment list with a uniform default "a legitimate
-    configuration" -- so it is a bug, not a contract, and the first two assertions are what this test
-    is really for. It is kept so that the second has a cause on record: the per-axis owner passes on a
-    BC the lookup still refuses.
+    The lookup itself answers a segment-free BC with its default's type since #2512 row B1: every face
+    imposes the default, so the face owner calls it uniform. That is #1700 part B, which calls the
+    configuration legitimate.
     """
     segment_free = BoundaryConditions(dimension=2, segments=[], default_bc=BCType.NO_FLUX)
+    assert get_bc_type_string(segment_free) == "no_flux"
 
+    def raising(_bc):
+        raise AssertionError("per_axis_operations read get_bc_type_string")
+
+    monkeypatch.setattr(bc_utils, "get_bc_type_string", raising)
     assert geometric_operations(segment_free) == {"reflect"}
     assert per_axis_operations(segment_free, 2, **CONSUMER) == ("reflect", "reflect")
-
-    # The CAUSE, observed where it lives. #1700B is about `get_bc_type_string`, so that is what the
-    # retirement condition has to watch.
-    with still_refused(
-        "only valid for uniform BCs",
-        observed=_OBSERVED_1700B,
-        causes=_CAUSES_1700B,
-        exc_type=ValueError,
-    ):
-        get_bc_type_string(segment_free)
 
 
 def test_hjb_sl_refuses_the_rename_signature_at_construction_2284(monkeypatch):

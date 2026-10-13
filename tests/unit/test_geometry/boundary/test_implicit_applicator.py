@@ -341,7 +341,7 @@ class TestAgainstAPackageGeometry:
     def test_a_callable_value_is_still_evaluated(self, package_applicator):
         """Routing the value through `bc.default_value` -- the owner the parent class uses -- would
         have fixed the scalar case and silently broken this one: that field is a plain float and the
-        factory writes 0.0 into it whenever the value is callable (`conditions.py:929`). The value is
+        factory writes 0.0 into it whenever the value is callable (`uniform_bc` in `conditions.py`). The value is
         read from the segment instead, which keeps the callable.
         """
         applicator, geometry = package_applicator
@@ -441,7 +441,7 @@ class TestAgainstAPackageGeometry:
 
         The `default_value` here is deliberately DIFFERENT from the segment's. ~~`dirichlet_bc(value=v)`~~
         [CORRECTED 2026-08-15] was the original fixture and it does not discriminate: that factory
-        writes `v` into **both** `segment.value` and `default_value` (`conditions.py:929`), so
+        writes `v` into **both** `segment.value` and `default_value` (`uniform_bc` in `conditions.py`), so
         "always return `default_value`" satisfies it. Review measured this test passing under exactly
         that mutation -- what killed it was the callable test, for the same reason, by accident.
         """

@@ -446,7 +446,7 @@ class FPFVMSolver(BaseFPSolver):
     # ------------------------------------------------------------------
     def _advect(self, m, alpha_faces, alpha_wrap, dt_adv, spacing):
         """Explicit (CFL-bounded, sub-cycled forward Euler) advection over ``dt_adv``."""
-        spans = [periodic_axis_span(self.boundary_conditions, n) for n in m.shape]
+        spans = [periodic_axis_span(self.boundary_conditions, n, m.ndim, self.problem.geometry) for n in m.shape]
         # Issue #2323: sized from the largest single-axis speed over the smallest spacing, the sub-step missed the
         # sum over axes and the half cell a no-flux wall node owns, and FVM upwind at this target returned
         # densities down to -1.6e10 on a 2-D flow with equal speeds on both axes.

@@ -587,6 +587,6 @@ if __name__ == "__main__":
     bc_back = to_boundary_conditions(resolved_list, dimension=1)
     print(f"  {len(bc_back.segments)} segments, dimension={bc_back.dimension}")
     assert len(bc_back.segments) == 2
-    assert bc_back.segments[0].bc_type == BCType.NEUMANN
+    assert [seg.bc_type for seg in bc_back.segments] == [BCType.NEUMANN, BCType.DIRICHLET]
 
     print("\nAll smoke tests passed.")

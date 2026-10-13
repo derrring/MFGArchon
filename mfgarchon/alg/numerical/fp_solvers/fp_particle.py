@@ -1037,7 +1037,7 @@ class FPParticleSolver(BaseFPSolver):
         topologies : list[str]
             Topology per dimension: ["periodic", "bounded", ...]
         """
-        return _get_topology(self.boundary_conditions, dimension)
+        return _get_topology(self.boundary_conditions, dimension, self.problem.geometry)
 
     def _project_obstacle_violations(self, particles: np.ndarray) -> np.ndarray:
         """

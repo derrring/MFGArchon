@@ -329,69 +329,130 @@ def test_a_neumann_wall_holds_its_slope_to_second_order():
     assert coarse / fine > 3.0, f"wall slope error ratio {coarse / fine:.2f} under refinement is not second order"
 
 
-_UNPLACED = {
-    # A Dirichlet with no `boundary` under a NEUMANN x_min: the accessors give it every face, the ghosts none.
-    "dirichlet_everywhere_else": lambda: BoundaryConditions(
-        dimension=2,
-        segments=[
-            BCSegment(name="rest", bc_type=BCType.DIRICHLET, value=0.5),
-            BCSegment(name="left", bc_type=BCType.NEUMANN, boundary="x_min", value=0.0),
-        ],
-        domain_bounds=BOUNDS,
-        default_bc=BCType.NEUMANN,
+# Six BCs the FDM ghosts and `get_bc_type_at_boundary` used to place differently, so #2537 refused each. With one face
+# owner (#2512 row B1) the four below mean one thing for every reader, and are solved; the census row for each is
+# in the B1a PR body. The order on a face: priority, then a placed segment before a global one (no placement, or
+# boundary="all"), then declaration order.
+_RESOLVED = {
+    # A global Dirichlet "the rest" beside a NEUMANN x_min: x_min is the placed segment's, the others the rest's.
+    "dirichlet_everywhere_else": (
+        lambda: BoundaryConditions(
+            dimension=2,
+            segments=[
+                BCSegment(name="rest", bc_type=BCType.DIRICHLET, value=0.5),
+                BCSegment(name="left", bc_type=BCType.NEUMANN, boundary="x_min", value=0.0),
+            ],
+            domain_bounds=BOUNDS,
+            default_bc=BCType.NEUMANN,
+        ),
+        {
+            "x_min": ("neumann", 0.0),
+            "x_max": ("dirichlet", 0.5),
+            "y_min": ("dirichlet", 0.5),
+            "y_max": ("dirichlet", 0.5),
+        },
     ),
-    # The exit-and-wall example with a wall whose datum the NEUMANN(0) default does not carry.
-    "wall_with_a_datum": lambda: BoundaryConditions(
-        dimension=2,
-        segments=[
-            BCSegment(name="exit", bc_type=BCType.DIRICHLET, boundary="x_max", value=0.7),
-            BCSegment(name="wall", bc_type=BCType.NEUMANN, value=-0.8),
-        ],
-        domain_bounds=BOUNDS,
-        default_bc=BCType.NEUMANN,
+    # The exit-and-wall idiom with a wall carrying a datum the NEUMANN(0) default does not.
+    "wall_with_a_datum": (
+        lambda: BoundaryConditions(
+            dimension=2,
+            segments=[
+                BCSegment(name="exit", bc_type=BCType.DIRICHLET, boundary="x_max", value=0.7),
+                BCSegment(name="wall", bc_type=BCType.NEUMANN, value=-0.8),
+            ],
+            domain_bounds=BOUNDS,
+            default_bc=BCType.NEUMANN,
+        ),
+        {
+            "x_min": ("neumann", -0.8),
+            "x_max": ("dirichlet", 0.7),
+            "y_min": ("neumann", -0.8),
+            "y_max": ("neumann", -0.8),
+        },
     ),
-    # One operation everywhere, so a reader of operations alone sees nothing; the datum still differs.
-    "one_operation_other_datum": lambda: BoundaryConditions(
-        dimension=2,
-        segments=[
-            BCSegment(name="wall", bc_type=BCType.NEUMANN, value=-0.8),
-            BCSegment(name="left", bc_type=BCType.NEUMANN, boundary="x_min", value=0.0),
-        ],
-        domain_bounds=BOUNDS,
-        default_bc=BCType.NEUMANN,
+    # One operation everywhere, two data: the placed x_min keeps its own.
+    "one_operation_other_datum": (
+        lambda: BoundaryConditions(
+            dimension=2,
+            segments=[
+                BCSegment(name="wall", bc_type=BCType.NEUMANN, value=-0.8),
+                BCSegment(name="left", bc_type=BCType.NEUMANN, boundary="x_min", value=0.0),
+            ],
+            domain_bounds=BOUNDS,
+            default_bc=BCType.NEUMANN,
+        ),
+        {"x_min": ("neumann", 0.0), "x_max": ("neumann", -0.8), "y_min": ("neumann", -0.8), "y_max": ("neumann", -0.8)},
     ),
-    # Both readers apply 'all' to no face (#1953).
-    "boundary_all": lambda: BoundaryConditions(
-        dimension=2,
-        segments=[BCSegment(name="all", bc_type=BCType.DIRICHLET, boundary="all", value=0.5)],
-        domain_bounds=BOUNDS,
-        default_bc=BCType.NO_FLUX,
+    # boundary="all" is every face (audit ruling, 2026-10-12); both readers used to apply it to none (#1953).
+    "boundary_all": (
+        lambda: BoundaryConditions(
+            dimension=2,
+            segments=[BCSegment(name="all", bc_type=BCType.DIRICHLET, boundary="all", value=0.5)],
+            domain_bounds=BOUNDS,
+            default_bc=BCType.NO_FLUX,
+        ),
+        dict.fromkeys(("x_min", "x_max", "y_min", "y_max"), ("dirichlet", 0.5)),
     ),
-    # A face of no 2-D domain: the overwrite raised IndexError on it, the ghosts drop it.
-    "z_max_in_2d": lambda: BoundaryConditions(
-        dimension=2,
-        segments=[BCSegment(name="top", bc_type=BCType.DIRICHLET, boundary="z_max", value=0.5)],
-        domain_bounds=BOUNDS,
-        default_bc=BCType.NO_FLUX,
+}
+
+_REFUSED = {
+    # A face of no 2-D domain: the overwrite raised IndexError on it, the ghosts dropped it. Ruling (c): a face of an
+    # axis the domain lacks stays refused, and since the BC knows its dimension it is refused when built.
+    "z_max_in_2d": (
+        lambda: BoundaryConditions(
+            dimension=2,
+            segments=[BCSegment(name="top", bc_type=BCType.DIRICHLET, boundary="z_max", value=0.5)],
+            domain_bounds=BOUNDS,
+            default_bc=BCType.NO_FLUX,
+        ),
+        "a face of axis 2",
     ),
-    # Part of a face: both readers stretch it over the whole face (#2490).
-    "partial_face": lambda: BoundaryConditions(
-        dimension=2,
-        segments=[
-            BCSegment(name="half", bc_type=BCType.DIRICHLET, boundary="x_max", region={1: (0.0, 0.5)}, value=0.5)
-        ],
-        domain_bounds=BOUNDS,
-        default_bc=BCType.NO_FLUX,
+    # Part of a face, with a condition other than the rest of it: both readers stretched it over the face (#2490).
+    "partial_face": (
+        lambda: BoundaryConditions(
+            dimension=2,
+            segments=[
+                BCSegment(name="half", bc_type=BCType.DIRICHLET, boundary="x_max", region={1: (0.0, 0.5)}, value=0.5)
+            ],
+            domain_bounds=BOUNDS,
+            default_bc=BCType.NO_FLUX,
+        ),
+        "covers part of the x_max face",
     ),
 }
 
 
-@pytest.mark.parametrize("case", sorted(_UNPLACED))
-def test_a_segment_the_ghosts_cannot_place_is_refused(case: str):
-    """`bc_utils.refuse_unplaceable_segments`, with ``ghosts=True``: a segment the FDM ghosts cannot place
-    is refused instead of silently solving `default_bc` on its faces. The post-solve overwrite used to write
-    the accessor's datum, so these were imposed (or, for `z_max_in_2d`, raised IndexError) before #2537. A
-    segment with no `boundary` is refused only where it changes a face's effect, so `exit_and_wall`, its
-    NO_FLUX-default spelling and a face-label `region_name` above all solve."""
-    with pytest.raises(NotImplementedError, match="HJBFDMSolver"):
-        _solve(_UNPLACED[case]())
+@pytest.mark.parametrize("case", sorted(_REFUSED))
+def test_a_segment_no_face_can_carry_is_refused(case: str):
+    """A placement the face owner cannot represent on a face is refused by name before the solve (#2512 row B1):
+    a face of an axis the domain does not have, and a segment covering part of a face with a different condition."""
+    make_bc, message = _REFUSED[case]
+    with pytest.raises(ValueError, match=message):
+        _solve(make_bc())
+
+
+@pytest.mark.parametrize("case", sorted(_RESOLVED))
+def test_a_bc_the_readers_used_to_disagree_on_solves_the_owners_answer(case: str):
+    """Read off the solution, on each face's interior (corners excluded): a Dirichlet face holds g exactly at every
+    level the solve wrote, and a Neumann face shows its slope du/dn = g to the second-order one-sided difference.
+    On these fixtures the difference misses g by at most 0.106 at 21^2 (measured on every Neumann face here); the
+    data a face could be confused with differ by 0.8, so 0.25 separates them with room on both sides."""
+    make_bc, expected = _RESOLVED[case]
+    n = 21
+    U, _ = _solve(make_bc(), n=n)
+    h = 1.0 / (n - 1)
+    u = U[0]
+    inner = slice(1, -1)
+    walls = {"x_min": u[0, inner], "x_max": u[-1, inner], "y_min": u[inner, 0], "y_max": u[inner, -1]}
+    slopes = {
+        "x_min": (3 * u[0, inner] - 4 * u[1, inner] + u[2, inner]) / (2 * h),
+        "x_max": (3 * u[-1, inner] - 4 * u[-2, inner] + u[-3, inner]) / (2 * h),
+        "y_min": (3 * u[inner, 0] - 4 * u[inner, 1] + u[inner, 2]) / (2 * h),
+        "y_max": (3 * u[inner, -1] - 4 * u[inner, -2] + u[inner, -3]) / (2 * h),
+    }
+    for face, (kind, g) in expected.items():
+        if kind == "dirichlet":
+            assert np.abs(walls[face] - g).max() == 0.0, f"{case}: {face} should hold g = {g}: {walls[face]}"
+        else:
+            miss = float(np.abs(slopes[face] - g).max())
+            assert miss < 0.25, f"{case}: {face} should show du/dn = {g}, misses by {miss:.3e}"

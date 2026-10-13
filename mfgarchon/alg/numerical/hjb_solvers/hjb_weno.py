@@ -357,6 +357,7 @@ class HJBWENOSolver(BaseHJBSolver):
             domain_bounds=domain_bounds,
             ghost_depth=self.ghost_depth,
             order=self.ghost_order,  # High-order ghost cells for WENO5
+            geometry=self.problem.geometry,  # the owner decides a placement on the grid this solve holds (#2512 B1)
             # No periodic_convention= here on purpose (Issue #1822): the BC carries it, and a
             # second declaration beside the one that already arrives is exactly the duplicated
             # convention this change removed from the applicator.

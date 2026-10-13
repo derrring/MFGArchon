@@ -66,9 +66,9 @@ from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.geometry.boundary.applicator_base import (
     LinearConstraint,
 )
-from mfgarchon.geometry.boundary.bc_utils import declares_periodic, refuse_unplaceable_segments
+from mfgarchon.geometry.boundary.bc_utils import declares_periodic
 from mfgarchon.geometry.boundary.conditions import periodic_faces, periodic_on_every_face, repeated_endpoint_mirror
-from mfgarchon.geometry.boundary.types import BoundaryFace
+from mfgarchon.geometry.boundary.types import BCType, BoundaryFace, segment_value
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise, mass_fabricated_by_clip
 from mfgarchon.utils.pde_coefficients import (
@@ -215,36 +215,43 @@ def _declares_dirichlet(boundary_conditions: Any) -> bool:
     return getattr(default, "value", None) == "dirichlet"
 
 
+def _faces_of_node(multi_idx: tuple[int, ...], shape: tuple[int, ...]) -> list[BoundaryFace]:
+    """The faces a grid node lies on: none inside, one on a face's interior, two or more at a corner or edge."""
+    faces = []
+    for d in range(len(shape)):
+        if multi_idx[d] == 0:
+            faces.append(BoundaryFace(d, "min"))
+        if multi_idx[d] == shape[d] - 1:
+            faces.append(BoundaryFace(d, "max"))
+    return faces
+
+
+def _segment_at_node(
+    boundary_conditions: Any, multi_idx: tuple[int, ...], shape: tuple[int, ...], geometry: Any = None
+) -> Any:
+    """The segment governing a wall node, from the face owner (#2512 row B1), or None for an interior node.
+
+    A node on several faces takes `BoundaryConditions.segment_for_corner`'s answer, the same one the FDM
+    Dirichlet rows use, on the same ``geometry`` (the grid), on which the owner reads a ``region``,
+    ``sdf_region`` or ``region_name`` placement. Nothing here catches the owner's refusal: a BC it cannot place
+    on a face is refused, not read as "no Dirichlet here" (this used to catch ValueError and AttributeError
+    and answer False).
+    """
+    faces = _faces_of_node(multi_idx, shape)
+    if not faces:
+        return None
+    return boundary_conditions.segment_for_corner(faces, geometry)
+
+
 def _is_dirichlet_at_point(
     boundary_conditions: Any,
     multi_idx: tuple[int, ...],
     shape: tuple[int, ...],
+    geometry: Any = None,
 ) -> bool:
-    """Check if boundary conditions specify Dirichlet at this point.
-
-    Issue #1258 fix (2026-06-10 audit): prior code returned True for ANY Dirichlet
-    segment in a mixed BC without checking which wall the point is on, causing every
-    boundary point to be treated as Dirichlet regardless of its actual wall type.
-    Fix: determine the wall(s) the grid point lies on from multi_idx/shape, then
-    query get_bc_type_at_boundary per wall using the BCSegment.boundary matching API.
-    """
-    try:
-        if boundary_conditions.is_uniform:
-            return boundary_conditions.type == "dirichlet"
-        # Mixed BC: determine which wall(s) this grid point is on, then query per wall.
-        _AXIS_NAMES = {0: "x", 1: "y", 2: "z", 3: "w"}
-        ndim = len(shape)
-        for d in range(ndim):
-            name = _AXIS_NAMES.get(d, f"axis{d}")
-            if multi_idx[d] == 0:
-                if boundary_conditions.get_bc_type_at_boundary(f"{name}_min").value == "dirichlet":
-                    return True
-            if multi_idx[d] == shape[d] - 1:
-                if boundary_conditions.get_bc_type_at_boundary(f"{name}_max").value == "dirichlet":
-                    return True
-    except (AttributeError, ValueError):
-        pass
-    return False
+    """Is this node Dirichlet: does the segment governing it, per the face owner, impose DIRICHLET? (#1258, #2512 B1)"""
+    segment = _segment_at_node(boundary_conditions, multi_idx, shape, geometry)
+    return segment is not None and segment.bc_type == BCType.DIRICHLET
 
 
 def _get_dirichlet_value_at_point(
@@ -254,21 +261,17 @@ def _get_dirichlet_value_at_point(
     *,
     time: float | None = None,
     point: np.ndarray | None = None,
+    geometry: Any = None,
 ) -> float:
-    """The Dirichlet value at a boundary node: the value of the first Dirichlet wall the node lies on, read through the
-    owner by `get_bc_value_at_boundary` at ``time`` and at the node ``point`` (#2512 row B2).
-
-    Issue #1258: for mixed BC, the wall the node is on, not the first Dirichlet segment. The time stepping passes the
-    level it solves for, t_{k+1}. This read a callable as 0, and a mixed BC's value at t = 0 (#2535).
-    """
-    _AXIS_NAMES = {0: "x", 1: "y", 2: "z", 3: "w"}
-    for d in range(len(shape)):
-        name = _AXIS_NAMES.get(d, f"axis{d}")
-        for side, on_wall in (("min", multi_idx[d] == 0), ("max", multi_idx[d] == shape[d] - 1)):
-            wall = f"{name}_{side}"
-            if on_wall and boundary_conditions.get_bc_type_at_boundary(wall).value == "dirichlet":
-                return float(boundary_conditions.get_bc_value_at_boundary(wall, time=time, point=point))
-    raise RuntimeError(f"FP-FDM read a Dirichlet value at node {tuple(multi_idx)}, which is on no Dirichlet wall.")
+    """The Dirichlet value at a boundary node: its governing segment's value, read by the owner at ``time`` and at the
+    node ``point`` (#2512 rows B1, B2). The time stepping passes the level it solves for, t_{k+1} (#2535)."""
+    segment = _segment_at_node(boundary_conditions, multi_idx, shape, geometry)
+    if segment is None or segment.bc_type != BCType.DIRICHLET:
+        raise RuntimeError(f"FP-FDM read a Dirichlet value at node {tuple(multi_idx)}, which is on no Dirichlet wall.")
+    # The governing segment's value, read by the value owner the accessor itself uses. Not re-resolved through a face:
+    # a `default_bc` fall-through segment is built per query, so it is no face's segment by identity.
+    where = f"FP-FDM's Dirichlet row at node {tuple(int(i) for i in multi_idx)}"
+    return float(segment_value(segment, t=time, x=point, where=where, time_keyword="time"))
 
 
 def _node(grid: Any, multi_idx: tuple[int | np.integer[Any], ...]) -> np.ndarray:
@@ -282,7 +285,7 @@ def _dirichlet_walls_1d(boundary_conditions: Any, grid: Any) -> list[tuple[int, 
     return [
         (index, BoundaryFace(0, side), _node(grid, (index,)))
         for index, side in ((0, "min"), (-1, "max"))
-        if boundary_conditions.get_bc_type_at_boundary(f"x_{side}").value == "dirichlet"
+        if boundary_conditions.segment_for_face(BoundaryFace(0, side), grid).bc_type == BCType.DIRICHLET
     ]
 
 
@@ -319,7 +322,12 @@ def _get_bc_type(boundary_conditions: Any) -> str | None:
 
 
 def _get_bc_value(
-    boundary_conditions: Any, face: BoundaryFace, *, time: float | None = None, point: np.ndarray | None = None
+    boundary_conditions: Any,
+    face: BoundaryFace,
+    *,
+    time: float | None = None,
+    point: np.ndarray | None = None,
+    geometry: Any = None,
 ) -> float:
     """
     Get BC value at a specific boundary, through `BoundaryConditions.get_bc_value_at_boundary`, at ``time`` and
@@ -327,7 +335,7 @@ def _get_bc_value(
 
     Issue #946: Uses BoundaryFace instead of string identifiers for internal dispatch.
     """
-    return boundary_conditions.get_bc_value_at_boundary(face.to_string(), time=time, point=point)
+    return boundary_conditions.get_bc_value_at_boundary(face, time=time, point=point, geometry=geometry)
 
 
 if TYPE_CHECKING:
@@ -619,7 +627,7 @@ def solve_timestep_explicit_with_drift(
     return M_next
 
 
-def _refuse_partial_periodic(boundary_conditions: Any, dimension: int) -> None:
+def _refuse_partial_periodic(boundary_conditions: Any, dimension: int, geometry: Any = None) -> None:
     """Refuse a BC that is periodic on some faces and not others. Issue #2495.
 
     This assembly wraps every axis or none. A wall node of any non-uniform BC is routed to
@@ -627,10 +635,9 @@ def _refuse_partial_periodic(boundary_conditions: Any, dimension: int) -> None:
     face is periodic. A channel -- no-flux walls beside a periodic axis -- or an axis periodic on one
     face only was therefore assembled as no-flux on every face, bit for bit, with no error.
 
-    The faces are read through `get_bc_type_at_boundary`, so a segment that reader cannot place is
-    refused first (`refuse_unplaceable_segments`): a periodic segment with no `boundary` reads as
-    periodic on every face, and would otherwise be wrapped on faces it does not reach -- where HJB-FDM
-    walls them over a default, or finds no BC and raises without one. A BC that declares
+    The faces are read through `periodic_faces`, the face owner asked with periodicity as the equivalence
+    (#2512 row B1): a periodic segment covers exactly the faces its placement holds, and a segment covering
+    part of a face is refused there unless it agrees with the rest of the face on periodicity. A BC that declares
     periodicity but shows it on no face -- a periodic default every face overrides -- is not periodic
     anywhere and is not refused.
 
@@ -644,8 +651,7 @@ def _refuse_partial_periodic(boundary_conditions: Any, dimension: int) -> None:
             return
     except AttributeError:
         return  # not a BoundaryConditions: refused in `solve_timestep_full_nd` (#1559)
-    refuse_unplaceable_segments(boundary_conditions, dimension, consumer="FPFDMSolver")
-    periodic = periodic_faces(boundary_conditions, dimension)
+    periodic = periodic_faces(boundary_conditions, dimension, geometry)
     if any(periodic) and not all(periodic):
         raise NotImplementedError(
             "FP-FDM wraps every axis or none, and this boundary condition is periodic on some faces "
@@ -1004,7 +1010,7 @@ def solve_fp_nd_full_system(
     # post-step overwrite, which wrote such a BC onto both walls, a no-flux default included, is gone (#2535).
     if ndim == 1 and _get_bc_type(boundary_conditions) == "dirichlet":
         for index, face, wall_node in _dirichlet_walls_1d(boundary_conditions, grid):
-            M_solution[0, index] = _get_bc_value(boundary_conditions, face, time=0.0, point=wall_node)
+            M_solution[0, index] = _get_bc_value(boundary_conditions, face, time=0.0, point=wall_node, geometry=grid)
 
     # Edge cases
     if Nt <= 1:
@@ -1320,7 +1326,7 @@ def solve_timestep_tensor_explicit(
     # instead of D = sigma^2/2 = 0.045 (~6.7x overdiffusion). Route through the single-source
     # converter so the tensor path matches the scalar path D = sigma^2/2 (2026-06-10 audit, #1249).
     D_tensor = diffusion_from_volatility(Sigma, kind="tensor")
-    diffusion_term = apply_diffusion(M_current, D_tensor, list(spacing), bc=boundary_conditions)
+    diffusion_term = apply_diffusion(M_current, D_tensor, list(spacing), bc=boundary_conditions, geometry=grid)
 
     # Compute advection term: div(alpha * m)
     # Use upwind scheme from fp_fdm_advection module
@@ -1444,9 +1450,9 @@ def solve_timestep_full_nd(
 
     # A BC periodic on every face wraps every wall node, however it is spelt: routed by the face reader,
     # not by `is_uniform`, which sent one PERIODIC segment per face to the no-flux handler (#2495).
-    _refuse_partial_periodic(boundary_conditions, ndim)
+    _refuse_partial_periodic(boundary_conditions, ndim, grid)
     try:
-        wraps_everywhere = periodic_on_every_face(boundary_conditions, ndim)
+        wraps_everywhere = periodic_on_every_face(boundary_conditions, ndim, grid)
     except AttributeError:
         wraps_everywhere = False  # not a BoundaryConditions: refused below (#1559)
 
@@ -1463,7 +1469,7 @@ def solve_timestep_full_nd(
         # one. Assembling a stencil row for it solves for one cell too many on a torus one cell too
         # long, and the duplicated pair drifts apart because their neighbourhoods differ -- the
         # #1822 seam. Constrain it to the node it repeats and move on.
-        mirror = repeated_endpoint_mirror(boundary_conditions, multi_idx, shape)
+        mirror = repeated_endpoint_mirror(boundary_conditions, multi_idx, shape, grid)
         if mirror is not None:
             mirror_flat = grid.get_index(tuple(mirror))
             row_indices.extend((flat_idx, flat_idx))
@@ -1501,10 +1507,10 @@ def solve_timestep_full_nd(
             ) from None
 
         # Dispatch to scheme-specific assembly function (Issue #859)
-        if is_boundary and _is_dirichlet_at_point(boundary_conditions, multi_idx, shape):
+        if is_boundary and _is_dirichlet_at_point(boundary_conditions, multi_idx, shape, grid):
             # Dirichlet BC: row becomes identity (m = prescribed value)
             bc_value = _get_dirichlet_value_at_point(
-                boundary_conditions, multi_idx, shape, time=time, point=_node(grid, multi_idx)
+                boundary_conditions, multi_idx, shape, time=time, point=_node(grid, multi_idx), geometry=grid
             )
             _add_boundary_dirichlet_entries(row_indices, col_indices, data_values, flat_idx, dt, bc_value)
         elif (is_no_flux or not is_uniform) and is_boundary and not wraps_everywhere:
@@ -1565,10 +1571,10 @@ def solve_timestep_full_nd(
         for idx in range(N_total):
             multi_idx = np.unravel_index(idx, shape)
             if is_boundary_point(multi_idx, shape, ndim) and _is_dirichlet_at_point(
-                boundary_conditions, multi_idx, shape
+                boundary_conditions, multi_idx, shape, grid
             ):
                 bc_value = _get_dirichlet_value_at_point(
-                    boundary_conditions, multi_idx, shape, time=time, point=_node(grid, multi_idx)
+                    boundary_conditions, multi_idx, shape, time=time, point=_node(grid, multi_idx), geometry=grid
                 )
                 b_rhs[idx] = bc_value / dt
 

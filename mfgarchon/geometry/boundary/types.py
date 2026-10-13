@@ -356,9 +356,9 @@ def parse_boundary_face(boundary: str | int | BoundaryFace | None) -> BoundaryFa
             return _BOUNDARY_STRING_TO_FACE[boundary]
         # Numeric-axis formats. Both spellings exist in the tree and mean the same thing:
         # `BoundaryEntity.to_string` emits "axis{N}_{side}" for axes past w, and `dim{N}_{side}` is
-        # emitted by THREE sites -- `applicator_particle._get_boundary_id`,
-        # `_compat._get_boundary_name_nd:755`, and `flux_diagnostics.py:161`. (~~two emitters~~
-        # [CORRECTED 2026-08-15] undercounted; review enumerated them.) Accepting only the first
+        # emitted by `applicator_particle._get_boundary_id` and `flux_diagnostics.py`. A third emitter,
+        # `_compat._get_boundary_name_nd`, was deleted when `_compat` began asking the face owner by
+        # `BoundaryFace` (#2512 row B1, #2628). Accepting only the first
         # spelling meant a segment declared on "dim3_min" resolved to axis 0 -- see below.
         #
         # Two further spellings exist and are deliberately NOT accepted: `geometry/base.py:739`
@@ -383,6 +383,19 @@ def parse_boundary_face(boundary: str | int | BoundaryFace | None) -> BoundaryFa
         # lets the caller fall through to its declared default, which is a wrong answer the caller
         # asked for rather than one this function invented. #1939
     return None
+
+
+def _normal_selects_face(segment: BCSegment, face: BoundaryFace) -> bool:
+    """Is ``face``'s outward normal within ``segment.normal_tolerance`` (a cosine) of its ``normal_direction``?"""
+    target = np.asarray(segment.normal_direction, dtype=float).ravel()
+    norm = float(np.linalg.norm(target))
+    if norm == 0.0 or face.axis >= target.size:
+        raise ValueError(
+            f"BC segment {segment.name!r}: normal_direction {target.tolist()} cannot select the "
+            f"{face.to_string()} face (zero vector, or fewer components than the face's axis)."
+        )
+    outward = -1.0 if face.side == "min" else 1.0
+    return outward * target[face.axis] / norm >= segment.normal_tolerance
 
 
 @dataclass
@@ -699,7 +712,18 @@ class BCSegment:
             if sdf_val > tolerance:
                 return False
 
-        # Method 4: Check normal direction match (general domains)
+        # Method 4: Check normal direction match. On a box domain (no SDF) the outward normal is the
+        # face's own, read from `boundary_id`; before, it was not read at all, so the segment matched on
+        # every face (#2512 row B1).
+        if self.normal_direction is not None and domain_sdf is None:
+            face = parse_boundary_face(boundary_id)
+            if face is None:
+                raise ValueError(
+                    f"BCSegment '{self.name}': normal_direction needs the outward normal at the point, and "
+                    "there is neither a domain_sdf nor a box face to read it from."
+                )
+            if not _normal_selects_face(self, face):
+                return False
         if self.normal_direction is not None and domain_sdf is not None:
             # Compute outward normal via SDF gradient (finite differences)
             normal = _compute_sdf_gradient(point, domain_sdf, epsilon=1e-5)

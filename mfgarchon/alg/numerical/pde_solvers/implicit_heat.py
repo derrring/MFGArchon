@@ -290,7 +290,7 @@ class ImplicitHeatSolver:
             f"  scheme={scheme_name},\n"
             f"  alpha={self.alpha},\n"
             f"  grid=({self.grid.dimension}D, {self.grid.num_spatial_points} points),\n"
-            f"  bc={self.bc.segments[0].bc_type if self.bc.segments else 'None'}\n"
+            f"  bc={self.bc.uniform_segment.bc_type if self.bc.is_uniform else 'mixed'}\n"
             f")"
         )
 

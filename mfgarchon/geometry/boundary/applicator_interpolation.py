@@ -37,19 +37,19 @@ Example:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
 from .applicator_base import BaseBCApplicator, DiscretizationType
-from .conditions import BoundaryConditions
+from .conditions import BoundaryConditions, _group_nodes
 from .enforcement import (
     enforce_dirichlet_value_nd,
     enforce_neumann_value_nd,
     enforce_periodic_value_nd,
     enforce_robin_value_nd,
 )
-from .types import BCType
+from .types import BCType, BoundaryFace, segment_robin_coefficients, segment_value
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -57,6 +57,49 @@ if TYPE_CHECKING:
 # The face types whose enforcement reads the value: Dirichlet's u, Neumann's du/dn. Not Robin, whose enforcement below
 # hard-codes its coefficients and reads no value (#2374); it joins this set when it reads the segment's.
 _VALUED = frozenset({"dirichlet", "neumann"})
+
+
+def _as_str(bc_type: BCType | str) -> str:
+    return bc_type.value.lower() if isinstance(bc_type, BCType) else str(bc_type).lower()
+
+
+def _zero_flux(bc_type: BCType | str, value: object) -> bool:
+    """NO_FLUX, REFLECTING, or Neumann with g = 0: one enforcement branch, whatever spells it."""
+    kind = _as_str(bc_type)
+    if kind in ("no_flux", "reflecting"):
+        return True
+    return kind == "neumann" and (value is None or (not callable(value) and bool(np.all(np.asarray(value) == 0))))
+
+
+def _enforcement(segment: Any) -> tuple:
+    """What `InterpolationApplicator` writes for ``segment``: zero flux, periodic, or the type with its data."""
+    kind = _as_str(segment.bc_type)
+    if _zero_flux(kind, segment.value):
+        return ("zero flux",)
+    if kind == "periodic":
+        return (kind,)
+    if kind == "robin":
+        where = "InterpolationApplicator, comparing two Robin segments on one face"
+        return (kind, segment.value, *segment_robin_coefficients(segment, where=where))
+    return (kind, segment.value)
+
+
+def _equal(a: object, b: object) -> bool:
+    if a is b:
+        return True
+    if callable(a) or callable(b):
+        return False
+    try:
+        return bool(np.array_equal(np.asarray(a), np.asarray(b)))
+    except (TypeError, ValueError):
+        return False
+
+
+def _same_enforcement(first: Any, second: Any) -> bool:
+    """The applicator's equivalence for the face owner: two segments it would enforce the same way. Module-level,
+    so the owner's per-object memo sees one function across steps."""
+    a, b = _enforcement(first), _enforcement(second)
+    return len(a) == len(b) and a[0] == b[0] and all(_equal(x, y) for x, y in zip(a[1:], b[1:], strict=True))
 
 
 class InterpolationApplicator(BaseBCApplicator):
@@ -119,6 +162,7 @@ class InterpolationApplicator(BaseBCApplicator):
         boundary_conditions: BoundaryConditions,
         spacing: NDArray[np.floating] | tuple[float, ...] | float | None = None,
         time: float | None = None,
+        geometry: Any = None,
     ) -> NDArray[np.floating]:
         """
         Enforce boundary condition values on field after interpolation.
@@ -138,6 +182,9 @@ class InterpolationApplicator(BaseBCApplicator):
                 value g, which is imposed as du/dn = g against the outward normal; refused without
                 it (#2141).
             time: Current time for time-dependent BC values
+            geometry: The grid the field lives on. The face owner reads a ``region``, ``sdf_region`` or
+                ``region_name`` placement on it (#2512 row B1); without it such a placement is refused unless
+                the whole BC is zero flux.
 
         Returns:
             Field with BC enforced at boundaries (modified in-place, also returned)
@@ -167,27 +214,24 @@ class InterpolationApplicator(BaseBCApplicator):
         if isinstance(boundary_conditions, BoundaryConditions):  # anything else is refused just below
             self._validate_bc_support(boundary_conditions)  # #1948
 
-        # Get BC types for each boundary
-        bc_types = self._get_bc_types_per_boundary(boundary_conditions, ndim)
-
         h_per_axis = None if spacing is None else np.broadcast_to(np.asarray(spacing, dtype=float).ravel(), (ndim,))
 
-        # Enforce BC along each dimension
-        for axis in range(ndim):
-            bc_type_min, bc_type_max = bc_types[axis]
-            h = None if h_per_axis is None else float(h_per_axis[axis])
+        # Each face's type, and its value where the type's enforcement reads one, from one segment. Then each node
+        # several faces share, from the owner's choice for that node (`BoundaryConditions.corner_nodes`): its
+        # segment's enforcement along its face, written at the node.
+        def enforce(target: NDArray[np.floating], face: BoundaryFace, bc_type: str, value: float | None) -> None:
+            h = None if h_per_axis is None else float(h_per_axis[face.axis])
+            side: Literal["min", "max"] = "min" if face.side == "min" else "max"
+            self._enforce_boundary_1d(target, face.axis, side, bc_type, value, self._extrapolation_order, h)
 
-            # The segment's value: Dirichlet's u, or Neumann's du/dn. Read only where the face's type uses it, so
-            # a zero-flux-only BC's region, typed no-flux above, is never read: the accessor cannot place it.
-            g_min = self._get_bc_value(boundary_conditions, axis, "min", time) if bc_type_min in _VALUED else None
-            g_max = self._get_bc_value(boundary_conditions, axis, "max", time) if bc_type_max in _VALUED else None
-
-            # Enforce BC at min boundary (index 0 along this axis)
-            self._enforce_boundary_1d(field, axis, "min", bc_type_min, g_min, self._extrapolation_order, h)
-
-            # Enforce BC at max boundary (index -1 along this axis)
-            self._enforce_boundary_1d(field, axis, "max", bc_type_max, g_max, self._extrapolation_order, h)
-
+        conditions, corners = self._face_conditions(boundary_conditions, ndim, geometry, time, field.shape)
+        for face, bc_type, value in conditions:
+            enforce(field, face, bc_type, value)
+        written = field.copy() if corners else None
+        for face, bc_type, value, nodes in corners:
+            source = written.copy()
+            enforce(source, face, bc_type, value)
+            field[nodes] = source[nodes]
         return field
 
     def _enforce_boundary_1d(
@@ -239,92 +283,61 @@ class InterpolationApplicator(BaseBCApplicator):
                 f"axis {axis}; it would return the interpolated value unchanged (#1948)."
             )
 
-    def _get_bc_types_per_boundary(
+    def _face_conditions(
         self,
         bc: BoundaryConditions,
         ndim: int,
-    ) -> list[tuple[str, str]]:
-        """
-        Extract BC types for min/max boundary of each dimension.
+        geometry: Any,
+        time: float | None,
+        shape: tuple[int, ...] | None = None,
+    ) -> tuple[list[tuple[BoundaryFace, str, float | None]], list[tuple[BoundaryFace, str, float | None, Any]]]:
+        """Each face's ``(face, type, value)``, from the segment the face owner gives it (#2512 row B1); and, for a
+        field of ``shape``, each group of nodes several faces share as ``(face, type, value, index)``: the owner's
+        choice there (`BoundaryConditions.corner_nodes`), to be written along that face at those nodes after the
+        faces. The value is read only where the type's enforcement uses it (``_VALUED``).
 
-        Returns list of (bc_type_min, bc_type_max) tuples for each dimension.
+        This applicator imposes one condition per face, and zero flux is one branch whatever spells it --
+        NO_FLUX, REFLECTING, or Neumann with g = 0. So the owner is asked with that equivalence
+        (`_same_enforcement`): a segment covering part of a face is accepted when it and the rest of the face
+        enforce the same way, and refused otherwise; under a blending ``corner_strategy`` a corner is refused only
+        where its faces enforce differently. When every condition the BC carries, its default included, is zero
+        flux, every face is zero flux whichever segment governs it, and no placement is read: a region the owner
+        cannot place without the solver's geometry (a ``region_name`` from `mixed_bc_from_regions`) is then
+        imposed, not refused (#2466, #2472). The faces are asked for by `BoundaryFace`, so no name is built here
+        (#2628).
         """
         if not isinstance(bc, BoundaryConditions):
             raise TypeError(
                 f"The interpolation applicator takes a BoundaryConditions, not a {type(bc).__name__} (the legacy "
                 "fdm_bc_1d class is removed)."
             )
-
-        # One resolver for the type and the value. `get_bc_type_at_boundary` resolves an alias
-        # ("left") and an uncovered face's default_bc exactly as `_get_bc_value`'s
-        # `get_bc_value_at_boundary` does. This class used its own string match, which did neither and
-        # typed such a face "neumann"; once the Neumann value was imposed (#2141), a value carried by a
-        # NO_FLUX segment or default leaked into that face as du/dn.
-        def as_str(bc_type: BCType | str) -> str:
-            return bc_type.value.lower() if isinstance(bc_type, BCType) else str(bc_type).lower()
-
-        # This applicator imposes one condition per face. A segment restricted to part of the boundary
-        # cannot be honoured, and the shared resolver would give it the whole face -- every face, for a
-        # segment with no face string. That matters only when the boundary carries some condition other
-        # than zero flux: Neumann with g = 0, NO_FLUX and REFLECTING take one branch below, so a
-        # zero-flux-only BC -- including a region `mixed_bc_from_regions` keeps because it covers part of a
-        # face -- is imposed exactly whatever the typing.
-        def zero_flux(bc_type: BCType | str, value: object) -> bool:
-            kind = as_str(bc_type)
-            if kind in ("no_flux", "reflecting"):
-                return True
-            return kind == "neumann" and (
-                value is None or (not callable(value) and bool(np.all(np.asarray(value) == 0)))
-            )
-
-        partial = [
-            seg.name
-            for seg in bc.segments
-            if seg.region is not None
-            or seg.sdf_region is not None
-            or seg.normal_direction is not None
-            or seg.region_name is not None
-        ]
         conditions = [(seg.bc_type, seg.value) for seg in bc.segments]
         if bc.default_bc is not None:
             conditions.append((bc.default_bc, bc.default_value))
-        if partial and not all(zero_flux(kind, value) for kind, value in conditions):
-            raise NotImplementedError(
-                f"InterpolationApplicator imposes one condition per face and cannot honour segment(s) {partial} "
-                "restricted to part of the boundary (region, sdf_region, normal_direction or region_name); "
-                "it would apply them to whole faces. Give each face one segment by its face name."
-            )
-        if partial:
-            # Zero flux on every face, so the typing cannot matter, and the shared resolver cannot type a
-            # region-named face without the geometry: it refuses rather than give the segment every face
-            # (#2472).
-            return [("no_flux", "no_flux")] * ndim
+            if all(_zero_flux(kind, value) for kind, value in conditions):
+                faces = [BoundaryFace(axis, side) for axis in range(ndim) for side in ("min", "max")]
+                return [(face, "no_flux", None) for face in faces], []
 
-        axis_names = ["x", "y", "z", "w"]  # Extend for higher dimensions
-        result = []
-        for d in range(ndim):
-            axis_name = axis_names[d] if d < len(axis_names) else f"d{d}"
-            result.append(
-                (
-                    as_str(bc.get_bc_type_at_boundary(f"{axis_name}_min")),
-                    as_str(bc.get_bc_type_at_boundary(f"{axis_name}_max")),
-                )
+        def written(segment: Any, face: BoundaryFace) -> tuple[str, float | None]:
+            kind = _as_str(segment.bc_type)
+            where = f"InterpolationApplicator, the {face.to_string()} face"
+            value = (
+                float(segment_value(segment, t=time, x=None, where=where, time_keyword="time"))
+                if kind in _VALUED
+                else None
             )
-        return result
+            return kind, value
 
-    def _get_bc_value(
-        self,
-        bc: BoundaryConditions,
-        axis: int,
-        side: str,
-        time: float,
-    ) -> float:
-        """The BC's value on one face, at ``time``, read through `BoundaryConditions.get_bc_value_at_boundary`
-        (#2512 row B2, D6). A refusal reaches the caller: a fallback that matched any segment with no ``boundary``
-        to every face used to catch it, which applied a region-placed segment to every face (#2472's shape)."""
-        axis_names = ["x", "y", "z", "w"]
-        axis_name = axis_names[axis] if axis < len(axis_names) else f"d{axis}"
-        return float(bc.get_bc_value_at_boundary(f"{axis_name}_{side}", time=time))
+        faces = [BoundaryFace(axis, side) for axis in range(ndim) for side in ("min", "max")]
+        result = [
+            (face, *written(bc.segment_for_face(face, geometry, equivalent=_same_enforcement), face)) for face in faces
+        ]
+        corners = []
+        if shape is not None:
+            nodes = bc.corner_nodes(tuple(shape), geometry, equivalent=_same_enforcement)
+            for face, segment, index in _group_nodes(nodes):
+                corners.append((face, *written(segment, face), index))
+        return result, corners
 
     def clamp_query_points(
         self,

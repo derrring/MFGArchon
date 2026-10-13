@@ -118,7 +118,8 @@ def _timed_readers():
     reader's keywords. A call with a time of 0.5 returns values holding g(0.5) = 0.75, g(t) = 0.25 + t, or None for the
     ghost fill, which returns nothing to read. Four more sites (D1's segment branch, `BCSegment.get_value`, FEM's and
     Nitsche's assemblies) are pinned by the accessor, FEM and Nitsche tests. The implicit applicator's, the n-D ghost
-    values' and the FDM ghost check's became reachable when their readers' time defaulted to None (2b-iv)."""
+    values' became reachable when their readers' time defaulted to None (2b-iv). The FDM ghost check
+    (`bc_utils._ghost_effect`) was removed with the refusal it served, by #2512 row B1."""
     import warnings
     from types import SimpleNamespace
 
@@ -130,7 +131,6 @@ def _timed_readers():
     from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator, PreallocatedGhostBuffer, dirichlet_wall_rows
     from mfgarchon.geometry.boundary.applicator_implicit import ImplicitApplicator
     from mfgarchon.geometry.boundary.applicator_meshfree import MeshfreeApplicator
-    from mfgarchon.geometry.boundary.bc_utils import _ghost_effect
     from mfgarchon.geometry.implicit.hypersphere import Hypersphere
 
     def g(t):
@@ -214,14 +214,6 @@ def _timed_readers():
         "get_ghost_values_nd, uniform": lambda **kw: ghost_values(uniform, **kw),
         "get_ghost_values_nd, a face segment": lambda **kw: ghost_values(on_x_min, **kw),
         "get_ghost_values_nd, the default value": lambda **kw: ghost_values(default_g, **kw),
-        # `refuse_unplaceable_segments(time=None)` hands its time to the check as is.
-        "the FDM ghost check, Dirichlet": lambda time=None: _ghost_effect(face(g, "s", BCType.DIRICHLET, None), time)[
-            1
-        ],
-        "the FDM ghost check, Neumann": lambda time=None: _ghost_effect(face(g, "s", BCType.NEUMANN, None), time)[1],
-        "the FDM ghost check, Robin": lambda time=None: _ghost_effect(
-            face(g, "s", BCType.ROBIN, None, alpha=1.0, beta=1.0), time
-        )[3],
     }
 
 
@@ -242,9 +234,6 @@ def _timed_readers():
         "get_ghost_values_nd, uniform",
         "get_ghost_values_nd, a face segment",
         "get_ghost_values_nd, the default value",
-        "the FDM ghost check, Dirichlet",
-        "the FDM ghost check, Neumann",
-        "the FDM ghost check, Robin",
     ],
 )
 def test_a_reader_given_no_time_says_to_pass_its_time(reader):

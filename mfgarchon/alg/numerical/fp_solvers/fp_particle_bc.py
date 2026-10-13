@@ -20,26 +20,15 @@ Usage:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-if TYPE_CHECKING:
-    from mfgarchon.geometry import BoundaryConditions
-    from mfgarchon.geometry.implicit import ImplicitDomain
-
+from mfgarchon.geometry.boundary.conditions import BoundaryConditions, periodic_faces
 from mfgarchon.geometry.boundary.types import BCType
 
-# Mapping from dimension index to boundary name prefix
-_DIM_TO_AXIS_PREFIX = {0: "x", 1: "y", 2: "z"}
-
-
-def _get_axis_prefix(dim_idx: int) -> str:
-    """Get axis prefix for dimension index (x, y, z, dim3, dim4, ...)."""
-    if dim_idx < 3:
-        return _DIM_TO_AXIS_PREFIX[dim_idx]
-    return f"dim{dim_idx}"
-
+if TYPE_CHECKING:
+    from mfgarchon.geometry.implicit import ImplicitDomain
 
 # =============================================================================
 # Topology Detection (unified)
@@ -49,6 +38,7 @@ def _get_axis_prefix(dim_idx: int) -> str:
 def get_topology_per_dimension(
     boundary_conditions: BoundaryConditions | str | None,
     dimension: int,
+    geometry: Any = None,
 ) -> list[str]:
     """
     Get grid topology for each dimension from boundary conditions (dimension-agnostic).
@@ -69,6 +59,7 @@ def get_topology_per_dimension(
         for fully periodic implicit geometry (e.g., Hyperrectangle torus).
     dimension : int
         Number of spatial dimensions
+    geometry : the solver's grid, on which the face owner decides a region or sdf_region placement
 
     Returns
     -------
@@ -93,38 +84,23 @@ def get_topology_per_dimension(
         return ["periodic"] * dimension
 
     bc = boundary_conditions
+    if not isinstance(bc, BoundaryConditions):
+        raise TypeError(
+            "get_topology_per_dimension takes a BoundaryConditions, the 'periodic' sentinel or None, not "
+            f"{type(bc).__name__} ({bc!r}): read as bounded walls, it would solve a boundary nobody declared "
+            "(#2634, review 2)."
+        )
 
-    # For uniform BCs, check if periodic - Issue #543: use getattr instead of hasattr
-    is_uniform = getattr(bc, "is_uniform", False)
-    if is_uniform:
-        bc_type = getattr(bc, "type", None)
-        if bc_type == "periodic":
-            return ["periodic"] * dimension
-        return topologies
+    # One condition everywhere: read with no placement, so no geometry is needed.
+    uniform = bc.uniform_segment
+    if uniform is not None:
+        return ["periodic" if uniform.bc_type == BCType.PERIODIC else "bounded"] * dimension
 
-    # For mixed BCs, check per dimension
-    # Periodic requires BOTH min and max to be periodic (topological constraint)
-    # Issue #543: use callable() for method existence check
-    if not callable(getattr(bc, "get_bc_type_at_boundary", None)):
-        return topologies  # Method doesn't exist, use default bounded
-
-    for d in range(dimension):
-        axis_prefix = _get_axis_prefix(d)
-        min_boundary = f"{axis_prefix}_min"
-        max_boundary = f"{axis_prefix}_max"
-
-        try:
-            bc_min = bc.get_bc_type_at_boundary(min_boundary)
-            bc_max = bc.get_bc_type_at_boundary(max_boundary)
-
-            # Periodic topology requires both boundaries to be periodic
-            if bc_min == BCType.PERIODIC and bc_max == BCType.PERIODIC:
-                topologies[d] = "periodic"
-            # All other cases: bounded topology (reflecting for particles)
-        except (KeyError, AttributeError):
-            pass  # Keep default "bounded"
-
-    return topologies
+    # Read through the face owner with periodicity as the equivalence (`periodic_faces`, #2512 row B1): the topology
+    # asks only whether an axis wraps, so a segment covering part of a face is accepted where it agrees with the rest of
+    # the face on that, and refused where it does not. Periodic topology needs both ends of an axis periodic.
+    periodic = periodic_faces(bc, dimension, geometry)
+    return ["periodic" if periodic[2 * d] and periodic[2 * d + 1] else "bounded" for d in range(dimension)]
 
 
 def needs_segment_aware_bc(boundary_conditions: BoundaryConditions | str | None) -> bool:
@@ -162,13 +138,16 @@ def needs_segment_aware_bc(boundary_conditions: BoundaryConditions | str | None)
         return False
 
     bc = boundary_conditions
+    if isinstance(bc, str):
+        raise ValueError(f"needs_segment_aware_bc: the only string a BC may be is 'periodic', not {bc!r}")
 
     # Check if uniform BC (same type everywhere) - Issue #543: use getattr instead of hasattr
     is_uniform = getattr(bc, "is_uniform", False)
     if is_uniform:
-        # Uniform BC - use fast path unless it's DIRICHLET (absorbing)
-        segments = getattr(bc, "segments", [])
-        return len(segments) > 0 and segments[0].bc_type == BCType.DIRICHLET
+        # Uniform BC - use fast path unless it's DIRICHLET (absorbing). One unplaced segment is what
+        # `is_uniform` means, and `uniform_segment` is that segment.
+        segment = bc.uniform_segment
+        return segment is not None and segment.bc_type == BCType.DIRICHLET
 
     # Mixed BC with segments - need segment-aware handling
     segments = getattr(bc, "segments", [])

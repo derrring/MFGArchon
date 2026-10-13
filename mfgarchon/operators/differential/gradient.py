@@ -438,37 +438,33 @@ def value_gradient(
     axis whose two faces are not periodic has its wall nodes replaced by the one-sided difference of
     ``values`` (`wall_gradient_from_values`). A periodic axis keeps the operator's wrap.
 
-    Each axis is asked separately, through ``get_bc_type_at_boundary``. Reading one type for the whole boundary
-    takes the first segment's, so on a geometry mixing periodic and non-periodic faces -- reachable wherever the
-    solver does not refuse such a BC itself: ``FPParticleSolver``, and ``FPSLSolver`` given its own
-    ``boundary_conditions`` -- the answer depended on the segments' order. That accessor and the ghosts'
-    resolver (``applicator_fdm.face_segment``) both match a segment with a ``boundary`` by
-    its face, whatever region it is restricted to within that face. A segment with no ``boundary`` covers every
-    face for the accessor, while the ghosts match it to a face only through its region name, or not at all; in a
-    periodic mix that disagreement can decide which axes are periodic, so such a segment is refused there, as is
-    an axis periodic on one face only. A uniform BC is not a mix: its one segment covers every face for both,
-    and neither reads its ``default_bc``, which ``geometric_operations`` still counts.
+    Each face is asked separately, of the face owner (:meth:`BoundaryConditions.segment_for_face`, #2512 row B1),
+    with the geometry: reading one type for the whole boundary took the first segment's, so on a geometry mixing
+    periodic and non-periodic faces -- reachable wherever the solver does not refuse such a BC itself:
+    ``FPParticleSolver``, and ``FPSLSolver`` given its own ``boundary_conditions`` -- the answer depended on the
+    segments' order. The owner places every segment the way the ghosts do, so no segment is refused here for being
+    unplaced; a segment covering part of a face is accepted only if it agrees with the rest of the face on
+    periodicity, the one thing this consumer reads. An axis periodic on one face only is refused.
 
     On a closed axis the wall values the ghosts produced are discarded, so ``time`` reaches nothing there;
     it is passed for the operator's reads, whose clock #2453 pins.
     """
-    from mfgarchon.geometry.boundary.bc_utils import geometric_operations
-    from mfgarchon.geometry.boundary.types import BCType
+    from mfgarchon.geometry.boundary.types import BCType, BoundaryFace
 
-    given = bc
-    bc = geometry.get_boundary_conditions() if given is None else given
-    operations = geometric_operations(bc)
-    if "periodic" in operations and len(operations) > 1 and not bc.is_uniform:
-        unbounded = [seg.name for seg in bc.segments if seg.boundary is None]
-        if unbounded:
-            raise NotImplementedError(
-                f"segments {unbounded} have no `boundary` in a mix of periodic and non-periodic faces; a velocity "
-                f"taken from U reads periodicity per face and cannot tell which faces they cover. Give each one the "
-                f"face it lies on with `boundary=` (a region may still restrict it within that face) (#2467)."
-            )
+    bc = geometry.get_boundary_conditions() if bc is None else bc
+
+    def is_periodic(segment: Any) -> bool:
+        return segment.bc_type == BCType.PERIODIC
+
+    def same_periodicity(part: Any, governing: Any) -> bool:
+        return is_periodic(part) == is_periodic(governing)
+
     closed_axes = []
     for axis in range(values.ndim):
-        periodic = [bc.get_bc_type_at_boundary(f"axis{axis}_{side}") == BCType.PERIODIC for side in ("min", "max")]
+        periodic = [
+            is_periodic(bc.segment_for_face(BoundaryFace(axis, side), geometry, equivalent=same_periodicity))
+            for side in ("min", "max")
+        ]
         if periodic[0] != periodic[1]:
             raise NotImplementedError(
                 f"axis {axis} is periodic on one face only; a periodic axis needs both, so a velocity taken from U "
@@ -476,11 +472,27 @@ def value_gradient(
             )
         if not periodic[0]:
             closed_axes.append(axis)
-    ops = (
-        geometry.get_gradient_operator(scheme="central", time=time)
-        if given is None
-        else geometry.get_gradient_operator(scheme="central", time=time, bc=given)
+    # The operator gets the BC this consumer reads: the wrap on a periodic axis, and on a closed one a no-flux
+    # ghost whose wall values are replaced below anyway. Handing it the full BC asked its ghosts to impose every
+    # condition on every face -- a Dirichlet door on part of a closed face among them, which no face-level ghost
+    # can represent and which this consumer then discards.
+    from mfgarchon.geometry.boundary import BCSegment, BoundaryConditions
+
+    read = BoundaryConditions(
+        dimension=values.ndim,
+        segments=[
+            BCSegment(
+                name=f"{'periodic' if axis not in closed_axes else 'closed'} {face.to_string()}",
+                bc_type=BCType.NO_FLUX if axis in closed_axes else BCType.PERIODIC,
+                boundary=face.to_string(),
+            )
+            for axis in range(values.ndim)
+            for face in (BoundaryFace(axis, "min"), BoundaryFace(axis, "max"))
+        ],
+        default_bc=BCType.NO_FLUX,
+        periodic_convention=bc.periodic_convention,
     )
+    ops = geometry.get_gradient_operator(scheme="central", time=time, bc=read)
     components = tuple(op(values) for op in ops)
     return wall_gradient_from_values(values, components, geometry.get_grid_spacing(), closed_axes)
 
