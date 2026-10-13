@@ -288,7 +288,7 @@ class DiffusionOperator(LinearOperator):
         from mfgarchon.operators.stencils.finite_difference import laplacian_with_bc
 
         D = float(self.coefficient)
-        lap = laplacian_with_bc(u, self.spacings, bc=self.bc, time=self.time)
+        lap = laplacian_with_bc(u, self.spacings, bc=self.bc, time=self.time, geometry=self.geometry)
         return D * lap
 
     def _apply_tensor_diffusion(self, u: NDArray) -> NDArray:

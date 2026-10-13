@@ -2950,7 +2950,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         geometry = self.problem.geometry
         if len(faces) == 1:
             return bc.segment_for_face(faces[0], geometry).bc_type.value
-        return bc.segment_for_corner(faces, geometry, node=tuple(int(i) for i in index)).bc_type.value
+        return bc.segment_for_corner(faces, geometry).bc_type.value
 
     def get_solver_info(self) -> dict[str, Any]:
         """Return solver configuration information."""

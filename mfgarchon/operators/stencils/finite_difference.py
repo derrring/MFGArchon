@@ -571,6 +571,7 @@ def laplacian_with_bc(
     spacings: list[float] | tuple[float, ...],
     bc: BoundaryConditions | None = None,
     time: float | None = None,
+    geometry: Any = None,
 ) -> NDArray:
     """
     Compute Laplacian with boundary condition handling.
@@ -584,6 +585,8 @@ def laplacian_with_bc(
         u: Input n-dimensional array
         spacings: Grid spacing per dimension [h₀, h₁, ..., hd₋₁]
         bc: Boundary conditions. If None, uses periodic BC.
+        geometry: The grid ``u`` lives on, on which the face owner decides a ``region`` or ``sdf_region``
+            placement (#2512 row B1); without it, the grid ``bc`` is bound to, if any.
         time: Current time for time-dependent BCs
 
     Returns:
@@ -604,7 +607,7 @@ def laplacian_with_bc(
         # spacing threaded: without it the buffer falls back to dx = 1.0 and an inhomogeneous
         # Neumann value is applied as g/h rather than g (#1904). `spacings` is already a
         # parameter of this function -- it was simply not passed on.
-        u_work = pad_array_with_ghosts(u, bc, ghost_depth=1, time=time, spacing=spacings)
+        u_work = pad_array_with_ghosts(u, bc, ghost_depth=1, time=time, geometry=geometry, spacing=spacings)
     else:
         u_work = u
 

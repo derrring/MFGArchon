@@ -1016,7 +1016,7 @@ def dirichlet_wall_rows(
 
     A node shared by several faces (a corner, or an edge in 3-D) takes the segment
     :meth:`BoundaryConditions.corner_nodes` gives it: the faces are written first, then each such node from the
-    owner's choice, which reads the segment that holds that node on each face (#2512 row B1).
+    owner's corner choice among those faces' segments (#2512 row B1).
     """
     mask = np.zeros(shape, dtype=bool)
     values = np.zeros(shape, dtype=np.float64)

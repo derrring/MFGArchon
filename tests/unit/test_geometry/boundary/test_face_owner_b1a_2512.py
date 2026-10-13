@@ -523,7 +523,7 @@ def test_a_segment_covering_no_boundary_location_is_refused(placement):
     `all([])` used to let it be dropped silently (review 1 of #2634, B-3). It is refused, on the grid it is bound to."""
     ghost = _seg("ghost", BCType.DIRICHLET, 1.0, priority=1, **placement)
     grid = _grid(BoundaryConditions(dimension=2, default_bc=BCType.NO_FLUX, segments=[ghost]))
-    with pytest.raises(ValueError, match="segment\\(s\\) 'ghost' cover no part of the domain's boundary on this grid"):
+    with pytest.raises(ValueError, match="segment\\(s\\) 'ghost' cover no node of any face's interior on this grid"):
         grid.get_boundary_conditions().segment_for_face("x_max")
 
 
@@ -639,11 +639,6 @@ def _particle_fate(segments, point, **bc_kw):
 
 
 _EXIT = BCType.DIRICHLET
-#: Two strips of x_max that overlap at (1, 0.5). Neither holds the face whole, so neither is a face's winner and
-#: neither is dead: the point's order (priority, then declaration) decides between them there. Two whole-face
-#: segments on one face would leave the loser governing nothing, which the owner refuses at a point as on a face.
-_MIDDLE_STRIP = {"boundary": "x_max", "region": {"y": (0.3, 0.7)}}
-_UPPER_STRIP = {"boundary": "x_max", "region": {"y": (0.4, 1.0)}}
 
 
 @pytest.mark.parametrize(
@@ -651,7 +646,7 @@ _UPPER_STRIP = {"boundary": "x_max", "region": {"y": (0.4, 1.0)}}
     [
         (
             "priority",
-            [_seg("wall", BCType.NO_FLUX, **_UPPER_STRIP), _seg("exit", _EXIT, priority=1, **_MIDDLE_STRIP)],
+            [_seg("wall", BCType.NO_FLUX, boundary="x_max"), _seg("exit", _EXIT, priority=1, boundary="x_max")],
             (1.0, 0.5),
             "absorbed",
         ),
@@ -663,13 +658,13 @@ _UPPER_STRIP = {"boundary": "x_max", "region": {"y": (0.4, 1.0)}}
         ),
         (
             "declaration, exit first",
-            [_seg("exit", _EXIT, **_MIDDLE_STRIP), _seg("wall", BCType.NO_FLUX, **_UPPER_STRIP)],
+            [_seg("exit", _EXIT, boundary="x_max"), _seg("wall", BCType.NO_FLUX, boundary="x_max")],
             (1.0, 0.5),
             "absorbed",
         ),
         (
             "declaration, wall first",
-            [_seg("wall", BCType.NO_FLUX, **_UPPER_STRIP), _seg("exit", _EXIT, **_MIDDLE_STRIP)],
+            [_seg("wall", BCType.NO_FLUX, boundary="x_max"), _seg("exit", _EXIT, boundary="x_max")],
             (1.0, 0.5),
             "reflected",
         ),
@@ -864,9 +859,9 @@ def test_a_strip_holding_no_node_is_judged_by_the_readers_own_equivalence():
     reflecting = _strip_between_nodes(BCType.REFLECTING)
     assert get_topology_per_dimension(reflecting, 2, grid) == ["bounded", "bounded"]
     assert reflecting.segment_for_point(np.array([1.0, 0.42])).name == "strip"
-    with pytest.raises(ValueError, match="'strip' cover no part of the domain's boundary"):
+    with pytest.raises(ValueError, match="'strip' cover no node of any face's interior"):
         get_topology_per_dimension(_strip_between_nodes(BCType.PERIODIC), 2, grid)
-    with pytest.raises(ValueError, match="'strip' cover no part of the domain's boundary"):
+    with pytest.raises(ValueError, match="'strip' cover no node of any face's interior"):
         reflecting.segment_for_face("x_max", grid)
 
 
@@ -883,8 +878,7 @@ def test_the_topology_query_refuses_what_is_not_a_bc():
 
 def _strip_at_a_corner(strip_value=0.0, d_type=BCType.DIRICHLET, d_value=5.0, d_priority=1):
     """``wall`` NEUMANN(0) everywhere; ``strip`` on x_max for y >= 0.75 at priority 2, which the face accepts as the
-    wall's condition when its value is 0; ``D`` on y_max. Corner (1, 1) is held by the strip on x_max and D on
-    y_max."""
+    wall's condition when its value is 0; ``D`` on y_max. The strip holds the corner (1, 1)."""
     return BoundaryConditions(
         dimension=2,
         domain_bounds=UNIT_SQUARE,
@@ -897,51 +891,53 @@ def _strip_at_a_corner(strip_value=0.0, d_type=BCType.DIRICHLET, d_value=5.0, d_
 
 
 @pytest.mark.parametrize(
-    ("case", "kwargs", "corner"),
-    [
-        ("strip priority 2 beats D priority 1", {}, "strip"),
-        (
-            "equal priority: the placed strip beats the global wall",
-            {"d_type": BCType.NEUMANN, "d_value": 1.0, "d_priority": 2},
-            "strip",
-        ),
-    ],
-    ids=["priority", "equal priority"],
+    ("kwargs", "dirichlet"),
+    [({}, True), ({"d_type": BCType.NEUMANN, "d_value": 1.0, "d_priority": 2}, False)],
+    ids=["D Dirichlet at priority 1", "D Neumann(1) at priority 2"],
 )
-def test_a_corner_node_and_a_point_at_it_take_the_segment_that_holds_the_node(case, kwargs, corner):
-    """B-c, ruling (i): on each face the segment that holds the node -- here the strip, a partial cover x_max
-    accepts as the wall's condition -- not the face's own segment. The node and the point give one answer, and
-    every reader that writes the corner writes it."""
+def test_a_point_at_a_corner_follows_the_node_among_the_faces_own_segments(kwargs, dirichlet):
+    """Review 2's B-c, under the corner rule as approved (the user's ruling of 2026-10-13, after review 3): a node
+    shared by several faces takes the corner choice among those faces' own segments, and a point exactly at the
+    corner follows the node. Here x_max's own segment is the wall -- the strip covers only part of it, accepted as
+    the wall's condition -- so the corner is D's, though the strip holds the corner point at priority 2."""
     grid = _grid(_strip_at_a_corner(**kwargs))
     bc = grid.get_boundary_conditions()
     faces = [BoundaryFace(0, "max"), BoundaryFace(1, "max")]
-    assert bc.segment_for_corner(faces, grid).name == corner
-    assert bc.segment_for_point(np.array([1.0, 1.0]), geometry=grid).name == corner
+    assert bc.segment_for_corner(faces, grid).name == "D"
+    assert bc.segment_for_point(np.array([1.0, 1.0]), geometry=grid).name == "D"
+    assert bc.segment_for_point(np.array([1.0, 0.9]), geometry=grid).name == "strip"  # off the corner, the point's own
     mask, _ = dirichlet_wall_rows(bc, (N, N), 0.0, grid)
-    assert not mask[-1, -1]
-    assert not _is_dirichlet_at_point(bc, (N - 1, N - 1), (N, N), grid)
+    assert mask[-1, -1] == dirichlet
+    assert _is_dirichlet_at_point(bc, (N - 1, N - 1), (N, N), grid) == dirichlet
 
 
-def test_a_placement_holding_only_a_corner_node_governs_that_node():
-    """Must-fix 2 of review 2: an exit whose region holds only the corner node (1, 1) holds no face's interior, and
-    it is not "covers nothing": it governs that node, for the node, the point, the FDM rows and `FDMApplicator`."""
+def test_a_placement_holding_only_corner_nodes_is_refused_by_name():
+    """Must-fix 2 of review 2, under the corner rule as approved: a node several faces share takes the corner choice
+    among those faces' own segments, so an exit whose region holds only the corner node (1, 1) reaches no face and
+    governs no node. Its condition would be dropped, and it is refused by name, as a segment between the boundary
+    nodes is."""
     corner_exit = _seg("exit", BCType.DIRICHLET, 0.3, region={"x": (0.95, 1.05), "y": (0.95, 1.05)})
     grid = _grid(
         BoundaryConditions(dimension=2, domain_bounds=UNIT_SQUARE, default_bc=BCType.NO_FLUX, segments=[corner_exit])
     )
     bc = grid.get_boundary_conditions()
-    assert bc.segment_for_corner([BoundaryFace(0, "max"), BoundaryFace(1, "max")], grid).name == "exit"
-    assert bc.segment_for_point(np.array([1.0, 1.0]), geometry=grid).name == "exit"
-    mask, values = dirichlet_wall_rows(bc, (N, N), 0.0, grid)
-    assert mask.sum() == 1
-    assert mask[-1, -1]
-    assert values[-1, -1] == pytest.approx(0.3)
-    # FDMApplicator writes only DIRICHLET and NEUMANN faces, so the corner pass is the only write of this node.
+    refusal = "'exit' cover no node of any face's interior on this grid"
+    with pytest.raises(ValueError, match=refusal):
+        bc.segment_for_face("x_max", grid)
+    with pytest.raises(ValueError, match=refusal):
+        bc.segment_for_corner([BoundaryFace(0, "max"), BoundaryFace(1, "max")], grid)
+
+
+def test_fdm_applicator_writes_each_corner_from_the_owners_choice():
+    """`FDMApplicator` writes its faces, then each corner from `corner_nodes`. On Fixture A, P (DIRICHLET 1, priority
+    1) and Q (DIRICHLET 2, priority 0) meet at (1, 1): the corner is P's 1, though y_max is written after x_max."""
     from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator
 
+    grid = _grid(_fixture_a("x_max"))
+    bc = grid.get_boundary_conditions()
     out = FDMApplicator(dimension=2).enforce_values(np.ones((N, N)), bc, (1 / (N - 1),) * 2, geometry=grid)
-    assert out[-1, -1] == pytest.approx(0.3)
-    assert np.count_nonzero(out != 1.0) == 1
+    assert out[-1, -1] == pytest.approx(1.0)
+    assert out[N // 2, -1] == pytest.approx(2.0)  # y_max away from the corner is Q's
 
 
 def test_a_corner_that_differs_only_in_what_the_sl_enforcement_does_not_write_is_answered_there():
@@ -1056,7 +1052,7 @@ def _refusal_kind(error):
         ("ROBIN default", "ROBIN"),
         ("blended corner", "impose different conditions, and corner_strategy"),
         ("partial cover", "covers part of"),
-        ("covers nothing", "cover no part"),
+        ("covers nothing", "cover no node of any face"),
         ("shadowed", "govern no face"),
     ):
         if marker in text:
@@ -1078,10 +1074,10 @@ def test_the_owners_face_corner_and_point_answers_agree_at_every_boundary_node(d
     BCs instead of more single cases: at every boundary node, the point rule (`segment_for_point`) gives the face or
     corner rule's segment (`segment_for_face` on one face, `segment_for_corner` on several) or an equivalent one,
     under the default equivalence; or both refuse, for the same reason. Where the face rule refuses what one
-    condition per face cannot hold -- a partial cover, a segment holding no grid node, or a face part of which
-    nothing governs while the point is held -- a point may still answer, since points honour placements faces
-    cannot; those nodes are counted, not compared. A segment shadowed everywhere is refused by both: it governs no
-    point either. A default segment is built per query, so two answers are the
+    condition per face cannot hold -- a partial cover, a segment holding no node of a face's interior, a segment
+    shadowed on every face, or a face part of which nothing governs while the point is held -- a point may still
+    answer; those nodes are counted, not compared. Whether a point query should refuse what no face holds is the
+    point family's own shadow check, which #2512's plan puts in stage B1d. A default segment is built per query, so two answers are the
     same segment when they have its name and its condition."""
     shape = (_AGREEMENT_N,) * dimension
     compared = refused_alike = face_only = 0
@@ -1104,11 +1100,11 @@ def test_the_owners_face_corner_and_point_answers_agree_at_every_boundary_node(d
             if len(faces) == 1:
                 face_answer, face_refusal = _ask(lambda: bc.segment_for_face(faces[0], grid))  # noqa: B023
             else:
-                face_answer, face_refusal = _ask(lambda: bc.segment_for_corner(faces, grid, node=node))  # noqa: B023
+                face_answer, face_refusal = _ask(lambda: bc.segment_for_corner(faces, grid))  # noqa: B023
             point_answer, point_refusal = _ask(lambda: bc.segment_for_point(point, geometry=grid))  # noqa: B023
             at = f"{label}, node {node}"
             held_here = point_answer is not None and point_answer.name != "default"
-            if face_refusal in ("partial cover", "covers nothing") or (
+            if face_refusal in ("partial cover", "covers nothing", "shadowed") or (
                 face_refusal in ("unset default", "ROBIN default") and held_here
             ):
                 face_only += 1
@@ -1132,5 +1128,20 @@ def test_the_owners_face_corner_and_point_answers_agree_at_every_boundary_node(d
     assert disagreements == [], f"{len(disagreements)} disagreements:\n" + "\n".join(disagreements[:20])
     # The invariant reached its branches: a vacuous run would pass the assertion above.
     assert compared > 0, counts
-    assert refused_alike > 0, counts
-    assert (face_only > 0) == (dimension == 2), counts  # in 1-D a face is one node: nothing covers part of one
+    assert face_only > 0, counts
+    assert (refused_alike > 0) == (dimension == 2), counts  # in 1-D every face is governed: no default is reached
+
+
+def test_the_scalar_diffusion_branch_reads_a_placement_on_the_grid_it_is_given():
+    """Must-fix 2 of review 3: `apply_diffusion` takes ``geometry=``, and its scalar branch (`laplacian_with_bc`) now
+    passes it to the ghost pad, as the tensor branch does. An unbound BC with an sdf exit is read on that grid; given
+    none, it is refused by name."""
+    from mfgarchon.operators.differential.diffusion import apply_diffusion
+
+    grid = _grid(no_flux_bc(dimension=2))
+    bc = BoundaryConditions(dimension=2, default_bc=BCType.NO_FLUX, segments=_sdf_exit(placed_by_sdf=True))
+    u = np.ones((N, N))
+    for coefficient in (0.1, np.diag([0.1, 0.05])):
+        assert np.all(np.isfinite(apply_diffusion(u, coefficient, [1 / (N - 1)] * 2, bc=bc, geometry=grid)))
+        with pytest.raises(ValueError, match="decided on a grid's boundary nodes"):
+            apply_diffusion(u, coefficient, [1 / (N - 1)] * 2, bc=bc)

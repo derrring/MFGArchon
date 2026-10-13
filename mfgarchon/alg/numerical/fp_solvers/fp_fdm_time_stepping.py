@@ -231,8 +231,8 @@ def _segment_at_node(
 ) -> Any:
     """The segment governing a wall node, from the face owner (#2512 row B1), or None for an interior node.
 
-    A node on several faces takes `BoundaryConditions.segment_for_corner`'s answer for that node, the same one the
-    FDM Dirichlet rows use, on the same ``geometry`` (the grid), on which the owner reads a ``region``,
+    A node on several faces takes `BoundaryConditions.segment_for_corner`'s answer, the same one the FDM
+    Dirichlet rows use, on the same ``geometry`` (the grid), on which the owner reads a ``region``,
     ``sdf_region`` or ``region_name`` placement. Nothing here catches the owner's refusal: a BC it cannot place
     on a face is refused, not read as "no Dirichlet here" (this used to catch ValueError and AttributeError
     and answer False).
@@ -240,7 +240,7 @@ def _segment_at_node(
     faces = _faces_of_node(multi_idx, shape)
     if not faces:
         return None
-    return boundary_conditions.segment_for_corner(faces, geometry, node=tuple(int(i) for i in multi_idx))
+    return boundary_conditions.segment_for_corner(faces, geometry)
 
 
 def _is_dirichlet_at_point(

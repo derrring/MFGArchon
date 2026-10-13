@@ -300,6 +300,7 @@ def laplacian(
     bc: BoundaryConditions | None = None,
     backend: ArrayBackend | None = None,
     time: float | None = None,
+    geometry: Any = None,
 ) -> NDArray:
     """
     Compute Laplacian Δu = ∇·∇u on regular grid.
@@ -319,6 +320,9 @@ def laplacian(
         GPU backend.
     time : float
         Current time for time-dependent BCs.
+    geometry : grid, optional
+        The grid ``u`` lives on, on which the face owner decides a ``region`` or ``sdf_region``
+        placement (#2512 row B1); without it, the grid ``bc`` is bound to, if any.
 
     Returns
     -------
@@ -335,7 +339,7 @@ def laplacian(
 
     # Apply ghost cells if BC provided
     if bc is not None:
-        u_work = _apply_ghost_cells_nd(u, bc, time, spacings)
+        u_work = _apply_ghost_cells_nd(u, bc, time, spacings, geometry)
     else:
         u_work = u
 
@@ -483,6 +487,9 @@ def diffusion(
         Domain bounds for mixed BCs.
     time : float
         Current time for time-dependent BCs.
+    geometry : grid, optional
+        The grid ``u`` lives on, on which the face owner decides a ``region`` or ``sdf_region``
+        placement (#2512 row B1); without it, the grid ``bc`` is bound to, if any.
 
     Returns
     -------
@@ -522,14 +529,14 @@ def diffusion(
     # vector/tensor branches used the input directly -- the #1549 shape-flip.)
     if np.isscalar(coeff):
         # Isotropic: D·Δu (fast path)
-        lap = laplacian(u, spacings, bc=bc, backend=backend, time=time)
+        lap = laplacian(u, spacings, bc=bc, backend=backend, time=time, geometry=geometry)
         return float(coeff) * lap
 
     coeff = np.asarray(coeff)
 
     if coeff.ndim == 0:
         # 0-d array (scalar D wrapped in array)
-        lap = laplacian(u, spacings, bc=bc, backend=backend, time=time)
+        lap = laplacian(u, spacings, bc=bc, backend=backend, time=time, geometry=geometry)
         return float(coeff) * lap
 
     if coeff.ndim == 1 and len(coeff) == d:
@@ -700,12 +707,12 @@ def advection(
 
 
 def _apply_ghost_cells_nd(
-    u: NDArray, bc: BoundaryConditions, time: float, spacings: list[float] | tuple[float, ...]
+    u: NDArray, bc: BoundaryConditions, time: float, spacings: list[float] | tuple[float, ...], geometry: Any = None
 ) -> NDArray:
-    """Apply ghost cells using boundary conditions, at the grid's spacing (#2140)."""
+    """Apply ghost cells using boundary conditions, at the grid's spacing (#2140), on ``geometry`` when given."""
     from mfgarchon.geometry.boundary import pad_array_with_ghosts
 
-    return pad_array_with_ghosts(u, bc, ghost_depth=1, time=time, spacing=spacings)
+    return pad_array_with_ghosts(u, bc, ghost_depth=1, time=time, geometry=geometry, spacing=spacings)
 
 
 def _extract_interior(u_padded: NDArray, dimension: int) -> NDArray:
