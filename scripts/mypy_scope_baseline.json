@@ -24,9 +24,9 @@
   },
   "counts": {
     "_root": 2,
-    "alg": 663,
+    "alg": 654,
     "config": 0,
-    "core": 125,
+    "core": 122,
     "extensions": 4,
     "factory": 3,
     "geometry": 281,
