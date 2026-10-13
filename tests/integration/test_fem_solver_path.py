@@ -156,13 +156,14 @@ class TestFEMBoundaryConditionResolution:
         from mfgarchon.geometry.boundary.conditions import BoundaryConditions
         from mfgarchon.geometry.boundary.types import BCSegment, BCType
 
-        mesh = skfem.MeshTri.init_sqsymmetric().refined(1)
+        mesh = skfem.MeshTri.init_sqsymmetric().refined(1).with_boundaries({"x_min": lambda x: np.isclose(x[0], 0.0)})
         basis = create_basis(mesh, order=1)
         A = assemble_stiffness(basis)
         rhs = np.zeros(basis.N)
         bc = BoundaryConditions(
             dimension=2,
             segments=[BCSegment(name="wall", bc_type=BCType.ROBIN, alpha=1.0, beta=1.0, value=0.0, boundary="x_min")],
+            default_bc=BCType.NO_FLUX,
         )
         A_out, rhs_out = apply_bc_to_fem_system(A, rhs, basis, bc)  # must not raise
         # No Dirichlet segment -> no condensation; system returned unchanged (Robin handled upstream).
@@ -226,6 +227,7 @@ class TestFEMFacetBoundaryTags:
         geom.boundary_conditions = BoundaryConditions(
             segments=[BCSegment(name="inlet", bc_type=BCType.DIRICHLET, boundary="x_min", value=0.0)],
             dimension=2,
+            default_bc=BCType.NO_FLUX,
         )
         components = MFGComponents(
             m_initial=lambda x: 1.0,
@@ -249,19 +251,19 @@ class TestFEMFacetBoundaryTags:
         a one-wall Dirichlet to the whole boundary is the bug); only boundary=None falls back to the
         whole boundary — and that fallback resolves ALL boundary DOFs, incl. P2 edge DOFs (F2)."""
         from mfgarchon.alg.numerical.fem.assembly import create_basis
-        from mfgarchon.alg.numerical.fem.bc_adapter import _find_segment_dofs
-        from mfgarchon.geometry.boundary.conditions import BCSegment, BCType
+        from mfgarchon.alg.numerical.fem.bc_adapter import get_dirichlet_dofs_and_values
+        from mfgarchon.geometry.boundary.conditions import BCSegment, BCType, BoundaryConditions
 
         mesh = skfem.MeshTri.init_sqsymmetric().refined(1)  # raw skfem mesh: boundaries is None
         assert mesh.boundaries is None
         basis = create_basis(mesh, order=2)  # P2, so the fallback must include edge DOFs (F2)
 
         named = BCSegment(name="d", bc_type=BCType.DIRICHLET, boundary="x_min", value=0.0)
-        with pytest.raises(ValueError, match=r"no such tagged boundary|entire boundary"):
-            _find_segment_dofs(mesh, basis, named)
+        with pytest.raises(ValueError, match=r"names boundary='x_min', which this mesh does not resolve"):
+            get_dirichlet_dofs_and_values(basis, BoundaryConditions(dimension=2, segments=[named]))
 
         whole = BCSegment(name="all", bc_type=BCType.DIRICHLET, boundary=None, value=0.0)
-        dofs = _find_segment_dofs(mesh, basis, whole)  # boundary=None -> whole boundary, no raise
+        dofs, _ = get_dirichlet_dofs_and_values(basis, BoundaryConditions(dimension=2, segments=[whole]))
         # F2: get_dofs on the boundary facets includes P2 edge-midpoint DOFs (> vertex-only count)
         assert len(dofs) == len(set(basis.get_dofs(mesh.boundary_facets()).flatten().tolist()))
         assert len(dofs) > len(mesh.boundary_nodes())  # strictly more than vertices-only (the F2 bug)

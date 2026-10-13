@@ -157,6 +157,7 @@ class TestRobinConvergence:
                         name="R", bc_type=BCType.ROBIN, alpha=_ALPHA, beta=_BETA, value=g_right, boundary="x_max"
                     ),
                 ],
+                default_bc=BCType.NO_FLUX,
             )
             components = MFGComponents(
                 m_initial=lambda x: 1.0,
@@ -325,6 +326,7 @@ class TestRobinFailLoud:
         bc = BoundaryConditions(
             dimension=1,
             segments=[BCSegment(name="L", bc_type=BCType.ROBIN, alpha=1.0, beta=0.0, value=1.0, boundary="x_min")],
+            default_bc=BCType.NO_FLUX,
         )
         with pytest.raises(NotImplementedError, match="beta=0"):
             assemble_robin_terms(basis, bc, D=0.5)
@@ -340,6 +342,7 @@ class TestRobinFailLoud:
             segments=[
                 BCSegment(name="L", bc_type=BCType.ROBIN, alpha=1.0, beta=1.0, value=lambda x: x[0], boundary="x_min")
             ],
+            default_bc=BCType.NO_FLUX,
         )
         # The FEM Robin load is one constant g per segment (#1237): the owner refuses a g that declares x there
         # (#2512 row B2).

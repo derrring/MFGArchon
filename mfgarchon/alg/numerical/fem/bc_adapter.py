@@ -3,8 +3,11 @@ Translate MFGArchon BoundaryConditions to scikit-fem BC operations.
 
 This adapter ensures FEM solvers use the same BC framework as FDM/GFDM/particle
 solvers. Users specify BC via BCSegment; this module translates to skfem operations.
+Which segment governs each boundary facet, and which one a node shared by differently governed facets
+takes, is the owner's answer (`BoundaryConditions.segments_for_facets`, `segment_for_shared_node`; #2512
+row B1, stage B1b): this module reads it and decides nothing about placement itself.
 
-Mapping:
+Mapping, per governing segment:
     BCType.DIRICHLET → condense() with boundary DOFs and values
     BCType.NEUMANN   → natural BC. Homogeneous (g=0): no action, whatever the value's dtype.
                        Inhomogeneous (g!=0): assemblable ONLY where the weak form's natural
@@ -30,6 +33,7 @@ Issue #1237: Robin BC via weak-form operator augmentation
 
 from __future__ import annotations
 
+import weakref
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -41,6 +45,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from mfgarchon.geometry.boundary import BCSegment, BoundaryConditions
+    from mfgarchon.geometry.boundary.conditions import BoundaryFacets
 
 
 def apply_bc_to_fem_system(
@@ -55,14 +60,13 @@ def apply_bc_to_fem_system(
     """
     Apply BoundaryConditions to assembled FEM system (A, rhs).
 
-    For Dirichlet segments: condense the system (eliminate boundary DOFs).
-    For Neumann/no-flux: no condensation (natural BC in weak form). An INHOMOGENEOUS Neumann
-    still owes a boundary load on the HJB side; that is an operator augmentation like Robin,
-    assembled by ``assemble_robin_terms`` and folded in upstream, not applied here (Issue #2294).
-    For Robin: no action here — the Robin boundary mass + load are an operator augmentation
-    assembled by ``assemble_robin_terms`` and folded into ``M/dt + D*K`` upstream (Robin dofs
-    stay free, so they are not condensed). For Periodic: raises ``NotImplementedError``
-    (Issue #1237, still deferred) — fail loud rather than silently degrade to Neumann.
+    Condenses the Dirichlet DOFs (`get_dirichlet_dofs_and_values`). Facets governed by Neumann/no-flux take the
+    natural BC in the weak form: no action. An INHOMOGENEOUS Neumann still owes a boundary load on the HJB side;
+    that is an operator augmentation like Robin, assembled by ``assemble_robin_terms`` and folded in upstream, not
+    applied here (Issue #2294). For Robin: no action here — the Robin boundary mass + load are an operator
+    augmentation assembled by ``assemble_robin_terms`` and folded into ``M/dt + D*K`` upstream (Robin dofs stay free,
+    so they are not condensed). A facet governed by Periodic raises ``NotImplementedError`` (Issue #1237, still
+    deferred) — fail loud rather than silently degrade to Neumann.
 
     Args:
         A: System matrix (N_dof, N_dof)
@@ -79,75 +83,15 @@ def apply_bc_to_fem_system(
         # Default: no-flux (Neumann) everywhere — natural BC, no action
         return A, rhs
 
-    from mfgarchon.geometry.boundary.types import BCType
-
-    dirichlet_dofs = []
-    dirichlet_values = []
-    mesh = basis.mesh
-
-    for segment in bc.segments:
-        if segment.bc_type in (BCType.DIRICHLET,):
-            # Find DOFs on this boundary segment
-            dofs = _find_segment_dofs(mesh, basis, segment)
-            values = _evaluate_segment_values(segment, basis, dofs, t)
-            dirichlet_dofs.extend(dofs)
-            dirichlet_values.extend(values)
-
-        elif segment.bc_type in (BCType.NEUMANN, BCType.NO_FLUX, BCType.REFLECTING):
-            # Natural BC — nothing to CONDENSE, which is all this function does. An
-            # inhomogeneous Neumann (g != 0) does owe a boundary load; it is assembled by
-            # ``assemble_robin_terms`` and folded into M/dt + D*K upstream (Issue #2294).
-            pass
-
-        elif segment.bc_type == BCType.ROBIN:
-            # Robin BC (alpha*u + beta*du/dn = g) is an OPERATOR AUGMENTATION, not condensation:
-            # the D-scaled boundary mass (D*alpha/beta)*int_dOmega phi_i phi_j and load
-            # (D/beta)*int_dOmega g phi_i are assembled by ``assemble_robin_terms`` and folded into
-            # ``M/dt + D*K`` upstream (the solver's ``_robin_operator_terms`` hook). Robin dofs stay
-            # free, so there is nothing to condense here. See Issue #1237.
-            pass
-
-        elif segment.bc_type == BCType.PERIODIC:
-            raise NotImplementedError(
-                f"Periodic BC on segment '{segment.name}' is not implemented for the FEM solver "
-                "path (needs DOF identification across paired boundaries; see Issue #1237)."
-            )
-
-        else:
-            # Issue #1260: EXTRAPOLATION_LINEAR / EXTRAPOLATION_QUADRATIC (and any future BCType
-            # added without a matching branch) must fail loud rather than silently degrade to
-            # natural (Neumann) BC — the same design intent as Robin/Periodic above (#1241).
-            # 2026-06-10 audit.
-            raise NotImplementedError(
-                f"BC type '{segment.bc_type.value}' on segment '{segment.name}' is not implemented "
-                "for the FEM solver path. EXTRAPOLATION_LINEAR/QUADRATIC are ghost-cell FDM concepts "
-                "with no direct FEM counterpart. Use a Dirichlet or Neumann/no-flux BC for FEM, "
-                "or use an FDM/GFDM solver for extrapolation boundaries (Issue #1260)."
-            )
-
-    if dirichlet_dofs:
-        # Condense: eliminate Dirichlet DOFs from system
-        dof_array = np.array(dirichlet_dofs, dtype=int)
+    _refuse_what_fem_has_no_imposition_for(_facet_groups(basis.mesh, bc))
+    dof_array, val_array = get_dirichlet_dofs_and_values(basis, bc, t=t)
+    if len(dof_array):
         # Issue #1489 (S2): homogeneous=True zeroes the boundary lift. The Newton CORRECTION has a
         # homogeneous boundary increment (delta[dofs]=0, since U_current already carries u=g), so
         # lifting by the actual Dirichlet values g would add a spurious -A[int,dofs]@g term and
         # corrupt every interior value. The linear solve keeps homogeneous=False (u=g is the solution).
-        val_array = np.zeros(len(dirichlet_dofs)) if homogeneous else np.array(dirichlet_values, dtype=float)
-        # Issue #1489 (F4): a corner/edge DOF shared by two Dirichlet segments appears twice in the
-        # list; dedup so the condensation lift `A[int,dofs]@val` does not double-count its column (and
-        # the scatter-back is not order-dependent). Fail loud on conflicting values for the same DOF.
-        uniq, first_idx = np.unique(dof_array, return_index=True)
-        if len(uniq) != len(dof_array):
-            if not homogeneous:
-                for d in uniq:
-                    vd = val_array[dof_array == d]
-                    if not np.allclose(vd, vd[0]):
-                        raise ValueError(
-                            f"Conflicting Dirichlet values on shared DOF {int(d)}: {sorted(set(vd.tolist()))} "
-                            f"— two BC segments meet at this corner/edge with different values (Issue #1489)."
-                        )
-            dof_array = uniq
-            val_array = val_array[first_idx]
+        if homogeneous:
+            val_array = np.zeros(len(dof_array))
         interior = np.setdiff1d(np.arange(A.shape[0]), dof_array)
 
         A_int = A[np.ix_(interior, interior)]
@@ -158,6 +102,29 @@ def apply_bc_to_fem_system(
     return A, rhs
 
 
+def _refuse_what_fem_has_no_imposition_for(groups: list[tuple[BCSegment, NDArray]]) -> None:
+    """Refuse a facet governed by a condition this path cannot impose: PERIODIC, and any type with no arm here."""
+    from mfgarchon.geometry.boundary.types import BCType
+
+    imposable = {BCType.DIRICHLET, BCType.NEUMANN, BCType.NO_FLUX, BCType.REFLECTING, BCType.ROBIN}
+    for segment, _ in groups:
+        if segment.bc_type == BCType.PERIODIC:
+            raise NotImplementedError(
+                f"Periodic BC on segment '{segment.name}' is not implemented for the FEM solver "
+                "path (needs DOF identification across paired boundaries; see Issue #1237)."
+            )
+        if segment.bc_type not in imposable:
+            # Issue #1260: EXTRAPOLATION_LINEAR / EXTRAPOLATION_QUADRATIC (and any future BCType
+            # added without a matching branch) must fail loud rather than silently degrade to
+            # natural (Neumann) BC — the same design intent as Robin/Periodic above (#1241).
+            raise NotImplementedError(
+                f"BC type '{segment.bc_type.value}' on segment '{segment.name}' is not implemented "
+                "for the FEM solver path. EXTRAPOLATION_LINEAR/QUADRATIC are ghost-cell FDM concepts "
+                "with no direct FEM counterpart. Use a Dirichlet or Neumann/no-flux BC for FEM, "
+                "or use an FDM/GFDM solver for extrapolation boundaries (Issue #1260)."
+            )
+
+
 def get_dirichlet_dofs_and_values(
     basis: skfem.Basis,
     bc: BoundaryConditions | None,
@@ -165,8 +132,11 @@ def get_dirichlet_dofs_and_values(
     t: float | None = None,
 ) -> tuple[NDArray, NDArray]:
     """
-    Extract Dirichlet DOF indices and values from BoundaryConditions, the values read at ``t`` (as in
-    `apply_bc_to_fem_system`).
+    The Dirichlet DOF indices, each once, and their values read at ``t`` (as in `apply_bc_to_fem_system`).
+
+    A DOF is Dirichlet when the segment it takes is: the segment governing its facets, or, on a node that facets
+    governed by different segments share, the owner's choice among them (`segment_for_shared_node`). So two
+    Dirichlet segments meeting at a node give it one value, the chosen segment's.
 
     Returns:
         (dof_indices, values) — empty arrays if no Dirichlet BC.
@@ -174,150 +144,152 @@ def get_dirichlet_dofs_and_values(
     if bc is None:
         return np.array([], dtype=int), np.array([], dtype=float)
 
-    from mfgarchon.geometry.boundary.types import BCType
-
-    mesh = basis.mesh
-    dirichlet_dofs = []
-    dirichlet_values = []
-
-    for segment in bc.segments:
-        if segment.bc_type == BCType.DIRICHLET:
-            dofs = _find_segment_dofs(mesh, basis, segment)
-            values = _evaluate_segment_values(segment, basis, dofs, t)
-            dirichlet_dofs.extend(dofs)
-            dirichlet_values.extend(values)
-
-    return np.array(dirichlet_dofs, dtype=int), np.array(dirichlet_values, dtype=float)
+    dirichlet_dofs: list[NDArray] = []
+    dirichlet_values: list[float] = []
+    for segment, dofs in _dirichlet_segments_at_dofs(basis, bc):
+        dirichlet_dofs.append(dofs)
+        dirichlet_values.extend(_evaluate_segment_values(segment, basis, dofs, t))
+    if not dirichlet_dofs:
+        return np.array([], dtype=int), np.array([], dtype=float)
+    return np.concatenate(dirichlet_dofs).astype(int), np.array(dirichlet_values, dtype=float)
 
 
-def is_pure_neumann(bc: BoundaryConditions | None) -> bool:
-    """Check if all BC segments are Neumann/no-flux (natural BC)."""
+def has_dirichlet_dofs(basis: skfem.Basis, bc: BoundaryConditions | None) -> bool:
+    """Does the BC condense any DOF (`get_dirichlet_dofs_and_values`)? Reads no value."""
+    return bc is not None and bool(_dirichlet_segments_at_dofs(basis, bc))
+
+
+def is_pure_neumann(mesh: skfem.Mesh, bc: BoundaryConditions | None) -> bool:
+    """Is every boundary facet governed by a natural condition (Neumann, no-flux, reflecting)? The owner's answer
+    per facet, ``default_bc`` included (`BoundaryConditions.segments_for_facets`)."""
     if bc is None:
         return True
 
     from mfgarchon.geometry.boundary.types import BCType
 
-    neumann_types = {BCType.NEUMANN, BCType.NO_FLUX, BCType.REFLECTING}
-    return all(s.bc_type in neumann_types for s in bc.segments)
+    natural = {BCType.NEUMANN, BCType.NO_FLUX, BCType.REFLECTING}
+    return all(segment.bc_type in natural for segment, _ in _facet_groups(mesh, bc))
 
 
-def _segment_boundary_facets(mesh: skfem.Mesh, segment: BCSegment) -> NDArray:
-    """The boundary facets a segment governs: its named boundary, or the whole boundary for ``None``.
-
-    One rule for the Dirichlet DOFs (`_find_segment_dofs`), the ROBIN and NEUMANN(g) facets
-    (`_find_segment_facets`), and what a ``default_bc`` is left to govern (`refuse_what_fem_cannot_impose`).
-    Only the ``boundary`` name is read. A segment also placed by ``region``, ``region_name``, ``sdf_region`` or
-    ``normal_direction`` resolves as its ``boundary`` face if it names one -- the whole face, not the placed
-    part -- and as the whole boundary if it names none.
-
-    A name must be a tag that holds facets. A tag the mesh carries with no facet in it is refused as a missing
-    one: the axis tags are placed by bounding box (`mesh_adapter._tag_axis_aligned_boundaries`), so on a domain
-    that touches its bounding box only at points, such as a disc, they exist and are empty, and condensing
-    nothing would leave that face a wall (#2593, review 3).
-    """
-    boundary_name = getattr(segment, "boundary", None)
-    if boundary_name:
-        # Issue #1489 (F3): a NAMED boundary absent from the mesh is an ERROR — silently falling back
-        # to the WHOLE boundary would over-constrain (a one-wall Dirichlet applied everywhere). The
-        # mesh_adapter auto-tags axis-aligned walls (x_min/x_max/...) for box domains (#607).
-        holding = {name: facets for name, facets in (mesh.boundaries or {}).items() if len(facets)}
-        if boundary_name not in holding:
-            raise ValueError(_no_such_tagged_boundary(mesh, segment, boundary_name, holding))
-        return np.asarray(holding[boundary_name])
-    return np.asarray(mesh.boundary_facets())
+#: `_boundary_facets` per mesh, by ``id``: the entry is evicted when the mesh is collected (`weakref.finalize`), so a
+#: later mesh at the same address never reads it. A mesh's tags are read once, so they are not changed afterwards.
+_FACETS: dict[int, tuple[NDArray, BoundaryFacets]] = {}
 
 
-def _no_such_tagged_boundary(mesh: skfem.Mesh, segment: BCSegment, boundary_name: object, holding: dict) -> str:
-    """The refusal of a name no facet-holding tag carries, with advice that can be followed on this mesh."""
-    from mfgarchon.geometry.boundary.types import parse_boundary_face
-
-    head = (
-        f"Segment '{getattr(segment, 'name', '?')}' names boundary '{boundary_name}', but the mesh has no such "
-        "tagged boundary"
-    )
-    empty = (
-        f" The mesh carries the tag '{boundary_name}', but no facet is in it."
-        if boundary_name in (mesh.boundaries or {})
-        else ""
-    )
-    why = (
-        " A missing named boundary would otherwise silently apply the BC to the ENTIRE boundary (Issue #1489), "
-        "and an empty one to none of it (#2593)."
-    )
-    if not holding:
-        return (
-            f"{head}: none of its tags holds a facet, so no face can be named on it.{empty}{why} Tag the mesh "
-            "before naming a face: give its MeshData nonzero "
-            "boundary_tags, one per boundary_faces row, and name the face 'region_<tag>'."
-        )
-    face = parse_boundary_face(boundary_name) if isinstance(boundary_name, str) else None
-    alias = (
-        f" The BC layer reads '{boundary_name}' as '{face.to_string()}', which this mesh tags."
-        if face is not None and face.to_string() != boundary_name and face.to_string() in holding
-        else ""
-    )
-    return (
-        f"{head} (available: {sorted(holding)}).{empty}{alias}{why} Name one of the mesh's tagged boundaries as "
-        "boundary=."
-    )
+def _boundary_facets(mesh: skfem.Mesh) -> tuple[NDArray, BoundaryFacets]:
+    """The mesh's boundary facet ids, ascending, and what the owner reads of them: midpoints, outward unit normals,
+    and the rows each tag of the mesh holds."""
+    cached = _FACETS.get(id(mesh))
+    if cached is None:
+        cached = _FACETS[id(mesh)] = _read_boundary_facets(mesh)
+        weakref.finalize(mesh, _FACETS.pop, id(mesh), None)
+    return cached
 
 
-def _find_segment_dofs(
-    mesh: skfem.Mesh,
-    basis: skfem.Basis,
-    segment,
-) -> list[int]:
-    """DOF indices for a BCSegment on the skfem mesh, from `_segment_boundary_facets`.
+def _read_boundary_facets(mesh: skfem.Mesh) -> tuple[NDArray, BoundaryFacets]:
+    from mfgarchon.geometry.boundary.conditions import BoundaryFacets
 
-    Issue #1489 (F2): resolved via ``basis.get_dofs`` on the boundary FACETS (which includes P2 edge-midpoint
+    ids = np.sort(np.asarray(mesh.boundary_facets(), dtype=np.int64))
+    corners = mesh.p[:, mesh.facets[:, ids]]  # (dim, vertices per facet, n)
+    midpoints = corners.mean(axis=1).T
+    inward = mesh.p[:, mesh.t[:, mesh.f2t[0, ids]]].mean(axis=1).T - midpoints  # toward the element's centroid
+    dim = mesh.p.shape[0]
+    if dim == 1:
+        normals = np.ones((len(ids), 1))
+    elif dim == 2:
+        tangent = (corners[:, 1, :] - corners[:, 0, :]).T
+        normals = np.column_stack([tangent[:, 1], -tangent[:, 0]])
+    else:
+        # The cross product of the two diagonals: a triangle's (vertex 2 - vertex 0 against 1 - 0) or a quad's.
+        last = 3 if corners.shape[1] > 3 else 2
+        normals = np.cross((corners[:, 2, :] - corners[:, 0, :]).T, (corners[:, last, :] - corners[:, 1, :]).T)
+    normals = normals / np.linalg.norm(normals, axis=1, keepdims=True)
+    normals[np.einsum("ij,ij->i", normals, inward) > 0] *= -1.0
+    tags: dict[str, NDArray] = {}
+    off_boundary = set()
+    for name, members in (mesh.boundaries or {}).items():
+        members = np.asarray(members, dtype=np.int64)
+        on = np.isin(members, ids)
+        if not on.all():
+            off_boundary.add(name)
+        tags[name] = np.searchsorted(ids, members[on])
+    return ids, BoundaryFacets(midpoints, normals, tags, frozenset(off_boundary))
+
+
+def _facet_groups(mesh: skfem.Mesh, bc: BoundaryConditions) -> list[tuple[BCSegment, NDArray]]:
+    """Each segment that governs a boundary facet, with the facet ids it governs (the owner's answer)."""
+    ids, facets = _boundary_facets(mesh)
+    answers = bc.segments_for_facets(facets)
+    groups: dict[int, tuple[BCSegment, list[int]]] = {}
+    for facet, segment in zip(ids, answers, strict=True):
+        groups.setdefault(id(segment), (segment, []))[1].append(int(facet))
+    return [(segment, np.array(members, dtype=np.int64)) for segment, members in groups.values()]
+
+
+def _dirichlet_segments_at_dofs(basis: skfem.Basis, bc: BoundaryConditions) -> list[tuple[BCSegment, NDArray]]:
+    """Each DIRICHLET segment with the DOFs it holds: the DOFs of the facets it governs, less the nodes it shares
+    with facets of another segment that the owner gives to that one (`segment_for_shared_node`).
+
+    Issue #1489 (F2): DOFs come from ``basis.get_dofs`` on the boundary FACETS (which includes P2 edge-midpoint
     DOFs), NOT ``mesh.boundary_nodes()`` (vertices only -> half the P2 boundary left free -> Dirichlet silently
     enforced on vertices only).
     """
-    return list(basis.get_dofs(_segment_boundary_facets(mesh, segment)).flatten())
+    from mfgarchon.geometry.boundary.types import BCType
+
+    groups = _facet_groups(basis.mesh, bc)
+    held = []
+    for k, (_, facets) in enumerate(groups):
+        group_dofs = np.asarray(basis.get_dofs(facets).flatten(), dtype=np.int64)
+        held.append(np.column_stack([group_dofs, np.full(len(group_dofs), k, dtype=np.int64)]))
+    pairs = np.unique(np.concatenate(held), axis=0)  # (dof, group), each pair once, sorted by dof
+    dofs, first, count = np.unique(pairs[:, 0], return_index=True, return_counts=True)
+    owner = pairs[first, 1].copy()
+    for i in np.flatnonzero(count > 1):
+        sharing = [groups[k][0] for k in pairs[first[i] : first[i] + count[i], 1]]
+        where = f"boundary facets at the mesh node {np.round(basis.doflocs[:, dofs[i]], 12).tolist()}"
+        chosen = bc.segment_for_shared_node(sharing, where)
+        owner[i] = next(k for k, (segment, _) in enumerate(groups) if segment is chosen)
+    for k, (segment, facets) in enumerate(groups):
+        if segment.bc_type == BCType.DIRICHLET and not (owner == k).any():
+            held = pairs[pairs[:, 1] == k, 0]
+            takers = [groups[j][0] for j in np.unique(owner[np.isin(dofs, held)])]
+            bc.refuse_a_segment_left_no_node(segment, takers, f"{len(facets)} boundary facet(s)")
+    return [
+        (segment, dofs[owner == k])
+        for k, (segment, _) in enumerate(groups)
+        if segment.bc_type == BCType.DIRICHLET and (owner == k).any()
+    ]
 
 
-def refuse_what_fem_cannot_impose(mesh: skfem.Mesh, bc: BoundaryConditions | None, consumer: str) -> None:
-    """Refuse, at construction, what the FEM adapter would otherwise misread in silence (#2593).
+def refuse_what_fem_cannot_impose(basis: skfem.Basis, bc: BoundaryConditions | None, consumer: str) -> None:
+    """Refuse, at construction, what the FEM adapter would otherwise misread in silence (#2593, #2595).
 
     - **A Dirichlet value it cannot read** (`segment_value`, #2512 row B2). It used to become 0.
-    - **A DIRICHLET ``default_bc`` left to govern boundary facets no segment claims.** The adapter imposes
-      conditions segment by segment and never reads ``default_bc``, so those facets got the natural condition
-      instead: a silent wall where an exit or a prescribed value was asked for.
-    Under a DIRICHLET default, the facets each segment claims follow `_segment_boundary_facets`, the rule its
-    Dirichlet DOFs follow, for segments of every type, so a segment named by anything but a tag that holds
-    facets -- a library alias such as ``"left"``, or an empty axis tag on a disc, included -- raises
-    there rather than claiming the whole boundary or nothing. A falsy name (``0``, ``""``) is read as no name.
-    A segment also placed by ``region``, ``region_name``, ``sdf_region`` or ``normal_direction`` claims its
-    whole ``boundary`` face, or the whole boundary if it names none, which this check cannot see past (#2595).
-    ``dirichlet_bc(g)`` passes, since its segment names the whole boundary.
+    - **What the owner refuses on this mesh** (`BoundaryConditions.segments_for_facets`, `segment_for_shared_node`,
+      `refuse_a_segment_left_no_node`):
+      - a ``boundary`` name that is no tag of the mesh and aliases no face it tags, and a tag that also holds facets
+        inside the domain;
+      - a segment that governs no facet, and a DIRICHLET segment the corner rule leaves no node, unless effect-neutral;
+      - ``default_bc`` unset or ROBIN where a facet falls through to it;
+      - a node shared by differently governed facets under a blending ``corner_strategy``.
+    - **A facet governed by a condition this path has no imposition for** (PERIODIC, EXTRAPOLATION_*).
     """
     from mfgarchon.geometry.boundary.types import BCType, segment_value
 
     if bc is None:
         return
-    for segment in bc.segments:
+    groups = _facet_groups(basis.mesh, bc)
+    for segment, _ in groups:
         if segment.bc_type == BCType.DIRICHLET and not callable(segment.value):
             segment_value(segment, t=None, x=None, where=f"{consumer}, Dirichlet segment {segment.name!r}")
-    if bc.default_bc != BCType.DIRICHLET:
-        return
-    claimed: set[int] = set()
-    for segment in bc.segments:
-        claimed.update(int(f) for f in _segment_boundary_facets(mesh, segment))
-    unclaimed = sorted({int(f) for f in mesh.boundary_facets()} - claimed)
-    if unclaimed:
-        raise NotImplementedError(
-            f"{consumer}: default_bc=DIRICHLET governs {len(unclaimed)} boundary facet(s) that no segment "
-            "names, and the FEM path imposes conditions only from segments, so those facets would get the "
-            "natural condition instead of the Dirichlet one (#2593). Give each Dirichlet face its own "
-            f"BCSegment(bc_type=BCType.DIRICHLET, value={bc.default_value!r}, boundary=...): a segment's value "
-            "defaults to 0.0, not to default_value."
-        )
+    _refuse_what_fem_has_no_imposition_for(groups)
+    _dirichlet_segments_at_dofs(basis, bc)  # every node shared by differently governed facets
 
 
 def _evaluate_segment_values(
-    segment,
+    segment: BCSegment,
     basis: skfem.Basis,
-    dofs: list[int],
+    dofs: NDArray,
     t: float | None,
 ) -> list[float]:
     """The segment's Dirichlet value at the given DOFs, read by the one owner (`segment_value`, #2512 row B2).
@@ -336,17 +308,6 @@ def _evaluate_segment_values(
         coords = basis.doflocs[:, dofs].T  # (n_dofs, dim)
         return [segment_value(segment, t=t, x=x, where=where, time_keyword="t") for x in coords]
     return [segment_value(segment, t=t, x=None, where=where, time_keyword="t")] * len(dofs)
-
-
-def _find_segment_facets(mesh: skfem.Mesh, segment) -> NDArray:
-    """Boundary-facet indices for a BCSegment (for ``FacetBasis``), from `_segment_boundary_facets`.
-
-    Mirrors :func:`_find_segment_dofs` but returns FACET indices: a Robin term integrates over facets, not nodes.
-    One facet rule for every segment type (#2595, rows 2 and 7). This used to fall back to the whole boundary on a
-    name the mesh does not tag, or on any name when the mesh is untagged, and to place nothing on a tag that holds
-    no facet; each of those raises now.
-    """
-    return np.asarray(_segment_boundary_facets(mesh, segment), dtype=np.int64)
 
 
 def assemble_robin_terms(
@@ -371,8 +332,9 @@ def assemble_robin_terms(
     to ``M/dt + D*K`` and ``rhs_robin`` to each timestep RHS. The boundary mass is symmetric, so
     the FP Robin term is the adjoint (identical) of the HJB one (Type-A duality preserved).
 
-    Summed over all ``BCType.ROBIN`` segments, each carrying its own ``alpha``, ``beta`` and
-    constant ``value`` (``g``), **and over every inhomogeneous** ``BCType.NEUMANN`` **segment**
+    Summed over the facets each ``BCType.ROBIN`` segment governs (`BoundaryConditions.segments_for_facets`), each
+    segment carrying its own ``alpha``, ``beta`` and constant ``value`` (``g``), **and over those of every
+    inhomogeneous** ``BCType.NEUMANN`` **segment**, a NEUMANN ``default_bc`` with its ``default_value`` included
     (Issue #2294) **when the caller passes** ``natural_bc="gradient"``: for a weak form that
     integrates only ``-D*Delta u`` by parts, ``du/dn = g`` is ``ROBIN(alpha=0, beta=1, g)`` and
     contributes the load and no mass. Those coefficients are synthesized, never read off the
@@ -410,24 +372,19 @@ def assemble_robin_terms(
         hole was a guard reading only ``segments``, and #1802 wrote a second copy and
         reproduced the same hole 300 lines away. A local ``isinstance(g, (int, float))``
         would reject ``np.float32(0.0)`` -- a homogeneous wall -- and accept nothing it
-        should. This asks the owner instead, per segment: the ``default_bc`` channel is deliberately
-        excluded here because this function assembles from segments and cannot honour it (#2305).
+        should. This asks the owner instead, per governing segment: a facet that falls through to ``default_bc``
+        arrives as the face owner's default segment, so the default channel is asked through it.
         """
         return describe_inhomogeneous_bc_data(
             SimpleNamespace(segments=segments, default_bc=None, default_value=None),
             bc_types={BCType.NEUMANN},
         )
 
-    # NOTE: this function assembles from `bc.segments` only. An inhomogeneous Neumann arriving
-    # solely through the `default_bc` / `default_value` fall-through therefore reaches no assembly
-    # and is dropped -- pre-existing, since `apply_bc_to_fem_system` has always been segments-only,
-    # and filed rather than guarded here. Two guards were tried and both were wrong: one read the
-    # default channel alone and rejected `neumann_bc(g)`, whose factory sets BOTH channels in
-    # lockstep; the replacement asked whether the segments COVER the boundary, via a raw
-    # `boundary in mesh.boundaries` lookup that `parse_boundary_face` was written to replace, so
-    # `boundary="left"` -- the spelling this library's own BCSegment docstring uses -- resolved to
-    # the whole boundary and the guard under-refused. See the tracking issue.
-    boundary_segments = [s for s in bc.segments if s.bc_type in (BCType.ROBIN, BCType.NEUMANN)]
+    boundary_segments = [
+        (segment, facets)
+        for segment, facets in _facet_groups(basis.mesh, bc)
+        if segment.bc_type in (BCType.ROBIN, BCType.NEUMANN)
+    ]
     if not boundary_segments:
         return None, None
 
@@ -447,7 +404,7 @@ def assemble_robin_terms(
     rhs_robin = np.zeros(n_dof)
 
     contributed = False
-    for segment in boundary_segments:
+    for segment, facets in boundary_segments:
         if segment.bc_type == BCType.NEUMANN and not _is_inhomogeneous(segment):
             # Verifiably zero: contributes neither mass nor load. Skipping keeps `(None, None)`
             # for every homogeneous natural-BC solve, so those stay on the code path they were
@@ -494,7 +451,6 @@ def assemble_robin_terms(
                 )
 
         contributed = True
-        facets = _find_segment_facets(mesh, segment)
         fb = FacetBasis(mesh, elem, facets=facets)
 
         M_bnd = skfem.asm(boundary_mass, fb)
