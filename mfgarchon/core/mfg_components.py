@@ -827,8 +827,9 @@ class ConditionsMixin:
         own = geometry.get_boundary_conditions() if geometry is not None else None
         if own is not None:
             return own
-        if isinstance(geometry, SupportsPeriodic) and len(geometry.periodic_dimensions) == geometry.dimension:
-            return periodic_bc(dimension=geometry.dimension)
+        dimension = geometry.dimension if geometry is not None else None
+        if isinstance(geometry, SupportsPeriodic) and len(geometry.periodic_dimensions) == dimension:
+            return periodic_bc(dimension=dimension)
         raise ValueError(
             "MFGProblem.get_boundary_conditions: no channel declares boundary conditions. The geometry "
             f"({type(geometry).__name__}) has none, and components.boundary_conditions is unset. Declare them on "
