@@ -62,10 +62,21 @@ def _adjoint_step(solver):
     return solver.solve_fp_step_adjoint_mode(np.ones(n), sparse.csr_matrix((n, n)))
 
 
+def _dirichlet_only_by_default():
+    """A no-flux wall on x_min and nothing on x_max, which falls through to a DIRICHLET(0.7) default: FP-FEM imposes
+    that default (#2595), so the wall is there with no DIRICHLET segment for a test on segment types to see."""
+    wall = BCSegment(name="wall", bc_type=BCType.NO_FLUX, boundary="x_min")
+    return BoundaryConditions(dimension=1, segments=[wall], default_bc=BCType.DIRICHLET, default_value=0.7)
+
+
 @pytest.mark.parametrize(
     "build",
-    [lambda: _fem(dirichlet_bc(dimension=1, value=0.7)), lambda: _meshless(dirichlet_bc(dimension=1, value=0.0))],
-    ids=["FP-FEM, a wall at 0.7", "meshless Galerkin, an absorbing wall"],
+    [
+        lambda: _fem(dirichlet_bc(dimension=1, value=0.7)),
+        lambda: _fem(_dirichlet_only_by_default()),
+        lambda: _meshless(dirichlet_bc(dimension=1, value=0.0)),
+    ],
+    ids=["FP-FEM, a wall at 0.7", "FP-FEM, the wall is the default", "meshless Galerkin, an absorbing wall"],
 )
 def test_the_adjoint_step_refuses_a_dirichlet_wall(build):
     with pytest.raises(NotImplementedError, match=REFUSAL):

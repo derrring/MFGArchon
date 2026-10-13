@@ -94,7 +94,7 @@ class HJBFEMSolver(WeakFormHJBSolver):
         super()._validate_bc_support(bc)
         from .bc_adapter import refuse_what_fem_cannot_impose
 
-        refuse_what_fem_cannot_impose(self._skfem_mesh, bc, type(self).__name__)
+        refuse_what_fem_cannot_impose(self._basis, bc, type(self).__name__)
 
     @property
     def basis(self):
@@ -170,7 +170,7 @@ class HJBFEMSolver(WeakFormHJBSolver):
     def _is_pure_neumann(self) -> bool:
         from .bc_adapter import is_pure_neumann
 
-        return is_pure_neumann(self._bc)
+        return is_pure_neumann(self._skfem_mesh, self._bc)
 
     def _dirichlet_dofs_and_values(self, t: float | None = None) -> tuple[NDArray, NDArray]:
         from .bc_adapter import get_dirichlet_dofs_and_values

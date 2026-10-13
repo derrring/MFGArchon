@@ -46,13 +46,30 @@ from .types import (
     PeriodicGridConvention,
     _compute_sdf_gradient,
     _normal_selects_face,
+    normal_holds,
     parse_boundary_face,
+    region_holds,
     repeated_endpoint_count,
+    sdf_region_holds,
     segment_value,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+
+@dataclass(frozen=True, eq=False)
+class BoundaryFacets:
+    """A mesh's boundary facets, as `BoundaryConditions.segments_for_facets` reads them (#2512 row B1, stage B1b).
+
+    ``midpoints`` and ``normals`` (outward, unit) hold one row per facet. ``tags`` maps each tag of the mesh to the
+    rows of the boundary facets it holds; ``off_boundary`` names the tags that also hold facets inside the domain.
+    """
+
+    midpoints: np.ndarray
+    normals: np.ndarray
+    tags: dict[str, np.ndarray]
+    off_boundary: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -659,6 +676,170 @@ class BoundaryConditions:
                 governing.append(self._default_segment("segment_for_point", f"the boundary point {point.tolist()}"))
         return governing[0]
 
+    def segments_for_facets(self, facets: BoundaryFacets) -> list[BCSegment]:
+        """The segment that governs each boundary facet of a mesh, one per row of ``facets`` (#2512 row B1, stage B1b).
+
+        **The face owner's order and sameness rule**, :meth:`_face_order` and `_same_condition`, applied per facet: the
+        first segment in that order that holds a facet governs it, and a facet no segment holds takes ``default_bc``
+        (:meth:`_default_segment`, refused when unset or ROBIN). A segment holds a facet when every placement field it
+        carries does:
+
+        - ``boundary``: a name that is a tag of the mesh is that tag, so a mesh's own group called ``"left"`` is that
+          group. Only a name that is no tag is read as the box face it aliases (``parse_boundary_face``), and holds the
+          facets of the mesh's tag for that face (``"left"`` -> ``x_min``). A name that is neither is refused, naming
+          both readings. ``"all"`` holds every facet.
+        - ``region_name``: the tag of that name.
+        - ``region``, ``sdf_region``: read at the facet's midpoint, as the point owner reads them at a point
+          (`region_holds`, `sdf_region_holds`), so a region that covers some of a face's facets holds those facets.
+          A facet is this reader's unit, which is why the face owner's partial-cover refusal does not apply here.
+        - ``normal_direction``: read at the facet's outward normal (`normal_holds`).
+
+        A segment that governs no facet is refused, as on a box (:meth:`_check_shadowed`), unless it imposes the same
+        condition as whatever governs the facets it holds, or every facet when it holds none. A node that facets
+        governed by different segments share takes :meth:`segment_for_shared_node`.
+        """
+        order = self._face_order()
+        n_facets = facets.midpoints.shape[0]
+        held = [self._facet_cover(segment, facets) for segment in order]
+        winner = np.full(n_facets, -1)
+        for k, mask in enumerate(held):
+            winner[(winner < 0) & mask] = k
+        segments = list(order)
+        if (winner < 0).any():
+            unheld = int((winner < 0).sum())
+            segments.append(
+                self._default_segment(
+                    "BoundaryConditions.segments_for_facets", f"{unheld} boundary facet(s) of the mesh"
+                )
+            )
+            winner[winner < 0] = len(order)
+        governing = [int(k) for k in np.unique(winner)]
+        governs = {id(segments[k]) for k in governing}
+        touched = {
+            id(segment): [
+                (f"{int((held[k] & (winner == j)).sum())} facet(s)", segments[j]) for j in np.unique(winner[held[k]])
+            ]
+            for k, segment in enumerate(order)
+            if id(segment) not in governs
+        }
+        nowhere, dead = _segments_governing_nothing(
+            order, governs, touched, set(), [segments[k] for k in governing], _same_condition
+        )
+        if nowhere:
+            holding = sorted(tag for tag, rows in facets.tags.items() if len(rows))
+            raise ValueError(
+                "BoundaryConditions: "
+                + "; ".join(f"segment {seg.name!r} {self._why_no_facet(seg, facets)}" for seg in nowhere)
+                + ". A segment that governs no facet would have its condition dropped where it differs from what "
+                f"governs there. The mesh's tags that hold facets: {holding}. Tag the facets the condition is meant "
+                "for and name that tag, or remove the segment (#2512 row B1, #2595)."
+            )
+        if dead:
+            where = " | ".join(
+                f"{seg.name!r} (priority {seg.priority}) -- "
+                + "; ".join(f"{at}: {win.name!r} (priority {win.priority}) outranks it" for at, win in hits)
+                for seg, hits in dead
+            )
+            raise ValueError(
+                f"BoundaryConditions: these segments govern no facet of the mesh, so their conditions would be "
+                f"dropped: {where}. Order on a facet: priority, then a placed segment before a global one (no "
+                "placement, or boundary='all'), then declaration order. Remove it or the segment that outranks it, or "
+                "place the two on different facets (#2512 row B1)."
+            )
+        return [segments[k] for k in winner]
+
+    def segment_for_shared_node(self, governing: list[BCSegment], where: str) -> BCSegment:
+        """The segment a node takes when facets governed by different segments share it (#2512 row B1, stage B1b).
+
+        A grid node on several faces takes the corner rule (:meth:`segment_for_corner`); a mesh node on facets
+        governed by different segments takes the same rule among those segments (:meth:`_corner_choice`), so a
+        Dirichlet facet meeting a natural one at equal priority holds the node, and ``corner_strategy="average"`` or
+        ``"mollify"`` refuses a node whose segments impose different conditions."""
+        return self._corner_choice(governing, where)
+
+    def refuse_a_segment_left_no_node(self, segment: BCSegment, takers: list[BCSegment], where: str) -> None:
+        """(c) at a reader's own unit, the node (#2512 row B1, stage B1b). ``takers`` are the segments that
+        :meth:`segment_for_shared_node` gave the nodes of a DIRICHLET segment that governs facets but holds none of their
+        nodes -- a single facet between two higher-priority segments is one. If any of them imposes the same condition
+        (`_same_condition`), that condition still holds at a node of its facets; if none does, its condition is
+        imposed nowhere, and it is refused."""
+        if any(_same_condition(segment, taker) for taker in takers):
+            return
+        names = ", ".join(sorted({repr(t.name) for t in takers}))
+        raise ValueError(
+            f"BoundaryConditions: segment {segment.name!r} governs {where} but holds none of their nodes: the corner rule "
+            f"gives each to {names}, {'which imposes' if len(takers) == 1 else 'each imposing'} a different condition, "
+            "so its condition would be dropped. Place it on only the facets it should govern (with a region, for "
+            f"instance) and give it a higher priority than {names}, so that it takes the nodes it shares with them; or "
+            "remove it (#2512 row B1)."
+        )
+
+    def _facet_cover(self, segment: BCSegment, facets: BoundaryFacets) -> np.ndarray:
+        """Which rows of ``facets`` ``segment`` holds: every placement field it carries, read per facet."""
+        held = np.ones(facets.midpoints.shape[0], dtype=bool)
+        if segment.boundary is not None and segment.boundary != "all":
+            held &= self._facets_named(segment, "boundary", segment.boundary, facets)
+        if segment.region_name is not None:
+            held &= self._facets_named(segment, "region_name", segment.region_name, facets)
+        if segment.normal_direction is not None:
+            held &= normal_holds(segment, facets.normals, "a mesh facet's outward normal")
+        if segment.region is not None:
+            held &= region_holds(segment, facets.midpoints, SDF_BOUNDARY_TOL)
+        if segment.sdf_region is not None:
+            held &= sdf_region_holds(segment, facets.midpoints, SDF_BOUNDARY_TOL)
+        return held
+
+    def _why_no_facet(self, segment: BCSegment, facets: BoundaryFacets) -> str:
+        """Why ``segment`` holds no facet, for the refusal in :meth:`segments_for_facets`."""
+        for field_name in ("boundary", "region_name"):
+            name = getattr(segment, field_name)
+            if name is not None and name != "all":
+                tag = self._tag_named(segment, field_name, name, facets)
+                if not len(facets.tags[tag]):
+                    return f"names the tag {tag!r} ({field_name}={name!r}), which holds no facet"
+        return "holds no facet: no facet midpoint is in its region or sdf_region, or no facet normal is its normal_direction"
+
+    @classmethod
+    def _facets_named(cls, segment: BCSegment, field_name: str, name: Any, facets: BoundaryFacets) -> np.ndarray:
+        """The rows of the tag ``name`` reads as (:meth:`_tag_named`)."""
+        rows = np.zeros(facets.midpoints.shape[0], dtype=bool)
+        rows[np.asarray(facets.tags[cls._tag_named(segment, field_name, name, facets)], dtype=np.intp)] = True
+        return rows
+
+    @staticmethod
+    def _tag_named(segment: BCSegment, field_name: str, name: Any, facets: BoundaryFacets) -> str:
+        """The tag ``name`` reads as: the tag of that name, else (``boundary`` only) the tag of the box face it
+        aliases. Refused when it is neither, or when the tag holds facets inside the domain."""
+        tag = name if isinstance(name, str) and name in facets.tags else None
+        alias = parse_boundary_face(name) if field_name == "boundary" and tag is None else None
+        if tag is None and alias is not None and alias.to_string() in facets.tags:
+            tag = alias.to_string()
+        if tag is None:
+            as_face = (
+                f"as the box face it aliases, {alias.to_string()!r}, which the mesh does not tag"
+                if alias is not None
+                else "as a box face, which it names none of"
+                if field_name == "boundary"
+                else "as nothing else: a region_name is read only as a tag"
+            )
+            holding = sorted(t for t, rows in facets.tags.items() if len(rows))
+            tags_held = (
+                f"the mesh's tags: {sorted(facets.tags)}, of which {holding} hold facets"
+                if facets.tags
+                else "the mesh has no tags"
+            )
+            raise ValueError(
+                f"BC segment {segment.name!r} names {field_name}={name!r}, which this mesh does not resolve. Read as a "
+                f"tag of the mesh, it is none ({tags_held}); read {as_face}. Name one of the mesh's tags (#2512 row B1)."
+            )
+        if tag in facets.off_boundary:
+            raise ValueError(
+                f"BC segment {segment.name!r} names {field_name}={name!r}, the mesh tag {tag!r}, which also holds "
+                "facets inside the domain. A boundary condition governs boundary facets only, so a condition on an "
+                "interior facet would be dropped (#2512 row B1)."
+            )
+        return tag
+
     def _face_order(self) -> list[BCSegment]:
         """Segments in the owner's order: priority descending, placed before global, then declaration order.
 
@@ -765,19 +946,15 @@ class BoundaryConditions:
             face_winners.append(winner)
             for seg in shadowed:
                 touched[id(seg)].append((f.to_string(), winner))
-        dead, nowhere = [], []
-        for seg in order:
-            if id(seg) in governs:
-                continue
-            hits = touched[id(seg)]
-            if not hits and id(seg) not in partial_ahead:
-                if not all(same(seg, winner) for winner in face_winners):
-                    nowhere.append(seg.name)
-                continue
-            if all(same(seg, winner) for _, winner in hits):
-                continue  # effect-neutral wherever it is shadowed, or a partial cover ahead of a winner
-            where = "; ".join(f"{at}: {winner.name!r} (priority {winner.priority}) outranks it" for at, winner in hits)
-            dead.append(f"{seg.name!r} (priority {seg.priority}) -- {where}")
+        nowhere_segments, dead_segments = _segments_governing_nothing(
+            order, governs, touched, partial_ahead, face_winners, same
+        )
+        nowhere = [seg.name for seg in nowhere_segments]
+        dead = [
+            f"{seg.name!r} (priority {seg.priority}) -- "
+            + "; ".join(f"{at}: {winner.name!r} (priority {winner.priority}) outranks it" for at, winner in hits)
+            for seg, hits in dead_segments
+        ]
         if nowhere:
             raise ValueError(
                 f"BoundaryConditions: segment(s) {', '.join(repr(name) for name in nowhere)} cover no node of any "
@@ -1818,6 +1995,37 @@ def _is_global(segment: BCSegment) -> bool:
         and segment.sdf_region is None
         and segment.normal_direction is None
     )
+
+
+def _segments_governing_nothing(
+    order: list[BCSegment],
+    governs: set[int],
+    touched: dict[int, list[tuple[str, BCSegment]]],
+    partial_ahead: set[int],
+    winners: list[BCSegment],
+    same: Callable[[BCSegment, BCSegment], bool],
+) -> tuple[list[BCSegment], list[tuple[BCSegment, list[tuple[str, BCSegment]]]]]:
+    """The segments that govern no location and are not effect-neutral, for the shadow refusal (#2512 row B1).
+
+    ``touched`` gives, for each segment that governs nowhere, where it is outranked and by what. One that is outranked
+    somewhere is dropped there unless ``same`` as each segment that outranks it; one that reaches nowhere (and covers
+    no part of a face ahead of its winner, ``partial_ahead``) is dropped unless ``same`` as every winner. Returns the
+    second kind, then the first with its outranking segments. Read by the box faces (`_check_shadowed`) and by a mesh's
+    facets (`BoundaryConditions.segments_for_facets`).
+    """
+    nowhere, dead = [], []
+    for seg in order:
+        if id(seg) in governs:
+            continue
+        hits = touched[id(seg)]
+        if not hits and id(seg) not in partial_ahead:
+            if not all(same(seg, winner) for winner in winners):
+                nowhere.append(seg)
+            continue
+        if all(same(seg, winner) for _, winner in hits):
+            continue  # effect-neutral wherever it is shadowed, or a partial cover ahead of a winner
+        dead.append((seg, hits))
+    return nowhere, dead
 
 
 def _equal_as_stored(a: Any, b: Any) -> bool:

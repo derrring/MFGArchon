@@ -87,6 +87,10 @@ class WeakFormFPSolver(BaseFPSolver):
     def _is_pure_neumann(self) -> bool:
         raise NotImplementedError
 
+    def _imposes_dirichlet(self) -> bool:
+        """Does the BC impose a Dirichlet wall anywhere (by condensation, or by Nitsche terms)?"""
+        raise NotImplementedError
+
     def _dirichlet_dofs_and_values(self, t: float | None = None) -> tuple[NDArray, NDArray]:
         """The Dirichlet dofs and their values, read at ``t``, the time of the level solved for (#2512 row B2)."""
         raise NotImplementedError
@@ -321,16 +325,11 @@ class WeakFormFPSolver(BaseFPSolver):
         )
         dt = self.problem.dt
         D = self._diffusion_coefficient(volatility)
-        # The forward step imposes a Dirichlet wall only when the BC is not pure Neumann, and then by Nitsche terms
-        # (meshless Galerkin, whose pure-Neumann test reads where its Dirichlet segments land, priority included) or by
-        # condensing onto the DIRICHLET segments' DOFs (FEM). This step does neither, so it would drop the wall in
-        # silence; refused, as FP-FDM's is (#2531, #2608). The test reads no boundary value: the BC's types and, for
-        # meshless, where its Dirichlet segments land; `time` is passed to nothing. FEM condenses every DIRICHLET
-        # segment whatever its priority (#2595 row 1), and this test follows it; it changes when #2595 does.
-        from mfgarchon.geometry.boundary import BCType
-
-        segments = self._bc.segments if self._bc is not None else []
-        if not self._is_pure_neumann() and any(seg.bc_type == BCType.DIRICHLET for seg in segments):
+        # The forward step imposes a Dirichlet wall by Nitsche terms (meshless Galerkin) or by condensing the DOFs the
+        # owner gives a DIRICHLET segment (FEM, `bc_adapter.has_dirichlet_dofs`). This step does neither, so it would
+        # drop the wall in silence; refused, as FP-FDM's is (#2531, #2608). The test reads no boundary value; `time`
+        # is passed to nothing.
+        if self._imposes_dirichlet():
             raise NotImplementedError(
                 f"{type(self).__name__}.solve_fp_step_adjoint_mode imposes no Dirichlet wall, so an absorbing exit "
                 "or a prescribed density would not hold its value (#2608, as #2531 for FP-FDM). With BlockIterator, "

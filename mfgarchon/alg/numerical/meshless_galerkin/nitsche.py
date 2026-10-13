@@ -110,7 +110,7 @@ def places_no_dirichlet_face(bc: BoundaryConditions | None, d: int) -> bool:
 
     The meshless pair's pure-Neumann answer, read from the placement Nitsche imposes with, so the two cannot
     disagree. A Dirichlet segment whose every face a higher-priority segment claims is not a wall; a
-    type-only reading (`fem.bc_adapter.is_pure_neumann`) called it one, and with no Nitsche term to impose
+    type-only reading (FEM's `is_pure_neumann` until #2595) called it one, and with no Nitsche term to impose
     the solve fell through to nodal condensation, which this basis cannot do.
     """
     return not any(faces for _, faces in _dirichlet_faces(bc, d))
