@@ -529,8 +529,10 @@ def test_a_segment_covering_no_boundary_location_is_refused(placement):
 
 def test_a_blending_corner_strategy_refuses_only_where_the_corners_conditions_differ():
     """``corner_strategy="average"`` says nothing about which condition applies, so a corner whose faces impose
-    different conditions is refused by every reader that writes it, and one whose faces agree is answered by all
-    (review 1 of #2634, B-4: the point refused every corner, and the SL enforcement chose one by the corner order)."""
+    different conditions is refused, and one whose faces agree is answered (review 1 of #2634, B-4: the point refused
+    every corner, and the SL enforcement chose one by the corner order). Each reader judges "different" by its own
+    sameness: here a Dirichlet and a no-flux face, which every reader below tells apart. A corner that differs only
+    in what a reader does not write is answered by that reader (the flux_capacity test below)."""
     one = BoundaryConditions(
         dimension=2, domain_bounds=UNIT_SQUARE, corner_strategy="average", segments=[_seg("w", BCType.NO_FLUX)]
     )
@@ -637,6 +639,11 @@ def _particle_fate(segments, point, **bc_kw):
 
 
 _EXIT = BCType.DIRICHLET
+#: Two strips of x_max that overlap at (1, 0.5). Neither holds the face whole, so neither is a face's winner and
+#: neither is dead: the point's order (priority, then declaration) decides between them there. Two whole-face
+#: segments on one face would leave the loser governing nothing, which the owner refuses at a point as on a face.
+_MIDDLE_STRIP = {"boundary": "x_max", "region": {"y": (0.3, 0.7)}}
+_UPPER_STRIP = {"boundary": "x_max", "region": {"y": (0.4, 1.0)}}
 
 
 @pytest.mark.parametrize(
@@ -644,7 +651,7 @@ _EXIT = BCType.DIRICHLET
     [
         (
             "priority",
-            [_seg("wall", BCType.NO_FLUX, boundary="x_max"), _seg("exit", _EXIT, priority=1, boundary="x_max")],
+            [_seg("wall", BCType.NO_FLUX, **_UPPER_STRIP), _seg("exit", _EXIT, priority=1, **_MIDDLE_STRIP)],
             (1.0, 0.5),
             "absorbed",
         ),
@@ -656,13 +663,13 @@ _EXIT = BCType.DIRICHLET
         ),
         (
             "declaration, exit first",
-            [_seg("exit", _EXIT, boundary="x_max"), _seg("wall", BCType.NO_FLUX, boundary="x_max")],
+            [_seg("exit", _EXIT, **_MIDDLE_STRIP), _seg("wall", BCType.NO_FLUX, **_UPPER_STRIP)],
             (1.0, 0.5),
             "absorbed",
         ),
         (
             "declaration, wall first",
-            [_seg("wall", BCType.NO_FLUX, boundary="x_max"), _seg("exit", _EXIT, boundary="x_max")],
+            [_seg("wall", BCType.NO_FLUX, **_UPPER_STRIP), _seg("exit", _EXIT, **_MIDDLE_STRIP)],
             (1.0, 0.5),
             "reflected",
         ),
@@ -792,3 +799,338 @@ def test_an_sdf_returning_a_one_element_array_is_read_as_its_value_by_the_face_o
     grid = _grid(BoundaryConditions(dimension=2, default_bc=BCType.NO_FLUX, segments=[disc]))
     with pytest.raises(ValueError, match="'D' covers part of the x_max face"):
         grid.get_boundary_conditions().segment_for_face("x_max")
+
+
+# ---------------------------------------------------------------- review 2 of #2634
+
+
+def _uniform_m0(x):
+    return 1.0
+
+
+def _zero_terminal(x):
+    return 0.0
+
+
+def _picklable_problem(bc):
+    return MFGProblem(
+        model=Model(
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.3
+        ),
+        domain=_grid(bc),
+        conditions=Conditions(m_initial=_uniform_m0, u_terminal=_zero_terminal, T=0.1),
+        Nt=2,
+    )
+
+
+def test_a_problem_crosses_a_process_boundary_and_its_grid_binds_its_bc_again():
+    """B-a: a weak reference cannot be pickled, so a problem holding a grid-bound BC could not reach a process pool
+    (`CommonNoiseMFGSolver(parallel=True)`); the suite's thread-pool swap hid it. Pickled for real here. A copy, deep
+    or shallow, binds its BC to itself, not to the grid it was copied from; a BC queried with a grid pickles too."""
+    import copy
+    import pickle
+
+    problem = pickle.loads(pickle.dumps(_picklable_problem(_strip_at_a_corner())))
+    grid = problem.geometry
+    assert grid.get_boundary_conditions()._geometry_ref() is grid
+    original = _grid(no_flux_bc(dimension=2))
+    for copied in (copy.deepcopy(original), copy.copy(original)):
+        assert copied.get_boundary_conditions()._geometry_ref() is copied
+        assert original.get_boundary_conditions()._geometry_ref() is original
+    queried = no_flux_bc(dimension=2)
+    queried.segment_for_face("x_min", original)  # fills the owner's memo with a weak reference
+    assert pickle.loads(pickle.dumps(queried)) == queried
+
+
+def _strip_between_nodes(bc_type):
+    """A strip of x_max, |y - 0.42| <= 0.02, between the grid nodes at y = 1/3 and y = 1/2: it holds no node."""
+    strip = _seg(
+        "strip",
+        bc_type,
+        sdf_region=lambda x: np.abs(np.asarray(x)[..., 1] - 0.42) - 0.02,
+        normal_direction=np.array([1.0, 0.0]),
+    )
+    return BoundaryConditions(dimension=2, domain_bounds=UNIT_SQUARE, default_bc=BCType.NO_FLUX, segments=[strip])
+
+
+def test_a_strip_holding_no_node_is_judged_by_the_readers_own_equivalence():
+    """B-b: "covers nothing" reads the segment as shadowed on every face, so the reader's equivalence decides. The
+    particle topology query asks only whether an axis wraps: a REFLECTING strip changes no axis's wrap and passes
+    (the particles still meet it, by the point owner); a PERIODIC one would be dropped and is refused. A face reader
+    asks for the whole condition and refuses the REFLECTING strip, which differs from the walls."""
+    from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import get_topology_per_dimension
+
+    grid = _grid(no_flux_bc(dimension=2))
+    reflecting = _strip_between_nodes(BCType.REFLECTING)
+    assert get_topology_per_dimension(reflecting, 2, grid) == ["bounded", "bounded"]
+    assert reflecting.segment_for_point(np.array([1.0, 0.42])).name == "strip"
+    with pytest.raises(ValueError, match="'strip' cover no part of the domain's boundary"):
+        get_topology_per_dimension(_strip_between_nodes(BCType.PERIODIC), 2, grid)
+    with pytest.raises(ValueError, match="'strip' cover no part of the domain's boundary"):
+        reflecting.segment_for_face("x_max", grid)
+
+
+def test_the_topology_query_refuses_what_is_not_a_bc():
+    """Read as bounded walls, a stray string or object would solve a boundary nobody declared (review 2, fail-fast)."""
+    from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import get_topology_per_dimension
+
+    for stray in ("dirichlet", object()):
+        with pytest.raises(TypeError, match="takes a BoundaryConditions"):
+            get_topology_per_dimension(stray, 2)
+    assert get_topology_per_dimension(None, 2) == ["bounded", "bounded"]
+    assert get_topology_per_dimension("periodic", 2) == ["periodic", "periodic"]
+
+
+def _strip_at_a_corner(strip_value=0.0, d_type=BCType.DIRICHLET, d_value=5.0, d_priority=1):
+    """``wall`` NEUMANN(0) everywhere; ``strip`` on x_max for y >= 0.75 at priority 2, which the face accepts as the
+    wall's condition when its value is 0; ``D`` on y_max. Corner (1, 1) is held by the strip on x_max and D on
+    y_max."""
+    return BoundaryConditions(
+        dimension=2,
+        domain_bounds=UNIT_SQUARE,
+        segments=[
+            _seg("wall", BCType.NEUMANN, 0.0),
+            _seg("strip", BCType.NEUMANN, strip_value, boundary="x_max", region={"y": (0.75, 1.0)}, priority=2),
+            _seg("D", d_type, d_value, boundary="y_max", priority=d_priority),
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    ("case", "kwargs", "corner"),
+    [
+        ("strip priority 2 beats D priority 1", {}, "strip"),
+        (
+            "equal priority: the placed strip beats the global wall",
+            {"d_type": BCType.NEUMANN, "d_value": 1.0, "d_priority": 2},
+            "strip",
+        ),
+    ],
+    ids=["priority", "equal priority"],
+)
+def test_a_corner_node_and_a_point_at_it_take_the_segment_that_holds_the_node(case, kwargs, corner):
+    """B-c, ruling (i): on each face the segment that holds the node -- here the strip, a partial cover x_max
+    accepts as the wall's condition -- not the face's own segment. The node and the point give one answer, and
+    every reader that writes the corner writes it."""
+    grid = _grid(_strip_at_a_corner(**kwargs))
+    bc = grid.get_boundary_conditions()
+    faces = [BoundaryFace(0, "max"), BoundaryFace(1, "max")]
+    assert bc.segment_for_corner(faces, grid).name == corner
+    assert bc.segment_for_point(np.array([1.0, 1.0]), geometry=grid).name == corner
+    mask, _ = dirichlet_wall_rows(bc, (N, N), 0.0, grid)
+    assert not mask[-1, -1]
+    assert not _is_dirichlet_at_point(bc, (N - 1, N - 1), (N, N), grid)
+
+
+def test_a_placement_holding_only_a_corner_node_governs_that_node():
+    """Must-fix 2 of review 2: an exit whose region holds only the corner node (1, 1) holds no face's interior, and
+    it is not "covers nothing": it governs that node, for the node, the point, the FDM rows and `FDMApplicator`."""
+    corner_exit = _seg("exit", BCType.DIRICHLET, 0.3, region={"x": (0.95, 1.05), "y": (0.95, 1.05)})
+    grid = _grid(
+        BoundaryConditions(dimension=2, domain_bounds=UNIT_SQUARE, default_bc=BCType.NO_FLUX, segments=[corner_exit])
+    )
+    bc = grid.get_boundary_conditions()
+    assert bc.segment_for_corner([BoundaryFace(0, "max"), BoundaryFace(1, "max")], grid).name == "exit"
+    assert bc.segment_for_point(np.array([1.0, 1.0]), geometry=grid).name == "exit"
+    mask, values = dirichlet_wall_rows(bc, (N, N), 0.0, grid)
+    assert mask.sum() == 1
+    assert mask[-1, -1]
+    assert values[-1, -1] == pytest.approx(0.3)
+    # FDMApplicator writes only DIRICHLET and NEUMANN faces, so the corner pass is the only write of this node.
+    from mfgarchon.geometry.boundary.applicator_fdm import FDMApplicator
+
+    out = FDMApplicator(dimension=2).enforce_values(np.ones((N, N)), bc, (1 / (N - 1),) * 2, geometry=grid)
+    assert out[-1, -1] == pytest.approx(0.3)
+    assert np.count_nonzero(out != 1.0) == 1
+
+
+def test_a_corner_that_differs_only_in_what_the_sl_enforcement_does_not_write_is_answered_there():
+    """Must-fix 3 of review 2: under a blending corner_strategy each reader refuses a corner by its own sameness. Exits
+    on every face, x_min's with a flux_capacity: the node, the point and the FDM rows refuse the corner; the SL
+    enforcement writes no flux_capacity and answers it."""
+    bc = BoundaryConditions(
+        dimension=2,
+        domain_bounds=UNIT_SQUARE,
+        corner_strategy="average",
+        segments=[
+            _seg("cap", BCType.DIRICHLET, 0.0, boundary="x_min", flux_capacity=1.0),
+            _seg("exit", BCType.DIRICHLET, 0.0),
+        ],
+    )
+    grid = _grid(bc)
+    held = grid.get_boundary_conditions()
+    refusal = "impose different conditions"
+    with pytest.raises(ValueError, match=refusal):
+        held.segment_for_corner([BoundaryFace(0, "min"), BoundaryFace(1, "min")], grid)
+    with pytest.raises(ValueError, match=refusal):
+        held.segment_for_point(np.array([0.0, 0.0]), geometry=grid)
+    with pytest.raises(ValueError, match=refusal):
+        dirichlet_wall_rows(held, (N, N), 0.0, grid)
+    out = InterpolationApplicator(dimension=2).enforce_values(
+        np.ones((N, N)), held, spacing=(1 / (N - 1),) * 2, geometry=grid
+    )
+    assert out[0, 0] == pytest.approx(0.0)
+
+
+def test_the_fp_fdm_tensor_route_refuses_an_explicit_placed_exit_for_its_own_reason():
+    """Must-fix 4 of review 2: FP-FDM's tensor step holds the grid and passes it to the kernels, so an explicit exit
+    placed by sdf_region or region gets the route's own refusal, as the same exit placed by boundary= does, and not
+    "this reader has no grid"."""
+    for place in (
+        {"sdf_region": lambda x: 0.95 - np.asarray(x)[..., 0]},
+        {"region": {"x": (0.95, 1.0)}},
+        {"boundary": "x_max"},
+    ):
+        exit_ = _seg("exit", BCType.DIRICHLET, 0.0, priority=1, **place)
+        bc = BoundaryConditions(dimension=2, default_bc=BCType.NO_FLUX, segments=[exit_, _seg("walls", BCType.NO_FLUX)])
+        problem = _picklable_problem(no_flux_bc(dimension=2))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            solver = FPFDMSolver(problem, boundary_conditions=bc)
+            with pytest.raises(NotImplementedError, match="mass_conservative divergence supports only"):
+                solver.solve_fp_system(
+                    np.ones((N, N)),
+                    potential_field=np.zeros((3, N, N)),
+                    volatility=np.diag([0.04, 0.02]),
+                    volatility_kind="tensor",
+                )
+
+
+# ---------------------------------------------------------------- the owner's answers agree (review 2's condition)
+
+_AGREEMENT_N = 6  # nodes per axis: 0, 0.2, ..., 1
+
+
+def _agreement_placements(dimension):
+    """Where the segment under test is put. In 2-D it sits on x_max: the whole face, part of it with the corner
+    (1, 1), only that corner node, or a strip between two grid nodes."""
+    if dimension == 1:
+        return {
+            "none": {},
+            "boundary": {"boundary": "x_max"},
+            "region": {"region": {"x": (0.9, 1.0)}},
+            "sdf_region": {"sdf_region": lambda x: 0.9 - np.asarray(x)[..., 0]},
+            "normal_direction": {"normal_direction": np.array([1.0])},
+        }
+    return {
+        "none": {},
+        "boundary": {"boundary": "x_max"},
+        "region": {"boundary": "x_max", "region": {"y": (0.5, 1.0)}},
+        "sdf_region": {"sdf_region": lambda x: np.maximum(0.9 - np.asarray(x)[..., 0], 0.5 - np.asarray(x)[..., 1])},
+        "normal_direction": {"normal_direction": np.array([1.0, 0.0])},
+        "corner only": {"region": {"x": (0.95, 1.05), "y": (0.95, 1.05)}},
+        "strip between nodes": {
+            "sdf_region": lambda x: np.abs(np.asarray(x)[..., 1] - 0.5) - 0.05,
+            "normal_direction": np.array([1.0, 0.0]),
+        },
+    }
+
+
+def _agreement_cases(dimension):
+    types = {
+        "DIRICHLET": (BCType.DIRICHLET, 1.0),
+        "NO_FLUX": (BCType.NO_FLUX, 0.0),
+        "NEUMANN(0)": (BCType.NEUMANN, 0.0),
+    }
+    for placement, where in _agreement_placements(dimension).items():
+        for order, priority in (("above", 1), ("equal", 0), ("below", -1)):
+            for type_name, (bc_type, value) in types.items():
+                for default in (BCType.NO_FLUX, None):
+                    segments = [
+                        _seg("S", bc_type, value, priority=priority, **where),
+                        _seg("W", BCType.NO_FLUX, boundary="x_min"),
+                    ]
+                    bc = BoundaryConditions(
+                        dimension=dimension,
+                        domain_bounds=np.array([[0.0, 1.0]] * dimension),
+                        default_bc=default,
+                        segments=segments,
+                    )
+                    yield f"{placement}, S {order} W, S {type_name}, default {default}", bc
+
+
+def _refusal_kind(error):
+    text = str(error)
+    for kind, marker in (
+        ("unset default", "default_bc was not specified"),
+        ("ROBIN default", "ROBIN"),
+        ("blended corner", "impose different conditions, and corner_strategy"),
+        ("partial cover", "covers part of"),
+        ("covers nothing", "cover no part"),
+        ("shadowed", "govern no face"),
+    ):
+        if marker in text:
+            return kind
+    return f"other: {type(error).__name__}: {text[:80]}"
+
+
+def _ask(fn):
+    try:
+        return fn(), None
+    except ValueError as error:
+        return None, _refusal_kind(error)
+
+
+@pytest.mark.parametrize("dimension", [1, 2])
+def test_the_owners_face_corner_and_point_answers_agree_at_every_boundary_node(dimension):
+    """Review 1 and review 2 of #2634 each found the owner's own questions disagreeing -- the face against the point,
+    the corner against the point, "covers nothing" against the reader's equivalence. One invariant over generated
+    BCs instead of more single cases: at every boundary node, the point rule (`segment_for_point`) gives the face or
+    corner rule's segment (`segment_for_face` on one face, `segment_for_corner` on several) or an equivalent one,
+    under the default equivalence; or both refuse, for the same reason. Where the face rule refuses what one
+    condition per face cannot hold -- a partial cover, a segment holding no grid node, or a face part of which
+    nothing governs while the point is held -- a point may still answer, since points honour placements faces
+    cannot; those nodes are counted, not compared. A segment shadowed everywhere is refused by both: it governs no
+    point either. A default segment is built per query, so two answers are the
+    same segment when they have its name and its condition."""
+    shape = (_AGREEMENT_N,) * dimension
+    compared = refused_alike = face_only = 0
+    disagreements = []
+    for label, bc in _agreement_cases(dimension):
+        grid = TensorProductGrid(
+            bounds=[(0.0, 1.0)] * dimension, Nx_points=list(shape), boundary_conditions=no_flux_bc(dimension=dimension)
+        )
+        coordinates = grid.coordinates
+        for node in np.ndindex(*shape):
+            faces = [
+                BoundaryFace(axis, side)
+                for axis in range(dimension)
+                for side, end in (("min", 0), ("max", shape[axis] - 1))
+                if node[axis] == end
+            ]
+            if not faces:
+                continue
+            point = np.array([coordinates[axis][node[axis]] for axis in range(dimension)])
+            if len(faces) == 1:
+                face_answer, face_refusal = _ask(lambda: bc.segment_for_face(faces[0], grid))  # noqa: B023
+            else:
+                face_answer, face_refusal = _ask(lambda: bc.segment_for_corner(faces, grid, node=node))  # noqa: B023
+            point_answer, point_refusal = _ask(lambda: bc.segment_for_point(point, geometry=grid))  # noqa: B023
+            at = f"{label}, node {node}"
+            held_here = point_answer is not None and point_answer.name != "default"
+            if face_refusal in ("partial cover", "covers nothing") or (
+                face_refusal in ("unset default", "ROBIN default") and held_here
+            ):
+                face_only += 1
+            elif face_refusal is not None or point_refusal is not None:
+                if face_refusal == point_refusal:
+                    refused_alike += 1
+                else:
+                    face_said = face_refusal or face_answer.name
+                    disagreements.append(f"{at}: face/corner {face_said}, point {point_refusal or point_answer.name}")
+            elif point_answer.name != face_answer.name and (
+                len(faces) > 1 or not _same_condition(face_answer, point_answer)
+            ):
+                disagreements.append(f"{at}: face/corner {face_answer.name}, point {point_answer.name}")
+            elif not _same_condition(face_answer, point_answer):
+                disagreements.append(
+                    f"{at}: face/corner {face_answer.name}, point {point_answer.name}, conditions differ"
+                )
+            else:
+                compared += 1
+    counts = {"compared": compared, "refused alike": refused_alike, "face only": face_only}
+    assert disagreements == [], f"{len(disagreements)} disagreements:\n" + "\n".join(disagreements[:20])
+    # The invariant reached its branches: a vacuous run would pass the assertion above.
+    assert compared > 0, counts
+    assert refused_alike > 0, counts
+    assert (face_only > 0) == (dimension == 2), counts  # in 1-D a face is one node: nothing covers part of one

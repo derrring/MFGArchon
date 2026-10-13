@@ -15,7 +15,7 @@ References:
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
@@ -452,6 +452,7 @@ def diffusion(
     backend: ArrayBackend | None = None,
     domain_bounds: NDArray | None = None,
     time: float | None = None,
+    geometry: Any = None,
 ) -> NDArray:
     """
     Compute diffusion ∇·(Σ∇u) with automatic dispatch based on coefficient type.
@@ -535,15 +536,15 @@ def diffusion(
         # Diagonal diffusion tensor: [D_0, D_1, ...] → diag(D) (values are D_i, used directly).
         # Convert to full tensor for uniform handling.
         Sigma = np.diag(coeff)
-        return _diffusion_tensor(u, Sigma, spacings, bc, domain_bounds, time)
+        return _diffusion_tensor(u, Sigma, spacings, bc, domain_bounds, time, geometry)
 
     if coeff.ndim == 2 and coeff.shape == (d, d):
         # Constant tensor Σ
-        return _diffusion_tensor(u, coeff, spacings, bc, domain_bounds, time)
+        return _diffusion_tensor(u, coeff, spacings, bc, domain_bounds, time, geometry)
 
     if coeff.shape == (*u.shape, d, d):
         # Spatially varying tensor Σ(x)
-        return _diffusion_tensor(u, coeff, spacings, bc, domain_bounds, time)
+        return _diffusion_tensor(u, coeff, spacings, bc, domain_bounds, time, geometry)
 
     raise ValueError(
         f"Invalid coefficient shape {coeff.shape} for {d}D field. "
@@ -558,6 +559,7 @@ def _diffusion_tensor(
     bc: BoundaryConditions | None,
     domain_bounds: NDArray | None,
     time: float,
+    geometry: Any = None,
 ) -> NDArray:
     """Internal: dispatch tensor diffusion by dimension."""
     d = u.ndim
@@ -565,9 +567,9 @@ def _diffusion_tensor(
     if d == 1:
         return _tensor_diffusion_1d(u, Sigma, spacings[0], bc)
     elif d == 2:
-        return _tensor_diffusion_2d(u, Sigma, spacings[0], spacings[1], bc, domain_bounds, time)
+        return _tensor_diffusion_2d(u, Sigma, spacings[0], spacings[1], bc, domain_bounds, time, geometry)
     else:
-        return _tensor_diffusion_nd(u, Sigma, tuple(spacings), bc)
+        return _tensor_diffusion_nd(u, Sigma, tuple(spacings), bc, geometry)
 
 
 def tensor_diffusion(
@@ -946,7 +948,7 @@ def _tensor_diffusion_1d(
         return (flux[1:] - flux[:-1]) / dx
 
 
-def _is_no_flux(bc: BoundaryConditions | None, dimension: int, tensor: NDArray) -> bool:
+def _is_no_flux(bc: BoundaryConditions | None, dimension: int, tensor: NDArray, geometry: Any = None) -> bool:
     """Does every wall face resolve to a zero-flux wall, the case whose boundary face flux must vanish (#2232)?
 
     Read face by face from the face owner (#2512 row B1), so a uniform ``no_flux_bc`` and the same no-flux
@@ -969,7 +971,7 @@ def _is_no_flux(bc: BoundaryConditions | None, dimension: int, tensor: NDArray) 
     if uniform is not None:
         return uniform.bc_type == BCType.NO_FLUX
     faces = [BoundaryFace(axis, side) for axis in range(dimension) for side in ("min", "max")]
-    no_flux = [bc.segment_for_face(face).bc_type == BCType.NO_FLUX for face in faces]
+    no_flux = [bc.segment_for_face(face, geometry).bc_type == BCType.NO_FLUX for face in faces]
     if all(no_flux):
         return True
     if any(no_flux):
@@ -994,6 +996,7 @@ def _tensor_diffusion_2d(
     bc: BoundaryConditions | None,
     domain_bounds: NDArray | None,
     time: float,
+    geometry: Any = None,
 ) -> NDArray:
     """2D tensor diffusion with optional Numba JIT."""
     from mfgarchon.geometry.boundary import pad_array_with_ghosts
@@ -1022,7 +1025,7 @@ def _tensor_diffusion_2d(
         is_noflux = False
         if isinstance(bc, BoundaryConditions):
             # Mixed BC - use unified interface (may not be uniform no-flux)
-            u_padded = pad_array_with_ghosts(u, bc, ghost_depth=1, time=time, spacing=(dx, dy))
+            u_padded = pad_array_with_ghosts(u, bc, ghost_depth=1, time=time, geometry=geometry, spacing=(dx, dy))
         else:
             # Not a BoundaryConditions: read by its .type
             is_noflux = bc.type.lower() in ["no_flux", "neumann"]
@@ -1032,12 +1035,12 @@ def _tensor_diffusion_2d(
                 u_padded = np.pad(u, 1, mode="edge")
             else:
                 # Use unified interface for other BC types
-                u_padded = pad_array_with_ghosts(u, bc, ghost_depth=1, time=time, spacing=(dx, dy))
+                u_padded = pad_array_with_ghosts(u, bc, ghost_depth=1, time=time, geometry=geometry, spacing=(dx, dy))
     else:
         # Default to periodic if no BC specified
         u_padded = np.pad(u, 1, mode="wrap")
 
-    zero_wall_flux = _is_no_flux(bc, 2, Sigma_full)
+    zero_wall_flux = _is_no_flux(bc, 2, Sigma_full, geometry)
 
     # Use JIT kernel if available
     if USE_NUMBA and NUMBA_AVAILABLE:
@@ -1086,6 +1089,7 @@ def _tensor_diffusion_nd(
     Sigma: NDArray,
     spacings: tuple[float, ...],
     bc: BoundaryConditions | None,
+    geometry: Any = None,
 ) -> NDArray:
     """General nD tensor diffusion."""
     d = u.ndim
@@ -1109,7 +1113,7 @@ def _tensor_diffusion_nd(
     else:
         u_padded = np.pad(u, 1, mode="wrap")
 
-    zero_wall_flux = _is_no_flux(bc, d, Sigma_full)
+    zero_wall_flux = _is_no_flux(bc, d, Sigma_full, geometry)
     result = np.zeros(shape, dtype=u.dtype)
 
     for i in range(d):

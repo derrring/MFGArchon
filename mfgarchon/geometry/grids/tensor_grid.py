@@ -20,7 +20,7 @@ References:
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -2079,6 +2079,15 @@ class TensorProductGrid(
             f"  total_points={self.total_points()}\n"
             f")"
         )
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore a pickled or deep-copied grid, and bind its BC to this grid, not to the one it was copied from.
+
+        A BC leaves its binding behind when it is pickled or copied (`BoundaryConditions.__getstate__`), so the BC
+        this grid stores would otherwise come back unbound (#2634, review 2)."""
+        self.__dict__.update(state)
+        if self._boundary_conditions is not None:
+            self._boundary_conditions = self._boundary_conditions.bind_geometry(self)
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ Examples:
 
 from __future__ import annotations
 
+import itertools
 import weakref
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
@@ -218,6 +219,17 @@ class BoundaryConditions:
         if geometry is not None or self._geometry_ref is None:
             return geometry
         return self._geometry_ref()
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Pickle and copy this BC without the owner's two weak references: the binding (`_geometry_ref`) and the
+        memo (`_owner_memo`). A weak reference cannot be pickled, so a problem holding a bound or queried BC could
+        not cross a process pool (#2634, review 2); and a copy that kept the binding would decide its placements on
+        the original's grid. The copy is unbound, and a grid that holds it binds it again (`TensorProductGrid`'s
+        ``__setstate__``)."""
+        state = dict(self.__dict__)
+        state["_geometry_ref"] = None
+        state.pop("_b1_owner_cache", None)
+        return state
 
     def _require_dimension(self, operation: str = "this operation") -> int:
         """
@@ -523,33 +535,108 @@ class BoundaryConditions:
         faces: list[BoundaryFace],
         geometry: Any = None,
         equivalent: Callable[[BCSegment, BCSegment], bool] | None = None,
+        node: tuple[int, ...] | None = None,
     ) -> BCSegment:
         """The segment that governs a node shared by several faces -- a corner, or an edge in 3-D (#2512 B1).
 
-        Each face's own segment comes from :meth:`segment_for_face`; ``corner_strategy`` then chooses among
-        them. ``"priority"``: the first of them in the corner order (:meth:`segment_for_face`'s docstring:
-        priority, then essential before natural, then placed before global, then declaration; a face's
-        ``default_bc`` ranks by its priority, -1, as a global segment declared last). ``"average"`` and ``"mollify"`` blend
-        outward normals and say nothing about which condition applies: where the faces' segments impose
-        different conditions they are refused here; where they impose the same one, there is nothing to
-        choose.
-        """
-        governing = [self.segment_for_face(face, geometry, equivalent) for face in faces]
-        return self._corner_choice(governing, ", ".join(f.to_string() for f in faces), equivalent)
+        Each face is resolved first (:meth:`segment_for_face`, with its refusals). Then, on each face, the segment
+        that holds THIS node: the first in the face order whose placement holds it (:meth:`_holds_node`), which is
+        the face's own segment unless one ahead of it in that order -- a partial cover the face accepts, or a
+        placement holding only corner or edge nodes -- holds the node; with none, ``default_bc``. A point at this
+        node takes the same segments (:meth:`segment_for_point`), so a node and a point at a corner give one
+        answer (ruling (i) of #2634's review 2, 2026-10-13). ``corner_strategy`` then chooses among them
+        (:meth:`_corner_choice`).
 
-    def refuse_blended_corners(
-        self, dimension: int, geometry: Any = None, equivalent: Callable[[BCSegment, BCSegment], bool] | None = None
-    ) -> None:
-        """For a reader that writes corners face by face: under ``corner_strategy="average"`` or ``"mollify"``, refuse
-        every corner whose faces' segments impose different conditions (:meth:`_corner_choice`), with the reader's own
-        ``equivalent``. Under ``"priority"`` there is nothing to refuse (#2512 row B1)."""
-        if self.corner_strategy == "priority":
-            return
-        for axis in range(dimension):
-            for other in range(axis + 1, dimension):
-                for s1 in ("min", "max"):
-                    for s2 in ("min", "max"):
-                        self.segment_for_corner([BoundaryFace(axis, s1), BoundaryFace(other, s2)], geometry, equivalent)
+        ``node`` is the node's index on ``geometry``'s grid. A corner of the whole domain needs none; a node on an
+        edge of a 3-D domain does, where a ``region`` or ``sdf_region`` can hold part of the edge.
+        """
+        return self._corner_resolution(tuple(faces), geometry, equivalent, node)[1]
+
+    def corner_nodes(
+        self,
+        shape: tuple[int, ...],
+        geometry: Any = None,
+        equivalent: Callable[[BCSegment, BCSegment], bool] | None = None,
+    ) -> dict[tuple[int, ...], tuple[BoundaryFace, BCSegment]]:
+        """For a reader that writes conditions face by face: every node of a ``shape`` grid that several faces share,
+        with the segment that governs it and the face it governs it from (:meth:`segment_for_corner`, asked with
+        the reader's own ``equivalent``). The reader writes its faces, then writes each node's segment, along that
+        face, at the node, so the node takes the owner's choice whatever order the faces were written in. The
+        node's segment is not always its face's: a placement can hold a corner node and no face interior (#2512
+        row B1). Under ``corner_strategy="average"`` or ``"mollify"`` a node whose faces' segments impose different
+        conditions is refused here."""
+        geometry = self._query_geometry(geometry)
+        key = ("corner nodes", tuple(shape), equivalent)
+        return self._owner_memo(
+            key,
+            geometry,
+            lambda: {
+                node: self._corner_resolution(faces, geometry, equivalent, node)
+                for node, faces in _multi_face_nodes(tuple(shape))
+            },
+        )
+
+    def _corner_resolution(
+        self, faces: tuple[BoundaryFace, ...], geometry: Any, equivalent: Any, node: tuple[int, ...] | None
+    ) -> tuple[BoundaryFace, BCSegment]:
+        """The face and the segment a node shared by ``faces`` takes: :meth:`segment_for_corner`'s rule."""
+        geometry = self._query_geometry(geometry)
+        own = [self.segment_for_face(face, geometry, equivalent) for face in faces]  # each face's refusals
+        if len(faces) == 1:
+            return faces[0], own[0]  # a node on one face takes that face's segment
+        node = node if node is not None else _corner_node(faces, geometry)
+        key = ("corner", faces, node, equivalent)
+        return self._owner_memo(key, geometry, lambda: self._choose_at_node(faces, geometry, equivalent, node))
+
+    def _choose_at_node(
+        self, faces: tuple[BoundaryFace, ...], geometry: Any, equivalent: Any, node: tuple[int, ...] | None
+    ) -> tuple[BoundaryFace, BCSegment]:
+        where = ", ".join(f.to_string() for f in faces)
+        point = _corner_point(faces, node, geometry, self.domain_bounds)
+        governing = [self._segment_holding_node(face, geometry, node, point, where) for face in faces]
+        chosen = self._corner_choice(governing, where, equivalent)
+        return faces[next(i for i, seg in enumerate(governing) if seg is chosen)], chosen
+
+    def _segment_holding_node(
+        self, face: BoundaryFace, geometry: Any, node: tuple[int, ...] | None, point: np.ndarray | None, where: str
+    ) -> BCSegment:
+        """On ``face``, the first segment in the face order that holds the node, else ``default_bc``."""
+        for segment in self._face_order():
+            if self._holds_node(segment, face, geometry, node, point, where):
+                return segment
+        return self._default_segment("segment_for_corner", f"the node shared by {where}")
+
+    def _holds_node(
+        self,
+        segment: BCSegment,
+        face: BoundaryFace,
+        geometry: Any,
+        node: tuple[int, ...] | None,
+        point: np.ndarray | None,
+        where: str,
+    ) -> bool:
+        """Does ``segment`` hold the node at ``node`` (on ``geometry``'s grid) or ``point``, on ``face``? A placement
+        that names a face, or a normal, holds only that face's nodes. A ``region`` or ``sdf_region`` is read at the
+        node itself: on the grid, where the face rule reads it too; without one, a ``region`` at the point on
+        ``domain_bounds``. Any other placement holds the nodes of every face it covers."""
+        if segment.boundary is not None and segment.boundary != "all" and parse_boundary_face(segment.boundary) != face:
+            return False
+        if segment.normal_direction is not None and not _normal_selects_face(segment, face):
+            return False
+        if segment.region is None and segment.sdf_region is None:
+            return self._cached_face_cover(segment, face, geometry) != "none"
+        mask = self._owner_memo(("mask", id(segment)), geometry, lambda: _placement_mask_on_grid(segment, geometry))
+        if mask is not None and node is not None:
+            return bool(mask[node])
+        if point is None:
+            raise ValueError(
+                f"BC segment {segment.name!r} is placed by region or sdf_region, and the node shared by {where} is "
+                "on an edge of the domain: which segment holds it depends on where on the edge it is. Pass node= "
+                "(its index on the grid) and the grid (#2512 row B1)."
+            )
+        return segment.matches_point(
+            point, face.to_string(), self.domain_bounds, SDF_BOUNDARY_TOL, domain_sdf=self.domain_sdf, geometry=geometry
+        )
 
     def _corner_choice(
         self, governing: list[BCSegment], where: str, equivalent: Callable[[BCSegment, BCSegment], bool] | None = None
@@ -597,6 +684,7 @@ class BoundaryConditions:
         """
         point = np.asarray(point, dtype=float)
         geometry = self._query_geometry(geometry)
+        self._refuse_dead_segments(geometry)
         if face is not None:
             faces: list[str | None] = [face.to_string() if isinstance(face, BoundaryFace) else face]
         elif self.domain_bounds is not None:
@@ -689,14 +777,51 @@ class BoundaryConditions:
         else:
             self._check_shadowed(dimension, geometry, equivalent)
 
-    def _check_shadowed(self, dimension: int, geometry: Any, equivalent: Any) -> bool:
-        """The shadow check itself, for :meth:`_refuse_shadowed_segments`: raises, or returns True."""
+    def _refuse_dead_segments(self, geometry: Any) -> None:
+        """For :meth:`segment_for_point`: refuse a segment that every face it reaches gives to another, with a
+        different condition. It governs no point either -- the segment ahead of it holds each of those faces whole --
+        so a point query would drop it where a face query refuses it (#2634, review 2's agreement oracle). Read only
+        where the faces' covers can be: on a grid, or with no ``sdf_region`` or ``region_name`` segment; a point
+        reader without a grid (particles) is otherwise not asked to decide covers it cannot."""
+        from mfgarchon.geometry.base import CartesianGrid  # local: geometry.base imports this package
+
+        dimension = self.dimension
+        if dimension is None and isinstance(geometry, CartesianGrid):
+            dimension = len(geometry.get_grid_shape())
+        if dimension is None:
+            return
+        needs_grid = any(seg.sdf_region is not None or seg.region_name is not None for seg in self.segments)
+        if needs_grid and not isinstance(geometry, CartesianGrid):
+            return
+        if (
+            self.domain_bounds is None
+            and not isinstance(geometry, CartesianGrid)
+            and any(seg.region is not None for seg in self.segments)
+        ):
+            return
+        self._owner_memo(
+            ("dead", dimension), geometry, lambda: self._check_shadowed(dimension, geometry, None, dead_only=True)
+        )
+
+    def _check_shadowed(self, dimension: int, geometry: Any, equivalent: Any, dead_only: bool = False) -> bool:
+        """The shadow check itself, for :meth:`_refuse_shadowed_segments`: raises, or returns True.
+
+        A segment governs a face, or a node several faces share (:meth:`segment_for_corner`), or it is shadowed
+        where it reaches, or it covers part of a face ahead of that face's winner (the partial-cover rule's case).
+        A segment that does none of these reaches no part of the boundary: it is read as shadowed on every face,
+        so the reader's own ``equivalent`` decides, as for any shadowed segment -- one equivalent to every face's
+        segment changes nothing there and passes, and any other is refused (#2634, review 2: a REFLECTING strip
+        between two grid nodes changes no axis's periodicity, so the particle topology query accepts it).
+        ``dead_only`` keeps the "covers nothing" case out, for :meth:`segment_for_point`: a point can lie on a
+        strip no grid node does.
+        """
         same = _same_condition if equivalent is None else equivalent
         faces = [BoundaryFace(axis, side) for axis in range(dimension) for side in ("min", "max")]
         order = self._face_order()
-        touched: dict[int, list[tuple[BoundaryFace, BCSegment]]] = {id(seg): [] for seg in order}
+        touched: dict[int, list[tuple[str, BCSegment]]] = {id(seg): [] for seg in order}
         governs: set[int] = set()
         partial_ahead: set[int] = set()  # covers part of a face ahead of its winner: the partial-cover rule's case
+        face_winners: list[BCSegment] = []
         for f in faces:
             # A segment ahead of the face's winner covers only part of it: that is the partial-cover rule's
             # case, refused or accepted when the face is resolved. A segment after the winner is shadowed there.
@@ -718,31 +843,31 @@ class BoundaryConditions:
                 winner = self._default_segment("segment_for_face", f"the {f.to_string()} face")
             else:
                 governs.add(id(winner))
+            face_winners.append(winner)
             for seg in shadowed:
-                touched[id(seg)].append((f, winner))
-        nowhere = [
-            seg.name
-            for seg in order
-            if id(seg) not in governs and id(seg) not in partial_ahead and not touched[id(seg)]
-        ]
-        if nowhere:
-            raise ValueError(
-                f"BoundaryConditions: segment(s) {', '.join(repr(name) for name in nowhere)} cover no part of the "
-                f"domain's boundary{' on this grid' if geometry is not None else ''}, so their conditions would be "
-                "dropped: a region or sdf_region that holds no boundary node, or a marked region on no face. Place "
-                "them on the boundary, or remove them (#2512 row B1)."
-            )
-        dead = []
+                touched[id(seg)].append((f.to_string(), winner))
+        self._check_shared_nodes(dimension, geometry, order, governs, touched)
+        dead, nowhere = [], []
         for seg in order:
             if id(seg) in governs:
                 continue
             hits = touched[id(seg)]
+            if not hits and id(seg) not in partial_ahead:
+                if not all(same(seg, winner) for winner in face_winners):
+                    nowhere.append(seg.name)
+                continue
             if all(same(seg, winner) for _, winner in hits):
-                continue  # effect-neutral on every face it is shadowed on, or a partial cover ahead of a winner
-            where = "; ".join(
-                f"{f.to_string()}: {winner.name!r} (priority {winner.priority}) outranks it" for f, winner in hits
-            )
+                continue  # effect-neutral wherever it is shadowed, or a partial cover ahead of a winner
+            where = "; ".join(f"{at}: {winner.name!r} (priority {winner.priority}) outranks it" for at, winner in hits)
             dead.append(f"{seg.name!r} (priority {seg.priority}) -- {where}")
+        if nowhere and not dead_only:
+            raise ValueError(
+                f"BoundaryConditions: segment(s) {', '.join(repr(name) for name in nowhere)} cover no part of the "
+                f"domain's boundary{' on this grid' if geometry is not None else ''} -- no node of a face, and no "
+                "node faces share -- so their conditions would be dropped where they differ from what governs "
+                "there: a region or sdf_region that holds no boundary node, or a marked region on no face. Place "
+                "them on the boundary, or remove them (#2512 row B1)."
+            )
         if dead:
             raise ValueError(
                 "BoundaryConditions: these segments govern no face of the domain, so their conditions would be "
@@ -751,6 +876,46 @@ class BoundaryConditions:
                 "priority, or remove it (#2512 row B1)."
             )
         return True
+
+    def _check_shared_nodes(
+        self,
+        dimension: int,
+        geometry: Any,
+        order: list[BCSegment],
+        governs: set[int],
+        touched: dict[int, list[tuple[str, BCSegment]]],
+    ) -> None:
+        """For :meth:`_check_shadowed`: the nodes several faces share, where a ``region`` or ``sdf_region`` can hold a
+        node and no face interior. The node's segment (:meth:`segment_for_corner`'s choice, by the corner order)
+        governs it; another segment holding the node is shadowed there. On a grid every such node is read; without
+        one, the corners of ``domain_bounds``."""
+        from mfgarchon.geometry.base import CartesianGrid  # local: geometry.base imports this package
+
+        if not any(seg.region is not None or seg.sdf_region is not None for seg in order):
+            return  # every placement is face-wide, so the faces above already account for every node
+        if isinstance(geometry, CartesianGrid):
+            nodes = list(_multi_face_nodes(tuple(geometry.get_grid_shape())))
+        elif self.domain_bounds is not None and dimension >= 2:
+            corners = itertools.product(("min", "max"), repeat=dimension)
+            nodes = [(None, tuple(BoundaryFace(d, side) for d, side in enumerate(sides))) for sides in corners]
+        else:
+            return
+        for node, node_faces in nodes:
+            where = ", ".join(f.to_string() for f in node_faces)
+            point = _corner_point(node_faces, node, geometry, self.domain_bounds)
+            local, holders = [], []
+            for face in node_faces:
+                held = [seg for seg in order if self._holds_node(seg, face, geometry, node, point, where)]
+                if not held and (self.default_bc is None or self.default_bc == BCType.ROBIN):
+                    break  # refused when the node itself is resolved
+                local.append(held[0] if held else self._default_segment("segment_for_corner", where))
+                holders += held
+            else:
+                chosen = min(local, key=self._corner_key)
+                governs.add(id(chosen))
+                for seg in holders:
+                    if seg is not chosen and id(seg) not in governs:
+                        touched[id(seg)].append((f"the node shared by {where}", chosen))
 
     def _faces_at_point(self, point: np.ndarray, tolerance: float) -> list[BoundaryFace]:
         """Every box face ``point`` lies on: one on a face's interior, two or more at a corner."""
@@ -1453,11 +1618,9 @@ def periodic_axis_span(bc: Any, n: int, dimension: int | None = None, geometry: 
     Returns ``None`` -- not ``n`` -- for a non-periodic axis, so a caller cannot use the number
     without having decided what to do about the wrap.
     """
-    try:
-        wraps = periodic_on_every_face(bc, dimension, geometry)
-    except AttributeError:
+    if not isinstance(bc, BoundaryConditions):
         return None  # not a BoundaryConditions: FP-FDM's dispatch refuses it (#1559)
-    if not wraps:
+    if not periodic_on_every_face(bc, dimension, geometry):
         return None
     return n - repeated_endpoint_count(getattr(bc, "periodic_convention", None))
 
@@ -1790,6 +1953,66 @@ def _region_axis(segment: BCSegment, key: str | int, dimension: int) -> int:
     if axis is None or not 0 <= axis < dimension:
         raise ValueError(f"BC segment {segment.name!r}: region axis {key!r} names no axis of a {dimension}-D domain.")
     return axis
+
+
+def _group_nodes(
+    corners: dict[tuple[int, ...], tuple[BoundaryFace, Any]],
+) -> list[tuple[BoundaryFace, Any, tuple[np.ndarray, ...]]]:
+    """`BoundaryConditions.corner_nodes`' answer grouped by face and segment, each group with an index for fancy
+    indexing, so a reader writes each group once."""
+    groups: dict[tuple[BoundaryFace, int], tuple[BoundaryFace, Any, list[tuple[int, ...]]]] = {}
+    for node, (face, segment) in corners.items():
+        groups.setdefault((face, id(segment)), (face, segment, []))[2].append(node)
+    return [(face, segment, tuple(np.array(nodes, dtype=np.intp).T)) for face, segment, nodes in groups.values()]
+
+
+def _multi_face_nodes(shape: tuple[int, ...]):
+    """Every node of a ``shape`` grid that lies on two or more faces, with those faces: the corners, and in 3-D the
+    edges. Each node once, from the set of axes it sits at an end of."""
+    ndim = len(shape)
+    for count in range(2, ndim + 1):
+        for axes in itertools.combinations(range(ndim), count):
+            for sides in itertools.product(("min", "max"), repeat=count):
+                fixed = dict(zip(axes, sides, strict=True))
+                ranges = [
+                    [0 if fixed[d] == "min" else shape[d] - 1] if d in fixed else range(1, shape[d] - 1)
+                    for d in range(ndim)
+                ]
+                faces = tuple(BoundaryFace(d, fixed[d]) for d in axes)
+                for node in itertools.product(*ranges):
+                    yield tuple(int(i) for i in node), faces
+
+
+def _corner_node(faces: tuple[BoundaryFace, ...], geometry: Any) -> tuple[int, ...] | None:
+    """The grid index of the node ``faces`` meet at, when they fix every axis of ``geometry``'s grid; else None."""
+    from mfgarchon.geometry.base import CartesianGrid  # local: geometry.base imports this package
+
+    if not isinstance(geometry, CartesianGrid):
+        return None
+    shape = tuple(geometry.get_grid_shape())
+    sides = {face.axis: face.side for face in faces}
+    if sorted(sides) != list(range(len(shape))):
+        return None
+    return tuple(0 if sides[d] == "min" else shape[d] - 1 for d in range(len(shape)))
+
+
+def _corner_point(
+    faces: tuple[BoundaryFace, ...], node: tuple[int, ...] | None, geometry: Any, domain_bounds: Any
+) -> np.ndarray | None:
+    """The coordinates of the node: from the grid when the node is known, else from ``domain_bounds`` when
+    ``faces`` fix every axis; None when neither says where it is."""
+    from mfgarchon.geometry.base import CartesianGrid  # local: geometry.base imports this package
+
+    if node is not None and isinstance(geometry, CartesianGrid):
+        grid: Any = geometry
+        return np.array([grid.coordinates[d][node[d]] for d in range(len(node))], dtype=float)
+    if domain_bounds is None:
+        return None
+    bounds = np.asarray(domain_bounds, dtype=float)
+    sides = {face.axis: face.side for face in faces}
+    if sorted(sides) != list(range(bounds.shape[0])):
+        return None
+    return np.array([bounds[d, 0 if sides[d] == "min" else 1] for d in range(bounds.shape[0])], dtype=float)
 
 
 def _placement_mask_on_grid(segment: BCSegment, geometry: Any) -> np.ndarray | None:

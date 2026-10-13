@@ -85,7 +85,11 @@ def get_topology_per_dimension(
 
     bc = boundary_conditions
     if not isinstance(bc, BoundaryConditions):
-        return topologies  # no faces to read: the default bounded walls
+        raise TypeError(
+            "get_topology_per_dimension takes a BoundaryConditions, the 'periodic' sentinel or None, not "
+            f"{type(bc).__name__} ({bc!r}): read as bounded walls, it would solve a boundary nobody declared "
+            "(#2634, review 2)."
+        )
 
     # One condition everywhere: read with no placement, so no geometry is needed.
     uniform = bc.uniform_segment

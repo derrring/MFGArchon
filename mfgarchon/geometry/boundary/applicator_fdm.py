@@ -92,7 +92,7 @@ from .applicator_base import (
     ZeroFluxCalculator,
     ZeroGradientCalculator,
 )
-from .conditions import BoundaryConditions
+from .conditions import BoundaryConditions, _group_nodes
 from .enforcement import enforce_dirichlet_value_nd, enforce_neumann_value_nd
 from .ghost_cells import (
     GhostCellConfig,
@@ -296,24 +296,31 @@ class FDMApplicator(BaseStructuredApplicator):
         from mfgarchon.geometry.boundary.types import BCType
 
         # One segment per face, from the face owner (#2512 row B1). This wrote every segment in turn, in priority
-        # order, so where two segments reached one face the LOWEST priority was written last and won. Faces are
-        # written lowest precedence first, so where faces share nodes the owner's corner choice writes last.
-        faces = [BoundaryFace(d, side) for d in range(field.ndim) for side in ("min", "max")]
-        governing = {face: boundary_conditions.segment_for_face(face, geometry) for face in faces}
-        for face in sorted(faces, key=lambda f: boundary_conditions._corner_key(governing[f]), reverse=True):
-            segment = governing[face]
+        # order, so where two segments reached one face the LOWEST priority was written last and won.
+        def write(target: NDArray[np.floating], face: BoundaryFace, segment: Any) -> None:
             if segment.bc_type not in (BCType.DIRICHLET, BCType.NEUMANN):
-                continue
+                return  # imposed elsewhere (the ghosts); nothing is written here
             bc_value = segment_value(
                 segment, t=time, time_keyword="time", x=None, where=f"FDM enforce_values on face {face.to_string()}"
             )
             if segment.bc_type == BCType.DIRICHLET:
                 # Dirichlet: Set boundary values directly u(boundary) = g
-                self._apply_dirichlet_enforcement(field, face.axis, face.side, bc_value)
+                self._apply_dirichlet_enforcement(target, face.axis, face.side, bc_value)
             else:
                 # Neumann: Set boundary value to satisfy gradient constraint du/dn = g
-                self._apply_neumann_enforcement(field, face.axis, face.side, bc_value, spacing_tuple[face.axis])
+                self._apply_neumann_enforcement(target, face.axis, face.side, bc_value, spacing_tuple[face.axis])
 
+        corners = boundary_conditions.corner_nodes(field.shape, geometry)
+        original = field.copy() if corners else None
+        for face in (BoundaryFace(d, side) for d in range(field.ndim) for side in ("min", "max")):
+            write(field, face, boundary_conditions.segment_for_face(face, geometry))
+        # Where faces share a node, the owner's choice (`corner_nodes`): its segment written along its face, at the
+        # node. A segment this applicator does not write leaves the node as it was before the faces were written.
+        written = field.copy() if corners else None
+        for face, segment, nodes in _group_nodes(corners):
+            source = written.copy() if segment.bc_type in (BCType.DIRICHLET, BCType.NEUMANN) else original
+            write(source, face, segment)
+            field[nodes] = source[nodes]
         return field
 
     def _apply_dirichlet_enforcement(self, field: NDArray[np.floating], dim: int, side: str, value: float) -> None:
@@ -1007,40 +1014,33 @@ def dirichlet_wall_rows(
     `face_segment`, so a face is Dirichlet here exactly when its ghost is. The FDM operators pad without a geometry
     (`pad_array_with_ghosts`); the owner then decides on the grid the BC is bound to (`bind_geometry`).
 
-    A node shared by several faces (a corner, or an edge in 3-D) takes the condition
-    :meth:`BoundaryConditions.segment_for_corner` gives it: ``corner_strategy="priority"`` picks the first of the
-    faces' segments in the corner order (priority, then essential before natural, then placed before global,
-    then declaration), so a corner a Dirichlet face shares at equal priority is the Dirichlet face's (#2512 row
-    B1). Applied here with rank arrays, by the same key, because this runs every step.
+    A node shared by several faces (a corner, or an edge in 3-D) takes the segment
+    :meth:`BoundaryConditions.corner_nodes` gives it: the faces are written first, then each such node from the
+    owner's choice, which reads the segment that holds that node on each face (#2512 row B1).
     """
     mask = np.zeros(shape, dtype=bool)
     values = np.zeros(shape, dtype=np.float64)
     if bc is None:
         return mask, values
-    faces = [BoundaryFace(axis, side) for axis in range(len(shape)) for side in ("min", "max")]
-    governing = [face_segment(bc, face, geometry) for face in faces]
-    rank_of = {id(seg): i for i, seg in enumerate(sorted(governing, key=bc._corner_key))}
-    best = np.full(shape, np.inf)
-    winner = np.full(shape, -1, dtype=int)
-    for k, (face, segment) in enumerate(zip(faces, governing, strict=True)):
-        slot: list[int | slice] = [slice(None)] * len(shape)
-        slot[face.axis] = 0 if face.side == "min" else -1
-        index = tuple(slot)
-        better = rank_of[id(segment)] < best[index]
-        best[index] = np.where(better, rank_of[id(segment)], best[index])
-        winner[index] = np.where(better, k, winner[index])
-    bc.refuse_blended_corners(len(shape), geometry)
-    for k, segment in enumerate(governing):
-        if segment.bc_type != BCType.DIRICHLET:
-            continue
-        where = winner == k
-        if not where.any():
-            continue
-        g = segment_value(
+
+    def wall_value(segment: Any) -> float:
+        return segment_value(
             segment, t=time, time_keyword="time", x=None, where=f"the FDM Dirichlet rows of {segment.name!r}"
         )
-        values[where] = g
-        mask |= where
+
+    for axis in range(len(shape)):
+        for side in ("min", "max"):
+            segment = face_segment(bc, BoundaryFace(axis, side), geometry)
+            slot: list[int | slice] = [slice(None)] * len(shape)
+            slot[axis] = 0 if side == "min" else -1
+            index = tuple(slot)
+            dirichlet = segment.bc_type == BCType.DIRICHLET
+            mask[index] = dirichlet
+            values[index] = wall_value(segment) if dirichlet else 0.0
+    for node, (_, segment) in bc.corner_nodes(shape, geometry).items():
+        dirichlet = segment.bc_type == BCType.DIRICHLET
+        mask[node] = dirichlet
+        values[node] = wall_value(segment) if dirichlet else 0.0
     return mask, values
 
 

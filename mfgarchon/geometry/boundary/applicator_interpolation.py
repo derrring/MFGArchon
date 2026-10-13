@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import numpy as np
 
 from .applicator_base import BaseBCApplicator, DiscretizationType
-from .conditions import BoundaryConditions
+from .conditions import BoundaryConditions, _group_nodes
 from .enforcement import (
     enforce_dirichlet_value_nd,
     enforce_neumann_value_nd,
@@ -57,6 +57,49 @@ if TYPE_CHECKING:
 # The face types whose enforcement reads the value: Dirichlet's u, Neumann's du/dn. Not Robin, whose enforcement below
 # hard-codes its coefficients and reads no value (#2374); it joins this set when it reads the segment's.
 _VALUED = frozenset({"dirichlet", "neumann"})
+
+
+def _as_str(bc_type: BCType | str) -> str:
+    return bc_type.value.lower() if isinstance(bc_type, BCType) else str(bc_type).lower()
+
+
+def _zero_flux(bc_type: BCType | str, value: object) -> bool:
+    """NO_FLUX, REFLECTING, or Neumann with g = 0: one enforcement branch, whatever spells it."""
+    kind = _as_str(bc_type)
+    if kind in ("no_flux", "reflecting"):
+        return True
+    return kind == "neumann" and (value is None or (not callable(value) and bool(np.all(np.asarray(value) == 0))))
+
+
+def _enforcement(segment: Any) -> tuple:
+    """What `InterpolationApplicator` writes for ``segment``: zero flux, periodic, or the type with its data."""
+    kind = _as_str(segment.bc_type)
+    if _zero_flux(kind, segment.value):
+        return ("zero flux",)
+    if kind == "periodic":
+        return (kind,)
+    if kind == "robin":
+        where = "InterpolationApplicator, comparing two Robin segments on one face"
+        return (kind, segment.value, *segment_robin_coefficients(segment, where=where))
+    return (kind, segment.value)
+
+
+def _equal(a: object, b: object) -> bool:
+    if a is b:
+        return True
+    if callable(a) or callable(b):
+        return False
+    try:
+        return bool(np.array_equal(np.asarray(a), np.asarray(b)))
+    except (TypeError, ValueError):
+        return False
+
+
+def _same_enforcement(first: Any, second: Any) -> bool:
+    """The applicator's equivalence for the face owner: two segments it would enforce the same way. Module-level,
+    so the owner's per-object memo sees one function across steps."""
+    a, b = _enforcement(first), _enforcement(second)
+    return len(a) == len(b) and a[0] == b[0] and all(_equal(x, y) for x, y in zip(a[1:], b[1:], strict=True))
 
 
 class InterpolationApplicator(BaseBCApplicator):
@@ -173,13 +216,22 @@ class InterpolationApplicator(BaseBCApplicator):
 
         h_per_axis = None if spacing is None else np.broadcast_to(np.asarray(spacing, dtype=float).ravel(), (ndim,))
 
-        # Each face's type, and its value where the type's enforcement reads one, from one segment, in the order the
-        # faces are written: where faces share nodes, the owner's corner choice is written last.
-        for face, bc_type, value in self._face_conditions(boundary_conditions, ndim, geometry, time):
+        # Each face's type, and its value where the type's enforcement reads one, from one segment. Then each node
+        # several faces share, from the owner's choice for that node (`BoundaryConditions.corner_nodes`): its
+        # segment's enforcement along its face, written at the node.
+        def enforce(target: NDArray[np.floating], face: BoundaryFace, bc_type: str, value: float | None) -> None:
             h = None if h_per_axis is None else float(h_per_axis[face.axis])
             side: Literal["min", "max"] = "min" if face.side == "min" else "max"
-            self._enforce_boundary_1d(field, face.axis, side, bc_type, value, self._extrapolation_order, h)
+            self._enforce_boundary_1d(target, face.axis, side, bc_type, value, self._extrapolation_order, h)
 
+        conditions, corners = self._face_conditions(boundary_conditions, ndim, geometry, time, field.shape)
+        for face, bc_type, value in conditions:
+            enforce(field, face, bc_type, value)
+        written = field.copy() if corners else None
+        for face, bc_type, value, nodes in corners:
+            source = written.copy()
+            enforce(source, face, bc_type, value)
+            field[nodes] = source[nodes]
         return field
 
     def _enforce_boundary_1d(
@@ -237,85 +289,55 @@ class InterpolationApplicator(BaseBCApplicator):
         ndim: int,
         geometry: Any,
         time: float | None,
-    ) -> list[tuple[BoundaryFace, str, float | None]]:
-        """Each face's ``(face, type, value)``, from the segment the face owner gives it (#2512 row B1), in the
-        order to write them. The value is read only where the type's enforcement uses it (``_VALUED``).
-
-        Faces are written lowest corner precedence first (`BoundaryConditions.segment_for_corner`'s order), so
-        where faces share nodes the owner's corner choice is written last, as `FDMApplicator.enforce_values`
-        does. Writing axis by axis gave every corner to the last axis written.
+        shape: tuple[int, ...] | None = None,
+    ) -> tuple[list[tuple[BoundaryFace, str, float | None]], list[tuple[BoundaryFace, str, float | None, Any]]]:
+        """Each face's ``(face, type, value)``, from the segment the face owner gives it (#2512 row B1); and, for a
+        field of ``shape``, each group of nodes several faces share as ``(face, type, value, index)``: the owner's
+        choice there (`BoundaryConditions.corner_nodes`), to be written along that face at those nodes after the
+        faces. The value is read only where the type's enforcement uses it (``_VALUED``).
 
         This applicator imposes one condition per face, and zero flux is one branch whatever spells it --
-        NO_FLUX, REFLECTING, or Neumann with g = 0. So the owner is asked with that equivalence: a segment
-        covering part of a face is accepted when it and the rest of the face enforce the same way, and refused
-        otherwise. When every condition the BC carries, its default included, is zero flux, every face is zero
-        flux whichever segment governs it, and no placement is read: a region the owner cannot place without
-        the solver's geometry (a ``region_name`` from `mixed_bc_from_regions`) is then imposed, not refused
-        (#2466, #2472). The faces are asked for by `BoundaryFace`, so no name is built here (#2628).
+        NO_FLUX, REFLECTING, or Neumann with g = 0. So the owner is asked with that equivalence
+        (`_same_enforcement`): a segment covering part of a face is accepted when it and the rest of the face
+        enforce the same way, and refused otherwise; under a blending ``corner_strategy`` a corner is refused only
+        where its faces enforce differently. When every condition the BC carries, its default included, is zero
+        flux, every face is zero flux whichever segment governs it, and no placement is read: a region the owner
+        cannot place without the solver's geometry (a ``region_name`` from `mixed_bc_from_regions`) is then
+        imposed, not refused (#2466, #2472). The faces are asked for by `BoundaryFace`, so no name is built here
+        (#2628).
         """
         if not isinstance(bc, BoundaryConditions):
             raise TypeError(
                 f"The interpolation applicator takes a BoundaryConditions, not a {type(bc).__name__} (the legacy "
                 "fdm_bc_1d class is removed)."
             )
-
-        def as_str(bc_type: BCType | str) -> str:
-            return bc_type.value.lower() if isinstance(bc_type, BCType) else str(bc_type).lower()
-
-        def zero_flux(bc_type: BCType | str, value: object) -> bool:
-            kind = as_str(bc_type)
-            if kind in ("no_flux", "reflecting"):
-                return True
-            return kind == "neumann" and (
-                value is None or (not callable(value) and bool(np.all(np.asarray(value) == 0)))
-            )
-
         conditions = [(seg.bc_type, seg.value) for seg in bc.segments]
         if bc.default_bc is not None:
             conditions.append((bc.default_bc, bc.default_value))
-            if all(zero_flux(kind, value) for kind, value in conditions):
-                return [(BoundaryFace(axis, side), "no_flux", None) for axis in range(ndim) for side in ("min", "max")]
+            if all(_zero_flux(kind, value) for kind, value in conditions):
+                faces = [BoundaryFace(axis, side) for axis in range(ndim) for side in ("min", "max")]
+                return [(face, "no_flux", None) for face in faces], []
 
-        def enforcement(segment: Any) -> tuple:
-            kind = as_str(segment.bc_type)
-            if zero_flux(kind, segment.value):
-                return ("zero flux",)
-            if kind == "periodic":
-                return (kind,)
-            if kind == "robin":
-                where = "InterpolationApplicator, comparing two Robin segments on one face"
-                return (kind, segment.value, *segment_robin_coefficients(segment, where=where))
-            return (kind, segment.value)
-
-        def equal(a: object, b: object) -> bool:
-            if a is b:
-                return True
-            if callable(a) or callable(b):
-                return False
-            try:
-                return bool(np.array_equal(np.asarray(a), np.asarray(b)))
-            except (TypeError, ValueError):
-                return False
-
-        def same_enforcement(first: Any, second: Any) -> bool:
-            a, b = enforcement(first), enforcement(second)
-            return len(a) == len(b) and a[0] == b[0] and all(equal(x, y) for x, y in zip(a[1:], b[1:], strict=True))
-
-        faces = [BoundaryFace(axis, side) for axis in range(ndim) for side in ("min", "max")]
-        governing = {face: bc.segment_for_face(face, geometry, equivalent=same_enforcement) for face in faces}
-        bc.refuse_blended_corners(ndim, geometry, equivalent=same_enforcement)
-        result = []
-        for face in sorted(faces, key=lambda f: bc._corner_key(governing[f]), reverse=True):
-            segment = governing[face]
-            kind = as_str(segment.bc_type)
+        def written(segment: Any, face: BoundaryFace) -> tuple[str, float | None]:
+            kind = _as_str(segment.bc_type)
             where = f"InterpolationApplicator, the {face.to_string()} face"
             value = (
                 float(segment_value(segment, t=time, x=None, where=where, time_keyword="time"))
                 if kind in _VALUED
                 else None
             )
-            result.append((face, kind, value))
-        return result
+            return kind, value
+
+        faces = [BoundaryFace(axis, side) for axis in range(ndim) for side in ("min", "max")]
+        result = [
+            (face, *written(bc.segment_for_face(face, geometry, equivalent=_same_enforcement), face)) for face in faces
+        ]
+        corners = []
+        if shape is not None:
+            nodes = bc.corner_nodes(tuple(shape), geometry, equivalent=_same_enforcement)
+            for face, segment, index in _group_nodes(nodes):
+                corners.append((face, *written(segment, face), index))
+        return result, corners
 
     def clamp_query_points(
         self,
