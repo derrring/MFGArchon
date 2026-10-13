@@ -35,8 +35,8 @@
   - **Inside `using_resolved_bc`**, a components BC is resolved together with the geometry's, so the two
     declarations stay one.
   - **On implicit domains the channels now reach every solver.**
-    - A solver on a geometry periodic on every axis used to receive no BC (None). It now receives
-      `periodic_bc`.
+    - A solver on a geometry periodic on every axis used to receive no BC (None), and the particle solver the
+      string `"periodic"`. It now receives `periodic_bc`.
     - The particle solver on an implicit domain with a components BC now uses that BC. It used to read only the
       geometry, so it either refused or, on a torus, took the `"periodic"` string.
     - On a torus the particle solver's density query no longer mirrors kernel mass at the box's edges, which a

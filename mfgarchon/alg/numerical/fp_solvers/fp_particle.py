@@ -136,8 +136,8 @@ class FPParticleSolver(BaseFPSolver):
     Boundary Conditions:
         A BC passed as ``boundary_conditions`` is this solver's own. Otherwise the problem's shared BC, from its
         one owner (`MFGProblem.get_boundary_conditions`, #2530): the geometry's, a components BC on a geometry that
-        declares none, or ``periodic_bc`` on a torus. A problem with none on any channel is refused by name; there
-        is no default.
+        declares none, ``periodic_bc`` on a torus, or a default the geometry answers of its own (a grid after
+        ``set_boundary_conditions(None)``, #2639). A problem with none on any channel is otherwise refused by name.
 
     Composition Pattern (Issue #545):
         This solver uses composition instead of mixins:

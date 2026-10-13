@@ -52,7 +52,9 @@ ALLOWED = {
     ("mfgarchon/core/mfg_components.py", "get_boundary_conditions"): (5, "the owner"),
     ("mfgarchon/core/mfg_components.py", "using_resolved_bc"): (
         3,
-        "a dependent: sets the provider-resolved BC on the channels that declare it, and restores them",
+        "a dependent: sets the provider-resolved BC on the geometry and on a components BC beside it, and restores "
+        "them; on a grid after set_boundary_conditions(None) the restore writes back the grid's answered default "
+        "as a declaration (#2639)",
     ),
     ("mfgarchon/core/mfg_problem.py", "__init__"): (
         2,

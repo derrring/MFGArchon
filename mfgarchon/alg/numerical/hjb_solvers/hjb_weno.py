@@ -336,11 +336,11 @@ class HJBWENOSolver(BaseHJBSolver):
         # Issue #576: Uses polynomial extrapolation (not simple reflection)
         self.ghost_order = 5
 
-        # Get boundary conditions from problem/geometry if available
+        # The problem's BC, from its one owner (#2530); a problem with none is refused there by name
         bc = self._get_boundary_conditions()
         # Issue #1456: fail loud now if the resolved BC requests a type WENO cannot honor
         # (Robin / Reflecting / Extrapolation), instead of silently reflecting/degrading it in the
-        # ghost path. The neumann fallback above keeps an unconfigured problem on a supported type.
+        # ghost path.
         self._validate_bc_support(bc)
 
         # Build domain bounds from grid information

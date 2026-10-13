@@ -216,7 +216,7 @@ def test_a_torus_answers_periodic_bc():
     assert bc.type == "periodic"
     assert bc.dimension == 2
     box = Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]]), periodic_dims=(0,))
-    with pytest.raises(ValueError, match=r"no channel declares boundary conditions.*components\.boundary_conditions"):
+    with pytest.raises(ValueError, match=r"no channel declares boundary conditions.*on a geometry that holds none"):
         MFGProblem(geometry=box, components=_components(), T=T, Nt=NT).get_boundary_conditions()
     # The refusal's advice for a geometry that holds none: the components BC is then the BC.
     declared = no_flux_bc(dimension=2)
@@ -382,7 +382,9 @@ def test_hjb_gfdm_solves_the_bc_the_owner_returns_once_newton_converges(mfg_capl
 # BC, whether it answers a default of its own, and whether it is periodic on every axis; and on the components BC.
 # Every concrete `GeometryProtocol` implementer in `mfgarchon.geometry` gets a builder here or a reason it has none,
 # and `test_every_geometry_type_has_a_builder_or_a_reason` fails on a new type until it does. Each cell's expected
-# answer is derived from the rulings, never listed.
+# answer is derived from the rulings and from what the type does: whether it holds a BC is measured by attaching
+# one through its own channel and reading it back. Blind spot: a protocol implementer that keeps its members as
+# instance attributes fails the class-level check below; `git grep "def get_boundary_conditions"` is the other net.
 
 _STATES = ("no BC anywhere", "components only", "geometry only", "both, the same", "both, differing")
 
@@ -441,6 +443,44 @@ def _generated(mesh):
 def _network(net):
     net.create_network()
     return net
+
+
+def _cloud_that_holds_a_bc():
+    """A `GeometryProtocol` outside the `Geometry` hierarchy whose accessor answers a BC it stores. No library type
+    does; it pins the owner's arm for one (review 2 of #2638)."""
+    from mfgarchon.geometry.implicit.point_cloud import PointCloudGeometry
+
+    class CloudThatHoldsABC(PointCloudGeometry):
+        def __init__(self, points):
+            super().__init__(points)
+            self.stored = None
+
+        def set_boundary_conditions(self, bc):
+            self.stored = bc
+
+        def get_boundary_conditions(self):
+            return self.stored
+
+    return CloudThatHoldsABC(np.linspace(0.0, 1.0, 11).reshape(-1, 1))
+
+
+def _attach(geometry, bc):
+    """Put ``bc`` on the geometry's own channel -- its setter, else its ``boundary_conditions`` attribute -- and say
+    whether the geometry then answers it, which is what holding a BC means here."""
+    if getattr(type(geometry), "set_boundary_conditions", None) is not None:
+        geometry.set_boundary_conditions(bc)
+    else:
+        geometry.boundary_conditions = bc
+    answer = geometry.get_boundary_conditions()
+    if bc is None or answer is None:
+        return False
+    if answer is bc:
+        return True
+    return (
+        isinstance(answer, BoundaryConditions)
+        and isinstance(bc, BoundaryConditions)
+        and answer.declares_the_same_as(bc)
+    )
 
 
 def _geometry_builders():
@@ -516,6 +556,7 @@ def _geometry_builders():
         "mfgarchon.geometry.graph.network_geometry.CustomNetwork": {
             "": network("CustomNetwork", adjacency_matrix=np.array([[0.0, 1.0], [1.0, 0.0]]))
         },
+        "tests: a GeometryProtocol outside Geometry that holds a BC": {"": _cloud_that_holds_a_bc},
         "mfgarchon.geometry.graph.maze_generator.MazeGeometry": (
             "NetworkMFGProblem cannot be built on it: AttributeError, no 'network_data', at 79fae339 as here (#2573)"
         ),
@@ -536,7 +577,7 @@ def _cells():
         for variant, build in variants.items():
             for state in _STATES:
                 yield pytest.param(
-                    build, state, id=f"{type_name.rsplit('.', 1)[1]}{' ' + variant if variant else ''}, {state}"
+                    build, state, id=f"{type_name.rsplit('.', 1)[-1]}{' ' + variant if variant else ''}, {state}"
                 )
 
 
@@ -548,23 +589,18 @@ def test_the_owner_answers_every_geometry_type_in_every_channel_state(build, sta
     One cell answers a default the library declares for the user -- a grid after ``set_boundary_conditions(None)``
     falls back to its parent class's no-flux -- and is kept by the audit session's ruling; that family is #2639."""
     from mfgarchon.extensions.topology import NetworkMFGProblem
-    from mfgarchon.geometry.base import GraphGeometry, UnstructuredMesh
+    from mfgarchon.geometry.base import GraphGeometry
     from mfgarchon.geometry.boundary.applicator_graph import GraphBCConfig
 
     geometry = build()
     dimension = geometry.dimension
-    is_graph = isinstance(geometry, GraphGeometry)
-    holds = is_graph or isinstance(geometry, (TensorProductGrid, UnstructuredMesh))
-    if state in _STATES[2:] and not holds:
-        pytest.skip("this geometry holds no BC")
+    is_graph = isinstance(geometry, GraphGeometry)  # a graph's BC is a node config, not a BoundaryConditions (#1471)
     on_geometry = GraphBCConfig() if is_graph else dirichlet_bc(dimension=dimension, value=0.7)
-    if state in _STATES[:2] and isinstance(geometry, TensorProductGrid):
-        geometry.set_boundary_conditions(None)  # a grid always declares one; this is how it holds none
-    if state in _STATES[2:]:
-        if is_graph or isinstance(geometry, TensorProductGrid):
-            geometry.set_boundary_conditions(on_geometry)
-        else:
-            geometry.boundary_conditions = on_geometry
+    if state in _STATES[2:] and not _attach(build(), on_geometry):
+        pytest.skip("this geometry holds no BC")
+    # The geometry states attach a BC through the type's own channel; the others clear it (a grid always declares
+    # one, and set_boundary_conditions(None) is how it holds none).
+    _attach(geometry, on_geometry if state in _STATES[2:] else None)
     stored = geometry.get_boundary_conditions()
     declared = {
         _STATES[1]: no_flux_bc(dimension=dimension),

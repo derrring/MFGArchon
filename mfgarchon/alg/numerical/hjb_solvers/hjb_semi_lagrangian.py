@@ -2922,7 +2922,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         Returns:
             BC type string ("periodic", "dirichlet", "neumann", "no_flux", "robin"), or "none" for an
-            interior point or a problem with no BC.
+            interior point. A problem with no BC is refused by its owner before this is reached (#2530).
 
         Note:
             Read through the owner (#2512 row B1): the segment governing the point's face, or at a corner

@@ -64,9 +64,10 @@ class _MockProblem:
         self.hamiltonian_class = None
 
     def get_boundary_conditions(self):
-        """The problem's BC owner, as `MFGProblem.get_boundary_conditions` answers (#2530): the BC this double was
-        given, as a components BC is on a geometry that declares none; else the geometry's, read live, so a BC set
-        on it between solves is the one the next solve reads."""
+        """A double for the problem's BC owner (`MFGProblem.get_boundary_conditions`, #2530): the BC it was given,
+        else a ``boundary_conditions`` attribute set on its geometry, read live so that a BC set between solves is
+        the one the next solve reads. The attribute stands in for a geometry that declares a BC; a real
+        Hyperrectangle declares none, and the owner would answer a components BC or refuse."""
         if self._boundary_conditions is not None:
             return self._boundary_conditions
         return self.geometry.boundary_conditions
