@@ -49,12 +49,15 @@ def _interval(bc: BoundaryConditions, n: int = 16):
 
 def _hjb(geometry, nt: int = NT):
     from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
+    from mfgarchon.geometry.meshes.mesh_1d import Mesh1D
 
+    # Unit mass on the domain's own measure: Mesh1D's uniform-cell measure gives a constant c the mass c (n+1)/n.
+    c = geometry.num_elements / (geometry.num_elements + 1) if isinstance(geometry, Mesh1D) else 1.0
     model = Model(
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=SIGMA
     )
     conditions = Conditions(
-        m_initial=lambda x: 1.0 + 0.0 * np.asarray(x, dtype=float)[..., 0], u_terminal=lambda x: 0.0, T=T
+        m_initial=lambda x: c + 0.0 * np.asarray(x, dtype=float)[..., 0], u_terminal=lambda x: 0.0, T=T
     )
     return HJBFEMSolver(MFGProblem(model=model, domain=geometry, conditions=conditions, Nt=nt))
 

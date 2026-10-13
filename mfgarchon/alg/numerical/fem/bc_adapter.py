@@ -279,9 +279,9 @@ def refuse_what_fem_cannot_impose(basis: skfem.Basis, bc: BoundaryConditions | N
 
 
 def _evaluate_segment_values(
-    segment,
+    segment: BCSegment,
     basis: skfem.Basis,
-    dofs: list[int],
+    dofs: NDArray,
     t: float | None,
 ) -> list[float]:
     """The segment's Dirichlet value at the given DOFs, read by the one owner (`segment_value`, #2512 row B2).
