@@ -63,16 +63,16 @@ _MAX_OUTFLOW_HORIZON = 50.0
 def _fp_boundary_conditions(fp_solver: Any) -> Any:
     """The BC object the FP solve will actually impose.
 
-    NOT ``problem.geometry.boundary_conditions``. ``FPFDMSolver`` resolves its BC from a
-    documented hierarchy (``fp_fdm.py``) in which an explicit ``boundary_conditions=``
-    kwarg and ``problem.components.boundary_conditions`` both **outrank** geometry. The
-    solvers are constructor arguments here, so that cascade has already run by the time
+    NOT ``problem.geometry.boundary_conditions``. A BC handed to the FP solver
+    (``boundary_conditions=``) outranks the problem's shared one
+    (`MFGProblem.get_boundary_conditions`, #2530), and the FP translates either. The
+    solvers are constructor arguments here, so that resolution has already run by the time
     this iterator is built, and the solver's own attribute is the single authoritative
     answer.
 
-    #1802's first version of the guard read geometry instead, and both higher-priority
-    routes walked past it: the predicate flagged the object the solver used and returned
-    clean for the object the guard looked at.
+    #1802's first version of the guard read geometry instead, and the routes that outranked
+    geometry then walked past it: the predicate flagged the object the solver used and
+    returned clean for the object the guard looked at.
 
     A solver that exposes no ``boundary_conditions`` attribute -- the weak-form family keeps its BC in
     ``_bc``, set from ``get_boundary_conditions()`` -- is asked through that method, which ends in the
@@ -244,7 +244,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         constructor arguments and both returning the rescaled density:
 
         - it read ``problem.geometry.boundary_conditions`` while the solve uses what the FP
-          solver resolved, and geometry is only third in that hierarchy. See
+          solver resolved, which a BC handed to the solver outranks. See
           ``_fp_boundary_conditions``.
         - it iterated ``segments`` and never read ``default_bc``/``default_value``. A
           fall-through wall carries data too; #1686 had already closed that exact hole in

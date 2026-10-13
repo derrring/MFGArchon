@@ -185,49 +185,25 @@ class FPFVMSolver(BaseFPSolver):
     # Setup helpers
     # ------------------------------------------------------------------
     def _resolve_boundary_conditions(self, boundary_conditions: BoundaryConditions | None) -> BoundaryConditions:
-        """Resolve BC using the same hierarchy as FPFDMSolver (explicit > components > geometry).
+        """The FP's own BC when it was handed one, else the problem's shared BC (`MFGProblem.get_boundary_conditions`,
+        #2530), as FPFDMSolver reads it.
 
-        Every return goes through ``_with_geometry_periodic_convention``: this method shadows
-        ``BaseMFGSolver.boundary_conditions``, which is where a periodic BC normally picks up the
-        node layout of the grid being solved on (#1822). Without it, a BC supplied by the caller
-        keeps an unstated convention and wraps the historical way while the geometry channel gets
-        the grid's -- 8.7e-02 against 9.3e-03 of heat-kernel error on one problem, decided only by
-        which channel supplied the BC.
+        Every return goes through ``_with_geometry_periodic_convention``, where a periodic BC picks up the node
+        layout of the grid being solved on (#1822). Without it, a BC supplied by the caller keeps an unstated
+        convention and wraps the historical way while the geometry channel gets the grid's -- 8.7e-02 against
+        9.3e-03 of heat-kernel error on one problem, decided only by which channel supplied the BC.
         """
         return self._with_geometry_periodic_convention(self._boundary_conditions_source(boundary_conditions))
 
     def _boundary_conditions_source(self, boundary_conditions: BoundaryConditions | None) -> BoundaryConditions:
         """Which object supplies the BC, before the grid's periodic layout is bound onto it.
 
-        A BC passed here is the FP's own, and a NEUMANN in it is refused; one read from the shared problem
-        or geometry is translated, so a NEUMANN there is zero flux (#2512, row B3).
+        A BC passed here is the FP's own, and a NEUMANN in it is refused; the problem's shared BC is
+        translated, so a NEUMANN there is zero flux (#2512, row B3).
         """
         if boundary_conditions is not None:
             return self._fp_own_bc(boundary_conditions)
-
-        try:
-            if self.problem.components is not None and self.problem.components.boundary_conditions is not None:
-                return self._fp_view_of_shared(self.problem.components.boundary_conditions)
-        except AttributeError:
-            pass
-
-        try:
-            bc = self.problem.geometry.boundary_conditions
-            if bc is not None:
-                return self._fp_view_of_shared(bc)
-        except AttributeError:
-            pass
-
-        try:
-            bc = self.problem.geometry.get_boundary_conditions()
-            if bc is not None:
-                return self._fp_view_of_shared(bc)
-        except AttributeError:
-            pass
-
-        from mfgarchon.geometry.boundary import no_flux_bc
-
-        return no_flux_bc(dimension=self.dimension)
+        return self._fp_view_of_shared(self.problem.get_boundary_conditions())
 
     @staticmethod
     def _resolve_bc_types(bc: BoundaryConditions, ndim: int) -> list[str]:

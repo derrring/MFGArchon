@@ -797,7 +797,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             Issues a CFL warning if the foot of a full step crosses more than one cell (``_foot_cfl``).
             Gradient clipping (Issue #583): Clips gradients > gradient_clip_threshold to prevent overflow.
         """
-        components = value_gradient(self.problem.geometry, u_values, time)
+        components = value_gradient(self.problem.geometry, u_values, time, bc=self.get_boundary_conditions())
 
         if self.dimension == 1:
             # 1D gradient computation via operator

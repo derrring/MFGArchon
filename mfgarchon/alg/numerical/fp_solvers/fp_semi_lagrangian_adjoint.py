@@ -451,7 +451,7 @@ class FPSLSolver(BaseFPSolver):
                 f"FPSLSolver differentiates U with TensorProductGrid's gradient operator (#2439); got "
                 f"{type(geometry).__name__}"
             )
-        return value_gradient(geometry, U, time)
+        return value_gradient(geometry, U, time, bc=self.get_boundary_conditions())
 
     def _adjoint_sl_step_1d(
         self,

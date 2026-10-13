@@ -762,43 +762,41 @@ class ConditionsMixin:
                 stacklevel=2,
             )
 
-    def get_boundary_conditions(self) -> BoundaryConditions:
-        """
-        Get spatial boundary conditions for the problem.
+    def get_boundary_conditions(self) -> BoundaryConditions | Any:
+        """The BC this problem's solvers share: the one owner of which channel supplies it (#2530, row B9).
 
-        Resolution order (SSOT principle with legacy backward compatibility):
-        1. Geometry with explicit BC - if geometry has explicitly set BC, use it (SSOT)
-        2. Components (legacy) - if MFGComponents has boundary_conditions, use it
-        3. Geometry default - if geometry exists, use its default BC
-        4. Default - periodic BC
+        A solver handed its own BC uses that one (`BaseMFGSolver._lookup_boundary_conditions`); every other reader
+        asks here, so the HJB and the FP of one problem read one BC. A graph geometry's node BCs are its own (#1471):
+        the owner returns them, None included, and a components BC beside them is refused.
 
-        This ensures both HJB and FP solvers see the same spatial BC
-        when querying via problem.get_boundary_conditions().
+        - The geometry's BC, when the geometry declares one (``has_explicit_boundary_conditions``). A components BC
+          given as well is a second declaration of the same BC, and the two must declare one condition
+          (`BoundaryConditions.declares_the_same_as`); two that differ are refused by name. On the
+          ``spatial_bounds=`` route the grid is built with the components BC (`MFGProblem._init_grid`), so there
+          the two are one.
+        - The components BC, on a geometry that declares none: an implicit domain, a point cloud, a mesh with no
+          BC attached.
+        - The geometry's own default, where it has one.
+        - A geometry periodic on every axis, a torus, answers `periodic_bc`.
+        - Otherwise no channel declares a BC, and it is refused by name (#2589).
+
+        Reading the components BC warns: that channel is deprecated in favour of the geometry's.
         """
+        from mfgarchon.geometry.base import GraphGeometry
         from mfgarchon.geometry.boundary.conditions import periodic_bc
+        from mfgarchon.geometry.protocols import SupportsPeriodic
 
-        # Check geometry availability and capabilities
-        has_geometry = self.geometry is not None
-
-        # Use contextlib.suppress for protocol duck typing (Issue #543 - geometry methods)
-        has_geometry_bc_method = False
-        has_explicit_bc = False
-
-        if has_geometry:
-            # Intentional: Protocol duck typing - not all geometries have BC methods
-            with contextlib.suppress(AttributeError):
-                has_geometry_bc_method = callable(getattr(self.geometry, "get_boundary_conditions", None))
-
-            # Intentional: Protocol duck typing - not all geometries have explicit BC support
-            with contextlib.suppress(AttributeError):
-                has_explicit_bc = self.geometry.has_explicit_boundary_conditions()
-
-        # Priority 1: Geometry with explicit BC (SSOT)
-        if has_explicit_bc:
-            return self.geometry.get_boundary_conditions()
-
-        # Priority 2: Components (legacy support) - DEPRECATED
-        if self.is_custom and self.components is not None and self.components.boundary_conditions is not None:
+        geometry = self.geometry
+        declared = self.components.boundary_conditions if self.components is not None else None
+        if isinstance(geometry, GraphGeometry):
+            if declared is not None:
+                raise ValueError(
+                    "MFGProblem.get_boundary_conditions: a network's node boundary conditions are declared on its "
+                    "graph geometry (#1471), and components.boundary_conditions is not read on a network. Remove it, "
+                    "or set the node BCs on the geometry (set_boundary_conditions)."
+                )
+            return geometry.get_boundary_conditions()
+        if declared is not None:
             import warnings
 
             warnings.warn(
@@ -814,27 +812,29 @@ class ConditionsMixin:
                 DeprecationWarning,
                 stacklevel=2,
             )
-            return self.components.boundary_conditions
-
-        # Priority 3: Geometry default (no-flux)
-        if has_geometry_bc_method:
-            return self.geometry.get_boundary_conditions()
-
-        # Priority 4: Default periodic BC - IMPLICIT FALLBACK
-        import warnings
-
-        warnings.warn(
-            "No boundary conditions specified. Defaulting to periodic BC. "
-            "This implicit fallback is deprecated. "
-            "Explicitly specify boundary conditions via geometry:\n\n"
-            "  from mfgarchon.geometry.boundary import periodic_bc\n"
-            "  bc = periodic_bc(dimension=...)\n"
-            "  grid = TensorProductGrid(..., boundary_conditions=bc)\n\n"
-            "Implicit periodic BC default will be removed in v1.0.0.",
-            DeprecationWarning,
-            stacklevel=2,
+        if geometry is not None and geometry.has_explicit_boundary_conditions():
+            on_geometry = geometry.get_boundary_conditions()
+            if declared is not None and not declared.declares_the_same_as(on_geometry):
+                raise ValueError(
+                    "MFGProblem.get_boundary_conditions: the problem declares its boundary conditions twice, on "
+                    f"the geometry ({type(geometry).__name__}) and in components.boundary_conditions, and the two "
+                    "differ. Both solvers read one BC, so one of the two would be dropped. Declare it once, on the "
+                    "geometry, or give components the same BC (#2530)."
+                )
+            return on_geometry
+        if declared is not None:
+            return declared
+        own = geometry.get_boundary_conditions() if geometry is not None else None
+        if own is not None:
+            return own
+        if isinstance(geometry, SupportsPeriodic) and len(geometry.periodic_dimensions) == geometry.dimension:
+            return periodic_bc(dimension=geometry.dimension)
+        raise ValueError(
+            "MFGProblem.get_boundary_conditions: no channel declares boundary conditions. The geometry "
+            f"({type(geometry).__name__}) has none, and components.boundary_conditions is unset. Declare them on "
+            "the geometry -- TensorProductGrid(..., boundary_conditions=bc), or mesh.boundary_conditions = bc -- or "
+            "pass boundary_conditions= to the solver that needs them (#2589)."
         )
-        return periodic_bc(dimension=self.dimension)
 
     @contextlib.contextmanager
     def using_resolved_bc(self, state: dict[str, Any]):
@@ -880,6 +880,9 @@ class ConditionsMixin:
         # Use geometry's set_boundary_conditions if available
         original_bc = None
         geometry_has_setter = False
+        # A components BC beside the geometry's is the same declaration (#2530, row B9): it is resolved with it,
+        # or the owner would compare the resolved geometry BC against the unresolved one and refuse the pair.
+        original_components_bc = None
 
         try:
             if self.geometry is not None:
@@ -888,6 +891,9 @@ class ConditionsMixin:
                     geometry_has_setter = True
                     original_bc = self.geometry.get_boundary_conditions()
                     self.geometry.set_boundary_conditions(resolved_bc)
+                    if self.components is not None and self.components.boundary_conditions is not None:
+                        original_components_bc = self.components.boundary_conditions
+                        self.components.boundary_conditions = resolved_bc
 
             if not geometry_has_setter:
                 # Fallback: store resolved BC in a temporary attribute.
@@ -902,6 +908,8 @@ class ConditionsMixin:
             # Restore original BC
             if geometry_has_setter and self.geometry is not None:
                 self.geometry.set_boundary_conditions(original_bc)
+                if original_components_bc is not None:
+                    self.components.boundary_conditions = original_components_bc
             else:
                 # Issue #1068: _temp_resolved_bc is always present (None-init).
                 # Restore to prior value (None if it was never set).

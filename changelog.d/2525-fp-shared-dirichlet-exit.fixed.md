@@ -19,7 +19,7 @@
       - For FEM that refusal was correct on main and is false now.
       - For meshless it was already false on main.
   - **Limits, filed:**
-    - On the `problem.components.boundary_conditions` route, the HJB does not read the BC when the geometry carries one, so that exit has no u = g half (#2530).
+    - On the `problem.components.boundary_conditions` route, the HJB did not read the BC when the geometry carried one, so that exit had no u = g half (#2530). Fixed in this same release: one owner decides the BC the HJB and the FP share (`2530-one-bc-owner.changed.md`).
     - FP-FDM adds a source term to its Dirichlet rows, so under a source the exit holds dt·S rather than 0: with S = 1 and dt = 0.05, it holds 0.05 at every step.
     - Separately, `solve_fp_step_adjoint_mode` imposes no Dirichlet value; the absorbing reading above is `solve_fp_system`'s (#2531).
   - FP-FVM, FP-GFDM and FP-SL refuse DIRICHLET at any g, shared or explicit.

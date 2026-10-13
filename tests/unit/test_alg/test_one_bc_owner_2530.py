@@ -1,0 +1,316 @@
+"""One owner decides which BC object is "the BC" of a problem (#2530, #2512 row B9).
+
+`MFGProblem.get_boundary_conditions` holds the order among the channels that can carry the shared BC -- the
+geometry's and ``components.boundary_conditions`` -- and what happens when none does. A solver handed its own BC
+uses that one; every other reader asks the owner. Before this, five readers each had their own order: FP-FDM and
+FP-FVM read the components BC first, the HJB solvers, FP-SL and the particle solver read the geometry's, so on
+#2530's legacy route the FP absorbed at an exit the HJB never imposed.
+
+Rulings of the audit session (2026-10-13), plan at #2530 comment 6133804095:
+- D1: a components BC and a geometry BC both given are two declarations of one BC: refused when they differ, the
+  geometry's when they agree (`BoundaryConditions.declares_the_same_as`).
+- D2: the ``spatial_bounds=`` route builds its grid with the components BC, and the owner returns that grid's object.
+- D4: no BC on any channel is refused by name (#2589); a torus answers ``periodic_bc``; a graph geometry's node BCs
+  are its own (#1471).
+"""
+
+from __future__ import annotations
+
+import logging
+
+import pytest
+
+import numpy as np
+
+from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
+from mfgarchon.alg.numerical.fp_solvers.fp_fvm import FPFVMSolver
+from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
+from mfgarchon.alg.numerical.fp_solvers.fp_semi_lagrangian_adjoint import FPSLSolver
+from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
+from mfgarchon.alg.numerical.hjb_solvers.hjb_semi_lagrangian import HJBSemiLagrangianSolver
+from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+from mfgarchon.core.mfg_components import MFGComponents
+from mfgarchon.core.mfg_problem import MFGProblem
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import BoundaryConditions, dirichlet_bc, no_flux_bc, periodic_bc
+from mfgarchon.operators.differential.gradient import value_gradient
+
+N, NT, T, SIGMA = 21, 10, 0.5, 0.4
+TWICE = "declares its boundary conditions twice"
+
+
+def _components(bc=None):
+    kw = {
+        "hamiltonian": SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
+        "m_initial": lambda x: 1.0,
+        "u_terminal": lambda x: 0.0,
+    }
+    if bc is not None:
+        kw["boundary_conditions"] = bc
+    return MFGComponents(**kw)
+
+
+def _legacy(bc):
+    """#2530's route: ``spatial_bounds=``, the BC in components."""
+    return MFGProblem(
+        spatial_bounds=[(0.0, 1.0)],
+        spatial_discretization=[N - 1],
+        components=_components(bc),
+        T=T,
+        Nt=NT,
+        volatility=SIGMA,
+    )
+
+
+def _on_grid(grid_bc, components_bc=None):
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[N], boundary_conditions=grid_bc)
+    return MFGProblem(geometry=grid, components=_components(components_bc), T=T, Nt=NT, volatility=SIGMA)
+
+
+# --- D1: two declarations of one BC -----------------------------------------------------------------------------
+
+
+def test_a_components_bc_that_differs_from_the_grids_is_refused_by_name():
+    problem = _on_grid(no_flux_bc(dimension=1), dirichlet_bc(dimension=1, value=0.7))
+    with pytest.raises(ValueError, match=TWICE):
+        problem.get_boundary_conditions()
+    for build in (FPFDMSolver, FPFVMSolver, lambda p: FPParticleSolver(p, num_particles=100, seed=0)):
+        with pytest.raises(ValueError, match=TWICE):
+            build(problem)
+
+
+def test_the_same_bc_on_both_channels_is_the_grids():
+    bc = dirichlet_bc(dimension=1, value=0.7)
+    problem = _on_grid(bc, bc)
+    assert problem.get_boundary_conditions() is problem.geometry.get_boundary_conditions()
+
+
+def test_a_bc_declared_without_a_dimension_agrees_with_its_bound_copy():
+    """A grid stores a bound copy, with its dimension filled in: content, not identity, is the test."""
+    unbound = no_flux_bc()
+    problem = _on_grid(unbound, unbound)
+    stored = problem.geometry.get_boundary_conditions()
+    assert stored is not unbound
+    assert unbound.dimension is None
+    assert stored.dimension == 1
+    assert problem.get_boundary_conditions() is stored
+
+
+def test_declares_the_same_as_compares_content_field_by_field():
+    exit_ = dirichlet_bc(dimension=1, value=0.7)
+    assert exit_.declares_the_same_as(dirichlet_bc(dimension=1, value=0.7))
+    assert not exit_.declares_the_same_as(dirichlet_bc(dimension=1, value=0.6))
+    assert not exit_.declares_the_same_as(dirichlet_bc(dimension=2, value=0.7))
+    assert exit_.declares_the_same_as(dirichlet_bc(value=0.7))  # an unset dimension agrees
+
+
+def test_a_mesh_with_a_bc_attached_declares_it_as_a_grid_does():
+    """A mesh's attached BC is the geometry's declaration (`UnstructuredMesh.has_explicit_boundary_conditions`):
+    a components BC beside it is the second declaration D1 compares, where it used to outrank the mesh's."""
+    from mfgarchon.geometry.meshes import Mesh1D
+
+    mesh = Mesh1D(bounds=(0.0, 1.0), num_elements=10)
+    mesh.generate_mesh()
+    assert not mesh.has_explicit_boundary_conditions()
+    mesh.boundary_conditions = no_flux_bc(dimension=1)
+    assert mesh.has_explicit_boundary_conditions()
+    problem = MFGProblem(geometry=mesh, components=_components(dirichlet_bc(dimension=1, value=0.7)), T=T, Nt=NT)
+    with pytest.raises(ValueError, match=TWICE):
+        problem.get_boundary_conditions()
+
+
+# --- D2: the legacy route --------------------------------------------------------------------------------------
+
+
+def test_the_legacy_route_builds_its_grid_with_the_components_bc():
+    exit_ = dirichlet_bc(dimension=1, value=0.7)
+    problem = _legacy(exit_)
+    stored = problem.geometry.get_boundary_conditions()
+    assert problem.get_boundary_conditions() is stored
+    assert stored.declares_the_same_as(exit_)
+    assert _legacy(None).get_boundary_conditions().declares_the_same_as(no_flux_bc(dimension=1))
+
+
+def test_inside_using_resolved_bc_the_components_bc_is_resolved_with_the_grids():
+    """The context sets the provider-resolved BC on the grid; the components BC, the same declaration, is resolved
+    with it, or the owner would compare resolved against unresolved and refuse (#2530 D1)."""
+    from mfgarchon.geometry.boundary import BaseBCValueProvider, BCSegment, BCType
+
+    class _Half(BaseBCValueProvider):
+        def compute(self, state):
+            return 0.5
+
+    with_provider = BoundaryConditions(
+        dimension=1, segments=[BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=_Half())]
+    )
+    problem = _legacy(with_provider)
+    with problem.using_resolved_bc({"geometry": problem.geometry}):
+        inside = problem.get_boundary_conditions()
+        assert inside.segments[0].value == 0.5
+    after = problem.get_boundary_conditions()
+    assert isinstance(after.segments[0].value, _Half)
+    assert problem.components.boundary_conditions is with_provider
+
+
+# --- D4: no BC ---------------------------------------------------------------------------------------------------
+
+
+def test_a_mesh_with_no_bc_on_any_channel_is_refused_by_name_and_the_advice_runs():
+    """#2589's probe: a mesh with no BC reached `has_providers()` on None from inside the Picard loop."""
+    from mfgarchon.geometry.meshes import Mesh1D
+
+    def problem_on(mesh):
+        return MFGProblem(geometry=mesh, components=_components(), T=0.5, Nt=5, volatility=SIGMA)
+
+    mesh = Mesh1D(bounds=(0.0, 1.0), num_elements=10)
+    mesh.generate_mesh()
+    with pytest.raises(ValueError, match=r"no channel declares boundary conditions.*Mesh1D.*#2589"):
+        problem_on(mesh).solve(max_iterations=3, verbose=False)
+    mesh.boundary_conditions = no_flux_bc(dimension=1)  # the message's advice: mesh.boundary_conditions = bc
+    assert problem_on(mesh).solve(max_iterations=3, verbose=False) is not None
+
+
+def test_a_torus_answers_periodic_bc():
+    from mfgarchon.geometry.implicit import Hyperrectangle
+
+    torus = Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]]), periodic_dims=(0, 1))
+    bc = MFGProblem(geometry=torus, components=_components(), T=T, Nt=NT).get_boundary_conditions()
+    assert bc.type == "periodic"
+    assert bc.dimension == 2
+    box = Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]]), periodic_dims=(0,))
+    with pytest.raises(ValueError, match="no channel declares boundary conditions"):
+        MFGProblem(geometry=box, components=_components(), T=T, Nt=NT).get_boundary_conditions()
+
+
+def test_a_components_bc_on_a_network_is_refused_where_the_graph_owns_node_bcs():
+    """A graph geometry's node BCs are its own (#1471): the owner returns them, None included (pinned in
+    test_network_hamiltonian_pinning.py), and a continuum BC in components is refused rather than dropped."""
+    pytest.importorskip("igraph")
+    from mfgarchon.extensions.topology import NetworkMFGProblem
+    from mfgarchon.geometry.graph.network_geometry import GridNetwork
+
+    net = GridNetwork(width=3, height=3)
+    net.create_network()
+    problem = NetworkMFGProblem(geometry=net, T=0.5, Nt=4)
+    assert problem.get_boundary_conditions() is None
+    problem.components.boundary_conditions = no_flux_bc(dimension=1)
+    with pytest.raises(ValueError, match="#1471"):
+        problem.get_boundary_conditions()
+
+
+# --- Form (b): a solver's operators are built on the BC it resolved ----------------------------------------------
+
+
+def _x_field(shape):
+    """u = x along axis 0: a mirror ghost and a periodic wrap give different wall gradients."""
+    return np.broadcast_to(np.linspace(0.0, 1.0, shape[0]).reshape(-1, *([1] * (len(shape) - 1))), shape).copy()
+
+
+@pytest.mark.parametrize("scheme", ["gradient_centered", "gradient_upwind"])
+def test_hjb_fdm_builds_its_gradients_on_the_bc_it_resolved(scheme):
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[9, 9], boundary_conditions=no_flux_bc(dimension=2)
+    )
+    problem = MFGProblem(geometry=grid, components=_components(), T=T, Nt=NT, volatility=SIGMA)
+    solver = HJBFDMSolver(problem, advection_scheme=scheme)
+    solver._boundary_conditions = periodic_bc(dimension=2)  # a BC handed to the solver, which outranks the grid's
+    U = _x_field((9, 9))
+    if scheme == "gradient_centered":
+        got = solver._compute_gradients_nd(U, time=0.0)[0]
+        on_own = grid.get_gradient_operator(scheme="central", time=0.0, bc=solver.get_boundary_conditions())[0](U)
+        on_grid = grid.get_gradient_operator(scheme="central", time=0.0)[0](U)
+    else:
+        got = solver._one_sided_differences_nd(U, time=0.0)[0][0]
+        on_own = grid.get_gradient_operator(scheme="backward", time=0.0, bc=solver.get_boundary_conditions())[0](U)
+        on_grid = grid.get_gradient_operator(scheme="backward", time=0.0)[0](U)
+    assert not np.allclose(on_own, on_grid)
+    np.testing.assert_allclose(got, on_own)
+
+
+def test_hjb_sl_builds_its_gradient_on_the_bc_it_resolved():
+    problem = _on_grid(no_flux_bc(dimension=1))
+    solver = HJBSemiLagrangianSolver(problem)
+    solver._boundary_conditions = periodic_bc(dimension=1)
+    U = np.linspace(0.0, 1.0, N)
+    on_own = value_gradient(problem.geometry, U, 0.0, bc=solver.get_boundary_conditions())[0]
+    on_grid = value_gradient(problem.geometry, U, 0.0)[0]
+    assert not np.allclose(on_own, on_grid)
+    np.testing.assert_allclose(solver._compute_gradient(U, time=0.0), on_own)
+
+
+def test_fp_sl_builds_its_gradient_of_u_on_the_bc_it_resolved():
+    problem = _on_grid(no_flux_bc(dimension=1))
+    solver = FPSLSolver(problem, boundary_conditions=periodic_bc(dimension=1))
+    U = np.linspace(0.0, 1.0, N)
+    on_own = value_gradient(problem.geometry, U, 0.0, bc=solver.get_boundary_conditions())[0]
+    on_grid = value_gradient(problem.geometry, U, 0.0)[0]
+    assert not np.allclose(on_own, on_grid)
+    np.testing.assert_allclose(solver._gradient(U, 0.0)[0], on_own)
+
+
+# --- #2530's oracle: each solver imposes the BC the owner returns -------------------------------------------------
+
+
+def _hjb(make, problem, U_T):
+    return np.asarray(make(problem).solve_hjb_system(np.ones((NT + 1, N)), U_T, np.tile(U_T, (NT + 1, 1))))
+
+
+_X = np.linspace(0.0, 1.0, N)
+
+
+def _fp(make, problem, kind):
+    """m0 = 1 + x: data that tells periodic from no-flux, which uniform data does not."""
+    solver = make(problem)
+    m0 = 1.0 + _X
+    if kind == "sl":
+        return np.asarray(solver.solve_fp_system(m0, potential_field=np.zeros((NT + 1, N))))
+    return np.asarray(solver.solve_fp_system(m0, drift_field=np.zeros((NT + 1, N))))
+
+
+_EXIT = dirichlet_bc(dimension=1, value=0.7)
+_SOLVERS = {
+    "HJB-FDM": (lambda p: _hjb(HJBFDMSolver, p, _X.copy()), _EXIT),
+    "HJB-SL": (lambda p: _hjb(HJBSemiLagrangianSolver, p, _X.copy()), periodic_bc(dimension=1)),
+    "FP-FDM": (lambda p: _fp(FPFDMSolver, p, "fdm"), _EXIT),
+    "FP-FVM": (lambda p: _fp(FPFVMSolver, p, "fvm"), periodic_bc(dimension=1)),
+    "FP-SL": (lambda p: _fp(FPSLSolver, p, "sl"), periodic_bc(dimension=1)),
+    "FP-particle": (lambda p: _fp(lambda q: FPParticleSolver(q, num_particles=2000, seed=2530), p, "particle"), _EXIT),
+}
+
+
+@pytest.mark.parametrize("name", list(_SOLVERS))
+def test_on_the_legacy_route_each_solver_solves_the_bc_the_owner_returns(name):
+    """Route A of the plan: the components BC on ``spatial_bounds=``. Each solver's solution equals its solution on a
+    grid that declares the same BC, and differs from the no-flux grid's -- which is what the legacy route used to
+    solve for every solver but FP-FDM. Solvers that refuse DIRICHLET (HJB-SL, FP-SL, FP-FVM) are read with
+    periodic against no-flux. Route B, a grid BC and a different components BC, is refused (D1)."""
+    run, bc = _SOLVERS[name]
+    legacy = run(_legacy(bc))
+    np.testing.assert_allclose(legacy, run(_on_grid(bc)))
+    assert not np.allclose(legacy, run(_on_grid(no_flux_bc(dimension=1))))
+    with pytest.raises(ValueError, match=TWICE):
+        run(_on_grid(no_flux_bc(dimension=1), bc))
+
+
+def test_hjb_gfdm_solves_the_bc_the_owner_returns_once_newton_converges(mfg_caplog):
+    """HJB-GFDM's default Newton does not converge against a wall datum that jumps from U_T (#2610), and a wall read
+    from an unconverged solve says nothing about which BC was resolved. So the datum is U_T = 0.7 + x(1 - x), which
+    equals the exit's 0.7 at both walls, and the solver's own verdict -- no "did not converge" record -- is asserted
+    before the walls are read. Its logger does not propagate, so the records are counted on it."""
+    x = np.linspace(0.0, 1.0, N)
+    U_T = 0.7 + x * (1.0 - x)
+
+    def run(problem):
+        return _hjb(lambda p: HJBGFDMSolver(p, collocation_points=p.geometry.get_spatial_grid()), problem, U_T)
+
+    with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm"):
+        legacy, exit_grid, no_flux = run(_legacy(_EXIT)), run(_on_grid(_EXIT)), run(_on_grid(no_flux_bc(dimension=1)))
+    unconverged = [r for r in mfg_caplog.records if "did not converge" in r.getMessage()]
+    assert unconverged == [], f"{len(unconverged)} unconverged steps: the walls below would mean nothing"
+    np.testing.assert_allclose(legacy[0, [0, -1]], [0.7, 0.7], atol=1e-10)
+    np.testing.assert_allclose(legacy, exit_grid)
+    assert abs(no_flux[0, 0] - 0.7) > 0.05
+    assert abs(no_flux[0, -1] - 0.7) > 0.05
+    with pytest.raises(ValueError, match=TWICE):
+        run(_on_grid(no_flux_bc(dimension=1), _EXIT))

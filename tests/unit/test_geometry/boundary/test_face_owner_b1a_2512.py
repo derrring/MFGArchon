@@ -881,11 +881,11 @@ def test_the_topology_query_refuses_what_is_not_a_bc():
     """Read as bounded walls, a stray string or object would solve a boundary nobody declared (review 2, fail-fast)."""
     from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import get_topology_per_dimension
 
-    for stray in ("dirichlet", object()):
+    # "periodic" was the particle solver's torus sentinel; a torus now answers periodic_bc (#2530, row B9).
+    for stray in ("dirichlet", "periodic", object()):
         with pytest.raises(TypeError, match="takes a BoundaryConditions"):
             get_topology_per_dimension(stray, 2)
     assert get_topology_per_dimension(None, 2) == ["bounded", "bounded"]
-    assert get_topology_per_dimension("periodic", 2) == ["periodic", "periodic"]
 
 
 def _strip_at_a_corner(strip_value=0.0, d_type=BCType.DIRICHLET, d_value=5.0, d_priority=1):

@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
+    from mfgarchon.geometry.boundary import BoundaryConditions
     from mfgarchon.types.pde_coefficients import DriftField
 
 
@@ -715,7 +716,15 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # Dispatch to appropriate initializer
         if mode == "nd_grid":
             # Mode 1: N-dimensional grid
-            self._init_grid(spatial_bounds, spatial_discretization, T, Nt, coupling_coefficient, suppress_warnings)
+            self._init_grid(
+                spatial_bounds,
+                spatial_discretization,
+                T,
+                Nt,
+                coupling_coefficient,
+                suppress_warnings,
+                components.boundary_conditions if components is not None else None,
+            )
 
         elif mode == "geometry":
             # Mode 2: Complex geometry
@@ -744,7 +753,15 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 UserWarning,
                 stacklevel=2,
             )
-            self._init_grid([(0.0, 1.0)], [51], T, Nt, coupling_coefficient, suppress_warnings)
+            self._init_grid(
+                [(0.0, 1.0)],
+                [51],
+                T,
+                Nt,
+                coupling_coefficient,
+                suppress_warnings,
+                components.boundary_conditions if components is not None else None,
+            )
 
         else:
             raise ValueError(f"Unknown initialization mode: {mode}")
@@ -815,14 +832,17 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         Nt: int,
         coupling_coefficient: float,
         suppress_warnings: bool,
+        boundary_conditions: BoundaryConditions | None = None,
     ) -> None:
         """
         Initialize problem on a tensor-product Cartesian grid.
 
-        Builds a ``TensorProductGrid`` (with default no-flux boundary conditions)
-        from ``spatial_bounds`` and the per-dimension interval counts in
-        ``spatial_discretization`` and stores the derived grid attributes. Used
-        by the ``spatial_bounds=`` (n-D grid) and no-argument (default 1D) paths.
+        Builds a ``TensorProductGrid`` from ``spatial_bounds`` and the per-dimension
+        interval counts in ``spatial_discretization`` and stores the derived grid
+        attributes. Used by the ``spatial_bounds=`` (n-D grid) and no-argument
+        (default 1D) paths. The grid carries the components BC when one is given --
+        the problem's BC owner then reads it there, as the grid's stored BC (#2530,
+        row B9) -- and no-flux otherwise.
 
         Args:
             spatial_bounds: List of (min, max) tuples, one per dimension.
@@ -833,6 +853,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             Nt: Number of time intervals.
             coupling_coefficient: Control cost coefficient.
             suppress_warnings: Skip the computational-feasibility check.
+            boundary_conditions: The components BC, or None.
         """
         # Validate inputs
         if not spatial_bounds:
@@ -856,7 +877,11 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # Convert discretization to Nx_points (add 1 for point count vs intervals)
         Nx_points = [n + 1 for n in spatial_discretization]
         geometry = TensorProductGrid(
-            bounds=spatial_bounds, Nx_points=Nx_points, boundary_conditions=no_flux_bc(dimension=dimension)
+            bounds=spatial_bounds,
+            Nx_points=Nx_points,
+            boundary_conditions=boundary_conditions
+            if boundary_conditions is not None
+            else no_flux_bc(dimension=dimension),
         )
 
         # Store geometry for unified interface

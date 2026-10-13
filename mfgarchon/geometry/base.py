@@ -1425,6 +1425,11 @@ class UnstructuredMesh(Geometry):
         bc = getattr(self, "boundary_conditions", None)
         return bc if isinstance(bc, BoundaryConditions) else None
 
+    def has_explicit_boundary_conditions(self) -> bool:
+        """True when a ``BoundaryConditions`` is attached: the mesh's declaration, which the problem's BC owner
+        reads before a components BC (#2530, row B9), as it reads a grid's."""
+        return self.get_boundary_conditions() is not None
+
     def get_collocation_points(self) -> NDArray:
         """
         Get collocation points (mesh vertices).
