@@ -681,6 +681,18 @@ _EXIT = BCType.DIRICHLET
             "reflected",
         ),
         (
+            "region, just inside its edge",
+            [_seg("exit", _EXIT, priority=1, boundary="x_max", region={"y": (0.4, 0.6)}), _seg("wall", BCType.NO_FLUX)],
+            (1.0, 0.58),
+            "absorbed",
+        ),
+        (
+            "region, just outside its edge",
+            [_seg("exit", _EXIT, priority=1, boundary="x_max", region={"y": (0.4, 0.6)}), _seg("wall", BCType.NO_FLUX)],
+            (1.0, 0.65),
+            "reflected",
+        ),
+        (
             "sdf_region, inside",
             [
                 _seg(
