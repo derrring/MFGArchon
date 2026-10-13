@@ -544,7 +544,9 @@ def _cells():
 def test_the_owner_answers_every_geometry_type_in_every_channel_state(build, state):
     """Each cell is one of the rulings: the declared BC; D1 (two declarations that differ are refused, the same one
     is the geometry's); D4 (none on any channel is refused by name, a torus answers periodic_bc, a graph its own
-    node config, None included). A geometry that holds no BC has no "geometry" states. Never an unnamed exception."""
+    node config, None included). A geometry that holds no BC has no "geometry" states. Never an unnamed exception.
+    One cell answers a default the library declares for the user -- a grid after ``set_boundary_conditions(None)``
+    falls back to its parent class's no-flux -- and is kept by the audit session's ruling; that family is #2639."""
     from mfgarchon.extensions.topology import NetworkMFGProblem
     from mfgarchon.geometry.base import GraphGeometry, UnstructuredMesh
     from mfgarchon.geometry.boundary.applicator_graph import GraphBCConfig
@@ -588,7 +590,7 @@ def test_the_owner_answers_every_geometry_type_in_every_channel_state(build, sta
         assert problem.get_boundary_conditions() is stored
     elif state == _STATES[1]:
         assert problem.get_boundary_conditions() is declared
-    elif stored is not None:  # no BC anywhere, but the geometry answers a default of its own (a new object per call)
+    elif stored is not None:  # the geometry answers a default of its own, a new object per call (#2639)
         assert problem.get_boundary_conditions().declares_the_same_as(stored)
     elif len(getattr(geometry, "periodic_dimensions", ())) == dimension:
         assert problem.get_boundary_conditions().type == "periodic"
