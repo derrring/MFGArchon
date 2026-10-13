@@ -441,31 +441,66 @@ def test_2305_a_neumann_load_on_the_default_channel_or_an_alias_is_assembled_whe
     assert np.allclose(basis.doflocs[0, np.flatnonzero(on_the_wall)], 0.0)
 
 
-def test_a_dirichlet_segment_the_corner_rule_leaves_no_node_is_refused_and_the_advice_runs():
+def _walls(**condition) -> list[BCSegment]:
+    """Two priority-1 segments on x_max placed by region, y in (0, 0.3) and y in (0.45, 1): on the 5 x 5 square they
+    govern the facets [0, 0.25] and [0.5, 1] and leave [0.25, 0.5] to whatever else is on x_max."""
+    return [
+        BCSegment(name="w1", boundary="x_max", region={"y": (0.0, 0.3)}, priority=1, **condition),
+        BCSegment(name="w2", boundary="x_max", region={"y": (0.45, 1.0)}, priority=1, **condition),
+    ]
+
+
+_EXIT_ON_X_MAX = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=G, boundary="x_max")
+#: The refusal's advice: on only the facet it should govern, at a priority above the segments that took its nodes.
+_ADVISED_EXIT = BCSegment(
+    name="exit", bc_type=BCType.DIRICHLET, value=G, boundary="x_max", region={"y": (0.3, 0.45)}, priority=2
+)
+
+
+@pytest.mark.parametrize(
+    "walls",
+    [{"bc_type": BCType.NO_FLUX}, {"bc_type": BCType.DIRICHLET, "value": 0.0}],
+    ids=["natural-walls", "dirichlet-walls"],
+)
+def test_a_dirichlet_segment_the_corner_rule_leaves_no_node_is_refused_and_the_advice_runs(walls):
     """Review 1 of #2643, B1. On the 5 x 5 square an exit on x_max governs the facet y in [0.25, 0.5] between two
-    priority-1 NO_FLUX walls placed by region; the corner rule gives both its nodes to the walls, so P1 FEM imposed no
-    exit at all, and has_dirichlet_dofs was False. It is refused, naming the walls. The advice -- the exit at the walls'
-    priority, declared after them -- keeps the facet and takes its two nodes."""
+    priority-1 walls placed by region; the corner rule gives both its nodes to the walls, so P1 FEM imposed no exit at
+    all. It is refused, naming the walls. The advice runs whether the walls are natural or DIRICHLET(0) (review 2 of
+    #2643, B1, found the earlier advice -- equal priority, declared after -- failing for DIRICHLET walls, where a tie
+    goes to the segment declared first): the exit restricted to its facet at priority 2 holds both nodes at 0.7."""
     from mfgarchon.alg.numerical.fem.bc_adapter import get_dirichlet_dofs_and_values
 
-    def walls(priority: int) -> list[BCSegment]:
-        return [
-            BCSegment(name="w1", bc_type=BCType.NO_FLUX, boundary="x_max", region={"y": (0.0, 0.3)}, priority=priority),
-            BCSegment(
-                name="w2", bc_type=BCType.NO_FLUX, boundary="x_max", region={"y": (0.45, 1.0)}, priority=priority
-            ),
-        ]
-
     basis = _square_basis()
-    exit_ = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=G, boundary="x_max")
-    refused = BoundaryConditions(dimension=2, segments=[exit_, *walls(1)], default_bc=BCType.NO_FLUX)
+    refused = BoundaryConditions(dimension=2, segments=[_EXIT_ON_X_MAX, *_walls(**walls)], default_bc=BCType.NO_FLUX)
     with pytest.raises(ValueError, match=r"segment 'exit' governs 1 boundary facet\(s\) but holds none of their nodes"):
         get_dirichlet_dofs_and_values(basis, refused)
-    advised_exit = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=G, boundary="x_max", priority=1)
-    advised = BoundaryConditions(dimension=2, segments=[*walls(1), advised_exit], default_bc=BCType.NO_FLUX)
+    advised = BoundaryConditions(dimension=2, segments=[*_walls(**walls), _ADVISED_EXIT], default_bc=BCType.NO_FLUX)
     dofs, values = get_dirichlet_dofs_and_values(basis, advised)
-    np.testing.assert_allclose(basis.doflocs[:, dofs].T, [[1.0, 0.25], [1.0, 0.5]])
-    np.testing.assert_allclose(values, G)
+    on_exit = np.isclose(basis.doflocs[0, dofs], 1.0) & (basis.doflocs[1, dofs] > 0.2) & (basis.doflocs[1, dofs] < 0.55)
+    np.testing.assert_allclose(basis.doflocs[1, dofs[on_exit]], [0.25, 0.5])
+    np.testing.assert_allclose(values[on_exit], G)
+
+
+def test_a_segment_one_of_whose_nodes_goes_to_the_same_condition_is_not_refused():
+    """Review 2 of #2643, B2. When one of the segments that took the exit's nodes imposes the exit's own condition --
+    w1 = DIRICHLET(0.7), w2 = NO_FLUX -- the exit's condition still holds at the node w1 took, so it is not refused:
+    the system is the one an exit restricted to the facets it keeps would give."""
+    from mfgarchon.alg.numerical.fem.bc_adapter import get_dirichlet_dofs_and_values
+
+    basis = _square_basis()
+    w1 = BCSegment(name="w1", bc_type=BCType.DIRICHLET, value=G, boundary="x_max", region={"y": (0.0, 0.3)}, priority=1)
+    w2 = BCSegment(name="w2", bc_type=BCType.NO_FLUX, boundary="x_max", region={"y": (0.45, 1.0)}, priority=1)
+    mixed = BoundaryConditions(dimension=2, segments=[_EXIT_ON_X_MAX, w1, w2], default_bc=BCType.NO_FLUX)
+    restricted_exit = BCSegment(
+        name="exit", bc_type=BCType.DIRICHLET, value=G, boundary="x_max", region={"y": (0.0, 0.45)}
+    )
+    restricted = BoundaryConditions(dimension=2, segments=[restricted_exit, w2], default_bc=BCType.NO_FLUX)
+    dofs, values = get_dirichlet_dofs_and_values(basis, mixed)
+    expected_dofs, expected_values = get_dirichlet_dofs_and_values(basis, restricted)
+    assert sorted(zip(dofs.tolist(), values.tolist(), strict=True)) == sorted(
+        zip(expected_dofs.tolist(), expected_values.tolist(), strict=True)
+    )
+    np.testing.assert_allclose(basis.doflocs[:, dofs].T[np.argsort(basis.doflocs[1, dofs])], [[1.0, 0.0], [1.0, 0.25]])
 
 
 def test_an_exit_on_a_face_one_element_thick_between_higher_priority_walls_is_refused():

@@ -758,18 +758,20 @@ class BoundaryConditions:
         return self._corner_choice(governing, where)
 
     def refuse_a_segment_left_no_node(self, segment: BCSegment, takers: list[BCSegment], where: str) -> None:
-        """(c) at a reader's own unit, the node (#2512 row B1, stage B1b): a DIRICHLET segment that governs facets but
-        whose every node :meth:`segment_for_shared_node` gives to other segments imposes nothing -- a single facet between
-        two higher-priority segments is one -- so it is refused unless each segment that took its nodes imposes the same
-        condition (`_same_condition`)."""
-        if all(_same_condition(segment, taker) for taker in takers):
+        """(c) at a reader's own unit, the node (#2512 row B1, stage B1b). ``takers`` are the segments that
+        :meth:`segment_for_shared_node` gave the nodes of a DIRICHLET segment that governs facets but holds none of their
+        nodes -- a single facet between two higher-priority segments is one. If any of them imposes the same condition
+        (`_same_condition`), that condition still holds at a node of its facets; if none does, its condition is
+        imposed nowhere, and it is refused."""
+        if any(_same_condition(segment, taker) for taker in takers):
             return
+        names = ", ".join(sorted({repr(t.name) for t in takers}))
         raise ValueError(
             f"BoundaryConditions: segment {segment.name!r} governs {where} but holds none of their nodes: the corner rule "
-            f"gives each to {', '.join(sorted({repr(t.name) for t in takers}))}, which impose a different condition, so "
-            "its condition would be dropped. Give it the priority of those segments and declare it after them -- it keeps "
-            "its facets by declaration order and takes their nodes, since a DIRICHLET segment takes a node before a "
-            "natural one at equal priority -- or remove it (#2512 row B1)."
+            f"gives each to {names}, {'which imposes' if len(takers) == 1 else 'each imposing'} a different condition, "
+            "so its condition would be dropped. Place it on only the facets it should govern (with a region, for "
+            f"instance) and give it a higher priority than {names}, so that it takes the nodes it shares with them; or "
+            "remove it (#2512 row B1)."
         )
 
     def _facet_cover(self, segment: BCSegment, facets: BoundaryFacets) -> np.ndarray:
@@ -820,11 +822,15 @@ class BoundaryConditions:
                 if field_name == "boundary"
                 else "as nothing else: a region_name is read only as a tag"
             )
+            holding = sorted(t for t, rows in facets.tags.items() if len(rows))
+            tags_held = (
+                f"the mesh's tags: {sorted(facets.tags)}, of which {holding} hold facets"
+                if facets.tags
+                else "the mesh has no tags"
+            )
             raise ValueError(
                 f"BC segment {segment.name!r} names {field_name}={name!r}, which this mesh does not resolve. Read as a "
-                f"tag of the mesh, it is none (the mesh's tags: {sorted(facets.tags)}, of which "
-                f"{sorted(t for t, rows in facets.tags.items() if len(rows))} hold facets); read {as_face}. Name one of "
-                "the mesh's tags (#2512 row B1)."
+                f"tag of the mesh, it is none ({tags_held}); read {as_face}. Name one of the mesh's tags (#2512 row B1)."
             )
         if tag in facets.off_boundary:
             raise ValueError(
