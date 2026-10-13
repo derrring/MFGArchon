@@ -126,21 +126,22 @@ def _tag_axis_aligned_boundaries(mesh: skfem.Mesh) -> skfem.Mesh:
     """Return ``mesh`` with named axis-aligned wall boundaries (``x_min``/``x_max``/``y_min``/...).
 
     A facet is on wall ``<axis>_<side>`` when its coordinate on that axis is within ``BOUNDARY_TOL``
-    of the mesh bounding-box bound. Names follow ``BoundaryFace.to_string()`` (axis 0->x, 1->y,
-    2->z), matching ``BCSegment.boundary``. For non-box domains these tag only the facets touching
-    the bounding box on each axis; SDF/region-based markers for curved domains are out of scope here.
+    of the mesh bounding-box bound. Each tag is named ``BoundaryFace(axis, side).to_string()``, the name the
+    owner reads a box-face alias as (`BoundaryConditions.segments_for_facets`). For non-box domains these tag only
+    the facets touching the bounding box on each axis; SDF/region-based markers for curved domains are out of scope
+    here.
     """
     from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL
+    from mfgarchon.geometry.boundary.types import BoundaryFace
 
-    dim = mesh.p.shape[0]
-    mins = mesh.p.min(axis=1)
-    maxs = mesh.p.max(axis=1)
-    axis_names = "xyz"
-    predicates: dict = {}
-    for d in range(dim):
-        name = axis_names[d] if d < len(axis_names) else f"axis{d}"
-        predicates[f"{name}_min"] = lambda x, d=d, b=mins[d]: np.isclose(x[d], b, atol=BOUNDARY_TOL)
-        predicates[f"{name}_max"] = lambda x, d=d, b=maxs[d]: np.isclose(x[d], b, atol=BOUNDARY_TOL)
+    bounds = {"min": mesh.p.min(axis=1), "max": mesh.p.max(axis=1)}
+    predicates = {
+        BoundaryFace(axis, side).to_string(): lambda x, axis=axis, b=bounds[side][axis]: np.isclose(
+            x[axis], b, atol=BOUNDARY_TOL
+        )
+        for axis in range(mesh.p.shape[0])
+        for side in ("min", "max")
+    }
     return mesh.with_boundaries(predicates)
 
 

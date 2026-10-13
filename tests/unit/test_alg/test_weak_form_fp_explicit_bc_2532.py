@@ -287,42 +287,35 @@ def _with_dirichlet_default(*segments: BCSegment) -> BoundaryConditions:
 
 
 @pytest.mark.parametrize("route", ["fp-explicit", "hjb-shared"])
-def test_fem_refuses_a_dirichlet_default_no_segment_names(route):
-    """The FEM adapter imposes conditions only from segments, so a DIRICHLET default_bc behind a segment set that
-    leaves a face unnamed got the natural condition there. That BC is refused, and its advice -- give each
-    Dirichlet face its own segment -- is executed: the wall stays free and the exit holds the value (measured
-    0.0013 at the wall).
-
-    It does not advise boundary=None any more. The FEM adapter ignores segment precedence, so a whole-boundary
-    DIRICHLET beside the NO_FLUX wall condensed the wall too, to 0.7 (#2593, review 2)."""
+def test_fem_imposes_a_dirichlet_default_on_the_facets_no_segment_holds(route):
+    """The FEM adapter used to impose conditions only from segments, so a DIRICHLET default_bc behind a segment set
+    that leaves a face unnamed got the natural condition there, and was refused (#2593). Each facet now takes the
+    owner's answer (`BoundaryConditions.segments_for_facets`), default_bc included, so the x_max facet no segment holds
+    is the exit at default_value: the same field as a segment naming it, entry for entry, with the wall free (measured
+    0.0013 at the wall). A whole-boundary DIRICHLET beside the NO_FLUX wall is ranked below it, placed before global
+    (#2595 row 1), and solves the same field too."""
     from mfgarchon.geometry.boundary import dirichlet_bc
 
-    with pytest.raises(NotImplementedError, match=r"default_bc=DIRICHLET governs 1 boundary facet") as excinfo:
-        _build(route, _with_dirichlet_default(_WALL))
-    assert "boundary=None" not in str(excinfo.value)
-    assert f"value={EXIT_VALUE!r}" in str(excinfo.value)
-    wall, exit_value = _wall_and_exit(route, _with_dirichlet_default(_WALL, _EXIT_SEGMENT))
+    wall, exit_value = _wall_and_exit(route, _with_dirichlet_default(_WALL))
     assert wall < 0.1
     assert exit_value == pytest.approx(EXIT_VALUE, abs=1e-12)
+    assert (wall, exit_value) == _wall_and_exit(route, _with_dirichlet_default(_WALL, _EXIT_SEGMENT))
+    whole = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=EXIT_VALUE)
+    assert (wall, exit_value) == _wall_and_exit(route, _with_dirichlet_default(_WALL, whole))
     _wall_and_exit(route, dirichlet_bc(value=EXIT_VALUE, dimension=1))
 
 
 @pytest.mark.parametrize("route", ["fp-explicit", "hjb-shared"])
-def test_a_segment_named_by_an_alias_is_refused_and_the_advice_runs(route):
-    """Under a DIRICHLET default every segment's facets are resolved by the mesh's tags, so a wall named by a library
-    alias ("left") is refused, though both FEM solvers solved that BC correctly on main: HJB-FEM held u = 0.0013 at
-    the wall and 0.7 at the exit (#2593, review 2; FEM's naming rule against the BC layer's is #2512's row B1). The
-    advice names the mesh's tags; renaming the wall to the tag it means solves with it intact."""
+def test_a_segment_named_by_an_alias_is_read_as_the_tag_it_aliases(route):
+    """A wall named by a library alias ("left") was refused under a DIRICHLET default (#2593, review 2), though both FEM
+    solvers solved that BC correctly before. A name that is no tag of the mesh is read as the box face it aliases, the
+    x_min tag (#2595 comment 6145845773, (A')), so the alias solves the field the tag's name solves, entry for entry:
+    u = 0.0013 at the wall and 0.7 at the exit for HJB-FEM."""
     alias = BCSegment(name="wall", bc_type=BCType.NO_FLUX, value=0.0, boundary="left")
-    with pytest.raises(
-        ValueError,
-        match=r"no such tagged boundary \(available: \[.*'x_min'.*\]\).*Name one of the mesh's tagged boundaries",
-    ) as excinfo:
-        _build(route, _with_dirichlet_default(alias, _EXIT_SEGMENT))
-    assert "The BC layer reads 'left' as 'x_min'" in str(excinfo.value)
-    wall, exit_value = _wall_and_exit(route, _with_dirichlet_default(_WALL, _EXIT_SEGMENT))
+    wall, exit_value = _wall_and_exit(route, _with_dirichlet_default(alias, _EXIT_SEGMENT))
     assert wall < 0.1
     assert exit_value == pytest.approx(EXIT_VALUE, abs=1e-12)
+    assert (wall, exit_value) == _wall_and_exit(route, _with_dirichlet_default(_WALL, _EXIT_SEGMENT))
 
 
 def _disc(tag_exit: bool):
@@ -365,23 +358,20 @@ def _solve_on_disc(route: str, name: str, tag_exit: bool):
 @pytest.mark.parametrize("route", ["fp-explicit", "hjb-shared"])
 def test_a_tag_holding_no_facet_is_refused_and_the_advice_runs(route):
     """On the disc the axis tags exist and hold no facets, so an exit named "x_max" condensed nothing and the
-    face stayed a wall, on main too; the alias refusal's advice pointed there (#2593, review 3). An empty tag is
-    refused as a missing one. With no tag holding a facet, the advice is to tag the mesh, and it is executed: the
-    exit faces tagged 1 and named "region_1" hold the value. Once tagged, "x_max" is still refused, listing it.
+    face stayed a wall (#2593, review 3). A segment that governs no facet and differs from what governs there is
+    refused by the owner, naming the empty tag and the tags that hold facets, with the advice to tag the facets; it is
+    executed: the exit faces tagged 1 and named "region_1" hold the value. Once tagged, "x_max" is still refused.
 
     The no-tag message offers no whole-boundary segment: beside a named wall that would condense the wall too
     (#2595 rows 1 and 10). And the tagged exit is not spread over the boundary: the 5 boundary DOFs at x < -0.9
     hold at most 1.21e-9 (FP) and 1.09e-9 (HJB), measured, so 1e-6 separates them from the exit's 0.7."""
-    with pytest.raises(
-        ValueError, match=r"none of its tags holds a facet.*Tag the mesh before naming a face"
-    ) as excinfo:
+    held_nowhere = r"segment 'exit' names the tag 'x_max' \(boundary='x_max'\), which holds no facet"
+    with pytest.raises(ValueError, match=held_nowhere + r".*hold facets: \[\]\. Tag the facets") as excinfo:
         _solve_on_disc(route, "x_max", tag_exit=False)
-    assert "available" not in str(excinfo.value)
     assert "boundary=None" not in str(excinfo.value)
     assert "whole-boundary" not in str(excinfo.value)
-    with pytest.raises(ValueError, match=r"no such tagged boundary \(available: \['region_1'\]\)") as excinfo:
+    with pytest.raises(ValueError, match=held_nowhere + r".*hold facets: \['region_1'\]"):
         _solve_on_disc(route, "x_max", tag_exit=True)
-    assert "The mesh carries the tag 'x_max', but no facet is in it." in str(excinfo.value)
 
     solver, field = _solve_on_disc(route, "region_1", tag_exit=True)
     exit_dofs = solver._basis.get_dofs(solver._skfem_mesh.boundaries["region_1"]).flatten()

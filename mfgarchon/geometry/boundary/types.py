@@ -387,15 +387,55 @@ def parse_boundary_face(boundary: str | int | BoundaryFace | None) -> BoundaryFa
 
 def _normal_selects_face(segment: BCSegment, face: BoundaryFace) -> bool:
     """Is ``face``'s outward normal within ``segment.normal_tolerance`` (a cosine) of its ``normal_direction``?"""
+    outward = np.zeros((1, face.axis + 1))
+    outward[0, face.axis] = -1.0 if face.side == "min" else 1.0
+    return bool(normal_holds(segment, outward, f"the {face.to_string()} face")[0])
+
+
+def normal_holds(segment: BCSegment, normals: np.ndarray, where: str) -> np.ndarray:
+    """For each outward unit normal (a row of ``normals``), is it within ``segment.normal_tolerance`` (a cosine) of
+    the segment's ``normal_direction``? The one reading of ``normal_direction`` against a known normal: a box face's
+    (`_normal_selects_face`) and a mesh facet's (`BoundaryConditions.segments_for_facets`, #2512 row B1)."""
+    normals = np.atleast_2d(np.asarray(normals, dtype=float))
     target = np.asarray(segment.normal_direction, dtype=float).ravel()
     norm = float(np.linalg.norm(target))
-    if norm == 0.0 or face.axis >= target.size:
+    if norm == 0.0 or normals.shape[1] > target.size:
         raise ValueError(
-            f"BC segment {segment.name!r}: normal_direction {target.tolist()} cannot select the "
-            f"{face.to_string()} face (zero vector, or fewer components than the face's axis)."
+            f"BC segment {segment.name!r}: normal_direction {target.tolist()} cannot select {where} (zero vector, or "
+            f"fewer components than the normal's {normals.shape[1]})."
         )
-    outward = -1.0 if face.side == "min" else 1.0
-    return outward * target[face.axis] / norm >= segment.normal_tolerance
+    return normals @ target[: normals.shape[1]] / norm >= segment.normal_tolerance
+
+
+def region_holds(
+    segment: BCSegment, points: np.ndarray, tolerance: float, axis_names: dict[int, str] | None = None
+) -> np.ndarray:
+    """For each point (a row of ``points``), does ``segment.region`` hold it: every named axis within its range, to
+    ``tolerance``? The point family's one reading of ``region``: `BCSegment.matches_point` and a mesh facet's midpoint
+    (`BoundaryConditions.segments_for_facets`, #2512 row B1)."""
+    points = np.atleast_2d(np.asarray(points, dtype=float))
+    if axis_names is None:
+        axis_names = {0: "x", 1: "y", 2: "z", 3: "w"}
+    held = np.ones(points.shape[0], dtype=bool)
+    for axis_key, (range_min, range_max) in segment.region.items():
+        if isinstance(axis_key, str):
+            axis_idx = next((idx for idx, name in axis_names.items() if name == axis_key), None)
+            if axis_idx is None:
+                raise ValueError(f"Unknown axis name: {axis_key}")
+        else:
+            axis_idx = int(axis_key)
+        if axis_idx >= points.shape[1]:
+            raise ValueError(f"Axis index {axis_idx} exceeds point dimension {points.shape[1]}")
+        coord = points[:, axis_idx]
+        held &= (coord >= range_min - tolerance) & (coord <= range_max + tolerance)
+    return held
+
+
+def sdf_region_holds(segment: BCSegment, points: np.ndarray, tolerance: float) -> np.ndarray:
+    """For each point (a row of ``points``), is it inside ``segment.sdf_region``, to ``tolerance``? The point family's
+    one reading of ``sdf_region``, as `region_holds` is of ``region``."""
+    points = np.atleast_2d(np.asarray(points, dtype=float))
+    return np.array([segment.sdf_region(point) <= tolerance for point in points], dtype=bool)
 
 
 @dataclass
@@ -683,34 +723,12 @@ class BCSegment:
                 return False
 
         # Method 2: Check coordinate range constraints (rectangular domains)
-        if self.region is not None:
-            if axis_names is None:
-                # Default axis names: x, y, z, w, ...
-                axis_names = {0: "x", 1: "y", 2: "z", 3: "w"}
-
-            for axis_key, (range_min, range_max) in self.region.items():
-                # Convert axis key to index
-                if isinstance(axis_key, str):
-                    # Find index from axis name
-                    axis_idx = next((idx for idx, name in axis_names.items() if name == axis_key), None)
-                    if axis_idx is None:
-                        raise ValueError(f"Unknown axis name: {axis_key}")
-                else:
-                    axis_idx = int(axis_key)
-
-                # Check if point coordinate is within range
-                if axis_idx >= len(point):
-                    raise ValueError(f"Axis index {axis_idx} exceeds point dimension {len(point)}")
-
-                coord = point[axis_idx]
-                if coord < range_min - tolerance or coord > range_max + tolerance:
-                    return False
+        if self.region is not None and not region_holds(self, point[None, :], tolerance, axis_names)[0]:
+            return False
 
         # Method 3: Check SDF region constraint (general domains)
-        if self.sdf_region is not None:
-            sdf_val = self.sdf_region(point)
-            if sdf_val > tolerance:
-                return False
+        if self.sdf_region is not None and not sdf_region_holds(self, point[None, :], tolerance)[0]:
+            return False
 
         # Method 4: Check normal direction match. On a box domain (no SDF) the outward normal is the
         # face's own, read from `boundary_id`; before, it was not read at all, so the segment matched on

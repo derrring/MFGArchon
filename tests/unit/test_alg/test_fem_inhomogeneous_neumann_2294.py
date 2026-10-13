@@ -84,7 +84,8 @@ def _problem(segments):
 
     geometry = Mesh2D(domain_type="rectangle", bounds=(0.0, 1.0, 0.0, 1.0))
     geometry.mesh_data = skfem_to_meshdata(skfem.MeshTri.init_sqsymmetric().refined(2))
-    geometry.boundary_conditions = BoundaryConditions(dimension=2, segments=segments)
+    # The y walls are no-flux, said so: since #2595 a facet no segment holds takes default_bc, refused when unset.
+    geometry.boundary_conditions = BoundaryConditions(dimension=2, segments=segments, default_bc=BCType.NO_FLUX)
     hamiltonian = SeparableHamiltonian(
         control_cost=QuadraticControlCost(control_cost=1.0),
         coupling=lambda m: 0.0 * np.asarray(m),
@@ -120,7 +121,7 @@ def _solve(solver_name: str, kind: str, g: float):
     """
     if solver_name == "FPFEMSolver" and kind == "robin":
         # A shared ROBIN is the HJB's and is refused at the FP (#2512), so the FP is handed its own.
-        robin = BoundaryConditions(dimension=2, segments=_segments("robin", g))
+        robin = BoundaryConditions(dimension=2, segments=_segments("robin", g), default_bc=BCType.NO_FLUX)
         solver = FPFEMSolver(_problem(_segments("neumann", 0.0)), order=1, boundary_conditions=robin)
     else:
         cls = HJBFEMSolver if solver_name == "HJBFEMSolver" else FPFEMSolver
@@ -385,7 +386,9 @@ def test_the_value_guard_admits_real_numbers_and_nothing_else(value, accepted):
     mesh = skfem.MeshTri.init_sqsymmetric().refined(2).with_boundaries({"x_min": lambda x: np.isclose(x[0], 0.0)})
     basis = skfem.Basis(mesh, skfem.ElementTriP1())
     bc = BoundaryConditions(
-        dimension=2, segments=[BCSegment(name="L", bc_type=BCType.NEUMANN, value=value, boundary="x_min")]
+        dimension=2,
+        segments=[BCSegment(name="L", bc_type=BCType.NEUMANN, value=value, boundary="x_min")],
+        default_bc=BCType.NO_FLUX,
     )
 
     if accepted:

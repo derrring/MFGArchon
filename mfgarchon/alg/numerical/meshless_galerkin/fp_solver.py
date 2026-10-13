@@ -135,6 +135,10 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
 
         return places_no_dirichlet_face(self._bc, self._disc.dim)
 
+    def _imposes_dirichlet(self) -> bool:
+        # Not pure Neumann here means a Dirichlet face is placed (`places_no_dirichlet_face`).
+        return not self._is_pure_neumann()
+
     def _weak_bc_terms(self, D: float):
         """Symmetric Nitsche terms for the FP diffusion block, from the BC this solver holds.
 
