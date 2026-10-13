@@ -281,7 +281,8 @@ def _create_sl_pair(
         hjb_config.setdefault("interpolation_method", "cubic")
         # Note: Cubic FP adjoint not yet implemented
         # For now, use linear splatting even with cubic HJB interpolation
-        # This breaks exact duality; the density converges as SL_LINEAR's (FPSLSolver, Convergence; #2468)
+        # This breaks exact duality; the FP half's density, for a given drift, converges as SL_LINEAR's
+        # (FPSLSolver, Convergence; #2468)
 
     hjb_solver = HJBSemiLagrangianSolver(problem, **hjb_config)
     # The FP half sub-steps exactly when the HJB half does, with its settings: a pair structured
