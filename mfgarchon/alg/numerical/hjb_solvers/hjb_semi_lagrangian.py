@@ -903,8 +903,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             Solution with BCs enforced (modified in-place)
         """
         bc = self.get_boundary_conditions()
-        if bc is None:
-            return U
 
         # Use InterpolationApplicator for dimension-agnostic BC enforcement, at the grid's spacing:
         # a Neumann value is imposed as u[wall] = u[neighbour] + g*h (#2141).
@@ -2935,8 +2933,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         from mfgarchon.geometry.boundary.types import BoundaryFace
 
         bc = self.get_boundary_conditions()
-        if bc is None:
-            return "none"
         shape = (len(self.x_grid),) if self.dimension == 1 else self._grid_shape
         index = np.unravel_index(int(point_idx), shape)
         faces = [

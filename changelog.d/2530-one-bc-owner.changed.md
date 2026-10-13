@@ -23,7 +23,8 @@
     - **`periodic_bc`**, for a geometry periodic on every axis.
     - **Otherwise a refusal by name, citing #2589.** A mesh with no BC used to reach the Picard loop and fail there
       with `AttributeError: 'NoneType' object has no attribute 'has_providers'`.
-  - **Removed fallbacks.** Each live caller was counted over the test suite at 79fae339, before removal:
+  - **Removed fallbacks.** Each live caller was counted at 79fae339, before removal, over the gate's suite command
+    (its marker selection, `scripts/ci_markers.txt`):
     - the implicit `periodic_bc` default for a problem whose geometry declares no BC, deprecated since 2026-01-11
       (0 callers);
     - FP-FDM's and FP-FVM's `no_flux_bc` fallbacks (0 callers each);
@@ -33,7 +34,15 @@
     `get_topology_per_dimension` and `needs_segment_aware_bc` now refuse a string.
   - **Inside `using_resolved_bc`**, a components BC is resolved together with the geometry's, so the two
     declarations stay one.
-  - **Who is affected**, measured over this repository's test suite at 79fae339, before the change.
+  - **On implicit domains the channels now reach every solver.**
+    - A solver on a geometry periodic on every axis used to receive no BC (None). It now receives
+      `periodic_bc`.
+    - The particle solver on an implicit domain with a components BC now uses that BC. It used to read only the
+      geometry, so it either refused or, on a torus, took the `"periodic"` string.
+    - On a torus the particle solver's density query no longer mirrors kernel mass at the box's edges, which a
+      torus does not have. The string had sent it down the "no BC: reflect every axis" branch.
+  - **Who is affected**, measured at 79fae339, before the change, over the gate's suite command (its marker
+    selection).
     - **Unchanged:** the owner gives the very object each reader used to pick:
       - FP-FDM: 601 constructions, in 349 tests;
       - FP-FVM: 80, in 45;

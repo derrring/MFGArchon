@@ -279,7 +279,7 @@ def fp_view_of_shared_bc(boundary_conditions: Any, *, consumer: str) -> Any:
     solver explicitly is the FP's own: there ``DIRICHLET(g)`` is a prescribed density m = g, a ROBIN is
     the FP's total-flux Robin, and a NEUMANN is refused (`refuse_explicit_fp_neumann`).
 
-    Anything that is not a ``BoundaryConditions`` (``None``, a string sentinel) is returned as is.
+    Anything that is not a ``BoundaryConditions`` (``None``, a graph geometry's node-BC config) is returned as is.
     """
     from dataclasses import replace
 

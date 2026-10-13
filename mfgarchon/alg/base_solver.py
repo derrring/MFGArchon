@@ -218,8 +218,8 @@ class BaseMFGSolver(ABC):
     def _with_geometry_periodic_convention(self, bc):
         """Complete a periodic BC with the node layout of the geometry actually being solved on.
 
-        Issue #1822. A grid binds this when a BC is attached to it, but Priority 1 above is a BC
-        the CALLER handed the solver -- it never met the grid, so its convention is unstated and
+        Issue #1822. A grid binds this when a BC is attached to it, but a BC the CALLER handed the
+        solver (``_boundary_conditions``) never met the grid, so its convention is unstated and
         would wrap the historical way (all N nodes distinct) on a grid where the two endpoints are
         one point. Measured on that path: the periodic gradient at the seam came out -1.5 where the
         grid's own layout gives -1.0.

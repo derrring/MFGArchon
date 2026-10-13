@@ -43,7 +43,6 @@ import numpy as np
 
 from mfgarchon.core.derivatives import DerivativeTensors, to_multi_index_dict
 from mfgarchon.geometry.boundary.applicator_fdm import PreallocatedGhostBuffer
-from mfgarchon.geometry.boundary.conditions import neumann_bc
 from mfgarchon.geometry.boundary.types import BCType
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.pde_coefficients import (
@@ -364,20 +363,11 @@ class HJBWENOSolver(BaseHJBSolver):
         )
 
     def _get_boundary_conditions(self):
-        """Resolve boundary conditions through the single-source inherited
-        ``BaseMFGSolver.get_boundary_conditions()`` (Issue #634 pattern), falling back to Neumann
-        (no-flux) when none is configured.
-
-        Issue #1429 (S0-21): this replaces a private 4-accessor copy of the resolution chain that
-        also diverged at the terminal (private ``neumann_bc`` vs inherited ``None`` vs the
-        ConditionsMixin ``periodic_bc``). The inherited chain resolves to the same stored BC for a
-        real ``MFGProblem``: ``self._boundary_conditions`` is never assigned, so its Priority-1 is a
-        no-op, and the geometry/problem attribute and method accessors return the same object. WENO
-        keeps a concrete-BC requirement — the ghost buffer cannot take ``None`` — so a no-flux
-        Neumann fallback is applied here when the single source yields ``None``.
+        """The BC this solver solves with: ``BaseMFGSolver.get_boundary_conditions()``, the problem's from its one
+        owner (#2530). On the grids WENO runs on the owner answers a BC or refuses by name, so there is no ``None``
+        for the ghost buffer to meet (Issue #1429 replaced a private copy of the resolution chain here).
         """
-        bc = self.get_boundary_conditions()
-        return bc if bc is not None else neumann_bc(dimension=self.dimension)
+        return self.get_boundary_conditions()
 
     def _get_domain_bounds(self) -> np.ndarray:
         """Get domain bounds from problem/geometry (NO hasattr per CLAUDE.md)."""

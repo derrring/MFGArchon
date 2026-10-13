@@ -24,7 +24,10 @@ and are the class line's control.
   which the grid's own operators read and which this cannot tell from a solver's read;
 - a computed ``getattr``, ``vars(...)``, ``__dict__``;
 - an operator class built directly (``LaplacianOperator(..., bc=None)``);
-- an allowed function whose read is swapped for another of the same count.
+- an allowed function whose read is swapped for another of the same count -- the owner's own order among them: its
+  sites are allowed by count, so a reordering is pinned by behaviour in ``test_one_bc_owner_2530.py``;
+- an allowance keyed by a bare function name, which another function of that name in the same file (another class's
+  ``__init__``) shares, count included.
 """
 
 from __future__ import annotations
@@ -46,7 +49,7 @@ OPERATORS = frozenset({"get_gradient_operator", "get_laplacian_operator", "value
 _PHI = "pads or differentiates a level-set function, a geometry field no solver reaches"
 #: (file, function) -> (site count, why it is allowed).
 ALLOWED = {
-    ("mfgarchon/core/mfg_components.py", "get_boundary_conditions"): (4, "the owner"),
+    ("mfgarchon/core/mfg_components.py", "get_boundary_conditions"): (5, "the owner"),
     ("mfgarchon/core/mfg_components.py", "using_resolved_bc"): (
         3,
         "a dependent: sets the provider-resolved BC on the channels that declare it, and restores them",

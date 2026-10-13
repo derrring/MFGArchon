@@ -134,12 +134,10 @@ class FPParticleSolver(BaseFPSolver):
         points, providing 10-100× speedup for Semi-Lagrangian HJB coupling.
 
     Boundary Conditions:
-        FPParticleSolver requires explicit boundary conditions. Provide via:
-        1. boundary_conditions parameter (direct), OR
-        2. problem.geometry.get_boundary_conditions() (from geometry)
-
-        No default fallback - explicit BCs required for correctness.
-        The solver will fail fast with a clear error message if BCs are missing.
+        A BC passed as ``boundary_conditions`` is this solver's own. Otherwise the problem's shared BC, from its
+        one owner (`MFGProblem.get_boundary_conditions`, #2530): the geometry's, a components BC on a geometry that
+        declares none, or ``periodic_bc`` on a torus. A problem with none on any channel is refused by name; there
+        is no default.
 
     Composition Pattern (Issue #545):
         This solver uses composition instead of mixins:

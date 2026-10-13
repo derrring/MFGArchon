@@ -33,7 +33,15 @@ from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonia
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import BoundaryConditions, dirichlet_bc, no_flux_bc, periodic_bc
+from mfgarchon.geometry.boundary import (
+    BCSegment,
+    BCType,
+    BoundaryConditions,
+    PeriodicGridConvention,
+    dirichlet_bc,
+    no_flux_bc,
+    periodic_bc,
+)
 from mfgarchon.operators.differential.gradient import value_gradient
 
 N, NT, T, SIGMA = 21, 10, 0.5, 0.4
@@ -97,6 +105,35 @@ def test_a_bc_declared_without_a_dimension_agrees_with_its_bound_copy():
     assert problem.get_boundary_conditions() is stored
 
 
+@pytest.mark.parametrize(
+    ("field", "other"),
+    [
+        ("default_bc", BCType.NO_FLUX),
+        ("default_value", 0.3),
+        ("domain_bounds", np.array([[0.0, 2.0]])),
+        ("domain_sdf", lambda x: np.asarray(x)[..., 0] - 0.5),
+        ("corner_strategy", "average"),
+        ("corner_mollification_radius", 0.2),
+        ("periodic_convention", PeriodicGridConvention.ENDPOINT_INCLUSIVE),
+    ],
+)
+def test_declares_the_same_as_refuses_a_difference_in_each_declared_field(field, other):
+    """Review 1 of #2638: each declared field outside the segments is compared, so a components BC differing from the
+    grid's only in, say, its fall-through ``default_bc`` is not taken for the same declaration and dropped."""
+    from dataclasses import replace
+
+    base = BoundaryConditions(
+        dimension=1,
+        segments=[BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.7, boundary="x_max")],
+        default_bc=BCType.DIRICHLET,
+        default_value=0.0,
+        domain_bounds=np.array([[0.0, 1.0]]),
+        periodic_convention=PeriodicGridConvention.ENDPOINT_EXCLUSIVE,
+    )
+    assert base.declares_the_same_as(replace(base))
+    assert not base.declares_the_same_as(replace(base, **{field: other}))
+
+
 def test_declares_the_same_as_compares_content_field_by_field():
     exit_ = dirichlet_bc(dimension=1, value=0.7)
     assert exit_.declares_the_same_as(dirichlet_bc(dimension=1, value=0.7))
@@ -135,7 +172,7 @@ def test_the_legacy_route_builds_its_grid_with_the_components_bc():
 def test_inside_using_resolved_bc_the_components_bc_is_resolved_with_the_grids():
     """The context sets the provider-resolved BC on the grid; the components BC, the same declaration, is resolved
     with it, or the owner would compare resolved against unresolved and refuse (#2530 D1)."""
-    from mfgarchon.geometry.boundary import BaseBCValueProvider, BCSegment, BCType
+    from mfgarchon.geometry.boundary import BaseBCValueProvider
 
     class _Half(BaseBCValueProvider):
         def compute(self, state):
@@ -179,8 +216,26 @@ def test_a_torus_answers_periodic_bc():
     assert bc.type == "periodic"
     assert bc.dimension == 2
     box = Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]]), periodic_dims=(0,))
-    with pytest.raises(ValueError, match="no channel declares boundary conditions"):
+    with pytest.raises(ValueError, match=r"no channel declares boundary conditions.*components\.boundary_conditions"):
         MFGProblem(geometry=box, components=_components(), T=T, Nt=NT).get_boundary_conditions()
+    # The refusal's advice for a geometry that holds none: the components BC is then the BC.
+    declared = no_flux_bc(dimension=2)
+    assert MFGProblem(geometry=box, components=_components(declared), T=T, Nt=NT).get_boundary_conditions() is declared
+
+
+def test_a_point_cloud_declares_none_so_the_components_bc_is_the_bc():
+    """Review 1 of #2638: a `GeometryProtocol` outside the `Geometry` hierarchy has no
+    ``has_explicit_boundary_conditions``; its accessor answers None when it declares none, and the owner reads that
+    instead of raising AttributeError."""
+    from mfgarchon.geometry.implicit.point_cloud import PointCloudGeometry
+
+    cloud = PointCloudGeometry(np.linspace(0.0, 1.0, N).reshape(-1, 1))
+    declared = no_flux_bc(dimension=1)
+    assert (
+        MFGProblem(geometry=cloud, components=_components(declared), T=T, Nt=NT).get_boundary_conditions() is declared
+    )
+    with pytest.raises(ValueError, match=r"no channel declares boundary conditions.*PointCloudGeometry"):
+        MFGProblem(geometry=cloud, components=_components(), T=T, Nt=NT).get_boundary_conditions()
 
 
 def test_a_components_bc_on_a_network_is_refused_where_the_graph_owns_node_bcs():
@@ -297,7 +352,9 @@ def test_hjb_gfdm_solves_the_bc_the_owner_returns_once_newton_converges(mfg_capl
     """HJB-GFDM's default Newton does not converge against a wall datum that jumps from U_T (#2610), and a wall read
     from an unconverged solve says nothing about which BC was resolved. So the datum is U_T = 0.7 + x(1 - x), which
     equals the exit's 0.7 at both walls, and the solver's own verdict -- no "did not converge" record -- is asserted
-    before the walls are read. Its logger does not propagate, so the records are counted on it."""
+    before the walls are read. Its logger does not propagate, so the records are counted on it, and the absence is
+    paired with a presence on the same logger: #2610's jumping datum, U_T = 0 against the exit, which does not
+    converge."""
     x = np.linspace(0.0, 1.0, N)
     U_T = 0.7 + x * (1.0 - x)
 
@@ -308,6 +365,9 @@ def test_hjb_gfdm_solves_the_bc_the_owner_returns_once_newton_converges(mfg_capl
         legacy, exit_grid, no_flux = run(_legacy(_EXIT)), run(_on_grid(_EXIT)), run(_on_grid(no_flux_bc(dimension=1)))
     unconverged = [r for r in mfg_caplog.records if "did not converge" in r.getMessage()]
     assert unconverged == [], f"{len(unconverged)} unconverged steps: the walls below would mean nothing"
+    with mfg_caplog.at_level(logging.WARNING, logger="mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm"):
+        _hjb(lambda p: HJBGFDMSolver(p, collocation_points=p.geometry.get_spatial_grid()), _on_grid(_EXIT), np.zeros(N))
+    assert any("did not converge" in r.getMessage() for r in mfg_caplog.records), "the instrument saw no record"
     np.testing.assert_allclose(legacy[0, [0, -1]], [0.7, 0.7], atol=1e-10)
     np.testing.assert_allclose(legacy, exit_grid)
     assert abs(no_flux[0, 0] - 0.7) > 0.05

@@ -769,7 +769,9 @@ class ConditionsMixin:
         asks here, so the HJB and the FP of one problem read one BC. A graph geometry's node BCs are its own (#1471):
         the owner returns them, None included, and a components BC beside them is refused.
 
-        - The geometry's BC, when the geometry declares one (``has_explicit_boundary_conditions``). A components BC
+        - The geometry's BC, when the geometry declares one: ``has_explicit_boundary_conditions`` on a `Geometry`,
+          and a BC from ``get_boundary_conditions`` on any other `GeometryProtocol`, whose contract answers None
+          when none is declared (a point cloud: always None). A components BC
           given as well is a second declaration of the same BC, and the two must declare one condition
           (`BoundaryConditions.declares_the_same_as`); two that differ are refused by name. On the
           ``spatial_bounds=`` route the grid is built with the components BC (`MFGProblem._init_grid`), so there
@@ -782,7 +784,7 @@ class ConditionsMixin:
 
         Reading the components BC warns: that channel is deprecated in favour of the geometry's.
         """
-        from mfgarchon.geometry.base import GraphGeometry
+        from mfgarchon.geometry.base import Geometry, GraphGeometry
         from mfgarchon.geometry.boundary.conditions import periodic_bc
         from mfgarchon.geometry.protocols import SupportsPeriodic
 
@@ -812,7 +814,11 @@ class ConditionsMixin:
                 DeprecationWarning,
                 stacklevel=2,
             )
-        if geometry is not None and geometry.has_explicit_boundary_conditions():
+        if isinstance(geometry, Geometry):
+            geometry_declares = geometry.has_explicit_boundary_conditions()
+        else:
+            geometry_declares = geometry is not None and geometry.get_boundary_conditions() is not None
+        if geometry_declares:
             on_geometry = geometry.get_boundary_conditions()
             if declared is not None and not declared.declares_the_same_as(on_geometry):
                 raise ValueError(
@@ -833,8 +839,9 @@ class ConditionsMixin:
         raise ValueError(
             "MFGProblem.get_boundary_conditions: no channel declares boundary conditions. The geometry "
             f"({type(geometry).__name__}) has none, and components.boundary_conditions is unset. Declare them on "
-            "the geometry -- TensorProductGrid(..., boundary_conditions=bc), or mesh.boundary_conditions = bc -- or "
-            "pass boundary_conditions= to the solver that needs them (#2589)."
+            "the geometry -- TensorProductGrid(..., boundary_conditions=bc), or mesh.boundary_conditions = bc -- or, "
+            "on a geometry that holds none (an implicit domain, a point cloud), in components.boundary_conditions "
+            "(#2589)."
         )
 
     @contextlib.contextmanager
