@@ -4,7 +4,12 @@
     - On a face the order is: priority; then a placed segment before a global one (no placement field, or
       `boundary="all"`, which is every face); then declaration order.
     - A node several faces share takes a choice among those faces' own segments, by one more rule after
-      priority: DIRICHLET before any other condition. A point exactly at a corner follows the node there.
+      priority: DIRICHLET before any other condition.
+    - A point query exactly at a corner that names no face takes the node's answer there, refusals included. A
+      `region` covering part of a face refuses that face's corners. A segment shadowed on every face, one holding
+      no node inside a face, or a marked region covering part of a face refuses every corner, including corners
+      it does not reach. Naming the face (`face=`) reads the point on that face. The particle solver names the
+      first face it finds a particle on, so it does not reach this rule.
     - Under `corner_strategy="average"` or `"mollify"`, a corner whose faces impose different conditions is
       refused, and one whose faces agree is answered. Each reader judges "different" by its own sameness: the
       semi-Lagrangian enforcement compares what it writes, so it answers a corner that differs only in
@@ -29,8 +34,7 @@
       beside a wall declared before it, is absorbed where it was reflected;
     - `normal_direction` selects only the face it points out of; on a box domain it used to match every face;
     - the particle solver's topology query reads a region or sdf placement on the solver's grid, and asks only
-      whether an axis wraps;
-    - a point exactly at a corner follows the node there.
+      whether an axis wraps.
     - Over the test suite these change no particle or GFDM answer; review-built cases do, and are pinned.
   - **Refused by name, where a reader used to stretch, drop or guess:**
     - a segment covering only part of a face, at a higher priority than the condition on the rest of it, when

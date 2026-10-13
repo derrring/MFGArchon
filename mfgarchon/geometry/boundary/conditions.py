@@ -606,9 +606,12 @@ class BoundaryConditions:
 
         The point-level reading of the same placement rule as :meth:`segment_for_face`, each segment
         tested by :meth:`BCSegment.matches_point`: on a face that one governs whole, both answer the
-        same. A point that lies on several faces (a corner) follows the node there: :meth:`segment_for_corner`,
-        the choice ``corner_strategy`` makes among those faces' own segments, so a point and a node at a corner
-        give one answer.
+        same. Without ``face``, a point that lies on several faces (a corner) takes the node's answer there:
+        :meth:`segment_for_corner`, the choice ``corner_strategy`` makes among those faces' own segments, so a
+        point and a node at a corner give one answer. That includes the node's refusals: a ``region`` covering
+        part of a face refuses that face's corners, and a segment shadowed on every face, one holding no node
+        inside a face, or a marked region covering part of a face refuses every corner, including corners it
+        does not reach. With ``face``, the point is read on that face alone and the corner rule does not apply.
 
         Args:
             point: Spatial coordinates, shape (dimension,).
@@ -621,7 +624,15 @@ class BoundaryConditions:
         if face is None and self.domain_bounds is not None:
             on = self._faces_at_point(point, tolerance)
             if len(on) > 1:
-                return self.segment_for_corner(on, geometry)  # a point at a corner follows the node
+                try:
+                    return self.segment_for_corner(on, geometry)  # a point at a corner follows the node
+                except ValueError as error:
+                    raise ValueError(
+                        f"BoundaryConditions.segment_for_point: the point {point.tolist()} lies on "
+                        f"{', '.join(f.to_string() for f in on)} and, with no face named, takes the node's answer "
+                        f"there, which is refused. The node's refusal, made for the faces: {error} To read the "
+                        "point on one of those faces, pass face= (#2512 row B1)."
+                    ) from error
         if face is not None:
             faces: list[str | None] = [face.to_string() if isinstance(face, BoundaryFace) else face]
         elif self.domain_bounds is not None:
@@ -771,9 +782,11 @@ class BoundaryConditions:
             raise ValueError(
                 f"BoundaryConditions: segment(s) {', '.join(repr(name) for name in nowhere)} cover no node of any "
                 f"face's interior{' on this grid' if geometry is not None else ''}, so their conditions would be "
-                "dropped where they differ from what governs there: a region or sdf_region between the boundary "
-                "nodes, or holding only nodes that faces share -- such a node takes the corner choice among those "
-                "faces' segments -- or a marked region on no face. Place them on a face, or remove them (#2512 row B1)."
+                "dropped where they differ from what governs there. Their placement selects no node inside a face "
+                "-- a region or sdf_region between the boundary nodes or off the face it names, a normal_direction "
+                "no face points along, a marked region on no face -- or only nodes that faces share, and such a "
+                "node takes the corner choice among those faces' segments. Place them on a face, or remove them "
+                "(#2512 row B1)."
             )
         if dead:
             raise ValueError(

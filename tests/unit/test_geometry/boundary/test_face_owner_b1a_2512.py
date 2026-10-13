@@ -940,6 +940,80 @@ def test_a_placement_holding_only_corner_nodes_is_refused_by_name():
         bc.segment_for_corner([BoundaryFace(0, "max"), BoundaryFace(1, "max")], grid)
 
 
+@pytest.mark.parametrize(
+    ("placed", "cause"),
+    [
+        (
+            {"normal_direction": np.array([1.0, 1.0]), "normal_tolerance": 0.9},
+            "a normal_direction no face points along",
+        ),
+        (
+            {"boundary": "x_max", "region": {"x": (0.0, 0.5)}},
+            "a region or sdf_region between the boundary nodes or off",
+        ),
+    ],
+    ids=["a normal no face points along", "a region off the face it names"],
+)
+def test_a_placement_selecting_no_face_node_is_refused_with_its_cause_named(placed, cause):
+    """Should-fix 2 of review 4: two placements that select no node inside a face, refused by the corner-only
+    refusal, whose list of causes did not name them."""
+    grid = _grid(
+        BoundaryConditions(
+            dimension=2,
+            domain_bounds=UNIT_SQUARE,
+            default_bc=BCType.NO_FLUX,
+            segments=[_seg("nowhere", BCType.DIRICHLET, 0.0, **placed)],
+        )
+    )
+    bc = grid.get_boundary_conditions()
+    with pytest.raises(ValueError, match="'nowhere' cover no node of any face's interior on this grid") as refused:
+        bc.segment_for_face("y_min", grid)
+    assert cause in str(refused.value)
+
+
+def test_a_point_at_a_corner_with_no_face_takes_the_nodes_refusal_and_names_face_to_read_one_face():
+    """Blocker 1 of review 4, ruled by the user on 2026-10-13: with no face named, a point at a corner takes the
+    node's answer, refusals included: a ``region`` covering part of x_max refuses x_max's corners, and a segment
+    shadowed on every face refuses every corner, including (0, 0), off the segment. The refusal says the point took
+    the node's answer and names the point's own remedy, ``face=``; this runs that remedy. Stage B1d designs the
+    point family's corners."""
+    door = BoundaryConditions(
+        dimension=2,
+        domain_bounds=UNIT_SQUARE,
+        default_bc=BCType.NO_FLUX,
+        segments=[
+            _seg("door", BCType.DIRICHLET, 0.0, boundary="x_max", region={"y": (0.3, 0.7)}, priority=1),
+            _seg("wall", BCType.NO_FLUX),
+        ],
+    )
+    shadowed = BoundaryConditions(
+        dimension=2,
+        domain_bounds=UNIT_SQUARE,
+        default_bc=BCType.NO_FLUX,
+        segments=[
+            _seg("exitA", BCType.DIRICHLET, 1.0, boundary="x_max", priority=1),
+            _seg("exitB", BCType.DIRICHLET, 2.0, boundary="x_max"),
+            _seg("walls", BCType.NO_FLUX),
+        ],
+    )
+    for declared, corner, faces, node_refusal, off_corner in (
+        (door, [1.0, 1.0], ("x_max", "y_max"), "covers part of the x_max face", ([1.0, 0.5], "door")),
+        (shadowed, [0.0, 0.0], ("x_min", "y_min"), "govern no face of the domain", ([0.0, 0.5], "walls")),
+    ):
+        grid = _grid(declared)
+        bc = grid.get_boundary_conditions()
+        point = np.array(corner)
+        assert bc.segment_for_point(np.array(off_corner[0]), geometry=grid).name == off_corner[1]
+        with pytest.raises(ValueError, match=f"lies on {', '.join(faces)} and, with no face named") as refused:
+            bc.segment_for_point(point, geometry=grid)
+        assert node_refusal in str(refused.value)
+        assert "To read the point on one of those faces, pass face=" in str(refused.value)
+        with pytest.raises(ValueError, match="with no face named"):
+            bc.get_bc_at_point(point, geometry=grid)
+        for face in faces:
+            assert bc.segment_for_point(point, face, geometry=grid).name in ("wall", "walls")
+
+
 def test_fdm_applicator_writes_each_corner_from_the_owners_choice():
     """`FDMApplicator` writes its faces, then each corner from `corner_nodes`. On Fixture A, P (DIRICHLET 1, priority
     1) and Q (DIRICHLET 2, priority 0) meet at (1, 1): the corner is P's 1, though y_max is written after x_max."""
