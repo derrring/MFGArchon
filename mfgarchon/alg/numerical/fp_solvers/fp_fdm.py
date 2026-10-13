@@ -131,10 +131,9 @@ class FPFDMSolver(BaseFPSolver):
         problem : Any
             MFG problem definition
         boundary_conditions : BoundaryConditions | None
-            The FP's own BC: here ``DIRICHLET(g)`` is a prescribed density m = g. When None, the BC is
-            resolved from the problem / geometry (default: no-flux) -- the BC the HJB shares, except
-            on the ``problem.components`` route when the geometry carries one (#2530) -- and a
-            ``DIRICHLET(g)`` there is an exit: absorbing, m = 0 (#2512, convention row 5).
+            The FP's own BC: here ``DIRICHLET(g)`` is a prescribed density m = g. When None, the
+            problem's shared BC (`MFGProblem.get_boundary_conditions`, #2530), the one the HJB reads,
+            and a ``DIRICHLET(g)`` there is an exit: absorbing, m = 0 (#2512, convention row 5).
         advection_scheme : str
             Advection term discretization (default: "divergence_upwind").
 
@@ -181,69 +180,17 @@ class FPFDMSolver(BaseFPSolver):
                 f"Compatible geometries: TensorProductGrid, ImplicitDomain."
             )
 
-        # Boundary condition resolution hierarchy:
-        # Issue #543 Phase 2: Replace hasattr with try/except cascade
-        # Issue #527: Align with centralized BC resolution from BaseMFGSolver
-        # 1. Explicit boundary_conditions parameter (highest priority)
-        # 2. Problem components BC (if available and not None)
-        # 3. geometry.boundary_conditions (attribute) - standard path
-        # 4. geometry.get_boundary_conditions() (method accessor)
-        # 5. Grid geometry boundary handler (legacy, if available)
-        # 6. Default no-flux BC (fallback)
+        # The FP's own BC when it was handed one, else the problem's shared BC from its one owner (#2530, row B9).
         if boundary_conditions is not None:
             self.boundary_conditions = self._fp_own_bc(boundary_conditions)
         else:
-            bc_found = False
+            self.boundary_conditions = problem.get_boundary_conditions()
 
-            # Try components BC
-            try:
-                if problem.components is not None and problem.components.boundary_conditions is not None:
-                    self.boundary_conditions = problem.components.boundary_conditions
-                    bc_found = True
-            except AttributeError:
-                pass  # No components attribute, continue to next option
-
-            # Try geometry.boundary_conditions (standard path - Issue #527)
-            if not bc_found:
-                try:
-                    bc = problem.geometry.boundary_conditions
-                    if bc is not None:
-                        self.boundary_conditions = bc
-                        bc_found = True
-                except AttributeError:
-                    pass  # No boundary_conditions attribute
-
-            # Try geometry.get_boundary_conditions() (method accessor - Issue #527)
-            if not bc_found:
-                try:
-                    bc = problem.geometry.get_boundary_conditions()
-                    if bc is not None:
-                        self.boundary_conditions = bc
-                        bc_found = True
-                except AttributeError:
-                    pass  # No get_boundary_conditions method
-
-            # Try geometry BC handler (legacy support)
-            if not bc_found:
-                try:
-                    self.boundary_conditions = problem.geometry.get_boundary_handler()
-                    bc_found = True
-                except AttributeError:
-                    pass  # No geometry BC handler
-
-            # Default to no-flux if no BC found
-            if not bc_found:
-                from mfgarchon.geometry.boundary import no_flux_bc
-
-                self.boundary_conditions = no_flux_bc(dimension=self.dimension)
-
-        # This resolution shadows BaseMFGSolver.boundary_conditions, which is where a periodic BC
-        # normally picks up the node layout of the grid being solved on (#1822). Without this line
-        # a BC handed to the constructor -- or reached through components -- keeps an unstated
-        # convention and wraps the historical way, while the same solve through the geometry gets
-        # the grid's layout: measured 8.7e-02 against 9.3e-03 of heat-kernel error on one problem,
-        # from one library, depending only on which channel supplied the BC. Applied once, after
-        # both branches, so no channel can be added below it and miss it.
+        # A periodic BC picks up the node layout of the grid being solved on here (#1822). Without this line
+        # a BC handed to the constructor keeps an unstated convention and wraps the historical way, while
+        # the same solve through the geometry gets the grid's layout: measured 8.7e-02 against 9.3e-03 of
+        # heat-kernel error on one problem, from one library, depending only on which channel supplied the
+        # BC. Applied once, after both branches.
         self.boundary_conditions = self._with_geometry_periodic_convention(self.boundary_conditions)
         # A BC this solver was not handed is the problem's shared one: a DIRICHLET(g) is an exit, the HJB's
         # u = g and an absorbing wall here, a NEUMANN(0) is zero flux here and a nonzero one is refused

@@ -279,7 +279,7 @@ def fp_view_of_shared_bc(boundary_conditions: Any, *, consumer: str) -> Any:
     solver explicitly is the FP's own: there ``DIRICHLET(g)`` is a prescribed density m = g, a ROBIN is
     the FP's total-flux Robin, and a NEUMANN is refused (`refuse_explicit_fp_neumann`).
 
-    Anything that is not a ``BoundaryConditions`` (``None``, a string sentinel) is returned as is.
+    Anything that is not a ``BoundaryConditions`` (``None``, a graph geometry's node-BC config) is returned as is.
     """
     from dataclasses import replace
 
@@ -428,8 +428,8 @@ def describe_inhomogeneous_bc_data(
 
     Args:
         boundary_conditions: a ``BoundaryConditions``-like object. Anything carrying
-            neither ``segments`` nor ``default_bc`` is not one (a string sentinel,
-            ``None``) and yields ``[]``; carrying exactly one of the pair is malformed
+            neither ``segments`` nor ``default_bc`` is not one (``None``, a graph's node-BC
+            config) and yields ``[]``; carrying exactly one of the pair is malformed
             and raises, matching ``geometric_operations`` (#1691) rather than degrading
             to "nothing disagrees".
         bc_types: restrict to segments/defaults of these ``BCType``\\ s. ``None`` means
@@ -447,7 +447,7 @@ def describe_inhomogeneous_bc_data(
     segments = getattr(boundary_conditions, "segments", missing)
     default_bc = getattr(boundary_conditions, "default_bc", missing)
     if segments is missing and default_bc is missing:
-        return []  # not a BoundaryConditions at all (None, a string sentinel)
+        return []  # not a BoundaryConditions at all (None, a graph's node-BC config)
     if segments is missing or default_bc is missing:
         # Issue #1691, same rule as geometric_operations in this module: an object
         # exposing one half of the pair is malformed, and answering "nothing disagrees"

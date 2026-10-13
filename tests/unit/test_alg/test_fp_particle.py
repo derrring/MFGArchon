@@ -202,20 +202,22 @@ class TestBoundaryConditionRequirements:
     """Test BC requirement enforcement (Issue #545)."""
 
     def test_fp_particle_requires_boundary_conditions(self):
-        """Test that FPParticleSolver fails fast without BCs."""
-        from unittest.mock import Mock
+        """FPParticleSolver fails fast without BCs: on a geometry that declares none, with none in components and
+        none handed to the solver, the problem's BC owner refuses by name (#2530, row B9; #2589)."""
+        from mfgarchon.geometry.implicit import Hyperrectangle
 
-        # Create minimal mock problem without geometry.get_boundary_conditions()
-        mock_geometry = Mock(spec=[])  # Empty spec - no methods
-        mock_problem = Mock()
-        mock_problem.geometry = mock_geometry
-        mock_problem.T = 1.0
-        mock_problem.Nt = 10
-        mock_problem.dimension = 1
-
-        # Should fail fast when geometry lacks get_boundary_conditions()
-        with pytest.raises(ValueError, match="requires explicit boundary conditions"):
-            FPParticleSolver(mock_problem, num_particles=100)
+        problem = MFGProblem(
+            geometry=Hyperrectangle(np.array([[0.0, 1.0]])),
+            T=1.0,
+            Nt=10,
+            components=MFGComponents(
+                hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
+                m_initial=lambda x: 1.0,
+                u_terminal=lambda x: 0.0,
+            ),
+        )
+        with pytest.raises(ValueError, match=r"no channel declares boundary conditions.*#2589"):
+            FPParticleSolver(problem, num_particles=100)
 
     def test_fp_particle_with_geometry_bc(self):
         """Test FPParticleSolver with geometry-provided BCs."""

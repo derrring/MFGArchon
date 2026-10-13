@@ -368,12 +368,10 @@ class Geometry(ABC):
 
     def has_explicit_boundary_conditions(self) -> bool:
         """
-        Check if this geometry has explicitly specified boundary conditions.
+        Check if this geometry declares its own boundary conditions, not a default it answers with.
 
-        Used by MFGProblem to determine BC priority:
-        1. If geometry has explicit BC → use it (SSOT)
-        2. If components has BC → use it (legacy support)
-        3. Otherwise → use geometry default
+        The problem's BC owner (`MFGProblem.get_boundary_conditions`, #2530) reads a declaring geometry's BC
+        first, and refuses a components BC beside it that declares a different condition.
 
         Returns:
             True if BC were explicitly set (not using default)
@@ -1424,6 +1422,11 @@ class UnstructuredMesh(Geometry):
 
         bc = getattr(self, "boundary_conditions", None)
         return bc if isinstance(bc, BoundaryConditions) else None
+
+    def has_explicit_boundary_conditions(self) -> bool:
+        """True when a ``BoundaryConditions`` is attached: the mesh's declaration, which the problem's BC owner
+        reads before a components BC (#2530, row B9), as it reads a grid's."""
+        return self.get_boundary_conditions() is not None
 
     def get_collocation_points(self) -> NDArray:
         """

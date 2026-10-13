@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import itertools
 import weakref
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -1361,6 +1361,34 @@ class BoundaryConditions:
             lines.append(f"  - Corner handling: {self.corner_strategy}")
         return "\n".join(lines)
 
+    def declares_the_same_as(self, other: BoundaryConditions) -> bool:
+        """Do two BCs declare one condition, whatever binding to a grid has added (#2530, row B9)?
+
+        A problem's components BC and its geometry's are two declarations of one shared BC, and they agree when
+        every declared field is equal as stored: the segments field by field, ``default_bc``, ``default_value``,
+        ``domain_bounds``, ``domain_sdf``, ``corner_strategy`` and ``corner_mollification_radius``. ``dimension``
+        and ``periodic_convention``, which binding fills in, agree when they are equal or one side leaves them
+        unset. The grid reference is not compared, and identity is not the test: a grid stores a bound copy of the
+        BC it is given.
+        """
+        if len(self.segments) != len(other.segments):
+            return False
+        segment_fields = [f.name for f in fields(BCSegment)]
+        for mine, theirs in zip(self.segments, other.segments, strict=True):
+            if not all(_equal_as_stored(getattr(mine, name), getattr(theirs, name)) for name in segment_fields):
+                return False
+        declared = ("default_bc", "default_value", "domain_bounds", "domain_sdf", "corner_strategy")
+        if not all(_equal_as_stored(getattr(self, name), getattr(other, name)) for name in declared):
+            return False
+        if not _equal_as_stored(self.corner_mollification_radius, other.corner_mollification_radius):
+            return False
+        return all(
+            getattr(self, name) is None
+            or getattr(other, name) is None
+            or _equal_as_stored(getattr(self, name), getattr(other, name))
+            for name in ("dimension", "periodic_convention")
+        )
+
 
 # =============================================================================
 # Factory Functions for Boundary Conditions
@@ -1792,6 +1820,18 @@ def _is_global(segment: BCSegment) -> bool:
     )
 
 
+def _equal_as_stored(a: Any, b: Any) -> bool:
+    """Equal as stored: a callable or an object equals only itself, an array equals an array of the same shape and
+    entries. The owner's comparison of declared values, for `_same_condition` and
+    `BoundaryConditions.declares_the_same_as`."""
+    if a is b:
+        return True
+    try:
+        return bool(np.all(np.asarray(a) == np.asarray(b))) and np.shape(a) == np.shape(b)
+    except (TypeError, ValueError):
+        return False
+
+
 def _same_condition(first: BCSegment, second: BCSegment) -> bool:
     """Do two segments impose the same condition: type, value, flux capacity and (for ROBIN) coefficients, by
     equality? The owner's one sameness rule: the shadow rule, the corner check and `uniform_segment` read it.
@@ -1800,18 +1840,9 @@ def _same_condition(first: BCSegment, second: BCSegment) -> bool:
     give equal numbers through different objects are not taken to be the same condition. ``flux_capacity`` is
     part of the condition: two exits that differ only in capacity let out different mass.
     """
-
-    def equal(a: Any, b: Any) -> bool:
-        if a is b:
-            return True
-        try:
-            return bool(np.all(np.asarray(a) == np.asarray(b))) and np.shape(a) == np.shape(b)
-        except (TypeError, ValueError):
-            return False
-
-    if first.bc_type != second.bc_type or not equal(first.value, second.value):
+    if first.bc_type != second.bc_type or not _equal_as_stored(first.value, second.value):
         return False
-    if not equal(first.flux_capacity, second.flux_capacity):
+    if not _equal_as_stored(first.flux_capacity, second.flux_capacity):
         return False
     if first.bc_type != BCType.ROBIN:
         return True
@@ -1819,7 +1850,7 @@ def _same_condition(first: BCSegment, second: BCSegment) -> bool:
 
     where = "BoundaryConditions.segment_for_face (are two segments the same condition?)"
     return all(
-        equal(a, b)
+        _equal_as_stored(a, b)
         for a, b in zip(
             segment_robin_coefficients(first, where=where), segment_robin_coefficients(second, where=where), strict=True
         )

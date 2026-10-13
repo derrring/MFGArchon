@@ -797,7 +797,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             Issues a CFL warning if the foot of a full step crosses more than one cell (``_foot_cfl``).
             Gradient clipping (Issue #583): Clips gradients > gradient_clip_threshold to prevent overflow.
         """
-        components = value_gradient(self.problem.geometry, u_values, time)
+        components = value_gradient(self.problem.geometry, u_values, time, bc=self.get_boundary_conditions())
 
         if self.dimension == 1:
             # 1D gradient computation via operator
@@ -903,8 +903,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
             Solution with BCs enforced (modified in-place)
         """
         bc = self.get_boundary_conditions()
-        if bc is None:
-            return U
 
         # Use InterpolationApplicator for dimension-agnostic BC enforcement, at the grid's spacing:
         # a Neumann value is imposed as u[wall] = u[neighbour] + g*h (#2141).
@@ -2924,7 +2922,7 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         Returns:
             BC type string ("periodic", "dirichlet", "neumann", "no_flux", "robin"), or "none" for an
-            interior point or a problem with no BC.
+            interior point. A problem with no BC is refused by its owner before this is reached (#2530).
 
         Note:
             Read through the owner (#2512 row B1): the segment governing the point's face, or at a corner
@@ -2935,8 +2933,6 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         from mfgarchon.geometry.boundary.types import BoundaryFace
 
         bc = self.get_boundary_conditions()
-        if bc is None:
-            return "none"
         shape = (len(self.x_grid),) if self.dimension == 1 else self._grid_shape
         index = np.unravel_index(int(point_idx), shape)
         faces = [

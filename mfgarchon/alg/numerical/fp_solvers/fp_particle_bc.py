@@ -54,9 +54,9 @@ def get_topology_per_dimension(
 
     Parameters
     ----------
-    boundary_conditions : BoundaryConditions or str or None
-        Boundary condition specification. Can also be "periodic" string sentinel
-        for fully periodic implicit geometry (e.g., Hyperrectangle torus).
+    boundary_conditions : BoundaryConditions or None
+        Boundary condition specification. A torus's is ``periodic_bc``, which the problem's BC owner
+        answers for a geometry periodic on every axis (#2530, row B9).
     dimension : int
         Number of spatial dimensions
     geometry : the solver's grid, on which the face owner decides a region or sdf_region placement
@@ -71,7 +71,6 @@ def get_topology_per_dimension(
     >>> from mfgarchon.geometry.boundary import periodic_bc, neumann_bc
     >>> get_topology_per_dimension(periodic_bc(1), 1)  # ["periodic"]
     >>> get_topology_per_dimension(neumann_bc(2), 2)   # ["bounded", "bounded"]
-    >>> get_topology_per_dimension("periodic", 2)       # ["periodic", "periodic"]
     """
     # Default to bounded (reflecting walls) for all dimensions
     topologies = ["bounded"] * dimension
@@ -79,14 +78,10 @@ def get_topology_per_dimension(
     if boundary_conditions is None:
         return topologies
 
-    # Handle "periodic" string sentinel (for implicit geometry with periodic_dims)
-    if boundary_conditions == "periodic":
-        return ["periodic"] * dimension
-
     bc = boundary_conditions
     if not isinstance(bc, BoundaryConditions):
         raise TypeError(
-            "get_topology_per_dimension takes a BoundaryConditions, the 'periodic' sentinel or None, not "
+            "get_topology_per_dimension takes a BoundaryConditions or None, not "
             f"{type(bc).__name__} ({bc!r}): read as bounded walls, it would solve a boundary nobody declared "
             "(#2634, review 2)."
         )
@@ -103,7 +98,7 @@ def get_topology_per_dimension(
     return ["periodic" if periodic[2 * d] and periodic[2 * d + 1] else "bounded" for d in range(dimension)]
 
 
-def needs_segment_aware_bc(boundary_conditions: BoundaryConditions | str | None) -> bool:
+def needs_segment_aware_bc(boundary_conditions: BoundaryConditions | None) -> bool:
     """
     Check if boundary conditions require segment-aware handling.
 
@@ -115,9 +110,8 @@ def needs_segment_aware_bc(boundary_conditions: BoundaryConditions | str | None)
 
     Parameters
     ----------
-    boundary_conditions : BoundaryConditions or str or None
-        Boundary condition specification. Can also be "periodic" string sentinel
-        for fully periodic implicit geometry.
+    boundary_conditions : BoundaryConditions or None
+        Boundary condition specification.
 
     Returns
     -------
@@ -128,18 +122,13 @@ def needs_segment_aware_bc(boundary_conditions: BoundaryConditions | str | None)
     --------
     >>> needs_segment_aware_bc(periodic_bc(1))  # False (uniform)
     >>> needs_segment_aware_bc(mixed_bc_with_exit)  # True (has DIRICHLET)
-    >>> needs_segment_aware_bc("periodic")  # False (uniform periodic)
     """
     if boundary_conditions is None:
         return False
 
-    # "periodic" string sentinel = uniform periodic, no segment-aware needed
-    if boundary_conditions == "periodic":
-        return False
-
     bc = boundary_conditions
     if isinstance(bc, str):
-        raise ValueError(f"needs_segment_aware_bc: the only string a BC may be is 'periodic', not {bc!r}")
+        raise ValueError(f"needs_segment_aware_bc: a BC is a BoundaryConditions, not the string {bc!r}")
 
     # Check if uniform BC (same type everywhere) - Issue #543: use getattr instead of hasattr
     is_uniform = getattr(bc, "is_uniform", False)

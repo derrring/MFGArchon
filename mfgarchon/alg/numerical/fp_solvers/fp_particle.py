@@ -134,12 +134,10 @@ class FPParticleSolver(BaseFPSolver):
         points, providing 10-100× speedup for Semi-Lagrangian HJB coupling.
 
     Boundary Conditions:
-        FPParticleSolver requires explicit boundary conditions. Provide via:
-        1. boundary_conditions parameter (direct), OR
-        2. problem.geometry.get_boundary_conditions() (from geometry)
-
-        No default fallback - explicit BCs required for correctness.
-        The solver will fail fast with a clear error message if BCs are missing.
+        A BC passed as ``boundary_conditions`` is this solver's own. Otherwise the problem's shared BC, from its
+        one owner (`MFGProblem.get_boundary_conditions`, #2530): the geometry's, a components BC on a geometry that
+        declares none, ``periodic_bc`` on a torus, or a default the geometry answers of its own (a grid after
+        ``set_boundary_conditions(None)``, #2639). A problem with none on any channel is otherwise refused by name.
 
     Composition Pattern (Issue #545):
         This solver uses composition instead of mixins:
@@ -282,56 +280,16 @@ class FPParticleSolver(BaseFPSolver):
         self.strategy_selector = StrategySelector(profiling_mode="silent")
         self.current_strategy = None  # Will be set in solve_fp_system
 
-        # Boundary condition resolution hierarchy (Issue #545):
-        # 1. Explicit boundary_conditions parameter (highest priority)
-        # 2. Grid geometry boundary conditions (from geometry)
-        # 3. Implicit geometry with periodic dimensions (e.g., Hyperrectangle torus)
-        # 4. FAIL FAST - no silent fallback (CLAUDE.md principle)
         # A BC passed here is this solver's own, so DIRICHLET(g) is a prescribed density and an absorbing
-        # wall refuses g != 0. A BC read from the shared problem/geometry is translated: there DIRICHLET(g)
-        # is an exit, u = g for the HJB and m = 0 for this solver (#2512, convention row 5).
-        self._bc_is_shared = boundary_conditions is None
+        # wall refuses g != 0. Otherwise the problem's shared BC, from its one owner (#2530, row B9) -- on a
+        # torus that is periodic_bc -- translated: there DIRICHLET(g) is an exit, u = g for the HJB and m = 0 for
+        # this solver (#2512, convention row 5).
         if boundary_conditions is not None:
             self.boundary_conditions = self._fp_own_bc(boundary_conditions)
         else:
-            # Try geometry BC (use try/except, not hasattr - Issue #543)
-            try:
-                self.boundary_conditions = problem.geometry.get_boundary_conditions()
-            except AttributeError as e:
-                # Fail fast - no silent fallback to periodic (CLAUDE.md principle)
-                raise ValueError(
-                    "FPParticleSolver requires explicit boundary conditions. "
-                    "Boundary conditions not provided via:\n"
-                    "  1. boundary_conditions=... parameter, OR\n"
-                    "  2. problem.geometry.get_boundary_conditions()\n\n"
-                    f"Original error: {e}"
-                ) from e
+            self.boundary_conditions = self._fp_view_of_shared(problem.get_boundary_conditions())
 
-            # Validate we got BCs (geometry method might return None)
-            if self.boundary_conditions is None:
-                # Check for fully periodic implicit geometry (e.g., Hyperrectangle torus)
-                # Fully periodic = all dimensions are periodic, no BC enforcement needed
-                geom = problem.geometry
-                periodic_dims = getattr(geom, "periodic_dimensions", ())
-                dimension = getattr(geom, "dimension", None)
-
-                if periodic_dims and dimension and len(periodic_dims) == dimension:
-                    # Fully periodic domain (torus) - particles wrap, no BC needed
-                    # Use "periodic" as a sentinel for BC application logic
-                    self.boundary_conditions = "periodic"
-                else:
-                    raise ValueError(
-                        "FPParticleSolver requires boundary conditions. "
-                        "problem.geometry.get_boundary_conditions() returned None. "
-                        "For implicit geometry, either:\n"
-                        "  1. Pass explicit boundary_conditions parameter, OR\n"
-                        "  2. Use fully periodic geometry (all dims in periodic_dimensions)"
-                    )
-
-        # Issue #1456: fail loud if the resolved BC requests a type this solver cannot honor
-        # (no-op for the "periodic" string sentinel).
-        if self._bc_is_shared:
-            self.boundary_conditions = self._fp_view_of_shared(self.boundary_conditions)
+        # Issue #1456: fail loud if the resolved BC requests a type this solver cannot honor.
         self._validate_bc_support(self.boundary_conditions)
         self._refuse_inhomogeneous_dirichlet(self.boundary_conditions)
 

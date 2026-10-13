@@ -442,11 +442,6 @@ class HJBFDMSolver(BaseHJBSolver):
                     jacobian=None,  # Use automatic finite differences
                 )
 
-            # Get gradient operators from geometry (Issue #596 Phase 2.1)
-            # Operators automatically inherit BC from geometry
-            scheme = "upwind" if self.use_upwind else "central"
-            self._gradient_operators = problem.geometry.get_gradient_operator(scheme=scheme)
-
         # Initialize warning flags (Issue #545 - NO hasattr pattern)
         self._bc_warning_emitted: bool = False
         self._batch_safety_checked: bool = False
@@ -964,7 +959,9 @@ class HJBFDMSolver(BaseHJBSolver):
                 gradients[d] = upwind_momentum(backward, forward, self.numerical_hamiltonian)
             return gradients
 
-        grad_ops = self.problem.geometry.get_gradient_operator(scheme="central", time=time)
+        grad_ops = self.problem.geometry.get_gradient_operator(
+            scheme="central", time=time, bc=self.get_boundary_conditions()
+        )
 
         # Apply gradient operators in each direction
         for d in range(self.dimension):
@@ -974,9 +971,10 @@ class HJBFDMSolver(BaseHJBSolver):
         return gradients
 
     def _one_sided_differences_nd(self, U: NDArray, *, time: float) -> dict[int, tuple[NDArray, NDArray]]:
-        """``{d: (backward, forward)}`` differences along each axis, with the geometry's BC ghost padding (#2313)."""
-        backward_ops = self.problem.geometry.get_gradient_operator(scheme="backward", time=time)
-        forward_ops = self.problem.geometry.get_gradient_operator(scheme="forward", time=time)
+        """``{d: (backward, forward)}`` differences along each axis, with the solver's BC ghost padding (#2313, #2530)."""
+        bc = self.get_boundary_conditions()
+        backward_ops = self.problem.geometry.get_gradient_operator(scheme="backward", time=time, bc=bc)
+        forward_ops = self.problem.geometry.get_gradient_operator(scheme="forward", time=time, bc=bc)
         return {d: (backward_ops[d](U), forward_ops[d](U)) for d in range(self.dimension)}
 
     def _evaluate_hamiltonian_nd(

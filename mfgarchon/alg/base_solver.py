@@ -133,6 +133,9 @@ class BaseMFGSolver(ABC):
     regardless of their mathematical approach (numerical, neural, RL, optimization).
     """
 
+    #: The BC a caller handed the solver, which outranks the problem's; a solver that takes one sets it.
+    _boundary_conditions: BoundaryConditions | None = None
+
     def __init__(self, problem: MFGProblem, config: BaseConfig) -> None:
         """
         Initialize the solver with a problem and configuration.
@@ -179,22 +182,10 @@ class BaseMFGSolver(ABC):
 
     def get_boundary_conditions(self) -> BoundaryConditions | None:
         """
-        Access boundary conditions from problem geometry.
+        The BC this solver solves with: the one it was handed, else the problem's (`_lookup_boundary_conditions`).
 
         Returns:
-            BoundaryConditions object or None if not available.
-
-        Note:
-            This is the single source of truth for BC information.
-            All paradigms should access BCs through this method.
-            Subclasses may override or cache boundary conditions as attributes.
-
-        Resolution Order:
-            1. Instance attribute `_boundary_conditions` (cached BCs)
-            2. `geometry.boundary_conditions` (attribute access)
-            3. `geometry.get_boundary_conditions()` (method accessor)
-            4. `problem.boundary_conditions` (direct on problem)
-            5. `problem.get_boundary_conditions()` (method on problem)
+            BoundaryConditions object; None only for a graph geometry that declares no node BCs (#1471).
 
         Raises:
             NotImplementedError: the resolved BC is one this solver cannot honour
@@ -207,61 +198,28 @@ class BaseMFGSolver(ABC):
         return bc
 
     def _lookup_boundary_conditions(self) -> BoundaryConditions | None:
-        """The resolution chain of `get_boundary_conditions`, without its support check."""
-        # Priority 1: an explicitly-passed BC, cached by the solver under this name.
-        #
+        """The BC a solver was handed (``_boundary_conditions``), else the problem's, from its one owner,
+        `MFGProblem.get_boundary_conditions` (#2530, row B9). Without the support check of `get_boundary_conditions`."""
         # Deliberately NOT `self.boundary_conditions`. That attribute carries two meanings in the
         # tree -- the BC a caller handed the constructor, and a cache of the geometry's BC -- and
         # honouring it here made a geometry-derived cache outrank a later geometry change, which
         # `test_gfdm_refreshes_geometry_bc_per_solve` exists to forbid. Solvers that accept an
         # explicit BC store it under the underscored name; see #1975 for why NO_FLUX and NEUMANN
         # are not spellings of one condition on the FP side.
-        try:
-            if self._boundary_conditions is not None:
-                return self._with_geometry_periodic_convention(self._boundary_conditions)
-        except AttributeError:
-            pass
-
-        # Priority 2: geometry.boundary_conditions (direct attribute)
-        try:
-            bc = self.problem.geometry.boundary_conditions
-            if bc is not None:
-                return self._with_geometry_periodic_convention(bc)
-        except AttributeError:
-            pass
-
-        # Priority 3: geometry.get_boundary_conditions() (method accessor)
-        try:
-            bc = self.problem.geometry.get_boundary_conditions()
-            if bc is not None:
-                return self._with_geometry_periodic_convention(bc)
-        except AttributeError:
-            pass
-
-        # Priority 4: problem.boundary_conditions (direct attribute)
-        try:
-            bc = self.problem.boundary_conditions
-            if bc is not None:
-                return self._with_geometry_periodic_convention(bc)
-        except AttributeError:
-            pass
-
-        # Priority 5: problem.get_boundary_conditions() (method accessor)
-        try:
-            bc = self.problem.get_boundary_conditions()
-            if bc is not None:
-                return self._with_geometry_periodic_convention(bc)
-        except AttributeError:
-            pass
-
-        # No BC found
-        return None
+        bc = (
+            self._boundary_conditions
+            if self._boundary_conditions is not None
+            else self.problem.get_boundary_conditions()
+        )
+        if bc is None:  # a graph geometry with no node BCs (#1471): its documented answer
+            return None
+        return self._with_geometry_periodic_convention(bc)
 
     def _with_geometry_periodic_convention(self, bc):
         """Complete a periodic BC with the node layout of the geometry actually being solved on.
 
-        Issue #1822. A grid binds this when a BC is attached to it, but Priority 1 above is a BC
-        the CALLER handed the solver -- it never met the grid, so its convention is unstated and
+        Issue #1822. A grid binds this when a BC is attached to it, but a BC the CALLER handed the
+        solver (``_boundary_conditions``) never met the grid, so its convention is unstated and
         would wrap the historical way (all N nodes distinct) on a grid where the two endpoints are
         one point. Measured on that path: the periodic gradient at the seam came out -1.5 where the
         grid's own layout gives -1.0.
@@ -318,15 +276,15 @@ class BaseMFGSolver(ABC):
         Without this gate an unsupported BC type is silently collapsed to the solver's default
         (usually Neumann / no-flux) and the solver returns a wrong answer with no error — the
         BC-blindness class mapped in #1456. No-op when the solver does not declare
-        ``supported_bc_types`` (un-migrated solver), when ``bc`` is ``None``, or when ``bc`` is a
-        non-``BoundaryConditions`` sentinel (e.g. the particle ``"periodic"`` string).
+        ``supported_bc_types`` (un-migrated solver), when ``bc`` is ``None``, or when ``bc`` is not a
+        ``BoundaryConditions`` (a graph geometry's node-BC config, #1471).
         """
         supported = getattr(self, "supported_bc_types", None)
         if supported is None or bc is None:
             return
         segments = getattr(bc, "segments", None)
         if segments is None:
-            return  # not a BoundaryConditions object (e.g. a string sentinel)
+            return  # not a BoundaryConditions object (a graph geometry's node-BC config)
         requested = {seg.bc_type for seg in segments}
         default = getattr(bc, "default_bc", None)
         if default is not None:

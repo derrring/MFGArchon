@@ -40,7 +40,7 @@ from mfgarchon.core.hamiltonian import (
     SeparableHamiltonian,
 )
 from mfgarchon.geometry import Hyperrectangle
-from mfgarchon.geometry.boundary import BaseBCValueProvider, BCSegment, BCType, BoundaryConditions
+from mfgarchon.geometry.boundary import BaseBCValueProvider, BCSegment, BCType, BoundaryConditions, no_flux_bc
 
 # ---------------------------------------------------------------------------
 # Minimal mock problem (mirrors test_joint_socp_mirror_symmetry pattern)
@@ -48,8 +48,9 @@ from mfgarchon.geometry.boundary import BaseBCValueProvider, BCSegment, BCType, 
 
 
 class _MockProblem:
-    def __init__(self, geometry, sigma=0.3, T=1.0, Nt=10, dimension=2):
+    def __init__(self, geometry, sigma=0.3, T=1.0, Nt=10, dimension=2, boundary_conditions=None):
         self.geometry = geometry
+        self._boundary_conditions = boundary_conditions
         self.dimension = dimension
         self.Nx = 9
         self.Nt = Nt
@@ -61,6 +62,15 @@ class _MockProblem:
         self.lambda_ = 1.0
         self.is_custom = False
         self.hamiltonian_class = None
+
+    def get_boundary_conditions(self):
+        """A double for the problem's BC owner (`MFGProblem.get_boundary_conditions`, #2530): the BC it was given,
+        else a ``boundary_conditions`` attribute set on its geometry, read live so that a BC set between solves is
+        the one the next solve reads. The attribute stands in for a geometry that declares a BC; a real
+        Hyperrectangle declares none, and the owner would answer a components BC or refuse."""
+        if self._boundary_conditions is not None:
+            return self._boundary_conditions
+        return self.geometry.boundary_conditions
 
     def H(self, x_idx, m_at_x, p_values, t_idx):
         return 0.5 * sum(v**2 for v in p_values.values() if isinstance(v, (int, float)))
@@ -203,7 +213,8 @@ def test_howard_runs_without_socp_stencils_and_says_so():
     behaviour for another.
     """
     pts, bdry, geom = _make_2d_cloud(nx=5, ny=5)
-    problem = _MockProblem(geom, sigma=0.3, T=1.0, Nt=5, dimension=2)
+    # The cloud's Hyperrectangle declares no BC, and a problem with none on any channel is refused (#2530, #2589).
+    problem = _MockProblem(geom, sigma=0.3, T=1.0, Nt=5, dimension=2, boundary_conditions=no_flux_bc(dimension=2))
     x_c = np.array([2.0, 2.0])
     U_T = 0.5 * np.sum((pts - x_c[None, :]) ** 2, axis=1)
 

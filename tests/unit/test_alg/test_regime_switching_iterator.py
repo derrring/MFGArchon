@@ -574,7 +574,11 @@ class TestDiagonalOutflowIsNotALaggedSource:
             if route == "geometry":
                 p.geometry.boundary_conditions = dirichlet_bc(value=0.2, dimension=1)
             elif route == "problem_components":
-                p.components.boundary_conditions = dirichlet_bc(value=0.2, dimension=1)
+                # A components BC is a second declaration of the grid's, and must agree with it (#2530): one BC on both.
+                # A components BC that differs from the grid's is refused by name, pinned in test_one_bc_owner_2530.py.
+                shared = dirichlet_bc(value=0.2, dimension=1)
+                p.geometry.boundary_conditions = shared
+                p.components.boundary_conditions = shared
             else:
                 p.geometry.boundary_conditions = BoundaryConditions(
                     dimension=1,

@@ -522,30 +522,30 @@ def test_get_boundary_conditions_default():
 
 @pytest.mark.unit
 def test_get_boundary_conditions_custom():
-    """Test get_boundary_conditions: geometry BC takes priority (Issue #674 SSOT).
+    """A components BC beside the geometry's is a second declaration of one shared BC (#2530, row B9).
 
-    Note: With geometry-first API (Issue #674), the geometry's BC takes priority
-    over components BC. This test verifies this priority order.
+    It used to lose to the geometry's silently (Issue #674's order), while FP-FDM read it first, so the HJB and the
+    FP of one problem solved different walls. Two that differ are now refused by name; the same BC on both is
+    the geometry's.
     """
-    # Uses Dirichlet BC in components (lower priority)
-    custom_bc = dirichlet_bc(value=0.0, dimension=1)
     # Issue #670: must provide m_initial and u_final
     # Issue #673: Hamiltonian required
     components = MFGComponents(
         hamiltonian=default_hamiltonian(),
-        boundary_conditions=custom_bc,
+        boundary_conditions=dirichlet_bc(value=0.0, dimension=1),
         m_initial=lambda x: 1.0,
         u_terminal=lambda x: 0.0,
     )
-    # create_test_problem uses default_geometry which has no_flux_bc
+    # create_test_problem uses default_geometry, which carries no_flux_bc
     problem = create_test_problem(components=components)
 
-    bc = problem.get_boundary_conditions()
+    with pytest.raises(ValueError, match="declares its boundary conditions twice"):
+        problem.get_boundary_conditions()
 
-    # Issue #674: Geometry BC takes priority over components BC
-    # The geometry has no_flux BC (from default_geometry), so that's what we get
+    problem.components.boundary_conditions = problem.geometry.get_boundary_conditions()
+    bc = problem.get_boundary_conditions()
     assert isinstance(bc, BoundaryConditions)
-    assert bc.type == "no_flux"
+    assert bc is problem.geometry.get_boundary_conditions()
 
 
 # ===================================================================

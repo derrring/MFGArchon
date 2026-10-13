@@ -192,7 +192,9 @@ class TestImplicitGeometryGradientNoTypeError:
         solver = object.__new__(FPParticleSolver)
         solver.problem = problem
         solver.backend = None  # No GPU; numpy only
-        solver.boundary_conditions = "periodic"  # Torus sentinel
+        from mfgarchon.geometry.boundary import periodic_bc
+
+        solver.boundary_conditions = periodic_bc(dimension=1)  # a torus's BC (#2530, row B9)
         return solver
 
     def test_zero_drift_on_implicit_geom_does_not_raise_type_error(self):
@@ -460,8 +462,9 @@ class TestHyperrectangleTorusEndToEnd:
         Refs #1255 (D2), 2026-06-11.
         """
         solver, M_initial = self._make_solver_and_m_initial(dim=2)
-        assert solver.boundary_conditions == "periodic", (
-            f"Torus solver should have periodic sentinel, got {solver.boundary_conditions!r}"
+        # A torus answers periodic_bc from the problem's BC owner (#2530, row B9), where it was a "periodic" string.
+        assert solver.boundary_conditions.type == "periodic", (
+            f"Torus solver should solve a periodic BC, got {solver.boundary_conditions!r}"
         )
 
         # Must not raise TypeError (or any exception)
@@ -485,7 +488,7 @@ class TestHyperrectangleTorusEndToEnd:
         Refs #1255 (D2), 2026-06-11.
         """
         solver, M_initial = self._make_solver_and_m_initial(dim=1)
-        assert solver.boundary_conditions == "periodic"
+        assert solver.boundary_conditions.type == "periodic"
 
         result = solver.solve_fp_system(drift_field=None, M_initial=M_initial)
 

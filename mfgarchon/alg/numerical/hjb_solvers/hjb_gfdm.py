@@ -690,10 +690,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             # re-read from geometry at solve time (Issue #1118 BC refresh).
             self._bc_from_geometry = False
         else:
-            # Use centralized BC resolution from BaseMFGSolver (Issue #527)
-            # Checks: cached _boundary_conditions, geometry.boundary_conditions,
-            # geometry.get_boundary_conditions(), problem.boundary_conditions,
-            # problem.get_boundary_conditions()
+            # No BC was handed to this solver, so this is the problem's, from its one owner (#2530).
             self.boundary_conditions = self.get_boundary_conditions()
             # Geometry-sourced BC may be re-resolved per Picard iteration by the
             # coupling layer (using_resolved_bc); refresh at solve time (Issue #1118).
