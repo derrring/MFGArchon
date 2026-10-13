@@ -374,3 +374,264 @@ def test_hjb_gfdm_solves_the_bc_the_owner_returns_once_newton_converges(mfg_capl
     assert abs(no_flux[0, -1] - 0.7) > 0.05
     with pytest.raises(ValueError, match=TWICE):
         run(_on_grid(no_flux_bc(dimension=1), _EXIT))
+
+
+# --- Every geometry type x every channel state (review 1 of #2638: B1's class) ------------------------------------
+#
+# The owner branches on the geometry's kind (a graph, a `Geometry`, another `GeometryProtocol`), on whether it holds a
+# BC, whether it answers a default of its own, and whether it is periodic on every axis; and on the components BC.
+# Every concrete `GeometryProtocol` implementer in `mfgarchon.geometry` gets a builder here or a reason it has none,
+# and `test_every_geometry_type_has_a_builder_or_a_reason` fails on a new type until it does. Each cell's expected
+# answer is derived from the rulings, never listed.
+
+_STATES = ("no BC anywhere", "components only", "geometry only", "both, the same", "both, differing")
+
+
+def _concrete_geometry_types():
+    import importlib
+    import inspect
+    import pkgutil
+
+    import mfgarchon.geometry as package
+    from mfgarchon.geometry.base import Geometry
+    from mfgarchon.geometry.protocol import GeometryProtocol
+
+    for info in pkgutil.walk_packages(package.__path__, "mfgarchon.geometry."):
+        importlib.import_module(info.name)
+    members = GeometryProtocol.__protocol_attrs__
+    found = {}
+    for cls in _all_subclasses(object):
+        module = vars(cls).get("__module__")
+        if not isinstance(module, str) or not module.startswith("mfgarchon.geometry") or inspect.isabstract(cls):
+            continue
+        if vars(cls).get("_is_protocol", False):  # GeometryProtocol and its kin describe types; they are none
+            continue
+        if issubclass(cls, Geometry) or all(hasattr(cls, name) for name in members):
+            found[f"{cls.__module__}.{cls.__qualname__}"] = cls
+    return found
+
+
+def _all_subclasses(root):
+    seen, stack = set(), list(type.__subclasses__(root))
+    while stack:
+        cls = stack.pop()
+        if cls not in seen:
+            seen.add(cls)
+            stack.extend(type.__subclasses__(cls))
+    return seen
+
+
+def _box():
+    from mfgarchon.geometry.implicit import Hyperrectangle
+
+    return Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]]))
+
+
+def _disc():
+    from mfgarchon.geometry.implicit import Hypersphere
+
+    return Hypersphere(center=[0.5, 0.5], radius=0.3)
+
+
+def _generated(mesh):
+    mesh.generate_mesh()
+    return mesh
+
+
+def _network(net):
+    net.create_network()
+    return net
+
+
+def _geometry_builders():
+    """type -> {variant: builder}, or the reason no problem can be built on it."""
+    from mfgarchon.geometry.implicit import Hyperrectangle
+    from mfgarchon.geometry.implicit.csg_operations import (
+        ComplementDomain,
+        DifferenceDomain,
+        IntersectionDomain,
+        UnionDomain,
+    )
+    from mfgarchon.geometry.implicit.point_cloud import PointCloudGeometry
+    from mfgarchon.geometry.meshes import Mesh1D, Mesh2D, Mesh3D
+
+    def complement():
+        domain = ComplementDomain(_disc())
+        domain.set_bounding_box(np.array([[0.0, 1.0], [0.0, 1.0]]))
+        return domain
+
+    def network(kind, **kw):
+        def build():
+            pytest.importorskip("igraph")
+            from mfgarchon.geometry.graph import network_geometry
+
+            return _network(getattr(network_geometry, kind)(**kw))
+
+        return build
+
+    def gmsh_mesh(cls, **kw):
+        def build():
+            pytest.importorskip("gmsh")
+            pytest.importorskip("meshio")
+            return _generated(cls(**kw))
+
+        return build
+
+    square = np.array([[0.0, 1.0], [0.0, 1.0]])
+    return {
+        "mfgarchon.geometry.grids.tensor_grid.TensorProductGrid": {
+            "": lambda: TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=no_flux_bc(dimension=1)
+            )
+        },
+        "mfgarchon.geometry.meshes.mesh_1d.Mesh1D": {
+            "": lambda: _generated(Mesh1D(bounds=(0.0, 1.0), num_elements=10))
+        },
+        "mfgarchon.geometry.meshes.mesh_2d.Mesh2D": {
+            "": gmsh_mesh(Mesh2D, domain_type="rectangle", bounds=(0.0, 1.0, 0.0, 1.0), mesh_size=0.5)
+        },
+        "mfgarchon.geometry.meshes.mesh_3d.Mesh3D": {
+            "": gmsh_mesh(Mesh3D, domain_type="box", bounds=(0.0, 1.0, 0.0, 1.0, 0.0, 1.0), mesh_size=0.5)
+        },
+        "mfgarchon.geometry.implicit.hyperrectangle.Hyperrectangle": {
+            "a box": _box,
+            "periodic on one axis": lambda: Hyperrectangle(square, periodic_dims=(0,)),
+            "a torus": lambda: Hyperrectangle(square, periodic_dims=(0, 1)),
+        },
+        "mfgarchon.geometry.implicit.hypersphere.Hypersphere": {"": _disc},
+        "mfgarchon.geometry.implicit.csg_operations.UnionDomain": {"": lambda: UnionDomain([_box(), _disc()])},
+        "mfgarchon.geometry.implicit.csg_operations.IntersectionDomain": {
+            "": lambda: IntersectionDomain([_box(), _disc()])
+        },
+        "mfgarchon.geometry.implicit.csg_operations.DifferenceDomain": {"": lambda: DifferenceDomain(_box(), _disc())},
+        "mfgarchon.geometry.implicit.csg_operations.ComplementDomain": {"": complement},
+        "mfgarchon.geometry.implicit.point_cloud.PointCloudGeometry": {
+            "": lambda: PointCloudGeometry(np.linspace(0.0, 1.0, 11).reshape(-1, 1))
+        },
+        "mfgarchon.geometry.graph.network_geometry.GridNetwork": {"": network("GridNetwork", width=3, height=3)},
+        "mfgarchon.geometry.graph.network_geometry.RandomNetwork": {
+            "": network("RandomNetwork", num_nodes=6, connection_prob=0.6)
+        },
+        "mfgarchon.geometry.graph.network_geometry.ScaleFreeNetwork": {"": network("ScaleFreeNetwork", num_nodes=6)},
+        "mfgarchon.geometry.graph.network_geometry.CustomNetwork": {
+            "": network("CustomNetwork", adjacency_matrix=np.array([[0.0, 1.0], [1.0, 0.0]]))
+        },
+        "mfgarchon.geometry.graph.maze_generator.MazeGeometry": (
+            "NetworkMFGProblem cannot be built on it: AttributeError, no 'network_data', at 79fae339 as here (#2573)"
+        ),
+    }
+
+
+def test_every_geometry_type_has_a_builder_or_a_reason():
+    found = _concrete_geometry_types()
+    assert "mfgarchon.geometry.grids.tensor_grid.TensorProductGrid" in found  # control: a Geometry subclass
+    assert "mfgarchon.geometry.implicit.point_cloud.PointCloudGeometry" in found  # control: protocol-only
+    assert sorted(set(found) - set(_geometry_builders())) == []
+
+
+def _cells():
+    for type_name, variants in _geometry_builders().items():
+        if isinstance(variants, str):
+            continue
+        for variant, build in variants.items():
+            for state in _STATES:
+                yield pytest.param(
+                    build, state, id=f"{type_name.rsplit('.', 1)[1]}{' ' + variant if variant else ''}, {state}"
+                )
+
+
+@pytest.mark.parametrize(("build", "state"), list(_cells()))
+def test_the_owner_answers_every_geometry_type_in_every_channel_state(build, state):
+    """Each cell is one of the rulings: the declared BC; D1 (two declarations that differ are refused, the same one
+    is the geometry's); D4 (none on any channel is refused by name, a torus answers periodic_bc, a graph its own
+    node config, None included). A geometry that holds no BC has no "geometry" states. Never an unnamed exception."""
+    from mfgarchon.extensions.topology import NetworkMFGProblem
+    from mfgarchon.geometry.base import GraphGeometry, UnstructuredMesh
+    from mfgarchon.geometry.boundary.applicator_graph import GraphBCConfig
+
+    geometry = build()
+    dimension = geometry.dimension
+    is_graph = isinstance(geometry, GraphGeometry)
+    holds = is_graph or isinstance(geometry, (TensorProductGrid, UnstructuredMesh))
+    if state in _STATES[2:] and not holds:
+        pytest.skip("this geometry holds no BC")
+    on_geometry = GraphBCConfig() if is_graph else dirichlet_bc(dimension=dimension, value=0.7)
+    if state in _STATES[:2] and isinstance(geometry, TensorProductGrid):
+        geometry.set_boundary_conditions(None)  # a grid always declares one; this is how it holds none
+    if state in _STATES[2:]:
+        if is_graph or isinstance(geometry, TensorProductGrid):
+            geometry.set_boundary_conditions(on_geometry)
+        else:
+            geometry.boundary_conditions = on_geometry
+    stored = geometry.get_boundary_conditions()
+    declared = {
+        _STATES[1]: no_flux_bc(dimension=dimension),
+        _STATES[3]: on_geometry,
+        _STATES[4]: no_flux_bc(dimension=dimension),
+    }.get(state)
+    if is_graph:
+        problem = NetworkMFGProblem(geometry=geometry, T=T, Nt=4)
+        problem.components.boundary_conditions = declared
+    else:
+        problem = MFGProblem(geometry=geometry, components=_components(declared), T=T, Nt=4)
+
+    if is_graph:
+        if declared is not None:
+            with pytest.raises(ValueError, match="#1471"):
+                problem.get_boundary_conditions()
+        else:
+            assert problem.get_boundary_conditions() is stored
+    elif state == _STATES[4]:
+        with pytest.raises(ValueError, match=TWICE):
+            problem.get_boundary_conditions()
+    elif state in (_STATES[2], _STATES[3]):
+        assert problem.get_boundary_conditions() is stored
+    elif state == _STATES[1]:
+        assert problem.get_boundary_conditions() is declared
+    elif stored is not None:  # no BC anywhere, but the geometry answers a default of its own (a new object per call)
+        assert problem.get_boundary_conditions().declares_the_same_as(stored)
+    elif len(getattr(geometry, "periodic_dimensions", ())) == dimension:
+        assert problem.get_boundary_conditions().type == "periodic"
+    else:
+        with pytest.raises(ValueError, match="no channel declares boundary conditions"):
+            problem.get_boundary_conditions()
+
+
+def test_a_new_geometry_type_without_a_builder_is_found():
+    """The coverage check is live: a geometry type nobody has given a builder or a reason is reported."""
+    import gc
+
+    from mfgarchon.geometry.implicit import Hyperrectangle
+
+    planted = type("PlantedDomain", (Hyperrectangle,), {"__module__": "mfgarchon.geometry.implicit.planted"})
+    try:
+        assert "mfgarchon.geometry.implicit.planted.PlantedDomain" in set(_concrete_geometry_types()) - set(
+            _geometry_builders()
+        )
+    finally:
+        del planted
+        gc.collect()
+    assert "mfgarchon.geometry.implicit.planted.PlantedDomain" not in _concrete_geometry_types()
+
+
+def test_a_solver_on_an_implicit_domain_solves_the_components_bc():
+    """The D4 refusal's remedy for a geometry that holds none, run as a solve (#2638): ``problem.solve()`` refuses an
+    implicit domain before any BC (FixedPointIterator takes a grid or a mesh), so HJB-GFDM is run on its own, on a
+    Hyperrectangle whose only BC is the components one."""
+    from mfgarchon.geometry.implicit import Hyperrectangle
+
+    box = Hyperrectangle(np.array([[0.0, 1.0]]))
+    declared = no_flux_bc(dimension=1)
+    problem = MFGProblem(geometry=box, components=_components(declared), T=T, Nt=4, volatility=SIGMA)
+    points = np.linspace(0.0, 1.0, 11).reshape(-1, 1)
+    solver = HJBGFDMSolver(problem, collocation_points=points, boundary_indices=np.array([0, 10]))
+    assert solver.get_boundary_conditions() is declared
+    U = np.asarray(solver.solve_hjb_system(np.ones((5, 11)), points[:, 0] ** 2, np.tile(points[:, 0] ** 2, (5, 1))))
+    assert U.shape == (5, 11)
+    assert np.all(np.isfinite(U))
+    with pytest.raises(ValueError, match="no channel declares boundary conditions"):
+        HJBGFDMSolver(
+            MFGProblem(geometry=box, components=_components(), T=T, Nt=4, volatility=SIGMA),
+            collocation_points=points,
+            boundary_indices=np.array([0, 10]),
+        )
