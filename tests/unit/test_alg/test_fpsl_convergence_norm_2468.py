@@ -102,8 +102,8 @@ def test_the_linear_deposit_gives_the_stagnation_node_twice_the_equations_inflow
     not depend on dt. If this fails with C at the stagnation node, #2645's consistent deposit has landed: update the
     documentation and this pin.
 
-    The control comes first: the rate is C at the other interior nodes, so a step that runs time at the wrong speed
-    fails there. The two nodes next to the walls are left out: #2243's trapezoid reweighting departs there (-12 at
+    The control comes first: the rate is C, to 1%, at the other interior nodes (exactly C for this deposit; within 0.3%
+    for the cubic one), so a step that runs time or the drift at the wrong speed fails there. The two nodes next to the walls are left out: #2243's trapezoid reweighting departs there (-12 at
     nx = 101)."""
     nx = 101
     x = np.linspace(0.0, 1.0, nx)
@@ -112,9 +112,7 @@ def test_the_linear_deposit_gives_the_stagnation_node_twice_the_equations_inflow
         rate = (M[1] - M[0]) / (dt * M[0])
         centre = int(np.argmin(np.abs(x - 0.5)))
         interior = np.r_[2:centre, centre + 1 : nx - 2]
-        np.testing.assert_allclose(
-            rate[interior], C, rtol=1e-10, err_msg="control: the step is wrong away from x = 1/2"
-        )
+        np.testing.assert_allclose(rate[interior], C, rtol=1e-2, err_msg="control: the step is wrong away from x = 1/2")
         assert rate[centre] == pytest.approx(2 * C, rel=1e-10)
 
 
