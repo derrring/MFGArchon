@@ -399,12 +399,12 @@ The paragraph above states the target. A **local patch** fixes a defect where it
 
 1. the defect class, named;
 2. its population: the predicate, counting members that are still defective (a site kept with a pin showing it matches the owner is not a member); a control the predicate must find at both shas, outside the count; and the count at the base sha and at the head sha;
-3. class fix (head count 0) or partial fix; for a partial fix, which admission below holds, and the open issue, which this PR does not close, where the remaining members are listed.
+3. class fix (head count 0) or partial fix; for a partial fix, which admission below holds, and an open issue this PR does not close that lists the remaining members.
 
 A partial fix is admitted only when:
-- it is one stage of a class fix whose remaining stages are named, in order, in an issue comment that records who approved the plan, someone other than its author, and that the class line links;
+- it is one stage of a class fix whose remaining stages are named, in order, in an issue comment that records the plan's approval by someone other than its author and that the class line links;
 - the class fix waits on a ruling that is not the author's to make, or on code outside this repository, and the issue that records it as open is named; or
-- it is a one-line truth repair (a false message or comment), and the class's other members are listed in an open issue that this PR does not close.
+- it is a one-line truth repair (a false message or comment), and the class's other members are listed in an open issue this PR does not close.
 
 Urgency is not an admission: it changes the order of work, not its level. Nor is "keep changes minimal + focused" (§ *Bug fixes from research*): that bounds a change to its defect's class.
 
