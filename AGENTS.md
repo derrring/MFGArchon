@@ -399,12 +399,12 @@ The paragraph above states the target. A **local patch** fixes a defect where it
 
 1. the defect class, named;
 2. its population: the predicate, counting members that are still defective (a site kept with a pin showing it matches the owner is not a member); a control the predicate must find at both shas, outside the count; and the count at the base sha and at the head sha;
-3. class fix (head count 0) or partial fix; for a partial fix, which admission below holds, and the issue where the remaining members are listed.
+3. class fix (head count 0) or partial fix; for a partial fix, which admission below holds, and the open issue, which this PR does not close, where the remaining members are listed.
 
 A partial fix is admitted only when:
-- it is one stage of a class fix whose remaining stages are named, in order, in an issue comment that records the plan's approval and that the class line links;
+- it is one stage of a class fix whose remaining stages are named, in order, in an issue comment that records who approved the plan, someone other than its author, and that the class line links;
 - the class fix waits on a ruling that is not the author's to make, or on code outside this repository, and the issue that records it as open is named; or
-- it is a one-line truth repair (a false message or comment), and the class's other members are listed in an issue.
+- it is a one-line truth repair (a false message or comment), and the class's other members are listed in an open issue that this PR does not close.
 
 Urgency is not an admission: it changes the order of work, not its level. Nor is "keep changes minimal + focused" (§ *Bug fixes from research*): that bounds a change to its defect's class.
 
@@ -431,6 +431,8 @@ Do **not** edit: `mfgarchon/__init__.py` (reads `importlib.metadata`), `workflow
   - **Should-fix**: wording, clarity, style. Fix it or file it; it never blocks.
   - A review whose findings are all must-fix or should-fix returns MERGE-OK, and the must-fix corrections are a condition of merging.
   - A prose-only must-fix or should-fix correction is not a diff change that triggers the next review.
+  - **A re-review is narrow** (user ruling, 2026-10-13). Review 1 reads the whole PR. Every later review reads only each finding of the review before it with the change that answers it, every file the fix round touched, and a regression pass over the PR's own tests and the gate's result; it does not re-read what did not change. Whatever it finds is classified as above.
+  - **The PR body carries claims, not tallies** (user ruling, 2026-10-13). It states what changed, the class line, and the evidence for each claim that gates the merge. Every number in it sits beside the command that printed it and the sha it ran at; a number with no command is not written. Measurements no gating claim rests on go in a comment on the PR's issue, which the body links. The one-line record of each review (its number, verdict and tokens) stays in the body.
 
 ### GitHub issue/PR management ⚠️ MANDATORY
 
