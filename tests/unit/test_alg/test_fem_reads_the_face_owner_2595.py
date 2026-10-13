@@ -472,7 +472,11 @@ def test_a_dirichlet_segment_the_corner_rule_leaves_no_node_is_refused_and_the_a
 
     basis = _square_basis()
     refused = BoundaryConditions(dimension=2, segments=[_EXIT_ON_X_MAX, *_walls(**walls)], default_bc=BCType.NO_FLUX)
-    with pytest.raises(ValueError, match=r"segment 'exit' governs 1 boundary facet\(s\) but holds none of their nodes"):
+    # The advice is part of what is pinned (review 3 of #2643): the BC below is the one it describes.
+    advice = r"Place it on only the facets it should govern .* give it a higher priority than 'w1', 'w2'"
+    with pytest.raises(
+        ValueError, match=r"segment 'exit' governs 1 boundary facet\(s\) but holds none of their nodes.*" + advice
+    ):
         get_dirichlet_dofs_and_values(basis, refused)
     advised = BoundaryConditions(dimension=2, segments=[*_walls(**walls), _ADVISED_EXIT], default_bc=BCType.NO_FLUX)
     dofs, values = get_dirichlet_dofs_and_values(basis, advised)

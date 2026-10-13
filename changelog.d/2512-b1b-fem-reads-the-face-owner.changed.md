@@ -40,8 +40,8 @@
       refusal names the tag and lists the tags that hold facets;
     - a DIRICHLET segment that governs facets but whose every node the corner rule gives to segments imposing a
       different condition, such as an exit on one facet between two higher-priority walls. P1 FEM imposed no exit there.
-      If one of those segments imposes its own condition, that condition holds at a node of its facets, and it is not
-      refused;
+      If a segment that takes one of its nodes imposes its own condition, that condition holds at that node, and it is
+      not refused;
     - a tag that also holds facets inside the domain, which main condensed;
     - under `corner_strategy="average"` or `"mollify"`, a node whose facets' segments impose different conditions.
   - **API changes.** `fem.bc_adapter.is_pure_neumann(mesh, bc)` and `refuse_what_fem_cannot_impose(basis, bc,
