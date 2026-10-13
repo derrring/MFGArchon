@@ -1,9 +1,10 @@
 """The norm `FPSLSolver`'s density converges in (#2468; user ruling 2026-10-13: document now, #2645 for the scheme).
 
-At σ = 0 the scheme converges in W₁ and L¹, which is what its theory gives (Carlini–Silva, arXiv:1708.02042, Theorem 4.1),
-and not pointwise at a node where the drift changes sign: the linear deposit gives that node twice the continuity
-equation's inflow. With σ > 0 the excess is diffused and the density converges pointwise. Each test below is an external
-oracle (an exact law) or, for the stagnation node, a labelled pin of the documented behaviour.
+At σ = 0 the scheme converges in W₁, which is what its theory gives (Carlini–Silva, arXiv:1708.02042, Theorem 4.1, on
+ℝ^d), and on #2468's fixture in L¹ too. It does not converge pointwise where the drift changes sign: in 1-D the linear
+deposit gives a compressive stagnation point on a node twice the continuity equation's rate. With σ > 0, away from
+walls, the excess is diffused and the density converges pointwise. Each test below is an external oracle (an exact law)
+or, for the stagnation node, a labelled pin of the documented behaviour, with a control asserted first.
 """
 
 from __future__ import annotations
@@ -68,7 +69,9 @@ def issue_runs():
 
 
 def test_at_sigma_zero_the_density_converges_in_w1_and_l1(issue_runs):
-    """W₁ and L¹ fall under refinement along dt = h, as Theorem 4.1's convergence in C([0,T]; P₁) allows. Measured at
+    """W₁ and L¹ fall under refinement along dt = h. W₁ is what Theorem 4.1's convergence in C([0,T]; P₁) gives, on
+    ℝ^d; this fixture's density vanishes before the walls. L¹ is measured here only: where σ = 0 drives mass into a wall,
+    the exact law has an atom and L¹ does not converge. Measured at
     acdae412: W₁ 3.86e-3, 1.85e-3, 9.07e-4 (orders 1.06, 1.03) and L¹ 6.78e-2, 3.87e-2, 2.24e-2 (orders 0.81, 0.79)."""
     w1 = [_w1(x, m, exact) for x, m, exact in issue_runs]
     l1 = [float(np.trapezoid(np.abs(m - exact), x)) for x, m, exact in issue_runs]
@@ -82,8 +85,12 @@ def test_at_sigma_zero_the_stagnation_node_is_not_converged_pointwise(issue_runs
     """RECORDED BEHAVIOUR, not a contract: the density at x = 1/2 stays above the exact peak by more than 1.1 at every
     level (measured at acdae412: 1.139, 1.171, 1.182; 1.186 at nx = 801), and it is the largest error. If this fails
     because the excess is gone, #2645's consistent deposit has landed: update `FPSLSolver`'s Convergence section,
-    CONVENTIONS § 9, and this pin."""
+    CONVENTIONS § 9, and this pin.
+
+    The control comes first: W₁ below 1e-2 at every level (measured 3.9e-3 at nx = 51), so a solve wrong everywhere --
+    one that runs time at the wrong speed, say -- fails here rather than reading as the excess retired."""
     for x, m, exact in issue_runs:
+        assert _w1(x, m, exact) < 1e-2, "control: the solve is wrong as a measure, not only at the stagnation node"
         centre = int(np.argmin(np.abs(x - 0.5)))
         assert m[centre] - exact[centre] > 1.1, (m[centre], exact[centre])
         assert int(np.argmax(np.abs(m - exact))) == centre
@@ -91,26 +98,33 @@ def test_at_sigma_zero_the_stagnation_node_is_not_converged_pointwise(issue_runs
 
 def test_the_linear_deposit_gives_the_stagnation_node_twice_the_equations_inflow():
     """RECORDED BEHAVIOUR, not a contract (#2645). One step at σ = 0 on a flat density: the growth rate
-    (M1 - M0) / (dt M0) is 2C at the node where the drift changes sign and C at every other interior node, where the
-    continuity equation gives C everywhere; it does not depend on dt. If this fails with C at the stagnation node,
-    #2645's consistent deposit has landed: update the documentation and this pin."""
+    (M1 - M0) / (dt M0) is 2C at the node where the drift changes sign, where the continuity equation gives C; it does
+    not depend on dt. If this fails with C at the stagnation node, #2645's consistent deposit has landed: update the
+    documentation and this pin.
+
+    The control comes first: the rate is C at the other interior nodes, so a step that runs time at the wrong speed
+    fails there. The two nodes next to the walls are left out: #2243's trapezoid reweighting departs there (-12 at
+    nx = 101)."""
     nx = 101
     x = np.linspace(0.0, 1.0, nx)
     for dt in (1e-2, 1e-3):
         M = _solve(nx, 1, dt, 0.0, np.ones(nx))
         rate = (M[1] - M[0]) / (dt * M[0])
         centre = int(np.argmin(np.abs(x - 0.5)))
-        assert rate[centre] == pytest.approx(2 * C, rel=1e-10)
         interior = np.r_[2:centre, centre + 1 : nx - 2]
-        np.testing.assert_allclose(rate[interior], C, rtol=1e-10)
+        np.testing.assert_allclose(
+            rate[interior], C, rtol=1e-10, err_msg="control: the step is wrong away from x = 1/2"
+        )
+        assert rate[centre] == pytest.approx(2 * C, rel=1e-10)
 
 
 def test_with_diffusion_the_density_converges_pointwise():
-    """External oracle: σ = 0.1 on a Gaussian of variance v0 = 0.01 about 1/2, whose law under the drift -C (x - 1/2) is
-    Gaussian about 1/2 with v(T) = v0 e^{-2CT} + (σ²/2C)(1 - e^{-2CT}) (Ornstein-Uhlenbeck); its tails at the walls are
-    below 4e-6 of the peak. L∞ falls at order >= 0.8 along dt = h. Measured at acdae412: 1.02e-1, 5.39e-2, 2.77e-2
-    (orders 0.92, 0.96)."""
-    sigma, v0 = 0.1, 0.01
+    """External oracle: σ = 0.1 on a Gaussian of variance v0 = 0.005 about 1/2, whose law under the drift -C (x - 1/2)
+    is Gaussian about 1/2 with v(T) = v0 e^{-2CT} + (σ²/2C)(1 - e^{-2CT}) (Ornstein-Uhlenbeck), here 0.0082: v0 is not
+    the stationary variance σ²/2C = 0.01, so the law moves. Its tails at the walls are below 1e-10 of the peak at t = 0
+    and 3e-7 at T. L∞ falls at order >= 0.8 along dt = h. Measured at 9b8116c8: 8.86e-2, 4.65e-2, 2.38e-2 (orders 0.93,
+    0.97). Away from walls only: at a no-flux wall the density does not converge pointwise (#1855)."""
+    sigma, v0 = 0.1, 0.005
     errors = []
     for nx in (51, 101, 201):
         x = np.linspace(0.0, 1.0, nx)

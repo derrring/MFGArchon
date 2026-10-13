@@ -5,13 +5,13 @@ This module provides splatting routines (adjoint of interpolation) for the
 Forward Semi-Lagrangian method. Each splatting scheme is the exact transpose
 of the corresponding interpolation scheme used in HJB-SL.
 
-Supported methods, each the transpose of the interpolation of that order:
-- linear: 2-point stencil, the transpose of linear interpolation, preserves positivity
-- cubic: 4-point stencil, the transpose of O(dx³) interpolation, may produce negative values
-- quintic: 6-point stencil, the transpose of O(dx⁵) interpolation, may produce negative values
+Supported methods, each the transpose of an interpolation:
+- linear: 2-point stencil, linear interpolation's, preserves positivity
+- cubic: 4-point stencil, Catmull-Rom interpolation's, may produce negative values
+- quintic: 6-point stencil, 6-point Lagrange interpolation's, may produce negative values
 
-The orders are the interpolations', not the density's. At σ = 0 the solver's density converges in W₁ and L¹ and
-not pointwise at a node where the drift changes sign (`FPSLSolver`, Convergence; #2468).
+No order is stated for the density. At σ = 0 the solver's density converges in W₁, and not pointwise where a
+component of the drift changes sign (`FPSLSolver`, Convergence; #2468).
 
 Mathematical Foundation:
     If HJB uses interpolation matrix P with row sums = 1,
@@ -140,7 +140,7 @@ def compute_quintic_weights(t: float) -> tuple[float, float, float, float, float
     """
     Compute quintic interpolation weights.
 
-    Uses 6 points for O(dx⁵) accuracy with C² continuity.
+    The degree-5 Lagrange polynomial through the 6 nearest nodes.
     Weights satisfy partition of unity: sum(w) = 1.
 
     Args:

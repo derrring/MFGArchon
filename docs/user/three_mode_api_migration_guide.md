@@ -310,8 +310,8 @@ These schemes satisfy $L_{FP} = L_{HJB}^T$ exactly at matrix level:
 |:-------|:---------|:------|:----------|
 | `FDM_UPWIND` | General purpose, monotone | 1st order | Excellent |
 | `FDM_CENTERED` | Higher accuracy, smooth problems | 2nd order | Good (low Peclet)¹ |
-| `SL_LINEAR` | Large time steps, transport-dominated | 1st order | Excellent |
-| `SL_CUBIC` | High accuracy SL | 3rd order (HJB) | Good |
+| `SL_LINEAR` | Large time steps, transport-dominated | density in $W_1$, not pointwise (#2468) | Excellent |
+| `SL_CUBIC` | High accuracy SL | cubic HJB interpolation; density as `SL_LINEAR` | Good |
 
 ¹ **`FDM_CENTERED` differs from `FDM_UPWIND` in the FP half only** — measured,
 `HJBFDMSolver.advection_scheme` is `gradient_upwind` under both (#1866). So the "2nd order" in this

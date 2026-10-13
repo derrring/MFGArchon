@@ -1,11 +1,20 @@
-- **`FPSLSolver` states the norm its density converges in** (closes #2468; the scheme question is #2645).
-  - At σ = 0 the density converges in W₁ and L¹, which is what the scheme's theory gives (Carlini–Silva,
-    arXiv:1708.02042, Theorem 4.1). It does not converge pointwise at a node where the drift changes sign: the
-    linear deposit gives that node twice the continuity equation's inflow, so the peak of a compressive drift stays too
-    high under refinement. On #2468's fixture the peak is 4.20 against an exact 3.02 at every resolution.
-  - With σ > 0 the excess is diffused and the density converges pointwise.
-  - The splatting methods' orders, O(dx³) for cubic and O(dx⁵) for quintic, were stated as the density's accuracy. They
-    are the interpolations' orders, and the docstrings now say so. The linear method's "O(dx) accuracy" is replaced by
-    the norm statement above.
+- **The FP semi-Lagrangian solver states the norm its density converges in, and no longer states orders it does not
+  have** (closes #2468; the scheme question is #2645).
+  - `FPSLSolver`, at σ = 0:
+    - the density converges in W₁, which is what the scheme's theory gives (Carlini–Silva, arXiv:1708.02042,
+      Theorem 4.1, on ℝ^d without a boundary);
+    - it does not converge pointwise where a component of the drift changes sign. In 1-D the linear deposit gives a
+      compressive stagnation point on a node twice the equation's rate, and the peak of a compressive drift stays
+      too high under refinement: on #2468's fixture 4.16 to 4.20 against an exact 3.02 over nx = 51 to 801;
+    - where σ = 0 drives mass into a wall, the exact law has an atom there and L¹ does not converge.
+  - With σ > 0, away from walls, the density converges pointwise. At a no-flux wall, at the default `diffusion_theta`,
+    it does not (#1855).
+  - Orders that were stated as the density's accuracy are removed:
+    - the splatting methods' "O(dx)", "O(dx³)" and "O(dx⁵)";
+    - `NumericalScheme.SL_LINEAR`'s "O(h^2) with Δt = O(h^{3/2})" and `SL_CUBIC`'s "O(h^4)";
+    - the SL pair factory's comment "maintains O(h^2) convergence" (`_create_sl_pair`, behind `create_paired_solvers`);
+    - the migration guide's "1st order" and "3rd order (HJB)" for the SL pairs.
+
+    The splatting methods are described by the interpolation each transposes.
   - `docs/user/CONVENTIONS.md` § 9 gains the rule: a density converges in a named norm, and a peak value or a plot of
-    a σ = 0 FP-SL density is a pointwise reading.
+    an FP-SL density is a pointwise reading.
