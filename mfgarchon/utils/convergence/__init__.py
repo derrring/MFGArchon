@@ -39,7 +39,7 @@ Usage:
 from __future__ import annotations
 
 # =============================================================================
-# CONVERGENCE CHECKERS (convergence_checkers.py)
+# ARRAY NORMS (convergence_checkers.py)
 # =============================================================================
 from .convergence_checkers import compute_norm
 

@@ -1,13 +1,13 @@
 """
-Array norms for convergence diagnostics.
+Array norms.
 
 The checker classes that used to live here are removed (#2648, ruling 5):
 - `ConvergenceConfig`, `MFGConvergenceChecker`, `HJBConvergenceChecker`, `FPConvergenceChecker`;
 - the `ConvergenceChecker` protocol and `create_convergence_checker`.
 
-No solver took a `ConvergenceConfig`, and seven of its fourteen fields had no reader. The convergence owner is
-`sweep_change` (`convergence_metrics.py`), which the coupling iterators call. #2657 records one convergence
-configuration across solvers, built on it.
+No solver took a `ConvergenceConfig`, and eight of its fourteen fields had no reader, `_history` among them.
+The convergence owner is `sweep_change` (`convergence_metrics.py`), which the coupling iterators call. #2657
+records one convergence configuration across solvers, built on it.
 
 `compute_norm` stays. It is #2566's row: a plain array norm that chooses its own measure.
 """

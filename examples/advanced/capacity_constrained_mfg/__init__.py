@@ -18,7 +18,7 @@ Mathematical Framework:
     As density approaches capacity, the cost g(m/C) → ∞ creates a "soft wall" effect.
 
 Examples:
-    >>> from examples.advanced.maze_navigation_capacity import (
+    >>> from examples.advanced.capacity_constrained_mfg import (
     ...     CapacityField,
     ...     QuadraticCongestion,
     ...     CapacityConstrainedMFGProblem
