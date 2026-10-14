@@ -38,6 +38,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 # Import base class for inheritance
+from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
+
 from .applicator_base import BaseGraphApplicator
 
 if TYPE_CHECKING:
@@ -138,14 +140,23 @@ class GraphBCConfig:
         ...         NodeBC(nodes=[0, 1], bc_type=GraphBCType.DIRICHLET, value=0.0, name="exit"),
         ...         NodeBC(nodes=[10, 11], bc_type=GraphBCType.SOURCE, value=1.0, name="source"),
         ...     ],
-        ...     default_bc_type=GraphBCType.NEUMANN
         ... )
         >>> applicator = GraphApplicator.from_config(config, num_nodes=20)
     """
 
     node_bcs: list[NodeBC] = field(default_factory=list)
     edge_bcs: list[EdgeBC] = field(default_factory=list)
-    default_bc_type: GraphBCType = GraphBCType.NEUMANN
+    default_bc_type: GraphBCType = NEVER_READ  # refused when passed; never read (#2648)
+
+
+GraphBCConfig.__init__ = retired_parameters(  # type: ignore[method-assign]
+    {
+        "default_bc_type": "a node without a NodeBC gets no condition; give each node that needs one a NodeBC (#2493)",
+    },
+    issue="#2648",
+    since="v0.22.0",
+    never_read=True,
+)(GraphBCConfig.__init__)
 
 
 class GraphApplicator(BaseGraphApplicator):

@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 import numpy as np
 
 from mfgarchon.types.callable_protocols import VARIATIONAL_LAGRANGIAN_SLOTS, BoundCallable, bound_attribute
+from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import retired_sigma_keyword
 
@@ -85,11 +86,11 @@ class VariationalMFGComponents:
 
     # Terminal cost
     terminal_cost_func: Callable | None = None  # g(x) -> float
-    terminal_cost_dx_func: Callable | None = None  # ∂g/∂x
+    terminal_cost_dx_func: Callable | None = NEVER_READ  # refused when passed; never read (#2648)
 
     # Running potential (time-varying external forces)
-    potential_func: Callable | None = None  # V(t, x) -> float
-    potential_dx_func: Callable | None = None  # ∂V/∂x
+    potential_func: Callable | None = NEVER_READ  # refused when passed; never read (#2648)
+    potential_dx_func: Callable | None = NEVER_READ  # refused when passed; never read (#2648)
 
     # Initial conditions
     m_initial: Callable | None = None  # m₀(x) -> float
@@ -107,7 +108,20 @@ class VariationalMFGComponents:
 
     # Metadata
     description: str = "Lagrangian MFG Problem"
-    problem_type: str = "lagrangian_mfg"
+    problem_type: str = NEVER_READ  # refused when passed; never read (#2648)
+
+
+VariationalMFGComponents.__init__ = retired_parameters(  # type: ignore[method-assign]
+    {
+        "terminal_cost_dx_func": "the variational solvers read terminal_cost_func only",
+        "potential_func": "the variational solvers read no separate potential; include V in lagrangian_func (#2558)",
+        "potential_dx_func": "the variational solvers read no separate potential; include V in lagrangian_func (#2558)",
+        "problem_type": "nothing reads it; omit it",
+    },
+    issue="#2648",
+    since="v0.22.0",
+    never_read=True,
+)(VariationalMFGComponents.__init__)
 
 
 class VariationalMFGProblem:

@@ -41,13 +41,11 @@ def test_mcmc_config_defaults():
 
     assert config.num_samples == 10000
     assert config.num_warmup == 1000
-    assert config.num_chains == 1
     assert config.thinning == 1
     assert config.step_size == 0.1
     assert config.adapt_step_size is True
     assert config.target_accept_rate == 0.65
     assert config.num_leapfrog_steps == 10
-    assert config.max_tree_depth == 10
 
 
 @pytest.mark.unit

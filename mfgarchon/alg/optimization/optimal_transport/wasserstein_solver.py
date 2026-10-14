@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from mfgarchon.alg.base_solver import BaseOptimizationSolver
+from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
 
 if TYPE_CHECKING:
@@ -31,7 +32,7 @@ class WassersteinSolverConfig:
     # Optimization parameters
     max_iterations: int = 1000
     tolerance: float = 1e-6
-    step_size: float = 0.01
+    step_size: float = NEVER_READ  # refused when passed; never read (#2648)
 
     # Wasserstein parameters
     regularization: float = 0.1  # Entropic regularization parameter
@@ -43,8 +44,20 @@ class WassersteinSolverConfig:
     num_spatial_points: int = 100
 
     # Convergence criteria
-    relative_tolerance: bool = True
-    history_length: int = 10
+    relative_tolerance: bool = NEVER_READ  # refused when passed; never read (#2648)
+    history_length: int = NEVER_READ  # refused when passed; never read (#2648)
+
+
+WassersteinSolverConfig.__init__ = retired_parameters(  # type: ignore[method-assign]
+    {
+        "relative_tolerance": "convergence compares the absolute change in cost, and the last W2 distance, against tolerance",
+        "history_length": "the solver keeps the whole cost history in its result",
+        "step_size": "no relaxation is applied; each iteration replaces the densities",
+    },
+    issue="#2648",
+    since="v0.22.0",
+    never_read=True,
+)(WassersteinSolverConfig.__init__)
 
 
 @dataclass
