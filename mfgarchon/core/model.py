@@ -176,4 +176,3 @@ class Conditions:
             )
         if self.T <= 0:
             raise ValueError(f"T must be positive, got {self.T}")
-
