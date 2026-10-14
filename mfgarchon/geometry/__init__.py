@@ -65,7 +65,6 @@ from .graph import (
     GridNetwork,
     HybridMazeGenerator,
     MazeAlgorithm,
-    MazeConfig,
     MazeGeometry,
     NetworkData,
     NetworkType,
@@ -75,7 +74,6 @@ from .graph import (
     maze_Algorithm,
     maze_CellularAutomataConfig,
     maze_CellularAutomataGenerator,
-    maze_Config,
     maze_Geometry,
     maze_HybridGenerator,
     maze_RecursiveDivisionConfig,
@@ -233,7 +231,6 @@ __all__ = [
     # Maze geometry (primary names)
     "MazeGeometry",
     "MazeAlgorithm",
-    "MazeConfig",
     "HybridMazeGenerator",
     "VoronoiMazeGenerator",
     # Maze with maze_ prefix
@@ -241,7 +238,6 @@ __all__ = [
     "maze_Algorithm",
     "maze_CellularAutomataConfig",
     "maze_CellularAutomataGenerator",
-    "maze_Config",
     "maze_HybridGenerator",
     "maze_RecursiveDivisionConfig",
     "maze_RecursiveDivisionGenerator",

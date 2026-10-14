@@ -9,7 +9,6 @@ not just MFG problems. It includes:
 - RollingConvergenceMonitor: Window-based statistical convergence (renamed from StochasticConvergenceMonitor)
 - calculate_error: Unified error computation (L1, L2, Linf)
 - sweep_change: the change one coupling sweep made, in the problem's measure
-- ConvergenceConfig: Configuration dataclass for future solver integration
 
 These utilities can be used for standalone HJB, FP, heat equation,
 or any iterative PDE solver.
@@ -19,7 +18,6 @@ from __future__ import annotations
 
 import math
 from collections import deque
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
@@ -466,79 +464,6 @@ def calculate_l2_convergence_metrics(
     ``||diff||_2 * sqrt(Dx * Dt)`` and its ratio, equal to rounding, for real arrays of any shape.
     """
     return sweep_change(U_new, U_old, M_new, M_old, lambda f: np.sum(f) * Dx, Dt)
-
-
-# =============================================================================
-# CONVERGENCE CONFIG (for future solver integration)
-# =============================================================================
-
-
-@dataclass
-class ConvergenceConfig:
-    """
-    Configuration for solver convergence criteria.
-
-    This dataclass can be passed to solvers to configure convergence
-    behavior. Designed for future integration (see issue #456).
-
-    Usage:
-        config = ConvergenceConfig(tolerance=1e-6, max_iterations=100)
-        result = solver.solve(convergence=config)
-
-        # Or use presets
-        result = solver.solve(convergence=ConvergenceConfig.strict())
-    """
-
-    # Basic settings
-    tolerance: float = 1e-6
-    max_iterations: int = 100
-    min_iterations: int = 0  # Avoid pseudo-convergence in early steps
-    norm: Literal["l1", "l2", "linf"] = "l2"
-    relative: bool = True
-    check_interval: int = 1
-    track_history: bool = True
-
-    # For coupled systems (MFG)
-    tolerance_U: float | None = None  # HJB tolerance (defaults to tolerance)
-    tolerance_M: float | None = None  # FP tolerance (defaults to tolerance)
-    require_both: bool = True  # Both U and M must converge
-
-    # For stochastic/particle methods
-    window_size: int | None = None
-    median_tolerance: float | None = None
-
-    # Divergence detection
-    divergence_threshold: float = 1e10  # Safety threshold for error explosion
-
-    # Internal tracking
-    _history: list[dict[str, float]] = field(default_factory=list, repr=False)
-
-    def get_tolerance_U(self) -> float:
-        """Get tolerance for U (HJB)."""
-        return self.tolerance_U if self.tolerance_U is not None else self.tolerance
-
-    def get_tolerance_M(self) -> float:
-        """Get tolerance for M (FP)."""
-        return self.tolerance_M if self.tolerance_M is not None else self.tolerance
-
-    @classmethod
-    def strict(cls) -> ConvergenceConfig:
-        """Create strict convergence config."""
-        return cls(tolerance=1e-8, max_iterations=500)
-
-    @classmethod
-    def relaxed(cls) -> ConvergenceConfig:
-        """Create relaxed convergence config."""
-        return cls(tolerance=1e-4, max_iterations=50)
-
-    @classmethod
-    def stochastic(cls, window_size: int = 10, median_tolerance: float = 1e-4) -> ConvergenceConfig:
-        """Create config for stochastic/particle methods."""
-        return cls(
-            window_size=window_size,
-            median_tolerance=median_tolerance,
-            tolerance=median_tolerance,
-        )
 
 
 # =============================================================================

@@ -336,12 +336,11 @@ where:
 ### Step 1: Generate Maze and Capacity Field
 
 ```python
-from mfgarchon.geometry.graph import MazeConfig, MazeGeometry
+from mfgarchon.geometry.graph import MazeGeometry
 from examples.advanced.capacity_constrained_mfg import CapacityField
 
-# Generate maze
-config = MazeConfig(rows=20, cols=20, seed=42)
-maze = MazeGeometry.generate(config)
+# Generate maze (MazeGeometry generates on construction)
+maze = MazeGeometry(rows=20, cols=20, seed=42)
 maze_array = maze.to_numpy_array(wall_thickness=3)
 
 print(f"Maze shape: {maze_array.shape}")
