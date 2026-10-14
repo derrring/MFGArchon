@@ -626,11 +626,12 @@ axes and refused. The sequence form is the convention, and library code uses it.
   and $L^1$ does not converge either. With $\sigma > 0$, away from walls, the density converges pointwise; where
   mass reaches a no-flux wall, at the default `diffusion_theta`, it need not (#1855). Beyond the semi-discrete
   steady state's wall bias, which is first order in $h$, the split step adds an excess of the same sign of about
-  $K(1-\theta)\,|\alpha|\,\Delta t/h$, with $\Delta t$ the step the advection takes and $K$ between 0.74 and
-  1.02 on #1855's 1-D fixture. That excess does not refine away along $\Delta t \propto h$ at $\theta = 0.5$ and
-  is absent at $\theta = 1$. The library leaves that trade-off to the caller; the sub-stepped case and the price
-  are stated at `FPSLSolver`'s `diffusion_theta`. A peak value or a plot of an FP-SL density is a pointwise
-  reading.
+  $K(1-\theta)\,|\alpha|\,\Delta t/h$, with $\Delta t$ the step the advection takes and
+  $|\alpha|\,\Delta t/h \le 1$. On #1855's 1-D fixture $K$ is between 0.74 and 0.97 at the wall the drift points
+  into, and between 0.80 and 1.76 at the other, where it rises with $|\alpha|\,\Delta t/h$. That excess does not
+  refine away along $\Delta t \propto h$ at $\theta = 0.5$ and is absent at $\theta = 1$. The library leaves that
+  trade-off to the caller; the sub-stepped case and the price are stated at `FPSLSolver`'s `diffusion_theta`. A peak
+  value or a plot of an FP-SL density is a pointwise reading.
 
 ### What a tolerance bounds
 
