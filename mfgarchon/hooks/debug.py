@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, TextIO
 
 import numpy as np
 
+from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
+
 from .base import SolverHooks
 
 if TYPE_CHECKING:
@@ -133,7 +135,13 @@ class PerformanceHook(SolverHooks):
         print(f"Peak memory: {perf.peak_memory_mb:.1f} MB")
     """
 
-    def __init__(self, track_memory: bool = False, track_detailed_timing: bool = False):
+    @retired_parameters(
+        {"track_detailed_timing": "iteration times are recorded whatever it is set to"},
+        issue="#2648",
+        since="v0.22.0",
+        never_read=True,
+    )
+    def __init__(self, track_memory: bool = False, track_detailed_timing: bool = NEVER_READ):
         self.track_memory = track_memory
         self.track_detailed_timing = track_detailed_timing
 

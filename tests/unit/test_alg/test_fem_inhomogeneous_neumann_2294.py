@@ -128,7 +128,11 @@ def _solve(solver_name: str, kind: str, g: float):
         solver = cls(_problem(_segments(kind, g)), order=1)
     x = solver._disc.dof_coordinates[:, 0]
     if solver_name == "HJBFEMSolver":
-        return np.asarray(solver.solve_hjb_system(M_density=np.ones((4, x.size)), U_terminal=np.sin(np.pi * x)))
+        return np.asarray(
+            solver.solve_hjb_system(
+                M_density=np.ones((4, x.size)), U_terminal=np.sin(np.pi * x), U_coupling_prev=np.zeros((4, x.size))
+            )
+        )
     # `potential_field` is the drift channel and is the parameter this solver actually has. An
     # earlier version passed `U_solution_for_drift=`, which `solve_fp_system` swallows through
     # `**kwargs`, so every FP arm ran at ZERO DRIFT -- and zero drift is precisely the regime in

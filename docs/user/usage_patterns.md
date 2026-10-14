@@ -56,7 +56,7 @@ class ScientificConfig(BaseModel):
     """Universal base with domain extensions"""
     problem_type: str
     solver_type: str
-    convergence: ConvergenceConfig = ConvergenceConfig()
+    tolerance: float = 1e-6  # each solver takes its own tolerance and max_iterations; one shared config is #2657
     resources: ResourceConfig = ResourceConfig()
     validation: ValidationConfig = ValidationConfig()
     

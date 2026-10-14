@@ -42,8 +42,6 @@ def test_mc_config_defaults():
     assert config.seed is None
     assert config.use_control_variates is False
     assert config.use_antithetic_variables is False
-    assert config.adaptive is False
-    assert config.parallel is False
 
 
 @pytest.mark.unit
@@ -56,7 +54,6 @@ def test_mc_config_custom_values():
         seed=42,
         use_control_variates=True,
         error_tolerance=1e-4,
-        parallel=True,
     )
 
     assert config.num_samples == 5000
@@ -64,7 +61,6 @@ def test_mc_config_custom_values():
     assert config.seed == 42
     assert config.use_control_variates is True
     assert config.error_tolerance == 1e-4
-    assert config.parallel is True
 
 
 @pytest.mark.unit

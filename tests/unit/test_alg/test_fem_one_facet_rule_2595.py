@@ -84,7 +84,9 @@ def _solve(route: str, domain, bc: BoundaryConditions):
     if route == "hjb-shared":
         solver = HJBFEMSolver(problem)
         n = solver._disc.dof_coordinates.shape[0]
-        field = solver.solve_hjb_system(M_density=np.ones((NT + 1, n)), U_terminal=np.zeros(n))
+        field = solver.solve_hjb_system(
+            M_density=np.ones((NT + 1, n)), U_terminal=np.zeros(n), U_coupling_prev=np.zeros((NT + 1, n))
+        )
     else:
         solver = FPFEMSolver(problem, order=1, boundary_conditions=bc)
         n = solver._disc.dof_coordinates.shape[0]

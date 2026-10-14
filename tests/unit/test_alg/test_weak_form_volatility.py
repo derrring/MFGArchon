@@ -70,6 +70,10 @@ def test_hjb_volatility_override_equals_problem_with_that_sigma():
 
     hjb_override = MeshlessGalerkinHJBSolver(_problem(sigma=0.9), collocation_points=_cloud(), delta=3.5 / 14)
     hjb_native = MeshlessGalerkinHJBSolver(_problem(sigma=0.3), collocation_points=_cloud(), delta=3.5 / 14)
-    U_override = hjb_override.solve_hjb_system(M_density=m, U_terminal=u_T, volatility=0.3)
-    U_native = hjb_native.solve_hjb_system(M_density=m, U_terminal=u_T, volatility=None)
+    U_override = hjb_override.solve_hjb_system(
+        M_density=m, U_terminal=u_T, U_coupling_prev=np.zeros_like(m), volatility=0.3
+    )
+    U_native = hjb_native.solve_hjb_system(
+        M_density=m, U_terminal=u_T, U_coupling_prev=np.zeros_like(m), volatility=None
+    )
     assert np.allclose(U_override, U_native, atol=1e-12)

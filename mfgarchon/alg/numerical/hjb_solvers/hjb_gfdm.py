@@ -36,7 +36,7 @@ from mfgarchon.geometry.boundary.conditions import BoundaryConditions
 from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL
 from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace
 from mfgarchon.types.callable_protocols import evaluate_solver_source
-from mfgarchon.utils.deprecation import WRAPPER_FRAMES, deprecated_value
+from mfgarchon.utils.deprecation import NEVER_READ, WRAPPER_FRAMES, deprecated_value, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.qp_utils import QPCache, QPSolver
 from mfgarchon.utils.pde_coefficients import (
@@ -262,6 +262,12 @@ class HJBGFDMSolver(BaseHJBSolver):
         # The equivalence test is `test_a_dict_bc_solves_as_the_boundary_conditions_it_spells` (#2597).
         removal_blockers=["internal_usage", "migration_docs"],
     )
+    @retired_parameters(
+        {"qp_usage_target": "the QP is governed by monotonicity_scheme and monotonicity_application"},
+        issue="#2648",
+        since="v0.22.0",
+        never_read=True,
+    )
     def __init__(
         self,
         problem: MFGProblem,
@@ -290,7 +296,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # See docstring for full semantics.
         monotonicity_scheme: str | None = None,
         monotonicity_application: str | None = None,
-        qp_usage_target: float = 0.1,  # Unused, kept for backward compatibility
+        qp_usage_target: float = NEVER_READ,
         qp_solver: str = "osqp",  # "osqp" or "scipy"
         qp_warm_start: bool = True,  # Enable QP warm-starting
         qp_constraint_mode: str = "indirect",  # "indirect" or "hamiltonian"
@@ -388,7 +394,8 @@ class HJBGFDMSolver(BaseHJBSolver):
                   Picard iterations / time steps. Recommended for joint_socp.
                 Default (None): use scheme-recommended default — "adaptive" for
                 qp_m_matrix, "precompute" for joint_socp.
-            qp_usage_target: Unused parameter, kept for backward compatibility
+            qp_usage_target: Refused when passed (#2648): it never had an effect; the QP is governed by
+                monotonicity_scheme and monotonicity_application. The name goes in v0.25.0.
             qp_solver: QP solver backend (default "osqp"):
                 - "osqp": Use OSQP solver (fast convex QP, 5-10× faster than scipy)
                 - "scipy": Use scipy.optimize.minimize (SLSQP or L-BFGS-B)
@@ -3100,7 +3107,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         Args:
             M_density: (Nt, *spatial_shape) density from FP solver
             U_terminal: (*spatial_shape,) terminal condition u(T,x)
-            U_coupling_prev: (Nt, *spatial_shape) previous coupling iteration estimate
+            U_coupling_prev: Accepted for interface conformance with the coupling's call; no GFDM path
+                reads it (#1055).
             show_progress: Whether to display progress bar for timesteps
             source_term: MMS forcing ``r_u`` of ``-u_t - (sigma^2/2) lap u + H = r_u``, with the
                 package-wide contract ``source_term(t, x) -> array``, ``x`` of shape ``(N, d)``
@@ -3156,20 +3164,12 @@ class HJBGFDMSolver(BaseHJBSolver):
                 f"Pass boundary_conditions parameter to solver or set BC on problem.geometry."
             )
 
-        # Determine n_time_points from available data or problem configuration
-        # n_time_points = Nt + 1 (number of time knots including t=0 and t=T)
-        if M_density is not None:
-            n_time_points = M_density.shape[0]
-        else:
-            n_time_points = self.problem.Nt + 1
-
-        # For standalone HJB (no MFG coupling), use defaults
+        # Every path reads the density: it enters H at each step. A missing one used to default to ones, which is a
+        # coupling value, not the absence of coupling (#2642). U_coupling_prev is read by no GFDM path (#1055).
         if M_density is None:
-            # Default: uniform density (no coupling effect)
-            M_density = np.ones((n_time_points, *U_terminal.shape))
-        if U_coupling_prev is None:
-            # Default: zero coupling (pure HJB)
-            U_coupling_prev = np.zeros((n_time_points, *U_terminal.shape))
+            raise ValueError("M_density is required")
+        # n_time_points = Nt + 1 (number of time knots including t=0 and t=T)
+        n_time_points = M_density.shape[0]
 
         # Store original spatial shape for reshaping output
         self._output_spatial_shape = M_density.shape[1:]

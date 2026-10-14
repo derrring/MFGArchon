@@ -671,8 +671,10 @@ class HJBHowardSolver:
         Parameters
         ----------
         M_density : np.ndarray | None
-            Density field at every time step, shape `(Nt+1, n)`. When None,
-            treated as zero (no MFG coupling).
+            Density field at every time step, shape `(Nt+1, n)`. It reaches the
+            solve only through ``alpha_star(t, x, p, m)``. When None, ``alpha_star``
+            receives ``m = 0``, which is no MFG coupling only for an ``alpha_star``
+            that does not depend on ``m``.
         U_terminal : np.ndarray
             Terminal condition `U(T, x)`, shape `(n,)`.
         volatility, volatility_kind, source_term

@@ -223,7 +223,7 @@ def benchmark_monte_carlo_parallel():
         domain = [(-3.0, 3.0)] * dim
 
         # Sequential (no parallelism in current implementation)
-        config = MCConfig(num_samples=num_samples, sampling_method="sobol", seed=42, parallel=False)
+        config = MCConfig(num_samples=num_samples, sampling_method="sobol", seed=42)
 
         start = time.perf_counter()
         result = monte_carlo_integrate(gaussian_integrand, domain, config)

@@ -39,9 +39,9 @@ assigned directly from a subtraction in the same function or an enclosing one. *
   not a definition of a verdict: it misses ``err < tol * scale``.
 
 **Anywhere under** `mfgarchon/alg/`: a call to a metric that computes a change its own way. Among them are
-the deprecated `calculate_l2_convergence_metrics`, and #2566's `calculate_error`, `compute_norm`, its three
-checkers `HJBConvergenceChecker`, `FPConvergenceChecker` and `MFGConvergenceChecker`, and
-`create_convergence_checker`, their factory.
+the deprecated `calculate_l2_convergence_metrics`, and #2566's `calculate_error` and `compute_norm`. The three
+checkers `HJBConvergenceChecker`, `FPConvergenceChecker` and `MFGConvergenceChecker`, and their factory
+`create_convergence_checker`, were removed by #2648's ruling 5; they stay on the list as a resurrection guard.
 
 Every function, method, nested function and lambda is a scope. Other spellings, such as an L1 sum of
 ``abs(d)``, a difference passed through a helper or stored on an attribute first, or a tuple or augmented

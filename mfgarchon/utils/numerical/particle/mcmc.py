@@ -37,6 +37,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
+from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
 
 logger = get_logger(__name__)
@@ -53,7 +54,7 @@ class MCMCConfig:
     # General MCMC parameters
     num_samples: int = 10000
     num_warmup: int = 1000  # Burn-in period
-    num_chains: int = 1  # Parallel chains
+    num_chains: int = NEVER_READ  # refused when passed; never read (#2648)
     thinning: int = 1  # Take every nth sample
 
     # Step size and adaptation
@@ -64,20 +65,38 @@ class MCMCConfig:
     # HMC specific parameters
     num_leapfrog_steps: int = 10  # Number of leapfrog steps
     mass_matrix: NDArray | None = None  # Mass matrix M for HMC
-    max_tree_depth: int = 10  # NUTS maximum tree depth
+    max_tree_depth: int = NEVER_READ  # refused when passed; never read (#2648)
 
     # Convergence diagnostics
-    compute_rhat: bool = True  # Compute R-hat convergence diagnostic
-    effective_sample_size: bool = True  # Compute effective sample size
+    compute_rhat: bool = NEVER_READ  # refused when passed; never read (#2648)
+    effective_sample_size: bool = NEVER_READ  # refused when passed; never read (#2648)
 
     # Computational settings
     seed: int | None = None
-    parallel: bool = False  # Parallel chain execution
+    parallel: bool = NEVER_READ  # refused when passed; never read (#2648)
 
     # Advanced options
     metric_adaptation: bool = True  # Adapt mass matrix
     step_size_adaptation: bool = True  # Dual averaging for step size
-    max_adapt_iter: int = 1000  # Maximum adaptation iterations
+    max_adapt_iter: int = NEVER_READ  # refused when passed; never read (#2648)
+
+
+MCMCConfig.__init__ = retired_parameters(  # type: ignore[method-assign]
+    {
+        "num_chains": "every sampler runs one chain from its initial_state; run it again for another chain",
+        "max_tree_depth": "NoUTurnSampler builds no tree; it is simplified HMC that picks its own number of leapfrog steps",
+        "max_adapt_iter": "step-size adaptation runs over the first num_warmup iterations; set num_warmup",
+        "parallel": "every sampler runs one chain, in this process",
+        "compute_rhat": "the sampler runs one chain; call compute_rhat(chains) on samples from several runs",
+        "effective_sample_size": (
+            "the sampler computes none; call effective_sample_size(chains) on the samples, shaped "
+            "(num_samples, num_chains, dimension)"
+        ),
+    },
+    issue="#2648",
+    since="v0.22.0",
+    never_read=True,
+)(MCMCConfig.__init__)
 
 
 @dataclass

@@ -28,6 +28,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
+from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
 
 logger = get_logger(__name__)
@@ -52,24 +53,39 @@ class MCConfig:
     control_function: Callable[[NDArray], NDArray] | None = None
 
     # Adaptive sampling
-    adaptive: bool = False
+    adaptive: bool = NEVER_READ  # refused when passed; never read (#2648)
     error_tolerance: float = 1e-3
-    max_adaptive_samples: int = 100000
+    max_adaptive_samples: int = NEVER_READ  # refused when passed; never read (#2648)
 
     # Stratification (for stratified sampling)
     num_strata_per_dim: int = 10
 
     # Importance sampling
     importance_function: Callable[[NDArray], NDArray] | None = None
-    proposal_distribution: str = "uniform"  # "uniform" | "gaussian" | "custom"
+    proposal_distribution: str = NEVER_READ  # refused when passed; never read (#2648)
 
     # Convergence monitoring
-    batch_size: int = 1000
+    batch_size: int = NEVER_READ  # refused when passed; never read (#2648)
     confidence_level: float = 0.95
 
     # Computational
-    parallel: bool = False
-    chunk_size: int = 10000
+    parallel: bool = NEVER_READ  # refused when passed; never read (#2648)
+    chunk_size: int = NEVER_READ  # refused when passed; never read (#2648)
+
+
+MCConfig.__init__ = retired_parameters(  # type: ignore[method-assign]
+    {
+        "adaptive": "monte_carlo_integrate samples once; call adaptive_monte_carlo for adaptive sampling",
+        "max_adaptive_samples": "adaptive_monte_carlo takes max_samples= itself",
+        "proposal_distribution": "no sampler reads a proposal distribution",
+        "batch_size": "adaptive_monte_carlo takes batch_size= itself",
+        "chunk_size": "monte_carlo_integrate evaluates the integrand on all samples at once",
+        "parallel": "the integrand is evaluated in this process",
+    },
+    issue="#2648",
+    since="v0.22.0",
+    never_read=True,
+)(MCConfig.__init__)
 
 
 @dataclass
