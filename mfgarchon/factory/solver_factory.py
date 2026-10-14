@@ -17,7 +17,6 @@ Both configs share compatible structure for the fields used by solvers
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from mfgarchon.alg.numerical.coupling import FixedPointIterator
@@ -33,19 +32,6 @@ if TYPE_CHECKING:
     from mfgarchon.core.mfg_problem import MFGProblem
 
 SolverType = Literal["fixed_point"]
-
-
-@dataclass
-class SolverFactoryConfig:
-    """Configuration for solver factory behavior."""
-
-    solver_type: SolverType = "fixed_point"
-    custom_config: MFGSolverConfig | None = None
-    solver_kwargs: dict[str, Any] | None = None
-
-    def __post_init__(self) -> None:
-        if self.solver_kwargs is None:
-            self.solver_kwargs = {}
 
 
 class SolverFactory:

@@ -176,19 +176,3 @@ class Conditions:
             )
         if self.T <= 0:
             raise ValueError(f"T must be positive, got {self.T}")
-
-
-@dataclass
-class ErgodicConditions:
-    """Stationary MFG -- no time horizon, no terminal condition.
-
-    For ergodic (long-time average) MFG problems where
-    the solution is time-independent.
-
-    Args:
-        m_stationary_guess: Initial guess for stationary density.
-        discount_rate: Discount factor for discounted ergodic problems.
-    """
-
-    m_stationary_guess: Callable | None = None
-    discount_rate: float | None = None
