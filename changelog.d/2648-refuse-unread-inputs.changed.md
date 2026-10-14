@@ -2,8 +2,9 @@
   7). Breaking (pre-1.0). Each refusal names the class or function that refuses it, says the input never had an
   effect, and says what the code does instead. Each input keeps its place in the signature, and its default is
   `NEVER_READ`. So the classes still construct, `dataclasses.replace` still works, and reading one of these
-  attributes gives `NEVER_READ`. `NEVER_READ` is not JSON-serializable, so `json.dumps(dataclasses.asdict(cfg))` on
-  `MCMCConfig()` or `MCConfig()`, which worked, now raises `TypeError`: drop the refused fields before serializing.
+  attributes gives `NEVER_READ`. `NEVER_READ` is not JSON-serializable, so `json.dumps(dataclasses.asdict(cfg))` on a
+  dataclass with a refused field raises `TypeError` (on `MCMCConfig()` and `MCConfig()` it worked before): drop the
+  refused fields before serializing.
   - `MCMCConfig`: `num_chains`, `max_tree_depth`, `max_adapt_iter`, `parallel`, `compute_rhat`,
     `effective_sample_size`. Every sampler runs one chain; `compute_rhat(chains)` is a function to call on samples
     from several runs, and `effective_sample_size(chains)` one to call on the samples.

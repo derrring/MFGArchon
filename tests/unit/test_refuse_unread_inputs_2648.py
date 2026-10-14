@@ -116,6 +116,27 @@ def test_an_input_that_never_had_an_effect_is_refused_by_name(target, qualname, 
         target(*args, **kwargs)
 
 
+# (callable, kwargs, phrases reviews 1 and 2 of #2658 found false, which the reason must not carry)
+_SECTIONS = ("always written", "same section structure", "fixed by the report method called")
+FALSE_REMEDIES = [
+    (NetworkMFGComponents, {"trajectory_cost_func": _f}, ("lagrangian_func",)),
+    (NetworkMFGComponents, {"congestion_func": _f}, ("pass hamiltonian_func to change it",)),
+    (NetworkMFGComponents, {"problem_params": {"a": 1}}, ("parameters=",)),
+    (MFGNotebookReporter, {"enable_latex": False}, _SECTIONS),
+    (MFGNotebookReporter, {"template_style": "minimal"}, _SECTIONS),
+    (MCMCConfig, {"effective_sample_size": False}, ("several runs",)),
+]
+
+
+@pytest.mark.parametrize(("target", "kwargs", "false"), FALSE_REMEDIES)
+def test_a_reason_names_no_path_the_code_does_not_take(target, kwargs, false):
+    """Reviews 1 and 2 of #2658: no network solve reads `lagrangian_func` or problem parameters, a report's sections
+    also follow what is passed to the method, and `effective_sample_size` takes one chain's samples."""
+    with pytest.raises(TypeError) as refused:
+        target(**kwargs)
+    assert not [phrase for phrase in false if phrase in str(refused.value)], str(refused.value)
+
+
 DATACLASSES = [
     (MCMCConfig, {}, "num_samples", 7),
     (MCConfig, {}, "num_samples", 7),

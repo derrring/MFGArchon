@@ -59,8 +59,14 @@ class MFGNotebookReporter:
 
     @retired_parameters(
         {
-            "enable_latex": "no code reads it; which sections a report has is fixed by the report method called",
-            "template_style": "no code reads it; which sections a report has is fixed by the report method called",
+            "enable_latex": (
+                "no code reads it; a report's sections come from the method called and what is passed to it "
+                "(the keys of solver_results, custom_sections)"
+            ),
+            "template_style": (
+                "no code reads it; a report's sections come from the method called and what is passed to it "
+                "(the keys of solver_results, custom_sections)"
+            ),
         },
         issue="#2648",
         since="v0.22.0",
@@ -78,11 +84,11 @@ class MFGNotebookReporter:
 
         Args:
             output_dir: Directory for generated reports
-            enable_latex: Refused when passed (#2648): no code reads it; which sections a report has is fixed
-                by the report method called.
+            enable_latex: Refused when passed (#2648): no code reads it; a report's sections come from the
+                method called and what is passed to it (the keys of solver_results, custom_sections).
             plotly_renderer: Plotly renderer ('notebook', 'browser', 'json')
-            template_style: Refused when passed (#2648): no code reads it; which sections a report has is fixed
-                by the report method called.
+            template_style: Refused when passed (#2648): no code reads it; a report's sections come from the
+                method called and what is passed to it (the keys of solver_results, custom_sections).
         """
         if not NOTEBOOK_AVAILABLE:
             raise NotebookReportError(
