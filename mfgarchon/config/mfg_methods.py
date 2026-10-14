@@ -291,7 +291,10 @@ class SLConfig(BaseConfig):
         The theta of the diffusion step, in [0.5, 1], passed to the HJB half; the pair factory hands it
         to the FP half. 0.5, Crank-Nicolson, is second order in time and keeps a density non-negative
         up to diffusion number D dt / dx^2 = 3/2 (further on small grids); 1, backward Euler, keeps it at every step and is
-        first order (#2463). None keeps the solver's own, 0.5.
+        first order (#2463). At a no-flux wall it also sets an excess in the density's steady-state wall
+        bias, growing with (1 - theta) and with the advection step's CFL up to 1, and absent at 1: a trade-off left to
+        the caller
+        (#1855; ``FPSLSolver``'s ``diffusion_theta`` states it). None keeps the solver's own, 0.5.
     """
 
     interpolation_method: Literal["linear", "slinear", "nearest", "cubic", "quintic"] = "cubic"

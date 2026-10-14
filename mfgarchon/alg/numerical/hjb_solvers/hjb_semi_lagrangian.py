@@ -277,7 +277,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                 0.5, Crank-Nicolson (default), is second order in time and keeps a non-negative field
                 non-negative up to diffusion number D dt / dx^2 = 3/2 (``positivity_edge``; further on small grids); 1,
                 backward Euler, keeps it at every step and is first order (#2463). The pair factory hands
-                it to the FP half, whose density needs it most.
+                it to the FP half, whose density needs it most. At a no-flux wall it also sets an excess in the FP
+                half's steady-state wall bias, growing with (1 - theta) and with the advection step's CFL up to 1,
+                and absent at 1: a trade-off left to the caller (#1855; ``FPSLSolver``'s ``diffusion_theta`` states
+                it).
         """
         super().__init__(problem)
         self.hjb_method_name = "Semi-Lagrangian"
