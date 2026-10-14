@@ -7,33 +7,27 @@ variational factories it never imports, in the branch it takes when the optional
 is absent.
 
 1. The star import of the package, in a fresh interpreter.
-2. Every `__all__` entry of every module resolves. The helper is checked on a planted module first, and the walk must
-   import every module, since a module it skips is a module this test does not check.
+2. Every `__all__` entry of every module resolves. The walk runs in a child interpreter: importing every module in
+   the test process would pre-import the renamed shim modules for every later test on the same xdist worker, and the
+   warning census would lose their DeprecationWarnings (review 1 of #2653; `test_hl_convention.py` found it first).
+   The helper is checked on a planted module, and the walk is checked against the files on disk, since a module it
+   skips is a module this test does not check.
 3. `mfgarchon.alg.optimization` in both states of the optional dependency, forced in a subprocess. The environment
    running the suite decides only one of them.
 """
 
 from __future__ import annotations
 
-import importlib
+import json
 import os
-import pkgutil
 import subprocess
 import sys
-import types
-import warnings
 from pathlib import Path
 
 import pytest
 
-import mfgarchon
-
 ROOT = Path(__file__).resolve().parents[2]
 CARRIER = str(ROOT / "mfgarchon" / "__init__.py")
-
-
-def _unbound(module) -> list[str]:
-    return [name for name in getattr(module, "__all__", ()) if not hasattr(module, name)]
 
 
 def _run(code: str) -> list[str]:
@@ -63,25 +57,56 @@ def test_the_star_import_of_the_package_succeeds():
     assert _run(code) == [CARRIER, "refused True"]
 
 
-def test_every_name_in_every_all_is_bound():
-    planted = types.ModuleType("planted")
-    planted.__all__ = ["present", "absent"]
-    planted.present = 1
-    assert _unbound(planted) == ["absent"]
+# Run in a CHILD interpreter by `test_every_name_in_every_all_is_bound`; see item 2 of the module docstring for why.
+_CHILD_WALK = r"""
+import importlib, json, pathlib, pkgutil, types, warnings
+warnings.simplefilter("ignore")
+import mfgarchon
 
-    modules, failures = [mfgarchon], []
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        for info in pkgutil.walk_packages(mfgarchon.__path__, prefix="mfgarchon."):
-            try:
-                modules.append(importlib.import_module(info.name))
-            except Exception as exc:
-                failures.append(f"{info.name}: {type(exc).__name__}: {exc}")
-    assert failures == [], f"modules the walk could not import, so their __all__ went unchecked: {failures}"
-    names = {m.__name__ for m in modules if hasattr(m, "__all__")}
-    assert {"mfgarchon", "mfgarchon.factory", "mfgarchon.alg.optimization"} <= names
-    unbound = {m.__name__: u for m in modules if (u := _unbound(m))}
-    assert unbound == {}, f"__all__ names these modules do not bind, so their star import raises: {unbound}"
+
+def unbound(module):
+    return [name for name in getattr(module, "__all__", ()) if not hasattr(module, name)]
+
+
+planted = types.ModuleType("planted")
+planted.__all__ = ["present", "absent"]
+planted.present = 1
+
+modules, failures, walked = [mfgarchon], [], {"mfgarchon"}
+for info in pkgutil.walk_packages(mfgarchon.__path__, prefix="mfgarchon.", onerror=failures.append):
+    walked.add(info.name)
+    try:
+        modules.append(importlib.import_module(info.name))
+    except Exception as exc:
+        failures.append(f"{info.name}: {type(exc).__name__}: {exc}")
+
+# walk_packages descends only into directories with an __init__.py, so its population is checked against the disk.
+root = pathlib.Path(mfgarchon.__file__).parent
+on_disk = set()
+for path in root.rglob("*.py"):
+    parts = ("mfgarchon",) + path.relative_to(root).with_suffix("").parts
+    on_disk.add(".".join(parts[:-1] if parts[-1] == "__init__" else parts))
+
+print("CARRIER", mfgarchon.__file__)
+print("RESULT", json.dumps({
+    "control": unbound(planted),
+    "failures": failures,
+    "unwalked": sorted(on_disk - walked),
+    "with_all": sorted(m.__name__ for m in modules if hasattr(m, "__all__")),
+    "unbound": {m.__name__: u for m in modules if (u := unbound(m))},
+}))
+"""
+
+
+def test_every_name_in_every_all_is_bound():
+    lines = _run(_CHILD_WALK)
+    assert [line for line in lines if line.startswith("CARRIER ")] == [f"CARRIER {CARRIER}"]
+    result = json.loads(next(line for line in lines if line.startswith("RESULT "))[len("RESULT ") :])
+    assert result["control"] == ["absent"], "the helper does not see an unbound name on a planted module"
+    assert result["failures"] == [], f"modules the walk could not import, so their __all__ went unchecked: {result}"
+    assert result["unwalked"] == [], f"modules on disk the walk never reached: {result['unwalked']}"
+    assert {"mfgarchon", "mfgarchon.factory", "mfgarchon.alg.optimization"} <= set(result["with_all"])
+    assert result["unbound"] == {}, f"__all__ names these modules do not bind, so their star import raises: {result}"
 
 
 FORCE = {
