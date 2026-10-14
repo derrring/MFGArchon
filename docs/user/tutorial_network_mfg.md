@@ -145,7 +145,6 @@ class NetworkMFGComponents:
     # Network-specific functions
     hamiltonian_func: Optional[Callable] = None              # H(t, node, neighbors, p, m)
     node_potential_func: Optional[Callable] = None           # V(t, node)
-    edge_cost_func: Optional[Callable] = None                # Cost of edge traversal
     
     # Initial and terminal conditions
     initial_node_density_func: Optional[Callable] = None     # m_0(node)
@@ -153,7 +152,6 @@ class NetworkMFGComponents:
     
     # Coupling and interaction
     node_interaction_func: Optional[Callable] = None         # Local node interactions
-    congestion_func: Optional[Callable] = None               # Congestion effects
     
     # Parameters
     diffusion_coefficient: float = 1.0

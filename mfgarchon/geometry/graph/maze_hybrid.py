@@ -33,6 +33,8 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
@@ -76,7 +78,7 @@ class HybridMazeConfig:
         blend_ratio: Ratio for spatial split (0.0-1.0), default 0.5
         split_axis: Axis for spatial split
         num_zones: Number of zones for hierarchical strategy
-        radial_center: Center point for radial strategy
+        radial_center: Refused when passed (#2648): the RADIAL strategy is not implemented.
         seed: Random seed for reproducibility
         ensure_connectivity: Add inter-zone connections if needed
     """
@@ -90,7 +92,7 @@ class HybridMazeConfig:
     blend_ratio: float = 0.5
     split_axis: Literal["horizontal", "vertical", "both"] = "vertical"
     num_zones: int = 4
-    radial_center: tuple[int, int] | None = None
+    radial_center: tuple[int, int] | None = NEVER_READ  # refused when passed; never read (#2648)
 
     seed: int | None = None
     ensure_connectivity: bool = True
@@ -111,6 +113,16 @@ class HybridMazeConfig:
 
         if self.num_zones < 2:
             raise ValueError("num_zones must be at least 2")
+
+
+HybridMazeConfig.__init__ = retired_parameters(  # type: ignore[method-assign]
+    {
+        "radial_center": "the RADIAL strategy is not implemented",
+    },
+    issue="#2648",
+    since="v0.22.0",
+    never_read=True,
+)(HybridMazeConfig.__init__)
 
 
 class HybridMazeGenerator:
