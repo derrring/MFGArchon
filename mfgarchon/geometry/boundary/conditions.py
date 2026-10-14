@@ -519,35 +519,65 @@ class BoundaryConditions:
         if target is None:
             return self._segment_for_tag(face)
         geometry = self._query_geometry(geometry)
+        governing, part = self._face_resolution(target, geometry, equivalent, "segment_for_face")
+        if part is None:
+            return governing
+        if governing is None:  # nothing covers the face whole, and the default does not answer: its refusal
+            self._default_segment("segment_for_face", f"the {target.to_string()} face")
+        how = "region" if part.region is not None else "sdf_region" if part.sdf_region is not None else "placement"
+        raise ValueError(
+            f"BC segment {part.name!r} covers part of the {target.to_string()} face (placed by `{how}`) "
+            f"at a higher priority than {governing.name!r}, which governs the rest of it, and the two "
+            "impose different conditions. A face-level boundary condition imposes one condition per "
+            "face and cannot represent both: either reading would silently drop the other. Cover whole "
+            "faces, or use a solver that resolves boundary conditions per point (#2512 row B1, #2490)."
+        )
+        return governing
+
+    def _face_resolution(
+        self,
+        target: BoundaryFace,
+        geometry: Any,
+        equivalent: Callable[[BCSegment, BCSegment], bool] | None,
+        context: str,
+    ) -> tuple[BCSegment | None, BCSegment | None]:
+        """The face owner's steps, in one place (#2512 row B1): :meth:`segment_for_face` refuses on their outcome,
+        and a point at a corner (:meth:`segment_for_point`) reads it.
+
+        The whole-BC check (:meth:`_refuse_shadowed_segments`) runs first, and its refusals raise. Then, in the face
+        order, the first segment covering the face whole governs it -- or, with none, ``default_bc``. Returns
+        ``(governing, part)``:
+
+        - ``(segment, None)``: the face answers ``segment``. Every partial cover ahead of it imposes its condition
+          (``equivalent``, by default `_same_condition`).
+        - ``(governing, part)``: ``part`` covers part of the face ahead of ``governing`` and imposes another
+          condition, so one condition for the face cannot represent both.
+        - ``(None, part)``: no segment covers the face whole and the default does not answer (unset or ROBIN), and
+          the partial cover ``part`` is why no segment governs it.
+
+        A face no segment covers at all, with a default that does not answer, raises the default's refusal; so does
+        a cover that cannot be decided. Only a partial cover is returned rather than raised.
+        """
         same = _same_condition if equivalent is None else equivalent
         self._refuse_shadowed_segments(target, geometry, equivalent)
-        shadowing: list[BCSegment] = []
+        partial: list[BCSegment] = []
+        governing: BCSegment | None = None
         for segment in self._face_order():
             cover = self._cached_face_cover(segment, target, geometry)
             if cover == "whole":
                 governing = segment
                 break
             if cover == "partial":
-                shadowing.append(segment)
-        else:
-            governing = self._default_segment("segment_for_face", f"the {target.to_string()} face")
-        for part in shadowing:
-            if not same(part, governing):
-                how = (
-                    "region"
-                    if part.region is not None
-                    else "sdf_region"
-                    if part.sdf_region is not None
-                    else "placement"
-                )
-                raise ValueError(
-                    f"BC segment {part.name!r} covers part of the {target.to_string()} face (placed by `{how}`) "
-                    f"at a higher priority than {governing.name!r}, which governs the rest of it, and the two "
-                    "impose different conditions. A face-level boundary condition imposes one condition per "
-                    "face and cannot represent both: either reading would silently drop the other. Cover whole "
-                    "faces, or use a solver that resolves boundary conditions per point (#2512 row B1, #2490)."
-                )
-        return governing
+                partial.append(segment)
+        if governing is None:
+            if partial and not self._default_answers():
+                return None, partial[0]
+            governing = self._default_segment(context, f"the {target.to_string()} face")
+        return governing, next((part for part in partial if not same(part, governing)), None)
+
+    def _default_answers(self) -> bool:
+        """Whether :meth:`_default_segment` answers rather than refuses: ``default_bc`` is set and is not ROBIN."""
+        return self.default_bc is not None and self._resolve_default_bc("BoundaryConditions") != BCType.ROBIN
 
     def segment_for_corner(
         self,
@@ -558,7 +588,7 @@ class BoundaryConditions:
         """The segment that governs a node shared by several faces -- a corner, or an edge in 3-D (#2512 B1).
 
         Each face's own segment comes from :meth:`segment_for_face`; ``corner_strategy`` then chooses among
-        them (:meth:`_corner_choice`). A point at the corner follows the node (:meth:`segment_for_point`).
+        them (:meth:`_corner_choice`). A point at the corner is resolved at the point (:meth:`segment_for_point`).
         """
         return self._corner_resolution(tuple(faces), geometry, equivalent)[1]
 
@@ -618,53 +648,69 @@ class BoundaryConditions:
         geometry: Any = None,
         tolerance: float = SDF_BOUNDARY_TOL,
         axis_names: dict[int, str] | None = None,
+        equivalent: Callable[[BCSegment, BCSegment], bool] | None = None,
     ) -> BCSegment:
         """The segment that governs the boundary point ``point`` (#2512 row B1).
 
         The point-level reading of the same placement rule as :meth:`segment_for_face`, each segment
         tested by :meth:`BCSegment.matches_point`: on a face that one governs whole, both answer the
-        same. Without ``face``, a point that lies on several faces (a corner) takes the node's answer there:
-        :meth:`segment_for_corner`, the choice ``corner_strategy`` makes among those faces' own segments, so a
-        point and a node at a corner give one answer. That includes the node's refusals: a ``region`` covering
-        part of a face refuses that face's corners, and a segment shadowed on every face, one holding no node
-        inside a face, or a marked region covering part of a face refuses every corner, including corners it
-        does not reach. With ``face``, the point is read on that face alone and the corner rule does not apply.
+        same. The faces a point lies on are read from ``domain_bounds``, or, when the BC carries none, from
+        the bounds of the geometry the query is decided on (``geometry``, else the grid this BC is bound to).
+
+        **A point at a corner is resolved at the point** (user ruling, 2026-10-14). Without ``face``, a point
+        on several faces takes each face's own segment, read at the point only where a partial cover keeps the face
+        from answering (:meth:`_face_resolution`): a ``region`` or ``sdf_region`` covering part of it ahead of the
+        segment governing the rest with another condition, or covering part of a face no segment covers whole and
+        whose ``default_bc`` does not answer. Then the segment holding the point on that face (this method with
+        ``face``) stands in. Every other refusal stands; a segment shadowed on every face refuses every corner wherever
+        the shadow check can enumerate the faces -- the BC's ``dimension`` is set, or the geometry is a grid.
+        ``corner_strategy`` then chooses among them in the corner order (:meth:`_corner_choice`). Both steps are
+        asked with ``equivalent``, so wherever the node asked with the same ``equivalent`` answers, the point gives
+        the node's segment; and where the node refuses only because a face is partly covered, the point answers.
+        With ``face``, the point is read on that face alone and the corner rule does not apply.
 
         Args:
             point: Spatial coordinates, shape (dimension,).
             face: The face the caller knows the point is on. Without it, every face the point lies on
-                is read from ``domain_bounds``, or the boundary is identified from ``domain_sdf``.
-            geometry: Required by a ``region_name`` segment (its marked-region mask).
+                is read from the bounds, or the boundary is identified from ``domain_sdf``.
+            geometry: Required by a ``region_name`` segment (its marked-region mask), and the source of the
+                bounds when the BC carries none.
+            tolerance: How far off a face a point may lie and still be on it.
+            equivalent: The consumer's sameness of two segments, as :meth:`segment_for_face` and
+                :meth:`segment_for_corner` take it; by default `_same_condition`. At a corner it decides whether a
+                face answers and which segment the corner takes, so the point and the node asked with the same
+                ``equivalent`` agree.
         """
         point = np.asarray(point, dtype=float)
         geometry = self._query_geometry(geometry)
-        if face is None and self.domain_bounds is not None:
-            on = self._faces_at_point(point, tolerance)
+        bounds = self._query_bounds(geometry)
+        if face is None and bounds is not None:
+            on = self._faces_at_point(point, tolerance, bounds)
             if len(on) > 1:
-                try:
-                    return self.segment_for_corner(on, geometry)  # a point at a corner follows the node
-                except ValueError as error:
-                    raise ValueError(
-                        f"BoundaryConditions.segment_for_point: the point {point.tolist()} lies on "
-                        f"{', '.join(f.to_string() for f in on)} and, with no face named, takes the node's answer "
-                        f"there, which is refused. The node's refusal, made for the faces: {error} To read the "
-                        "point on one of those faces, pass face= (#2512 row B1)."
-                    ) from error
+                at_point = [
+                    self._corner_face_at_point(point, f, geometry, tolerance, axis_names, equivalent) for f in on
+                ]
+                return self._corner_choice(at_point, ", ".join(f.to_string() for f in on), equivalent)
         if face is not None:
             faces: list[str | None] = [face.to_string() if isinstance(face, BoundaryFace) else face]
-        elif self.domain_bounds is not None:
-            faces = [f.to_string() for f in self._faces_at_point(point, tolerance)] or [None]
+        elif bounds is not None:
+            faces = [f.to_string() for f in self._faces_at_point(point, tolerance, bounds)] or [None]
         elif self.domain_sdf is not None:
             faces = [self.identify_boundary_id(point, tolerance)]
         else:
-            raise ValueError("Either domain_bounds or domain_sdf must be set")
+            raise ValueError(
+                "BoundaryConditions.segment_for_point: this BC has no domain_bounds or domain_sdf, and the query's "
+                f"geometry ({type(geometry).__name__}) gives no box to read the faces from: it is not a "
+                "GeometryProtocol whose get_bounds() returns bounds. Pass such a geometry, or set domain_bounds "
+                "(#2512 row B1)."
+            )
         governing = []
         for boundary_id in faces:
             for segment in self._face_order():
                 if segment.matches_point(
                     point,
                     boundary_id,
-                    self.domain_bounds,
+                    bounds,
                     tolerance,
                     axis_names,
                     domain_sdf=self.domain_sdf,
@@ -974,9 +1020,51 @@ class BoundaryConditions:
             )
         return True
 
-    def _faces_at_point(self, point: np.ndarray, tolerance: float) -> list[BoundaryFace]:
-        """Every box face ``point`` lies on: one on a face's interior, two or more at a corner."""
-        bounds = np.asarray(self.domain_bounds, dtype=float)
+    def _corner_face_at_point(
+        self,
+        point: np.ndarray,
+        face: BoundaryFace,
+        geometry: Any,
+        tolerance: float,
+        axis_names: dict[int, str] | None,
+        equivalent: Callable[[BCSegment, BCSegment], bool] | None,
+    ) -> BCSegment:
+        """One face's segment for a point at a corner (:meth:`segment_for_point`): the face's own answer
+        (:meth:`_face_resolution`) wherever it has one, so the point and the node asked with the same ``equivalent``
+        agree; where a partial cover keeps the face from answering (:meth:`_face_resolution`'s second and third
+        outcomes), the segment holding the point on that face.
+        Every other refusal stands. Reading every face at the point instead would let a segment holding the point at
+        a higher priority override the face's answer -- review 2's B-c, a strip accepted on x_max as the wall's
+        condition, would take the y_max Dirichlet's corner."""
+        governing, part = self._face_resolution(face, geometry, equivalent, "BoundaryConditions.segment_for_point")
+        if part is None:
+            return governing
+        return self.segment_for_point(point, face, geometry, tolerance, axis_names)
+
+    def _query_bounds(self, geometry: Any) -> np.ndarray | None:
+        """The box a query reads faces from, shape (dimension, 2): ``domain_bounds``; else, for a BC with no
+        ``domain_sdf`` either, the bounds of ``geometry`` when it has them; else None. The point owner reads a point's faces from it, and the face owner a ``region``'s
+        cover when there is no grid. A solver's BC seldom carries bounds of its own; GFDM's never does, and before the
+        point readers had one owner it passed its geometry's bounds to them itself (#2512 row B1)."""
+        if self.domain_bounds is not None:
+            return np.asarray(self.domain_bounds, dtype=float)
+        if self.domain_sdf is not None:
+            return None  # the BC's own domain decides; a geometry's bounding box would override it
+        from mfgarchon.geometry.protocol import GeometryProtocol  # local: the geometry package imports this one
+
+        if not isinstance(geometry, GeometryProtocol):
+            return None
+        box = geometry.get_bounds()
+        if box is None:
+            return None
+        return np.column_stack([np.asarray(box[0], dtype=float), np.asarray(box[1], dtype=float)])
+
+    def _faces_at_point(
+        self, point: np.ndarray, tolerance: float, bounds: np.ndarray | None = None
+    ) -> list[BoundaryFace]:
+        """Every box face ``point`` lies on: one on a face's interior, two or more at a corner. ``bounds``
+        defaults to ``domain_bounds``."""
+        bounds = np.asarray(self.domain_bounds if bounds is None else bounds, dtype=float)
         faces = []
         for axis in range(bounds.shape[0]):
             for side, bound in (("min", bounds[axis, 0]), ("max", bounds[axis, 1])):
@@ -1020,13 +1108,19 @@ class BoundaryConditions:
                 f"({type(geometry).__name__}). Pass the grid, or place the segment with boundary= "
                 "(#2512 row B1)."
             )
-        if self.domain_bounds is None:
-            raise ValueError(
-                f"BC segment {segment.name!r} is placed by region, and neither a grid geometry nor "
-                "domain_bounds says how far each face extends, so this reader cannot tell whether it "
-                f"covers {face.to_string()}. Pass the grid or set domain_bounds (#2512 row B1)."
+        bounds = self._query_bounds(geometry)
+        if bounds is None:
+            remedy = (
+                "this BC's domain is its domain_sdf, so a geometry's bounding box is not read for it: pass the grid or "
+                "set domain_bounds"
+                if self.domain_sdf is not None
+                else "pass a grid or a geometry with bounds, or set domain_bounds"
             )
-        bounds = np.asarray(self.domain_bounds, dtype=float)
+            raise ValueError(
+                f"BC segment {segment.name!r} is placed by region, and neither a grid geometry nor a box (domain_bounds, "
+                "or the bounds of the geometry for a BC with no domain_sdf) says how far each face extends, so this "
+                f"reader cannot tell whether it covers {face.to_string()}: {remedy} (#2512 row B1)."
+            )
         tol = SDF_BOUNDARY_TOL
         part_of_face = False
         for key, (low, high) in segment.region.items():
