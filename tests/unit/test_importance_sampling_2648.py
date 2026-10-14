@@ -177,6 +177,9 @@ def test_an_integrand_outside_the_densitys_support_is_refused():
         monte_carlo_integrate(lambda x: np.ones(len(x)), DOMAIN, config)
     with pytest.raises(ValueError, match=r"of the integral of \|f\| lies where .* the integrand is -1\.0\)"):
         monte_carlo_integrate(lambda x: -np.ones(len(x)), DOMAIN, config)
+    # Of mixed sign, f = 1 where p > 0 and -1 beyond: both masses are of |f|, so the fraction is 0.8 again.
+    with pytest.raises(ValueError, match=r"an estimated 0\.8\d* of the integral of \|f\|"):
+        monte_carlo_integrate(lambda x: np.where(np.abs(x[:, 0]) <= 1.0, 1.0, -1.0), DOMAIN, config)
     inside = monte_carlo_integrate(lambda x: np.where(np.abs(x[:, 0]) <= 1.0, 1.0, 0.0), DOMAIN, config)
     assert inside.estimate == pytest.approx(2.0, rel=1e-12)
 
