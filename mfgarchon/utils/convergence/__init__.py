@@ -13,16 +13,14 @@ Modules:
   - sweep_change, l2_change: the change one coupling sweep made, in the problem's measure (#2555)
   - worst_sweep_change, refuse_non_finite_change: the max over a multi-field sweep's fields, and the
     refusal of a non-finite change (#2578)
-  - ConvergenceConfig: Configuration dataclass for solver integration
 
 - **convergence_monitors.py**: MFG-specific monitors
   - DistributionConvergenceMonitor: Multi-criteria (Wasserstein, KL, moments)
   - SolverTypeDetector: Detect particle vs grid-based solvers
   - ConvergenceWrapper: Adaptive convergence based on solver type
 
-- **convergence_checkers.py**: Protocol-based convergence checking
-  - ConvergenceChecker: Protocol for all checkers
-  - HJBConvergenceChecker, FPConvergenceChecker, MFGConvergenceChecker
+- **convergence_checkers.py**: `compute_norm`, a plain array norm (#2566). Its checker classes are removed (#2648,
+  ruling 5): no solver used them, and `sweep_change` is the convergence owner.
 
 Usage:
     # General-purpose convergence checking
@@ -36,13 +34,6 @@ Usage:
 
     monitor = DistributionConvergenceMonitor(wasserstein_tol=1e-4)
     diagnostics = monitor.update(u_current, u_previous, m_current, x_grid)
-
-    # Solver integration
-    from mfgarchon.utils.convergence import ConvergenceConfig, MFGConvergenceChecker
-
-    config = ConvergenceConfig(tolerance=1e-6, require_both=True)
-    checker = MFGConvergenceChecker(config)
-    converged, metrics = checker.check(old_state, new_state)
 """
 
 from __future__ import annotations
@@ -50,19 +41,12 @@ from __future__ import annotations
 # =============================================================================
 # CONVERGENCE CHECKERS (convergence_checkers.py)
 # =============================================================================
-from .convergence_checkers import (
-    ConvergenceChecker,
-    FPConvergenceChecker,
-    HJBConvergenceChecker,
-    MFGConvergenceChecker,
-    compute_norm,
-)
+from .convergence_checkers import compute_norm
 
 # =============================================================================
 # GENERAL-PURPOSE IMPORTS (convergence_metrics.py)
 # =============================================================================
 from .convergence_metrics import (
-    ConvergenceConfig,
     # Core utilities
     DistributionComparator,
     MomentConvergenceMonitor,
@@ -110,7 +94,6 @@ __all__ = [
     "refuse_non_finite_change",
     "sweep_change",
     "worst_sweep_change",
-    "ConvergenceConfig",
     "create_moment_monitor",
     "create_rolling_monitor",
     # MFG-specific (convergence_monitors.py)
@@ -122,10 +105,6 @@ __all__ = [
     "adaptive_convergence",
     "wrap_solver_with_adaptive_convergence",
     "test_particle_detection",
-    # Convergence checkers (convergence_checkers.py)
-    "ConvergenceChecker",
-    "HJBConvergenceChecker",
-    "FPConvergenceChecker",
-    "MFGConvergenceChecker",
+    # Array norm (convergence_checkers.py)
     "compute_norm",
 ]

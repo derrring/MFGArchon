@@ -23,12 +23,11 @@ Examples:
     ...     QuadraticCongestion,
     ...     CapacityConstrainedMFGProblem
     ... )
-    >>> from mfgarchon.geometry.graph import MazeGeometry, MazeConfig
+    >>> from mfgarchon.geometry.graph import MazeGeometry
     >>>
-    >>> # Generate maze
-    >>> config = MazeConfig(rows=20, cols=20, wall_thickness=3)
-    >>> maze = MazeGeometry.generate(config)
-    >>> maze_array = maze.to_numpy_array()
+    >>> # Generate maze (MazeGeometry generates on construction)
+    >>> maze = MazeGeometry(rows=20, cols=20, seed=42)
+    >>> maze_array = maze.to_numpy_array(wall_thickness=3)
     >>>
     >>> # Compute capacity field
     >>> capacity = CapacityField.from_maze_geometry(maze_array)
