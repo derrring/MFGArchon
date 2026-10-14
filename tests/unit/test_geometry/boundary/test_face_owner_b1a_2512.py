@@ -46,7 +46,7 @@ from mfgarchon.geometry.boundary import (
     periodic_bc,
 )
 from mfgarchon.geometry.boundary.applicator_fdm import dirichlet_wall_rows
-from mfgarchon.geometry.boundary.applicator_interpolation import InterpolationApplicator
+from mfgarchon.geometry.boundary.applicator_interpolation import InterpolationApplicator, _same_enforcement
 from mfgarchon.geometry.boundary.conditions import _same_condition
 from mfgarchon.geometry.boundary.types import BoundaryFace
 
@@ -909,9 +909,11 @@ def _strip_at_a_corner(strip_value=0.0, d_type=BCType.DIRICHLET, d_value=5.0, d_
 )
 def test_a_point_at_a_corner_follows_the_node_among_the_faces_own_segments(kwargs, dirichlet):
     """Review 2's B-c, under the corner rule as approved (the user's ruling of 2026-10-13, after review 3): a node
-    shared by several faces takes the corner choice among those faces' own segments, and a point exactly at the
-    corner follows the node. Here x_max's own segment is the wall -- the strip covers only part of it, accepted as
-    the wall's condition -- so the corner is D's, though the strip holds the corner point at priority 2."""
+    shared by several faces takes the corner choice among those faces' own segments. A point exactly at the corner
+    gives the node's segment wherever the node answers (the ruling of 2026-10-14 as implemented: a face is read at the
+    point only where a partial cover is all that keeps it from answering). Here x_max's own segment is the wall -- the
+    strip covers only part of it, accepted as the wall's condition -- so the corner is D's, though the strip holds the
+    corner point at priority 2."""
     grid = _grid(_strip_at_a_corner(**kwargs))
     bc = grid.get_boundary_conditions()
     faces = [BoundaryFace(0, "max"), BoundaryFace(1, "max")]
@@ -1154,18 +1156,44 @@ def _ask(fn):
         return None, _refusal_kind(error)
 
 
+def _same_operation(part, governing):
+    """`bc_utils.per_axis_operations`' equivalence: the same geometric operation."""
+    from mfgarchon.geometry.boundary.bc_utils import bc_type_to_geometric_operation
+
+    return bc_type_to_geometric_operation(str(part.bc_type.value)) == bc_type_to_geometric_operation(
+        str(governing.bc_type.value)
+    )
+
+
+def _same_periodicity(first, second):
+    """`periodic_faces`' and the gradient's equivalence: both periodic or both not."""
+    return (first.bc_type is BCType.PERIODIC) == (second.bc_type is BCType.PERIODIC)
+
+
+_EQUIVALENCES = {
+    "default": None,
+    "_same_enforcement": _same_enforcement,
+    "same_operation": _same_operation,
+    "same_periodicity": _same_periodicity,
+}
+
+
+@pytest.mark.parametrize("equivalence", list(_EQUIVALENCES))
 @pytest.mark.parametrize("dimension", [1, 2])
-def test_the_owners_face_corner_and_point_answers_agree_at_every_boundary_node(dimension):
+def test_the_owners_face_corner_and_point_answers_agree_at_every_boundary_node(dimension, equivalence):
     """Review 1 and review 2 of #2634 each found the owner's own questions disagreeing -- the face against the point,
     the corner against the point, "covers nothing" against the reader's equivalence. One invariant over generated
     BCs instead of more single cases: at every boundary node, the point rule (`segment_for_point`) gives the face or
     corner rule's segment (`segment_for_face` on one face, `segment_for_corner` on several) or an equivalent one,
-    under the default equivalence; or both refuse, for the same reason. Where the face rule refuses what one
+    under each equivalence a consumer passes -- the default, the interpolation applicator's, `per_axis_operations`'
+    and the periodicity readers' (review 1 of #2663, B3) -- or both refuse, for the same reason. Where the face rule refuses what one
     condition per face cannot hold -- a partial cover, a segment holding no node of a face's interior, a segment
     shadowed on every face, or a face part of which nothing governs while the point is held -- a point may still
     answer; those nodes are counted, not compared. Whether a point query should refuse what no face holds is the
     point family's own shadow check, which #2512's plan puts in stage B1d. A default segment is built per query, so two answers are the
     same segment when they have its name and its condition."""
+    eq = _EQUIVALENCES[equivalence]
+    same = _same_condition if eq is None else eq
     shape = (_AGREEMENT_N,) * dimension
     compared = refused_alike = face_only = 0
     disagreements = []
@@ -1185,10 +1213,10 @@ def test_the_owners_face_corner_and_point_answers_agree_at_every_boundary_node(d
                 continue
             point = np.array([coordinates[axis][node[axis]] for axis in range(dimension)])
             if len(faces) == 1:
-                face_answer, face_refusal = _ask(lambda: bc.segment_for_face(faces[0], grid))  # noqa: B023
+                face_answer, face_refusal = _ask(lambda: bc.segment_for_face(faces[0], grid, equivalent=eq))  # noqa: B023
             else:
-                face_answer, face_refusal = _ask(lambda: bc.segment_for_corner(faces, grid))  # noqa: B023
-            point_answer, point_refusal = _ask(lambda: bc.segment_for_point(point, geometry=grid))  # noqa: B023
+                face_answer, face_refusal = _ask(lambda: bc.segment_for_corner(faces, grid, equivalent=eq))  # noqa: B023
+            point_answer, point_refusal = _ask(lambda: bc.segment_for_point(point, geometry=grid, equivalent=eq))  # noqa: B023
             at = f"{label}, node {node}"
             held_here = point_answer is not None and point_answer.name != "default"
             if face_refusal in ("partial cover", "covers nothing", "shadowed") or (
@@ -1201,11 +1229,9 @@ def test_the_owners_face_corner_and_point_answers_agree_at_every_boundary_node(d
                 else:
                     face_said = face_refusal or face_answer.name
                     disagreements.append(f"{at}: face/corner {face_said}, point {point_refusal or point_answer.name}")
-            elif point_answer.name != face_answer.name and (
-                len(faces) > 1 or not _same_condition(face_answer, point_answer)
-            ):
+            elif point_answer.name != face_answer.name and (len(faces) > 1 or not same(face_answer, point_answer)):
                 disagreements.append(f"{at}: face/corner {face_answer.name}, point {point_answer.name}")
-            elif not _same_condition(face_answer, point_answer):
+            elif not same(face_answer, point_answer):
                 disagreements.append(
                     f"{at}: face/corner {face_answer.name}, point {point_answer.name}, conditions differ"
                 )
@@ -1213,9 +1239,12 @@ def test_the_owners_face_corner_and_point_answers_agree_at_every_boundary_node(d
                 compared += 1
     counts = {"compared": compared, "refused alike": refused_alike, "face only": face_only}
     assert disagreements == [], f"{len(disagreements)} disagreements:\n" + "\n".join(disagreements[:20])
-    # The invariant reached its branches: a vacuous run would pass the assertion above.
+    # The invariant reached its branches: a vacuous run would pass the assertion above. A coarser equivalence makes
+    # fewer faces refuse -- under periodicity sameness no non-periodic partial cover splits a face -- so the
+    # face-only branch is required of the default equivalence, which these cases are built to split.
     assert compared > 0, counts
-    assert face_only > 0, counts
+    if eq is None:
+        assert face_only > 0, counts
     assert (refused_alike > 0) == (dimension == 2), counts  # in 1-D every face is governed: no default is reached
 
 
