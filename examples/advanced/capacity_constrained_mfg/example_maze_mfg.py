@@ -45,7 +45,7 @@ from examples.advanced.capacity_constrained_mfg import (
     create_congestion_model,
     visualize_capacity_field,
 )
-from mfgarchon.geometry.graph import MazeConfig, MazeGeometry
+from mfgarchon.geometry.graph import MazeGeometry
 
 
 def generate_maze_with_capacity(
@@ -70,8 +70,7 @@ def generate_maze_with_capacity(
     print(f"\n1. Generating {rows}x{cols} maze with wall_thickness={wall_thickness}...")
 
     # Generate perfect maze
-    config = MazeConfig(rows=rows, cols=cols, seed=42)
-    maze = MazeGeometry.generate(config)
+    maze = MazeGeometry(rows=rows, cols=cols, seed=42)
     maze_array = maze.to_numpy_array(wall_thickness=wall_thickness)
 
     print(f"   Maze shape: {maze_array.shape}")

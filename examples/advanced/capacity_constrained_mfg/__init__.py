@@ -18,17 +18,16 @@ Mathematical Framework:
     As density approaches capacity, the cost g(m/C) → ∞ creates a "soft wall" effect.
 
 Examples:
-    >>> from examples.advanced.maze_navigation_capacity import (
+    >>> from examples.advanced.capacity_constrained_mfg import (
     ...     CapacityField,
     ...     QuadraticCongestion,
     ...     CapacityConstrainedMFGProblem
     ... )
-    >>> from mfgarchon.geometry.graph import MazeGeometry, MazeConfig
+    >>> from mfgarchon.geometry.graph import MazeGeometry
     >>>
-    >>> # Generate maze
-    >>> config = MazeConfig(rows=20, cols=20, wall_thickness=3)
-    >>> maze = MazeGeometry.generate(config)
-    >>> maze_array = maze.to_numpy_array()
+    >>> # Generate maze (MazeGeometry generates on construction)
+    >>> maze = MazeGeometry(rows=20, cols=20, seed=42)
+    >>> maze_array = maze.to_numpy_array(wall_thickness=3)
     >>>
     >>> # Compute capacity field
     >>> capacity = CapacityField.from_maze_geometry(maze_array)

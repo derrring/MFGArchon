@@ -8,7 +8,6 @@ including network topologies and maze-based domains.
 # Network geometry
 # Maze generation
 from .maze_cellular_automata import CellularAutomataConfig, CellularAutomataGenerator
-from .maze_config import MazeConfig
 from .maze_generator import MazeAlgorithm, MazeGeometry
 from .maze_hybrid import HybridMazeGenerator
 from .maze_recursive_division import RecursiveDivisionConfig, RecursiveDivisionGenerator
@@ -37,7 +36,6 @@ BaseNetworkGeometry = NetworkGeometry
 # Add maze_ prefixes for clarity
 maze_Geometry = MazeGeometry
 maze_Algorithm = MazeAlgorithm
-maze_Config = MazeConfig
 maze_CellularAutomataConfig = CellularAutomataConfig
 maze_CellularAutomataGenerator = CellularAutomataGenerator
 maze_HybridGenerator = HybridMazeGenerator
@@ -65,7 +63,6 @@ __all__ = [
     # Maze geometry (primary name)
     "MazeGeometry",
     "MazeAlgorithm",
-    "MazeConfig",
     "CellularAutomataConfig",
     "CellularAutomataGenerator",
     "HybridMazeGenerator",
@@ -75,7 +72,6 @@ __all__ = [
     # Maze with maze_ prefix
     "maze_Geometry",
     "maze_Algorithm",
-    "maze_Config",
     "maze_CellularAutomataConfig",
     "maze_CellularAutomataGenerator",
     "maze_HybridGenerator",

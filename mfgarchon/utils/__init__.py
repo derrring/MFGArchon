@@ -38,16 +38,9 @@ from .adjoint_validation import (
 from .aux_func import npart, ppart
 from .callable_adapter import CallableSignature, adapt_ic_callable
 from .convergence import (
-    # NEW: Convergence checkers
-    ConvergenceChecker,
-    # New names (preferred)
-    ConvergenceConfig,
     ConvergenceWrapper,
     DistributionComparator,
     DistributionConvergenceMonitor,
-    FPConvergenceChecker,
-    HJBConvergenceChecker,
-    MFGConvergenceChecker,
     RollingConvergenceMonitor,
     SolverTypeDetector,
     adaptive_convergence,
@@ -297,7 +290,6 @@ __all__ = [
     "density_dependent_drift",
     "composite_drift",
     # Convergence monitoring (new names)
-    "ConvergenceConfig",
     "ConvergenceWrapper",
     "DistributionConvergenceMonitor",
     "RollingConvergenceMonitor",
@@ -308,11 +300,7 @@ __all__ = [
     "sweep_change",
     "create_distribution_monitor",
     "create_rolling_monitor",
-    # Convergence checkers (Protocol-based)
-    "ConvergenceChecker",
-    "HJBConvergenceChecker",
-    "FPConvergenceChecker",
-    "MFGConvergenceChecker",
+    # Array norm (#2566)
     "compute_norm",
     # Geometry utilities (obstacles, SDF)
     "BoxObstacle",
