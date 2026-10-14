@@ -523,7 +523,7 @@ class BoundaryConditions:
         if part is None:
             return governing
         if governing is None:  # nothing covers the face whole, and the default does not answer: its refusal
-            self._default_segment("segment_for_face", f"the {target.to_string()} face")
+            raise ValueError(self._default_refusal("segment_for_face", f"the {target.to_string()} face"))
         how = "region" if part.region is not None else "sdf_region" if part.sdf_region is not None else "placement"
         raise ValueError(
             f"BC segment {part.name!r} covers part of the {target.to_string()} face (placed by `{how}`) "
@@ -532,7 +532,6 @@ class BoundaryConditions:
             "face and cannot represent both: either reading would silently drop the other. Cover whole "
             "faces, or use a solver that resolves boundary conditions per point (#2512 row B1, #2490)."
         )
-        return governing
 
     def _face_resolution(
         self,
@@ -570,14 +569,10 @@ class BoundaryConditions:
             if cover == "partial":
                 partial.append(segment)
         if governing is None:
-            if partial and not self._default_answers():
+            if partial and self._default_refusal(context, f"the {target.to_string()} face") is not None:
                 return None, partial[0]
             governing = self._default_segment(context, f"the {target.to_string()} face")
         return governing, next((part for part in partial if not same(part, governing)), None)
-
-    def _default_answers(self) -> bool:
-        """Whether :meth:`_default_segment` answers rather than refuses: ``default_bc`` is set and is not ROBIN."""
-        return self.default_bc is not None and self._resolve_default_bc("BoundaryConditions") != BCType.ROBIN
 
     def segment_for_corner(
         self,
@@ -688,7 +683,7 @@ class BoundaryConditions:
             on = self._faces_at_point(point, tolerance, bounds)
             if len(on) > 1:
                 at_point = [
-                    self._corner_face_at_point(point, f, geometry, tolerance, axis_names, equivalent) for f in on
+                    seg for _, seg in self._corner_readings(point, on, geometry, tolerance, axis_names, equivalent)
                 ]
                 return self._corner_choice(at_point, ", ".join(f.to_string() for f in on), equivalent)
         if face is not None:
@@ -721,6 +716,42 @@ class BoundaryConditions:
             else:
                 governing.append(self._default_segment("segment_for_point", f"the boundary point {point.tolist()}"))
         return governing[0]
+
+    def face_segments_at_point(
+        self,
+        point: np.ndarray,
+        geometry: Any = None,
+        tolerance: float = SDF_BOUNDARY_TOL,
+        axis_names: dict[int, str] | None = None,
+        equivalent: Callable[[BCSegment, BCSegment], bool] | None = None,
+    ) -> list[tuple[BoundaryFace, BCSegment]]:
+        """Every box face ``point`` lies on, in face order, with the segment that face takes there: the readings
+        :meth:`segment_for_point`, asked with the same arguments, chooses among (#2512 row B1). On one face, the point's
+        segment on it; at a corner, each face's own answer, read at the point only where a partial cover keeps the
+        face from answering (:meth:`_corner_face_at_point`). A reader that writes a row along a face's normal picks
+        that face among these. Empty when the point lies on no box face, or when there is no box to read faces from
+        (a BC with ``domain_sdf``)."""
+        point = np.asarray(point, dtype=float)
+        geometry = self._query_geometry(geometry)
+        bounds = self._query_bounds(geometry)
+        if bounds is None:
+            return []
+        on = self._faces_at_point(point, tolerance, bounds)
+        if len(on) == 1:
+            return [(on[0], self.segment_for_point(point, on[0], geometry, tolerance, axis_names))]
+        return self._corner_readings(point, on, geometry, tolerance, axis_names, equivalent)
+
+    def _corner_readings(
+        self,
+        point: np.ndarray,
+        faces: list[BoundaryFace],
+        geometry: Any,
+        tolerance: float,
+        axis_names: dict[int, str] | None,
+        equivalent: Callable[[BCSegment, BCSegment], bool] | None,
+    ) -> list[tuple[BoundaryFace, BCSegment]]:
+        """Each of a corner's ``faces`` with its segment at ``point`` (:meth:`_corner_face_at_point`)."""
+        return [(f, self._corner_face_at_point(point, f, geometry, tolerance, axis_names, equivalent)) for f in faces]
 
     def segments_for_facets(self, facets: BoundaryFacets) -> list[BCSegment]:
         """The segment that governs each boundary facet of a mesh, one per row of ``facets`` (#2512 row B1, stage B1b).
@@ -1151,7 +1182,18 @@ class BoundaryConditions:
         return self._default_segment("segment_for_face", f"the boundary named {tag!r}")
 
     def _default_segment(self, context: str, where: str = "this location") -> BCSegment:
-        """The condition on a location no segment governs: ``default_bc`` with ``default_value``.
+        """The condition on a location no segment governs: ``default_bc`` with ``default_value``, refused where
+        :meth:`_default_refusal` says why."""
+        refusal = self._default_refusal(context, where)
+        if refusal is not None:
+            raise ValueError(refusal)
+        return BCSegment(
+            name="default", bc_type=self._resolve_default_bc(context), value=self.default_value, priority=-1
+        )
+
+    def _default_refusal(self, context: str, where: str) -> str | None:
+        """Why ``default_bc`` cannot govern ``where``, or None when it can: the one predicate :meth:`_default_segment`
+        raises on and :meth:`_face_resolution` reads.
 
         Refused when ``default_bc`` is unset (#1100) -- the remedy is to set it or to cover every face
         -- and when it is ROBIN: ``default_bc`` is a bare ``BCType``, and this class carries no default
@@ -1159,22 +1201,21 @@ class BoundaryConditions:
         Dirichlet corner of the Robin family (#2042).
         """
         if self.default_bc is None:
-            raise ValueError(
+            return (
                 f"{context}: no segment governs {where}, and default_bc was not specified on BoundaryConditions "
                 f"(#1100). Either cover {where} with a segment -- an unplaced segment says 'the rest' -- or pass "
                 "default_bc= with the condition every location no segment governs should get "
                 "(#2512 row B1)."
             )
-        default_type = self._resolve_default_bc(context)
-        if default_type == BCType.ROBIN:
-            raise ValueError(
+        if self._resolve_default_bc(context) == BCType.ROBIN:
+            return (
                 f"{context}: default_bc is ROBIN, but default_bc is a bare BCType -- it carries no alpha and no "
                 "beta, and this class has no default alpha/beta -- so a location no segment governs would get "
                 "BCSegment's alpha=1.0, beta=0.0, which is a DIRICHLET wall, not a Robin one. Give every face an "
                 "explicit BCSegment carrying its own alpha and beta (an unplaced segment says 'the rest'), or "
                 "choose a default_bc whose condition needs no coefficients (#2042)."
             )
-        return BCSegment(name="default", bc_type=default_type, value=self.default_value, priority=-1)
+        return None
 
     def get_bc_at_point(
         self,

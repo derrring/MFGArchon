@@ -238,3 +238,28 @@ def test_domain_bounds_decide_the_faces_before_the_domain_sdf():
     )
     assert bc.segment_for_point(np.array([1.0, 0.5])).name == "east"
     assert bc.segment_for_point(np.array([1.0, 1.0])).name == "north"
+
+
+def test_the_readings_at_a_point_are_what_the_point_chooses_among():
+    """B1c-1: `face_segments_at_point` gives each face the point lies on, in face order, with its segment there -- the
+    readings `segment_for_point` chooses among under the same equivalence, and GFDM's corner normal reads. At the strip
+    corner, x_max is partly covered under the default and reads the strip at the point; under the applicator's
+    equivalence x_max answers the wall. One face gives one reading; an interior point none."""
+    from mfgarchon.geometry.boundary.applicator_interpolation import _same_enforcement
+
+    bc, grid = _strip_beside_a_dirichlet()
+
+    def named(point, equivalent=None):
+        return [(f.to_string(), s.name) for f, s in bc.face_segments_at_point(point, grid, equivalent=equivalent)]
+
+    corner = np.array([1.0, 1.0])
+    assert named(corner) == [("x_max", "strip"), ("y_max", "D")]
+    assert named(corner, _same_enforcement) == [("x_max", "wall"), ("y_max", "D")]
+    assert named(np.array([1.0, 0.9])) == [("x_max", "strip")]
+    assert named(np.array([0.5, 0.5])) == []
+    nodes = grid.get_spatial_grid()
+    on_boundary = nodes[np.any((nodes == 0.0) | (nodes == 1.0), axis=1)]
+    for equivalent in (None, _same_enforcement):
+        for point in on_boundary:
+            chosen = bc.segment_for_point(point, geometry=grid, equivalent=equivalent)
+            assert any(seg is chosen for _, seg in bc.face_segments_at_point(point, grid, equivalent=equivalent)), point

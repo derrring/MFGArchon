@@ -32,9 +32,9 @@ from mfgarchon.alg.numerical.hjb_solvers.h_eval import (
     eval_H_batch,
 )
 from mfgarchon.geometry.boundary.applicator_base import DiscretizationType
-from mfgarchon.geometry.boundary.conditions import BoundaryConditions
+from mfgarchon.geometry.boundary.conditions import BoundaryConditions, _equal_as_stored
 from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL
-from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace
+from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace, segment_robin_coefficients
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.deprecation import NEVER_READ, WRAPPER_FRAMES, deprecated_value, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
@@ -75,6 +75,28 @@ _TENSOR_VOLATILITY_REFUSAL = (
     "constant tensor volatility from the same problem. Otherwise pass a scalar volatility "
     "or a scalar-valued field (volatility_kind='field')."
 )
+
+
+def _bc_row(segment: BCSegment) -> tuple:
+    """The boundary row HJB-GFDM writes for ``segment`` (``_bc_row_for_point``): a value row for DIRICHLET and a
+    normal-derivative row for NEUMANN and NO_FLUX, each with the segment's datum; ROBIN's with its coefficients. A
+    type GFDM writes no row for is compared by type."""
+    if segment.bc_type is BCType.DIRICHLET:
+        return ("value", segment.value)
+    if segment.bc_type in (BCType.NEUMANN, BCType.NO_FLUX):
+        return ("normal derivative", segment.value)
+    if segment.bc_type is BCType.ROBIN:
+        where = "HJB-GFDM, comparing two Robin segments at a boundary point"
+        return ("robin", segment.value, *segment_robin_coefficients(segment, where=where))
+    return (segment.bc_type,)
+
+
+def _same_bc_row(first: BCSegment, second: BCSegment) -> bool:
+    """HJB-GFDM's equivalence for the boundary owner: two segments it writes the same row for. The row reads the type,
+    with NEUMANN and NO_FLUX one row, and the datum; it does not read ``flux_capacity``. Module-level, so the owner's
+    per-object memo sees one function across calls (#2512 row B1)."""
+    a, b = _bc_row(first), _bc_row(second)
+    return len(a) == len(b) and a[0] == b[0] and all(_equal_as_stored(x, y) for x, y in zip(a[1:], b[1:], strict=True))
 
 
 class HJBGFDMSolver(BaseHJBSolver):
@@ -551,11 +573,14 @@ class HJBGFDMSolver(BaseHJBSolver):
                 "'none' (no QP correction). This produces bare Wendland-Taylor LSQ "
                 "stencils whose M-matrix structure is not enforced — boundary "
                 "stencils can produce oscillatory derivatives that destabilize "
-                "FP-Particle coupling on long-time-horizon problems. For "
-                "paper-canonical monotone behavior, pass "
-                "`monotonicity_scheme='joint_socp'` (M-matrix + per-edge cone, "
-                "discrete comparison principle) or "
-                "`monotonicity_scheme='qp_m_matrix'` (M-matrix only, cheaper). "
+                "FP-Particle coupling on long-time-horizon problems. For a "
+                "monotone scheme, pass `monotonicity_scheme='joint_socp'` "
+                "(non-negative off-centre Laplacian weights and a per-edge cone, "
+                "solved per stencil; its discrete maximum principle is checked per "
+                "run, not guaranteed a priori). `monotonicity_scheme='qp_m_matrix'` "
+                "is not a monotone scheme: at runtime it constrains the solution's "
+                "Taylor coefficients, not the stencil's weights, and its precompute "
+                "path drops the stencil's exactness on quadratics (#1689). "
                 "See Issue #1034. Pass `monotonicity_scheme='none'` explicitly "
                 "to suppress this warning if the bare scheme is intentional.",
                 UserWarning,
@@ -1350,52 +1375,36 @@ class HJBGFDMSolver(BaseHJBSolver):
         if not is_mixed:
             return
 
-        bounds = self._get_domain_bounds_array()
-        sorted_segments = sorted(
-            self.boundary_conditions.segments,
-            key=lambda seg: seg.priority,
-            reverse=True,
-        )
-
-        # tolerance for classification: 1e-6 covers ε=1e-6 collocation
-        # generators (e.g. SDF-clipped boundary points placed at micron
-        # distance from the wall). Users with looser collocation can override
-        # via a future kwarg; current default is conservative.
-        tol = BOUNDARY_TOL
-        unmatched: list[tuple[int, np.ndarray, BoundaryFace | None, str]] = []
+        # The owner decides each point (#2512 row B1), on the problem's geometry and at GFDM's BOUNDARY_TOL: collocation
+        # generators may place a boundary point within it of the wall rather than on it (SDF-clipped points), which
+        # the owner's default SDF_BOUNDARY_TOL would read as interior. The equivalence is GFDM's own row.
+        geometry = self.problem.geometry
+        bc = self.boundary_conditions
+        unmatched: list[tuple[int, np.ndarray, str]] = []
 
         for i in self.boundary_indices:
             i = int(i)
             point = self.collocation_points[i]
-
-            face = self.boundary_conditions.identify_boundary_face(
-                point=point,
-                tolerance=tol,
-                domain_bounds=bounds,
+            readings = bc.face_segments_at_point(
+                point, geometry=geometry, tolerance=BOUNDARY_TOL, equivalent=_same_bc_row
             )
-            if face is None:
-                unmatched.append((i, point, None, "no BoundaryFace match"))
+            if not readings:
+                unmatched.append((i, point, "on no face of the domain's box"))
                 continue
-
-            matching_segment: BCSegment | None = None
-            for seg in sorted_segments:
-                if seg.matches_point(
-                    point=point,
-                    boundary_id=face.to_string(),
-                    domain_bounds=bounds,
-                ):
-                    matching_segment = seg
-                    break
-
-            if matching_segment is None:
-                unmatched.append((i, point, face, f"BoundaryFace={face!r} not covered by any segment"))
+            try:
+                segment = bc.segment_for_point(
+                    point, geometry=geometry, tolerance=BOUNDARY_TOL, equivalent=_same_bc_row
+                )
+            except ValueError as exc:
+                unmatched.append((i, point, f"refused by the boundary owner: {exc}"))
                 continue
+            # The normal at a corner (#2512 row B1, gap 2): the first face, in face order, whose segment at the point
+            # writes the row the point's segment writes. The point's segment is one of the readings, so one matches.
+            face = next(f for f, seg in readings if _same_bc_row(seg, segment))
 
             self._bc_face_per_point[i] = face
-            self._bc_segment_per_point[i] = matching_segment
-            self._bc_normal_per_point[i] = self.boundary_conditions.outward_normal_for_face(
-                face, dimension=self.dimension
-            )
+            self._bc_segment_per_point[i] = segment
+            self._bc_normal_per_point[i] = bc.outward_normal_for_face(face, dimension=self.dimension)
 
         if unmatched:
             lines = [
@@ -1403,17 +1412,14 @@ class HJBGFDMSolver(BaseHJBSolver):
                 f"{len(unmatched)}/{len(self.boundary_indices)} boundary points.",
                 "",
                 "Common causes:",
-                f"  1. Collocation generator places boundary points >{tol:.0e} off the wall "
-                "(e.g. ε=1e-4 with default tol=1e-6) → bump tolerance, or shrink ε.",
-                "  2. BoundaryConditions.segments don't cover every geometric face → add "
-                "a segment for the missing face, or set boundary='all'.",
-                "  3. domain_bounds inferred from problem.geometry differ from collocation "
-                "extent (e.g. quirky obstacle-clipping geometry).",
+                f"  1. Collocation generator places boundary points >{BOUNDARY_TOL:.0e} off the wall "
+                "→ shrink the offset, so the point lies on a face of the domain's box.",
+                "  2. The boundary owner refuses the point: the reason is on its line below.",
                 "",
                 "Unmatched points (first 5):",
             ]
-            for i, point, face, reason in unmatched[:5]:
-                lines.append(f"  pt {i} at {point.tolist()}: face={face!r} -- {reason}")
+            for i, point, reason in unmatched[:5]:
+                lines.append(f"  pt {i} at {point.tolist()}: {reason}")
             if len(unmatched) > 5:
                 lines.append(f"  ... and {len(unmatched) - 5} more")
             raise ValueError("\n".join(lines))
@@ -1569,56 +1575,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         mins = self.collocation_points.min(axis=0)
         maxs = self.collocation_points.max(axis=0)
         return list(zip(mins.astype(float).tolist(), maxs.astype(float).tolist(), strict=True))
-
-    def _get_domain_bounds_array(self) -> np.ndarray | None:
-        """Get domain bounds as numpy array for BCSegment.matches_point().
-
-        Returns:
-            Array of shape (dimension, 2) where bounds[i, 0] = min and bounds[i, 1] = max
-            for dimension i. Returns None if bounds cannot be determined.
-
-        Note:
-            Issue #542 fix - provides bounds in format expected by BCSegment.
-        """
-        bounds_list = self._get_domain_bounds()
-        if not bounds_list:
-            return None
-        return np.array(bounds_list, dtype=float)
-
-    def _infer_boundary_id(
-        self, point: np.ndarray, domain_bounds: np.ndarray | None, tol: float = BOUNDARY_TOL
-    ) -> str | None:
-        """Infer boundary identifier for a point on rectangular domain boundary.
-
-        This is optional - BCSegment.matches_point() can work without boundary_id
-        using SDF or normal matching. For rectangular domains, providing boundary_id
-        enables efficient segment matching via the 'boundary' attribute.
-
-        Args:
-            point: Spatial coordinates (dimension,)
-            domain_bounds: Domain bounds array (dimension, 2) or None
-            tol: Tolerance for boundary detection
-
-        Returns:
-            Boundary identifier like "x_min", "y_max", or None if not on axis-aligned boundary.
-
-        Note:
-            Issue #542 fix - separated boundary inference from BC matching.
-            Returns None for non-rectangular domains or interior/corner points.
-        """
-        if domain_bounds is None:
-            return None
-
-        # Check each axis for boundary proximity
-        for axis_idx in range(min(len(point), len(domain_bounds))):
-            if abs(point[axis_idx] - domain_bounds[axis_idx, 0]) < tol:
-                axis_name = ["x", "y", "z"][axis_idx] if axis_idx < 3 else f"dim{axis_idx}"
-                return f"{axis_name}_min"
-            elif abs(point[axis_idx] - domain_bounds[axis_idx, 1]) < tol:
-                axis_name = ["x", "y", "z"][axis_idx] if axis_idx < 3 else f"dim{axis_idx}"
-                return f"{axis_name}_max"
-
-        return None
 
     def _get_domain_sdf(self) -> callable | None:
         """Get signed distance function from geometry if available.
