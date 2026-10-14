@@ -47,9 +47,9 @@ and on `FAST_PATH_STENCIL` that constant is 0.2840929695, holding to 1 ulp acros
 Claims of this kind are stated as BOUNDS throughout this file, deliberately: an exactness is a
 property of one `DELTA_MULT` on one LAPACK and silently survives changes to either.
 
-`hjb_gfdm.py:1104` picked `C = 8.0` partly to reach this path. How often it is reached is not
-measured here and is not asserted -- it swings on `k_neighbors`, which `hjb_gfdm.py:308` leaves
-auto-computed. Reachable and otherwise untested is reason enough.
+`HJBGFDMSolver`'s joint-SOCP precompute picked `cone_constant_C=8.0` partly to reach this path. How often
+it is reached is not measured here and is not asserted -- it swings on `k_neighbors`, which
+`HJBGFDMSolver.__init__` leaves auto-computed. Reachable and otherwise untested is reason enough.
 
 The measurements behind each number are in the commit history; the production consequence of
 `kappa_max`'s degeneracy is #2113.
