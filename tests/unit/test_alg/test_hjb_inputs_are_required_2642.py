@@ -29,7 +29,6 @@ from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
 from mfgarchon.alg.numerical.meshless_galerkin.hjb_solver import MeshlessGalerkinHJBSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
-from mfgarchon.core.mfg_problem import MFGComponents
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import dirichlet_bc, no_flux_bc
 from mfgarchon.geometry.meshes.mesh_1d import Mesh1D
@@ -38,7 +37,8 @@ T, SIGMA, G = 0.5, 0.4, 0.7
 
 
 def _fem(n: int, nt: int, g: float = G) -> tuple[HJBFEMSolver, np.ndarray]:
-    """HJB-FEM P1 on [0, 1], u = g at both ends, u(T) = 0, H = |p|^2 / 2, sigma = 0.4, T = 0.5: the issue's problem."""
+    """HJB-FEM P1 on [0, 1], u = g at both ends, u(T) = 0, H = |p|^2 / 2, sigma = 0.4, T = 0.5: the issue's problem.
+    m_initial has mass 1 on the n + 1 nodes' uniform cells; the HJB reads the density it is passed, not this."""
     mesh = Mesh1D(bounds=(0.0, 1.0), num_elements=n)
     mesh.generate_mesh()
     mesh.boundary_conditions = dirichlet_bc(value=g, dimension=1)
@@ -46,7 +46,7 @@ def _fem(n: int, nt: int, g: float = G) -> tuple[HJBFEMSolver, np.ndarray]:
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=SIGMA
     )
     conditions = Conditions(
-        m_initial=lambda x: 1.0 + 0.0 * np.asarray(x, dtype=float)[..., 0], u_terminal=lambda x: 0.0, T=T
+        m_initial=lambda x: n / (n + 1) + 0.0 * np.asarray(x, dtype=float)[..., 0], u_terminal=lambda x: 0.0, T=T
     )
     solver = HJBFEMSolver(MFGProblem(model=model, domain=mesh, conditions=conditions, Nt=nt), order=1)
     return solver, solver._disc.dof_coordinates[:, 0]
@@ -92,12 +92,11 @@ def test_the_newton_branch_reads_no_iterate():
 
 def _grid_problem(n: int = 15) -> MFGProblem:
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
-    components = MFGComponents(
-        hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
-        m_initial=lambda x: np.exp(-20 * (x - 0.5) ** 2),
-        u_terminal=lambda x: 0.5 * (x - 0.5) ** 2,
+    model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.5)
+    conditions = Conditions(
+        m_initial=lambda x: 1.0 + 0.0 * np.asarray(x, dtype=float)[..., 0], u_terminal=lambda x: 0.0, T=0.5
     )
-    return MFGProblem(geometry=grid, components=components, T=0.5, Nt=10, volatility=0.5)
+    return MFGProblem(model=model, domain=grid, conditions=conditions, Nt=10)
 
 
 def _meshless(use_newton: bool) -> MeshlessGalerkinHJBSolver:
