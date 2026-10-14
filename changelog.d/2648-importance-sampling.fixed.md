@@ -7,14 +7,15 @@
     samples with uniform points and self-normalized 1/q weights. For a density matched to the integrand, the
     estimate `monte_carlo_integrate` forms from its points and weights was 0.00000, against an exact 0.751988
     (f = exp(-x^2 / (2 * 0.3^2)) on [-5, 5], N = 2000, 200 seeds).
-  - **Refused by name, where the old sampler gave a wrong number:**
+  - **Refused by name; the old sampler accepted each:**
     - a density whose integral over the domain differs from 1 by more than max(1e-6, 4 standard errors of a
       100,000-point check). A check cannot certify Z more closely than its own error, so that is the window the
       estimate may still carry. The check draws uniformly, so for a sharply peaked density the window is wide: about
       21% for a normal of width 0.01 on [-5, 5];
     - a density that is not finite, or is negative;
     - an integrand with more than 1e-6 of the integral of |f| where the density is 0, which importance sampling never
-      draws. The fraction is estimated on the check points, so a miss between them is not seen.
+      draws, or one that is NaN or infinite there. The fraction is estimated on the check points, so a miss between
+      them is not seen.
   - **Refused by name where nothing was wrong before, because the dispatch or the parameter is new:**
     - `use_control_variates` with `sampling_method="importance"`, whose calibration assumes equal weights. Before,
       "importance" was sampled uniformly, and control variates leave a uniform estimate unbiased;

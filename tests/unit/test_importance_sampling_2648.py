@@ -19,8 +19,11 @@ The oracle is f(x) = exp(-x^2 / (2 * 0.3^2)) on [-5, 5], whose integral is exact
    over all of space; stratified sampling refuses more strata than samples, which used to confine the first
    coordinate to its low strata.
 6. Review 2 of #2664: the support check weighs mass, so a density whose tail underflows to 0 where f is subnormal is
-   not refused; the Gaussian integrator forms f / p in log space, so it does not overflow where the integral is a
-   finite float; its covariance is checked; and the standard error and confidence interval are pinned.
+   not refused; the Gaussian integrator forms f / p in log space, so neither p nor 1 / p overflows on its own; its
+   covariance is checked; and the standard error and confidence interval are pinned.
+7. Review 3 of #2664: a NaN or infinite f where the density is 0 is refused by name, and an f too large to sum is
+   still weighed; the refusal prints the signed value; the integrator's seed fixes its draw; its sign, an f that is 0
+   everywhere, and its rescale before averaging are pinned.
 """
 
 from __future__ import annotations
@@ -159,8 +162,10 @@ def test_an_unknown_sampling_method_is_refused_by_name():
 
 def test_an_integrand_outside_the_densitys_support_is_refused():
     """Review 1 of #2664, B3: p = 1/2 on [-1, 1] and 0 elsewhere is normalized on [-5, 5], but importance sampling
-    never draws where p = 0, so f = 1 gave 2 against 10. The check points where p = 0 are evaluated through f; a
-    non-zero value is refused. An integrand vanishing there too is the control: support matched, estimate exact."""
+    never draws where p = 0, so f = 1 gave 2 against 10. The check points where p = 0 are evaluated through f, and the
+    fraction of the integral of |f| lying there is refused above 1e-6 -- 0.8 for f = 1 and for f = -1, whose refusal
+    prints the signed value (review 3). An integrand vanishing there too is the control: support matched, estimate
+    exact."""
 
     def half_on_unit(x):
         return np.where(np.abs(x[:, 0]) <= 1.0, 0.5, 0.0)
@@ -170,7 +175,7 @@ def test_an_integrand_outside_the_densitys_support_is_refused():
         ValueError, match=r"an estimated 0\.8\d* of the integral of \|f\| lies where the importance density is 0"
     ):
         monte_carlo_integrate(lambda x: np.ones(len(x)), DOMAIN, config)
-    with pytest.raises(ValueError, match=r"of the integral of \|f\| lies where the importance density is 0"):
+    with pytest.raises(ValueError, match=r"of the integral of \|f\| lies where .* the integrand is -1\.0\)"):
         monte_carlo_integrate(lambda x: -np.ones(len(x)), DOMAIN, config)
     inside = monte_carlo_integrate(lambda x: np.where(np.abs(x[:, 0]) <= 1.0, 1.0, 0.0), DOMAIN, config)
     assert inside.estimate == pytest.approx(2.0, rel=1e-12)
@@ -194,6 +199,13 @@ def test_the_support_check_weighs_mass_not_a_single_point():
     fraction = float(str(refused.value).split("an estimated ")[1].split(" ")[0])
     assert 0.5e-5 < fraction < 2e-5, fraction
     assert monte_carlo_integrate(tail(1e-7), [(0.0, 1.0)], config).estimate == pytest.approx(0.5, rel=1e-12)
+    # The threshold is NORMALIZATION_TOL, 1e-6: 1.5e-6 refused, 7e-7 not (review 3, S3-1).
+    with pytest.raises(ValueError, match=r"of the integral of \|f\| lies where the importance density is 0"):
+        monte_carlo_integrate(tail(1.5e-6), [(0.0, 1.0)], config)
+    assert monte_carlo_integrate(tail(7e-7), [(0.0, 1.0)], config).estimate == pytest.approx(0.5, rel=1e-12)
+    # The part seen is the integral of |f| too: f = -1 where p > 0 and -1e-7 beyond misses 1e-7 of it, not more.
+    negative = monte_carlo_integrate(lambda x: np.where(x[:, 0] <= 0.5, -1.0, -1e-7), [(0.0, 1.0)], config)
+    assert negative.estimate == pytest.approx(-0.5, rel=1e-12)
     for half_width in (40.0, 50.0):
         z = math.erf(half_width / math.sqrt(2))
         matched = MCConfig(
@@ -206,6 +218,22 @@ def test_the_support_check_weighs_mass_not_a_single_point():
             lambda x: np.exp(-np.sum(x**2, axis=1) / 2), [(-half_width, half_width)], matched
         )
         assert result.estimate == pytest.approx(math.sqrt(2 * math.pi) * z, rel=1e-12), half_width
+
+
+def test_a_non_finite_or_overflowing_integrand_where_the_density_vanishes_is_refused():
+    """Review 3 of #2664, B3-1: the mass criterion compared NaN and inf as False, and summed 1e304 into inf, so all
+    three were accepted where the witness rule had refused them. A non-finite value is refused by name; a large one is
+    weighed relative to the largest |f|, which leaves the fraction, 0.8 here, unchanged."""
+
+    def half_on_unit(x):
+        return np.where(np.abs(x[:, 0]) <= 1.0, 0.5, 0.0)
+
+    config = MCConfig(num_samples=N, seed=0, sampling_method="importance", importance_function=half_on_unit)
+    for bad, shown in ((np.nan, "nan"), (np.inf, "inf")):
+        with pytest.raises(ValueError, match=rf"the integrand is {shown} at x = .*, where the importance density is 0"):
+            monte_carlo_integrate(lambda x, bad=bad: np.where(np.abs(x[:, 0]) <= 1.0, 1.0, bad), DOMAIN, config)
+    with pytest.raises(ValueError, match=r"an estimated 0\.8\d* of the integral of \|f\|"):
+        monte_carlo_integrate(lambda x: np.full(len(x), 1e304), DOMAIN, config)
 
 
 def test_the_normalization_window_is_its_floor_or_four_check_errors():
@@ -249,22 +277,48 @@ def test_the_gaussian_integrator_returns_the_integral_over_all_of_space():
     )
     result = integrate_gaussian_quadrature_mc(np.zeros(3), np.eye(3), lambda x: np.exp(-np.sum(x**2, axis=1)), seed=0)
     assert abs(result.estimate - math.pi**1.5) < 6 * result.standard_error
+    negative = integrate_gaussian_quadrature_mc(
+        np.zeros(3), np.eye(3), lambda x: -np.exp(-np.sum(x**2, axis=1)), seed=0
+    )
+    assert negative.estimate == -result.estimate  # the sign survives the log-space form (review 3)
+    zero = integrate_gaussian_quadrature_mc(np.zeros(3), np.eye(3), lambda x: np.zeros(len(x)), seed=0)
+    assert zero.estimate == 0.0
+    assert zero.standard_error == 0.0
     seven = integrate_gaussian_quadrature_mc(np.zeros(7), np.eye(7), lambda x: np.exp(-0.5 * np.sum(x**2, axis=1)), 200)
     assert seven.estimate == pytest.approx((2 * math.pi) ** 3.5, rel=1e-10)
 
 
-def test_the_gaussian_integrator_does_not_overflow_where_the_integral_is_finite():
+def test_the_gaussian_integrator_overflows_only_where_the_largest_f_over_p_does():
     """Review 2 of #2664, MF-3: with f = exp(-|x|^2 / (2 s^2)) and cov = s^2 I, f / p is (2 pi s^2)^(d/2) exactly:
     10^279.8 at d = 200, s = 10, a finite float, which mean(f * exp(-log p)) returned as inf because 1 / p overflows
-    alone."""
+    alone. Review 3: f / p = 1e306 at every point is finite too, but 2000 of them summed are not, so the contributions
+    are rescaled by the largest before they are averaged."""
     from mfgarchon.utils.numerical.particle.sampling import integrate_gaussian_quadrature_mc
 
     d, s = 200, 10.0
     result = integrate_gaussian_quadrature_mc(
         np.zeros(d), s**2 * np.eye(d), lambda x: np.exp(-np.sum(x**2, axis=1) / (2 * s**2)), num_samples=50, seed=0
     )
-    assert math.isfinite(result.estimate)
-    assert math.log(result.estimate) == pytest.approx(d / 2 * math.log(2 * math.pi * s**2), rel=1e-12)
+    assert result.estimate == pytest.approx(math.exp(d / 2 * math.log(2 * math.pi * s**2)), rel=1e-10)
+    c = 1e306 / math.sqrt(2 * math.pi)
+    large = integrate_gaussian_quadrature_mc(
+        np.zeros(1), np.eye(1), lambda x: c * np.exp(-np.sum(x**2, axis=1) / 2), num_samples=2000, seed=0
+    )
+    assert large.estimate == pytest.approx(1e306, rel=1e-12)
+
+
+def test_the_gaussian_integrators_seed_fixes_its_draw():
+    """Review 3 of #2664, B3-2: the seed reaches the draw -- the same seed twice gives the same estimate, another seed
+    a different one."""
+    from mfgarchon.utils.numerical.particle.sampling import integrate_gaussian_quadrature_mc
+
+    def run(seed):
+        return integrate_gaussian_quadrature_mc(
+            np.zeros(2), np.eye(2), lambda x: np.exp(-np.sum(x**2, axis=1)), num_samples=500, seed=seed
+        ).estimate
+
+    assert run(0) == run(0)
+    assert run(0) != run(1)
 
 
 @pytest.mark.parametrize(

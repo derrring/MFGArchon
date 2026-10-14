@@ -281,9 +281,9 @@ class ImportanceMCSampler(MCSampler):
     integral; the sampler keeps its check points where p = 0, and ``monte_carlo_integrate`` estimates the missing part
     there (`_refuse_integrand_outside_the_support`).
 
-    - **``NORMALIZATION_TOL``** is the relative error in the integral's mass that the estimator may carry silently. It
-      is read twice: as the floor of the normalization window, and as the largest fraction of the integral of |f|
-      that may lie where p = 0.
+    - **``NORMALIZATION_TOL``** is the floor of the relative mass error these checks let through. It is read twice:
+      the normalization window is max(``NORMALIZATION_TOL``, 4 check errors), and up to ``NORMALIZATION_TOL`` of the
+      integral of |f| may lie where p = 0 unrefused.
     - **Normalization** is checked at construction, by a fixed-seed Monte Carlo estimate of Z over
       ``_CHECK_SAMPLES`` points. It is refused when Z differs from 1 by more than both ``NORMALIZATION_TOL`` and 4 of
       the check's standard errors. A check of finite size cannot certify Z more closely than its own error, so the
@@ -776,15 +776,31 @@ def _refuse_integrand_outside_the_support(
     here; the part it sees is the draw's own estimate of the integral of |f| over p > 0 (``scale`` times the mean
     |contribution|). A missing fraction above ``ImportanceMCSampler.NORMALIZATION_TOL`` is refused, naming the
     fraction and the check point where |f| is largest -- a mass criterion, so an f that is merely subnormal where p
-    underflows to 0 is not refused (review 2 of #2664). Sampled: a miss between check points is not seen (#2648)."""
+    underflows to 0 is not refused (review 2 of #2664). A NaN or infinite f at such a point is refused by name, since
+    no fraction of it can be formed (review 3). Both masses are taken relative to the larger of the largest |f| there
+    and the largest |contribution| drawn, so neither sum overflows. Sampled: a miss between check points is not seen (#2648)."""
     points = sampler.zero_density_points
     if len(points) == 0:
         return
-    values = np.abs(np.asarray(integrand(points), dtype=float))
-    missing = sampler.domain_volume * float(np.sum(values)) / sampler._CHECK_SAMPLES
-    seen = scale * float(np.mean(np.abs(contributions)))
+    values = np.asarray(integrand(points), dtype=float)
+    bad = np.flatnonzero(~np.isfinite(values))
+    if len(bad):
+        i = int(bad[0])
+        raise ValueError(
+            f"monte_carlo_integrate: the integrand is {float(values[i])!r} at x = {points[i].tolist()}, where the "
+            "importance density is 0; importance sampling never draws there, and no estimate can include a value "
+            "that is not finite. Use a density positive wherever the integrand is non-zero, and a finite integrand."
+        )
+    magnitude = np.abs(values)
+    top = float(np.max(magnitude))
+    if top == 0.0:
+        return
+    drawn = np.abs(contributions[np.isfinite(contributions)])
+    norm = max(top, float(np.max(drawn)) if drawn.size else 0.0)  # every ratio below is at most 1
+    missing = sampler.domain_volume * float(np.sum(magnitude / norm)) / sampler._CHECK_SAMPLES
+    seen = scale * float(np.sum(drawn / norm)) / len(contributions)
     if missing > sampler.NORMALIZATION_TOL * (missing + seen):
-        i = int(np.argmax(values))
+        i = int(np.argmax(magnitude))
         raise ValueError(
             f"monte_carlo_integrate: an estimated {missing / (missing + seen):.3g} of the integral of |f| lies where "
             f"the importance density is 0 (at x = {points[i].tolist()} the integrand is {float(values[i])!r}); "
