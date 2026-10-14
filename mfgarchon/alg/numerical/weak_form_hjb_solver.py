@@ -274,6 +274,24 @@ class WeakFormHJBSolver(BaseHJBSolver):
 
         return U_current
 
+    def solve(self) -> NDArray:
+        """The standalone solve (`BaseHJBSolver.solve`), on the Newton branch only.
+
+        `BaseHJBSolver.solve` passes the terminal condition, tiled over time, as the coupling iterate. The Picard
+        branch evaluates H at that iterate's gradient, so its answer would be the HJB frozen at the terminal
+        condition's gradient, a choice the caller never made (#2642). It is refused there; the Newton branch does
+        not read the iterate and is unchanged.
+        """
+        if not self._use_newton_default:
+            raise ValueError(
+                f"{type(self).__name__}.solve() runs the Picard branch, which evaluates H at the gradient of a "
+                "coupling iterate, and a standalone solve has none: it would linearize at the terminal condition, "
+                "which nobody chose (#2642). Call solve_hjb_system(M_density, U_terminal, U_coupling_prev) with the "
+                "iterate you mean, or solve_hjb_system(..., use_newton=True) -- or build a meshless solver with "
+                "use_newton=True -- since the Newton inner solver does not read it."
+            )
+        return super().solve()
+
     @retired_volatility_keywords
     def solve_hjb_system(
         self,
@@ -305,6 +323,12 @@ class WeakFormHJBSolver(BaseHJBSolver):
 
         ``use_newton=None`` takes the solver's default, ``_use_newton_default``: Picard here, and the
         constructor's ``use_newton`` on the meshless-Galerkin solver.
+
+        ``M_density`` and ``U_terminal`` are required: both branches read them. ``U_coupling_prev`` is required on
+        the Picard branch, which evaluates H at its gradient, and unused by the Newton inner solver. Each used to
+        default when omitted -- the density to ``1/N``, the other two to zeros -- and a Picard solve with a zero
+        iterate freezes H at p = 0: the backward heat equation with source ``-H(x, m, 0)``, which for #2642's
+        ``H = |p|^2 / 2`` is the heat equation itself.
         """
         if use_newton is None:
             use_newton = self._use_newton_default
@@ -342,12 +366,17 @@ class WeakFormHJBSolver(BaseHJBSolver):
                 )
             return self._M @ s_vals
 
-        if U_terminal is None:
-            U_terminal = np.zeros(N)
         if M_density is None:
-            M_density = np.ones((Nt + 1, N)) / N
-        if U_coupling_prev is None:
-            U_coupling_prev = np.zeros((Nt + 1, N))
+            raise ValueError("M_density is required")
+        if U_terminal is None:
+            raise ValueError("U_terminal is required")
+        if U_coupling_prev is None and not use_newton:
+            raise ValueError(
+                "U_coupling_prev is required on the Picard branch (use_newton=False): each step evaluates H at the "
+                "gradient of this iterate, so without it the solve has no point to linearize at -- defaulted to zeros, "
+                "H was frozen at p = 0, the backward heat equation with source -H(x, m, 0) (#2642). Pass the previous "
+                "coupling iterate, or use_newton=True, which does not read it."
+            )
         if M_density.ndim == 1:
             M_density = np.tile(M_density, (Nt + 1, 1))
 

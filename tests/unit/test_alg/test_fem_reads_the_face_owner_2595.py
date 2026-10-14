@@ -66,7 +66,11 @@ def _u(bc: BoundaryConditions) -> np.ndarray:
     """#2595's reproducer: HJB-FEM, 16 elements on [0, 1], sigma = 0.4, T = 0.5, Nt = 10, M = 1, U(T) = 0."""
     solver = _hjb(_interval(bc))
     n = solver._disc.dof_coordinates.shape[0]
-    return np.asarray(solver.solve_hjb_system(M_density=np.ones((NT + 1, n)), U_terminal=np.zeros(n)))
+    return np.asarray(
+        solver.solve_hjb_system(
+            M_density=np.ones((NT + 1, n)), U_terminal=np.zeros(n), U_coupling_prev=np.zeros((NT + 1, n))
+        )
+    )
 
 
 # --- the external oracle ---------------------------------------------------------------------------------------------
