@@ -182,3 +182,59 @@ def test_a_blending_corner_is_judged_by_the_consumers_equivalence():
     with pytest.raises(ValueError, match="impose different conditions"):
         bc.segment_for_point(corner)
     assert bc.segment_for_point(corner, equivalent=_same_enforcement).name == "n0"  # priority 0 over the default's -1
+
+
+def test_a_corner_partly_covered_under_a_robin_default_is_read_at_the_point():
+    """Review 2 of #2663, S1: a ROBIN default does not answer (it carries no alpha or beta), so on a face a strip covers
+    only in part, the strip stands in at the point. The node refuses with the ROBIN refusal."""
+    bc = BoundaryConditions(
+        dimension=2,
+        domain_bounds=UNIT_SQUARE,
+        default_bc=BCType.ROBIN,
+        segments=[BCSegment(name="strip", bc_type=BCType.NEUMANN, value=0.0, region={"y": (0.5, 1.0)})],
+    )
+    with pytest.raises(ValueError, match="default_bc is ROBIN"):
+        bc.segment_for_corner([BoundaryFace(0, "max"), BoundaryFace(1, "max")])
+    assert bc.segment_for_point(np.array([1.0, 1.0])).name == "strip"
+
+
+def test_a_cover_the_owner_cannot_decide_is_refused_at_a_corner_too():
+    """Review 2 of #2663, S2: an ``sdf_region`` cover is decided on a grid's nodes, so on a Hyperrectangle the face
+    cannot decide it. That refusal is not a partial cover's, so it stands at the corner, although a region strip
+    also covers part of the face."""
+    from mfgarchon.geometry.implicit import Hyperrectangle
+
+    bc = BoundaryConditions(
+        dimension=2,
+        domain_bounds=UNIT_SQUARE,
+        default_bc=BCType.NO_FLUX,
+        segments=[
+            BCSegment(name="strip", bc_type=BCType.NEUMANN, value=0.5, boundary="x_max", region={"y": (0.5, 1.0)}),
+            BCSegment(
+                name="blob", bc_type=BCType.NO_FLUX, sdf_region=lambda x: np.asarray(x, dtype=float)[..., 0] - 2.0
+            ),
+        ],
+    )
+    geometry = Hyperrectangle(UNIT_SQUARE)
+    with pytest.raises(ValueError, match="decided on a grid's boundary nodes"):
+        bc.segment_for_corner([BoundaryFace(0, "max"), BoundaryFace(1, "max")], geometry)
+    with pytest.raises(ValueError, match="decided on a grid's boundary nodes"):
+        bc.segment_for_point(np.array([1.0, 1.0]), geometry=geometry)
+
+
+def test_domain_bounds_decide_the_faces_before_the_domain_sdf():
+    """Review 2 of #2663, S3: the precedence is ``domain_bounds``, then ``domain_sdf``, then the geometry's box. With
+    both set, the corner (1, 1) lies on x_max and y_max of the box, so the corner rule gives it to ``north``, of the
+    higher priority; read from the SDF alone, the point would find one face and take that face's segment."""
+    bc = BoundaryConditions(
+        dimension=2,
+        domain_bounds=UNIT_SQUARE,
+        domain_sdf=lambda x: np.max(np.abs(np.asarray(x, dtype=float) - 0.5), axis=-1) - 0.5,
+        segments=[
+            BCSegment(name="east", bc_type=BCType.DIRICHLET, value=1.0, boundary="x_max", priority=1),
+            BCSegment(name="north", bc_type=BCType.DIRICHLET, value=2.0, boundary="y_max", priority=2),
+            BCSegment(name="rest", bc_type=BCType.NO_FLUX),
+        ],
+    )
+    assert bc.segment_for_point(np.array([1.0, 0.5])).name == "east"
+    assert bc.segment_for_point(np.array([1.0, 1.0])).name == "north"

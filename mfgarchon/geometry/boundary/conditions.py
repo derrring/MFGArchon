@@ -658,10 +658,12 @@ class BoundaryConditions:
         the bounds of the geometry the query is decided on (``geometry``, else the grid this BC is bound to).
 
         **A point at a corner is resolved at the point** (user ruling, 2026-10-14). Without ``face``, a point
-        on several faces takes each face's own segment, read at the point only where a ``region`` or ``sdf_region``
-        covers part of that face and that is the only reason the face does not answer
-        (:meth:`_face_resolution`); then the segment holding the point on that face (this method with ``face``)
-        stands in. Every other refusal stands -- a segment shadowed on every face refuses every corner.
+        on several faces takes each face's own segment, read at the point only where a partial cover keeps the face
+        from answering (:meth:`_face_resolution`): a ``region`` or ``sdf_region`` covering part of it ahead of the
+        segment governing the rest with another condition, or covering part of a face no segment covers whole and
+        whose ``default_bc`` does not answer. Then the segment holding the point on that face (this method with
+        ``face``) stands in. Every other refusal stands; a segment shadowed on every face refuses every corner wherever
+        the shadow check can enumerate the faces -- the BC's ``dimension`` is set, or the geometry is a grid.
         ``corner_strategy`` then chooses among them in the corner order (:meth:`_corner_choice`). Both steps are
         asked with ``equivalent``, so wherever the node asked with the same ``equivalent`` answers, the point gives
         the node's segment; and where the node refuses only because a face is partly covered, the point answers.
@@ -1029,7 +1031,8 @@ class BoundaryConditions:
     ) -> BCSegment:
         """One face's segment for a point at a corner (:meth:`segment_for_point`): the face's own answer
         (:meth:`_face_resolution`) wherever it has one, so the point and the node asked with the same ``equivalent``
-        agree; where only a partial cover keeps the face from answering, the segment holding the point on that face.
+        agree; where a partial cover keeps the face from answering (:meth:`_face_resolution`'s second and third
+        outcomes), the segment holding the point on that face.
         Every other refusal stands. Reading every face at the point instead would let a segment holding the point at
         a higher priority override the face's answer -- review 2's B-c, a strip accepted on x_max as the wall's
         condition, would take the y_max Dirichlet's corner."""
@@ -1107,10 +1110,16 @@ class BoundaryConditions:
             )
         bounds = self._query_bounds(geometry)
         if bounds is None:
+            remedy = (
+                "this BC's domain is its domain_sdf, so a geometry's bounding box is not read for it: pass the grid or "
+                "set domain_bounds"
+                if self.domain_sdf is not None
+                else "pass a grid or a geometry with bounds, or set domain_bounds"
+            )
             raise ValueError(
-                f"BC segment {segment.name!r} is placed by region, and neither a grid geometry, nor domain_bounds, "
-                "nor a geometry with bounds says how far each face extends, so this reader cannot tell whether it "
-                f"covers {face.to_string()}. Pass the geometry or set domain_bounds (#2512 row B1)."
+                f"BC segment {segment.name!r} is placed by region, and neither a grid geometry nor a box (domain_bounds, "
+                "or the bounds of the geometry for a BC with no domain_sdf) says how far each face extends, so this "
+                f"reader cannot tell whether it covers {face.to_string()}: {remedy} (#2512 row B1)."
             )
         tol = SDF_BOUNDARY_TOL
         part_of_face = False

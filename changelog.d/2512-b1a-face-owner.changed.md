@@ -6,10 +6,12 @@
     - A node several faces share takes a choice among those faces' own segments, by one more rule after
       priority: DIRICHLET before any other condition.
     - A point query exactly at a corner that names no face takes each face's own segment, read at the point only
-      where a `region` or `sdf_region` covering part of that face is all that keeps the face from answering, and
-      the corner order chooses among them. Both steps take the reader's `equivalent=`, so the point gives the
-      node's answer wherever the node, asked with the same equivalence, answers. Any other refusal stands: a
-      segment shadowed on every face refuses every corner.
+      where a partial cover (`region` or `sdf_region`) keeps the face from answering: it covers part of the face
+      ahead of a segment with another condition, or part of a face no segment covers whole and whose `default_bc`
+      does not answer. The corner order then chooses. Both steps take the reader's `equivalent=`, so the point
+      gives the node's answer wherever the node, asked with the same equivalence, answers. Any other refusal
+      stands: a segment shadowed on every face refuses every corner, wherever the BC's dimension is known or the
+      geometry is a grid.
       Naming the face (`face=`) reads the point on that face. The particle solver names the first face it finds a
       particle on, so it does not reach this rule.
     - Under `corner_strategy="average"` or `"mollify"`, a corner whose faces impose different conditions is
