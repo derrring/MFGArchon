@@ -1,12 +1,8 @@
 {
   "_comment": "Every keyword argument in a docstring example must be a real parameter of the callee it names.",
-  "checked": 1022,
-  "blocks": 621,
+  "checked": 994,
+  "blocks": 610,
   "findings": [
-    "mfgarchon.core.mfg_components_nested.MFGComponents: MFGComponents(hamiltonian_func=...)",
-    "mfgarchon.core.mfg_components_nested.MFGComponents: MFGComponents(neural_architecture=...)",
-    "mfgarchon.core.mfg_components_nested.MFGComponents: MFGComponents(potential_func=...)",
-    "mfgarchon.core.mfg_components_nested.MFGComponents: NeuralMFGConfig(architecture=...)",
     "mfgarchon.geometry.boundary.applicator_graph.create_maze_applicator: MazeGeometry(height=...)",
     "mfgarchon.geometry.boundary.applicator_graph.create_maze_applicator: MazeGeometry(width=...)",
     "mfgarchon.geometry.protocol.detect_geometry_type: NetworkGeometry(n_nodes=...)",

@@ -42,7 +42,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
@@ -51,24 +50,6 @@ from numpy.typing import NDArray
 MeasureDensity = NDArray  # Probability density on spatial domain
 FunctionalOnMeasures = Callable[[MeasureDensity], float | NDArray]  # U[m]
 LinearDerivative = Callable[[NDArray, NDArray], float | NDArray]  # δU/δm(x,y)
-
-
-@dataclass
-class FunctionalDerivativeConfig:
-    """Configuration for functional derivative computation."""
-
-    # Finite difference parameters
-    epsilon: float = 1e-4  # Perturbation size for finite differences
-    method: str = "forward"  # "forward" | "central" | "automatic"
-
-    # Particle approximation
-    num_particles: int = 50  # Number of particles to represent measure
-    particle_method: str = "uniform"  # "uniform" | "adaptive" | "quasi_random"
-
-    # Numerical stability
-    regularization: float = 1e-10  # Small regularization to avoid division by zero
-    clip_gradients: bool = True  # Clip large gradients
-    max_gradient: float = 1e6  # Maximum gradient value
 
 
 class FunctionalDerivative(ABC):
