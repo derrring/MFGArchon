@@ -180,7 +180,7 @@ def format_item(item: dict, collisions: dict[str, dict] | None = None) -> str:
         blocked = [_BLOCKER_TEXT.get(b, b) for b in item.get("removal_blockers") or []]
         until = f", once no longer blocked: {'; '.join(blocked)}" if blocked else ""
         refusal = (
-            "refused with a TypeError that says it never had an effect"
+            f"refused with a TypeError that says {item.get('effect', 'it never had an effect')}"
             if item.get("never_read")
             else "refused with a TypeError that names the replacement"
         )

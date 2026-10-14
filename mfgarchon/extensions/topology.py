@@ -361,12 +361,21 @@ class NetworkMFGComponents(MFGComponents):
 NetworkMFGComponents.__init__ = retired_parameters(  # type: ignore[method-assign]
     {
         "velocity_space_dim": "no network solver works in a velocity space (#1470)",
-        "trajectory_cost_func": "no network solver reads a trajectory cost; put the cost in lagrangian_func or hamiltonian_func",
+        "trajectory_cost_func": (
+            "no network solver reads a trajectory cost; running costs enter the network Hamiltonian as "
+            "node_potential_func (V) and node_interaction_func (f), and a custom hamiltonian_func carries any "
+            "other, which only NetworkHJBSolver honours"
+        ),
         "relaxed_control": "no network solver computes relaxed equilibria (#1470)",
-        "edge_cost_func": "no network solver reads an edge cost; put it in hamiltonian_func",
-        "congestion_func": "the default Hamiltonian's congestion is its quadratic node term; pass hamiltonian_func to change it",
+        "edge_cost_func": (
+            "no network solver reads an edge cost; put it in a custom hamiltonian_func, which only NetworkHJBSolver honours"
+        ),
+        "congestion_func": (
+            "congestion enters through node_interaction_func, f(t, node, m), which replaces the default "
+            "0.5 * m^2 node term in both network HJB solvers"
+        ),
         "edge_interaction_func": "no network solver reads edge interactions; node_interaction_func is the coupling it reads",
-        "problem_params": "pass parameters=, which MFGProblem reads",
+        "problem_params": "no network solve reads problem parameters; close over the values in your callables",
     },
     issue="#2648",
     since="v0.22.0",

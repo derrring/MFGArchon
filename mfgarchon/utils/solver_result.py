@@ -75,12 +75,13 @@ class SolverResult:
 
     @retired_parameters(
         {
-            "ergodic_constant": "no solver computes one, and there is no stationary (ergodic) mode; it comes back "
-            "with such a mode (#2652)"
+            "ergodic_constant": "the field is removed: there is no stationary (ergodic) mode, and it comes back with "
+            "one (#2652)"
         },
         issue="#2648",
         since="v0.22.0",
         never_read=True,
+        effect="no library solver ever set it",
     )
     def __init__(
         self,
@@ -110,8 +111,8 @@ class SolverResult:
             converged: Whether convergence was achieved
             execution_time: Total solve time in seconds
             metadata: Additional solver-specific information
-            ergodic_constant: Refused when passed (#2652): no solver computes one, and there is no
-                stationary mode. The attribute is removed; the name goes in v0.25.0.
+            ergodic_constant: Refused when passed (#2652): the field is removed, since there is no
+                stationary mode and no library solver ever set it; the name goes in v0.25.0.
             policy: Optimal control policy alpha*(t, x) as callable
             mass_conservation_error: max|mass(t)/mass(0) - 1| over time steps -- the drift from the
             initial mass, not the deviation from 1.0 (Issue #875, #1672), or None. The functional

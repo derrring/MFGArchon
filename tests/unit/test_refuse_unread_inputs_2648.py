@@ -1,7 +1,7 @@
 """#2648 stage 2: declared inputs that no code reads are refused by name, until v0.25.0 (ruling 3).
 
 1. Each member is refused when passed, by keyword, and by position where the class takes it positionally. The
-   message names the class or function the caller called, says the input never had an effect, and gives the reason.
+   message names the class or function that refuses it, says the input never had an effect, and gives the reason.
 2. Its default is `NEVER_READ`, which the refusal lets through. So each class still constructs, and
    `dataclasses.replace`, which passes every field back in, still works.
 3. `SolverResult.ergodic_constant` is removed (#2652): the attribute is gone, and passing the name is refused.
@@ -23,7 +23,7 @@ from mfgarchon.alg.optimization.variational_problem import VariationalMFGCompone
 from mfgarchon.core.multi_population import MultiPopulationProblem
 from mfgarchon.extensions.topology import NetworkMFGComponents
 from mfgarchon.geometry.boundary.applicator_graph import GraphBCConfig
-from mfgarchon.geometry.graph.maze_hybrid import HybridMazeConfig
+from mfgarchon.geometry.graph.maze_hybrid import AlgorithmSpec, HybridMazeConfig, HybridStrategy
 from mfgarchon.hooks.debug import PerformanceHook
 from mfgarchon.utils.deprecation import NEVER_READ
 from mfgarchon.utils.notebooks.reporting import MFGNotebookReporter
@@ -123,6 +123,14 @@ DATACLASSES = [
     (NetworkMFGComponents, {}, "node_potential_func", _f),
     (VariationalMFGComponents, {}, "terminal_cost_func", _f),
     (GraphBCConfig, {}, "edge_bcs", []),
+    (MultiPopulationProblem, {"populations": [object()]}, "population_names", ["only"]),
+    (
+        HybridMazeConfig,
+        {"rows": 10, "cols": 10, "strategy": HybridStrategy.HIERARCHICAL, "algorithms": [AlgorithmSpec("perfect")]},
+        "seed",
+        7,
+    ),
+    (SweepConfiguration, {"parameters": {}}, "max_workers", 7),
 ]
 
 
@@ -154,7 +162,11 @@ def test_solver_result_has_no_ergodic_constant():
     assert not hasattr(result, "ergodic_constant")
     assert "ergodic_constant" not in [f.name for f in dataclasses.fields(SolverResult)]
     assert dataclasses.replace(result, solver_name="x").solver_name == "x"
-    with pytest.raises(TypeError, match=r"^SolverResult\.__init__\(\) refuses ergodic_constant=: .+\(#2652\)"):
+    with pytest.raises(
+        TypeError,
+        match=r"^SolverResult\.__init__\(\) refuses ergodic_constant=: the field is removed: .+\(#2652\); "
+        r"no library solver ever set it, ",
+    ):
         _result(ergodic_constant=0.5)
 
 

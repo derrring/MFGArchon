@@ -95,7 +95,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 - `enable_latex=`, `template_style=` in `MFGNotebookReporter.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `MFGResidual.__init__()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `backend=` in `MFGSolverGenerator.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
-- `ergodic_constant=` in `MFGSolverResult.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
+- `ergodic_constant=` in `MFGSolverResult.__init__()` — refused with a TypeError that says no library solver ever set it (#2648); the refusal goes by v0.25.0
 - `sigma=` in `MeshlessGalerkinFPSolver.solve_fp_step_adjoint_mode()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `MeshlessGalerkinFPSolver.solve_fp_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `MeshlessGalerkinHJBSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
@@ -110,7 +110,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `PenaltyHJBSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `track_detailed_timing=` in `PerformanceHook.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `target_precision=`, `time_constraint=` in `PerformanceProfile.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
-- `ergodic_constant=` in `SolverResult.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
+- `ergodic_constant=` in `SolverResult.__init__()` — refused with a TypeError that says no library solver ever set it (#2648); the refusal goes by v0.25.0
 - `batch_size=` in `SweepConfiguration.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `potential_dx_func=`, `potential_func=`, `problem_type=`, `terminal_cost_dx_func=` in `VariationalMFGComponents.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `sigma=` in `VariationalMFGProblem.__init__()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0, once no longer blocked: the function takes **kwargs, which would accept a retired name and ignore it

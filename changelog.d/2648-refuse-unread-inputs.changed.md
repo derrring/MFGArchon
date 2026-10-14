@@ -1,17 +1,18 @@
 - **Inputs that never had an effect are refused when passed, by name, until v0.25.0** (#2648, stage 2; rulings 3 and
-  7). Breaking (pre-1.0). Each refusal names the class or function called, says the input never had an effect, and
-  says what the code does instead. Each input keeps its place in the signature, and its default is `NEVER_READ`.
-  So the classes still construct, `dataclasses.replace` still works, and reading one of these attributes gives
-  `NEVER_READ`.
+  7). Breaking (pre-1.0). Each refusal names the class or function that refuses it, says the input never had an
+  effect, and says what the code does instead. Each input keeps its place in the signature, and its default is
+  `NEVER_READ`. So the classes still construct, `dataclasses.replace` still works, and reading one of these
+  attributes gives `NEVER_READ`. `NEVER_READ` is not JSON-serializable, so `json.dumps(dataclasses.asdict(cfg))` on
+  `MCMCConfig()` or `MCConfig()`, which worked, now raises `TypeError`: drop the refused fields before serializing.
   - `MCMCConfig`: `num_chains`, `max_tree_depth`, `max_adapt_iter`, `parallel`, `compute_rhat`,
-    `effective_sample_size`. Every sampler runs one chain; `compute_rhat(chains)` and `effective_sample_size(chains)`
-    are functions to call on samples from several runs.
+    `effective_sample_size`. Every sampler runs one chain; `compute_rhat(chains)` is a function to call on samples
+    from several runs, and `effective_sample_size(chains)` one to call on the samples.
   - `MCConfig`: `adaptive`, `max_adaptive_samples`, `proposal_distribution`, `batch_size`, `chunk_size`, `parallel`.
     `adaptive_monte_carlo` takes its own `batch_size=` and `max_samples=`.
   - `WassersteinSolverConfig`: `step_size`, `relative_tolerance`, `history_length`.
   - `NetworkMFGComponents`: `velocity_space_dim`, `trajectory_cost_func`, `relaxed_control`, `edge_cost_func`,
-    `congestion_func`, `edge_interaction_func`, and `problem_params`, for which `parameters=` is the field
-    `MFGProblem` reads.
+    `congestion_func`, `edge_interaction_func` and `problem_params`. No network solve reads problem parameters:
+    close over the values in your callables.
   - `VariationalMFGComponents`: `terminal_cost_dx_func`, `potential_func`, `potential_dx_func`, `problem_type`. A
     potential belongs in `lagrangian_func`.
   - `MultiPopulationProblem(cross_coupling=)`, `GraphBCConfig(default_bc_type=)`, `HybridMazeConfig(radial_center=)`,

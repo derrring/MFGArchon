@@ -59,8 +59,8 @@ class MFGNotebookReporter:
 
     @retired_parameters(
         {
-            "enable_latex": "the mathematical framework section, with its LaTeX, is always written",
-            "template_style": "every report has the same section structure",
+            "enable_latex": "no code reads it; which sections a report has is fixed by the report method called",
+            "template_style": "no code reads it; which sections a report has is fixed by the report method called",
         },
         issue="#2648",
         since="v0.22.0",
@@ -78,9 +78,11 @@ class MFGNotebookReporter:
 
         Args:
             output_dir: Directory for generated reports
-            enable_latex: Refused when passed (#2648): the mathematical framework section is always written.
+            enable_latex: Refused when passed (#2648): no code reads it; which sections a report has is fixed
+                by the report method called.
             plotly_renderer: Plotly renderer ('notebook', 'browser', 'json')
-            template_style: Refused when passed (#2648): every report has the same section structure.
+            template_style: Refused when passed (#2648): no code reads it; which sections a report has is fixed
+                by the report method called.
         """
         if not NOTEBOOK_AVAILABLE:
             raise NotebookReportError(

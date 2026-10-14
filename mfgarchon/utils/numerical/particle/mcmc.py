@@ -88,7 +88,10 @@ MCMCConfig.__init__ = retired_parameters(  # type: ignore[method-assign]
         "max_adapt_iter": "step-size adaptation runs over the first num_warmup iterations; set num_warmup",
         "parallel": "every sampler runs one chain, in this process",
         "compute_rhat": "the sampler runs one chain; call compute_rhat(chains) on samples from several runs",
-        "effective_sample_size": "the sampler computes none; call effective_sample_size(chains) on samples from several runs",
+        "effective_sample_size": (
+            "the sampler computes none; call effective_sample_size(chains) on the samples, shaped "
+            "(num_samples, num_chains, dimension)"
+        ),
     },
     issue="#2648",
     since="v0.22.0",

@@ -578,7 +578,13 @@ NEVER_READ: Any = _NeverRead()
 
 
 def retired_parameters(
-    replacements: dict[str, str], *, issue: str, since: str, removal: str = "v0.25.0", never_read: bool = False
+    replacements: dict[str, str],
+    *,
+    issue: str,
+    since: str,
+    removal: str = "v0.25.0",
+    never_read: bool = False,
+    effect: str = "it never had an effect",
 ) -> Callable[[F], F]:
     """Refuse retired keyword arguments with a ``TypeError`` that names what replaces each.
 
@@ -597,7 +603,8 @@ def retired_parameters(
     ``NEVER_READ``, and passing it any other value -- by keyword or by position, the old default included --
     is refused. ``dataclasses.replace`` and the ``asdict`` / ``astuple`` round trips pass ``NEVER_READ`` back
     and are let through. Each value of ``replacements`` is then the reason, with the remedy where there is
-    one, and the message says the input never had an effect.
+    one, and the message then says ``effect``: by default that the input never had an effect. Pass another
+    where that is false, as for a removed field that a caller could set and read back.
 
     Three limits of this mode:
     - A ``@dataclass`` subclass generates its own ``__init__``, which this wrapper does not cover.
@@ -634,7 +641,7 @@ def retired_parameters(
                 if refused:
                     name = refused[0]
                     raise TypeError(
-                        f"{func.__qualname__}() refuses {name}=: {replacements[name]}; it never had an effect, and the "
+                        f"{func.__qualname__}() refuses {name}=: {replacements[name]}; {effect}, and the "
                         f"name goes in {removal} ({issue})."
                     )
                 return func(*args, **kwargs)
@@ -653,6 +660,7 @@ def retired_parameters(
             "removal": removal,
             "removal_blockers": ["var_keyword"] if takes_var_keyword else [],
             "never_read": never_read,
+            "effect": effect,
         }
         return wrapper  # type: ignore[return-value]
 
@@ -787,6 +795,7 @@ def _scan_object(obj: Any, name: str, module_name: str, results: list[dict[str, 
                 "removal": retired["removal"],
                 "removal_blockers": list(retired["removal_blockers"]),
                 "never_read": retired.get("never_read", False),
+                "effect": retired.get("effect", "it never had an effect"),
                 "deprecated_on": None,
             }
         )
