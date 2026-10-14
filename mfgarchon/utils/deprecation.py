@@ -556,6 +556,27 @@ def deprecated_alias(
 WRAPPER_FRAMES: tuple[str, ...] = (os.path.splitext(__file__)[0],)
 
 
+class _NeverRead:
+    """The default of a parameter that ``retired_parameters(never_read=True)`` refuses (#2648).
+
+    ``dataclasses.replace`` and the ``asdict`` / ``astuple`` round trips pass every field back in, and the
+    refusal lets this value through, so those keep working while any value a caller writes is still refused.
+    ``__reduce__`` names the module global, so ``copy``, ``deepcopy`` and ``pickle`` all return ``NEVER_READ``
+    itself, which the refusal's identity test needs.
+    """
+
+    def __repr__(self) -> str:
+        return "<never read>"
+
+    def __reduce__(self) -> str:
+        return "NEVER_READ"
+
+
+#: The default to give a parameter that ``retired_parameters(never_read=True)`` refuses. Typed ``Any`` so
+#: that the parameter keeps its documented annotation.
+NEVER_READ: Any = _NeverRead()
+
+
 def retired_parameters(
     replacements: dict[str, str], *, issue: str, since: str, removal: str = "v0.25.0", never_read: bool = False
 ) -> Callable[[F], F]:
@@ -571,10 +592,18 @@ def retired_parameters(
     function's signature is unchanged for ``inspect.signature`` (``functools.wraps`` sets
     ``__wrapped__``), so signature-keyed gates see the current parameters.
 
-    With ``never_read=True`` the parameter never had an effect and has no replacement (#2648): it stays in
-    the signature, so the positions of the parameters after it do not shift, and passing it at all -- by
-    keyword or by position -- is refused. Each value of ``replacements`` is then the reason, with the remedy
-    where there is one, and the message says the input never had an effect.
+    With ``never_read=True`` the parameter never had an effect and has no replacement (#2648). It stays in
+    the signature, so the positions of the parameters after it do not shift. Its default must be
+    ``NEVER_READ``, and passing it any other value -- by keyword or by position, the old default included --
+    is refused. ``dataclasses.replace`` and the ``asdict`` / ``astuple`` round trips pass ``NEVER_READ`` back
+    and are let through. Each value of ``replacements`` is then the reason, with the remedy where there is
+    one, and the message says the input never had an effect.
+
+    Two limits of this mode:
+    - A ``@dataclass`` subclass generates its own ``__init__``, which this wrapper does not cover.
+    - When the name goes at ``removal``, a parameter after it must not take its position. Make the later
+      parameters keyword-only, or keep a placeholder; deleting it shifts every later positional argument
+      silently.
 
     The refusal is itself scheduled to go at ``removal``, by the same policy as a deprecation.
     ``scan_deprecated`` reports one ``retired_parameters`` entry per decorated function, so the
@@ -594,8 +623,11 @@ def retired_parameters(
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             if never_read:
-                passed = signature.bind_partial(*args, **kwargs).arguments
-                refused = [name for name in replacements if name in passed]
+                try:
+                    passed = signature.bind_partial(*args, **kwargs).arguments
+                except TypeError:
+                    return func(*args, **kwargs)  # the call's own error, which names the function
+                refused = [name for name in replacements if name in passed and passed[name] is not NEVER_READ]
                 if refused:
                     name = refused[0]
                     raise TypeError(

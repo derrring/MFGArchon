@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mfgarchon.utils.deprecation import retired_parameters
+from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -30,9 +30,9 @@ class PerformanceProfile:
 
     problem_size: int
     backend: str
-    target_precision: float | None = None  # refused when passed; never read (#2648)
+    target_precision: float | None = NEVER_READ  # refused when passed; never read (#2648)
     memory_constraint: int | None = None  # MB
-    time_constraint: float | None = None  # refused when passed; never read (#2648)
+    time_constraint: float | None = NEVER_READ  # refused when passed; never read (#2648)
     optimization_level: str = "balanced"  # "speed", "balanced", "accuracy"
 
 
@@ -57,8 +57,8 @@ class OptimizationHints:
     compute_bound: bool = True
 
     # Loop optimization hints
-    unroll_small_loops: bool = True  # refused when passed; never read (#2648)
-    vectorize_inner_loops: bool = True  # refused when passed; never read (#2648)
+    unroll_small_loops: bool = NEVER_READ  # refused when passed; never read (#2648)
+    vectorize_inner_loops: bool = NEVER_READ  # refused when passed; never read (#2648)
 
     # Backend-specific hints
     jax_hints: dict[str, Any] | None = None

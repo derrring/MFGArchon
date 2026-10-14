@@ -1,10 +1,12 @@
 """
 Meta-programming framework for MFGarchon.
 
-**Experimental, unverified: no test covers its output** (#2648). Nothing in the library uses this
-subpackage, and it carries no documentation beyond its docstrings. Its code generator's solver source
-does not compile today -- ``generate_solver_class`` emits an HJB class whose methods are mis-indented, so
-no generated solver has run. Treat everything here as a sketch, not as a solver.
+**Experimental, unverified: no test checks that its output computes anything** (#2648). Nothing in the
+library uses this subpackage, and it carries no documentation beyond its docstrings. The solver source
+``generate_solver_class`` emits does not compile today: ``generate_from_template`` substitutes multi-line
+snippets without indenting their continuation lines. Behind that, the generated ``_compute_flux`` and
+``_newton_iteration_step`` use ``x_idx``, which neither defines. No generated solver has run. Treat
+everything here as a sketch, not as a solver.
 
 This module provides advanced meta-programming capabilities for automatically
 generating, optimizing, and composing MFG solvers and mathematical formulations.

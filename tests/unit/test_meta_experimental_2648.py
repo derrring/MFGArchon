@@ -6,12 +6,19 @@
 2. Five dataclass fields that never had an effect are refused when passed, by keyword or by position. The refusal
    stays until v0.25.0, in ruling 16's shape. Each field stays in the signature, so the positions of the fields
    after it do not shift for a caller passing positionally.
+3. Their default is `NEVER_READ`, which the refusal lets through, so `dataclasses.replace` and the `asdict` /
+   `astuple` round trips -- which pass every field back in -- still work (review 1 of #2650, B1).
 
-Not pinned: that a generated solver runs. Its source does not compile today -- the HJB template's methods are
-mis-indented -- and the package docstring says so.
+Not pinned: that a generated solver runs. Its source does not compile today -- the template substitution does not
+indent multi-line snippets, and two generated methods use an undefined `x_idx` -- and the package docstring says so.
 """
 
 from __future__ import annotations
+
+import copy
+import dataclasses
+import inspect
+import pickle
 
 import pytest
 
@@ -56,9 +63,54 @@ def test_a_field_that_never_had_an_effect_is_refused_by_name(cls, args, kwargs, 
 
 
 def test_the_other_fields_still_bind_where_they_did():
-    """Control: the refusals take nothing else away, and no field after a refused one has moved."""
+    """Control: the refusals take nothing else away, and every field keeps the position it had at cb0724a9."""
+    assert list(inspect.signature(DiscretizationScheme).parameters) == [
+        "operator",
+        "order",
+        "stencil",
+        "coefficients",
+        "boundary_treatment",
+    ]
+    assert list(inspect.signature(PerformanceProfile).parameters) == [
+        "problem_size",
+        "backend",
+        "target_precision",
+        "memory_constraint",
+        "time_constraint",
+        "optimization_level",
+    ]
+    assert list(inspect.signature(OptimizationHints).parameters) == [
+        "vectorizable",
+        "parallelizable",
+        "memory_bound",
+        "compute_bound",
+        "unroll_small_loops",
+        "vectorize_inner_loops",
+        "jax_hints",
+        "numba_hints",
+    ]
     assert DiscretizationScheme("gradient", 2, [-1, 1], [-0.5, 0.5]).operator == "gradient"
     profile = PerformanceProfile(100, "numpy", memory_constraint=64, optimization_level="speed")
     assert (profile.memory_constraint, profile.optimization_level) == (64, "speed")
     hints = OptimizationHints(vectorizable=False, compute_bound=False)
     assert (hints.vectorizable, hints.compute_bound) == (False, False)
+
+
+def test_a_round_trip_passes_the_never_read_default_back():
+    """`replace` and the `asdict` / `astuple` round trips pass every field back in, the refused ones included."""
+    scheme = DiscretizationScheme("gradient", 2, [-1, 1], [-0.5, 0.5])
+    profile = PerformanceProfile(100, "numpy")
+    hints = OptimizationHints()
+    assert dataclasses.replace(scheme, order=4).order == 4
+    assert dataclasses.replace(profile, backend="jax").backend == "jax"
+    assert dataclasses.replace(hints, vectorizable=False).vectorizable is False
+    assert PerformanceProfile(**dataclasses.asdict(profile)) == profile
+    assert DiscretizationScheme(*dataclasses.astuple(scheme)) == scheme
+    assert copy.deepcopy(hints) == hints
+    assert pickle.loads(pickle.dumps(profile)) == profile
+
+
+def test_a_call_that_does_not_bind_keeps_the_function_in_its_message():
+    """The refusal binds the call first; a call that does not bind gets the function's own error, which names it."""
+    with pytest.raises(TypeError, match=r"OptimizationHints\.__init__\(\) got an unexpected keyword argument 'bogus'"):
+        OptimizationHints(bogus=True)

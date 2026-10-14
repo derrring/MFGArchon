@@ -17,7 +17,7 @@ import ast
 import textwrap
 from dataclasses import dataclass
 
-from mfgarchon.utils.deprecation import retired_parameters
+from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
 
 
 @dataclass
@@ -28,11 +28,14 @@ class DiscretizationScheme:
     order: int  # Approximation order
     stencil: list[int]  # Stencil points
     coefficients: list[float]  # Stencil coefficients
-    boundary_treatment: str = "periodic"  # refused when passed; never read (#2648)
+    boundary_treatment: str = NEVER_READ  # refused when passed; never read (#2648)
 
 
 DiscretizationScheme.__init__ = retired_parameters(  # type: ignore[method-assign]
-    {"boundary_treatment": "the generators take the boundary from their own boundary_type argument"},
+    {
+        "boundary_treatment": "no generator reads it; the boundary is MFGSolverGenerator.generate_hjb_solver's "
+        "boundary_type argument, which generate_solver_class leaves at its periodic default"
+    },
     issue="#2648",
     since="v0.22.0",
     never_read=True,
