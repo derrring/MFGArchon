@@ -39,6 +39,7 @@ try:
 except ImportError:
     PLOTLY_AVAILABLE = False
 
+from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
 
 logger = get_logger(__name__)
@@ -56,21 +57,30 @@ class MFGNotebookReporter:
     LaTeX mathematical expressions, and professional documentation.
     """
 
+    @retired_parameters(
+        {
+            "enable_latex": "the mathematical framework section, with its LaTeX, is always written",
+            "template_style": "every report has the same section structure",
+        },
+        issue="#2648",
+        since="v0.22.0",
+        never_read=True,
+    )
     def __init__(
         self,
         output_dir: str = "reports",
-        enable_latex: bool = True,
+        enable_latex: bool = NEVER_READ,
         plotly_renderer: str = "notebook",
-        template_style: str = "research",
+        template_style: str = NEVER_READ,
     ):
         """
         Initialize the notebook reporting system.
 
         Args:
             output_dir: Directory for generated reports
-            enable_latex: Enable LaTeX mathematical notation
+            enable_latex: Refused when passed (#2648): the mathematical framework section is always written.
             plotly_renderer: Plotly renderer ('notebook', 'browser', 'json')
-            template_style: Report template ('research', 'presentation', 'minimal')
+            template_style: Refused when passed (#2648): every report has the same section structure.
         """
         if not NOTEBOOK_AVAILABLE:
             raise NotebookReportError(

@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 
+from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -195,17 +197,24 @@ class LQPolicyIterationHelper:
     policy iteration for HJB-MFG problems.
     """
 
+    @retired_parameters(
+        {"potential_func": "the policy evaluation uses the HJB solver's own problem; put V there (#2558)"},
+        issue="#2648",
+        since="v0.22.0",
+        never_read=True,
+    )
     def __init__(
         self,
         hjb_solver,
-        potential_func: Callable[[float, float, float], float] | None = None,
+        potential_func: Callable[[float, float, float], float] | None = NEVER_READ,
     ):
         """
         Initialize LQ policy iteration helper.
 
         Args:
             hjb_solver: HJB solver instance (e.g., HJBFDMSolver)
-            potential_func: Optional potential V(x, m, t) -> float
+            potential_func: Refused when passed (#2648): the policy evaluation uses the HJB solver's own
+                problem; put V there.
         """
         self.hjb_solver = hjb_solver
         self.potential_func = potential_func
@@ -292,9 +301,15 @@ class LQPolicyIterationHelper:
         return policy_improved
 
 
+@retired_parameters(
+    {"potential_func": "the policy evaluation uses the HJB solver's own problem; put V there (#2558)"},
+    issue="#2648",
+    since="v0.22.0",
+    never_read=True,
+)
 def create_lq_policy_problem(
     hjb_solver,
-    potential_func: Callable | None = None,
+    potential_func: Callable | None = NEVER_READ,
 ) -> HJBPolicyProblem:
     """
     Create a policy iteration problem from an HJB solver.
@@ -304,7 +319,8 @@ def create_lq_policy_problem(
 
     Args:
         hjb_solver: HJB solver instance
-        potential_func: Optional potential function V(x, m, t)
+        potential_func: Refused when passed (#2648): the policy evaluation uses the HJB solver's own problem;
+            put V there.
 
     Returns:
         Object implementing HJBPolicyProblem protocol

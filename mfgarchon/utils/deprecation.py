@@ -627,6 +627,8 @@ def retired_parameters(
                 try:
                     passed = signature.bind_partial(*args, **kwargs).arguments
                 except TypeError:
+                    passed = None
+                if passed is None:  # outside the except, so the call's own error does not chain the binding's
                     return func(*args, **kwargs)  # the call's own error, which names the function
                 refused = [name for name in replacements if name in passed and passed[name] is not NEVER_READ]
                 if refused:

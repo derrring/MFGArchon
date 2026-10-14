@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -36,7 +38,6 @@ class SolverResult:
         converged: Whether convergence was achieved
         execution_time: Total solve time in seconds
         metadata: Additional solver-specific information
-        ergodic_constant: Ergodic constant lambda for stationary MFG (Issue #875)
         policy: Optimal control policy alpha*(t, x) as callable (Issue #875)
         mass_conservation_error: max|mass(t)/mass(0) - 1| over time steps -- the drift from the
             initial mass, not the deviation from 1.0 (Issue #875, #1672), or None
@@ -69,10 +70,18 @@ class SolverResult:
     converged: bool = False
     execution_time: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    ergodic_constant: float | None = None
     policy: Any | None = None
     mass_conservation_error: float | None = None
 
+    @retired_parameters(
+        {
+            "ergodic_constant": "no solver computes one, and there is no stationary (ergodic) mode; it comes back "
+            "with such a mode (#2652)"
+        },
+        issue="#2648",
+        since="v0.22.0",
+        never_read=True,
+    )
     def __init__(
         self,
         U: NDArray[np.floating],
@@ -84,7 +93,7 @@ class SolverResult:
         converged: bool = False,
         execution_time: float | None = None,
         metadata: dict[str, Any] | None = None,
-        ergodic_constant: float | None = None,
+        ergodic_constant: float | None = NEVER_READ,
         policy: Any | None = None,
         mass_conservation_error: float | None = None,
     ):
@@ -101,7 +110,8 @@ class SolverResult:
             converged: Whether convergence was achieved
             execution_time: Total solve time in seconds
             metadata: Additional solver-specific information
-            ergodic_constant: Ergodic constant lambda for stationary MFG
+            ergodic_constant: Refused when passed (#2652): no solver computes one, and there is no
+                stationary mode. The attribute is removed; the name goes in v0.25.0.
             policy: Optimal control policy alpha*(t, x) as callable
             mass_conservation_error: max|mass(t)/mass(0) - 1| over time steps -- the drift from the
             initial mass, not the deviation from 1.0 (Issue #875, #1672), or None. The functional
@@ -117,7 +127,6 @@ class SolverResult:
         self.converged = converged
         self.execution_time = execution_time
         self.metadata = metadata if metadata is not None else {}
-        self.ergodic_constant = ergodic_constant
         self.policy = policy
         self.mass_conservation_error = mass_conservation_error
 

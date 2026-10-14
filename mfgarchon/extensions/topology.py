@@ -20,7 +20,7 @@ Key differences from continuous MFG:
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
@@ -38,6 +38,7 @@ from mfgarchon.types.callable_protocols import (
     BoundCallable,
     bound_attribute,
 )
+from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -319,16 +320,16 @@ class NetworkMFGComponents(MFGComponents):
 
     # Lagrangian formulation support (based on ArXiv 2207.10908v3)
     lagrangian_func: Callable | None = None  # L(t, node, velocity, m)
-    velocity_space_dim: int = 2  # Dimension of velocity space
-    trajectory_cost_func: Callable | None = None  # Cost along trajectories
-    relaxed_control: bool = False  # Use relaxed equilibria
+    velocity_space_dim: int = NEVER_READ  # refused when passed; never read (#2648)
+    trajectory_cost_func: Callable | None = NEVER_READ  # refused when passed; never read (#2648)
+    relaxed_control: bool = NEVER_READ  # refused when passed; never read (#2648)
 
     # Node-based potential function
     node_potential_func: Callable | None = None  # V(t, node)
 
     # Edge-based costs/rewards
-    edge_cost_func: Callable | None = None  # Cost of moving along edges
-    congestion_func: Callable | None = None  # Congestion effects
+    edge_cost_func: Callable | None = NEVER_READ  # refused when passed; never read (#2648)
+    congestion_func: Callable | None = NEVER_READ  # refused when passed; never read (#2648)
 
     # Initial and terminal conditions on network
     initial_node_density_func: Callable | None = None  # m_0(node)
@@ -340,10 +341,10 @@ class NetworkMFGComponents(MFGComponents):
 
     # Network-specific coupling
     node_interaction_func: Callable | None = None  # Local node interactions
-    edge_interaction_func: Callable | None = None  # Edge-based interactions
+    edge_interaction_func: Callable | None = NEVER_READ  # refused when passed; never read (#2648)
 
     # Problem parameters
-    problem_params: dict[str, Any] = field(default_factory=dict)
+    problem_params: dict[str, Any] = NEVER_READ  # refused when passed; never read (#2648)
 
     def __post_init__(self) -> None:
         # Issue #1470 (Problem/Components unification, Layer Ψ): NetworkMFGComponents IS-A
@@ -355,6 +356,22 @@ class NetworkMFGComponents(MFGComponents):
         # structure and is bound by NetworkMFGProblem, not the components. The init=False
         # ``_hamiltonian_class`` / ``_lagrangian_class`` fields default to None regardless.
         pass
+
+
+NetworkMFGComponents.__init__ = retired_parameters(  # type: ignore[method-assign]
+    {
+        "velocity_space_dim": "no network solver works in a velocity space (#1470)",
+        "trajectory_cost_func": "no network solver reads a trajectory cost; put the cost in lagrangian_func or hamiltonian_func",
+        "relaxed_control": "no network solver computes relaxed equilibria (#1470)",
+        "edge_cost_func": "no network solver reads an edge cost; put it in hamiltonian_func",
+        "congestion_func": "the default Hamiltonian's congestion is its quadratic node term; pass hamiltonian_func to change it",
+        "edge_interaction_func": "no network solver reads edge interactions; node_interaction_func is the coupling it reads",
+        "problem_params": "pass parameters=, which MFGProblem reads",
+    },
+    issue="#2648",
+    since="v0.22.0",
+    never_read=True,
+)(NetworkMFGComponents.__init__)
 
 
 class NetworkMFGProblem(MFGProblem):

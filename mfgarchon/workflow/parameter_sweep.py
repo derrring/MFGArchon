@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
+
 from .common import setup_workflow_logging
 
 if TYPE_CHECKING:
@@ -36,7 +38,7 @@ class SweepConfiguration:
     parameters: dict[str, list[Any]]
     execution_mode: str = "sequential"  # "sequential", "parallel_threads", "parallel_processes"
     max_workers: int | None = None
-    batch_size: int | None = None
+    batch_size: int | None = NEVER_READ  # refused when passed; never read (#2648)
     save_intermediate: bool = True
     output_dir: Path | None = None
     timeout_per_run: float | None = None
@@ -65,6 +67,16 @@ class SweepConfiguration:
 
         self.output_dir = Path(self.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+
+SweepConfiguration.__init__ = retired_parameters(  # type: ignore[method-assign]
+    {
+        "batch_size": "the sweep runs by execution_mode and max_workers",
+    },
+    issue="#2648",
+    since="v0.22.0",
+    never_read=True,
+)(SweepConfiguration.__init__)
 
 
 def _process_worker(args):

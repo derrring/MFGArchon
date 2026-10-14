@@ -19,6 +19,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from mfgarchon.utils.deprecation import NEVER_READ, retired_parameters
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -39,10 +41,9 @@ class MultiPopulationProblem:
         K individual MFG problems, one per population.
     population_names : list[str] or None
         Optional names for each population (for logging/plotting).
-    cross_coupling : callable or None
-        Optional function F(m_all, k) -> coupling_value that computes
-        cross-population interaction for population k given all densities.
-        If None, each H_k handles coupling internally.
+    cross_coupling : refused when passed (#2648)
+        It never had an effect: cross-population coupling enters each population's HJB
+        through the stacked densities, and each H_k handles it (#2173). The name goes in v0.25.0.
 
     Examples
     --------
@@ -59,7 +60,7 @@ class MultiPopulationProblem:
 
     populations: list[MFGProblem]
     population_names: list[str] | None = None
-    cross_coupling: Callable | None = None
+    cross_coupling: Callable | None = NEVER_READ  # refused when passed; never read (#2648)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
@@ -91,3 +92,13 @@ class MultiPopulationProblem:
     def get_population(self, k: int) -> MFGProblem:
         """Get the k-th population's MFGProblem."""
         return self.populations[k]
+
+
+MultiPopulationProblem.__init__ = retired_parameters(  # type: ignore[method-assign]
+    {
+        "cross_coupling": "cross-population coupling enters each population's HJB through the stacked densities (#2173)",
+    },
+    issue="#2648",
+    since="v0.22.0",
+    never_read=True,
+)(MultiPopulationProblem.__init__)

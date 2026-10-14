@@ -1,7 +1,7 @@
 # Deprecation Modernization Guide
 
 **Auto-generated** by `scripts/generate_deprecation_guide.py`
-**Total deprecated items**: 111
+**Total deprecated items**: 127
 **Versions covered**: v0.22.0, v0.21.0, v0.20.0, v0.19.2, v0.19.0, v0.18.6, v0.18.0, v0.17.0, v0.16.11, v0.12.0
 
 ---
@@ -43,7 +43,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 ## Deprecated since v0.22.0
 
-*70 items*
+*86 items*
 
 ### Parameters
 
@@ -78,28 +78,43 @@ It does mean a migration you read on one row **does not transfer** to another so
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `FPSLSolver.solve_fp_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `FictitiousPlayIterator.__init__()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `FixedPointIterator.__init__()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0, once no longer blocked: the function takes **kwargs, which would accept a retired name and ignore it
+- `default_bc_type=` in `GraphBCConfig.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `HJBFDMSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `HJBFEMSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
+- `qp_usage_target=` in `HJBGFDMSolver.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `HJBGFDMSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `HJBHowardSolver.__init__()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `HJBHowardSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `HJBNetworkSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `HJBSemiLagrangianSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `HJBWENOSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
+- `radial_center=` in `HybridMazeConfig.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
+- `potential_func=` in `LQPolicyIterationHelper.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
+- `adaptive=`, `batch_size=`, `chunk_size=`, `max_adaptive_samples=`, `parallel=`, `proposal_distribution=` in `MCConfig.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
+- `compute_rhat=`, `effective_sample_size=`, `max_adapt_iter=`, `max_tree_depth=`, `num_chains=`, `parallel=` in `MCMCConfig.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
+- `enable_latex=`, `template_style=` in `MFGNotebookReporter.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `MFGResidual.__init__()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `backend=` in `MFGSolverGenerator.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
+- `ergodic_constant=` in `MFGSolverResult.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `sigma=` in `MeshlessGalerkinFPSolver.solve_fp_step_adjoint_mode()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `MeshlessGalerkinFPSolver.solve_fp_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `MeshlessGalerkinHJBSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma_function=` in `MonotonicityEnforcer.__init__()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
+- `cross_coupling=` in `MultiPopulationProblem.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `NetworkFPSolver.solve_fp_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `NetworkHJBSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
+- `congestion_func=`, `edge_cost_func=`, `edge_interaction_func=`, `problem_params=`, `relaxed_control=`, `trajectory_cost_func=`, `velocity_space_dim=` in `NetworkMFGComponents.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `NetworkPolicyIterationHJBSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `NewtonMFGSolver.__init__()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `unroll_small_loops=`, `vectorize_inner_loops=` in `OptimizationHints.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `PenaltyHJBSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
+- `track_detailed_timing=` in `PerformanceHook.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `target_precision=`, `time_constraint=` in `PerformanceProfile.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
+- `ergodic_constant=` in `SolverResult.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
+- `batch_size=` in `SweepConfiguration.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
+- `potential_dx_func=`, `potential_func=`, `problem_type=`, `terminal_cost_dx_func=` in `VariationalMFGComponents.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `sigma=` in `VariationalMFGProblem.__init__()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0, once no longer blocked: the function takes **kwargs, which would accept a retired name and ignore it
+- `history_length=`, `relative_tolerance=`, `step_size=` in `WassersteinSolverConfig.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `sigma=` in `WeakFormFPSolver.solve_fp_step_adjoint_mode()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `WeakFormFPSolver.solve_fp_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `WeakFormHJBSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
@@ -111,6 +126,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 - `sigma=` in `check_adi_compatibility()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma_at_n=` in `compute_hjb_jacobian()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma_at_n=` in `compute_hjb_residual()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
+- `potential_func=` in `create_lq_policy_problem()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `sigma=` in `create_obstacle_variational_mfg()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma=` in `create_quadratic_variational_mfg()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma=` in `diffusion_from_volatility()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0

@@ -36,7 +36,7 @@ from mfgarchon.geometry.boundary.conditions import BoundaryConditions
 from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL
 from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace
 from mfgarchon.types.callable_protocols import evaluate_solver_source
-from mfgarchon.utils.deprecation import WRAPPER_FRAMES, deprecated_value
+from mfgarchon.utils.deprecation import NEVER_READ, WRAPPER_FRAMES, deprecated_value, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical.qp_utils import QPCache, QPSolver
 from mfgarchon.utils.pde_coefficients import (
@@ -262,6 +262,12 @@ class HJBGFDMSolver(BaseHJBSolver):
         # The equivalence test is `test_a_dict_bc_solves_as_the_boundary_conditions_it_spells` (#2597).
         removal_blockers=["internal_usage", "migration_docs"],
     )
+    @retired_parameters(
+        {"qp_usage_target": "the QP is governed by monotonicity_scheme and monotonicity_application"},
+        issue="#2648",
+        since="v0.22.0",
+        never_read=True,
+    )
     def __init__(
         self,
         problem: MFGProblem,
@@ -290,7 +296,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # See docstring for full semantics.
         monotonicity_scheme: str | None = None,
         monotonicity_application: str | None = None,
-        qp_usage_target: float = 0.1,  # Unused, kept for backward compatibility
+        qp_usage_target: float = NEVER_READ,
         qp_solver: str = "osqp",  # "osqp" or "scipy"
         qp_warm_start: bool = True,  # Enable QP warm-starting
         qp_constraint_mode: str = "indirect",  # "indirect" or "hamiltonian"
@@ -388,7 +394,8 @@ class HJBGFDMSolver(BaseHJBSolver):
                   Picard iterations / time steps. Recommended for joint_socp.
                 Default (None): use scheme-recommended default — "adaptive" for
                 qp_m_matrix, "precompute" for joint_socp.
-            qp_usage_target: Unused parameter, kept for backward compatibility
+            qp_usage_target: Refused when passed (#2648): it never had an effect; the QP is governed by
+                monotonicity_scheme and monotonicity_application. The name goes in v0.25.0.
             qp_solver: QP solver backend (default "osqp"):
                 - "osqp": Use OSQP solver (fast convex QP, 5-10× faster than scipy)
                 - "scipy": Use scipy.optimize.minimize (SLSQP or L-BFGS-B)
