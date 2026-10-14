@@ -52,9 +52,9 @@ __all__ = [
 ]
 
 _MESSAGE = (
-    "mfgarchon.factory problem construction is not built (#1920). The previous implementation "
-    "silently replaced the caller's BoundaryConditions with a hardcoded no-flux wall, so it was "
-    "removed rather than left to answer wrongly. Build the problem directly -- "
+    "mfgarchon.factory problem construction is not built (#1920). The general factory built a legacy "
+    "1-D domain with a hardcoded no-flux wall, whatever boundary the caller passed, and the problem "
+    "factories were removed with it rather than left to answer wrongly. Build the problem directly -- "
     "MFGProblem(geometry=..., components=...) -- which puts you in front of the same choices "
     "without pretending they are handled. See this module's docstring for what a rebuilt factory "
     "must guarantee before it is worth using."

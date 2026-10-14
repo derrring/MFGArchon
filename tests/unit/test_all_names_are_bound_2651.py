@@ -63,6 +63,9 @@ import importlib, json, pathlib, pkgutil, types, warnings
 warnings.simplefilter("ignore")
 import mfgarchon
 
+# Each marker starts a fresh line: a module the walk imports may write to stdout without a newline.
+print("\nCARRIER", mfgarchon.__file__)
+
 
 def unbound(module):
     return [name for name in getattr(module, "__all__", ()) if not hasattr(module, name)]
@@ -87,8 +90,7 @@ for path in root.rglob("*.py"):
     parts = ("mfgarchon",) + path.relative_to(root).with_suffix("").parts
     on_disk.add(".".join(parts[:-1] if parts[-1] == "__init__" else parts))
 
-print("CARRIER", mfgarchon.__file__)
-print("RESULT", json.dumps({
+print("\nRESULT", json.dumps({
     "control": unbound(planted),
     "failures": failures,
     "unwalked": sorted(on_disk - walked),
@@ -101,7 +103,8 @@ print("RESULT", json.dumps({
 def test_every_name_in_every_all_is_bound():
     lines = _run(_CHILD_WALK)
     assert [line for line in lines if line.startswith("CARRIER ")] == [f"CARRIER {CARRIER}"]
-    result = json.loads(next(line for line in lines if line.startswith("RESULT "))[len("RESULT ") :])
+    # The last RESULT line is the walk's own: one printed by an imported module comes before it.
+    result = json.loads([line for line in lines if line.startswith("RESULT ")][-1][len("RESULT ") :])
     assert result["control"] == ["absent"], "the helper does not see an unbound name on a planted module"
     assert result["failures"] == [], f"modules the walk could not import, so their __all__ went unchecked: {result}"
     assert result["unwalked"] == [], f"modules on disk the walk never reached: {result['unwalked']}"
