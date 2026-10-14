@@ -502,9 +502,7 @@ def splat_nd(
         return splat_linear_nd(weighted, x_dest, grid_coordinates, grid_shape, bounds) / measure
     elif method in ("cubic", "quintic"):
         raise NotImplementedError(
-            f"'{method}' splatting not yet implemented for nD. Use 'linear' or implement "
-            "tensor-product splatting. For nD, consider using 'linear' which provides "
-            "adequate accuracy for most MFG applications."
+            f"'{method}' splatting not yet implemented for nD. Use 'linear' or implement tensor-product splatting."
         )
     else:
         raise ValueError(f"Unknown splatting method: {method}.")

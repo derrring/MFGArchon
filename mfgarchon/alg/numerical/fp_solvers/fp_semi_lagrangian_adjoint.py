@@ -113,8 +113,8 @@ class FPSLSolver(BaseFPSolver):
           exact law carries an atom there.
         - It does not converge pointwise where a component of the drift changes sign, because the deposit's rate
           departs from the equation's there. In 1-D a compressive stagnation point on a node gets twice the equation's
-          rate; off a node the excess is shared by the two nearest nodes. In n-D the affected nodes are those next to
-          the set where a drift component changes sign: whole grid lines (2-D) or planes (3-D) only when that set
+          rate; off a node the excess is shared by the two nearest nodes. In n-D the affected nodes lie where a drift
+          component changes sign along its own axis: whole grid lines (2-D) or planes (3-D) only when that set
           follows the grid. On #2468's fixture L∞ stays at 1.14 to 1.19 at x = 1/2, the peak 4.16 to 4.20 against 3.02.
         - With σ > 0, away from walls, the excess is diffused and the density converges pointwise: at σ = 0.1, on a
           Gaussian of variance 0.005 under the same drift, L∞ falls from 8.9e-2 to 7.1e-3 over nx = 51 to 801. Where

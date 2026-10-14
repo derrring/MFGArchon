@@ -315,7 +315,7 @@ _CASES = [
     # Lie-splitting substep after its transport step, derived rather than guessed: the adjoint
     # step is an explicit linear operator M^{n+1} = A M^n (A the splatting matrix) and the
     # Jacobian step an explicit map M^{n+1} = T(M^n), so in both cases the forcing is
-    # + dt * S(t_{n+1}, .), first order in time, which is each scheme's own order. That is the
+    # + dt * S(t_{n+1}, .), added explicitly after the step. That is the
     # discriminator against the three HJB-SL variants #2198 still refuses, where the forcing would
     # have to enter an implicit alpha* fixed point or a sampled characteristic.
     #

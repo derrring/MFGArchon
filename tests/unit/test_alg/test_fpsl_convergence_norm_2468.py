@@ -69,8 +69,9 @@ def issue_runs():
 
 
 def test_at_sigma_zero_the_density_converges_in_w1_and_l1(issue_runs):
-    """W₁ and L¹ fall under refinement along dt = h. W₁ is what Theorem 4.1's convergence in C([0,T]; P₁) gives, on
-    ℝ^d; this fixture's drift points inward at both walls, so no foot leaves the domain. L¹ is measured here only:
+    """W₁ and L¹ fall under refinement along dt = h. W₁ is the norm of Theorem 4.1's convergence in C([0,T]; P₁),
+    stated on ℝ^d; this fixture is on a bounded domain, so it is an external-oracle check against the exact
+    pushforward, not an instance of the theorem. L¹ is measured here only:
     where σ = 0 drives mass into a wall, the exact law has an atom and L¹ does not converge. Measured at
     acdae412: W₁ 3.86e-3, 1.85e-3, 9.07e-4 (orders 1.06, 1.03) and L¹ 6.78e-2, 3.87e-2, 2.24e-2 (orders 0.81, 0.79)."""
     w1 = [_w1(x, m, exact) for x, m, exact in issue_runs]
@@ -103,9 +104,9 @@ def test_the_linear_deposit_gives_the_stagnation_node_twice_the_equations_inflow
     documentation and this pin.
 
     The control comes first: the rate is C, to 1%, at the other interior nodes (exactly C for this deposit; for the
-    cubic one within 0.51% at dt = 1e-2 and 0.05% at dt = 1e-3), so a step that runs time or the drift at the wrong
-    speed fails there. The nodes within two of a wall are left out: #2243's trapezoid reweighting departs at the wall's neighbour (-12 at nx = 101), and the cubic
-    stencil reaches one node further."""
+    cubic one within 0.51% at dt = 1e-2 and 0.051% at dt = 1e-3), so a step that runs time or the drift at the wrong
+    speed fails there. The nodes within two of a wall are left out: #2243's trapezoid reweighting departs at the
+    wall's neighbour (-12 at nx = 101), and the cubic stencil reaches one node further."""
     nx = 101
     x = np.linspace(0.0, 1.0, nx)
     for dt in (1e-2, 1e-3):
