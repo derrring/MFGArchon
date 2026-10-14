@@ -179,10 +179,12 @@ def format_item(item: dict, collisions: dict[str, dict] | None = None) -> str:
         names = ", ".join(f"`{n}=`" for n in item.get("retired", []))
         blocked = [_BLOCKER_TEXT.get(b, b) for b in item.get("removal_blockers") or []]
         until = f", once no longer blocked: {'; '.join(blocked)}" if blocked else ""
-        return (
-            f"- {names} in `{name}()` — refused with a TypeError that names the replacement "
-            f"({item.get('issue', '')}); the refusal goes by {removal}{until}"
+        refusal = (
+            "refused with a TypeError that says it never had an effect"
+            if item.get("never_read")
+            else "refused with a TypeError that names the replacement"
         )
+        return f"- {names} in `{name}()` — {refusal} ({item.get('issue', '')}); the refusal goes by {removal}{until}"
     if item_type == "parameter":
         # "ClassName.method.param_name" -> extract parts
         parts = name.split(".")
