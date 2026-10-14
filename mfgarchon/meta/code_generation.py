@@ -42,6 +42,10 @@ DiscretizationScheme.__init__ = retired_parameters(  # type: ignore[method-assig
 )(DiscretizationScheme.__init__)
 
 
+#: Why ``backend=`` is refused at every entry point that accepts it (#2648).
+_BACKEND_NEVER_READ = {"backend": "every generator emits the same source whatever backend is named, so omit it"}
+
+
 class CodeGenerator:
     """
     Base class for generating optimized numerical code.
@@ -50,7 +54,8 @@ class CodeGenerator:
     and optimization-specific transformations.
     """
 
-    def __init__(self, backend: str = "numpy"):
+    @retired_parameters(_BACKEND_NEVER_READ, issue="#2648", since="v0.22.0", never_read=True)
+    def __init__(self, backend: str = NEVER_READ):
         self.backend = backend
         self.templates: dict[str, str] = {}
         self.optimizations: list[str] = []
@@ -130,7 +135,8 @@ class MFGSolverGenerator(CodeGenerator):
     and discretization schemes.
     """
 
-    def __init__(self, backend: str = "numpy"):
+    @retired_parameters(_BACKEND_NEVER_READ, issue="#2648", since="v0.22.0", never_read=True)
+    def __init__(self, backend: str = NEVER_READ):
         super().__init__(backend)
         self._setup_mfg_templates()
 
@@ -450,11 +456,12 @@ class Generated{solver_name}(BaseMFGSolver):
         ).strip()
 
 
+@retired_parameters(_BACKEND_NEVER_READ, issue="#2648", since="v0.22.0", never_read=True)
 def generate_solver_class(
     solver_name: str,
     mathematical_system,
     discretization_schemes: dict[str, DiscretizationScheme],
-    backend: str = "numpy",
+    backend: str = NEVER_READ,
 ) -> str:
     """
     Generate complete solver class from mathematical specification.
@@ -463,7 +470,8 @@ def generate_solver_class(
         solver_name: Name for generated solver class
         mathematical_system: CompiledMFGSystem instance
         discretization_schemes: Dict mapping operators to schemes
-        backend: Computational backend ("numpy", "jax", "numba")
+        backend: Refused when passed (#2648): every backend name produced the same source, so it never had an
+            effect. The name goes in v0.25.0.
 
     Returns:
         Generated solver class code as string

@@ -1,7 +1,7 @@
 # Deprecation Modernization Guide
 
 **Auto-generated** by `scripts/generate_deprecation_guide.py`
-**Total deprecated items**: 108
+**Total deprecated items**: 111
 **Versions covered**: v0.22.0, v0.21.0, v0.20.0, v0.19.2, v0.19.0, v0.18.6, v0.18.0, v0.17.0, v0.16.11, v0.12.0
 
 ---
@@ -43,7 +43,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 ## Deprecated since v0.22.0
 
-*67 items*
+*70 items*
 
 ### Parameters
 
@@ -64,6 +64,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 ### Refused parameters (already raise TypeError)
 
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `BlockIterator.__init__()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
+- `backend=` in `CodeGenerator.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `sigma=` in `DiffusionOperator.from_volatility()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `boundary_treatment=` in `DiscretizationScheme.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `sigma=` in `FPFDMSolver.solve_fp_step_adjoint_mode()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
@@ -86,6 +87,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `HJBSemiLagrangianSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `HJBWENOSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `MFGResidual.__init__()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
+- `backend=` in `MFGSolverGenerator.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `sigma=` in `MeshlessGalerkinFPSolver.solve_fp_step_adjoint_mode()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `MeshlessGalerkinFPSolver.solve_fp_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `MeshlessGalerkinHJBSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
@@ -114,6 +116,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 - `sigma=` in `diffusion_from_volatility()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma=` in `diffusion_from_volatility_torch()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma=`, `sigma_kind=` in `fp_source()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
+- `backend=` in `generate_solver_class()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `sigma=`, `sigma_kind=` in `hjb_source()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma_at_n=` in `newton_hjb_step()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `solve_fp_nd_full_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
