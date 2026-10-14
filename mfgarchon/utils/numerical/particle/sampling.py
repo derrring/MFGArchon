@@ -776,7 +776,8 @@ def _refuse_integrand_outside_the_support(
     here; the part it sees is the draw's own estimate of the integral of |f| over p > 0 (``scale`` times the mean
     |contribution|). A missing fraction above ``ImportanceMCSampler.NORMALIZATION_TOL`` is refused, naming the
     fraction and the check point where |f| is largest -- a mass criterion, so an f that is merely subnormal where p
-    underflows to 0 is not refused (review 2 of #2664). A NaN or infinite f at such a point is refused by name, since
+    underflows to 0 is not refused while the draw sees some of |f| (review 2 of #2664). Where the draw sees none of it,
+    the fraction is 1 however small |f| is there, and the refusal stands (review 4). A NaN or infinite f at such a point is refused by name, since
     no fraction of it can be formed (review 3). Both masses are taken relative to the larger of the largest |f| there
     and the largest |contribution| drawn, so neither sum overflows. Sampled: a miss between check points is not seen (#2648)."""
     points = sampler.zero_density_points

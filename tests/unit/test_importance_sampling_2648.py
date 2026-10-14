@@ -19,7 +19,7 @@ The oracle is f(x) = exp(-x^2 / (2 * 0.3^2)) on [-5, 5], whose integral is exact
    over all of space; stratified sampling refuses more strata than samples, which used to confine the first
    coordinate to its low strata.
 6. Review 2 of #2664: the support check weighs mass, so a density whose tail underflows to 0 where f is subnormal is
-   not refused; the Gaussian integrator forms f / p in log space, so neither p nor 1 / p overflows on its own; its
+   not refused while the draw sees some of |f|; the Gaussian integrator forms f / p in log space, so neither p nor 1 / p overflows on its own; its
    covariance is checked; and the standard error and confidence interval are pinned.
 7. Review 3 of #2664: a NaN or infinite f where the density is 0 is refused by name, and an f too large to sum is
    still weighed; the refusal prints the signed value; the integrator's seed fixes its draw; its sign, an f that is 0
@@ -206,6 +206,9 @@ def test_the_support_check_weighs_mass_not_a_single_point():
     with pytest.raises(ValueError, match=r"of the integral of \|f\| lies where the importance density is 0"):
         monte_carlo_integrate(tail(1.5e-6), [(0.0, 1.0)], config)
     assert monte_carlo_integrate(tail(7e-7), [(0.0, 1.0)], config).estimate == pytest.approx(0.5, rel=1e-12)
+    # Where the draw sees none of |f|, all of it is missing, however small it is where p = 0 (review 4, SF4-1).
+    with pytest.raises(ValueError, match=r"an estimated 1 of the integral of \|f\|"):
+        monte_carlo_integrate(lambda x: np.where(x[:, 0] <= 0.5, 0.0, 1.0), [(0.0, 1.0)], config)
     # The part seen is the integral of |f| too: f = -1 where p > 0 and -1e-7 beyond misses 1e-7 of it, not more.
     negative = monte_carlo_integrate(lambda x: np.where(x[:, 0] <= 0.5, -1.0, -1e-7), [(0.0, 1.0)], config)
     assert negative.estimate == pytest.approx(-0.5, rel=1e-12)
