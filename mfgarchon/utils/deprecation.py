@@ -557,7 +557,7 @@ WRAPPER_FRAMES: tuple[str, ...] = (os.path.splitext(__file__)[0],)
 
 
 def retired_parameters(
-    replacements: dict[str, str], *, issue: str, since: str, removal: str = "v0.25.0"
+    replacements: dict[str, str], *, issue: str, since: str, removal: str = "v0.25.0", never_read: bool = False
 ) -> Callable[[F], F]:
     """Refuse retired keyword arguments with a ``TypeError`` that names what replaces each.
 
@@ -570,6 +570,11 @@ def retired_parameters(
     ``replacements`` maps each retired name to the text that replaces it in the message. The wrapped
     function's signature is unchanged for ``inspect.signature`` (``functools.wraps`` sets
     ``__wrapped__``), so signature-keyed gates see the current parameters.
+
+    With ``never_read=True`` the parameter never had an effect and has no replacement (#2648): it stays in
+    the signature, so the positions of the parameters after it do not shift, and passing it at all -- by
+    keyword or by position -- is refused. Each value of ``replacements`` is then the reason, with the remedy
+    where there is one, and the message says the input never had an effect.
 
     The refusal is itself scheduled to go at ``removal``, by the same policy as a deprecation.
     ``scan_deprecated`` reports one ``retired_parameters`` entry per decorated function, so the
@@ -584,8 +589,20 @@ def retired_parameters(
             p.kind is inspect.Parameter.VAR_KEYWORD for p in inspect.signature(func).parameters.values()
         )
 
+        signature = inspect.signature(func)
+
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
+            if never_read:
+                passed = signature.bind_partial(*args, **kwargs).arguments
+                refused = [name for name in replacements if name in passed]
+                if refused:
+                    name = refused[0]
+                    raise TypeError(
+                        f"{func.__qualname__}() refuses {name}=: {replacements[name]}; it never had an effect, and the "
+                        f"name goes in {removal} ({issue})."
+                    )
+                return func(*args, **kwargs)
             retired = [name for name in kwargs if name in replacements]
             if retired:
                 name = retired[0]
@@ -600,6 +617,7 @@ def retired_parameters(
             "since": since,
             "removal": removal,
             "removal_blockers": ["var_keyword"] if takes_var_keyword else [],
+            "never_read": never_read,
         }
         return wrapper  # type: ignore[return-value]
 
@@ -733,6 +751,7 @@ def _scan_object(obj: Any, name: str, module_name: str, results: list[dict[str, 
                 "issue": retired["issue"],
                 "removal": retired["removal"],
                 "removal_blockers": list(retired["removal_blockers"]),
+                "never_read": retired.get("never_read", False),
                 "deprecated_on": None,
             }
         )

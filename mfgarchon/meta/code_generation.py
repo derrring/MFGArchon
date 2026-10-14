@@ -17,6 +17,8 @@ import ast
 import textwrap
 from dataclasses import dataclass
 
+from mfgarchon.utils.deprecation import retired_parameters
+
 
 @dataclass
 class DiscretizationScheme:
@@ -26,7 +28,15 @@ class DiscretizationScheme:
     order: int  # Approximation order
     stencil: list[int]  # Stencil points
     coefficients: list[float]  # Stencil coefficients
-    boundary_treatment: str = "periodic"
+    boundary_treatment: str = "periodic"  # refused when passed; never read (#2648)
+
+
+DiscretizationScheme.__init__ = retired_parameters(  # type: ignore[method-assign]
+    {"boundary_treatment": "the generators take the boundary from their own boundary_type argument"},
+    issue="#2648",
+    since="v0.22.0",
+    never_read=True,
+)(DiscretizationScheme.__init__)
 
 
 class CodeGenerator:
@@ -385,6 +395,8 @@ class Generated{solver_name}(BaseMFGSolver):
         """Generate flux computation code."""
         return textwrap.dedent(
             """
+        from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
+
         sigma = float(self.problem.volatility)
         dx = self.problem.geometry.get_grid_spacing()[0]
 
@@ -396,8 +408,8 @@ class Generated{solver_name}(BaseMFGSolver):
         else:
             m_grad = (m[x_idx+1] - m[x_idx-1]) / (2*dx)
 
-        # Flux = m * v - sigma^2/2 * grad(m)
-        flux = m[x_idx] * optimal_control[x_idx] - 0.5 * sigma**2 * m_grad
+        # Flux = m * v - D * grad(m), D = sigma^2/2 from its one owner (#2648)
+        flux = m[x_idx] * optimal_control[x_idx] - diffusion_from_volatility(sigma) * m_grad
         return flux
         """
         ).strip()

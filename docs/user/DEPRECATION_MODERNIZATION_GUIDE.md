@@ -1,7 +1,7 @@
 # Deprecation Modernization Guide
 
 **Auto-generated** by `scripts/generate_deprecation_guide.py`
-**Total deprecated items**: 105
+**Total deprecated items**: 108
 **Versions covered**: v0.22.0, v0.21.0, v0.20.0, v0.19.2, v0.19.0, v0.18.6, v0.18.0, v0.17.0, v0.16.11, v0.12.0
 
 ---
@@ -43,7 +43,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 ## Deprecated since v0.22.0
 
-*64 items*
+*67 items*
 
 ### Parameters
 
@@ -65,6 +65,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `BlockIterator.__init__()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma=` in `DiffusionOperator.from_volatility()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
+- `boundary_treatment=` in `DiscretizationScheme.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `sigma=` in `FPFDMSolver.solve_fp_step_adjoint_mode()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `FPFDMSolver.solve_fp_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `sigma=` in `FPFEMSolver.solve_fp_step_adjoint_mode()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
@@ -93,7 +94,9 @@ It does mean a migration you read on one row **does not transfer** to another so
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `NetworkHJBSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `NetworkPolicyIterationHJBSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `NewtonMFGSolver.__init__()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
+- `unroll_small_loops=`, `vectorize_inner_loops=` in `OptimizationHints.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `PenaltyHJBSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
+- `target_precision=`, `time_constraint=` in `PerformanceProfile.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `sigma=` in `VariationalMFGProblem.__init__()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0, once no longer blocked: the function takes **kwargs, which would accept a retired name and ignore it
 - `sigma=` in `WeakFormFPSolver.solve_fp_step_adjoint_mode()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `WeakFormFPSolver.solve_fp_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
