@@ -323,7 +323,7 @@ class BoundaryConditions:
         """
         candidates = list(self.segments)
         if not any(_is_global(segment) for segment in self.segments):
-            if self.default_bc is None or self.default_bc == BCType.ROBIN:
+            if self._default_refusal("uniform_segment", "the boundary") is not None:
                 return None  # unset, or a bare ROBIN with no alpha/beta: the owner refuses it where it governs
             candidates.append(self._default_segment("uniform_segment", "the boundary"))
         if not candidates:
@@ -678,27 +678,17 @@ class BoundaryConditions:
         """
         point = np.asarray(point, dtype=float)
         geometry = self._query_geometry(geometry)
-        bounds = self._query_bounds(geometry)
-        if face is None and bounds is not None:
-            on = self._faces_at_point(point, tolerance, bounds)
+        if face is None:
+            on, bounds = self._point_faces(point, geometry, tolerance)
             if len(on) > 1:
                 at_point = [
                     seg for _, seg in self._corner_readings(point, on, geometry, tolerance, axis_names, equivalent)
                 ]
                 return self._corner_choice(at_point, ", ".join(f.to_string() for f in on), equivalent)
-        if face is not None:
-            faces: list[str | None] = [face.to_string() if isinstance(face, BoundaryFace) else face]
-        elif bounds is not None:
-            faces = [f.to_string() for f in self._faces_at_point(point, tolerance, bounds)] or [None]
-        elif self.domain_sdf is not None:
-            faces = [self.identify_boundary_id(point, tolerance)]
+            faces: list[str | None] = [f.to_string() for f in on] or [None]
         else:
-            raise ValueError(
-                "BoundaryConditions.segment_for_point: this BC has no domain_bounds or domain_sdf, and the query's "
-                f"geometry ({type(geometry).__name__}) gives no box to read the faces from: it is not a "
-                "GeometryProtocol whose get_bounds() returns bounds. Pass such a geometry, or set domain_bounds "
-                "(#2512 row B1)."
-            )
+            bounds = self._query_bounds(geometry)
+            faces = [face.to_string() if isinstance(face, BoundaryFace) else face]
         governing = []
         for boundary_id in faces:
             for segment in self._face_order():
@@ -725,21 +715,38 @@ class BoundaryConditions:
         axis_names: dict[int, str] | None = None,
         equivalent: Callable[[BCSegment, BCSegment], bool] | None = None,
     ) -> list[tuple[BoundaryFace, BCSegment]]:
-        """Every box face ``point`` lies on, in face order, with the segment that face takes there: the readings
-        :meth:`segment_for_point`, asked with the same arguments, chooses among (#2512 row B1). On one face, the point's
-        segment on it; at a corner, each face's own answer, read at the point only where a partial cover keeps the
-        face from answering (:meth:`_corner_face_at_point`). A reader that writes a row along a face's normal picks
-        that face among these. Empty when the point lies on no box face, or when there is no box to read faces from
-        (a BC with ``domain_sdf``)."""
+        """Every face ``point`` lies on (:meth:`_point_faces`), in face order, with the segment that face takes there:
+        the readings :meth:`segment_for_point`, asked with the same arguments, chooses among (#2512 row B1). On one face,
+        the point's segment on it; at a corner, each face's own answer, read at the point only where a partial cover
+        keeps the face from answering (:meth:`_corner_face_at_point`). A reader that writes a row along a face's normal
+        picks that face among these. Empty when the point lies on no face."""
         point = np.asarray(point, dtype=float)
         geometry = self._query_geometry(geometry)
-        bounds = self._query_bounds(geometry)
-        if bounds is None:
-            return []
-        on = self._faces_at_point(point, tolerance, bounds)
+        on, _ = self._point_faces(point, geometry, tolerance)
         if len(on) == 1:
             return [(on[0], self.segment_for_point(point, on[0], geometry, tolerance, axis_names))]
         return self._corner_readings(point, on, geometry, tolerance, axis_names, equivalent)
+
+    def _point_faces(
+        self, point: np.ndarray, geometry: Any, tolerance: float
+    ) -> tuple[list[BoundaryFace], np.ndarray | None]:
+        """The faces ``point`` lies on, for both point readers (#2512 row B1), and the box they were read from: every
+        face of the box (:meth:`_query_bounds`) within ``tolerance``; else, for a BC with ``domain_sdf``, the one face
+        its SDF gives the point (:meth:`identify_boundary_face`, the gradient's dominant axis), or none where the SDF
+        puts the point off its boundary; else refused. Under an SDF a point has one face, so no corner rule applies
+        there (#2675)."""
+        bounds = self._query_bounds(geometry)
+        if bounds is not None:
+            return self._faces_at_point(point, tolerance, bounds), bounds
+        if self.domain_sdf is not None:
+            face = self.identify_boundary_face(point, tolerance)
+            return ([] if face is None else [face]), None
+        raise ValueError(
+            "BoundaryConditions.segment_for_point: this BC has no domain_bounds or domain_sdf, and the query's "
+            f"geometry ({type(geometry).__name__}) gives no box to read the faces from: it is not a "
+            "GeometryProtocol whose get_bounds() returns bounds. Pass such a geometry, or set domain_bounds "
+            "(#2512 row B1)."
+        )
 
     def _corner_readings(
         self,
@@ -1015,7 +1022,7 @@ class BoundaryConditions:
                 else:
                     partial_ahead.add(id(seg))
             if winner is None:
-                if self.default_bc is None or self.default_bc == BCType.ROBIN:
+                if self._default_refusal("segment_for_face", f"the {f.to_string()} face") is not None:
                     continue  # refused when this face itself is resolved, with its own message
                 winner = self._default_segment("segment_for_face", f"the {f.to_string()} face")
             else:
@@ -2195,7 +2202,9 @@ def _same_condition(first: BCSegment, second: BCSegment) -> bool:
     return all(
         _equal_as_stored(a, b)
         for a, b in zip(
-            segment_robin_coefficients(first, where=where), segment_robin_coefficients(second, where=where), strict=True
+            segment_robin_coefficients(first, where=where, as_stored=True),
+            segment_robin_coefficients(second, where=where, as_stored=True),
+            strict=True,
         )
     )
 

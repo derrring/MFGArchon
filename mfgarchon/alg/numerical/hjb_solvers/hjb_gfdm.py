@@ -79,22 +79,23 @@ _TENSOR_VOLATILITY_REFUSAL = (
 
 def _bc_row(segment: BCSegment) -> tuple:
     """The boundary row HJB-GFDM writes for ``segment`` (``_bc_row_for_point``): a value row for DIRICHLET and a
-    normal-derivative row for NEUMANN and NO_FLUX, each with the segment's datum; ROBIN's with its coefficients. A
-    type GFDM writes no row for is compared by type."""
+    normal-derivative row for NEUMANN and NO_FLUX, each with the segment's datum; ROBIN's with its coefficients, as
+    stored, since points are classified at construction, before any provider is resolved. A type GFDM writes no row
+    for is compared by type."""
     if segment.bc_type is BCType.DIRICHLET:
         return ("value", segment.value)
     if segment.bc_type in (BCType.NEUMANN, BCType.NO_FLUX):
         return ("normal derivative", segment.value)
     if segment.bc_type is BCType.ROBIN:
         where = "HJB-GFDM, comparing two Robin segments at a boundary point"
-        return ("robin", segment.value, *segment_robin_coefficients(segment, where=where))
+        return ("robin", segment.value, *segment_robin_coefficients(segment, where=where, as_stored=True))
     return (segment.bc_type,)
 
 
 def _same_bc_row(first: BCSegment, second: BCSegment) -> bool:
-    """HJB-GFDM's equivalence for the boundary owner: two segments it writes the same row for. The row reads the type,
-    with NEUMANN and NO_FLUX one row, and the datum; it does not read ``flux_capacity``. Module-level, so the owner's
-    per-object memo sees one function across calls (#2512 row B1)."""
+    """HJB-GFDM's equivalence for the boundary owner: two segments it writes the same row for (#2512 row B1). The row
+    reads the type, with NEUMANN and NO_FLUX one row, and the datum, compared as stored; it does not read
+    ``flux_capacity``, which no HJB reads (#2575: at a capped exit the HJB side reads u = g)."""
     a, b = _bc_row(first), _bc_row(second)
     return len(a) == len(b) and a[0] == b[0] and all(_equal_as_stored(x, y) for x, y in zip(a[1:], b[1:], strict=True))
 
@@ -576,8 +577,9 @@ class HJBGFDMSolver(BaseHJBSolver):
                 "FP-Particle coupling on long-time-horizon problems. For a "
                 "monotone scheme, pass `monotonicity_scheme='joint_socp'` "
                 "(non-negative off-centre Laplacian weights and a per-edge cone, "
-                "solved per stencil; its discrete maximum principle is checked per "
-                "run, not guaranteed a priori). `monotonicity_scheme='qp_m_matrix'` "
+                "solved per stencil; whether its discrete maximum principle holds is "
+                "decided per problem and run, not a priori; `check_dmp=True` checks it). "
+                "`monotonicity_scheme='qp_m_matrix'` "
                 "is not a monotone scheme: at runtime it constrains the solution's "
                 "Taylor coefficients, not the stencil's weights, and its precompute "
                 "path drops the stencil's exactness on quadratics (#1689). "
@@ -1385,13 +1387,13 @@ class HJBGFDMSolver(BaseHJBSolver):
         for i in self.boundary_indices:
             i = int(i)
             point = self.collocation_points[i]
-            readings = bc.face_segments_at_point(
-                point, geometry=geometry, tolerance=BOUNDARY_TOL, equivalent=_same_bc_row
-            )
-            if not readings:
-                unmatched.append((i, point, "on no face of the domain's box"))
-                continue
             try:
+                readings = bc.face_segments_at_point(
+                    point, geometry=geometry, tolerance=BOUNDARY_TOL, equivalent=_same_bc_row
+                )
+                if not readings:
+                    unmatched.append((i, point, "on no face the boundary owner reads for this BC"))
+                    continue
                 segment = bc.segment_for_point(
                     point, geometry=geometry, tolerance=BOUNDARY_TOL, equivalent=_same_bc_row
                 )
@@ -1412,8 +1414,10 @@ class HJBGFDMSolver(BaseHJBSolver):
                 f"{len(unmatched)}/{len(self.boundary_indices)} boundary points.",
                 "",
                 "Common causes:",
-                f"  1. Collocation generator places boundary points >{BOUNDARY_TOL:.0e} off the wall "
-                "→ shrink the offset, so the point lies on a face of the domain's box.",
+                f"  1. The point lies on no face the boundary owner reads for this BC: more than {BOUNDARY_TOL:.0e} "
+                "from every face of its box (domain_bounds, or the geometry's bounds when the BC has neither bounds "
+                "nor domain_sdf), or off the boundary its own domain_sdf describes. A BC whose domain_sdf is an "
+                "obstacle's needs domain_bounds for the outer box.",
                 "  2. The boundary owner refuses the point: the reason is on its line below.",
                 "",
                 "Unmatched points (first 5):",

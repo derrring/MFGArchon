@@ -263,3 +263,51 @@ def test_the_readings_at_a_point_are_what_the_point_chooses_among():
         for point in on_boundary:
             chosen = bc.segment_for_point(point, geometry=grid, equivalent=equivalent)
             assert any(seg is chosen for _, seg in bc.face_segments_at_point(point, grid, equivalent=equivalent)), point
+
+
+def test_a_bc_with_only_an_sdf_reads_each_points_face_from_it():
+    """Review 1 of #2674, blocker 1: both point readers take their faces from one function. A BC with ``domain_sdf``
+    and no ``domain_bounds`` gives each point the one face its SDF's gradient names, and the readings carry it; GFDM
+    found none there and refused every point. One face per point, so no corner rule reaches an SDF BC (#2675)."""
+
+    def box_sdf(x):
+        return float(np.max(np.abs(np.asarray(x, dtype=float) - 0.5)) - 0.5)
+
+    bc = BoundaryConditions(
+        dimension=2,
+        domain_sdf=box_sdf,
+        segments=[
+            BCSegment(name="in", bc_type=BCType.DIRICHLET, value=1.0, boundary="x_min"),
+            BCSegment(name="wall", bc_type=BCType.NO_FLUX),
+        ],
+    )
+    left, right = np.array([0.0, 0.5]), np.array([1.0, 0.5])
+    assert bc.segment_for_point(left, tolerance=BOUNDARY_TOL).name == "in"
+    assert bc.segment_for_point(right, tolerance=BOUNDARY_TOL).name == "wall"
+    assert [(f.to_string(), s.name) for f, s in bc.face_segments_at_point(left, tolerance=BOUNDARY_TOL)] == [
+        ("x_min", "in")
+    ]
+
+
+def test_two_robin_segments_are_compared_as_stored():
+    """Review 1 of #2674, blocker 2's family: an equivalence compares two segments and writes no row, so it reads a
+    Robin coefficient as stored -- a provider is equal only to itself -- and does not resolve it. The owner's
+    ``_same_condition`` resolved them and raised on a provider, so ``uniform_segment`` did; so did the interpolation
+    applicator's ``_same_enforcement``. With ``beta = 1.0`` on both, the control, the BC is uniform."""
+    from mfgarchon.geometry.boundary.applicator_interpolation import _same_enforcement
+    from mfgarchon.geometry.boundary.providers import ConstantProvider
+
+    def robins(beta):
+        return BoundaryConditions(
+            dimension=2,
+            segments=[
+                BCSegment(name="ra", bc_type=BCType.ROBIN, alpha=0.0, beta=beta, value=0.25, boundary="x_min"),
+                BCSegment(name="rb", bc_type=BCType.ROBIN, alpha=0.0, beta=1.0, value=0.25),
+            ],
+        )
+
+    provided = robins(ConstantProvider(1.0))
+    assert provided.uniform_segment is None
+    assert _same_enforcement(provided.segments[0], provided.segments[0])
+    assert not _same_enforcement(provided.segments[0], provided.segments[1])
+    assert robins(1.0).uniform_segment.name == "ra"

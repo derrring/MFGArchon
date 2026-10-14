@@ -121,3 +121,111 @@ def test_gfdm_judges_a_corner_by_the_row_it_writes():
     corner = solver.collocation_points[i]
     assert bc.segment_for_point(corner, geometry=grid, equivalent=_same_bc_row).name == "D"
     assert bc.segment_for_point(corner, geometry=grid).name == "strip"  # the owner's default, for contrast
+
+
+def _box_sdf(x):
+    return float(np.max(np.abs(np.asarray(x, dtype=float) - 0.5)) - 0.5)
+
+
+def _obstacle_sdf(x):
+    return float(0.2 - np.linalg.norm(np.asarray(x, dtype=float) - 0.5))
+
+
+def _inlet_and_wall(**kwargs) -> BoundaryConditions:
+    segments = [
+        BCSegment(name="in", bc_type=BCType.DIRICHLET, value=1.0, boundary="x_min"),
+        BCSegment(name="wall", bc_type=BCType.NO_FLUX),
+    ]
+    return BoundaryConditions(dimension=2, segments=segments, **kwargs)
+
+
+def test_a_bc_with_its_own_sdf_is_classified_by_the_faces_its_sdf_gives():
+    """Review 1 of #2674, blocker 1. A BC with ``domain_sdf`` and no ``domain_bounds`` has no box for the owner to read
+    faces from (#2663: the geometry's box does not override the BC's SDF), so each point takes the face its SDF gives,
+    as `segment_for_point` reads it. Before this, GFDM found no face and refused every point, advising a smaller
+    offset. An SDF that is an obstacle's puts the outer walls on no face of the BC; the refusal says so and names
+    ``domain_bounds``, and with them the same BC classifies."""
+    solver = _solver(_inlet_and_wall(domain_sdf=_box_sdf))
+    assert solver._bc_segment_per_point[_index(solver, [0.0, 0.5])].name == "in"
+    assert solver._bc_segment_per_point[_index(solver, [1.0, 0.5])].name == "wall"
+    with pytest.raises(ValueError, match=r"off the boundary its own domain_sdf describes.*needs domain_bounds"):
+        _solver(_inlet_and_wall(domain_sdf=_obstacle_sdf))
+    bounded = _solver(_inlet_and_wall(domain_sdf=_obstacle_sdf, domain_bounds=np.array([[0.0, 1.0], [0.0, 1.0]])))
+    assert bounded._bc_segment_per_point[_index(bounded, [0.0, 0.5])].name == "in"
+
+
+def test_a_robin_coefficient_provider_does_not_stop_construction():
+    """Review 1 of #2674, blocker 2. GFDM classifies at construction, before the coupling layer resolves any provider,
+    so its equivalence compares Robin coefficients as stored. Reading them through the resolving owner raised on a
+    ``beta`` given as a provider."""
+    from mfgarchon.geometry.boundary.providers import ConstantProvider
+
+    bc = BoundaryConditions(
+        dimension=2,
+        segments=[
+            BCSegment(
+                name="robin", bc_type=BCType.ROBIN, alpha=0.0, beta=ConstantProvider(1.0), value=0.25, boundary="x_min"
+            ),
+            BCSegment(name="wall", bc_type=BCType.NO_FLUX),
+        ],
+    )
+    solver = _solver(bc)
+    assert solver._bc_segment_per_point[_index(solver, [0.0, 0.5])].name == "robin"
+
+
+def test_every_refusal_the_owner_makes_is_reported_per_point():
+    """Review 1 of #2674, must-fix 1: a BC with no default and no segment on the y faces. The owner refuses those
+    points; GFDM collects each refusal, with the owner's reason, into one message rather than raising the first."""
+    bc = BoundaryConditions(
+        dimension=2,
+        segments=[
+            BCSegment(name="in", bc_type=BCType.DIRICHLET, value=1.0, boundary="x_min"),
+            BCSegment(name="out", bc_type=BCType.NO_FLUX, boundary="x_max"),
+        ],
+    )
+    with pytest.raises(
+        ValueError, match=r"(?s)pre-classification failed for \d+/\d+ boundary points.*no segment governs"
+    ):
+        _solver(bc)
+
+
+def test_gfdms_equivalence_is_the_row_it_writes():
+    """Review 1 of #2674, should-fix 1: two segments are one row when GFDM writes the same row for them -- the type,
+    NEUMANN and NO_FLUX together, and the datum as stored -- and ``flux_capacity`` is not read (#2575)."""
+    from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import _same_bc_row
+    from mfgarchon.geometry.boundary.providers import ConstantProvider
+
+    def seg(bc_type, **kwargs):
+        return BCSegment(name="s", bc_type=bc_type, **kwargs)
+
+    provider = ConstantProvider(1.0)
+    assert _same_bc_row(seg(BCType.NEUMANN, value=0.0), seg(BCType.NO_FLUX))
+    assert not _same_bc_row(seg(BCType.NEUMANN, value=1.0), seg(BCType.NO_FLUX))
+    assert not _same_bc_row(seg(BCType.DIRICHLET, value=1.0), seg(BCType.DIRICHLET, value=2.0))
+    assert not _same_bc_row(seg(BCType.DIRICHLET, value=0.0), seg(BCType.NEUMANN, value=0.0))
+    assert _same_bc_row(seg(BCType.DIRICHLET, value=0.0, flux_capacity=0.1), seg(BCType.DIRICHLET, value=0.0))
+    robin = {"alpha": 0.0, "beta": provider}
+    assert _same_bc_row(seg(BCType.ROBIN, value=0.25, **robin), seg(BCType.ROBIN, value=0.25, **robin))
+    assert not _same_bc_row(seg(BCType.ROBIN, value=0.25, **robin), seg(BCType.ROBIN, value=0.5, **robin))
+    assert not _same_bc_row(
+        seg(BCType.ROBIN, value=0.25, **robin), seg(BCType.ROBIN, value=0.25, alpha=0.0, beta=ConstantProvider(1.0))
+    )
+
+
+def test_r1_reads_the_corner_face_by_the_row_gfdm_writes():
+    """R1 at a corner reads each face's segment by GFDM's own equivalence, the row it writes, not the owner's default
+    sameness. NEUMANN(0) on x_min and NO_FLUX on y_min at priority 1 write one row, so the corner the y_min segment
+    takes is written along x_min's normal, the first face in face order; under the owner's default the two differ
+    and the normal would be y_min's."""
+    bc = BoundaryConditions(
+        dimension=2,
+        segments=[
+            BCSegment(name="x_min", bc_type=BCType.NEUMANN, value=0.0, boundary="x_min"),
+            BCSegment(name="y_min", bc_type=BCType.NO_FLUX, boundary="y_min", priority=1),
+            BCSegment(name="rest", bc_type=BCType.NO_FLUX),
+        ],
+    )
+    solver = _solver(bc)
+    i = _index(solver, [0.0, 0.0])
+    assert solver._bc_segment_per_point[i].name == "y_min"
+    assert solver._bc_normal_per_point[i] == pytest.approx([-1.0, 0.0])
