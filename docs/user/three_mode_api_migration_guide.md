@@ -218,7 +218,7 @@ result = solver.solve()
 > the FDM pair** the HJB side does not vary (#1866). It does vary elsewhere in the same enum:
 > `SL_LINEAR` and `SL_CUBIC` build an `HJBSemiLagrangianSolver` and differ in
 > `interpolation_method` (set in `_create_sl_pair`, `mfgarchon/factory/scheme_factory.py`), which
-> is why the table below can advertise "3rd order (HJB)" for one of them. So the pair Option 1
+> is why the table below names a cubic HJB interpolation for one of them. So the pair Option 1
 > builds is the `FDM_UPWIND` pair; the enum is kept here for the shape of the example, not because
 > it buys HJB order.
 
@@ -310,8 +310,8 @@ These schemes satisfy $L_{FP} = L_{HJB}^T$ exactly at matrix level:
 |:-------|:---------|:------|:----------|
 | `FDM_UPWIND` | General purpose, monotone | 1st order | Excellent |
 | `FDM_CENTERED` | Higher accuracy, smooth problems | 2nd order | Good (low Peclet)¹ |
-| `SL_LINEAR` | Large time steps, transport-dominated | 1st order | Excellent |
-| `SL_CUBIC` | High accuracy SL | 3rd order (HJB) | Good |
+| `SL_LINEAR` | Large time steps, transport-dominated | FP half, for a given drift: density in $W_1$ at $\sigma = 0$, not pointwise (#2468); the pair's order is not stated | Excellent |
+| `SL_CUBIC` | High accuracy SL | cubic HJB interpolation; FP half as `SL_LINEAR`'s | Good |
 
 ¹ **`FDM_CENTERED` differs from `FDM_UPWIND` in the FP half only** — measured,
 `HJBFDMSolver.advection_scheme` is `gradient_upwind` under both (#1866). So the "2nd order" in this

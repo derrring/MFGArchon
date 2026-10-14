@@ -49,13 +49,15 @@ class NumericalScheme(Enum):
         - Adjoint: div_centered is exact transpose of grad_centered
 
     - **SL_LINEAR**: Semi-Lagrangian with linear interpolation
-        - Convergence: O(h^2) with Δt = O(h^{3/2})
+        - Convergence: the FP half's density, for a given drift, in W₁ at σ = 0 and not pointwise where the drift
+          changes sign (``FPSLSolver``, Convergence; #2468). The pair's convergence is not stated here.
         - Stability: Unconditionally stable
         - Use case: 2D/3D problems, better scaling than FDM
         - Adjoint: Forward splatting (scatter) is transpose of backward interpolation (gather)
 
     - **SL_CUBIC**: Semi-Lagrangian with cubic interpolation (⚠️ EXPERIMENTAL)
-        - Convergence: O(h^4) with Δt = O(h^{3/2})
+        - Convergence: the FP half splats linearly, so its density, for a given drift, converges as SL_LINEAR's
+          FP half's (#2468). The pair's convergence is not stated here.
         - Stability: Generally stable but can produce NaN (Issue #583)
         - Use case: High-accuracy requirements, research
         - Adjoint: Cubic splatting is transpose of cubic interpolation
@@ -95,7 +97,7 @@ class NumericalScheme(Enum):
     | 1D/2D structured | FDM_UPWIND | Most stable, proven convergence |
     | 2D smooth | FDM_CENTERED | Higher accuracy if stable |
     | 2D/3D regular grid | SL_LINEAR | Better scaling, unconditionally stable |
-    | High accuracy needed | SL_CUBIC | O(h^4) if stable (check for NaN) |
+    | High accuracy needed | SL_CUBIC | Cubic HJB interpolation (check for NaN) |
     | Obstacles/complex geom | none yet | GFDM's pair is refused while its FP is withdrawn (#2583) |
     | Unstructured mesh | none yet | GFDM's pair is refused while its FP is withdrawn (#2583) |
     | FEM triangle mesh | FEM_P1 | Variational structure on unstructured mesh |

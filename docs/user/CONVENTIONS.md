@@ -616,6 +616,16 @@ axes and refused. The sequence form is the convention, and library code uses it.
 - **Renormalisation is a per-solver property, not a convention.** `FPSLSolver` does not rescale,
   because its splatting conserves; `FPParticleSolver` pins every slice to the caller's mass under `kde_normalization="all"`. Comparing
   $\int m$ across solvers therefore measures the solver as well as the physics.
+- **A density converges in a named norm.** At $\sigma = 0$, for a given drift, `FPSLSolver`'s density converges
+  in $W_1$, which is what its scheme's theory gives (Carlini–Silva, arXiv:1708.02042, Theorem 4.1: on
+  $\mathbb{R}^d$ without a boundary, under its (H)-(Lip) and $\Delta x^2 = o(\Delta t)$, every limit point in
+  $C([0,T];\mathcal{P}_1(\mathbb{R}^d))$ solves the equation; at $\sigma = 0$ with a Lipschitz drift that
+  solution is unique). It does not converge pointwise where a component of the drift changes sign along its own
+  axis, since the deposit's rate departs from the equation's there; in 1-D a compressive stagnation point on a node
+  gets twice the equation's rate (#2468, #2645). Where $\sigma = 0$ drives mass into a wall, the exact law has an atom there
+  and $L^1$ does not converge either. With $\sigma > 0$, away from walls, the density converges pointwise; where
+  mass reaches a no-flux wall, at the default `diffusion_theta`, it need not (#1855). A peak value or a plot of an
+  FP-SL density is a pointwise reading.
 
 ### What a tolerance bounds
 

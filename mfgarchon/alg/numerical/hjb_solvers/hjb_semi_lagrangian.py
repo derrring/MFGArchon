@@ -1597,11 +1597,10 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
         double-counted the kinetic term ~3x; see Issue #575/#1413.)
 
         Validation: see mfg-research/experiments/crowd_evacuation_2d/minors/archive/
-        exp14_towel_1d_benchmark/subs/exp14e_solver_comparison/, where the
-        decoupled-from-diffusion form (diffusion_method='adi' default) gave
-        O(h) convergence on the 1D Boltzmann-Gibbs equilibrium against the
-        Carlini-Silva theoretical O(h^2). Reproducing the CS rate requires
-        this stochastic-characteristic path.
+        exp14_towel_1d_benchmark/subs/exp14e_solver_comparison/, which compared
+        this path with the decoupled-from-diffusion form (diffusion_method='adi',
+        the default) on the 1D Boltzmann-Gibbs equilibrium. No rate is stated
+        here (#2468).
 
         References:
             Carlini, E., & Silva, F. J. (2014). A semi-Lagrangian scheme for a

@@ -92,14 +92,36 @@ class FPSLSolver(BaseFPSolver):
 
     Key Properties:
         - Mass conservation is exact (scatter weights sum to 1)
-        - Density peaks form naturally from converging flow
+        - Density peaks form naturally from converging flow; at σ = 0 the peak at a stagnation point is too high
+          (Convergence, below)
         - Discrete duality with HJB Backward SL is preserved
         - No Jacobian correction needed (conservation is intrinsic)
 
-    Splatting Methods (Issue #708):
-        - 'linear': 2-point stencil (1D) / 2^d corners (nD), preserves positivity
-        - 'cubic': 4-point Catmull-Rom stencil, O(dx³) accuracy (1D only)
-        - 'quintic': 6-point Lagrange stencil, O(dx⁵) accuracy (1D only)
+    Splatting Methods (Issue #708), each the transpose of an interpolation:
+        - 'linear': linear interpolation's, 2 points (1D) / 2^d corners (nD), preserves positivity
+        - 'cubic': Catmull-Rom interpolation's, 4 points (1D only)
+        - 'quintic': 6-point Lagrange interpolation's (1D only)
+        No order is stated for the density; Convergence, below, says what is known.
+
+    Convergence (#2468):
+        - At σ = 0 the density converges in W₁, for a given drift. That is what the scheme's theory gives:
+          Carlini–Silva, arXiv:1708.02042, Theorem 4.1: on ℝ^d with no boundary, under its (H)-(Lip) and
+          dx² = o(dt), every limit point in C([0,T]; P₁(ℝ^d)) solves the equation; at σ = 0 with a Lipschitz drift
+          that solution is unique (below its (3.2)), so the whole sequence converges. On #2468's 1-D fixture
+          (drift -(x - 1/2)/2, T = 1, dt = h, nx = 51 to 801) W₁ falls from 3.9e-3 to 2.3e-4, and L¹ from 6.8e-2 to
+          7.9e-3. L¹ is not given by the theorem, and it does not converge where σ = 0 drives mass into a wall: the
+          exact law carries an atom there.
+        - It does not converge pointwise where a component of the drift changes sign, because the deposit's rate
+          departs from the equation's there. In 1-D a compressive stagnation point on a node gets twice the equation's
+          rate; off a node the excess is shared by the two nearest nodes. In n-D the affected nodes lie where a drift
+          component changes sign along its own axis: whole grid lines (2-D) or planes (3-D) only when that set
+          follows the grid. On #2468's fixture L∞ stays at 1.14 to 1.19 at x = 1/2, the peak 4.16 to 4.20 against 3.02.
+        - With σ > 0, away from walls, the excess is diffused and the density converges pointwise: at σ = 0.1, on a
+          Gaussian of variance 0.005 under the same drift, L∞ falls from 8.9e-2 to 7.1e-3 over nx = 51 to 801. Where
+          mass reaches a no-flux wall, at the default ``diffusion_theta``, it need not: on #1855's fixture the wall
+          node stalls (#1855).
+        - Pinned in ``tests/unit/test_alg/test_fpsl_convergence_norm_2468.py``. A deposit consistent where the drift
+          changes sign, which would depart from the published scheme and change every σ = 0 result, is #2645.
 
     Important: The interpolation_method must match the HJB solver's method
     to maintain exact discrete adjoint consistency.
@@ -149,8 +171,8 @@ class FPSLSolver(BaseFPSolver):
                 The advection step uses reflecting BC for mass conservation.
             interpolation_method: Splatting method (adjoint of interpolation)
                 - 'linear': Linear splatting (fastest, preserves positivity)
-                - 'cubic': Cubic splatting (O(dx³), may produce negatives)
-                - 'quintic': Quintic splatting (O(dx⁵), may produce negatives)
+                - 'cubic': Cubic splatting (Catmull-Rom interpolation's transpose; may produce negatives)
+                - 'quintic': Quintic splatting (6-point Lagrange interpolation's transpose; may produce negatives)
                 Must match the HJB solver's interpolation_method for adjoint consistency.
             cfl_target, max_substeps, enable_adaptive_substepping: How a step whose CFL number
                 exceeds max(1, cfl_target) is cut into sub-steps (``cfl_substeps``), measured on this
@@ -353,8 +375,8 @@ class FPSLSolver(BaseFPSolver):
 
         # `source_term` enters as a Lie-splitting substep AFTER the transport step (#2020). The
         # adjoint step is an explicit linear operator on the density -- M^{n+1} = A M^n, where A is
-        # the splatting matrix -- so a source makes it M^{n+1} = A M^n + dt * S(t_{n+1}, .), which
-        # is a one-line derivation and first order in time, matching the scheme's own order. That
+        # the splatting matrix -- so a source makes it M^{n+1} = A M^n + dt * S(t_{n+1}, .), a
+        # one-line derivation: the source is added explicitly, after the transport step. That
         # is why this family is wired and the three HJB-SL variants named in #2198 are not: there
         # the forcing would have to enter an implicit alpha* fixed point or a sampled
         # characteristic, and neither has been derived.

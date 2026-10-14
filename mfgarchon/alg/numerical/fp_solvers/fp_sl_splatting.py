@@ -5,10 +5,13 @@ This module provides splatting routines (adjoint of interpolation) for the
 Forward Semi-Lagrangian method. Each splatting scheme is the exact transpose
 of the corresponding interpolation scheme used in HJB-SL.
 
-Supported methods:
-- linear: 2-point stencil, O(dx) accuracy, preserves positivity
-- cubic: 4-point stencil, O(dx³) accuracy, may produce negative values
-- quintic: 6-point stencil, O(dx⁵) accuracy, may produce negative values
+Supported methods, each the transpose of an interpolation:
+- linear: 2-point stencil, linear interpolation's, preserves positivity
+- cubic: 4-point stencil, Catmull-Rom interpolation's, may produce negative values
+- quintic: 6-point stencil, 6-point Lagrange interpolation's, may produce negative values
+
+No order is stated for the density. At σ = 0 the solver's density converges in W₁, and not pointwise where a
+component of the drift changes sign (`FPSLSolver`, Convergence; #2468).
 
 Mathematical Foundation:
     If HJB uses interpolation matrix P with row sums = 1,
@@ -137,7 +140,7 @@ def compute_quintic_weights(t: float) -> tuple[float, float, float, float, float
     """
     Compute quintic interpolation weights.
 
-    Uses 6 points for O(dx⁵) accuracy with C² continuity.
+    The degree-5 Lagrange polynomial through the 6 nearest nodes.
     Weights satisfy partition of unity: sum(w) = 1.
 
     Args:
@@ -499,9 +502,7 @@ def splat_nd(
         return splat_linear_nd(weighted, x_dest, grid_coordinates, grid_shape, bounds) / measure
     elif method in ("cubic", "quintic"):
         raise NotImplementedError(
-            f"'{method}' splatting not yet implemented for nD. Use 'linear' or implement "
-            "tensor-product splatting. For nD, consider using 'linear' which provides "
-            "adequate accuracy for most MFG applications."
+            f"'{method}' splatting not yet implemented for nD. Use 'linear' or implement tensor-product splatting."
         )
     else:
         raise ValueError(f"Unknown splatting method: {method}.")
