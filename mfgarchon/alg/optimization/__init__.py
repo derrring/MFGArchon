@@ -80,8 +80,6 @@ except ImportError:
         # Variational Problem
         "VariationalMFGComponents",
         "VariationalMFGProblem",
-        "create_obstacle_variational_mfg",
-        "create_quadratic_variational_mfg",
         # Variational Solvers
         "BaseVariationalSolver",
         "PrimalDualMFGSolver",

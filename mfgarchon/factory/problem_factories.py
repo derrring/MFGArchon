@@ -8,15 +8,16 @@ central method **silently discarded the caller's boundary conditions**. Measured
     problem.get_boundary_conditions()       NO_FLUX
 
 `create_from_hamiltonian` passed `boundary_conditions=` into the components while building the
-geometry with a hardcoded `no_flux_bc(dimension=1)`, and solvers resolve the BC from the geometry.
-No error, no warning. Every non-no-flux BC on every problem built this way was replaced by a
-reflecting wall.
+geometry with a hardcoded `no_flux_bc(dimension=1)`. The solvers then split: the HJB solvers resolve
+the BC from the geometry and ran on a reflecting wall, while `FPFDMSolver` and `FPFVMSolver` read the
+components' BC first and ran on the caller's boundary. No error, no warning: every non-no-flux BC on
+every problem built this way gave an HJB and an FP solved under different boundaries.
 
 **What a rebuilt factory owes.** A factory that only assembles is an example with extra steps; the
 reason to have one in this library is that construction carries invariants a caller will get wrong,
 and today none of them is enforced anywhere:
 
-- the caller's `BoundaryConditions` must reach the geometry, which is what solvers read, and not
+- the caller's `BoundaryConditions` must reach the geometry, which the HJB solvers read, and not
   only the components (the defect above);
 - the drift convention must match the solver family (`_drift_convention`, VELOCITY vs
   VALUE_FUNCTION);
@@ -52,10 +53,11 @@ __all__ = [
 ]
 
 _MESSAGE = (
-    "mfgarchon.factory problem construction is not built (#1920). The previous implementation "
-    "silently replaced the caller's BoundaryConditions with a hardcoded no-flux wall, so it was "
-    "removed rather than left to answer wrongly. Build the problem directly -- "
-    "MFGProblem(geometry=..., components=...) -- which puts you in front of the same choices "
+    "mfgarchon.factory problem construction is not built (#1920). Given a legacy 1-D domain, the general "
+    "factory built the grid with a hardcoded no-flux wall while the caller's boundary went only into the "
+    "components, and the problem factories were removed with it rather than left to answer wrongly. Build "
+    "the problem directly -- MFGProblem(geometry=..., components=...), or NetworkMFGProblem for a network -- "
+    "which puts you in front of the same choices "
     "without pretending they are handled. See this module's docstring for what a rebuilt factory "
     "must guarantee before it is worth using."
 )

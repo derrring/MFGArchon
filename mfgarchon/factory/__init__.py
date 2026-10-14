@@ -26,6 +26,7 @@ from .backend_factory import BackendFactory, create_backend_for_problem, print_b
 # Problem factories
 from .problem_factories import (
     create_crowd_problem,
+    create_general_mfg_problem,
     create_highdim_problem,
     create_lq_problem,
     create_mfg_problem,
