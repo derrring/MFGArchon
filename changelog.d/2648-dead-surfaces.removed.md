@@ -3,11 +3,11 @@
   - `mfgarchon.core.component_configs` (`StandardMFGConfig`, `NetworkMFGConfig`, `VariationalMFGConfig`,
     `StochasticMFGConfig`, `NeuralMFGConfig`, `RLMFGConfig`, `ImplicitGeometryConfig`, `AMRConfig`,
     `TimeDependentDomainConfig`, `MultiPopulationMFGConfig`) and `mfgarchon.core.mfg_components_nested` (its own
-    `MFGComponents`). Each was imported only by the other, and nothing imported the pair. This answers #2558's first row.
-  - `ErgodicConditions`, which was exported at the top level. It declared a stationary problem that no `MFGProblem`
-    accepted. It comes back together with an ergodic mode, should one be designed.
+    `MFGComponents`). `component_configs` was imported only by `mfg_components_nested`, which nothing imported. This
+    answers #2558's first row.
+  - `ErgodicConditions`, exported from `mfgarchon` and `mfgarchon.core` at v0.21.0. It declared a stationary problem
+    that no `MFGProblem` accepted. It comes back together with an ergodic mode, should one be designed.
   - `mfgarchon.factory.solver_factory.SolverFactoryConfig` and
     `mfgarchon.utils.functional_calculus.FunctionalDerivativeConfig`, two dataclasses that nothing instantiated
     (#1663's `SolverFactoryConfig` row).
-  - `scripts/docstring_kwargs_baseline.json` is re-recorded. Its four findings in `mfg_components_nested` went with the
-    module, which held the scan's one block and 9 keyword arguments of the difference.
+  - Everything above except `ErgodicConditions` was reachable at v0.21.0 only by its module path.
