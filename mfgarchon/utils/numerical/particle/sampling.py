@@ -43,7 +43,7 @@ class MCConfig:
 
     # Sampling parameters
     num_samples: int = 10000
-    sampling_method: str = "uniform"  # "uniform" | "stratified" | "importance" | "sobol" | "halton"
+    sampling_method: str = "uniform"  # one of SAMPLING_METHODS; any other is refused
     seed: int | None = None
 
     # Variance reduction
@@ -246,51 +246,95 @@ class QuasiMCSampler(MCSampler):
 
 
 class ImportanceMCSampler(MCSampler):
-    """Importance sampling Monte Carlo sampler."""
+    """Importance sampling: draw from a density p on the domain and estimate an integral as mean(f / p).
 
-    def __init__(self, domain: MCDomain, config: MCConfig, importance_function: Callable[[NDArray], NDArray]):
+    Contract (#2648, ruling 8): ``importance_function`` is a probability density normalized on the domain, so
+    that its integral over the domain is 1. The estimator is then unbiased, and a density matched to the integrand
+    gives a zero-variance estimate.
+
+    - **Normalization** is checked at construction: a fixed-seed Monte Carlo estimate of the integral of p is refused
+      when it differs from 1 by more than ``NORMALIZATION_TOL`` and by more than 4 of its standard errors.
+    - **Rejection sampling** draws exactly from p: uniform candidates are accepted with probability p(x) / M.
+      M is ``importance_max`` when given; otherwise it is the largest p over a dense draw, times ``ENVELOPE_SAFETY``.
+      Every candidate is checked, and one with p(x) > M is refused, naming the bound and the point, because
+      rejection with too small an M silently samples min(p, M) instead of p.
+    - **An infeasible acceptance rate** is refused up front. It is 1 / (V M) for a normalized p on a domain of
+      volume V.
+    """
+
+    NORMALIZATION_TOL = 0.05
+    ENVELOPE_SAFETY = 1.5
+    MIN_ACCEPTANCE = 1e-4
+    _CHECK_SAMPLES = 100_000
+    _CHECK_SEED = 2648
+
+    def __init__(
+        self,
+        domain: MCDomain,
+        config: MCConfig,
+        importance_function: Callable[[NDArray], NDArray],
+        importance_max: float | None = None,
+    ):
         """
         Initialize importance sampling.
 
         Args:
             domain: Domain bounds
             config: MC configuration
-            importance_function: Importance distribution p(x)
+            importance_function: Probability density p(x), normalized on the domain
+            importance_max: An upper bound on p over the domain. If omitted, it is estimated from a dense draw.
         """
         super().__init__(domain, config)
         self.importance_function = importance_function
+        check = np.random.RandomState(self._CHECK_SEED)
+        lows, highs = self.domain_bounds[:, 0], self.domain_bounds[:, 1]
+        points = lows + (highs - lows) * check.random_sample((self._CHECK_SAMPLES, self.dimension))
+        values = np.asarray(importance_function(points), dtype=float)
+        integral = float(self.domain_volume * np.mean(values))
+        error = float(self.domain_volume * np.std(values) / np.sqrt(len(values)))
+        if abs(integral - 1.0) > self.NORMALIZATION_TOL and abs(integral - 1.0) > 4.0 * error:
+            raise ValueError(
+                f"ImportanceMCSampler: importance_function must be a probability density normalized on the "
+                f"domain; its integral is estimated at {integral:.6g} +- {error:.2g} ({self._CHECK_SAMPLES} "
+                f"fixed-seed points), not 1. Divide it by its integral over the domain."
+            )
+        self.importance_max = (
+            float(importance_max) if importance_max is not None else float(np.max(values)) * self.ENVELOPE_SAFETY
+        )
+        acceptance = 1.0 / (self.domain_volume * self.importance_max)
+        if acceptance < self.MIN_ACCEPTANCE:
+            raise ValueError(
+                f"ImportanceMCSampler: the rejection acceptance rate 1/(V M) = {acceptance:.3g} is below "
+                f"{self.MIN_ACCEPTANCE:g} (V = {self.domain_volume:.6g}, M = {self.importance_max:.6g}); the density "
+                f"is too peaked for rejection from the domain. Use a wider density or a smaller domain."
+            )
 
     def sample(self, num_samples: int) -> NDArray:
-        """Generate importance-weighted samples using rejection sampling."""
-        # Use rejection sampling (simplified implementation)
-        # In practice, more sophisticated methods would be used
-
-        candidate_samples = num_samples * 3  # Generate extra candidates
-        candidates = UniformMCSampler(self.domain, self.config).sample(candidate_samples)
-
-        # Evaluate importance function
-        importance_values = self.importance_function(candidates)
-        max_importance = np.max(importance_values)
-
-        # Rejection sampling
-        accept_probs = importance_values / max_importance
-        accepted_mask = self.rng.random(candidate_samples) < accept_probs
-
-        accepted_samples = candidates[accepted_mask]
-
-        # If not enough samples, fill with uniform
-        if len(accepted_samples) < num_samples:
-            additional_needed = num_samples - len(accepted_samples)
-            additional_samples = UniformMCSampler(self.domain, self.config).sample(additional_needed)
-            accepted_samples = np.vstack([accepted_samples, additional_samples])
-
-        return accepted_samples[:num_samples]
+        """Draw exactly ``num_samples`` points from the density by rejection, with no uniform fill."""
+        lows, highs = self.domain_bounds[:, 0], self.domain_bounds[:, 1]
+        accepted: list[NDArray] = []
+        count = 0
+        while count < num_samples:
+            batch = max(4 * (num_samples - count), 64)
+            candidates = lows + (highs - lows) * self.rng.random_sample((batch, self.dimension))
+            values = np.asarray(self.importance_function(candidates), dtype=float)
+            over = values > self.importance_max
+            if np.any(over):
+                i = int(np.argmax(over))
+                raise ValueError(
+                    f"ImportanceMCSampler: p(x) = {values[i]:.6g} at x = {candidates[i].tolist()} exceeds the "
+                    f"rejection bound M = {self.importance_max:.6g}, so the draw would not follow p. Pass an "
+                    f"importance_max at least the density's supremum."
+                )
+            keep = candidates[self.rng.random_sample(batch) < values / self.importance_max]
+            accepted.append(keep)
+            count += len(keep)
+        return np.vstack(accepted)[:num_samples]
 
     def get_weights(self, points: NDArray) -> NDArray:
-        """Get importance weights (inverse of importance function)."""
-        importance_vals = self.importance_function(points)
-        weights = 1.0 / np.maximum(importance_vals, 1e-12)
-        return weights / np.sum(weights)  # Normalize
+        """Weights 1 / (N V p(x)), so that ``monte_carlo_integrate``'s estimate is mean(f / p)."""
+        values = np.asarray(self.importance_function(points), dtype=float)
+        return 1.0 / (len(points) * self.domain_volume * values)
 
 
 class PoissonDiskSampler(MCSampler):
@@ -570,6 +614,10 @@ class ControlVariates:
         return reduced_values
 
 
+#: The ``sampling_method`` values ``monte_carlo_integrate`` dispatches; any other is refused (#2648, ruling 8).
+SAMPLING_METHODS = ("uniform", "stratified", "sobol", "halton", "latin_hypercube", "importance")
+
+
 def monte_carlo_integrate(integrand: MCIntegrand, domain: MCDomain, config: MCConfig | None = None) -> MCResult:
     """
     Monte Carlo integration of a function over a domain.
@@ -597,9 +645,18 @@ def monte_carlo_integrate(integrand: MCIntegrand, domain: MCDomain, config: MCCo
         sampler = StratifiedMCSampler(domain, config)
     elif config.sampling_method in ["sobol", "halton", "latin_hypercube"]:
         sampler = QuasiMCSampler(domain, config, config.sampling_method)
+    elif config.sampling_method == "importance":
+        if config.importance_function is None:
+            raise ValueError(
+                "monte_carlo_integrate: sampling_method='importance' needs MCConfig.importance_function, a "
+                "probability density normalized on the domain."
+            )
+        sampler = ImportanceMCSampler(domain, config, config.importance_function)
     else:
-        logger.warning(f"Unknown sampling method: {config.sampling_method}, using uniform")
-        sampler = UniformMCSampler(domain, config)
+        raise ValueError(
+            f"monte_carlo_integrate: unknown sampling_method {config.sampling_method!r}; choose one of "
+            f"{', '.join(repr(m) for m in SAMPLING_METHODS)}. (It used to be logged and sampled uniformly, #2648.)"
+        )
 
     # Sample points
     sample_points = sampler.sample(config.num_samples)
@@ -730,14 +787,17 @@ def integrate_gaussian_quadrature_mc(
     upper_bounds = mean + 6 * sigma
     domain = list(zip(lower_bounds.tolist(), upper_bounds.tolist(), strict=True))
 
-    # Gaussian importance function
+    # Gaussian importance density, normalized (#2648, ruling 8: ImportanceMCSampler takes a probability density).
+    # The mass outside the 6-sigma box is about 2e-9 per dimension.
     # Issue #1066: use solve() not inv() — for high-dim cov with cond > 1e10,
     # inv()-based Mahalanobis silently returns wrong values. solve() is stable.
+    normalization = (2.0 * np.pi) ** (len(mean) / 2.0) * np.sqrt(np.linalg.det(cov))
+
     def gaussian_importance(x):
         diff = x - mean
         # cov is symmetric → diff @ cov^{-1} = solve(cov, diff.T).T
         sol = np.linalg.solve(cov, diff.T).T
-        return np.exp(-0.5 * np.einsum("ij,ij->i", sol, diff))
+        return np.exp(-0.5 * np.einsum("ij,ij->i", sol, diff)) / normalization
 
     config = MCConfig(num_samples=num_samples, sampling_method="importance", importance_function=gaussian_importance)
 
