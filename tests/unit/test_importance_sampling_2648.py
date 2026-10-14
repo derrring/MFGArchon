@@ -14,10 +14,13 @@ The oracle is f(x) = exp(-x^2 / (2 * 0.3^2)) on [-5, 5], whose integral is exact
 4. Refused by name: a density that is not normalized (to within max(1e-6, 4 standard errors of the check)), not
    finite or negative; a rejection bound below the density; an infeasible acceptance rate; a missing
    importance_function; an unknown sampling_method; control variates under importance sampling; and an integrand
-   that is non-zero where the density vanishes, at a check point.
+   with more than 1e-6 of the integral of |f| where the density vanishes, estimated on the check points.
 5. Review 1 of #2664: `integrate_gaussian_quadrature_mc` draws from N(mean, cov) directly and returns the integral
-   over all of space, in any dimension; stratified sampling refuses more strata than samples, which used to confine
-   the first coordinate to its low strata.
+   over all of space; stratified sampling refuses more strata than samples, which used to confine the first
+   coordinate to its low strata.
+6. Review 2 of #2664: the support check weighs mass, so a density whose tail underflows to 0 where f is subnormal is
+   not refused; the Gaussian integrator forms f / p in log space, so it does not overflow where the integral is a
+   finite float; its covariance is checked; and the standard error and confidence interval are pinned.
 """
 
 from __future__ import annotations
@@ -163,10 +166,67 @@ def test_an_integrand_outside_the_densitys_support_is_refused():
         return np.where(np.abs(x[:, 0]) <= 1.0, 0.5, 0.0)
 
     config = MCConfig(num_samples=N, seed=0, sampling_method="importance", importance_function=half_on_unit)
-    with pytest.raises(ValueError, match=r"the importance density is 0 at x = .*, where the integrand is 1.0"):
+    with pytest.raises(
+        ValueError, match=r"an estimated 0\.8\d* of the integral of \|f\| lies where the importance density is 0"
+    ):
         monte_carlo_integrate(lambda x: np.ones(len(x)), DOMAIN, config)
+    with pytest.raises(ValueError, match=r"of the integral of \|f\| lies where the importance density is 0"):
+        monte_carlo_integrate(lambda x: -np.ones(len(x)), DOMAIN, config)
     inside = monte_carlo_integrate(lambda x: np.where(np.abs(x[:, 0]) <= 1.0, 1.0, 0.0), DOMAIN, config)
     assert inside.estimate == pytest.approx(2.0, rel=1e-12)
+
+
+def test_the_support_check_weighs_mass_not_a_single_point():
+    """Review 2 of #2664, B-1. A missing fraction of the integral of |f| above 1e-6 is refused; one below it is not,
+    nor is a matched density whose tail underflows to p = 0 where f is still subnormal (5e-324 at x = 38.6), which the
+    witness rule refused. p = 2 on [0, 0.5] and f = 1 there, f = delta on (0.5, 1]: the missing fraction is about
+    delta."""
+
+    def left_half(x):
+        return np.where(x[:, 0] <= 0.5, 2.0, 0.0)
+
+    def tail(delta):
+        return lambda x: np.where(x[:, 0] <= 0.5, 1.0, delta)
+
+    config = MCConfig(num_samples=N, seed=0, sampling_method="importance", importance_function=left_half)
+    with pytest.raises(ValueError, match=r"of the integral of \|f\| lies where the importance density is 0") as refused:
+        monte_carlo_integrate(tail(1e-5), [(0.0, 1.0)], config)
+    fraction = float(str(refused.value).split("an estimated ")[1].split(" ")[0])
+    assert 0.5e-5 < fraction < 2e-5, fraction
+    assert monte_carlo_integrate(tail(1e-7), [(0.0, 1.0)], config).estimate == pytest.approx(0.5, rel=1e-12)
+    for half_width in (40.0, 50.0):
+        z = math.erf(half_width / math.sqrt(2))
+        matched = MCConfig(
+            num_samples=N,
+            seed=0,
+            sampling_method="importance",
+            importance_function=lambda x, z=z: np.exp(-np.sum(x**2, axis=1) / 2) / (math.sqrt(2 * math.pi) * z),
+        )
+        result = monte_carlo_integrate(
+            lambda x: np.exp(-np.sum(x**2, axis=1) / 2), [(-half_width, half_width)], matched
+        )
+        assert result.estimate == pytest.approx(math.sqrt(2 * math.pi) * z, rel=1e-12), half_width
+
+
+def test_the_normalization_window_is_its_floor_or_four_check_errors():
+    """Review 2 of #2664, S-2. A constant density 1e-5 too heavy has a check error of 0, so only the 1e-6 floor can
+    refuse it; 2.04 x on [0, 1] is 2% too heavy, 10 check errors, and only a window of 4 errors refuses it."""
+    with pytest.raises(ValueError, match=r"must be a probability density normalized on the domain"):
+        ImportanceMCSampler([(0.0, 1.0)], MCConfig(seed=0), lambda x: np.full(len(x), 1.0 + 1e-5))
+    with pytest.raises(ValueError, match=r"must be a probability density normalized on the domain"):
+        ImportanceMCSampler([(0.0, 1.0)], MCConfig(seed=0), lambda x: 2.04 * x[:, 0])
+
+
+def test_the_standard_error_and_confidence_interval_are_those_of_the_estimate():
+    """Review 2 of #2664, S-2: f = x on [0, 2], sampled uniformly. Each point contributes 2 x, whose standard
+    deviation is 2 / sqrt(3), so the standard error is that over sqrt(N); the 95% interval is 1.96 of them either
+    side."""
+    n = 10000
+    result = monte_carlo_integrate(lambda x: x[:, 0], [(0.0, 2.0)], MCConfig(num_samples=n, seed=0))
+    assert result.standard_error == pytest.approx(2 / math.sqrt(3) / math.sqrt(n), rel=0.03)
+    assert result.confidence_interval == pytest.approx(
+        (result.estimate - 1.96 * result.standard_error, result.estimate + 1.96 * result.standard_error), rel=1e-14
+    )
 
 
 def test_the_gaussian_integrator_returns_the_integral_over_all_of_space():
@@ -187,10 +247,41 @@ def test_the_gaussian_integrator_returns_the_integral_over_all_of_space():
     assert integrate_gaussian_quadrature_mc(mean, cov, proportional, num_samples=500).estimate == pytest.approx(
         exact, rel=1e-10
     )
-    result = integrate_gaussian_quadrature_mc(np.zeros(3), np.eye(3), lambda x: np.exp(-np.sum(x**2, axis=1)))
+    result = integrate_gaussian_quadrature_mc(np.zeros(3), np.eye(3), lambda x: np.exp(-np.sum(x**2, axis=1)), seed=0)
     assert abs(result.estimate - math.pi**1.5) < 6 * result.standard_error
     seven = integrate_gaussian_quadrature_mc(np.zeros(7), np.eye(7), lambda x: np.exp(-0.5 * np.sum(x**2, axis=1)), 200)
     assert seven.estimate == pytest.approx((2 * math.pi) ** 3.5, rel=1e-10)
+
+
+def test_the_gaussian_integrator_does_not_overflow_where_the_integral_is_finite():
+    """Review 2 of #2664, MF-3: with f = exp(-|x|^2 / (2 s^2)) and cov = s^2 I, f / p is (2 pi s^2)^(d/2) exactly:
+    10^279.8 at d = 200, s = 10, a finite float, which mean(f * exp(-log p)) returned as inf because 1 / p overflows
+    alone."""
+    from mfgarchon.utils.numerical.particle.sampling import integrate_gaussian_quadrature_mc
+
+    d, s = 200, 10.0
+    result = integrate_gaussian_quadrature_mc(
+        np.zeros(d), s**2 * np.eye(d), lambda x: np.exp(-np.sum(x**2, axis=1) / (2 * s**2)), num_samples=50, seed=0
+    )
+    assert math.isfinite(result.estimate)
+    assert math.log(result.estimate) == pytest.approx(d / 2 * math.log(2 * math.pi * s**2), rel=1e-12)
+
+
+@pytest.mark.parametrize(
+    ("cov", "message"),
+    [
+        (np.array([[1.0, 2.0], [2.0, 1.0]]), r"cov must be positive definite"),
+        (np.array([[1.0, 0.5], [0.0, 1.0]]), r"cov must be a symmetric 2x2 matrix"),
+    ],
+    ids=["indefinite", "asymmetric"],
+)
+def test_the_gaussian_integrator_refuses_a_covariance_it_cannot_factor_by_name(cov, message):
+    """Review 2 of #2664, S-4: an indefinite covariance raised numpy's bare LinAlgError, and an asymmetric one was
+    read through its lower triangle without a word."""
+    from mfgarchon.utils.numerical.particle.sampling import integrate_gaussian_quadrature_mc
+
+    with pytest.raises(ValueError, match=message):
+        integrate_gaussian_quadrature_mc(np.zeros(2), cov, lambda x: np.ones(len(x)), seed=0)
 
 
 def test_stratified_sampling_refuses_more_strata_than_samples_and_reports_what_it_drew():

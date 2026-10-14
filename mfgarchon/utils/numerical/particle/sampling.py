@@ -278,12 +278,17 @@ class ImportanceMCSampler(MCSampler):
     non-negative, positive wherever the integrand is non-zero -- whose integral Z over D is 1. The expectation of the
     estimate is then the integral of f over D divided by Z, which is unbiased at Z = 1, and a density matched to the
     integrand gives a zero-variance estimate. A density that vanishes where f does not misses that part of the
-    integral, and nothing here can see it.
+    integral; the sampler keeps its check points where p = 0, and ``monte_carlo_integrate`` estimates the missing part
+    there (`_refuse_integrand_outside_the_support`).
 
+    - **``NORMALIZATION_TOL``** is the relative error in the integral's mass that the estimator may carry silently. It
+      is read twice: as the floor of the normalization window, and as the largest fraction of the integral of |f|
+      that may lie where p = 0.
     - **Normalization** is checked at construction, by a fixed-seed Monte Carlo estimate of Z over
       ``_CHECK_SAMPLES`` points. It is refused when Z differs from 1 by more than both ``NORMALIZATION_TOL`` and 4 of
       the check's standard errors. A check of finite size cannot certify Z more closely than its own error, so the
-      window the estimate may still carry is max(``NORMALIZATION_TOL``, 4 standard errors), relative.
+      window the estimate may still carry is max(``NORMALIZATION_TOL``, 4 standard errors), relative. The check
+      draws uniformly, so for a sharply peaked density its error, and the window with it, is large.
     - **Non-finite or negative values** at the check points are refused.
     - **Rejection sampling** draws exactly from p: uniform candidates are accepted with probability p(x) / M.
       M is ``importance_max`` when given; otherwise it is the largest p over a dense draw, times ``ENVELOPE_SAFETY``.
@@ -704,7 +709,6 @@ def monte_carlo_integrate(integrand: MCIntegrand, domain: MCDomain, config: MCCo
                 "and the estimate comes back biased (#2648). Use one or the other."
             )
         sampler = ImportanceMCSampler(domain, config, config.importance_function)
-        _refuse_integrand_outside_the_support(integrand, sampler)
     else:
         raise ValueError(
             f"monte_carlo_integrate: unknown sampling_method {config.sampling_method!r}; choose one of "
@@ -730,7 +734,10 @@ def monte_carlo_integrate(integrand: MCIntegrand, domain: MCDomain, config: MCCo
 
     # Each point's contribution to the estimate: V f(x) w(x) N, whose mean is the estimate
     domain_volume = np.prod([max_val - min_val for min_val, max_val in domain])
-    return _mc_result(function_values * weights * len(weights), config, start_time, scale=domain_volume)
+    contributions = function_values * weights * len(weights)
+    if isinstance(sampler, ImportanceMCSampler):
+        _refuse_integrand_outside_the_support(integrand, sampler, contributions, domain_volume)
+    return _mc_result(contributions, config, start_time, scale=domain_volume)
 
 
 def _mc_result(contributions: NDArray, config: MCConfig, start_time: float, scale: float = 1.0) -> MCResult:
@@ -761,21 +768,29 @@ def _mc_result(contributions: NDArray, config: MCConfig, start_time: float, scal
     )
 
 
-def _refuse_integrand_outside_the_support(integrand: MCIntegrand, sampler: ImportanceMCSampler) -> None:
-    """Importance sampling misses the integral of f wherever its density vanishes. Among the sampler's check points,
-    those where p = 0 are evaluated through ``integrand``; one where f is non-zero is refused, naming it. Sampled, so
-    sound only in the refusing direction: a miss between check points is not seen (#2648)."""
+def _refuse_integrand_outside_the_support(
+    integrand: MCIntegrand, sampler: ImportanceMCSampler, contributions: NDArray, scale: float
+) -> None:
+    """Importance sampling misses the integral of f wherever its density vanishes. The part of the integral of |f| it
+    cannot see is estimated on the sampler's check points where p = 0, the only points ``integrand`` is evaluated at
+    here; the part it sees is the draw's own estimate of the integral of |f| over p > 0 (``scale`` times the mean
+    |contribution|). A missing fraction above ``ImportanceMCSampler.NORMALIZATION_TOL`` is refused, naming the
+    fraction and the check point where |f| is largest -- a mass criterion, so an f that is merely subnormal where p
+    underflows to 0 is not refused (review 2 of #2664). Sampled: a miss between check points is not seen (#2648)."""
     points = sampler.zero_density_points
     if len(points) == 0:
         return
-    values = np.asarray(integrand(points), dtype=float)
-    hit = np.flatnonzero(values != 0.0)
-    if len(hit):
-        i = int(hit[0])
+    values = np.abs(np.asarray(integrand(points), dtype=float))
+    missing = sampler.domain_volume * float(np.sum(values)) / sampler._CHECK_SAMPLES
+    seen = scale * float(np.mean(np.abs(contributions)))
+    if missing > sampler.NORMALIZATION_TOL * (missing + seen):
+        i = int(np.argmax(values))
         raise ValueError(
-            f"monte_carlo_integrate: the importance density is 0 at x = {points[i].tolist()}, where the integrand is "
-            f"{float(values[i])!r}; importance sampling never draws there, so that part of the integral would be missing. "
-            "Use a density positive wherever the integrand is non-zero."
+            f"monte_carlo_integrate: an estimated {missing / (missing + seen):.3g} of the integral of |f| lies where "
+            f"the importance density is 0 (at x = {points[i].tolist()} the integrand is {float(values[i])!r}); "
+            "importance sampling never draws there, so that part of the integral would be missing. Use a density "
+            f"positive wherever the integrand is non-zero (the missing fraction allowed is "
+            f"{sampler.NORMALIZATION_TOL:g})."
         )
 
 
@@ -853,7 +868,7 @@ def adaptive_monte_carlo(
 
 # Convenience functions for common use cases
 def integrate_gaussian_quadrature_mc(
-    mean: NDArray, cov: NDArray, integrand: MCIntegrand, num_samples: int = 10000
+    mean: NDArray, cov: NDArray, integrand: MCIntegrand, num_samples: int = 10000, seed: int | None = None
 ) -> MCResult:
     """The integral of ``integrand`` over all of R^d, by importance sampling from N(mean, cov) (#2648, ruling 8).
 
@@ -861,20 +876,39 @@ def integrate_gaussian_quadrature_mc(
     drawn from N(mean, cov) directly and the estimate is mean(f(x) / p(x)), p the normal density, unbiased for the
     integral of f over R^d. Its variance is finite only when the integral of f^2 / p is: an integrand with heavier
     tails than the Gaussian, or one that is not integrable (f = 1), gives an estimate whose standard error means
-    nothing.
+    nothing. f / p is formed in log space and rescaled by its largest value in the draw before averaging, so neither
+    p nor 1 / p overflows on its own (review 2 of #2664); the estimate overflows only when that largest f / p does.
+
+    ``cov`` must be symmetric positive definite, and is refused by name otherwise. ``seed`` fixes the draw.
     """
     import time
 
     start_time = time.time()
-    config = MCConfig(num_samples=num_samples)
+    config = MCConfig(num_samples=num_samples, seed=seed)
     mean = np.asarray(mean, dtype=float)
+    cov = np.asarray(cov, dtype=float)
+    if cov.shape != (len(mean), len(mean)) or not np.allclose(cov, cov.T, rtol=1e-12, atol=0.0):
+        raise ValueError(
+            f"integrate_gaussian_quadrature_mc: cov must be a symmetric {len(mean)}x{len(mean)} matrix; a Cholesky "
+            "factor would read only its lower triangle."
+        )
     # Cholesky, not inv() (Issue #1066): stable for an ill-conditioned covariance, and its diagonal gives log det.
-    factor = np.linalg.cholesky(np.asarray(cov, dtype=float))
+    try:
+        factor = np.linalg.cholesky(cov)
+    except np.linalg.LinAlgError as exc:
+        raise ValueError(
+            "integrate_gaussian_quadrature_mc: cov must be positive definite; it has no Cholesky factor."
+        ) from exc
     z = np.random.RandomState(config.seed).standard_normal((num_samples, len(mean)))
     points = mean + z @ factor.T
     log_density = -0.5 * np.sum(z**2, axis=1) - 0.5 * len(mean) * np.log(2.0 * np.pi) - np.sum(np.log(np.diag(factor)))
-    contributions = np.asarray(integrand(points), dtype=float) * np.exp(-log_density)
-    return _mc_result(contributions, config, start_time)
+    values = np.asarray(integrand(points), dtype=float)
+    with np.errstate(divide="ignore"):
+        log_ratio = np.log(np.abs(values)) - log_density
+    finite = log_ratio[np.isfinite(log_ratio)]
+    shift = float(np.max(finite)) if finite.size else 0.0
+    contributions = np.sign(values) * np.exp(log_ratio - shift)
+    return _mc_result(contributions, config, start_time, scale=float(np.exp(shift)))
 
 
 def estimate_expectation(samples: NDArray, weights: NDArray | None = None) -> tuple[float, float]:
