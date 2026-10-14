@@ -34,8 +34,11 @@ Validation Logic
 The check_solver_duality() function uses _scheme_family traits to classify
 solver pairs:
 
-1. **Same family, Type A** → DISCRETE_DUAL (exact transpose)
-2. **Same family, Type B** → CONTINUOUS_DUAL (asymptotic transpose)
+1. **Same family, Type A** → DISCRETE_DUAL (the family's pairs are exact transposes when configured alike)
+2. **Same family, Type B** → CONTINUOUS_DUAL (asymptotic transposes when configured alike)
+
+The assembled operators are not compared: a same-family pair configured apart -- another numerical Hamiltonian, or
+another advection scheme -- is reported by its family (#1689 part 2; computing it from the operators is #2671).
 3. **Different families** → NOT_DUAL (mixing FDM with GFDM breaks duality)
 4. **Missing trait** → VALIDATION_SKIPPED (unannotated solvers)
 
@@ -60,13 +63,16 @@ class DualityStatus(Enum):
     Classification of HJB-FP duality relationship.
 
     Values:
-        DISCRETE_DUAL: Exact discrete transpose (L_FP = L_HJB^T)
-        CONTINUOUS_DUAL: Asymptotic transpose (L_FP = L_HJB^T + O(h))
+        DISCRETE_DUAL: Both solvers are of one Type A family, whose pairs are exact discrete transposes
+            (L_FP = L_HJB^T) when configured alike. Read from ``_scheme_family``; the operators are not compared
+            (#2671).
+        CONTINUOUS_DUAL: Both solvers are of one Type B family, whose pairs are asymptotic transposes
+            (L_FP = L_HJB^T + O(h)) when configured alike. Read from ``_scheme_family`` too.
         NOT_DUAL: Different scheme families, or an SL pair whose halves do not sub-step alike (duality broken)
         VALIDATION_SKIPPED: Cannot validate (missing traits)
     """
 
-    DISCRETE_DUAL = "discrete_dual"  # Type A: FDM, SL, FVM
+    DISCRETE_DUAL = "discrete_dual"  # one Type A family (FDM, SL, FVM); the operators are not compared (#2671)
     CONTINUOUS_DUAL = "continuous_dual"  # Type B: GFDM, PINN
     NOT_DUAL = "not_dual"  # Mixed families, or an SL pair sub-stepping on one side only (#2440)
     VALIDATION_SKIPPED = "validation_skipped"  # Missing _scheme_family
