@@ -3,7 +3,7 @@
   - `mfgarchon.core.component_configs` (`StandardMFGConfig`, `NetworkMFGConfig`, `VariationalMFGConfig`,
     `StochasticMFGConfig`, `NeuralMFGConfig`, `RLMFGConfig`, `ImplicitGeometryConfig`, `AMRConfig`,
     `TimeDependentDomainConfig`, `MultiPopulationMFGConfig`) and `mfgarchon.core.mfg_components_nested` (its own
-    `MFGComponents`). Each was imported only by the other, and nothing imported the pair. This closes #2558's first row.
+    `MFGComponents`). Each was imported only by the other, and nothing imported the pair. This answers #2558's first row.
   - `ErgodicConditions`, which was exported at the top level. It declared a stationary problem that no `MFGProblem`
     accepted. It comes back together with an ergodic mode, should one be designed.
   - `mfgarchon.factory.solver_factory.SolverFactoryConfig` and
