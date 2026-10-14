@@ -599,8 +599,9 @@ def retired_parameters(
     and are let through. Each value of ``replacements`` is then the reason, with the remedy where there is
     one, and the message says the input never had an effect.
 
-    Two limits of this mode:
+    Three limits of this mode:
     - A ``@dataclass`` subclass generates its own ``__init__``, which this wrapper does not cover.
+    - Assignment after construction (``obj.name = value``) is not refused.
     - When the name goes at ``removal``, a parameter after it must not take its position. Make the later
       parameters keyword-only, or keep a placeholder; deleting it shifts every later positional argument
       silently.

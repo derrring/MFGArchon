@@ -10,8 +10,9 @@
 3. Their default is `NEVER_READ`, which the refusal lets through, so `dataclasses.replace` and the `asdict` /
    `astuple` round trips -- which pass every field back in -- still work (review 1 of #2650, B1).
 
-Not pinned: that a generated solver runs. Its source does not compile today -- the template substitution does not
-indent multi-line snippets, and two generated methods use an undefined `x_idx` -- and the package docstring says so.
+Not pinned: that a generated solver runs. Its source does not compile today, because the template substitution does
+not indent multi-line snippets; repaired by hand, the generated FP solver still raises `NameError` on an undefined
+`x_idx` (#2655). The package docstring says so.
 """
 
 from __future__ import annotations
@@ -128,8 +129,11 @@ def test_a_round_trip_passes_the_never_read_default_back():
     assert dataclasses.replace(hints, vectorizable=False).vectorizable is False
     assert PerformanceProfile(**dataclasses.asdict(profile)) == profile
     assert DiscretizationScheme(*dataclasses.astuple(scheme)) == scheme
-    assert copy.deepcopy(hints) == hints
-    assert pickle.loads(pickle.dumps(profile)) == profile
+    for obj in (scheme, profile, hints):
+        assert copy.copy(obj) == obj
+        assert copy.deepcopy(obj) == obj
+        for protocol in range(pickle.HIGHEST_PROTOCOL + 1):
+            assert pickle.loads(pickle.dumps(obj, protocol=protocol)) == obj, protocol
 
 
 def test_a_call_that_does_not_bind_keeps_the_function_in_its_message():
