@@ -5,11 +5,12 @@
       `boundary="all"`, which is every face); then declaration order.
     - A node several faces share takes a choice among those faces' own segments, by one more rule after
       priority: DIRICHLET before any other condition.
-    - A point query exactly at a corner that names no face takes the node's answer there, refusals included. A
-      `region` covering part of a face refuses that face's corners. A segment shadowed on every face, one holding
-      no node inside a face, or a marked region covering part of a face refuses every corner, including corners
-      it does not reach. Naming the face (`face=`) reads the point on that face. The particle solver names the
-      first face it finds a particle on, so it does not reach this rule.
+    - A point query exactly at a corner that names no face takes each face's own segment, read at the point only
+      where that face is partly covered, and the corner order chooses among them. So it gives the node's answer
+      wherever the node answers, and where the node refuses only because a `region` covers part of a face, the
+      point still answers. Any other refusal stands: a segment shadowed on every face refuses every corner.
+      Naming the face (`face=`) reads the point on that face. The particle solver names the first face it finds a
+      particle on, so it does not reach this rule.
     - Under `corner_strategy="average"` or `"mollify"`, a corner whose faces impose different conditions is
       refused, and one whose faces agree is answered. Each reader judges "different" by its own sameness: the
       semi-Lagrangian enforcement compares what it writes, so it answers a corner that differs only in

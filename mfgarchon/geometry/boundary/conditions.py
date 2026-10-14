@@ -558,7 +558,7 @@ class BoundaryConditions:
         """The segment that governs a node shared by several faces -- a corner, or an edge in 3-D (#2512 B1).
 
         Each face's own segment comes from :meth:`segment_for_face`; ``corner_strategy`` then chooses among
-        them (:meth:`_corner_choice`). A point at the corner follows the node (:meth:`segment_for_point`).
+        them (:meth:`_corner_choice`). A point at the corner is resolved at the point (:meth:`segment_for_point`).
         """
         return self._corner_resolution(tuple(faces), geometry, equivalent)[1]
 
@@ -623,48 +623,52 @@ class BoundaryConditions:
 
         The point-level reading of the same placement rule as :meth:`segment_for_face`, each segment
         tested by :meth:`BCSegment.matches_point`: on a face that one governs whole, both answer the
-        same. Without ``face``, a point that lies on several faces (a corner) takes the node's answer there:
-        :meth:`segment_for_corner`, the choice ``corner_strategy`` makes among those faces' own segments, so a
-        point and a node at a corner give one answer. That includes the node's refusals: a ``region`` covering
-        part of a face refuses that face's corners, and a segment shadowed on every face, one holding no node
-        inside a face, or a marked region covering part of a face refuses every corner, including corners it
-        does not reach. With ``face``, the point is read on that face alone and the corner rule does not apply.
+        same. The faces a point lies on are read from ``domain_bounds``, or, when the BC carries none, from
+        the bounds of the geometry the query is decided on (``geometry``, else the grid this BC is bound to).
+
+        **A point at a corner is resolved at the point** (user ruling, 2026-10-14). Without ``face``, a point
+        on several faces takes, at a corner, each face's own segment (:meth:`segment_for_face`), read at the point
+        only where that face is partly covered: where the face refuses because a segment covers only part of it,
+        the segment holding the point on that face (this method with ``face``) stands in for it. Any other refusal
+        stands. ``corner_strategy`` then chooses among them in the corner order (:meth:`_corner_choice`). So
+        wherever the node answers, the point gives the node's segment; and where the node refuses only because a
+        face is partly covered, the point answers. With ``face``, the point is read on that face alone and the
+        corner rule does not apply.
 
         Args:
             point: Spatial coordinates, shape (dimension,).
             face: The face the caller knows the point is on. Without it, every face the point lies on
-                is read from ``domain_bounds``, or the boundary is identified from ``domain_sdf``.
-            geometry: Required by a ``region_name`` segment (its marked-region mask).
+                is read from the bounds, or the boundary is identified from ``domain_sdf``.
+            geometry: Required by a ``region_name`` segment (its marked-region mask), and the source of the
+                bounds when the BC carries none.
+            tolerance: How far off a face a point may lie and still be on it.
         """
         point = np.asarray(point, dtype=float)
         geometry = self._query_geometry(geometry)
-        if face is None and self.domain_bounds is not None:
-            on = self._faces_at_point(point, tolerance)
+        bounds = self._query_bounds(geometry)
+        if face is None and bounds is not None:
+            on = self._faces_at_point(point, tolerance, bounds)
             if len(on) > 1:
-                try:
-                    return self.segment_for_corner(on, geometry)  # a point at a corner follows the node
-                except ValueError as error:
-                    raise ValueError(
-                        f"BoundaryConditions.segment_for_point: the point {point.tolist()} lies on "
-                        f"{', '.join(f.to_string() for f in on)} and, with no face named, takes the node's answer "
-                        f"there, which is refused. The node's refusal, made for the faces: {error} To read the "
-                        "point on one of those faces, pass face= (#2512 row B1)."
-                    ) from error
+                at_point = [self._corner_face_at_point(point, f, geometry, tolerance, axis_names) for f in on]
+                return self._corner_choice(at_point, ", ".join(f.to_string() for f in on))
         if face is not None:
             faces: list[str | None] = [face.to_string() if isinstance(face, BoundaryFace) else face]
-        elif self.domain_bounds is not None:
-            faces = [f.to_string() for f in self._faces_at_point(point, tolerance)] or [None]
+        elif bounds is not None:
+            faces = [f.to_string() for f in self._faces_at_point(point, tolerance, bounds)] or [None]
         elif self.domain_sdf is not None:
             faces = [self.identify_boundary_id(point, tolerance)]
         else:
-            raise ValueError("Either domain_bounds or domain_sdf must be set")
+            raise ValueError(
+                "BoundaryConditions.segment_for_point: this BC has no domain_bounds or domain_sdf, and the query has "
+                "no geometry with bounds to read the faces from. Pass geometry=, or set domain_bounds (#2512 row B1)."
+            )
         governing = []
         for boundary_id in faces:
             for segment in self._face_order():
                 if segment.matches_point(
                     point,
                     boundary_id,
-                    self.domain_bounds,
+                    bounds,
                     tolerance,
                     axis_names,
                     domain_sdf=self.domain_sdf,
@@ -974,9 +978,44 @@ class BoundaryConditions:
             )
         return True
 
-    def _faces_at_point(self, point: np.ndarray, tolerance: float) -> list[BoundaryFace]:
-        """Every box face ``point`` lies on: one on a face's interior, two or more at a corner."""
-        bounds = np.asarray(self.domain_bounds, dtype=float)
+    def _corner_face_at_point(
+        self, point: np.ndarray, face: BoundaryFace, geometry: Any, tolerance: float, axis_names: dict[int, str] | None
+    ) -> BCSegment:
+        """One face's segment for a point at a corner (:meth:`segment_for_point`): the face's own
+        (:meth:`segment_for_face`) wherever the face answers, so the point and the node agree; where the face refuses
+        and some segment covers only part of it, the segment that holds the point on that face. Any other refusal
+        stands. Reading every face at the point instead would let a segment that holds the point at a higher priority
+        override the face's answer the node takes -- review 2's B-c, a strip accepted on x_max as the wall's
+        condition, would take a Dirichlet corner from the y_max face."""
+        try:
+            return self.segment_for_face(face, geometry)
+        except ValueError:
+            if not any(self._cached_face_cover(seg, face, geometry) == "partial" for seg in self._face_order()):
+                raise
+        return self.segment_for_point(point, face, geometry, tolerance, axis_names)
+
+    def _query_bounds(self, geometry: Any) -> np.ndarray | None:
+        """The box a query reads faces from, shape (dimension, 2): ``domain_bounds``, else the bounds of ``geometry``
+        when it has them, else None. The point owner reads a point's faces from it, and the face owner a ``region``'s
+        cover when there is no grid. A solver's BC seldom carries bounds of its own; GFDM's never does, and before the
+        point readers had one owner it passed its geometry's bounds to them itself (#2512 row B1)."""
+        if self.domain_bounds is not None:
+            return np.asarray(self.domain_bounds, dtype=float)
+        from mfgarchon.geometry.protocol import GeometryProtocol  # local: the geometry package imports this one
+
+        if not isinstance(geometry, GeometryProtocol):
+            return None
+        box = geometry.get_bounds()
+        if box is None:
+            return None
+        return np.column_stack([np.asarray(box[0], dtype=float), np.asarray(box[1], dtype=float)])
+
+    def _faces_at_point(
+        self, point: np.ndarray, tolerance: float, bounds: np.ndarray | None = None
+    ) -> list[BoundaryFace]:
+        """Every box face ``point`` lies on: one on a face's interior, two or more at a corner. ``bounds``
+        defaults to ``domain_bounds``."""
+        bounds = np.asarray(self.domain_bounds if bounds is None else bounds, dtype=float)
         faces = []
         for axis in range(bounds.shape[0]):
             for side, bound in (("min", bounds[axis, 0]), ("max", bounds[axis, 1])):
@@ -1020,13 +1059,13 @@ class BoundaryConditions:
                 f"({type(geometry).__name__}). Pass the grid, or place the segment with boundary= "
                 "(#2512 row B1)."
             )
-        if self.domain_bounds is None:
+        bounds = self._query_bounds(geometry)
+        if bounds is None:
             raise ValueError(
-                f"BC segment {segment.name!r} is placed by region, and neither a grid geometry nor "
-                "domain_bounds says how far each face extends, so this reader cannot tell whether it "
-                f"covers {face.to_string()}. Pass the grid or set domain_bounds (#2512 row B1)."
+                f"BC segment {segment.name!r} is placed by region, and neither a grid geometry, nor domain_bounds, "
+                "nor a geometry with bounds says how far each face extends, so this reader cannot tell whether it "
+                f"covers {face.to_string()}. Pass the geometry or set domain_bounds (#2512 row B1)."
             )
-        bounds = np.asarray(self.domain_bounds, dtype=float)
         tol = SDF_BOUNDARY_TOL
         part_of_face = False
         for key, (low, high) in segment.region.items():
