@@ -47,6 +47,7 @@ from .extensions.topology import (  # noqa: E402
 )
 from .factory import (  # noqa: E402
     SolverFactory,
+    create_general_mfg_problem,
     create_solver,
 )
 from .geometry import (  # noqa: E402
