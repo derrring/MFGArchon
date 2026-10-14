@@ -188,10 +188,12 @@ def _hjb_fem():
     pytest.importorskip("skfem", reason="scikit-fem required for the weak-form FEM solvers")
     from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
 
-    s = HJBFEMSolver(_mesh_problem(), order=1)
-    return lambda f: s.solve_hjb_system(
-        M_density=None, U_terminal=None, U_coupling_prev=None, **({"source_term": f} if f else {})
-    )
+    p = _mesh_problem()
+    s = HJBFEMSolver(p, order=1)
+    n = s._disc.dof_coordinates.shape[0]
+    m = np.ones((p.Nt + 1, n)) / n
+    u = np.zeros((p.Nt + 1, n))
+    return lambda f: s.solve_hjb_system(m, np.zeros(n), u, **({"source_term": f} if f else {}))
 
 
 def _fp_fem():

@@ -399,8 +399,9 @@ class BaseHJBSolver(BaseNumericalSolver):
         """
         Solve standalone HJB equation (single-agent optimal control).
 
-        This method solves the HJB equation in standalone mode without Mean Field Game
-        coupling. It uses uniform density (no population effects) and is suitable for:
+        This method solves the HJB equation in standalone mode, against a frozen density: it passes the uniform
+        density ``m = 1 / |Omega|`` at every time. That has no population effect only where the coupling vanishes
+        there; otherwise H is evaluated at that constant density. It is suitable for:
         - Single-agent optimal control problems
         - HJB solver comparison and benchmarking
         - Algorithm testing and validation
@@ -422,7 +423,7 @@ class BaseHJBSolver(BaseNumericalSolver):
             >>> U = solver.solve()  # Standalone HJB solution
             >>> print(U.shape)  # (51, 101)
         """
-        # Create uniform density for standalone mode (no MFG coupling)
+        # Create the uniform density the standalone mode freezes (see the docstring: not the absence of coupling)
         # Using geometry-first API (works for any dimension)
         Nt_points = self.problem.Nt + 1  # Time points (Nt intervals + 1)
 
