@@ -186,14 +186,19 @@ class FPSLSolver(BaseFPSolver):
                 HJB solver's**; ``_create_sl_pair`` does. 0.5, Crank-Nicolson (default), keeps a density
                 non-negative up to diffusion number D dt / dx^2 = 3/2 (``positivity_edge``; further on small grids); 1,
                 backward Euler, at every step, at first order in time (#2463).
-                At a no-flux wall the choice is a trade-off the library leaves to the caller (#1855). The split
-                step's steady state depends on (1 - theta) dt, because theta's explicit part diffuses the advection
-                step's wall increment on its own. The wall node's bias is the semi-discrete steady state's, first
-                order in h, plus about K (1 - theta) |alpha| dt / h, with K = 0.74 to 0.96 over nx = 41 to 321 on
-                #1855's fixture. So along dt proportional to h it does not refine away at 0.5, and at 1 it is absent.
-                The price of 1: the interior L∞ error of #2468's sigma = 0.1 oracle is 1.3 to 1.5 times larger, and
-                a pair whose HJB half does not sub-step runs away faster (#2465); HJB-SL's own error on a Cole-Hopf
-                oracle is 7% to 39% smaller. Measured in #1855 comments 6156109020, 6159639438 and 6159690880.
+                At a no-flux wall the choice is a trade-off the library leaves to the caller (#1855). Measured in
+                1-D on #1855's fixture, with dt the step the advection takes: the split step's steady state depends
+                on (1 - theta) dt, because theta's explicit part diffuses the advection's wall increment apart from
+                the diffusive increment that balances it. The wall node's bias is the semi-discrete steady state's,
+                first order in h, plus an excess of the same sign of about K (1 - theta) |alpha| dt / h, with
+                K = 0.74 to 0.96 at the wall the drift points into and 0.80 to 1.02 at the other, over nx = 41 to
+                321. That excess does not refine away along dt proportional to h at 0.5, and is absent at 1. A step
+                whose foot CFL exceeds max(1, cfl_target) is cut into sub-steps (``cfl_substeps``), so the excess
+                stays near K (1 - theta) times the sub-step's CFL; with sub-stepping off and |alpha| dt / h above 1
+                the semi-discrete part grows too. At 1, the interior L∞ error of #2468's sigma = 0.1 oracle is 1.3
+                to 1.5 times larger, and a pair whose HJB half does not sub-step ran away faster on #1880's fixture
+                (#2465); in its favour, HJB-SL's own error on a Cole-Hopf oracle is 7% to 39% smaller. Measured in
+                #1855 comments 6156109020, 6159639438, 6159690880 and 6159984274.
         """
         super().__init__(problem)
         self.fp_method_name = "Adjoint Semi-Lagrangian"

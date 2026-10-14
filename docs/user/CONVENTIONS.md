@@ -624,11 +624,13 @@ axes and refused. The sequence form is the convention, and library code uses it.
   axis, since the deposit's rate departs from the equation's there; in 1-D a compressive stagnation point on a node
   gets twice the equation's rate (#2468, #2645). Where $\sigma = 0$ drives mass into a wall, the exact law has an atom there
   and $L^1$ does not converge either. With $\sigma > 0$, away from walls, the density converges pointwise; where
-  mass reaches a no-flux wall, at the default `diffusion_theta`, it need not (#1855): the split step's steady state
-  carries a wall bias of about $K(1-\theta)\,|\alpha|\,\Delta t/h$, with $K$ between 0.74 and 0.96 on #1855's
-  fixture, which does not refine away along $\Delta t \propto h$ at $\theta = 0.5$ and is absent at $\theta = 1$.
-  The library leaves that trade-off to the caller; its price is stated at `FPSLSolver`'s `diffusion_theta`. A
-  peak value or a plot of an FP-SL density is a pointwise reading.
+  mass reaches a no-flux wall, at the default `diffusion_theta`, it need not (#1855). Beyond the semi-discrete
+  steady state's wall bias, which is first order in $h$, the split step adds an excess of the same sign of about
+  $K(1-\theta)\,|\alpha|\,\Delta t/h$, with $\Delta t$ the step the advection takes and $K$ between 0.74 and
+  1.02 on #1855's 1-D fixture. That excess does not refine away along $\Delta t \propto h$ at $\theta = 0.5$ and
+  is absent at $\theta = 1$. The library leaves that trade-off to the caller; the sub-stepped case and the price
+  are stated at `FPSLSolver`'s `diffusion_theta`. A peak value or a plot of an FP-SL density is a pointwise
+  reading.
 
 ### What a tolerance bounds
 
