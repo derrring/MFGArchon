@@ -542,7 +542,9 @@ def test_integrated_howard_inner_solver_lq_1d():
     x_c = LX / 2
     U_T = 0.5 * (x_pts - x_c) ** 2
 
-    U = gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)  # delegates to Howard internally
+    U = gfdm.solve_hjb_system(
+        M_density=np.ones((gfdm.problem.Nt + 1, *U_T.shape)), U_terminal=U_T
+    )  # delegates to Howard internally
 
     assert np.all(np.isfinite(U)), "integrated Howard path produced non-finite U"
     probe_idx = int(np.argmin(np.abs(x_pts - (x_c - 1.0))))
@@ -572,7 +574,7 @@ def test_integrated_howard_consumes_nonconstant_volatility_field():
         )
         U_T = 0.5 * (pts[:, 0] - 1.0) ** 2
         return gfdm.solve_hjb_system(
-            M_density=None,
+            M_density=np.ones((gfdm.problem.Nt + 1, *U_T.shape)),
             U_terminal=U_T,
             volatility=volatility,
             volatility_kind="field" if np.ndim(volatility) else None,
@@ -618,7 +620,7 @@ def test_integrated_howard_runs_on_a_non_socp_scheme_and_warns():
     U_T = 0.5 * (pts[:, 0] - 2.0) ** 2
 
     with pytest.warns(UserWarning, match="non-SOCP"):
-        U = gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+        U = gfdm.solve_hjb_system(M_density=np.ones((gfdm.problem.Nt + 1, *U_T.shape)), U_terminal=U_T)
 
     assert np.all(np.isfinite(U)), "the non-SOCP path must produce a finite solution"
     assert np.allclose(U[problem.Nt], U_T), "terminal must be preserved"
@@ -632,7 +634,7 @@ def test_integrated_howard_requires_hamiltonian_class():
     gfdm = _make_gfdm_solver(pts, bdry, geom, problem, k_neighbors=5, inner_solver="howard")
     U_T = 0.5 * (pts[:, 0] - 2.0) ** 2
     with pytest.raises(ValueError, match="hamiltonian_class"):
-        gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+        gfdm.solve_hjb_system(M_density=np.ones((gfdm.problem.Nt + 1, *U_T.shape)), U_terminal=U_T)
 
 
 # ---------------------------------------------------------------------------
@@ -664,7 +666,7 @@ def test_integrated_howard_rejects_nonquadratic_control_cost():
     H = SeparableHamiltonian(control_cost=L1ControlCost(lambda_=1.0))
     gfdm, U_T = _howard_gfdm_with_hamiltonian(H)
     with pytest.raises(NotImplementedError, match="quadratic"):
-        gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+        gfdm.solve_hjb_system(M_density=np.ones((gfdm.problem.Nt + 1, *U_T.shape)), U_terminal=U_T)
 
 
 def test_integrated_howard_rejects_congestion_hamiltonian():
@@ -690,7 +692,7 @@ def test_integrated_howard_rejects_congestion_hamiltonian():
     assert H.control_cost.lambda_ == 1.0
     gfdm, U_T = _howard_gfdm_with_hamiltonian(H)
     with pytest.raises(NotImplementedError, match="congestion"):
-        gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+        gfdm.solve_hjb_system(M_density=np.ones((gfdm.problem.Nt + 1, *U_T.shape)), U_terminal=U_T)
 
 
 # ---------------------------------------------------------------------------
@@ -853,7 +855,7 @@ def test_integrated_howard_dirichlet_value():
     )
     gfdm, pts, bdry = _make_howard_gfdm_with_bc(bc)
     U_T = 0.5 * (pts[:, 0] - 2.0) ** 2  # terminal != g_D at the boundary
-    U = gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+    U = gfdm.solve_hjb_system(M_density=np.ones((gfdm.problem.Nt + 1, *U_T.shape)), U_terminal=U_T)
     assert np.all(np.isfinite(U))
     assert np.allclose(U[0, bdry], g_D, atol=1e-6), (
         f"Dirichlet boundary not honored: U[0, boundary]={U[0, bdry]} != g_D={g_D} "
@@ -876,7 +878,7 @@ def test_integrated_howard_rejects_robin_nonzero_alpha():
     gfdm, pts, _ = _make_howard_gfdm_with_bc(bc)
     U_T = 0.5 * (pts[:, 0] - 2.0) ** 2
     with pytest.raises(NotImplementedError, match=r"alpha"):
-        gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+        gfdm.solve_hjb_system(M_density=np.ones((gfdm.problem.Nt + 1, *U_T.shape)), U_terminal=U_T)
 
 
 # ---------------------------------------------------------------------------
@@ -1133,7 +1135,7 @@ def test_howard_robin_nonzero_beta_rejected():
     gfdm, pts, _ = _make_howard_gfdm_with_bc(bc)
     U_T = 0.5 * (pts[:, 0] - 2.0) ** 2
     with pytest.raises(NotImplementedError, match=r"beta"):
-        gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+        gfdm.solve_hjb_system(M_density=np.ones((gfdm.problem.Nt + 1, *U_T.shape)), U_terminal=U_T)
 
 
 def test_howard_unresolved_provider_fails_loud():
@@ -1144,7 +1146,7 @@ def test_howard_unresolved_provider_fails_loud():
     gfdm, pts, _ = _make_howard_gfdm_with_bc(bc)  # explicit BC, providers NOT resolved
     U_T = 0.5 * (pts[:, 0] - 2.0) ** 2
     with pytest.raises(AssertionError, match=r"unresolved BCValueProvider"):
-        gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+        gfdm.solve_hjb_system(M_density=np.ones((gfdm.problem.Nt + 1, *U_T.shape)), U_terminal=U_T)
 
 
 def test_howard_honors_resolved_robin_in_solution():
@@ -1167,7 +1169,7 @@ def test_howard_honors_resolved_robin_in_solution():
     )
     gfdm, pts, bdry = _make_howard_gfdm_with_bc(bc, sigma=sigma)
     U_T = 0.5 * (pts[:, 0] - 2.0) ** 2
-    U = gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+    U = gfdm.solve_hjb_system(M_density=np.ones((gfdm.problem.Nt + 1, *U_T.shape)), U_terminal=U_T)
     assert np.all(np.isfinite(U))
 
     bi_left, bi_right = int(bdry[0]), int(bdry[1])
@@ -1288,7 +1290,7 @@ def test_dmp_guard_warns_on_howard_path_when_advection_dominated(mfg_caplog):
 
         x_pts = pts[:, 0]
         U_T = 0.5 * (x_pts - LX / 2) ** 2
-        gfdm.solve_hjb_system(M_density=None, U_terminal=U_T)
+        gfdm.solve_hjb_system(M_density=np.ones((gfdm.problem.Nt + 1, *U_T.shape)), U_terminal=U_T)
 
         assert any("DMP not guaranteed" in m for m in mfg_caplog.messages), (
             "DMP guard never warned on the Howard path (Issue #1381 wiring gap)"

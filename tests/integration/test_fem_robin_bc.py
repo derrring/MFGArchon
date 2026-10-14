@@ -309,7 +309,11 @@ class TestRobinSolveLoopWiring:
         d_dofs, _ = solver._dirichlet_dofs_and_values()
         assert len(d_dofs) == 0, "Robin segments must be excluded from the Dirichlet dof set"
         N = solver.n_dof
-        U = solver.solve_hjb_system(M_density=np.ones((problem.Nt + 1, N)) / N, U_terminal=np.zeros(N))
+        U = solver.solve_hjb_system(
+            M_density=np.ones((problem.Nt + 1, N)) / N,
+            U_terminal=np.zeros(N),
+            U_coupling_prev=np.zeros((problem.Nt + 1, N)),
+        )
         assert np.all(np.isfinite(U))
 
 

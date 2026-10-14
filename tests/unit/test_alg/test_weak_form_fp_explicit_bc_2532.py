@@ -231,7 +231,11 @@ def test_hjb_fem_holds_a_shared_dirichlet_of_every_readable_value(value):
 
     solver = HJBFEMSolver(_problem(_mesh(1), _exit(1, value)))
     x = solver._disc.dof_coordinates[:, 0]
-    U = np.asarray(solver.solve_hjb_system(M_density=np.ones((NT + 1, x.size)), U_terminal=np.zeros(x.size)))
+    U = np.asarray(
+        solver.solve_hjb_system(
+            M_density=np.ones((NT + 1, x.size)), U_terminal=np.zeros(x.size), U_coupling_prev=np.zeros((NT + 1, x.size))
+        )
+    )
     np.testing.assert_allclose(U[:-1, np.isclose(x, 1.0)], _as_number(value), rtol=1e-6)
 
 
@@ -272,7 +276,13 @@ def _wall_and_exit(route: str, bc: BoundaryConditions) -> tuple[float, float]:
     if route == "fp-explicit":
         field = np.asarray(solver.solve_fp_system(M_initial=np.zeros(x.size), potential_field=None))[-1]
     else:
-        field = np.asarray(solver.solve_hjb_system(M_density=np.ones((NT + 1, x.size)), U_terminal=np.zeros(x.size)))[0]
+        field = np.asarray(
+            solver.solve_hjb_system(
+                M_density=np.ones((NT + 1, x.size)),
+                U_terminal=np.zeros(x.size),
+                U_coupling_prev=np.zeros((NT + 1, x.size)),
+            )
+        )[0]
     return float(field[np.isclose(x, 0.0)][0]), float(field[np.isclose(x, 1.0)][0])
 
 
@@ -352,7 +362,11 @@ def _solve_on_disc(route: str, name: str, tag_exit: bool):
     n = solver._disc.dof_coordinates.shape[0]
     if route == "fp-explicit":
         return solver, np.asarray(solver.solve_fp_system(M_initial=np.zeros(n), potential_field=None))[-1]
-    return solver, np.asarray(solver.solve_hjb_system(M_density=np.ones((NT + 1, n)), U_terminal=np.zeros(n)))[0]
+    return solver, np.asarray(
+        solver.solve_hjb_system(
+            M_density=np.ones((NT + 1, n)), U_terminal=np.zeros(n), U_coupling_prev=np.zeros((NT + 1, n))
+        )
+    )[0]
 
 
 @pytest.mark.parametrize("route", ["fp-explicit", "hjb-shared"])
@@ -398,7 +412,11 @@ def test_fem_reads_a_verifiably_zero_value_as_zero(route, value):
     else:
         solver = HJBFEMSolver(_problem(_mesh(1), _exit(1, value)))
         x = solver._disc.dof_coordinates[:, 0]
-        field = np.asarray(solver.solve_hjb_system(M_density=np.ones((NT + 1, x.size)), U_terminal=np.ones(x.size)))[
-            :-1
-        ]
+        field = np.asarray(
+            solver.solve_hjb_system(
+                M_density=np.ones((NT + 1, x.size)),
+                U_terminal=np.ones(x.size),
+                U_coupling_prev=np.zeros((NT + 1, x.size)),
+            )
+        )[:-1]
     np.testing.assert_array_equal(field[:, np.isclose(x, 1.0)], 0.0)

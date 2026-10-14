@@ -521,7 +521,11 @@ def test_fem_passes_each_dof_as_x_of_shape_d():
     conditions = Conditions(m_initial=lambda x: 8 / 9 + 0.0 * x[..., 0], u_terminal=lambda x: 0.0, T=0.5)
     solver = HJBFEMSolver(MFGProblem(model=model, domain=mesh, conditions=conditions, Nt=4))
     x = solver._disc.dof_coordinates[:, 0]
-    U = np.asarray(solver.solve_hjb_system(M_density=np.ones((5, x.size)), U_terminal=np.zeros(x.size)))
+    U = np.asarray(
+        solver.solve_hjb_system(
+            M_density=np.ones((5, x.size)), U_terminal=np.zeros(x.size), U_coupling_prev=np.zeros((5, x.size))
+        )
+    )
     np.testing.assert_allclose(U[:-1, np.isclose(x, 1.0)], 1.5, rtol=1e-12)
 
 
