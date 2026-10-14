@@ -287,7 +287,8 @@ class WeakFormHJBSolver(BaseHJBSolver):
                 f"{type(self).__name__}.solve() runs the Picard branch, which evaluates H at the gradient of a "
                 "coupling iterate, and a standalone solve has none: it would linearize at the terminal condition, "
                 "which nobody chose (#2642). Call solve_hjb_system(M_density, U_terminal, U_coupling_prev) with the "
-                "iterate you mean, or use the Newton inner solver, which does not read it."
+                "iterate you mean, or solve_hjb_system(..., use_newton=True) -- or build a meshless solver with "
+                "use_newton=True -- since the Newton inner solver does not read it."
             )
         return super().solve()
 
@@ -326,7 +327,8 @@ class WeakFormHJBSolver(BaseHJBSolver):
         ``M_density`` and ``U_terminal`` are required: both branches read them. ``U_coupling_prev`` is required on
         the Picard branch, which evaluates H at its gradient, and unused by the Newton inner solver. Each used to
         default when omitted -- the density to ``1/N``, the other two to zeros -- and a Picard solve with a zero
-        iterate is the heat equation for a quadratic H (#2642).
+        iterate freezes H at p = 0: the backward heat equation with source ``-H(x, m, 0)``, which for #2642's
+        ``H = |p|^2 / 2`` is the heat equation itself.
         """
         if use_newton is None:
             use_newton = self._use_newton_default
@@ -371,9 +373,9 @@ class WeakFormHJBSolver(BaseHJBSolver):
         if U_coupling_prev is None and not use_newton:
             raise ValueError(
                 "U_coupling_prev is required on the Picard branch (use_newton=False): each step evaluates H at the "
-                "gradient of this iterate, so without it the solve has no equation to linearize -- defaulted to zeros, "
-                "a quadratic H became the heat equation (#2642). Pass the previous coupling iterate, or "
-                "use_newton=True, which does not read it."
+                "gradient of this iterate, so without it the solve has no point to linearize at -- defaulted to zeros, "
+                "H was frozen at p = 0, the backward heat equation with source -H(x, m, 0) (#2642). Pass the previous "
+                "coupling iterate, or use_newton=True, which does not read it."
             )
         if M_density.ndim == 1:
             M_density = np.tile(M_density, (Nt + 1, 1))

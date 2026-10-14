@@ -2,8 +2,9 @@
 
 `WeakFormHJBSolver` (HJB-FEM, meshless Galerkin) defaulted a missing `M_density` to ``1/N``, `U_terminal` to zeros and
 `U_coupling_prev` to zeros, and `HJBGFDMSolver` defaulted `M_density` to ones. Each default was read. On the weak-form
-Picard branch H is evaluated at the gradient of `U_coupling_prev`, so a standalone call without it solved the backward
-heat equation: 0.31 off the exact solution of the issue's Dirichlet problem at every resolution. HJB-FDM, SL and WENO
+Picard branch H is evaluated at the gradient of `U_coupling_prev`, so a standalone call without it froze H at p = 0 --
+for the issue's H = |p|^2 / 2, the backward heat equation: 0.31 off the exact solution of its Dirichlet problem at
+every resolution (on 33d26557). HJB-FDM, SL and WENO
 refuse the same call. `BaseHJBSolver.solve()` reached the same branch one layer up, passing the terminal condition as
 the iterate.
 
