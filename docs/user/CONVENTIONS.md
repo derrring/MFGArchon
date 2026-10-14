@@ -805,9 +805,9 @@ Composition is by whole component — `with_model`, `with_domain`, `with_conditi
 change through `dataclasses.replace`. There are no per-field shortcuts.
 
 *Not yet met (#2429): `Model(lagrangian=...)` cannot yet be assembled; `coupling_cost` and
-`terminal_coupling` are read by nothing; `ErgodicConditions` (`m_stationary_guess`, `discount_rate`)
-is declared but no `MFGProblem` accepts it; and `Model` defaults the volatility to `0.1` where the
-legacy constructor gives `0.0`.*
+`terminal_coupling` are read by nothing (#1642); and `Model` defaults the volatility to `0.1` where the
+legacy constructor gives `0.0`. There is no stationary (ergodic) problem: `ErgodicConditions`, which
+declared one that no `MFGProblem` accepted, is removed (#2648).*
 
 A **legacy constructor**, the components= form `MFGProblem(geometry=, components=, T=, Nt=, …)`, also exists. It
 emits a `PendingDeprecationWarning`: the model/domain/conditions form is planned to replace it, and nothing needs

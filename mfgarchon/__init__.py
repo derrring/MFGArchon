@@ -37,7 +37,7 @@ from .core.mfg_problem import (  # noqa: E402
     MFGComponents,
     MFGProblem,
 )
-from .core.model import Conditions, ErgodicConditions, Model  # noqa: E402
+from .core.model import Conditions, Model  # noqa: E402
 from .extensions.topology import (  # noqa: E402
     NetworkMFGComponents,
     NetworkMFGProblem,
@@ -135,7 +135,6 @@ __all__ = [
     # The model/domain/conditions form (Issue #875)
     "Model",
     "Conditions",
-    "ErgodicConditions",
     # Hamiltonian/Lagrangian classes (Issues #651, #667, #673)
     "ControlCostBase",
     "QuadraticControlCost",
