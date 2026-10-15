@@ -2313,8 +2313,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         refused rather than measured some other way, since its weights cannot be recovered from ``integrate`` short
         of integrating N indicator fields (#1642).
         """
-        if self._measures_on_the_grids_weights():
-            return SpatialMeasure(np.asarray(self.geometry.measure_weights(), dtype=float), "grid")
+        measure_weights = getattr(self.geometry, "measure_weights", None)
+        if not self.is_network and callable(measure_weights):
+            return SpatialMeasure(np.asarray(measure_weights(), dtype=float), "grid")
         if not self.is_network and callable(getattr(self.geometry, "integrate", None)):
             raise TypeError(
                 f"{type(self.geometry).__name__} has integrate() but no measure_weights(). The problem's measure is "
