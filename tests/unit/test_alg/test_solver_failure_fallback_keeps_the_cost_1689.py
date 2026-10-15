@@ -3,8 +3,8 @@
 The semi-Lagrangian n-D DPP step minimises dt * L(x, alpha, m, t) + U_next(x + alpha dt) per node with L-BFGS-B,
 started at alpha = 0. For a non-smooth L that is the kink, and the line search often ends with ``success=False``.
 The step then used U_next(x): the cost at alpha = 0 without its running cost. A constant potential V, which must
-shift U by exactly V * (T - t), shifted it by less -- by up to 1.004 against 1.0 at V = 2 on this fixture. The step
-now takes the minimiser's attained cost, the cost of the control it returns, whatever `success` says.
+shift U by exactly V * (T - t), shifted it by less -- by between -0.0037 and 0.372 against 1.0 at V = 2 on this
+fixture. The step now evaluates the cost of the control the minimiser returns, whatever `success` says.
 
 The network HJB's ODE path integrates backward with solve_ivp. When the integrator stopped short of t = 0, the
 solver warned and filled every level it had not reached by extrapolating the trajectory, so a node potential singular
@@ -39,6 +39,9 @@ def _solve(potential: float, monkeypatch=None, failures: list | None = None) -> 
         def counting(fun, x0, *args, **kwargs):
             result = real(fun, x0, *args, **kwargs)
             failures.append(not result.success)
+            if not result.success:
+                # On a failed exit scipy's result.fun need not be the cost at result.x, so the step must not read it.
+                result.fun = result.fun + 1.0
             return result
 
         monkeypatch.setattr(sl, "minimize", counting)
