@@ -5,7 +5,8 @@
   - a multi-population run composes each population's source;
   - a regime adds its source to the cross-regime term, with the FP side under the regime's integrating factor;
   - each noise path's conditional problem is the parent rebuilt through `MFGProblem._rebuilt`, which now keeps a
-    record of the `components=` form's inputs too.
+    record of the `components=` form's inputs too. So the conditional problem also carries the parent's `lambda_`,
+    `coupling_coefficient`, `obstacles` and `drift`, which the hand-built path reset to their defaults.
 - **Two refusals where there were silent drops.**
   - `BaseHJBSolver.solve()`, the standalone HJB entry, passes no source, so it now raises on a problem that
     declares one, naming the coupled solvers and `solve_hjb_system(source_term=)` as the routes.
@@ -16,4 +17,6 @@
 - **A solver that cannot take a source now says so** on these paths. Of the exported FP solvers, `FPNetworkSolver`
   and `FPGFDMSolver` do not name `source_term`. A multi-population run with one of them now raises
   `NotImplementedError` when the population declares a source; it used to pass none. A regime run, which always
-  hands its FP solver the inflow, raises the same error where it used to fail with a `TypeError`.
+  hands its FP solver the inflow, raises the same error where it used to fail with a `TypeError`. So does a regime
+  whose solver is wrapped by a bare `(*args, **kwargs)` forwarder, which used to run with the value function routed
+  into the wrong argument (#2703); a wrapper keeps the signature it wraps with `functools.wraps`.

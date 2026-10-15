@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 import numpy as np
@@ -45,6 +46,12 @@ _RETIRED_VOLATILITY_ATTRIBUTE = (
     "from mfgarchon.utils.pde_coefficients, which refuses an array or a callable rather than "
     "averaging it (#2376)."
 )
+
+# Set by `MFGProblem._rebuilt` while it replays a components-form record: that problem's own construction already
+# told its caller the form is planned to be replaced, so the replay does not say it again (#2666). A ContextVar, not a
+# warnings filter: `warnings.catch_warnings` resets the once-per-location registry on every rebuild, so a warning raised
+# inside each conditional solve printed once per noise path, and it is process-global, so not thread-safe.
+_REPLAYING_A_RECORD: ContextVar[bool] = ContextVar("mfgproblem_replaying_a_record", default=False)
 
 
 # ============================================================================
@@ -490,10 +497,12 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             self._v1_model = None
             self._v1_conditions = None
             self._v1_inputs = {}
-            # This form's twin of `_v1_inputs`: every input it was given, as given, before the normalisation
+            # This form's twin of `_v1_inputs`: every input it was given, held by reference before the normalisation
             # below. `_rebuilt` reads it, so a rebuild of a components-form problem carries its source, nonlocal
-            # operator, state penalty, ... -- StochasticMFGProblem.create_conditional_problem built its conditional
-            # problem by hand from five fields and dropped them all (#2666).
+            # operator, ... -- StochasticMFGProblem.create_conditional_problem built its conditional problem by hand
+            # from five fields and dropped them all (#2666). By reference is not "as given" for `components` under
+            # `state_penalty`: the constructor composes the wall into the caller's MFGComponents itself, so a replay of
+            # this record composes it again (#2702). No public route replays it with a state penalty today.
             self._components_inputs: dict[str, Any] = {
                 "constraints": constraints,
                 "spatial_bounds": spatial_bounds,
@@ -522,12 +531,13 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             # form is not fixed yet, so a caller is not told to migrate to it and no removal clock runs (user ruling,
             # 2026-10-12, #2184 option A). The legacy path is not in the deprecation registry. The form is named
             # generically: a list of its routes (geometry=, spatial_bounds=, network=) names the wrong one to someone.
-            warnings.warn(
-                "The components= form of MFGProblem is planned to be replaced by the model/domain/conditions "
-                "form, MFGProblem(model=, domain=, conditions=). Nothing needs to change now.",
-                PendingDeprecationWarning,
-                stacklevel=2,
-            )
+            if not _REPLAYING_A_RECORD.get():
+                warnings.warn(
+                    "The components= form of MFGProblem is planned to be replaced by the model/domain/conditions "
+                    "form, MFGProblem(model=, domain=, conditions=). Nothing needs to change now.",
+                    PendingDeprecationWarning,
+                    stacklevel=2,
+                )
 
         # Normalize parameter aliases
         if time_domain is not None:
@@ -2826,16 +2836,11 @@ See: docs/user/CONVENTIONS.md, section 2 (the cost channels and their signs)"""
         that form before they get here.
         """
         if self._v1_model is None:
-            import warnings
-
-            # The constructor warns that the components= form is planned to be replaced. This problem's own construction
-            # already told its caller; the rebuild's copy comes from inside the library, once per conditional solve, so
-            # it is suppressed -- that category and that message, nothing else (#2666).
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore", message="The components= form of MFGProblem", category=PendingDeprecationWarning
-                )
+            replaying = _REPLAYING_A_RECORD.set(True)  # this problem's construction already warned; see the flag
+            try:
                 return MFGProblem(**{**self._components_inputs, **changes})
+            finally:
+                _REPLAYING_A_RECORD.reset(replaying)
         inputs = {"model": self._v1_model, "domain": self.geometry, "conditions": self._v1_conditions, "Nt": self.Nt}
         return MFGProblem(**{**inputs, **self._v1_inputs, **changes})
 

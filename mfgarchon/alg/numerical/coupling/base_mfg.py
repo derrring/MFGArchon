@@ -313,8 +313,15 @@ def resolve_volatility_kwarg(
     )
 
 
-def resolve_source_kwarg(params: Any, source_term: Any, solver_name: str, method: str, side: str) -> dict[str, Any]:
+def resolve_source_kwarg(
+    params: Any, source_term: Any, solver_name: str, method: str, side: str, *, origin: str | None = None
+) -> dict[str, Any]:
     """The ``source_term`` kwarg for ``method``, or ``{}`` when there is nothing to forward.
+
+    ``origin`` says what composed the source when the problem is not its only author: a loop that always
+    hands its solver one, as ``RegimeSwitchingIterator`` does with its cross-regime term (#2666). The
+    refusal then names that, and drops the advice to remove the term from the problem, which a caller
+    could not follow.
 
     Third of the ``resolve_*`` family, beside :func:`resolve_volatility_kwarg` and
     ``resolve_fp_drift_kwargs``. One owner for the forwarding decision, which until #2200 was
@@ -379,12 +386,19 @@ def resolve_source_kwarg(params: Any, source_term: Any, solver_name: str, method
         return {}
     if "source_term" in params:
         return {"source_term": source_term}
+    composed = origin if origin is not None else f"the problem composed a non-None {side} source"
+    remedy = (
+        f"Declare `source_term` on the solver's {method} -- a wrapper keeps the signature it wraps with "
+        f"functools.wraps -- and the convention is"
+        if origin is not None
+        else f"Either declare `source_term` on the solver's {method} -- the convention is"
+    )
+    removal = "" if origin is not None else " -- or remove the term from the problem"
     raise NotImplementedError(
-        f"{solver_name}.{method} does not accept 'source_term', but the problem composed a non-None "
-        f"{side} source. Its signature is ({', '.join(sorted(params))}). Silently dropping it would "
-        f"solve a different problem (Issue #1424). Either declare `source_term` on the solver's "
-        f"{method} -- the convention is source_term(t, x) -> (N,) with x of shape (N, d) at the "
-        f"solver's own evaluation points -- or remove the term from the problem. A solver taking "
+        f"{solver_name}.{method} does not accept 'source_term', but {composed}. Its signature is "
+        f"({', '.join(sorted(params))}). Silently dropping it would solve a different problem (Issue #1424). "
+        f"{remedy} source_term(t, x) -> (N,) with x of shape (N, d) at the solver's own evaluation "
+        f"points{removal}. A solver taking "
         f"**kwargs does not count as accepting it: the parameter must be named. To find one that "
         f"does, ask any candidate the same question this check asks: "
         f"`'source_term' in inspect.signature(solver.{method}).parameters`. That is deliberately a "

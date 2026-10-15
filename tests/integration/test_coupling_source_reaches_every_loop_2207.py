@@ -360,8 +360,9 @@ def test_each_population_solves_with_its_own_source(field):
 _Q = np.array([[-0.1, 0.1], [0.2, -0.2]])
 
 
-def _regime_solve(**fields):
-    problems = [_problem(**fields) for _ in range(2)]
+def _regime_solve(*per_regime_fields):
+    """Two regimes, each problem built with its own fields; none by default."""
+    problems = [_problem(**fields) for fields in (per_regime_fields or ({}, {}))]
     result = RegimeSwitchingIterator(
         problems,
         RegimeSwitchingConfig(transition_matrix=_Q),
@@ -377,12 +378,13 @@ def _regime_solve(**fields):
 
 def test_each_regime_adds_its_own_hjb_source_to_the_cross_regime_term():
     """The same c in both regimes, so the cross-regime term Q (u_k - u_j) is unchanged by the shift and the exact
-    effect is dU = c (T - t) in each."""
+    effect is dU = c (T - t) in each. One source object per regime, each counted: a loop that composed one regime's
+    problem for every regime would call one of them twice as often and the other never."""
     u0, m0 = _regime_solve()
-    source = _CountingSource(5.0)
-    u1, m1 = _regime_solve(source_term_hjb=source)
-    assert source.calls > 0
-    for k in range(2):
+    sources = [_CountingSource(5.0), _CountingSource(5.0)]
+    u1, m1 = _regime_solve(*({"source_term_hjb": s} for s in sources))
+    for k, source in enumerate(sources):
+        assert source.calls > 0, f"regime {k}'s source_term_hjb was never called"
         _assert_the_sources_exact_effect("source_term_hjb", source.value, u0[k], u1[k], m0[k], m1[k], f"regime {k}")
 
 
@@ -392,26 +394,29 @@ def test_each_regime_adds_its_own_fp_source_under_the_integrating_factor():
     Derived from the scheme, not the code. The diagonal outflow is carried by ``n^k = e^{q_k t} m^k`` (#1681), so the
     FP solve sees ``d_t n^k - L^k[n^k] = e^{q_k t} (sum_{j != k} Q_jk m^j + S^k)``. FPFDMSolver takes a source at the
     NEW time, ``n_{n+1} = n_n + dt (L n_{n+1} + source(t_{n+1}))``, and ``L`` conserves the trapezoid mass under
-    no-flux. Recovering ``m = e^{-q_k t} n`` and integrating, with ``S^k = c``:
+    no-flux. Recovering ``m = e^{-q_k t} n`` and integrating, with ``S^k = c_k``:
 
-        M^k_{n+1} = e^{-q_k dt} M^k_n + dt (sum_{j != k} Q_jk M^j_{n+1} + c).
+        M^k_{n+1} = e^{-q_k dt} M^k_n + dt (sum_{j != k} Q_jk M^j_{n+1} + c_k).
+
+    Each regime has its own source and its own c (5 and 3), so a source applied to the wrong regime shows.
 
     It holds under that hypothesis only: FPFDMSolver's implicit source time. Measured on this fixture for #2666, regimes
-    0 and 1: residual 1.199e-14 and 7.550e-15 with the source, 2.220e-16 without, and 2.407e-03 and 2.486e-03 for the
-    same recurrence with the source at t_n. A source left outside the factor misses it by 3.960e-03 and 7.842e-03, a
-    dropped one by 2.000e-01.
+    0 and 1: residual 8.882e-15 and 6.439e-15 with the sources, 2.220e-16 without, and 1.777e-03 and 1.836e-03 for the
+    same recurrence with the source at t_n. A source left outside the factor misses it by 3.960e-03 and 4.705e-03, a
+    dropped one by 2.000e-01 and 1.200e-01, and regime 0's source composed for both regimes by 8.000e-02 in regime 1.
 
-    Why not "the total mass grows by K c t": that holds for the PDE and not here. Summing the recurrence over k leaves
-    ``dt sum_j q_j (M^j_{n+1} - M^j_n)``, the scheme's non-conservation #1798 records, and on this fixture the total
-    is off by 1.211e-02 -- the size of the error a source not scaled by ``e^{q_k t}`` makes, so it cannot see that one.
+    Why not "the total mass grows by sum_k c_k t": that holds for the PDE and not here. Summing the recurrence over k
+    leaves ``dt sum_j q_j (M^j_{n+1} - M^j_n)``, the scheme's non-conservation #1798 records, and on this fixture the
+    total is off by 8.900e-03 -- the size of the error a source not scaled by ``e^{q_k t}`` makes, so it cannot see
+    that one.
     """
     u0, _ = _regime_solve()
-    source = _CountingSource(5.0)
-    u1, m1 = _regime_solve(source_term_fp=source)
-    assert source.calls > 0
+    sources = [_CountingSource(5.0), _CountingSource(3.0)]
+    u1, m1 = _regime_solve(*({"source_term_fp": s} for s in sources))
     mass = np.array([np.asarray(m) @ _TRAPEZOID for m in m1])  # (K, Nt + 1)
     dt = _T / _NT
-    for k in range(2):
+    for k, source in enumerate(sources):
+        assert source.calls > 0, f"regime {k}'s source_term_fp was never called"
         q_k = -_Q[k, k]
         inflow = sum(_Q[j, k] * mass[j, 1:] for j in range(2) if j != k)
         predicted = np.exp(-q_k * dt) * mass[k, :-1] + dt * (inflow + source.value)
@@ -473,13 +478,16 @@ def test_every_conditional_problem_carries_the_source(field):
             parallel=False,
             seed=7,
         ).solve(verbose=False)
-        return result.u_mean, result.m_mean
+        return [result.u_mean, *result.u_samples], [result.m_mean, *result.m_samples]
 
     u0, m0 = solve()
     source = _CountingSource(5.0)
     u1, m1 = solve(**{field: source})
     assert source.calls > 0
-    _assert_the_sources_exact_effect(field, source.value, u0, u1, m0, m1, "the conditional mean")
+    # The conditional Hamiltonian ignores theta, so each noise path's solve carries the exact effect, not only
+    # their mean: a path that dropped the source would be hidden in a mean only by a path that doubled it.
+    for i, where in enumerate(["the conditional mean", *(f"noise path {k}" for k in range(len(u0) - 1))]):
+        _assert_the_sources_exact_effect(field, source.value, u0[i], u1[i], m0[i], m1[i], where)
 
 
 @pytest.mark.parametrize("field", ["source_term_hjb", "nonlocal_operator"])

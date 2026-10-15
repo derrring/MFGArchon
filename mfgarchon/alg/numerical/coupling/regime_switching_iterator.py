@@ -62,6 +62,13 @@ if TYPE_CHECKING:
 # so this is a precision bound, not a range one, and it is deliberately well inside it.
 _MAX_OUTFLOW_HORIZON = 50.0
 
+# What composed the source a regime's solver is handed, for resolve_source_kwarg's refusal (#2666): it always
+# has one, so "remove the term from the problem" -- the advice for a problem's own source -- does not apply.
+_REGIME_SOURCE_ORIGIN = (
+    "RegimeSwitchingIterator hands every regime's solve a source: its {term}, plus any source the regime's "
+    "problem declares"
+)
+
 
 def _fp_boundary_conditions(fp_solver: Any) -> Any:
     """The BC object the FP solve will actually impose.
@@ -488,7 +495,12 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 hjb_sig_params_k = self._hjb_sig_params_k[k]
                 if hjb_sig_params_k is not None:
                     hjb_kwargs = resolve_source_kwarg(
-                        hjb_sig_params_k, hjb_source, type(self._hjb[k]).__name__, "solve_hjb_system", "HJB"
+                        hjb_sig_params_k,
+                        hjb_source,
+                        type(self._hjb[k]).__name__,
+                        "solve_hjb_system",
+                        "HJB",
+                        origin=_REGIME_SOURCE_ORIGIN.format(term="cross-regime term sum_j Q[k,j](u_k - u_j)"),
                     )
                 else:
                     hjb_kwargs = {"source_term": hjb_source}
@@ -552,7 +564,12 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 fp_sig_params_k = self._fp_sig_params_k[k]
                 if fp_sig_params_k is not None:
                     fp_kwargs: dict[str, Any] = resolve_source_kwarg(
-                        fp_sig_params_k, fp_source, type(self._fp[k]).__name__, "solve_fp_system", "FP"
+                        fp_sig_params_k,
+                        fp_source,
+                        type(self._fp[k]).__name__,
+                        "solve_fp_system",
+                        "FP",
+                        origin=_REGIME_SOURCE_ORIGIN.format(term="inflow sum_j Q[j,k] m_j"),
                     )
                     drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
                         self._problems[k],
