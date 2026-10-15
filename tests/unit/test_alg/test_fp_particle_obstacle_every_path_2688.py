@@ -19,10 +19,9 @@ import pytest
 
 import numpy as np
 
+from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
-from mfgarchon.core.mfg_components import MFGComponents
-from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc, periodic_bc
 from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle
@@ -52,12 +51,12 @@ def _absorbing_at_x_max(d):
 def _problem(d, bc):
     n = 21 if d == 2 else 101
     grid = TensorProductGrid(bounds=[(0.0, 1.0)] * d, Nx_points=[n] * d, boundary_conditions=bc)
-    components = MFGComponents(
+    model = Model(
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
-        u_terminal=lambda x: 0.0,
-        m_initial=lambda x: 1.0,
+        volatility=0.1 if d == 2 else 0.05,
     )
-    return MFGProblem(geometry=grid, T=0.3, Nt=_NT, volatility=0.1 if d == 2 else 0.05, components=components), n
+    conditions = Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.3)
+    return MFGProblem(model=model, domain=grid, conditions=conditions, Nt=_NT), n
 
 
 def _m_initial(d, n, centres):
