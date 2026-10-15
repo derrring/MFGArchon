@@ -1121,7 +1121,6 @@ class TestStochasticCharacteristicSL_nD:  # noqa: N801 — SL_nD = semi-Lagrangi
                 Nt=Nt,
                 volatility=sigma,
                 components=components,
-                boundary_conditions=bc,
             ),
             grid,
             m0,

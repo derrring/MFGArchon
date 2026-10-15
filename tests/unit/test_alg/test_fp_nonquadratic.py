@@ -366,7 +366,6 @@ class TestFixedPointIteratorDrift:
             T=1.0,
             Nt=Nt,
             volatility=0.1,
-            boundary_conditions=bc,
             components=components,
         )
 
