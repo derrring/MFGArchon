@@ -40,6 +40,7 @@ from .fp_particle_bc import apply_boundary_conditions as _apply_bc
 from .fp_particle_bc import get_topology_per_dimension as _get_topology
 from .fp_particle_bc import needs_segment_aware_bc as _needs_segment_bc
 from .fp_particle_bc import project_to_navigable_or_defer as _project_to_navigable
+from .fp_particle_bc import reflection_waypoints as _reflection_waypoints
 from .fp_particle_density import generate_brownian_increment as _gen_brownian
 from .particle_result import FPParticleResult
 
@@ -929,6 +930,37 @@ class FPParticleSolver(BaseFPSolver):
             navigable=None if self._implicit_domain is None else self._implicit_domain.contains,
         )
 
+    def _leave_out_nodes_inside_an_obstacle(self, x_grid: np.ndarray, probs: np.ndarray) -> np.ndarray:
+        """The 1-D grid path's node probabilities with the nodes inside an obstacle left out, or a refusal (#2688).
+
+        This path places particles on the nodes it samples, so a node inside an obstacle that carries mass is mass
+        inside it. Its share, over every node carrying any, goes to `mass_fabrication_gate.drop_mass_or_raise`, as
+        `sample_from_density`'s blocked cells do (#2706): above the threshold the solve is refused, at or below it
+        those nodes are left out and the rest renormalised.
+        """
+        from mfgarchon.utils.numerical.mass_fabrication_gate import drop_mass_or_raise
+
+        inside = ~np.atleast_1d(np.asarray(self._implicit_domain.contains(x_grid.reshape(-1, 1)), dtype=bool))
+        blocked = (probs > 0) & inside
+        if not blocked.any():
+            return probs
+        drop_mass_or_raise(
+            float(probs[blocked].sum()),
+            float(probs[probs > 0].sum()),
+            context="FPParticleSolver",
+            why=(
+                f"{int(blocked.sum())} grid node(s) carrying m_initial's mass are inside an obstacle -- the first at "
+                f"{x_grid[blocked][0]} -- and this path places particles on the nodes it samples. That mass is not "
+                "moved elsewhere, since that would change the measure the caller gave (#2688)."
+            ),
+            remedy=(
+                "Set m_initial to zero at the nodes inside the obstacles, e.g. "
+                "m_initial * domain.contains(x_grid.reshape(-1, 1))."
+            ),
+        )
+        kept = np.where(blocked, 0.0, probs)
+        return kept / kept.sum()
+
     def _refuse_initial_particles_inside_an_obstacle(self, particles: np.ndarray, origin: str, advice: str) -> None:
         """t = 0 of #2688. Each later step starts where the one before it placed its particles, so every step
         starts inside the domain only if the first does. `sample_from_density(navigable=)` redraws a jitter that
@@ -1020,7 +1052,9 @@ class FPParticleSolver(BaseFPSolver):
         """
         return _get_topology(self.boundary_conditions, dimension, self.problem.geometry)
 
-    def _project_obstacle_violations(self, particles: np.ndarray, previous: np.ndarray) -> np.ndarray:
+    def _project_obstacle_violations(
+        self, particles: np.ndarray, previous: np.ndarray, via: np.ndarray | None = None
+    ) -> np.ndarray:
         """
         Place the particles that ended a step inside an obstacle (#533, #2688), after the outer boundary
         condition has run (`_finish_step`).
@@ -1044,7 +1078,7 @@ class FPParticleSolver(BaseFPSolver):
         if self._implicit_domain is None:
             return particles
         report: dict[str, int] = {}
-        placed = _project_to_navigable(particles, self._implicit_domain, previous=previous, report=report)
+        placed = _project_to_navigable(particles, self._implicit_domain, previous=previous, report=report, via=via)
         self.obstacle_placement_history.append(report)
         inside = np.atleast_1d(self._implicit_domain.contains(placed))
         if not np.all(inside):
@@ -1091,24 +1125,43 @@ class FPParticleSolver(BaseFPSolver):
         """
         if use_segment_aware_bc:
             recorded, n_absorbed, _, absorbed_mask = self._apply_boundary_conditions_segment_aware(raw, bounds)
-            survivors_previous = previous[~absorbed_mask]
+            survivors_previous, survivors_raw = previous[~absorbed_mask], raw[~absorbed_mask]
         else:
             topologies = self._get_topology_per_dimension(raw.shape[1])
             recorded = self._apply_boundary_conditions_nd(raw, bounds, topologies)
             absorbed_mask, n_absorbed = None, 0
-            survivors_previous = previous
-        return self._project_obstacle_violations(recorded, survivors_previous), absorbed_mask, n_absorbed
+            survivors_previous, survivors_raw = previous, raw
+        # A survivor whose raw step left the box was reflected: its path is broken at the wall, and the face it met
+        # is on that path, not on the chord to where it was reflected (#2706, review 1).
+        via = (
+            None if self._implicit_domain is None else _reflection_waypoints(survivors_previous, survivors_raw, bounds)
+        )
+        return self._project_obstacle_violations(recorded, survivors_previous, via), absorbed_mask, n_absorbed
 
-    def _refuse_what_the_obstacle_placement_cannot_do(self, dimension: int) -> None:
-        """An obstacle with a periodic outer boundary is refused: a wrapped particle's straight segment from its
-        previous position is not its path, so the face it names can be one the particle never approached (#2688;
-        the capability is #2704)."""
+    def _refuse_what_the_obstacle_placement_cannot_do(self, dimension: int, bounds: list[tuple[float, float]]) -> None:
+        """What the obstacle placement cannot do, refused at the start of a solve: an obstacle with a periodic outer
+        boundary, since a wrapped particle's straight segment from its previous position is not its path (#2688; the
+        capability is #2704); and an implicit_domain whose bounding box does not contain the grid's box (#2706)."""
         if self._implicit_domain is not None and "periodic" in self._get_topology_per_dimension(dimension):
             raise NotImplementedError(
                 "FPParticleSolver: an implicit_domain with obstacles and a periodic outer boundary is not supported. "
                 "A particle that ends a step inside an obstacle is placed by the face its step crossed, and a "
                 "wrapped particle's step is not the straight segment from where it started (#2688). Placing it by "
                 "the wrapped image of its step is #2704."
+            )
+        # The outer boundary condition reflects at the grid's box, and the placement leaves to it whatever is outside the
+        # domain's bounding box. Where the grid's box reaches past the domain's, a particle there is navigable to neither
+        # and is recorded outside the domain (#2706, review 1).
+        box = np.asarray(self._implicit_domain.get_bounding_box(), dtype=float).reshape(dimension, 2)
+        grid = np.asarray(bounds, dtype=float).reshape(dimension, 2)
+        slack = 1e-12 * max(1.0, float(np.abs(grid).max()))
+        if np.any(grid[:, 0] < box[:, 0] - slack) or np.any(grid[:, 1] > box[:, 1] + slack):
+            raise ValueError(
+                f"FPParticleSolver: the implicit_domain's bounding box {box.tolist()} does not contain the grid's box "
+                f"{grid.tolist()}. The outer boundary condition reflects at the grid's box, and a particle between the "
+                "two is outside the domain and out of the obstacle placement's reach, so it would be recorded outside "
+                "the domain (#2706). Build the implicit_domain on the grid's box, e.g. "
+                "DifferenceDomain(Hyperrectangle(grid bounds), obstacle)."
             )
 
     def _infer_reflect_bounds(self, bounds: list[tuple[float, float]]) -> list[tuple[float, float]] | None:
@@ -1700,7 +1753,8 @@ class FPParticleSolver(BaseFPSolver):
         # latent.
         self.obstacle_placement_history = []
         if self._implicit_domain is not None:
-            self._refuse_what_the_obstacle_placement_cannot_do(self._get_grid_params()["dimension"])
+            params = self._get_grid_params()
+            self._refuse_what_the_obstacle_placement_cannot_do(params["dimension"], params["bounds"])
         M = self._solve_fp_system_unscaled(
             M_initial=M_initial,
             drift_field=drift_field,
@@ -2000,6 +2054,8 @@ class FPParticleSolver(BaseFPSolver):
         if Dx > 1e-14 and np.sum(m_initial_condition * Dx) > 1e-9:
             m0_probs_unnormalized = m_initial_condition * Dx
             m0_probs = m0_probs_unnormalized / np.sum(m0_probs_unnormalized)
+            if self._implicit_domain is not None:
+                m0_probs = self._leave_out_nodes_inside_an_obstacle(x_grid, m0_probs)
             try:
                 initial_particle_positions = self._rng.choice(x_grid, size=self.num_particles, p=m0_probs, replace=True)
             except ValueError as e:
@@ -2009,16 +2065,6 @@ class FPParticleSolver(BaseFPSolver):
                     f"(e.g. negative entries): {e}. Provide a non-negative initial density; it "
                     "will not be silently replaced by a uniform sample (Issue #1071, fail-fast)."
                 ) from e
-            if self._implicit_domain is not None:
-                # This path samples the nodes themselves, so a sampled node inside an obstacle is mass inside it.
-                blocked = ~np.atleast_1d(self._implicit_domain.contains(x_grid.reshape(-1, 1)))
-                sampled = np.isin(np.arange(len(x_grid)), np.searchsorted(x_grid, initial_particle_positions))
-                self._refuse_initial_particles_inside_an_obstacle(
-                    initial_particle_positions,
-                    "the initial particles, which this path places on the grid nodes it samples from m_initial",
-                    f"The sampled nodes inside carry {float(m0_probs[blocked & sampled].sum()):.6g} of the "
-                    "mass. Set m_initial to zero at the nodes inside the obstacles.",
-                )
         else:
             initial_particle_positions = (
                 self._rng.uniform(xmin, xmin + Lx, self.num_particles)

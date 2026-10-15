@@ -908,6 +908,41 @@ class TestProjectToNavigableOrDefer:
         with pytest.raises(RuntimeError, match=r"not placed by the 1 face\(s\) its step met \(at \[0\.9 +0\.4875\]"):
             domain._place_by_face_of_entry(previous, entered, tol, max_faces=1)
 
+    def test_the_first_face_a_step_meets_places_it_even_behind_another_obstacle(self):
+        """#2706 review 1, S1: the step from (0.80, 0.5) to (0.98, 0.5) passes the slab W = [0.85, 0.87] before it
+        ends in O, so the face it met first is W's at x = 0.85, and it is placed there. The slab is thicker than a
+        scan step (0.18 / 32), so the scan finds it; a scan of one step would bisect onto O's face at x = 0.9."""
+        from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import project_to_navigable_or_defer
+        from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle, UnionDomain
+
+        obstacles = UnionDomain(
+            [Hyperrectangle(np.array([[0.85, 0.87], [0.3, 0.7]])), Hyperrectangle(np.array([[0.9, 1.05], [0.2, 0.8]]))]
+        )
+        domain = DifferenceDomain(Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])), obstacles)
+        report: dict[str, int] = {}
+        moved = project_to_navigable_or_defer(
+            np.array([[0.98, 0.5]]), domain, previous=np.array([[0.80, 0.5]]), report=report
+        )
+        np.testing.assert_allclose(moved, [[0.85 - 1e-10, 0.5]], rtol=0, atol=1e-12)
+        assert report == {"projected": 0, "face_of_entry": 1}, report
+
+    @pytest.mark.parametrize("gap", [3e-5, 1e-5, 5e-6, 3.5e-7, 1e-9])
+    def test_the_face_where_an_obstacle_meets_the_wall_is_the_obstacles_own(self, gap):
+        """#2706: a particle on the obstacle's top face, ``gap`` from the wall x = 1, steps straight down into the
+        obstacle, and is placed back on that face: (1 - gap, 0.8 + 1e-10). The face's normal is the obstacle's own,
+        chosen by which component's phi changes sign across the crossing (`crossing_normal`). The domain's gradient
+        normal blends the wall's within its central difference of 1e-5: at gap 3.5e-7 that raised, and at 1e-9 it
+        placed the particle at (0.88, 0.68), on the obstacle's far side."""
+        from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import project_to_navigable_or_defer
+        from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle
+
+        domain = DifferenceDomain(
+            Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])), Hyperrectangle(np.array([[0.9, 1.05], [0.2, 0.8]]))
+        )
+        x = 1.0 - gap
+        moved = project_to_navigable_or_defer(np.array([[x, 0.56]]), domain, previous=np.array([[x, 0.8 + 1e-10]]))
+        np.testing.assert_allclose(moved, [[x, 0.8 + 1e-10]], rtol=0, atol=1e-12)
+
     def test_outer_bbox_violation_left_alone(self):
         """Issue #1064: Particle past outer bbox is NOT touched — caller's BC handles it."""
         from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import project_to_navigable_or_defer

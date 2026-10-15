@@ -264,6 +264,7 @@ def project_to_navigable_or_defer(
     implicit_domain: ImplicitDomain | None,
     previous: np.ndarray | None = None,
     report: dict[str, int] | None = None,
+    via: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     Project obstacle-interior violations back to the navigable region; defer
@@ -304,6 +305,9 @@ def project_to_navigable_or_defer(
         place and refuses those without it (#2688).
     report : dict or None
         Forwarded to ``implicit_domain.project_to_interior``'s counter.
+    via : np.ndarray or None
+        Waypoints of each step's actual path, shape (num_particles, k, dimension), rows of NaN unused
+        (`reflection_waypoints`). Forwarded with ``previous``.
 
     Returns
     -------
@@ -347,7 +351,10 @@ def project_to_navigable_or_defer(
         if np.any(in_obstacle):
             obs_idx = np.where(in_obstacle)[0]
             prev = None if previous is None else np.asarray(previous, dtype=float).reshape(particles.shape)[obs_idx]
-            particles[obs_idx] = implicit_domain.project_to_interior(particles[obs_idx], previous=prev, report=report)
+            waypoints = None if via is None else np.asarray(via, dtype=float)[obs_idx]
+            particles[obs_idx] = implicit_domain.project_to_interior(
+                particles[obs_idx], previous=prev, report=report, via=waypoints
+            )
 
     # Convert back to 1D if input was 1D
     if is_1d_flat:
@@ -520,3 +527,47 @@ if __name__ == "__main__":
     print("  project_to_navigable_or_defer (None domain): OK")
 
     print("\nAll smoke tests passed!")
+
+
+def reflection_waypoints(previous: np.ndarray, raw: np.ndarray, bounds: list[tuple[float, float]]) -> np.ndarray | None:
+    """The wall hits of each step that left the box, folded back in: the vertices of its reflected path between
+    ``previous`` and its reflected end (#2706, review 1).
+
+    The obstacle placement names the face a step met. For a reflected step that is a face on the broken path
+    ``previous`` -> wall hit -> ... -> reflected end, not on the chord from ``previous`` to the reflected end, which
+    can cross a face the particle never approached. The hits are where the unfolded straight step crosses a wall
+    plane, folded with `reflect_positions`, the fold the boundary condition itself applies.
+
+    Returns shape (N, k, dimension), rows of NaN where a step has fewer than ``k`` hits, or None when no step left
+    the box.
+    """
+    from mfgarchon.geometry.boundary.corner import reflect_positions
+
+    lo = np.array([b[0] for b in bounds], dtype=float)
+    hi = np.array([b[1] for b in bounds], dtype=float)
+    length = hi - lo
+    prev = np.asarray(previous, dtype=float).reshape(len(previous), -1)
+    end = np.asarray(raw, dtype=float).reshape(prev.shape)
+    left = np.flatnonzero(np.any((end < lo) | (end > hi), axis=1))
+    if left.size == 0:
+        return None
+    hits = []
+    for i in left:
+        a, b = prev[i], end[i]
+        ts = []
+        for k in range(prev.shape[1]):
+            if b[k] == a[k]:
+                continue
+            first = np.ceil((min(a[k], b[k]) - lo[k]) / length[k])
+            last = np.floor((max(a[k], b[k]) - lo[k]) / length[k])
+            for j in np.arange(first, last + 1):
+                t = (lo[k] + j * length[k] - a[k]) / (b[k] - a[k])
+                if 0.0 < t < 1.0:
+                    ts.append(t)
+        hits.append(sorted(ts))
+    via = np.full((len(prev), max(len(t) for t in hits), prev.shape[1]), np.nan)
+    for i, ts in zip(left, hits, strict=True):
+        if ts:
+            unfolded = prev[i][None, :] + np.asarray(ts)[:, None] * (end[i] - prev[i])[None, :]
+            via[i, : len(ts)] = reflect_positions(unfolded, bounds)
+    return via

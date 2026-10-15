@@ -1179,9 +1179,10 @@ def sample_from_density(
 
         - A jitter that lands where ``navigable`` is False is redrawn within the same cell, so the cell's mass
           goes to its navigable part. Nothing is clipped or dropped.
-        - A sampled cell with no navigable point on a 5-per-axis probe lattice is refused, naming the share of
-          the mass it carries: that mass lies inside an obstacle, and moving it would change the caller's
-          measure.
+        - The cells carrying mass with no navigable point on a 5-per-axis probe lattice hold mass inside an
+          obstacle, which moving would change the caller's measure. Their share of the mass, over every cell
+          that carries any, goes to `mass_fabrication_gate.drop_mass_or_raise`: above its threshold the sample is
+          refused, naming the share; at or below it those cells are left out (#2706).
         - The uniform fallbacks, for a zero density or degenerate probabilities, redraw the same way over the
           bounding box.
 
@@ -1247,6 +1248,8 @@ def sample_from_density(
         return particles
 
     probs = density_flat / total_mass
+    if navigable is not None:
+        probs = _leave_out_cells_with_no_navigable_point(probs, coordinates, navigable)
 
     # Sample flat indices according to probability
     try:
@@ -1277,7 +1280,6 @@ def sample_from_density(
         jitter_offsets = rng.uniform(-0.5, 0.5, size=(num_samples, dimension)) * spacings
         particles += jitter_offsets
         if navigable is not None:
-            _refuse_cells_with_no_navigable_point(flat_indices, nodes, spacings, probs, navigable)
             _redraw_until_navigable(
                 particles,
                 lambda idx: nodes[idx] + rng.uniform(-0.5, 0.5, size=(len(idx), dimension)) * spacings,
@@ -1292,31 +1294,50 @@ _PROBES_PER_AXIS = 5
 _MAX_REDRAW_ROUNDS = 1000
 
 
-def _refuse_cells_with_no_navigable_point(
-    flat_indices: NDArray,
-    nodes: NDArray,
-    spacings: NDArray,
-    probs: NDArray,
-    navigable: Callable[[NDArray], NDArray | bool],
-) -> None:
-    """Refuse the sampled cells that show no navigable point on a probe lattice: their mass is inside an obstacle,
-    and no redraw within the cell can place it (#2688, CONVENTIONS § The measure)."""
-    cells, first = np.unique(flat_indices, return_index=True)
-    centres = nodes[first]
-    dimension = centres.shape[1]
+def _leave_out_cells_with_no_navigable_point(
+    probs: NDArray, coordinates: list[NDArray], navigable: Callable[[NDArray], NDArray | bool]
+) -> NDArray:
+    """The cell probabilities with the cells that hold no navigable point left out, or a refusal (#2688, #2706).
+
+    A cell carrying mass whose probe lattice -- 5 points per axis, the node among them -- has no navigable point holds
+    mass inside an obstacle, which no redraw within the cell can place. Its share of the mass, over every cell that
+    carries any, goes to `mass_fabrication_gate.drop_mass_or_raise`, the owner of how much a library may leave out:
+    above its threshold the sample is refused, naming the share; at or below it those cells are left out and the
+    rest renormalised. Only cells whose node is not navigable are probed.
+    """
+    from mfgarchon.utils.numerical.mass_fabrication_gate import drop_mass_or_raise
+
+    dimension = len(coordinates)
+    grid_shape = tuple(len(c) for c in coordinates)
+    carrying = np.flatnonzero(probs > 0)
+    multi = np.unravel_index(carrying, grid_shape)
+    nodes = np.column_stack([coordinates[d][multi[d]] for d in range(dimension)])
+    suspect = ~np.atleast_1d(np.asarray(navigable(nodes), dtype=bool))
+    if not suspect.any():
+        return probs
+    spacings = np.array([c[1] - c[0] if len(c) > 1 else 0.0 for c in coordinates])
     ticks = (np.arange(_PROBES_PER_AXIS) + 0.5) / _PROBES_PER_AXIS - 0.5
     offsets = np.stack(np.meshgrid(*([ticks] * dimension), indexing="ij"), axis=-1).reshape(-1, dimension) * spacings
+    centres = nodes[suspect]
     probes = (centres[:, None, :] + offsets[None, :, :]).reshape(-1, dimension)
-    has_navigable = np.asarray(navigable(probes), dtype=bool).reshape(len(cells), len(offsets)).any(axis=1)
-    if np.all(has_navigable):
-        return
-    blocked = ~has_navigable
-    raise ValueError(
-        f"sample_from_density: {int(blocked.sum())} sampled cell(s) carrying {float(probs[cells[blocked]].sum()):.6g} "
-        f"of the mass have no navigable point on a {_PROBES_PER_AXIS}-per-axis lattice -- the first is centred at "
-        f"{centres[blocked][0]}. That mass is inside an obstacle. It is not clipped or moved, since that would "
-        "change the measure the caller gave (#2688). Set the initial density to zero inside the obstacles."
+    blocked_here = ~np.asarray(navigable(probes), dtype=bool).reshape(len(centres), len(offsets)).any(axis=1)
+    if not blocked_here.any():
+        return probs
+    blocked = carrying[np.flatnonzero(suspect)[blocked_here]]
+    drop_mass_or_raise(
+        float(probs[blocked].sum()),
+        float(probs.sum()),
+        context="sample_from_density",
+        why=(
+            f"{blocked.size} cell(s) carrying mass have no navigable point on a {_PROBES_PER_AXIS}-per-axis lattice -- "
+            f"the first centred at {centres[blocked_here][0]}: that mass is inside an obstacle, and no redraw within "
+            "its cell can place it. It is not moved elsewhere, since that would change the measure the caller gave."
+        ),
+        remedy="Set the initial density to zero inside the obstacles, e.g. m_initial * domain.contains(nodes).",
     )
+    kept = probs.copy()
+    kept[blocked] = 0.0
+    return kept / kept.sum()
 
 
 def _redraw_until_navigable(

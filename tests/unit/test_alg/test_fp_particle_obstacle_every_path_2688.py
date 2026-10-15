@@ -24,7 +24,7 @@ from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc, periodic_bc
-from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle
+from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle, UnionDomain
 
 _NT, _N = 15, 600
 
@@ -178,6 +178,7 @@ def test_the_placement_reads_each_survivors_own_previous_position():
         "initial_particles inside the obstacle",
         "M_initial inside the obstacle, n-D",
         "M_initial inside the obstacle, 1-D nodes",
+        "an implicit_domain box short of the grid's",
         "GPU path",
     ],
 )
@@ -194,14 +195,30 @@ def test_what_the_placement_cannot_do_is_refused(case):
             _solve(2, no_flux_bc(dimension=2), "callable", initial_particles=start)
     elif case == "M_initial inside the obstacle, n-D":
         with pytest.raises(
-            ValueError, match=r"sampled cell\(s\) carrying .* no navigable point.*Set the initial density"
+            ValueError, match=r"cell\(s\) carrying mass have no navigable point.*Leaving it out would drop"
         ):
             _solve(2, no_flux_bc(dimension=2), "grid", centres=[(0.97, 0.5)])
     elif case == "M_initial inside the obstacle, 1-D nodes":
         with pytest.raises(
-            ValueError, match=r"grid nodes it samples from m_initial, \d+ of 600 are inside an obstacle"
+            ValueError,
+            match=r"grid node\(s\) carrying m_initial's mass are inside an obstacle.*Leaving it out would drop",
         ):
             _solve(1, no_flux_bc(dimension=1), "grid", centres=[0.5])
+    elif case == "an implicit_domain box short of the grid's":
+        # #2706 review 1, B1: the BC reflects at the grid's box, and the placement leaves to it whatever is outside
+        # the domain's box, so a particle between the two would be recorded outside the domain.
+        short = DifferenceDomain(
+            Hyperrectangle(np.array([[0.0, 0.8], [0.0, 1.0]])), Hyperrectangle(np.array([[0.3, 0.4], [0.3, 0.4]]))
+        )
+        problem, _ = _problem(2, no_flux_bc(dimension=2))
+        solver = FPParticleSolver(problem, num_particles=_N, implicit_domain=short, seed=0)
+        with pytest.raises(ValueError, match=r"does not contain the grid's box"):
+            solver.solve_fp_system(
+                initial_particles=_navigable_start() * [0.9, 1.0],
+                drift_field=_drift(2, 21, "callable"),
+                drift_needs_density=False,
+                show_progress=False,
+            )
     else:
         pytest.importorskip("torch")
         problem, n = _problem(1, no_flux_bc(dimension=1))
@@ -213,3 +230,146 @@ def test_what_the_placement_cannot_do_is_refused(case):
         assert solver.current_strategy.name != "cpu", (
             "the selector sent this solve to the CPU path, so it tests nothing"
         )
+
+
+def test_a_reflected_step_is_placed_by_the_face_its_path_met():
+    """#2706 review 1, M3: a reflected step's path is broken at the wall, and the face it met is on that path.
+
+    From (0.985, 0.95) the raw step to (1.015, 0.7) hits the wall at (1.0, 0.825) and its reflected leg enters O
+    through O's top face at (0.997, 0.8). The chord from the start to the reflected end, (0.985, 0.7), crosses the
+    small obstacle Q's top face instead, a face the particle never approached; placed by the chord it landed at
+    (0.985, 0.82). Placed by the path, it is projected onto O's top face: (0.985, 0.8 + 1e-10)."""
+    obstacles = UnionDomain(
+        [Hyperrectangle(np.array([[0.9, 1.05], [0.2, 0.8]])), Hyperrectangle(np.array([[0.984, 0.99], [0.81, 0.82]]))]
+    )
+    domain = DifferenceDomain(Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])), obstacles)
+    problem, _ = _problem(2, no_flux_bc(dimension=2))
+    solver = FPParticleSolver(problem, num_particles=1, implicit_domain=domain, seed=0)
+    recorded, _, _ = solver._finish_step(np.array([[1.015, 0.7]]), np.array([[0.985, 0.95]]), [(0.0, 1.0)] * 2, False)
+    np.testing.assert_allclose(recorded, [[0.985, 0.8 + 1e-10]], rtol=0, atol=1e-12)
+
+
+@pytest.mark.parametrize("path", ["grid", "callable"])
+def test_every_placement_in_a_solve_reads_its_own_particles_start(path):
+    """#2706 review 1, S1: in a solve, each particle that ends a step in the obstacle is placed from its own start.
+
+    The drift is linear, 8 * ((1, 0.5) - x), so each step's end is known from its start up to noise of order 1e-7,
+    and particles enter the crossing rectangle through its left, top and bottom faces. Each recorded position is
+    checked against the placement owner's answer from that particle's own start. A start read from another particle
+    names another face and moves the placement by O(0.1)."""
+    from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import project_to_navigable_or_defer
+
+    nt, rate, target = 5, 8.0, np.array([1.0, 0.5])
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[21, 21], boundary_conditions=no_flux_bc(dimension=2))
+    problem = MFGProblem(
+        model=Model(
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=1e-6
+        ),
+        domain=grid,
+        conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.5),
+        Nt=nt,
+    )
+    solver = FPParticleSolver(
+        problem, num_particles=_N, implicit_domain=_DOMAIN[2], seed=2706, boundary_conditions=no_flux_bc(dimension=2)
+    )
+    if path == "callable":
+        rng = np.random.default_rng(2706)
+        starts = np.vstack(
+            [
+                rng.uniform([0.86, 0.3], [0.89, 0.7], (_N // 3, 2)),
+                rng.uniform([0.95, 0.85], [0.99, 0.95], (_N // 3, 2)),
+                rng.uniform([0.95, 0.05], [0.99, 0.15], (_N - 2 * (_N // 3), 2)),
+            ]
+        )
+        solver.solve_fp_system(
+            initial_particles=starts,
+            drift_field=lambda t, x, m: rate * (target - np.asarray(x)),
+            drift_needs_density=False,
+            show_progress=False,
+        )
+    else:
+        xs = np.linspace(0.0, 1.0, 21)
+        X, Y = np.meshgrid(xs, xs, indexing="ij")
+        drift = np.zeros((nt + 1, 21, 21, 2))
+        drift[..., 0], drift[..., 1] = rate * (1.0 - X), rate * (0.5 - Y)
+        solver.solve_fp_system(
+            M_initial=_m_initial(2, 21, [(0.85, 0.5), (0.95, 0.9), (0.95, 0.1)]),
+            drift_field=drift,
+            drift_is_precomputed=True,
+            show_progress=False,
+        )
+    traj = [np.asarray(P, dtype=float).reshape(-1, 2) for P in solver.M_particles_trajectory]
+    dt = problem.T / nt
+    report: dict[str, int] = {}
+    for t in range(len(traj) - 1):
+        start = traj[t]
+        expected = project_to_navigable_or_defer(
+            start + rate * (target - start) * dt, _DOMAIN[2], previous=start, report=report
+        )
+        np.testing.assert_allclose(traj[t + 1], expected, rtol=0, atol=1e-4, err_msg=f"step {t}")
+    assert report.get("face_of_entry", 0) > _N, f"the face map must act for many particles here: {report}"
+
+
+def test_a_single_particle_steps_in_two_dimensions():
+    """#2691: `reflect_positions`, `absorb_positions` and `wrap_positions` returned shape (d,) for a (1, d) row, and the
+    step's placement then read a 2-D point as d points of dimension 1. A (1, d) row now comes back as (1, d)."""
+    problem, _ = _problem(2, no_flux_bc(dimension=2))
+    solver = FPParticleSolver(problem, num_particles=1, implicit_domain=_DOMAIN[2], seed=0, density_mode="query_only")
+    solver.solve_fp_system(
+        initial_particles=np.array([[0.85, 0.5]]),
+        drift_field=_drift(2, 21, "callable"),
+        drift_needs_density=False,
+        show_progress=False,
+    )
+    for particles in solver.M_particles_trajectory:
+        p = np.asarray(particles, dtype=float)
+        assert p.reshape(-1, 2).shape == (1, 2), p.shape
+        assert _DOMAIN[2].contains(p.reshape(-1, 2)).all(), p
+
+
+def _interval_minus(lo, hi):
+    return DifferenceDomain(Hyperrectangle(np.array([[0.0, 1.0]])), Hyperrectangle(np.array([[lo, hi]])))
+
+
+_XS = np.linspace(0.0, 1.0, 11)  # spacing 0.1: the node 0.3 owns the cell [0.25, 0.35]
+
+
+def test_a_jitter_in_an_obstacle_is_redrawn_within_its_cell():
+    """t = 0 of #2688: the node 0.3 is navigable and its cell meets the obstacle at 0.32, so a jitter landing past it
+    is redrawn -- within the same cell, so the cell keeps its mass: every sample lies in [0.25, 0.32)."""
+    from mfgarchon.utils.numerical.particle import sample_from_density
+
+    density = np.zeros(11)
+    density[3] = 1.0
+    x = sample_from_density(density, [_XS], 2000, seed=0, navigable=_interval_minus(0.32, 0.6).contains)[:, 0]
+    assert np.all((x >= 0.25) & (x < 0.32)), (x.min(), x.max())
+    assert np.ptp(x) > 0.05, "the redraw must spread over the cell's navigable part"
+
+
+def test_a_cell_with_its_node_inside_but_a_navigable_part_is_sampled_there():
+    """The node 0.3 is inside the obstacle [0.28, 0.6], but its cell's probe lattice holds 0.26, which is not: the
+    cell has a navigable part, so its mass is sampled there rather than refused."""
+    from mfgarchon.utils.numerical.particle import sample_from_density
+
+    density = np.zeros(11)
+    density[3] = 1.0
+    x = sample_from_density(density, [_XS], 2000, seed=0, navigable=_interval_minus(0.28, 0.6).contains)[:, 0]
+    assert np.all((x >= 0.25) & (x < 0.28)), (x.min(), x.max())
+
+
+@pytest.mark.parametrize(("share", "refused"), [(1e-9, False), (1e-6, True)])
+def test_mass_inside_an_obstacle_is_left_out_up_to_the_gates_threshold(share, refused):
+    """#2706: the cell of the node 0.6 lies wholly inside the obstacle [0.45, 0.75]. Its share of the mass goes to
+    `mass_fabrication_gate.drop_mass_or_raise`: above the gate's threshold (1e-8) the sample is refused, naming the
+    share; at or below it the cell is left out and nothing is placed there."""
+    from mfgarchon.utils.numerical.particle import sample_from_density
+
+    domain = _interval_minus(0.45, 0.75)
+    density = np.zeros(11)
+    density[2], density[6] = 1.0 - share, share
+    if refused:
+        with pytest.raises(ValueError, match=r"Leaving it out would drop a fraction 1\.000e-06 of the total mass \(threshold 1e-08\)"):
+            sample_from_density(density, [_XS], 2000, seed=0, navigable=domain.contains)
+        return
+    x = sample_from_density(density, [_XS], 2000, seed=0, navigable=domain.contains)
+    assert domain.contains(x).all()
