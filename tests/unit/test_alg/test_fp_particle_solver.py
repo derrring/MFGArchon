@@ -502,7 +502,7 @@ class TestFPParticleSolverHelperMethods:
         # is no target; asserting that as the whole contract is what made a sibling 42% flaky
         # (#2185 review, round 4).
         solver._mass_target = 0.3
-        solver._mass_weights = solver._quadrature_weights()
+        solver._mass_weights = problem.spatial_measure().weights
         solver._mass_factor = None
         solver._time_step_counter = 0
         pinned = solver._normalize_density(M_array, dx, use_backend=False)
@@ -538,7 +538,7 @@ class TestFPParticleSolverHelperMethods:
         # Inside a solve, ALL pins every slice to the target on the geometry's measure. Set the state
         # `solve_fp_system` sets, rather than running a solve, because this is a helper test.
         solver._mass_target = 0.3
-        solver._mass_weights = solver._quadrature_weights()
+        solver._mass_weights = problem.spatial_measure().weights
         solver._mass_factor = None
         for t in [0, 1, 5, 10]:
             solver._time_step_counter = t

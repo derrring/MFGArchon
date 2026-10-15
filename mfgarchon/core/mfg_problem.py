@@ -27,6 +27,7 @@ from mfgarchon.types.callable_protocols import (
     refuse_methods_out_of_order,
 )
 from mfgarchon.utils.deprecation import validate_kwargs
+from mfgarchon.utils.numerical.quadrature import integrate_on_weights
 
 # Use unified nD-capable BoundaryConditions from conditions.py
 
@@ -60,14 +61,19 @@ _REPLAYING_A_RECORD: ContextVar[bool] = ContextVar("mfgproblem_replaying_a_recor
 
 
 class SpatialMeasure(NamedTuple):
-    """How a problem integrates a field over space, and the name of that measure (#2555).
+    """How a problem integrates a field over space: its per-node weights, and the name of the measure (#2555).
 
-    ``integrate`` reduces the TRAILING spatial axes, so a ``(time, *spatial)`` history integrates to one
-    value per time row. Returned by :meth:`MFGProblem.spatial_measure`.
+    ``weights`` is shaped like the spatial field. :meth:`integrate` is ``sum(f * weights)`` over the TRAILING axes,
+    so a ``(time, *spatial)`` history integrates to one value per time row. It is the measure's only expression,
+    and a consumer that needs the weights themselves reads ``weights`` rather than rebuilding them (#1642).
+    Returned by :meth:`MFGProblem.spatial_measure`.
     """
 
-    integrate: Callable[[NDArray], Any]
+    weights: NDArray
     name: str
+
+    def integrate(self, field: NDArray) -> Any:
+        return integrate_on_weights(field, self.weights, f"the {self.name} measure's weights")
 
 
 def _same_geometry(a: object, b: object) -> bool:
@@ -2302,16 +2308,26 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         ``alg/numerical/network_solvers/fp_network.py`` uses ``float(np.sum(M[0, :]))`` as its own
         total mass -- so this puts ``problem.initial_mass`` on the same measure as the solve.
 
-        Same lesson as #2157: gate on the thing you are about to use.
+        Same lesson as #2157: gate on the thing you are about to use. The grid branch reads the geometry's
+        ``measure_weights()``, which its ``integrate`` also reads; a geometry with an ``integrate`` and no weights is
+        refused rather than measured some other way, since its weights cannot be recovered from ``integrate`` short
+        of integrating N indicator fields (#1642).
         """
-        integrate = getattr(self.geometry, "integrate", None)
-        if not self.is_network and callable(integrate):
-            return SpatialMeasure(integrate, "grid")
+        if self._measures_on_the_grids_weights():
+            return SpatialMeasure(np.asarray(self.geometry.measure_weights(), dtype=float), "grid")
+        if not self.is_network and callable(getattr(self.geometry, "integrate", None)):
+            raise TypeError(
+                f"{type(self.geometry).__name__} has integrate() but no measure_weights(). The problem's measure is "
+                "its per-node weights, which every consumer reads, and they cannot be recovered from integrate() "
+                "without integrating one indicator field per node. Give the geometry a measure_weights() that "
+                "returns the weights its integrate() uses (#1642)."
+            )
+        n = self.num_spatial_points
         if self.is_network:
-            return SpatialMeasure(lambda f: np.sum(f, axis=-1), "node-sum")
+            return SpatialMeasure(np.ones(n), "node-sum")
         if self.dimension == 1:
             dx = self._get_spacing() or 1.0
-            return SpatialMeasure(lambda f: np.sum(f, axis=-1) * dx, "uniform-cell")
+            return SpatialMeasure(np.full(n, dx), "uniform-cell")
         from mfgarchon.geometry import GeometryType
 
         # A declared Cartesian grid without `integrate` is measured on its cells. This is the population that
@@ -2326,19 +2342,22 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                     f"({type(self.geometry).__name__}) declares a CARTESIAN_GRID with neither integrate() nor a "
                     "get_grid_spacing() that returns one."
                 )
-            cell = float(np.prod(spacing))
-            axes = tuple(range(-len(spacing), 0))
-            return SpatialMeasure(lambda f: np.sum(f, axis=axes) * cell, "uniform-cell")
-        n = self.num_spatial_points
-        return SpatialMeasure(lambda f: np.sum(f, axis=-1) / n, "point-average")
+            return SpatialMeasure(
+                np.full(tuple(self.geometry.get_grid_shape()), float(np.prod(spacing))), "uniform-cell"
+            )
+        return SpatialMeasure(np.full(n, 1.0 / n), "point-average")
+
+    def _measures_on_the_grids_weights(self) -> bool:
+        """Whether :meth:`spatial_measure` is the geometry's own weights, its ``"grid"`` branch."""
+        return not self.is_network and callable(getattr(self.geometry, "measure_weights", None))
 
     def _measure_initial_density(self) -> tuple[float, str]:
         """The initial density's total mass, and the name of the measure that produced it."""
-        measure = self.spatial_measure()
         try:
+            measure = self.spatial_measure()
             return float(measure.integrate(np.asarray(self.m_initial))), measure.name
         except ValueError as exc:
-            if measure.name != "grid":
+            if not self._measures_on_the_grids_weights():
                 raise
             # The one case that reaches here is a single-node axis, which `quadrature_weights_1d`
             # refuses because a one-node axis has no measure -- returning 0 or dx would both be

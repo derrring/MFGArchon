@@ -29,6 +29,7 @@ from mfgarchon.utils.numerical.particle import (
     interpolate_grid_to_particles,
     sample_from_density,
 )
+from mfgarchon.utils.numerical.quadrature import integrate_on_weights
 from mfgarchon.utils.pde_coefficients import (
     resolve_volatility_override,
     retired_volatility_keywords,
@@ -1361,27 +1362,6 @@ class FPParticleSolver(BaseFPSolver):
         # the returned history -- see `_to_caller_mass`.
         return self._to_caller_mass(m_density_estimated, particles=particles_at_time_t)
 
-    def _quadrature_weights(self) -> np.ndarray | None:
-        """The geometry's own measure as an array, so one functional is used everywhere (#2145).
-
-        Built from the per-axis weights rather than from a spacing, because `sum(m) * dx` is the
-        rectangle rule and is not the mass on an endpoint-inclusive grid. Returned as an array so the
-        backend path can weight a tensor with the same numbers the CPU path uses -- an asymmetry here
-        would make the two conserve different quantities, which is the defect #2145 removed.
-        """
-        geom = getattr(self.problem, "geometry", None)
-        weights_fn = getattr(geom, "quadrature_weights", None)
-        if not callable(weights_fn):
-            return None
-        try:
-            axes = [np.asarray(weights_fn(d), dtype=float) for d in range(len(geom.get_grid_shape()))]
-        except (ValueError, NotImplementedError, AttributeError, TypeError):
-            return None
-        w = axes[0]
-        for a in axes[1:]:
-            w = np.multiply.outer(w, a)
-        return w
-
     def _measure(self, density, use_backend: bool = False) -> float | None:
         """This slice's mass, on the GEOMETRY'S OWN measure. The only place that answers that.
 
@@ -1400,7 +1380,7 @@ class FPParticleSolver(BaseFPSolver):
         arr = np.asarray(raw, dtype=float)
         if arr.shape != w.shape:
             return None
-        mass = float((arr * w).sum())
+        mass = float(integrate_on_weights(arr, w))
         return mass if np.isfinite(mass) and mass > 0.0 else None
 
     def _to_caller_mass(self, density: Any, use_backend: bool = False, particles: Any = None) -> Any:
@@ -1594,7 +1574,9 @@ class FPParticleSolver(BaseFPSolver):
             )
 
         self._mass_target = self._caller_mass(M_initial)
-        self._mass_weights = self._quadrature_weights() if self._mass_target is not None else None
+        # The problem's measure as an array, so the backend path weights a tensor with the numbers the CPU path uses
+        # (#2145); its one owner is `MFGProblem.spatial_measure` (#1642).
+        self._mass_weights = self.problem.spatial_measure().weights if self._mass_target is not None else None
         self._mass_factor = None  # calibrated on the first KDE reconstruction of THIS solve
         self._n_particles_initial = None  # likewise: the count behind the first slice (#2519)
         # Reset here rather than in the implementation: the callable-drift path returns before the
