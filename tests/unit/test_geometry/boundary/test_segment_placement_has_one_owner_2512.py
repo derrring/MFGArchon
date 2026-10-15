@@ -47,8 +47,6 @@ FACE_NAME = re.compile(r"\}_(min|max)\b|_\{(side|lo|hi|s|end)\}")
 _NOT_A_SEGMENT = "matches a rival form and reads no segment"
 #: (file, function) -> (site count, why it is allowed).
 ALLOWED = {
-    ("mfgarchon/alg/numerical/hjb_solvers/hjb_gfdm.py", "_preclassify_boundary_points"): (2, "B1c: GFDM node classes"),
-    ("mfgarchon/alg/numerical/hjb_solvers/hjb_gfdm.py", "_infer_boundary_id"): (2, "B1c: GFDM's face name for a node"),
     ("mfgarchon/alg/numerical/meshless_galerkin/nitsche.py", "_segment_faces"): (8, "B1c: Nitsche faces"),
     ("mfgarchon/geometry/boundary/applicator_particle.py", "_get_boundary_id"): (2, "B1d: particle boundary id"),
     ("mfgarchon/alg/base_solver.py", "get_domain_constraints"): (1, "B1e: one constraint per segment, from its region"),
