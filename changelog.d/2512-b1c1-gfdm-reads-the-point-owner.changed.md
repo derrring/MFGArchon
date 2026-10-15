@@ -9,7 +9,8 @@
     `domain_sdf` is now classified by its own SDF; one whose SDF is an obstacle's puts the outer walls on no face and
     is refused, naming `domain_bounds`.
   - On a curved `domain_sdf` a mixed BC is now classified, where it was refused, and its rows take the SDF's normal
-    at the point, the one the uniform path writes there.
+    at the point, the one the uniform path writes there off the geometry's box. At a kink of `domain_sdf` on the
+    geometry's box the two paths differ (#2675).
   - At a corner the row is written along the normal of the first face, in face order, whose segment at the point
     writes the row the corner's segment writes. Where the corner's segment changes, the normal follows its datum.
   - `BoundaryConditions.face_segments_at_point` gives each face a point lies on with its segment there and the

@@ -724,8 +724,10 @@ class BoundaryConditions:
 
         The normal is the face's (:meth:`outward_normal_for_face`) where the faces are read from a box. Where they are
         read from ``domain_sdf``, the one face is the gradient's dominant axis, which on a curved boundary is not its
-        normal, so the normal is the SDF's at the point (:meth:`get_outward_normal`): the normal the uniform path
-        writes there."""
+        normal, so the normal is the SDF's at the point (:meth:`get_outward_normal`), the function the uniform path's
+        SDF branch calls. The two paths agree wherever the uniform path reaches that branch, which is off the
+        geometry's box: at a kink of ``domain_sdf`` lying on the geometry's box, the uniform path writes the box face's
+        normal and this one the SDF's (#2675)."""
         point = np.asarray(point, dtype=float)
         geometry = self._query_geometry(geometry)
         on, bounds = self._point_faces(point, geometry, tolerance, "face_segments_at_point")

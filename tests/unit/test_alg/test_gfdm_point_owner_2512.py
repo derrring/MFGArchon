@@ -142,9 +142,9 @@ def _inlet_and_wall(**kwargs) -> BoundaryConditions:
 def test_a_bc_with_its_own_sdf_is_classified_by_the_faces_its_sdf_gives():
     """Review 1 of #2674, blocker 1. A BC with ``domain_sdf`` and no ``domain_bounds`` has no box for the owner to read
     faces from (#2663: the geometry's box does not override the BC's SDF), so each point takes the face its SDF gives,
-    as `segment_for_point` reads it. Before this, GFDM found no face and refused every point, advising a smaller
-    offset. An SDF that is an obstacle's puts the outer walls on no face of the BC; the refusal says so and names
-    ``domain_bounds``, and with them the same BC classifies."""
+    as `segment_for_point` reads it. At the base GFDM read its box from the geometry whatever the BC carried, so a
+    box SDF was classified by the geometry's box. An SDF that is an obstacle's puts the outer walls on no face of the
+    BC; the refusal says so and names ``domain_bounds``, and with them the same BC classifies."""
     solver = _solver(_inlet_and_wall(domain_sdf=_box_sdf))
     assert solver._bc_segment_per_point[_index(solver, [0.0, 0.5])].name == "in"
     assert solver._bc_segment_per_point[_index(solver, [1.0, 0.5])].name == "wall"
@@ -227,8 +227,8 @@ def test_a_robin_coefficient_provider_does_not_stop_construction():
 def test_every_refusal_the_owner_makes_is_reported_per_point():
     """Review 1 of #2674, must-fix 1: a BC with no default and no segment on the y faces. The owner refuses those
     points; GFDM collects each refusal, with the owner's reason, into one message rather than raising the first.
-    Review 2, should-fix 3: a ``region_name`` segment on a geometry that cannot mark regions is refused with a
-    TypeError, which is collected too."""
+    Review 2, should-fix 3: a ``region_name`` segment on a geometry that does not implement ``SupportsRegionMarking``
+    is refused with a TypeError, which is collected too."""
     bc = BoundaryConditions(
         dimension=2,
         segments=[

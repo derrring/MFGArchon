@@ -1399,8 +1399,9 @@ class HJBGFDMSolver(BaseHJBSolver):
                     point, geometry=geometry, tolerance=BOUNDARY_TOL, equivalent=_same_bc_row
                 )
             except (ValueError, TypeError, NotImplementedError) as exc:
-                # BCSegment.matches_point refuses a region_name segment with TypeError or NotImplementedError on a
-                # geometry that cannot mark regions or map a point to its node; every other refusal is a ValueError.
+                # BCSegment.matches_point refuses a region_name segment with TypeError on a geometry that does not
+                # implement SupportsRegionMarking, and with NotImplementedError on one that cannot map a point to its
+                # node; the owner's other refusals are ValueErrors.
                 unmatched.append((i, point, f"refused by the boundary owner: {exc}"))
                 continue
             # The normal at a corner (#2512 row B1, gap 2): the first face, in face order, whose segment at the point
