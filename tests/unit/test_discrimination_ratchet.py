@@ -98,7 +98,10 @@ def test_a_deleted_mutation_is_caught(td):
 
 
 def test_a_new_mutation_is_listed_as_a_gain(td):
-    problems, gains = td.compare_to_baseline(_now(a=10, b=3), _base(a=10))
+    """With a matrix, the path `main()` takes: a new mutation is in neither the baseline nor the matrix, and
+    must not read as a baseline mutation whose killer set the matrix lacks (#2692 review 1)."""
+    matrix = {"mutations": {"a": {"status": "ok", "killed": []}}}
+    problems, gains = td.compare_to_baseline(_now(a=10, b=3), _base(a=10), matrix)
     assert problems == []
     assert len(gains) == 1
     assert "NEW mutation" in gains[0]
@@ -900,19 +903,30 @@ def test_the_killer_reference_is_the_committed_matrix_not_this_runs_output(td, m
 
 
 @pytest.mark.parametrize(
-    ("case", "recorded", "reference", "now", "code"),
+    ("case", "recorded", "reference", "now", "code", "regressed", "listed"),
     [
-        ("a gain", 1, ["test_a"], {"test_a", "test_b"}, 0),
+        ("a gain", 1, ["test_a"], {"test_a", "test_b"}, 0, [], ["IMPROVED", "::warning"]),
         # The matrix disagrees with the count on purpose: nothing departs, so only the count path can fail it.
-        ("a drop", 2, ["test_a"], {"test_a"}, 1),
-        ("a departure while the count rises", 1, ["test_a"], {"test_b", "test_c"}, 1),
+        ("a drop", 2, ["test_a"], {"test_a"}, 1, ["DISCRIMINATION LOST"], []),
+        # Its exit 1 alone would also come from the arrival line beside it, so the departure is asserted in the
+        # regression block by its own words; and the count's rise is still listed beside it (#2692 review 1).
+        (
+            "a departure while the count rises",
+            1,
+            ["test_a"],
+            {"test_b", "test_c"},
+            1,
+            ["STOPPED killing"],
+            ["IMPROVED"],
+        ),
     ],
 )
 def test_check_baseline_fails_on_a_loss_and_lists_a_gain(
-    td, monkeypatch, tmp_path, capsys, case, recorded, reference, now, code
+    td, monkeypatch, tmp_path, capsys, case, recorded, reference, now, code, regressed, listed
 ):
     """The weekly verdict (user ruling, 2026-10-15): exit 1 on a drop or a departure, exit 0 on a gain,
-    which the output still lists. Driven through `main()` over a synthetic baseline and matrix, no sweep."""
+    which the output still lists. Driven through `main()` over a synthetic baseline and matrix, no sweep.
+    Each line is asserted in its own block: gains print first, then the regressions under their heading."""
     name = td.MUTATIONS[0].name
     baseline = tmp_path / "discrimination_baseline.json"
     matrix = tmp_path / "discrimination_killmatrix.json"
@@ -929,9 +943,11 @@ def test_check_baseline_fails_on_a_loss_and_lists_a_gain(
     )
     out = capsys.readouterr().out
     assert got == code, f"{case}: exit {got}, expected {code}\n{out[-800:]}"
-    if code == 0:
-        assert "not a failure" in out, f"{case}: the gains are not listed\n{out[-800:]}"
-        assert "IMPROVED" in out, f"{case}: the gain is not in the list\n{out[-800:]}"
+    gains_block, _, regression_block = out.partition("Discrimination baseline mismatch:")
+    if listed:
+        assert "not a failure" in gains_block, f"{case}: no gains heading\n{out[-800:]}"
+    missing = [t for t in listed if t not in gains_block] + [t for t in regressed if t not in regression_block]
+    assert not missing, f"{case}: not in its block: {missing}\n{out[-800:]}"
 
 
 def test_the_shards_partition_the_mutation_list(td):

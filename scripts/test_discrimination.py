@@ -835,8 +835,9 @@ def compare_to_baseline(results: dict, baseline: dict, matrix: dict | None = Non
     A gain -- a count that rises, a new killer, a new mutation -- is listed and does not fail
     (user ruling, 2026-10-15). Failing on gains too left the weekly run red on gains nobody had
     recorded, where a real loss reads as one more line among them (#1715).
-    What a gain leaves open, a new killer that departs before it is recorded, is closed by
-    re-recording the baseline monthly in its own PR (`.github/workflows/discrimination.yml`).
+    What a gain leaves open is a new killer that departs before anything records it, which no
+    run sees. Re-recording the baseline monthly in its own PR bounds that window to a month and
+    does not close it (`.github/workflows/discrimination.yml`).
     Losing a mutation is a regression: DISAPPEARED and INEFFECTIVE both leave a convention
     the baseline measured with no count to compare.
     """
@@ -870,7 +871,7 @@ def _compare_killers(results: dict, matrix: dict, recorded: set[str]) -> tuple[l
     A departure is a regression even when the count holds: that test stopped noticing the
     convention, and whatever replaced it is a different assertion about a different thing.
     Renames land here too, and that is the intended cost: the fix is to regenerate the
-    baseline in the same commit, exactly as a count change requires. Silence would be the
+    baseline in the same commit, as a count drop requires. Silence would be the
     alternative, and silence is what this whole tool exists to remove.
 
     Two details are deliberately unpinned because they change no verdict, only how it reads:
