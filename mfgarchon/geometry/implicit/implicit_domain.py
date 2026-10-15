@@ -537,9 +537,16 @@ class ImplicitDomain(
 
         Implements SupportsBoundaryProjection protocol.
 
-        This moves points outside the domain just inside the boundary by
-        projecting to the boundary and then moving inward by tolerance along
-        the inward normal.
+        Each outside point is projected onto the boundary along the SDF normal, then moved inward by
+        `tolerance`, or by up to 1e4 * `tolerance` where the projection converged linearly and stopped
+        short. That is the nearest interior point wherever the projection reaches the boundary point
+        nearest it (#2679).
+
+        Every output is checked against phi <= 0, and a point still outside is walked toward the
+        bounding-box centre to the first point inside: inside, but not the nearest. For a domain
+        `box \\ obstacle` this is the obstacle that crosses or is flush with the box, whose nearest face
+        lies outside it, where the projection is trapped at the box wall (#2687). If the walk fails too,
+        this raises naming the point (#1047).
 
         Args:
             points: Points to project, shape (num_points, dimension) or (dimension,)
@@ -547,6 +554,10 @@ class ImplicitDomain(
 
         Returns:
             Projected points in interior, same shape as input
+
+        Raises:
+            RuntimeError: a point neither the projection nor the walk toward the bounding-box centre
+                places inside.
 
         Example:
             >>> sphere = Hypersphere(center=[0, 0], radius=1.0)
@@ -561,30 +572,63 @@ class ImplicitDomain(
         if is_single:
             points = points.reshape(1, -1)
 
-        # Check which points are outside
-        sd = self.signed_distance(points)
-        if np.isscalar(sd):
-            sd = np.array([sd])
-
-        outside = sd > 0
+        outside = np.atleast_1d(self.signed_distance(points)) > 0
 
         if not np.any(outside):
             # All points already inside
             return points[0] if is_single else points
 
-        # Project to boundary, then move inside by tolerance
         points_interior = points.copy()
-
-        # Project outside points to boundary
         boundary_points = self.project_to_boundary(points[outside])
-
-        # Get inward normal (negative of outward normal)
-        normals = self.get_outward_normal(boundary_points)
-
-        # Move inward by tolerance
-        points_interior[outside] = boundary_points - tolerance * normals
+        normals = np.atleast_2d(self.get_outward_normal(boundary_points))
+        moved = boundary_points - tolerance * normals
+        # Where the projection converges linearly -- an obstacle's corner, the seam of a union -- it stops with
+        # 0 < phi below its own tol, and a step of `tolerance` may not cross. Step further, up to 1e4 * tolerance.
+        missed = np.atleast_1d(self.signed_distance(moved)) > 0
+        for step in tolerance * 10.0 ** np.arange(1, 5):
+            if not missed.any():
+                break
+            idx = np.where(missed)[0]
+            moved[idx] = boundary_points[idx] - step * normals[idx]
+            missed[idx] = np.atleast_1d(self.signed_distance(moved[idx])) > 0
+        for i in np.where(missed)[0]:
+            moved[i] = self._walk_toward_bbox_centre(points[outside][i])
+        points_interior[outside] = moved
 
         return points_interior[0] if is_single else points_interior
+
+    def _walk_toward_bbox_centre(self, x: NDArray[np.float64]) -> NDArray[np.float64]:
+        """The first point inside on the ray from `x` toward the bounding-box centre, else a Newton step on
+        the SDF; raise naming `x` if neither reaches phi <= 0 (#1047). Inside, not nearest: the fallback
+        for the points `project_to_interior`'s projection does not place."""
+        from mfgarchon.geometry.implicit.sdf_utils import sdf_gradient
+
+        center = self.get_bounding_box().mean(axis=1)
+        direction = center - x
+        alpha = 0.0
+        for _ in range(100):
+            candidate = x + alpha * direction
+            if self.signed_distance(candidate) <= 0:
+                return candidate
+            alpha += 0.1
+
+        # x_{k+1} = x_k - phi(x_k) * grad(phi) / |grad(phi)|^2
+        x_i = x.copy()
+        for _ in range(20):
+            sd_i = float(np.atleast_1d(self.signed_distance(x_i))[0])
+            if sd_i <= 0:
+                return x_i
+            grad_i = np.asarray(sdf_gradient(x_i, self.signed_distance)).reshape(-1)
+            grad_norm_sq = float(np.dot(grad_i, grad_i))
+            if grad_norm_sq < 1e-12:
+                break
+            x_i = x_i - sd_i * grad_i / grad_norm_sq
+        raise RuntimeError(
+            f"project_to_interior: point {x} is not placed inside by the projection onto the boundary, by 100 "
+            f"steps toward the bounding-box centre {center}, or by 20 Newton steps on the SDF. This indicates a "
+            f"degenerate geometry (e.g. an obstacle surrounding the bounding-box centre, or an SDF whose "
+            f"gradient vanishes near {x}); check signed_distance."
+        )
 
     @property
     def manifold_dimension(self) -> int:

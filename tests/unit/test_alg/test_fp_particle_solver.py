@@ -826,10 +826,9 @@ class TestProjectToNavigableOrDefer:
         """#2679: the projection moved a particle along the ray toward the bounding-box centre, to the first navigable
         point on it, so a particle that entered the side facing away from the centre came out on the obstacle's far
         side -- every particle, for an obstacle on the centre. The nearest navigable point is on the rim, 0.01 from a
-        particle 0.01 deep, on the side it entered. At an obstacle's centre every rim point is nearest, and the ray
-        sent the particle to (0.46, 0.5), 0.16 away."""
+        particle 0.01 deep, on the side it entered, and the rim itself is not navigable: `contains` is phi <= 0."""
         from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import project_to_navigable_or_defer
-        from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle, Hypersphere
+        from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle, Hypersphere, UnionDomain
 
         radius = 0.15
         for centre in (np.array([0.5, 0.5]), np.array([0.3, 0.3])):
@@ -839,11 +838,38 @@ class TestProjectToNavigableOrDefer:
             theta = np.linspace(0.0, 2.0 * np.pi, 8, endpoint=False)
             entered = centre + (radius - 0.01) * np.c_[np.cos(theta), np.sin(theta)]
             moved = project_to_navigable_or_defer(entered.copy(), domain)
+            assert domain.contains(moved).all(), (centre, moved)
             np.testing.assert_allclose(np.linalg.norm(moved - entered, axis=1), 0.01, atol=1e-9, err_msg=str(centre))
             assert np.all(np.sum((moved - centre) * (entered - centre), axis=1) > 0), centre
 
-        at_centre = project_to_navigable_or_defer(np.array([[0.3, 0.5]]), self._make_diff_domain())
-        assert abs(np.linalg.norm(at_centre[0] - np.array([0.3, 0.5])) - radius) < 1e-6, at_centre
+        # In the lens of two overlapping discs the nearest navigable point is a seam point, where the projection
+        # converges linearly and stops short of the boundary (#2687); walked toward the bounding-box centre instead,
+        # the particle crossed the obstacle, 0.18 away.
+        a, b = np.array([0.4, 0.5]), np.array([0.55, 0.5])
+        lens = DifferenceDomain(
+            Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])),
+            UnionDomain([Hypersphere(center=a, radius=0.1), Hypersphere(center=b, radius=0.1)]),
+        )
+        seam = (a + b) / 2 - [0.0, np.sqrt(0.1**2 - 0.075**2)]
+        entered = np.array([[0.473395, 0.439368]])
+        moved = project_to_navigable_or_defer(entered.copy(), lens)
+        assert lens.contains(moved).all(), moved
+        assert abs(np.linalg.norm(moved[0] - entered[0]) - np.linalg.norm(seam - entered[0])) < 1e-6, moved
+
+    def test_a_particle_in_an_obstacle_crossing_the_wall_is_placed_inside(self):
+        """#2687: for an obstacle reaching past the box, the projection onto the domain's boundary is trapped at the
+        box wall, inside the obstacle, wherever the obstacle's nearest face lies outside the box. Those particles
+        must still land navigable -- by the walk toward the bounding-box centre, inside but not nearest."""
+        from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import project_to_navigable_or_defer
+        from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle
+
+        domain = DifferenceDomain(
+            Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])), Hyperrectangle(np.array([[0.9, 1.05], [0.2, 0.8]]))
+        )
+        # The first two have the obstacle's face at x = 1.05 nearest; the third its face at x = 0.9.
+        entered = np.array([[0.99, 0.5], [0.98, 0.3], [0.91, 0.5]])
+        moved = project_to_navigable_or_defer(entered.copy(), domain)
+        assert domain.contains(moved).all(), moved
 
     def test_outer_bbox_violation_left_alone(self):
         """Issue #1064: Particle past outer bbox is NOT touched — caller's BC handles it."""
