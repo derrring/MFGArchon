@@ -232,6 +232,19 @@ def test_what_the_placement_cannot_do_is_refused(case):
         )
 
 
+def test_a_step_that_absorbs_every_particle_records_none():
+    """Every particle of the step leaves at the absorbing wall, so the placement gets no survivors: shape (0, 2)."""
+    problem, _ = _problem(2, _absorbing_at_x_max(2))
+    solver = FPParticleSolver(
+        problem, num_particles=2, implicit_domain=_DOMAIN[2], seed=0, boundary_conditions=_absorbing_at_x_max(2)
+    )
+    recorded, _absorbed, n_absorbed = solver._finish_step(
+        np.array([[1.2, 0.95], [1.3, 0.1]]), np.array([[0.85, 0.95], [0.85, 0.1]]), [(0.0, 1.0)] * 2, True
+    )
+    assert recorded.shape == (0, 2), recorded.shape
+    assert n_absorbed == 2, n_absorbed
+
+
 def test_a_reflected_step_is_placed_by_the_face_its_path_met():
     """#2706 review 1, M3: a reflected step's path is broken at the wall, and the face it met is on that path.
 
@@ -247,6 +260,24 @@ def test_a_reflected_step_is_placed_by_the_face_its_path_met():
     solver = FPParticleSolver(problem, num_particles=1, implicit_domain=domain, seed=0)
     recorded, _, _ = solver._finish_step(np.array([[1.015, 0.7]]), np.array([[0.985, 0.95]]), [(0.0, 1.0)] * 2, False)
     np.testing.assert_allclose(recorded, [[0.985, 0.8 + 1e-10]], rtol=0, atol=1e-12)
+
+
+def test_a_reflected_step_that_clips_a_flush_obstacles_corner_is_placed_on_its_top_face():
+    """#2706: the obstacle [0.9, 1.0] x [0.2, 0.8] is flush with the wall x = 1. This step's first leg clips the
+    obstacle's corner just before it hits the wall at (1.0, 0.79896), which lies ON the obstacle's face, phi = 0. That
+    excursion is shorter than a scan step, so it was missed, the second leg began on a face that coincides with the
+    wall, and the placement raised. Found by `i2688/m3/reflected_faces_code.py` on pop's flush rectangle. The face it
+    met is the top face, so it is placed at (2 - raw_x, 0.8 + 1e-10)."""
+    flush = DifferenceDomain(
+        Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])), Hyperrectangle(np.array([[0.9, 1.0], [0.2, 0.8]]))
+    )
+    problem, _ = _problem(2, no_flux_bc(dimension=2))
+    solver = FPParticleSolver(problem, num_particles=1, implicit_domain=flush, seed=0)
+    raw = np.array([[1.0275983976791534, 0.7639797123595877]])
+    recorded, _, _ = solver._finish_step(
+        raw, np.array([[0.9547534651728411, 0.8562972391037148]]), [(0.0, 1.0)] * 2, False
+    )
+    np.testing.assert_allclose(recorded, [[2.0 - raw[0, 0], 0.8 + 1e-10]], rtol=0, atol=1e-12)
 
 
 @pytest.mark.parametrize("path", ["grid", "callable"])
@@ -368,7 +399,9 @@ def test_mass_inside_an_obstacle_is_left_out_up_to_the_gates_threshold(share, re
     density = np.zeros(11)
     density[2], density[6] = 1.0 - share, share
     if refused:
-        with pytest.raises(ValueError, match=r"Leaving it out would drop a fraction 1\.000e-06 of the total mass \(threshold 1e-08\)"):
+        with pytest.raises(
+            ValueError, match=r"Leaving it out would drop a fraction 1\.000e-06 of the total mass \(threshold 1e-08\)"
+        ):
             sample_from_density(density, [_XS], 2000, seed=0, navigable=domain.contains)
         return
     x = sample_from_density(density, [_XS], 2000, seed=0, navigable=domain.contains)

@@ -666,8 +666,11 @@ class ImplicitDomain(
         """On the leg from ``a`` (taken as inside) to ``b``: the last inside and the first outside point bracketing
         its first phi = 0 crossing, or None when no scan point beyond ``a`` is outside. A scan of ``n_scan`` steps
         and ``n_bisect`` bisections on the sign of phi; a feature thinner than a scan step can be passed over, and
-        the crossing found is then a later one (#2710)."""
-        s = np.linspace(0.0, 1.0, n_scan + 1)
+        the crossing found is then a later one (#2710). One more sample sits 1e-9 of the leg before ``b``: a leg that
+        ends ON an obstacle's face -- a reflected step's wall hit where the obstacle is flush with the wall -- has
+        phi = 0 there, which reads inside, and its excursion into the obstacle just before the end can be shorter
+        than a scan step (#2706)."""
+        s = np.concatenate([np.linspace(0.0, 1.0, n_scan + 1)[:-1], [1.0 - 1e-9, 1.0]])
         out = np.atleast_1d(self.signed_distance(a[None, :] + s[:, None] * (b - a)[None, :])) > 0
         out[0] = False
         if not out.any():

@@ -546,7 +546,7 @@ def reflection_waypoints(previous: np.ndarray, raw: np.ndarray, bounds: list[tup
     lo = np.array([b[0] for b in bounds], dtype=float)
     hi = np.array([b[1] for b in bounds], dtype=float)
     length = hi - lo
-    prev = np.asarray(previous, dtype=float).reshape(len(previous), -1)
+    prev = np.asarray(previous, dtype=float).reshape(-1, len(bounds))
     end = np.asarray(raw, dtype=float).reshape(prev.shape)
     left = np.flatnonzero(np.any((end < lo) | (end > hi), axis=1))
     if left.size == 0:
