@@ -14,10 +14,10 @@ use names defined in a neighbouring docstring. `doctest`'s unit of isolation is 
 under any runner, and turning execution on package-wide is a documentation rewrite rather than a check. The 23 modules
 below are the ones whose examples already pass, all 172 of them.
 
-**So this covers 23 of 178 modules with examples, and nothing else.** The number is in `test_the_allowlist_states_its_own_coverage`
+**So this covers 23 of 177 modules with examples, and nothing else.** The number is in `test_the_allowlist_states_its_own_coverage`
 so that it cannot quietly be read as "the package's examples are checked". The complement is covered differently and
-statically, by `scripts/check_docstring_kwargs.py`, which needs no executability and analyses 607 of the 624
-docstring blocks — the other 17 do not parse as Python (measured 2026-10-14, #2648).
+statically, by `scripts/check_docstring_kwargs.py`, which needs no executability and analyses 605 of the 622
+docstring blocks — the other 17 do not parse as Python (measured 2026-10-16, #2002).
 
 What reddens this file: any change that breaks an example in a listed module — a renamed parameter, a moved import,
 a changed repr.
@@ -172,7 +172,7 @@ def test_every_example_in_this_module_still_runs(module_name):
 
 
 def test_the_allowlist_states_its_own_coverage():
-    """A list of 23 modules must not read as a claim about the package's 178.
+    """A list of 23 modules must not read as a claim about the package's 177.
 
     This is the positive control on the file's honesty rather than on the code: it fails if the package grows modules
     with examples and the list stays put without the docstring above being updated to say so. The ratio is the thing a
@@ -196,15 +196,16 @@ def test_the_allowlist_states_its_own_coverage():
             if any(t.examples for t in doctest.DocTestFinder().find(module)):
                 with_examples += 1
 
-    # `len(EXECUTABLE) <= with_examples` was the first version of this and is vacuous -- 23 <= 178 holds
+    # `len(EXECUTABLE) <= with_examples` was the first version of this and is vacuous -- 23 <= 177 holds
     # however few of the listed modules carry examples, and the property it names is actually tested above by
     # `assert tests` per module (review of #2351). The ratio is what this test is for, and it is asserted
-    # EXACTLY: a docstring that says "23 of 178" stops being true at any other count, so any other count fires.
+    # EXACTLY: a docstring that says "23 of 177" stops being true at any other count, so any other count fires.
     # #2422 took it from 182 to 181 by deleting a module that carried examples, #2583 to 180 by withdrawing
     # FP-GFDM's, #2648 to 179 by deleting `core.mfg_components_nested`, and #2648's ruling 6 to 178 by deleting
-    # `geometry.graph.maze_config`.
-    assert with_examples == 178, (
-        f"modules carrying examples moved {178} -> {with_examples}. This file's docstring states the ratio "
-        f"23 of 178 and `scripts/check_docstring_kwargs.py`'s docstring states 607 analysed blocks; both are "
+    # `geometry.graph.maze_config`, and the retirement docstrings of #2002 to 177 by withdrawing the example
+    # of `PenaltyHJBSolver`, whose constructor raises.
+    assert with_examples == 177, (
+        f"modules carrying examples moved {177} -> {with_examples}. This file's docstring states the ratio "
+        f"23 of 177 and `scripts/check_docstring_kwargs.py`'s docstring states 605 analysed blocks; both are "
         f"now wrong. Update them and this number together, or the coverage claim overstates itself silently."
     )
