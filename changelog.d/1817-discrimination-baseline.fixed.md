@@ -2,8 +2,9 @@
   (Issue #1817). The sweep has never once succeeded: its first run aborted on a test that was red on
   the runner and green locally, #1828 fixed that the next day, and nothing re-ran it because the
   schedule is weekly and nothing closes the issue. The baseline it compares against was measured at
-  `bec28ce5` (`collected: 5683`) against 5872 now, and it refuses a drop *and* a rise, so it could not
-  have gone green even with the runner fixed. Re-measured on `db3496f9`; a local run and the CI sweep
+  `bec28ce5` (`collected: 5683`) against 5872 now, and it then refused a drop *and* a rise (one-way since
+  #1715: a gain is listed and exits 0), so it could not have gone green even with the runner fixed.
+  Re-measured on `db3496f9`; a local run and the CI sweep
   agree on all six counts and on the 212-distinct-tests total. `discrimination.yml` also gains the
   `resolve-on-success` edge that #1806 gave `nightly.yml` — it had only an opening edge, which is why
   #1817 stayed open for four days after its cause was fixed.
