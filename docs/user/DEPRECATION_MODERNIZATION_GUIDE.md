@@ -1,7 +1,7 @@
 # Deprecation Modernization Guide
 
 **Auto-generated** by `scripts/generate_deprecation_guide.py`
-**Total deprecated items**: 127
+**Total deprecated items**: 126
 **Versions covered**: v0.22.0, v0.21.0, v0.20.0, v0.19.2, v0.19.0, v0.18.6, v0.18.0, v0.17.0, v0.16.11, v0.12.0
 
 ---
@@ -43,7 +43,7 @@ It does mean a migration you read on one row **does not transfer** to another so
 
 ## Deprecated since v0.22.0
 
-*86 items*
+*85 items*
 
 ### Parameters
 
@@ -99,7 +99,6 @@ It does mean a migration you read on one row **does not transfer** to another so
 - `sigma=` in `MeshlessGalerkinFPSolver.solve_fp_step_adjoint_mode()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `MeshlessGalerkinFPSolver.solve_fp_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `MeshlessGalerkinHJBSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
-- `sigma_function=` in `MonotonicityEnforcer.__init__()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `cross_coupling=` in `MultiPopulationProblem.__init__()` — refused with a TypeError that says it never had an effect (#2648); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `NetworkFPSolver.solve_fp_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0
 - `diffusion_field=`, `tensor_diffusion_field=`, `volatility_field=`, `volatility_matrix=` in `NetworkHJBSolver.solve_hjb_system()` — refused with a TypeError that names the replacement (#2378); the refusal goes by v0.25.0

@@ -48,7 +48,7 @@ C = 2.0 * np.pi / L
 K = np.pi / L
 DA1 = -1.0 / (2.0 * T)
 
-_HOWARD = {"inner_solver": "howard", "monotonicity_scheme": "qp_m_matrix", "monotonicity_application": "always"}
+_HOWARD = {"inner_solver": "howard", "monotonicity_scheme": "none"}
 _NEWTON = {"monotonicity_scheme": "none"}
 
 

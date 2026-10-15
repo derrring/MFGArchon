@@ -116,33 +116,6 @@ class FEMConfig(BaseConfig):
 # =============================================================================
 
 
-class QPConfig(BaseConfig):
-    """
-    QP monotonicity enforcement configuration for GFDM.
-
-    Controls quadratic programming constraints that ensure monotone schemes,
-    important for viscosity solution convergence.
-
-    Attributes
-    ----------
-    optimization_level : Literal["none", "auto", "always"]
-        QP optimization level: "none" (no QP), "auto" (adaptive M-matrix check),
-        "always" (force QP everywhere, for debugging).
-    solver : Literal["osqp", "scipy"]
-        QP solver backend: "osqp" (fast convex QP) or "scipy" (SLSQP).
-    warm_start : bool
-        Enable warm-starting for OSQP (2-3x speedup on similar QPs).
-    constraint_mode : Literal["indirect", "hamiltonian"]
-        Constraint type: "indirect" (Taylor coefficient constraints) or
-        "hamiltonian" (direct dH/du_j >= 0, stricter).
-    """
-
-    optimization_level: Literal["none", "auto", "always"] = "none"
-    solver: Literal["osqp", "scipy"] = "osqp"
-    warm_start: bool = True
-    constraint_mode: Literal["indirect", "hamiltonian"] = "indirect"
-
-
 class NeighborhoodConfig(BaseConfig):
     """
     Neighborhood construction configuration for GFDM.
@@ -236,8 +209,9 @@ class GFDMConfig(BaseConfig):
         Weight function type (default: "wendland")
     weight_scale : float
         Weight scale parameter (default: 1.0)
-    qp : QPConfig
-        QP monotonicity enforcement settings
+    monotonicity_scheme : Literal["none", "joint_socp"]
+        Monotone stencil construction, as ``HJBGFDMSolver(monotonicity_scheme=)``. The QP sub-config that
+        selected the derivative-coefficient QP is deleted (#1689).
     neighborhood : NeighborhoodConfig
         Neighborhood construction settings
     derivative : DerivativeConfig
@@ -252,7 +226,7 @@ class GFDMConfig(BaseConfig):
     taylor_order: int = Field(default=2, ge=1, le=2)
     weight_function: str = "wendland"
     weight_scale: float = Field(default=1.0, gt=0)
-    qp: QPConfig = Field(default_factory=QPConfig)
+    monotonicity_scheme: Literal["none", "joint_socp"] = "none"
     neighborhood: NeighborhoodConfig = Field(default_factory=NeighborhoodConfig)
     derivative: DerivativeConfig = Field(default_factory=DerivativeConfig)
     boundary_accuracy: BoundaryAccuracyConfig = Field(default_factory=BoundaryAccuracyConfig)

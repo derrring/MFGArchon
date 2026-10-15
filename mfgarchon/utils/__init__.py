@@ -132,7 +132,6 @@ from .numerical.particle.interpolation import (
     interpolate_grid_to_particles,
     interpolate_particles_to_grid,
 )
-from .numerical.qp_utils import QPCache, QPSolver
 from .numerical.sdf_utils import (
     sdf_box,
     sdf_complement,
@@ -362,9 +361,6 @@ __all__ = [
     "sdf_smooth_union",
     "sdf_sphere",
     "sdf_union",
-    # QP utilities
-    "QPCache",
-    "QPSolver",
     "get_logger",
     "log_performance_metric",
     "log_solver_completion",

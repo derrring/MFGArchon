@@ -45,7 +45,7 @@ from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, d
 L, T, NX, NT = 2.0, 1.0, 21, 10
 X = np.linspace(0.0, L, NX)
 TERMINALS = {"zero": np.zeros(NX), "constant": np.full(NX, 0.1), "linear": 0.1 + 0.05 * X}
-HOWARD = {"inner_solver": "howard", "monotonicity_scheme": "qp_m_matrix", "monotonicity_application": "always"}
+HOWARD = {"inner_solver": "howard", "monotonicity_scheme": "none"}
 
 
 def _problem(grid):

@@ -148,10 +148,9 @@ def test_mms_reaches_gfdm_and_it_converges():
 
 _HOWARD = {
     "inner_solver": "howard",
-    # qp_m_matrix (osqp, a base dependency) rather than joint_socp (cvxpy, the `numerical`
-    # extra): this test pins that `source_term` REACHES the Howard branch, not SOCP stencils.
-    "monotonicity_scheme": "qp_m_matrix",
-    "monotonicity_application": "always",
+    # "none" rather than joint_socp (cvxpy, the `numerical` extra): this test pins that `source_term`
+    # REACHES the Howard branch, not SOCP stencils.
+    "monotonicity_scheme": "none",
 }
 
 
@@ -227,16 +226,8 @@ def test_the_source_reaches_gfdm_in_2d():
     assert flipped > 3.0 * forced, f"2D source is not discriminating: forced={forced:.3e} flipped={flipped:.3e}"
 
 
-@pytest.mark.slow
 def test_the_per_point_residual_path_also_honours_the_source():
     """A THIRD arithmetic site, with its own sign, and nothing else reaches it.
-
-    NOT IN THE AUTHORITATIVE GATE. `scripts/local_ci.sh` filters on `scripts/ci_markers.txt`,
-    which starts `not slow`, and this test measures 42.8 s -- 28% of the whole gate -- so the
-    marker is justified and removing it is not the fix. State the consequence rather than leave
-    it inferable: the batch path's sign control (`test_the_source_sign_is_not_free`) and Howard's
-    do run in the gate; this one does not, and the migrated caller in
-    `tests/integration/test_diffusion_magnitude_gate.py` runs on THIS path.
 
     `qp_optimization_level != "none"` switches off the batch residual and uses the per-point
     loop, where the source enters at `hjb_gfdm.py` as `H = H + additive_source[i]` -- separate
@@ -245,12 +236,14 @@ def test_the_per_point_residual_path_also_honours_the_source():
     every other test in this module green while the path sits at the flat-1.42 non-convergence
     signature, so this is the failure nothing else discriminates.
 
-    One flipped-sign control, not an order study. Marked slow: the QP-per-point assembly costs
-    ~24s for the pair even at nx=11/nt=4, so the gate skips it and nightly runs it. Measured
-    separation at the shipped size: correct 1.275e-02 against flipped 1.429e+00, 112x.
+    One flipped-sign control, not an order study. It ran on the deleted "qp_m_matrix" (#1689), which
+    gave correct 1.275e-02 against flipped 1.429e+00, 112x; on joint_socp the pair gives 1.689e-02
+    against 1.431e+00, 84.7x, in under a second, so it is no longer marked slow and the gate runs it.
     """
-    # v0.25.0 (#1070) removed `qp_optimization_level=`; the axes are passed directly.
-    kw = {"monotonicity_scheme": "qp_m_matrix", "monotonicity_application": "always"}
+    # joint_socp is the one scheme that still routes to the per-point loop: the derivative-coefficient
+    # QP that did, "qp_m_matrix", is deleted (#1689).
+    pytest.importorskip("cvxpy")
+    kw = {"monotonicity_scheme": "joint_socp"}
     correct = _linf(21, nt=4, **kw)
     flipped = _linf(21, nt=4, sign=+1.0, **kw)
     assert flipped > 1.0, f"flipped source should not converge on the per-point path, got {flipped:.3e}"

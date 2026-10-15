@@ -61,7 +61,6 @@ from .mfg_methods import (
     NetworkConfig,
     NewtonConfig,
     ParticleConfig,
-    QPConfig,
     SLConfig,
     WENOConfig,
 )
@@ -94,7 +93,6 @@ __all__ = [
     "FEMConfig",
     "GFDMConfig",
     "NeighborhoodConfig",
-    "QPConfig",
     "SLConfig",
     "WENOConfig",
     "ParticleConfig",
