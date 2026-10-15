@@ -15,9 +15,9 @@ What it does NOT catch, stated so the number is not read as coverage: a position
 moved, a keyword whose meaning changed while the name survived, a callee it cannot resolve (a local
 name, a method on an instance built earlier in the example), anything in a `**kwargs` signature,
 keywords hidden behind `f(**mapping)` since those names are not in the AST, and the blocks whose
-source does not parse -- 17 of 618, measured 2026-10-15 (#1689), leaving 601 analysed. Those are
-excluded from the reported block count rather than counted as analysed -- the count below is what was
-ANALYSED, not what was seen.
+source does not parse. Those are excluded from the reported block count rather than counted as
+analysed -- the count this script prints is what was ANALYSED, not what was seen. Run it for the
+number; a count copied here drifted from the tree within a day (#1689).
 
 An aliased import is NOT a miss; it resolves and fires. That was listed as a limit here before the
 review of #2351 measured it.

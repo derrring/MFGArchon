@@ -16,8 +16,8 @@ below are the ones whose examples already pass, all 172 of them.
 
 **So this covers 23 of 176 modules with examples, and nothing else.** The number is in `test_the_allowlist_states_its_own_coverage`
 so that it cannot quietly be read as "the package's examples are checked". The complement is covered differently and
-statically, by `scripts/check_docstring_kwargs.py`, which needs no executability and analyses 601 of the 618
-docstring blocks — the other 17 do not parse as Python (measured 2026-10-15, #1689).
+statically, by `scripts/check_docstring_kwargs.py`, which needs no executability and analyses every docstring
+block that parses as Python; running it prints how many.
 
 What reddens this file: any change that breaks an example in a listed module — a renamed parameter, a moved import,
 a changed repr.
@@ -206,6 +206,5 @@ def test_the_allowlist_states_its_own_coverage():
     # `MonotonicityEnforcer`, whose module keeps two functions without examples.
     assert with_examples == 176, (
         f"modules carrying examples moved {176} -> {with_examples}. This file's docstring states the ratio "
-        f"23 of 176 and `scripts/check_docstring_kwargs.py`'s docstring states 601 analysed blocks; both are "
-        f"now wrong. Update them and this number together, or the coverage claim overstates itself silently."
+        f"23 of 176; update it and this number together, or the coverage claim overstates itself silently."
     )
