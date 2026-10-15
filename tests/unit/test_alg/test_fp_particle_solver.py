@@ -826,7 +826,8 @@ class TestProjectToNavigableOrDefer:
         """#2679: the projection moved a particle along the ray toward the bounding-box centre, to the first navigable
         point on it, so a particle that entered the side facing away from the centre came out on the obstacle's far
         side -- every particle, for an obstacle on the centre. The nearest navigable point is on the rim, 0.01 from a
-        particle 0.01 deep, on the side it entered, and the rim itself is not navigable: `contains` is phi <= 0."""
+        particle 0.01 deep, on the side it entered. Landing on the rim is not enough: a computed rim point's phi
+        rounds to either sign, and `contains` is phi <= 0."""
         from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import project_to_navigable_or_defer
         from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle, Hypersphere, UnionDomain
 
