@@ -50,6 +50,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import re
 import subprocess
@@ -741,6 +742,9 @@ def _provenance(artifact: str) -> dict[str, str]:
     """
     return {
         "commit": _head_sha(),
+        # The monthly re-baseline is due from this date. A commit date cannot stand in for it: PRs
+        # hand-edit counts in the baseline, so its last commit is not its last sweep.
+        "swept_on": datetime.date.today().isoformat(),
         "reproduce": (
             f"the `commit` key above is a pre-merge branch sha and does not survive the squash merge "
             f"that ships this file. `git log --oneline --follow {artifact}` and check out its FIRST "
@@ -756,7 +760,8 @@ def _write_baseline(path: Path, results: dict, *, paths: list[str], collected: i
     payload = {
         "_comment": (
             "Kill counts per mutated convention. --check-baseline fails when a count DROPS "
-            "(discrimination lost) and when one RISES (record the gain in the same change). "
+            "(discrimination lost) or a test stops killing a mutation; a count that RISES and a new "
+            "killer are listed, not failed, and the monthly re-baseline records them. "
             "Counts, not test names: this population cannot be selected by name -- the "
             "agreement-shaped patterns give 51, 114 or 156 depending on the regex."
         ),
@@ -807,8 +812,10 @@ def restrict_to_selection(baseline: dict, selected: set[str], declared: set[str]
     }
 
 
-def compare_to_baseline(results: dict, baseline: dict, matrix: dict | None = None) -> list[str]:
-    """Every way discrimination can degrade. Empty list means it did not.
+def compare_to_baseline(results: dict, baseline: dict, matrix: dict | None = None) -> tuple[list[str], list[str]]:
+    """Every way discrimination can degrade, and every gain, as `(regressions, gains)`.
+
+    An empty first list means it did not degrade; `--check-baseline` fails on that list alone.
 
     Two ratchets, both unforgeable by renaming -- which matters, because the
     population this measures cannot be selected by name at all:
@@ -825,11 +832,16 @@ def compare_to_baseline(results: dict, baseline: dict, matrix: dict | None = Non
       instrument than it reads. The killer sets live in the sibling kill matrix, which
       until now was committed as evidence that nothing read.
 
-    Improvements trip it too, and must be recorded in the same change -- otherwise the
-    next baseline encodes the gain as if it had always held, and the ratchet loses the
-    ability to say when anything got better. Same rule as the capability matrix.
+    A gain -- a count that rises, a new killer, a new mutation -- is listed and does not fail
+    (user ruling, 2026-10-15). Failing on gains too left the weekly run red on gains nobody had
+    recorded, where a real loss reads as one more line among them (#1715).
+    What a gain leaves open, a new killer that departs before it is recorded, is closed by
+    re-recording the baseline monthly in its own PR (`.github/workflows/discrimination.yml`).
+    Losing a mutation is a regression: DISAPPEARED and INEFFECTIVE both leave a convention
+    the baseline measured with no count to compare.
     """
-    problems = []
+    problems: list[str] = []
+    gains: list[str] = []
     base_muts = baseline["mutations"]
     for name, was in sorted(base_muts.items()):
         now = results.get(name)
@@ -842,17 +854,17 @@ def compare_to_baseline(results: dict, baseline: dict, matrix: dict | None = Non
         if now["kill_count"] < was["kill_count"]:
             problems.append(f"  {name}: {was['kill_count']} -> {now['kill_count']} killed  [DISCRIMINATION LOST]")
         elif now["kill_count"] > was["kill_count"]:
-            problems.append(
-                f"  {name}: {was['kill_count']} -> {now['kill_count']} killed  [IMPROVED -- record it in the baseline]"
-            )
+            gains.append(f"  {name}: {was['kill_count']} -> {now['kill_count']} killed  [IMPROVED]")
     if matrix is not None:
-        problems.extend(_compare_killers(results, matrix))
+        lost, gained = _compare_killers(results, matrix, set(base_muts))
+        problems.extend(lost)
+        gains.extend(gained)
     for name in sorted(set(results) - set(base_muts)):
-        problems.append(f"  {name}: NEW mutation, not in baseline")
-    return problems
+        gains.append(f"  {name}: NEW mutation, not in baseline")
+    return problems, gains
 
 
-def _compare_killers(results: dict, matrix: dict) -> list[str]:
+def _compare_killers(results: dict, matrix: dict, recorded: set[str]) -> tuple[list[str], list[str]]:
     """Which tests kill each mutation, not how many -- the half a count cannot express.
 
     A departure is a regression even when the count holds: that test stopped noticing the
@@ -873,6 +885,7 @@ def _compare_killers(results: dict, matrix: dict) -> list[str]:
     about the test file, so read it there: `tests/unit/test_discrimination_ratchet.py`.
     """
     problems: list[str] = []
+    gains: list[str] = []
     base = matrix.get("mutations", {})
     compared = 0
     for name, was in sorted(base.items()):
@@ -898,17 +911,21 @@ def _compare_killers(results: dict, matrix: dict) -> list[str]:
         if arrived:
             shown = ", ".join(t.rsplit("::", 1)[-1] for t in arrived[:3])
             more = f" (+{len(arrived) - 3} more)" if len(arrived) > 3 else ""
-            problems.append(
+            # Beside a departure the arrival is evidence about it -- probably a rename -- so it
+            # is reported with the regression rather than as a gain.
+            (problems if departed else gains).append(
                 f"  {name}: {len(arrived)} new killer(s)  "
-                f"[{'a rename? regenerate' if departed else 'IMPROVED -- record it in the baseline'}]: {shown}{more}"
+                f"[{'a rename? regenerate' if departed else 'IMPROVED'}]: {shown}{more}"
             )
-    unchecked = sorted(set(results) - set(base))
+    # A mutation the baseline counts but the matrix lacks is one whose departures cannot be seen.
+    # One in neither is NEW, and `compare_to_baseline` lists it as a gain.
+    unchecked = sorted((set(results) - set(base)) & recorded)
     if unchecked:
         problems.append(
             f"  killer sets compared for {compared} of {len(results)} mutation(s); "
             f"NO matrix entry for: {', '.join(unchecked)} -- regenerate the matrix alongside the baseline"
         )
-    return problems
+    return problems, gains
 
 
 def main() -> None:
@@ -1081,7 +1098,12 @@ def main() -> None:
         recorded = len(baseline["mutations"])
         if args.shard or args.only:
             baseline = restrict_to_selection(baseline, {m.name for m in selected}, {m.name for m in MUTATIONS})
-        problems = compare_to_baseline(results, baseline, matrix)
+        problems, gains = compare_to_baseline(results, baseline, matrix)
+        if gains:
+            # Listed, never failed (user ruling, 2026-10-15); the monthly re-baseline records them.
+            print("\nGains over the baseline, recorded by the monthly re-baseline -- not a failure:")
+            print("\n".join(gains))
+            print(f"::warning title=Discrimination gains::{len(gains)} gain(s) over the baseline, listed in the log")
         if problems:
             print("\nDiscrimination baseline mismatch:")
             print("\n".join(problems))
@@ -1094,7 +1116,7 @@ def main() -> None:
             )
             sys.exit(1)
         print(
-            f"Discrimination matches baseline ({len(baseline['mutations'])} of {recorded} mutations, "
+            f"Discrimination holds against the baseline ({len(baseline['mutations'])} of {recorded} mutations, "
             f"counts and killer sets)."
         )
         sys.exit(0)

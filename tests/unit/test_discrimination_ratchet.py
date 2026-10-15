@@ -14,8 +14,8 @@ the sweep MEANS, which is where it can silently stop working:
   outcomes and reported four mutations killing 113, 17, 5 and 5 tests as INEFFECTIVE
   because their control test-path had been guessed wrong -- while the one genuinely
   uncovered convention looked identical to them.
-- the ratchet, which must fail in both directions for the same reason the capability
-  baseline does.
+- the ratchet, which fails on a loss -- a count that drops, a killer that departs -- and lists a
+  gain without failing (user ruling, 2026-10-15; the monthly re-baseline records gains).
 - the mutation anchors, which are literal source text and rot when the source moves.
 """
 
@@ -57,21 +57,23 @@ def _now(**counts):
 
 
 def test_identical_counts_report_no_problem(td):
-    assert td.compare_to_baseline(_now(a=10), _base(a=10)) == []
+    assert td.compare_to_baseline(_now(a=10), _base(a=10)) == ([], [])
 
 
 def test_a_dropped_kill_count_is_caught(td):
     """Discrimination lost: a convention 10 tests noticed is now noticed by 9."""
-    problems = td.compare_to_baseline(_now(a=9), _base(a=10))
+    problems, gains = td.compare_to_baseline(_now(a=9), _base(a=10))
     assert len(problems) == 1
+    assert gains == []
     assert "DISCRIMINATION LOST" in problems[0]
 
 
-def test_a_raised_kill_count_is_also_caught(td):
-    """The direction a one-way ratchet would swallow, taking the record with it."""
-    problems = td.compare_to_baseline(_now(a=11), _base(a=10))
-    assert len(problems) == 1
-    assert "IMPROVED" in problems[0]
+def test_a_raised_kill_count_is_listed_as_a_gain_not_a_regression(td):
+    """Listed, so the log still says what got better; not failed, under the ruling of 2026-10-15."""
+    problems, gains = td.compare_to_baseline(_now(a=11), _base(a=10))
+    assert problems == []
+    assert len(gains) == 1
+    assert "IMPROVED" in gains[0]
 
 
 def test_a_mutation_going_ineffective_is_caught_before_its_count(td):
@@ -82,7 +84,7 @@ def test_a_mutation_going_ineffective_is_caught_before_its_count(td):
     """
     now = _now(a=0)
     now["a"]["status"] = "INEFFECTIVE"
-    problems = td.compare_to_baseline(now, _base(a=10))
+    problems, _ = td.compare_to_baseline(now, _base(a=10))
     assert len(problems) == 1
     assert "INEFFECTIVE" in problems[0]
     assert "DISCRIMINATION LOST" not in problems[0]
@@ -90,15 +92,16 @@ def test_a_mutation_going_ineffective_is_caught_before_its_count(td):
 
 def test_a_deleted_mutation_is_caught(td):
     """Deleting a mutation must not be a way to make a red ratchet go green."""
-    problems = td.compare_to_baseline({}, _base(a=10))
+    problems, _ = td.compare_to_baseline({}, _base(a=10))
     assert len(problems) == 1
     assert "DISAPPEARED" in problems[0]
 
 
-def test_a_new_mutation_is_caught(td):
-    problems = td.compare_to_baseline(_now(a=10, b=3), _base(a=10))
-    assert len(problems) == 1
-    assert "NEW mutation" in problems[0]
+def test_a_new_mutation_is_listed_as_a_gain(td):
+    problems, gains = td.compare_to_baseline(_now(a=10, b=3), _base(a=10))
+    assert problems == []
+    assert len(gains) == 1
+    assert "NEW mutation" in gains[0]
 
 
 def test_an_uncovered_convention_holding_at_zero_is_not_a_regression(td):
@@ -107,7 +110,7 @@ def test_an_uncovered_convention_holding_at_zero_is_not_a_regression(td):
     now["a"]["status"] = "UNCOVERED"
     base = _base(a=0)
     base["mutations"]["a"]["status"] = "UNCOVERED"
-    assert td.compare_to_baseline(now, base) == []
+    assert td.compare_to_baseline(now, base) == ([], [])
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +266,7 @@ def test_shipped_baseline_records_the_scope_it_was_measured_at(td):
     """
     at = json.loads(_BASELINE.read_text()).get("_measured_at")
     assert isinstance(at, dict), "provenance must be structured, not a bare sha"
-    for key in ("commit", "paths", "markers", "collected", "excluded", "reproduce"):
+    for key in ("commit", "swept_on", "paths", "markers", "collected", "excluded", "reproduce"):
         assert at.get(key), f"_measured_at is missing {key!r}"
     assert at["markers"] == td.MARKERS, "baseline marker set has drifted from the script's"
     assert at["excluded"] == td.SELF_TESTS
@@ -574,7 +577,7 @@ def test_an_equal_size_killer_swap_is_caught(td):
     reported no change, which is why a count is a weaker instrument than it reads (#1901).
     """
     results = _results(["tests/a.py::test_alpha", "tests/a.py::test_gamma"])
-    problems = td.compare_to_baseline(results, _baseline_for(2), _MATRIX)
+    problems, _ = td.compare_to_baseline(results, _baseline_for(2), _MATRIX)
     assert problems, "an equal-size swap passed: the killer-set ratchet is not wired in"
     assert any("STOPPED killing" in p and "test_beta" in p for p in problems), problems
 
@@ -582,19 +585,18 @@ def test_an_equal_size_killer_swap_is_caught(td):
 def test_a_killer_leaving_is_a_loss_even_when_the_count_rises(td):
     """Two arriving and one leaving is a net gain by count and a real loss by coverage."""
     results = _results(["tests/a.py::test_alpha", "tests/a.py::test_gamma", "tests/a.py::test_delta"])
-    problems = td.compare_to_baseline(results, _baseline_for(2), _MATRIX)
+    problems, _ = td.compare_to_baseline(results, _baseline_for(2), _MATRIX)
     assert any("STOPPED killing" in p for p in problems), problems
 
 
 def test_identical_killer_sets_report_nothing(td):
     """Control: the new check must be silent when nothing moved, or it is noise."""
     results = _results(["tests/a.py::test_alpha", "tests/a.py::test_beta"])
-    assert td.compare_to_baseline(results, _baseline_for(2), _MATRIX) == []
+    assert td.compare_to_baseline(results, _baseline_for(2), _MATRIX) == ([], [])
 
 
-def test_new_killers_alone_are_reported_as_an_improvement_to_record(td):
-    """Gains trip it too, same contract as the counts -- otherwise the next baseline
-    encodes the gain as if it had always held.
+def test_new_killers_alone_are_listed_as_a_gain_not_a_regression(td):
+    """Listed, never failed, same contract as the counts (user ruling, 2026-10-15).
 
     The baseline is 3, not 2, on purpose: at 2 the pre-existing COUNT ratchet emits its own
     `2 -> 3 killed [IMPROVED]` for this same input, so `any("IMPROVED" in p)` was satisfied
@@ -603,14 +605,15 @@ def test_new_killers_alone_are_reported_as_an_improvement_to_record(td):
     arrival line can satisfy the assertion.
     """
     results = _results(["tests/a.py::test_alpha", "tests/a.py::test_beta", "tests/a.py::test_gamma"])
-    problems = td.compare_to_baseline(results, _baseline_for(3), _MATRIX)
-    assert any("IMPROVED" in p for p in problems), problems
+    problems, gains = td.compare_to_baseline(results, _baseline_for(3), _MATRIX)
+    assert problems == [], problems
+    assert any("IMPROVED" in p for p in gains), gains
     # Assert on the arrival line's own words, not on the ABSENCE of the count line. The first
     # version of this guard searched for `"killed ["` while the emitted text is `"killed  ["`
     # with two spaces, so it matched nothing and passed over a reverted baseline -- a guard
     # written to prove the witness is not the count ratchet, which could not detect the count
     # ratchet. Found by re-review (#1903); the wrong spacing came from this commit's own message.
-    assert any("new killer(s)" in p for p in problems), f"the witness is not the arrival line: {problems}"
+    assert any("new killer(s)" in p for p in gains), f"the witness is not the arrival line: {gains}"
 
 
 def test_an_ineffective_mutation_contributes_no_killer_noise(td):
@@ -620,7 +623,7 @@ def test_an_ineffective_mutation_contributes_no_killer_noise(td):
     mass departure that is really just 'the mutation stopped applying'.
     """
     results = _results([], status="INEFFECTIVE")
-    problems = td.compare_to_baseline(results, _baseline_for(2), _MATRIX)
+    problems, _ = td.compare_to_baseline(results, _baseline_for(2), _MATRIX)
     assert any("INEFFECTIVE" in p for p in problems)
     assert not any("STOPPED killing" in p for p in problems), problems
 
@@ -628,12 +631,12 @@ def test_an_ineffective_mutation_contributes_no_killer_noise(td):
 def test_without_a_matrix_the_comparison_itself_is_silent(td):
     """The function degrades cleanly; `main()` is what refuses, and on a distinct code.
 
-    Split deliberately: `compare_to_baseline(..., None)` returning [] is the library
+    Split deliberately: `compare_to_baseline(..., None)` returning nothing is the library
     contract, while "do not let a half-off gate exit 0" is a policy that belongs to the
     caller -- see `test_the_degraded_gate_cannot_exit_zero`.
     """
     results = _results(["tests/a.py::test_alpha", "tests/a.py::test_gamma"])
-    assert td.compare_to_baseline(results, _baseline_for(2), None) == []
+    assert td.compare_to_baseline(results, _baseline_for(2), None) == ([], [])
     body = inspect.getsource(td.main)
     assert "discrimination_killmatrix.json" in body, "main() no longer loads the matrix"
     # Loading it is not using it. Dropping the third argument leaves the string above present
@@ -704,7 +707,7 @@ def test_end_to_end_an_unchanged_tree_reports_nothing(td):
         }
         for name, entry in matrix["mutations"].items()
     }
-    assert td.compare_to_baseline(results, baseline, matrix) == [], (
+    assert td.compare_to_baseline(results, baseline, matrix) == ([], []), (
         "an unchanged tree is not silent: the reader and the writer disagree about their shape"
     )
 
@@ -720,7 +723,7 @@ def test_a_baseline_mutation_absent_from_the_matrix_is_reported_not_skipped(td):
     }
     baseline = _baseline_for(2)
     baseline["mutations"]["a_mutation_the_matrix_never_saw"] = {"kill_count": 1, "status": "ok", "owner": "x"}
-    problems = td.compare_to_baseline(results, baseline, _MATRIX)
+    problems, _ = td.compare_to_baseline(results, baseline, _MATRIX)
     assert any("NO matrix entry for" in p and "a_mutation_the_matrix_never_saw" in p for p in problems), problems
     assert any("compared for 1 of 2" in p for p in problems), problems
 
@@ -732,7 +735,7 @@ def test_a_rename_reports_the_arrival_too(td):
     the design calls its intended cost.
     """
     results = _results(["tests/a.py::test_alpha", "tests/a.py::test_beta_renamed"])
-    problems = td.compare_to_baseline(results, _baseline_for(2), _MATRIX)
+    problems, _ = td.compare_to_baseline(results, _baseline_for(2), _MATRIX)
     assert any("STOPPED killing" in p for p in problems), problems
     assert any("a rename? regenerate" in p for p in problems), problems
 
@@ -896,6 +899,41 @@ def test_the_killer_reference_is_the_committed_matrix_not_this_runs_output(td, m
     assert "STOPPED killing" in out, f"exit 1, but not for the killer swap:\n{out[-600:]}"
 
 
+@pytest.mark.parametrize(
+    ("case", "recorded", "reference", "now", "code"),
+    [
+        ("a gain", 1, ["test_a"], {"test_a", "test_b"}, 0),
+        # The matrix disagrees with the count on purpose: nothing departs, so only the count path can fail it.
+        ("a drop", 2, ["test_a"], {"test_a"}, 1),
+        ("a departure while the count rises", 1, ["test_a"], {"test_b", "test_c"}, 1),
+    ],
+)
+def test_check_baseline_fails_on_a_loss_and_lists_a_gain(
+    td, monkeypatch, tmp_path, capsys, case, recorded, reference, now, code
+):
+    """The weekly verdict (user ruling, 2026-10-15): exit 1 on a drop or a departure, exit 0 on a gain,
+    which the output still lists. Driven through `main()` over a synthetic baseline and matrix, no sweep."""
+    name = td.MUTATIONS[0].name
+    baseline = tmp_path / "discrimination_baseline.json"
+    matrix = tmp_path / "discrimination_killmatrix.json"
+    baseline.write_text(json.dumps({"mutations": {name: {"owner": "x", "status": "ok", "kill_count": recorded}}}))
+    matrix.write_text(
+        json.dumps({"mutations": {name: {"status": "ok", "killed": [f"tests/a.py::{t}" for t in reference]}}})
+    )
+    failed = {f"tests/a.py::{t}" for t in now}
+    got = _drive_main(
+        td,
+        monkeypatch,
+        ["--only", name, "--check-baseline", str(baseline)],
+        [td.Run(collected=10), td.Run(failed=failed, returncode=1, collected=10)],
+    )
+    out = capsys.readouterr().out
+    assert got == code, f"{case}: exit {got}, expected {code}\n{out[-800:]}"
+    if code == 0:
+        assert "not a failure" in out, f"{case}: the gains are not listed\n{out[-800:]}"
+        assert "IMPROVED" in out, f"{case}: the gain is not in the list\n{out[-800:]}"
+
+
 def test_the_shards_partition_the_mutation_list(td):
     """Complete and disjoint for every N, so a mutation added later is always in exactly one shard.
 
@@ -925,8 +963,9 @@ def test_a_shard_checks_its_own_mutations_and_still_sees_a_deleted_one(td):
     """
     baseline = _base(ours=1, other_shards=2, removed=3)
     restricted = td.restrict_to_selection(baseline, selected={"ours"}, declared={"ours", "other_shards"})
-    problems = td.compare_to_baseline(_now(ours=1), restricted)
+    problems, gains = td.compare_to_baseline(_now(ours=1), restricted)
     assert problems == ["  removed: mutation DISAPPEARED (baseline killed 3)"], problems
+    assert gains == [], gains
 
 
 def test_a_shard_cannot_write_the_baseline(td, monkeypatch, capsys):
