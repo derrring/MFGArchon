@@ -1,29 +1,24 @@
 """
-Penalty method for variational inequality HJB (optimal stopping / entry-exit).
+Retired penalty wrapper for the obstacle problem v >= Psi(x) (#2002).
 
-Solves: min(-du/dt + H(x, m, Du), v - Psi(x)) = 0
+`PenaltyHJBSolver` raises `NotImplementedError` on construction; the message there gives the
+reason and the alternative. It was written (#924) to approximate the variational inequality
 
-via penalization: -du/dt + H(x, m, Du) + (1/eps) * max(0, Psi(x) - v) = 0
+    min(-dv/dt + H(x, m, Dv), v - Psi(x)) = 0
 
-This is a **wrapper** that decorates any BaseHJBSolver. The penalty term is
-injected via the source_term parameter (#921), so the inner solver doesn't
-need any modification. Any HJB solver (FDM, SL, GFDM, FEM) gains VI
-capability instantly.
+by the penalized equation
 
-Issue #924: Part of Layer 1 (Generalized PDE & Institutional MFG Plan).
+    -dv/dt + H(x, m, Dv) - (1/eps) * max(0, Psi(x) - v) = 0,
 
-Mathematical background:
-    The variational inequality arises in MFG with optimal stopping
-    (entry/exit dynamics). Agents can choose to exit the game when their
-    value function hits the obstacle Psi(x) (e.g., zero scrap value).
+whose penalty raises v where it falls below Psi, injected through the inner solver's
+`source_term`. That channel is `(t, x) -> array` and cannot carry v, so the term the wrapper
+applied was `max(0, Psi(x))`, the same where the constraint holds and where it fails. The obstacle
+route that runs is `HJBFDMSolver(problem, constraint=ObstacleConstraint(psi, 'lower'))` (#591),
+a projection after each time step, with its limits in #2036 and #2046.
 
-    The penalty method approximates the VI by adding a large penalty
-    (1/eps) * max(0, Psi - v) to the HJB equation. As eps -> 0, the
-    penalized solution converges to the VI solution.
-
-    For MFG entry/exit models (Institutional Proposal Project A):
-    - Psi(x) = 0 (exit value) with smooth pasting at the free boundary
-    - The free boundary x*(t) separates active from exited firms
+`v >= Psi` bounds the cost-to-go from below. The library minimises (`docs/user/CONVENTIONS.md`
+§1), so optimal stopping at a stopping cost Psi is the upper obstacle `v <= Psi`,
+`ObstacleConstraint(psi, 'upper')`, not this one.
 
 References:
     - Bensoussan & Lions (1982), "Applications of Variational Inequalities
@@ -49,34 +44,20 @@ if TYPE_CHECKING:
 
 
 class PenaltyHJBSolver(BaseHJBSolver):
-    """Wrapper that adds variational inequality constraint to any HJB solver.
+    """Retired (#2002): construction raises `NotImplementedError`; see the module docstring.
 
-    Enforces v >= Psi(x)
-    via a penalty term added to the source_term of the inner solver.
+    It was written to enforce v >= Psi(x) by adding a penalty to the inner solver's
+    `source_term`, which cannot carry v.
 
     Parameters
     ----------
     inner_solver : BaseHJBSolver
-        The HJB solver to wrap. Can be any concrete solver (FDM, SL, GFDM, etc.)
+        The HJB solver it would have wrapped.
     obstacle : Callable[[NDArray], NDArray]
         Obstacle function Psi(x). Receives spatial grid (N, d) or (N,),
         returns array of obstacle values (N,).
     penalty_parameter : float
-        Penalty strength 1/eps. Larger values give sharper enforcement
-        but may cause numerical stiffness. Default: 1e4.
-        Typical range: 1e3 (soft) to 1e6 (hard).
-
-    Example
-    -------
-    >>> from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
-    >>> inner = HJBFDMSolver(problem)
-    >>> # Entry-exit: firms exit when value drops to zero
-    >>> penalty_solver = PenaltyHJBSolver(
-    ...     inner_solver=inner,
-    ...     obstacle=lambda x: np.zeros(x.shape[0]),  # Psi = 0
-    ...     penalty_parameter=1e4,
-    ... )
-    >>> U = penalty_solver.solve_hjb_system(M, U_T, U_prev)
+        Penalty strength 1/eps. Default: 1e4.
     """
 
     # Inherit scheme family from inner solver
