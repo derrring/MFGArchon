@@ -13,9 +13,9 @@
       1e4 * `tolerance` where the projection converges linearly and stops short (an obstacle's corner, the seam of
       a union).
     - A point still outside is walked toward the bounding-box centre to the first navigable point: navigable, not
-      the nearest, and the walk can cross the obstacle. This is reached by an obstacle that crosses or is flush with
-      the bounding box, whose nearest face lies outside it. If the walk fails too, it raises `RuntimeError` naming
-      the point.
+      the nearest, and the walk can cross the obstacle (#2688). This is reached by an obstacle that crosses or is
+      flush with the bounding box, whose nearest face lies outside it. If the walk fails too, it raises
+      `RuntimeError` naming the point.
     - Before, it returned those points outside the domain, on the box wall inside the obstacle, without a warning.
   - `ImplicitDomain.project_to_domain` is removed; use `project_to_interior`. It was a second projection beside the
     protocol's: the bounding-box ray, a private Newton iteration used only when the ray failed, and a
