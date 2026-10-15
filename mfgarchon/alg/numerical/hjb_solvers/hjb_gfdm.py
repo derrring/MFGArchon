@@ -379,7 +379,8 @@ class HJBGFDMSolver(BaseHJBSolver):
                 Default: "none". The derivative-coefficient QP, ``"qp_m_matrix"``, is deleted (#1689): it
                 constrained the solution's Taylor coefficients, not the stencil's weights.
             monotonicity_application: ``"precompute"`` (the only one ``joint_socp`` has: its weights
-                are solved once at construction) or None, which means the same. Ignored for ``"none"``.
+                are solved once at construction) or None, which means the same. Any other value is refused,
+                with either scheme; with ``"none"`` the two have no effect.
             qp_usage_target: Refused when passed (#2648): it never had an effect, and the QP it named is
                 deleted (#1689). The name goes in v0.25.0.
             adaptive_neighborhoods: Enable adaptive delta enlargement to guarantee well-posed problems.
@@ -1675,11 +1676,11 @@ class HJBGFDMSolver(BaseHJBSolver):
         neighborhood = self.neighborhoods[point_idx]
         has_ghost = neighborhood.get("has_ghost", False)
 
-        # Fast path: delegate to GFDMOperator when no ghost particles and no QP needed
+        # Fast path: GFDMOperator, at level "none" with no ghost particles
         if qp_level == "none" and not has_ghost:
             return self._gfdm_operator.approximate_derivatives_at_point(u_values, point_idx)
 
-        # Slow path: handle ghost particles and/or QP constraints
+        # Slow path: this solver's own least squares, for ghost particles and at joint_socp's "precompute" level
         if self.taylor_matrices[point_idx] is None:
             return {}
 
@@ -1998,8 +1999,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         Compute HJB residual using pre-computed derivatives (per-point path).
 
         Per-point path via problem.H(). The potential V(x) comes from the
-        Hamiltonian class (e.g., SeparableHamiltonian._potential). Active for custom problems
-        (is_custom=True) or when QP monotonicity is enabled. See Issue #766.
+        Hamiltonian class (e.g., SeparableHamiltonian._potential). Active wherever the batch path is not:
+        joint_socp's precomputed weights, or a problem with no hamiltonian_class. See Issue #766.
         """
         from mfgarchon.core.derivatives import from_multi_index_dict
 
