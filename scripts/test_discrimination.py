@@ -242,7 +242,7 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         name="particle_mass_counting_measure",
         path="mfgarchon/alg/numerical/fp_solvers/fp_particle.py",
-        old="        mass = float((arr * w).sum())",
+        old="        mass = float(integrate_on_weights(arr, w))",
         new="        mass = float(arr.sum())  # MUTATED: weights dropped, mass measured with the counting measure",
         owner=(
             "The particle FP step measures a slice's mass on the GEOMETRY'S OWN measure, not the "
