@@ -5,6 +5,8 @@ Tests sampling strategies, variance reduction, integration methods,
 and convergence diagnostics for Monte Carlo computations.
 """
 
+import math
+
 import pytest
 
 import numpy as np
@@ -306,9 +308,11 @@ def test_importance_sampler_basic():
     domain = [(0.0, 1.0)]
     config = MCConfig(num_samples=100, seed=42)
 
-    # Importance function: favor center of domain
+    # Importance density favoring the center, normalized on [0, 1] as ImportanceMCSampler requires (#2648)
+    norm = np.sqrt(np.pi / 10) * math.erf(0.5 * np.sqrt(10))
+
     def importance_fn(x):
-        return np.exp(-10 * (x[:, 0] - 0.5) ** 2)
+        return np.exp(-10 * (x[:, 0] - 0.5) ** 2) / norm
 
     sampler = ImportanceMCSampler(domain, config, importance_fn)
 

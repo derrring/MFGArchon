@@ -44,7 +44,7 @@ class MCConfig:
 
     # Sampling parameters
     num_samples: int = 10000
-    sampling_method: str = "uniform"  # "uniform" | "stratified" | "importance" | "sobol" | "halton"
+    sampling_method: str = "uniform"  # one of SAMPLING_METHODS; any other is refused
     seed: int | None = None
 
     # Variance reduction
@@ -176,10 +176,23 @@ class StratifiedMCSampler(MCSampler):
     """Stratified Monte Carlo sampler for variance reduction."""
 
     def sample(self, num_samples: int) -> NDArray:
-        """Generate stratified samples."""
+        """Generate stratified samples: ``num_samples // strata**d`` uniform points in every stratum.
+
+        Every stratum must get a point, so ``num_strata_per_dim**d`` greater than ``num_samples`` is refused (#2648):
+        it used to keep the first ``num_samples`` strata in C order, which confines the first coordinate to its low
+        strata -- at d = 5 with the defaults, the mean of x0 came back 0.05 against 0.5. When ``num_samples`` is not
+        a multiple of the strata, the remainder is not drawn, and the estimate uses the points that were.
+        """
         strata_per_dim = self.config.num_strata_per_dim
         total_strata = strata_per_dim**self.dimension
-        samples_per_stratum = max(1, num_samples // total_strata)
+        if total_strata > num_samples:
+            raise ValueError(
+                f"StratifiedMCSampler: {strata_per_dim} strata per dimension in d = {self.dimension} make "
+                f"{total_strata} strata, more than the {num_samples} samples, so some strata would get no point and "
+                f"the estimate would cover only part of the domain. Use num_strata_per_dim <= "
+                f"{int(np.floor(num_samples ** (1.0 / self.dimension) + 1e-9))}, or num_samples >= {total_strata}."
+            )
+        samples_per_stratum = num_samples // total_strata
 
         samples = []
 
@@ -202,10 +215,7 @@ class StratifiedMCSampler(MCSampler):
 
             samples.append(stratum_samples)
 
-        all_samples = np.vstack(samples)
-
-        # Truncate to exact number if needed
-        return all_samples[:num_samples]
+        return np.vstack(samples)
 
 
 class QuasiMCSampler(MCSampler):
@@ -262,51 +272,120 @@ class QuasiMCSampler(MCSampler):
 
 
 class ImportanceMCSampler(MCSampler):
-    """Importance sampling Monte Carlo sampler."""
+    """Importance sampling: draw from a density p on the domain and estimate an integral as mean(f / p).
 
-    def __init__(self, domain: MCDomain, config: MCConfig, importance_function: Callable[[NDArray], NDArray]):
+    Contract (#2648, ruling 8): ``importance_function`` is a probability density on the domain D -- finite,
+    non-negative, positive wherever the integrand is non-zero -- whose integral Z over D is 1. The expectation of the
+    estimate is then the integral of f over D divided by Z, which is unbiased at Z = 1, and a density matched to the
+    integrand gives a zero-variance estimate. A density that vanishes where f does not misses that part of the
+    integral; the sampler keeps its check points where p = 0, and ``monte_carlo_integrate`` estimates the missing part
+    there (`_refuse_integrand_outside_the_support`).
+
+    - **``NORMALIZATION_TOL``** is the floor of the relative mass error these checks let through. It is read twice:
+      the normalization window is max(``NORMALIZATION_TOL``, 4 check errors), and up to ``NORMALIZATION_TOL`` of the
+      integral of |f| may lie where p = 0 unrefused.
+    - **Normalization** is checked at construction, by a fixed-seed Monte Carlo estimate of Z over
+      ``_CHECK_SAMPLES`` points. It is refused when Z differs from 1 by more than both ``NORMALIZATION_TOL`` and 4 of
+      the check's standard errors. A check of finite size cannot certify Z more closely than its own error, so the
+      window the estimate may still carry is max(``NORMALIZATION_TOL``, 4 standard errors), relative. The check
+      draws uniformly, so for a sharply peaked density its error, and the window with it, is large.
+    - **Non-finite or negative values** at the check points are refused.
+    - **Rejection sampling** draws exactly from p: uniform candidates are accepted with probability p(x) / M.
+      M is ``importance_max`` when given; otherwise it is the largest p over a dense draw, times ``ENVELOPE_SAFETY``.
+      Every candidate is checked, and one with p(x) > M is refused, naming the bound and the point, because
+      rejection with too small an M silently samples min(p, M) instead of p.
+    - **An infeasible acceptance rate** is refused up front. It is 1 / (V M) for a normalized p on a domain of
+      volume V.
+    """
+
+    NORMALIZATION_TOL = 1e-6
+    ENVELOPE_SAFETY = 1.5
+    MIN_ACCEPTANCE = 1e-4
+    _CHECK_SAMPLES = 100_000
+    _CHECK_SEED = 2648
+
+    def __init__(
+        self,
+        domain: MCDomain,
+        config: MCConfig,
+        importance_function: Callable[[NDArray], NDArray],
+        importance_max: float | None = None,
+    ):
         """
         Initialize importance sampling.
 
         Args:
             domain: Domain bounds
             config: MC configuration
-            importance_function: Importance distribution p(x)
+            importance_function: Probability density p(x), normalized on the domain
+            importance_max: An upper bound on p over the domain. If omitted, it is estimated from a dense draw.
         """
         super().__init__(domain, config)
         self.importance_function = importance_function
+        check = np.random.RandomState(self._CHECK_SEED)
+        lows, highs = self.domain_bounds[:, 0], self.domain_bounds[:, 1]
+        points = lows + (highs - lows) * check.random_sample((self._CHECK_SAMPLES, self.dimension))
+        values = np.asarray(importance_function(points), dtype=float)
+        if not np.all(np.isfinite(values)) or np.any(values < 0.0):
+            bad = int(np.flatnonzero(~np.isfinite(values) | (values < 0.0))[0])
+            raise ValueError(
+                f"ImportanceMCSampler: importance_function must be finite and non-negative on the domain; it is "
+                f"{float(values[bad])!r} at x = {points[bad].tolist()}."
+            )
+        self.zero_density_points = points[values == 0.0]
+        integral = float(self.domain_volume * np.mean(values))
+        error = float(self.domain_volume * np.std(values) / np.sqrt(len(values)))
+        if abs(integral - 1.0) > self.NORMALIZATION_TOL and abs(integral - 1.0) > 4.0 * error:
+            raise ValueError(
+                f"ImportanceMCSampler: importance_function must be a probability density normalized on the "
+                f"domain; its integral is estimated at {integral:.6g} +- {error:.2g} ({self._CHECK_SAMPLES} "
+                f"fixed-seed points), not 1. Divide it by its integral over the domain."
+            )
+        if importance_max is not None and float(np.max(values)) > float(importance_max):
+            top = int(np.argmax(values))
+            raise ValueError(
+                f"ImportanceMCSampler: p(x) = {values[top]:.6g} at x = {points[top].tolist()} exceeds the rejection "
+                f"bound M = {float(importance_max):.6g} (importance_max), so the draw would not follow p. Pass an "
+                f"importance_max at least the density's supremum."
+            )
+        self.importance_max = (
+            float(importance_max) if importance_max is not None else float(np.max(values)) * self.ENVELOPE_SAFETY
+        )
+        acceptance = 1.0 / (self.domain_volume * self.importance_max)
+        if acceptance < self.MIN_ACCEPTANCE:
+            raise ValueError(
+                f"ImportanceMCSampler: the rejection acceptance rate 1/(V M) = {acceptance:.3g} is below "
+                f"{self.MIN_ACCEPTANCE:g} (V = {self.domain_volume:.6g}, M = {self.importance_max:.6g}): the bound M on "
+                f"the density, importance_max or the largest value over the check points, is too large for rejection "
+                f"from this domain. A wider density, a smaller domain, or a tighter importance_max raises the rate."
+            )
 
     def sample(self, num_samples: int) -> NDArray:
-        """Generate importance-weighted samples using rejection sampling."""
-        # Use rejection sampling (simplified implementation)
-        # In practice, more sophisticated methods would be used
-
-        candidate_samples = num_samples * 3  # Generate extra candidates
-        candidates = UniformMCSampler(self.domain, self.config).sample(candidate_samples)
-
-        # Evaluate importance function
-        importance_values = self.importance_function(candidates)
-        max_importance = np.max(importance_values)
-
-        # Rejection sampling
-        accept_probs = importance_values / max_importance
-        accepted_mask = self.rng.random(candidate_samples) < accept_probs
-
-        accepted_samples = candidates[accepted_mask]
-
-        # If not enough samples, fill with uniform
-        if len(accepted_samples) < num_samples:
-            additional_needed = num_samples - len(accepted_samples)
-            additional_samples = UniformMCSampler(self.domain, self.config).sample(additional_needed)
-            accepted_samples = np.vstack([accepted_samples, additional_samples])
-
-        return accepted_samples[:num_samples]
+        """Draw exactly ``num_samples`` points from the density by rejection, with no uniform fill."""
+        lows, highs = self.domain_bounds[:, 0], self.domain_bounds[:, 1]
+        accepted: list[NDArray] = []
+        count = 0
+        while count < num_samples:
+            batch = max(4 * (num_samples - count), 64)
+            candidates = lows + (highs - lows) * self.rng.random_sample((batch, self.dimension))
+            values = np.asarray(self.importance_function(candidates), dtype=float)
+            over = values > self.importance_max
+            if np.any(over):
+                i = int(np.argmax(over))
+                raise ValueError(
+                    f"ImportanceMCSampler: p(x) = {values[i]:.6g} at x = {candidates[i].tolist()} exceeds the "
+                    f"rejection bound M = {self.importance_max:.6g}, so the draw would not follow p. Pass an "
+                    f"importance_max at least the density's supremum."
+                )
+            keep = candidates[self.rng.random_sample(batch) < values / self.importance_max]
+            accepted.append(keep)
+            count += len(keep)
+        return np.vstack(accepted)[:num_samples]
 
     def get_weights(self, points: NDArray) -> NDArray:
-        """Get importance weights (inverse of importance function)."""
-        importance_vals = self.importance_function(points)
-        weights = 1.0 / np.maximum(importance_vals, 1e-12)
-        return weights / np.sum(weights)  # Normalize
+        """Weights 1 / (N V p(x)), so that ``monte_carlo_integrate``'s estimate is mean(f / p)."""
+        values = np.asarray(self.importance_function(points), dtype=float)
+        return 1.0 / (len(points) * self.domain_volume * values)
 
 
 class PoissonDiskSampler(MCSampler):
@@ -586,6 +665,10 @@ class ControlVariates:
         return reduced_values
 
 
+#: The ``sampling_method`` values ``monte_carlo_integrate`` dispatches; any other is refused (#2648, ruling 8).
+SAMPLING_METHODS = ("uniform", "stratified", "sobol", "halton", "latin_hypercube", "importance")
+
+
 def monte_carlo_integrate(integrand: MCIntegrand, domain: MCDomain, config: MCConfig | None = None) -> MCResult:
     """
     Monte Carlo integration of a function over a domain.
@@ -613,9 +696,24 @@ def monte_carlo_integrate(integrand: MCIntegrand, domain: MCDomain, config: MCCo
         sampler = StratifiedMCSampler(domain, config)
     elif config.sampling_method in ["sobol", "halton", "latin_hypercube"]:
         sampler = QuasiMCSampler(domain, config, config.sampling_method)
+    elif config.sampling_method == "importance":
+        if config.importance_function is None:
+            raise ValueError(
+                "monte_carlo_integrate: sampling_method='importance' needs MCConfig.importance_function, a "
+                "probability density normalized on the domain."
+            )
+        if config.use_control_variates:
+            raise ValueError(
+                "monte_carlo_integrate: use_control_variates does not combine with sampling_method='importance': the "
+                "control variate is calibrated on its sample mean with equal weights, which importance weights break, "
+                "and the estimate comes back biased (#2648). Use one or the other."
+            )
+        sampler = ImportanceMCSampler(domain, config, config.importance_function)
     else:
-        logger.warning(f"Unknown sampling method: {config.sampling_method}, using uniform")
-        sampler = UniformMCSampler(domain, config)
+        raise ValueError(
+            f"monte_carlo_integrate: unknown sampling_method {config.sampling_method!r}; choose one of "
+            f"{', '.join(repr(m) for m in SAMPLING_METHODS)}. (It used to be logged and sampled uniformly, #2648.)"
+        )
 
     # Sample points
     sample_points = sampler.sample(config.num_samples)
@@ -634,33 +732,83 @@ def monte_carlo_integrate(integrand: MCIntegrand, domain: MCDomain, config: MCCo
     if config.use_antithetic_variables:
         function_values = _apply_antithetic_variables(function_values, sampler, integrand)
 
-    # Compute estimate
+    # Each point's contribution to the estimate: V f(x) w(x) N, whose mean is the estimate
     domain_volume = np.prod([max_val - min_val for min_val, max_val in domain])
-    weighted_values = function_values * weights * len(weights)
-    estimate = domain_volume * np.mean(weighted_values)
+    contributions = function_values * weights * len(weights)
+    if isinstance(sampler, ImportanceMCSampler):
+        _refuse_integrand_outside_the_support(integrand, sampler, contributions, domain_volume)
+    return _mc_result(contributions, config, start_time, scale=domain_volume)
 
-    # Compute error estimates
-    standard_error = domain_volume * np.std(weighted_values) / np.sqrt(len(weighted_values))
+
+def _mc_result(contributions: NDArray, config: MCConfig, start_time: float, scale: float = 1.0) -> MCResult:
+    """The estimate, its standard error and confidence interval from per-point contributions: the estimate is
+    ``scale`` times their mean. The one place an ``MCResult`` is assembled from a draw (``monte_carlo_integrate``,
+    ``integrate_gaussian_quadrature_mc``); ``num_samples_used`` is the number of points drawn."""
+    import time
+
+    estimate = scale * np.mean(contributions)
+    standard_error = scale * np.std(contributions) / np.sqrt(len(contributions))
 
     # Confidence interval
     z_score = 1.96 if config.confidence_level == 0.95 else 2.576  # Simplified
     ci_lower = estimate - z_score * standard_error
     ci_upper = estimate + z_score * standard_error
 
-    # Create result
-    result = MCResult(
+    elapsed = time.time() - start_time
+    return MCResult(
         estimate=estimate,
         standard_error=standard_error,
         confidence_interval=(ci_lower, ci_upper),
-        num_samples_used=config.num_samples,
-        effective_sample_size=config.num_samples,
+        num_samples_used=len(contributions),
+        effective_sample_size=len(contributions),
         converged=standard_error < config.error_tolerance,
         final_error=standard_error,
-        computation_time=time.time() - start_time,
-        samples_per_second=config.num_samples / max(time.time() - start_time, 1e-6),
+        computation_time=elapsed,
+        samples_per_second=len(contributions) / max(elapsed, 1e-6),
     )
 
-    return result
+
+def _refuse_integrand_outside_the_support(
+    integrand: MCIntegrand, sampler: ImportanceMCSampler, contributions: NDArray, scale: float
+) -> None:
+    """Importance sampling misses the integral of f wherever its density vanishes. The part of the integral of |f| it
+    cannot see is estimated on the sampler's check points where p = 0, the only points ``integrand`` is evaluated at
+    here; the part it sees is the draw's own estimate of the integral of |f| over p > 0 (``scale`` times the mean
+    |contribution|). A missing fraction above ``ImportanceMCSampler.NORMALIZATION_TOL`` is refused, naming the
+    fraction and the check point where |f| is largest -- a mass criterion, so an f that is merely subnormal where p
+    underflows to 0 is not refused while the draw sees some of |f| (review 2 of #2664). Where the draw sees none of it,
+    the fraction is 1 however small |f| is there, and the refusal stands (review 4). A NaN or infinite f at such a point is refused by name, since
+    no fraction of it can be formed (review 3). Both masses are taken relative to the larger of the largest |f| there
+    and the largest |contribution| drawn, so neither sum overflows. Sampled: a miss between check points is not seen (#2648)."""
+    points = sampler.zero_density_points
+    if len(points) == 0:
+        return
+    values = np.asarray(integrand(points), dtype=float)
+    bad = np.flatnonzero(~np.isfinite(values))
+    if len(bad):
+        i = int(bad[0])
+        raise ValueError(
+            f"monte_carlo_integrate: the integrand is {float(values[i])!r} at x = {points[i].tolist()}, where the "
+            "importance density is 0; importance sampling never draws there, and no estimate can include a value "
+            "that is not finite. Use a density positive wherever the integrand is non-zero, and a finite integrand."
+        )
+    magnitude = np.abs(values)
+    top = float(np.max(magnitude))
+    if top == 0.0:
+        return
+    drawn = np.abs(contributions[np.isfinite(contributions)])
+    norm = max(top, float(np.max(drawn)) if drawn.size else 0.0)  # every ratio below is at most 1
+    missing = sampler.domain_volume * float(np.sum(magnitude / norm)) / sampler._CHECK_SAMPLES
+    seen = scale * float(np.sum(drawn / norm)) / len(contributions)
+    if missing > sampler.NORMALIZATION_TOL * (missing + seen):
+        i = int(np.argmax(magnitude))
+        raise ValueError(
+            f"monte_carlo_integrate: an estimated {missing / (missing + seen):.3g} of the integral of |f| lies where "
+            f"the importance density is 0 (at x = {points[i].tolist()} the integrand is {float(values[i])!r}); "
+            "importance sampling never draws there, so that part of the integral would be missing. Use a density "
+            f"positive wherever the integrand is non-zero (the missing fraction allowed is "
+            f"{sampler.NORMALIZATION_TOL:g})."
+        )
 
 
 def _apply_antithetic_variables(function_values: NDArray, sampler: MCSampler, integrand: MCIntegrand) -> NDArray:
@@ -737,27 +885,47 @@ def adaptive_monte_carlo(
 
 # Convenience functions for common use cases
 def integrate_gaussian_quadrature_mc(
-    mean: NDArray, cov: NDArray, integrand: MCIntegrand, num_samples: int = 10000
+    mean: NDArray, cov: NDArray, integrand: MCIntegrand, num_samples: int = 10000, seed: int | None = None
 ) -> MCResult:
-    """Monte Carlo integration with Gaussian distribution."""
-    # Create domain (6-sigma bounds) - vectorized
-    sigma = np.sqrt(np.diag(cov))
-    lower_bounds = mean - 6 * sigma
-    upper_bounds = mean + 6 * sigma
-    domain = list(zip(lower_bounds.tolist(), upper_bounds.tolist(), strict=True))
+    """The integral of ``integrand`` over all of R^d, by importance sampling from N(mean, cov) (#2648, ruling 8).
 
-    # Gaussian importance function
-    # Issue #1066: use solve() not inv() — for high-dim cov with cond > 1e10,
-    # inv()-based Mahalanobis silently returns wrong values. solve() is stable.
-    def gaussian_importance(x):
-        diff = x - mean
-        # cov is symmetric → diff @ cov^{-1} = solve(cov, diff.T).T
-        sol = np.linalg.solve(cov, diff.T).T
-        return np.exp(-0.5 * np.einsum("ij,ij->i", sol, diff))
+    This is not the Gaussian-weighted expectation E_N[f] that Gauss-Hermite quadrature computes. The points are
+    drawn from N(mean, cov) directly and the estimate is mean(f(x) / p(x)), p the normal density, unbiased for the
+    integral of f over R^d. Its variance is finite only when the integral of f^2 / p is: an integrand with heavier
+    tails than the Gaussian, or one that is not integrable (f = 1), gives an estimate whose standard error means
+    nothing. f / p is formed in log space and rescaled by its largest value in the draw before averaging, so neither
+    p nor 1 / p overflows on its own (review 2 of #2664); the estimate overflows only when that largest f / p does.
 
-    config = MCConfig(num_samples=num_samples, sampling_method="importance", importance_function=gaussian_importance)
+    ``cov`` must be symmetric positive definite, and is refused by name otherwise. ``seed`` fixes the draw.
+    """
+    import time
 
-    return monte_carlo_integrate(integrand, domain, config)
+    start_time = time.time()
+    config = MCConfig(num_samples=num_samples, seed=seed)
+    mean = np.asarray(mean, dtype=float)
+    cov = np.asarray(cov, dtype=float)
+    if cov.shape != (len(mean), len(mean)) or not np.allclose(cov, cov.T, rtol=1e-12, atol=0.0):
+        raise ValueError(
+            f"integrate_gaussian_quadrature_mc: cov must be a symmetric {len(mean)}x{len(mean)} matrix; a Cholesky "
+            "factor would read only its lower triangle."
+        )
+    # Cholesky, not inv() (Issue #1066): stable for an ill-conditioned covariance, and its diagonal gives log det.
+    try:
+        factor = np.linalg.cholesky(cov)
+    except np.linalg.LinAlgError as exc:
+        raise ValueError(
+            "integrate_gaussian_quadrature_mc: cov must be positive definite; it has no Cholesky factor."
+        ) from exc
+    z = np.random.RandomState(config.seed).standard_normal((num_samples, len(mean)))
+    points = mean + z @ factor.T
+    log_density = -0.5 * np.sum(z**2, axis=1) - 0.5 * len(mean) * np.log(2.0 * np.pi) - np.sum(np.log(np.diag(factor)))
+    values = np.asarray(integrand(points), dtype=float)
+    with np.errstate(divide="ignore"):
+        log_ratio = np.log(np.abs(values)) - log_density
+    finite = log_ratio[np.isfinite(log_ratio)]
+    shift = float(np.max(finite)) if finite.size else 0.0
+    contributions = np.sign(values) * np.exp(log_ratio - shift)
+    return _mc_result(contributions, config, start_time, scale=float(np.exp(shift)))
 
 
 def estimate_expectation(samples: NDArray, weights: NDArray | None = None) -> tuple[float, float]:
