@@ -256,7 +256,8 @@ class FPParticleSolver(BaseFPSolver):
         self.total_absorbed: int = 0  # Cumulative absorbed count
 
         # Implicit domain for obstacle handling (Issue #533)
-        # When set, particles entering obstacles are reflected back
+        # When set, particles entering obstacles are moved back by ImplicitDomain.project_to_interior, whose
+        # docstring says where they land (#2679)
         self._implicit_domain = implicit_domain
 
         # Issue #1119: preserve_indices flag for particle ID tracking

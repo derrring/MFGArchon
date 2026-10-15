@@ -216,113 +216,6 @@ class ImplicitDomain(
 
     # Note: contains() and sample_uniform() now inherited from ImplicitGeometry
 
-    def project_to_domain(
-        self, x: NDArray[np.float64], method: Literal["simple", "gradient"] = "simple"
-    ) -> NDArray[np.float64]:
-        """
-        Project point(s) outside domain back inside.
-
-        Args:
-            x: Point(s) - shape (d,) or (N, d)
-            method: Projection method
-                - "simple": Scale toward centroid of bounding box
-                - "gradient": Use SDF gradient (requires smooth SDF)
-
-        Returns:
-            Projected point(s) - same shape as x
-
-        Example:
-            >>> domain = Hypersphere(center=[0, 0], radius=1.0)
-            >>> outside = np.array([2.0, 0.0])
-            >>> inside = domain.project_to_domain(outside)
-            >>> assert domain.contains(inside)
-        """
-        is_single = x.ndim == 1
-        if is_single:
-            x = x.reshape(1, -1)
-
-        # Check which points need projection
-        sd = self.signed_distance(x)
-        if np.isscalar(sd):
-            sd = np.array([sd])
-
-        outside = sd > 0
-
-        if not np.any(outside):
-            return x[0] if is_single else x
-
-        # Simple projection: scale toward bounding box center.
-        # Issue #1047 fix: when line search exhausts, fall back to Newton-on-SDF
-        # iteration (φ(x) → 0 along ∇φ direction) instead of the previous silent
-        # bbox-center fallback. Newton-on-SDF projects to the nearest point on
-        # the zero level set; for a navigable region with a non-trivial obstacle,
-        # this is geometrically correct unlike the bbox-center heuristic.
-        # If Newton also fails (degenerate gradient or non-converging), raise
-        # rather than silently corrupting (per fail-fast doctrine).
-        if method == "simple":
-            from mfgarchon.geometry.implicit.sdf_utils import sdf_gradient
-
-            bounds = self.get_bounding_box()
-            center = bounds.mean(axis=1)
-
-            x_projected = x.copy()
-            for i in np.where(outside)[0]:
-                # Phase 1: line search toward bbox center (existing heuristic)
-                direction = center - x[i]
-                alpha = 0.0
-                step = 0.1
-
-                line_search_succeeded = False
-                for _ in range(100):
-                    candidate = x[i] + alpha * direction
-                    if self.signed_distance(candidate) <= 0:
-                        x_projected[i] = candidate
-                        line_search_succeeded = True
-                        break
-                    alpha += step
-
-                if line_search_succeeded:
-                    continue
-
-                # Phase 2 (Issue #1047): Newton-on-SDF iteration
-                # x_{k+1} = x_k - φ(x_k) · ∇φ(x_k) / |∇φ|²
-                # Pulls x toward the zero level set along the SDF gradient.
-                x_i = x[i].copy()
-                converged = False
-                for _ in range(20):
-                    sd_i = float(np.atleast_1d(self.signed_distance(x_i))[0])
-                    if sd_i <= 0:
-                        converged = True
-                        break
-                    grad_i = sdf_gradient(x_i, self.signed_distance)
-                    grad_i = np.asarray(grad_i).reshape(-1)
-                    grad_norm_sq = float(np.dot(grad_i, grad_i))
-                    if grad_norm_sq < 1e-12:
-                        # Degenerate SDF gradient — can't proceed
-                        break
-                    x_i = x_i - sd_i * grad_i / grad_norm_sq
-
-                if converged:
-                    x_projected[i] = x_i
-                else:
-                    # Both line search and Newton failed. Surface the bug rather
-                    # than silently corrupting downstream KDE / particle stepping.
-                    raise RuntimeError(
-                        f"project_to_domain(method='simple'): point {x[i]} could not "
-                        f"be projected back into domain after 100 line-search steps "
-                        f"toward bbox center {center} AND 20 Newton-on-SDF iterations. "
-                        f"This indicates a degenerate geometry (e.g. obstacle "
-                        f"completely surrounds the bbox center, or the SDF has "
-                        f"vanishing gradient near {x[i]}). Consider using "
-                        f"method='gradient' explicitly with a manually-tuned step "
-                        f"size, or check geometry.signed_distance for correctness."
-                    )
-
-            return x_projected[0] if is_single else x_projected
-
-        else:
-            raise ValueError(f"Unknown projection method: {method}")
-
     @deprecated(
         since="v0.12.0",
         replacement="Use MeshfreeApplicator from mfgarchon.geometry.boundary instead.",
@@ -360,7 +253,7 @@ class ImplicitDomain(
             >>> particles_updated = applicator.apply_particle_bc(particles, "reflecting")
         """
         if bc_type == "reflecting":
-            return self.project_to_domain(particles, method="simple")
+            return self.project_to_interior(particles)
 
         elif bc_type == "absorbing":
             inside = self.contains(particles)
@@ -644,9 +537,16 @@ class ImplicitDomain(
 
         Implements SupportsBoundaryProjection protocol.
 
-        This moves points outside the domain just inside the boundary by
-        projecting to the boundary and then moving inward by tolerance along
-        the inward normal.
+        Each outside point is projected onto the boundary along the SDF normal, then moved inward by
+        `tolerance`, or by up to 1e4 * `tolerance` where the projection converged linearly and stopped
+        short. That is the nearest interior point wherever the projection reaches the boundary point
+        nearest it (#2679).
+
+        Every output is checked against phi <= 0, and a point still outside is walked toward the
+        bounding-box centre to the first point inside: inside, but not the nearest (#2688). That is
+        reached where phi is not the true distance to the domain: a point trapped against the outer box,
+        where an obstacle crosses or is flush with it, and a point inside a union, overlapping obstacles
+        or an approximate SDF (#2689). If the walk fails too, this raises naming the point (#1047).
 
         Args:
             points: Points to project, shape (num_points, dimension) or (dimension,)
@@ -654,6 +554,10 @@ class ImplicitDomain(
 
         Returns:
             Projected points in interior, same shape as input
+
+        Raises:
+            RuntimeError: a point neither the projection nor the walk toward the bounding-box centre
+                places inside.
 
         Example:
             >>> sphere = Hypersphere(center=[0, 0], radius=1.0)
@@ -668,30 +572,63 @@ class ImplicitDomain(
         if is_single:
             points = points.reshape(1, -1)
 
-        # Check which points are outside
-        sd = self.signed_distance(points)
-        if np.isscalar(sd):
-            sd = np.array([sd])
-
-        outside = sd > 0
+        outside = np.atleast_1d(self.signed_distance(points)) > 0
 
         if not np.any(outside):
             # All points already inside
             return points[0] if is_single else points
 
-        # Project to boundary, then move inside by tolerance
         points_interior = points.copy()
-
-        # Project outside points to boundary
         boundary_points = self.project_to_boundary(points[outside])
-
-        # Get inward normal (negative of outward normal)
-        normals = self.get_outward_normal(boundary_points)
-
-        # Move inward by tolerance
-        points_interior[outside] = boundary_points - tolerance * normals
+        normals = np.atleast_2d(self.get_outward_normal(boundary_points))
+        moved = boundary_points - tolerance * normals
+        # Where the projection converges linearly -- an obstacle's corner, the seam of a union -- it stops with
+        # 0 < phi below its own tol, and a step of `tolerance` may not cross. Step further, up to 1e4 * tolerance.
+        missed = np.atleast_1d(self.signed_distance(moved)) > 0
+        for step in tolerance * 10.0 ** np.arange(1, 5):
+            if not missed.any():
+                break
+            idx = np.where(missed)[0]
+            moved[idx] = boundary_points[idx] - step * normals[idx]
+            missed[idx] = np.atleast_1d(self.signed_distance(moved[idx])) > 0
+        for i in np.where(missed)[0]:
+            moved[i] = self._walk_toward_bbox_centre(points[outside][i])
+        points_interior[outside] = moved
 
         return points_interior[0] if is_single else points_interior
+
+    def _walk_toward_bbox_centre(self, x: NDArray[np.float64]) -> NDArray[np.float64]:
+        """The first point inside on the ray from `x` toward the bounding-box centre, else a Newton step on
+        the SDF; raise naming `x` if neither reaches phi <= 0 (#1047). Inside, not nearest: the fallback
+        for the points `project_to_interior`'s projection does not place."""
+        from mfgarchon.geometry.implicit.sdf_utils import sdf_gradient
+
+        center = self.get_bounding_box().mean(axis=1)
+        direction = center - x
+        alpha = 0.0
+        for _ in range(100):
+            candidate = x + alpha * direction
+            if self.signed_distance(candidate) <= 0:
+                return candidate
+            alpha += 0.1
+
+        # x_{k+1} = x_k - phi(x_k) * grad(phi) / |grad(phi)|^2
+        x_i = x.copy()
+        for _ in range(20):
+            sd_i = float(np.atleast_1d(self.signed_distance(x_i))[0])
+            if sd_i <= 0:
+                return x_i
+            grad_i = np.asarray(sdf_gradient(x_i, self.signed_distance)).reshape(-1)
+            grad_norm_sq = float(np.dot(grad_i, grad_i))
+            if grad_norm_sq < 1e-12:
+                break
+            x_i = x_i - sd_i * grad_i / grad_norm_sq
+        raise RuntimeError(
+            f"project_to_interior: point {x} is not placed inside by the projection onto the boundary, by 100 "
+            f"steps toward the bounding-box centre {center}, or by 20 Newton steps on the SDF. This indicates a "
+            f"degenerate geometry (e.g. an obstacle surrounding the bounding-box centre, or an SDF whose "
+            f"gradient vanishes near {x}); check signed_distance."
+        )
 
     @property
     def manifold_dimension(self) -> int:

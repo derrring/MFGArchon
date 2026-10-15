@@ -23,7 +23,7 @@ def test_sdf_vanishing_gradient_normal_fails_loud():
     """#1558: SDFParticleBCHandler._compute_normal fabricated an arbitrary [1,0,...] normal when
     the finite-difference SDF gradient vanished -- reflecting a particle along a geometry-independent
     direction (silent-wrong). A constant SDF has zero gradient everywhere, so the normal is undefined;
-    it must raise (mirroring project_to_domain's #1047 raise)."""
+    it must raise, as #1047 ruled."""
     from mfgarchon.geometry.boundary import SDFParticleBCHandler
 
     handler = SDFParticleBCHandler(lambda pts: -0.5 * np.ones(np.asarray(pts).shape[0]), dimension=2)
