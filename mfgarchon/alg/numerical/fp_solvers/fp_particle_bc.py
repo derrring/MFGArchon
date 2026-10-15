@@ -274,7 +274,8 @@ def project_to_navigable_or_defer(
 
     If an implicit domain with obstacles is defined, particles that have
     entered obstacle regions (domain.contains() returns False AND inside outer
-    bbox) are projected back to the valid domain using domain.project_to_domain().
+    bbox) are moved to the nearest navigable point, domain.project_to_interior()
+    (#2679): onto the obstacle's boundary along its normal, then just inside.
 
     Issue #1064: particles past the outer bounding box are NOT projected here —
     they are an outer-boundary concern handled by the caller's
@@ -294,7 +295,7 @@ def project_to_navigable_or_defer(
         - 1D: shape (num_particles,) or (num_particles, 1)
         - nD: shape (num_particles, dimension)
     implicit_domain : ImplicitDomain or None
-        Domain definition with contains() and project_to_domain() methods
+        Domain definition with contains() and project_to_interior() methods
 
     Returns
     -------
@@ -337,7 +338,7 @@ def project_to_navigable_or_defer(
         in_obstacle = in_bbox & (~inside_valid)
         if np.any(in_obstacle):
             obs_idx = np.where(in_obstacle)[0]
-            particles[obs_idx] = implicit_domain.project_to_domain(particles[obs_idx])
+            particles[obs_idx] = implicit_domain.project_to_interior(particles[obs_idx])
 
     # Convert back to 1D if input was 1D
     if is_1d_flat:

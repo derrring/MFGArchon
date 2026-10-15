@@ -808,7 +808,7 @@ class TestProjectToNavigableOrDefer:
         )
 
         box = Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]]))
-        # Obstacle off bbox center so project_to_domain has a non-degenerate direction
+        # Obstacle off the bbox centre; the nearest-point projection has a well-defined direction except at its centre
         obstacle = Hypersphere(center=np.array([0.3, 0.5]), radius=0.15)
         return DifferenceDomain(box, obstacle)
 
@@ -821,6 +821,29 @@ class TestProjectToNavigableOrDefer:
         result = project_to_navigable_or_defer(particles.copy(), domain)
         assert not np.allclose(result, particles), "Particle inside obstacle should have been projected out"
         assert domain.contains(result).all()
+
+    def test_a_particle_in_an_obstacle_moves_to_the_nearest_navigable_point(self):
+        """#2679: the projection moved a particle along the ray toward the bounding-box centre, to the first navigable
+        point on it, so a particle that entered the side facing away from the centre came out on the obstacle's far
+        side -- every particle, for an obstacle on the centre. The nearest navigable point is on the rim, 0.01 from a
+        particle 0.01 deep, on the side it entered. At an obstacle's centre every rim point is nearest, and the ray
+        sent the particle to (0.46, 0.5), 0.16 away."""
+        from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import project_to_navigable_or_defer
+        from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle, Hypersphere
+
+        radius = 0.15
+        for centre in (np.array([0.5, 0.5]), np.array([0.3, 0.3])):
+            domain = DifferenceDomain(
+                Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])), Hypersphere(center=centre, radius=radius)
+            )
+            theta = np.linspace(0.0, 2.0 * np.pi, 8, endpoint=False)
+            entered = centre + (radius - 0.01) * np.c_[np.cos(theta), np.sin(theta)]
+            moved = project_to_navigable_or_defer(entered.copy(), domain)
+            np.testing.assert_allclose(np.linalg.norm(moved - entered, axis=1), 0.01, atol=1e-9, err_msg=str(centre))
+            assert np.all(np.sum((moved - centre) * (entered - centre), axis=1) > 0), centre
+
+        at_centre = project_to_navigable_or_defer(np.array([[0.3, 0.5]]), self._make_diff_domain())
+        assert abs(np.linalg.norm(at_centre[0] - np.array([0.3, 0.5])) - radius) < 1e-6, at_centre
 
     def test_outer_bbox_violation_left_alone(self):
         """Issue #1064: Particle past outer bbox is NOT touched — caller's BC handles it."""
