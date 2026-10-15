@@ -3,11 +3,15 @@
 Issue #1361: lift ``_compose_hjb_source`` / ``_compose_fp_source`` out of
 ``FixedPointIterator`` so the Picard coupler (``FixedPointIterator``) and the
 coupled-Newton path (``MFGResidual`` behind ``NewtonMFGSolver``) consume **one**
-copy of the convention. [The consumer set above is #1361's and is no longer current:
-since #2207 every ``BaseCouplingIterator`` consumes this module through
-``_build_hjb_kwargs`` / ``_build_fp_kwargs``, which compose from the iterates rather
-than receiving a composed source, and ``MFGResidual`` remains the one direct caller
-outside them. The reason for one copy is unchanged.] A second private copy is the "parallel physics paths
+copy of the convention. [The consumer set above is #1361's and is no longer current.
+``base_mfg.hjb_solve_kwargs`` / ``fp_solve_kwargs`` compose from the iterates rather than
+receiving a composed source (#2207); ``FixedPointIterator``, ``FictitiousPlayIterator`` and
+``BlockIterator`` reach them through ``_build_hjb_kwargs`` / ``_build_fp_kwargs``, and
+``MultiPopulationIterator`` calls them per population (#2666). ``MFGResidual`` (behind
+``NewtonMFGSolver``) and ``RegimeSwitchingIterator``, which adds its own terms to the problem's
+source, call this module directly; ``BaseHJBSolver.solve`` asks only whether it would compose
+anything, and refuses. ``GraphMFGSolver`` composes in its own ``_compose_hjb_source`` /
+``_compose_fp_source`` from this module's primitives. The reason for one copy is unchanged.] A second private copy is the "parallel physics paths
 with private convention copies" bug class that already produced two silent
 divergences in the Picard copy alone:
 

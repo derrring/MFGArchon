@@ -26,6 +26,7 @@ References:
 
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
@@ -300,6 +301,19 @@ class StochasticMFGProblem(MFGProblem):
             >>> conditional_problem = problem.create_conditional_problem(noise_path)
             >>> # Now solve conditional_problem as standard MFG
         """
+        # Refused here rather than at the rebuild below, whose guard would name a private class: a state penalty is
+        # composed into a SeparableHamiltonian's potential, and each conditional problem's Hamiltonian is the user's
+        # conditional_hamiltonian, which has none (#2700). Before #2666 the penalty was dropped instead.
+        if self.state_penalty is not None:
+            raise NotImplementedError(
+                "This common-noise problem declares state_penalty, which its conditional problems cannot carry: each "
+                "one solves with conditional_hamiltonian, frozen along the noise path, and that has no potential to "
+                "compose the penalty into (#2700). Fold the penalty into conditional_hamiltonian as the potential it "
+                "is -- H subtracts a potential, H = H_control - V - f (docs/user/CONVENTIONS.md section 2) -- by "
+                "returning H(x, p, m, theta) - state_penalty_scale * state_penalty(x), and construct the problem "
+                "without state_penalty."
+            )
+
         # A frozen-noise Hamiltonian, as a real `HamiltonianBase` (#2191).
         #
         # This used to construct an EMPTY `MFGComponents` and then attach `hamiltonian_func` /
@@ -399,26 +413,20 @@ class StochasticMFGProblem(MFGProblem):
             "description": "Conditional MFG with noise path (seed dependent)",
             "problem_type": "conditional_mfg",
         }
-        if self.components is not None:
-            component_kwargs["m_initial"] = self.components.m_initial
-            if getattr(self.components, "boundary_conditions", None) is not None:
-                component_kwargs["boundary_conditions"] = self.components.boundary_conditions
-            if getattr(self.components, "parameters", None) is not None:
-                component_kwargs["parameters"] = self.components.parameters.copy()
-
-        conditional_components = MFGComponents(**component_kwargs)
-
-        # Create conditional problem
-        conditional_problem = MFGProblem(
-            geometry=self.geometry,
-            T=self.T,
-            Nt=self.Nt,
-            volatility=self.volatility,
-            volatility_kind=self.volatility_kind,
-            components=conditional_components,
+        # Issue #2666: the conditional problem is THIS problem with its Hamiltonian and terminal cost frozen at the
+        # path, so it is rebuilt from everything this problem was given, through the one owner of a rebuild. It
+        # was built by hand from five fields, which dropped every other input -- `source_term_hjb`,
+        # `source_term_fp`, `nonlocal_operator`, ... -- and every conditional solve ran without them, in silence.
+        # `replace` carries every MFGComponents field the same way; the Lagrangian is cleared because the frozen
+        # Hamiltonian replaces the one it described. `self.components` is never None here: the constructor
+        # refuses a problem without u_terminal and m_initial, which only components carry in this form.
+        conditional_components = dataclasses.replace(
+            self.components,
+            lagrangian=None,
+            parameters=dict(self.components.parameters),
+            **component_kwargs,
         )
-
-        return conditional_problem
+        return self._rebuilt(components=conditional_components)
 
     def __repr__(self) -> str:
         """String representation of stochastic MFG problem."""

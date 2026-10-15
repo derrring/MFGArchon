@@ -413,6 +413,10 @@ class BaseHJBSolver(BaseNumericalSolver):
             np.ndarray: Value function U(t,x) of shape (Nt+1, Nx+1) for 1D problems
                        or (Nt+1, *spatial_shape) for nD problems.
 
+        Raises:
+            NotImplementedError: The problem declares an HJB source (``source_term_hjb``, ``nonlocal_operator``),
+                which this entry has no route for; the message names the routes that do (#2666).
+
         Example:
             >>> from mfgarchon.core.mfg_problem import MFGProblem
             >>> from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
@@ -445,6 +449,28 @@ class BaseHJBSolver(BaseNumericalSolver):
 
         # Initial guess for nonlinear solver: repeat terminal condition across time
         U_prev_picard = np.tile(U_terminal, (Nt_points,) + (1,) * len(spatial_shape))
+
+        # Issue #2666: this entry passes no source, so a problem that declares one was solved without it and
+        # nothing said so. The predicate is the composition owner's own -- whatever it would compose is refused --
+        # rather than a restated list of fields. Refused rather than composed: the coupled loops recompose the
+        # source from the iterates every sweep, and a nonlocal term bound here would read the initial guess.
+        from mfgarchon.alg.numerical.coupling.source_composition import compose_hjb_source
+
+        if compose_hjb_source(self.problem, m_uniform, U_prev_picard) is not None:
+            # Named for the message only; the predicate above decides, so a field the owner learns to compose
+            # is refused even before it is named here.
+            named = [n for n in ("source_term_hjb", "nonlocal_operator") if getattr(self.problem, n, None) is not None]
+            raise NotImplementedError(
+                f"{type(self).__name__}.solve() has no route for the problem's HJB source "
+                f"({', '.join(named) or 'composed by compose_hjb_source'}): it passes no source to solve_hjb_system, "
+                "so it would return the value function of a problem without it (#2666). Solve the coupled MFG "
+                "instead -- problem.solve(), "
+                "or a coupling iterator such as FixedPointIterator, which composes the source from its iterates "
+                "every sweep -- or pass the source yourself: solver.solve_hjb_system(M, U_terminal, U_guess, "
+                "source_term=compose_hjb_source(problem, M, U_guess)), with compose_hjb_source from "
+                "mfgarchon.alg.numerical.coupling.source_composition. That binds the M and U_guess you pass, so a "
+                "nonlocal term reads U_guess, not the solution."
+            )
 
         # Solve using the specific solver's implementation
         return self.solve_hjb_system(m_uniform, U_terminal, U_prev_picard)

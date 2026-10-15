@@ -20,8 +20,8 @@ import numpy as np
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 
-from .base_mfg import assert_bc_providers_resolvable, assert_paired_solver_sigma
-from .fixed_point_utils import diverged_value_function
+from .base_mfg import assert_bc_providers_resolvable, assert_paired_solver_sigma, fp_solve_kwargs, hjb_solve_kwargs
+from .fixed_point_utils import diverged_value_function, hjb_solver_sig_params
 
 if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConvention
@@ -98,6 +98,10 @@ class MultiPopulationIterator:
                 self._fp_sig_params.append(set(inspect.signature(fp.solve_fp_system).parameters))
             except (AttributeError, ValueError, TypeError):
                 self._fp_sig_params.append(None)
+
+        # Issue #2666: the HJB twin, for the population's source. Until it existed this loop handed the
+        # HJB solver no source at all, and a population's `source_term_hjb` was dropped in silence.
+        self._hjb_sig_params: list[set[str] | None] = [hjb_solver_sig_params(h) for h in hjb_solvers]
 
         # Issue #1489 (S1): per-population FP drift-input convention, parallel to _fp_sig_params, so
         # resolve_fp_drift_kwargs routes each population by convention rather than param presence.
@@ -218,12 +222,17 @@ class MultiPopulationIterator:
                         "not thread the cross-density trajectory into solve_hjb_system and "
                         "would silently decouple. Use HJBFDMSolver for multi-population MFG."
                     )
+                # Issue #2666: the population's own source, composed from the iterates this sweep starts
+                # from -- the previous U, as every single-population loop binds it (#1259).
+                hjb_kwargs = hjb_solve_kwargs(
+                    populations[k], self._hjb_sig_params[k], type(solver_k).__name__, M=M[k], U=U[k]
+                )
                 if honors_cross_density:
                     U[k] = solver_k.solve_hjb_system(
-                        M[k], U_terminal_k, U[k], cross_density=(None if K == 1 else m_all)
+                        M[k], U_terminal_k, U[k], cross_density=(None if K == 1 else m_all), **hjb_kwargs
                     )
                 else:
-                    U[k] = solver_k.solve_hjb_system(M[k], U_terminal_k, U[k])
+                    U[k] = solver_k.solve_hjb_system(M[k], U_terminal_k, U[k], **hjb_kwargs)
 
                 # Issue #1718: check before the NEXT population is solved, not after the loop. Every
                 # population's HJB is solved before any FP runs, so one population's NaN would reach
@@ -268,9 +277,12 @@ class MultiPopulationIterator:
                 m0_k = M[k][0]
                 H_k = prob_k.hamiltonian_class
                 fp_k = self.fp_solvers[k]
+                # Issue #2666: the population's FP source, composed from the density this solve replaces
+                # and the value function it consumes -- the new U, as FixedPointIterator binds it.
+                fp_kwargs = fp_solve_kwargs(prob_k, self._fp_sig_params[k], type(fp_k).__name__, M=M[k], U=U[k])
 
                 if getattr(prob_k, "spatial_dimension", None) == 0:
-                    M_new_k = fp_k.solve_fp_system(m0_k, drift_field=U[k], show_progress=False)
+                    M_new_k = fp_k.solve_fp_system(m0_k, drift_field=U[k], show_progress=False, **fp_kwargs)
                 else:
                     drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
                         prob_k,
@@ -283,9 +295,9 @@ class MultiPopulationIterator:
                         drift_convention=self._fp_drift_convention[k],
                     )
                     if use_positional_U:
-                        M_new_k = fp_k.solve_fp_system(m0_k, U[k], show_progress=False)
+                        M_new_k = fp_k.solve_fp_system(m0_k, U[k], show_progress=False, **fp_kwargs)
                     else:
-                        M_new_k = fp_k.solve_fp_system(m0_k, show_progress=False, **drift_kwargs)
+                        M_new_k = fp_k.solve_fp_system(m0_k, show_progress=False, **drift_kwargs, **fp_kwargs)
 
                 # The UNDAMPED map output is what the convergence test needs; see the block below.
                 M_map[k] = M_new_k

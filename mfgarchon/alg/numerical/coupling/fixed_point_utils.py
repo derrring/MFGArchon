@@ -19,6 +19,7 @@ logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
+    from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
     from mfgarchon.utils.solver_result import SolverResult
 
 
@@ -34,6 +35,18 @@ def fp_solver_sig_params(fp_solver: object) -> set[str] | None:
     """
     try:
         return set(inspect.signature(fp_solver.solve_fp_system).parameters.keys())
+    except (AttributeError, ValueError):
+        return None
+
+
+def hjb_solver_sig_params(hjb_solver: BaseHJBSolver) -> set[str] | None:
+    """Return the parameter names of ``hjb_solver.solve_hjb_system`` (or ``None``).
+
+    :func:`fp_solver_sig_params`'s HJB twin, for an iterator that holds one HJB solver per
+    population and hands each set to :func:`~.base_mfg.hjb_solve_kwargs` (#2666).
+    """
+    try:
+        return set(inspect.signature(hjb_solver.solve_hjb_system).parameters.keys())
     except (AttributeError, ValueError):
         return None
 
