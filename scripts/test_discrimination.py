@@ -363,9 +363,15 @@ MUTATIONS: list[Mutation] = [
         #
         # order > 2 is the durable witness. `_update_ghosts_uniform` dispatches to
         # `_apply_poly_extrapolation`; the per-face path has no order dispatch at all, so the
-        # separation is structural rather than a consequence of the drop. Measured at order 3:
-        # clean 3.490909, mutant 1.1, and mutant-plus-that-fix still 1.1.
-        verify="abs(_ghost0(neumann_bc(dimension=1, value=2.0), 3) - 1.1) < 1e-12",
+        # separation is structural rather than a consequence of the drop. So the probe states the structure,
+        # not a value: under the mutation the order-3 ghost is the order-2 one. A constant went stale here once
+        # already -- the expected 1.1 held until the order-2 Neumann ghost itself moved to 2.2, and the row then
+        # read INEFFECTIVE at f7aeead2 with the mutation applying perfectly (#1715). Measured at 27bc4a9d: clean
+        # order 3 gives 3.490909 against 2.2 at order 2; the mutant gives 2.2 at both.
+        verify=(
+            "abs(_ghost0(neumann_bc(dimension=1, value=2.0), 3) - _ghost0(neumann_bc(dimension=1, value=2.0), 2))"
+            " < 1e-12"
+        ),
     ),
     Mutation(
         name="neumann_low_wall_flux_sign",
