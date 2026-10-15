@@ -82,8 +82,8 @@ def test_a_wider_density_is_unbiased_and_beats_uniform(width):
 
 def test_uniform_sampling_is_unchanged():
     """Control: measured on main at 25fd097b, before this change. To a relative 1e-12, not bit for bit: the values were
-    captured on one platform, and another sums them 2 ulps apart (#2694). A changed draw or a lost factor moves the
-    estimate by far more."""
+    captured on one machine, and the nightly's runner gives seed 1's estimate 2 ulps away (#2694). A changed draw or a
+    lost factor moves the estimate by far more."""
     for seed, value in ((0, 0.6982045585893328), (1, 0.7319098980065832), (7, 0.7491218261522968)):
         estimate = monte_carlo_integrate(f, DOMAIN, MCConfig(num_samples=N, seed=seed)).estimate
         assert estimate == pytest.approx(value, rel=1e-12), (seed, estimate)
