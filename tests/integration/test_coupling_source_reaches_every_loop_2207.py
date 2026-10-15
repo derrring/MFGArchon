@@ -32,15 +32,24 @@ The property is source-term plumbing -- named in AGENTS.md as fully expressed in
 Nothing here is directional: no normal/tangential split, no axis pairing, no corner. A 2-D fixture
 would buy runtime and no discrimination.
 
+THE LOOPS THAT HOLD ONE SOLVER PER POPULATION, REGIME OR NOISE PATH (#2666)
+---------------------------------------------------------------------------
+``MultiPopulationIterator``, ``RegimeSwitchingIterator`` and ``CommonNoiseMFGSolver`` dropped the
+problem's source on both halves -- measured, ``Δ = 0`` with the source called 0 times -- because none
+of them reached the owner this file pins. Their rows are below the #2207 rows and assert more than
+``|Δ| > 0``: each compares against the source's exact effect at convergence. A constant HJB source
+``c`` shifts ``U`` by ``c (T - t)`` and leaves ``M`` alone (docs/user/CONVENTIONS.md § 2: the source keeps
+its sign); a constant FP source under no-flux grows the trapezoid mass by ``c t`` -- except across
+regimes, where the mass moves between them and the oracle is the scheme's own recurrence (see that
+test). Regimes add the problem's source to their cross-regime term in the one ``source_term``
+channel, which is the combination #2207 left open, decided by #2666.
+
 NOT COVERED, AND NAMED RATHER THAN IMPLIED
 ------------------------------------------
-``RegimeSwitchingIterator`` and ``GraphMFGSolver`` also reach a solver's ``source_term``, and are
-NOT rows here. Both compose a cross-regime / cross-node term of their own into the same channel, so
-for them the question is how a problem-level source COMBINES with it -- addition or replacement, and
-with which sign -- which #2207 deliberately left open (cf. #1681, #1803). Neither routes through
-``_build_*_kwargs``, so the required-iterate mechanism cannot reach them either.
-``MultiPopulationIterator`` is not a ``BaseCouplingIterator`` subclass at all; #2173 proposes
-folding ``MultiPopulationProblem`` into ``MFGProblem``, which is the related but distinct question.
+``GraphMFGSolver`` is not a row. It composes in its own ``_compose_hjb_source`` /
+``_compose_fp_source`` from ``source_composition``'s primitives and honoured both halves when #2666
+measured it, so no change of #2666 reaches it; #2173 proposes folding ``MultiPopulationProblem`` into
+``MFGProblem``, a related but distinct question.
 """
 
 from __future__ import annotations
@@ -55,11 +64,18 @@ from mfgarchon.alg.numerical.coupling.base_mfg import BaseCouplingIterator
 from mfgarchon.alg.numerical.coupling.block_iterators import BlockGaussSeidelIterator, BlockJacobiIterator
 from mfgarchon.alg.numerical.coupling.fictitious_play import FictitiousPlayIterator
 from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
+from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
+from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwitchingIterator
 from mfgarchon.alg.numerical.fp_solvers.fp_fdm import FPFDMSolver
 from mfgarchon.alg.numerical.hjb_solvers.hjb_fdm import HJBFDMSolver
+from mfgarchon.alg.numerical.stochastic import CommonNoiseMFGSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
 from mfgarchon.core.model import Conditions, Model
+from mfgarchon.core.multi_population import MultiPopulationProblem
+from mfgarchon.core.regime_switching import RegimeSwitchingConfig
+from mfgarchon.core.stochastic import OrnsteinUhlenbeckProcess, StochasticMFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
@@ -83,15 +99,16 @@ _POSITIVE_CONTROL = FixedPointIterator
 
 
 class _CountingSource:
-    """The problem-level ``(x, m, v, t)`` callback, counting its own invocations."""
+    """The problem-level ``(x, m, v, t)`` callback, constant ``value``, counting its own invocations."""
 
-    def __init__(self) -> None:
+    def __init__(self, value: float = _MAGNITUDE) -> None:
+        self.value = value
         self.calls = 0
 
     def __call__(self, t, x, v, m):
         self.calls += 1
         a = np.asarray(x, dtype=float)
-        return np.full(a.shape[0] if a.ndim == 2 else a.size, _MAGNITUDE)
+        return np.full(a.shape[0] if a.ndim == 2 else a.size, self.value)
 
 
 def _nonlocal_operator():
@@ -288,6 +305,193 @@ def test_the_strict_adjoint_path_refuses_an_fp_source(loop_cls):
                 f"the guard over-fired on '{label}': this configuration carries no FP source and "
                 f"must still run, but the strict-adjoint path refused it -- {exc}"
             )
+
+
+# --- #2666: the loops that hold one solver per population, regime or noise path ----------------------
+
+_T, _NT = 0.2, 5  # _problem's horizon
+_TIMES = np.arange(_NT + 1) * (_T / _NT)
+_TRAPEZOID = np.r_[0.5, np.ones(_N - 2), 0.5] / (_N - 1)
+
+#: Solved to convergence, so the exact effect of the source is what the iterate carries. The largest residual
+#: #2666 measured on these rows is 5.494e-12 (the common-noise mean's dM under an HJB source); a dropped source
+#: leaves c T = 1 unexplained.
+_CONVERGED = {"max_iterations": 200, "tolerance": 1e-12}
+_EXACT = 1e-9
+
+
+def _assert_the_sources_exact_effect(field, c, u0, u1, m0, m1, where):
+    """A constant source's whole effect: on the array it moves, exactly; on the other, none."""
+    du, dm = np.asarray(u1) - np.asarray(u0), np.asarray(m1) - np.asarray(m0)
+    if field == "source_term_hjb":
+        moved, still = np.max(np.abs(du - c * (_T - _TIMES)[:, None])), np.max(np.abs(dm))
+        expect = f"dU = c (T - t) with c = {c}"
+    else:
+        moved, still = np.max(np.abs(dm @ _TRAPEZOID - c * _TIMES)), np.max(np.abs(du))
+        expect = f"the mass grows by c t with c = {c}"
+    assert moved <= _EXACT, f"{where}: {field} should give {expect}; off by {moved:.3e} (a dropped source: {c * _T})"
+    assert still <= _EXACT, f"{where}: {field} moved the other field by {still:.3e}"
+
+
+@pytest.mark.parametrize("field", ["source_term_hjb", "source_term_fp"])
+def test_each_population_solves_with_its_own_source(field):
+    """MultiPopulationIterator, K = 2, with a different c per population, so a source applied to the wrong one shows."""
+    values = (5.0, 3.0)
+
+    def solve(sources):
+        problems = [_problem(**({field: s} if s is not None else {})) for s in sources]
+        result = MultiPopulationIterator(
+            MultiPopulationProblem(populations=problems, population_names=["a", "b"]),
+            [HJBFDMSolver(p) for p in problems],
+            [FPFDMSolver(p) for p in problems],
+            relaxation=0.5,
+        ).solve(**_CONVERGED)
+        assert result.converged
+        return result.U, result.M
+
+    u0, m0 = solve([None, None])
+    sources = [_CountingSource(v) for v in values]
+    u1, m1 = solve(sources)
+    for k, source in enumerate(sources):
+        assert source.calls > 0, f"population {k}'s {field} was never called"
+        _assert_the_sources_exact_effect(field, source.value, u0[k], u1[k], m0[k], m1[k], f"population {k}")
+
+
+_Q = np.array([[-0.1, 0.1], [0.2, -0.2]])
+
+
+def _regime_solve(**fields):
+    problems = [_problem(**fields) for _ in range(2)]
+    result = RegimeSwitchingIterator(
+        problems,
+        RegimeSwitchingConfig(transition_matrix=_Q),
+        [HJBFDMSolver(p) for p in problems],
+        [FPFDMSolver(p) for p in problems],
+        max_iterations=_CONVERGED["max_iterations"],
+        tolerance=_CONVERGED["tolerance"],
+        damping=0.5,
+    ).solve()
+    assert result.converged
+    return result.values, result.densities
+
+
+def test_each_regime_adds_its_own_hjb_source_to_the_cross_regime_term():
+    """The same c in both regimes, so the cross-regime term Q (u_k - u_j) is unchanged by the shift and the exact
+    effect is dU = c (T - t) in each."""
+    u0, m0 = _regime_solve()
+    source = _CountingSource(5.0)
+    u1, m1 = _regime_solve(source_term_hjb=source)
+    assert source.calls > 0
+    for k in range(2):
+        _assert_the_sources_exact_effect("source_term_hjb", source.value, u0[k], u1[k], m0[k], m1[k], f"regime {k}")
+
+
+def test_each_regime_adds_its_own_fp_source_under_the_integrating_factor():
+    """The oracle is this scheme's mass recurrence, per regime, which holds to rounding.
+
+    Derived from the scheme, not the code. The diagonal outflow is carried by ``n^k = e^{q_k t} m^k`` (#1681), so the
+    FP solve sees ``d_t n^k - L^k[n^k] = e^{q_k t} (sum_{j != k} Q_jk m^j + S^k)``. FPFDMSolver takes a source at the
+    NEW time, ``n_{n+1} = n_n + dt (L n_{n+1} + source(t_{n+1}))``, and ``L`` conserves the trapezoid mass under
+    no-flux. Recovering ``m = e^{-q_k t} n`` and integrating, with ``S^k = c``:
+
+        M^k_{n+1} = e^{-q_k dt} M^k_n + dt (sum_{j != k} Q_jk M^j_{n+1} + c).
+
+    It holds under that hypothesis only: FPFDMSolver's implicit source time. Measured on this fixture for #2666, regimes
+    0 and 1: residual 1.199e-14 and 7.550e-15 with the source, 2.220e-16 without, and 2.407e-03 and 2.486e-03 for the
+    same recurrence with the source at t_n. A source left outside the factor misses it by 3.960e-03 and 7.842e-03, a
+    dropped one by 2.000e-01.
+
+    Why not "the total mass grows by K c t": that holds for the PDE and not here. Summing the recurrence over k leaves
+    ``dt sum_j q_j (M^j_{n+1} - M^j_n)``, the scheme's non-conservation #1798 records, and on this fixture the total
+    is off by 1.211e-02 -- the size of the error a source not scaled by ``e^{q_k t}`` makes, so it cannot see that one.
+    """
+    u0, _ = _regime_solve()
+    source = _CountingSource(5.0)
+    u1, m1 = _regime_solve(source_term_fp=source)
+    assert source.calls > 0
+    mass = np.array([np.asarray(m) @ _TRAPEZOID for m in m1])  # (K, Nt + 1)
+    dt = _T / _NT
+    for k in range(2):
+        q_k = -_Q[k, k]
+        inflow = sum(_Q[j, k] * mass[j, 1:] for j in range(2) if j != k)
+        predicted = np.exp(-q_k * dt) * mass[k, :-1] + dt * (inflow + source.value)
+        residual = np.max(np.abs(mass[k, 1:] - predicted))
+        assert residual <= 1e-12, (
+            f"regime {k}: the mass misses the recurrence M_(n+1) = e^(-q dt) M_n + dt (inflow_(n+1) + c) by "
+            f"{residual:.3e} (a dropped source misses it by dt c = {dt * source.value}). If FPFDMSolver's source time "
+            "changed -- a Crank-Nicolson source, say -- this fires on a correct solver: re-derive the recurrence for "
+            "the new time, do not loosen the bound."
+        )
+        assert np.max(np.abs(np.asarray(u1[k]) - np.asarray(u0[k]))) <= _EXACT, f"regime {k}: an FP source moved U"
+
+
+class _ConvergedConditionalSolve:
+    """A conditional-solver factory that solves to ``_CONVERGED``, so the mean carries the exact effect. The inner
+    Newton is set at least as tight as the outer loop, which otherwise warns that it cannot get below the inner floor."""
+
+    def __init__(self, problem):
+        self.loop = FixedPointIterator(
+            problem, HJBFDMSolver(problem, newton_tolerance=_CONVERGED["tolerance"]), FPFDMSolver(problem)
+        )
+
+    def solve(self):
+        return self.loop.solve(**_CONVERGED)
+
+
+@pytest.mark.parametrize("field", ["source_term_hjb", "source_term_fp"])
+def test_every_conditional_problem_carries_the_source(field):
+    """CommonNoiseMFGSolver: each noise path's conditional problem is the parent rebuilt with the noise frozen, so it
+    carries the parent's source. Every conditional solve shifts by the same exact effect, and so does the mean."""
+
+    def solve(**fields):
+        components = MFGComponents(
+            hamiltonian=SeparableHamiltonian(
+                control_cost=QuadraticControlCost(control_cost=1.0),
+                coupling=lambda m: np.asarray(m) * 0.0,
+                coupling_dm=lambda m: np.asarray(m) * 0.0,
+            ),
+            u_terminal=_u_terminal,
+            m_initial=_m_initial,
+        )
+        problem = StochasticMFGProblem(
+            geometry=TensorProductGrid(
+                bounds=[(0.0, 1.0)], Nx_points=[_N], boundary_conditions=no_flux_bc(dimension=1)
+            ),
+            T=_T,
+            Nt=_NT,
+            volatility=0.3,
+            noise_process=OrnsteinUhlenbeckProcess(kappa=1.0, mu=0.0, sigma=0.1),
+            conditional_hamiltonian=lambda x, p, m, theta: 0.5 * np.sum(p**2, axis=-1),
+            components=components,
+            **fields,
+        )
+        result = CommonNoiseMFGSolver(
+            problem,
+            num_noise_samples=2,
+            conditional_solver_factory=_ConvergedConditionalSolve,
+            variance_reduction=False,
+            parallel=False,
+            seed=7,
+        ).solve(verbose=False)
+        return result.u_mean, result.m_mean
+
+    u0, m0 = solve()
+    source = _CountingSource(5.0)
+    u1, m1 = solve(**{field: source})
+    assert source.calls > 0
+    _assert_the_sources_exact_effect(field, source.value, u0, u1, m0, m1, "the conditional mean")
+
+
+@pytest.mark.parametrize("field", ["source_term_hjb", "nonlocal_operator"])
+def test_the_standalone_hjb_solve_refuses_a_source_it_cannot_apply(field):
+    """``BaseHJBSolver.solve()`` passed no source, so a declared one was dropped (#2666). It now refuses, and the route
+    its message names was run once for #2666, on a problem like ``_problem`` with ``m_initial = 1``:
+    ``solve_hjb_system(..., source_term=compose_hjb_source(...))`` moved U by exactly c (T - t), to 1.110e-16. The
+    control is the same problem without the field, which still solves."""
+    fields = {field: _CountingSource(5.0) if field == "source_term_hjb" else _nonlocal_operator()}
+    with pytest.raises(NotImplementedError, match=rf"solve\(\) has no route.*{field}.*#2666"):
+        HJBFDMSolver(_problem(**fields)).solve()
+    assert np.all(np.isfinite(HJBFDMSolver(_problem()).solve()))
 
 
 if __name__ == "__main__":

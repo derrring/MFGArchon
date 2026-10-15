@@ -6,10 +6,15 @@ constructor accepted was dropped: a problem built with ``source_term_hjb=50`` so
 with nothing reported. The four now read one owner, `MFGProblem._rebuilt`, which builds from the record the
 constructor keeps. Two inputs nothing read are refused by name instead: ``drift=`` in this form (#2678), and
 ``boundary_conditions=`` in every form.
+
+The components= form has its own record (#2666), read by the one rebuild of that form the library makes:
+`StochasticMFGProblem.create_conditional_problem`, which built each noise path's problem by hand from five fields.
 """
 
 from __future__ import annotations
 
+import dataclasses
+import inspect
 import warnings
 
 import pytest
@@ -19,6 +24,7 @@ import numpy as np
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
+from mfgarchon.core.stochastic import OrnsteinUhlenbeckProcess, StochasticMFGProblem
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import dirichlet_bc, no_flux_bc
 
@@ -135,3 +141,61 @@ def test_an_input_nothing_reads_is_refused_by_name(form, keyword):
     )
     with pytest.raises(TypeError, match=rf"{name}=.*refused.*#2667"):
         MFGProblem(geometry=_grid(), T=1.0, Nt=10, volatility=0.3, components=components, **keyword)
+
+
+def test_the_conditional_problem_carries_every_input_of_the_components_form():
+    """Measured before #2666 on CommonNoiseMFGSolver: a constant ``source_term_hjb`` or ``source_term_fp`` moved the mean
+    by 0, called 0 times. Two enumerations keep the record whole as the constructor grows: every named parameter of
+    ``MFGProblem.__init__`` outside the model form's three is in it, and every ``MFGComponents`` field reaches the
+    conditional problem unless the frozen noise replaces it.
+
+    A ``state_penalty`` is carried too, and so reaches #2002's refusal: it is composed into the Hamiltonian's potential,
+    and the frozen-noise Hamiltonian has none. It was dropped before; refusing is the outcome a carried input owes."""
+    inputs = {
+        "source_term_hjb": lambda t, x, v, m: 50.0 * np.ones(len(x)),
+        "source_term_fp": lambda t, x, v, m: np.zeros(len(x)),
+        "nonlocal_operator": 0.3 * np.eye(21),
+        "lambda_": 2.0,
+        "coupling_coefficient": 0.9,
+    }
+
+    def conditional_of(**given):
+        components = MFGComponents(
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)),
+            u_terminal=lambda x: (np.asarray(x) - 0.3) ** 2,
+            m_initial=lambda x: 1.0 + 0.5 * np.cos(np.pi * np.asarray(x)),
+            parameters={"label": "parent"},
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            parent = StochasticMFGProblem(
+                geometry=_grid(),
+                T=1.0,
+                Nt=10,
+                volatility=0.3,
+                noise_process=OrnsteinUhlenbeckProcess(kappa=1.0, mu=0.0, sigma=0.1),
+                conditional_hamiltonian=lambda x, p, m, theta: 0.5 * np.sum(p**2, axis=-1) + theta,
+                components=components,
+                **given,
+            )
+            return parent, parent.create_conditional_problem(parent.sample_noise_path(seed=0))
+
+    parent, conditional = conditional_of(**inputs)
+
+    for name, value in inputs.items():
+        carried = getattr(conditional, name)
+        assert carried == value if isinstance(value, float) else carried is value, name
+
+    replaced = {"hamiltonian", "lagrangian", "u_terminal", "parameters", "description", "problem_type"}
+    for field in dataclasses.fields(MFGComponents):
+        if field.init and field.name not in replaced:
+            assert getattr(conditional.components, field.name) is getattr(parent.components, field.name), field.name
+    assert conditional.components.parameters == {"label": "parent"}
+    assert conditional.components.parameters is not parent.components.parameters
+
+    named = set(inspect.signature(MFGProblem.__init__).parameters) - {"self", "model", "domain", "conditions", "kwargs"}
+    missing = sorted(named - set(parent._components_inputs))
+    assert not missing, f"MFGProblem.__init__ takes {missing}, which the components form's record does not keep"
+
+    with pytest.raises(NotImplementedError, match="state_penalty needs a Hamiltonian that carries a potential"):
+        conditional_of(state_penalty=lambda x: np.maximum(0.0, np.asarray(x) - 0.5))

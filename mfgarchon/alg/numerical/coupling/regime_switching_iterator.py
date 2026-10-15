@@ -34,13 +34,16 @@ from mfgarchon.alg.numerical.coupling.base_mfg import (
     BaseCouplingIterator,
     assert_bc_providers_resolvable,
     assert_paired_solver_sigma,
+    resolve_source_kwarg,
 )
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
     check_convergence_criteria,
     diverged_value_function,
     fp_solver_sig_params,
+    hjb_solver_sig_params,
     resolve_fp_drift_kwargs,
 )
+from mfgarchon.alg.numerical.coupling.source_composition import compose_fp_source, compose_hjb_source
 from mfgarchon.utils.convergence import sweep_change, worst_sweep_change
 
 if TYPE_CHECKING:
@@ -187,6 +190,9 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         # _init_solver_signatures. One set per regime k because regimes may use different FP
         # solver types.
         self._fp_sig_params_k = [fp_solver_sig_params(fp) for fp in fp_solvers]
+        # Issue #2666: the HJB twin, so each regime's source -- the cross-regime term plus the problem's
+        # own -- goes through resolve_source_kwarg like every other coupling loop's.
+        self._hjb_sig_params_k = [hjb_solver_sig_params(h) for h in hjb_solvers]
         # Issue #1489 (S1): per-regime FP drift-input convention, parallel to _fp_sig_params_k, so
         # resolve_fp_drift_kwargs routes each regime by convention rather than param presence.
         self._fp_drift_convention_k = [getattr(fp, "_drift_convention", None) for fp in fp_solvers]
@@ -309,11 +315,17 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         Q: NDArray,
         Us_full: list[NDArray],
         Us_new: list[NDArray | None],
+        problem_source: Callable | None = None,
     ) -> Callable:
         """Build HJB source term for regime k with cross-coupling.
 
         Captures current state via explicit arguments (not closures over
         loop variables) to satisfy ruff B023.
+
+        ``problem_source`` is regime k's own composed source (``compose_hjb_source``), added to the
+        cross term. Both enter the solver through the one ``source_term`` channel, so they share its
+        sign: the solver subtracts the source, and the problem's source keeps the sign
+        CONVENTIONS.md section 2 gives it (Issue #2666, which found it dropped here).
 
         Note: Us_new is a mutable list reference. For Gauss-Seidel, this is
         intentional — when solving regime k, Us_new[j] for j < k contains
@@ -341,6 +353,8 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                     # +cross flipped the inter-regime coupling sign (2026-06-10 audit, #1251);
                     # the FP source below already carries the correct +inflow/-outflow sign.
                     s -= Q[k, j] * (u_k_n - u_j_n)
+            if problem_source is not None:
+                s = s + problem_source(t, x)
             return s
 
         return source
@@ -351,6 +365,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         K: int,
         Q: NDArray,
         Ms: list[NDArray],
+        problem_source: Callable | None = None,
     ) -> Callable:
         """Build the FP inflow source for regime k, pre-scaled by the integrating factor.
 
@@ -374,6 +389,11 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         source is non-negative and ``n^k >= 0`` follows from the scheme; ``solve`` then
         recovers ``m^k = exp(-q_k t) n^k >= 0``. The remaining lag is on the inflow only,
         where it costs accuracy rather than positivity.
+
+        ``problem_source`` is regime k's own composed FP source ``S^k`` (``compose_fp_source``,
+        Issue #2666). It is external like the inflow, so it takes the same factor:
+        ``d_t n^k - L^k[n^k] = exp(+q_k t) * (sum_{j!=k} Q[j,k] m^j + S^k)``. Unlike the inflow it
+        carries no sign guarantee, so a negative ``S^k`` is outside the positivity argument above.
         """
         dt_k = self._problems[k].dt
         Nt_k = self._problems[k].Nt
@@ -386,6 +406,8 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 if j != k:
                     m_j = Ms[j] if Ms[j].ndim == 1 else (Ms[j][n] if n < Ms[j].shape[0] else Ms[j][-1])
                     s += Q[j, k] * m_j  # inflow from j
+            if problem_source is not None:
+                s = s + problem_source(t, x)
             return np.exp(q_k * t) * s
 
         return source
@@ -454,15 +476,28 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
 
             # --- HJB step: solve K backward equations with cross-terms ---
             for k in range(K):
-                hjb_source = self._make_hjb_source(k, K, Q, Us_full, Us_new)
-
-                U_k = self._hjb[k].solve_hjb_system(
+                M_k = (
                     Ms[k]
                     if isinstance(Ms[k], np.ndarray) and Ms[k].ndim == 2
-                    else np.tile(Ms[k], (self._problems[k].Nt + 1, 1)),
+                    else np.tile(Ms[k], (self._problems[k].Nt + 1, 1))
+                )
+                # Issue #2666: regime k's own source, composed from the iterates this solve starts from.
+                hjb_source = self._make_hjb_source(
+                    k, K, Q, Us_full, Us_new, compose_hjb_source(self._problems[k], M_k, Us_full[k])
+                )
+                hjb_sig_params_k = self._hjb_sig_params_k[k]
+                if hjb_sig_params_k is not None:
+                    hjb_kwargs = resolve_source_kwarg(
+                        hjb_sig_params_k, hjb_source, type(self._hjb[k]).__name__, "solve_hjb_system", "HJB"
+                    )
+                else:
+                    hjb_kwargs = {"source_term": hjb_source}
+
+                U_k = self._hjb[k].solve_hjb_system(
+                    M_k,
                     Us_full[k][-1],  # terminal condition
                     Us_full[k],  # previous iterate
-                    source_term=hjb_source,
+                    **hjb_kwargs,
                 )
                 Us_new[k] = U_k
 
@@ -501,7 +536,10 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
 
             # --- FP step: solve K forward equations with mass transfer ---
             for k in range(K):
-                fp_source = self._make_fp_source(k, K, Q, Ms)
+                # Issue #2666: regime k's own FP source, composed from the density this solve replaces
+                # (tiled at iteration 0, when `Ms[k]` is still m_initial) and the U it consumes.
+                M_k = Ms[k] if Ms[k].ndim == 2 else np.tile(Ms[k], (self._problems[k].Nt + 1, 1))
+                fp_source = self._make_fp_source(k, K, Q, Ms, compose_fp_source(self._problems[k], M_k, Us_new[k]))
 
                 m0_k = Ms[k][0] if Ms[k].ndim == 2 else Ms[k]
                 # Issue #1315 (Refs #1043): route the value function through the
@@ -511,9 +549,11 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 # the velocity internally. Passing drift_field=U is silent-wrong-equilibrium.
                 # Mirrors FixedPointIterator.solve() / fictitious_play (#1299), per-regime: each
                 # regime has its own problem (Hamiltonian/geometry) and FP solver signature.
-                fp_kwargs: dict[str, Any] = {"source_term": fp_source}
                 fp_sig_params_k = self._fp_sig_params_k[k]
                 if fp_sig_params_k is not None:
+                    fp_kwargs: dict[str, Any] = resolve_source_kwarg(
+                        fp_sig_params_k, fp_source, type(self._fp[k]).__name__, "solve_fp_system", "FP"
+                    )
                     drift_kwargs, use_positional_U = resolve_fp_drift_kwargs(
                         self._problems[k],
                         fp_sig_params_k,

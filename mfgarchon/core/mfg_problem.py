@@ -490,6 +490,33 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             self._v1_model = None
             self._v1_conditions = None
             self._v1_inputs = {}
+            # This form's twin of `_v1_inputs`: every input it was given, as given, before the normalisation
+            # below. `_rebuilt` reads it, so a rebuild of a components-form problem carries its source, nonlocal
+            # operator, state penalty, ... -- StochasticMFGProblem.create_conditional_problem built its conditional
+            # problem by hand from five fields and dropped them all (#2666).
+            self._components_inputs: dict[str, Any] = {
+                "constraints": constraints,
+                "spatial_bounds": spatial_bounds,
+                "spatial_discretization": spatial_discretization,
+                "geometry": geometry,
+                "obstacles": obstacles,
+                "hjb_geometry": hjb_geometry,
+                "fp_geometry": fp_geometry,
+                "network": network,
+                "T": T,
+                "Nt": Nt,
+                "time_domain": time_domain,
+                "diffusion": diffusion,
+                "volatility": volatility,
+                "volatility_kind": volatility_kind,
+                "drift": drift,
+                "coupling_coefficient": coupling_coefficient,
+                "lambda_": lambda_,
+                "hamiltonian": hamiltonian,
+                "components": components,
+                "suppress_warnings": suppress_warnings,
+                **kwargs,
+            }
 
             # The components= form is planned to be replaced, and is not deprecated: the model/domain/conditions
             # form is not fixed yet, so a caller is not told to migrate to it and no removal clock runs (user ruling,
@@ -2793,7 +2820,13 @@ See: docs/user/CONVENTIONS.md, section 2 (the cost channels and their signs)"""
         ``with_conditions`` all read it, so an input the constructor accepted -- ``source_term_hjb``,
         ``state_penalty``, ``nonlocal_operator``, ... -- is not dropped by one of them. The constructor's own
         validation runs again on the result. It builds ``MFGProblem``, not ``type(self)``, as the four sites did.
+
+        A components-form problem is rebuilt from its own record (#2666), which
+        ``StochasticMFGProblem.create_conditional_problem`` reads. ``solve(Nt=)`` and ``with_*`` still refuse
+        that form before they get here.
         """
+        if self._v1_model is None:
+            return MFGProblem(**{**self._components_inputs, **changes})
         inputs = {"model": self._v1_model, "domain": self.geometry, "conditions": self._v1_conditions, "Nt": self.Nt}
         return MFGProblem(**{**inputs, **self._v1_inputs, **changes})
 

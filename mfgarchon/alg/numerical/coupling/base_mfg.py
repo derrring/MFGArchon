@@ -393,6 +393,71 @@ def resolve_source_kwarg(params: Any, source_term: Any, solver_name: str, method
     )
 
 
+def hjb_solve_kwargs(
+    problem: Any,
+    params: set[str] | None,
+    solver_name: str,
+    *,
+    M: np.ndarray,
+    U: np.ndarray,
+    volatility: float | np.ndarray | Any | None = None,
+    volatility_kind: str | None = None,
+) -> dict[str, Any]:
+    """The kwargs an HJB solve receives from ``problem``: its composed source and any volatility override.
+
+    The one owner for every loop that hands the problem's source to the solver unchanged: the
+    :class:`BaseCouplingIterator` family through :meth:`BaseCouplingIterator._build_hjb_kwargs`, and
+    ``MultiPopulationIterator`` once per population. It was a method until #2666, so a loop that is not a
+    ``BaseCouplingIterator``, or holds one solver per population, could not call it -- and two such loops
+    dropped the problem's source in silence. A loop that must ADD a term of its own to the problem's source
+    (``RegimeSwitchingIterator``'s cross-regime term) composes it with ``compose_hjb_source`` and forwards the
+    sum through ``resolve_source_kwarg``; neither decision is restated there.
+
+    ``params`` is the solver's ``solve_hjb_system`` parameter names, ``None`` when introspection failed.
+    """
+    kwargs: dict[str, Any] = {}
+    if params is None:
+        # KNOWN HOLE, tracked separately: signature introspection failed, so both the
+        # volatility resolution and the source guard below are skipped and a live source is
+        # dropped here in silence -- the same shape as #2207 one level up. Deciding what an
+        # unreadable signature should mean (refuse, or assume it accepts) is not this change's.
+        return kwargs
+    source_term = compose_hjb_source(problem, M, U)
+    kwargs.update(
+        resolve_volatility_kwarg(params, volatility, volatility_kind, problem, solver_name, "solve_hjb_system", "HJB")
+    )
+    kwargs.update(resolve_source_kwarg(params, source_term, solver_name, "solve_hjb_system", "HJB"))
+    return kwargs
+
+
+def fp_solve_kwargs(
+    problem: Any,
+    params: set[str] | None,
+    solver_name: str,
+    *,
+    M: np.ndarray,
+    U: np.ndarray,
+    drift_field: np.ndarray | Callable | Any | None = None,
+    volatility: float | np.ndarray | Any | None = None,
+    volatility_kind: str | None = None,
+) -> dict[str, Any]:
+    """The kwargs an FP solve receives from ``problem``: its composed source, a ``drift_field`` the caller
+    passes, and any volatility override. :func:`hjb_solve_kwargs`'s twin, with the same callers and the same
+    history (#2666). ``params`` is the solver's ``solve_fp_system`` parameter names, ``None`` when
+    introspection failed."""
+    kwargs: dict[str, Any] = {}
+    if params is None:
+        return kwargs  # same hole as the HJB side; see there.
+    source_term = compose_fp_source(problem, M, U)
+    if "drift_field" in params and drift_field is not None:
+        kwargs["drift_field"] = drift_field
+    kwargs.update(
+        resolve_volatility_kwarg(params, volatility, volatility_kind, problem, solver_name, "solve_fp_system", "FP")
+    )
+    kwargs.update(resolve_source_kwarg(params, source_term, solver_name, "solve_fp_system", "FP"))
+    return kwargs
+
+
 class BaseCouplingIterator(ABC):
     """
     Abstract base class for iterative coupling solvers (Picard, block, fictitious play).
@@ -456,7 +521,7 @@ class BaseCouplingIterator(ABC):
 
         ``M`` and ``U`` are the iterates the problem's source is composed FROM, and they are
         REQUIRED. They replace a ``source_term=`` callable the caller had to compose itself, which
-        is the whole of Issue #2207: the guard below fires on a source that was *handed over*, so a
+        is the whole of Issue #2207: the guard in :func:`hjb_solve_kwargs` fires on a source *handed over*, so a
         loop that never composed one never reached it. Measured before this change, on one problem
         and one solver pair with ``source_term_hjb`` a constant 50.0 --
         ``FixedPointIterator`` moved ``max|U|`` by 8.75 and called the source 15 times, while
@@ -467,28 +532,15 @@ class BaseCouplingIterator(ABC):
         Progress is handled automatically via context routing (Issue #934) —
         solver's ``create_progress_bar`` detects the parent ``HierarchicalProgress``.
         """
-        kwargs: dict[str, Any] = {}
-        params = self._hjb_sig_params
-        if params is None:
-            # KNOWN HOLE, tracked separately: signature introspection failed, so both the
-            # volatility resolution and the source guard below are skipped and a live source is
-            # dropped here in silence -- the same shape as #2207 one level up. Deciding what an
-            # unreadable signature should mean (refuse, or assume it accepts) is not this change's.
-            return kwargs
-        source_term = compose_hjb_source(self.problem, M, U)
-        kwargs.update(
-            resolve_volatility_kwarg(
-                params,
-                volatility,
-                volatility_kind,
-                self.problem,
-                self._hjb_solver_name,
-                "solve_hjb_system",
-                "HJB",
-            )
+        return hjb_solve_kwargs(
+            self.problem,
+            self._hjb_sig_params,
+            self._hjb_solver_name,
+            M=M,
+            U=U,
+            volatility=volatility,
+            volatility_kind=volatility_kind,
         )
-        kwargs.update(resolve_source_kwarg(params, source_term, self._hjb_solver_name, "solve_hjb_system", "HJB"))
-        return kwargs
 
     def _build_fp_kwargs(
         self,
@@ -520,9 +572,11 @@ class BaseCouplingIterator(ABC):
         fixed in ``core/mfg_problem.py``, reintroduced in the line asserting the correction.
 
         This method is where every BUILDER-ROUTED loop composes, which is not the same as the only
-        site: ``compose_fp_source`` has one other caller, ``mfg_residual.py`` (the Newton path),
-        which is not a ``BaseCouplingIterator`` and cannot use these builders. The single owner is
-        ``source_composition``, the module, exactly as its own docstring says.
+        site: ``compose_fp_source`` has two other callers besides :func:`fp_solve_kwargs`, which this
+        delegates to and ``MultiPopulationIterator`` calls per population (#2666) --
+        ``mfg_residual.py`` (the Newton path) and ``RegimeSwitchingIterator``, which adds its own
+        terms to the problem's source. The single owner is ``source_composition``, the module,
+        exactly as its own docstring says.
 
         Third correction, recorded for the same reason as the two above: the draft that replaced
         "the single site" named ``block_iterators.py``'s strict-adjoint guard as a third caller --
@@ -534,26 +588,16 @@ class BaseCouplingIterator(ABC):
 
         Progress is handled automatically via context routing (Issue #934).
         """
-        kwargs: dict[str, Any] = {}
-        params = self._fp_sig_params
-        if params is None:
-            return kwargs  # same hole as the HJB side; see there.
-        source_term = compose_fp_source(self.problem, M, U)
-        if "drift_field" in params and drift_field is not None:
-            kwargs["drift_field"] = drift_field
-        kwargs.update(
-            resolve_volatility_kwarg(
-                params,
-                volatility,
-                volatility_kind,
-                self.problem,
-                self._fp_solver_name,
-                "solve_fp_system",
-                "FP",
-            )
+        return fp_solve_kwargs(
+            self.problem,
+            self._fp_sig_params,
+            self._fp_solver_name,
+            M=M,
+            U=U,
+            drift_field=drift_field,
+            volatility=volatility,
+            volatility_kind=volatility_kind,
         )
-        kwargs.update(resolve_source_kwarg(params, source_term, self._fp_solver_name, "solve_fp_system", "FP"))
-        return kwargs
 
     @abstractmethod
     def solve(self, max_iterations: int, tolerance: float = 1e-5, **kwargs: Any) -> SolverReturnTuple:

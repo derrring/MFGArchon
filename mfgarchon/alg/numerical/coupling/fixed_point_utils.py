@@ -38,6 +38,18 @@ def fp_solver_sig_params(fp_solver: object) -> set[str] | None:
         return None
 
 
+def hjb_solver_sig_params(hjb_solver: object) -> set[str] | None:
+    """Return the parameter names of ``hjb_solver.solve_hjb_system`` (or ``None``).
+
+    :func:`fp_solver_sig_params`'s HJB twin, for an iterator that holds one HJB solver per
+    population and hands each set to :func:`~.base_mfg.hjb_solve_kwargs` (#2666).
+    """
+    try:
+        return set(inspect.signature(hjb_solver.solve_hjb_system).parameters.keys())
+    except (AttributeError, ValueError):
+        return None
+
+
 def initialize_cold_start(
     U: np.ndarray,
     M: np.ndarray,
