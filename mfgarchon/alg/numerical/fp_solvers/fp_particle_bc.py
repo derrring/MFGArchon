@@ -275,7 +275,7 @@ def project_to_navigable_or_defer(
     If an implicit domain with obstacles is defined, particles that have
     entered obstacle regions (domain.contains() returns False AND inside outer
     bbox) are moved back by domain.project_to_interior(), whose docstring says
-    where they land: the nearest navigable point where it can find one (#2679).
+    where they land (#2679).
 
     Issue #1064: particles past the outer bounding box are NOT projected here —
     they are an outer-boundary concern handled by the caller's

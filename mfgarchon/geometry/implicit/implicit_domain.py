@@ -543,10 +543,10 @@ class ImplicitDomain(
         nearest it (#2679).
 
         Every output is checked against phi <= 0, and a point still outside is walked toward the
-        bounding-box centre to the first point inside: inside, but not the nearest. That is reached by a
-        point trapped against the outer box, where an obstacle crosses or is flush with it (#2688), and by
-        a point the projection does not converge for inside a union, whose phi is not a true distance
-        there (#2689). If the walk fails too, this raises naming the point (#1047).
+        bounding-box centre to the first point inside: inside, but not the nearest (#2688). That is
+        reached where phi is not the true distance to the domain: a point trapped against the outer box,
+        where an obstacle crosses or is flush with it, and a point inside a union, overlapping obstacles
+        or an approximate SDF (#2689). If the walk fails too, this raises naming the point (#1047).
 
         Args:
             points: Points to project, shape (num_points, dimension) or (dimension,)
