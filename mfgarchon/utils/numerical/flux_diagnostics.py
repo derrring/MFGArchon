@@ -46,7 +46,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d, quadrature_weights_nd
+from mfgarchon.utils.numerical.quadrature import integrate_on_weights, quadrature_weights_1d, quadrature_weights_nd
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -688,8 +688,7 @@ def compute_mass_conservation_error(
     coordinates = [np.arange(n, dtype=float) * float(h) for n, h in zip(spatial_shape, spacing, strict=True)]
     weights = quadrature_weights_nd(coordinates)
 
-    spatial_axes = tuple(range(1, M.ndim))  # (1,) for 1D, (1, 2) for 2D, etc.
-    mass_history = np.sum(M * weights, axis=spatial_axes)
+    mass_history = integrate_on_weights(M, weights, "the grid")
 
     initial_mass = mass_history[0]
     final_mass = mass_history[-1]
