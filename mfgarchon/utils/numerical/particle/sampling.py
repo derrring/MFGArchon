@@ -1145,6 +1145,7 @@ def sample_from_density(
     num_samples: int,
     jitter: bool = True,
     seed: int | None = None,
+    navigable: Callable[[NDArray], NDArray] | None = None,
 ) -> NDArray:
     """
     Sample particle positions from a density field on a regular grid.
@@ -1171,6 +1172,20 @@ def sample_from_density(
         If False, return exact grid cell centers.
     seed : int or None, default=None
         Random seed for reproducibility.
+    navigable : callable or None, default=None
+        ``navigable(points)``, for points of shape (n, d), is a boolean array saying where a particle may be --
+        ``ImplicitDomain.contains`` for a domain with obstacles. When given, every returned particle is navigable
+        (#2688):
+
+        - A jitter that lands where ``navigable`` is False is redrawn within the same cell, so the cell's mass
+          goes to its navigable part. Nothing is clipped or dropped.
+        - A sampled cell with no navigable point on a 5-per-axis probe lattice is refused, naming the share of
+          the mass it carries: that mass lies inside an obstacle, and moving it would change the caller's
+          measure.
+        - The uniform fallbacks, for a zero density or degenerate probabilities, redraw the same way over the
+          bounding box.
+
+        Requires ``jitter=True``.
 
     Returns
     -------
@@ -1201,6 +1216,11 @@ def sample_from_density(
     - Sub-grid jitter prevents aliasing artifacts in visualization and improves
       the smoothness of subsequent KDE density estimation.
     """
+    if navigable is not None and not jitter:
+        raise ValueError(
+            "sample_from_density: navigable= needs jitter=True. A particle is moved off an obstacle by redrawing "
+            "its jitter within its cell, and with jitter=False every particle sits on its grid node."
+        )
     rng = np.random.RandomState(seed)
     dimension = len(coordinates)
     grid_shape = tuple(len(c) for c in coordinates)
@@ -1217,6 +1237,13 @@ def sample_from_density(
         # Uniform fallback if density is zero
         bounds = np.array([[c[0], c[-1]] for c in coordinates])  # shape: (d, 2)
         particles = rng.uniform(bounds[:, 0], bounds[:, 1], size=(num_samples, dimension))
+        if navigable is not None:
+            _redraw_until_navigable(
+                particles,
+                lambda idx: rng.uniform(bounds[:, 0], bounds[:, 1], size=(len(idx), dimension)),
+                navigable,
+                "the bounding box (the density is zero, so the sample is uniform)",
+            )
         return particles
 
     probs = density_flat / total_mass
@@ -1228,6 +1255,13 @@ def sample_from_density(
         # Fallback to uniform if probability is degenerate
         bounds = np.array([[c[0], c[-1]] for c in coordinates])
         particles = rng.uniform(bounds[:, 0], bounds[:, 1], size=(num_samples, dimension))
+        if navigable is not None:
+            _redraw_until_navigable(
+                particles,
+                lambda idx: rng.uniform(bounds[:, 0], bounds[:, 1], size=(len(idx), dimension)),
+                navigable,
+                "the bounding box (the probabilities are degenerate, so the sample is uniform)",
+            )
         return particles
 
     # Convert flat indices to multi-indices
@@ -1239,10 +1273,71 @@ def sample_from_density(
     # Add sub-grid jitter for smoothness
     if jitter:
         spacings = np.array([c[1] - c[0] if len(c) > 1 else 0.0 for c in coordinates])
+        nodes = particles.copy()
         jitter_offsets = rng.uniform(-0.5, 0.5, size=(num_samples, dimension)) * spacings
         particles += jitter_offsets
+        if navigable is not None:
+            _refuse_cells_with_no_navigable_point(flat_indices, nodes, spacings, probs, navigable)
+            _redraw_until_navigable(
+                particles,
+                lambda idx: nodes[idx] + rng.uniform(-0.5, 0.5, size=(len(idx), dimension)) * spacings,
+                navigable,
+                "its cell",
+            )
 
     return particles
+
+
+_PROBES_PER_AXIS = 5
+_MAX_REDRAW_ROUNDS = 1000
+
+
+def _refuse_cells_with_no_navigable_point(
+    flat_indices: NDArray,
+    nodes: NDArray,
+    spacings: NDArray,
+    probs: NDArray,
+    navigable: Callable[[NDArray], NDArray],
+) -> None:
+    """Refuse the sampled cells that show no navigable point on a probe lattice: their mass is inside an obstacle,
+    and no redraw within the cell can place it (#2688, CONVENTIONS § The measure)."""
+    cells, first = np.unique(flat_indices, return_index=True)
+    centres = nodes[first]
+    dimension = centres.shape[1]
+    ticks = (np.arange(_PROBES_PER_AXIS) + 0.5) / _PROBES_PER_AXIS - 0.5
+    offsets = np.stack(np.meshgrid(*([ticks] * dimension), indexing="ij"), axis=-1).reshape(-1, dimension) * spacings
+    probes = (centres[:, None, :] + offsets[None, :, :]).reshape(-1, dimension)
+    has_navigable = np.asarray(navigable(probes), dtype=bool).reshape(len(cells), len(offsets)).any(axis=1)
+    if np.all(has_navigable):
+        return
+    blocked = ~has_navigable
+    raise ValueError(
+        f"sample_from_density: {int(blocked.sum())} sampled cell(s) carrying {float(probs[cells[blocked]].sum()):.6g} "
+        f"of the mass have no navigable point on a {_PROBES_PER_AXIS}-per-axis lattice -- the first is centred at "
+        f"{centres[blocked][0]}. That mass is inside an obstacle. It is not clipped or moved, since that would "
+        "change the measure the caller gave (#2688). Set the initial density to zero inside the obstacles."
+    )
+
+
+def _redraw_until_navigable(
+    particles: NDArray,
+    redraw: Callable[[NDArray], NDArray],
+    navigable: Callable[[NDArray], NDArray],
+    within: str,
+) -> None:
+    """Redraw, in place, the particles where ``navigable`` is False, until none is (#2688)."""
+    pending = np.flatnonzero(~np.asarray(navigable(particles), dtype=bool))
+    for _ in range(_MAX_REDRAW_ROUNDS):
+        if pending.size == 0:
+            return
+        particles[pending] = redraw(pending)
+        pending = pending[~np.asarray(navigable(particles[pending]), dtype=bool)]
+    if pending.size:
+        raise ValueError(
+            f"sample_from_density: {pending.size} particle(s) found no navigable position within {within} in "
+            f"{_MAX_REDRAW_ROUNDS} redraws -- the first at {particles[pending[0]]}. The navigable part there is too "
+            "small to sample by rejection (#2688)."
+        )
 
 
 # =============================================================================

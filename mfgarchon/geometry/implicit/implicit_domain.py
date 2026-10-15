@@ -20,6 +20,7 @@ References:
 import warnings
 from abc import abstractmethod
 from collections.abc import Callable
+from itertools import combinations
 from typing import Literal
 
 import numpy as np
@@ -531,6 +532,8 @@ class ImplicitDomain(
         self,
         points: NDArray[np.float64],
         tolerance: float = 1e-10,
+        previous: NDArray[np.float64] | None = None,
+        report: dict[str, int] | None = None,
     ) -> NDArray[np.float64]:
         """
         Project points from outside domain into interior.
@@ -542,22 +545,37 @@ class ImplicitDomain(
         short. That is the nearest interior point wherever the projection reaches the boundary point
         nearest it (#2679).
 
-        Every output is checked against phi <= 0, and a point still outside is walked toward the
-        bounding-box centre to the first point inside: inside, but not the nearest (#2688). That is
-        reached where phi is not the true distance to the domain: a point trapped against the outer box,
-        where an obstacle crosses or is flush with it, and a point inside a union, overlapping obstacles
-        or an approximate SDF (#2689). If the walk fails too, this raises naming the point (#1047).
+        The projection does not place a point where phi is not the true distance to the domain: a point
+        trapped against the outer box where an obstacle crosses or is flush with it, and a point inside a
+        union, overlapping obstacles or an approximate SDF (#2689). Such a point needs where it came from
+        (#2688):
+
+        - With ``previous`` (the point's position before the step that took it out), the first phi = 0
+          crossing on the segment from ``previous`` names the face it crossed -- found by a sign scan and
+          bisection on the sign of phi alone -- and the point is projected onto that face's tangent plane,
+          then moved inward by ``tolerance``. On a flat face this is the projected-Euler (Skorokhod) map: it
+          keeps the step's displacement along the face, and it cannot tunnel. On a curved face, at an edge or
+          a seam it is a local approximation, repeated from the new segment while the result is still
+          outside, up to 8 faces, each time projecting onto the intersection of the faces met. A point still
+          outside after 8 faces raises, naming it and the faces.
+        - Without ``previous`` such a point is refused: nothing here can place it nearest, and the walk toward
+          the bounding-box centre that used to place it crossed the obstacle (#2688).
 
         Args:
             points: Points to project, shape (num_points, dimension) or (dimension,)
             tolerance: Distance to move inside boundary (for numerical stability)
+            previous: The points' positions before the step, same shape as ``points``, each inside the domain.
+                Read only for the points the projection does not place.
+            report: Optional counter, updated in place: ``"projected"`` (placed by the projection) and
+                ``"face_of_entry"`` (by the face map).
 
         Returns:
             Projected points in interior, same shape as input
 
         Raises:
-            RuntimeError: a point neither the projection nor the walk toward the bounding-box centre
-                places inside.
+            RuntimeError: a point the projection does not place, with no ``previous`` given; or one that 8
+                faces do not place.
+            ValueError: a ``previous`` position, for such a point, that is not inside the domain.
 
         Example:
             >>> sphere = Hypersphere(center=[0, 0], radius=1.0)
@@ -571,6 +589,8 @@ class ImplicitDomain(
         is_single = points.ndim == 1
         if is_single:
             points = points.reshape(1, -1)
+            if previous is not None:
+                previous = np.asarray(previous, dtype=float).reshape(1, -1)
 
         outside = np.atleast_1d(self.signed_distance(points)) > 0
 
@@ -591,44 +611,92 @@ class ImplicitDomain(
             idx = np.where(missed)[0]
             moved[idx] = boundary_points[idx] - step * normals[idx]
             missed[idx] = np.atleast_1d(self.signed_distance(moved[idx])) > 0
-        for i in np.where(missed)[0]:
-            moved[i] = self._walk_toward_bbox_centre(points[outside][i])
+
+        if missed.any():
+            at = np.where(outside)[0][missed]
+            if previous is None:
+                raise RuntimeError(
+                    f"project_to_interior: {at.size} point(s), the first {points[at[0]]}, are not placed by the "
+                    f"projection onto the boundary: the domain's phi is not the true distance there (a point trapped "
+                    f"against the outer box where an obstacle meets it, inside a union or overlapping obstacles, or "
+                    f"an approximate SDF), and no previous position was given. Pass "
+                    f"project_to_interior(points, previous=...) -- each point's position before the step -- and the "
+                    f"point is placed on the face that step crossed (#2688)."
+                )
+            prev = np.asarray(previous, dtype=float)[at]
+            if np.any(np.atleast_1d(self.signed_distance(prev)) > 0):
+                bad = prev[np.atleast_1d(self.signed_distance(prev)) > 0][0]
+                raise ValueError(
+                    f"project_to_interior: previous position {bad} is not inside the domain, so the step from it "
+                    f"names no face it crossed (#2688)."
+                )
+            moved[missed] = self._place_by_face_of_entry(prev, points[at], tolerance)
+        if report is not None:
+            report["projected"] = report.get("projected", 0) + int(outside.sum() - missed.sum())
+            report["face_of_entry"] = report.get("face_of_entry", 0) + int(missed.sum())
         points_interior[outside] = moved
 
         return points_interior[0] if is_single else points_interior
 
-    def _walk_toward_bbox_centre(self, x: NDArray[np.float64]) -> NDArray[np.float64]:
-        """The first point inside on the ray from `x` toward the bounding-box centre, else a Newton step on
-        the SDF; raise naming `x` if neither reaches phi <= 0 (#1047). Inside, not nearest: the fallback
-        for the points `project_to_interior`'s projection does not place."""
-        from mfgarchon.geometry.implicit.sdf_utils import sdf_gradient
+    def _first_crossing(
+        self, a: NDArray[np.float64], b: NDArray[np.float64], n_scan: int = 32, n_bisect: int = 60
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """For each segment from ``a`` (inside) to ``b`` (outside): the last inside and the first outside point
+        bracketing its first phi = 0 crossing, from a scan of ``n_scan`` steps and ``n_bisect`` bisections on the
+        sign of phi. A feature thinner than a scan step can be passed over; the crossing found is then a later one."""
+        m, d = a.shape
+        s = np.linspace(0.0, 1.0, n_scan + 1)
+        along = a[:, None, :] + s[None, :, None] * (b - a)[:, None, :]
+        out = (np.atleast_1d(self.signed_distance(along.reshape(-1, d))) > 0).reshape(m, n_scan + 1)
+        first = np.argmax(out, axis=1)
+        lo, hi = s[first - 1], s[first]
+        for _ in range(n_bisect):
+            mid = 0.5 * (lo + hi)
+            mid_out = np.atleast_1d(self.signed_distance(a + mid[:, None] * (b - a))) > 0
+            hi = np.where(mid_out, mid, hi)
+            lo = np.where(mid_out, lo, mid)
+        return a + lo[:, None] * (b - a), a + hi[:, None] * (b - a)
 
-        center = self.get_bounding_box().mean(axis=1)
-        direction = center - x
-        alpha = 0.0
-        for _ in range(100):
-            candidate = x + alpha * direction
-            if self.signed_distance(candidate) <= 0:
-                return candidate
-            alpha += 0.1
+    def _place_by_face_of_entry(
+        self, previous: NDArray[np.float64], points: NDArray[np.float64], tolerance: float, max_faces: int = 8
+    ) -> NDArray[np.float64]:
+        """Place each outside point by the faces its step crosses (#2688); see `project_to_interior`.
 
-        # x_{k+1} = x_k - phi(x_k) * grad(phi) / |grad(phi)|^2
-        x_i = x.copy()
-        for _ in range(20):
-            sd_i = float(np.atleast_1d(self.signed_distance(x_i))[0])
-            if sd_i <= 0:
-                return x_i
-            grad_i = np.asarray(sdf_gradient(x_i, self.signed_distance)).reshape(-1)
-            grad_norm_sq = float(np.dot(grad_i, grad_i))
-            if grad_norm_sq < 1e-12:
-                break
-            x_i = x_i - sd_i * grad_i / grad_norm_sq
-        raise RuntimeError(
-            f"project_to_interior: point {x} is not placed inside by the projection onto the boundary, by 100 "
-            f"steps toward the bounding-box centre {center}, or by 20 Newton steps on the SDF. This indicates a "
-            f"degenerate geometry (e.g. an obstacle surrounding the bounding-box centre, or an SDF whose "
-            f"gradient vanishes near {x}); check signed_distance."
-        )
+        The first crossing on the segment from the previous position names a face, kept as the half-space on the
+        domain's side of its tangent plane, and the point is projected onto the intersection of the faces kept so
+        far, `tolerance` inside each. Where that is still outside, the segment from the last inside point to it
+        crosses one more face, and the original point is projected again onto the larger intersection. One face is
+        the flat-face projection; two at a seam or an edge are the projection onto the wedge they bound -- repeated
+        projections onto one face at a time converge only geometrically there. Raises, naming the point and the
+        faces, where ``max_faces`` faces do not place it or their half-spaces do not intersect: no geometry measured
+        reaches that (#2688)."""
+        placed = np.empty_like(points)
+        for i in range(points.shape[0]):
+            target = points[i]
+            start, end = previous[i], points[i]
+            centres, normals = [], []
+            for _ in range(max_faces):
+                inside, crossed = (x[0] for x in self._first_crossing(start[None, :], end[None, :]))
+                centres.append(crossed)
+                normals.append(np.atleast_2d(self.get_outward_normal(crossed[None, :]))[0])
+                candidate = _project_onto_half_spaces(target, np.array(centres), np.array(normals), tolerance)
+                if candidate is None:
+                    break
+                if float(np.atleast_1d(self.signed_distance(candidate[None, :]))[0]) <= 0:
+                    placed[i] = candidate
+                    break
+                start, end = inside, candidate
+            else:
+                candidate = None
+            if candidate is None:
+                faces = "; ".join(f"at {c} with outward normal {n}" for c, n in zip(centres, normals, strict=True))
+                raise RuntimeError(
+                    f"project_to_interior: the point {target}, whose step began at {previous[i]}, is not placed by "
+                    f"the {len(centres)} face(s) its step met ({faces}): projected onto their intersection it is still "
+                    f"outside the domain, or they do not intersect. The face-of-entry placement does not cover this "
+                    f"geometry (#2688); report it with the domain."
+                )
+        return placed
 
     @property
     def manifold_dimension(self) -> int:
@@ -1074,3 +1142,34 @@ class ImplicitDomain(
     def __repr__(self) -> str:
         """String representation of the domain."""
         return f"{self.__class__.__name__}(dimension={self.dimension})"
+
+
+def _project_onto_half_spaces(
+    point: NDArray[np.float64], centres: NDArray[np.float64], normals: NDArray[np.float64], tolerance: float
+) -> NDArray[np.float64] | None:
+    """The nearest point to ``point`` in the intersection of the half-spaces ``(x - c_k) . n_k <= -tolerance``.
+
+    Each half-space is a face's domain side, ``n_k`` its outward unit normal. The minimiser has at most ``d``
+    active faces with independent normals, so it is found exactly by trying every such set -- at most 92 for 8
+    faces in 3-D -- and keeping the nearest candidate that satisfies all of them. None if no candidate does."""
+    d = point.shape[0]
+    offsets = np.einsum("kd,kd->k", centres, normals) - tolerance
+    if np.all(normals @ point <= offsets):
+        return point.copy()
+    best, best_dist = None, np.inf
+    k = len(normals)
+    for size in range(1, min(d, k) + 1):
+        for active in combinations(range(k), size):
+            n_act = normals[list(active)]
+            gram = n_act @ n_act.T
+            if abs(np.linalg.det(gram)) < 1e-14:
+                continue
+            lam = np.linalg.solve(gram, n_act @ point - offsets[list(active)])
+            if np.any(lam < 0):
+                continue
+            candidate = point - n_act.T @ lam
+            if np.all(normals @ candidate <= offsets + 1e-15):
+                dist = float(np.linalg.norm(candidate - point))
+                if dist < best_dist:
+                    best, best_dist = candidate, dist
+    return best

@@ -262,6 +262,8 @@ def apply_boundary_conditions(
 def project_to_navigable_or_defer(
     particles: np.ndarray,
     implicit_domain: ImplicitDomain | None,
+    previous: np.ndarray | None = None,
+    report: dict[str, int] | None = None,
 ) -> np.ndarray:
     """
     Project obstacle-interior violations back to the navigable region; defer
@@ -296,6 +298,12 @@ def project_to_navigable_or_defer(
         - nD: shape (num_particles, dimension)
     implicit_domain : ImplicitDomain or None
         Domain definition with contains() and project_to_interior() methods
+    previous : np.ndarray or None
+        The particles' positions before the step, same shape as ``particles``. Forwarded to
+        ``implicit_domain.project_to_interior``, which reads it only for the particles its projection does not
+        place and refuses those without it (#2688).
+    report : dict or None
+        Forwarded to ``implicit_domain.project_to_interior``'s counter.
 
     Returns
     -------
@@ -338,7 +346,8 @@ def project_to_navigable_or_defer(
         in_obstacle = in_bbox & (~inside_valid)
         if np.any(in_obstacle):
             obs_idx = np.where(in_obstacle)[0]
-            particles[obs_idx] = implicit_domain.project_to_interior(particles[obs_idx])
+            prev = None if previous is None else np.asarray(previous, dtype=float).reshape(particles.shape)[obs_idx]
+            particles[obs_idx] = implicit_domain.project_to_interior(particles[obs_idx], previous=prev, report=report)
 
     # Convert back to 1D if input was 1D
     if is_1d_flat:
