@@ -6,8 +6,9 @@
 
   `--check-baseline` now loads the sibling matrix and reports any killer that **left**, even when the
   count holds or rises: two arriving and one leaving is a net gain by count and a real loss by
-  coverage. Arrivals are reported too, on the same contract as the counts — otherwise the next
-  baseline encodes the gain as if it had always held.
+  coverage. Arrivals are reported too, and they then failed the run on the same contract as the
+  counts, so that the next baseline would not encode the gain as if it had always held (one-way since
+  #1715: a gain is listed and exits 0).
 
   Three failure modes closed with it. A baseline mutation absent from the matrix was silently
   unchecked, so the comparison now reports `compared N of M`. The absent-matrix path printed a note

@@ -1,28 +1,29 @@
 {
-  "_comment": "Kill counts per mutated convention. --check-baseline fails when a count DROPS (discrimination lost) and when one RISES (record the gain in the same change). Counts, not test names: this population cannot be selected by name -- the agreement-shaped patterns give 51, 114 or 156 depending on the regex.",
+  "_comment": "Kill counts per mutated convention. --check-baseline fails when a count DROPS (discrimination lost) or a test stops killing a mutation; a count that RISES and a new killer are listed, not failed, and the monthly re-baseline records them. Counts, not test names: this population cannot be selected by name -- the agreement-shaped patterns give 51, 114 or 156 depending on the regex.",
   "_measured_at": {
-    "collected": 4213,
-    "commit": "8107cedf",
+    "collected": 5495,
+    "commit": "ac8eae9f",
     "excluded": "tests/unit/test_discrimination_ratchet.py",
     "markers": "not slow and not benchmark and not experimental and not optional_torch and not environment and not manual",
     "paths": [
       "tests"
     ],
-    "reproduce": "the `commit` key above is a pre-merge branch sha and does not survive the squash merge that ships this file. `git log --oneline --follow scripts/discrimination_baseline.json` and check out its FIRST entry -- squash merges here are single-parent, so there is no merge commit to find. That yields the tree this artifact SHIPPED in, which is not necessarily the tree the sweep ran on; compare with `git diff --stat` against `commit` if the difference matters"
+    "reproduce": "the `commit` key above is a pre-merge branch sha and does not survive the squash merge that ships this file. `git log --oneline --follow scripts/discrimination_baseline.json` and check out its FIRST entry -- squash merges here are single-parent, so there is no merge commit to find. That yields the tree this artifact SHIPPED in, which is not necessarily the tree the sweep ran on; compare with `git diff --stat` against `commit` if the difference matters",
+    "swept_on": "2026-10-15"
   },
   "mutations": {
     "bc_default_reads_as_reflect": {
-      "kill_count": 3,
+      "kill_count": 4,
       "owner": "absent BC defaults to clamp/absorbing (#1698)",
       "status": "ok"
     },
     "bc_noflux_reads_as_clamp": {
-      "kill_count": 12,
+      "kill_count": 22,
       "owner": "no_flux/neumann/robin -> reflect (#1698)",
       "status": "ok"
     },
     "bc_uniform_dispatch_reads_as_mixed": {
-      "kill_count": 12,
+      "kill_count": 6,
       "owner": "PreallocatedGhostBuffer.update_ghosts routes a uniform BC to the single-segment path and a mixed BC to the per-face path (#577 Phase 3 for the mixed rewrite, #1255 (C) for the alpha/beta forwarding the uniform branch carries). The two paths are NOT equivalent: the uniform branch applies the inhomoge",
       "status": "ok"
     },
@@ -37,27 +38,27 @@
       "status": "ok"
     },
     "diffusion_scalar_2x": {
-      "kill_count": 210,
+      "kill_count": 263,
       "owner": "D = sigma^2/2 for scalar sigma (#811)",
       "status": "ok"
     },
     "drift_coefficient_2x": {
-      "kill_count": 36,
+      "kill_count": 54,
       "owner": "FP drift c = 1/control_cost (#1420 / G-017)",
       "status": "ok"
     },
     "engquist_osher_derivative_drops_the_forward_branch": {
-      "kill_count": 61,
+      "kill_count": 80,
       "owner": "`upwind_momentum_derivatives` is the one owner of d(p)/d(backward) and d(p)/d(forward); for `engquist_osher` both are nonzero at a local maximum, and the analytic HJB Jacobian, the nD linearised operator and the strict-adjoint operator all read them, so the Jacobian is the residual's own derivative (#2313)",
       "status": "ok"
     },
     "engquist_osher_magnitude_is_the_larger_branch": {
-      "kill_count": 42,
+      "kill_count": 61,
       "owner": "the default `engquist_osher` preset of `upwind_momentum` evaluates H at sqrt(a+^2 + b-^2) per axis (ACD's Example 1), which at a discrete local maximum sums both one-sided differences; that sum is what makes its linearisation the transpose of the FDM FP divergence_upwind operator (#2313). Taking the larger branch instead is Rouy-Tourin, which leaves the transpose defect at maxima",
       "status": "ok"
     },
     "fp_initial_condition_written_at_final_index": {
-      "kill_count": 132,
+      "kill_count": 154,
       "owner": "The FP marches FORWARD from t=0 with m_0 written at time row 0 -- the initial-condition half of the HJB/FP boundary-data pair. Single site in the live FDM FP time loop, fp_fdm_time_stepping.py:797, whose own docstring states the convention at :681: \"- Forward time evolution: k=0 -> Nt-1\". No issue n",
       "status": "ok"
     },
@@ -67,7 +68,7 @@
       "status": "ok"
     },
     "ghost_spacing_ignored": {
-      "kill_count": 80,
+      "kill_count": 158,
       "owner": "the ghost buffer uses the caller's spacing, not dx = 1.0 (#1904)",
       "status": "ok"
     },
@@ -77,12 +78,12 @@
       "status": "ok"
     },
     "grid_spacing_uses_point_count": {
-      "kill_count": 64,
+      "kill_count": 106,
       "owner": "uniform grid spacing is L/(node count - 1), not L/(node count) -- the L/n vs L/(n-1) convention. `self.spacing` is the single owner: get_grid_spacing() returns it verbatim, get_spacing() indexes it, legacy_1d_attrs[\"Dx\"] reads it, cell volume ",
       "status": "ok"
     },
     "hjb_marches_forward_in_time": {
-      "kill_count": 35,
+      "kill_count": 42,
       "owner": "The HJB marches BACKWARD in time, from the terminal row down to t=0, while the FP marches forward -- the adjoint pairing. Single site: base_hjb.py:1780, the only time loop in solve_hjb_system_backward. The M-indexing that rides on it is documented in the same loop body at base_hjb.py:1790: \"# BUG #7",
       "status": "ok"
     },
@@ -102,47 +103,47 @@
       "status": "ok"
     },
     "optimal_control_sign": {
-      "kill_count": 37,
+      "kill_count": 60,
       "owner": "QuadraticControlCost alpha* = -p/lambda (#1649, #2373)",
       "status": "ok"
     },
     "particle_mass_counting_measure": {
-      "kill_count": 22,
+      "kill_count": 23,
       "owner": "The particle FP step measures a slice's mass on the GEOMETRY'S OWN measure, not the counting measure and not `sum(m) * dx` -- the rectangle rule is not the mass on an endpoint-inclusive grid (#2145). Sole owner: `FPParticleSolver._measure`, reached by `_to_caller_mass`, which is the only thing that decides what a reconstructed slice's mass is. RETARGETED from `_compute_total_mass`, which #2181 deleted: that helper measured `sum(density) * dV` and the KDE normalisation divided by it so the density integrated to 1. Both halves of that sentence stopped being true -- the measure is now the geometry's, and the target is the caller's mass rather than 1 -- but the convention it defended survived and moved here, so the mutation follows it.",
       "status": "ok"
     },
     "periodic_endpoint_convention_inverted": {
-      "kill_count": 25,
+      "kill_count": 31,
       "owner": "where the last node sits, MEASURED from the coordinates the grid built (#1822). `_axis_convention` is the single owner: `periodic_convention` calls it (tensor_grid.py:415) and `_first_axis_with_convention` calls it (:385). The property docstring states why it is derived rather than asserted: \"Derive",
       "status": "ok"
     },
     "periodic_wrap_endpoint_inverted": {
-      "kill_count": 51,
+      "kill_count": 57,
       "owner": "how many trailing nodes of a periodic axis repeat a node the array already holds -- the ONE number both the ghost skip and the modular span derive from (#1822). types.py:126-130 states the ownership verbatim: \"Every periodic wrap in the package is one of two expressions of this single number, which ",
       "status": "ok"
     },
     "picard_criterion_reads_as_or": {
-      "kill_count": 71,
+      "kill_count": 75,
       "owner": "The outer coupling tolerance bounds the RELATIVE L2 change, and an absolute bound applies only when `absolute_tolerance` is given -- then BOTH must hold (CONVENTIONS.md section 9, #2555). Owner: check_convergence_criteria in fixed_point_utils.py, read by all six coupling iterators. RETARGETED from the unconditional relative-AND-absolute criterion #2555 retired: with no absolute tolerance the disjunction accepts any relative change.",
       "status": "ok"
     },
     "quadrature_wall_node_counting_measure": {
-      "kill_count": 93,
+      "kill_count": 102,
       "owner": "The measure on a node-centred grid is the TRAPEZOID: `TensorProductGrid` is endpoint-inclusive, so the wall lies ON the end node and that node owns half a cell. Those weights are also the control volumes the conservative FP schemes telescope against, which is why this is one convention and not two (#2145). Sole owner: `mfgarchon/utils/numerical/quadrature.py`, reached by `TensorProductGrid.integrate`, `mass_drift`, the FV advection kernel and the FDM wall rows. SUPERSEDES `m_initial_1d_counting_measure`, which mutated the constructor's normalisation dispatch -- #1887 removed that rescale (the library validates the initial mass and does not change it), so that anchor no longer exists. The convention it defended survived and moved here; the mutation follows it.",
       "status": "ok"
     },
     "rouy_tourin_branch_swap": {
-      "kill_count": 35,
+      "kill_count": 44,
       "owner": "Rouy-Tourin upwind takes the clamped BACKWARD part max(backward, 0) where it dominates the clamped forward part min(forward, 0) in magnitude -- the `rouy_tourin` preset of `upwind_momentum`, the one owner of the HJB upwind momentum (#2308, #2313), consumed by the HJB residual and Jacobian when that preset is selected, by GradientOperator(scheme='upwind') and by PDE reinitialisation (of phi or -phi by sign(phi0), #2310); transport upwinds by the velocity instead since #2309",
       "status": "ok"
     },
     "terminal_condition_pinned_at_initial_index": {
-      "kill_count": 19,
+      "kill_count": 23,
       "owner": "u is boundary-data at the TERMINAL time and m at the INITIAL one: preserve_terminal_condition re-imposes u(T)=g on the LAST time row after damping/Anderson. Single owner, three caller families -- fixed_point_iterator.py:644 and :724 (Picard), fictitious_play.py:432, block_iterators.py:583. No issue ",
       "status": "ok"
     },
     "upwind_minimum_takes_a_one_sided_difference": {
-      "kill_count": 31,
+      "kill_count": 34,
       "owner": "at a discrete local minimum (backward < 0 < forward) the upwind momentum is 0, the value of the min/max numerical Hamiltonian for an H even in each momentum component and nondecreasing in its magnitude; selecting on sign(central) returned the one-sided difference of smaller magnitude there, a non-monotone numerical Hamiltonian that Newton still converges on (#2308)",
       "status": "ok"
     }

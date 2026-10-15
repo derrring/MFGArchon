@@ -6,10 +6,12 @@ antisymmetric perturbation ~3.3x per sweep on a reflection-symmetric problem, wh
 at 0.89 and SL refined in dt at 0.2. The mirror mismatch, with FP sub-stepping while HJB does not, is
 unstable too. So the FP half sub-steps exactly when its HJB half does.
 
-Here: two mutation-verified pins of Picard stability, a property two independent schemes agree on for
-this fixture and not a law of the problem; an external oracle for the FP half alone, the stationary
+Here: a mutation-verified pin of Picard stability, a property two independent schemes agree on for this
+fixture and not a law of the problem; an external oracle for the FP half alone, the stationary
 Ornstein-Uhlenbeck density; two checks that check_solver_duality sees a hand-built pair that does not
-sub-step alike (#2440); and two pins of the sub-step cap (#2438).
+sub-step alike (#2440); and two pins of the sub-step cap (#2438). The pair with neither half sub-stepping is not
+pinned as stable: started symmetric it converges only because its one seed is round-off, and seeded at 1e-6 it
+does not (#2465, #1715).
 """
 
 from __future__ import annotations
@@ -66,19 +68,6 @@ def test_a_seeded_asymmetry_decays_under_the_sl_pair():
 
     growth = (asym_after(8) / asym_after(4)) ** 0.25
     assert growth < 1.0, f"seeded asymmetry grows {growth:.3f}x per sweep"
-
-
-def test_the_pair_stays_stable_when_its_hjb_half_does_not_substep():
-    """The mirror mismatch: FP sub-stepping while HJB does not. This pair converges in 60 sweeps, before
-    #1880 and after; forcing the FP half to sub-step regardless leaves it unconverged with asymmetry ~1
-    after 200. The budget is not the claim, so it has room."""
-    problem = _problem(volatility=0.2)
-    hjb, fp = create_paired_solvers(
-        problem, NumericalScheme.SL_LINEAR, hjb_config={"enable_adaptive_substepping": False}
-    )
-    result = problem.solve(hjb_solver=hjb, fp_solver=fp, max_iterations=100, tolerance=1e-8, verbose=False)
-    assert result.converged
-    assert _asymmetry(result.M) < 1e-10
 
 
 @pytest.mark.parametrize(

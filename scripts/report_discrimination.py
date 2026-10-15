@@ -14,6 +14,7 @@ in the weekly tier, because measuring it costs one full suite run per mutation.
 
 from __future__ import annotations
 
+import datetime
 import json
 import subprocess
 import sys
@@ -118,8 +119,14 @@ def main() -> int:
 
     print(
         f"discrimination : {len(killers)} of {then} tests notice at least one of {conventions} "
-        f"conventions = {100 * len(killers) / then:.2f}%  (measured at {measured['commit']})"
+        f"conventions = {100 * len(killers) / then:.2f}%  (measured at {measured['commit']}, "
+        f"swept {measured.get('swept_on', 'on an unrecorded date')})"
     )
+    # The weekly check lists gains without failing, so a killer that arrives and departs between
+    # two re-baselines is never seen; the monthly re-baseline bounds that window (#1715).
+    swept = measured.get("swept_on")
+    if swept and (age := (datetime.date.today() - datetime.date.fromisoformat(swept)).days) > 31:
+        print(f"                 the baseline was last swept {age} days ago: the monthly re-baseline is overdue")
     if uncovered:
         print(f"                 {len(uncovered)} convention(s) NO test notices: {', '.join(uncovered)}")
 
