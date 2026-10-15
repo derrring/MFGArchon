@@ -899,8 +899,9 @@ class ImplicitDomain(
             BCs should be specified by the problem or solver.
 
         Notes:
-            Implicit domains support general BC via signed distance function.
-            Specify BCs through problem.boundary_conditions or solver configuration.
+            Implicit domains support general BC via signed distance function. The one channel a problem on an
+            implicit domain has is the components form's MFGComponents(boundary_conditions=), which is deprecated;
+            the model/domain/conditions form has none (#2684). A solver may also take them directly.
         """
         return None
 

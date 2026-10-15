@@ -446,8 +446,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 )
             # Every input this form was given beside model, domain, conditions and Nt, as given: the one record the
             # rebuilds read (`_rebuilt`), so solve(Nt=) and with_* do not drop what the constructor accepted (#2667).
-            # lambda_ and coupling_coefficient are the fallbacks the readers take when the Hamiltonian exposes no
-            # control_cost (#1420); whether they should exist is decided where those readers are fixed.
+            # lambda_ is the fallback BaseHJBSolver._control_cost_lambda reads when the Hamiltonian exposes no
+            # control_cost, and coupling_coefficient the one fp_drift_coefficient reads for any Hamiltonian that is not
+            # a quadratic SeparableHamiltonian (#2681); whether they should exist is decided where those readers are
+            # repaired.
             self._v1_inputs: dict[str, Any] = {
                 "constraints": constraints,
                 "obstacles": obstacles,

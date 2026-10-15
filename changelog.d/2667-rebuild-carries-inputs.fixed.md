@@ -8,3 +8,6 @@
     geometry's boundary conditions whatever it said. Declare them on the geometry, or as
     `MFGComponents(boundary_conditions=...)` in the components form.
   - `drift=` is refused in the model/domain/conditions form: no solver reads the problem's drift field (#2678).
+  - A rebuild now meets the new object with the old inputs, and refuses where the constructor would: a problem built
+    with `state_penalty` and rebuilt by `with_model` onto a `DualHamiltonian` raises, where the penalty used to be
+    dropped silently.
