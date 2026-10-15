@@ -301,6 +301,19 @@ class StochasticMFGProblem(MFGProblem):
             >>> conditional_problem = problem.create_conditional_problem(noise_path)
             >>> # Now solve conditional_problem as standard MFG
         """
+        # Refused here rather than at the rebuild below, whose guard would name a private class: a state penalty is
+        # composed into a SeparableHamiltonian's potential, and each conditional problem's Hamiltonian is the user's
+        # conditional_hamiltonian, which has none (#2700). Before #2666 the penalty was dropped instead.
+        if self.state_penalty is not None:
+            raise NotImplementedError(
+                "This common-noise problem declares state_penalty, which its conditional problems cannot carry: each "
+                "one solves with conditional_hamiltonian, frozen along the noise path, and that has no potential to "
+                "compose the penalty into (#2700). Fold the penalty into conditional_hamiltonian as the potential it "
+                "is -- H subtracts a potential, H = H_control - V - f (docs/user/CONVENTIONS.md section 2) -- by "
+                "returning H(x, p, m, theta) - state_penalty_scale * state_penalty(x), and construct the problem "
+                "without state_penalty."
+            )
+
         # A frozen-noise Hamiltonian, as a real `HamiltonianBase` (#2191).
         #
         # This used to construct an EMPTY `MFGComponents` and then attach `hamiltonian_func` /

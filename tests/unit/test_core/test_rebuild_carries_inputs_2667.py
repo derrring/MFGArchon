@@ -149,8 +149,9 @@ def test_the_conditional_problem_carries_every_input_of_the_components_form():
     ``MFGProblem.__init__`` outside the model form's three is in it, and every ``MFGComponents`` field reaches the
     conditional problem unless the frozen noise replaces it.
 
-    A ``state_penalty`` is carried too, and so reaches #2002's refusal: it is composed into the Hamiltonian's potential,
-    and the frozen-noise Hamiltonian has none. It was dropped before; refusing is the outcome a carried input owes."""
+    A ``state_penalty`` cannot be carried: it is composed into a SeparableHamiltonian's potential, and the frozen-noise
+    Hamiltonian is the user's ``conditional_hamiltonian``, which has none (#2700). It was dropped before; it is refused
+    now, by name."""
     inputs = {
         "source_term_hjb": lambda t, x, v, m: 50.0 * np.ones(len(x)),
         "source_term_fp": lambda t, x, v, m: np.zeros(len(x)),
@@ -197,5 +198,5 @@ def test_the_conditional_problem_carries_every_input_of_the_components_form():
     missing = sorted(named - set(parent._components_inputs))
     assert not missing, f"MFGProblem.__init__ takes {missing}, which the components form's record does not keep"
 
-    with pytest.raises(NotImplementedError, match="state_penalty needs a Hamiltonian that carries a potential"):
+    with pytest.raises(NotImplementedError, match=r"common-noise problem declares state_penalty.*#2700"):
         conditional_of(state_penalty=lambda x: np.maximum(0.0, np.asarray(x) - 0.5))

@@ -2826,7 +2826,16 @@ See: docs/user/CONVENTIONS.md, section 2 (the cost channels and their signs)"""
         that form before they get here.
         """
         if self._v1_model is None:
-            return MFGProblem(**{**self._components_inputs, **changes})
+            import warnings
+
+            # The constructor warns that the components= form is planned to be replaced. This problem's own construction
+            # already told its caller; the rebuild's copy comes from inside the library, once per conditional solve, so
+            # it is suppressed -- that category and that message, nothing else (#2666).
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore", message="The components= form of MFGProblem", category=PendingDeprecationWarning
+                )
+                return MFGProblem(**{**self._components_inputs, **changes})
         inputs = {"model": self._v1_model, "domain": self.geometry, "conditions": self._v1_conditions, "Nt": self.Nt}
         return MFGProblem(**{**inputs, **self._v1_inputs, **changes})
 

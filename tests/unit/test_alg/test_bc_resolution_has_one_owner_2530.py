@@ -60,10 +60,6 @@ ALLOWED = {
         2,
         "D2's hand-over: the components BC becomes the legacy grid's declaration; it picks nothing",
     ),
-    ("mfgarchon/core/stochastic/stochastic_problem.py", "create_conditional_problem"): (
-        1,
-        "a dependent: copies the components BC into the conditional problem, whose owner reads it",
-    ),
     ("mfgarchon/extensions/topology.py", "__init__"): (1, "a graph's node BCs, which the graph geometry owns (#1471)"),
     ("mfgarchon/operators/differential/gradient.py", "value_gradient"): (
         1,
@@ -198,17 +194,15 @@ def test_a_planted_rival_is_found(package_copy, form):
 
 
 def test_a_new_read_inside_an_allowed_function_is_found(package_copy):
-    """The allowance pins its site count, so a second components read in the conditional problem fails too."""
-    rel = "mfgarchon/core/stochastic/stochastic_problem.py"
+    """The allowance pins its site count, so a second read in an allowed function fails too: the topology's node BC."""
+    rel = "mfgarchon/extensions/topology.py"
     target = package_copy / rel
     original = target.read_text()
-    anchor = 'component_kwargs["boundary_conditions"] = self.components.boundary_conditions\n'
+    anchor = "        node_bc = network_geometry.get_boundary_conditions()\n"
     assert original.count(anchor) == 1
     try:
-        target.write_text(
-            original.replace(anchor, anchor + "                _ = self.components.boundary_conditions\n")
-        )
+        target.write_text(original.replace(anchor, anchor + "        _ = network_geometry.get_boundary_conditions()\n"))
         violations = _violations(scan(package_copy))
     finally:
         target.write_text(original)
-    assert any("create_conditional_problem" in v for v in violations), violations
+    assert any("topology.py" in v and "2 rival sites, 1 allowed" in v for v in violations), violations

@@ -9,9 +9,10 @@
 - **Two refusals where there were silent drops.**
   - `BaseHJBSolver.solve()`, the standalone HJB entry, passes no source, so it now raises on a problem that
     declares one, naming the coupled solvers and `solve_hjb_system(source_term=)` as the routes.
-  - Because the conditional problem now carries the parent's `state_penalty`, a `StochasticMFGProblem` that
-    declares one raises at `create_conditional_problem`: the frozen-noise Hamiltonian has no potential to compose it
-    into (#2002). It was dropped before.
+  - A `StochasticMFGProblem` that declares `state_penalty` now raises at `create_conditional_problem`, where the
+    penalty was dropped: each conditional problem solves with `conditional_hamiltonian`, which has no potential to
+    compose it into (#2700). The message names the route that works, folding the penalty into
+    `conditional_hamiltonian`.
 - **A solver that cannot take a source now says so** on these paths. Of the exported FP solvers, `FPNetworkSolver`
   and `FPGFDMSolver` do not name `source_term`. A multi-population run with one of them now raises
   `NotImplementedError` when the population declares a source; it used to pass none. A regime run, which always

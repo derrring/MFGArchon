@@ -11,6 +11,8 @@ reached it. They aggregate through `worst_sweep_change`, which refuses and names
 
 from __future__ import annotations
 
+import functools
+
 import pytest
 
 import numpy as np
@@ -92,6 +94,9 @@ def _fp(problem: MFGProblem, nan_at_sweep: int | None) -> FPFDMSolver:
     fp = FPFDMSolver(problem)
     solve, calls = fp.solve_fp_system, [0]
 
+    # wraps, so the patched method still names its parameters: a coupling loop asks the signature whether the solver
+    # takes `source_term`, and a bare (*args, **kwargs) does not count as naming it (#1316, #2666).
+    @functools.wraps(solve)
     def patched(*args, **kwargs):
         calls[0] += 1
         m = solve(*args, **kwargs)
