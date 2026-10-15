@@ -1352,8 +1352,9 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         - ``self._bc_face_per_point[i]``: BoundaryFace the point lies on.
         - ``self._bc_segment_per_point[i]``: BCSegment that applies to ``i``.
-        - ``self._bc_normal_per_point[i]``: outward unit normal (axis-aligned,
-          from the face — not from any SDF gradient).
+        - ``self._bc_normal_per_point[i]``: outward unit normal, the one the owner gives with the chosen face's
+          reading: the face's own normal where the faces are read from a box, the SDF's normal at the point where
+          they are read from ``domain_sdf`` (``BoundaryConditions.face_segments_at_point``).
 
         Raises if any boundary point cannot be classified to a face or matched
         to a segment. This converts a class of latent failures — the historical
@@ -1397,16 +1398,19 @@ class HJBGFDMSolver(BaseHJBSolver):
                 segment = bc.segment_for_point(
                     point, geometry=geometry, tolerance=BOUNDARY_TOL, equivalent=_same_bc_row
                 )
-            except ValueError as exc:
+            except (ValueError, TypeError, NotImplementedError) as exc:
+                # BCSegment.matches_point refuses a region_name segment with TypeError or NotImplementedError on a
+                # geometry that cannot mark regions or map a point to its node; every other refusal is a ValueError.
                 unmatched.append((i, point, f"refused by the boundary owner: {exc}"))
                 continue
             # The normal at a corner (#2512 row B1, gap 2): the first face, in face order, whose segment at the point
             # writes the row the point's segment writes. The point's segment is one of the readings, so one matches.
-            face = next(f for f, seg in readings if _same_bc_row(seg, segment))
+            # The owner gives the normal with the face, so on a curved domain_sdf it is the SDF's, not the face axis.
+            face, normal = next((f, n) for f, seg, n in readings if _same_bc_row(seg, segment))
 
             self._bc_face_per_point[i] = face
             self._bc_segment_per_point[i] = segment
-            self._bc_normal_per_point[i] = bc.outward_normal_for_face(face, dimension=self.dimension)
+            self._bc_normal_per_point[i] = normal
 
         if unmatched:
             lines = [

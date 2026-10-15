@@ -250,7 +250,7 @@ def test_the_readings_at_a_point_are_what_the_point_chooses_among():
     bc, grid = _strip_beside_a_dirichlet()
 
     def named(point, equivalent=None):
-        return [(f.to_string(), s.name) for f, s in bc.face_segments_at_point(point, grid, equivalent=equivalent)]
+        return [(f.to_string(), s.name) for f, s, _ in bc.face_segments_at_point(point, grid, equivalent=equivalent)]
 
     corner = np.array([1.0, 1.0])
     assert named(corner) == [("x_max", "strip"), ("y_max", "D")]
@@ -262,7 +262,9 @@ def test_the_readings_at_a_point_are_what_the_point_chooses_among():
     for equivalent in (None, _same_enforcement):
         for point in on_boundary:
             chosen = bc.segment_for_point(point, geometry=grid, equivalent=equivalent)
-            assert any(seg is chosen for _, seg in bc.face_segments_at_point(point, grid, equivalent=equivalent)), point
+            assert any(seg is chosen for _, seg, _ in bc.face_segments_at_point(point, grid, equivalent=equivalent)), (
+                point
+            )
 
 
 def test_a_bc_with_only_an_sdf_reads_each_points_face_from_it():
@@ -284,7 +286,7 @@ def test_a_bc_with_only_an_sdf_reads_each_points_face_from_it():
     left, right = np.array([0.0, 0.5]), np.array([1.0, 0.5])
     assert bc.segment_for_point(left, tolerance=BOUNDARY_TOL).name == "in"
     assert bc.segment_for_point(right, tolerance=BOUNDARY_TOL).name == "wall"
-    assert [(f.to_string(), s.name) for f, s in bc.face_segments_at_point(left, tolerance=BOUNDARY_TOL)] == [
+    assert [(f.to_string(), s.name) for f, s, _ in bc.face_segments_at_point(left, tolerance=BOUNDARY_TOL)] == [
         ("x_min", "in")
     ]
 

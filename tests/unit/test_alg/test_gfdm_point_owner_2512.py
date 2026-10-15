@@ -148,10 +148,61 @@ def test_a_bc_with_its_own_sdf_is_classified_by_the_faces_its_sdf_gives():
     solver = _solver(_inlet_and_wall(domain_sdf=_box_sdf))
     assert solver._bc_segment_per_point[_index(solver, [0.0, 0.5])].name == "in"
     assert solver._bc_segment_per_point[_index(solver, [1.0, 0.5])].name == "wall"
-    with pytest.raises(ValueError, match=r"off the boundary its own domain_sdf describes.*needs domain_bounds"):
+    with pytest.raises(ValueError, match=r"pt \d+ at \[[^\]]*\]: on no face the boundary owner reads for this BC"):
         _solver(_inlet_and_wall(domain_sdf=_obstacle_sdf))
     bounded = _solver(_inlet_and_wall(domain_sdf=_obstacle_sdf, domain_bounds=np.array([[0.0, 1.0], [0.0, 1.0]])))
     assert bounded._bc_segment_per_point[_index(bounded, [0.0, 0.5])].name == "in"
+
+
+def _circle_sdf(x):
+    return float(np.linalg.norm(np.asarray(x, dtype=float) - 0.5) - 0.4)
+
+
+def _on_a_circle(segments: list[BCSegment]) -> HJBGFDMSolver:
+    """GFDM inside the circle of radius 0.4 about (0.5, 0.5), which is the BC's ``domain_sdf``: the grid's nodes inside
+    it, and 48 points on it as the boundary."""
+    bc = BoundaryConditions(dimension=2, segments=segments, domain_sdf=_circle_sdf)
+    grid = TensorProductGrid(bounds=[(0.0, 1.0), (0.0, 1.0)], Nx=[21, 21], boundary_conditions=bc)
+    nodes = grid.get_spatial_grid()
+    inner = nodes[np.linalg.norm(nodes - 0.5, axis=1) < 0.38]
+    angles = np.arange(48) * (2 * np.pi / 48)
+    ring = 0.5 + 0.4 * np.stack([np.cos(angles), np.sin(angles)], axis=1)
+    model = Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)))
+    conditions = Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=1.0)
+    problem = MFGProblem(model=model, domain=grid, conditions=conditions, Nt=4)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return HJBGFDMSolver(
+            problem,
+            collocation_points=np.vstack([inner, ring]),
+            boundary_indices=np.arange(len(inner), len(inner) + len(ring)),
+            delta=0.16,
+            k_neighbors=14,
+            derivative_method="taylor",
+            taylor_order=2,
+            weight_function="wendland",
+            monotonicity_scheme="none",
+        )
+
+
+def test_a_curved_sdf_boundary_takes_the_normal_the_uniform_path_writes():
+    """Review 2 of #2674. On a curved ``domain_sdf`` a point's face is the SDF gradient's dominant axis, and the mixed
+    path wrote that axis as the row's normal: up to 45 degrees off the circle's, where the uniform path writes the SDF's
+    normal at the point. The owner now gives the SDF's normal with the reading, so at every point the mixed BC makes
+    NO_FLUX, its row normal is the one the uniform NO_FLUX BC writes there."""
+    uniform = _on_a_circle([BCSegment(name="wall", bc_type=BCType.NO_FLUX)])
+    mixed = _on_a_circle(_inlet_and_wall().segments)
+    assert not uniform.boundary_conditions.is_mixed
+    assert mixed.boundary_conditions.is_mixed
+    normals = uniform._bc_config["normals"]
+    no_flux = [
+        (local, int(i))
+        for local, i in enumerate(mixed.boundary_indices)
+        if mixed._bc_segment_per_point[int(i)].bc_type is BCType.NO_FLUX
+    ]
+    assert no_flux
+    for local, i in no_flux:
+        np.testing.assert_array_equal(mixed._bc_normal_per_point[i], normals[local])
 
 
 def test_a_robin_coefficient_provider_does_not_stop_construction():
@@ -175,7 +226,9 @@ def test_a_robin_coefficient_provider_does_not_stop_construction():
 
 def test_every_refusal_the_owner_makes_is_reported_per_point():
     """Review 1 of #2674, must-fix 1: a BC with no default and no segment on the y faces. The owner refuses those
-    points; GFDM collects each refusal, with the owner's reason, into one message rather than raising the first."""
+    points; GFDM collects each refusal, with the owner's reason, into one message rather than raising the first.
+    Review 2, should-fix 3: a ``region_name`` segment on a geometry that cannot mark regions is refused with a
+    TypeError, which is collected too."""
     bc = BoundaryConditions(
         dimension=2,
         segments=[
@@ -187,6 +240,40 @@ def test_every_refusal_the_owner_makes_is_reported_per_point():
         ValueError, match=r"(?s)pre-classification failed for \d+/\d+ boundary points.*no segment governs"
     ):
         _solver(bc)
+
+    from mfgarchon.core.mfg_components import MFGComponents
+    from mfgarchon.geometry.implicit.hyperrectangle import Hyperrectangle
+
+    marked = BoundaryConditions(
+        dimension=2,
+        segments=[
+            BCSegment(name="in", bc_type=BCType.DIRICHLET, value=1.0, region_name="inlet"),
+            BCSegment(name="wall", bc_type=BCType.NO_FLUX),
+        ],
+    )
+    components = MFGComponents(
+        hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=1.0)),
+        m_initial=lambda x: 1.0,
+        u_terminal=lambda x: 0.0,
+        boundary_conditions=marked,
+    )
+    points = np.stack(np.meshgrid(*[np.linspace(0.0, 1.0, NX)] * 2, indexing="ij"), axis=-1).reshape(-1, 2)
+    on_box = np.flatnonzero(np.any((points == 0.0) | (points == 1.0), axis=1))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", PendingDeprecationWarning)  # an implicit domain's BC needs components=
+        problem = MFGProblem(
+            geometry=Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])),
+            T=1.0,
+            Nt=4,
+            volatility=0.1,
+            components=components,
+        )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(
+            ValueError, match=r"refused by the boundary owner: .*doesn't implement SupportsRegionMarking"
+        ):
+            HJBGFDMSolver(problem, collocation_points=points, boundary_indices=on_box, monotonicity_scheme="none")
 
 
 def test_gfdms_equivalence_is_the_row_it_writes():

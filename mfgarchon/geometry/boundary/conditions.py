@@ -679,7 +679,7 @@ class BoundaryConditions:
         point = np.asarray(point, dtype=float)
         geometry = self._query_geometry(geometry)
         if face is None:
-            on, bounds = self._point_faces(point, geometry, tolerance)
+            on, bounds = self._point_faces(point, geometry, tolerance, "segment_for_point")
             if len(on) > 1:
                 at_point = [
                     seg for _, seg in self._corner_readings(point, on, geometry, tolerance, axis_names, equivalent)
@@ -714,21 +714,39 @@ class BoundaryConditions:
         tolerance: float = SDF_BOUNDARY_TOL,
         axis_names: dict[int, str] | None = None,
         equivalent: Callable[[BCSegment, BCSegment], bool] | None = None,
-    ) -> list[tuple[BoundaryFace, BCSegment]]:
-        """Every face ``point`` lies on (:meth:`_point_faces`), in face order, with the segment that face takes there:
-        the readings :meth:`segment_for_point`, asked with the same arguments, chooses among (#2512 row B1). On one face,
-        the point's segment on it; at a corner, each face's own answer, read at the point only where a partial cover
-        keeps the face from answering (:meth:`_corner_face_at_point`). A reader that writes a row along a face's normal
-        picks that face among these. Empty when the point lies on no face."""
+    ) -> list[tuple[BoundaryFace, BCSegment, np.ndarray]]:
+        """Every face ``point`` lies on (:meth:`_point_faces`), in face order, with the segment that face takes there
+        and the outward normal a row along it writes: the readings :meth:`segment_for_point`, asked with the same
+        arguments, chooses among (#2512 row B1). On one face, the point's segment on it; at a corner, each face's own
+        answer, read at the point only where a partial cover keeps the face from answering
+        (:meth:`_corner_face_at_point`). A reader that writes a row along a face's normal picks that face among these.
+        Empty when the point lies on no face.
+
+        The normal is the face's (:meth:`outward_normal_for_face`) where the faces are read from a box. Where they are
+        read from ``domain_sdf``, the one face is the gradient's dominant axis, which on a curved boundary is not its
+        normal, so the normal is the SDF's at the point (:meth:`get_outward_normal`): the normal the uniform path
+        writes there."""
         point = np.asarray(point, dtype=float)
         geometry = self._query_geometry(geometry)
-        on, _ = self._point_faces(point, geometry, tolerance)
+        on, bounds = self._point_faces(point, geometry, tolerance, "face_segments_at_point")
         if len(on) == 1:
-            return [(on[0], self.segment_for_point(point, on[0], geometry, tolerance, axis_names))]
-        return self._corner_readings(point, on, geometry, tolerance, axis_names, equivalent)
+            readings = [(on[0], self.segment_for_point(point, on[0], geometry, tolerance, axis_names))]
+        else:
+            readings = self._corner_readings(point, on, geometry, tolerance, axis_names, equivalent)
+        if bounds is None and readings:
+            normal = self.get_outward_normal(point)
+            if normal is None:
+                raise ValueError(
+                    "BoundaryConditions.face_segments_at_point: the gradient of domain_sdf vanishes at "
+                    f"{point.tolist()}, so it gives this boundary point no outward normal (#2512 row B1)."
+                )
+            return [(face, segment, normal) for face, segment in readings]
+        return [
+            (face, segment, self.outward_normal_for_face(face, dimension=point.shape[0])) for face, segment in readings
+        ]
 
     def _point_faces(
-        self, point: np.ndarray, geometry: Any, tolerance: float
+        self, point: np.ndarray, geometry: Any, tolerance: float, reader: str
     ) -> tuple[list[BoundaryFace], np.ndarray | None]:
         """The faces ``point`` lies on, for both point readers (#2512 row B1), and the box they were read from: every
         face of the box (:meth:`_query_bounds`) within ``tolerance``; else, for a BC with ``domain_sdf``, the one face
@@ -742,7 +760,7 @@ class BoundaryConditions:
             face = self.identify_boundary_face(point, tolerance)
             return ([] if face is None else [face]), None
         raise ValueError(
-            "BoundaryConditions.segment_for_point: this BC has no domain_bounds or domain_sdf, and the query's "
+            f"BoundaryConditions.{reader}: this BC has no domain_bounds or domain_sdf, and the query's "
             f"geometry ({type(geometry).__name__}) gives no box to read the faces from: it is not a "
             "GeometryProtocol whose get_bounds() returns bounds. Pass such a geometry, or set domain_bounds "
             "(#2512 row B1)."
