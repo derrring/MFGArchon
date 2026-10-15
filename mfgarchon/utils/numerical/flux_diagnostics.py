@@ -279,6 +279,11 @@ class FluxDiagnostics:
         """
         return quadrature_weights_1d(np.arange(n, dtype=float) * float(self.spacing[axis]))
 
+    def _node_weights(self, shape: tuple[int, ...]) -> NDArray:
+        """The control volume each node owns, from the one owner (#2145, #1642), on coordinates rebuilt as in
+        :meth:`_axis_weights`."""
+        return quadrature_weights_nd([np.arange(n, dtype=float) * float(self.spacing[k]) for k, n in enumerate(shape)])
+
     def _compute_flux_1d(
         self,
         m: NDArray,
@@ -296,7 +301,7 @@ class FluxDiagnostics:
         dx = self.spacing[0]
 
         # Total mass, on the grid's own measure (#2145)
-        total_mass = float(np.dot(np.asarray(m, dtype=float), self._axis_weights(0, m.shape[0])))
+        total_mass = float(integrate_on_weights(m, self._axis_weights(0, m.shape[0])))
 
         # Diffusion coefficient handling
         D_left = D if np.isscalar(D) else D[0]
@@ -358,7 +363,7 @@ class FluxDiagnostics:
         # weights, so a corner owns (h_x/2)(h_y/2) rather than a full cell.
         w_x = self._axis_weights(0, m.shape[0])
         w_y = self._axis_weights(1, m.shape[1])
-        total_mass = float(np.einsum("ij,i,j->", np.asarray(m, dtype=float), w_x, w_y))
+        total_mass = float(integrate_on_weights(m, self._node_weights(m.shape)))
 
         # Handle velocity field shape
         if alpha.ndim == 2:
@@ -381,37 +386,37 @@ class FluxDiagnostics:
         dm_dx_left = (m[1, :] - m[0, :]) / dx
         adv_left = -alpha_x[0, :] * m[0, :]  # -α_x because normal is -x
         diff_left = D_val * dm_dx_left  # D*∂m/∂x, outward is -x so sign flips
-        J_left = float(np.dot(adv_left + diff_left, w_y))
+        J_left = float(integrate_on_weights(adv_left + diff_left, w_y))
         boundary_fluxes["left"] = J_left
-        total_advection += float(np.dot(adv_left, w_y))
-        total_diffusion += float(np.dot(diff_left, w_y))
+        total_advection += float(integrate_on_weights(adv_left, w_y))
+        total_diffusion += float(integrate_on_weights(diff_left, w_y))
 
         # Right boundary (x=L): outward normal = (+1, 0)
         dm_dx_right = (m[-1, :] - m[-2, :]) / dx
         adv_right = alpha_x[-1, :] * m[-1, :]
         diff_right = -D_val * dm_dx_right
-        J_right = float(np.dot(adv_right + diff_right, w_y))
+        J_right = float(integrate_on_weights(adv_right + diff_right, w_y))
         boundary_fluxes["right"] = J_right
-        total_advection += float(np.dot(adv_right, w_y))
-        total_diffusion += float(np.dot(diff_right, w_y))
+        total_advection += float(integrate_on_weights(adv_right, w_y))
+        total_diffusion += float(integrate_on_weights(diff_right, w_y))
 
         # Bottom boundary (y=0): outward normal = (0, -1)
         dm_dy_bottom = (m[:, 1] - m[:, 0]) / dy
         adv_bottom = -alpha_y[:, 0] * m[:, 0]
         diff_bottom = D_val * dm_dy_bottom
-        J_bottom = float(np.dot(adv_bottom + diff_bottom, w_x))
+        J_bottom = float(integrate_on_weights(adv_bottom + diff_bottom, w_x))
         boundary_fluxes["bottom"] = J_bottom
-        total_advection += float(np.dot(adv_bottom, w_x))
-        total_diffusion += float(np.dot(diff_bottom, w_x))
+        total_advection += float(integrate_on_weights(adv_bottom, w_x))
+        total_diffusion += float(integrate_on_weights(diff_bottom, w_x))
 
         # Top boundary (y=L): outward normal = (0, +1)
         dm_dy_top = (m[:, -1] - m[:, -2]) / dy
         adv_top = alpha_y[:, -1] * m[:, -1]
         diff_top = -D_val * dm_dy_top
-        J_top = float(np.dot(adv_top + diff_top, w_x))
+        J_top = float(integrate_on_weights(adv_top + diff_top, w_x))
         boundary_fluxes["top"] = J_top
-        total_advection += float(np.dot(adv_top, w_x))
-        total_diffusion += float(np.dot(diff_top, w_x))
+        total_advection += float(integrate_on_weights(adv_top, w_x))
+        total_diffusion += float(integrate_on_weights(diff_top, w_x))
 
         # Net flux (sum of all boundary fluxes, all pointing outward)
         net_flux = sum(boundary_fluxes.values())

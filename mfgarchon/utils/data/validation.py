@@ -134,11 +134,11 @@ def validate_mfg_solution(U: NDArray[np.floating], M: NDArray[np.floating], stri
             # harmless here because a uniform rescale of the weights cancels in the ratio below,
             # while the CHOICE of functional does not: one of the two is conserved at a no-flux
             # wall and the other is not, which is the whole of #2145.
-            from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
+            from mfgarchon.utils.numerical.quadrature import integrate_on_weights, quadrature_weights_1d
 
             if M.shape[1] > 1:
                 w = quadrature_weights_1d(np.linspace(0.0, 1.0, M.shape[1]))
-                total_masses = M @ w
+                total_masses = integrate_on_weights(M, w)
             else:
                 total_masses = np.sum(M, axis=1)
 

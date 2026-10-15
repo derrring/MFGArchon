@@ -2313,9 +2313,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         refused rather than measured some other way, since its weights cannot be recovered from ``integrate`` short
         of integrating N indicator fields (#1642).
         """
-        measure_weights = getattr(self.geometry, "measure_weights", None)
-        if not self.is_network and callable(measure_weights):
-            return SpatialMeasure(np.asarray(measure_weights(), dtype=float), "grid")
+        grid_weights = self._grid_measure_weights()
+        if grid_weights is not None:
+            return SpatialMeasure(np.asarray(grid_weights(), dtype=float), "grid")
         if not self.is_network and callable(getattr(self.geometry, "integrate", None)):
             raise TypeError(
                 f"{type(self.geometry).__name__} has integrate() but no measure_weights(). The problem's measure is "
@@ -2331,7 +2331,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             return SpatialMeasure(np.full(n, dx), "uniform-cell")
         from mfgarchon.geometry import GeometryType
 
-        # A declared Cartesian grid without `integrate` is measured on its cells. This is the population that
+        # A declared Cartesian grid without `measure_weights` is measured on its cells. This is the population that
         # had to report `spatial_discretization` before #1889 retired it, and the gate reads the same
         # declaration `__init__` dispatches on, not `CartesianGrid` inheritance, which the protocol does not ask for.
         if self.geometry is not None and self.geometry.geometry_type == GeometryType.CARTESIAN_GRID:
@@ -2340,7 +2340,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             if spacing is None:
                 raise ValueError(
                     "measuring a field on this geometry needs the grid spacing, and this geometry "
-                    f"({type(self.geometry).__name__}) declares a CARTESIAN_GRID with neither integrate() nor a "
+                    f"({type(self.geometry).__name__}) declares a CARTESIAN_GRID with neither measure_weights() nor a "
                     "get_grid_spacing() that returns one."
                 )
             return SpatialMeasure(
@@ -2348,9 +2348,11 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             )
         return SpatialMeasure(np.full(n, 1.0 / n), "point-average")
 
-    def _measures_on_the_grids_weights(self) -> bool:
-        """Whether :meth:`spatial_measure` is the geometry's own weights, its ``"grid"`` branch."""
-        return not self.is_network and callable(getattr(self.geometry, "measure_weights", None))
+    def _grid_measure_weights(self) -> Callable[[], NDArray] | None:
+        """The geometry's ``measure_weights``, when :meth:`spatial_measure` is its ``"grid"`` branch, else None: that
+        branch's one predicate, which :meth:`_measure_initial_density` reads too."""
+        weights = getattr(self.geometry, "measure_weights", None)
+        return weights if not self.is_network and callable(weights) else None
 
     def _measure_initial_density(self) -> tuple[float, str]:
         """The initial density's total mass, and the name of the measure that produced it."""
@@ -2358,7 +2360,7 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             measure = self.spatial_measure()
             return float(measure.integrate(np.asarray(self.m_initial))), measure.name
         except ValueError as exc:
-            if not self._measures_on_the_grids_weights():
+            if self._grid_measure_weights() is None:
                 raise
             # The one case that reaches here is a single-node axis, which `quadrature_weights_1d`
             # refuses because a one-node axis has no measure -- returning 0 or dx would both be

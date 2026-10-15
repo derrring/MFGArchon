@@ -628,7 +628,7 @@ def _measure_probe():
         u_terminal=lambda x: 0.0,
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0))))
     s = FPParticleSolver(p, num_particles=10)
-    s._mass_weights = s._quadrature_weights()
+    s._mass_weights = p.spatial_measure().weights
     return s._measure(np.ones(21))
 
 
