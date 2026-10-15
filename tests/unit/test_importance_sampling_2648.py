@@ -9,8 +9,9 @@ The oracle is f(x) = exp(-x^2 / (2 * 0.3^2)) on [-5, 5], whose integral is exact
 1. With the density matched to f, the estimate is exact: f / p is constant.
 2. With wider densities, the mean over seeds is within 3 standard errors of the exact value, and the spread is below
    uniform sampling's over the same seeds.
-3. Uniform sampling is unchanged: its estimates at three fixed seeds equal, bit for bit, those measured on main at
-   25fd097b before this change. This is the control.
+3. Uniform sampling is unchanged: its estimates at three fixed seeds equal those measured on main at 25fd097b
+   before this change, to a relative 1e-12. This is the control. Not bit for bit: the nightly's Linux runner gives
+   0.7319098980065835 where this machine gives 0.7319098980065832, 2 ulps or a relative 3.0e-16 (#2694).
 4. Refused by name: a density that is not normalized (to within max(1e-6, 4 standard errors of the check)), not
    finite or negative; a rejection bound below the density; an infeasible acceptance rate; a missing
    importance_function; an unknown sampling_method; control variates under importance sampling; and an integrand
@@ -80,9 +81,12 @@ def test_a_wider_density_is_unbiased_and_beats_uniform(width):
 
 
 def test_uniform_sampling_is_unchanged():
-    """Control: measured on main at 25fd097b, before this change."""
+    """Control: measured on main at 25fd097b, before this change. To a relative 1e-12, not bit for bit: the values were
+    captured on one machine, and the nightly's runner gives seed 1's estimate 2 ulps away (#2694). A changed draw or a
+    lost factor moves the estimate by far more."""
     for seed, value in ((0, 0.6982045585893328), (1, 0.7319098980065832), (7, 0.7491218261522968)):
-        assert monte_carlo_integrate(f, DOMAIN, MCConfig(num_samples=N, seed=seed)).estimate == value, seed
+        estimate = monte_carlo_integrate(f, DOMAIN, MCConfig(num_samples=N, seed=seed)).estimate
+        assert estimate == pytest.approx(value, rel=1e-12), (seed, estimate)
 
 
 def test_a_density_that_is_not_normalized_is_refused():
