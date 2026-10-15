@@ -80,7 +80,7 @@ def _enforcement(segment: Any) -> tuple:
         return (kind,)
     if kind == "robin":
         where = "InterpolationApplicator, comparing two Robin segments on one face"
-        return (kind, segment.value, *segment_robin_coefficients(segment, where=where))
+        return (kind, segment.value, *segment_robin_coefficients(segment, where=where, as_stored=True))
     return (kind, segment.value)
 
 

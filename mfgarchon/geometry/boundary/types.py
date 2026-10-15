@@ -1163,14 +1163,21 @@ def _read_constant(
 
 
 def segment_robin_coefficients(
-    segment: BCSegment, *, where: str, state: dict[str, Any] | None = None
-) -> tuple[float, float]:
+    segment: BCSegment, *, where: str, state: dict[str, Any] | None = None, as_stored: bool = False
+) -> tuple[Any, Any]:
     """The one reading of a segment's Robin coefficients ``(alpha, beta)``, for every reader (#2512 row B2).
 
     Each is a constant, read by `boundary_value`'s constant contract, or a provider resolved with ``state``. A
     callable coefficient is refused: no reader evaluates one per point or per time (#1237). ``None`` is refused
     rather than read as 0, as `BoundaryConditions` validation refuses it for a Robin segment.
+
+    ``as_stored=True`` returns the two coefficients as the segment stores them, a provider unresolved, for a reader
+    that only compares two segments and writes no row -- an equivalence: the owner's `_same_condition`, HJB-GFDM's
+    `_same_bc_row`, the interpolation applicator's `_same_enforcement`. Such a comparison may run before the coupling
+    layer resolves any provider: HJB-GFDM classifies its points at construction (#2512 row B1).
     """
+    if as_stored:
+        return tuple(getattr(segment, name) for name in ("alpha", "beta"))
     coefficients = []
     for name in ("alpha", "beta"):
         coefficient = getattr(segment, name)
