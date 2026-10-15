@@ -3155,7 +3155,7 @@ if __name__ == "__main__":
 
     # Initial density near the obstacle, zero inside it: mass inside an obstacle is refused, not moved (#2688)
     M_near_obstacle = np.exp(-((X - 0.35) ** 2 + (Y - 0.5) ** 2) / 0.05)
-    M_near_obstacle *= domain_with_obstacle.contains(np.c_[X.ravel(), Y.ravel()]).reshape(X.shape)
+    M_near_obstacle *= np.asarray(domain_with_obstacle.contains(np.c_[X.ravel(), Y.ravel()])).reshape(X.shape)
     M_near_obstacle = M_near_obstacle / np.sum(M_near_obstacle)
 
     # Pure diffusion (no drift) - particles will diffuse toward obstacle

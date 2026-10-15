@@ -1145,7 +1145,7 @@ def sample_from_density(
     num_samples: int,
     jitter: bool = True,
     seed: int | None = None,
-    navigable: Callable[[NDArray], NDArray] | None = None,
+    navigable: Callable[[NDArray], NDArray | bool] | None = None,
 ) -> NDArray:
     """
     Sample particle positions from a density field on a regular grid.
@@ -1297,7 +1297,7 @@ def _refuse_cells_with_no_navigable_point(
     nodes: NDArray,
     spacings: NDArray,
     probs: NDArray,
-    navigable: Callable[[NDArray], NDArray],
+    navigable: Callable[[NDArray], NDArray | bool],
 ) -> None:
     """Refuse the sampled cells that show no navigable point on a probe lattice: their mass is inside an obstacle,
     and no redraw within the cell can place it (#2688, CONVENTIONS § The measure)."""
@@ -1322,7 +1322,7 @@ def _refuse_cells_with_no_navigable_point(
 def _redraw_until_navigable(
     particles: NDArray,
     redraw: Callable[[NDArray], NDArray],
-    navigable: Callable[[NDArray], NDArray],
+    navigable: Callable[[NDArray], NDArray | bool],
     within: str,
 ) -> None:
     """Redraw, in place, the particles where ``navigable`` is False, until none is (#2688)."""
