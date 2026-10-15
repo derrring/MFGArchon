@@ -15,4 +15,4 @@
     | `periodic_endpoint_convention_inverted` | 23 | 24 |
     | `periodic_wrap_endpoint_inverted` | 49 | 50 |
 
-    The script's own docstring requires improvements to be recorded in the same change, "otherwise the next baseline encodes the gain as if it had always held". They are recorded here rather than absorbed silently.
+    The script's own docstring then required improvements to be recorded in the same change (one-way since #1715: a gain is listed and exits 0), "otherwise the next baseline encodes the gain as if it had always held". They are recorded here rather than absorbed silently.

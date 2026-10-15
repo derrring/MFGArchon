@@ -19,6 +19,15 @@ name: Weekly Test-Discrimination Sweep
 # claim cross-path agreement notice none of the conventions at all. ("none of the six"
 # until #2349: the alphabet had six entries in the 2026-07-27 read this file strikes as
 # superseded nine lines above, and the count is owned by `MUTATIONS`.)
+#
+# The verdict is owned by `scripts/test_discrimination.py --check-baseline`; this file only calls it.
+# A run fails on a regression -- a kill count that drops, or a test that stops killing a mutation --
+# and lists gains (a count that rises, a new killer) in its log and as one warning per shard, without
+# failing (user ruling, 2026-10-15). What a gain leaves open is a new killer that departs before
+# anything records it: neither run sees it. Re-recording the baseline MONTHLY -- a full
+# `--write-baseline` sweep in its own PR, by AGENTS.md's recipe -- bounds that window to a month; it
+# does not close it. The last one is dated by the baseline's `_measured_at.swept_on`, which the gate's
+# discrimination report prints, not by its last commit: PRs hand-edit counts there.
 
 on:
   schedule:
@@ -159,9 +168,10 @@ jobs:
           const cause = [];
           if (anyFailed) {
             cause.push(
-              'Either discrimination dropped (a convention fewer tests now notice), a mutation',
-              'stopped applying because the source moved, or it improved and the baseline has',
-              'not recorded it yet. The failing shard\'s output names which.',
+              'Something regressed: a convention fewer tests now notice, a test that stopped',
+              'noticing one, a mutation that stopped applying or disappeared, a mutation the kill',
+              'matrix lacks, or a suite that failed before any mutation. Gains do not fail this',
+              'run. The failing shard\'s output names which.',
             );
           }
           if (anyUnfinished) {
