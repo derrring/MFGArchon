@@ -886,9 +886,7 @@ class TestFPParticlePreserveIndices:
             dimension=2,
         )
         grid = TensorProductGrid([(0, Lx), (0, Ly)], Nx_points=[21, 11], boundary_conditions=bc)
-        return MFGProblem(
-            geometry=grid, Nt=Nt, T=T, volatility=0.3, boundary_conditions=bc, components=_default_components_2d()
-        ), bc
+        return MFGProblem(geometry=grid, Nt=Nt, T=T, volatility=0.3, components=_default_components_2d()), bc
 
     @staticmethod
     def _drift_rightward(t, x, m):
@@ -955,9 +953,7 @@ class TestFPParticlePreserveIndices:
         Lx, Ly, Nt, T = 4.0, 2.0, 20, 1.0
         bc = no_flux_bc(dimension=2)
         grid = TensorProductGrid([(0, Lx), (0, Ly)], Nx_points=[21, 11], boundary_conditions=bc)
-        problem = MFGProblem(
-            geometry=grid, Nt=Nt, T=T, volatility=0.3, boundary_conditions=bc, components=_default_components_2d()
-        )
+        problem = MFGProblem(geometry=grid, Nt=Nt, T=T, volatility=0.3, components=_default_components_2d())
         solver = FPParticleSolver(
             problem,
             num_particles=500,

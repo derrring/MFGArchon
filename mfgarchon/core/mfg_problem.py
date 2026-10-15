@@ -384,6 +384,13 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 "e.g. SeparableHamiltonian(control_cost=..., coupling=lambda m: gamma * m**2, "
                 "coupling_dm=lambda m: 2 * gamma * m); H carries it as -f (cost-signed)."
             )
+        if "boundary_conditions" in kwargs:
+            raise TypeError(
+                "MFGProblem(boundary_conditions=...) is refused (#2667): nothing read it, in any form, so the "
+                "problem solved on its geometry's boundary conditions whatever it said. Declare them on the "
+                "geometry -- TensorProductGrid(..., boundary_conditions=bc), or mesh.boundary_conditions = bc -- "
+                "or, in the components= form on a geometry that holds none, as MFGComponents(boundary_conditions=bc)."
+            )
 
         # =====================================================================
         # The model/domain/conditions form (Issue #875): Model + Domain + Conditions
@@ -431,6 +438,25 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                     f"Got legacy parameters: {', '.join(_legacy_params.keys())}"
                 )
 
+            if drift is not None:
+                raise ValueError(
+                    "MFGProblem(model=, domain=, conditions=, drift=...): drift= is refused in this form (#2667). "
+                    "No solver reads the problem's drift field, whether it comes from drift= or from "
+                    "Model(drift_field=) (#2678), so the solve ran without it."
+                )
+            # Every input this form was given beside model, domain, conditions and Nt, as given: the one record the
+            # rebuilds read (`_rebuilt`), so solve(Nt=) and with_* do not drop what the constructor accepted (#2667).
+            # lambda_ and coupling_coefficient are the fallbacks the readers take when the Hamiltonian exposes no
+            # control_cost (#1420); whether they should exist is decided where those readers are fixed.
+            self._v1_inputs: dict[str, Any] = {
+                "constraints": constraints,
+                "obstacles": obstacles,
+                "lambda_": lambda_,
+                "coupling_coefficient": coupling_coefficient,
+                "suppress_warnings": suppress_warnings,
+                **kwargs,
+            }
+
             # Translate to legacy parameters
             geometry = domain
             volatility = model.volatility
@@ -458,11 +484,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             # Store the model/domain/conditions objects for solve() and with_*() methods
             self._v1_model = model
             self._v1_conditions = conditions
-            self._v1_constraints = constraints
         else:
             self._v1_model = None
             self._v1_conditions = None
-            self._v1_constraints = None
+            self._v1_inputs = {}
 
             # The components= form is planned to be replaced, and is not deprecated: the model/domain/conditions
             # form is not fixed yet, so a caller is not told to migrate to it and no removal clock runs (user ruling,
@@ -2392,10 +2417,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
     # Legacy 1D geometry kwargs removed in Issue #1363 (subset of _DEPRECATED_KWARGS)
     _GEOMETRY_KWARGS: ClassVar[set[str]] = {"xmin", "xmax", "Nx", "Lx"}
 
-    # Known valid kwargs that are consumed by _initialize_functions or mixins
-    _RECOGNIZED_KWARGS: ClassVar[set[str]] = {
-        "boundary_conditions",  # BC object
-    }
+    # Known valid kwargs that are consumed by _initialize_functions or mixins. boundary_conditions was listed here and
+    # read by nothing; it is refused by name at __init__ (#2667).
+    _RECOGNIZED_KWARGS: ClassVar[set[str]] = set()
 
     def _validate_kwargs(self, kwargs: dict[str, Any]) -> None:
         """
@@ -2556,13 +2580,7 @@ See: docs/user/CONVENTIONS.md, section 2 (the cost channels and their signs)"""
             # Nt deeply affects solver setup. For the model/domain/conditions form, reconstruct
             # with the correct Nt and delegate solve to the new problem.
             if self._v1_model is not None:
-                new_problem = MFGProblem(
-                    model=self._v1_model,
-                    domain=self.geometry,
-                    conditions=self._v1_conditions,
-                    constraints=self._v1_constraints,
-                    Nt=Nt,
-                )
+                new_problem = self._rebuilt(Nt=Nt)
                 return new_problem.solve(
                     max_iterations=max_iterations,
                     tolerance=tolerance,
@@ -2752,37 +2770,30 @@ See: docs/user/CONVENTIONS.md, section 2 (the cost channels and their signs)"""
         """
         if self._v1_model is None:
             raise ValueError("with_model() requires a problem created with model/domain/conditions")
-        return MFGProblem(
-            model=model,
-            domain=self.geometry,
-            conditions=self._v1_conditions,
-            constraints=self._v1_constraints,
-            Nt=self.Nt,
-        )
+        return self._rebuilt(model=model)
 
     def with_domain(self, domain: Any) -> MFGProblem:
         """Return new problem with different domain (spatial geometry)."""
         if self._v1_model is None:
             raise ValueError("with_domain() requires a problem created with model/domain/conditions")
-        return MFGProblem(
-            model=self._v1_model,
-            domain=domain,
-            conditions=self._v1_conditions,
-            constraints=self._v1_constraints,
-            Nt=self.Nt,
-        )
+        return self._rebuilt(domain=domain)
 
     def with_conditions(self, conditions: Any) -> MFGProblem:
         """Return new problem with different conditions (time + IC/TC)."""
         if self._v1_model is None:
             raise ValueError("with_conditions() requires a problem created with model/domain/conditions")
-        return MFGProblem(
-            model=self._v1_model,
-            domain=self.geometry,
-            conditions=conditions,
-            constraints=self._v1_constraints,
-            Nt=self.Nt,
-        )
+        return self._rebuilt(conditions=conditions)
+
+    def _rebuilt(self, **changes: Any) -> MFGProblem:
+        """This problem built again from the inputs it was built from, with ``changes`` in their place (#2667).
+
+        The one owner of what a rebuild carries: ``solve(Nt=)``, ``with_model``, ``with_domain`` and
+        ``with_conditions`` all read it, so an input the constructor accepted -- ``source_term_hjb``,
+        ``state_penalty``, ``nonlocal_operator``, ... -- is not dropped by one of them. The constructor's own
+        validation runs again on the result. It builds ``MFGProblem``, not ``type(self)``, as the four sites did.
+        """
+        inputs = {"model": self._v1_model, "domain": self.geometry, "conditions": self._v1_conditions, "Nt": self.Nt}
+        return MFGProblem(**{**inputs, **self._v1_inputs, **changes})
 
     # No with_volatility() or with_T() — these are premature convenience shortcuts
     # that break orthogonality. The volatility lives in Model, T lives in Conditions.

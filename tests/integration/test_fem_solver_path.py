@@ -37,8 +37,8 @@ def _fem_problem(refine: int = 2):
     mesh = skfem.MeshTri.init_sqsymmetric().refined(refine)
     geom = Mesh2D(domain_type="rectangle", bounds=(0.0, 1.0, 0.0, 1.0))
     geom.mesh_data = skfem_to_meshdata(mesh)
-    # BC attaches to the GEOMETRY (the codebase pattern; MFGProblem(boundary_conditions=) is
-    # dropped for mesh geometries). The geometry BC accessor then surfaces it to the solver.
+    # BC attaches to the GEOMETRY; MFGProblem(boundary_conditions=) is refused (#2667). The geometry BC accessor
+    # then surfaces it to the solver.
     geom.boundary_conditions = no_flux_bc(dimension=2)
     components = MFGComponents(
         m_initial=lambda x: 1.0,
@@ -59,7 +59,6 @@ def _fem_problem(refine: int = 2):
         volatility=0.3,
         components=components,
         coupling_coefficient=0.5,
-        boundary_conditions=no_flux_bc(dimension=2),
     )
     return problem, mesh
 
