@@ -270,27 +270,21 @@ class NetworkHJBSolver(BaseHJBSolver):
         )
 
         if not sol.success:
-            import warnings
+            # The integrator stopped short of t = 0. The levels it never reached were filled by extrapolating the
+            # trajectory with only a warning, so a failed solve returned values nothing computed (#1689 member 4).
+            from mfgarchon.utils.exceptions import NumericalInstabilityError
 
-            warnings.warn(
-                f"Network HJB ODE solver did not converge: {sol.message}",
-                RuntimeWarning,
-                stacklevel=2,
+            last = float(T - sol.t[-1]) if sol.t.size else float(T)  # sol.t holds only the levels of t_eval it reached
+            raise NumericalInstabilityError(
+                f"the network HJB's ODE integrator ({self.scheme}) stopped before reaching t = 0; the last time level "
+                f"it computed is t = {last:.6g}: {sol.message} No value is returned for the levels below it (#1689)",
+                problematic_values={"last level computed": last, "t sought": 0.0, "integrator message": sol.message},
+                solver_name=type(self).__name__,
             )
 
-        # sol.y shape: (num_nodes, n_time_points) — reversed time
-        # Flip back to physical time: index 0 = t=0, index -1 = t=T
-        U = sol.y.T[::-1]  # (n_time_points, num_nodes)
-
-        # Ensure correct shape (solve_ivp may return fewer points if adaptive)
-        if U.shape[0] != n_time_points:
-            from scipy.interpolate import interp1d
-
-            s_eval = np.linspace(0, T, n_time_points)
-            interp = interp1d(sol.t, sol.y, axis=1, fill_value="extrapolate")
-            U = interp(s_eval).T[::-1]
-
-        return U
+        # sol.y shape: (num_nodes, n_time_points) — reversed time. t_eval covers every level, so a successful
+        # solve returns all of them. Flip back to physical time: index 0 = t=0, index -1 = t=T
+        return sol.y.T[::-1]  # (n_time_points, num_nodes)
 
 
 class NetworkPolicyIterationHJBSolver(NetworkHJBSolver):
