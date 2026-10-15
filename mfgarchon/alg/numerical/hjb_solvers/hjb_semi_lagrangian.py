@@ -2197,7 +2197,13 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
                     options={"ftol": self.tolerance, "maxiter": 100},
                 )
 
-                U_star[multi_idx] = result.fun if result.success else self._interpolate_value(U_next_shaped, x_current)
+                # The cost of the control the minimiser returns, evaluated here, whatever `success` says. L-BFGS-B
+                # starts at alpha = 0, the kink of a non-smooth L, and its line search there often ends ABNORMAL. On
+                # that exit result.fun need not be the cost at result.x, so it is not read. The fallback that stood
+                # here, U_next(x), was the cost at alpha = 0 without its running cost dt * L(x, 0, m, t), so a constant
+                # potential V shifted U by less than V * T (#1689 member 4). Whether the minimiser reaches the minimum
+                # is #2501.
+                U_star[multi_idx] = float(dpp_cost_nd(result.x))
 
             U_current_shaped = self._apply_diffusion(U_star, dt)
             U_current_shaped = self._enforce_boundary_conditions(U_current_shaped, time=time_idx * self.dt)
