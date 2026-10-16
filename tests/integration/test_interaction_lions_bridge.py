@@ -103,6 +103,7 @@ class TestGate3LionsBridgeEquivalence:
             "an object with @",
             "a wrapper of csr_array",
             "a wrapper of a LinearOperator",
+            "an object with @ and a list for its shape",
         ],
     )
     def test_the_nonlocal_source_applies_a_sparse_or_matrix_free_kernel(self, form):
@@ -120,6 +121,13 @@ class TestGate3LionsBridgeEquivalence:
 
         class _AppliesItself:
             shape = W.shape
+
+            def __matmul__(self, v):
+                return W @ v
+
+        class _ListShape:
+            def __init__(self):
+                self.shape = list(W.shape)
 
             def __matmul__(self, v):
                 return W @ v
@@ -142,6 +150,7 @@ class TestGate3LionsBridgeEquivalence:
             "an object with @": _AppliesItself(),
             "a wrapper of csr_array": _Forwarding(csr_array(W)),
             "a wrapper of a LinearOperator": _Forwarding(aslinearoperator(W)),
+            "an object with @ and a list for its shape": _ListShape(),
         }[form]
         w, m = quadrature_weights_1d(x), 1.0 + x
         source = create_nonlocal_source(kernel, w)

@@ -72,9 +72,10 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class _AppliedWithMatmul(Protocol):
-    """A kernel ``create_nonlocal_source`` applies as it is: it applies itself with ``@``. Python looks ``@`` up on the
-    type, and so does this check. Its shape is read apart, as an attribute, since a wrapper can forward one through
-    ``__getattr__``, which this check does not see (#2726)."""
+    """A kernel ``create_nonlocal_source`` applies as it is: it applies itself with ``@``. This check finds
+    ``__matmul__`` statically, on the type or on the instance, while Python's ``@`` uses the type's alone. Its shape is
+    read apart, as an attribute, since a wrapper can forward one through ``__getattr__``, which this check does not see
+    (#2726)."""
 
     def __matmul__(self, other: Any) -> Any: ...
 
@@ -311,14 +312,14 @@ def create_nonlocal_source(
             total number of spatial grid points (N = Nx for 1D, Nx*Ny for 2D, etc.):
             anything with that shape that applies itself with ``@`` -- a dense array,
             a sparse matrix, a ``LinearOperator``, a matrix-free object of the
-            caller's -- applied as ``W @ v``, or anything ``np.asarray`` makes a
+            caller's -- applied as ``W @ v``, or anything ``np.asarray`` makes a numeric
             matrix. Symmetric for undirected interaction. Operates on flattened
             density arrays. ``W`` must not carry the measure's weights itself: those
             are ``weights``, and a weighted form is weighted twice. The library's
             weighted operators, a ``ConvolutionCouplingOperator`` or a
             ``GraphonCouplingOperator`` passed as built, are refused; a form derived
-            from one (``op.T``, ``2 * op``, ``op.as_dense()``) cannot be told from an
-            unweighted kernel and is not.
+            from one (``op.T``, ``op.H``, ``2 * op``, ``op.as_dense()``, a wrapper of
+            one) cannot be told from an unweighted kernel and is not.
         weights: The measure's per-node weights, ``problem.spatial_measure().weights``:
             shape (N,), or the grid's shape. A scalar is refused. One cell volume for
             every node is the rectangle rule, which gives each end node a full cell

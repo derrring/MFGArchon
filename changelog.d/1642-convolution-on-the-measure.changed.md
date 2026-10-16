@@ -17,5 +17,5 @@
     the remedy `problem.spatial_measure().weights`. `W` is the unweighted kernel. The library's weighted operators
     passed as built, a `ConvolutionCouplingOperator` or a `GraphonCouplingOperator`, are refused, since their `@`
     carries the weights already; the remedies are `create_lions_source(QuadraticInteractionEnergy(op))` or
-    `op.kernel_matrix()`, and the graphon kernel's own matrix. A form derived from one, such as `op.T`, `2 * op` or
-    `op.as_dense()`, cannot be told from an unweighted kernel and is weighted twice.
+    `op.kernel_matrix()`, and the graphon kernel's own matrix. A form derived from one, such as `op.T`, `op.H`,
+    `2 * op`, `op.as_dense()` or a wrapper of one, cannot be told from an unweighted kernel and is weighted twice.
