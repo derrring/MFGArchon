@@ -64,6 +64,22 @@ if TYPE_CHECKING:
     from mfgarchon.core.mfg_problem import MFGProblem
 
 
+def _joint_socp_refusal(unplaced: dict[int, str], points: np.ndarray) -> str:
+    """The refusal for interior rows the joint SOCP could not place (#1689): their count, the first ten with their
+    coordinates and reasons, and the two ways forward."""
+    rows = sorted(unplaced)
+    listed = "; ".join(f"{i} at {np.round(points[i], 6).tolist()}: {unplaced[i]}" for i in rows[:10])
+    return (
+        f"HJBGFDMSolver(monotonicity_scheme='joint_socp'): {len(rows)} interior row(s) have no joint-SOCP stencil, so "
+        f"the scheme cannot give them the monotone weights it names (#1689). Rows, first 10: {listed}. Where the SOCP "
+        "is infeasible: socp_max_stencil_enlargements=N retries each such row with up to N * socp_enlargement_step "
+        "more neighbours. The added points are visibility-filtered only when obstacle_sdf is passed; without it they "
+        "can cross a wall, so a domain with obstacles should pass it. Or socp_allow_relaxed_rows=True accepts "
+        "relaxed-SOCP rows, whose M-matrix slack eps_M is positive: they are reported, not monotone, and not counted "
+        "as feasible. A row with no neighbourhood is refused either way."
+    )
+
+
 _TENSOR_VOLATILITY_REFUSAL = (
     "HJBGFDMSolver does not support a tensor volatility (volatility_kind='tensor'). "
     "The GFDM Laplacian target (e_lap in joint_socp.py) has zero weight on "
@@ -344,6 +360,9 @@ class HJBGFDMSolver(BaseHJBSolver):
         # shared runtime neighborhoods (no cascade into operator / FP / BC).
         socp_max_stencil_enlargements: int = 0,
         socp_enlargement_step: int = 2,
+        # joint_socp scheme only: accept relaxed-SOCP rows where the exact SOCP is infeasible (#1689). Default False
+        # refuses such a cloud by naming its rows.
+        socp_allow_relaxed_rows: bool = False,
     ):
         """
         Initialize the GFDM HJB solver.
@@ -486,6 +505,13 @@ class HJBGFDMSolver(BaseHJBSolver):
                 runtime neighborhoods.
             socp_enlargement_step: Number of next-nearest neighbors added per
                 enlargement step (Issue #1106). Default 2.
+            socp_allow_relaxed_rows: ``joint_socp`` scheme only (#1689). An interior
+                row whose joint SOCP is infeasible after C-bisection and enlargement
+                is refused by default: construction raises, naming the rows. True
+                gives such rows the relaxed SOCP's weights, whose M-matrix slack
+                ``eps_M`` is positive, so they are not monotone. They are reported
+                in one WARNING, with their count and the largest ``eps_M``, and are
+                not counted as feasible.
         """
         super().__init__(problem)
 
@@ -685,6 +711,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # SOCP adaptive stencil enlargement (Issue #1106), joint_socp scheme only.
         self._socp_max_stencil_enlargements: int = int(socp_max_stencil_enlargements)
         self._socp_enlargement_step: int = int(socp_enlargement_step)
+        self._socp_allow_relaxed_rows: bool = bool(socp_allow_relaxed_rows)
 
         # Congestion mode for Hamiltonian coupling
         self.congestion_mode = congestion_mode
@@ -974,18 +1001,9 @@ class HJBGFDMSolver(BaseHJBSolver):
                 # larger C up to C_max. Most marginally infeasible stencils
                 # become feasible at C ∈ (1, 8].
                 cone_constant_C_max=8.0,
-                # Always-feasible relaxed SOCP fallback. Eliminates the
-                # discrete scheme switch between joint_socp (overrides L+D)
-                # and Phase 2 M-matrix-QP (overrides only L; leaves D as bare
-                # W-T) that creates discontinuous discretization on irregular
-                # 2D clouds. With this enabled, ALL interior points get
-                # consistent (L, D) from the SOCP framework — well-conditioned
-                # stencils recover exact joint_socp; marginally infeasible
-                # stencils smoothly degrade via slack penalties (continuous
-                # mapping cloud→stencil weights). Empirically required for
-                # 2D obstacle navigation; latent on 1D / quasi-uniform clouds
-                # where infeasibility doesn't fire.
-                use_relaxed_fallback=True,
+                # The relaxed SOCP's rows carry M-matrix slack, so they are not the weights this scheme names: they
+                # are taken only when the caller opts in, and reported (#1689).
+                use_relaxed_fallback=self._socp_allow_relaxed_rows,
                 lambda_M=1.0e4,
                 lambda_C=1.0e4,
                 # SOCP-infeasibility-triggered adaptive stencil enlargement
@@ -1000,16 +1018,13 @@ class HJBGFDMSolver(BaseHJBSolver):
                 visibility_samples=visibility_samples,
                 visibility_margin=visibility_margin,
             )
-            stats = self._joint_socp_stencils.stats
+            stencils = self._joint_socp_stencils
+            stats = stencils.stats
+            if stencils.unplaced_rows:
+                raise ValueError(_joint_socp_refusal(stencils.unplaced_rows, self.collocation_points))
             relax_C_msg = (
                 f"; {stats['n_relaxed_C']} C-relaxed (max C={stats['max_achieved_C']:.2f})"
                 if stats.get("n_relaxed_C", 0) > 0
-                else ""
-            )
-            relax_fb_msg = (
-                f"; {stats['n_relaxed_fallback']} via relaxed SOCP "
-                f"(max ε_M={stats['max_eps_M']:.2e}, ε_C={stats['max_eps_C']:.2e})"
-                if stats.get("n_relaxed_fallback", 0) > 0
                 else ""
             )
             enlarge_msg = (
@@ -1018,26 +1033,26 @@ class HJBGFDMSolver(BaseHJBSolver):
                 if stats.get("n_enlarged", 0) > 0
                 else ""
             )
-            # Issue #1565: the SOCP loop iterates INTERIOR indices only, and the M-matrix-QP
-            # precompute buffer is BOUNDARY-only, so an SOCP-infeasible interior node matches
-            # neither has_stencil branch at solve time and falls through to the bare (non-monotone)
-            # Wendland-Taylor LSQ weights — NOT a Phase-2 M-matrix QP (which never covers interior
-            # nodes). Report the real fallback so the monotone fraction is not over-stated.
             logger.info(
                 f"Precomputed joint SOCP stencils: feasible {stats['n_feasible']}/"
                 f"{stats['n_interior']} interior "
                 f"({stats['n_fast_path']} via Wendland-LSQ fast-path, "
-                f"{stats['n_socp']} via CLARABEL SOCP{relax_C_msg}{enlarge_msg}{relax_fb_msg}) in "
-                f"{stats['time_ms']:.1f}ms; SOCP-infeasible {stats['n_infeasible']} interior node(s) "
-                f"fall through to bare Wendland-Taylor LSQ (NON-MONOTONE; no Phase-2 QP covers "
-                f"interior nodes)"
+                f"{stats['n_socp']} via CLARABEL SOCP{relax_C_msg}{enlarge_msg}); "
+                f"{len(stencils.relaxed_rows)} relaxed, in {stats['time_ms']:.1f}ms"
             )
+            if stencils.relaxed_rows:
+                rows = sorted(stencils.relaxed_rows)
+                logger.warning(
+                    f"HJBGFDMSolver(joint_socp, socp_allow_relaxed_rows=True): {len(rows)} interior row(s) use "
+                    f"relaxed-SOCP weights, max eps_M = {stats['max_eps_M']:.4g}. Their M-matrix slack is positive, "
+                    f"so they are not monotone and are not counted as feasible (#1689). Rows, first 10: {rows[:10]}."
+                )
 
         # Precomputed M-matrix QP stencils at boundary nodes, for joint_socp (the scheme
         # `qp_optimization_level == "precompute"` routes). #1689's PR 2 replaces them with
         # certified positive P2 rows (site h of #1689 comment 6191566926).
-        # SOCP-infeasible interior nodes fall through to bare Wendland-Taylor;
-        # extending the buffer set to cover them was empirically destabilizing
+        # An interior node the joint SOCP cannot place is refused above (#1689);
+        # extending this buffer set to cover such nodes was empirically destabilizing
         # (Lap-only correction creates Lap/Grad inconsistency at those nodes).
         self._precomputed_stencils: PrecomputedMonotoneStencils | None = None
         if self.qp_optimization_level == "precompute":
