@@ -2491,19 +2491,22 @@ class SeparableHamiltonian(HamiltonianBase):
         to per-point loop. Detection result is cached for subsequent calls.
         """
         N = x_batch.shape[0]
+        if N == 0:
+            return np.zeros(0)
 
         if self._potential_is_vectorized is None:
-            # Probe with small batch (at least 2 points needed for shape check)
-            probe_size = min(2, N)
-            if probe_size < 2:
-                # Single-point batch — can't distinguish scalar from vectorized
+            # The probe has d + 1 rows, repeating points when N is smaller. A potential written per
+            # point indexes coordinates, x[0], x[1], ..., which on a batch are its rows, so it returns
+            # one value per coordinate: shape (d,). The probe must not have d rows, or that result
+            # passes as one value per point -- with two rows, every per-point potential in 2-D did
+            # (#2714).
+            d = x_batch.shape[1] if x_batch.ndim == 2 else 1
+            rows = np.arange(d + 1) % N
+            try:
+                probe = np.asarray(_bound_potential(self)(x=x_batch[rows], t=t), dtype=float)
+                self._potential_is_vectorized = probe.shape == (d + 1,)
+            except (TypeError, IndexError, ValueError):
                 self._potential_is_vectorized = False
-            else:
-                try:
-                    probe = np.asarray(_bound_potential(self)(x=x_batch[:2], t=t), dtype=float)
-                    self._potential_is_vectorized = probe.shape == (2,)
-                except (TypeError, IndexError, ValueError):
-                    self._potential_is_vectorized = False
 
         if self._potential_is_vectorized:
             return np.asarray(_bound_potential(self)(x=x_batch, t=t), dtype=float)
