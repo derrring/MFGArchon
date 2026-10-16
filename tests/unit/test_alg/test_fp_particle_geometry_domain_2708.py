@@ -92,28 +92,34 @@ def test_each_channel_keeps_the_particles_in_its_domain(case):
     assert placed > 0
 
 
-@pytest.mark.parametrize("case", ["one domain built twice", "the keyword carries an obstacle"])
+@pytest.mark.parametrize(
+    "case",
+    ["one domain built twice", "an obstacle on the geometry", "an obstacle on the grid's box"],
+)
 def test_two_domain_objects_are_refused_and_each_route_of_the_advice_runs(case):
-    """Two different objects, and which one bounds the particles is not this solver's choice. For one domain built
-    twice the advice is to drop implicit_domain=; for a keyword that cuts a hole out of a disc geometry (#2721 review 1,
-    B1: dropping it solved with every particle in the hole), it is to make that domain the problem's geometry."""
+    """Two different objects would put the particles and the HJB on two domains. For one domain built twice the advice
+    is to drop implicit_domain=. For a keyword that cuts a hole out of a disc geometry (#2721 review 1, B1: dropping it
+    put every particle in the hole) it is the geometry minus that obstacle, built here as the advice spells it, not
+    taken from the keyword: a keyword built on the grid's box, made the geometry, put 435 of 500 particles outside the
+    disc (review 2). The ring start and the drift toward (1, 1) reach both the hole and the arc."""
+    rng = np.random.default_rng(1)
+    radius, angle = rng.uniform(0.30, 0.45, _N), rng.uniform(0.0, 2.0 * np.pi, _N)
+    ring = np.c_[0.5 + radius * np.cos(angle), 0.5 + radius * np.sin(angle)]
     if case == "one domain built twice":
-        geometry, keyword, start, target = _obstacle(), _obstacle(), _corner_start(), [0.5, 0.5]
-        remedy = geometry
+        geometry, keyword, remedy, start, target = _obstacle(), _obstacle(), None, _corner_start(), [0.5, 0.5]
     else:
-        disc = Hypersphere(center=[0.5, 0.5], radius=0.5)
-        geometry, keyword = disc, DifferenceDomain(disc, Hypersphere(center=[0.5, 0.5], radius=0.15))
-        rng = np.random.default_rng(1)
-        radius, angle = rng.uniform(0.30, 0.45, _N), rng.uniform(0.0, 2.0 * np.pi, _N)
-        start, target = np.c_[0.5 + radius * np.cos(angle), 0.5 + radius * np.sin(angle)], [0.5, 0.5]
-        remedy = keyword
-    route = "drop implicit_domain=" if remedy is geometry else r"DifferenceDomain\(geometry, obstacle\)"
+        geometry = Hypersphere(center=[0.5, 0.5], radius=0.5)
+        hole = Hypersphere(center=[0.5, 0.5], radius=0.15)
+        keyword = DifferenceDomain(geometry if case == "an obstacle on the geometry" else _box(), hole)
+        remedy, start, target = DifferenceDomain(geometry, hole), ring, [1.0, 1.0]
+    route = "drop implicit_domain=" if remedy is None else r"DifferenceDomain\(geometry, obstacle\)"
     with pytest.raises(
         ValueError, match=rf"implicit_domain= names a different object.*one coupled problem on two domains.*{route}"
     ):
         _solver(geometry, implicit_domain=keyword)
-    recorded = _solve(_solver(remedy), start, target)
-    assert remedy.contains(recorded).all()
+    domain = geometry if remedy is None else remedy
+    recorded = _solve(_solver(domain), start, target)
+    assert domain.contains(recorded).all()
 
 
 def test_a_curved_outer_boundary_is_a_boundary_too():

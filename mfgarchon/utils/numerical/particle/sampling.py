@@ -1332,7 +1332,7 @@ def _leave_out_cells_with_no_navigable_point(
         why=(
             f"{int(blocked.sum())} cell(s) carrying mass have no navigable point on a {_PROBES_PER_AXIS}-per-axis "
             f"lattice -- the first centred at {centres[blocked_here][0]}: that mass is outside the navigable set "
-            "(inside an obstacle, or beyond a curved boundary), and no "
+            "(inside an obstacle, or beyond the domain's outer boundary), and no "
             "redraw within its cell can place it. It is not moved elsewhere, since that would change the measure the "
             "caller gave."
         ),

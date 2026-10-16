@@ -29,13 +29,13 @@
   - **Initial particles are drawn navigable.**
     - `sample_from_density(..., navigable=)` redraws, within its cell, a jitter that lands where `navigable` is
       False.
-    - Cells carrying mass with no navigable point on a 5-per-axis probe lattice hold mass inside an obstacle, and
-      no redraw can place it. Their share of the mass, over every cell that carries any, is decided by
+    - Cells carrying mass with no navigable point on a 5-per-axis probe lattice hold mass outside the domain, inside
+      an obstacle or beyond its outer boundary, and no redraw can place it. Their share of the mass, over every cell that carries any, is decided by
       `mass_fabrication_gate.leave_out_or_raise`, against the threshold that bounds a non-negativity clip (1e-8):
       - above it the sample is refused, naming the share;
       - at or below it those cells are left out, silently, as a clip of that size is, and the rest renormalised.
-    - The 1-D grid-drift path samples the nodes themselves and decides its nodes inside an obstacle the same way.
-    - `initial_particles` inside an obstacle are refused.
+    - The 1-D grid-drift path samples the nodes themselves and decides its nodes outside the domain the same way.
+    - `initial_particles` outside the domain are refused.
   - **Refused rather than delivered wrong:**
     - an `implicit_domain` with any periodic face on the outer boundary, since a wrapped step is not the segment
       from where it started (#2704);

@@ -6,16 +6,19 @@
     `ImplicitDomain`, and the keyword, the only channel for a grid geometry with a separate obstacle domain.
   - Both naming the same object is accepted. Two different objects that both reach the placement, even two equal
     domains built twice, are refused by name. The message gives both routes: drop `implicit_domain=` when the two are
-    one domain, and when `implicit_domain=` carries an obstacle inside the geometry, make that domain the problem's
-    geometry, e.g. `DifferenceDomain(geometry, obstacle)`.
+    one domain, and when `implicit_domain=` carries an obstacle inside the geometry, make the geometry minus that
+    obstacle the problem's geometry, `DifferenceDomain(geometry, obstacle)`.
   - **Behaviour changes** on an `ImplicitDomain` geometry other than a grid-box `Hyperrectangle`, which is now a
     domain the particles must stay in:
-    - a periodic outer condition is refused, where it solved with particles recorded inside an obstacle;
-    - initial particles, or `m_initial` mass, outside the domain are refused, where they were recorded there;
-    - the GPU path is refused;
+    - a periodic outer condition is refused. With an obstacle it solved with particles recorded inside the obstacle;
+      on a disc, with particles recorded beyond the arc; on a `Hyperrectangle` subclass, which has neither, it solved
+      as a torus, which is now a capability removed;
+    - initial particles outside the domain are refused, and so is `m_initial` mass that #2688's rule cannot place
+      inside it (a cell with no navigable point, above the 1e-8 share); they were recorded there;
+    - the 1-D GPU path is refused;
     - a keyword that cut a hole out of a disc geometry solved its particles on the keyword alone while the problem,
       and so the HJB, solved on the disc: one coupled problem on two domains, which nothing reported. It is now
-      refused by the rule above, and its route is to make the domain with the hole the problem's geometry.
+      refused by the rule above, and its route is to make the disc minus the hole the problem's geometry.
     A `Hyperrectangle` subclass is such a geometry. A periodic grid with a grid-box `Hyperrectangle` keyword now
     solves, where it was refused.
   - On that route every boundary of the geometry off the grid box's walls reflects, whatever boundary condition was

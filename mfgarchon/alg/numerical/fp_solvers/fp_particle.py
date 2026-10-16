@@ -961,10 +961,10 @@ class FPParticleSolver(BaseFPSolver):
             blocked,
             context="FPParticleSolver",
             why=(
-                f"{int(blocked.sum())} grid node(s) carrying m_initial's mass are outside the particles' domain (inside "
-                f"an obstacle, or beyond a curved boundary) -- the first at {x_grid[blocked][0]} -- and this path "
-                "places particles on the nodes it samples. That mass is not "
-                "moved elsewhere, since that would change the measure the caller gave (#2688)."
+                f"{int(blocked.sum())} grid node(s) carrying m_initial's mass are outside the particles' domain "
+                f"(inside an obstacle, or beyond the domain's outer boundary) -- the first at {x_grid[blocked][0]} -- "
+                "and this path places particles on the nodes it samples. That mass is not moved elsewhere, since that "
+                "would change the measure the caller gave (#2688)."
             ),
             remedy=(
                 "Set m_initial to zero at the nodes outside the domain, e.g. "
@@ -983,10 +983,10 @@ class FPParticleSolver(BaseFPSolver):
         inside = ~np.atleast_1d(np.asarray(self._implicit_domain.contains(points), dtype=bool))
         if np.any(inside):
             raise ValueError(
-                f"FPParticleSolver: of {origin}, {int(inside.sum())} of {len(points)} are outside the particles' domain "
-                f"(inside an obstacle, or beyond a curved boundary) -- the first at {points[inside][0]}. They are not "
-                "moved: the first step would start outside the domain, "
-                f"and moving them changes the measure the caller gave (#2688). {advice}"
+                f"FPParticleSolver: of {origin}, {int(inside.sum())} of {len(points)} are outside the particles' "
+                f"domain (inside an obstacle, or beyond the domain's outer boundary) -- the first at "
+                f"{points[inside][0]}. They are not moved: the first step would start outside the domain, and moving "
+                f"them changes the measure the caller gave (#2688). {advice}"
             )
 
     def _generate_brownian_increment_nd(
@@ -1165,8 +1165,9 @@ class FPParticleSolver(BaseFPSolver):
         Both channels may name the same object. Two different objects that both reach the placement are refused: the
         particles would solve on the keyword's domain while the problem, and so the HJB, solves on the geometry's,
         and two equal domains built twice are not told apart. The keyword is for a geometry that cannot carry an
-        obstacle, a grid; on an implicit geometry the obstacle belongs in the geometry. A grid-box `Hyperrectangle` in one channel reaches none, so beside it the
-        other channel declares the domain.
+        obstacle, a grid; on an implicit geometry the obstacle belongs in the geometry, as
+        ``DifferenceDomain(geometry, obstacle)``. A grid-box `Hyperrectangle` in one channel reaches none, so beside it
+        the other channel declares the domain.
         """
         from mfgarchon.geometry.implicit import Hyperrectangle, ImplicitDomain
 
@@ -1189,7 +1190,7 @@ class FPParticleSolver(BaseFPSolver):
             "particles would solve on implicit_domain= while the problem, and so the HJB, solves on the geometry: one "
             "coupled problem on two domains. Two equal domains built twice are not told apart. If they are one "
             "domain, drop implicit_domain= or pass the geometry object. If implicit_domain= carries more -- an "
-            "obstacle inside the geometry -- make that domain the problem's geometry, e.g. "
+            "obstacle inside the geometry -- make the geometry minus that obstacle the problem's geometry, "
             "DifferenceDomain(geometry, obstacle), and drop implicit_domain= (#2708)."
         )
 
