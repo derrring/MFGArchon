@@ -134,4 +134,4 @@ def test_a_row_its_neighbourhood_does_not_contain_is_refused(allow_relaxed):
     message = str(refusal.value)
     assert f"{node} at " in message, f"node {node} is not named: {message}"
     assert "its neighbourhood does not contain it" in message
-    assert "move the node out of that margin, or reduce visibility_margin" in message
+    assert "move it out of the margin, or reduce visibility_margin" in message

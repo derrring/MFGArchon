@@ -572,7 +572,8 @@ class PrecomputedJointSocpStencils:
     unplaced_rows : dict[int, str]
         Each interior node with no stencil, and why: no neighbourhood; a
         neighbourhood that does not contain the node, which the visibility filter
-        leaves for a node within ``visibility_margin`` of the obstacle; or no
+        leaves for a node whose ``obstacle_sdf`` is at most ``visibility_margin``,
+        a node on or inside the obstacle included; or no
         feasible SOCP after the tiers that ran (C-bisection when
         ``cone_constant_C_max`` allows a step, enlargement when enabled, the
         relaxed SOCP when enabled) (#1689). ``HJBGFDMSolver`` refuses a cloud
@@ -630,8 +631,8 @@ class PrecomputedJointSocpStencils:
         # until feasible or C exceeds C_max.
         self._C_max = float(cone_constant_C_max) if cone_constant_C_max is not None else None
         self._C_growth = float(cone_constant_C_growth)
-        # Relaxed-SOCP rows for stencils that fail C-bisection and enlargement. Their
-        # M-matrix slack is positive, so they are recorded in `relaxed_rows` and not
+        # Relaxed-SOCP rows for stencils no exact tier places. They carry slack on the
+        # M-matrix or the cone constraint, so they are recorded in `relaxed_rows` and not
         # counted as feasible (#1689).
         self._use_relaxed_fallback = bool(use_relaxed_fallback)
         self._lambda_M = float(lambda_M)

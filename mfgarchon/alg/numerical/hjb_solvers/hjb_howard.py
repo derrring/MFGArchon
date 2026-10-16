@@ -348,8 +348,9 @@ class HJBHowardSolver:
         # inconsistent. Worse, the old gate did not deliver the property it appeared to guard: a
         # `joint_socp` run gave SOCP-infeasible interior nodes non-monotone weights -- relaxed rows,
         # or bare Wendland-Taylor LSQ -- and this check passed anyway, because it tested for the
-        # OBJECT rather than for monotonicity. Since #1689 such a node is refused at construction
-        # unless `socp_allow_relaxed_rows=True`, which reports its rows.
+        # OBJECT rather than for monotonicity. Since #1689 such a node is refused at construction;
+        # `socp_allow_relaxed_rows=True` lifts the refusal for an infeasible SOCP only, and reports
+        # those rows.
         _socp = getattr(stencil_provider, "_joint_socp_stencils", None)
         _generic = getattr(stencil_provider, "_gfdm_operator", None)
         if _socp is None and getattr(_generic, "get_derivative_weights", None) is None:

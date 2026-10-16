@@ -75,15 +75,18 @@ def _joint_socp_refusal(unplaced: dict[int, str], points: np.ndarray) -> str:
         remedies.append(
             "Where the SOCP is infeasible: socp_max_stencil_enlargements=N retries each such row with up to "
             "N * socp_enlargement_step more neighbours. The added points are visibility-filtered only when obstacle_sdf "
-            "is passed; without it they can cross a wall, so a domain with obstacles should pass it. Or "
-            "socp_allow_relaxed_rows=True accepts relaxed-SOCP rows, which carry slack on the M-matrix or the cone "
-            "constraint: they are reported, not monotone, and not counted as feasible."
+            "is passed; without it they can cross a wall, so a domain with obstacles should pass it. Unless it is "
+            "already set, socp_allow_relaxed_rows=True accepts relaxed-SOCP rows, which carry slack on the M-matrix or "
+            "the cone constraint: they are reported, not monotone, and not counted as feasible. A reason that lists the "
+            "relaxed SOCP means the row failed that too."
         )
     if "its neighbourhood does not contain it" in reasons:
         remedies.append(
-            "A row whose neighbourhood does not contain it lies within visibility_margin of obstacle_sdf, so the "
-            "visibility filter removed the node from its own stencil: move the node out of that margin, or reduce "
-            "visibility_margin. socp_allow_relaxed_rows does not apply to it."
+            "A row whose neighbourhood does not contain it has obstacle_sdf at most visibility_margin at its node, so "
+            "the visibility filter removed the node from its own stencil. A node on or inside the obstacle "
+            "(obstacle_sdf <= 0) is not an interior node of the domain: remove it, or make it a boundary node. "
+            "Otherwise move it out of the margin, or reduce visibility_margin. socp_allow_relaxed_rows does not "
+            "apply to it."
         )
     if "no neighbourhood" in reasons:
         remedies.append("A row with no neighbourhood is refused whatever the options.")
@@ -508,8 +511,8 @@ class HJBGFDMSolver(BaseHJBSolver):
                 ``llf_augmentation=True`` and this is None.
             socp_max_stencil_enlargements: SOCP-infeasibility-triggered adaptive
                 stencil enlargement budget (Issue #1106), ``joint_socp`` scheme
-                only. When > 0, a stencil that is still infeasible after the
-                C-bisection is rebuilt with ``socp_enlargement_step`` additional
+                only. When > 0, a stencil whose joint SOCP is infeasible is
+                rebuilt with ``socp_enlargement_step`` additional
                 next-nearest neighbors and the SOCP retried, up to this many
                 steps; the extra Taylor degrees of freedom can flip a
                 geometrically starved (wall / corner / obstacle-adjacent) stencil
@@ -1012,12 +1015,11 @@ class HJBGFDMSolver(BaseHJBSolver):
                 neighborhoods=self.neighborhoods,
                 cone_constant_C=8.0,  # higher C → cone less binding, picks fast-path Wendland-LSQ where M-matrix holds
                 eps_pos=0.0,
-                # C-bisection: retry infeasible stencils with progressively
-                # larger C up to C_max. Most marginally infeasible stencils
-                # become feasible at C ∈ (1, 8].
+                # C_max = C, so the C-bisection never steps here: a step needs
+                # C * cone_constant_C_growth <= C_max (#1689 review 1).
                 cone_constant_C_max=8.0,
-                # The relaxed SOCP's rows carry M-matrix slack, so they are not the weights this scheme names: they
-                # are taken only when the caller opts in, and reported (#1689).
+                # The relaxed SOCP's rows carry slack on the M-matrix or the cone constraint, so they are not the
+                # weights this scheme names: they are taken only when the caller opts in, and reported (#1689).
                 use_relaxed_fallback=self._socp_allow_relaxed_rows,
                 lambda_M=1.0e4,
                 lambda_C=1.0e4,

@@ -205,9 +205,10 @@ def test_howard_runs_without_socp_stencils_and_says_so():
     `discretisation="central"`, documented as "Does NOT preserve monotonicity ... included for
     comparison only". Refusing here while offering that was inconsistent.
 
-    The old gate also did not deliver the property it appeared to guard: a `joint_socp` run logs
-    SOCP-infeasible interior nodes falling "through to bare Wendland-Taylor LSQ (NON-MONOTONE)" and
-    the check passed anyway, because it tested for the OBJECT rather than for monotonicity.
+    The old gate also did not deliver the property it appeared to guard: a `joint_socp` run gave
+    SOCP-infeasible interior nodes non-monotone weights, and logged some as falling "through to bare
+    Wendland-Taylor LSQ (NON-MONOTONE)", and the check passed anyway, because it tested for the OBJECT
+    rather than for monotonicity. Since #1689 such a node is refused at construction.
 
     So: runs, and warns. The warning is the point -- a silent acceptance would trade one wrong
     behaviour for another.
