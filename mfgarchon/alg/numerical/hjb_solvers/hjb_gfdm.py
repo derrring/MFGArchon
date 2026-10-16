@@ -14,7 +14,6 @@ from scipy.optimize import approx_fprime
 from mfgarchon.alg.numerical.gfdm_components import (
     BoundaryHandler,
     GridCollocationMapper,
-    MonotonicityEnforcer,
     NeighborhoodBuilder,
     PrecomputedMonotoneStencils,
 )
@@ -38,7 +37,6 @@ from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace, s
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.deprecation import NEVER_READ, WRAPPER_FRAMES, deprecated_value, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
-from mfgarchon.utils.numerical.qp_utils import QPCache, QPSolver
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
     resolve_diffusion_source,
@@ -109,15 +107,7 @@ class HJBGFDMSolver(BaseHJBSolver):
     2. Taylor expansion with weighted least squares for derivative approximation
     3. Newton iteration for nonlinear HJB equations
     4. Support for various boundary conditions
-    5. Optional QP constraints for monotonicity preservation
-
-    QP Optimization Levels:
-    - "none": GFDM without QP constraints (fastest, no monotonicity guarantee)
-    - "auto": Adaptive QP with M-matrix checking (runtime QP when needed)
-    - "always": Force QP at every point (slowest, for debugging)
-    - "precompute": Precomputed monotone stencils (fast + monotone, recommended)
-
-    Note: Monotonicity and QP constraint functionality is provided by MonotonicityEnforcer component.
+    5. An optional monotone stencil construction, ``monotonicity_scheme="joint_socp"``
 
     Implements BoundaryCapable protocol for unified BC handling (Issue #527).
 
@@ -243,24 +233,12 @@ class HJBGFDMSolver(BaseHJBSolver):
         Returns:
             Configured HJBGFDMSolver instance
         """
-        # Translate QPConfig.optimization_level to the v0.18.0 canonical axes
-        # (qp_optimization_level was removed from __init__ in v0.25.0, Issue #1070).
-        _qp_level_to_scheme: dict[str, tuple[str, str | None]] = {
-            "none": ("none", None),
-            "auto": ("qp_m_matrix", "adaptive"),
-            "always": ("qp_m_matrix", "always"),
-        }
-        _mono_scheme, _mono_app = _qp_level_to_scheme.get(config.qp.optimization_level, ("none", None))
         kwargs: dict[str, Any] = {
             "delta": config.delta,
             "taylor_order": config.taylor_order,
             "weight_function": config.weight_function,
             "weight_scale": config.weight_scale,
-            "monotonicity_scheme": _mono_scheme,
-            "monotonicity_application": _mono_app,
-            "qp_solver": config.qp.solver,
-            "qp_warm_start": config.qp.warm_start,
-            "qp_constraint_mode": config.qp.constraint_mode,
+            "monotonicity_scheme": config.monotonicity_scheme,
             "neighborhood_mode": config.neighborhood.mode,
             "k_neighbors": config.neighborhood.k_neighbors,
             "adaptive_neighborhoods": config.neighborhood.adaptive,
@@ -286,7 +264,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         removal_blockers=["internal_usage", "migration_docs"],
     )
     @retired_parameters(
-        {"qp_usage_target": "the QP is governed by monotonicity_scheme and monotonicity_application"},
+        {"qp_usage_target": "the derivative-coefficient QP it named is deleted (#1689)"},
         issue="#2648",
         since="v0.22.0",
         never_read=True,
@@ -312,17 +290,10 @@ class HJBGFDMSolver(BaseHJBSolver):
         inner_solver: str = "newton",
         boundary_indices: np.ndarray | None = None,
         boundary_conditions: dict | BoundaryConditions | None = None,
-        # Monotonicity construction (renamed from qp_optimization_level v0.18.0; Issue #XXXX).
-        # Two orthogonal axes:
-        #   - monotonicity_scheme: WHICH constraint is enforced
-        #   - monotonicity_application: WHEN to enforce it
-        # See docstring for full semantics.
+        # Monotone stencil construction: "none" or "joint_socp". See the docstring.
         monotonicity_scheme: str | None = None,
         monotonicity_application: str | None = None,
         qp_usage_target: float = NEVER_READ,
-        qp_solver: str = "osqp",  # "osqp" or "scipy"
-        qp_warm_start: bool = True,  # Enable QP warm-starting
-        qp_constraint_mode: str = "indirect",  # "indirect" or "hamiltonian"
         # Adaptive neighborhood parameters
         adaptive_neighborhoods: bool = False,
         k_min: int | None = None,
@@ -392,9 +363,7 @@ class HJBGFDMSolver(BaseHJBSolver):
             monotonicity_scheme: Which monotonicity construction to enforce on the GFDM
                 Laplacian (and, for joint_socp, the per-edge cone on the gradient stencil):
                 - "none": no constraints (fastest; no monotonicity guarantee).
-                - "qp_m_matrix": classical M-matrix QP — projects unconstrained
-                  Wendland-Taylor Laplacian weights onto $L_{ij} \\geq 0$ for $j \\neq i$.
-                - "joint_socp": (Phase 1B follow-up) joint SOCP — M-matrix on $-\\Delta_h$
+                - "joint_socp": joint SOCP — M-matrix on $-\\Delta_h$
                   + per-edge cone $\\|D_{ij}\\|_2 \\leq C h_i L_{ij}$, closing the discrete
                   comparison principle (audit-major contribution).
                   Scope (Issue #1074): joint_socp enforces the M-matrix property PER
@@ -407,29 +376,13 @@ class HJBGFDMSolver(BaseHJBSolver):
                   or ``monotonicity_enforcer.verify_assembled_m_matrix(...)`` to check
                   the assembled M-matrix / DMP property for a specific problem and
                   discretization.
-                Default: "none". (Renamed from qp_optimization_level in v0.18.0.)
-            monotonicity_application: When the chosen scheme is enforced (only
-                meaningful for non-"none" schemes):
-                - "adaptive": only at nodes where the unconstrained weights violate
-                  the constraint (recommended for qp_m_matrix).
-                - "always": at every node, every solve.
-                - "precompute": cache feasible weights at construction; reuse for all
-                  Picard iterations / time steps. Recommended for joint_socp.
-                Default (None): use scheme-recommended default — "adaptive" for
-                qp_m_matrix, "precompute" for joint_socp.
-            qp_usage_target: Refused when passed (#2648): it never had an effect; the QP is governed by
-                monotonicity_scheme and monotonicity_application. The name goes in v0.25.0.
-            qp_solver: QP solver backend (default "osqp"):
-                - "osqp": Use OSQP solver (fast convex QP, 5-10× faster than scipy)
-                - "scipy": Use scipy.optimize.minimize (SLSQP or L-BFGS-B)
-            qp_warm_start: Enable warm-starting for QP solves (default True).
-                When True, uses previous QP solution as initial guess for next solve.
-                Provides 2-3× additional speedup for OSQP on similar QP problems.
-                Only applies to OSQP solver (scipy does not support efficient warm-starting).
-            qp_constraint_mode: Type of monotonicity constraints (default "indirect"):
-                - "indirect": Constraints on Taylor coefficients (simpler, approximate)
-                - "hamiltonian": Direct Hamiltonian gradient constraints dH/du_j >= 0
-                  (stricter, better monotonicity guarantees, requires gamma parameter)
+                Default: "none". The derivative-coefficient QP, ``"qp_m_matrix"``, is deleted (#1689): it
+                constrained the solution's Taylor coefficients, not the stencil's weights.
+            monotonicity_application: ``"precompute"`` (the only one ``joint_socp`` has: its weights
+                are solved once at construction) or None, which means the same. Any other value is refused,
+                with either scheme; with ``"none"`` the two have no effect.
+            qp_usage_target: Refused when passed (#2648): it never had an effect, and the QP it named is
+                deleted (#1689). The name goes in v0.25.0.
             adaptive_neighborhoods: Enable adaptive delta enlargement to guarantee well-posed problems.
                 When enabled, points with insufficient neighbors get locally enlarged delta.
                 Maintains theoretical soundness while ensuring practical robustness.
@@ -543,21 +496,12 @@ class HJBGFDMSolver(BaseHJBSolver):
         if getattr(self.problem, "volatility_kind", None) == "tensor":
             raise NotImplementedError(_TENSOR_VOLATILITY_REFUSAL)
 
-        # --- Resolve (scheme, application) from new API or legacy alias (v0.18.0) ---
-        #
-        # Two orthogonal axes:
-        #   monotonicity_scheme:        WHICH constraint is enforced
-        #     "none" | "qp_m_matrix" | "joint_socp"
-        #   monotonicity_application:   WHEN it is enforced
-        #     "adaptive" | "always" | "precompute"
-        #
-        # Application defaults per scheme (when application=None):
-        #   qp_m_matrix → "adaptive"     (= legacy "auto", recommended runtime check)
-        #   joint_socp  → "precompute"   (audit-major default; weights cached at construction)
-        #   none        → ignored
-        #
-        # v0.25.0 (Issue #1070): qp_optimization_level= parameter removed; pass
-        # monotonicity_scheme= and monotonicity_application= directly.
+        # --- Resolve (scheme, application) ---
+        #   monotonicity_scheme:      "none" | "joint_socp"
+        #   monotonicity_application: "precompute" for joint_socp, whose weights are solved at
+        #                             construction; ignored for "none".
+        # The derivative-coefficient QP, "qp_m_matrix", and its "adaptive"/"always" applications are
+        # deleted (#1689 members 2 and 6): they constrained u's Taylor coefficients, not the stencil.
 
         # Issue #1034: warn when user defaults to "none" (bare Wendland-Taylor LSQ).
         # This default produces a method whose M-matrix structure is not enforced;
@@ -579,10 +523,6 @@ class HJBGFDMSolver(BaseHJBSolver):
                 "(non-negative off-centre Laplacian weights and a per-edge cone, "
                 "solved per stencil; whether its discrete maximum principle holds is "
                 "decided per problem and run, not a priori; `check_dmp=True` checks it). "
-                "`monotonicity_scheme='qp_m_matrix'` "
-                "is not a monotone scheme: at runtime it constrains the solution's "
-                "Taylor coefficients, not the stencil's weights, and its precompute "
-                "path drops the stencil's exactness on quadratics (#1689). "
                 "See Issue #1034. Pass `monotonicity_scheme='none'` explicitly "
                 "to suppress this warning if the bare scheme is intentional.",
                 UserWarning,
@@ -592,23 +532,15 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         if monotonicity_scheme is not None or monotonicity_application is not None:
             scheme = monotonicity_scheme if monotonicity_scheme is not None else "none"
-            valid_schemes = ("none", "qp_m_matrix", "joint_socp")
+            valid_schemes = ("none", "joint_socp")
             if scheme not in valid_schemes:
                 raise ValueError(f"monotonicity_scheme must be one of {valid_schemes}; got '{scheme}'.")
-            valid_apps = ("adaptive", "always", "precompute", None)
+            valid_apps = ("precompute", None)
             if monotonicity_application not in valid_apps:
                 raise ValueError(
                     f"monotonicity_application must be one of {valid_apps}; got '{monotonicity_application}'."
                 )
-            # Resolve application via scheme-default if unspecified
-            if monotonicity_application is None:
-                application = {
-                    "none": "ignored",
-                    "qp_m_matrix": "adaptive",
-                    "joint_socp": "precompute",
-                }[scheme]
-            else:
-                application = monotonicity_application
+            application = "ignored" if scheme == "none" else "precompute"
         else:
             # Default: no monotonicity constraints
             scheme = "none"
@@ -618,49 +550,22 @@ class HJBGFDMSolver(BaseHJBSolver):
         self.monotonicity_scheme = scheme
         self.monotonicity_application = application
 
-        # Reconstruct legacy `qp_optimization_level` for backward-compat internal branches
-        # (lines using self.qp_optimization_level == "auto"/"always"/"precompute"/"none"):
+        # The internal routing name `qp_optimization_level`: "none" selects the batch Hamiltonian path,
+        # "precompute" the per-point Newton path joint_socp's precomputed weights need.
         if scheme == "none":
             self.qp_optimization_level = "none"
-        elif scheme == "qp_m_matrix":
-            self.qp_optimization_level = application  # adaptive→"auto"-like, etc.
-            # Note: "adaptive" maps to legacy "auto" semantically, but the legacy code
-            # branches check string == "auto", so we need to translate:
-            if application == "adaptive":
-                self.qp_optimization_level = "auto"
         elif scheme == "joint_socp":
             # joint_socp precomputes weights at __init__ (per-edge cone + M-matrix
             # via SOCP); semantically this IS a precompute application. Setting
-            # legacy `qp_optimization_level = "precompute"` selects the per-point
-            # HJB Newton path (line ~2425), matching the qp_m_matrix+precompute
+            # `qp_optimization_level = "precompute"` selects the per-point HJB Newton
             # path. Setting it to "none" instead would route through the batch
             # Hamiltonian path which evaluates H(t, x, p, m) differently and breaks
             # numerical equivalence with the legacy `precompute_socp_weights +
             # patch_operator` workflow used in research code.
             self.qp_optimization_level = "precompute"
-            if application not in ("precompute", "ignored"):
-                warnings.warn(
-                    f"monotonicity_scheme='joint_socp' currently supports only "
-                    f"application='precompute'; got '{application}'. Falling back to "
-                    f"'precompute'. Adaptive/always strategies are tracked for a "
-                    f"follow-up PR.",
-                    stacklevel=2,
-                    skip_file_prefixes=WRAPPER_FRAMES,  # past `deprecated_value`'s wrapper (#2579)
-                )
 
         # Method name
-        if scheme == "none":
-            self.hjb_method_name = "GFDM"
-        elif scheme == "qp_m_matrix":
-            self.hjb_method_name = {
-                "adaptive": "GFDM-QP",
-                "always": "GFDM-QP-Always",
-                "precompute": "GFDM-Precompute",
-            }.get(application, f"GFDM-{application}")
-        elif scheme == "joint_socp":
-            self.hjb_method_name = f"GFDM-JointSOCP-{application}"
-        else:
-            self.hjb_method_name = f"GFDM-{self.qp_optimization_level}"
+        self.hjb_method_name = "GFDM" if scheme == "none" else f"GFDM-JointSOCP-{application}"
 
         # Set defaults if still None
         if max_newton_iterations is None:
@@ -781,17 +686,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         self._socp_max_stencil_enlargements: int = int(socp_max_stencil_enlargements)
         self._socp_enlargement_step: int = int(socp_enlargement_step)
 
-        # Monotonicity scheme (single source of truth) — already set above (v0.18.0 rename)
-        # self.monotonicity_scheme and self.qp_optimization_level both = resolved monotonicity_scheme
-
-        # QP usage target (deprecated, kept for backward compatibility)
-        self.qp_usage_target = qp_usage_target
-
-        # QP solver selection
-        self.qp_solver = qp_solver
-        self.qp_warm_start = qp_warm_start
-        self.qp_constraint_mode = qp_constraint_mode
-
         # Congestion mode for Hamiltonian coupling
         self.congestion_mode = congestion_mode
         # Issue #1426: congestion_mode is stored but never read — 'multiplicative' was a silent
@@ -802,24 +696,6 @@ class HJBGFDMSolver(BaseHJBSolver):
                 f"never applied, so it would silently behave as 'additive'. Only 'additive' is supported."
             )
 
-        # Initialize QP components (will be fully initialized after neighborhoods are built)
-        # Map qp_solver parameter to QPSolver backend
-        qp_backend = "auto" if qp_solver == "osqp" else "scipy-slsqp"
-        self._qp_cache = QPCache(max_size=1000)
-        self._qp_solver_instance = QPSolver(
-            backend=qp_backend,
-            enable_warm_start=qp_warm_start,
-            cache=self._qp_cache,
-        )
-
-        # Legacy warm-start cache (kept for backward compatibility, but unused)
-        self._qp_warm_start_cache: dict[int, tuple[np.ndarray, np.ndarray | None]] = {}
-
-        # Placeholder for MonotonicityEnforcer - will be initialized after neighborhoods built
-        self._monotonicity_enforcer: MonotonicityEnforcer | None = None
-
-        # QP stats placeholder (will be aliased to enforcer.stats after initialization)
-        self.qp_stats: dict[str, Any] = {}
         self._current_point_idx = 0
 
         # Adaptive neighborhood parameters
@@ -1077,42 +953,6 @@ class HJBGFDMSolver(BaseHJBSolver):
             # Legacy fallback
             self._build_taylor_matrices()
 
-        # Initialize MonotonicityEnforcer component (Issue #545: composition over mixins)
-        # Only create enforcer if QP optimization is enabled
-        if self.qp_optimization_level != "none":
-            self._monotonicity_enforcer = MonotonicityEnforcer(
-                qp_solver=self._qp_solver_instance,
-                qp_constraint_mode=self.qp_constraint_mode,
-                collocation_points=self.collocation_points,
-                neighborhoods=self.neighborhoods,
-                multi_indices=self.multi_indices,
-                domain_bounds=self.domain_bounds,
-                delta=self.delta,
-                volatility_function=self._get_volatility_value,
-            )
-            # Alias qp_stats to enforcer.stats for backward compatibility
-            self.qp_stats = self._monotonicity_enforcer.stats
-        else:
-            self._monotonicity_enforcer = None
-            # Initialize empty qp_stats for "none" level
-            self.qp_stats = {
-                "total_qp_solves": 0,
-                "qp_times": [],
-                "violations_detected": 0,
-                "violation_point_indices": set(),
-                "violation_laplacian": 0,
-                "violation_gradient": 0,
-                "violation_higher_order": 0,
-                "points_checked": 0,
-                "qp_successes": 0,
-                "qp_failures": 0,
-                "qp_fallbacks": 0,
-                "slsqp_solves": 0,
-                "lbfgsb_solves": 0,
-                "osqp_solves": 0,
-                "osqp_failures": 0,
-            }
-
         # Initialize precomputed joint SOCP stencils first (joint_socp scheme only).
         # Audit-major Phase 1B: enforce M-matrix + per-edge cone at all interior nodes
         # where the joint SOCP is feasible (paper Theorem `thm:joint_socp_feasibility`).
@@ -1193,10 +1033,9 @@ class HJBGFDMSolver(BaseHJBSolver):
                 f"interior nodes)"
             )
 
-        # Initialize precomputed M-matrix QP stencils at boundary nodes.
-        # Activated under both `qp_optimization_level == "precompute"` (legacy
-        # qp_m_matrix scheme) and `monotonicity_scheme == "joint_socp"` (which
-        # internally aliases qp_optimization_level to "precompute" — see above).
+        # Precomputed M-matrix QP stencils at boundary nodes, for joint_socp (the scheme
+        # `qp_optimization_level == "precompute"` routes). #1689's PR 2 replaces them with
+        # certified positive P2 rows (site h of #1689 comment 6191566926).
         # SOCP-infeasible interior nodes fall through to bare Wendland-Taylor;
         # extending the buffer set to cover them was empirically destabilizing
         # (Lap-only correction creates Lap/Grad inconsistency at those nodes).
@@ -1736,14 +1575,10 @@ class HJBGFDMSolver(BaseHJBSolver):
             grad_weights = weights["grad_weights"]  # shape: (d, n_neighbors)
             lap_weights = weights["lap_weights"]  # shape: (n_neighbors,)
 
-            # Override Laplacian weights with M-matrix QP precomputed monotone
-            # weights if available. Two activation paths both populate
-            # self._precomputed_stencils:
-            #   (1) qp_m_matrix scheme + precompute application (legacy path)
-            #   (2) joint_socp scheme — applies M-matrix QP at boundary buffer
-            #       nodes where joint SOCP is infeasible (Phase 2 fallback per
-            #       paper §831). The `joint_socp_stencils` override below takes
-            #       priority for SOCP-feasible interior nodes.
+            # Override Laplacian weights with joint_socp's precomputed boundary-buffer
+            # weights where it has them (`self._precomputed_stencils`). The
+            # `joint_socp_stencils` override below takes priority for SOCP-feasible
+            # interior nodes.
             if self._precomputed_stencils is not None and self._precomputed_stencils.has_stencil(i):
                 precomputed = self._precomputed_stencils.get_laplacian_weights(i)
                 if precomputed is not None:
@@ -1751,9 +1586,8 @@ class HJBGFDMSolver(BaseHJBSolver):
 
             # Override BOTH Laplacian and gradient weights with joint SOCP weights at
             # interior nodes where SOCP is feasible (audit-major Phase 1B). This takes
-            # priority over qp_m_matrix precompute. Boundary buffer nodes where SOCP
-            # is infeasible fall back to qp_m_matrix above (or default Wendland-Taylor
-            # if qp_m_matrix precompute also doesn't have a stencil there).
+            # priority over the boundary-buffer weights above; a node neither covers keeps
+            # the default Wendland-Taylor weights (#1689 sites g and h, PR 2).
             if self._joint_socp_stencils is not None and self._joint_socp_stencils.has_stencil(i):
                 socp_weights = self._joint_socp_stencils.get_weights_dict(i)
                 if socp_weights is not None:
@@ -1842,11 +1676,11 @@ class HJBGFDMSolver(BaseHJBSolver):
         neighborhood = self.neighborhoods[point_idx]
         has_ghost = neighborhood.get("has_ghost", False)
 
-        # Fast path: delegate to GFDMOperator when no ghost particles and no QP needed
+        # Fast path: GFDMOperator, at level "none" with no ghost particles
         if qp_level == "none" and not has_ghost:
             return self._gfdm_operator.approximate_derivatives_at_point(u_values, point_idx)
 
-        # Slow path: handle ghost particles and/or QP constraints
+        # Slow path: this solver's own least squares, for ghost particles and at joint_socp's "precompute" level
         if self.taylor_matrices[point_idx] is None:
             return {}
 
@@ -1878,29 +1712,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # For ghost particles: u_ghost = u_center → b = 0, enforcing ∂u/∂n = 0
         b = u_neighbors - u_center
 
-        if qp_level == "always":
-            # "always" level: Force QP at every point without checking M-matrix
-            derivative_coeffs = self._monotonicity_enforcer.solve_constrained_qp(taylor_data, b, point_idx)  # type: ignore[union-attr]
-        elif qp_level == "auto":
-            # "auto" level: Adaptive QP with M-matrix checking
-            # First try unconstrained solution to check if constraints are needed
-            unconstrained_coeffs = self._monotonicity_enforcer._solve_unconstrained_fallback(taylor_data, b)  # type: ignore[union-attr]
-
-            # Check if unconstrained solution violates monotonicity (M-matrix property)
-            self.qp_stats["points_checked"] += 1
-            needs_constraints = self._monotonicity_enforcer.check_monotonicity_violation(
-                unconstrained_coeffs, point_idx
-            )  # type: ignore[union-attr]
-
-            if needs_constraints:
-                # Apply constrained QP to enforce monotonicity
-                self.qp_stats["violations_detected"] += 1
-                self.qp_stats["violation_point_indices"].add(point_idx)
-                derivative_coeffs = self._monotonicity_enforcer.solve_constrained_qp(taylor_data, b, point_idx)  # type: ignore[union-attr]
-            else:
-                # Use faster unconstrained solution
-                derivative_coeffs = unconstrained_coeffs
-        elif taylor_data.get("use_svd", False):  # type: ignore[attr-defined]
+        if taylor_data.get("use_svd", False):  # type: ignore[attr-defined]
             # Use SVD: solve using pseudoinverse with truncated SVD
             sqrt_W = taylor_data["sqrt_W"]
             U = taylor_data["U"]
@@ -2059,62 +1871,21 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         return derivatives
 
-    def compute_all_derivatives(
-        self, u: np.ndarray, use_qp: bool | None = None
-    ) -> dict[int, dict[tuple[int, ...], float]]:
+    def compute_all_derivatives(self, u: np.ndarray) -> dict[int, dict[tuple[int, ...], float]]:
         """
-        Compute derivatives at all collocation points using precomputed Taylor matrices.
-
-        When to use this vs GFDMOperator:
-        - Use this method when you need QP constraints for monotonicity (M-matrix)
-        - Use GFDMOperator for general GFDM needs (FP solver, one-off computations)
-
-        Example:
-            # For QP-constrained derivatives (HJB specific):
-            solver = HJBGFDMSolver(problem, points, monotonicity_scheme="auto")
-            derivs = solver.compute_all_derivatives(u, use_qp=True)
-
-            # For general GFDM (simpler, no QP):
-            from mfgarchon.utils.numerical import GFDMOperator
-            gfdm = GFDMOperator(points, delta=0.1)
-            grad = gfdm.gradient(u)
-            lap = gfdm.laplacian(u)
+        Compute derivatives at all collocation points using precomputed Taylor matrices, with this
+        solver's ghost handling and boundary rotation. For general GFDM derivatives use
+        ``mfgarchon.utils.numerical.GFDMOperator``.
 
         Args:
             u: Function values at collocation points, shape (n_points,)
-            use_qp: Override QP constraint behavior for this call.
-                None: Use solver's qp_optimization_level setting
-                True: Force QP constraints at all points
-                False: Disable QP constraints for this call
 
         Returns:
             Dictionary mapping point index to derivative dictionary.
             derivatives[i] = {(1,): du/dx, (2,): d²u/dx², ...} for 1D
             derivatives[i] = {(1,0): du/dx, (0,1): du/dy, (2,0): d²u/dx², ...} for 2D
         """
-        # Optionally override QP level for this computation
-        saved_qp_level = None
-        if use_qp is not None:
-            saved_qp_level = self.qp_optimization_level
-            self.qp_optimization_level = "always" if use_qp else "none"
-
-        try:
-            all_derivatives: dict[int, dict[tuple[int, ...], float]] = {}
-            for i in range(self.n_points):
-                all_derivatives[i] = self.approximate_derivatives(u, i)
-            return all_derivatives
-        finally:
-            # Restore QP level if overridden
-            if saved_qp_level is not None:
-                self.qp_optimization_level = saved_qp_level
-
-    # Note: QP methods moved to MonotonicityEnforcer component (Issue #545)
-    # - solve_constrained_qp() (was _solve_monotone_constrained_qp)
-    # - _solve_unconstrained_fallback()
-    # - check_monotonicity_violation() (was _check_monotonicity_violation)
-    # - check_m_matrix() (was _check_m_matrix_property)
-    # - print_diagnostics() (was print_qp_diagnostics)
-    # - compute_fd_weights_from_taylor() (was _compute_fd_weights_from_taylor)
+        return {i: self.approximate_derivatives(u, i) for i in range(self.n_points)}
 
     def _approximate_all_derivatives_cached(self, u: np.ndarray) -> dict[int, dict[tuple[int, ...], float]]:
         """Compute all derivatives at once (for caching between residual/Jacobian)."""
@@ -2228,8 +1999,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         Compute HJB residual using pre-computed derivatives (per-point path).
 
         Per-point path via problem.H(). The potential V(x) comes from the
-        Hamiltonian class (e.g., SeparableHamiltonian._potential). Active for custom problems
-        (is_custom=True) or when QP monotonicity is enabled. See Issue #766.
+        Hamiltonian class (e.g., SeparableHamiltonian._potential). Active wherever the batch path is not:
+        joint_socp's precomputed weights, or a problem with no hamiltonian_class. See Issue #766.
         """
         from mfgarchon.core.derivatives import from_multi_index_dict
 
@@ -3050,11 +2821,6 @@ class HJBGFDMSolver(BaseHJBSolver):
         """
         return resolve_diffusion_source(source, index=point_idx, points=self.collocation_points)
 
-    # Note: _check_monotonicity_violation moved to MonotonicityEnforcer component
-    # Note: _check_m_matrix_property moved to MonotonicityEnforcer component
-    # Note: _build_monotonicity_constraints moved to MonotonicityEnforcer component
-    # Note: _build_hamiltonian_gradient_constraints moved to MonotonicityEnforcer component
-
     @retired_volatility_keywords
     def solve_hjb_system(
         self,
@@ -3246,10 +3012,6 @@ class HJBGFDMSolver(BaseHJBSolver):
                     n,
                     additive_source=rc_n,
                 )
-
-                # Update progress bar with QP statistics if available (Issue #587 Protocol - no hasattr needed)
-                if self.qp_optimization_level in ["auto", "always"]:
-                    timestep_range.update_metrics(qp_solves=self.qp_stats.get("total_qp_solves", 0))
 
         # Return format depends on input mode
         if is_meshfree_input:
@@ -3752,7 +3514,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         #    Fast: numpy vectorized over all collocation points at once
         #
         # 2. Per-point path (fallback):
-        #    Active when: NOT the batch path -- QP mode enabled, is_custom=True without a
+        #    Active when: NOT the batch path -- joint_socp's precomputed weights, is_custom=True without a
         #    hamiltonian_class, or no hamiltonian_class at all. Calls problem.H() per-point
         #    over collocation points. (Issue #1071 Phase 5 retired the dead legacy-LQ
         #    vectorized residual branch that ran only for is_custom=False mock problems.)

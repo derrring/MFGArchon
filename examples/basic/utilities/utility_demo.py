@@ -5,7 +5,6 @@ Utility Module Demonstration
 Demonstrates new utility features from Phase 2.2 improvements:
 1. Particle interpolation utilities
 2. Geometry utilities (SDF, obstacles)
-3. QP solver with caching
 
 Run:
     python examples/basic/utility_demo.py
@@ -15,8 +14,6 @@ import numpy as np
 
 from mfgarchon.utils import (
     CircleObstacle,
-    QPCache,
-    QPSolver,
     RectangleObstacle,
     Union,
     create_circle_obstacle,
@@ -101,61 +98,6 @@ def demo_geometry_utilities():
         print(f"   Point {point}: SDF = {sdf:+.3f}, inside = {inside}")
 
 
-def demo_qp_solver():
-    """Demonstrate QP solver with caching."""
-    print("\n" + "=" * 60)
-    print("QP Solver Demo")
-    print("=" * 60)
-
-    # Create solver with caching
-    cache = QPCache(max_size=100)
-    solver = QPSolver(backend="auto", enable_warm_start=True, cache=cache)
-
-    print("\n1. Solver configuration")
-    print(f"   Backend: {solver.backend}")
-    print(f"   Warm-start: {solver.enable_warm_start}")
-    print(f"   Cache size: {cache.max_size}")
-
-    # Solve a simple constrained least-squares problem
-    print("\n2. Solving constrained least-squares")
-    np.random.seed(42)
-    A = np.random.randn(20, 5)
-    b = np.random.randn(20)
-    W = np.eye(20)
-    bounds = [(-2, 2)] * 5  # Constrain all variables to [-2, 2]
-
-    print("   Problem: min ||W^(1/2) (Ax - b)||^2  s.t. -2 ≤ x ≤ 2")
-    print(f"   Matrix A: {A.shape}, vector b: {b.shape}")
-
-    # First solve
-    x1 = solver.solve_weighted_least_squares(A, b, W, bounds=bounds, point_id=0)
-    print(f"   Solution: {x1}")
-    print(f"   Bounds satisfied: {np.all(x1 >= -2) and np.all(x1 <= 2)}")
-
-    # Solve again with same problem (should hit cache)
-    print("\n3. Solving again (cache test)")
-    x2 = solver.solve_weighted_least_squares(A, b, W, bounds=bounds, point_id=0)
-    print(f"   Cache hits: {solver.stats['cache_hits']}")
-    print(f"   Cache misses: {solver.stats['cache_misses']}")
-    print(f"   Solutions match: {np.allclose(x1, x2)}")
-
-    # Solve with modified problem (warm-start test)
-    print("\n4. Solving modified problem (warm-start test)")
-    b_mod = b + 0.1 * np.random.randn(20)
-    solver.solve_weighted_least_squares(A, b_mod, W, bounds=bounds, point_id=0)
-    print(f"   Warm starts: {solver.stats['warm_starts']}")
-    print(f"   Cold starts: {solver.stats['cold_starts']}")
-
-    # Print statistics
-    print("\n5. Solver statistics")
-    print(f"   Total solves: {solver.stats['total_solves']}")
-    print(f"   Successes: {solver.stats['successes']}")
-    print(f"   Cache hit rate: {cache.hit_rate:.1%}")
-    print(
-        f"   Warm-start rate: {solver.stats['warm_starts'] / (solver.stats['warm_starts'] + solver.stats['cold_starts']):.1%}"
-    )
-
-
 def main():
     """Run all utility demonstrations."""
     print("\n" + "=" * 60)
@@ -165,7 +107,6 @@ def main():
 
     demo_particle_interpolation()
     demo_geometry_utilities()
-    demo_qp_solver()
 
     print("\n" + "=" * 60)
     print("Demo complete")

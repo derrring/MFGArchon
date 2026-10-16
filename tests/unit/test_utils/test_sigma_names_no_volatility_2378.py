@@ -133,11 +133,6 @@ def test_the_renamed_public_api_refuses_sigma_by_name():
         ("mfgarchon.alg.numerical.hjb_solvers.base_hjb:compute_hjb_jacobian", "sigma_at_n", "volatility_at_n"),
         ("mfgarchon.alg.numerical.hjb_solvers.base_hjb:newton_hjb_step", "sigma_at_n", "volatility_at_n"),
         ("mfgarchon.alg.numerical.hjb_solvers.base_hjb:solve_hjb_timestep_newton", "sigma_at_n", "volatility_at_n"),
-        (
-            "mfgarchon.alg.numerical.gfdm_components.monotonicity_enforcer:MonotonicityEnforcer",
-            "sigma_function",
-            "volatility_function",
-        ),
     ],
 )
 def test_the_part3_renames_refuse_the_old_keyword_by_name(owner, old, new):

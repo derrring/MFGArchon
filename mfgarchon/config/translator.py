@@ -254,16 +254,8 @@ def _map_gfdm_to_hjb_kwargs(gfdm_cfg: Any, kwargs: dict[str, Any]) -> None:
     if "congestion_mode" in gfdm_cfg.model_fields_set:
         kwargs["congestion_mode"] = gfdm_cfg.congestion_mode
 
-    # QP sub-config
-    _qp_map = {"none": "none", "auto": "qp_m_matrix", "always": "joint_socp"}
-    if "optimization_level" in gfdm_cfg.qp.model_fields_set:
-        kwargs["monotonicity_scheme"] = _qp_map[gfdm_cfg.qp.optimization_level]
-    if "solver" in gfdm_cfg.qp.model_fields_set:
-        kwargs["qp_solver"] = gfdm_cfg.qp.solver
-    if "warm_start" in gfdm_cfg.qp.model_fields_set:
-        kwargs["qp_warm_start"] = gfdm_cfg.qp.warm_start
-    if "constraint_mode" in gfdm_cfg.qp.model_fields_set:
-        kwargs["qp_constraint_mode"] = gfdm_cfg.qp.constraint_mode
+    if "monotonicity_scheme" in gfdm_cfg.model_fields_set:
+        kwargs["monotonicity_scheme"] = gfdm_cfg.monotonicity_scheme
 
     # Neighborhood sub-config
     if "mode" in gfdm_cfg.neighborhood.model_fields_set:

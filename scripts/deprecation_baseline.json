@@ -1,9 +1,9 @@
 {
   "internal_usage_cleared": 1,
-  "total": 127,
+  "total": 126,
   "type:function": 16,
   "type:parameter": 34,
   "type:property": 1,
-  "type:retired_parameters": 75,
+  "type:retired_parameters": 74,
   "type:value": 1
 }

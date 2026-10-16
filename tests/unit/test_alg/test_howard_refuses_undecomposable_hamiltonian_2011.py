@@ -24,7 +24,7 @@ The alpha-free part it CAN. `howard_running_cost` evaluates the Hamiltonian at p
 same `eval_H_batch` the Newton residual uses -- no private attribute, no decomposition -- and the
 switch that builds it now also fires on the guard's own measurement of |H(x, m, 0, t)|, not only on
 `_potential`/`_coupling`. Measured on `H = |p|^2/2 + g*x*m`, where it gave 0.0000e+00 before:
-Howard 1.4687e-01 against Newton 1.4687e-01 under this file's `M_MATRIX_QP`. (Under the
+Howard 1.4687e-01 against Newton 1.4687e-01 under this file's `BARE_STENCILS`. (Under the
 `joint_socp`/`precompute` this file used before #2093, Howard gives 1.4586e-01 and Newton is
 unchanged -- the scheme moves Howard by 0.7%, not the extraction.)
 
@@ -66,13 +66,12 @@ from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
 L, T, NX, NT = 1.0, 0.2, 21, 10
-# `qp_m_matrix` rather than `joint_socp`: what this file pins is Howard's DECOMPOSITION gate,
-# not SOCP stencils. joint_socp needs cvxpy (the `numerical` extra) and would make all 17 tests
-# below skip wherever it is absent -- including the accept controls, which is the half you least
-# want silently missing. qp_m_matrix runs on osqp, a base dependency, and exercises the same
-# Howard path. SOCP itself is covered by test_socp_m_matrix_property, test_socp_stencil_enlargement
-# and test_joint_socp_mirror_symmetry, which are about SOCP.
-M_MATRIX_QP = {"monotonicity_scheme": "qp_m_matrix", "monotonicity_application": "always"}
+# "none" rather than `joint_socp`: what this file pins is Howard's DECOMPOSITION gate, not SOCP
+# stencils. joint_socp needs cvxpy (the `numerical` extra) and would make all 17 tests below skip
+# wherever it is absent -- including the accept controls, which is the half you least want silently
+# missing. SOCP itself is covered by test_socp_m_matrix_property, test_socp_stencil_enlargement and
+# test_joint_socp_mirror_symmetry, which are about SOCP.
+BARE_STENCILS = {"monotonicity_scheme": "none"}
 
 
 def _first_coord(x):
@@ -152,7 +151,7 @@ def test_howard_extracts_an_alpha_free_part_it_was_never_told_about():
         return float(np.abs(u1 - u0).max())
 
     newton = spread("newton")
-    howard = spread("howard", **M_MATRIX_QP)
+    howard = spread("howard", **BARE_STENCILS)
 
     assert newton > 1e-3, "the control itself must see the coupling, or this test proves nothing"
     assert howard > 1e-3, f"Howard still dropped the alpha-free part: {howard:.4e}"
@@ -169,7 +168,7 @@ def test_the_refusal_names_the_consequence_and_the_alternative():
     `_ke` is still a refusal while the alpha-free gate is not.
     """
     with pytest.raises(NotImplementedError) as exc:
-        _solve(_quartic(), "howard", **M_MATRIX_QP)
+        _solve(_quartic(), "howard", **BARE_STENCILS)
     text = str(exc.value)
     assert "L(alpha) = (1/2)|alpha|^2" in text, "must say WHAT would be substituted"
     assert "not the problem" in text, (
@@ -196,7 +195,7 @@ def test_a_separable_hamiltonian_is_not_refused():
         SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
         "howard",
         terminal="cos",
-        **M_MATRIX_QP,
+        **BARE_STENCILS,
     )
     assert np.all(np.isfinite(u)), "the Howard path must still run for the class it was built for"
     assert np.ptp(u) > 1e-6, "the solve returned a constant field; the Howard path did not run"
@@ -254,7 +253,7 @@ class LambdaTwoQuadratic(HamiltonianBase):
 
 def test_a_bare_unit_quadratic_subclass_is_ACCEPTED():
     """The discriminating control: refusing this is what the attribute-keyed first version did."""
-    u = _solve(BareUnitQuadratic(), "howard", terminal="cos", **M_MATRIX_QP)
+    u = _solve(BareUnitQuadratic(), "howard", terminal="cos", **BARE_STENCILS)
     assert np.all(np.isfinite(u)), "Howard must accept a Hamiltonian its substitution is exact for"
     assert np.ptp(u) > 1e-6, "the solve returned a constant field; the Howard path did not run"
 
@@ -262,7 +261,7 @@ def test_a_bare_unit_quadratic_subclass_is_ACCEPTED():
 def test_a_lambda_two_quadratic_is_refused_though_its_alpha_free_part_is_zero():
     """The other direction: zero alpha-free part, wrong Lagrangian, and it must still be refused."""
     with pytest.raises(NotImplementedError, match=r"departs from \(1/2\)\|p\|\^2"):
-        _solve(LambdaTwoQuadratic(), "howard", **M_MATRIX_QP)
+        _solve(LambdaTwoQuadratic(), "howard", **BARE_STENCILS)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -432,7 +431,7 @@ def test_the_probe_sees_hamiltonians_a_fixed_sample_point_cannot(name, factory):
     what it could compute is not a safety property.
     """
     with pytest.raises(NotImplementedError):
-        _solve(factory(), "howard", **M_MATRIX_QP)
+        _solve(factory(), "howard", **BARE_STENCILS)
 
 
 def _pure_bump():
@@ -546,7 +545,7 @@ def test_the_probe_finds_a_kinetic_defect_at_the_magnitudes_the_solve_visits(nam
     Lipschitz constant tracks the truth, so the ladder's rungs land where the solve lives.
     """
     with pytest.raises(NotImplementedError, match="cannot decompose"):
-        _solve(_bump_on(lo_q, hi_q, amp), "howard", terminal="cos", **M_MATRIX_QP)
+        _solve(_bump_on(lo_q, hi_q, amp), "howard", terminal="cos", **BARE_STENCILS)
 
 
 def test_a_probe_that_cannot_be_evaluated_is_not_a_probe_that_passed():
@@ -557,13 +556,13 @@ def test_a_probe_that_cannot_be_evaluated_is_not_a_probe_that_passed():
     safe. Measured before the fix: accepted, all-finite output, 153% wrong against Newton.
     """
     with pytest.raises(NotImplementedError, match="non-finite"):
-        _solve(_nan_at_one_probe_point(), "howard", terminal="cos", **M_MATRIX_QP)
+        _solve(_nan_at_one_probe_point(), "howard", terminal="cos", **BARE_STENCILS)
 
 
 def test_the_denser_ladder_does_not_false_refuse_a_genuine_quadratic():
     """The control for the two above. A denser probe can only make a TRUE refusal stricter --
     a genuine quadratic matches the kinetic reference at every |p| -- and this pins that."""
-    u = _solve(_pure_unit_quadratic(), "howard", terminal="cos", **M_MATRIX_QP)
+    u = _solve(_pure_unit_quadratic(), "howard", terminal="cos", **BARE_STENCILS)
     assert np.all(np.isfinite(u))
     assert np.abs(u).max() > 1e-6
 
@@ -576,12 +575,12 @@ def test_an_unwired_alpha_free_part_is_extracted_not_refused(name, factory):
     solver that silently returned zeros would satisfy any `isfinite` check and this test would pass
     while proving nothing -- the trap `_solve`'s own docstring names.
     """
-    u = _solve(factory(), "howard", terminal="cos", **M_MATRIX_QP)
+    u = _solve(factory(), "howard", terminal="cos", **BARE_STENCILS)
     assert np.all(np.isfinite(u))
     assert np.abs(u).max() > 1e-6, "accepted, but the solve produced nothing to check"
 
     # the alpha-free part must MOVE the answer: compare against the same Hamiltonian with it gone
-    baseline = _solve(BareUnitQuadratic(), "howard", terminal="cos", **M_MATRIX_QP)
+    baseline = _solve(BareUnitQuadratic(), "howard", terminal="cos", **BARE_STENCILS)
     assert np.abs(u - baseline).max() > 1e-3, (
         f"{name} was accepted but its alpha-free part changed nothing -- extraction is a no-op, "
         "which is the pre-#2011 behaviour wearing a green test"
@@ -615,13 +614,13 @@ def test_the_kinetic_probe_covers_every_time_slice():
     in a comment, and reverting `_slices` to the three-slice form leaves the whole howard suite green.
     """
     with pytest.raises(NotImplementedError) as exc:
-        _solve(_time_varying_kinetic(1000.0), "howard", terminal="cos", **M_MATRIX_QP)
+        _solve(_time_varying_kinetic(1000.0), "howard", terminal="cos", **BARE_STENCILS)
     assert "departs from (1/2)|p|^2" in str(exc.value)
 
     # The false-refusal control, and it is the half that would go silently wrong. A = 0 is the same
     # Hamiltonian with the defect switched off; refusing it would mean the widening broke the
     # unit quadratic itself rather than closing a hole.
-    u = _solve(_time_varying_kinetic(0.0), "howard", terminal="cos", **M_MATRIX_QP)
+    u = _solve(_time_varying_kinetic(0.0), "howard", terminal="cos", **BARE_STENCILS)
     assert np.all(np.isfinite(u))
     assert np.abs(u).max() > 1e-6
 
@@ -635,7 +634,7 @@ def test_the_refusal_reports_the_ke_the_docstring_cites():
     value that would turn every probe-ladder change into a test edit.
     """
     with pytest.raises(NotImplementedError) as exc:
-        _solve(_relativistic(), "howard", terminal="cos", **M_MATRIX_QP)
+        _solve(_relativistic(), "howard", terminal="cos", **BARE_STENCILS)
     text = str(exc.value)
     ke = float(re.search(r"departs from \(1/2\)\|p\|\^2 by ([\d.e+-]+)", text).group(1))
     tol = float(re.search(r"tolerance ([\d.e+-]+)", text).group(1))
@@ -659,6 +658,6 @@ def test_a_wired_alpha_free_part_is_NOT_refused():
             extra={"_potential": (lambda xx, t=0.0: 1.0 * np.asarray(xx).ravel()[0])},
         ),
         "howard",
-        **M_MATRIX_QP,
+        **BARE_STENCILS,
     )
     assert np.all(np.isfinite(u))
