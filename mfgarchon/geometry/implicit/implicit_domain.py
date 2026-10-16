@@ -556,8 +556,9 @@ class ImplicitDomain(
           tangent plane, then moved inward by ``tolerance``. The path is the segment from ``previous``, or,
           with ``via``, the polyline through those waypoints -- a reflected step's wall hits, so that the face
           is one the step actually met (#2706, review 1). The crossing is found by a scan of 32 steps per leg
-          and bisection on the sign of phi alone, so it cannot tunnel through a feature thicker than a scan step,
-          1/32 of the leg; a thinner one can be stepped over and a later face named (#2710). On a flat face this
+          and bisection on the sign of phi alone, so a leg whose path inside a feature is shorter than a scan step,
+          1/32 of the leg, can step over it and name a later face: a thin feature, or a corner the leg clips
+          (#2710). On a flat face this
           is the projected-Euler (Skorokhod) map: it keeps the step's displacement along the face. On a curved
           face, at an edge or a seam it is a local approximation, repeated from the new segment while the result
           is still outside, up to 8 faces, each time projecting onto the intersection of the faces met. A point
@@ -652,7 +653,8 @@ class ImplicitDomain(
         ``outside`` (phi > 0), two points bracketing the crossing closely.
 
         Here, with no components to choose among, it is the gradient normal at ``outside``
-        (:meth:`get_outward_normal`). That is a central difference of step 1e-5 on phi, so within that distance of
+        (:meth:`get_outward_normal`). That is a central difference of step 1e-6 on phi (`get_boundary_normal`'s
+        ``eps``), so within that distance of
         another surface of the boundary -- a corner, an obstacle meeting a wall -- it blends the two surfaces'
         normals (#2698). A CSG domain overrides this: it decides which component's surface is crossed by which
         component's own phi changes sign between the two points, and gives that component's normal, so no
@@ -665,8 +667,9 @@ class ImplicitDomain(
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
         """On the leg from ``a`` (taken as inside) to ``b``: the last inside and the first outside point bracketing
         its first phi = 0 crossing, or None when no scan point beyond ``a`` is outside. A scan of ``n_scan`` steps
-        and ``n_bisect`` bisections on the sign of phi; a feature thinner than a scan step can be passed over, and
-        the crossing found is then a later one (#2710). One more sample sits 1e-9 of the leg before ``b``: a leg that
+        and ``n_bisect`` bisections on the sign of phi; a leg whose path inside a feature is shorter than a scan step
+        -- a thin feature, or a corner the leg clips -- can pass it over, and the crossing found is then a later one
+        (#2710). One more sample sits 1e-9 of the leg before ``b``: a leg that
         ends ON an obstacle's face -- a reflected step's wall hit where the obstacle is flush with the wall -- has
         phi = 0 there, which reads inside, and its excursion into the obstacle just before the end can be shorter
         than a scan step (#2706)."""
@@ -702,8 +705,8 @@ class ImplicitDomain(
         crosses one more face, and the original point is projected again onto the larger intersection. One face is
         the flat-face projection; two at a seam or an edge are the projection onto the wedge they bound -- repeated
         projections onto one face at a time converge only geometrically there. Raises, naming the point and the
-        faces, where ``max_faces`` faces do not place it or their half-spaces do not intersect: no geometry measured
-        reaches that (#2688)."""
+        faces, where ``max_faces`` faces do not place it, or where `_project_onto_half_spaces` finds no nearest
+        point of their intersection (#2688)."""
         placed = np.empty_like(points)
         for i in range(points.shape[0]):
             target = points[i]
@@ -738,8 +741,11 @@ class ImplicitDomain(
                 raise RuntimeError(
                     f"project_to_interior: the point {target}, whose step began at {previous[i]}, is not placed by "
                     f"the {len(centres)} face(s) its step met ({faces}): projected onto their intersection it is still "
-                    f"outside the domain, or they do not intersect. The face-of-entry placement does not cover this "
-                    f"geometry (#2688); report it with the domain."
+                    f"outside the domain, or no nearest point of their intersection was found. That is the "
+                    f"active-set solve's limit (`_project_onto_half_spaces`): faces so nearly parallel that the Gram "
+                    f"matrix of the set holding the nearest point is too close to singular -- two faces facing apart "
+                    f"at half-angle 1e-7 or less, with the placement's gap 1e-10. The face-of-entry placement does "
+                    f"not cover this geometry (#2688); report it with the domain."
                 )
         return placed
 
@@ -1197,10 +1203,11 @@ def _project_onto_half_spaces(
     Each half-space is a face's domain side, ``n_k`` its outward unit normal. The minimiser has at most ``d``
     active faces with independent normals, so it is found by trying every such set -- at most 92 for 8 faces in
     3-D -- and keeping the nearest candidate that satisfies all of them. Feasibility is judged with a slack
-    relative to the problem's scale. Where no active set yields a feasible candidate -- nearly parallel faces,
-    whose Gram matrix is too close to singular to solve -- Dykstra's alternating projection finds the nearest
-    point of the intersection instead. None only if that does not reach a feasible point: the intersection is
-    empty (#2706, review 1)."""
+    relative to the problem's scale (#2706, review 1). None where no active set yields a feasible candidate: the
+    intersection is empty, or the faces are so nearly parallel that the active set holding the nearest point has a
+    Gram matrix too close to singular to solve. Two faces through one point, facing apart at half-angle 1e-7 or
+    less, with ``tolerance`` 1e-10, are one: their intersection is a sliver whose apex lies ``tolerance / sin`` of the
+    half-angle from that point, 0.1 at 1e-9 (#2706, review 2)."""
     d = point.shape[0]
     offsets = np.einsum("kd,kd->k", centres, normals) - tolerance
     slack = 64.0 * np.finfo(float).eps * max(1.0, float(np.abs(offsets).max()), float(np.abs(point).max()))
@@ -1222,20 +1229,4 @@ def _project_onto_half_spaces(
                 dist = float(np.linalg.norm(candidate - point))
                 if dist < best_dist:
                     best, best_dist = candidate, dist
-    if best is not None:
-        return best
-    # Dykstra: cyclic projections onto each half-space with the correction terms that make the limit the nearest
-    # point of the intersection, not merely a point in it.
-    x = point.copy()
-    corrections = np.zeros((k, d))
-    for _ in range(10000):
-        x_before = x.copy()
-        for j in range(k):
-            y = x + corrections[j]
-            excess = float(normals[j] @ y - offsets[j])
-            x_next = y - max(excess, 0.0) * normals[j]
-            corrections[j] = y - x_next
-            x = x_next
-        if np.max(np.abs(x - x_before)) <= slack:
-            break
-    return x if np.all(normals @ x <= offsets + slack) else None
+    return best

@@ -1181,7 +1181,7 @@ def sample_from_density(
           goes to its navigable part. Nothing is clipped or dropped.
         - The cells carrying mass with no navigable point on a 5-per-axis probe lattice hold mass inside an
           obstacle, which moving would change the caller's measure. Their share of the mass, over every cell
-          that carries any, goes to `mass_fabrication_gate.drop_mass_or_raise`: above its threshold the sample is
+          that carries any, goes to `mass_fabrication_gate.leave_out_or_raise`: above its threshold the sample is
           refused, naming the share; at or below it those cells are left out (#2706).
         - The uniform fallbacks, for a zero density or degenerate probabilities, redraw the same way over the
           bounding box.
@@ -1301,11 +1301,11 @@ def _leave_out_cells_with_no_navigable_point(
 
     A cell carrying mass whose probe lattice -- 5 points per axis, the node among them -- has no navigable point holds
     mass inside an obstacle, which no redraw within the cell can place. Its share of the mass, over every cell that
-    carries any, goes to `mass_fabrication_gate.drop_mass_or_raise`, the owner of how much a library may leave out:
+    carries any, goes to `mass_fabrication_gate.leave_out_or_raise`, the owner of how much a library may leave out:
     above its threshold the sample is refused, naming the share; at or below it those cells are left out and the
     rest renormalised. Only cells whose node is not navigable are probed.
     """
-    from mfgarchon.utils.numerical.mass_fabrication_gate import drop_mass_or_raise
+    from mfgarchon.utils.numerical.mass_fabrication_gate import leave_out_or_raise
 
     dimension = len(coordinates)
     grid_shape = tuple(len(c) for c in coordinates)
@@ -1323,21 +1323,24 @@ def _leave_out_cells_with_no_navigable_point(
     blocked_here = ~np.asarray(navigable(probes), dtype=bool).reshape(len(centres), len(offsets)).any(axis=1)
     if not blocked_here.any():
         return probs
-    blocked = carrying[np.flatnonzero(suspect)[blocked_here]]
-    drop_mass_or_raise(
-        float(probs[blocked].sum()),
-        float(probs.sum()),
+    blocked = np.zeros(probs.shape, dtype=bool)
+    blocked[carrying[np.flatnonzero(suspect)[blocked_here]]] = True
+    return leave_out_or_raise(
+        probs,
+        blocked,
         context="sample_from_density",
         why=(
-            f"{blocked.size} cell(s) carrying mass have no navigable point on a {_PROBES_PER_AXIS}-per-axis lattice -- "
-            f"the first centred at {centres[blocked_here][0]}: that mass is inside an obstacle, and no redraw within "
-            "its cell can place it. It is not moved elsewhere, since that would change the measure the caller gave."
+            f"{int(blocked.sum())} cell(s) carrying mass have no navigable point on a {_PROBES_PER_AXIS}-per-axis "
+            f"lattice -- the first centred at {centres[blocked_here][0]}: that mass is inside an obstacle, and no "
+            "redraw within its cell can place it. It is not moved elsewhere, since that would change the measure the "
+            "caller gave."
         ),
-        remedy="Set the initial density to zero inside the obstacles, e.g. m_initial * domain.contains(nodes).",
+        remedy=(
+            "Set the density to zero at the nodes inside the obstacles: density * "
+            "navigable(nodes).reshape(density.shape), with nodes = np.stack(np.meshgrid(*coordinates, "
+            'indexing="ij"), axis=-1).reshape(-1, len(coordinates)).'
+        ),
     )
-    kept = probs.copy()
-    kept[blocked] = 0.0
-    return kept / kept.sum()
 
 
 def _redraw_until_navigable(

@@ -931,7 +931,7 @@ class TestProjectToNavigableOrDefer:
         """#2706: a particle on the obstacle's top face, ``gap`` from the wall x = 1, steps straight down into the
         obstacle, and is placed back on that face: (1 - gap, 0.8 + 1e-10). The face's normal is the obstacle's own,
         chosen by which component's phi changes sign across the crossing (`crossing_normal`). The domain's gradient
-        normal blends the wall's within its central difference of 1e-5: at gap 3.5e-7 that raised, and at 1e-9 it
+        normal blends the wall's within its central difference of 1e-6: at gap 3.5e-7 that raised, and at 1e-9 it
         placed the particle at (0.88, 0.68), on the obstacle's far side."""
         from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import project_to_navigable_or_defer
         from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle

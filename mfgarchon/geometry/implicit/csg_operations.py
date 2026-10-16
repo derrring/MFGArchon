@@ -208,7 +208,7 @@ class IntersectionDomain(ImplicitDomain):
         """The normal of the component whose surface is crossed: one that holds ``inside`` and not ``outside``, by its
         own phi's sign (the most outside of them at ``outside`` where several do), with that component's own normal.
         A difference is this with the subtracted domain's complement, so an obstacle meeting the outer box gives the
-        obstacle's own normal even within the gradient's 1e-5 of the box (#2698, #2706). See
+        obstacle's own normal even within the gradient's 1e-6 of the box (#2698, #2706). See
         :meth:`ImplicitDomain.crossing_normal`."""
         a = np.array([float(np.atleast_1d(domain.signed_distance(inside[None, :]))[0]) for domain in self.domains])
         b = np.array([float(np.atleast_1d(domain.signed_distance(outside[None, :]))[0]) for domain in self.domains])

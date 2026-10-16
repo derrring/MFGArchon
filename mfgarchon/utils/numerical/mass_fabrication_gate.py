@@ -115,7 +115,7 @@ import numpy as np
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-__all__ = ["MAX_CLIP_MASS_FABRICATION", "clip_nonnegative_or_raise", "drop_mass_or_raise", "mass_fabricated_by_clip"]
+__all__ = ["MAX_CLIP_MASS_FABRICATION", "clip_nonnegative_or_raise", "leave_out_or_raise", "mass_fabricated_by_clip"]
 
 # The largest fraction of the present mass a non-negativity clip may create before the
 # solve is stopped. Round-off is ~1e-15; a failed scheme is O(1) (Issue #1671).
@@ -184,28 +184,29 @@ def clip_nonnegative_or_raise(
     return np.maximum(density, 0.0)
 
 
-def drop_mass_or_raise(
-    dropped: float,
-    total: float,
+def leave_out_or_raise(
+    probs: NDArray[np.floating],
+    blocked: NDArray[np.bool_],
     *,
     context: str,
     why: str,
     remedy: str,
     threshold: float = MAX_CLIP_MASS_FABRICATION,
-) -> float:
-    """Stop when leaving ``dropped`` of ``total`` out would change the caller's measure by more than a clip may.
+) -> NDArray[np.floating]:
+    """The non-negative weights ``probs`` with the ``blocked`` entries left out and the rest renormalised to sum to 1,
+    or a refusal when the blocked share of the total is more than a clip may change the caller's measure.
 
     The counterpart of `clip_nonnegative_or_raise` for mass the library cannot place rather than mass a clip would
     create: the same threshold, compared the same way, and a message of the same shape -- the share, why it cannot be
-    kept, and the caller's choices (#2706). At or below the threshold the caller leaves the mass out, silently, as a
-    clip of that size is.
-
-    Returns the dropped fraction of ``total``.
+    kept, and the caller's choices (#2706). At or below the threshold the mass is left out silently, as a clip of
+    that size is. The callers compute ``blocked`` only; leaving out and renormalising are here (#2706, review 2).
     """
-    fraction = dropped / total if total > 0 else float("inf")
+    total = float(probs.sum())
+    fraction = float(probs[blocked].sum()) / total if total > 0 else float("inf")
     if fraction > threshold:
         raise ValueError(
             f"{context}: {why} Leaving it out would drop a fraction {fraction:.3e} of the total mass (threshold "
             f"{threshold:.0e}), so the solve is stopped rather than run on a measure the caller did not give. {remedy}"
         )
-    return fraction
+    kept = np.where(blocked, 0.0, probs)
+    return kept / kept.sum()

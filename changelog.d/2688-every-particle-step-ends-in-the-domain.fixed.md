@@ -12,10 +12,11 @@
     - `ImplicitDomain.project_to_interior(points, previous=..., via=...)` finds the first crossing on the step's
       path and projects the point onto that face's tangent plane. The path is the segment from `previous`, or for a
       reflected step the polyline through its wall hits (`reflection_waypoints`), so the face is one the particle met.
-    - The crossing is found by a scan of 32 steps per leg and bisection on the sign of φ. A feature thinner than a
-      scan step, 1/32 of the leg, can be stepped over (#2710).
+    - The crossing is found by a scan of 32 steps per leg and bisection on the sign of φ. A leg whose path inside a
+      feature is shorter than a scan step, 1/32 of the leg, can step over it: a thin feature, or a corner the leg
+      clips (#2710).
     - The face's normal is the crossed component's own, decided by which component's φ changes sign across the
-      crossing (`ImplicitDomain.crossing_normal`, overridden by the CSG domains). Within 1e-5 of the outer box, the
+      crossing (`ImplicitDomain.crossing_normal`, overridden by the CSG domains). Within 1e-6 of the outer box, the
       domain's gradient normal blended the box wall's into an obstacle face's. Next to a wall, a particle stepping
       onto the face was then either refused or placed on the obstacle's far side.
     - On a flat face this is the projected-Euler (Skorokhod) map, which keeps the displacement along the face. Where
@@ -29,16 +30,17 @@
       False.
     - Cells carrying mass with no navigable point on a 5-per-axis probe lattice hold mass inside an obstacle, and
       no redraw can place it. Their share of the mass, over every cell that carries any, is decided by
-      `mass_fabrication_gate.drop_mass_or_raise`, the threshold that bounds a non-negativity clip (1e-8):
+      `mass_fabrication_gate.leave_out_or_raise`, against the threshold that bounds a non-negativity clip (1e-8):
       - above it the sample is refused, naming the share;
-      - at or below it those cells are left out, silently, as a clip of that size is.
+      - at or below it those cells are left out, silently, as a clip of that size is, and the rest renormalised.
     - The 1-D grid-drift path samples the nodes themselves and decides its nodes inside an obstacle the same way.
     - `initial_particles` inside an obstacle are refused.
   - **Refused rather than delivered wrong:**
-    - an `implicit_domain` with a periodic outer boundary, since a wrapped step is not the segment from where it
-      started (#2704);
-    - an `implicit_domain` whose bounding box does not contain the grid's box, where a particle between the two is
-      out of the placement's reach;
+    - an `implicit_domain` with any periodic face on the outer boundary, since a wrapped step is not the segment
+      from where it started (#2704);
+    - an `implicit_domain` whose bounding box is not the grid's box. The boundary condition reflects at the grid's
+      box and the placement acts inside the domain's: where the grid's box reaches further, a particle between the
+      two is placed by neither; where the domain's does, a particle can be placed beyond the reflecting wall;
     - an `implicit_domain` on the GPU path, whose particles never met the placement.
   - **Known limitation,** which predates this change: a step that passes through an obstacle and ends past an
     absorbing exit is absorbed before any placement (#2707).

@@ -21,6 +21,7 @@ except ImportError:  # pragma: no cover - graceful fallback when SciPy missing
     SCIPY_AVAILABLE = False
 
 from mfgarchon.geometry.boundary.applicator_particle import ParticleApplicator
+from mfgarchon.geometry.boundary.bc_utils import declares_periodic
 from mfgarchon.geometry.boundary.types import BCType
 
 # Issue #625: Migrated from tensor_calculus to operators/stencils
@@ -934,19 +935,19 @@ class FPParticleSolver(BaseFPSolver):
         """The 1-D grid path's node probabilities with the nodes inside an obstacle left out, or a refusal (#2688).
 
         This path places particles on the nodes it samples, so a node inside an obstacle that carries mass is mass
-        inside it. Its share, over every node carrying any, goes to `mass_fabrication_gate.drop_mass_or_raise`, as
+        inside it. Its share, over every node carrying any, goes to `mass_fabrication_gate.leave_out_or_raise`, as
         `sample_from_density`'s blocked cells do (#2706): above the threshold the solve is refused, at or below it
         those nodes are left out and the rest renormalised.
         """
-        from mfgarchon.utils.numerical.mass_fabrication_gate import drop_mass_or_raise
+        from mfgarchon.utils.numerical.mass_fabrication_gate import leave_out_or_raise
 
         inside = ~np.atleast_1d(np.asarray(self._implicit_domain.contains(x_grid.reshape(-1, 1)), dtype=bool))
         blocked = (probs > 0) & inside
         if not blocked.any():
             return probs
-        drop_mass_or_raise(
-            float(probs[blocked].sum()),
-            float(probs[probs > 0].sum()),
+        return leave_out_or_raise(
+            probs,
+            blocked,
             context="FPParticleSolver",
             why=(
                 f"{int(blocked.sum())} grid node(s) carrying m_initial's mass are inside an obstacle -- the first at "
@@ -958,8 +959,6 @@ class FPParticleSolver(BaseFPSolver):
                 "m_initial * domain.contains(x_grid.reshape(-1, 1))."
             ),
         )
-        kept = np.where(blocked, 0.0, probs)
-        return kept / kept.sum()
 
     def _refuse_initial_particles_inside_an_obstacle(self, particles: np.ndarray, origin: str, advice: str) -> None:
         """t = 0 of #2688. Each later step starts where the one before it placed its particles, so every step
@@ -1139,28 +1138,35 @@ class FPParticleSolver(BaseFPSolver):
         return self._project_obstacle_violations(recorded, survivors_previous, via), absorbed_mask, n_absorbed
 
     def _refuse_what_the_obstacle_placement_cannot_do(self, dimension: int, bounds: list[tuple[float, float]]) -> None:
-        """What the obstacle placement cannot do, refused at the start of a solve: an obstacle with a periodic outer
-        boundary, since a wrapped particle's straight segment from its previous position is not its path (#2688; the
-        capability is #2704); and an implicit_domain whose bounding box does not contain the grid's box (#2706)."""
-        if self._implicit_domain is not None and "periodic" in self._get_topology_per_dimension(dimension):
+        """What the obstacle placement cannot do, refused at the start of a solve: an obstacle with any periodic face,
+        since a wrapped particle's straight segment from its previous position is not its path (#2688; the capability
+        is #2704); and an implicit_domain whose bounding box is not the grid's box (#2706)."""
+        # Any periodic face, not a periodic axis: a BC periodic on one face of an axis reads as a bounded topology, yet
+        # the applicator wraps a particle through that face (#2706, review 2).
+        if self._implicit_domain is not None and declares_periodic(self.boundary_conditions):
             raise NotImplementedError(
-                "FPParticleSolver: an implicit_domain with obstacles and a periodic outer boundary is not supported. "
+                "FPParticleSolver: an implicit_domain with a periodic face on the outer boundary is not supported. "
                 "A particle that ends a step inside an obstacle is placed by the face its step crossed, and a "
                 "wrapped particle's step is not the straight segment from where it started (#2688). Placing it by "
                 "the wrapped image of its step is #2704."
             )
-        # The outer boundary condition reflects at the grid's box, and the placement leaves to it whatever is outside the
-        # domain's bounding box. Where the grid's box reaches past the domain's, a particle there is navigable to neither
-        # and is recorded outside the domain (#2706, review 1).
+        # The BC and the placement must each land inside the other's reach, which is two inclusions, and together they
+        # are equality. (i) The BC's output is inside the grid's box, and the placement defers to the BC whatever lies
+        # outside the domain's bounding box, so grid box within domain box (#2706, review 1). (ii) The placement's
+        # output is navigable, so inside the domain's bounding box, and it must be inside the grid's box the BC has
+        # already applied: domain box within grid box. Review 2's counter-case broke (ii) alone: the domain's box
+        # reached past the wall, and the projection put a particle on an obstacle's far face beyond it. Do not narrow
+        # this to one inclusion again.
         box = np.asarray(self._implicit_domain.get_bounding_box(), dtype=float).reshape(dimension, 2)
         grid = np.asarray(bounds, dtype=float).reshape(dimension, 2)
         slack = 1e-12 * max(1.0, float(np.abs(grid).max()))
-        if np.any(grid[:, 0] < box[:, 0] - slack) or np.any(grid[:, 1] > box[:, 1] + slack):
+        if np.any(np.abs(grid - box) > slack):
             raise ValueError(
-                f"FPParticleSolver: the implicit_domain's bounding box {box.tolist()} does not contain the grid's box "
-                f"{grid.tolist()}. The outer boundary condition reflects at the grid's box, and a particle between the "
-                "two is outside the domain and out of the obstacle placement's reach, so it would be recorded outside "
-                "the domain (#2706). Build the implicit_domain on the grid's box, e.g. "
+                f"FPParticleSolver: the implicit_domain's bounding box {box.tolist()} is not the grid's box "
+                f"{grid.tolist()}. The outer boundary condition reflects at the grid's box and the obstacle placement "
+                "acts inside the domain's: where the grid's box reaches further, a particle between the two is "
+                "placed by neither, and where the domain's does, a particle can be placed beyond the reflecting wall "
+                "(#2706). Build the implicit_domain on the grid's box, e.g. "
                 "DifferenceDomain(Hyperrectangle(grid bounds), obstacle)."
             )
 

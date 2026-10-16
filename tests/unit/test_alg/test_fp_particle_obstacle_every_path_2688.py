@@ -179,15 +179,29 @@ def test_the_placement_reads_each_survivors_own_previous_position():
         "M_initial inside the obstacle, n-D",
         "M_initial inside the obstacle, 1-D nodes",
         "an implicit_domain box short of the grid's",
+        "an implicit_domain box beyond the grid's",
+        "a periodic face on one side only",
         "GPU path",
     ],
 )
 def test_what_the_placement_cannot_do_is_refused(case):
-    """A periodic outer boundary (a wrapped step is not a segment, #2704), initial mass inside an obstacle (moving
-    it changes the caller's measure), and the GPU path (its particles never meet the placement) are refused."""
+    """A periodic face (a wrapped step is not a segment, #2704), initial mass inside an obstacle (moving it changes
+    the caller's measure), an implicit_domain whose box is not the grid's, and the GPU path (its particles never meet
+    the placement) are refused."""
     if case.startswith("periodic"):
-        with pytest.raises(NotImplementedError, match=r"periodic outer boundary is not supported.*#2704"):
+        with pytest.raises(NotImplementedError, match=r"periodic face on the outer boundary is not supported.*#2704"):
             _solve(2, periodic_bc(dimension=2), "grid" if "grid" in case else "callable")
+    elif case == "a periodic face on one side only":
+        # #2706 review 2: periodic on x_min alone reads as a bounded topology, yet the applicator wraps through it.
+        one_sided = BoundaryConditions(
+            segments=[
+                BCSegment(name=b, bc_type=BCType.PERIODIC if b == "x_min" else BCType.NO_FLUX, value=0.0, boundary=b)
+                for b in ("x_min", "x_max", "y_min", "y_max")
+            ],
+            dimension=2,
+        )
+        with pytest.raises(NotImplementedError, match=r"periodic face on the outer boundary is not supported"):
+            _solve(2, one_sided, "callable", initial_particles=_navigable_start())
     elif case.startswith("initial_particles"):
         start = _navigable_start()
         start[:3] = [0.95, 0.5]
@@ -198,6 +212,17 @@ def test_what_the_placement_cannot_do_is_refused(case):
             ValueError, match=r"cell\(s\) carrying mass have no navigable point.*Leaving it out would drop"
         ):
             _solve(2, no_flux_bc(dimension=2), "grid", centres=[(0.97, 0.5)])
+        # The message's remedy, run as written: the density zeroed at the nodes inside the obstacles.
+        problem, n = _problem(2, no_flux_bc(dimension=2))
+        coordinates = [np.linspace(0.0, 1.0, n)] * 2
+        density = _m_initial(2, n, [(0.97, 0.5)])
+        nodes = np.stack(np.meshgrid(*coordinates, indexing="ij"), axis=-1).reshape(-1, len(coordinates))
+        density = density * _DOMAIN[2].contains(nodes).reshape(density.shape)
+        solver = FPParticleSolver(problem, num_particles=_N, implicit_domain=_DOMAIN[2], seed=2688)
+        solver.solve_fp_system(
+            M_initial=density, drift_field=_drift(2, n, "grid"), drift_is_precomputed=True, show_progress=False
+        )
+        assert _DOMAIN[2].contains(np.asarray(solver.M_particles_trajectory[0], dtype=float).reshape(-1, 2)).all()
     elif case == "M_initial inside the obstacle, 1-D nodes":
         with pytest.raises(
             ValueError,
@@ -212,13 +237,32 @@ def test_what_the_placement_cannot_do_is_refused(case):
         )
         problem, _ = _problem(2, no_flux_bc(dimension=2))
         solver = FPParticleSolver(problem, num_particles=_N, implicit_domain=short, seed=0)
-        with pytest.raises(ValueError, match=r"does not contain the grid's box"):
+        with pytest.raises(ValueError, match=r"is not the grid's box"):
             solver.solve_fp_system(
                 initial_particles=_navigable_start() * [0.9, 1.0],
                 drift_field=_drift(2, 21, "callable"),
                 drift_needs_density=False,
                 show_progress=False,
             )
+    elif case == "an implicit_domain box beyond the grid's":
+        # #2706 review 2: the BC reflects at the grid's box first, and a domain whose box reaches past it lets the
+        # projection put a particle on the obstacle's far face x = 1.05, beyond the wall. The advice -- the same
+        # obstacle cut from the grid's box -- then records nothing outside the grid's box or the domain.
+        obstacle = Hyperrectangle(np.array([[0.9, 1.05], [0.2, 0.8]]))
+        wide = DifferenceDomain(Hyperrectangle(np.array([[-0.5, 1.5], [-0.5, 1.5]])), obstacle)
+        problem, _ = _problem(2, no_flux_bc(dimension=2))
+        drift = {"drift_field": lambda t, x, m: np.column_stack([np.full(len(x), 8.0), np.zeros(len(x))])}
+        drift.update(drift_needs_density=False, show_progress=False)
+        solver = FPParticleSolver(problem, num_particles=_N, implicit_domain=wide, seed=0)
+        with pytest.raises(ValueError, match=r"is not the grid's box"):
+            solver.solve_fp_system(initial_particles=_navigable_start(), **drift)
+        advised = DifferenceDomain(Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])), obstacle)
+        solver = FPParticleSolver(problem, num_particles=_N, implicit_domain=advised, seed=0)
+        solver.solve_fp_system(initial_particles=_navigable_start(), **drift)
+        recorded = np.concatenate([np.asarray(P, dtype=float).reshape(-1, 2) for P in solver.M_particles_trajectory])
+        outside_the_box = np.any((recorded < 0.0) | (recorded > 1.0), axis=1)
+        assert not outside_the_box.any(), recorded[outside_the_box][:3]
+        assert advised.contains(recorded).all()
     else:
         pytest.importorskip("torch")
         problem, n = _problem(1, no_flux_bc(dimension=1))
@@ -389,20 +433,83 @@ def test_a_cell_with_its_node_inside_but_a_navigable_part_is_sampled_there():
 
 
 @pytest.mark.parametrize(("share", "refused"), [(1e-9, False), (1e-6, True)])
-def test_mass_inside_an_obstacle_is_left_out_up_to_the_gates_threshold(share, refused):
-    """#2706: the cell of the node 0.6 lies wholly inside the obstacle [0.45, 0.75]. Its share of the mass goes to
-    `mass_fabrication_gate.drop_mass_or_raise`: above the gate's threshold (1e-8) the sample is refused, naming the
-    share; at or below it the cell is left out and nothing is placed there."""
+@pytest.mark.parametrize("route", ["sample_from_density", "1-D grid nodes"])
+def test_mass_inside_an_obstacle_is_left_out_up_to_the_gates_threshold(route, share, refused):
+    """#2706: mass inside the obstacle, at ``share`` of the total, goes to `mass_fabrication_gate.leave_out_or_raise`
+    by both routes: the sampler's blocked cells (the cell of the node 0.6 lies wholly inside [0.45, 0.75]) and the
+    1-D grid path's nodes (the node 0.5, inside [0.4, 0.6]). Above the gate's threshold (1e-8) the solve is refused,
+    naming the share; at or below it the mass is left out and nothing is placed there."""
     from mfgarchon.utils.numerical.particle import sample_from_density
+
+    message = r"Leaving it out would drop a fraction 1\.000e-06 of the total mass \(threshold 1e-08\)"
+    if route == "1-D grid nodes":
+        problem, n = _problem(1, no_flux_bc(dimension=1))
+        m0 = _m_initial(1, n, [0.3])
+        m0[50] = share / (1.0 - share) * m0.sum()  # the node 0.5 holds `share` of the total
+        solver = FPParticleSolver(problem, num_particles=2000, implicit_domain=_DOMAIN[1], seed=2688)
+        kwargs = {"M_initial": m0, "drift_field": _drift(1, n, "grid"), "show_progress": False}
+        if refused:
+            with pytest.raises(ValueError, match=message):
+                solver.solve_fp_system(**kwargs)
+            return
+        solver.solve_fp_system(**kwargs)
+        start = np.asarray(solver.M_particles_trajectory[0], dtype=float).reshape(-1, 1)
+        assert _DOMAIN[1].contains(start).all()
+        return
 
     domain = _interval_minus(0.45, 0.75)
     density = np.zeros(11)
     density[2], density[6] = 1.0 - share, share
     if refused:
-        with pytest.raises(
-            ValueError, match=r"Leaving it out would drop a fraction 1\.000e-06 of the total mass \(threshold 1e-08\)"
-        ):
+        with pytest.raises(ValueError, match=message):
             sample_from_density(density, [_XS], 2000, seed=0, navigable=domain.contains)
         return
     x = sample_from_density(density, [_XS], 2000, seed=0, navigable=domain.contains)
     assert domain.contains(x).all()
+
+
+def test_the_gate_leaves_out_the_blocked_entries_and_renormalises_the_rest():
+    """#2706 review 2: what the two leave-out routes hand to the draw. Pinned here, at the owner, because no draw can
+    see it: numpy's choice divides its cdf by the last entry itself and accepts a deficit up to sqrt(eps) = 1.49e-8,
+    above the gate's 1e-8, and a cell holding 1e-8 of the mass is not drawn once in 200,000 draws
+    (i2688/r2fix/t0/choice_renorm.py, numpy 2.5.3). The blocked entries are 0, the rest keep their ratios and sum to 1."""
+    from mfgarchon.utils.numerical.mass_fabrication_gate import leave_out_or_raise
+
+    probs = np.array([0.5, 0.3, 0.2 - 4e-9, 4e-9])
+    blocked = np.array([False, False, False, True])
+    kept = leave_out_or_raise(probs, blocked, context="test", why="", remedy="")
+    assert kept[3] == 0.0
+    assert kept.sum() == pytest.approx(1.0, abs=1e-15)
+    np.testing.assert_allclose(kept[:3] / kept[0], probs[:3] / probs[0], rtol=1e-15)
+
+
+def test_a_reflected_step_off_two_walls_is_placed_by_the_face_its_folded_path_met():
+    """#2706 review 2: a step that hits the wall x = 1 and then y = 1. From (0.55, 0.57) to raw (1.15, 1.01): it hits
+    x = 1 at (1, 0.90) and y = 1 at x = 1.13636, folded to 0.86364; it ends at the fold (0.85, 0.99), inside the
+    obstacle O = [0.70, 0.95] x [0.93, 1.02], which meets the top wall. O's nearest face to that end is beyond the
+    wall, so the face its path met places it. That is the second leg's: from (1, 0.90) toward (0.86364, 1) it enters
+    O through the right face x = 0.95, at y = 0.93667; placed at (0.95 + 1e-10, 0.99). The hits taken in the other
+    order, or the chord, enter through the bottom face (0.85, 0.93 - 1e-10); unfolded hits name the wall x = 1."""
+    domain = DifferenceDomain(
+        Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])), Hyperrectangle(np.array([[0.70, 0.95], [0.93, 1.02]]))
+    )
+    problem, _ = _problem(2, no_flux_bc(dimension=2))
+    solver = FPParticleSolver(problem, num_particles=1, implicit_domain=domain, seed=0)
+    raw = np.array([[1.15, 1.01]])
+    recorded, _, _ = solver._finish_step(raw, np.array([[0.55, 0.57]]), [(0.0, 1.0)] * 2, False)
+    np.testing.assert_allclose(recorded, [[0.95 + 1e-10, 2.0 - raw[0, 1]]], rtol=0, atol=1e-12)
+
+
+def test_two_faces_meeting_at_a_tiny_angle_still_place_at_their_apex():
+    """#2706 review 1, S3: a point projected onto two faces through the origin with outward normals (cos a, +-sin a),
+    half-angle a = 3e-8. The nearest point of their intersection is the apex, the origin. The pair's Gram determinant
+    is below the solver's 1e-14, so the single-face projection stands in, 3e-8 from the apex, and it satisfies the
+    other face to within a slack relative to the problem's scale. With an absolute 1e-15 slack it was refused (None),
+    and the particle raised."""
+    from mfgarchon.geometry.implicit.implicit_domain import _project_onto_half_spaces
+
+    a = 3e-8
+    normals = np.array([[np.cos(a), np.sin(a)], [np.cos(a), -np.sin(a)]])
+    placed = _project_onto_half_spaces(np.array([1.0, 0.0]), np.zeros((2, 2)), normals, 0.0)
+    assert placed is not None
+    assert np.linalg.norm(placed) <= 2 * a, placed
