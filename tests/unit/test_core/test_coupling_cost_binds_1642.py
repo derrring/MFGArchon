@@ -43,6 +43,13 @@ def _grid(n, bounds=(0.0, 1.0)):
     return TensorProductGrid(bounds=[bounds], Nx_points=[n], boundary_conditions=no_flux_bc(dimension=1))
 
 
+def _unit_mass(density, n):
+    """``density`` on [0, 1], scaled to mass 1 on the n-node grid's measure, the trapezoid."""
+    xs = np.linspace(0.0, 1.0, n)
+    mass = np.trapezoid(density(xs), xs)
+    return lambda x: density(np.asarray(x, dtype=float)) / mass
+
+
 def _x(problem):
     return np.asarray(problem.geometry.get_spatial_grid(), dtype=float).ravel()
 
@@ -64,7 +71,7 @@ def _plumbing_problem(where, n=41, nt=20):
         domain=_grid(n),
         conditions=Conditions(
             u_terminal=lambda x: (np.asarray(x, dtype=float) - 0.7) ** 2,
-            m_initial=lambda x: np.exp(-30 * (np.asarray(x, dtype=float) - 0.3) ** 2),
+            m_initial=_unit_mass(lambda x: np.exp(-30 * (x - 0.3) ** 2), n),
             T=0.5,
         ),
         Nt=nt,
@@ -72,7 +79,7 @@ def _plumbing_problem(where, n=41, nt=20):
 
 
 # Five sweeps, not a converged solve: both forms take the same iterates, so they agree at every sweep.
-_PICARD = MFGSolverConfig(picard=PicardConfig(max_iterations=5, tolerance=1e-14, relaxation=0.5, verbose=False))
+_PICARD = MFGSolverConfig(picard=PicardConfig(max_iterations=5, tolerance=1e-6, relaxation=0.5, verbose=False))
 
 
 def _picard(where, **kwargs):
@@ -94,11 +101,9 @@ def test_a_linear_coupling_cost_solves_as_the_same_potential_in_the_hamiltonian(
     """F = int V m has ``delta F / delta m = V``, so ``PotentialCost(V)`` and V as H's potential pose one game, and
     each route takes the same iterates with either.
 
-    - HJB-FDM adds the source where it adds V. Five Picard sweeps agree to 1.1e-16; one Newton step, to 1.4e-17.
-      Converged, they agree as well: 1.1e-16 and 5.6e-17.
-    - HJB-SL takes V inside its update from H and adds the source at t_{n+1}, so the two differ by O(dt). After five
-      sweeps the gap is 8.8e-3 at Nt = 20 and 6.7e-3 at Nt = 40. Converged, it is 9.1e-3, 6.9e-3 and 3.5e-3 at Nt = 20,
-      40 and 80. The bound is 0.015 at Nt = 20.
+    - HJB-FDM adds the source where it adds V. Five Picard sweeps agree to 1.1e-16; one Newton step, to 6.9e-18.
+    - HJB-SL takes V inside its update from H and adds the source at t_{n+1}, so the two differ by O(dt): after five
+      sweeps, 8.8e-3 at Nt = 20 and 6.7e-3 at Nt = 40. The bound is 0.015 at Nt = 20.
     - Without either, five sweeps move U by 0.26: the scale a dropped part would show.
     """
     if route == "Picard, HJB-FDM":
@@ -219,7 +224,7 @@ def test_the_bound_nodes_and_the_density_slice_share_the_grids_order():
         return MFGProblem(
             model=Model(hamiltonian=_hamiltonian(), volatility=0.3, coupling_cost=cost),
             domain=grid,
-            conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.2),
+            conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 0.5, T=0.2),
             Nt=2,
         )
 
@@ -326,7 +331,7 @@ def test_each_population_s_coupling_cost_reads_its_own_density():
             domain=_grid(31),
             conditions=Conditions(
                 u_terminal=lambda x: 0.0,
-                m_initial=lambda x: np.exp(-40 * (np.asarray(x, dtype=float) - centre) ** 2),
+                m_initial=_unit_mass(lambda x: np.exp(-40 * (x - centre) ** 2), 31),
                 T=0.3,
             ),
             Nt=6,
@@ -390,7 +395,7 @@ def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
         MFGProblem(
             model=Model(hamiltonian=_hamiltonian(), coupling_cost=PotentialCost(lambda x: 0.0)),
             domain=CustomNetwork(csr_matrix(ring)),
-            conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.2),
+            conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0 / 6.0, T=0.2),
             Nt=4,
         )
     net = GridNetwork(width=5, height=1)
