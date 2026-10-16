@@ -943,10 +943,10 @@ class FPParticleSolver(BaseFPSolver):
         )
 
     def _leave_out_nodes_inside_an_obstacle(self, x_grid: np.ndarray, probs: np.ndarray) -> np.ndarray:
-        """The 1-D grid path's node probabilities with the nodes inside an obstacle left out, or a refusal (#2688).
+        """The 1-D grid path's node probabilities with the nodes outside the domain left out, or a refusal (#2688).
 
-        This path places particles on the nodes it samples, so a node inside an obstacle that carries mass is mass
-        inside it. Its share, over every node carrying any, goes to `mass_fabrication_gate.leave_out_or_raise`, as
+        This path places particles on the nodes it samples, so a node outside the domain that carries mass is mass
+        outside it. Its share, over every node carrying any, goes to `mass_fabrication_gate.leave_out_or_raise`, as
         `sample_from_density`'s blocked cells do (#2706): above the threshold the solve is refused, at or below it
         those nodes are left out and the rest renormalised.
         """
@@ -1068,7 +1068,7 @@ class FPParticleSolver(BaseFPSolver):
         self, particles: np.ndarray, previous: np.ndarray, via: np.ndarray | None = None
     ) -> np.ndarray:
         """
-        Place the particles that ended a step inside an obstacle (#533, #2688), after the outer boundary
+        Place the particles that ended a step outside the domain (#533, #2688), after the outer boundary
         condition has run (`_finish_step`).
 
         ``previous`` is each particle's position before the step, inside the domain by induction from t = 0.

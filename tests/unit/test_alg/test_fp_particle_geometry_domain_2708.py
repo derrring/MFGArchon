@@ -112,7 +112,11 @@ def test_two_domain_objects_are_refused_and_each_route_of_the_advice_runs(case):
         hole = Hypersphere(center=[0.5, 0.5], radius=0.15)
         keyword = DifferenceDomain(geometry if case == "an obstacle on the geometry" else _box(), hole)
         remedy, start, target = DifferenceDomain(geometry, hole), ring, [1.0, 1.0]
-    route = "drop implicit_domain=" if remedy is None else r"DifferenceDomain\(geometry, obstacle\)"
+    route = (
+        "drop implicit_domain="
+        if remedy is None
+        else r"make the geometry minus that obstacle the problem's geometry, DifferenceDomain\(geometry, obstacle\)"
+    )
     with pytest.raises(
         ValueError, match=rf"implicit_domain= names a different object.*one coupled problem on two domains.*{route}"
     ):

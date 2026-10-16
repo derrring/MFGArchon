@@ -1300,7 +1300,7 @@ def _leave_out_cells_with_no_navigable_point(
     """The cell probabilities with the cells that hold no navigable point left out, or a refusal (#2688, #2706).
 
     A cell carrying mass whose probe lattice -- 5 points per axis, the node among them -- has no navigable point holds
-    mass inside an obstacle, which no redraw within the cell can place. Its share of the mass, over every cell that
+    mass outside the navigable set, which no redraw within the cell can place. Its share of the mass, over every cell that
     carries any, goes to `mass_fabrication_gate.leave_out_or_raise`, the owner of how much a library may leave out:
     above its threshold the sample is refused, naming the share; at or below it those cells are left out and the
     rest renormalised. Only cells whose node is not navigable are probed.
