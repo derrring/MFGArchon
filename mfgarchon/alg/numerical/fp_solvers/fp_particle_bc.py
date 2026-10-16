@@ -140,11 +140,18 @@ def needs_segment_aware_bc(boundary_conditions: BoundaryConditions | None) -> bo
     # the boundary (#2490): read by the segments alone, a reflecting segment beside default_bc=DIRICHLET took the
     # reflecting fast path, and the walls the default makes absorbing reflected.
     from mfgarchon.geometry.boundary.applicator_particle import particle_action_for_bc_type
+    from mfgarchon.geometry.boundary.types import segment_robin_coefficients
 
     segment = bc.uniform_segment
     if segment is None:
         return True
-    return particle_action_for_bc_type(segment.bc_type, segment.beta) == "absorbing"
+    # A classification that writes no row, so the coefficients as stored (the owner's equivalence readers' form).
+    beta = (
+        segment_robin_coefficients(segment, where="FPParticleSolver's routing", as_stored=True)[1]
+        if segment.bc_type == BCType.ROBIN
+        else None
+    )
+    return particle_action_for_bc_type(segment.bc_type, beta) == "absorbing"
 
 
 # =============================================================================
