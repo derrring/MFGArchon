@@ -69,20 +69,15 @@ class NewtonMFGSolver(BaseCouplingIterator):
         - Automatic Jacobian (finite diff or JAX)
         - Line search for globalization
 
-    Source / nonlocal / obstacle terms (Issue #1361):
-        ``source_term_hjb``, ``source_term_fp``, ``nonlocal_operator``, and
-        ``obstacle`` flow through the residual ``MFGResidual`` and are composed
+    Source / nonlocal terms (Issue #1361):
+        ``source_term_hjb``, a bound ``coupling_cost``, ``nonlocal_operator`` and
+        ``source_term_fp`` flow through the residual ``MFGResidual`` and are composed
         from the ``(U, M)`` residual arguments via the single-source
         ``source_composition`` helpers shared with the Picard
         ``FixedPointIterator``. The FD Jacobian differentiates through the source
         dependence (option A; see ``MFGResidual``), so Newton converges to the
-        same equilibrium as Picard. Obstacle uses the same ``(1/eps) * max(0, psi)``
-        the Picard path uses -- the two agree, which is #1361's point.
-        ~~``PenaltyHJBSolver`` (#924) is the proper-handling route.~~
-        [CORRECTED 2026-08-21, #2002] It never was, and it is now RETIRED: it injected the same
-        ``v``-free term through ``source_term``, which is ``(t, x) -> array`` and cannot carry the
-        value function a constraint penalty needs. The term both paths apply penalises POSITION,
-        not violation, and cannot enforce ``v >= Psi`` at any ``eps``. The reachable alternative is
+        same equilibrium as Picard. An obstacle is no source term: since #2002 a soft wall is
+        ``state_penalty``, a potential composed into the Hamiltonian, and ``v >= Psi`` is
         ``HJBFDMSolver(constraint=...)`` (#591), a projection splitting with its own limits in #2046.
 
     Performance / solver selection:

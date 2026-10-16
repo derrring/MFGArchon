@@ -55,8 +55,8 @@ class MFGResidual:
         F(U, M) = [HJB_solve(M) - U, FP_solve(U) - M]
 
     Source / nonlocal terms (Issue #1361):
-        ``source_term_hjb``, ``source_term_fp``, ``nonlocal_operator``, and
-        are composed via the single-source helpers
+        ``source_term_hjb``, a bound ``coupling_cost``, ``nonlocal_operator`` and
+        ``source_term_fp`` are composed via the single-source helpers
         :func:`source_composition.compose_hjb_source` /
         :func:`source_composition.compose_fp_source` — the *same* copy the Picard
         ``FixedPointIterator`` consumes (no private second copy; that was the bug
@@ -215,8 +215,8 @@ class MFGResidual:
         """
         Compute HJB solver output for given density.
 
-        Issue #1361: composes ``source_term_hjb`` / ``nonlocal_operator`` /
-        from the ``(M, U_prev)`` arguments via the single-source
+        Issue #1361: composes the problem's HJB source (the fields
+        ``hjb_source_fields`` names) from the ``(M, U_prev)`` arguments via the single-source
         :func:`source_composition.compose_hjb_source` (shared with Picard) and
         passes it as ``source_term=`` when the solver accepts it. Composing from
         the arguments (option A) lets the finite-difference Jacobian differentiate

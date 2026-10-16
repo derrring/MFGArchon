@@ -80,6 +80,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.operators.interaction.energy_functionals import EnergyFunctional
 
 
 def _call_problem_source(problem: MFGProblem, name: str, *, t: float, x: NDArray, m: NDArray, v: NDArray) -> NDArray:
@@ -88,6 +89,62 @@ def _call_problem_source(problem: MFGProblem, name: str, *, t: float, x: NDArray
     The one place a problem's ``source_term_hjb`` or ``source_term_fp`` is invoked.
     """
     return bound_attribute(problem, name, SOURCE_TERM_SLOTS, role=name)(x=x, m=m, v=v, t=t)
+
+
+def hjb_source_fields(problem: MFGProblem) -> list[str]:
+    """The fields that declare a problem-level HJB source, of those this problem sets: the one owner of that
+    predicate (#2666, #1642 stage 1).
+
+    ``"source_term_hjb"``, ``"nonlocal_operator"``, and ``"coupling_cost"`` for a bound ``Model.coupling_cost``
+    (``problem.coupling_energy``). Every consumer reads this rather than the fields, so a part added here is composed,
+    and refused where it cannot be, everywhere at once: the grid couplers (`compose_hjb_source`), ``GraphMFGSolver``,
+    and ``BaseHJBSolver.solve``'s refusal.
+    """
+    fields = []
+    if problem.source_term_hjb is not None:
+        fields.append("source_term_hjb")
+    if problem.nonlocal_operator is not None:
+        fields.append("nonlocal_operator")
+    if problem.coupling_energy is not None:
+        fields.append("coupling_cost")
+    return fields
+
+
+def hjb_source_is_active(problem: MFGProblem) -> bool:
+    """Whether this problem declares any HJB source, without composing one (`hjb_source_fields`)."""
+    return bool(hjb_source_fields(problem))
+
+
+def _coupling_part(energy: EnergyFunctional, nodes: NDArray, m_t: NDArray, x: NDArray, t: float) -> NDArray:
+    """The coupling cost's part of the HJB source: ``delta F / delta m`` at the density slice ``m_t``, at the nodes F
+    was bound on (#1642 stage 1).
+
+    ``nodes`` are the grid's, the rows of ``geometry.get_spatial_grid()`` in the grid's C order, which F was bound in,
+    and ``m_t`` is flattened in that order. The part evaluates only at those nodes: an ``x`` that is not them -- other
+    points, or the same points in another order -- is refused rather than given the nodes' values. Evaluating it at a
+    solver's own points, such as HJB-GFDM's collocation points where they are not the grid's nodes in their order, is
+    #2737.
+    """
+    flat = np.asarray(m_t, dtype=float).ravel()
+    nodes = np.asarray(nodes, dtype=float).reshape(np.shape(energy.weights)[0], -1)
+    points = np.asarray(x, dtype=float).reshape(np.shape(x)[0], -1) if np.ndim(x) else np.zeros((0, 1))
+    axes = [np.unique(column) for column in nodes.T]
+    spacing = min((float(np.min(np.diff(a))) for a in axes if a.size > 1), default=1.0)
+    if (
+        points.shape != nodes.shape
+        or flat.size != len(nodes)
+        or not np.allclose(points, nodes, rtol=0, atol=1e-9 * spacing)
+    ):
+        raise ValueError(
+            f"The coupling cost was bound on this problem's {len(nodes)} grid nodes, and this HJB evaluation passes x "
+            f"with {points.shape[0]} rows that are not those nodes in their order, and a density slice of {flat.size} "
+            "values. The coupling cost evaluates only at the nodes it was bound on (#1642): a solver that evaluates "
+            "its source at its own points, such as HJB-GFDM's collocation points where they are not the grid's "
+            "nodes in their order, cannot carry it until #2737. Solve "
+            "with a grid solver -- HJB-FDM, HJB-SL, or HJB-WENO in 1-D -- or, for a linear F = integral V m, give V "
+            "to the Hamiltonian as its potential."
+        )
+    return np.asarray(energy.flat_derivative(flat, t=t), dtype=float)
 
 
 def _problem_hjb_source_terms(
@@ -102,26 +159,31 @@ def _problem_hjb_source_terms(
 
     Returns a dict with the present problem-level HJB source contributions evaluated
     at the time-``t`` slices: ``"source"`` = ``source_term_hjb(t, x, v_t, m_t)`` with
-    ``v_t`` the value-function slice (NOT zero), and ``"nonlocal"`` =
-    ``nonlocal_operator @ v_t``. This is the single source of the ``v_t`` convention
+    ``v_t`` the value-function slice (NOT zero), ``"nonlocal"`` =
+    ``nonlocal_operator @ v_t``, and ``"coupling"`` = the bound coupling cost's
+    ``delta F / delta m`` at ``m_t`` (`_coupling_part`). This is the single source of the ``v_t`` convention
     for both the grid couplers (``compose_hjb_source``) and ``graph_mfg_solver``, so a
     ``v``-dependent source cannot silently diverge between paths.
 
-    Named (dict) rather than a list so each consumer composes them in its own exact
-    order — the grid coupler interleaves the obstacle as ``[source, obstacle, nonlocal]``,
-    graph layers the coupling source as ``[coupling, source, nonlocal]`` — preserving
-    byte-for-byte float-sum associativity with the pre-refactor code.
+    Named (dict) so a consumer can tell the parts apart; their insertion order, source then coupling then
+    nonlocal, is the one order every consumer sums them in (``compose_hjb_source``, ``GraphMFGSolver``).
 
     ``dt`` is passed explicitly (rather than read from ``problem.dt``) so the graph
     coupler — which carries its own ``self._dt`` — slices identically.
     """
     out: dict[str, NDArray] = {}
-    needs_v = problem.source_term_hjb is not None or problem.nonlocal_operator is not None
+    fields = hjb_source_fields(problem)
+    needs_v = "source_term_hjb" in fields or "nonlocal_operator" in fields
     v_t = _get_time_slice(u_current, t, dt) if needs_v else None
-    if problem.source_term_hjb is not None:
-        m_t = _get_time_slice(m_current, t, dt)
+    needs_m = "source_term_hjb" in fields or "coupling_cost" in fields
+    m_t = _get_time_slice(m_current, t, dt) if needs_m else None
+    if "source_term_hjb" in fields:
         out["source"] = _call_problem_source(problem, "source_term_hjb", t=t, x=x, m=m_t, v=v_t)
-    if problem.nonlocal_operator is not None:
+    if "coupling_cost" in fields:
+        out["coupling"] = _coupling_part(
+            problem.coupling_energy, np.asarray(problem.geometry.get_spatial_grid()), m_t, x, t
+        )
+    if "nonlocal_operator" in fields:
         out["nonlocal"] = problem.nonlocal_operator @ v_t
     return out
 
@@ -133,9 +195,9 @@ def compose_hjb_source(
 ) -> Callable[[float, NDArray], NDArray] | None:
     """Compose problem-level HJB source terms into a solver-level callable.
 
-    Reads ``source_term_hjb``, ``nonlocal_operator``, and ``obstacle`` from the
-    problem, binds the spatial grid, current density ``m_current``, and current
-    value function ``u_current``, and returns a ``(t, x) -> array`` closure.
+    Composes the parts `hjb_source_fields` names -- ``source_term_hjb``, the bound
+    coupling cost, ``nonlocal_operator`` -- binds the current density ``m_current``
+    and value function ``u_current``, and returns a ``(t, x) -> array`` closure.
 
     Args:
         problem: MFG problem definition carrying the extended PDE fields.
@@ -144,17 +206,15 @@ def compose_hjb_source(
             term's time-``t`` slicing.
 
     Returns:
-        Callable, or ``None`` if no HJB source / nonlocal / obstacle field is set.
+        Callable, or ``None`` if the problem declares no HJB source (`hjb_source_is_active`).
     """
-    has_nonlocal = problem.nonlocal_operator is not None
-    has_source = problem.source_term_hjb is not None
 
     # The obstacle branch that stood here is GONE (#2002), not moved. `problem.obstacle` is
     # retired and raises; a soft wall is `problem.state_penalty`, composed into the Hamiltonian's
     # potential at problem construction, because a term that is `alpha`-free and `u`-free is a
     # potential and belongs where V lives. Deleted in the same change that added the replacement:
     # a composition that only ADDS an owner has not consolidated anything.
-    if not (has_nonlocal or has_source):
+    if not hjb_source_is_active(problem):
         return None
 
     def composed(t: float, x: NDArray) -> NDArray:
@@ -164,12 +224,11 @@ def compose_hjb_source(
         # `(1/eps) * max(0, psi)` with `eps = 1e6`, i.e. 5e-07 at psi = 0.5, so its removal is
         # visible in the last bits of any problem that set it -- and every such problem now
         # raises at construction instead.
+        # The parts in the primitive's own order, source -> coupling -> nonlocal, the one order every consumer sums
+        # in: the coupling part (#1642) sits after the source, so a problem without it sums the other two in their
+        # pre-#1642 order, bit for bit.
         parts = _problem_hjb_source_terms(problem, m_current, u_current, t, x, problem.dt)
-        terms: list[NDArray] = []
-        if "source" in parts:
-            terms.append(parts["source"])
-        if "nonlocal" in parts:
-            terms.append(parts["nonlocal"])
+        terms = list(parts.values())
         return sum(terms) if terms else np.zeros(x.shape[0])
 
     return composed
@@ -182,9 +241,9 @@ def fp_source_is_active(problem: MFGProblem) -> bool:
     path in ``block_iterators.py`` needs exactly that -- it refuses a source it has no route for
     (#2207) -- and its first version restated ``problem.source_term_fp is not None`` inline, which
     put a second owner on the predicate inside the change whose whole thesis is that composition
-    has one. The risk is not hypothetical: the sibling :func:`compose_hjb_source` reads three
-    fields today and read a fourth (``obstacle``) until #2002, so a second copy drifts the day this
-    one grows a field.
+    has one. The risk is not hypothetical: the sibling :func:`compose_hjb_source` read
+    ``obstacle`` until #2002 and reads ``coupling_cost`` since #1642, so a second copy drifts the
+    day this one grows a field.
 
     Calling :func:`compose_fp_source` instead would work and says the wrong thing: it reads as an
     evaluation, and it would bind an ``M_initial`` that ``_get_time_slice`` freezes in time.

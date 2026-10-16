@@ -32,7 +32,11 @@ from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
     resolve_fp_drift_kwargs,
 )
 from mfgarchon.alg.numerical.coupling.graph_coupling import _get_time_slice
-from mfgarchon.alg.numerical.coupling.source_composition import _call_problem_source, _problem_hjb_source_terms
+from mfgarchon.alg.numerical.coupling.source_composition import (
+    _call_problem_source,
+    _problem_hjb_source_terms,
+    hjb_source_is_active,
+)
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.convergence import sweep_change, worst_sweep_change
 
@@ -361,7 +365,8 @@ class GraphMFGSolver(BaseCouplingIterator):
         """Compose per-node problem sources with the graph coupling source.
 
         The graph coupling source from `GraphCouplingOperator` is layered on top
-        of any per-node `problem.source_term_hjb` and `problem.nonlocal_operator`
+        of each node problem's own HJB source, the parts `hjb_source_fields` names
+        (`source_term_hjb`, a bound `coupling_cost`, `nonlocal_operator`),
         so that all Layer 1 feature dimensions (Levy, custom sources, graph)
         compose at each node, matching Binding Constraint #1 of the Plan.
 
@@ -374,24 +379,19 @@ class GraphMFGSolver(BaseCouplingIterator):
         (#591), and #2046 tracks threading it through the shared timestep solve.
         """
         p = self._problems[k]
-        has_problem_source = p.source_term_hjb is not None
-        has_nonlocal = p.nonlocal_operator is not None
-        if not (has_problem_source or has_nonlocal):
+        if not hjb_source_is_active(p):
             return coupling_source
 
         dt = self._dt
 
         def composed(t: float, x_eval: NDArray) -> NDArray:
             s = evaluate_solver_source(coupling_source, t=t, x=x_eval)
-            # Source + nonlocal via the shared single-source primitive (Issue #1382),
-            # layered on the graph coupling source. Order [coupling, source, nonlocal]
-            # preserves byte-for-byte agreement with the pre-#1382 graph closure. Uses
-            # self._dt so the slice index matches the grid couplers.
-            parts = _problem_hjb_source_terms(p, Ms_expanded[k], Us_full[k], t, x_eval, dt)
-            if "source" in parts:
-                s = s + parts["source"]
-            if "nonlocal" in parts:
-                s = s + parts["nonlocal"]
+            # The node problem's own parts via the shared single-source primitive (Issue #1382), layered on the
+            # graph coupling source and summed in the primitive's own order (source, F's part, nonlocal), which
+            # preserves byte-for-byte agreement with the pre-#1382 graph closure. Uses self._dt so the slice index
+            # matches the grid couplers.
+            for part in _problem_hjb_source_terms(p, Ms_expanded[k], Us_full[k], t, x_eval, dt).values():
+                s = s + part
             return s
 
         return composed

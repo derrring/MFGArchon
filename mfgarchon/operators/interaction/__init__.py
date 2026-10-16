@@ -22,6 +22,9 @@ Contents:
     - energy_functionals: EnergyFunctional protocol + QuadraticInteractionEnergy,
       PotentialEnergy, CombinedEnergy with analytic flat derivatives
       ``delta F / delta m``.
+    - coupling_costs: InteractionCost, PotentialCost and CombinedCost, the
+      discretization-free values of ``Model.coupling_cost``, each binding to one
+      of the energy functionals above on a problem's grid and measure (#1642).
 
 The analytic flat derivatives plug into
 ``alg.numerical.coupling.lions_correction.create_lions_source`` (Phase 2), which
@@ -32,6 +35,7 @@ Phase 1b.
 """
 
 from .convolution import ConvolutionCouplingOperator
+from .coupling_costs import CombinedCost, InteractionCost, PotentialCost
 from .energy_functionals import (
     CombinedEnergy,
     EnergyFunctional,
@@ -62,6 +66,10 @@ __all__ = [
     "PowerLawKernel",
     # Convolution operator
     "ConvolutionCouplingOperator",
+    # Coupling costs: the values of Model.coupling_cost (#1642)
+    "InteractionCost",
+    "PotentialCost",
+    "CombinedCost",
     # Energy functionals
     "EnergyFunctional",
     "QuadraticInteractionEnergy",
