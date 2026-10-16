@@ -961,12 +961,13 @@ class FPParticleSolver(BaseFPSolver):
             blocked,
             context="FPParticleSolver",
             why=(
-                f"{int(blocked.sum())} grid node(s) carrying m_initial's mass are inside an obstacle -- the first at "
-                f"{x_grid[blocked][0]} -- and this path places particles on the nodes it samples. That mass is not "
+                f"{int(blocked.sum())} grid node(s) carrying m_initial's mass are outside the particles' domain (inside "
+                f"an obstacle, or beyond a curved boundary) -- the first at {x_grid[blocked][0]} -- and this path "
+                "places particles on the nodes it samples. That mass is not "
                 "moved elsewhere, since that would change the measure the caller gave (#2688)."
             ),
             remedy=(
-                "Set m_initial to zero at the nodes inside the obstacles, e.g. "
+                "Set m_initial to zero at the nodes outside the domain, e.g. "
                 "m_initial * domain.contains(x_grid.reshape(-1, 1))."
             ),
         )
@@ -982,8 +983,9 @@ class FPParticleSolver(BaseFPSolver):
         inside = ~np.atleast_1d(np.asarray(self._implicit_domain.contains(points), dtype=bool))
         if np.any(inside):
             raise ValueError(
-                f"FPParticleSolver: of {origin}, {int(inside.sum())} of {len(points)} are inside an obstacle -- the "
-                f"first at {points[inside][0]}. They are not moved: the first step would start outside the domain, "
+                f"FPParticleSolver: of {origin}, {int(inside.sum())} of {len(points)} are outside the particles' domain "
+                f"(inside an obstacle, or beyond a curved boundary) -- the first at {points[inside][0]}. They are not "
+                "moved: the first step would start outside the domain, "
                 f"and moving them changes the measure the caller gave (#2688). {advice}"
             )
 
@@ -1160,8 +1162,10 @@ class FPParticleSolver(BaseFPSolver):
         subclass, or a box that is not the grid's, does reach it, and B1 refuses the second
         (`_refuse_what_the_obstacle_placement_cannot_do`).
 
-        Both channels may name the same object. Two different objects are refused: which of them bounds the particles
-        is a choice this solver cannot make for the caller, and two equal domains built twice are not told apart.
+        Both channels may name the same object. Two different objects that both reach the placement are refused:
+        which of them bounds the particles is a choice this solver cannot make for the caller, and two equal domains
+        built twice are not told apart. A grid-box `Hyperrectangle` in one channel reaches none, so beside it the
+        other channel declares the domain.
         """
         from mfgarchon.geometry.implicit import Hyperrectangle, ImplicitDomain
 
@@ -1180,8 +1184,11 @@ class FPParticleSolver(BaseFPSolver):
             return geometric
         raise ValueError(
             f"FPParticleSolver: the problem's geometry is an ImplicitDomain ({type(geometry).__name__}), and "
-            f"implicit_domain= names a different object ({type(implicit_domain).__name__}). The solver keeps its "
-            "particles in the geometry's domain itself; drop implicit_domain=, or pass the geometry object (#2708)."
+            f"implicit_domain= names a different object ({type(implicit_domain).__name__}). Which of them bounds the "
+            "particles is not this solver's to choose, and two equal domains built twice are not told apart. If they "
+            "are one domain, drop implicit_domain= or pass the geometry object. If implicit_domain= carries more -- "
+            "an obstacle inside the geometry -- make that domain the problem's geometry, e.g. "
+            "DifferenceDomain(geometry, obstacle), and drop implicit_domain= (#2708)."
         )
 
     def _refuse_what_the_obstacle_placement_cannot_do(self, dimension: int, bounds: list[tuple[float, float]]) -> None:
@@ -1192,9 +1199,9 @@ class FPParticleSolver(BaseFPSolver):
         # the applicator wraps a particle through that face (#2706, review 2).
         if self._implicit_domain is not None and declares_periodic(self.boundary_conditions):
             raise NotImplementedError(
-                "FPParticleSolver: an implicit_domain with a periodic condition on the outer boundary (a periodic "
-                "segment or default_bc) is not supported. "
-                "A particle that ends a step inside an obstacle is placed by the face its step crossed, and a "
+                "FPParticleSolver: a domain for the particles -- an ImplicitDomain geometry or implicit_domain= -- "
+                "with a periodic condition on the outer boundary (a periodic segment or default_bc) is not supported. "
+                "A particle that ends a step outside the domain is placed by the face its step crossed, and a "
                 "wrapped particle's step is not the straight segment from where it started (#2688). Placing it by "
                 "the wrapped image of its step is #2704."
             )
@@ -2108,7 +2115,7 @@ class FPParticleSolver(BaseFPSolver):
             self._refuse_initial_particles_inside_an_obstacle(
                 initial_particle_positions,
                 "the initial particles, drawn uniformly over the interval because m_initial carries no mass",
-                "Give an m_initial with its mass outside the obstacles.",
+                "Give an m_initial with its mass inside the domain.",
             )
 
         # Store initial particles
@@ -2423,9 +2430,10 @@ class FPParticleSolver(BaseFPSolver):
             )
         if self._implicit_domain is not None:
             raise NotImplementedError(
-                "FPParticleSolver: the GPU path does not place particles that end a step inside an obstacle "
-                "(#2688). Its particles live on the device, and neither its initial sampling nor its step consults "
-                "`implicit_domain`, so it would record them inside. Use backend='numpy' with an implicit_domain."
+                "FPParticleSolver: the GPU path does not place particles that end a step outside the particles' "
+                "domain (#2688). Its particles live on the device, and neither its initial sampling nor its step "
+                "consults the domain -- an ImplicitDomain geometry or implicit_domain= -- so it would record them "
+                "outside. Use backend='numpy' with such a domain."
             )
 
         from mfgarchon.alg.numerical.density_estimation import gaussian_kde_gpu_internal
@@ -2728,7 +2736,7 @@ class FPParticleSolver(BaseFPSolver):
             if initial_particles.shape[1] != dimension:
                 raise ValueError(f"initial_particles has dimension {initial_particles.shape[1]}, expected {dimension}")
             self._refuse_initial_particles_inside_an_obstacle(
-                initial_particles, "the particles given as initial_particles", "Pass positions outside the obstacles."
+                initial_particles, "the particles given as initial_particles", "Pass positions inside the domain."
             )
             init_p = initial_particles
         else:

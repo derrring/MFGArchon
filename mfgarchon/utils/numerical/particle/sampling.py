@@ -1331,12 +1331,13 @@ def _leave_out_cells_with_no_navigable_point(
         context="sample_from_density",
         why=(
             f"{int(blocked.sum())} cell(s) carrying mass have no navigable point on a {_PROBES_PER_AXIS}-per-axis "
-            f"lattice -- the first centred at {centres[blocked_here][0]}: that mass is inside an obstacle, and no "
+            f"lattice -- the first centred at {centres[blocked_here][0]}: that mass is outside the navigable set "
+            "(inside an obstacle, or beyond a curved boundary), and no "
             "redraw within its cell can place it. It is not moved elsewhere, since that would change the measure the "
             "caller gave."
         ),
         remedy=(
-            "Set the density to zero at the nodes inside the obstacles: density * "
+            "Set the density to zero at the nodes outside the navigable set: density * "
             "navigable(nodes).reshape(density.shape), with nodes = np.stack(np.meshgrid(*coordinates, "
             'indexing="ij"), axis=-1).reshape(-1, len(coordinates)).'
         ),

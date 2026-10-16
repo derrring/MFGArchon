@@ -17,7 +17,7 @@ from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.geometry.boundary import no_flux_bc, periodic_bc
 from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle, Hypersphere
 
 _N = 500
@@ -50,13 +50,13 @@ def _solve(solver, start, target):
     return np.concatenate([np.asarray(P, dtype=float).reshape(-1, 2) for P in solver.M_particles_trajectory])
 
 
-def _solver(geometry, **kwargs):
+def _solver(geometry, bc=None, **kwargs):
     return FPParticleSolver(
         _problem(geometry),
         num_particles=_N,
         seed=1,
         density_mode="query_only",
-        boundary_conditions=no_flux_bc(2),
+        boundary_conditions=no_flux_bc(2) if bc is None else bc,
         **kwargs,
     )
 
@@ -92,14 +92,26 @@ def test_each_channel_keeps_the_particles_in_its_domain(case):
     assert placed > 0
 
 
-def test_two_domain_objects_are_refused_and_the_geometry_alone_is_the_advice():
-    """Two equal domains built twice are two objects, and which one bounds the particles is not this solver's choice.
-    The refusal says to drop implicit_domain=, and so the solve runs on the geometry's domain."""
-    geometry = _obstacle()
-    with pytest.raises(ValueError, match=r"implicit_domain= names a different object.*drop implicit_domain="):
-        _solver(geometry, implicit_domain=_obstacle())
-    recorded = _solve(_solver(geometry), _corner_start(), [0.5, 0.5])
-    assert geometry.contains(recorded).all()
+@pytest.mark.parametrize("case", ["one domain built twice", "the keyword carries an obstacle"])
+def test_two_domain_objects_are_refused_and_each_route_of_the_advice_runs(case):
+    """Two different objects, and which one bounds the particles is not this solver's choice. For one domain built
+    twice the advice is to drop implicit_domain=; for a keyword that cuts a hole out of a disc geometry (#2721 review 1,
+    B1: dropping it solved with every particle in the hole), it is to make that domain the problem's geometry."""
+    if case == "one domain built twice":
+        geometry, keyword, start, target = _obstacle(), _obstacle(), _corner_start(), [0.5, 0.5]
+        remedy = geometry
+    else:
+        disc = Hypersphere(center=[0.5, 0.5], radius=0.5)
+        geometry, keyword = disc, DifferenceDomain(disc, Hypersphere(center=[0.5, 0.5], radius=0.15))
+        rng = np.random.default_rng(1)
+        radius, angle = rng.uniform(0.30, 0.45, _N), rng.uniform(0.0, 2.0 * np.pi, _N)
+        start, target = np.c_[0.5 + radius * np.cos(angle), 0.5 + radius * np.sin(angle)], [0.5, 0.5]
+        remedy = keyword
+    route = "drop implicit_domain=" if remedy is geometry else r"DifferenceDomain\(geometry, obstacle\)"
+    with pytest.raises(ValueError, match=rf"implicit_domain= names a different object.*{route}"):
+        _solver(geometry, implicit_domain=keyword)
+    recorded = _solve(_solver(remedy), start, target)
+    assert remedy.contains(recorded).all()
 
 
 def test_a_curved_outer_boundary_is_a_boundary_too():
@@ -114,13 +126,22 @@ def test_a_curved_outer_boundary_is_a_boundary_too():
 
 
 @pytest.mark.parametrize(
-    "case", ["a box geometry", "a box geometry beside an obstacle keyword", "a keyword box short of the grid"]
+    "case",
+    [
+        "a box geometry",
+        "a box geometry beside an obstacle keyword",
+        "a keyword box on a periodic grid",
+        "a keyword box beside an obstacle geometry",
+        "a keyword box short of the grid",
+    ],
 )
 def test_a_box_on_the_grid_reaches_no_placement(case):
     """A domain that is exactly a `Hyperrectangle` on the grid's box carries nothing the boundary condition does not
     place, so no domain reaches the placement (the periodic box geometry is the torus of
-    `test_fp_particle_gradient_bc_1255`, which solves). Beside it, an obstacle keyword declares the domain. A box
-    that is not the grid's still reaches the placement, and the box refusal names it (#2706)."""
+    `test_fp_particle_gradient_bc_1255`, which solves). Beside it, an obstacle keyword declares the domain. The keyword
+    channel skips such a box too: on a periodic grid it solves, where it was refused, and beside an obstacle geometry
+    the geometry declares the domain (#2721 review 1, B2). A box that is not the grid's still reaches the placement,
+    and the box refusal names it (#2706)."""
     if case == "a box geometry":
         assert _solver(_box())._implicit_domain is None
         return
@@ -130,6 +151,18 @@ def test_a_box_on_the_grid_reaches_no_placement(case):
         assert solver._implicit_domain is obstacle
         recorded = _solve(solver, _corner_start(), [0.5, 0.5])
         assert obstacle.contains(recorded).all()
+        return
+    if case == "a keyword box on a periodic grid":
+        grid = TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[21, 21], boundary_conditions=periodic_bc(2))
+        solver = _solver(grid, bc=periodic_bc(2), implicit_domain=_box())
+        assert solver._implicit_domain is None
+        assert np.isfinite(_solve(solver, _corner_start(), [0.5, 0.5])).all()
+        return
+    if case == "a keyword box beside an obstacle geometry":
+        obstacle = _obstacle()
+        solver = _solver(obstacle, implicit_domain=_box())
+        assert solver._implicit_domain is obstacle
+        assert obstacle.contains(_solve(solver, _corner_start(), [0.5, 0.5])).all()
         return
     grid = TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[21, 21], boundary_conditions=no_flux_bc(2))
     short = Hyperrectangle(np.array([[0.0, 0.8], [0.0, 1.0]]))
