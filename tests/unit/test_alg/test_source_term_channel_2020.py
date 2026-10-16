@@ -369,8 +369,7 @@ _UNCOVERED: dict[str, str] = {
     "WeakFormHJBSolver": "intended-abstract base -- constructs given a discretization, then its BC "
     "hooks raise NotImplementedError; the concrete subclasses are the FEM rows above",
     "WeakFormFPSolver": "intended-abstract base -- same",
-    "PenaltyHJBSolver": "wrapper -- delegates solve_hjb_system to an inner solver, so it measures "
-    "whichever row that inner solver already has",
+    "PenaltyHJBSolver": "retired (#2002): construction refuses",
 }
 
 
