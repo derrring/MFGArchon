@@ -102,7 +102,7 @@ print(f"Converged: {result.converged} in {result.iterations} iterations")
 
 ### HJB Solvers
 - **Finite Difference (FDM)** - Standard grid-based with upwind schemes
-- **GFDM** - Meshfree generalized FDM with QP-monotonicity enforcement
+- **GFDM** - Meshfree generalized FDM; `monotonicity_scheme="joint_socp"` solves its stencils under an M-matrix constraint (#1689)
 - **Semi-Lagrangian** - Adaptive time-stepping with periodic BC support
 - **WENO** - High-order (5th) shock-capturing with high-order ghost nodes
 - **FEM** - scikit-fem based P1/P2 finite elements on unstructured meshes
