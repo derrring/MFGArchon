@@ -22,10 +22,46 @@ References:
 - TECHNICAL_REFERENCE_HIGH_DIMENSIONAL_MFG.md Section 4.3
 """
 
+from collections.abc import Callable
+from typing import Literal
+
 import numpy as np
 from numpy.typing import NDArray
 
 from .implicit_domain import ImplicitDomain
+
+
+def _component_crossing_normal(
+    domains: list[ImplicitDomain],
+    inside: NDArray[np.float64],
+    outside: NDArray[np.float64],
+    pick: Literal["nearest", "most outside"],
+    fallback: Callable[[NDArray[np.float64], NDArray[np.float64]], NDArray[np.float64]],
+) -> NDArray[np.float64]:
+    """`UnionDomain.crossing_normal` and `IntersectionDomain.crossing_normal`, for one crossing (shape (d,)) or several
+    (shape (n, d)) at once: per crossing, the component that holds ``inside`` and not ``outside`` by its own phi's sign
+    -- the one with the least phi at ``outside`` where several do (``"nearest"``) or the greatest (``"most outside"``),
+    the first in order on a tie -- gives its own normal; ``fallback`` gives the normal where none does (#2698, #2706,
+    #2707)."""
+    single = np.ndim(outside) == 1
+    ins = np.atleast_2d(np.asarray(inside, dtype=float))
+    outs = np.atleast_2d(np.asarray(outside, dtype=float))
+    a = np.array([np.atleast_1d(domain.signed_distance(ins)) for domain in domains])
+    b = np.array([np.atleast_1d(domain.signed_distance(outs)) for domain in domains])
+    exited = (a <= 0) & (b > 0)
+    if pick == "nearest":
+        chosen = np.argmin(np.where(exited, b, np.inf), axis=0)
+    else:
+        chosen = np.argmax(np.where(exited, b, -np.inf), axis=0)
+    some = exited.any(axis=0)
+    normals = np.empty_like(outs)
+    if not some.all():
+        normals[~some] = np.atleast_2d(fallback(ins[~some], outs[~some]))
+    for k, domain in enumerate(domains):
+        rows = some & (chosen == k)
+        if rows.any():
+            normals[rows] = np.atleast_2d(domain.crossing_normal(ins[rows], outs[rows]))
+    return normals[0] if single else normals
 
 
 class UnionDomain(ImplicitDomain):
@@ -106,12 +142,7 @@ class UnionDomain(ImplicitDomain):
         """The normal of the component whose surface is crossed: one that holds ``inside`` and not ``outside``, by its
         own phi's sign (the nearest of them at ``outside`` where several do), with that component's own normal
         (#2698, #2706). See :meth:`ImplicitDomain.crossing_normal`."""
-        a = np.array([float(np.atleast_1d(domain.signed_distance(inside[None, :]))[0]) for domain in self.domains])
-        b = np.array([float(np.atleast_1d(domain.signed_distance(outside[None, :]))[0]) for domain in self.domains])
-        exited = np.flatnonzero((a <= 0) & (b > 0))
-        if exited.size == 0:
-            return super().crossing_normal(inside, outside)
-        return self.domains[int(exited[np.argmin(b[exited])])].crossing_normal(inside, outside)
+        return _component_crossing_normal(self.domains, inside, outside, "nearest", super().crossing_normal)
 
     def get_bounding_box(self) -> NDArray[np.float64]:
         """
@@ -210,12 +241,7 @@ class IntersectionDomain(ImplicitDomain):
         A difference is this with the subtracted domain's complement, so an obstacle meeting the outer box gives the
         obstacle's own normal even within the gradient's 1e-6 of the box (#2698, #2706). See
         :meth:`ImplicitDomain.crossing_normal`."""
-        a = np.array([float(np.atleast_1d(domain.signed_distance(inside[None, :]))[0]) for domain in self.domains])
-        b = np.array([float(np.atleast_1d(domain.signed_distance(outside[None, :]))[0]) for domain in self.domains])
-        exited = np.flatnonzero((a <= 0) & (b > 0))
-        if exited.size == 0:
-            return super().crossing_normal(inside, outside)
-        return self.domains[int(exited[np.argmax(b[exited])])].crossing_normal(inside, outside)
+        return _component_crossing_normal(self.domains, inside, outside, "most outside", super().crossing_normal)
 
     def get_bounding_box(self) -> NDArray[np.float64]:
         """

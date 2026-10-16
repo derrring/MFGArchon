@@ -20,7 +20,7 @@ References:
 import warnings
 from abc import abstractmethod
 from collections.abc import Callable
-from itertools import combinations, pairwise
+from itertools import combinations
 from typing import Literal
 
 import numpy as np
@@ -42,6 +42,12 @@ from mfgarchon.utils.mfg_logging import get_logger
 
 # Module logger
 logger = get_logger(__name__)
+
+
+def _leg_parameters(n_scan: int) -> NDArray[np.float64]:
+    """The points of a leg the crossing search samples, as fractions of it: ``n_scan`` steps from the start, one more
+    1e-9 of the leg before the end, and the end (`ImplicitDomain._leg_crossing`, `ImplicitDomain.legs_leave`)."""
+    return np.concatenate([np.linspace(0.0, 1.0, n_scan + 1)[:-1], [1.0 - 1e-9, 1.0]])
 
 
 class ImplicitDomain(
@@ -606,18 +612,7 @@ class ImplicitDomain(
             return points[0] if is_single else points
 
         points_interior = points.copy()
-        boundary_points = self.project_to_boundary(points[outside])
-        normals = np.atleast_2d(self.get_outward_normal(boundary_points))
-        moved = boundary_points - tolerance * normals
-        # Where the projection converges linearly -- an obstacle's corner, the seam of a union -- it stops with
-        # 0 < phi below its own tol, and a step of `tolerance` may not cross. Step further, up to 1e4 * tolerance.
-        missed = np.atleast_1d(self.signed_distance(moved)) > 0
-        for step in tolerance * 10.0 ** np.arange(1, 5):
-            if not missed.any():
-                break
-            idx = np.where(missed)[0]
-            moved[idx] = boundary_points[idx] - step * normals[idx]
-            missed[idx] = np.atleast_1d(self.signed_distance(moved[idx])) > 0
+        moved, missed = self._projection(points[outside], tolerance)
 
         if missed.any():
             at = np.where(outside)[0][missed]
@@ -648,6 +643,117 @@ class ImplicitDomain(
 
         return points_interior[0] if is_single else points_interior
 
+    def _projection(
+        self, points: NDArray[np.float64], tolerance: float
+    ) -> tuple[NDArray[np.float64], NDArray[np.bool_]]:
+        """`project_to_interior`'s projection of outside ``points``, shape (n, d): each onto the boundary along the SDF
+        normal, then `tolerance` inward; and which of them it does not place, still outside (#2679, #2689)."""
+        boundary_points = self.project_to_boundary(points)
+        normals = np.atleast_2d(self.get_outward_normal(boundary_points))
+        moved = boundary_points - tolerance * normals
+        # Where the projection converges linearly -- an obstacle's corner, the seam of a union -- it stops with
+        # 0 < phi below its own tol, and a step of `tolerance` may not cross. Step further, up to 1e4 * tolerance.
+        missed = np.atleast_1d(self.signed_distance(moved)) > 0
+        for step in tolerance * 10.0 ** np.arange(1, 5):
+            if not missed.any():
+                break
+            idx = np.where(missed)[0]
+            moved[idx] = boundary_points[idx] - step * normals[idx]
+            missed[idx] = np.atleast_1d(self.signed_distance(moved[idx])) > 0
+        return moved, missed
+
+    def place_step(
+        self,
+        previous: NDArray[np.float64] | None,
+        end: NDArray[np.float64],
+        via: NDArray[np.float64] | None = None,
+        tolerance: float = 1e-10,
+        report: dict[str, int] | None = None,
+    ) -> NDArray[np.float64]:
+        """Where each step from ``previous`` to ``end`` lands inside the domain: a point the particle reaches from
+        ``previous`` without leaving the domain (#2707). The one owner of that answer for a particle step.
+
+        The step's path is the segment from ``previous`` to ``end``, or, with ``via``, the polyline through those
+        waypoints -- a reflected step's wall hits (`reflection_waypoints`). Each leg is searched with `legs_leave`'s
+        scan, so a leg whose path inside a feature is shorter than a scan step reads as staying inside (#2710).
+
+        - A path that stays inside lands at ``end``.
+        - An ``end`` outside the domain, on a path that stays inside up to its last waypoint, lands at its projection,
+          the nearest interior point (`project_to_interior`), when both hold: (a) the segment from the path's first
+          crossing of the boundary to ``end`` stays outside the domain, so ``end`` is in what the path entered; and
+          (b) the outward normals at that crossing and at the projection agree, ``n_entry . n_projection > 0``, so no
+          medial axis of what it entered lies between them. Both normals are the corner owner's
+          (`crossing_normal`), not the blended gradient.
+        - Every other step lands by the face its path met first (`_place_by_face_of_entry`): an ``end`` past an
+          obstacle's medial axis (a slab's middle, a disc's centre), whose projection is on the far side; an ``end``
+          in a second obstacle after the path left the first; an ``end`` inside the domain beyond an obstacle the path
+          crossed; a path that left before its last waypoint; and an ``end`` the projection does not place.
+
+        With ``previous`` None, the step is `project_to_interior` with no previous position: an outside point is
+        projected, and one the projection does not place is refused.
+
+        Args:
+            previous: The positions before the step, shape (n, d) or (d,), each inside the domain; or None.
+            end: The positions the step reached, same shape.
+            via: Optional waypoints, shape (n, k, d), rows of NaN unused. Read only with ``previous``.
+            tolerance: How far inside the boundary a placed point lands.
+            report: Optional counter, updated in place: ``"projected"`` and ``"face_of_entry"``.
+
+        Returns:
+            The landed positions, the shape of ``end``.
+
+        Raises:
+            ValueError: a ``previous`` position, of a step whose path leaves the domain, that is not inside it.
+            RuntimeError: as `_place_by_face_of_entry` and `project_to_interior`.
+        """
+        if previous is None:
+            return self.project_to_interior(np.asarray(end, dtype=float), tolerance, report=report)
+        points = np.atleast_2d(np.asarray(end, dtype=float))
+        n, d = points.shape
+        if n == 0:
+            return points.copy()
+        prev = np.asarray(previous, dtype=float).reshape(n, d)
+        waypoints = None if via is None else np.asarray(via, dtype=float).reshape(n, -1, d)
+        last, early = prev.copy(), np.zeros(n, dtype=bool)
+        for k in range(0 if waypoints is None else waypoints.shape[1]):
+            w = waypoints[:, k]
+            used = np.all(np.isfinite(w), axis=1)
+            if used.any():
+                early[used] |= self.legs_leave(last[used], w[used])
+                last[used] = w[used]
+        leaves = early | self.legs_leave(last, points)
+        landed = points.copy()
+        projected = np.zeros(n, dtype=bool)
+        tried = np.flatnonzero(leaves & ~early & (np.atleast_1d(self.signed_distance(points)) > 0))
+        if tried.size:
+            ends = points[tried]
+            candidate, missed = self._projection(ends, tolerance)
+            found, entry_in, entry_out, _ = self._leg_crossings(last[tried], ends)
+            kept = ~missed & found
+            at = np.flatnonzero(kept)
+            if at.size:
+                stays = self._legs_stay_outside(entry_out[at], ends[at])
+                n_entry = np.atleast_2d(self.crossing_normal(entry_in[at], entry_out[at]))
+                n_end = np.atleast_2d(self.crossing_normal(candidate[at], ends[at]))
+                kept[at] = stays & (np.einsum("nd,nd->n", n_entry, n_end) > 0)
+            landed[tried[kept]] = candidate[kept]
+            projected[tried[kept]] = True
+        face = leaves & ~projected
+        if face.any():
+            phi_prev = np.atleast_1d(self.signed_distance(prev[face]))
+            if np.any(phi_prev > 0):
+                raise ValueError(
+                    f"place_step: previous position {prev[face][phi_prev > 0][0]} is not inside the domain, so the "
+                    f"step from it names no face it crossed (#2688, #2707)."
+                )
+            landed[face] = self._place_by_face_of_entry(
+                prev[face], points[face], tolerance, via=None if waypoints is None else waypoints[face]
+            )
+        if report is not None:
+            report["projected"] = report.get("projected", 0) + int(projected.sum())
+            report["face_of_entry"] = report.get("face_of_entry", 0) + int(face.sum())
+        return landed[0] if np.asarray(end).ndim == 1 else landed
+
     def crossing_normal(self, inside: NDArray[np.float64], outside: NDArray[np.float64]) -> NDArray[np.float64]:
         """The outward unit normal of this domain's boundary where it is crossed between ``inside`` (phi <= 0) and
         ``outside`` (phi > 0), two points bracketing the crossing closely.
@@ -659,8 +765,14 @@ class ImplicitDomain(
         normals (#2698). A CSG domain overrides this: it decides which component's surface is crossed by which
         component's own phi changes sign between the two points, and gives that component's normal, so no
         difference straddles another surface (#2706).
+
+        ``inside`` and ``outside`` are one crossing, shape (d,), or several, shape (n, d), which give shape (n, d)
+        (#2707).
         """
-        return np.atleast_2d(self.get_outward_normal(np.asarray(outside, dtype=float)[None, :]))[0]
+        outside = np.asarray(outside, dtype=float)
+        if outside.ndim == 1:
+            return np.atleast_2d(self.get_outward_normal(outside[None, :]))[0]
+        return np.atleast_2d(self.get_outward_normal(outside))
 
     def _leg_crossing(
         self, a: NDArray[np.float64], b: NDArray[np.float64], n_scan: int = 32, n_bisect: int = 60
@@ -673,20 +785,94 @@ class ImplicitDomain(
         ends ON an obstacle's face -- a reflected step's wall hit where the obstacle is flush with the wall -- has
         phi = 0 there, which reads inside, and its excursion into the obstacle just before the end can be shorter
         than a scan step (#2706)."""
-        s = np.concatenate([np.linspace(0.0, 1.0, n_scan + 1)[:-1], [1.0 - 1e-9, 1.0]])
-        out = np.atleast_1d(self.signed_distance(a[None, :] + s[:, None] * (b - a)[None, :])) > 0
-        out[0] = False
-        if not out.any():
-            return None
-        first = int(np.argmax(out))
-        lo, hi = float(s[first - 1]), float(s[first])
+        found, inside, outside, _ = self._leg_crossings(a[None, :], b[None, :], n_scan, n_bisect)
+        return (inside[0], outside[0]) if found[0] else None
+
+    def _leg_crossings(
+        self, a: NDArray[np.float64], b: NDArray[np.float64], n_scan: int = 32, n_bisect: int = 60
+    ) -> tuple[NDArray[np.bool_], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+        """`_leg_crossing` for the legs ``a[i]`` -> ``b[i]``, shape (n, d), all at once: whether each has a crossing,
+        its bracket, and the bracket's outside end as a fraction of the leg, NaN where it has none. Each leg's scan and
+        bisections are its own, so a leg's bracket is the one it would get alone."""
+        n, d = a.shape
+        s = _leg_parameters(n_scan)
+        samples = a[:, None, :] + s[None, :, None] * (b - a)[:, None, :]
+        out = np.atleast_1d(self.signed_distance(samples.reshape(-1, d))).reshape(n, len(s)) > 0
+        out[:, 0] = False
+        found = out.any(axis=1)
+        inside = np.full((n, d), np.nan)
+        outside = np.full((n, d), np.nan)
+        fraction = np.full(n, np.nan)
+        if not found.any():
+            return found, inside, outside, fraction
+        at = np.flatnonzero(found)
+        first = np.argmax(out[at], axis=1)
+        lo, hi = s[first - 1].copy(), s[first].copy()
+        a_at, step = a[at], (b - a)[at]
         for _ in range(n_bisect):
             mid = 0.5 * (lo + hi)
-            if float(np.atleast_1d(self.signed_distance((a + mid * (b - a))[None, :]))[0]) > 0:
-                hi = mid
-            else:
-                lo = mid
-        return a + lo * (b - a), a + hi * (b - a)
+            beyond = np.atleast_1d(self.signed_distance(a_at + mid[:, None] * step)) > 0
+            hi = np.where(beyond, mid, hi)
+            lo = np.where(beyond, lo, mid)
+        inside[at] = a_at + lo[:, None] * step
+        outside[at] = a_at + hi[:, None] * step
+        fraction[at] = hi
+        return found, inside, outside, fraction
+
+    def legs_leave(
+        self,
+        starts: NDArray[np.float64],
+        ends: NDArray[np.float64],
+        n_scan: int = 32,
+        before: NDArray[np.float64] | None = None,
+    ) -> NDArray[np.bool_]:
+        """Whether each leg from ``starts[i]`` (taken as inside) to ``ends[i]`` leaves the domain, for every leg at once
+        (#2707).
+
+        A leg whose two ends are inside, and whose length is less than the sum of their depths -phi over phi's
+        Lipschitz constant L (`get_lipschitz_constant`), stays inside: the balls of those radii about its ends are
+        inside the domain and cover it. That is exact wherever phi is L-Lipschitz -- an exact SDF, and a CSG of exact
+        SDFs, with L = 1 -- and it decides a short step without a scan. Every other leg leaves where a point of
+        `_leg_crossing`'s scan beyond its start is outside: the same scan, so the same bound, and a leg whose path
+        inside a feature is shorter than a scan step can pass it over (#2710).
+
+        With ``before``, fractions of each leg, a leg leaves only where its first crossing -- the scan and bisection
+        `place_step` itself uses on that leg -- lies before ``before[i]``; so a caller that asks about part of a leg
+        and then places the whole leg gets one answer about which boundary it met first."""
+        if len(starts) == 0:
+            return np.zeros(0, dtype=bool)
+        a = np.asarray(starts, dtype=float).reshape(len(starts), -1)
+        b = np.asarray(ends, dtype=float).reshape(a.shape)
+        phi_a = np.atleast_1d(self.signed_distance(a))
+        phi_b = np.atleast_1d(self.signed_distance(b))
+        lipschitz = self.get_lipschitz_constant("sdf")
+        covered = (phi_a <= 0) & (phi_b <= 0) & (lipschitz * np.linalg.norm(b - a, axis=1) < -(phi_a + phi_b))
+        leaves = np.zeros(len(a), dtype=bool)
+        scan = np.flatnonzero(~covered)
+        if scan.size:
+            s = _leg_parameters(n_scan)[1:]
+            samples = a[scan, None, :] + s[None, :, None] * (b[scan] - a[scan])[:, None, :]
+            phi = np.atleast_1d(self.signed_distance(samples.reshape(-1, a.shape[1]))).reshape(scan.size, len(s))
+            leaves[scan] = (phi > 0).any(axis=1)
+        if before is not None:
+            at = np.flatnonzero(leaves)
+            if at.size:
+                fraction = self._leg_crossings(a[at], b[at], n_scan)[3]
+                leaves[at] = fraction < np.asarray(before, dtype=float).reshape(len(a))[at]
+        return leaves
+
+    def _legs_stay_outside(
+        self, starts: NDArray[np.float64], ends: NDArray[np.float64], n_scan: int = 32
+    ) -> NDArray[np.bool_]:
+        """Whether each leg from ``starts[i]`` to ``ends[i]`` stays outside the domain: every point of `legs_leave`'s
+        scan, its ends included, has phi > 0 (#2707). The same scan, so the same bound: a gap in what it crosses
+        narrower than a scan step can pass unseen (#2710)."""
+        a = np.asarray(starts, dtype=float).reshape(len(starts), -1)
+        b = np.asarray(ends, dtype=float).reshape(a.shape)
+        s = _leg_parameters(n_scan)
+        samples = a[:, None, :] + s[None, :, None] * (b - a)[:, None, :]
+        phi = np.atleast_1d(self.signed_distance(samples.reshape(-1, a.shape[1]))).reshape(len(a), len(s))
+        return np.asarray((phi > 0).all(axis=1), dtype=bool)
 
     def _place_by_face_of_entry(
         self,
@@ -708,16 +894,31 @@ class ImplicitDomain(
         faces, where ``max_faces`` faces do not place it, or where `_project_onto_half_spaces` finds no nearest
         point of their intersection (#2688)."""
         placed = np.empty_like(points)
-        for i in range(points.shape[0]):
-            target = points[i]
-            legs = [previous[i]]
+        n = points.shape[0]
+        # Each step's path: its previous position, its waypoints in order, its point. The first crossing on it is
+        # searched for every step at once, leg by leg.
+        paths = []
+        for i in range(n):
+            nodes = [previous[i]]
             if via is not None:
-                legs.extend(v for v in via[i] if np.all(np.isfinite(v)))
-            legs.append(target)
-            crossing = next(
-                (c for a, b in pairwise(legs) if (c := self._leg_crossing(a, b)) is not None),
-                None,
+                nodes.extend(v for v in via[i] if np.all(np.isfinite(v)))
+            nodes.append(points[i])
+            paths.append(nodes)
+        first: list[tuple[NDArray[np.float64], NDArray[np.float64]] | None] = [None] * n
+        pending = np.arange(n)
+        for k in range(max(len(nodes) for nodes in paths) - 1):
+            pending = np.array([i for i in pending if k + 1 < len(paths[i])], dtype=int)
+            if pending.size == 0:
+                break
+            found, inside, outside, _ = self._leg_crossings(
+                np.array([paths[i][k] for i in pending]), np.array([paths[i][k + 1] for i in pending])
             )
+            for j in np.flatnonzero(found):
+                first[pending[j]] = (inside[j], outside[j])
+            pending = pending[~found]
+        for i in range(n):
+            target = points[i]
+            crossing = first[i]
             centres, normals = [], []
             candidate, why = None, ""
             for _ in range(max_faces):

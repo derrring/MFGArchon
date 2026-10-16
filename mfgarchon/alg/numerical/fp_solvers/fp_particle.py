@@ -41,7 +41,6 @@ from .base_fp import BaseFPSolver, DriftConvention
 from .fp_particle_bc import apply_boundary_conditions as _apply_bc
 from .fp_particle_bc import get_topology_per_dimension as _get_topology
 from .fp_particle_bc import needs_segment_aware_bc as _needs_segment_bc
-from .fp_particle_bc import project_to_navigable_or_defer as _project_to_navigable
 from .fp_particle_bc import reflection_waypoints as _reflection_waypoints
 from .fp_particle_density import generate_brownian_increment as _gen_brownian
 from .particle_result import FPParticleResult
@@ -1065,22 +1064,32 @@ class FPParticleSolver(BaseFPSolver):
         return _get_topology(self.boundary_conditions, dimension, self.problem.geometry)
 
     def _project_obstacle_violations(
-        self, particles: np.ndarray, previous: np.ndarray, via: np.ndarray | None = None
+        self,
+        particles: np.ndarray,
+        previous: np.ndarray,
+        via: np.ndarray | None,
+        report: dict[str, int],
     ) -> np.ndarray:
         """
-        Place the particles that ended a step outside the domain (#533, #2688), after the outer boundary
-        condition has run (`_finish_step`).
+        Place the reflected survivors of a step (#533, #2688, #2707), after the outer boundary condition has run
+        (`_finish_step`).
 
-        ``previous`` is each particle's position before the step, inside the domain by induction from t = 0.
-        `ImplicitDomain.project_to_interior` reads it only where its projection does not place a particle; there
-        the face the step crossed decides. This step's counts go to ``obstacle_placement_history``.
+        A survivor the boundary condition reflected has a broken path, ``previous`` -> its wall hits ``via`` -> its
+        reflected position, and `ImplicitDomain.place_step` places it by that path. Every other survivor is already
+        where it lands: its step stayed in the box, and the step's segment was searched before the boundary
+        condition ran. ``previous`` is each survivor's position before the step, inside the domain by induction
+        from t = 0. This step's counts go to ``obstacle_placement_history``.
 
         Parameters
         ----------
         particles : np.ndarray
-            Particle positions after the outer boundary condition, shape (num_particles, dimension)
+            The survivors' positions after the outer boundary condition, shape (M, dimension)
         previous : np.ndarray
-            The same particles' positions before the step, same shape
+            Their positions before the step, same shape
+        via : np.ndarray or None
+            Their wall hits, shape (M, k, dimension), rows of NaN unused (`reflection_waypoints`)
+        report : dict
+            This step's counts so far, updated in place and recorded
 
         Returns
         -------
@@ -1089,18 +1098,26 @@ class FPParticleSolver(BaseFPSolver):
         """
         if self._implicit_domain is None:
             return particles
-        report: dict[str, int] = {}
-        placed = _project_to_navigable(particles, self._implicit_domain, previous=previous, report=report, via=via)
+        after: dict[str, int] = {}
+        if via is not None:
+            reflected = np.any(np.all(np.isfinite(via), axis=2), axis=1)
+            if reflected.any():
+                particles = particles.copy()
+                particles[reflected] = self._implicit_domain.place_step(
+                    previous[reflected], particles[reflected], via=via[reflected], report=after
+                )
+        report["projected"] = after.get("projected", 0)
+        report["face_of_entry"] = after.get("face_of_entry", 0)
         self.obstacle_placement_history.append(report)
-        inside = np.atleast_1d(self._implicit_domain.contains(placed))
+        inside = np.atleast_1d(self._implicit_domain.contains(particles))
         if not np.all(inside):
             raise RuntimeError(
                 f"FPParticleSolver: internal error -- {int((~inside).sum())} particle(s), the first "
-                f"{np.atleast_2d(placed)[~inside][0]}, are outside the domain after the outer boundary condition and "
+                f"{np.atleast_2d(particles)[~inside][0]}, are outside the domain after the outer boundary condition and "
                 f"the obstacle placement. Every recorded particle must be inside, so that the next step starts from "
                 f"inside (#2688)."
             )
-        return placed
+        return particles
 
     def _finish_step(
         self,
@@ -1109,12 +1126,22 @@ class FPParticleSolver(BaseFPSolver):
         bounds: list[tuple[float, float]],
         use_segment_aware_bc: bool,
     ) -> tuple[np.ndarray, np.ndarray | None, int]:
-        """The one end of a particle step, for every forward path (#2688, #1561 part 2).
+        """The one end of a particle step, for every forward path (#2688, #1561 part 2, #2707).
 
-        The outer boundary condition runs on the raw step first -- absorption at Dirichlet segments, then
-        reflection or wrap (#1064) -- and the obstacle placement second, on the survivors, with their positions
-        before the step. The other order let a wall reflection put a particle back inside an obstacle that meets
-        the wall, where it was recorded.
+        The first boundary a step meets decides. Where the domain is not the grid's box (`_obstacle_domain`), each
+        step's segment from its previous position is searched for the domain's boundary -- an obstacle's face, or a
+        curved outer boundary -- with the scan `ImplicitDomain.place_step` uses (`ImplicitDomain.legs_leave`), and its
+        first crossing is compared with where the segment first reaches the box's wall. A step that meets the domain's
+        boundary before the wall lands where `place_step` places it, and the outer boundary condition does not act on
+        it: a step that met an obstacle before an absorbing wall is not absorbed.
+        Every other step meets the wall first or nothing: the outer boundary condition acts on it -- absorption at
+        Dirichlet segments, then reflection or wrap (#1064) -- and `place_step` then places each reflected survivor
+        along its reflected path (`_project_obstacle_violations`).
+
+        The comparison is with a cut 1e-9 of the box's length short of the wall, so that the wall itself, where the
+        box's phi is zero up to rounding, does not read as a crossing of the domain's boundary: a step that ends past an
+        absorbing wall must reach the boundary condition. A step that enters an obstacle flush with the wall closer to
+        the wall than that is placed after its reflection, on its path through the wall hit.
 
         Parameters
         ----------
@@ -1135,12 +1162,28 @@ class FPParticleSolver(BaseFPSolver):
             Which of the N were absorbed, or None when nothing can be
         n_absorbed : int
         """
+        report: dict[str, int] = {}
+        placed = np.zeros(len(raw), dtype=bool)
+        if self._implicit_domain is not None:
+            raw, placed = self._place_steps_that_meet_the_domain_first(raw, previous, bounds, report)
+        # The boundary condition acts on the steps the domain's boundary did not place: a placed step can lie within
+        # the applicator's own tolerance of an absorbing wall (`ParticleApplicator`, 1e-10), which would absorb it.
+        rest = np.flatnonzero(~placed)
+        ended = raw.copy()
         if use_segment_aware_bc:
-            recorded, n_absorbed, _, absorbed_mask = self._apply_boundary_conditions_segment_aware(raw, bounds)
+            absorbed_mask = np.zeros(len(raw), dtype=bool)
+            n_absorbed = 0
+            if rest.size:
+                kept, n_absorbed, _, absorbed_rest = self._apply_boundary_conditions_segment_aware(raw[rest], bounds)
+                absorbed_mask[rest[absorbed_rest]] = True
+                ended[rest[~absorbed_rest]] = kept
+            recorded = ended[~absorbed_mask]
             survivors_previous, survivors_raw = previous[~absorbed_mask], raw[~absorbed_mask]
         else:
-            topologies = self._get_topology_per_dimension(raw.shape[1])
-            recorded = self._apply_boundary_conditions_nd(raw, bounds, topologies)
+            if rest.size:
+                topologies = self._get_topology_per_dimension(raw.shape[1])
+                ended[rest] = self._apply_boundary_conditions_nd(raw[rest], bounds, topologies)
+            recorded = ended
             absorbed_mask, n_absorbed = None, 0
             survivors_previous, survivors_raw = previous, raw
         # A survivor whose raw step left the box was reflected: its path is broken at the wall, and the face it met
@@ -1148,7 +1191,36 @@ class FPParticleSolver(BaseFPSolver):
         via = (
             None if self._implicit_domain is None else _reflection_waypoints(survivors_previous, survivors_raw, bounds)
         )
-        return self._project_obstacle_violations(recorded, survivors_previous, via), absorbed_mask, n_absorbed
+        return self._project_obstacle_violations(recorded, survivors_previous, via, report), absorbed_mask, n_absorbed
+
+    def _place_steps_that_meet_the_domain_first(
+        self, raw: np.ndarray, previous: np.ndarray, bounds: list[tuple[float, float]], report: dict[str, int]
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """The raw steps, with each one whose first crossing of the domain's boundary lies before the box's wall
+        landed where `ImplicitDomain.place_step` places it (#2707), and which ones landed; see `_finish_step`. Counts:
+        ``report["projected_before_the_wall"]`` and ``report["face_of_entry_before_the_wall"]``."""
+        domain = self._implicit_domain
+        previous = np.asarray(previous, dtype=float).reshape(raw.shape)
+        lo, hi = (np.array([b[k] for b in bounds], dtype=float) for k in (0, 1))
+        margin = 1e-9 * (hi - lo)
+        step = raw - previous
+        with np.errstate(divide="ignore", invalid="ignore"):
+            wall = np.where(
+                raw > hi, (hi - margin - previous) / step, np.where(raw < lo, (lo + margin - previous) / step, np.inf)
+            )
+        first_wall = np.min(wall, axis=1)
+        # The whole step is searched, as `place_step` searches it, and its first crossing must lie before the cut: a
+        # search of the cut segment alone can see a feature thinner than the whole step's scan step, which
+        # `place_step` then passes over to the wall (#2710).
+        before = np.where(np.isfinite(first_wall), np.clip(first_wall, 0.0, 1.0), np.inf)
+        meets = domain.legs_leave(previous, raw, before=before)
+        before: dict[str, int] = {}
+        if meets.any():
+            raw = raw.copy()
+            raw[meets] = domain.place_step(previous[meets], raw[meets], report=before)
+        report["projected_before_the_wall"] = before.get("projected", 0)
+        report["face_of_entry_before_the_wall"] = before.get("face_of_entry", 0)
+        return raw, meets
 
     def _obstacle_domain(self, implicit_domain: ImplicitDomain | None) -> ImplicitDomain | None:
         """The one owner of the domain the particles must end in (#2708, #2679 stage 2c). Two channels declare it: the
@@ -2189,7 +2261,8 @@ class FPParticleSolver(BaseFPSolver):
             # Euler-Maruyama update
             new_particles = particles_t + alpha_optimal_at_particles * Dt + sigma_sde * dW
 
-            # The outer boundary condition, then the obstacle placement (#2688): see `_finish_step`.
+            # The step's first boundary decides, then the outer boundary condition, then the obstacle placement (#2688,
+            # #2707): see `_finish_step`.
             if use_segment_aware_bc and self._preserve_indices:
                 raise NotImplementedError(
                     "preserve_indices=True not supported in 1D path; use callable-drift n-D path (Issue #1119)."
@@ -2355,7 +2428,8 @@ class FPParticleSolver(BaseFPSolver):
             # Euler-Maruyama step: X_{t+1} = X_t + drift * dt + sigma * dW
             new_particles = particles_t + drift * Dt + dW
 
-            # The outer boundary condition, then the obstacle placement (#2688): see `_finish_step`.
+            # The step's first boundary decides, then the outer boundary condition, then the obstacle placement (#2688,
+            # #2707): see `_finish_step`.
             if use_segment_aware_bc and self._preserve_indices:
                 raise NotImplementedError(
                     "preserve_indices=True not supported in grid-drift n-D path; use callable-drift path (Issue #1119)."
@@ -2909,8 +2983,8 @@ class FPParticleSolver(BaseFPSolver):
             # Euler-Maruyama step
             new_particles = particles_t + drift * Dt + dW
 
-            # The outer boundary condition -- segment-aware where it has Dirichlet (absorbing) segments (#1042) --
-            # then the obstacle placement (#2688): see `_finish_step`.
+            # The step's first boundary decides, then the outer boundary condition -- segment-aware where it has
+            # Dirichlet (absorbing) segments (#1042) -- then the obstacle placement (#2688, #2707): see `_finish_step`.
             new_particles, absorbed_mask, _n_absorbed = self._finish_step(
                 new_particles, particles_t, bounds, use_segment_aware_bc
             )

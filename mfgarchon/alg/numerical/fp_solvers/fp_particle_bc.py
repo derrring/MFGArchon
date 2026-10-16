@@ -4,7 +4,7 @@ Dimension-agnostic boundary condition handling for particle-based FP solvers (Is
 This module provides unified functions that work for any dimension:
 - Topology detection from boundary conditions
 - Boundary enforcement (periodic wrap, reflecting bounce)
-- Obstacle boundary handling (implicit domains)
+- A reflected step's wall hits, the path the obstacle placement reads (`reflection_waypoints`)
 - Segment-aware BC checking
 
 All functions accept both 1D and nD inputs with consistent APIs.
@@ -13,22 +13,18 @@ Usage:
     from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import (
         get_topology_per_dimension,
         apply_boundary_conditions,
-        project_to_navigable_or_defer,
         needs_segment_aware_bc,
     )
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
 
 from mfgarchon.geometry.boundary.conditions import BoundaryConditions, periodic_faces
 from mfgarchon.geometry.boundary.types import BCType
-
-if TYPE_CHECKING:
-    from mfgarchon.geometry.implicit import ImplicitDomain
 
 # =============================================================================
 # Topology Detection (unified)
@@ -255,115 +251,6 @@ def apply_boundary_conditions(
 
 
 # =============================================================================
-# Obstacle Boundary Handling (unified)
-# =============================================================================
-
-
-def project_to_navigable_or_defer(
-    particles: np.ndarray,
-    implicit_domain: ImplicitDomain | None,
-    previous: np.ndarray | None = None,
-    report: dict[str, int] | None = None,
-    via: np.ndarray | None = None,
-) -> np.ndarray:
-    """
-    Project obstacle-interior violations back to the navigable region; defer
-    outer-boundary violations to the caller's outer-BC layer (dimension-agnostic).
-
-    Particles past the outer bounding box are LEFT untouched for the caller's
-    outer-BC layer (segment-aware BC, topology, etc.); only particles that
-    entered an obstacle interior are corrected here. The name reflects this
-    conditional contract (Issue #1067): it is NOT comprehensive enforcement.
-
-    If an implicit domain with obstacles is defined, particles that have
-    entered obstacle regions (domain.contains() returns False AND inside outer
-    bbox) are moved back by domain.project_to_interior(), whose docstring says
-    where they land (#2679).
-
-    Issue #1064: particles past the outer bounding box are NOT projected here —
-    they are an outer-boundary concern handled by the caller's
-    BoundaryConditions (segment-aware reflect/absorb/wrap). Re-projecting
-    outer-boundary violations preempts segment-aware Dirichlet absorption.
-
-    The discriminator:
-    - inside bbox + ~contains  →  obstacle interior  →  project here
-    - outside bbox + ~contains →  outer-boundary    →  leave for outer BC
-    - outside bbox + contains  →  impossible (contains implies inside bbox)
-    - inside bbox + contains   →  navigable region  →  no-op
-
-    Parameters
-    ----------
-    particles : np.ndarray
-        Particle positions.
-        - 1D: shape (num_particles,) or (num_particles, 1)
-        - nD: shape (num_particles, dimension)
-    implicit_domain : ImplicitDomain or None
-        Domain definition with contains() and project_to_interior() methods
-    previous : np.ndarray or None
-        The particles' positions before the step, same shape as ``particles``. Forwarded to
-        ``implicit_domain.project_to_interior``, which reads it only for the particles its projection does not
-        place and refuses those without it (#2688).
-    report : dict or None
-        Forwarded to ``implicit_domain.project_to_interior``'s counter.
-    via : np.ndarray or None
-        Waypoints of each step's actual path, shape (num_particles, k, dimension), rows of NaN unused
-        (`reflection_waypoints`). Forwarded with ``previous``.
-
-    Returns
-    -------
-    particles : np.ndarray
-        Updated particle positions with obstacle violations corrected
-
-    Examples
-    --------
-    >>> from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle, Hypersphere
-    >>> domain = DifferenceDomain(Hyperrectangle(...), Hypersphere(center=[0.5, 0.5], radius=0.1))
-    >>> particles = project_to_navigable_or_defer(particles, domain)
-    """
-    if implicit_domain is None:
-        return particles
-
-    particles = np.asarray(particles)
-
-    # Handle 1D case
-    is_1d_flat = particles.ndim == 1
-    if is_1d_flat:
-        particles = particles[:, np.newaxis]
-
-    # Check which particles are outside the valid domain (inside obstacles
-    # OR past the outer boundary).
-    inside_valid = implicit_domain.contains(particles)
-
-    # Handle scalar return (single particle case)
-    if np.isscalar(inside_valid):
-        inside_valid = np.array([inside_valid])
-
-    # Issue #1064: discriminate obstacle-interior violations (we project) from
-    # outer-boundary violations (caller's segment-aware BC handles these).
-    if not np.all(inside_valid):
-        bounds = implicit_domain.get_bounding_box()  # shape (d, 2)
-        in_bbox = np.all(
-            (particles >= bounds[:, 0]) & (particles <= bounds[:, 1]),
-            axis=1,
-        )
-        # Project only particles inside the outer bbox but in an obstacle.
-        in_obstacle = in_bbox & (~inside_valid)
-        if np.any(in_obstacle):
-            obs_idx = np.where(in_obstacle)[0]
-            prev = None if previous is None else np.asarray(previous, dtype=float).reshape(particles.shape)[obs_idx]
-            waypoints = None if via is None else np.asarray(via, dtype=float)[obs_idx]
-            particles[obs_idx] = implicit_domain.project_to_interior(
-                particles[obs_idx], previous=prev, report=report, via=waypoints
-            )
-
-    # Convert back to 1D if input was 1D
-    if is_1d_flat:
-        return particles.ravel()
-
-    return particles
-
-
-# =============================================================================
 # Coordinate/Grid Utilities (unified)
 # =============================================================================
 
@@ -519,12 +406,6 @@ if __name__ == "__main__":
     assert np.abs(spacings[0] - 0.1) < 1e-10
     assert np.abs(spacings[1] - 0.1) < 1e-10
     print("  compute_spacings: OK")
-
-    # Test 8: Obstacle boundary (None domain - should pass through)
-    particles_obs = np.array([[0.5, 0.5], [0.3, 0.3]])
-    result_obs = project_to_navigable_or_defer(particles_obs, None)
-    assert np.allclose(result_obs, particles_obs)
-    print("  project_to_navigable_or_defer (None domain): OK")
 
     print("\nAll smoke tests passed!")
 

@@ -2,15 +2,17 @@
 
 Three CPU paths step particles -- the 1-D grid drift, the n-D grid drift, and the callable drift -- and each crossed
 with the outer boundary condition it can take, uniform or segment-aware (absorbing), and with `preserve_indices` and
-the caller's `initial_particles` where those exist. Each ends its step in `_finish_step`: the outer boundary condition
-on the raw step, then the obstacle placement for the survivors with their positions before the step. Before, the 1-D
-grid path never placed (1990 of 2000 particles inside the obstacle at the peak, i2688/prod/product_base.log) and the
+the caller's `initial_particles` where those exist. Each ends its step in `_finish_step`: a step that meets the
+domain's boundary before the box's wall lands where `ImplicitDomain.place_step` places it (#2707); the outer boundary
+condition acts on the rest, then the placement on its reflected survivors, by their paths. Before, the 1-D grid path
+never placed (1990 of 2000 particles inside the obstacle at the peak, i2688/prod/product_base.log) and the
 n-D paths placed BEFORE the wall reflection, which put particles back inside an obstacle that meets the wall (13438
 particle-times). The GPU path, a periodic outer boundary and initial mass inside an obstacle are refused by name.
 
-What reddens this file: any path whose step stops calling the placement, or calls it before the boundary condition
-(its cell); the placement indexing ``previous`` without the absorbed mask (the mask test); the initial sampler
-dropping ``navigable=`` (the cells' t = 0, whose jitter at the box's edge nodes leaves the domain).
+What reddens this file: any path whose step stops calling the placement, or places only before the boundary condition
+(its cell); the placement indexing ``previous`` without the absorbed mask (the mask test); a step placed by a boundary
+other than the first it meets (the first-boundary rows); the initial sampler dropping ``navigable=`` (the cells'
+t = 0, whose jitter at the box's edge nodes leaves the domain).
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc, periodic_bc
-from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle, UnionDomain
+from mfgarchon.geometry.implicit import DifferenceDomain, Hyperrectangle, Hypersphere, UnionDomain
 
 _NT, _N = 15, 600
 
@@ -37,25 +39,27 @@ _DOMAIN = {
 }
 
 
-def _absorbing_at_x_max(d):
+def _absorbing_at(d, wall="x_max"):
     boundaries = ["x_min", "x_max", "y_min", "y_max"][: 2 * d]
     return BoundaryConditions(
         segments=[
-            BCSegment(name=b, bc_type=BCType.DIRICHLET if b == "x_max" else BCType.NO_FLUX, value=0.0, boundary=b)
+            BCSegment(name=b, bc_type=BCType.DIRICHLET if b == wall else BCType.NO_FLUX, value=0.0, boundary=b)
             for b in boundaries
         ],
         dimension=d,
     )
 
 
-def _problem(d, bc):
+def _problem(d, bc, bounds=None):
     n = 21 if d == 2 else 101
-    grid = TensorProductGrid(bounds=[(0.0, 1.0)] * d, Nx_points=[n] * d, boundary_conditions=bc)
+    bounds = bounds or [(0.0, 1.0)] * d
+    grid = TensorProductGrid(bounds=bounds, Nx_points=[n] * d, boundary_conditions=bc)
     model = Model(
         hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
         volatility=0.1 if d == 2 else 0.05,
     )
-    conditions = Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.3)
+    volume = float(np.prod([hi - lo for lo, hi in bounds]))
+    conditions = Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0 / volume, T=0.3)
     return MFGProblem(model=model, domain=grid, conditions=conditions, Nt=_NT), n
 
 
@@ -131,7 +135,7 @@ def test_no_step_path_records_a_particle_outside_the_domain(cell):
     """Every recorded particle, at every time, is navigable; and the cell exercises what it names -- the placement
     acted, and an absorbing cell absorbed."""
     d, wall, path, options = _CELLS[cell]
-    bc = _absorbing_at_x_max(d) if wall == "absorbing" else no_flux_bc(dimension=d)
+    bc = _absorbing_at(d) if wall == "absorbing" else no_flux_bc(dimension=d)
     kwargs = {}
     if options.get("preserve_indices"):
         kwargs = {"preserve_indices": True, "density_mode": "query_only"}
@@ -154,20 +158,168 @@ def test_no_step_path_records_a_particle_outside_the_domain(cell):
 
 
 def test_the_placement_reads_each_survivors_own_previous_position():
-    """The boundary condition absorbs first, so the survivors are a subset; the placement must read each survivor's
-    own position before the step, through the absorbed mask. Particle 0 leaves at the absorbing wall; particle 1 ends
-    inside the obstacle having entered through its bottom face. Read without the mask, particle 1 would take particle
-    0's start -- left of the obstacle -- and land on the face x = 0.9 instead of y = 0.2."""
-    problem, _ = _problem(2, _absorbing_at_x_max(2))
+    """The boundary condition absorbs, so the survivors are a subset, and a reflected survivor is placed by its own
+    path, through the absorbed mask. Particle 0 passes above the obstacle and leaves at the absorbing wall. Particle 1
+    reflects off the wall y = 0 at (0.95167, 0), and its reflected leg ends at (0.96, 0.25) inside the obstacle, which
+    crosses the absorbing wall: it is placed on the bottom face its leg entered, y = 0.2. Read from particle 0's start,
+    its path would enter through the face x = 0.9, and it would land at (0.9, 0.25). (#2707: a step that stays in the
+    box no longer reaches this indexing, since it is placed before the boundary condition.)"""
+    problem, _ = _problem(2, _absorbing_at(2))
     solver = FPParticleSolver(
-        problem, num_particles=2, implicit_domain=_DOMAIN[2], seed=0, boundary_conditions=_absorbing_at_x_max(2)
+        problem, num_particles=2, implicit_domain=_DOMAIN[2], seed=0, boundary_conditions=_absorbing_at(2)
     )
-    previous = np.array([[0.85, 0.3], [0.95, 0.15]])
-    raw = np.array([[1.2, 0.95], [0.98, 0.3]])
+    previous = np.array([[0.85, 0.85], [0.95, 0.05]])
+    raw = np.array([[1.2, 0.95], [0.96, -0.25]])
     recorded, absorbed, n_absorbed = solver._finish_step(raw, previous, [(0.0, 1.0), (0.0, 1.0)], True)
     assert n_absorbed == 1, n_absorbed
     assert absorbed.tolist() == [True, False], absorbed
-    np.testing.assert_allclose(recorded, [[0.98, 0.2 - 1e-10]], rtol=0, atol=1e-12)
+    np.testing.assert_allclose(recorded, [[0.96, 0.2 - 1e-10]], rtol=0, atol=1e-12)
+
+
+_BOX = Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]]))
+_FIRST_BOUNDARY = {
+    # name: (domain, the absorbing wall or None, previous, raw, recorded or None if absorbed)
+    "a convex arc crossed: the projection, which the path reaches": (
+        DifferenceDomain(_BOX, Hypersphere(center=np.array([0.5, 0.5]), radius=0.2)),
+        None,
+        [0.2, 0.5],
+        [0.35, 0.52],
+        np.array([0.5, 0.5]) + (0.2 + 1e-10) * np.array([-0.15, 0.02]) / np.hypot(0.15, 0.02),
+    ),
+    "sliding along a disc from its face: the projection": (
+        DifferenceDomain(_BOX, Hypersphere(center=np.array([0.5, 0.5]), radius=0.2)),
+        None,
+        [0.3 - 1e-10, 0.5],
+        [0.305, 0.51],
+        np.array([0.5, 0.5]) + (0.2 + 1e-10) * np.array([-0.195, 0.01]) / np.hypot(0.195, 0.01),
+    ),
+    "through a thin obstacle into a second: the first one's near face": (
+        DifferenceDomain(
+            _BOX,
+            UnionDomain(
+                [
+                    Hyperrectangle(np.array([[0.5, 0.52], [0.2, 0.8]])),
+                    Hyperrectangle(np.array([[0.6, 0.9], [0.2, 0.8]])),
+                ]
+            ),
+        ),
+        None,
+        [0.4, 0.5],
+        [0.65, 0.5],
+        [0.5 - 1e-10, 0.5],
+    ),
+    "1-D, past the middle: the near face, not the far one": (
+        DifferenceDomain(Hyperrectangle(np.array([[0.0, 1.0]])), Hyperrectangle(np.array([[0.4, 0.6]]))),
+        None,
+        [0.3],
+        [0.55],
+        [0.4 - 1e-10],
+    ),
+    "entered by one face of a rectangle, ending nearer another: the face it entered": (
+        _DOMAIN[2],
+        None,
+        [0.85, 0.77],
+        [0.94, 0.77],
+        [0.9 - 1e-10, 0.77],
+    ),
+    "a thin slab jumped over: the near face": (
+        DifferenceDomain(_BOX, Hyperrectangle(np.array([[0.5, 0.52], [0.2, 0.8]]))),
+        None,
+        [0.4, 0.5],
+        [0.6, 0.5],
+        [0.5 - 1e-10, 0.5],
+    ),
+    "an obstacle before an absorbing wall: placed, not absorbed": (
+        DifferenceDomain(_BOX, Hyperrectangle(np.array([[0.9, 0.95], [0.2, 0.8]]))),
+        "x_max",
+        [0.85, 0.5],
+        [1.1, 0.5],
+        [0.9 - 1e-10, 0.5],
+    ),
+    "an obstacle flush with an absorbing wall, met first: its corner with the wall, not absorbed": (
+        DifferenceDomain(_BOX, Hyperrectangle(np.array([[0.9, 1.0], [0.2, 0.8]]))),
+        "x_max",
+        [0.9547534651728411, 0.8562972391037148],
+        [1.0275983976791534, 0.7639797123595877],
+        [1.0 - 1e-10, 0.8 + 1e-10],
+    ),
+    "a slab the whole step's scan passes over, before an absorbing wall: absorbed (#2710)": (
+        DifferenceDomain(_BOX, Hyperrectangle(np.array([[0.92, 0.935], [0.2, 0.8]]))),
+        "x_max",
+        [0.5, 0.5],
+        [1.5, 0.5],
+        None,
+    ),
+    "the wall first, then a reflected leg past an obstacle's middle: the near face": (
+        DifferenceDomain(_BOX, Hyperrectangle(np.array([[0.85, 0.95], [0.2, 0.8]]))),
+        None,
+        [0.97, 0.5],
+        [1.12, 0.5],
+        [0.95 + 1e-10, 0.5],
+    ),
+    "an absorbing wall met first, its hit rounding past the wall: absorbed": (
+        DifferenceDomain(
+            Hyperrectangle(np.array([[0.1, 0.7], [-0.3, 1.9]])), Hyperrectangle(np.array([[0.5, 0.55], [0.5, 1.0]]))
+        ),
+        "x_min",
+        [0.3681010452004989, 1.629651317640937],
+        [-0.2879055071371419, 1.593352815202474],
+        None,
+        [(0.1, 0.7), (-0.3, 1.9)],
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(_FIRST_BOUNDARY))
+def test_the_first_boundary_a_step_meets_decides(case):
+    """#2707: the step from ``previous`` to ``raw`` lands by the first boundary it meets, in closed form.
+
+    - The arc: the end is inside the disc, short of its centre; the segment from where the step entered to the end
+      stays in the disc, and the normals there and at the radial projection agree, so the projection stands.
+    - Sliding along a disc: the step starts on the disc's face and ends 0.005 inside it; the projection stands, the
+      radial one. A rule that asked the straight path from the start to the projection to stay outside the disc
+      rejected it, since that chord dips into the disc, and placed the step on the tangent line instead.
+    - Through a thin obstacle into a second: the end is in the second obstacle, whose normal at the projection agrees
+      with the first's at the entry, but the segment from the entry to the end leaves the first obstacle; the first
+      one's near face, x = 0.5, places it.
+    - 1-D: the end 0.55 is past the middle of [0.4, 0.6], so its projection is 0.6, whose normal is opposite the
+      entry's; the face it entered, 0.4, places it.
+    - A rectangle's corner: the step enters [0.9, 1.05] x [0.2, 0.8] through its left face and ends at (0.94, 0.77),
+      nearer the top face, where the projection is. The normals at the entry and at the projection are orthogonal, so
+      the left face places it (the base recorded the top face's (0.94, 0.8 + 1e-10)).
+    - The slab: the end is inside the domain, past a slab of width 0.02; it lands on the face it met, x = 0.5.
+    - Before an absorbing wall: the step meets the obstacle at x = 0.9 before the wall; it is placed there and not
+      absorbed.
+    - Flush with an absorbing wall: the step meets the obstacle's top face before the wall and lands at their corner,
+      1e-10 from the wall. The boundary condition does not act on it: its applicator absorbs within 1e-10 of a
+      Dirichlet wall (`ParticleApplicator`).
+    - A slab before an absorbing wall, thinner than the whole step's scan step: the scan of the step from 0.5 to 1.5
+      samples x = 0.906 and 0.9375 and passes the slab [0.92, 0.935] over (#2710), so the step reaches the wall and
+      is absorbed. The solver's search and `place_step`'s are one: a search of the segment cut at the wall alone
+      (step 0.5 / 32) saw the slab, and `place_step`, which did not, placed the step at the wall, unabsorbed.
+    - The wall first: the step hits x = 1 and its reflected leg ends at 0.88, past the middle 0.9 of [0.85, 0.95]; the
+      projection is on the far face 0.85, whose normal is opposite the entry's, so the face the leg entered, 0.95,
+      places it.
+    - The absorbing wall x = 0.1 of the box (0.1, 0.7) x (-0.3, 1.9), met first: the step's first crossing, bisected,
+      lies before the wall's hit as computed, by rounding, so compared with the wall itself it reads as meeting the
+      domain's boundary first and would be placed at the wall. The cut 1e-9 of the box short of the wall leaves it to
+      the absorbing condition (#1064). With no margin, 1,656 of 100,000 such steps through that wall read this way,
+      and none with it (`i2707/pins/probe_row6c.py`); on [0, 1]^2 none do (`probe_margin3.py`)."""
+    domain, wall, previous, raw, expected, *box = _FIRST_BOUNDARY[case]
+    d = len(previous)
+    bounds = box[0] if box else [(0.0, 1.0)] * d
+    bc = no_flux_bc(dimension=d) if wall is None else _absorbing_at(d, wall)
+    problem, _ = _problem(d, bc, bounds)
+    solver = FPParticleSolver(problem, num_particles=1, implicit_domain=domain, seed=0, boundary_conditions=bc)
+    recorded, _, n_absorbed = solver._finish_step(
+        np.array([raw], dtype=float), np.array([previous], dtype=float), bounds, wall is not None
+    )
+    if expected is None:
+        assert n_absorbed == 1, recorded
+        assert recorded.shape == (0, d), recorded
+        return
+    assert n_absorbed == 0, n_absorbed
+    np.testing.assert_allclose(recorded, [expected], rtol=0, atol=1e-12)
 
 
 @pytest.mark.parametrize(
@@ -282,9 +434,9 @@ def test_what_the_placement_cannot_do_is_refused(case):
 
 def test_a_step_that_absorbs_every_particle_records_none():
     """Every particle of the step leaves at the absorbing wall, so the placement gets no survivors: shape (0, 2)."""
-    problem, _ = _problem(2, _absorbing_at_x_max(2))
+    problem, _ = _problem(2, _absorbing_at(2))
     solver = FPParticleSolver(
-        problem, num_particles=2, implicit_domain=_DOMAIN[2], seed=0, boundary_conditions=_absorbing_at_x_max(2)
+        problem, num_particles=2, implicit_domain=_DOMAIN[2], seed=0, boundary_conditions=_absorbing_at(2)
     )
     recorded, _absorbed, n_absorbed = solver._finish_step(
         np.array([[1.2, 0.95], [1.3, 0.1]]), np.array([[0.85, 0.95], [0.85, 0.1]]), [(0.0, 1.0)] * 2, True
@@ -311,11 +463,12 @@ def test_a_reflected_step_is_placed_by_the_face_its_path_met():
 
 
 def test_a_reflected_step_that_clips_a_flush_obstacles_corner_is_placed_on_its_top_face():
-    """#2706: the obstacle [0.9, 1.0] x [0.2, 0.8] is flush with the wall x = 1. This step's first leg clips the
-    obstacle's corner just before it hits the wall at (1.0, 0.79896), which lies ON the obstacle's face, phi = 0. That
-    excursion is shorter than a scan step, so it was missed, the second leg began on a face that coincides with the
-    wall, and the placement raised. Found by `i2688/m3/reflected_faces_code.py` on pop's flush rectangle. The face it
-    met is the top face, so it is placed at (2 - raw_x, 0.8 + 1e-10)."""
+    """#2706: the obstacle [0.9, 1.0] x [0.2, 0.8] is flush with the wall x = 1. This step clips the obstacle's corner
+    just before it hits the wall at (1.0, 0.79896), which lies ON the obstacle's face, phi = 0. That excursion is
+    shorter than a scan step, so it was missed, and the placement raised. Found by `i2688/m3/reflected_faces_code.py`
+    on pop's flush rectangle. The first boundary the step meets is the top face, at x = 0.9992, before the wall
+    (#2707), so the top face and then the wall place it at their corner, (1 - 1e-10, 0.8 + 1e-10). Before #2707 the
+    wall reflected it first, to (2 - raw_x, 0.8 + 1e-10)."""
     flush = DifferenceDomain(
         Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])), Hyperrectangle(np.array([[0.9, 1.0], [0.2, 0.8]]))
     )
@@ -325,7 +478,7 @@ def test_a_reflected_step_that_clips_a_flush_obstacles_corner_is_placed_on_its_t
     recorded, _, _ = solver._finish_step(
         raw, np.array([[0.9547534651728411, 0.8562972391037148]]), [(0.0, 1.0)] * 2, False
     )
-    np.testing.assert_allclose(recorded, [[2.0 - raw[0, 0], 0.8 + 1e-10]], rtol=0, atol=1e-12)
+    np.testing.assert_allclose(recorded, [[1.0 - 1e-10, 0.8 + 1e-10]], rtol=0, atol=1e-12)
 
 
 @pytest.mark.parametrize("path", ["grid", "callable"])
@@ -334,10 +487,8 @@ def test_every_placement_in_a_solve_reads_its_own_particles_start(path):
 
     The drift is linear, 8 * ((1, 0.5) - x), so each step's end is known from its start up to noise of order 1e-7,
     and particles enter the crossing rectangle through its left, top and bottom faces. Each recorded position is
-    checked against the placement owner's answer from that particle's own start. A start read from another particle
-    names another face and moves the placement by O(0.1)."""
-    from mfgarchon.alg.numerical.fp_solvers.fp_particle_bc import project_to_navigable_or_defer
-
+    checked against the placement owner's answer (`ImplicitDomain.place_step`) from that particle's own start. A start
+    read from another particle names another face and moves the placement by O(0.1)."""
     nt, rate, target = 5, 8.0, np.array([1.0, 0.5])
     grid = TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[21, 21], boundary_conditions=no_flux_bc(dimension=2))
     problem = MFGProblem(
@@ -382,9 +533,7 @@ def test_every_placement_in_a_solve_reads_its_own_particles_start(path):
     report: dict[str, int] = {}
     for t in range(len(traj) - 1):
         start = traj[t]
-        expected = project_to_navigable_or_defer(
-            start + rate * (target - start) * dt, _DOMAIN[2], previous=start, report=report
-        )
+        expected = _DOMAIN[2].place_step(start, start + rate * (target - start) * dt, report=report)
         np.testing.assert_allclose(traj[t + 1], expected, rtol=0, atol=1e-4, err_msg=f"step {t}")
     assert report.get("face_of_entry", 0) > _N, f"the face map must act for many particles here: {report}"
 
