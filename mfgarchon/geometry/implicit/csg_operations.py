@@ -102,6 +102,17 @@ class UnionDomain(ImplicitDomain):
 
         return float(sd) if is_single and np.isscalar(sd) else sd
 
+    def crossing_normal(self, inside: NDArray[np.float64], outside: NDArray[np.float64]) -> NDArray[np.float64]:
+        """The normal of the component whose surface is crossed: one that holds ``inside`` and not ``outside``, by its
+        own phi's sign (the nearest of them at ``outside`` where several do), with that component's own normal
+        (#2698, #2706). See :meth:`ImplicitDomain.crossing_normal`."""
+        a = np.array([float(np.atleast_1d(domain.signed_distance(inside[None, :]))[0]) for domain in self.domains])
+        b = np.array([float(np.atleast_1d(domain.signed_distance(outside[None, :]))[0]) for domain in self.domains])
+        exited = np.flatnonzero((a <= 0) & (b > 0))
+        if exited.size == 0:
+            return super().crossing_normal(inside, outside)
+        return self.domains[int(exited[np.argmin(b[exited])])].crossing_normal(inside, outside)
+
     def get_bounding_box(self) -> NDArray[np.float64]:
         """
         Get bounding box containing all domains.
@@ -193,6 +204,19 @@ class IntersectionDomain(ImplicitDomain):
 
         return float(sd) if is_single and np.isscalar(sd) else sd
 
+    def crossing_normal(self, inside: NDArray[np.float64], outside: NDArray[np.float64]) -> NDArray[np.float64]:
+        """The normal of the component whose surface is crossed: one that holds ``inside`` and not ``outside``, by its
+        own phi's sign (the most outside of them at ``outside`` where several do), with that component's own normal.
+        A difference is this with the subtracted domain's complement, so an obstacle meeting the outer box gives the
+        obstacle's own normal even within the gradient's 1e-6 of the box (#2698, #2706). See
+        :meth:`ImplicitDomain.crossing_normal`."""
+        a = np.array([float(np.atleast_1d(domain.signed_distance(inside[None, :]))[0]) for domain in self.domains])
+        b = np.array([float(np.atleast_1d(domain.signed_distance(outside[None, :]))[0]) for domain in self.domains])
+        exited = np.flatnonzero((a <= 0) & (b > 0))
+        if exited.size == 0:
+            return super().crossing_normal(inside, outside)
+        return self.domains[int(exited[np.argmax(b[exited])])].crossing_normal(inside, outside)
+
     def get_bounding_box(self) -> NDArray[np.float64]:
         """
         Get bounding box for intersection (conservative estimate).
@@ -271,6 +295,11 @@ class ComplementDomain(ImplicitDomain):
             Signed distance(s) - scalar float or array of shape (N,)
         """
         return -self.domain.signed_distance(x)
+
+    def crossing_normal(self, inside: NDArray[np.float64], outside: NDArray[np.float64]) -> NDArray[np.float64]:
+        """The negated normal of the complemented domain, crossed the other way: its outside is this one's inside
+        (#2706). See :meth:`ImplicitDomain.crossing_normal`."""
+        return -self.domain.crossing_normal(outside, inside)
 
     def get_bounding_box(self) -> NDArray[np.float64]:
         """

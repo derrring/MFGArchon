@@ -69,8 +69,9 @@ def reflect_positions(
         boundary reflection. All particle BC handlers should use this.
         See Issue #521 for corner handling architecture.
     """
+    # A (d,) point comes back as (d,), and a (1, d) array as (1, d): the shape the input had, not the row count (#2691).
+    was_1d = np.ndim(positions) == 1
     positions = np.atleast_2d(positions)
-    was_1d = positions.shape[0] == 1 and len(positions.shape) == 2
     result = positions.copy()
 
     bounds = np.asarray(bounds)
@@ -114,8 +115,9 @@ def absorb_positions(
     Returns:
         Clamped positions, same shape as input
     """
+    # A (d,) point comes back as (d,), and a (1, d) array as (1, d): the shape the input had, not the row count (#2691).
+    was_1d = np.ndim(positions) == 1
     positions = np.atleast_2d(positions)
-    was_1d = positions.shape[0] == 1 and len(positions.shape) == 2
     result = positions.copy()
 
     bounds = np.asarray(bounds)
