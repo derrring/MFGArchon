@@ -12,7 +12,8 @@ numerical analysis approaches:
   stencils on a stencil_provider HJBGFDMSolver)
 - HJBSemiLagrangianSolver: Semi-Lagrangian approach (characteristic-based, nD)
 - HJBWENOSolver: WENO (Weighted Essentially Non-Oscillatory) method (1D/2D/3D)
-- PenaltyHJBSolver: Variational inequality wrapper (obstacle/optimal stopping)
+- PenaltyHJBSolver: retired (#2002); construction raises NotImplementedError. Obstacles go
+  through HJBFDMSolver(constraint=ObstacleConstraint(...)) (#591)
 
 All solvers inherit from BaseNumericalSolver and follow the new paradigm structure.
 """

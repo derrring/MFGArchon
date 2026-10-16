@@ -1,7 +1,7 @@
 {
   "_comment": "Every keyword argument in a docstring example must be a real parameter of the callee it names.",
-  "checked": 994,
-  "blocks": 607,
+  "checked": 988,
+  "blocks": 605,
   "findings": [
     "mfgarchon.geometry.boundary.applicator_graph.create_maze_applicator: MazeGeometry(height=...)",
     "mfgarchon.geometry.boundary.applicator_graph.create_maze_applicator: MazeGeometry(width=...)",

@@ -6,7 +6,6 @@ This module provides unified functions that work for any dimension:
 - KDE density estimation (particles → grid)
 - Gradient computation
 - Brownian increment generation
-- Particle sampling from density
 
 All functions accept both 1D and nD inputs with consistent APIs.
 Internal optimizations (e.g., scipy fast path for 1D) are implementation details.
@@ -17,7 +16,6 @@ Usage:
         estimate_density_kde,
         compute_gradient,
         generate_brownian_increment,
-        sample_particles_from_density,
     )
 """
 
@@ -42,10 +40,7 @@ except ImportError:  # pragma: no cover - graceful fallback when SciPy missing
 
 # Issue #625: Migrated from tensor_calculus to operators/stencils
 from mfgarchon.operators.stencils.finite_difference import gradient_nd
-from mfgarchon.utils.numerical.particle import (
-    interpolate_particles_to_grid,
-    sample_from_density,
-)
+from mfgarchon.utils.numerical.particle import interpolate_particles_to_grid
 
 # =============================================================================
 # Density Normalization (unified)
@@ -447,80 +442,6 @@ def _estimate_density_kde_nd(
 
 
 # =============================================================================
-# Particle Sampling from Density (unified)
-# =============================================================================
-
-
-def sample_particles_from_density(
-    density: np.ndarray,
-    num_particles: int,
-    bounds: tuple[tuple[float, float], ...],
-    implicit_domain: Any | None = None,
-) -> np.ndarray:
-    """
-    Sample particles from a density distribution (dimension-agnostic).
-
-    Uses importance sampling via sample_from_density utility.
-    Supports implicit domains (obstacles) for valid region sampling.
-
-    Parameters
-    ----------
-    density : np.ndarray
-        Density on grid, shape (N1,) for 1D or (N1, N2, ..., Nd) for nD
-    num_particles : int
-        Number of particles to sample
-    bounds : tuple[tuple[float, float], ...]
-        Bounds per dimension, e.g., ((xmin, xmax),) for 1D
-    implicit_domain : ImplicitDomain, optional
-        If provided, only sample in valid regions (outside obstacles)
-
-    Returns
-    -------
-    particles : np.ndarray
-        Sampled particle positions.
-        - 1D: shape (num_particles,)
-        - nD: shape (num_particles, dimension)
-
-    Examples
-    --------
-    >>> density_1d = np.exp(-((x - 0.5)**2) / 0.1)
-    >>> particles = sample_particles_from_density(density_1d, 1000, ((0, 1),))
-    """
-    dimension = len(bounds)
-
-    # Convert bounds to coordinate arrays (required by sample_from_density)
-    coordinates = []
-    for d in range(dimension):
-        n_points = density.shape[d]
-        coords = np.linspace(bounds[d][0], bounds[d][1], n_points)
-        coordinates.append(coords)
-
-    if implicit_domain is not None:
-        # Domain-aware sampling (avoids obstacles)
-        from mfgarchon.utils.numerical.particle import sample_from_density_with_domain
-
-        particles = sample_from_density_with_domain(
-            density=density,
-            coordinates=coordinates,
-            num_samples=num_particles,
-            domain=implicit_domain,
-        )
-    else:
-        # Standard sampling
-        particles = sample_from_density(
-            density=density,
-            coordinates=coordinates,
-            num_samples=num_particles,
-        )
-
-    # For 1D, return flat array (backward compatible)
-    if dimension == 1 and particles.ndim > 1:
-        return particles.ravel()
-
-    return particles
-
-
-# =============================================================================
 # Smoke Tests
 # =============================================================================
 
@@ -577,18 +498,5 @@ if __name__ == "__main__":
     assert density_est_2d.shape == (20, 20), f"Expected (20, 20), got {density_est_2d.shape}"
     assert np.all(density_est_2d >= 0)
     print("  estimate_density_kde (2D): OK")
-
-    # Test 6: Particle sampling (1D and 2D)
-    # Create 1D density
-    x_sample = np.linspace(0, 1, 50)
-    density_for_sample = np.exp(-((x_sample - 0.5) ** 2) / 0.05)
-    sampled_1d = sample_particles_from_density(density_for_sample, 200, ((0.0, 1.0),))
-    assert sampled_1d.shape == (200,), f"Expected (200,), got {sampled_1d.shape}"
-
-    # Create 2D density
-    density_2d_sample = np.exp(-((X - 0.5) ** 2 + (Y - 0.5) ** 2) / 0.1)
-    sampled_2d = sample_particles_from_density(density_2d_sample, 200, ((0.0, 1.0), (0.0, 1.0)))
-    assert sampled_2d.shape == (200, 2), f"Expected (200, 2), got {sampled_2d.shape}"
-    print("  sample_particles_from_density: OK (1D and 2D)")
 
     print("\nAll smoke tests passed!")

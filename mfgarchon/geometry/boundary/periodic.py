@@ -67,8 +67,9 @@ def wrap_positions(
         This is the canonical utility for particle position wrapping.
         Used by MeshfreeApplicator._apply_periodic_bc() and others.
     """
+    # A (d,) point comes back as (d,), and a (1, d) array as (1, d): the shape the input had, not the row count (#2691).
+    was_1d = np.ndim(positions) == 1
     positions = np.atleast_2d(positions)
-    was_1d = positions.shape[0] == 1 and len(positions.shape) == 2
     result = positions.copy()
 
     bounds = np.asarray(bounds)

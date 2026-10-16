@@ -600,11 +600,14 @@ axes and refused. The sequence form is the convention, and library code uses it.
 - **The library does not rescale `m_initial`.** A density whose integral is not 1 is reported and
   used as given; normalising is a modelling decision, not a requirement.
 - **The measure has one owner**, `mfgarchon.utils.numerical.quadrature`, exposed on
-  `TensorProductGrid` as `integrate` and `quadrature_weights`, and correct on graded axes. A bare
-  `np.sum(m) * dx` is a *different functional* even on a uniform grid: it gives each end node a full
-  cell and over-counts by $\tfrac{dx}{2}(m_0 + m_N)$. No other geometry carries an `integrate`; a
-  network is measured on its nodes, and other geometries fall back to a named `uniform-cell` or
-  `point-average` measure. `MFGProblem.spatial_measure()` makes that choice, once per problem (#2555).
+  `TensorProductGrid` as `integrate`, `measure_weights` and `quadrature_weights`, and correct on
+  graded axes. A bare `np.sum(m) * dx` is a *different functional* even on a uniform grid: it gives
+  each end node a full cell and over-counts by $\tfrac{dx}{2}(m_0 + m_N)$. No other geometry carries
+  an `integrate`; a network is measured on its nodes, and other geometries fall back to a named
+  `uniform-cell` or `point-average` measure. `MFGProblem.spatial_measure()` makes that choice, once
+  per problem (#2555). It returns the measure as per-node `weights`, and its `integrate` is their
+  weighted sum in every branch. A consumer that needs the weights reads them there rather than
+  rebuilding them, and a geometry with an `integrate` but no `measure_weights` is refused (#1642).
   *Not yet met (#2429, #2566): live sites outside that fallback still measure with `np.sum(m) * dx`,
   mostly particle/KDE diagnostics and the public convergence helpers #2566 lists.*
 - **Mass conservation needs both the boundary condition and a conservative discretisation.** Under

@@ -243,12 +243,13 @@ class TestWhatTheRefusalDoesToCallers:
         def _refuses(_field):
             raise ValueError("this geometry has no measure")
 
-        # Since #2555 the change each sweep makes is measured in the geometry's own measure, so a
-        # geometry that cannot integrate cannot measure its convergence either: the solve stops on the
-        # geometry's own refusal rather than reporting a number from some other measure. The mass
-        # block's narrowed `except` still serves a solve that ends before its first measured sweep.
+        # Since #2555 the change each sweep makes is measured in the problem's measure, whose weights
+        # come from the geometry's `measure_weights` (#1642). So a geometry that cannot give its weights
+        # cannot measure its convergence either: the solve stops on the geometry's own refusal rather
+        # than reporting a number from some other measure. The mass block, which reads `integrate`,
+        # keeps its narrowed `except` for a solve that ends before its first measured sweep.
         refusing = _fresh()
-        refusing.geometry.integrate = _refuses
+        refusing.geometry.measure_weights = lambda: _refuses(None)
         with pytest.raises(ValueError, match="this geometry has no measure"):
             refusing.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False)
 
@@ -296,3 +297,24 @@ class TestWhatTheRefusalDoesToCallers:
         wrong.geometry.integrate = _reports_zero_mass
         with pytest.raises(ValueError, match="non-positive or non-finite total mass"):
             wrong.solve(scheme=NumericalScheme.FDM_UPWIND, max_iterations=2, verbose=False)
+
+
+def test_a_geometry_with_integrate_and_no_measure_weights_is_refused():
+    """#1642: the problem's measure is its per-node weights, and the grid branch reads them from
+    `measure_weights()`. A geometry that has an `integrate` but no weights is refused by name rather
+    than measured some other way: its weights could only be recovered from `integrate` by integrating
+    one indicator field per node. Without the refusal it would fall through to `uniform-cell`."""
+    from mfgarchon import Conditions, MFGProblem, Model
+    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+
+    class _IntegrateOnly(TensorProductGrid):
+        measure_weights = None
+
+    geometry = _IntegrateOnly(bounds=[(0.0, 1.0)], Nx_points=[9], boundary_conditions=no_flux_bc(dimension=1))
+    with pytest.raises(TypeError, match=r"_IntegrateOnly has integrate\(\) but no measure_weights\(\)"):
+        MFGProblem(
+            model=Model(hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0))),
+            domain=geometry,
+            conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.1),
+            Nt=2,
+        )

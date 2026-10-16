@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-__all__ = ["quadrature_weights_1d", "quadrature_weights_nd"]
+__all__ = ["integrate_on_weights", "quadrature_weights_1d", "quadrature_weights_nd"]
 
 
 def quadrature_weights_1d(coordinates: NDArray) -> NDArray:
@@ -67,3 +67,22 @@ def quadrature_weights_nd(coordinates: Sequence[NDArray]) -> NDArray:
     for axis in axes[1:]:
         weights = np.multiply.outer(weights, quadrature_weights_1d(axis))
     return weights
+
+
+def integrate_on_weights(field: NDArray, weights: NDArray, what: str = "the weights") -> NDArray | float:
+    """``sum(field * weights)`` over the trailing axes: the one expression of an integral on node weights (#1642).
+
+    ``weights`` is shaped like the spatial field, so a ``(time, *spatial)`` history integrates to one value per time
+    row. A field whose trailing axes are not shaped like ``weights`` is refused rather than broadcast; ``what`` names
+    the weights in that message.
+    """
+    arr = np.asarray(field, dtype=float)
+    w = np.asarray(weights, dtype=float)
+    nd = w.ndim
+    if arr.ndim < nd or tuple(arr.shape[-nd:]) != w.shape:
+        raise ValueError(
+            f"field trailing axes {tuple(arr.shape[-nd:]) if arr.ndim >= nd else arr.shape} do not match {what} "
+            f"{w.shape}; integration reduces the TRAILING axes so that a (time, *spatial) history returns one value "
+            "per time row"
+        )
+    return (arr * w).sum(axis=tuple(range(arr.ndim - nd, arr.ndim)))

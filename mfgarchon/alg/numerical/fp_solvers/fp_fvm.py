@@ -88,7 +88,6 @@ from mfgarchon.operators.differential.laplacian import LaplacianOperator
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.numerical import clip_nonnegative_or_raise
-from mfgarchon.utils.numerical.quadrature import quadrature_weights_nd
 from mfgarchon.utils.pde_coefficients import (
     assert_quadratic_drift,
     diffusion_from_volatility,
@@ -553,7 +552,7 @@ class FPFVMSolver(BaseFPSolver):
         # The measure this scheme conserves (#2145), so the positivity gate below weighs negative mass the same way.
         # TensorProductGrid only (module docstring), which the problem's GeometryProtocol does not say.
         grid = cast("TensorProductGrid", self.problem.geometry)
-        control_volumes = quadrature_weights_nd(tuple(grid.coordinates[: len(shape)]))
+        control_volumes = grid.measure_weights()
 
         for k in range(n_steps):
             idx = min(k, field.shape[0] - 1) if field is not None else 0
