@@ -1027,7 +1027,8 @@ class FPParticleSolver(BaseFPSolver):
 
     def _needs_segment_aware_bc(self) -> bool:
         """Whether this solver's BC takes the per-point path: `needs_segment_aware_bc` -- True unless one reflecting
-        or periodic condition covers every wall (#2490)."""
+        or periodic condition covers the boundary, or no segment is placed on part of a face and every condition in
+        play, default_bc whenever it is set, reflects a particle (#2490)."""
         return _needs_segment_bc(self.boundary_conditions)
 
     def _get_topology_per_dimension(
@@ -2416,13 +2417,15 @@ class FPParticleSolver(BaseFPSolver):
         if self._needs_segment_aware_bc():
             raise NotImplementedError(
                 "FPParticleSolver: the GPU path applies one particle action, reflect or wrap, on every wall; it "
-                "implements no segment-aware absorbing boundary and no mix of conditions (Issue #535 Phase 1, #1910). "
-                "This BC is not one such condition on every wall: its walls carry different conditions -- an exit "
-                "beside walls, or a reflecting segment beside a no-flux default -- or every wall absorbs, or it has no "
-                "default_bc and no segment covering every wall. The GPU evolution loop never consults "
+                "implements no segment-aware absorbing boundary and no mix of actions (Issue #535 Phase 1, #1910). "
+                "This BC routes per point: one condition covers its boundary and absorbs, or its conditions differ and "
+                "one of them does not reflect a particle -- an exit, or a periodic face beside reflecting walls -- or a "
+                "segment is placed on part of a face, or default_bc is set to a condition that does not reflect. default_bc counts whenever it is set, even where the face segments "
+                "leave it no wall: two REFLECTING faces beside a DIRICHLET default route per point, and the same faces "
+                "beside a reflecting default_bc, or none, take the fast path. The GPU evolution loop never consults "
                 "`_needs_segment_aware_bc()`, so it would apply one action everywhere and report a plausible density. "
-                "Use backend='numpy' for this BC, or one reflecting or periodic condition on every wall on the GPU "
-                "path."
+                "Use backend='numpy' for this BC, or on the GPU path one reflecting or periodic condition everywhere, or "
+                "reflecting conditions only with no segment placed on part of a face."
             )
         if self._implicit_domain is not None:
             raise NotImplementedError(

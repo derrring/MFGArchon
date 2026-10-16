@@ -28,6 +28,8 @@ from mfgarchon.geometry.boundary.conditions import BoundaryConditions, periodic_
 from mfgarchon.geometry.boundary.types import BCType
 
 if TYPE_CHECKING:
+    from mfgarchon.geometry.boundary.applicator_particle import ParticleAction
+    from mfgarchon.geometry.boundary.types import BCSegment
     from mfgarchon.geometry.implicit import ImplicitDomain
 
 # =============================================================================
@@ -102,17 +104,22 @@ def needs_segment_aware_bc(boundary_conditions: BoundaryConditions | None) -> bo
     """
     Check if boundary conditions require segment-aware handling.
 
-    The fast path applies one action, reflect or wrap, on every wall, so it is taken where
-    `BoundaryConditions.uniform_segment` names one condition every location of the boundary carries -- counting
-    ``default_bc`` wherever no global segment covers the boundary -- and a particle does not absorb under it (#2490).
+    The fast path applies one action on every wall, reflect or wrap. It is taken where
+    `BoundaryConditions.uniform_segment` names one condition everywhere and a particle does not absorb under it, placed
+    segments included; and, where the walls carry several conditions, where no segment is placed by more than a face
+    label and every condition in play reflects a particle by `particle_action_for_bc_type`: each segment's, and
+    ``default_bc``'s whenever it is set (#2490).
 
     Returns True if:
-    - the walls do not all carry one condition: two segments of different conditions, or a segment beside a
-      ``default_bc`` of another condition (a REFLECTING segment beside a NO_FLUX default counts as two)
-    - every wall carries one condition and it absorbs
-    - no segment covers every wall and ``default_bc`` is unset
+    - one condition covers the boundary and it absorbs
+    - the conditions differ and a segment is placed by more than a face label (`BoundaryConditions.placed_segments`)
+    - the conditions differ and one of them does not reflect: an exit, or a periodic face beside reflecting walls
+    - ``default_bc`` is set to a condition that does not reflect, even where the face segments leave it no wall: two
+      REFLECTING faces beside a DIRICHLET default route per point
+    - the conditions differ and ``default_bc`` is ROBIN, which carries no coefficients (#2042)
 
-    Returns False where every wall carries one reflecting or periodic condition.
+    Returns False where one reflecting or periodic condition covers the boundary, or every condition in play reflects:
+    a REFLECTING segment beside a NO_FLUX default reflects on both.
 
     Parameters
     ----------
@@ -136,22 +143,37 @@ def needs_segment_aware_bc(boundary_conditions: BoundaryConditions | None) -> bo
     if isinstance(bc, str):
         raise ValueError(f"needs_segment_aware_bc: a BC is a BoundaryConditions, not the string {bc!r}")
 
-    # The owner's one answer to "one condition everywhere", which counts default_bc wherever no global segment covers
-    # the boundary (#2490): read by the segments alone, a reflecting segment beside default_bc=DIRICHLET took the
-    # reflecting fast path, and the walls the default makes absorbing reflected.
     from mfgarchon.geometry.boundary.applicator_particle import particle_action_for_bc_type
     from mfgarchon.geometry.boundary.types import segment_robin_coefficients
 
-    segment = bc.uniform_segment
-    if segment is None:
+    def action(segment: BCSegment) -> ParticleAction:
+        # A classification that writes no row, so a Robin segment's coefficients as stored (the owner's equivalence
+        # readers' form).
+        beta = (
+            segment_robin_coefficients(segment, where="FPParticleSolver's routing", as_stored=True)[1]
+            if segment.bc_type == BCType.ROBIN
+            else None
+        )
+        return particle_action_for_bc_type(segment.bc_type, beta)
+
+    # One condition everywhere, default_bc counted wherever no global segment covers the boundary: the fast path wraps
+    # or reflects it, and its topology read answers a uniform BC without reading placements.
+    uniform = bc.uniform_segment
+    if uniform is not None:
+        return action(uniform) == "absorbing"
+    # Several conditions: the fast path reflects every particle. A segment placed by more than a face label routes per
+    # point, since the fast path's topology read refuses one (#2739 review 1).
+    if bc.placed_segments():
         return True
-    # A classification that writes no row, so the coefficients as stored (the owner's equivalence readers' form).
-    beta = (
-        segment_robin_coefficients(segment, where="FPParticleSolver's routing", as_stored=True)[1]
-        if segment.bc_type == BCType.ROBIN
-        else None
-    )
-    return particle_action_for_bc_type(segment.bc_type, beta) == "absorbing"
+    # default_bc counts whenever it is set, even where the face segments leave it no wall; per point the owner decides
+    # which condition governs. Read by the segments alone, a reflecting segment beside default_bc=DIRICHLET took the
+    # reflecting fast path, and the walls the default makes absorbing reflected every particle (#2490).
+    if bc.default_bc == BCType.ROBIN:
+        return True  # a bare BCType carries no beta to read an action from; per point the owner refuses it (#2042)
+    actions = [action(segment) for segment in bc.segments]
+    if bc.default_bc is not None:
+        actions.append(particle_action_for_bc_type(bc.default_bc))
+    return any(a != "reflecting" for a in actions)
 
 
 # =============================================================================
