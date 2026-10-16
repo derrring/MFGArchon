@@ -1,6 +1,6 @@
 - **Every forward step of `FPParticleSolver` with an `implicit_domain=` records its particles inside that domain,
   or refuses** (#2688, #2679 stage 2; the second half of #1561).
-  - An obstacle given only as the problem's geometry, with no `implicit_domain=`, is still not read: that is #2708.
+  - The problem's geometry, when it is an `ImplicitDomain`, is read as that domain too (#2708).
   - **One end of step.** The 1-D grid-drift, n-D grid-drift and callable-drift paths end each step in one place,
     `_finish_step`.
     - The outer boundary condition runs on the raw step first: absorption at Dirichlet segments, then reflection.
