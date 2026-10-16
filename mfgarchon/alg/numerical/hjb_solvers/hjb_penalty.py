@@ -12,9 +12,10 @@ by the penalized equation
 
 whose penalty raises v where it falls below Psi, injected through the inner solver's
 `source_term`. That channel is `(t, x) -> array` and cannot carry v, so the term the wrapper
-applied was `max(0, Psi(x))`, the same where the constraint holds and where it fails. The obstacle
-route that runs is `HJBFDMSolver(problem, constraint=ObstacleConstraint(psi, 'lower'))` (#591),
-a projection after each time step, with its limits in #2036 and #2046.
+applied was `penalty_parameter * max(0, Psi(x))`, the same where the constraint holds and where it
+fails. The obstacle route that runs is
+`HJBFDMSolver(problem, constraint=ObstacleConstraint(psi, 'lower'))` (#591), with `psi` the
+obstacle sampled on the grid: a projection after each time step, with its limits in #2036 and #2046.
 
 `v >= Psi` bounds the cost-to-go from below. The library minimises (`docs/user/CONVENTIONS.md`
 §1), so optimal stopping at a stopping cost Psi is the upper obstacle `v <= Psi`,
@@ -92,8 +93,8 @@ class PenaltyHJBSolver(BaseHJBSolver):
             "If your obstacle is a state penalty V(x) rather than a constraint -- alpha-free and "
             "u-free -- it belongs in the Hamiltonian's potential (#1999, #2001), not here."
         )
-        # Unreachable. Left in place so the retirement is a one-line revert if #2002 decides the
-        # wrapper should return with a `(t, x, v)` channel behind it.
+        # Unreachable. Left in place so that a return behind a `(t, x, v)` channel is a one-line
+        # revert.
         super().__init__(inner_solver.problem, getattr(inner_solver, "config", None))
         self._inner = inner_solver
         self._obstacle = obstacle
@@ -106,7 +107,7 @@ class PenaltyHJBSolver(BaseHJBSolver):
         return self._inner._get_solver_type_id()
 
     def solve(self) -> NDArray:
-        """Solve standalone (delegates to inner solver with penalty)."""
+        """Unreachable (construction raises). It returned the inner solver's `solve()`, with no penalty."""
         return self._inner.solve()
 
     @retired_volatility_keywords
@@ -142,7 +143,7 @@ class PenaltyHJBSolver(BaseHJBSolver):
            say. Since #2036 it is applied after each time step in 1-D and nD alike, so the
            obstacle feeds back through the sweep, and a terminal condition outside the set is
            refused. It is a projection splitting, not a solve of the discrete variational
-           inequality (#2046). Prefer it over this term while #2002 is open.
+           inequality (#2046). It is the route that runs; this method is unreachable.
         """
         penalty_param = self._penalty
         obstacle_fn = self._obstacle
@@ -192,72 +193,9 @@ class PenaltyHJBSolver(BaseHJBSolver):
 
     @property
     def free_boundary_estimate(self) -> NDArray | None:
-        """Estimate free boundary location after solve.
-
-        Returns spatial points where v approximately equals Psi,
-        i.e., the boundary between the continuation and stopping regions.
-
-        Returns None if no solution is available.
-        """
-        # This would need access to the last solution and obstacle values.
-        # Placeholder for future implementation.
+        """Unreachable (construction raises). It always returned None: no estimate was implemented."""
         return None
 
     def validate_solution(self) -> dict[str, Any]:
         """Delegate validation to inner solver."""
         return self._inner.validate_solution()
-
-
-if __name__ == "__main__":
-    """Quick smoke test for PenaltyHJBSolver."""
-    from mfgarchon import MFGProblem
-    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
-    from mfgarchon.geometry import TensorProductGrid
-    from mfgarchon.geometry.boundary import no_flux_bc
-
-    print("Testing PenaltyHJBSolver...")
-
-    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
-    from mfgarchon.core.mfg_components import MFGComponents
-
-    # Simple 1D problem with Hamiltonian and terminal condition
-    H = SeparableHamiltonian(
-        control_cost=QuadraticControlCost(control_cost=1.0),
-        coupling=lambda m: m**2,
-    )
-    components = MFGComponents(
-        hamiltonian=H,
-        u_terminal=lambda x: 0.0,
-        m_initial=lambda x: 1.0,
-    )
-    geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-    problem = MFGProblem(geometry=geometry, T=1.0, Nt=20, volatility=0.3, components=components)
-    inner = HJBFDMSolver(problem)
-
-    # Obstacle: Psi(x) = 0.5 * sin(pi * x) — agents must stay above this
-    def obstacle(x: np.ndarray) -> np.ndarray:
-        return 0.5 * np.sin(np.pi * np.atleast_1d(x).ravel())
-
-    solver = PenaltyHJBSolver(inner, obstacle=obstacle, penalty_parameter=1e4)
-
-    # Solve — use problem's own initial/terminal conditions
-    Nt = problem.Nt
-    grid_shape = problem.geometry.get_grid_shape()
-    Nx = grid_shape[0]
-    M = np.ones((Nt + 1, Nx)) / Nx
-    U_T = problem.get_final_u()
-    U_prev = np.zeros((Nt + 1, Nx))
-
-    U = solver.solve_hjb_system(M, U_T, U_prev)
-
-    # Check obstacle constraint
-    x_grid = problem.geometry.get_spatial_grid().ravel()
-    psi = obstacle(x_grid)
-    violation = np.min(U[-1] - psi)
-    print(f"  Min(v - Psi) at t=0: {violation:.4f} (should be >= 0 or near 0)")
-    print(f"  Solution shape: {U.shape}")
-    print(f"  Solution range: [{U.min():.4f}, {U.max():.4f}]")
-
-    assert U.shape[0] == Nt + 1, f"Time dimension mismatch: {U.shape}"
-    assert np.all(np.isfinite(U)), "Non-finite values in solution"
-    print("Smoke test passed!")

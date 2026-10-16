@@ -202,8 +202,8 @@ def test_the_allowlist_states_its_own_coverage():
     # EXACTLY: a docstring that says "23 of 177" stops being true at any other count, so any other count fires.
     # #2422 took it from 182 to 181 by deleting a module that carried examples, #2583 to 180 by withdrawing
     # FP-GFDM's, #2648 to 179 by deleting `core.mfg_components_nested`, and #2648's ruling 6 to 178 by deleting
-    # `geometry.graph.maze_config`, and the retirement docstrings of #2002 to 177 by withdrawing the example
-    # of `PenaltyHJBSolver`, whose constructor raises.
+    # `geometry.graph.maze_config`. The retirement docstrings of #2002 took it to 177 by withdrawing the
+    # example of `PenaltyHJBSolver`, whose constructor raises.
     assert with_examples == 177, (
         f"modules carrying examples moved {177} -> {with_examples}. This file's docstring states the ratio "
         f"23 of 177 and `scripts/check_docstring_kwargs.py`'s docstring states 605 analysed blocks; both are "
