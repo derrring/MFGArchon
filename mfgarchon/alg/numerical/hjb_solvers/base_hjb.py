@@ -474,7 +474,7 @@ class BaseHJBSolver(BaseNumericalSolver):
                 + (
                     " A coupling cost evaluates only at the grid's nodes, so that route carries it only for a solver "
                     "that evaluates there -- HJB-FDM, HJB-SL, HJB-WENO in 1-D -- and refuses it at other points, such "
-                    "as HJB-GFDM's collocation points where they are not the grid's nodes (#2737)."
+                    "as HJB-GFDM's collocation points where they are not the grid's nodes in their order (#2737)."
                     if "coupling_cost" in named
                     else ""
                 )

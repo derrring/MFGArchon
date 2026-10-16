@@ -87,8 +87,9 @@ def _spatial_density(m: NDArray, n: int | None = None) -> NDArray:
     density to the current backward time step before calling the source, so a
     per-time source always receives one spatial slice: shape (Nx,) in 1-D, the
     grid's shape in n-D. ``n`` is the number of nodes the functional is on,
-    known from its weights: a slice holding exactly ``n`` values is flattened in
-    the grid's C order whatever its shape (#1642). Without ``n``, a 2-D array is
+    known from its weights, or from the evaluation's x where the weight is one
+    scalar: a slice holding exactly ``n`` values is flattened in the grid's C
+    order whatever its shape (#1642). Without ``n``, a 2-D array is
     read as a ``(Nt+1, Nx)`` trajectory and refused: silently collapsing it to
     the terminal slice ``m[-1]`` reintroduces the Issue #1285 wrong-slice bug.
     """
@@ -272,7 +273,8 @@ def create_lions_source(
             x: Spatial grid points, shape (Nx,) or (Nx, d)
             v: Current value function (unused — correction depends on m only)
             m: Current spatial density, one time-t slice: shape (Nx,), or the
-                grid's shape in n-D when the weights number its nodes. The
+                grid's shape in n-D when it holds the node count -- the
+                weights' size, or x's row count for one scalar weight. The
                 source pipeline time-slices before calling (a 2-D (Nt+1, Nx)
                 trajectory is rejected — see Issue #1285).
 

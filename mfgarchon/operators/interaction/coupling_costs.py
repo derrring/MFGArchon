@@ -115,9 +115,10 @@ class PotentialCost(_SummableCost):
         nodes = nodes.reshape(nodes.shape[0], -1)
         d = nodes.shape[1]
         in_the_hamiltonian = (
-            "A time-dependent potential goes in the Hamiltonian, SeparableHamiltonian(potential=lambda t, x: ...), "
-            "which reads it at each time; there x is an array of points of shape (N, d), so a V written for one "
-            "point reads x[..., 0] in 1-D (#1642)."
+            "A time-dependent potential goes in the Hamiltonian, SeparableHamiltonian(potential=lambda t, x: ...). "
+            "HJB-FDM and HJB-SL read it at each time; HJB-WENO reads a Hamiltonian at t = 0 (#2429), so with it the "
+            "potential is V(0, x) for the whole horizon. There x is a point or an array of points, of shape (d,) or "
+            "(N, d), so a V written for one point reads x[..., 0] in 1-D (#1642)."
         )
         try:
             signature, V = adapt_ic_callable(
@@ -126,7 +127,7 @@ class PotentialCost(_SummableCost):
         except TypeError as unread:
             raise TypeError(
                 f"PotentialCost(V): V takes the point x alone -- a float in 1-D, an array of shape (d,) in n-D -- and "
-                f"this V does not read as that. {in_the_hamiltonian} What the reader found: {unread}"
+                f"the library could not read this V as V(x). {in_the_hamiltonian}"
             ) from unread
         if signature is CallableSignature.SPATIOTEMPORAL_TX:
             raise TypeError(

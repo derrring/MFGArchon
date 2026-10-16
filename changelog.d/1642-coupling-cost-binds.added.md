@@ -17,7 +17,7 @@
     - `PotentialCost(V)` with a `V(t, x)`: F is autonomous, and binding would read V at t = 0 only. The message
       names the Hamiltonian's `potential(t, x)`;
     - an HJB evaluation at points other than the grid's nodes, such as HJB-GFDM's collocation points where they are
-      not the grid's nodes (#2737);
+      not the grid's nodes in their order (#2737);
     - `Model(terminal_coupling=...)`, which was read by nothing, until stage 2 binds it;
     - a coupling cost on a network, where no solve takes a `Model` (#2045). The message names
       `NetworkMFGComponents(node_potential_func=...)`;

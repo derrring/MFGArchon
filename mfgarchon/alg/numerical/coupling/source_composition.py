@@ -122,7 +122,8 @@ def _coupling_part(energy: EnergyFunctional, nodes: NDArray, m_t: NDArray, x: ND
     ``nodes`` are the grid's, the rows of ``geometry.get_spatial_grid()`` in the grid's C order, which F was bound in,
     and ``m_t`` is flattened in that order. The part evaluates only at those nodes: an ``x`` that is not them -- other
     points, or the same points in another order -- is refused rather than given the nodes' values. Evaluating it at a
-    solver's own points, such as HJB-GFDM's collocation points where they are not the grid's nodes, is #2737.
+    solver's own points, such as HJB-GFDM's collocation points where they are not the grid's nodes in their order, is
+    #2737.
     """
     flat = np.asarray(m_t, dtype=float).ravel()
     nodes = np.asarray(nodes, dtype=float).reshape(np.shape(energy.weights)[0], -1)
@@ -139,7 +140,7 @@ def _coupling_part(energy: EnergyFunctional, nodes: NDArray, m_t: NDArray, x: ND
             f"with {points.shape[0]} rows that are not those nodes in their order, and a density slice of {flat.size} "
             "values. The coupling cost evaluates only at the nodes it was bound on (#1642): a solver that evaluates "
             "its source at its own points, such as HJB-GFDM's collocation points where they are not the grid's "
-            "nodes, cannot carry it until #2737. Solve "
+            "nodes in their order, cannot carry it until #2737. Solve "
             "with a grid solver -- HJB-FDM, HJB-SL, or HJB-WENO in 1-D -- or, for a linear F = integral V m, give V "
             "to the Hamiltonian as its potential."
         )
