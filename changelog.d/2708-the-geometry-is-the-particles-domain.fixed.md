@@ -13,8 +13,9 @@
     - a periodic outer condition is refused, where it solved with particles recorded inside an obstacle;
     - initial particles, or `m_initial` mass, outside the domain are refused, where they were recorded there;
     - the GPU path is refused;
-    - a keyword that cut a hole out of a disc geometry solved on the keyword alone, and is now refused by the rule
-      above.
+    - a keyword that cut a hole out of a disc geometry solved its particles on the keyword alone while the problem,
+      and so the HJB, solved on the disc: one coupled problem on two domains, which nothing reported. It is now
+      refused by the rule above, and its route is to make the domain with the hole the problem's geometry.
     A `Hyperrectangle` subclass is such a geometry. A periodic grid with a grid-box `Hyperrectangle` keyword now
     solves, where it was refused.
   - On that route every boundary of the geometry off the grid box's walls reflects, whatever boundary condition was

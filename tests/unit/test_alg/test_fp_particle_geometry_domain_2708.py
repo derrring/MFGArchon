@@ -108,7 +108,9 @@ def test_two_domain_objects_are_refused_and_each_route_of_the_advice_runs(case):
         start, target = np.c_[0.5 + radius * np.cos(angle), 0.5 + radius * np.sin(angle)], [0.5, 0.5]
         remedy = keyword
     route = "drop implicit_domain=" if remedy is geometry else r"DifferenceDomain\(geometry, obstacle\)"
-    with pytest.raises(ValueError, match=rf"implicit_domain= names a different object.*{route}"):
+    with pytest.raises(
+        ValueError, match=rf"implicit_domain= names a different object.*one coupled problem on two domains.*{route}"
+    ):
         _solver(geometry, implicit_domain=keyword)
     recorded = _solve(_solver(remedy), start, target)
     assert remedy.contains(recorded).all()

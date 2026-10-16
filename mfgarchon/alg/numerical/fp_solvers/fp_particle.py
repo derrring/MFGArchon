@@ -1162,9 +1162,10 @@ class FPParticleSolver(BaseFPSolver):
         subclass, or a box that is not the grid's, does reach it, and B1 refuses the second
         (`_refuse_what_the_obstacle_placement_cannot_do`).
 
-        Both channels may name the same object. Two different objects that both reach the placement are refused:
-        which of them bounds the particles is a choice this solver cannot make for the caller, and two equal domains
-        built twice are not told apart. A grid-box `Hyperrectangle` in one channel reaches none, so beside it the
+        Both channels may name the same object. Two different objects that both reach the placement are refused: the
+        particles would solve on the keyword's domain while the problem, and so the HJB, solves on the geometry's,
+        and two equal domains built twice are not told apart. The keyword is for a geometry that cannot carry an
+        obstacle, a grid; on an implicit geometry the obstacle belongs in the geometry. A grid-box `Hyperrectangle` in one channel reaches none, so beside it the
         other channel declares the domain.
         """
         from mfgarchon.geometry.implicit import Hyperrectangle, ImplicitDomain
@@ -1184,10 +1185,11 @@ class FPParticleSolver(BaseFPSolver):
             return geometric
         raise ValueError(
             f"FPParticleSolver: the problem's geometry is an ImplicitDomain ({type(geometry).__name__}), and "
-            f"implicit_domain= names a different object ({type(implicit_domain).__name__}). Which of them bounds the "
-            "particles is not this solver's to choose, and two equal domains built twice are not told apart. If they "
-            "are one domain, drop implicit_domain= or pass the geometry object. If implicit_domain= carries more -- "
-            "an obstacle inside the geometry -- make that domain the problem's geometry, e.g. "
+            f"implicit_domain= names a different object ({type(implicit_domain).__name__}). If the two differ, the "
+            "particles would solve on implicit_domain= while the problem, and so the HJB, solves on the geometry: one "
+            "coupled problem on two domains. Two equal domains built twice are not told apart. If they are one "
+            "domain, drop implicit_domain= or pass the geometry object. If implicit_domain= carries more -- an "
+            "obstacle inside the geometry -- make that domain the problem's geometry, e.g. "
             "DifferenceDomain(geometry, obstacle), and drop implicit_domain= (#2708)."
         )
 
