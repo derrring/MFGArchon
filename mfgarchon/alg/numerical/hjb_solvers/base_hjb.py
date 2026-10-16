@@ -414,8 +414,9 @@ class BaseHJBSolver(BaseNumericalSolver):
                        or (Nt+1, *spatial_shape) for nD problems.
 
         Raises:
-            NotImplementedError: The problem declares an HJB source (``source_term_hjb``, ``nonlocal_operator``),
-                which this entry has no route for; the message names the routes that do (#2666).
+            NotImplementedError: The problem declares an HJB source (`hjb_source_fields`: ``source_term_hjb``,
+                ``nonlocal_operator``, a bound ``coupling_cost``), which this entry has no route for; the message
+                names the routes that do (#2666).
 
         Example:
             >>> from mfgarchon.core.mfg_problem import MFGProblem
@@ -454,12 +455,12 @@ class BaseHJBSolver(BaseNumericalSolver):
         # nothing said so. The predicate is the composition owner's own -- whatever it would compose is refused --
         # rather than a restated list of fields. Refused rather than composed: the coupled loops recompose the
         # source from the iterates every sweep, and a nonlocal term bound here would read the initial guess.
-        from mfgarchon.alg.numerical.coupling.source_composition import compose_hjb_source
+        from mfgarchon.alg.numerical.coupling.source_composition import compose_hjb_source, hjb_source_fields
 
         if compose_hjb_source(self.problem, m_uniform, U_prev_picard) is not None:
             # Named for the message only; the predicate above decides, so a field the owner learns to compose
             # is refused even before it is named here.
-            named = [n for n in ("source_term_hjb", "nonlocal_operator") if getattr(self.problem, n, None) is not None]
+            named = hjb_source_fields(self.problem)
             raise NotImplementedError(
                 f"{type(self).__name__}.solve() has no route for the problem's HJB source "
                 f"({', '.join(named) or 'composed by compose_hjb_source'}): it passes no source to solve_hjb_system, "

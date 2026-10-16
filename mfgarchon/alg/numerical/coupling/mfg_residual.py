@@ -215,8 +215,8 @@ class MFGResidual:
         """
         Compute HJB solver output for given density.
 
-        Issue #1361: composes ``source_term_hjb`` / ``nonlocal_operator`` /
-        from the ``(M, U_prev)`` arguments via the single-source
+        Issue #1361: composes the problem's HJB source (the fields
+        ``hjb_source_fields`` names) from the ``(M, U_prev)`` arguments via the single-source
         :func:`source_composition.compose_hjb_source` (shared with Picard) and
         passes it as ``source_term=`` when the solver accepts it. Composing from
         the arguments (option A) lets the finite-difference Jacobian differentiate

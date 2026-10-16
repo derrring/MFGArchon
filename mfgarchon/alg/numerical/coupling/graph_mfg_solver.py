@@ -32,7 +32,11 @@ from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
     resolve_fp_drift_kwargs,
 )
 from mfgarchon.alg.numerical.coupling.graph_coupling import _get_time_slice
-from mfgarchon.alg.numerical.coupling.source_composition import _call_problem_source, _problem_hjb_source_terms
+from mfgarchon.alg.numerical.coupling.source_composition import (
+    _call_problem_source,
+    _problem_hjb_source_terms,
+    hjb_source_is_active,
+)
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.convergence import sweep_change, worst_sweep_change
 
@@ -374,9 +378,7 @@ class GraphMFGSolver(BaseCouplingIterator):
         (#591), and #2046 tracks threading it through the shared timestep solve.
         """
         p = self._problems[k]
-        has_problem_source = p.source_term_hjb is not None
-        has_nonlocal = p.nonlocal_operator is not None
-        if not (has_problem_source or has_nonlocal):
+        if not hjb_source_is_active(p):
             return coupling_source
 
         dt = self._dt
@@ -388,10 +390,9 @@ class GraphMFGSolver(BaseCouplingIterator):
             # preserves byte-for-byte agreement with the pre-#1382 graph closure. Uses
             # self._dt so the slice index matches the grid couplers.
             parts = _problem_hjb_source_terms(p, Ms_expanded[k], Us_full[k], t, x_eval, dt)
-            if "source" in parts:
-                s = s + parts["source"]
-            if "nonlocal" in parts:
-                s = s + parts["nonlocal"]
+            for key in ("source", "coupling", "nonlocal"):
+                if key in parts:
+                    s = s + parts[key]
             return s
 
         return composed
