@@ -18,9 +18,10 @@ again and had drifted from it on four of BCType's eight members (#1956):
 - EXTRAPOLATION_LINEAR / _QUADRATIC: refused, they are field-truncation rules
 
 Architecture:
-    BoundaryConditions provides segment matching via get_bc_at_point()
-    particle_action_for_bc_type interprets BCType for particle dynamics
-    ParticleApplicator executes the action, per matched segment
+    particle_action_at is the one owner of what a particle does at a boundary point: the segment
+    BoundaryConditions.segment_for_point gives there, at a corner by corner_strategy and elsewhere
+    unmatched by default_bc, read through particle_action_for_bc_type
+    ParticleApplicator executes the action
 
 Created: 2025-01-03
 Part of: Unified Boundary Condition Architecture (Issue #536)
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from .conditions import BoundaryConditions
+    from .types import BCSegment
 
 ParticleAction = Literal["reflecting", "absorbing", "periodic"]
 
@@ -134,6 +136,35 @@ def particle_action_for_bc_type(
     )
 
 
+def segment_particle_action(segment: BCSegment) -> ParticleAction:
+    """What a particle does at a wall that ``segment`` governs: `particle_action_for_bc_type` on its type and, for a
+    Robin segment, its ``beta`` -- a classification by the sign of beta, which reads no number."""
+    return particle_action_for_bc_type(segment.bc_type, segment.beta)
+
+
+def particle_action_at(
+    bc: BoundaryConditions,
+    point: NDArray[np.floating],
+    bounds: list[tuple[float, float]] | NDArray[np.floating],
+    geometry: object = None,
+) -> tuple[ParticleAction, BCSegment]:
+    """What a particle at or beyond the box ``bounds`` does there, and the segment that says so (#2490 B1d): the one
+    owner of that decision for the particle family.
+
+    ``point`` is clamped onto the box, and the segment is `BoundaryConditions.segment_for_point`'s at the clamp: at a
+    corner, ``corner_strategy`` chooses among the faces' segments in the owner's corner order, and where no segment
+    governs, ``default_bc`` does, refused by name where it is unset or a bare ROBIN.
+
+    The clamp stands in for the point where the particle's path crossed the wall, which the per-axis applicator does
+    not have. A particle beyond two faces therefore reads their corner, even where its path crossed only one of them.
+    That is the rule until #2733 passes the exact contact point here.
+    """
+    box = np.asarray(bounds, dtype=float)
+    clamped = np.clip(np.asarray(point, dtype=float), box[:, 0], box[:, 1])
+    segment = bc.segment_for_point(clamped, geometry=geometry)
+    return segment_particle_action(segment), segment
+
+
 class ParticleApplicator:
     """
     Segment-aware boundary condition applicator for particle methods.
@@ -174,9 +205,8 @@ class ParticleApplicator:
         """
         Apply segment-aware boundary conditions to particles.
 
-        For each particle that has crossed or is at the boundary:
-        1. Query bc.get_bc_at_point() to determine which BC segment applies
-        2. Apply the appropriate action based on bc_type
+        For each particle that has crossed or is at the boundary, `particle_action_at` decides the action -- absorb,
+        reflect or wrap -- and this applies it.
 
         Args:
             particles: Particle positions, shape (N, d)
@@ -223,25 +253,7 @@ class ParticleApplicator:
         for idx in boundary_indices:
             particle = result_particles[idx]
 
-            # Determine which boundary the particle is at
-            boundary_id = self._get_boundary_id(particle, domain_min, domain_max, dimension)
-
-            # Query BC at this point (uses bc.domain_bounds internally)
-            segment = bc.get_bc_at_point(
-                particle,
-                boundary_id=boundary_id,
-            )
-
-            if segment is None:
-                # No matching segment - use default reflecting
-                result_particles[idx] = self._reflect_particle(particle, domain_min, domain_max, domain_size)
-                continue
-
-            # alpha/beta come off the matched segment, so a mixed BC with a different
-            # Robin coefficient per wall is read per wall. The meshfree applicator's
-            # uniform path reads the BC's one condition and refuses a mixed BC
-            # (`applicator_meshfree.the_one_condition`).
-            action = particle_action_for_bc_type(segment.bc_type, segment.beta)
+            action, _ = particle_action_at(bc, particle, bounds_arr)
 
             if action == "absorbing":
                 absorbed_mask[idx] = True
@@ -322,15 +334,7 @@ class ParticleApplicator:
 
         for idx in boundary_indices:
             particle = result_particles[idx]
-            boundary_id = self._get_boundary_id(particle, domain_min, domain_max, dimension)
-
-            segment = bc.get_bc_at_point(particle, boundary_id=boundary_id)
-
-            if segment is None:
-                result_particles[idx] = self._reflect_particle(particle, domain_min, domain_max, domain_size)
-                continue
-
-            action = particle_action_for_bc_type(segment.bc_type, segment.beta)
+            action, segment = particle_action_at(bc, particle, bounds_arr)
 
             if action == "absorbing":
                 seg_name = segment.name
@@ -367,44 +371,6 @@ class ParticleApplicator:
         remaining_particles = result_particles[~absorbed_mask]
 
         return remaining_particles, absorbed_mask, exit_positions, absorbed_count
-
-    def _get_boundary_id(
-        self,
-        particle: NDArray[np.floating],
-        domain_min: NDArray[np.floating],
-        domain_max: NDArray[np.floating],
-        dimension: int,
-    ) -> str | None:
-        """
-        Determine which boundary a particle is at.
-
-        Returns boundary ID using BCSegment convention:
-        - 1D: "left", "right" (directional for 1D)
-        - 2D: "x_min", "x_max", "y_min", "y_max" (axis-based for 2D+)
-        - 3D: "x_min", "x_max", "y_min", "y_max", "z_min", "z_max"
-        - nD: "dim0_min", "dim0_max", etc. for d >= 3
-
-        Note: Different conventions for 1D vs 2D+ to match common usage patterns.
-        """
-        # Handle 1D special case (uses directional naming)
-        if dimension == 1:
-            if particle[0] <= domain_min[0] + self._boundary_tolerance:
-                return "left"
-            if particle[0] >= domain_max[0] - self._boundary_tolerance:
-                return "right"
-            return None
-
-        # 2D+ uses axis-based naming (x_min, y_max, etc.)
-        axis_names = ["x", "y", "z"] + [f"dim{i}" for i in range(3, dimension)]
-
-        for d in range(dimension):
-            axis_name = axis_names[d] if d < len(axis_names) else f"dim{d}"
-            if particle[d] <= domain_min[d] + self._boundary_tolerance:
-                return f"{axis_name}_min"
-            if particle[d] >= domain_max[d] - self._boundary_tolerance:
-                return f"{axis_name}_max"
-
-        return None
 
     def _reflect_particle(
         self,

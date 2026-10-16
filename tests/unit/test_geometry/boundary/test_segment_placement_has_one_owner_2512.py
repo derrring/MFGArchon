@@ -47,7 +47,6 @@ FACE_NAME = re.compile(r"\}_(min|max)\b|_\{(side|lo|hi|s|end)\}")
 _NOT_A_SEGMENT = "matches a rival form and reads no segment"
 #: (file, function) -> (site count, why it is allowed).
 ALLOWED = {
-    ("mfgarchon/geometry/boundary/applicator_particle.py", "_get_boundary_id"): (2, "B1d: particle boundary id"),
     ("mfgarchon/alg/base_solver.py", "get_domain_constraints"): (1, "B1e: one constraint per segment, from its region"),
     ("mfgarchon/alg/numerical/adjoint/diagnostics.py", "_get_boundary_indices"): (4, f"{_NOT_A_SEGMENT}: index keys"),
     ("mfgarchon/alg/numerical/adjoint/operators.py", "get_boundary_indices_from_geometry"): (
@@ -179,15 +178,15 @@ def test_a_planted_rival_is_found(package_copy, form):
 
 
 def test_a_new_rival_inside_an_allowed_function_is_found(package_copy):
-    """The allowance pins its site count, so a second rival in the particle applicator's allowed function fails too."""
-    rel = "mfgarchon/geometry/boundary/applicator_particle.py"
+    """The allowance pins its site count, so a second rival in an allowed function fails too."""
+    rel = "mfgarchon/alg/base_solver.py"
     target = package_copy / rel
     original = target.read_text()
-    anchor = "        # Handle 1D special case (uses directional naming)\n"
+    anchor = "        # Handle segments if available\n"
     assert original.count(anchor) == 1
     try:
         target.write_text(original.replace(anchor, anchor + "        _ = [seg.priority for seg in ()]\n"))
         violations = _violations(scan(package_copy))
     finally:
         target.write_text(original)
-    assert any("_get_boundary_id" in v for v in violations), violations
+    assert any("get_domain_constraints" in v for v in violations), violations

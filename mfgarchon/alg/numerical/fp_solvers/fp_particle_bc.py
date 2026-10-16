@@ -130,21 +130,14 @@ def needs_segment_aware_bc(boundary_conditions: BoundaryConditions | None) -> bo
     if isinstance(bc, str):
         raise ValueError(f"needs_segment_aware_bc: a BC is a BoundaryConditions, not the string {bc!r}")
 
-    # Check if uniform BC (same type everywhere) - Issue #543: use getattr instead of hasattr
-    is_uniform = getattr(bc, "is_uniform", False)
-    if is_uniform:
-        # Uniform BC - use fast path unless it's DIRICHLET (absorbing). One unplaced segment is what
-        # `is_uniform` means, and `uniform_segment` is that segment.
-        segment = bc.uniform_segment
-        return segment is not None and segment.bc_type == BCType.DIRICHLET
+    # The owner's one answer to "one condition everywhere", which counts default_bc wherever no global segment
+    # covers the boundary (#2490 B1d): a BC whose walls absorb by default_bc alone took the reflecting fast path.
+    from mfgarchon.geometry.boundary.applicator_particle import segment_particle_action
 
-    # Mixed BC with segments - need segment-aware handling
-    segments = getattr(bc, "segments", [])
-    if len(segments) > 1:
+    segment = bc.uniform_segment
+    if segment is None:
         return True
-
-    # Check for DIRICHLET segments (absorbing BC)
-    return any(segment.bc_type == BCType.DIRICHLET for segment in segments)
+    return segment_particle_action(segment) == "absorbing"
 
 
 # =============================================================================

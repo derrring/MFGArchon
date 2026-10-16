@@ -734,7 +734,10 @@ class BoundaryConditions:
                     governing.append(segment)
                     break
             else:
-                governing.append(self._default_segment("segment_for_point", f"the boundary point {point.tolist()}"))
+                on_face = f" on face {boundary_id}" if boundary_id is not None else ""
+                governing.append(
+                    self._default_segment("segment_for_point", f"the boundary point {point.tolist()}{on_face}")
+                )
         return governing[0]
 
     def face_segments_at_point(

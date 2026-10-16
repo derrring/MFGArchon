@@ -303,7 +303,7 @@ class FPParticleSolver(BaseFPSolver):
         # torus that is periodic_bc -- translated: there DIRICHLET(g) is an exit, u = g for the HJB and m = 0 for
         # this solver (#2512, convention row 5).
         if boundary_conditions is not None:
-            self.boundary_conditions = self._fp_own_bc(boundary_conditions)
+            self.boundary_conditions = self._with_geometry_periodic_convention(self._fp_own_bc(boundary_conditions))
         else:
             self.boundary_conditions = self._fp_view_of_shared(problem.get_boundary_conditions())
 
