@@ -6,10 +6,28 @@
     on an earlier axis swallowed an absorbing face on a later one. A particle beyond a corner now takes the corner's
     segment in the owner's order: priority, then DIRICHLET before a natural condition.
   - The clamp stands in for the point where the path crossed the wall until #2733 passes the exact contact. A
-    particle beyond two faces reads their corner even where its path crossed only one.
-  - `FPParticleSolver` routes a BC to the per-point path unless `BoundaryConditions.uniform_segment` names one
-    non-absorbing condition. The routing counted segments and read no `default_bc`, so a reflecting segment beside
-    `default_bc=DIRICHLET` took the reflecting fast path, and the walls the default makes absorbing reflected.
+    particle beyond two faces reads their corner even where its path crossed only one. A `region` or `sdf_region`
+    placement is read at the clamp, on the wall where it is placed: a particle beyond an exit at
+    `region={"x": (1, 1), ...}` was read off the wall and reflected, and is absorbed.
+  - Two segments are one wall where they do the same to a particle, so a REFLECTING face beside a NO_FLUX one is
+    one wall. A `corner_strategy` other than `"priority"` does not choose between two actions at a corner: that
+    corner is refused by name, with its remedies. An exit on x_max with no-flux walls and `"average"` absorbed at the
+    corner, and is now refused.
+  - A periodic axis is identified, not walled: a particle is wrapped on it first, and the walls are read alone. A
+    particle beyond a periodic face and a wall was wrapped on both axes; it wraps on the one and takes the wall's
+    action on the other.
+  - The applicator's boundary tolerance, 1e-10, is the one the owner reads faces with.
+  - A box with an axis of no width is refused: a particle there lies on both faces of that axis at once.
+  - `FPParticleSolver` reads every vertex of the box at construction, so a refusal the corner rule raises fires
+    there, not at the step a particle first reaches the corner. That is a limit, not coverage: in 3-D two faces meet
+    along the box's 12 edges, and a segment restricted by region can change which two govern along an edge, so a
+    refusal inside an edge still fires when a particle first reaches it.
+  - `FPParticleSolver` routes a BC to the per-point path unless every wall takes one non-absorbing particle action,
+    by `BoundaryConditions.uniform_segment_under` the particle's sameness. The routing counted segments and read no
+    `default_bc`, so a reflecting segment beside `default_bc=DIRICHLET` took the reflecting fast path, and the walls
+    the default makes absorbing reflected. The GPU path's refusal names that reason; it said every such BC needed
+    particles removed at a DIRICHLET segment.
   - A BC handed to `FPParticleSolver` is completed with the grid's periodic node layout, as every other route
-    completes it (#1822).
+    completes it (#1822), and bound to the grid, as the grid binds its own: an `sdf_region` or `region_name`
+    segment is read on it.
   - `ParticleApplicator._get_boundary_id` is removed; nothing calls it.

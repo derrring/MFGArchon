@@ -43,6 +43,10 @@ if TYPE_CHECKING:
 
 ParticleAction = Literal["reflecting", "absorbing", "periodic"]
 
+# How far off a face a particle may lie and still be on it: the applicator's test for a boundary particle, and the
+# owner's for which faces the particle's clamp lies on (#2490 B1d) -- one tolerance, so the two cannot disagree.
+PARTICLE_BOUNDARY_TOL = 1e-10
+
 
 def particle_action_for_bc_type(
     bc_type: BCType,
@@ -142,11 +146,31 @@ def segment_particle_action(segment: BCSegment) -> ParticleAction:
     return particle_action_for_bc_type(segment.bc_type, segment.beta)
 
 
+def same_particle_action(first: BCSegment, second: BCSegment) -> bool:
+    """The particle family's sameness of two segments, which the owner asks with: they do the same to a particle."""
+    return segment_particle_action(first) == segment_particle_action(second)
+
+
+def periodic_axes(bc: BoundaryConditions, dimension: int, geometry: object = None) -> tuple[int, ...]:
+    """The axes a particle wraps on: both their faces PERIODIC, read through the face owner (`periodic_faces`). A BC
+    that declares nothing periodic has none, and no face is read."""
+    from .bc_utils import declares_periodic
+    from .conditions import periodic_faces
+
+    if not declares_periodic(bc):
+        return ()
+    faces = periodic_faces(bc, dimension, geometry)
+    return tuple(axis for axis in range(dimension) if faces[2 * axis] and faces[2 * axis + 1])
+
+
 def particle_action_at(
     bc: BoundaryConditions,
     point: NDArray[np.floating],
     bounds: list[tuple[float, float]] | NDArray[np.floating],
     geometry: object = None,
+    *,
+    tolerance: float = PARTICLE_BOUNDARY_TOL,
+    periodic: tuple[int, ...] = (),
 ) -> tuple[ParticleAction, BCSegment]:
     """What a particle at or beyond the box ``bounds`` does there, and the segment that says so (#2490 B1d): the one
     owner of that decision for the particle family.
@@ -157,11 +181,45 @@ def particle_action_at(
 
     The clamp stands in for the point where the particle's path crossed the wall, which the per-axis applicator does
     not have. A particle beyond two faces therefore reads their corner, even where its path crossed only one of them.
-    That is the rule until #2733 passes the exact contact point here.
+    That is the rule until #2733 passes the exact contact point here. A region or sdf_region placement is read at the
+    clamp too, on the wall where it is placed, not at the particle beyond it.
+
+    The owner is asked with the particle's sameness: two segments are one where they do the same to a particle, so a
+    REFLECTING face beside a NO_FLUX one is one wall. A ``corner_strategy`` other than ``"priority"`` does not choose
+    between two actions at a corner, and that corner is refused by name.
+
+    ``periodic`` names the axes the caller has already wrapped (`periodic_axes`): a periodic axis is identified, not
+    walled, so its faces take no part in the reading. The point is read at its own coordinate there, held
+    ``2 * tolerance`` off those faces, so a particle beyond a periodic face and a wall reads the wall alone.
+
+    A box with an axis of no width is refused: a particle there lies on both faces of that axis at once, and every
+    step off the line leaves the box, so no wall action describes it.
     """
     box = np.asarray(bounds, dtype=float)
-    clamped = np.clip(np.asarray(point, dtype=float), box[:, 0], box[:, 1])
-    segment = bc.segment_for_point(clamped, geometry=geometry)
+    flat = [axis for axis in range(len(box)) if not box[axis, 1] > box[axis, 0]]
+    if flat:
+        raise ValueError(
+            f"particle_action_at: the box {box.tolist()} has no interior along axis {flat}: a particle there lies on "
+            "both faces of that axis at once, and no wall action describes it. Give every axis a positive width, or "
+            "pose the problem in the dimensions that have one (#2490 B1d)."
+        )
+    query = np.clip(np.asarray(point, dtype=float), box[:, 0], box[:, 1])
+    for axis in periodic:
+        query[axis] = min(max(query[axis], box[axis, 0] + 2 * tolerance), box[axis, 1] - 2 * tolerance)
+    from .conditions import UndecidedCornerError
+
+    try:
+        segment = bc.segment_for_point(query, geometry=geometry, tolerance=tolerance, equivalent=same_particle_action)
+    except UndecidedCornerError as undecided:
+        actions = sorted({segment_particle_action(seg) for seg in undecided.governing})
+        governing = ", ".join(f"{seg.name!r} ({segment_particle_action(seg)})" for seg in undecided.governing)
+        raise ValueError(
+            f"particle_action_at: the corner shared by {undecided.where}, at {tuple(query.tolist())}, is governed by "
+            f"{governing}, and corner_strategy={bc.corner_strategy!r} does not say which of them a particle there "
+            f"does: a particle takes one action, and there is no average of {' and '.join(actions)}. Use "
+            "corner_strategy='priority' and give the segment that should govern the corner the higher priority "
+            "(BCSegment(priority=...)), or segments whose particle actions agree at that corner (#2490 B1d)."
+        ) from undecided
     return segment_particle_action(segment), segment
 
 
@@ -194,7 +252,7 @@ class ParticleApplicator:
 
     def __init__(self) -> None:
         """Initialize particle applicator."""
-        self._boundary_tolerance = 1e-10
+        self._boundary_tolerance = PARTICLE_BOUNDARY_TOL
 
     def apply(
         self,
@@ -237,23 +295,18 @@ class ParticleApplicator:
         if bc.domain_bounds is None:
             bc.domain_bounds = bounds_arr
 
-        # Find particles at or beyond boundary
-        at_min = particles <= domain_min + self._boundary_tolerance
-        at_max = particles >= domain_max - self._boundary_tolerance
-        at_boundary = np.any(at_min | at_max, axis=1)
+        result_particles, boundary_indices, periodic = self._wrapped_and_at_walls(particles, bc, bounds_arr)
 
         # Initialize output arrays
         absorbed_mask = np.zeros(n_particles, dtype=bool)
         exit_positions_list = []
-        result_particles = particles.copy()
-
-        # Process boundary particles
-        boundary_indices = np.where(at_boundary)[0]
 
         for idx in boundary_indices:
             particle = result_particles[idx]
 
-            action, _ = particle_action_at(bc, particle, bounds_arr)
+            action, _ = particle_action_at(
+                bc, particle, bounds_arr, tolerance=self._boundary_tolerance, periodic=periodic
+            )
 
             if action == "absorbing":
                 absorbed_mask[idx] = True
@@ -317,24 +370,19 @@ class ParticleApplicator:
         if bc.domain_bounds is None:
             bc.domain_bounds = bounds_arr
 
-        # Find boundary particles
-        at_min = particles <= domain_min + self._boundary_tolerance
-        at_max = particles >= domain_max - self._boundary_tolerance
-        at_boundary = np.any(at_min | at_max, axis=1)
+        result_particles, boundary_indices, periodic = self._wrapped_and_at_walls(particles, bc, bounds_arr)
 
         absorbed_mask = np.zeros(n_particles, dtype=bool)
         exit_positions_list = []
-        result_particles = particles.copy()
 
         # Track absorption per segment for flux limiting
         absorbed_count: dict[str, int] = dict.fromkeys(flux_limits, 0)
 
-        # Process boundary particles
-        boundary_indices = np.where(at_boundary)[0]
-
         for idx in boundary_indices:
             particle = result_particles[idx]
-            action, segment = particle_action_at(bc, particle, bounds_arr)
+            action, segment = particle_action_at(
+                bc, particle, bounds_arr, tolerance=self._boundary_tolerance, periodic=periodic
+            )
 
             if action == "absorbing":
                 seg_name = segment.name
@@ -371,6 +419,26 @@ class ParticleApplicator:
         remaining_particles = result_particles[~absorbed_mask]
 
         return remaining_particles, absorbed_mask, exit_positions, absorbed_count
+
+    def _wrapped_and_at_walls(
+        self, particles: NDArray[np.floating], bc: BoundaryConditions, bounds: NDArray[np.floating]
+    ) -> tuple[NDArray[np.floating], NDArray[np.intp], tuple[int, ...]]:
+        """The particles with their periodic axes wrapped, the indices of those at or beyond a wall, and the periodic
+        axes (#2490 B1d). A periodic axis is identified, not walled, so every particle is wrapped on it first, and a
+        particle is at a wall only on the other axes: beyond a periodic face and a wall at once, it wraps on the one
+        and takes the wall's action on the other."""
+        from .periodic import wrap_positions
+
+        dimension = particles.shape[1]
+        periodic = periodic_axes(bc, dimension)
+        result = wrap_positions(particles, bounds, periodic_dims=periodic) if periodic else particles.copy()
+        walls = [axis for axis in range(dimension) if axis not in periodic]
+        at_wall = np.any(
+            (result[:, walls] <= bounds[walls, 0] + self._boundary_tolerance)
+            | (result[:, walls] >= bounds[walls, 1] - self._boundary_tolerance),
+            axis=1,
+        )
+        return result, np.flatnonzero(at_wall), periodic
 
     def _reflect_particle(
         self,

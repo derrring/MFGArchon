@@ -58,6 +58,17 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+class UndecidedCornerError(ValueError):
+    """A corner whose faces' segments differ under the consumer's sameness, read with a ``corner_strategy`` that
+    blends normals and so does not choose among them (`BoundaryConditions._corner_choice`). ``where`` names the faces
+    and ``governing`` holds their segments, so a consumer can say what differs in its own terms."""
+
+    def __init__(self, message: str, where: str, governing: list[BCSegment]):
+        super().__init__(message)
+        self.where = where
+        self.governing = governing
+
+
 @dataclass(frozen=True, eq=False)
 class BoundaryFacets:
     """A mesh's boundary facets, as `BoundaryConditions.segments_for_facets` reads them (#2512 row B1, stage B1b).
@@ -321,6 +332,12 @@ class BoundaryConditions:
         BC is whichever segment was declared first and governs no particular location. Four alike segments, one
         per face, are uniform; so is a BC with no segments and a ``default_bc``.
         """
+        return self.uniform_segment_under(_same_condition)
+
+    def uniform_segment_under(self, equivalent: Callable[[BCSegment, BCSegment], bool]) -> BCSegment | None:
+        """:attr:`uniform_segment` under a consumer's own sameness, as :meth:`segment_for_point` takes ``equivalent``:
+        a segment every location of the boundary carries up to ``equivalent``, or ``None``. A particle asks it with
+        "the same particle action", under which a REFLECTING segment and a NO_FLUX ``default_bc`` are one wall."""
         candidates = list(self.segments)
         if not any(_is_global(segment) for segment in self.segments):
             if self._default_refusal("uniform_segment", "the boundary") is not None:
@@ -329,7 +346,7 @@ class BoundaryConditions:
         if not candidates:
             return None
         first = candidates[0]
-        return first if all(_same_condition(segment, first) for segment in candidates[1:]) else None
+        return first if all(equivalent(segment, first) for segment in candidates[1:]) else None
 
     # =========================================================================
     # Dynamic BC Value Provider Support (Issue #625)
@@ -658,11 +675,13 @@ class BoundaryConditions:
         same = _same_condition if equivalent is None else equivalent
         first = min(governing, key=self._corner_key)
         if self.corner_strategy != "priority" and not all(same(seg, first) for seg in governing):
-            raise ValueError(
+            raise UndecidedCornerError(
                 f"BoundaryConditions: the corner shared by {where} is governed by "
                 f"{', '.join(repr(seg.name) for seg in governing)}, which impose different conditions, and "
                 f"corner_strategy={self.corner_strategy!r} blends outward normals -- it does not say which "
-                "condition applies there. Use corner_strategy='priority' (#2512 row B1)."
+                "condition applies there. Use corner_strategy='priority' (#2512 row B1).",
+                where,
+                governing,
             )
         return first
 
