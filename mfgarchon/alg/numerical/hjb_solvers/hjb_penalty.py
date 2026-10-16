@@ -120,7 +120,7 @@ class PenaltyHJBSolver(BaseHJBSolver):
         source_term: Callable | None = None,
         volatility_kind: str | None = None,
     ) -> NDArray:
-        """Solve HJB with obstacle constraint via penalty method.
+        """Unreachable (construction raises). It passed the inner solver a position-only source.
 
         .. warning::
 
@@ -152,23 +152,10 @@ class PenaltyHJBSolver(BaseHJBSolver):
             # Start with existing source term if any
             base = evaluate_solver_source(source_term, t=t, x=x) if source_term is not None else np.zeros(x.shape[0])
 
-            # Penalty: (1/eps) * max(0, Psi(x) - v)
-            # Note: We evaluate Psi at x but don't have v here.
-            # The penalty is based on the obstacle value only.
-            # For the full v-dependent penalty, the inner solver's
-            # time-stepping loop handles it (source_term is evaluated
-            # at each time step with the current v).
-            #
-            # This works because the HJB solver subtracts source_term
-            # from the residual: F(u) = (u-u_next)/dt + H - S = 0
-            # With S = (1/eps)*max(0, Psi-u), we get:
-            #   F(u) = (u-u_next)/dt + H - (1/eps)*max(0, Psi-u) = 0
-            # When u < Psi, the penalty term pushes u upward.
-            #
-            # However: the source_term signature is (t, x) -> array,
-            # not (t, x, v) -> array. The v-dependent penalty must be
-            # handled at the time-stepping level inside the solver.
-            # For now, we apply a static obstacle penalty.
+            # The intended penalty, (1/eps) * max(0, Psi - v), cannot be formed here: this callable
+            # receives (t, x) and never v, and the inner solver evaluates it as a source at each time
+            # step without the current iterate. The comment that stood here said the time stepping
+            # supplied v; that is withdrawn.
             #
             # #2002: `max(0, psi)` PENALISES POSITION, NOT VIOLATION. It contains no `v`, so it is
             # positive wherever psi > 0 whether or not `v >= Psi` holds -- verified, unchanged at
