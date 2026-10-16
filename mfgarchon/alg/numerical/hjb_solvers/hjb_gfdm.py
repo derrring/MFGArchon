@@ -66,17 +66,31 @@ if TYPE_CHECKING:
 
 def _joint_socp_refusal(unplaced: dict[int, str], points: np.ndarray) -> str:
     """The refusal for interior rows the joint SOCP could not place (#1689): their count, the first ten with their
-    coordinates and reasons, and the two ways forward."""
+    coordinates and reasons, and the way forward for each reason present."""
     rows = sorted(unplaced)
     listed = "; ".join(f"{i} at {np.round(points[i], 6).tolist()}: {unplaced[i]}" for i in rows[:10])
+    reasons = set(unplaced.values())
+    remedies = []
+    if any(reason.startswith("SOCP-infeasible") for reason in reasons):
+        remedies.append(
+            "Where the SOCP is infeasible: socp_max_stencil_enlargements=N retries each such row with up to "
+            "N * socp_enlargement_step more neighbours. The added points are visibility-filtered only when obstacle_sdf "
+            "is passed; without it they can cross a wall, so a domain with obstacles should pass it. Or "
+            "socp_allow_relaxed_rows=True accepts relaxed-SOCP rows, which carry slack on the M-matrix or the cone "
+            "constraint: they are reported, not monotone, and not counted as feasible."
+        )
+    if "its neighbourhood does not contain it" in reasons:
+        remedies.append(
+            "A row whose neighbourhood does not contain it lies within visibility_margin of obstacle_sdf, so the "
+            "visibility filter removed the node from its own stencil: move the node out of that margin, or reduce "
+            "visibility_margin. socp_allow_relaxed_rows does not apply to it."
+        )
+    if "no neighbourhood" in reasons:
+        remedies.append("A row with no neighbourhood is refused whatever the options.")
     return (
         f"HJBGFDMSolver(monotonicity_scheme='joint_socp'): {len(rows)} interior row(s) have no joint-SOCP stencil, so "
-        f"the scheme cannot give them the monotone weights it names (#1689). Rows, first 10: {listed}. Where the SOCP "
-        "is infeasible: socp_max_stencil_enlargements=N retries each such row with up to N * socp_enlargement_step "
-        "more neighbours. The added points are visibility-filtered only when obstacle_sdf is passed; without it they "
-        "can cross a wall, so a domain with obstacles should pass it. Or socp_allow_relaxed_rows=True accepts "
-        "relaxed-SOCP rows, whose M-matrix slack eps_M is positive: they are reported, not monotone, and not counted "
-        "as feasible. A row with no neighbourhood is refused either way."
+        f"the scheme cannot give them the monotone weights it names (#1689). Rows, first 10: {listed}. "
+        + " ".join(remedies)
     )
 
 
@@ -506,12 +520,13 @@ class HJBGFDMSolver(BaseHJBSolver):
             socp_enlargement_step: Number of next-nearest neighbors added per
                 enlargement step (Issue #1106). Default 2.
             socp_allow_relaxed_rows: ``joint_socp`` scheme only (#1689). An interior
-                row whose joint SOCP is infeasible after C-bisection and enlargement
-                is refused by default: construction raises, naming the rows. True
-                gives such rows the relaxed SOCP's weights, whose M-matrix slack
-                ``eps_M`` is positive, so they are not monotone. They are reported
-                in one WARNING, with their count and the largest ``eps_M``, and are
-                not counted as feasible.
+                row whose joint SOCP is infeasible, enlargement included when it is
+                enabled, is refused by default: construction raises, naming the rows.
+                True gives such rows the relaxed SOCP's weights, which carry slack on
+                the M-matrix or the cone constraint, so they are not monotone. They
+                are reported in one WARNING, with their count and the largest M-matrix
+                slack ``eps_M``, and are not counted as feasible. A row whose
+                neighbourhood does not contain it is refused either way.
         """
         super().__init__(problem)
 
@@ -1044,8 +1059,9 @@ class HJBGFDMSolver(BaseHJBSolver):
                 rows = sorted(stencils.relaxed_rows)
                 logger.warning(
                     f"HJBGFDMSolver(joint_socp, socp_allow_relaxed_rows=True): {len(rows)} interior row(s) use "
-                    f"relaxed-SOCP weights, max eps_M = {stats['max_eps_M']:.4g}. Their M-matrix slack is positive, "
-                    f"so they are not monotone and are not counted as feasible (#1689). Rows, first 10: {rows[:10]}."
+                    f"relaxed-SOCP weights, max eps_M = {stats['max_eps_M']:.4g}. They carry slack on the M-matrix or "
+                    f"the cone constraint, so they are not monotone and are not counted as feasible (#1689). Rows, "
+                    f"first 10: {rows[:10]}."
                 )
 
         # Precomputed M-matrix QP stencils at boundary nodes, for joint_socp (the scheme
@@ -1592,8 +1608,8 @@ class HJBGFDMSolver(BaseHJBSolver):
 
             # Override Laplacian weights with joint_socp's precomputed boundary-buffer
             # weights where it has them (`self._precomputed_stencils`). The
-            # `joint_socp_stencils` override below takes priority for SOCP-feasible
-            # interior nodes.
+            # `joint_socp_stencils` override below takes priority at every interior
+            # node it placed (exact, or relaxed under the #1689 opt-in).
             if self._precomputed_stencils is not None and self._precomputed_stencils.has_stencil(i):
                 precomputed = self._precomputed_stencils.get_laplacian_weights(i)
                 if precomputed is not None:
@@ -1813,7 +1829,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         # to the qp_m_matrix control on the same setup).
         #
         # Precedence (matches `_build_derivative_matrices` / `_cached_derivative_weights`):
-        #   joint SOCP at SOCP-feasible interior > M-matrix QP at boundary > bare W-T.
+        #   joint SOCP at every interior node it placed (exact, or relaxed under the #1689 opt-in)
+        #   > M-matrix QP at boundary > bare W-T.
         if self._joint_socp_stencils is not None and self._joint_socp_stencils.has_stencil(point_idx):
             socp = self._joint_socp_stencils.get_weights_dict(point_idx)
             if socp is not None:

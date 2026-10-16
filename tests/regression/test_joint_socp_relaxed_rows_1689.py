@@ -85,3 +85,53 @@ def test_without_the_opt_in_the_rows_are_refused_by_name():
         assert f"{int(r)} at " in message, f"row {int(r)} is not named"
     assert "socp_max_stencil_enlargements" in message
     assert "socp_allow_relaxed_rows=True" in message
+
+
+@pytest.mark.parametrize("allow_relaxed", [False, True])
+def test_a_row_its_neighbourhood_does_not_contain_is_refused(allow_relaxed):
+    """A node within ``visibility_margin`` of ``obstacle_sdf`` is removed from its own neighbourhood by the visibility
+    filter, so the joint SOCP builds no row there. Main skipped it silently, and at solve time it took bare
+    Wendland-Taylor weights. Found by #2741's review 1: the census's 2-D cloud (11 x 11, interior nodes jittered by up
+    to 0.03, seed 0, delta 0.3) with a disc of radius 0.03 centred 0.05 to the right of the interior node nearest
+    (0.5, 0.5), and ``visibility_margin=0.03``. The refusal names that node with its reason, and the opt-in, which
+    accepts relaxed rows only, does not lift it."""
+    grid = np.linspace(0.0, 1.0, 11)
+    xs, ys = np.meshgrid(grid, grid, indexing="ij")
+    points = np.column_stack([xs.ravel(), ys.ravel()])
+    on_boundary = (points[:, 0] % 1 == 0) | (points[:, 1] % 1 == 0)
+    points[~on_boundary] += np.random.default_rng(0).uniform(-0.03, 0.03, (int((~on_boundary).sum()), 2))
+    interior = np.flatnonzero(~on_boundary)
+    node = int(interior[np.argmin(np.linalg.norm(points[interior] - 0.5, axis=1))])
+    centre = points[node] + np.array([0.05, 0.0])
+
+    def disc(x):
+        return np.linalg.norm(np.atleast_2d(np.asarray(x, dtype=float)) - centre, axis=1) - 0.03
+
+    problem = MFGProblem(
+        model=Model(
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=1.0
+        ),
+        domain=TensorProductGrid(bounds=[(0, 1.0), (0, 1.0)], Nx_points=[11, 11], boundary_conditions=no_flux_bc(2)),
+        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=1.0),
+        Nt=4,
+    )
+    with pytest.raises(ValueError, match=r"have no joint-SOCP stencil") as refusal:
+        HJBGFDMSolver(
+            problem,
+            collocation_points=points,
+            boundary_indices=np.flatnonzero(on_boundary),
+            delta=0.3,
+            derivative_method="taylor",
+            taylor_order=2,
+            weight_function="wendland",
+            adaptive_neighborhoods=True,
+            monotonicity_scheme="joint_socp",
+            monotonicity_application="precompute",
+            obstacle_sdf=disc,
+            visibility_margin=0.03,
+            socp_allow_relaxed_rows=allow_relaxed,
+        )
+    message = str(refusal.value)
+    assert f"{node} at " in message, f"node {node} is not named: {message}"
+    assert "its neighbourhood does not contain it" in message
+    assert "move the node out of that margin, or reduce visibility_margin" in message

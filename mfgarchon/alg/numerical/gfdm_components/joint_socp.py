@@ -570,9 +570,13 @@ class PrecomputedJointSocpStencils:
         SOCP needed (#1689). Its weights are in ``stencils``; it is not monotone and
         not counted in ``n_feasible``.
     unplaced_rows : dict[int, str]
-        Each interior node with no stencil, and why: no neighbourhood, or no
-        feasible SOCP after C-bisection, enlargement and, if enabled, the relaxed
-        SOCP (#1689). ``HJBGFDMSolver`` refuses a cloud with any.
+        Each interior node with no stencil, and why: no neighbourhood; a
+        neighbourhood that does not contain the node, which the visibility filter
+        leaves for a node within ``visibility_margin`` of the obstacle; or no
+        feasible SOCP after the tiers that ran (C-bisection when
+        ``cone_constant_C_max`` allows a step, enlargement when enabled, the
+        relaxed SOCP when enabled) (#1689). ``HJBGFDMSolver`` refuses a cloud
+        with any.
     stats : dict
         Precomputation statistics: n_feasible (exact rows only), n_infeasible,
         n_fast_path, n_socp, n_relaxed_fallback, max_eps_M, n_enlarged,
@@ -837,10 +841,17 @@ class PrecomputedJointSocpStencils:
 
             if res["status"] != "feasible":
                 self.stats["n_infeasible"] += 1
-                self.unplaced_rows[i] = (
-                    "SOCP-infeasible after C-bisection"
-                    + (", enlargement" if self._max_enlargements > 0 else "")
-                    + (" and the relaxed SOCP" if self._use_relaxed_fallback else "")
+                tiers = [
+                    name
+                    for name, ran in (
+                        ("C-bisection", self._C_max is not None and self._C * self._C_growth <= self._C_max + 1e-12),
+                        ("enlargement", self._max_enlargements > 0),
+                        ("the relaxed SOCP", self._use_relaxed_fallback),
+                    )
+                    if ran
+                ]
+                self.unplaced_rows[i] = f"SOCP-infeasible at C = {self._C:g}" + (
+                    f", after {', '.join(tiers)}" if tiers else ""
                 )
                 continue
 
@@ -872,12 +883,13 @@ class PrecomputedJointSocpStencils:
         self.stats["time_ms"] = (time.time() - t0) * 1000.0
 
     def has_stencil(self, point_idx: int) -> bool:
-        """Whether SOCP-feasible weights were precomputed for this point."""
+        """Whether weights were precomputed for this point: an exact joint-SOCP row, or, with
+        ``use_relaxed_fallback``, a relaxed one (``relaxed_rows``)."""
         return point_idx in self.stencils
 
     def get_weights_dict(self, point_idx: int) -> dict | None:
         """Return weights in mfgarchon's `get_derivative_weights` format,
-        or None if SOCP infeasible at this point.
+        or None if no stencil was placed at this point (``unplaced_rows``).
 
         Returned dict has keys: neighbor_indices, grad_weights (shape (d, n)),
         lap_weights (shape (n,)), center_idx_in_neighbors.
