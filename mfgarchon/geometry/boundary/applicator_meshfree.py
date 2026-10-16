@@ -33,27 +33,37 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from .conditions import BoundaryConditions
+    from .types import BCSegment
 
 from mfgarchon.geometry.protocol import GeometryProtocol
 
 # Import base class for inheritance
 from .applicator_base import BaseMeshfreeApplicator
 from .applicator_particle import particle_action_for_bc_type
-from .types import BCType, boundary_value, segment_robin_coefficients
+from .types import BCType, boundary_value, segment_robin_coefficients, segment_value
 
 
-def _robin_alpha_beta(boundary_conditions) -> tuple[float, float]:
-    """Read Robin (alpha, beta) from the BCSegment that carries them (Issue #1558).
+def the_one_condition(boundary_conditions: BoundaryConditions, where: str) -> BCSegment:
+    """The one condition `MeshfreeApplicator` and `ImplicitApplicator` impose at every boundary point: the BC's
+    uniform segment (#2512 row B1, stage B1c-2), whose type, value and Robin coefficients they read.
 
-    alpha/beta live on ``BCSegment``, not on ``BoundaryConditions`` -- the previous
-    ``getattr(boundary_conditions, "beta", 0.0)`` always read the 0.0 default, silently collapsing
-    every Robin BC to pure Dirichlet (field path: hard ``u = g/alpha``; particle path: absorbing).
-    Read them from the segment whose type is ROBIN (for a uniform Robin BC this is the sole segment).
+    Neither places a condition by location, so a BC with no one condition for every location is refused rather
+    than flattened onto every point (#1947). Before, both read the type from ``default_bc`` and the value from
+    ``default_value``, whatever the segments imposed.
     """
-    robin_seg = next((s for s in boundary_conditions.segments if s.bc_type == BCType.ROBIN), None)
-    if robin_seg is None:
-        raise ValueError("Robin BC resolved but no BCSegment carries the Robin alpha/beta coefficients.")
-    return segment_robin_coefficients(robin_seg, where="the meshfree applicator")
+    segment = boundary_conditions.uniform_segment
+    if segment is None:
+        seen = ", ".join(f"{s.name!r} ({s.bc_type.name})" for s in boundary_conditions.segments) or "none"
+        default = getattr(boundary_conditions.default_bc, "name", None)
+        raise NotImplementedError(
+            f"{where}: this applicator cannot represent this boundary condition, which is a valid one. The applicator "
+            f"imposes one condition at every boundary point, and the BC has no one condition for every location "
+            f"(segments {seen}; default_bc {default}): its conditions differ by location, or a location falls to a "
+            "default_bc that cannot govern it (unset, or ROBIN). Imposing one of them everywhere would drop the others "
+            "(#1947). Give this applicator a uniform BC -- one segment with no placement, or a default_bc alone; "
+            "resolving each point's condition is #2712."
+        )
+    return segment
 
 
 class MeshfreeApplicator(BaseMeshfreeApplicator):
@@ -383,6 +393,7 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
         """
         field = field.copy()
         points = np.atleast_2d(points)
+        segment = the_one_condition(boundary_conditions, "MeshfreeBoundaryApplicator.apply")
 
         # Find boundary points
         on_boundary = self.geometry.is_on_boundary(points)
@@ -391,20 +402,10 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
             return field
 
         self._validate_bc_support(boundary_conditions)  # #1948
-
-        # Get BC type (uniform BC for now; fails loud if default_bc unset, Issue #1100)
-        bc_type = boundary_conditions._resolve_default_bc("MeshfreeBoundaryApplicator.apply")
+        bc_type = segment.bc_type
 
         if bc_type == BCType.DIRICHLET:
-            # Get Dirichlet value
-            bc_value = boundary_value(
-                boundary_conditions.default_value,
-                kind="default_value",
-                t=time,
-                time_keyword="time",
-                x=None,
-                where="the meshfree applicator",
-            )
+            bc_value = segment_value(segment, t=time, x=None, where="the meshfree applicator", time_keyword="time")
             field[on_boundary] = bc_value
 
         elif bc_type == BCType.NEUMANN:
@@ -417,15 +418,8 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
         elif bc_type == BCType.ROBIN:
             # Robin BC: α*u + β*du/dn = g
             # For meshfree without derivative info, use penalty approximation
-            alpha, beta = _robin_alpha_beta(boundary_conditions)
-            bc_value = boundary_value(
-                boundary_conditions.default_value,
-                kind="default_value",
-                t=time,
-                time_keyword="time",
-                x=None,
-                where="the meshfree applicator",
-            )
+            alpha, beta = segment_robin_coefficients(segment, where="the meshfree applicator")
+            bc_value = segment_value(segment, t=time, x=None, where="the meshfree applicator", time_keyword="time")
 
             if np.isclose(beta, 0.0):
                 # Pure Dirichlet: u = g/α
@@ -499,8 +493,8 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
             >>> bc = neumann_bc(dimension=2)  # Zero-flux = reflecting
             >>> particles_updated = applicator.apply_particles(particles, bc)
         """
-        # Fails loud if default_bc unset (Issue #1100)
-        bc_type = boundary_conditions._resolve_default_bc("MeshfreeBoundaryApplicator.apply_particles")
+        segment = the_one_condition(boundary_conditions, "MeshfreeBoundaryApplicator.apply_particles")
+        bc_type = segment.bc_type
 
         # One owner for BCType -> particle action, shared with ParticleApplicator. The two
         # copies had drifted on four of BCType's eight members; REFLECTING raised here and
@@ -509,9 +503,8 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
         # impermeable one on the other.
         beta = None
         if bc_type == BCType.ROBIN:
-            # alpha is read here only to keep `_robin_alpha_beta`'s single-owner contract; the
-            # particle mapping dispatches on beta alone (#1960).
-            _alpha, beta = _robin_alpha_beta(boundary_conditions)
+            # The particle mapping dispatches on beta alone (#1960).
+            _alpha, beta = segment_robin_coefficients(segment, where="the meshfree applicator")
 
         return self.apply_particle_bc(particles, particle_action_for_bc_type(bc_type, beta))
 

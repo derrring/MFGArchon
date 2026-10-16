@@ -38,9 +38,9 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 
 from .applicator_base import GridType
-from .applicator_meshfree import MeshfreeApplicator, _robin_alpha_beta
+from .applicator_meshfree import MeshfreeApplicator, the_one_condition
 from .providers import is_provider
-from .types import BCType, boundary_value, segment_value
+from .types import BCType, segment_robin_coefficients, segment_value
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from mfgarchon.geometry.protocol import GeometryProtocol
 
     from .conditions import BoundaryConditions
+    from .types import BCSegment
 
 
 class ImplicitApplicator(MeshfreeApplicator):
@@ -138,6 +139,7 @@ class ImplicitApplicator(MeshfreeApplicator):
         """
         self._validate_bc(boundary_conditions)
         self._validate_bc_support(boundary_conditions)  # #1948
+        segment = the_one_condition(boundary_conditions, "ImplicitBoundaryApplicator.apply")
 
         # Make a copy to avoid modifying input
         result = field.copy()
@@ -152,9 +154,8 @@ class ImplicitApplicator(MeshfreeApplicator):
         boundary_points = points[boundary_mask]
         normals = self._compute_boundary_normals(boundary_points)
 
-        # Apply BC based on type (fails loud if default_bc unset; Issue #1100)
-        bc_type = boundary_conditions._resolve_default_bc("ImplicitBoundaryApplicator.apply")
-        bc_value = self._resolve_bc_value(boundary_conditions, boundary_points, time, bc_type)
+        bc_type = segment.bc_type
+        bc_value = self._resolve_bc_value(segment, boundary_points, time)
 
         if bc_type == BCType.DIRICHLET:
             result[boundary_mask] = self._apply_dirichlet(result[boundary_mask], bc_value)
@@ -163,11 +164,7 @@ class ImplicitApplicator(MeshfreeApplicator):
                 result, boundary_mask, normals, bc_value, points, spacing
             )
         elif bc_type == BCType.ROBIN:
-            # `_robin_alpha_beta`, not `getattr(boundary_conditions, ...)`. alpha/beta live on the
-            # BCSegment; `BoundaryConditions` has no such attribute, so the previous form always
-            # took its own defaults and made every Robin BC identical. #1558 established this owner
-            # on the parent class and this subclass kept the pre-fix code. #1938
-            alpha, beta = _robin_alpha_beta(boundary_conditions)
+            alpha, beta = segment_robin_coefficients(segment, where="the implicit applicator")
             result[boundary_mask] = self._apply_robin_along_normal(
                 result, boundary_mask, normals, alpha, beta, bc_value, points, spacing
             )
@@ -225,69 +222,27 @@ class ImplicitApplicator(MeshfreeApplicator):
 
     def _resolve_bc_value(
         self,
-        bc: BoundaryConditions,
+        segment: BCSegment,
         points: NDArray[np.floating],
-        time: float,
-        bc_type: BCType,
+        time: float | None,
     ) -> NDArray[np.floating] | float:
-        """
-        Resolve BC value (may be callable or constant).
+        """The value of the BC's one condition (`the_one_condition`) at the boundary points: a constant, or a
+        callable g(t, x) read one point at a time through the one value owner (#2512 row B2).
 
-        Args:
-            bc: Boundary conditions specification
-            points: Boundary points
-            time: Current time
-
-        Returns:
-            BC values (scalar or array matching points)
+        NO_FLUX and REFLECTING impose a zero normal flux whatever value the segment carries: a NO_FLUX value of 2.5
+        once imposed du/dn = 2.5 here (#1938).
         """
-        # ~~`getattr(bc, "value", 0.0)`~~ [FIXED 2026-08-15, #1938] -- `BoundaryConditions` has no
-        # `.value` attribute, so the default fired on every call and every Dirichlet BC was applied
-        # as 0.0 regardless of what the caller asked for. The value lives on the segments.
-        #
-        # A segment's value is read ONLY for a uniform BC, and only when its type is the one that
-        # was resolved. Otherwise `bc.default_value`.
-        #
-        # `apply()` resolves ONE `bc_type` through `_resolve_default_bc` and applies it to every
-        # boundary point; this applicator has no spatial dispatch at all -- moving a segment's
-        # `normal_direction` from one arc to another, or deleting its region spec entirely, gives
-        # byte-identical output. So for a genuinely mixed BC, taking the value from *any* segment is
-        # meaningless: whichever it is, it gets imposed everywhere, including where that segment was
-        # never meant to act. `default_value` is the field that means "the value where no segment
-        # governs", which is the honest answer here. (That the applicator silently flattens a mixed
-        # BC at all is a separate, pre-existing defect, filed on its own.)
-        #
-        # Two traps this line has already fallen into, both measured:
-        #
-        # - `s.value is not None` never filters: `BCSegment.value` defaults to `0.0`, not `None`,
-        #   and nothing passes `value=None`. The expression is then unconditionally `segments[0]`,
-        #   whose value comes from whichever segment sorts first while `bc_type` and alpha/beta
-        #   come from two other resolvers -- three sources, one condition.
-        # - A NEUMANN/NO_FLUX family clause makes a NO_FLUX resolution impose a NON-ZERO flux:
-        #   `[BCSegment(NEUMANN, value=2.5)]` under `default_bc=NO_FLUX` gave an implied `du/dn`
-        #   of 2.5, and reordering the segments changed the answer. `default_value` is 0.0 there,
-        #   which is what NO_FLUX requires.
-        if bc_type in (BCType.NO_FLUX, BCType.REFLECTING):
+        if segment.bc_type in (BCType.NO_FLUX, BCType.REFLECTING):
             return 0.0
-
-        # Read through the one owner (#2512 row B2): a callable is g(t, x), time first, one point at a time.
-        where = f"the implicit applicator's {bc_type.name} boundary"
-        uniform_segment = bc.uniform_segment
-        if uniform_segment is not None and uniform_segment.bc_type == bc_type:
-            value = uniform_segment.value
-
-            def read(point):
-                return segment_value(uniform_segment, t=time, x=point, where=where, time_keyword="time")
-
-        else:
-            value = bc.default_value
-
-            def read(point):
-                return boundary_value(value, kind="default_value", t=time, x=point, where=where, time_keyword="time")
-
-        if callable(value) and not is_provider(value):
-            return np.array([read(np.asarray(p, dtype=float)) for p in points])
-        return read(None)
+        where = f"the implicit applicator's {segment.bc_type.name} boundary"
+        if callable(segment.value) and not is_provider(segment.value):
+            return np.array(
+                [
+                    segment_value(segment, t=time, x=np.asarray(p, dtype=float), where=where, time_keyword="time")
+                    for p in points
+                ]
+            )
+        return segment_value(segment, t=time, x=None, where=where, time_keyword="time")
 
     def _apply_dirichlet(
         self,

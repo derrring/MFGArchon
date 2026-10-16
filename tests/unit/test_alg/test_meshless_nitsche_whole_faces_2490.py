@@ -1,12 +1,12 @@
-"""The meshless Nitsche path places conditions on whole faces only, and refuses what it cannot place (#2490).
+"""The meshless Nitsche path places conditions on whole faces, by the face owner (#2490, #2512 row B1 stage B1c-2).
 
-`nitsche._segment_faces` gives the bounding-box faces a segment names; `_dirichlet_faces` gives each Dirichlet
-segment the faces no earlier segment in the BC's priority order claims (ties by declaration order), as
-`get_bc_at_point` reads them. The Nitsche assembly imposes Dirichlet data there, the pair's pure-Neumann
-answer comes from the same placement, and the default-DIRICHLET guard counts coverage with `_segment_faces`.
-Before, the assembly applied a segment whose placement it could not read to every face it named, or to every
-face when it named none (a 1-D Dirichlet segment on ``region={0: (0.5, 1)}`` absorbed 0.6652, the both-walls
-figure, where x_max alone gives 0.8326), and the guard read `BoundaryConditions._segment_covers`.
+`nitsche._dirichlet_faces` asks `BoundaryConditions.segment_for_face` which segment governs each bounding-box face,
+and imposes Dirichlet data on the faces a Dirichlet condition governs, ``default_bc`` included. The owner places
+``region``, ``sdf_region``, ``normal_direction`` and ``region_name`` where they cover a whole face, and refuses a
+partial cover, a segment that governs no face, a placement it cannot decide, and a face nothing governs. Before
+B1c-2 this path had its own face reader, `_segment_faces`, which refused every restricted placement, and before
+#2490 it applied such a segment to every face it named (a 1-D Dirichlet segment on ``region={0: (0.5, 1)}`` absorbed
+0.6652, the both-walls figure, where x_max alone gives 0.8326).
 """
 
 import pytest
@@ -37,32 +37,19 @@ def _dirichlet(**where):
     return BCSegment(name="d", bc_type=BCType.DIRICHLET, value=0.0, **where)
 
 
-@pytest.mark.parametrize("cls", CLASSES)
 @pytest.mark.parametrize(
-    "restriction",
+    ("restriction", "face"),
     [
-        {"region": {0: (0.5, 1.0)}},
-        {"sdf_region": lambda x: np.asarray(x)[..., 0] - 0.5},
-        {"normal_direction": np.array([1.0])},
+        ({"region": {0: (0.5, 1.0)}}, "x_max"),
+        ({"sdf_region": lambda x: np.asarray(x)[..., 0] - 0.5}, "x_min"),
+        ({"normal_direction": np.array([1.0])}, "x_max"),
     ],
     ids=["region", "sdf_region", "normal_direction"],
 )
-def test_a_dirichlet_segment_on_part_of_the_boundary_is_refused(cls, restriction):
-    with pytest.raises(NotImplementedError, match="#2490") as exc:
-        cls(_problem(_bc(_dirichlet(**restriction))), XS, delta=0.35)
-    if "sdf_region" in restriction:
-        # The withdrawn curved-domain route says so, and where it comes back.
-        assert "withdrawn" in str(exc.value)
-        assert "#1139" in str(exc.value)
-
-
-@pytest.mark.parametrize("cls", CLASSES)
-def test_a_restricted_segment_does_not_count_as_covering_its_face(cls):
-    """NO_FLUX on part of the boundary with a DIRICHLET default: the point resolver gives x_max to the
-    default, which Nitsche does not read. Main solved that wall as no-flux (FP mass ratio 1.0000)."""
-    segment = BCSegment(name="nf", bc_type=BCType.NO_FLUX, region={0: (0.0, 0.5)})
-    with pytest.raises(NotImplementedError, match="#2490"):
-        cls(_problem(_bc(segment, default=BCType.DIRICHLET, default_value=0.5)), XS, delta=0.35)
+def test_a_placement_that_covers_a_whole_face_governs_that_face(restriction, face):
+    """In 1-D a face is one point, so each of these placements covers one face whole, and the owner gives it that
+    face: the same solve as ``boundary=face``. This path refused all three before B1c-2."""
+    assert _fp_mass_ratio(_bc(_dirichlet(**restriction))) == _fp_mass_ratio(_bc(_dirichlet(boundary=face)))
 
 
 def test_a_region_named_face_is_that_face_only():
@@ -106,11 +93,25 @@ def test_a_face_belongs_to_the_highest_priority_segment_that_names_it():
     assert _fp_mass_ratio(layered) == pytest.approx(_fp_mass_ratio(separated), abs=1e-12)
 
 
-def test_an_unscoped_segment_of_higher_priority_takes_every_face():
-    """No-flux with no boundary at priority 1 over a Dirichlet x_max: no-flux everywhere (1.0000). Main
-    imposed the Dirichlet too (0.8326, the x_max-wall figure)."""
-    layered = _bc(_nf(priority=1), _dirichlet(boundary="x_max"))
-    assert _fp_mass_ratio(layered) == pytest.approx(_fp_mass_ratio(no_flux_bc(dimension=1)), abs=1e-12)
+@pytest.mark.parametrize(
+    "segments",
+    [
+        pytest.param(lambda: (_nf(priority=1), _dirichlet(boundary="x_max")), id="a higher-priority global segment"),
+        pytest.param(lambda: (_nf(boundary="x_max"), _dirichlet(boundary="x_max")), id="equal priority, no-flux first"),
+        pytest.param(
+            lambda: (_dirichlet(boundary="x_max"), _nf(boundary="x_max")), id="equal priority, Dirichlet first"
+        ),
+        pytest.param(
+            lambda: (_dirichlet(priority=-1), _nf(boundary="x_min", priority=1), _nf(boundary="x_max", priority=1)),
+            id="a global Dirichlet under higher-priority no-flux faces",
+        ),
+    ],
+)
+def test_a_segment_that_governs_no_face_is_refused(segments):
+    """A segment another one outranks on every face it names governs nothing, and its condition would be dropped:
+    the owner refuses it (#2512 row B1). Before B1c-2 this path solved each, as the higher-ranked segment alone."""
+    with pytest.raises(ValueError, match="govern no face"):
+        MeshlessGalerkinFPSolver(_problem(_bc(*segments())), XS, delta=0.35)
 
 
 def test_the_hjb_takes_each_faces_value_from_its_own_segment():
@@ -151,13 +152,6 @@ def test_a_zero_the_translator_accepts_is_a_zero_here(zero):
     ) == _fp_mass_ratio(_bc(_nf(boundary="x_min"), _dirichlet(boundary="x_max")))
 
 
-def test_a_non_dirichlet_sdf_segment_is_refused_by_the_coverage_guard_not_as_the_curved_route():
-    segment = BCSegment(name="nf", bc_type=BCType.NO_FLUX, sdf_region=lambda x: np.asarray(x)[..., 0] - 0.5)
-    with pytest.raises(NotImplementedError, match="#2490") as exc:
-        MeshlessGalerkinFPSolver(_problem(_bc(segment, default=BCType.DIRICHLET, default_value=0.0)), XS, delta=0.35)
-    assert "withdrawn" not in str(exc.value)
-
-
 @pytest.mark.parametrize("value", [np.int64(1), np.float32(1.0), np.ones(1)], ids=["int64", "float32", "size1_array"])
 def test_any_real_scalar_is_a_dirichlet_value(value):
     """The HJB imposes the value; a NumPy scalar or a size-1 array is the number it holds."""
@@ -175,17 +169,6 @@ def test_any_real_scalar_is_a_dirichlet_value(value):
     np.testing.assert_array_equal(u(value), u(1.0))
 
 
-def test_equal_priorities_go_by_declaration_order():
-    """Ties are read in declaration order, as `get_bc_at_point` reads them: the first segment naming a
-    face takes it."""
-    no_flux_first = _bc(_nf(boundary="x_max"), _dirichlet(boundary="x_max"))
-    dirichlet_first = _bc(_dirichlet(boundary="x_max"), _nf(boundary="x_max"))
-    assert _fp_mass_ratio(no_flux_first) == pytest.approx(_fp_mass_ratio(no_flux_bc(dimension=1)), abs=1e-12)
-    assert _fp_mass_ratio(dirichlet_first) == pytest.approx(
-        _fp_mass_ratio(_bc(_nf(boundary="x_min"), _dirichlet(boundary="x_max"))), abs=1e-12
-    )
-
-
 @pytest.mark.parametrize(
     "value", [np.complex128(1j), np.array([1j]), np.array([1 + 5j])], ids=["scalar", "imag", "mixed"]
 )
@@ -201,9 +184,9 @@ def test_a_complex_dirichlet_value_is_refused(value):
         )
 
 
-def test_a_segment_refused_for_outranking_a_dirichlet_one_says_so():
-    """A non-Dirichlet segment is read only because it can take a face from a Dirichlet one; the refusal
-    names that reason, not just its unplaceable boundary name."""
+def test_a_segment_placed_on_no_face_is_refused_at_construction():
+    """``boundary="inlet"`` names no face of a box, so the owner cannot tell which face it governs: refused when the
+    solver is built, where the Nitsche terms are decided, not at the first solve."""
     bc = _bc(BCSegment(name="inlet", bc_type=BCType.NO_FLUX, boundary="inlet", priority=1), _dirichlet())
-    with pytest.raises(NotImplementedError, match="outranks a Dirichlet segment"):
+    with pytest.raises(ValueError, match="names no face"):
         MeshlessGalerkinFPSolver(_problem(bc), XS, delta=0.35)
