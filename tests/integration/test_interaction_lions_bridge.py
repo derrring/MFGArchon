@@ -308,8 +308,10 @@ class TestGate3LionsBridgeEquivalence:
 
         On a 7 x 5 grid a (3, 7, 5) trajectory is refused by name on all three
         routes -- the analytic, the optimized nonlocal and the finite-difference
-        source -- since its size is not the 35 nodes. Read by ``ndim``, it is
-        not 2-D, so it fell through to a shape error that named no trajectory
+        source with one scalar weight -- since its size is not the 35 nodes.
+        Read by ``ndim`` it was not 2-D, so it fell through: the analytic and
+        nonlocal routes raised a shape error naming no trajectory, and the
+        scalar-weight route raised nothing and returned a field of 105 values
         (#2728)."""
         N = 30
         x = np.linspace(0.0, 1.0, N)
