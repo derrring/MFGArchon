@@ -16,12 +16,10 @@
     - It projects onto the boundary along the SDF normal and steps inside by `tolerance`, or by up to
       1e4 * `tolerance` where the projection converges linearly and stops short (an obstacle's corner, the seam of
       a union).
-    - A point still outside is walked toward the bounding-box centre to the first navigable point. It lands exactly
-      where the removed `project_to_domain` put it: navigable, not the nearest, and the walk can cross the obstacle
-      (#2688). It is reached wherever the projection and the ladder fail, which is where the domain's φ is not the
-      true distance to the navigable set: a point trapped against the outer box, where an obstacle crosses or is
-      flush with it, and a point inside a union, overlapping obstacles or an approximate SDF (#2689). If the walk
-      fails too, it raises `RuntimeError` naming the point.
+    - A point still outside is placed by the face its step crossed when `previous` is given, and refused by name
+      without it (#2688). That is where the domain's φ is not the true distance to the navigable set: a point trapped
+      against the outer box, where an obstacle crosses or is flush with it, and a point inside a union, overlapping
+      obstacles or an approximate SDF (#2689).
     - Before, it returned the points its projection did not place outside the domain, without a warning.
   - `ImplicitDomain.project_to_domain` is removed; use `project_to_interior`. It was a second projection beside the
     protocol's: the bounding-box ray, a private Newton iteration used only when the ray failed, and a

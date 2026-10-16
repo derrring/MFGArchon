@@ -181,6 +181,10 @@ _BOX = Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]]))
 _A = Hyperrectangle(np.array([[0.40, 0.70], [-0.1, 0.45]]))
 _B = Hyperrectangle(np.array([[0.40, 0.45], [0.40, 1.1]]))
 _C = Hyperrectangle(np.array([[0.55, 0.70], [0.44, 0.65]]))
+# Review 2's two rooms: a union as the domain, not connected (#2732).
+_ROOMS = UnionDomain(
+    [Hyperrectangle(np.array([[0.0, 0.5], [0.0, 1.0]])), Hyperrectangle(np.array([[0.52, 1.0], [0.0, 1.0]]))]
+)
 _FIRST_BOUNDARY = {
     # name: (domain, the absorbing wall or None, previous, raw, recorded or None if absorbed)
     "a convex arc crossed: the projection, which the path reaches": (
@@ -296,6 +300,40 @@ _FIRST_BOUNDARY = {
         [1.22355, 1.025],
         [0.8 + 1e-10, 0.975],
     ),
+    "a union domain, a step from the first interval toward the second: the face of the one it left": (
+        UnionDomain([Hyperrectangle(np.array([[0.0, 0.4]])), Hyperrectangle(np.array([[0.6, 1.0]]))]),
+        None,
+        [0.3],
+        [0.55],
+        [0.4 - 1e-10],
+    ),
+    "two rooms, a step toward the other: the face of the room it left": (
+        _ROOMS,
+        None,
+        [0.49, 0.5],
+        [0.515, 0.5],
+        [0.5 - 1e-10, 0.5],
+    ),
+    "a ring's hole stepped out of: the hole's face, not the ring's outer one": (
+        DifferenceDomain(
+            _BOX,
+            DifferenceDomain(
+                Hypersphere(center=np.array([0.5, 0.5]), radius=0.3),
+                Hypersphere(center=np.array([0.5, 0.5]), radius=0.25),
+            ),
+        ),
+        None,
+        [0.7, 0.5],
+        [0.79, 0.5],
+        [0.75 - 1e-10, 0.5],
+    ),
+    "a reflected leg across a thin slab, ending inside the domain: the face it entered": (
+        DifferenceDomain(_BOX, Hyperrectangle(np.array([[0.85, 0.87], [0.2, 0.8]]))),
+        None,
+        [0.95, 0.5],
+        [1.2, 0.5],
+        [0.87 + 1e-10, 0.5],
+    ),
     "the wall first, then a reflected leg past an obstacle's middle: the near face": (
         DifferenceDomain(_BOX, Hyperrectangle(np.array([[0.85, 0.95], [0.2, 0.8]]))),
         None,
@@ -377,6 +415,88 @@ def test_a_step_through_a_lens_lands_by_the_disc_it_entered():
     np.testing.assert_allclose(lens.place_step(previous[None, :], end[None, :]), [expected], rtol=0, atol=1e-9)
 
 
+def test_a_step_from_outside_the_domain_is_refused_on_every_branch():
+    """#2732 review 1: `place_step` refuses a ``previous`` outside the domain on a step that leaves it, and only the
+    face map's branch did. The step from (0.5, 0.31) to (0.5, 0.33), both inside the disc obstacle, has an end the
+    projection places, and it is refused. The control, from (0.5, 0.25) inside the domain to the same end, lands at the
+    disc's face 1e-10 out."""
+    disc = DifferenceDomain(_BOX, Hypersphere(center=np.array([0.5, 0.5]), radius=0.2))
+    end = np.array([[0.5, 0.33]])
+    with pytest.raises(ValueError, match=r"previous position \[0\.5 +0\.31\] is not inside the domain"):
+        disc.place_step(np.array([[0.5, 0.31]]), end)
+    np.testing.assert_allclose(disc.place_step(np.array([[0.5, 0.25]]), end), [[0.5, 0.3 - 1e-10]], rtol=0, atol=1e-12)
+
+
+@pytest.mark.parametrize(
+    ("previous", "end"),
+    [([0.45, 0.05], [0.6, -0.05]), ([0.49, 5e-7], [0.53, 2e-7])],
+    ids=["past the corner", "crossing within 1e-6 of the corner"],
+)
+def test_a_step_past_a_rooms_corner_lands_in_that_room_at_its_nearest_point(previous, end):
+    """#2732 review 2: a step leaves the left room of `_ROOMS` beside its corner (0.5, 0). Its nearest point in that
+    room is the clamp of the end to the room: the corner, and (0.5, 2e-7). The projection onto the domain put the
+    first in the other room, at (0.6, 1e-10); the second raised in the face map, whose crossing within 1e-6 of the
+    corner read the corner's blended normal. Each lands within 1e-9 of the clamp, inside the room it left."""
+    landed = _ROOMS.place_step(np.array([previous]), np.array([end]))
+    clamp = np.clip(end, [0.0, 0.0], [0.5, 1.0])
+    np.testing.assert_allclose(landed, [clamp], rtol=0, atol=1e-9)
+    assert landed[0, 0] < 0.5, landed
+    assert float(np.atleast_1d(_ROOMS.signed_distance(landed))[0]) < 0, landed
+
+
+@pytest.mark.parametrize(
+    ("case", "navigable"),
+    [
+        ("the point where an obstacle meets the wall it is flush with", False),
+        ("the seam between two touching obstacles", False),
+        ("the seam between two touching rooms", True),
+        ("a corner of the box", True),
+    ],
+)
+def test_a_particle_starts_only_in_the_closure_of_the_domains_interior(case, navigable):
+    """#2732 review 2: `ImplicitDomain.navigable`, the regularized set, is where a particle may start. The first two
+    have phi = 0, so `contains` holds them, and no interior point is next to them: a step from one names no face it
+    crossed, and the face map raised on it. They are refused at t = 0, by name. The last two are the permission half:
+    phi = 0 with interior next to them, so they start; they started under `contains` too, and pass there by design."""
+    box = Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]]))
+    domain, point = {
+        "the point where an obstacle meets the wall it is flush with": (
+            DifferenceDomain(box, Hyperrectangle(np.array([[0.0, 0.1], [0.2, 0.8]]))),
+            [0.0, 0.5],
+        ),
+        "the seam between two touching obstacles": (
+            DifferenceDomain(
+                box,
+                UnionDomain(
+                    [
+                        Hyperrectangle(np.array([[0.3, 0.5], [0.3, 0.7]])),
+                        Hyperrectangle(np.array([[0.5, 0.7], [0.3, 0.7]])),
+                    ]
+                ),
+            ),
+            [0.5, 0.5],
+        ),
+        "the seam between two touching rooms": (
+            UnionDomain(
+                [Hyperrectangle(np.array([[0.0, 0.5], [0.0, 1.0]])), Hyperrectangle(np.array([[0.5, 1.0], [0.0, 1.0]]))]
+            ),
+            [0.5, 0.5],
+        ),
+        "a corner of the box": (DifferenceDomain(box, Hyperrectangle(np.array([[0.4, 0.6], [0.4, 0.6]]))), [0.0, 0.0]),
+    }[case]
+    assert bool(np.atleast_1d(domain.contains(np.array([point])))[0])
+    problem, _ = _problem(2, no_flux_bc(dimension=2))
+    solver = FPParticleSolver(problem, num_particles=_N, implicit_domain=domain, seed=2688)
+    start = np.random.default_rng(2688).uniform([0.05, 0.85], [0.25, 0.95], (_N, 2))
+    start[:3] = point
+    kwargs = {"initial_particles": start, "drift_field": _drift(2, 21, "callable"), "show_progress": False}
+    if navigable:
+        solver.solve_fp_system(drift_needs_density=False, **kwargs)
+        return
+    with pytest.raises(ValueError, match=r"3 of 600 are not where a particle can start.*ImplicitDomain\.navigable"):
+        solver.solve_fp_system(drift_needs_density=False, **kwargs)
+
+
 @pytest.mark.parametrize("case", list(_FIRST_BOUNDARY))
 def test_the_first_boundary_a_step_meets_decides(case):
     """#2707: the step from ``previous`` to ``raw`` lands by the first boundary it meets, in closed form.
@@ -413,6 +533,13 @@ def test_the_first_boundary_a_step_meets_decides(case):
         on the wall;
       - a union's concave corner, where the corner owner's tie between A and C went to the first listed: the rule
         reads the entered leaf's own normal, in either order.
+    - Review 2 of #2732, three landings on a surface the path never met, where the domain is the leaf's inside:
+      the projection onto the domain reached the second interval of a union, the other room, and the ring's outer
+      face 0.8 from its hole. The leaf's far side holds those, so the end was on it and the normals agreed; the
+      projection is now the leaf's own.
+    - A reflected leg across a thin slab that ends inside the domain beyond it: placed by the face it entered. The
+      reflected set is every survivor whose raw step left the box; read as the survivors that ended outside the
+      domain, it misses this leg, and the step is recorded at its end, 0.8, past the slab (#2732 review 2).
     - A reflected step that starts exactly on the wall x = 0: its reflected leg is its chord, and it is placed though
       the wall hit at its start lies outside the step.
     - A reflected leg that clips the corner of an obstacle flush with the top wall just before it hits that wall: the
@@ -480,7 +607,7 @@ def test_what_the_placement_cannot_do_is_refused(case):
         start = _navigable_start()
         start[:3] = [0.95, 0.5]
         with pytest.raises(
-            ValueError, match=r"initial_particles, 3 of 600 are outside the particles' domain \(inside an obstacle"
+            ValueError, match=r"initial_particles, 3 of 600 are not where a particle can start \(inside an obstacle"
         ):
             _solve(2, no_flux_bc(dimension=2), "callable", initial_particles=start)
     elif case == "M_initial inside the obstacle, n-D":
@@ -502,7 +629,7 @@ def test_what_the_placement_cannot_do_is_refused(case):
     elif case == "M_initial inside the obstacle, 1-D nodes":
         with pytest.raises(
             ValueError,
-            match=r"grid node\(s\) carrying m_initial's mass are outside the particles' domain \(inside an obstacle.*Leaving it out would drop",
+            match=r"grid node\(s\) carrying m_initial's mass are not where a particle can start \(inside an obstacle.*Leaving it out would drop",
         ):
             _solve(1, no_flux_bc(dimension=1), "grid", centres=[0.5])
     elif case == "an implicit_domain box short of the grid's":

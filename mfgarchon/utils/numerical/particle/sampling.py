@@ -1174,7 +1174,7 @@ def sample_from_density(
         Random seed for reproducibility.
     navigable : callable or None, default=None
         ``navigable(points)``, for points of shape (n, d), is a boolean array saying where a particle may be --
-        ``ImplicitDomain.contains`` for a domain with obstacles. When given, every returned particle is navigable
+        ``ImplicitDomain.navigable`` for a domain with obstacles. When given, every returned particle is navigable
         (#2688):
 
         - A jitter that lands where ``navigable`` is False is redrawn within the same cell, so the cell's mass

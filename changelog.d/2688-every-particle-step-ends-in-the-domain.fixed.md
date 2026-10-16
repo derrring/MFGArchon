@@ -4,9 +4,10 @@
     as that domain too (#2708).
   - **One end of step.** The 1-D grid-drift, n-D grid-drift and callable-drift paths end each step in one place,
     `_finish_step`.
-    - A step that meets the domain's boundary before the box's wall is placed where it met it (#2707). The outer
-      boundary condition runs on the other steps -- absorption at Dirichlet segments, then reflection -- and its
-      reflected survivors are placed along their reflected paths, with their positions before the step.
+    - A step that meets the domain's boundary before the box's wall is placed by `ImplicitDomain.place_step`
+      (#2707). The outer boundary condition runs on the other steps -- absorption at Dirichlet segments, then
+      reflection -- and its reflected survivors are placed along their reflected paths, with their positions before
+      the step.
     - Before, the 1-D grid-drift path never placed them. The n-D paths placed them before the wall reflection,
       which put particles back inside an obstacle that meets the wall.
   - **The face of entry.** A particle that the projection onto the boundary does not place is now placed by the face
@@ -18,7 +19,8 @@
       feature is shorter than a scan step, 1/32 of the leg, can step over it: a thin feature, or a corner the leg
       clips (#2710).
     - The face's normal is the crossed component's own, decided by which component's φ changes sign across the
-      crossing (`ImplicitDomain.crossing_normal`, overridden by the CSG domains). Within 1e-6 of the outer box, the
+      crossing (`ImplicitDomain.crossing_leaf`, which the CSG domains override, and `crossing_normal` from it). Within
+      1e-6 of the outer box, the
       domain's gradient normal blended the box wall's into an obstacle face's. Next to a wall, a particle stepping
       onto the face was then either refused or placed on the obstacle's far side.
     - On a flat face this is the projected-Euler (Skorokhod) map, which keeps the displacement along the face. Where

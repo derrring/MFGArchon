@@ -405,6 +405,32 @@ class ImplicitDomain(
 
         return x_proj[0] if is_single else x_proj
 
+    def navigable(self, x: NDArray[np.float64], probe: float = 1e-6) -> NDArray[np.bool_]:
+        """Whether each point of ``x``, shape (n, d), lies in the closure of the domain's interior: the regularized
+        set, where a particle can start (#2732, review 2).
+
+        `contains` is phi <= 0, the closed set, which also holds points next to no interior point: where an obstacle
+        meets the wall it is flush with, and the seam between two touching obstacles. A step from such a point
+        names no face it crossed, and every placement of it fails. A point with phi < -probe / 4 is navigable; one
+        with -probe / 4 <= phi <= 0 is navigable where one of the 3^d - 1 points ``x + probe * v / |v|``, v in
+        {-1, 0, 1}^d other than 0, has phi < -probe / 4. The diagonals are what admit a box's own corner. A navigable
+        wedge so narrow at a point that none of those directions reaches that depth reads as not navigable.
+        """
+        points = np.atleast_2d(np.asarray(x, dtype=float))
+        d = points.shape[1]
+        depth = probe / 4.0
+        phi = np.atleast_1d(self.signed_distance(points))
+        navigable = phi < -depth
+        edge = np.flatnonzero((phi <= 0) & ~navigable)
+        if edge.size:
+            directions = np.array(np.meshgrid(*([[-1.0, 0.0, 1.0]] * d), indexing="ij")).reshape(d, -1).T
+            directions = directions[np.any(directions != 0, axis=1)]
+            directions /= np.linalg.norm(directions, axis=1, keepdims=True)
+            probes = points[edge, None, :] + probe * directions[None, :, :]
+            phi_probes = np.atleast_1d(self.signed_distance(probes.reshape(-1, d))).reshape(edge.size, -1)
+            navigable[edge] = (phi_probes < -depth).any(axis=1)
+        return navigable
+
     def is_on_boundary(
         self,
         x: NDArray[np.float64],
@@ -612,7 +638,18 @@ class ImplicitDomain(
             return points[0] if is_single else points
 
         points_interior = points.copy()
-        moved, missed = self._projection(points[outside], tolerance)
+        boundary_points = self.project_to_boundary(points[outside])
+        normals = np.atleast_2d(self.get_outward_normal(boundary_points))
+        moved = boundary_points - tolerance * normals
+        # Where the projection converges linearly -- an obstacle's corner, the seam of a union -- it stops with
+        # 0 < phi below its own tol, and a step of `tolerance` may not cross. Step further, up to 1e4 * tolerance.
+        missed = np.atleast_1d(self.signed_distance(moved)) > 0
+        for step in tolerance * 10.0 ** np.arange(1, 5):
+            if not missed.any():
+                break
+            idx = np.where(missed)[0]
+            moved[idx] = boundary_points[idx] - step * normals[idx]
+            missed[idx] = np.atleast_1d(self.signed_distance(moved[idx])) > 0
 
         if missed.any():
             at = np.where(outside)[0][missed]
@@ -643,31 +680,6 @@ class ImplicitDomain(
 
         return points_interior[0] if is_single else points_interior
 
-    def _projection(
-        self, points: NDArray[np.float64], tolerance: float
-    ) -> tuple[NDArray[np.float64], NDArray[np.bool_]]:
-        """`project_to_interior`'s projection of outside ``points``, shape (n, d): each onto the boundary along the SDF
-        normal, then `tolerance` inward; and which of them it does not place (#2679, #2689, #2707).
-
-        Not placed: a point still outside, and a point where the boundary's normal vanishes. There phi's central
-        difference is exactly 0 -- an internal seam of a union, where two touching components each have phi = 0, or an
-        obstacle flush with a wall at a coordinate where the difference rounds symmetrically -- so the step inward
-        moves the point nowhere, and it stays at phi = 0: inside the closed obstacle, which reads as navigable."""
-        boundary_points = self.project_to_boundary(points)
-        normals = np.atleast_2d(self.get_outward_normal(boundary_points))
-        degenerate = np.linalg.norm(normals, axis=1) < 0.5
-        moved = boundary_points - tolerance * normals
-        # Where the projection converges linearly -- an obstacle's corner, the seam of a union -- it stops with
-        # 0 < phi below its own tol, and a step of `tolerance` may not cross. Step further, up to 1e4 * tolerance.
-        missed = (np.atleast_1d(self.signed_distance(moved)) > 0) | degenerate
-        for step in tolerance * 10.0 ** np.arange(1, 5):
-            idx = np.where(missed & ~degenerate)[0]
-            if idx.size == 0:
-                break
-            moved[idx] = boundary_points[idx] - step * normals[idx]
-            missed[idx] = np.atleast_1d(self.signed_distance(moved[idx])) > 0
-        return moved, missed
-
     def place_step(
         self,
         previous: NDArray[np.float64] | None,
@@ -684,19 +696,17 @@ class ImplicitDomain(
         scan, so a leg whose path inside a feature is shorter than a scan step reads as staying inside (#2710).
 
         - A path that stays inside lands at ``end``.
-        - An ``end`` outside the domain, on a path that stays inside up to its last waypoint, lands at its projection,
-          the nearest interior point (`project_to_interior`), when both hold on the leaf the path's first crossing
-          entered (`crossing_leaf`, the primitive whose surface it crossed): (a) the segment from that crossing to
-          ``end`` stays inside that leaf's far side, so ``end`` is in the obstacle the path entered, not beyond a wall
-          the obstacle meets; and (b) that leaf's outward normals at the crossing and at the projection agree, so no
-          medial axis of it lies between them (`_projection_reached`). Whether the projection lies on that leaf's own
-          surface is not tested: the projection follows phi's gradient, which inside the leaf is the leaf's own, and
-          where it ends elsewhere -- on a surface the leaf's is covered by -- it has, in every case measured, either
-          missed or failed (b) (#2732, review 1).
+        - A path that leaves, and stays inside up to its last waypoint, lands at the nearest point of the surface its
+          first crossing met: the leaf that crossing entered (`crossing_leaf`, the primitive whose surface it is),
+          moved ``tolerance`` to the domain's side (`_leaf_projection`). It is kept where (a) the segment from the
+          crossing to ``end`` stays on the leaf's far side, (b) the domain's outward normals read on that leaf agree
+          at the crossing and at the projection, and (c) the moved point is in the domain. The projection lies on the
+          leaf's own surface by construction: the domain's nearest point can lie on a surface the path never met --
+          another room of a union domain, a ring's outer face stepped out of from its hole (#2732, review 2).
         - Every other step lands by the face its path met first (`_place_by_face_of_entry`): an ``end`` past an
           obstacle's medial axis (a slab's middle, a disc's centre), whose projection is on the far side; an ``end``
           in a second obstacle after the path left the first; an ``end`` inside the domain beyond an obstacle the path
-          crossed; a path that left before its last waypoint; and an ``end`` the projection does not place.
+          crossed; a leaf projection inside another component; and a path that left before its last waypoint.
 
         With ``previous`` None, the step is `project_to_interior` with no previous position: an outside point is
         projected, and one the projection does not place is refused.
@@ -742,17 +752,14 @@ class ImplicitDomain(
                 )
         landed = points.copy()
         projected = np.zeros(n, dtype=bool)
-        tried = np.flatnonzero(leaves & ~early & (np.atleast_1d(self.signed_distance(points)) > 0))
+        tried = np.flatnonzero(leaves & ~early)
         if tried.size:
-            ends = points[tried]
-            candidate, missed = self._projection(ends, tolerance)
-            found, entry_in, entry_out, _ = self._leg_crossings(last[tried], ends)
-            kept = ~missed & found
-            at = np.flatnonzero(kept)
+            found, entry_in, entry_out, _ = self._leg_crossings(last[tried], points[tried])
+            at = np.flatnonzero(found)
             if at.size:
-                kept[at] = self._projection_reached(entry_in[at], entry_out[at], ends[at], candidate[at])
-            landed[tried[kept]] = candidate[kept]
-            projected[tried[kept]] = True
+                candidate, kept = self._leaf_projection(entry_in[at], entry_out[at], points[tried[at]], tolerance)
+                landed[tried[at[kept]]] = candidate[kept]
+                projected[tried[at[kept]]] = True
         face = leaves & ~projected
         if face.any():
             landed[face] = self._place_by_face_of_entry(
@@ -893,39 +900,54 @@ class ImplicitDomain(
                 leaves[at] = fraction < np.asarray(before, dtype=float).reshape(len(a))[at]
         return leaves
 
-    def _projection_reached(
+    def _leaf_projection(
         self,
         entry_in: NDArray[np.float64],
         entry_out: NDArray[np.float64],
         ends: NDArray[np.float64],
-        projections: NDArray[np.float64],
+        tolerance: float,
         n_scan: int = 32,
-    ) -> NDArray[np.bool_]:
-        """`place_step`'s test of whether a step reaches its end's projection, per step (#2707): read on the leaf the
-        path entered (`crossing_leaf`), the primitive whose surface it crossed, not on the domain's whole complement.
+    ) -> tuple[NDArray[np.float64], NDArray[np.bool_]]:
+        """`place_step`'s projection, per step (#2707): the nearest point of the leaf the path's first crossing entered
+        (`crossing_leaf`), moved ``tolerance`` to the domain's side along the leaf's normal; and whether it is kept.
 
-        (a) Every point of `legs_leave`'s scan from the entry to the end lies inside that leaf's far side: phi_leaf > 0
-        beyond a leaf at even parity, phi_leaf < 0 inside a complemented one (an obstacle). The end is in the obstacle
-        the path entered, not in the region beyond a wall that obstacle meets. The same scan, so the same bound: a gap
-        narrower than a scan step can pass unseen (#2710).
-        (b) That leaf's own outward normal at the projection agrees with its normal at the entry, so no medial axis of
-        the leaf lies between them. It is the same leaf both times, so the order of tied components never decides.
+        Kept where all three hold; the other steps go to the face of entry.
+        (a) Every point of `legs_leave`'s scan from the entry to the end lies on the leaf's far side: phi_leaf > 0
+            beyond a leaf at even parity, phi_leaf < 0 inside a complemented one (an obstacle). The end is beyond this
+            surface, not past a wall the obstacle meets. The same scan, so the same bound: a gap narrower than a scan
+            step can pass unseen (#2710).
+        (b) The domain's outward normal read on that leaf agrees at the entry and at the projection, so no medial
+            axis of the leaf lies between them. It is the same leaf both times.
+        (c) The moved point is in the domain: no other component covers the leaf's surface there.
+
+        It is the leaf's projection, not the domain's. The domain's nearest point can lie on a surface the path never
+        met, and at even parity that surface is on the leaf's far side, so (a) and (b) alone would keep it: another
+        room of a union domain, a ring's outer face stepped out of from its hole (#2732, review 2). The projection is
+        the leaf's own `project_to_boundary`, which for a box is the clamp of the end to it. Past a box's corner that
+        is the corner, and the step runs along the corner's blended normal, so the point lands ``tolerance /
+        sqrt(d)`` inside each face: 7.1e-11 in 2-D at the default. Where a leaf's phi is only a bound on the
+        distance, (c) is what guards the moved point.
         """
         leaves, parity = self.crossing_leaf(entry_in, entry_out)
         sign = np.where(parity % 2 == 1, -1.0, 1.0)
         n_entry = np.atleast_2d(self.crossing_normal(entry_in, entry_out))
         s = _leg_parameters(n_scan)
-        reached = np.zeros(len(ends), dtype=bool)
+        moved = np.array(ends, dtype=float, copy=True)
+        kept = np.zeros(len(ends), dtype=bool)
         for leaf in _unique(leaves):
             rows = np.flatnonzero(np.array([candidate is leaf for candidate in leaves]))
             a, b = entry_out[rows], ends[rows]
             samples = a[:, None, :] + s[None, :, None] * (b - a)[:, None, :]
             phi = np.atleast_1d(leaf.signed_distance(samples.reshape(-1, a.shape[1]))).reshape(len(rows), len(s))
-            inside_entered = (sign[rows, None] * phi > 0).all(axis=1)
-            n_projection = sign[rows, None] * np.atleast_2d(leaf.get_outward_normal(projections[rows]))
-            agree = np.einsum("nd,nd->n", n_entry[rows], n_projection) > 0
-            reached[rows] = inside_entered & agree
-        return reached
+            rows = rows[(sign[rows, None] * phi > 0).all(axis=1)]
+            if rows.size == 0:
+                continue
+            on_leaf = np.atleast_2d(leaf.project_to_boundary(ends[rows]))
+            normal = sign[rows, None] * np.atleast_2d(leaf.get_outward_normal(on_leaf))
+            moved[rows] = on_leaf - tolerance * normal
+            kept[rows] = np.einsum("nd,nd->n", n_entry[rows], normal) > 0
+        kept &= np.atleast_1d(self.signed_distance(moved)) <= 0
+        return moved, kept
 
     def _place_by_face_of_entry(
         self,

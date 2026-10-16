@@ -939,7 +939,7 @@ class FPParticleSolver(BaseFPSolver):
             # which refuses anything larger. A 2**63 draw raised for all but 2**-31 of seeds.
             seed=None if self.seed is None else int(self._rng.integers(0, 2**32 - 1)),
             # t = 0 of #2688: a jitter that lands in an obstacle is redrawn within its cell.
-            navigable=None if self._implicit_domain is None else self._implicit_domain.contains,
+            navigable=None if self._implicit_domain is None else self._implicit_domain.navigable,
         )
 
     def _leave_out_nodes_inside_an_obstacle(self, x_grid: np.ndarray, probs: np.ndarray) -> np.ndarray:
@@ -952,7 +952,7 @@ class FPParticleSolver(BaseFPSolver):
         """
         from mfgarchon.utils.numerical.mass_fabrication_gate import leave_out_or_raise
 
-        inside = ~np.atleast_1d(np.asarray(self._implicit_domain.contains(x_grid.reshape(-1, 1)), dtype=bool))
+        inside = ~self._implicit_domain.navigable(x_grid.reshape(-1, 1))
         blocked = (probs > 0) & inside
         if not blocked.any():
             return probs
@@ -961,14 +961,15 @@ class FPParticleSolver(BaseFPSolver):
             blocked,
             context="FPParticleSolver",
             why=(
-                f"{int(blocked.sum())} grid node(s) carrying m_initial's mass are outside the particles' domain "
-                f"(inside an obstacle, or beyond the domain's outer boundary) -- the first at {x_grid[blocked][0]} -- "
+                f"{int(blocked.sum())} grid node(s) carrying m_initial's mass are not where a particle can start "
+                f"(inside an obstacle, beyond the domain's outer boundary, or on its boundary next to no interior "
+                f"point, as where an obstacle meets the wall it is flush with) -- the first at {x_grid[blocked][0]} -- "
                 "and this path places particles on the nodes it samples. That mass is not moved elsewhere, since that "
                 "would change the measure the caller gave (#2688)."
             ),
             remedy=(
                 "Set m_initial to zero at the nodes outside the domain, e.g. "
-                "m_initial * domain.contains(x_grid.reshape(-1, 1))."
+                "m_initial * domain.navigable(x_grid.reshape(-1, 1))."
             ),
         )
 
@@ -980,11 +981,12 @@ class FPParticleSolver(BaseFPSolver):
         if self._implicit_domain is None:
             return
         points = np.asarray(particles, dtype=float).reshape(len(particles), -1)
-        inside = ~np.atleast_1d(np.asarray(self._implicit_domain.contains(points), dtype=bool))
+        inside = ~self._implicit_domain.navigable(points)
         if np.any(inside):
             raise ValueError(
-                f"FPParticleSolver: of {origin}, {int(inside.sum())} of {len(points)} are outside the particles' "
-                f"domain (inside an obstacle, or beyond the domain's outer boundary) -- the first at "
+                f"FPParticleSolver: of {origin}, {int(inside.sum())} of {len(points)} are not where a particle can "
+                f"start (inside an obstacle, beyond the domain's outer boundary, or on its boundary next to no "
+                f"interior point, `ImplicitDomain.navigable`) -- the first at "
                 f"{points[inside][0]}. They are not moved: the first step would start outside the domain, and moving "
                 f"them changes the measure the caller gave (#2688). {advice}"
             )
@@ -1077,10 +1079,9 @@ class FPParticleSolver(BaseFPSolver):
         (`_finish_step`).
 
         A survivor the boundary condition reflected -- its raw step left the box -- has a broken path, ``previous`` ->
-        its wall hits ``via`` -> its reflected position, and `ImplicitDomain.place_step` places it by that path. A step
-        that starts on the wall has no hit inside the step, so its path is the chord, which is its reflected leg. Every
-        other survivor is already
-        where it lands: its step stayed in the box, and the step's segment was searched before the boundary
+        its wall hits ``via`` -> its reflected position, and `ImplicitDomain.place_step` places it by that path. The
+        wall a step starts on contributes no hit inside the step, so a step that starts on a wall and meets no other
+        has the chord as its path, which is its reflected leg. Every other survivor is already where it lands: its step stayed in the box, and the step's segment was searched before the boundary
         condition ran. ``previous`` is each survivor's position before the step, inside the domain by induction
         from t = 0. This step's counts go to ``obstacle_placement_history``.
 
