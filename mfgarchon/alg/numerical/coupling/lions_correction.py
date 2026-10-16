@@ -361,12 +361,13 @@ def create_nonlocal_source(
             "(#1642)."
         )
     w = validate_weights(weights, "create_nonlocal_source")
-    if isinstance(interaction_kernel, _AppliedWithMatmul):
+    applied_as_given = isinstance(interaction_kernel, _AppliedWithMatmul)
+    if applied_as_given:
         # Applied as it is -- an ndarray, a sparse matrix, a LinearOperator, a matrix-free object of the caller's, a
         # wrapper of one; np.asarray would wrap the matrix-free ones in a 0-d object array.
         W = interaction_kernel
         try:
-            shape = tuple(W.shape)
+            shape = tuple(interaction_kernel.shape)
         except AttributeError:
             raise ValueError(
                 f"create_nonlocal_source: the interaction kernel, a {type(W).__name__}, applies itself with @ but has "
