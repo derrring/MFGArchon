@@ -81,7 +81,7 @@ library a plain dict or a built model.
 | HJB | `HJBConfig`, `GFDMConfig`, `FDMConfig`, `FEMConfig`, `WENOConfig`, `SLConfig`, `NewtonConfig` |
 | FP | `FPConfig`, `ParticleConfig`, `NetworkConfig` |
 | Iteration | `PicardConfig` |
-| Numerics | `DerivativeConfig`, `NeighborhoodConfig`, `QPConfig`, `BoundaryAccuracyConfig`, `CollocationConfig` |
+| Numerics | `DerivativeConfig`, `NeighborhoodConfig`, `BoundaryAccuracyConfig`, `CollocationConfig` |
 | Infrastructure | `BackendConfig`, `LoggingConfig`, `MFGGridConfig`, `MFGArrays`, `ArrayValidationConfig` |
 
 Translation helpers (`hjb_config_to_kwargs`, `fp_config_to_kwargs`,

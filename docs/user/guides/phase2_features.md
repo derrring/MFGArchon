@@ -4,9 +4,8 @@
 
 This guide covers all Phase 2 improvements:
 1. **`problem.solve()`** - One-line high-level interface
-2. **QP Utilities** - Caching and warm-starting for quadratic programming
-3. **Particle Interpolation** - Grid ↔ particle conversion utilities
-4. **Geometry Utilities** - Simplified obstacle and domain creation
+2. **Particle Interpolation** - Grid ↔ particle conversion utilities
+3. **Geometry Utilities** - Simplified obstacle and domain creation
 
 ---
 
@@ -157,184 +156,7 @@ three. A backend goes through `config`, not a keyword — `problem.solve(backend
 
 ---
 
-## 2. QP Utilities (Phase 2.2)
-
-### Overview
-
-Performance optimizations for quadratic programming operations used in particle-based FP solvers.
-
-**Features**:
-- **Result Caching**: Hash-based cache with LRU eviction (~9× speedup)
-- **Warm-Starting**: Reuse previous solutions for iterative solves (~4% improvement)
-
-### QPCache: Result Caching
-
-**How It Works**:
-1. Hash QP problem parameters (A, b, W, bounds) using SHA256
-2. Store result in LRU cache (max_size entries)
-3. Return cached result on cache hit
-
-**Usage**:
-```python
-from mfgarchon.utils.numerical.qp_utils import QPCache, QPSolver
-
-# Create cache with size limit
-cache = QPCache(max_size=100)
-
-# Create solver with cache
-solver = QPSolver(backend="auto", enable_warm_start=False, cache=cache)
-
-# Solve QP problems
-for iteration in range(num_iterations):
-    result = solver.solve_weighted_least_squares(A, b, W, bounds=bounds)
-
-# Check cache statistics
-print(f"Cache hits: {cache.hits}")
-print(f"Cache misses: {cache.misses}")
-print(f"Hit rate: {cache.hit_rate:.1%}")
-```
-
-**Performance**:
-- **9× speedup** for repeated identical problems
-- 90% hit rate on recurring subproblems
-- Negligible overhead on cache misses
-
-**When to Use**:
-- Problems with recurring QP substructure
-- Iterative algorithms with repeated subproblems
-- Spatial grid points with similar problems
-
-**When NOT to Use**:
-- RHS changes every iteration (no cache hits)
-- Single-solve scenarios
-- Memory-constrained environments
-
-### Warm-Starting
-
-**How It Works**:
-1. Store previous QP solution (x, y dual variables)
-2. Use as initial guess for next solve with same structure
-3. Reduces solver iterations (~4% speedup for small problems)
-
-**Usage**:
-```python
-from mfgarchon.utils.numerical.qp_utils import QPSolver
-
-# Create solver with warm-starting enabled
-solver = QPSolver(backend="osqp", enable_warm_start=True, cache=None)
-
-# Solve sequence of related problems
-for iteration in range(num_iterations):
-    b = compute_rhs(iteration)  # RHS changes
-
-    # Use same point_id to trigger warm-starting
-    result = solver.solve_weighted_least_squares(
-        A, b, W, bounds=bounds, point_id=0
-    )
-
-# Check warm-start statistics
-print(f"Cold starts: {solver.stats['cold_starts']}")
-print(f"Warm starts: {solver.stats['warm_starts']}")
-```
-
-**Performance**:
-- **4% speedup** for small problems (50×50)
-- More effective for large QP problems (>1000 variables)
-- Requires backend support (OSQP ✅, scipy ❌)
-
-**Important**: Use consistent `point_id` for related problems to enable warm-starting.
-
-### Combined Caching + Warm-Starting
-
-```python
-from mfgarchon.utils.numerical.qp_utils import QPCache, QPSolver
-
-# Create cache and solver
-cache = QPCache(max_size=100)
-solver = QPSolver(backend="osqp", enable_warm_start=True, cache=cache)
-
-# MFG scenario: Solve at each spatial grid point across time iterations
-for time_iteration in range(num_time_steps):
-    for point_id, (A, W, bounds) in enumerate(spatial_problems):
-        b = compute_rhs(time_iteration, point_id)
-
-        # Caching checks for identical (A, b, W, bounds)
-        # Warm-starting reuses solution from previous time step
-        result = solver.solve_weighted_least_squares(
-            A, b, W, bounds=bounds, point_id=point_id
-        )
-```
-
-**Realistic MFG Performance**:
-- Warm-starting active but no cache hits (RHS changes)
-- Benefits depend on problem size and solver backend
-- Monitor cache hit rate to assess effectiveness
-
-### Benchmarks
-
-Run comprehensive performance benchmarks:
-```bash
-python benchmarks/qp_caching_benchmark.py
-```
-
-**Benchmark Scenarios**:
-1. Cache performance (10 unique, 100 total solves) → 9× speedup
-2. Warm-start performance (50 iterations) → 1.04× speedup
-3. Combined MFG scenario (20 grid points, 50 iterations) → 0.98× (no cache hits)
-
-**Findings**:
-- Caching highly effective for repeated identical problems
-- Warm-starting minimal benefit for small QP problems with OSQP
-- MFG scenarios typically don't benefit from caching (RHS changes)
-
-### API Reference
-
-```python
-class QPCache:
-    def __init__(self, max_size: int = 1000):
-        """LRU cache for QP results."""
-
-    @property
-    def hits(self) -> int:
-        """Number of cache hits."""
-
-    @property
-    def misses(self) -> int:
-        """Number of cache misses."""
-
-    @property
-    def hit_rate(self) -> float:
-        """Cache hit rate (0-1)."""
-
-class QPSolver:
-    def __init__(
-        self,
-        backend: str = "auto",
-        enable_warm_start: bool = True,
-        cache: QPCache | None = None,
-    ):
-        """QP solver with caching and warm-starting."""
-
-    def solve_weighted_least_squares(
-        self,
-        A: np.ndarray,
-        b: np.ndarray,
-        W: np.ndarray,
-        bounds: list[tuple[float, float]] | None = None,
-        point_id: int | None = None,
-    ) -> np.ndarray:
-        """Solve weighted least squares QP problem."""
-
-    @property
-    def stats(self) -> dict[str, int]:
-        """Solver statistics (cold_starts, warm_starts)."""
-```
-
-**Example**: See `benchmarks/qp_caching_benchmark.py` for performance analysis.
-
----
-
-## 3. Particle Interpolation Utilities (Phase 2.2)
+## 2. Particle Interpolation Utilities (Phase 2.2)
 
 ### Overview
 
@@ -485,7 +307,7 @@ def particles_to_grid_kde(
 
 ---
 
-## 4. Geometry Utilities (Phase 2.2)
+## 3. Geometry Utilities (Phase 2.2)
 
 ### Overview
 
@@ -632,7 +454,6 @@ class Difference:
 ## Summary
 
 ### Phase 2.2: Infrastructure Improvements
-- **QP Utilities**: 9× speedup via caching, warm-starting support
 - **Particle Interpolation**: Grid ↔ particle conversion for hybrid solvers
 - **Geometry Utilities**: Simplified aliases for obstacles and CSG operations
 
@@ -647,17 +468,14 @@ class Difference:
 |:--------|:---------|
 | `problem.solve()` | Quick prototyping, standard problems, getting started |
 | Factory API | Custom configs, fine control, research comparisons |
-| QP Cache | Repeated identical QP problems |
-| Warm-Starting | Large QP problems, iterative solves |
 | Particle Interpolation | Hybrid solvers (internal use) |
 | Geometry Utilities | Defining obstacles and domains |
 
 ### Next Steps
 
 1. **Quick Start**: Try `problem.solve()` on example problems
-2. **Performance**: Run QP benchmarks to understand speedups
-3. **Advanced**: Use Factory API for custom solver configurations
-4. **Research**: Combine utilities for novel MFG algorithms
+2. **Advanced**: Use Factory API for custom solver configurations
+3. **Research**: Combine utilities for novel MFG algorithms
 
 ---
 
@@ -669,4 +487,3 @@ class Difference:
 **Examples**:
 - `examples/basic/three_mode_api_demo.py` - High-level interface demonstrations
 - `examples/basic/utility_demo.py` - Utility demonstrations
-- `benchmarks/qp_caching_benchmark.py` - Performance benchmarks

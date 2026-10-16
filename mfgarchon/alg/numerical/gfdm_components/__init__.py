@@ -6,7 +6,6 @@ This package provides modular components for GFDM solvers,extracted from the ori
 Components:
 -----------
 - GridCollocationMapper: Bidirectional grid ↔ collocation interpolation
-- MonotonicityEnforcer: QP-constrained monotonicity enforcement
 - BoundaryHandler: Boundary operations, LCR, ghost nodes
 - NeighborhoodBuilder: Stencil construction, Taylor matrices
 
@@ -23,14 +22,12 @@ See docs/development/PARTICLE_SOLVER_TEMPLATE.md for composition pattern guide.
 
 from .boundary_handler import BoundaryHandler
 from .grid_collocation_mapper import GridCollocationMapper
-from .monotonicity_enforcer import MonotonicityEnforcer
 from .neighborhood_builder import NeighborhoodBuilder
 from .precomputed_stencils import PrecomputedMonotoneStencils
 
 __all__ = [
     "BoundaryHandler",
     "GridCollocationMapper",
-    "MonotonicityEnforcer",
     "NeighborhoodBuilder",
     "PrecomputedMonotoneStencils",
 ]

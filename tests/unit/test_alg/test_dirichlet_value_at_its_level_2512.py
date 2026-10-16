@@ -121,7 +121,7 @@ def test_gfdm_reads_a_dirichlet_value_at_its_level(d, inner):
     kwargs = (
         {"monotonicity_scheme": "none"}
         if inner == "newton"
-        else {"inner_solver": "howard", "monotonicity_scheme": "qp_m_matrix", "monotonicity_application": "always"}
+        else {"inner_solver": "howard", "monotonicity_scheme": "none"}
     )
     grid = TensorProductGrid(bounds=[(0.0, 1.0)] * d, Nx_points=[n] * d, boundary_conditions=dirichlet_bc(dimension=d))
     u = _exact(_rate(_problem(grid), d), d)

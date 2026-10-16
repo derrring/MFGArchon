@@ -286,7 +286,7 @@ multi-index dict `{(1, 0): u_x, ...}`, which is still live. The adapter reduces 
 Who builds one:
 
 - **HJB-WENO** builds one per point per Hamiltonian evaluation on its default path.
-- **HJB-GFDM** builds them only with `monotonicity_scheme="qp_m_matrix"` or `"joint_socp"`; its
+- **HJB-GFDM** builds them only with `monotonicity_scheme="joint_socp"`; its
   default batch path passes gradient arrays of shape `(N, d)`.
 - **HJB-FDM** never builds one. It evaluates $H$ in one batch on gradient arrays: in every dimension on
   the NumPy backend, and in $d \ge 2$ on any backend. Its 1-D residual and Jacobian call `problem.H()`

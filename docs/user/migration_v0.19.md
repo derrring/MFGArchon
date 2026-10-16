@@ -71,6 +71,8 @@ The divergence matrix below enumerates every field difference per class.  Column
 | `derivative`, `neighborhood`, `qp` | — | set | New: sub-configs |
 | `taylor_order`, `weight_scale` | — | set | New |
 
+The `qp` sub-config named above was removed later, with the derivative-coefficient QP it configured (#1689). `GFDMConfig(qp=...)` is now refused, and the scheme is chosen by `GFDMConfig.monotonicity_scheme`.
+
 ### ParticleConfig
 
 | Field | Legacy | Canonical | Action |
