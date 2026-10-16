@@ -112,6 +112,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from mfgarchon.utils.numerical.quadrature import integrate_on_weights
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
@@ -142,8 +144,9 @@ def mass_fabricated_by_clip(
         w = np.asarray(weights)
         if w.shape != density.shape:
             raise ValueError(f"weights shape {w.shape} does not match density shape {density.shape}")
-        negative_mass = -float((density * w)[negatives].sum())
-        positive_mass = float((density * w)[density > 0].sum())
+        # The integrals of the negative and the positive part on the caller's measure, through its one sum (#1642).
+        negative_mass = float(integrate_on_weights(np.where(negatives, -density, 0.0), w))
+        positive_mass = float(integrate_on_weights(np.where(density > 0, density, 0.0), w))
     if positive_mass <= 0:
         return float("inf")
     return negative_mass / positive_mass

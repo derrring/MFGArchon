@@ -265,24 +265,30 @@ class FluxDiagnostics:
 
             return np.stack(alpha_components, axis=-1)
 
-    def _axis_weights(self, axis: int, n: int) -> NDArray:
-        """The control volume each node owns along ``axis``, from the one owner (#2145).
+    def _axis_coordinates(self, axis: int, n: int) -> NDArray:
+        """The ``n`` node coordinates along ``axis``, which both weight readers below take.
 
         This class holds a spacing and no grid, so the coordinates are rebuilt -- exact for the
         uniform spacing it is constructed with, and the weights depend only on differences, so the
-        origin does not matter. It calls ``quadrature_weights_1d`` rather than writing the formula
-        again: a second derivation is what #2145 found in 169 places.
+        origin does not matter.
+        """
+        return np.arange(n, dtype=float) * float(self.spacing[axis])
+
+    def _axis_weights(self, axis: int, n: int) -> NDArray:
+        """The control volume each node owns along ``axis``, from the one owner (#2145).
+
+        It calls ``quadrature_weights_1d`` rather than writing the formula again: a second
+        derivation is what #2145 found in 169 places.
 
         ``sum(f) * dx`` is NOT this, and the difference is not a rounding detail: it gives the two
         end nodes a full cell each and over-counts by ``dx*(f[0]+f[-1])/2``. On a boundary face that
         is the same error one dimension down, which is why the face integrals below use it too.
         """
-        return quadrature_weights_1d(np.arange(n, dtype=float) * float(self.spacing[axis]))
+        return quadrature_weights_1d(self._axis_coordinates(axis, n))
 
     def _node_weights(self, shape: tuple[int, ...]) -> NDArray:
-        """The control volume each node owns, from the one owner (#2145, #1642), on coordinates rebuilt as in
-        :meth:`_axis_weights`."""
-        return quadrature_weights_nd([np.arange(n, dtype=float) * float(self.spacing[k]) for k, n in enumerate(shape)])
+        """The control volume each node owns, from the one owner (#2145, #1642)."""
+        return quadrature_weights_nd([self._axis_coordinates(k, n) for k, n in enumerate(shape)])
 
     def _compute_flux_1d(
         self,
