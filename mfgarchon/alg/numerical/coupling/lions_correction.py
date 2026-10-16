@@ -285,12 +285,15 @@ def create_lions_source(
 
 def create_nonlocal_source(
     interaction_kernel: NDArray,
-    grid_spacing: float,
+    weights: NDArray,
 ) -> Callable[[float, NDArray, NDArray, NDArray], NDArray]:
     """Create source_term_hjb for nonlocal interaction coupling.
 
     Optimized path for the common case F[m] = (1/2) int int W(x,y) m(x) m(y) dx dy,
-    where delta F / delta m[m](x) = int W(x,y) m(y) dy = (W @ m) * dx.
+    where delta F / delta m[m](x) = int W(x,y) m(y) dy = W @ (w * m), with ``w`` the
+    per-node weights of the problem's measure. ``W`` need not be translation-invariant;
+    for a kernel K(x - y), ``ConvolutionCouplingOperator.from_problem`` is the same
+    integral with an FFT path.
 
     This avoids the overhead of finite-difference functional derivatives
     by computing the convolution directly.
@@ -299,20 +302,34 @@ def create_nonlocal_source(
         interaction_kernel: W(x_i, x_j) matrix, shape (N, N) where N is the
             total number of spatial grid points (N = Nx for 1D, Nx*Ny for 2D, etc.).
             Symmetric for undirected interaction. Operates on flattened density arrays.
-        grid_spacing: Spatial grid spacing dx for quadrature (1D cell volume).
-            For nD, pass the cell volume dx*dy*... instead.
+        weights: The measure's per-node weights, ``problem.spatial_measure().weights``:
+            shape (N,), or the grid's shape. A scalar is refused. One cell volume for
+            every node is the rectangle rule, which gives each end node a full cell
+            past the domain (#1642).
 
     Returns:
         source_term_hjb(t, x, v, m) -> NDArray.
 
     Example:
-        >>> # Gaussian interaction kernel
-        >>> x = np.linspace(0, 1, 50)
+        >>> # Gaussian interaction kernel on a problem's grid
+        >>> x = problem.geometry.get_spatial_grid().ravel()
         >>> W = np.exp(-((x[:, None] - x[None, :]) ** 2) / (2 * 0.1**2))
-        >>> source = create_nonlocal_source(W, grid_spacing=x[1] - x[0])
+        >>> source = create_nonlocal_source(W, problem.spatial_measure().weights)
     """
-    W = interaction_kernel
-    dx = grid_spacing
+    from mfgarchon.operators.interaction.energy_functionals import validate_weights
+
+    if np.ndim(weights) == 0:
+        raise ValueError(
+            f"create_nonlocal_source: weights is the scalar {weights!r}, one cell volume for every node. That is the "
+            "rectangle rule, which gives each end node a full cell past the domain. Pass the measure's per-node "
+            "weights, problem.spatial_measure().weights (#1642)."
+        )
+    W = np.asarray(interaction_kernel)
+    w = validate_weights(weights, "create_nonlocal_source")
+    if W.shape != (w.size, w.size):
+        raise ValueError(
+            f"create_nonlocal_source: the interaction kernel has shape {W.shape} and the weights {w.size} nodes"
+        )
 
     def source_term_hjb(
         t: float,
@@ -322,6 +339,6 @@ def create_nonlocal_source(
     ) -> NDArray:
         """Evaluate (W * m)(x) = int W(x,y) m(y) dy."""
         m_spatial = _spatial_density(m)
-        return (W @ m_spatial) * dx
+        return W @ (w * m_spatial)
 
     return source_term_hjb

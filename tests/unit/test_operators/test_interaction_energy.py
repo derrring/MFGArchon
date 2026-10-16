@@ -24,7 +24,13 @@ from __future__ import annotations
 import pytest
 
 import numpy as np
+from scipy.special import erf
 
+from mfgarchon import Conditions, MFGProblem, Model
+from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+from mfgarchon.geometry import TensorProductGrid
+from mfgarchon.geometry.boundary import no_flux_bc, periodic_bc
+from mfgarchon.geometry.implicit import Hyperrectangle
 from mfgarchon.operators.interaction.convolution import ConvolutionCouplingOperator
 from mfgarchon.operators.interaction.energy_functionals import (
     CombinedEnergy,
@@ -39,6 +45,7 @@ from mfgarchon.operators.interaction.energy_functionals import (
 )
 from mfgarchon.operators.interaction.kernels import GaussianKernel, WendlandKernel
 from mfgarchon.utils.functional_calculus import FiniteDifferenceFunctionalDerivative
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
 
 
 def _grid(N):
@@ -280,14 +287,14 @@ class TestA2PhysicalQuadrature:
     def test_uniform_grid_is_the_scattered_case_with_equal_weights(self):
         """Cross-path pin: the FFT/grid construction and the scattered
         construction are two code paths for the same quantity. On a uniform
-        cloud they must return the same energy -- the grid path must not carry a
-        private ``cell_volume`` convention."""
+        cloud with the trapezoid weights they must return the same energy -- the
+        grid path must not carry a private ``cell_volume`` convention (#1642)."""
         N = 48
         x, dx = _grid(N)
         kernel = GaussianKernel(1.1, 0.13)
         grid_energy = QuadraticInteractionEnergy(ConvolutionCouplingOperator(kernel, grid_shape=(N,), spacings=[dx]))
         cloud_energy = QuadraticInteractionEnergy(
-            ConvolutionCouplingOperator(kernel, points=x, cell_volume=np.full(N, dx))
+            ConvolutionCouplingOperator(kernel, points=x, cell_volume=quadrature_weights_1d(x))
         )
         m = np.sin(np.pi * x) + 1.2
         assert grid_energy.energy(m) == pytest.approx(cloud_energy.energy(m), rel=1e-10)
@@ -302,7 +309,7 @@ class TestWeightsOntology:
         x, dx = _grid(N)
         conv = ConvolutionCouplingOperator(GaussianKernel(1.0, 0.1), grid_shape=(N,), spacings=[dx])
         w = conv.weights
-        assert w.sum() == pytest.approx(N * dx)
+        assert w.sum() == pytest.approx(x[-1] - x[0])
         energy = QuadraticInteractionEnergy(conv)
         m = np.sin(np.pi * x) + 1.2
         numeric = _fd_flat_derivative(energy.energy, m, w)
@@ -376,7 +383,7 @@ class TestWeightsOntology:
         N = 24
         x, dx = _grid(N)
         conv = ConvolutionCouplingOperator(GaussianKernel(1.0, 0.1), grid_shape=(N,), spacings=[dx])
-        potential = PotentialEnergy(np.cos(np.pi * x), np.full(N, dx))
+        potential = PotentialEnergy(np.cos(np.pi * x), quadrature_weights_1d(x))
         energy = {
             "quadratic": lambda: QuadraticInteractionEnergy(conv),
             "potential": lambda: potential,
@@ -391,7 +398,7 @@ class TestWeightsOntology:
             energy.weights[0] = 99.0
 
         assert energy.energy(m) == pytest.approx(before, rel=0, abs=0)
-        assert conv.as_dense()[0, 0] == pytest.approx(conv.kernel_matrix()[0, 0] * dx)
+        assert conv.as_dense()[0, 0] == pytest.approx(conv.kernel_matrix()[0, 0] * dx / 2)
 
 
 class TestContractMembership:
@@ -591,14 +598,15 @@ class TestConstruction:
 
     def test_operator_weights_is_always_an_array(self):
         """``ConvolutionCouplingOperator.weights`` is the single spelling of the
-        quadrature weight, an ``(N,)`` array on both construction routes."""
+        quadrature weight, an ``(N,)`` array on both construction routes: the
+        grid's trapezoid weights, and a scattered cloud's scalar broadcast."""
         N = 16
         x, dx = _grid(N)
         grid_op = ConvolutionCouplingOperator(GaussianKernel(1.0, 0.1), grid_shape=(N,), spacings=[dx])
         cloud_op = ConvolutionCouplingOperator(GaussianKernel(1.0, 0.1), points=x, cell_volume=dx)
-        for op in (grid_op, cloud_op):
+        for op, expected in ((grid_op, quadrature_weights_1d(x)), (cloud_op, np.full(N, dx))):
             assert op.weights.shape == (N,)
-            np.testing.assert_allclose(op.weights, dx)
+            np.testing.assert_allclose(op.weights, expected)
 
     def test_kernel_matrix_times_weights_is_as_dense(self):
         """Pins the two matrix accessors against each other: ``as_dense`` is the
@@ -615,3 +623,104 @@ class TestConstruction:
         first = op.kernel_matrix()
         first[0, 0] = 12345.0
         assert op.kernel_matrix()[0, 0] != 12345.0
+
+
+# ---------------------------------------------------------------------------
+# The convolution on the problem's measure (#1642, Stage 0 item 4). On a regular grid the operator weighted every node by
+# prod(spacings), the rectangle rule: each end node owned a full cell past the domain, an O(dx) error, while the
+# problem's measure is the trapezoid rule. Both paths now weight node j by the grid's trapezoid weight, so the FFT path
+# convolves m * w and its adjoint is w * (K * g). `from_problem` reads the problem's grid, measure and topology, and
+# refuses a periodic axis, on which this Euclidean convolution does not wrap.
+# ---------------------------------------------------------------------------
+
+_ELL = 0.1
+
+
+def _box_integral(x):
+    """``int_0^1 exp(-(x - y)^2 / (2 ell^2)) dy``, exactly."""
+    s = np.sqrt(2.0) * _ELL
+    return _ELL * np.sqrt(np.pi / 2.0) * (erf((1.0 - x) / s) + erf(x / s))
+
+
+def _error_on_ones(d, n, use_fft):
+    """Max error of ``F @ 1`` against the exact integral over [0, 1]^d (a product of the 1-D integrals)."""
+    x = np.linspace(0.0, 1.0, n)
+    op = ConvolutionCouplingOperator(
+        GaussianKernel(1.0, _ELL), grid_shape=(n,) * d, spacings=[x[1]] * d, use_fft=use_fft
+    )
+    exact = np.ones(())
+    for axis in np.meshgrid(*[x] * d, indexing="ij"):
+        exact = exact * _box_integral(axis)
+    return np.abs(op @ np.ones(n**d) - exact.ravel()).max()
+
+
+@pytest.mark.parametrize("use_fft", [True, False], ids=["fft", "dense"])
+@pytest.mark.parametrize("d", [1, 2])
+def test_the_box_integral_converges_at_second_order(d, use_fft):
+    """Halving dx quarters the error of ``int K(x - y) dy`` over the box: the trapezoid rule. The rectangle rule, which
+    gave each end node a full cell past the domain, halved it."""
+    coarse, fine = (81, 161) if d == 1 else (41, 81)
+    assert _error_on_ones(d, coarse, use_fft) / _error_on_ones(d, fine, use_fft) > 3.5
+
+
+def test_the_adjoint_is_the_adjoint_on_both_paths():
+    """With per-node weights the operator is not self-adjoint, on the FFT path too: ``<F m, g> = <m, F^T g>``, and the
+    two paths agree on both products."""
+    n, rng = 41, np.random.default_rng(1642)
+    dx = 1.0 / (n - 1)
+    fft = ConvolutionCouplingOperator(GaussianKernel(1.0, _ELL), grid_shape=(n, n), spacings=[dx, dx])
+    dense = ConvolutionCouplingOperator(GaussianKernel(1.0, _ELL), grid_shape=(n, n), spacings=[dx, dx], use_fft=False)
+    m, g = rng.uniform(size=n * n), rng.uniform(size=n * n)
+    for op in (fft, dense):
+        assert g @ (op @ m) == pytest.approx(m @ (op.T @ g), rel=1e-12)
+    np.testing.assert_allclose(fft @ m, dense @ m, atol=1e-14)
+    np.testing.assert_allclose(fft.T @ g, dense.T @ g, atol=1e-14)
+
+
+def _problem(domain):
+    return MFGProblem(
+        model=Model(
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.1
+        ),
+        domain=domain,
+        conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.5),
+        Nt=4,
+    )
+
+
+@pytest.mark.parametrize("case", ["uniform grid", "graded grid", "periodic grid", "not a grid"])
+def test_from_problem_reads_the_grid_the_measure_and_the_topology(case):
+    """The operator's weights are the problem's measure, on a uniform grid (where FFT is available) and on a graded one
+    (direct). A periodic axis is refused by name, and so is a geometry that is not a grid."""
+    kernel = GaussianKernel(1.0, _ELL)
+    if case == "uniform grid":
+        problem = _problem(
+            TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[11, 9], boundary_conditions=no_flux_bc(2))
+        )
+        op = ConvolutionCouplingOperator.from_problem(kernel, problem)
+        assert op.uses_fft
+    elif case == "graded grid":
+        axis = np.linspace(0.0, 1.0, 11) ** 2
+        problem = _problem(
+            TensorProductGrid(
+                bounds=[(0.0, 1.0)],
+                Nx_points=[11],
+                spacing_type="custom",
+                custom_coordinates=[axis],
+                boundary_conditions=no_flux_bc(1),
+            )
+        )
+        op = ConvolutionCouplingOperator.from_problem(kernel, problem)
+        assert not op.uses_fft
+        np.testing.assert_array_equal(op.points[:, 0], axis)
+    elif case == "periodic grid":
+        problem = _problem(TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=periodic_bc(1)))
+        with pytest.raises(ValueError, match=r"axis \[0\] of the problem's grid is periodic"):
+            ConvolutionCouplingOperator.from_problem(kernel, problem)
+        return
+    else:
+        problem = _problem(Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])))
+        with pytest.raises(TypeError, match=r"not a TensorProductGrid"):
+            ConvolutionCouplingOperator.from_problem(kernel, problem)
+        return
+    np.testing.assert_array_equal(op.weights, problem.spatial_measure().weights.ravel())

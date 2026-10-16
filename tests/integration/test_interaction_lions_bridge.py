@@ -24,6 +24,7 @@ import pytest
 
 import numpy as np
 
+from mfgarchon import Conditions, Model
 from mfgarchon.alg.numerical.coupling import FixedPointIterator
 from mfgarchon.alg.numerical.coupling.lions_correction import (
     create_lions_source,
@@ -45,6 +46,7 @@ from mfgarchon.operators.interaction import (
     QuadraticInteractionEnergy,
 )
 from mfgarchon.utils.functional_calculus import FiniteDifferenceFunctionalDerivative
+from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
 
 
 class TestGate3LionsBridgeEquivalence:
@@ -61,14 +63,35 @@ class TestGate3LionsBridgeEquivalence:
         source_analytic = create_lions_source(energy)
 
         W = kernel.matrix(x)  # raw K(x_i, x_j) matrix
-        source_nonlocal = create_nonlocal_source(W, grid_spacing=dx)
+        source_nonlocal = create_nonlocal_source(W, quadrature_weights_1d(x))
 
         m = np.sin(np.pi * x) + 1.2
         v = np.zeros(N)
         r_analytic = source_analytic(t=0.0, x=x, v=v, m=m)
         r_nonlocal = source_nonlocal(t=0.0, x=x, v=v, m=m)
-        # Both equal (W @ m) * dx to machine precision.
+        # Both equal W @ (w * m) on the grid's trapezoid weights to machine precision, the end nodes included (#1642).
         np.testing.assert_allclose(r_analytic, r_nonlocal, atol=1e-12)
+
+    def test_the_nonlocal_source_refuses_one_cell_volume_and_reads_the_measure(self):
+        """A scalar weight is the rectangle rule: each end node gets a full cell past the domain, an O(dx) error. It
+        is refused by name, and the remedy the refusal names, the problem's measure, solves (#1642)."""
+        problem = MFGProblem(
+            model=Model(
+                hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.2
+            ),
+            domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[41], boundary_conditions=no_flux_bc(1)),
+            conditions=Conditions(u_terminal=lambda xx: 0.0, m_initial=lambda xx: 1.0, T=0.5),
+            Nt=4,
+        )
+        x = problem.geometry.get_spatial_grid().ravel()
+        W = GaussianKernel(amplitude=1.0, length_scale=0.1).matrix(x)
+        with pytest.raises(ValueError, match=r"rectangle rule.*problem\.spatial_measure\(\)\.weights"):
+            create_nonlocal_source(W, x[1] - x[0])
+        source = create_nonlocal_source(W, problem.spatial_measure().weights)
+        m = np.ones_like(x)
+        np.testing.assert_allclose(
+            source(t=0.0, x=x, v=np.zeros_like(x), m=m), W @ quadrature_weights_1d(x), atol=1e-14
+        )
 
     def test_analytic_matches_fd_lambda_path(self):
         """The two branches of create_lions_source agree on ONE energy object.
@@ -114,17 +137,18 @@ class TestGate3LionsBridgeEquivalence:
         conv = ConvolutionCouplingOperator(kernel, grid_shape=(N,), spacings=[dx], use_fft=False)
         energy = QuadraticInteractionEnergy(conv)
         W = kernel.matrix(x)
+        w = quadrature_weights_1d(x)  # the trapezoid weights of the grid's measure (#1642)
 
         def f_physical(m):
             m = np.asarray(m).ravel()
             # F[m] = (1/2) sum_ij w_i w_j W_ij m_i m_j -- BOTH quadrature factors.
-            return 0.5 * float(np.sum(m * (W @ m))) * dx**2
+            return 0.5 * float(np.sum(w * m * (W @ (w * m))))
 
         m = np.sin(np.pi * x) + 1.2
         assert f_physical(m) == pytest.approx(energy.energy(m), rel=1e-12)
 
         fd = FiniteDifferenceFunctionalDerivative(epsilon=1e-5, method="central")
-        source_user = create_lions_source(f_physical, fd, weights=dx)
+        source_user = create_lions_source(f_physical, fd, weights=w)
         r_user = source_user(t=0.0, x=x, v=np.zeros(N), m=m)
         r_analytic = create_lions_source(energy)(t=0.0, x=x, v=np.zeros(N), m=m)
         rel = np.max(np.abs(r_analytic - r_user)) / np.max(np.abs(r_analytic))
@@ -193,7 +217,7 @@ class TestGate3LionsBridgeEquivalence:
         conv = ConvolutionCouplingOperator(GaussianKernel(1.0, 0.1), grid_shape=(N,), spacings=[dx])
         source = create_lions_source(QuadraticInteractionEnergy(conv))
         W = np.exp(-((x[:, None] - x[None, :]) ** 2) / (2 * 0.2**2))
-        source_nonlocal = create_nonlocal_source(W, grid_spacing=dx)
+        source_nonlocal = create_nonlocal_source(W, quadrature_weights_1d(x))
 
         m_slice = np.sin(np.pi * x) + 1.0
         m_traj = np.tile(m_slice, (5, 1))  # (Nt+1, Nx), constant in time
@@ -381,16 +405,13 @@ def _ring_problem(grid_only=False, amp=5.0, length_scale=0.15, bowl=4.0):
         components=components,
     )
     g = problem.geometry.get_spatial_grid().ravel()
-    dx = g[1] - g[0]
-    potential = PotentialEnergy(bowl * (g - 0.5) ** 2, dx)  # attractive bowl (cost away from centre)
+    # Both energies on the problem's measure (#1642): an attractive bowl (cost away from the centre) and the interaction.
+    potential = PotentialEnergy(bowl * (g - 0.5) ** 2, problem.spatial_measure().weights)
     if grid_only:
         energy = potential
     else:
-        conv = ConvolutionCouplingOperator(
-            GaussianKernel(amplitude=amp, length_scale=length_scale),
-            grid_shape=(len(g),),
-            spacings=[dx],
-            use_fft=True,
+        conv = ConvolutionCouplingOperator.from_problem(
+            GaussianKernel(amplitude=amp, length_scale=length_scale), problem, use_fft=True
         )
         energy = CombinedEnergy([QuadraticInteractionEnergy(conv), potential])
     problem.source_term_hjb = create_lions_source(energy)
