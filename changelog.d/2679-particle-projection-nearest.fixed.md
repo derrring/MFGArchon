@@ -4,8 +4,9 @@
   union or overlapping obstacles, or for an approximate SDF.
   - `FPParticleSolver`'s forward loops place a particle that stepped into an obstacle with
     `ImplicitDomain.project_to_interior`'s projection, now through `ImplicitDomain.place_step` (#2707). They used
-    `project_to_domain`, which walked the ray toward the bounding-box centre to the first navigable point. A particle that entered the side of an obstacle facing away from the centre
-    came out on the far side -- every particle, for an obstacle on the centre.
+    `project_to_domain`, which walked the ray toward the bounding-box centre to the first navigable point. A
+    particle that entered the side of an obstacle facing away from the centre came out on the far side -- every
+    particle, for an obstacle on the centre.
   - `ImplicitDomain.project_to_interior` no longer returns a point outside the domain. This changes it for every
     caller that reaches it with an `ImplicitDomain`: `ImplicitDomain.place_step` (#2707), the deprecated
     `apply_boundary_conditions("reflecting")`, and in `geometry/boundary/applicator_meshfree.py`

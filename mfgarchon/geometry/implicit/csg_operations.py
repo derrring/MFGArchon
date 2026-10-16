@@ -31,37 +31,39 @@ from numpy.typing import NDArray
 from .implicit_domain import ImplicitDomain
 
 
-def _component_crossing_normal(
+def _component_crossing_leaf(
     domains: list[ImplicitDomain],
     inside: NDArray[np.float64],
     outside: NDArray[np.float64],
     pick: Literal["nearest", "most outside"],
-    fallback: Callable[[NDArray[np.float64], NDArray[np.float64]], NDArray[np.float64]],
-) -> NDArray[np.float64]:
-    """`UnionDomain.crossing_normal` and `IntersectionDomain.crossing_normal`, for one crossing (shape (d,)) or several
-    (shape (n, d)) at once: per crossing, the component that holds ``inside`` and not ``outside`` by its own phi's sign
-    -- the one with the least phi at ``outside`` where several do (``"nearest"``) or the greatest (``"most outside"``),
-    the first in order on a tie -- gives its own normal; ``fallback`` gives the normal where none does (#2698, #2706,
-    #2707)."""
-    single = np.ndim(outside) == 1
+    fallback: Callable[[NDArray[np.float64], NDArray[np.float64]], tuple[NDArray[np.object_], NDArray[np.int_]]],
+) -> tuple[NDArray[np.object_], NDArray[np.int_]]:
+    """`UnionDomain.crossing_leaf` and `IntersectionDomain.crossing_leaf`, for crossings of shape (n, d): per crossing,
+    the component whose own phi rises across it, from <= 0 at ``inside`` to >= 0 at ``outside`` -- the one with the
+    least phi at ``outside`` where several do (``"nearest"``) or the greatest (``"most outside"``), the first in order
+    on a tie -- is asked for its leaf; ``fallback`` answers where none does (#2698, #2706, #2707). A bracket point can
+    lie exactly on a component's surface, phi = 0: the bisection stops there on an axis-aligned face at a round
+    coordinate, and that component is still the one crossed. Read as a strict ``phi > 0`` at ``outside``, it was
+    missed, and the fallback gave the whole domain's blended normal."""
     ins = np.atleast_2d(np.asarray(inside, dtype=float))
     outs = np.atleast_2d(np.asarray(outside, dtype=float))
     a = np.array([np.atleast_1d(domain.signed_distance(ins)) for domain in domains])
     b = np.array([np.atleast_1d(domain.signed_distance(outs)) for domain in domains])
-    exited = (a <= 0) & (b > 0)
+    exited = (a <= 0) & (b >= 0) & (a < b)
     if pick == "nearest":
         chosen = np.argmin(np.where(exited, b, np.inf), axis=0)
     else:
         chosen = np.argmax(np.where(exited, b, -np.inf), axis=0)
     some = exited.any(axis=0)
-    normals = np.empty_like(outs)
+    leaves = np.empty(len(outs), dtype=object)
+    parity = np.zeros(len(outs), dtype=int)
     if not some.all():
-        normals[~some] = np.atleast_2d(fallback(ins[~some], outs[~some]))
+        leaves[~some], parity[~some] = fallback(ins[~some], outs[~some])
     for k, domain in enumerate(domains):
         rows = some & (chosen == k)
         if rows.any():
-            normals[rows] = np.atleast_2d(domain.crossing_normal(ins[rows], outs[rows]))
-    return normals[0] if single else normals
+            leaves[rows], parity[rows] = domain.crossing_leaf(ins[rows], outs[rows])
+    return leaves, parity
 
 
 class UnionDomain(ImplicitDomain):
@@ -138,11 +140,13 @@ class UnionDomain(ImplicitDomain):
 
         return float(sd) if is_single and np.isscalar(sd) else sd
 
-    def crossing_normal(self, inside: NDArray[np.float64], outside: NDArray[np.float64]) -> NDArray[np.float64]:
-        """The normal of the component whose surface is crossed: one that holds ``inside`` and not ``outside``, by its
-        own phi's sign (the nearest of them at ``outside`` where several do), with that component's own normal
-        (#2698, #2706). See :meth:`ImplicitDomain.crossing_normal`."""
-        return _component_crossing_normal(self.domains, inside, outside, "nearest", super().crossing_normal)
+    def crossing_leaf(
+        self, inside: NDArray[np.float64], outside: NDArray[np.float64]
+    ) -> tuple[NDArray[np.object_], NDArray[np.int_]]:
+        """The leaf of the component whose surface is crossed: one that holds ``inside`` and not ``outside``, by its own
+        phi's sign, the nearest of them at ``outside`` where several do (#2698, #2706, #2707). See
+        :meth:`ImplicitDomain.crossing_leaf`."""
+        return _component_crossing_leaf(self.domains, inside, outside, "nearest", super().crossing_leaf)
 
     def get_bounding_box(self) -> NDArray[np.float64]:
         """
@@ -235,13 +239,14 @@ class IntersectionDomain(ImplicitDomain):
 
         return float(sd) if is_single and np.isscalar(sd) else sd
 
-    def crossing_normal(self, inside: NDArray[np.float64], outside: NDArray[np.float64]) -> NDArray[np.float64]:
-        """The normal of the component whose surface is crossed: one that holds ``inside`` and not ``outside``, by its
-        own phi's sign (the most outside of them at ``outside`` where several do), with that component's own normal.
-        A difference is this with the subtracted domain's complement, so an obstacle meeting the outer box gives the
-        obstacle's own normal even within the gradient's 1e-6 of the box (#2698, #2706). See
-        :meth:`ImplicitDomain.crossing_normal`."""
-        return _component_crossing_normal(self.domains, inside, outside, "most outside", super().crossing_normal)
+    def crossing_leaf(
+        self, inside: NDArray[np.float64], outside: NDArray[np.float64]
+    ) -> tuple[NDArray[np.object_], NDArray[np.int_]]:
+        """The leaf of the component whose surface is crossed: one that holds ``inside`` and not ``outside``, by its own
+        phi's sign, the most outside of them at ``outside`` where several do. A difference is this with the
+        subtracted domain's complement, so an obstacle meeting the outer box is its own leaf even within the
+        gradient's 1e-6 of the box (#2698, #2706, #2707). See :meth:`ImplicitDomain.crossing_leaf`."""
+        return _component_crossing_leaf(self.domains, inside, outside, "most outside", super().crossing_leaf)
 
     def get_bounding_box(self) -> NDArray[np.float64]:
         """
@@ -322,10 +327,13 @@ class ComplementDomain(ImplicitDomain):
         """
         return -self.domain.signed_distance(x)
 
-    def crossing_normal(self, inside: NDArray[np.float64], outside: NDArray[np.float64]) -> NDArray[np.float64]:
-        """The negated normal of the complemented domain, crossed the other way: its outside is this one's inside
-        (#2706). See :meth:`ImplicitDomain.crossing_normal`."""
-        return -self.domain.crossing_normal(outside, inside)
+    def crossing_leaf(
+        self, inside: NDArray[np.float64], outside: NDArray[np.float64]
+    ) -> tuple[NDArray[np.object_], NDArray[np.int_]]:
+        """The complemented domain's leaf, crossed the other way, one complement more: its outside is this one's
+        inside (#2706, #2707). See :meth:`ImplicitDomain.crossing_leaf`."""
+        leaves, parity = self.domain.crossing_leaf(outside, inside)
+        return leaves, parity + 1
 
     def get_bounding_box(self) -> NDArray[np.float64]:
         """

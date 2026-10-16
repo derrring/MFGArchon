@@ -270,8 +270,9 @@ class FPParticleSolver(BaseFPSolver):
 
         # The domain every step's particles must end in (#533, #2708): the problem's geometry when it is an
         # ImplicitDomain, else the implicit_domain= keyword (`_obstacle_domain`). When set, each step ends in
-        # `_finish_step`: the outer boundary condition, then the survivors outside the domain are placed by
-        # ImplicitDomain.project_to_interior with their positions before the step (#2679, #2688). The initial
+        # `_finish_step`: a step that meets the domain's boundary before the box's wall lands where
+        # ImplicitDomain.place_step places it, the outer boundary condition acts on the rest, and its reflected
+        # survivors are placed along their reflected paths (#2679, #2688, #2707). The initial
         # particles are drawn navigable, and what cannot be placed -- a periodic outer boundary, the GPU path, initial
         # mass inside an obstacle -- is refused.
         self._implicit_domain = self._obstacle_domain(implicit_domain)
@@ -1068,14 +1069,17 @@ class FPParticleSolver(BaseFPSolver):
         particles: np.ndarray,
         previous: np.ndarray,
         via: np.ndarray | None,
+        reflected: np.ndarray,
         report: dict[str, int],
     ) -> np.ndarray:
         """
         Place the reflected survivors of a step (#533, #2688, #2707), after the outer boundary condition has run
         (`_finish_step`).
 
-        A survivor the boundary condition reflected has a broken path, ``previous`` -> its wall hits ``via`` -> its
-        reflected position, and `ImplicitDomain.place_step` places it by that path. Every other survivor is already
+        A survivor the boundary condition reflected -- its raw step left the box -- has a broken path, ``previous`` ->
+        its wall hits ``via`` -> its reflected position, and `ImplicitDomain.place_step` places it by that path. A step
+        that starts on the wall has no hit inside the step, so its path is the chord, which is its reflected leg. Every
+        other survivor is already
         where it lands: its step stayed in the box, and the step's segment was searched before the boundary
         condition ran. ``previous`` is each survivor's position before the step, inside the domain by induction
         from t = 0. This step's counts go to ``obstacle_placement_history``.
@@ -1088,6 +1092,8 @@ class FPParticleSolver(BaseFPSolver):
             Their positions before the step, same shape
         via : np.ndarray or None
             Their wall hits, shape (M, k, dimension), rows of NaN unused (`reflection_waypoints`)
+        reflected : np.ndarray
+            Which of them the boundary condition reflected, shape (M,)
         report : dict
             This step's counts so far, updated in place and recorded
 
@@ -1099,13 +1105,11 @@ class FPParticleSolver(BaseFPSolver):
         if self._implicit_domain is None:
             return particles
         after: dict[str, int] = {}
-        if via is not None:
-            reflected = np.any(np.all(np.isfinite(via), axis=2), axis=1)
-            if reflected.any():
-                particles = particles.copy()
-                particles[reflected] = self._implicit_domain.place_step(
-                    previous[reflected], particles[reflected], via=via[reflected], report=after
-                )
+        if reflected.any():
+            particles = particles.copy()
+            particles[reflected] = self._implicit_domain.place_step(
+                previous[reflected], particles[reflected], via=None if via is None else via[reflected], report=after
+            )
         report["projected"] = after.get("projected", 0)
         report["face_of_entry"] = after.get("face_of_entry", 0)
         self.obstacle_placement_history.append(report)
@@ -1191,7 +1195,10 @@ class FPParticleSolver(BaseFPSolver):
         via = (
             None if self._implicit_domain is None else _reflection_waypoints(survivors_previous, survivors_raw, bounds)
         )
-        return self._project_obstacle_violations(recorded, survivors_previous, via, report), absorbed_mask, n_absorbed
+        lo, hi = (np.array([b[k] for b in bounds], dtype=float) for k in (0, 1))
+        reflected = np.any((survivors_raw < lo) | (survivors_raw > hi), axis=1)
+        placed_after = self._project_obstacle_violations(recorded, survivors_previous, via, reflected, report)
+        return placed_after, absorbed_mask, n_absorbed
 
     def _place_steps_that_meet_the_domain_first(
         self, raw: np.ndarray, previous: np.ndarray, bounds: list[tuple[float, float]], report: dict[str, int]
@@ -1281,8 +1288,9 @@ class FPParticleSolver(BaseFPSolver):
                 "the wrapped image of its step is #2704."
             )
         # The BC and the placement must each land inside the other's reach: two inclusions, which equal boxes give.
-        # (i) The BC's output is inside the grid's box, and the placement defers to the BC whatever lies outside the
-        # domain's bounding box, so grid box within domain box (#2706, review 1). (ii) The placement's output is
+        # (i) The BC acts at the grid's box and the domain's walls are its bounding box's: with grid box within domain
+        # box, the wall the BC reflects or absorbs at is a wall of the domain, and `_finish_step`'s cut at the grid's
+        # wall is a cut at the domain's (#2706, review 1; #2707). (ii) The placement's output is
         # navigable, so inside the domain's bounding box, and it must be inside the grid's box the BC has already
         # applied: domain box within grid box is enough for that, though not needed. Review 2's counter-case broke
         # (ii): the domain's box reached past the wall, and the projection put a particle on an obstacle's far face

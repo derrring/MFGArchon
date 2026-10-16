@@ -4,8 +4,9 @@
     as that domain too (#2708).
   - **One end of step.** The 1-D grid-drift, n-D grid-drift and callable-drift paths end each step in one place,
     `_finish_step`.
-    - The outer boundary condition runs on the raw step first: absorption at Dirichlet segments, then reflection.
-    - Then the survivors that ended outside the domain are placed, with their positions before the step.
+    - A step that meets the domain's boundary before the box's wall is placed where it met it (#2707). The outer
+      boundary condition runs on the other steps -- absorption at Dirichlet segments, then reflection -- and its
+      reflected survivors are placed along their reflected paths, with their positions before the step.
     - Before, the 1-D grid-drift path never placed them. The n-D paths placed them before the wall reflection,
       which put particles back inside an obstacle that meets the wall.
   - **The face of entry.** A particle that the projection onto the boundary does not place is now placed by the face
@@ -44,5 +45,3 @@
       box and the placement acts inside the domain's: where the grid's box reaches further, a particle between the
       two is placed by neither; where the domain's does, a particle can be placed beyond the reflecting wall;
     - an `implicit_domain` on the GPU path, whose particles never met the placement.
-  - **Known limitation,** which predates this change: a step that passes through an obstacle and ends past an
-    absorbing exit is absorbed before any placement (#2707).

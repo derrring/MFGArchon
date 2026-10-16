@@ -177,6 +177,10 @@ def test_the_placement_reads_each_survivors_own_previous_position():
 
 
 _BOX = Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]]))
+# Review 1's barrier: A and B meet at a concave corner beside C (#2732).
+_A = Hyperrectangle(np.array([[0.40, 0.70], [-0.1, 0.45]]))
+_B = Hyperrectangle(np.array([[0.40, 0.45], [0.40, 1.1]]))
+_C = Hyperrectangle(np.array([[0.55, 0.70], [0.44, 0.65]]))
 _FIRST_BOUNDARY = {
     # name: (domain, the absorbing wall or None, previous, raw, recorded or None if absorbed)
     "a convex arc crossed: the projection, which the path reaches": (
@@ -250,6 +254,48 @@ _FIRST_BOUNDARY = {
         [1.5, 0.5],
         None,
     ),
+    "an obstacle crossing an absorbing wall, entered by its inner face, the end beyond the wall: that face": (
+        _DOMAIN[2],
+        "x_max",
+        [0.85, 0.75],
+        [1.2, 0.84],
+        [0.9 - 1e-10, 0.84],
+    ),
+    "an obstacle flush with the wall x = 0, the end beyond the wall: the face entered, not the wall": (
+        DifferenceDomain(_BOX, Hyperrectangle(np.array([[0.0, 0.1], [0.2, 0.8]]))),
+        None,
+        [0.12, 0.5],
+        [-0.03, 0.5],
+        [0.1 + 1e-10, 0.5],
+    ),
+    "a union's concave corner, components A, B, C: the face entered": (
+        DifferenceDomain(_BOX, UnionDomain([_A, _B, _C])),
+        None,
+        [0.35, 0.40],
+        [0.56, 0.447],
+        [0.4 - 1e-10, 0.447],
+    ),
+    "a union's concave corner, components C, A, B: the face entered": (
+        DifferenceDomain(_BOX, UnionDomain([_C, _A, _B])),
+        None,
+        [0.35, 0.40],
+        [0.56, 0.447],
+        [0.4 - 1e-10, 0.447],
+    ),
+    "a reflected step that starts on the wall, into an obstacle: the face its reflected leg entered": (
+        DifferenceDomain(_BOX, Hyperrectangle(np.array([[0.05, 0.15], [0.2, 0.8]]))),
+        None,
+        [0.0, 0.5],
+        [-0.13, 0.52],
+        [0.05 - 1e-10, 0.52],
+    ),
+    "a reflected leg clipping the corner of an obstacle flush with the next wall: the face it clipped": (
+        DifferenceDomain(_BOX, Hyperrectangle(np.array([[0.5, 0.8], [0.9, 1.0]]))),
+        None,
+        [0.97, 0.75],
+        [1.22355, 1.025],
+        [0.8 + 1e-10, 0.975],
+    ),
     "the wall first, then a reflected leg past an obstacle's middle: the near face": (
         DifferenceDomain(_BOX, Hyperrectangle(np.array([[0.85, 0.95], [0.2, 0.8]]))),
         None,
@@ -268,6 +314,67 @@ _FIRST_BOUNDARY = {
         [(0.1, 0.7), (-0.3, 1.9)],
     ),
 }
+
+
+_ARMS = DifferenceDomain(
+    _BOX,
+    UnionDomain(
+        [
+            Hyperrectangle(np.array([[0.8, 1.05], [0.2, 0.45]])),
+            Hyperrectangle(np.array([[0.9, 1.05], [0.45, 0.9]])),
+            Hyperrectangle(np.array([[0.3, 0.32], [0.1, 0.9]])),
+        ]
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case", ["toward the seam", "beyond the wall at the seam"], ids=["toward the seam", "beyond the wall at the seam"]
+)
+def test_a_step_into_two_touching_components_lands_at_their_concave_corner(case):
+    """#2732 review 1: the arms [0.8, 1.05] x [0.2, 0.45] and [0.9, 1.05] x [0.45, 0.9] touch along y = 0.45, where
+    the union's phi is 0 inside the closed obstacle. Each step enters the lower arm and lands at the arms' concave
+    corner (0.9, 0.45), to the 1e-10 of each face, with a blended normal at the upper arm's own corner (#2698):
+    - toward the seam: the projection stayed on the seam, where phi's gradient is 0, and read as placed. A degenerate
+      normal now counts as not placed;
+    - beyond the wall at the seam: the projection is the wall's point of the seam, (1 - 1e-10, 0.45), phi = 0, which
+      the normals' test alone kept. The end is outside the arm the path entered, so rule (a) refuses it."""
+    previous, end = {
+        "toward the seam": ([0.7828459091496743, 0.5135627060726424], [0.9249879579933417, 0.39948193165556767]),
+        "beyond the wall at the seam": (
+            [0.8153611900522864, 0.45842686791332643],
+            [1.1074949068892654, 0.41584568028921276],
+        ),
+    }[case]
+    landed = _ARMS.place_step(np.array([previous]), np.array([end]))
+    np.testing.assert_allclose(landed, [[0.9, 0.45]], rtol=0, atol=1e-9)
+    assert float(np.atleast_1d(_ARMS.signed_distance(landed))[0]) < 0, landed
+
+
+def test_a_step_through_a_lens_lands_by_the_disc_it_entered():
+    """#2732 review 1: a step enters the lens of the discs centred (0.55, 0.5) and (0.4, 0.5), radius 0.1, through
+    the right disc and ends in the left one. The end's projection is on the left disc's far side, which the normals'
+    test alone kept; the end is outside the disc the path entered, so rule (a) refuses it, and the face map places it
+    on the tangent half-space at the entry, in closed form: the end minus its depth past that plane along the plane's
+    normal, then 1e-10 out."""
+    centre, radius = np.array([0.55, 0.5]), 0.1
+    lens = DifferenceDomain(
+        _BOX,
+        UnionDomain([Hypersphere(center=np.array([0.4, 0.5]), radius=0.1), Hypersphere(center=centre, radius=radius)]),
+    )
+    previous = np.array([0.7592528057332772, 0.39503817891560256])
+    end = np.array([0.3695070973761362, 0.4293527663288494])
+    direction = end - previous
+    # The entry: the segment's first point at distance r from the right disc's centre.
+    a, b, c = (
+        direction @ direction,
+        2 * direction @ (previous - centre),
+        (previous - centre) @ (previous - centre) - radius**2,
+    )
+    entry = previous + (-b - np.sqrt(b * b - 4 * a * c)) / (2 * a) * direction
+    inward = (centre - entry) / radius  # the domain's outward normal there points into the disc
+    expected = end - ((end - entry) @ inward + 1e-10) * inward
+    np.testing.assert_allclose(lens.place_step(previous[None, :], end[None, :]), [expected], rtol=0, atol=1e-9)
 
 
 @pytest.mark.parametrize("case", list(_FIRST_BOUNDARY))
@@ -297,6 +404,19 @@ def test_the_first_boundary_a_step_meets_decides(case):
       samples x = 0.906 and 0.9375 and passes the slab [0.92, 0.935] over (#2710), so the step reaches the wall and
       is absorbed. The solver's search and `place_step`'s are one: a search of the segment cut at the wall alone
       (step 0.5 / 32) saw the slab, and `place_step`, which did not, placed the step at the wall, unabsorbed.
+    - Review 1 of #2732, three far-side landings the first version of the rule kept, each now on the face entered:
+      - an obstacle crossing the absorbing wall x = 1, entered through its left face, the end beyond the wall: the end
+        was outside the domain all the way, through the obstacle and past the wall, and the wall's normal agreed with
+        the face's, so it landed at the wall, unabsorbed. The rule now reads the leaf the path entered, the obstacle,
+        and the end is outside it;
+      - an obstacle flush with x = 0, where phi's central difference at the seam is exactly 0: the projection stayed
+        on the wall;
+      - a union's concave corner, where the corner owner's tie between A and C went to the first listed: the rule
+        reads the entered leaf's own normal, in either order.
+    - A reflected step that starts exactly on the wall x = 0: its reflected leg is its chord, and it is placed though
+      the wall hit at its start lies outside the step.
+    - A reflected leg that clips the corner of an obstacle flush with the top wall just before it hits that wall: the
+      clip is shorter than the leg's scan step, and only the sample 1e-9 of the leg before its end sees it (#2706).
     - The wall first: the step hits x = 1 and its reflected leg ends at 0.88, past the middle 0.9 of [0.85, 0.95]; the
       projection is on the far face 0.85, whose normal is opposite the entry's, so the face the leg entered, 0.95,
       places it.
