@@ -34,9 +34,12 @@ D = 0.7  # nontrivial diffusion: confirms every Nitsche term scales with D
 
 
 def _dirichlet_bc(values: dict[str, float], dim: int = 1) -> BoundaryConditions:
+    """Dirichlet on the named faces; the rest take the natural condition, as no-flux (#2490: a face no segment and
+    no default governs is refused)."""
     return BoundaryConditions(
         segments=[BCSegment(name=face, bc_type=BCType.DIRICHLET, value=v, boundary=face) for face, v in values.items()],
         dimension=dim,
+        default_bc=BCType.NO_FLUX,
     )
 
 

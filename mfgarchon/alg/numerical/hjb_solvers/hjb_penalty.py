@@ -1,29 +1,25 @@
 """
-Penalty method for variational inequality HJB (optimal stopping / entry-exit).
+Retired penalty wrapper for the obstacle problem v >= Psi(x) (#2002).
 
-Solves: min(-du/dt + H(x, m, Du), v - Psi(x)) = 0
+`PenaltyHJBSolver` raises `NotImplementedError` on construction; the message there gives the
+reason and the alternative. It was written (#924) to approximate the variational inequality
 
-via penalization: -du/dt + H(x, m, Du) + (1/eps) * max(0, Psi(x) - v) = 0
+    min(-dv/dt + H(x, m, Dv), v - Psi(x)) = 0
 
-This is a **wrapper** that decorates any BaseHJBSolver. The penalty term is
-injected via the source_term parameter (#921), so the inner solver doesn't
-need any modification. Any HJB solver (FDM, SL, GFDM, FEM) gains VI
-capability instantly.
+by the penalized equation
 
-Issue #924: Part of Layer 1 (Generalized PDE & Institutional MFG Plan).
+    -dv/dt + H(x, m, Dv) - (1/eps) * max(0, Psi(x) - v) = 0,
 
-Mathematical background:
-    The variational inequality arises in MFG with optimal stopping
-    (entry/exit dynamics). Agents can choose to exit the game when their
-    value function hits the obstacle Psi(x) (e.g., zero scrap value).
+whose penalty raises v where it falls below Psi, injected through the inner solver's
+`source_term`. That channel is `(t, x) -> array` and cannot carry v, so the term the wrapper
+applied was `penalty_parameter * max(0, Psi(x))`, the same where the constraint holds and where it
+fails. The obstacle route that runs is
+`HJBFDMSolver(problem, constraint=ObstacleConstraint(psi, 'lower'))` (#591), with `psi` the
+obstacle sampled on the grid: a projection after each time step, with its limits in #2036 and #2046.
 
-    The penalty method approximates the VI by adding a large penalty
-    (1/eps) * max(0, Psi - v) to the HJB equation. As eps -> 0, the
-    penalized solution converges to the VI solution.
-
-    For MFG entry/exit models (Institutional Proposal Project A):
-    - Psi(x) = 0 (exit value) with smooth pasting at the free boundary
-    - The free boundary x*(t) separates active from exited firms
+`v >= Psi` bounds the cost-to-go from below. The library minimises (`docs/user/CONVENTIONS.md`
+§1), so optimal stopping at a stopping cost Psi is the upper obstacle `v <= Psi`,
+`ObstacleConstraint(psi, 'upper')`, not this one.
 
 References:
     - Bensoussan & Lions (1982), "Applications of Variational Inequalities
@@ -49,34 +45,20 @@ if TYPE_CHECKING:
 
 
 class PenaltyHJBSolver(BaseHJBSolver):
-    """Wrapper that adds variational inequality constraint to any HJB solver.
+    """Retired (#2002): construction raises `NotImplementedError`; see the module docstring.
 
-    Enforces v >= Psi(x)
-    via a penalty term added to the source_term of the inner solver.
+    It was written to enforce v >= Psi(x) by adding a penalty to the inner solver's
+    `source_term`, which cannot carry v.
 
     Parameters
     ----------
     inner_solver : BaseHJBSolver
-        The HJB solver to wrap. Can be any concrete solver (FDM, SL, GFDM, etc.)
+        The HJB solver it would have wrapped.
     obstacle : Callable[[NDArray], NDArray]
         Obstacle function Psi(x). Receives spatial grid (N, d) or (N,),
         returns array of obstacle values (N,).
     penalty_parameter : float
-        Penalty strength 1/eps. Larger values give sharper enforcement
-        but may cause numerical stiffness. Default: 1e4.
-        Typical range: 1e3 (soft) to 1e6 (hard).
-
-    Example
-    -------
-    >>> from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
-    >>> inner = HJBFDMSolver(problem)
-    >>> # Entry-exit: firms exit when value drops to zero
-    >>> penalty_solver = PenaltyHJBSolver(
-    ...     inner_solver=inner,
-    ...     obstacle=lambda x: np.zeros(x.shape[0]),  # Psi = 0
-    ...     penalty_parameter=1e4,
-    ... )
-    >>> U = penalty_solver.solve_hjb_system(M, U_T, U_prev)
+        Penalty strength 1/eps. Default: 1e4.
     """
 
     # Inherit scheme family from inner solver
@@ -111,8 +93,8 @@ class PenaltyHJBSolver(BaseHJBSolver):
             "If your obstacle is a state penalty V(x) rather than a constraint -- alpha-free and "
             "u-free -- it belongs in the Hamiltonian's potential (#1999, #2001), not here."
         )
-        # Unreachable. Left in place so the retirement is a one-line revert if #2002 decides the
-        # wrapper should return with a `(t, x, v)` channel behind it.
+        # Unreachable. Left in place so that a return behind a `(t, x, v)` channel is a one-line
+        # revert.
         super().__init__(inner_solver.problem, getattr(inner_solver, "config", None))
         self._inner = inner_solver
         self._obstacle = obstacle
@@ -125,7 +107,7 @@ class PenaltyHJBSolver(BaseHJBSolver):
         return self._inner._get_solver_type_id()
 
     def solve(self) -> NDArray:
-        """Solve standalone (delegates to inner solver with penalty)."""
+        """Unreachable (construction raises). It returned the inner solver's `solve()`, with no penalty."""
         return self._inner.solve()
 
     @retired_volatility_keywords
@@ -138,7 +120,7 @@ class PenaltyHJBSolver(BaseHJBSolver):
         source_term: Callable | None = None,
         volatility_kind: str | None = None,
     ) -> NDArray:
-        """Solve HJB with obstacle constraint via penalty method.
+        """Unreachable (construction raises). It passed the inner solver a position-only source.
 
         .. warning::
 
@@ -161,7 +143,7 @@ class PenaltyHJBSolver(BaseHJBSolver):
            say. Since #2036 it is applied after each time step in 1-D and nD alike, so the
            obstacle feeds back through the sweep, and a terminal condition outside the set is
            refused. It is a projection splitting, not a solve of the discrete variational
-           inequality (#2046). Prefer it over this term while #2002 is open.
+           inequality (#2046). It is the route that runs; this method is unreachable.
         """
         penalty_param = self._penalty
         obstacle_fn = self._obstacle
@@ -170,23 +152,10 @@ class PenaltyHJBSolver(BaseHJBSolver):
             # Start with existing source term if any
             base = evaluate_solver_source(source_term, t=t, x=x) if source_term is not None else np.zeros(x.shape[0])
 
-            # Penalty: (1/eps) * max(0, Psi(x) - v)
-            # Note: We evaluate Psi at x but don't have v here.
-            # The penalty is based on the obstacle value only.
-            # For the full v-dependent penalty, the inner solver's
-            # time-stepping loop handles it (source_term is evaluated
-            # at each time step with the current v).
-            #
-            # This works because the HJB solver subtracts source_term
-            # from the residual: F(u) = (u-u_next)/dt + H - S = 0
-            # With S = (1/eps)*max(0, Psi-u), we get:
-            #   F(u) = (u-u_next)/dt + H - (1/eps)*max(0, Psi-u) = 0
-            # When u < Psi, the penalty term pushes u upward.
-            #
-            # However: the source_term signature is (t, x) -> array,
-            # not (t, x, v) -> array. The v-dependent penalty must be
-            # handled at the time-stepping level inside the solver.
-            # For now, we apply a static obstacle penalty.
+            # The intended penalty, (1/eps) * max(0, Psi - v), cannot be formed here: this callable
+            # receives (t, x) and never v, and the inner solver evaluates it as a source at each time
+            # step without the current iterate. The comment that stood here said the time stepping
+            # supplied v; that is withdrawn.
             #
             # #2002: `max(0, psi)` PENALISES POSITION, NOT VIOLATION. It contains no `v`, so it is
             # positive wherever psi > 0 whether or not `v >= Psi` holds -- verified, unchanged at
@@ -211,72 +180,9 @@ class PenaltyHJBSolver(BaseHJBSolver):
 
     @property
     def free_boundary_estimate(self) -> NDArray | None:
-        """Estimate free boundary location after solve.
-
-        Returns spatial points where v approximately equals Psi,
-        i.e., the boundary between the continuation and stopping regions.
-
-        Returns None if no solution is available.
-        """
-        # This would need access to the last solution and obstacle values.
-        # Placeholder for future implementation.
+        """Unreachable (construction raises). It always returned None: no estimate was implemented."""
         return None
 
     def validate_solution(self) -> dict[str, Any]:
         """Delegate validation to inner solver."""
         return self._inner.validate_solution()
-
-
-if __name__ == "__main__":
-    """Quick smoke test for PenaltyHJBSolver."""
-    from mfgarchon import MFGProblem
-    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
-    from mfgarchon.geometry import TensorProductGrid
-    from mfgarchon.geometry.boundary import no_flux_bc
-
-    print("Testing PenaltyHJBSolver...")
-
-    from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
-    from mfgarchon.core.mfg_components import MFGComponents
-
-    # Simple 1D problem with Hamiltonian and terminal condition
-    H = SeparableHamiltonian(
-        control_cost=QuadraticControlCost(control_cost=1.0),
-        coupling=lambda m: m**2,
-    )
-    components = MFGComponents(
-        hamiltonian=H,
-        u_terminal=lambda x: 0.0,
-        m_initial=lambda x: 1.0,
-    )
-    geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[51], boundary_conditions=no_flux_bc(dimension=1))
-    problem = MFGProblem(geometry=geometry, T=1.0, Nt=20, volatility=0.3, components=components)
-    inner = HJBFDMSolver(problem)
-
-    # Obstacle: Psi(x) = 0.5 * sin(pi * x) — agents must stay above this
-    def obstacle(x: np.ndarray) -> np.ndarray:
-        return 0.5 * np.sin(np.pi * np.atleast_1d(x).ravel())
-
-    solver = PenaltyHJBSolver(inner, obstacle=obstacle, penalty_parameter=1e4)
-
-    # Solve — use problem's own initial/terminal conditions
-    Nt = problem.Nt
-    grid_shape = problem.geometry.get_grid_shape()
-    Nx = grid_shape[0]
-    M = np.ones((Nt + 1, Nx)) / Nx
-    U_T = problem.get_final_u()
-    U_prev = np.zeros((Nt + 1, Nx))
-
-    U = solver.solve_hjb_system(M, U_T, U_prev)
-
-    # Check obstacle constraint
-    x_grid = problem.geometry.get_spatial_grid().ravel()
-    psi = obstacle(x_grid)
-    violation = np.min(U[-1] - psi)
-    print(f"  Min(v - Psi) at t=0: {violation:.4f} (should be >= 0 or near 0)")
-    print(f"  Solution shape: {U.shape}")
-    print(f"  Solution range: [{U.min():.4f}, {U.max():.4f}]")
-
-    assert U.shape[0] == Nt + 1, f"Time dimension mismatch: {U.shape}"
-    assert np.all(np.isfinite(U)), "Non-finite values in solution"
-    print("Smoke test passed!")

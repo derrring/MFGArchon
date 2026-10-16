@@ -46,7 +46,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d, quadrature_weights_nd
+from mfgarchon.utils.numerical.quadrature import integrate_on_weights, quadrature_weights_1d, quadrature_weights_nd
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -265,19 +265,30 @@ class FluxDiagnostics:
 
             return np.stack(alpha_components, axis=-1)
 
-    def _axis_weights(self, axis: int, n: int) -> NDArray:
-        """The control volume each node owns along ``axis``, from the one owner (#2145).
+    def _axis_coordinates(self, axis: int, n: int) -> NDArray:
+        """The ``n`` node coordinates along ``axis``, which both weight readers below take.
 
         This class holds a spacing and no grid, so the coordinates are rebuilt -- exact for the
         uniform spacing it is constructed with, and the weights depend only on differences, so the
-        origin does not matter. It calls ``quadrature_weights_1d`` rather than writing the formula
-        again: a second derivation is what #2145 found in 169 places.
+        origin does not matter.
+        """
+        return np.arange(n, dtype=float) * float(self.spacing[axis])
+
+    def _axis_weights(self, axis: int, n: int) -> NDArray:
+        """The control volume each node owns along ``axis``, from the one owner (#2145).
+
+        It calls ``quadrature_weights_1d`` rather than writing the formula again: a second
+        derivation is what #2145 found in 169 places.
 
         ``sum(f) * dx`` is NOT this, and the difference is not a rounding detail: it gives the two
         end nodes a full cell each and over-counts by ``dx*(f[0]+f[-1])/2``. On a boundary face that
         is the same error one dimension down, which is why the face integrals below use it too.
         """
-        return quadrature_weights_1d(np.arange(n, dtype=float) * float(self.spacing[axis]))
+        return quadrature_weights_1d(self._axis_coordinates(axis, n))
+
+    def _node_weights(self, shape: tuple[int, ...]) -> NDArray:
+        """The control volume each node owns, from the one owner (#2145, #1642)."""
+        return quadrature_weights_nd([self._axis_coordinates(k, n) for k, n in enumerate(shape)])
 
     def _compute_flux_1d(
         self,
@@ -296,7 +307,7 @@ class FluxDiagnostics:
         dx = self.spacing[0]
 
         # Total mass, on the grid's own measure (#2145)
-        total_mass = float(np.dot(np.asarray(m, dtype=float), self._axis_weights(0, m.shape[0])))
+        total_mass = float(integrate_on_weights(m, self._axis_weights(0, m.shape[0])))
 
         # Diffusion coefficient handling
         D_left = D if np.isscalar(D) else D[0]
@@ -358,7 +369,7 @@ class FluxDiagnostics:
         # weights, so a corner owns (h_x/2)(h_y/2) rather than a full cell.
         w_x = self._axis_weights(0, m.shape[0])
         w_y = self._axis_weights(1, m.shape[1])
-        total_mass = float(np.einsum("ij,i,j->", np.asarray(m, dtype=float), w_x, w_y))
+        total_mass = float(integrate_on_weights(m, self._node_weights(m.shape)))
 
         # Handle velocity field shape
         if alpha.ndim == 2:
@@ -381,37 +392,37 @@ class FluxDiagnostics:
         dm_dx_left = (m[1, :] - m[0, :]) / dx
         adv_left = -alpha_x[0, :] * m[0, :]  # -α_x because normal is -x
         diff_left = D_val * dm_dx_left  # D*∂m/∂x, outward is -x so sign flips
-        J_left = float(np.dot(adv_left + diff_left, w_y))
+        J_left = float(integrate_on_weights(adv_left + diff_left, w_y))
         boundary_fluxes["left"] = J_left
-        total_advection += float(np.dot(adv_left, w_y))
-        total_diffusion += float(np.dot(diff_left, w_y))
+        total_advection += float(integrate_on_weights(adv_left, w_y))
+        total_diffusion += float(integrate_on_weights(diff_left, w_y))
 
         # Right boundary (x=L): outward normal = (+1, 0)
         dm_dx_right = (m[-1, :] - m[-2, :]) / dx
         adv_right = alpha_x[-1, :] * m[-1, :]
         diff_right = -D_val * dm_dx_right
-        J_right = float(np.dot(adv_right + diff_right, w_y))
+        J_right = float(integrate_on_weights(adv_right + diff_right, w_y))
         boundary_fluxes["right"] = J_right
-        total_advection += float(np.dot(adv_right, w_y))
-        total_diffusion += float(np.dot(diff_right, w_y))
+        total_advection += float(integrate_on_weights(adv_right, w_y))
+        total_diffusion += float(integrate_on_weights(diff_right, w_y))
 
         # Bottom boundary (y=0): outward normal = (0, -1)
         dm_dy_bottom = (m[:, 1] - m[:, 0]) / dy
         adv_bottom = -alpha_y[:, 0] * m[:, 0]
         diff_bottom = D_val * dm_dy_bottom
-        J_bottom = float(np.dot(adv_bottom + diff_bottom, w_x))
+        J_bottom = float(integrate_on_weights(adv_bottom + diff_bottom, w_x))
         boundary_fluxes["bottom"] = J_bottom
-        total_advection += float(np.dot(adv_bottom, w_x))
-        total_diffusion += float(np.dot(diff_bottom, w_x))
+        total_advection += float(integrate_on_weights(adv_bottom, w_x))
+        total_diffusion += float(integrate_on_weights(diff_bottom, w_x))
 
         # Top boundary (y=L): outward normal = (0, +1)
         dm_dy_top = (m[:, -1] - m[:, -2]) / dy
         adv_top = alpha_y[:, -1] * m[:, -1]
         diff_top = -D_val * dm_dy_top
-        J_top = float(np.dot(adv_top + diff_top, w_x))
+        J_top = float(integrate_on_weights(adv_top + diff_top, w_x))
         boundary_fluxes["top"] = J_top
-        total_advection += float(np.dot(adv_top, w_x))
-        total_diffusion += float(np.dot(diff_top, w_x))
+        total_advection += float(integrate_on_weights(adv_top, w_x))
+        total_diffusion += float(integrate_on_weights(diff_top, w_x))
 
         # Net flux (sum of all boundary fluxes, all pointing outward)
         net_flux = sum(boundary_fluxes.values())
@@ -688,8 +699,7 @@ def compute_mass_conservation_error(
     coordinates = [np.arange(n, dtype=float) * float(h) for n, h in zip(spatial_shape, spacing, strict=True)]
     weights = quadrature_weights_nd(coordinates)
 
-    spatial_axes = tuple(range(1, M.ndim))  # (1,) for 1D, (1, 2) for 2D, etc.
-    mass_history = np.sum(M * weights, axis=spatial_axes)
+    mass_history = integrate_on_weights(M, weights, "the grid")
 
     initial_mass = mass_history[0]
     final_mass = mass_history[-1]

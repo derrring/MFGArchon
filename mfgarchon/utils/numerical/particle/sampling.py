@@ -1145,6 +1145,7 @@ def sample_from_density(
     num_samples: int,
     jitter: bool = True,
     seed: int | None = None,
+    navigable: Callable[[NDArray], NDArray | bool] | None = None,
 ) -> NDArray:
     """
     Sample particle positions from a density field on a regular grid.
@@ -1171,6 +1172,21 @@ def sample_from_density(
         If False, return exact grid cell centers.
     seed : int or None, default=None
         Random seed for reproducibility.
+    navigable : callable or None, default=None
+        ``navigable(points)``, for points of shape (n, d), is a boolean array saying where a particle may be --
+        ``ImplicitDomain.contains`` for a domain with obstacles. When given, every returned particle is navigable
+        (#2688):
+
+        - A jitter that lands where ``navigable`` is False is redrawn within the same cell, so the cell's mass
+          goes to its navigable part. Nothing is clipped or dropped.
+        - The cells carrying mass with no navigable point on a 5-per-axis probe lattice hold mass inside an
+          obstacle, which moving would change the caller's measure. Their share of the mass, over every cell
+          that carries any, goes to `mass_fabrication_gate.leave_out_or_raise`: above its threshold the sample is
+          refused, naming the share; at or below it those cells are left out (#2706).
+        - The uniform fallbacks, for a zero density or degenerate probabilities, redraw the same way over the
+          bounding box.
+
+        Requires ``jitter=True``.
 
     Returns
     -------
@@ -1201,6 +1217,11 @@ def sample_from_density(
     - Sub-grid jitter prevents aliasing artifacts in visualization and improves
       the smoothness of subsequent KDE density estimation.
     """
+    if navigable is not None and not jitter:
+        raise ValueError(
+            "sample_from_density: navigable= needs jitter=True. A particle is moved off an obstacle by redrawing "
+            "its jitter within its cell, and with jitter=False every particle sits on its grid node."
+        )
     rng = np.random.RandomState(seed)
     dimension = len(coordinates)
     grid_shape = tuple(len(c) for c in coordinates)
@@ -1217,9 +1238,18 @@ def sample_from_density(
         # Uniform fallback if density is zero
         bounds = np.array([[c[0], c[-1]] for c in coordinates])  # shape: (d, 2)
         particles = rng.uniform(bounds[:, 0], bounds[:, 1], size=(num_samples, dimension))
+        if navigable is not None:
+            _redraw_until_navigable(
+                particles,
+                lambda idx: rng.uniform(bounds[:, 0], bounds[:, 1], size=(len(idx), dimension)),
+                navigable,
+                "the bounding box (the density is zero, so the sample is uniform)",
+            )
         return particles
 
     probs = density_flat / total_mass
+    if navigable is not None:
+        probs = _leave_out_cells_with_no_navigable_point(probs, coordinates, navigable)
 
     # Sample flat indices according to probability
     try:
@@ -1228,6 +1258,13 @@ def sample_from_density(
         # Fallback to uniform if probability is degenerate
         bounds = np.array([[c[0], c[-1]] for c in coordinates])
         particles = rng.uniform(bounds[:, 0], bounds[:, 1], size=(num_samples, dimension))
+        if navigable is not None:
+            _redraw_until_navigable(
+                particles,
+                lambda idx: rng.uniform(bounds[:, 0], bounds[:, 1], size=(len(idx), dimension)),
+                navigable,
+                "the bounding box (the probabilities are degenerate, so the sample is uniform)",
+            )
         return particles
 
     # Convert flat indices to multi-indices
@@ -1239,10 +1276,93 @@ def sample_from_density(
     # Add sub-grid jitter for smoothness
     if jitter:
         spacings = np.array([c[1] - c[0] if len(c) > 1 else 0.0 for c in coordinates])
+        nodes = particles.copy()
         jitter_offsets = rng.uniform(-0.5, 0.5, size=(num_samples, dimension)) * spacings
         particles += jitter_offsets
+        if navigable is not None:
+            _redraw_until_navigable(
+                particles,
+                lambda idx: nodes[idx] + rng.uniform(-0.5, 0.5, size=(len(idx), dimension)) * spacings,
+                navigable,
+                "its cell",
+            )
 
     return particles
+
+
+_PROBES_PER_AXIS = 5
+_MAX_REDRAW_ROUNDS = 1000
+
+
+def _leave_out_cells_with_no_navigable_point(
+    probs: NDArray, coordinates: list[NDArray], navigable: Callable[[NDArray], NDArray | bool]
+) -> NDArray:
+    """The cell probabilities with the cells that hold no navigable point left out, or a refusal (#2688, #2706).
+
+    A cell carrying mass whose probe lattice -- 5 points per axis, the node among them -- has no navigable point holds
+    mass outside the navigable set, which no redraw within the cell can place. Its share of the mass, over every cell that
+    carries any, goes to `mass_fabrication_gate.leave_out_or_raise`, the owner of how much a library may leave out:
+    above its threshold the sample is refused, naming the share; at or below it those cells are left out and the
+    rest renormalised. Only cells whose node is not navigable are probed.
+    """
+    from mfgarchon.utils.numerical.mass_fabrication_gate import leave_out_or_raise
+
+    dimension = len(coordinates)
+    grid_shape = tuple(len(c) for c in coordinates)
+    carrying = np.flatnonzero(probs > 0)
+    multi = np.unravel_index(carrying, grid_shape)
+    nodes = np.column_stack([coordinates[d][multi[d]] for d in range(dimension)])
+    suspect = ~np.atleast_1d(np.asarray(navigable(nodes), dtype=bool))
+    if not suspect.any():
+        return probs
+    spacings = np.array([c[1] - c[0] if len(c) > 1 else 0.0 for c in coordinates])
+    ticks = (np.arange(_PROBES_PER_AXIS) + 0.5) / _PROBES_PER_AXIS - 0.5
+    offsets = np.stack(np.meshgrid(*([ticks] * dimension), indexing="ij"), axis=-1).reshape(-1, dimension) * spacings
+    centres = nodes[suspect]
+    probes = (centres[:, None, :] + offsets[None, :, :]).reshape(-1, dimension)
+    blocked_here = ~np.asarray(navigable(probes), dtype=bool).reshape(len(centres), len(offsets)).any(axis=1)
+    if not blocked_here.any():
+        return probs
+    blocked = np.zeros(probs.shape, dtype=bool)
+    blocked[carrying[np.flatnonzero(suspect)[blocked_here]]] = True
+    return leave_out_or_raise(
+        probs,
+        blocked,
+        context="sample_from_density",
+        why=(
+            f"{int(blocked.sum())} cell(s) carrying mass have no navigable point on a {_PROBES_PER_AXIS}-per-axis "
+            f"lattice -- the first centred at {centres[blocked_here][0]}: that mass is outside the navigable set "
+            "(inside an obstacle, or beyond the domain's outer boundary), and no "
+            "redraw within its cell can place it. It is not moved elsewhere, since that would change the measure the "
+            "caller gave."
+        ),
+        remedy=(
+            "Set the density to zero at the nodes outside the navigable set: density * "
+            "navigable(nodes).reshape(density.shape), with nodes = np.stack(np.meshgrid(*coordinates, "
+            'indexing="ij"), axis=-1).reshape(-1, len(coordinates)).'
+        ),
+    )
+
+
+def _redraw_until_navigable(
+    particles: NDArray,
+    redraw: Callable[[NDArray], NDArray],
+    navigable: Callable[[NDArray], NDArray | bool],
+    within: str,
+) -> None:
+    """Redraw, in place, the particles where ``navigable`` is False, until none is (#2688)."""
+    pending = np.flatnonzero(~np.asarray(navigable(particles), dtype=bool))
+    for _ in range(_MAX_REDRAW_ROUNDS):
+        if pending.size == 0:
+            return
+        particles[pending] = redraw(pending)
+        pending = pending[~np.asarray(navigable(particles[pending]), dtype=bool)]
+    if pending.size:
+        raise ValueError(
+            f"sample_from_density: {pending.size} particle(s) found no navigable position within {within} in "
+            f"{_MAX_REDRAW_ROUNDS} redraws -- the first at {particles[pending[0]]}. The navigable part there is too "
+            "small to sample by rejection (#2688)."
+        )
 
 
 # =============================================================================

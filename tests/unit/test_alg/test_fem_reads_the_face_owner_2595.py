@@ -411,6 +411,24 @@ def test_a_node_a_higher_priority_natural_segment_shares_is_left_free_and_a_blen
         refuse_what_fem_cannot_impose(basis, averaged, "test")
 
 
+def test_a_node_only_natural_segments_share_needs_no_choice_under_a_blending_strategy():
+    """FEM imposes a natural condition on facets, not nodes, so the owner is asked to choose a node only where a
+    DIRICHLET segment shares it. A NEUMANN(1) x_min meeting the NO_FLUX default at (0, 0) under
+    ``corner_strategy="average"`` assembles the same load, bit for bit, as under the default "priority"; it was refused
+    (#2490 B1c-2; B1b's review 1, S1)."""
+    from mfgarchon.alg.numerical.fem.bc_adapter import assemble_robin_terms, refuse_what_fem_cannot_impose
+
+    load = BCSegment(name="load", bc_type=BCType.NEUMANN, value=1.0, boundary="x_min")
+    basis = _square_basis()
+    averaged = BoundaryConditions(dimension=2, segments=[load], default_bc=BCType.NO_FLUX, corner_strategy="average")
+    refuse_what_fem_cannot_impose(basis, averaged, "test")
+    _, r_avg = assemble_robin_terms(basis, averaged, 0.1, natural_bc="gradient")
+    _, r_pri = assemble_robin_terms(
+        basis, BoundaryConditions(dimension=2, segments=[load], default_bc=BCType.NO_FLUX), 0.1, natural_bc="gradient"
+    )
+    np.testing.assert_array_equal(r_avg, r_pri)
+
+
 def test_the_whole_boundary_verdict_reads_the_default():
     """`is_pure_neumann` read the segment types and never ``default_bc``: a BC whose only Dirichlet is the default was
     "pure Neumann", so the weak-form solvers skipped condensation. It reads the owner's answer per facet now."""

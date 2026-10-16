@@ -154,12 +154,9 @@ def _timed_readers():
         default_value=g,
     )
     dirichlet_default = BoundaryConditions(dimension=1, segments=[], default_bc=BCType.DIRICHLET, default_value=g)
-    robin_default = BoundaryConditions(
-        dimension=1,
-        segments=[face(0.0, "r", BCType.ROBIN, "x_max", alpha=1.0, beta=0.0)],
-        default_bc=BCType.ROBIN,
-        default_value=g,
-    )
+    # The meshfree and implicit applicators impose one condition everywhere and refuse a BC with none (#2490 B1c-2),
+    # so their rows read a uniform segment and a default-only BC.
+    robin_uniform = BoundaryConditions(dimension=1, segments=[face(g, "r", BCType.ROBIN, None, alpha=1.0, beta=0.0)])
     bounds = np.array([[0.0, 1.0]])
     grid = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[5], boundary_conditions=no_flux_bc(dimension=1))
     points = np.linspace(0.0, 1.0, 5).reshape(-1, 1)
@@ -170,12 +167,7 @@ def _timed_readers():
     implicit_uniform = BoundaryConditions(
         dimension=2, segments=[face(g, "d", BCType.DIRICHLET, None)], default_bc=BCType.DIRICHLET
     )
-    implicit_default = BoundaryConditions(
-        dimension=2,
-        segments=[face(0.0, "L", BCType.DIRICHLET, "x_min"), face(0.0, "R", BCType.DIRICHLET, "x_max")],
-        default_bc=BCType.DIRICHLET,
-        default_value=g,
-    )
+    implicit_default = BoundaryConditions(dimension=2, segments=[], default_bc=BCType.DIRICHLET, default_value=g)
     held = np.full(5, 0.75)  # g(0.5): the field a Dirichlet ghost reproduces, so the ghost holds g(0.5) either way
 
     def implicit(bc, **kw):
@@ -206,7 +198,7 @@ def _timed_readers():
             np.zeros(5), dirichlet_default, points, **kw
         ),
         "MeshfreeApplicator.apply, Robin": lambda **kw: MeshfreeApplicator(grid).apply(
-            np.zeros(5), robin_default, points, **kw
+            np.zeros(5), robin_uniform, points, **kw
         ),
         "get_boundary_target_values": neural,
         "ImplicitApplicator.apply, a uniform segment": lambda **kw: implicit(implicit_uniform, **kw),
