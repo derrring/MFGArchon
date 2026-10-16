@@ -93,11 +93,23 @@ class TestGate3LionsBridgeEquivalence:
             source(t=0.0, x=x, v=np.zeros_like(x), m=m), W @ quadrature_weights_1d(x), atol=1e-14
         )
 
-    @pytest.mark.parametrize("form", ["dense", "csr_matrix", "csr_array", "LinearOperator", "an object with @"])
+    @pytest.mark.parametrize(
+        "form",
+        [
+            "dense",
+            "csr_matrix",
+            "csr_array",
+            "LinearOperator",
+            "an object with @",
+            "a wrapper of csr_array",
+            "a wrapper of a LinearOperator",
+        ],
+    )
     def test_the_nonlocal_source_applies_a_sparse_or_matrix_free_kernel(self, form):
         """The nonlocal source is the path for a kernel that is not translation-invariant, which is where a sparse or
         matrix-free W is used: anything with a shape that applies itself with @ is applied as it is. np.asarray wrapped
-        them in a 0-d object array, and the shape check refused them (#2726, reviews 1 and 2)."""
+        them in a 0-d object array, and the shape check refused them (#2726, reviews 1 and 2). A wrapper that forwards
+        its shape through __getattr__ is one too; a check that looked the shape up statically missed it (review 3)."""
         from scipy.sparse import csr_array, csr_matrix
         from scipy.sparse.linalg import aslinearoperator
 
@@ -112,29 +124,58 @@ class TestGate3LionsBridgeEquivalence:
             def __matmul__(self, v):
                 return W @ v
 
+        class _Forwarding:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+            def __matmul__(self, v):
+                return self._inner @ v
+
         kernel = {
             "dense": W,
             "csr_matrix": csr_matrix(W),
             "csr_array": csr_array(W),
             "LinearOperator": aslinearoperator(W),
             "an object with @": _AppliesItself(),
+            "a wrapper of csr_array": _Forwarding(csr_array(W)),
+            "a wrapper of a LinearOperator": _Forwarding(aslinearoperator(W)),
         }[form]
         w, m = quadrature_weights_1d(x), 1.0 + x
         source = create_nonlocal_source(kernel, w)
         np.testing.assert_allclose(source(t=0.0, x=x, v=np.zeros_like(x), m=m), W @ (w * m), atol=1e-15)
 
-    def test_the_nonlocal_source_refuses_the_weighted_operator(self):
-        """A ConvolutionCouplingOperator's @ already carries its weights, so as W it would weight m twice (#2726,
-        review 2). It is refused, and the remedy the message names, its kernel_matrix(), matches the operator."""
+    @pytest.mark.parametrize("operator", ["ConvolutionCouplingOperator", "GraphonCouplingOperator"])
+    def test_the_nonlocal_source_refuses_the_library_s_weighted_operators(self, operator):
+        """The library's weighted operators' @ is already the integral, weights included, so as W they would weight
+        m twice (#2726, reviews 2 and 3). Each is refused, and the remedies its message names run: for the
+        convolution, its own channel create_lions_source(QuadraticInteractionEnergy(op)) and its kernel_matrix(),
+        both equal to op @ m; for the graphon, the matrix of its kernel, here the constant 0.5, whose integral against
+        m = 1 on [0, 1] is 0.5."""
+        from mfgarchon.operators.integro_diff.graphon_coupling import GraphonCouplingOperator
+        from mfgarchon.operators.integro_diff.graphon_kernels import ConstantGraphon
+
         x = np.linspace(0.0, 1.0, 21)
         w = quadrature_weights_1d(x)
-        op = ConvolutionCouplingOperator(GaussianKernel(1.0, 0.1), grid_shape=(21,), spacings=[x[1]])
-        with pytest.raises(ValueError, match=r"weight m twice.*op\.kernel_matrix\(\)"):
-            create_nonlocal_source(op, w)
-        m = 1.0 + x
-        np.testing.assert_allclose(
-            create_nonlocal_source(op.kernel_matrix(), w)(t=0.0, x=x, v=np.zeros_like(x), m=m), op @ m, atol=1e-14
-        )
+        v = np.zeros_like(x)
+        if operator == "ConvolutionCouplingOperator":
+            op = ConvolutionCouplingOperator(GaussianKernel(1.0, 0.1), grid_shape=(21,), spacings=[x[1]])
+            with pytest.raises(ValueError, match=r"weight m twice.*QuadraticInteractionEnergy\(op\).*kernel_matrix"):
+                create_nonlocal_source(op, w)
+            m = 1.0 + x
+            channel = create_lions_source(QuadraticInteractionEnergy(op))
+            np.testing.assert_allclose(channel(t=0.0, x=x, v=v, m=m), op @ m, atol=1e-14)
+            np.testing.assert_allclose(
+                create_nonlocal_source(op.kernel_matrix(), w)(t=0.0, x=x, v=v, m=m), op @ m, atol=1e-14
+            )
+            return
+        kernel = ConstantGraphon(p=0.5)
+        with pytest.raises(ValueError, match=r"GraphonCouplingOperator.*weight m twice.*kernel\.evaluate\(x, x\)"):
+            create_nonlocal_source(GraphonCouplingOperator(x, kernel), w)
+        source = create_nonlocal_source(kernel.evaluate(x, x), w)
+        np.testing.assert_allclose(source(t=0.0, x=x, v=v, m=np.ones_like(x)), 0.5, atol=1e-14)
 
     def test_analytic_matches_fd_lambda_path(self):
         """The two branches of create_lions_source agree on ONE energy object.

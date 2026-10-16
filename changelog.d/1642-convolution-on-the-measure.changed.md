@@ -12,7 +12,10 @@
     (`spatial_measure().weights`) and its topology. A periodic axis is refused by name: the convolution is Euclidean
     and does not wrap. A geometry that is not a `TensorProductGrid` is refused.
   - `create_nonlocal_source(W, weights)` takes the measure's per-node weights and computes `W @ (w * m)`, for a
-    dense, sparse or matrix-free `W` (anything with a shape that applies itself with `@`). Its second parameter,
-    `grid_spacing`, a scalar cell volume, is renamed `weights`; a scalar there is refused with the remedy
-    `problem.spatial_measure().weights`. A `ConvolutionCouplingOperator` as `W` is refused: its `@` carries its
-    weights already, so the remedy is `op.kernel_matrix()`.
+    dense, sparse or matrix-free `W` (anything with a shape that applies itself with `@`, a wrapper of one included).
+    Its second parameter, `grid_spacing`, a scalar cell volume, is renamed `weights`; a scalar there is refused with
+    the remedy `problem.spatial_measure().weights`. `W` is the unweighted kernel. The library's weighted operators
+    passed as built, a `ConvolutionCouplingOperator` or a `GraphonCouplingOperator`, are refused, since their `@`
+    carries the weights already; the remedies are `create_lions_source(QuadraticInteractionEnergy(op))` or
+    `op.kernel_matrix()`, and the graphon kernel's own matrix. A form derived from one, such as `op.T`, `2 * op` or
+    `op.as_dense()`, cannot be told from an unweighted kernel and is weighted twice.

@@ -225,7 +225,8 @@ class ConvolutionCouplingOperator(LinearOperator):
             raise ValueError(
                 f"cell_volume on a regular grid is per node, shape {shapes}; got the scalar "
                 f"{float(w)!r}. One weight for every node is the rectangle rule, which gives each end node a full cell "
-                "past the domain; leave cell_volume out for the trapezoid weights (#1642)."
+                "past the domain. Leave cell_volume out for the trapezoid weights, where every axis has two nodes or "
+                "more, or pass a weight per node (#1642)."
             )
         if w.shape not in ((N,), self._grid_shape):
             raise ValueError(f"cell_volume on a regular grid is per node, shape {shapes}; got {w.shape}.")

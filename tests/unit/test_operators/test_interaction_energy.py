@@ -614,16 +614,20 @@ class TestConstruction:
     @pytest.mark.parametrize("route", ["regular grid, per-node cell_volume", "points, cell_volume", "points"])
     def test_the_operator_does_not_read_the_callers_arrays_after_construction(self, route):
         """The weights and the points are copied at construction, so a caller writing its own array afterwards
-        does not move the operator (#2726, review 2: writing cv[0] = 7 moved op @ 1 by 6.9)."""
+        does not move the operator (#2726, review 2: writing cv[0] = 7 moved op @ 1 by 6.9). Each row writes one
+        array: the regular grid's weights, the point route's weights, the point route's points."""
         N = 9
         x, dx = _grid(N)
         cv, pts = quadrature_weights_1d(x), x.copy()
+        kernel = GaussianKernel(1.0, 0.1)
         if route.startswith("regular"):
-            op = ConvolutionCouplingOperator(GaussianKernel(1.0, 0.1), grid_shape=(N,), spacings=[dx], cell_volume=cv)
+            op, written = ConvolutionCouplingOperator(kernel, grid_shape=(N,), spacings=[dx], cell_volume=cv), cv
+        elif route == "points, cell_volume":
+            op, written = ConvolutionCouplingOperator(kernel, points=pts, cell_volume=cv), cv
         else:
-            op = ConvolutionCouplingOperator(GaussianKernel(1.0, 0.1), points=pts, cell_volume=cv)
+            op, written = ConvolutionCouplingOperator(kernel, points=pts, cell_volume=dx), pts
         before = op @ np.ones(N), op.points.copy()
-        cv[0], pts[0] = 7.0, 7.0
+        written[0] = 7.0
         np.testing.assert_array_equal(op @ np.ones(N), before[0])
         np.testing.assert_array_equal(op.points, before[1])
 
