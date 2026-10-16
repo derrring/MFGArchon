@@ -47,8 +47,12 @@ class _SummableCost:
         return CombinedCost([*_parts(self), *_parts(other)])
 
 
-def _parts(cost: _SummableCost) -> list[_SummableCost]:
-    return list(cost.costs) if isinstance(cost, CombinedCost) else [cost]
+def _parts(cost: _SummableCost) -> list[InteractionCost | PotentialCost]:
+    if isinstance(cost, CombinedCost):
+        return list(cost.costs)
+    if isinstance(cost, (InteractionCost, PotentialCost)):
+        return [cost]
+    raise TypeError(f"{type(cost).__name__} is not a coupling cost: InteractionCost, PotentialCost or their sum")
 
 
 class InteractionCost(_SummableCost):
