@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -23,6 +23,21 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from mfgarchon.core.hamiltonian import HamiltonianBase
+    from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.operators.interaction.energy_functionals import EnergyFunctional
+
+
+@runtime_checkable
+class CouplingCost(Protocol):
+    """A coupling cost F[m], the value of ``Model.coupling_cost``: a specification free of any discretization, which
+    the library binds to a problem (#1642, the user's ruling 1 of 2026-10-14).
+
+    ``bind(problem)`` returns the ``EnergyFunctional`` of F on that problem's nodes and measure, whose flat derivative
+    the HJB source composes. The shipped specifications are ``InteractionCost(kernel)`` and ``PotentialCost(V)`` in
+    ``mfgarchon.operators.interaction``, and their sum.
+    """
+
+    def bind(self, problem: MFGProblem) -> EnergyFunctional: ...
 
 
 @dataclass
@@ -49,9 +64,18 @@ class Model:
             ``"tensor"`` (a square ``(d, d)`` matrix, or ``(*grid, d, d)`` per point; a non-square
             matrix is refused). Required for an array.
         drift_field: Prescribed drift for FP-only problems (no optimization).
-        coupling_cost: F(m) -- interaction cost (variational formulation). Read by nothing yet (#2429).
-        terminal_coupling: G(x, m(T)) -- terminal cost in objective (variational). Read by
-            nothing yet (#2429).
+        coupling_cost: The coupling cost F[m], a `CouplingCost` -- ``InteractionCost(kernel)``,
+            ``PotentialCost(V)`` or their sum (``mfgarchon.operators.interaction``). ``MFGProblem`` binds it to its grid
+            and measure, and the HJB carries its flat derivative ``delta F / delta m`` as a source, cost-signed, summed
+            with the Hamiltonian's own coupling ``f`` (#1642). Bound on a ``TensorProductGrid``. Refused on FEM and
+            meshless geometries until #1642's stage 1b, and on a network, where no solve takes a ``Model`` (#2045).
+            In a multi-population problem each population's own ``Model`` carries
+            its own F_k, which reads that population's density m_k alone; coupling across populations belongs in each
+            H_k, through the stacked densities (#2173). The same holds per regime of a regime-switching problem and per
+            node problem of a graph solve: each composes its own F on its own density. A plain ``F[m] -> float`` is
+            refused: it would carry its own quadrature, so it is bound to one grid (#1642, the user's ruling 3).
+        terminal_coupling: G(x, m(T)), the terminal coupling cost. Refused until #1642's stage 2, which binds it: it
+            was accepted and read by nothing.
     """
 
     hamiltonian: HamiltonianBase | None = None
@@ -59,7 +83,7 @@ class Model:
     volatility: float | NDArray | Callable = 0.1
     volatility_kind: str | None = None
     drift_field: Callable | None = None
-    coupling_cost: Callable | None = None
+    coupling_cost: CouplingCost | None = None
     terminal_coupling: Callable | None = None
 
     @property
@@ -77,6 +101,41 @@ class Model:
         if has_h and has_l:
             raise ValueError(
                 "Provide hamiltonian OR lagrangian, not both. They are dual descriptions of the same game; supply one."
+            )
+        self.refuse_what_is_not_bound()
+
+    def refuse_what_is_not_bound(self) -> None:
+        """The refusals of the fields this stage does not bind, read at construction and again where a problem binds
+        this model, since a ``Model`` is a mutable dataclass (#1642): a ``coupling_cost`` that is not a
+        `CouplingCost`, and any ``terminal_coupling``."""
+        cost = self.coupling_cost
+        if cost is not None and (isinstance(cost, type) or not isinstance(cost, CouplingCost)):
+            from mfgarchon.operators.interaction.energy_functionals import missing_energy_functional_members
+
+            if isinstance(cost, type):
+                what = f"the class {cost.__name__}, not an instance of it"
+            elif not missing_energy_functional_members(cost):
+                what = (
+                    f"{type(cost).__name__}, an EnergyFunctional -- F already bound to a grid. Give the specification "
+                    "it was bound from, or pass create_lions_source(energy) as source_term_hjb"
+                )
+            else:
+                what = type(cost).__name__
+            raise TypeError(
+                f"Model(coupling_cost=...) takes a coupling cost the library binds to the problem's grid and measure -- "
+                f"InteractionCost(kernel), PotentialCost(V) or their sum, from mfgarchon.operators.interaction, or an "
+                f"instance of a class of your own whose bind(problem) returns an EnergyFunctional -- not {what}. A plain F[m] -> float carries its own quadrature, so it is bound to one grid (#1642). Give "
+                f"such an F to the problem's HJB source explicitly, on that grid: MFGProblem(..., domain=grid, "
+                f"source_term_hjb=create_lions_source(F, FiniteDifferenceFunctionalDerivative(), "
+                f"weights=grid.measure_weights().ravel())), with create_lions_source from "
+                f"mfgarchon.alg.numerical.coupling.lions_correction and FiniteDifferenceFunctionalDerivative from "
+                f"mfgarchon.utils.functional_calculus; or pass its flat derivative delta F / delta m as source_term_hjb "
+                f"directly."
+            )
+        if self.terminal_coupling is not None:
+            raise NotImplementedError(
+                "Model(terminal_coupling=...) is refused until stage 2 of #1642 binds it: no solver reads it, and it "
+                "was accepted and ignored. A terminal cost that does not depend on m(T) is Conditions(u_terminal=...)."
             )
 
     @property

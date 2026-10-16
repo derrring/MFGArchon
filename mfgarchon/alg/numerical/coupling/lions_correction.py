@@ -80,15 +80,22 @@ class _AppliedWithMatmul(Protocol):
     def __matmul__(self, other: Any) -> Any: ...
 
 
-def _spatial_density(m: NDArray) -> NDArray:
+def _spatial_density(m: NDArray, n: int | None = None) -> NDArray:
     """Return the flat spatial density, rejecting (Nt+1, Nx) trajectories.
 
     The composed source pipeline (:mod:`source_composition`) time-slices the
     density to the current backward time step before calling the source, so a
-    per-time source always receives a 1-D spatial array. A 2-D ``(Nt+1, Nx)``
-    trajectory reaching here is a caller error: silently collapsing it to the
-    terminal slice ``m[-1]`` reintroduces the Issue #1285 wrong-slice bug.
+    per-time source always receives one spatial slice: shape (Nx,) in 1-D, the
+    grid's shape in n-D. ``n`` is the number of nodes the functional is on,
+    known from its weights, or from the evaluation's x where the weight is one
+    scalar: a slice holding exactly ``n`` values is flattened in the grid's C
+    order whatever its shape (#1642). Without ``n``, a 2-D array is
+    read as a ``(Nt+1, Nx)`` trajectory and refused: silently collapsing it to
+    the terminal slice ``m[-1]`` reintroduces the Issue #1285 wrong-slice bug.
     """
+    m = np.asarray(m)
+    if n is not None and m.size == n:
+        return m.ravel()
     if m.ndim == 2:
         raise ValueError(
             f"Lions source expects a 1-D spatial density (Nx,), got a 2-D array "
@@ -201,7 +208,7 @@ def create_lions_source(
             m: NDArray,
         ) -> NDArray:
             """Evaluate the analytic correction delta F / delta m[m](x)."""
-            m_flat = _spatial_density(m)
+            m_flat = _spatial_density(m, np.size(analytic.weights))
             return np.asarray(analytic.flat_derivative(m_flat, t=t)).ravel()
 
         return source_term_hjb_analytic
@@ -265,14 +272,16 @@ def create_lions_source(
             t: Current time (unused for time-independent F[m])
             x: Spatial grid points, shape (Nx,) or (Nx, d)
             v: Current value function (unused — correction depends on m only)
-            m: Current spatial density, shape (Nx,). Must be a single time-t
-                slice; the source pipeline time-slices before calling (a 2-D
-                (Nt+1, Nx) trajectory is rejected — see Issue #1285).
+            m: Current spatial density, one time-t slice: shape (Nx,), or the
+                grid's shape in n-D when it holds the node count -- the
+                weights' size, or x's row count for one scalar weight. The
+                source pipeline time-slices before calling (a 2-D (Nt+1, Nx)
+                trajectory is rejected — see Issue #1285).
 
         Returns:
             Source term values, shape (Nx,)
         """
-        m_flat = _spatial_density(m)
+        m_flat = _spatial_density(m, int(np.shape(x)[0]) if w_scalar is not None else w_array.size)
         Nx = len(m_flat)
 
         # Compute dF/dm_k at each grid point
@@ -397,7 +406,7 @@ def create_nonlocal_source(
         m: NDArray,
     ) -> NDArray:
         """Evaluate (W * m)(x) = int W(x,y) m(y) dy."""
-        m_spatial = _spatial_density(m)
+        m_spatial = _spatial_density(m, w.size)
         return W @ (w * m_spatial)
 
     return source_term_hjb

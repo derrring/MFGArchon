@@ -47,7 +47,7 @@ class _HJBKwargBuilder(BaseCouplingIterator):
         # No `sigma` attribute: a scalar can never be shown equivalent to one that is not
         # there. The two source fields are what `_build_hjb_kwargs` composes from (#2207);
         # both None, so this double exercises the volatility branch and nothing else.
-        self.problem = SimpleNamespace(source_term_hjb=None, nonlocal_operator=None)
+        self.problem = SimpleNamespace(source_term_hjb=None, nonlocal_operator=None, coupling_energy=None)
 
     def solve(self, *args, **kwargs):  # pragma: no cover - abstract stub, never called
         raise NotImplementedError

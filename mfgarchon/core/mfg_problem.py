@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from mfgarchon.geometry.boundary import BoundaryConditions
+    from mfgarchon.operators.interaction.energy_functionals import EnergyFunctional
     from mfgarchon.types.pde_coefficients import DriftField
 
 
@@ -886,6 +887,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # Hamiltonian becomes available.
         if self.state_penalty is not None:
             self._compose_state_penalty_into_potential()
+
+        # The coupling cost F, bound once to this problem's nodes and measure (#1642 stage 1). A rebuild binds it again:
+        # `_rebuilt` rebuilds from the Model.
+        self._coupling_energy = self._bind_coupling_cost()
 
         # Validate custom components if provided
         if self.is_custom:
@@ -2277,6 +2282,51 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
             )
 
     _INITIAL_MASS_TOLERANCE: ClassVar[float] = 1e-8
+
+    @property
+    def coupling_energy(self) -> EnergyFunctional | None:
+        """``Model.coupling_cost`` bound to this problem's nodes and measure, or None (#1642 stage 1).
+
+        The HJB carries its flat derivative ``delta F / delta m`` at each time slice of m as a cost-signed source
+        (`source_composition`), summed with the Hamiltonian's own coupling ``f``. Read-only: the binding is the
+        problem's, and a different F is a different ``Model`` (``with_model``).
+        """
+        return self._coupling_energy
+
+    def _bind_coupling_cost(self) -> EnergyFunctional | None:
+        """``model.coupling_cost.bind(self)``, where this stage binds one; the reason by name where it does not."""
+        if self._v1_model is None:
+            return None
+        self._v1_model.refuse_what_is_not_bound()
+        cost = self._v1_model.coupling_cost
+        if cost is None:
+            return None
+        if self.is_network:
+            raise NotImplementedError(
+                "Model(coupling_cost=...) on a network: no network solve takes a problem built from a Model -- the "
+                "network solvers take a NetworkMFGProblem, which has no continuous-domain path (#2045), and their HJB "
+                "takes no source term. On a network, give the potential through the network's own route, "
+                "NetworkMFGComponents(node_potential_func=...). F on a network is a later stage of #1642."
+            )
+        from mfgarchon.geometry import TensorProductGrid
+
+        if not isinstance(self.geometry, TensorProductGrid):
+            raise NotImplementedError(
+                f"Model(coupling_cost=...) binds on a TensorProductGrid; this problem's geometry is "
+                f"{type(self.geometry).__name__}. On FEM and meshless geometries the coupling cost binds against the HJB "
+                f"solver's own discretization, its dof coordinates and the quadrature weights it sees, which is "
+                f"stage 1b of #1642."
+            )
+        from mfgarchon.operators.interaction.energy_functionals import bound_energy_functional
+
+        energy = bound_energy_functional(cost, self)
+        nodes = int(np.asarray(self.geometry.get_spatial_grid()).shape[0])
+        if np.shape(energy.weights) != (nodes,):
+            raise ValueError(
+                f"{type(cost).__name__}.bind(problem) returned an energy on {np.shape(energy.weights)} weights; this "
+                f"problem has {nodes} nodes, in the order of geometry.get_spatial_grid()'s rows (#1642)."
+            )
+        return energy
 
     def spatial_measure(self) -> SpatialMeasure:
         """The measure this problem integrates over space with, and its name: the one owner (#2555).

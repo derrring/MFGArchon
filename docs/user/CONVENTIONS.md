@@ -132,6 +132,11 @@ not claimed for them, and the library does not check it either way.
 - For a repulsive interaction energy $F[m]$, with its strength inside $F$, the source is
   $S = +\,\delta F/\delta m$, cost-signed like everything else here. `create_lions_source(F, ...)`
   returns exactly this.
+- **`Model(coupling_cost=...)` is that source, bound by the library** (#1642). The value is a
+  specification, `InteractionCost(kernel)`, `PotentialCost(V)` or their sum. `MFGProblem` binds it
+  on its grid and measure (`problem.coupling_energy`), and the HJB carries
+  $\delta F/\delta m$ at each density slice, summed with the Hamiltonian's own $f$ and with
+  `source_term_hjb`. It binds on a `TensorProductGrid` and is refused elsewhere by name.
 
 ### Worked example — 1-D LQ Riccati
 
@@ -813,9 +818,9 @@ physics and belongs to `Conditions`; $N_t$ is discretisation and belongs to the 
 Composition is by whole component — `with_model`, `with_domain`, `with_conditions` — and single fields
 change through `dataclasses.replace`. There are no per-field shortcuts.
 
-*Not yet met (#2429): `Model(lagrangian=...)` cannot yet be assembled; `coupling_cost` and
-`terminal_coupling` are read by nothing (#1642); and `Model` defaults the volatility to `0.1` where the
-legacy constructor gives `0.0`. There is no stationary (ergodic) problem: `ErgodicConditions`, which
+*Not yet met (#2429): `Model(lagrangian=...)` cannot yet be assembled; `coupling_cost` binds only on
+a `TensorProductGrid`, and `terminal_coupling` is refused until it is bound (#1642); and `Model`
+defaults the volatility to `0.1` where the legacy constructor gives `0.0`. There is no stationary (ergodic) problem: `ErgodicConditions`, which
 declared one that no `MFGProblem` accepted, is removed (#2648).*
 
 A **legacy constructor**, the components= form `MFGProblem(geometry=, components=, T=, Nt=, …)`, also exists. It

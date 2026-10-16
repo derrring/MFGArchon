@@ -959,8 +959,12 @@ class HJBWENOSolver(BaseHJBSolver):
 
         # Dispatch to dimensional solvers (using internal variable names)
         if source_term is not None and self.dimension != 1:
+            from mfgarchon.alg.numerical.coupling.source_composition import hjb_source_fields
+
+            declared = hjb_source_fields(self.problem)
+            fields = f" (the problem declares {', '.join(declared)})" if declared else ""
             raise NotImplementedError(
-                f"HJBWENOSolver: source_term is threaded through the 1D path only; this problem is "
+                f"HJBWENOSolver: source_term{fields} is threaded through the 1D path only; this problem is "
                 f"{self.dimension}D. The multi-D path is a dimensional split, so a source added in "
                 f"each axis sweep would be applied {self.dimension} times per step. Accepting it "
                 f"here would silently solve the wrong problem, which is the failure Issue #1424 "
