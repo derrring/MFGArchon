@@ -17,7 +17,9 @@
   - `FPParticleSolver` reads its mass weights from the measure. It no longer rebuilds them from the per-axis
     quadrature weights.
   - `FPFVMSolver`'s control volumes are `TensorProductGrid.measure_weights()`. Through `integrate_on_weights` now:
-    `FluxDiagnostics`' 1-D and 2-D total mass and face fluxes (its n-D path is still the rectangle rule, #2274),
-    `ConvergenceWrapper`'s mass change, `validate_mfg_solution`'s total mass, and `mass_fabricated_by_clip`'s
-    negative and positive mass on given weights. Each is the same integral as before, summed in another order, so
-    its value can move in the last bits.
+    `FluxDiagnostics`' 1-D and 2-D total mass and its 2-D face fluxes (its n-D path is still the rectangle rule,
+    #2274), `compute_mass_conservation_error`'s mass history, `ConvergenceWrapper`'s mass change,
+    `validate_mfg_solution`'s total mass, and `mass_fabricated_by_clip`'s negative and positive mass on given
+    weights. For finite weights each is the same integral as before, summed in another order, so its value can move
+    in the last bits. `mass_fabricated_by_clip` now sums every node: a non-finite weight at a node it used to mask
+    out, `0 * inf`, makes the result nan.
