@@ -657,11 +657,11 @@ class ConvergenceWrapper:
                 # #2145: the grid's own measure, from the coordinates already in hand. The end
                 # nodes hold half a cell each, so `sum(m)*dx` is a different functional and reports
                 # a different drift -- the two disagree by dx*(m[0]+m[-1])/2 at every step.
-                from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d
+                from mfgarchon.utils.numerical.quadrature import integrate_on_weights, quadrature_weights_1d
 
                 w = quadrature_weights_1d(x_grid)
-                initial_mass = float(np.dot(M[0, :], w))
-                final_mass = float(np.dot(M[-1, :], w))
+                initial_mass = float(integrate_on_weights(M[0, :], w))
+                final_mass = float(integrate_on_weights(M[-1, :], w))
                 mass_change = abs(final_mass - initial_mass) / initial_mass * 100
 
                 advanced_info["mass_change_percent"] = mass_change
