@@ -12,8 +12,9 @@ Discretization convention
 A discrete measure is the pair ``(m, weights)``: densities ``m`` sampled on a
 point set, and ``weights`` the **quadrature weights of the measure
 representation** -- cell volumes on a grid, particle masses for an empirical
-measure. On a uniform grid ``weights`` is ``prod(spacings)`` repeated; on a
-scattered GFDM cloud it is the per-point cell volume array. Integrals are
+measure. On a grid ``weights`` is the grid's measure, the trapezoid weights
+(``problem.spatial_measure().weights``, #1642); on a scattered GFDM cloud it is
+the per-point cell volume array. Integrals are
 discretized as ``integral g(x) m(x) dx = sum_k w_k g_k m_k``.
 
 Grid cell volumes sum to ``|Omega|``; particle masses are normalized to sum to
