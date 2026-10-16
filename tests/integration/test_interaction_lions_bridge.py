@@ -279,14 +279,15 @@ class TestGate3LionsBridgeEquivalence:
             create_lions_source(energy_lambda, fd, weights=np.array([0.1, -0.1, 0.1]))
 
     def test_fd_path_refuses_weights_of_the_wrong_length(self):
-        """A weights/density length mismatch must not broadcast into a wrong number."""
+        """A weights/density length mismatch must not broadcast into a wrong number: the density is refused by name,
+        a slice on another grid than the weights' (#2728)."""
         fd = FiniteDifferenceFunctionalDerivative(epsilon=1e-5, method="central")
 
         def energy_lambda(m):
             return 0.5 * float(np.sum(np.asarray(m) ** 2)) * 0.02
 
         source = create_lions_source(energy_lambda, fd, weights=np.full(7, 0.02))
-        with pytest.raises(ValueError, match=r"does not match weights shape"):
+        with pytest.raises(ValueError, match=r"one time-t density slice of 7 values.*shape \(10,\).*another grid"):
             source(t=0.0, x=np.linspace(0, 1, 10), v=np.zeros(10), m=np.ones(10))
 
     def test_fd_path_requires_functional_derivative(self):
@@ -299,11 +300,17 @@ class TestGate3LionsBridgeEquivalence:
             create_lions_source(energy_lambda)
 
     def test_time_space_array_rejected(self):
-        """A 2-D (Nt+1, Nx) trajectory is a caller error: the source pipeline
-        time-slices before calling, so a per-time source must get a 1-D spatial
+        """A (Nt+1, Nx) trajectory is a caller error: the source pipeline
+        time-slices before calling, so a per-time source must get one spatial
         slice. Passing the full trajectory raises (was a silent m[-1] fallback
         that reintroduced the Issue #1285 wrong-slice bug). The 1-D slice path
-        still works on both the analytic and the optimized nonlocal source."""
+        still works on both the analytic and the optimized nonlocal source.
+
+        On a 7 x 5 grid a (3, 7, 5) trajectory is refused by name on all three
+        routes -- the analytic, the optimized nonlocal and the finite-difference
+        source -- since its size is not the 35 nodes. Read by ``ndim``, it is
+        not 2-D, so it fell through to a shape error that named no trajectory
+        (#2728)."""
         N = 30
         x = np.linspace(0.0, 1.0, N)
         dx = x[1] - x[0]
@@ -320,10 +327,35 @@ class TestGate3LionsBridgeEquivalence:
         assert r_slice.shape == (N,)
 
         # 2-D trajectory rejected on both paths.
-        with pytest.raises(ValueError, match=r"1-D spatial density"):
+        with pytest.raises(ValueError, match=r"one time-t density slice of 30 values.*shape \(5, 30\)"):
             source(t=0.0, x=x, v=np.zeros(N), m=m_traj)
-        with pytest.raises(ValueError, match=r"1-D spatial density"):
+        with pytest.raises(ValueError, match=r"one time-t density slice of 30 values.*shape \(5, 30\)"):
             source_nonlocal(t=0.0, x=x, v=np.zeros(N), m=m_traj)
+
+        # On a 7 x 5 grid, a (3, 7, 5) trajectory on every route.
+        from mfgarchon.utils.functional_calculus import FiniteDifferenceFunctionalDerivative
+
+        xs, ys = np.linspace(0.0, 1.0, 7), np.linspace(0.0, 2.0, 5)
+        nodes = np.stack(np.meshgrid(xs, ys, indexing="ij"), axis=-1).reshape(-1, 2)
+        cell = (xs[1] - xs[0]) * (ys[1] - ys[0])
+        plane = ConvolutionCouplingOperator(
+            GaussianKernel(1.0, 0.5), grid_shape=(7, 5), spacings=[xs[1] - xs[0], ys[1] - ys[0]]
+        )
+        W2 = np.exp(-(np.linalg.norm(nodes[:, None] - nodes[None], axis=2) ** 2))
+        routes = {
+            "analytic": create_lions_source(QuadraticInteractionEnergy(plane)),
+            "nonlocal": create_nonlocal_source(W2, np.full(35, cell)),
+            "finite-difference": create_lions_source(
+                lambda m: float(np.sum(cell * np.asarray(m, dtype=float))),
+                FiniteDifferenceFunctionalDerivative(),
+                weights=cell,
+            ),
+        }
+        m_grid_traj = np.ones((3, 7, 5))
+        for name, routed in routes.items():
+            with pytest.raises(ValueError, match=r"one time-t density slice of 35 values.*shape \(3, 7, 5\)"):
+                routed(t=0.0, x=nodes, v=np.zeros(35), m=m_grid_traj)
+            assert np.asarray(routed(t=0.0, x=nodes, v=np.zeros(35), m=m_grid_traj[0])).shape == (35,), name
 
 
 class _TimeStampedEnergy:

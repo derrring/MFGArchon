@@ -80,28 +80,27 @@ class _AppliedWithMatmul(Protocol):
     def __matmul__(self, other: Any) -> Any: ...
 
 
-def _spatial_density(m: NDArray, n: int | None = None) -> NDArray:
-    """Return the flat spatial density, rejecting (Nt+1, Nx) trajectories.
+def _spatial_density(m: NDArray, n: int) -> NDArray:
+    """Return one time-t density slice, flat in the grid's C order.
 
     The composed source pipeline (:mod:`source_composition`) time-slices the
     density to the current backward time step before calling the source, so a
-    per-time source always receives one spatial slice: shape (Nx,) in 1-D, the
-    grid's shape in n-D. ``n`` is the number of nodes the functional is on,
-    known from its weights, or from the evaluation's x where the weight is one
-    scalar: a slice holding exactly ``n`` values is flattened in the grid's C
-    order whatever its shape (#1642). Without ``n``, a 2-D array is
-    read as a ``(Nt+1, Nx)`` trajectory and refused: silently collapsing it to
-    the terminal slice ``m[-1]`` reintroduces the Issue #1285 wrong-slice bug.
+    per-time source receives one spatial slice: shape (Nx,) in 1-D, the grid's
+    shape in n-D. ``n`` is the number of nodes the functional is on, known from
+    its weights, or from the evaluation's x where the weight is one scalar. A
+    density holding exactly ``n`` values is that slice, flattened whatever its
+    shape (#1642); any other is refused by name, whatever its ndim -- a
+    ``(Nt+1, Nx)`` or ``(Nt+1, *grid)`` trajectory above all, which collapsed to
+    its terminal slice ``m[-1]`` reintroduces the Issue #1285 wrong-slice bug,
+    and which read whole failed on a shape that named no trajectory (#2728).
     """
     m = np.asarray(m)
-    if n is not None and m.size == n:
-        return m.ravel()
-    if m.ndim == 2:
+    if m.size != n:
         raise ValueError(
-            f"Lions source expects a 1-D spatial density (Nx,), got a 2-D array "
-            f"with shape {m.shape}. Pass the time-t density slice, not the full "
-            "(Nt+1, Nx) trajectory (see source_composition.compose_hjb_source; "
-            "Issue #1285)."
+            f"Lions source expects one time-t density slice of {n} values, the node count its weights give (or, for "
+            f"one scalar weight, its x); got an array of shape {m.shape}, {m.size} values: a (Nt+1, ...) trajectory, "
+            "or a density on another grid than the weights'. Pass the time-t density slice on the weights' grid (see "
+            "source_composition.compose_hjb_source; Issue #1285, #2728)."
         )
     return m.ravel()
 
