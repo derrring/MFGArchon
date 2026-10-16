@@ -2496,10 +2496,9 @@ class SeparableHamiltonian(HamiltonianBase):
 
         if self._potential_is_vectorized is None:
             # The probe has d + 1 rows, repeating points when N is smaller. A potential written per
-            # point indexes coordinates, x[0], x[1], ..., which on a batch are its rows, so it returns
-            # one value per coordinate: shape (d,). The probe must not have d rows, or that result
-            # passes as one value per point -- with two rows, every per-point potential in 2-D did
-            # (#2714).
+            # point that is elementwise in the coordinates it indexes, x[0]**2 + x[1]**2, reads them on a
+            # batch as rows and returns one value per coordinate: shape (d,). The probe must not have d
+            # rows, or that result passes as one value per point, as it did in 2-D with two (#2714).
             d = x_batch.shape[1] if x_batch.ndim == 2 else 1
             rows = np.arange(d + 1) % N
             try:

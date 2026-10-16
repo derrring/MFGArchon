@@ -12,6 +12,8 @@ The oracle is the closed form of each potential, evaluated without the Hamiltoni
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 import numpy as np
@@ -33,7 +35,7 @@ def _potential_values(H, X):
     return -np.asarray(H(t=0.0, x=X, p=np.zeros_like(X), m=np.zeros(N)), dtype=float)
 
 
-@pytest.mark.parametrize("d", [1, 2, 3])
+@pytest.mark.parametrize("d", [1, 2, 3, 4])
 @pytest.mark.parametrize("N", [1, 2, 3, 5])
 def test_a_per_point_potential_is_evaluated_per_point(d, N):
     H = SeparableHamiltonian(control_cost=QuadraticControlCost(), potential=_per_point(d))
@@ -43,7 +45,7 @@ def test_a_per_point_potential_is_evaluated_per_point(d, N):
     assert H._potential_is_vectorized is False
 
 
-@pytest.mark.parametrize("d", [1, 2, 3])
+@pytest.mark.parametrize("d", [1, 2, 3, 4])
 @pytest.mark.parametrize("N", [1, 2, 3, 5])
 def test_a_vectorised_potential_keeps_the_fast_path(d, N):
     H = SeparableHamiltonian(control_cost=QuadraticControlCost(), potential=_vectorised)
@@ -51,6 +53,35 @@ def test_a_vectorised_potential_keeps_the_fast_path(d, N):
 
     np.testing.assert_allclose(_potential_values(H, X), (X**2).sum(axis=1), rtol=1e-12)
     assert H._potential_is_vectorized is True
+
+
+def _exp_of_first(t, x):
+    return math.exp(-x[0])
+
+
+def _branch_on_first(t, x):
+    return x[0] if x[0] > 0.5 else 1.0 - x[0]
+
+
+@pytest.mark.parametrize(
+    ("potential", "closed_form"),
+    [
+        (_exp_of_first, lambda X: np.exp(-X[:, 0])),
+        (_branch_on_first, lambda X: np.where(X[:, 0] > 0.5, X[:, 0], 1.0 - X[:, 0])),
+    ],
+    ids=["TypeError", "ValueError"],
+)
+def test_a_potential_that_raises_on_a_batch_is_evaluated_per_point(potential, closed_form):
+    """The probe's except branch. These pass at 0b5481fd too: they pin the branch, not #2714.
+
+    Before the fix a 3-D per-point potential that indexes x[2] reached it through IndexError, the
+    two-row probe having no row 2; with d + 1 rows nothing else in this file does.
+    """
+    H = SeparableHamiltonian(control_cost=QuadraticControlCost(), potential=potential)
+    X = np.random.default_rng(11).random((5, 2))
+
+    np.testing.assert_allclose(_potential_values(H, X), closed_form(X), rtol=1e-12)
+    assert H._potential_is_vectorized is False
 
 
 def test_the_cached_decision_serves_a_later_batch_of_another_size():
