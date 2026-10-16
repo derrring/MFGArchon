@@ -303,7 +303,14 @@ class FPParticleSolver(BaseFPSolver):
         # torus that is periodic_bc -- translated: there DIRICHLET(g) is an exit, u = g for the HJB and m = 0 for
         # this solver (#2512, convention row 5).
         if boundary_conditions is not None:
-            self.boundary_conditions = self._fp_own_bc(boundary_conditions)
+            own = self._with_geometry_periodic_convention(self._fp_own_bc(boundary_conditions))
+            # Bound to the grid, as the grid binds its own (`TensorProductGrid.set_boundary_conditions`), so the owner
+            # reads a region or sdf_region placement on the grid this solver steps on (#2490 B1d).
+            from mfgarchon.geometry.base import CartesianGrid
+
+            if isinstance(problem.geometry, CartesianGrid):
+                own = own.bind_geometry(problem.geometry)
+            self.boundary_conditions = own
         else:
             self.boundary_conditions = self._fp_view_of_shared(problem.get_boundary_conditions())
 
@@ -1026,17 +1033,8 @@ class FPParticleSolver(BaseFPSolver):
         return result
 
     def _needs_segment_aware_bc(self) -> bool:
-        """
-        Check if boundary conditions require segment-aware handling.
-
-        Delegates to unified needs_segment_aware_bc() from fp_particle_bc module.
-
-        Returns True if:
-        - BC has multiple segments with different types
-        - BC has absorbing (DIRICHLET) segments that should remove particles
-
-        Returns False for uniform periodic/reflecting BC where fast path can be used.
-        """
+        """Whether this solver's BC takes the per-point path: `needs_segment_aware_bc`, which decides on what a
+        particle does -- True unless every wall takes one action, reflect or wrap (#2490 B1d)."""
         return _needs_segment_bc(self.boundary_conditions)
 
     def _get_topology_per_dimension(
@@ -2424,12 +2422,14 @@ class FPParticleSolver(BaseFPSolver):
         """
         if self._needs_segment_aware_bc():
             raise NotImplementedError(
-                "FPParticleSolver: the GPU path does not implement segment-aware absorbing "
-                "boundary conditions (Issue #535 Phase 1, #1910). This BC needs particles removed "
-                "at a DIRICHLET segment, and the GPU evolution loop never consults "
-                "`_needs_segment_aware_bc()`, so it would reflect them instead and report a "
-                "plausible density with nothing absorbed. Use backend='numpy' for this BC, or a "
-                "uniform periodic/reflecting BC on the GPU path."
+                "FPParticleSolver: the GPU path applies one particle action, reflect or wrap, on every wall; it "
+                "implements no segment-aware absorbing boundary and no mix of actions (Issue #535 Phase 1, #1910). "
+                "This BC is not read as one such action: its walls take different actions -- absorb on some and "
+                "reflect on others, or wrap on one axis and reflect on another -- or every wall absorbs, or it has no "
+                "default_bc and no segment covering every wall, so its walls' action is not read without their "
+                "placements. The GPU evolution loop never consults `_needs_segment_aware_bc()`, so it would apply one action everywhere "
+                "and report a plausible density. Use backend='numpy' for this BC, or a BC whose every wall reflects "
+                "or every wall wraps on the GPU path."
             )
         if self._implicit_domain is not None:
             raise NotImplementedError(

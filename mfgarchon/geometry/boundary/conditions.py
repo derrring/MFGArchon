@@ -55,7 +55,18 @@ from .types import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
+
+
+class UndecidedCornerError(ValueError):
+    """A corner whose faces' segments differ under the consumer's sameness, read with a ``corner_strategy`` that
+    blends normals and so does not choose among them (`BoundaryConditions._corner_choice`). ``where`` names the faces
+    and ``governing`` holds their segments, so a consumer can say what differs in its own terms."""
+
+    def __init__(self, message: str, where: str, governing: list[BCSegment]):
+        super().__init__(message)
+        self.where = where
+        self.governing = governing
 
 
 @dataclass(frozen=True, eq=False)
@@ -321,6 +332,12 @@ class BoundaryConditions:
         BC is whichever segment was declared first and governs no particular location. Four alike segments, one
         per face, are uniform; so is a BC with no segments and a ``default_bc``.
         """
+        return self.uniform_segment_under(_same_condition)
+
+    def uniform_segment_under(self, equivalent: Callable[[BCSegment, BCSegment], bool]) -> BCSegment | None:
+        """:attr:`uniform_segment` under a consumer's own sameness, as :meth:`segment_for_point` takes ``equivalent``:
+        a segment every location of the boundary carries up to ``equivalent``, or ``None``. A particle asks it with
+        "the same particle action", under which a REFLECTING segment and a NO_FLUX ``default_bc`` are one wall."""
         candidates = list(self.segments)
         if not any(_is_global(segment) for segment in self.segments):
             if self._default_refusal("uniform_segment", "the boundary") is not None:
@@ -329,7 +346,7 @@ class BoundaryConditions:
         if not candidates:
             return None
         first = candidates[0]
-        return first if all(_same_condition(segment, first) for segment in candidates[1:]) else None
+        return first if all(equivalent(segment, first) for segment in candidates[1:]) else None
 
     # =========================================================================
     # Dynamic BC Value Provider Support (Issue #625)
@@ -658,11 +675,13 @@ class BoundaryConditions:
         same = _same_condition if equivalent is None else equivalent
         first = min(governing, key=self._corner_key)
         if self.corner_strategy != "priority" and not all(same(seg, first) for seg in governing):
-            raise ValueError(
+            raise UndecidedCornerError(
                 f"BoundaryConditions: the corner shared by {where} is governed by "
                 f"{', '.join(repr(seg.name) for seg in governing)}, which impose different conditions, and "
                 f"corner_strategy={self.corner_strategy!r} blends outward normals -- it does not say which "
-                "condition applies there. Use corner_strategy='priority' (#2512 row B1)."
+                "condition applies there. Use corner_strategy='priority' (#2512 row B1).",
+                where,
+                governing,
             )
         return first
 
@@ -674,6 +693,7 @@ class BoundaryConditions:
         tolerance: float = SDF_BOUNDARY_TOL,
         axis_names: dict[int, str] | None = None,
         equivalent: Callable[[BCSegment, BCSegment], bool] | None = None,
+        axes: Sequence[int] | None = None,
     ) -> BCSegment:
         """The segment that governs the boundary point ``point`` (#2512 row B1).
 
@@ -705,11 +725,14 @@ class BoundaryConditions:
                 :meth:`segment_for_corner` take it; by default `_same_condition`. At a corner it decides whether a
                 face answers and which segment the corner takes, so the point and the node asked with the same
                 ``equivalent`` agree.
+            axes: The axes whose faces the point may lie on, read from a box; by default every axis. A consumer for
+                which an axis has no wall -- a particle's periodic axis, which it wraps -- leaves it out, so a point
+                on that axis's face reads the other faces alone.
         """
         point = np.asarray(point, dtype=float)
         geometry = self._query_geometry(geometry)
         if face is None:
-            on, bounds = self._point_faces(point, geometry, tolerance, "segment_for_point")
+            on, bounds = self._point_faces(point, geometry, tolerance, "segment_for_point", axes)
             if len(on) > 1:
                 at_point = [
                     seg for _, seg in self._corner_readings(point, on, geometry, tolerance, axis_names, equivalent)
@@ -734,7 +757,10 @@ class BoundaryConditions:
                     governing.append(segment)
                     break
             else:
-                governing.append(self._default_segment("segment_for_point", f"the boundary point {point.tolist()}"))
+                on_face = f" on face {boundary_id}" if boundary_id is not None else ""
+                governing.append(
+                    self._default_segment("segment_for_point", f"the boundary point {point.tolist()}{on_face}")
+                )
         return governing[0]
 
     def face_segments_at_point(
@@ -778,7 +804,7 @@ class BoundaryConditions:
         ]
 
     def _point_faces(
-        self, point: np.ndarray, geometry: Any, tolerance: float, reader: str
+        self, point: np.ndarray, geometry: Any, tolerance: float, reader: str, axes: Sequence[int] | None = None
     ) -> tuple[list[BoundaryFace], np.ndarray | None]:
         """The faces ``point`` lies on, for both point readers (#2512 row B1), and the box they were read from: every
         face of the box (:meth:`_query_bounds`) within ``tolerance``; else, for a BC with ``domain_sdf``, the one face
@@ -787,7 +813,7 @@ class BoundaryConditions:
         there (#2675)."""
         bounds = self._query_bounds(geometry)
         if bounds is not None:
-            return self._faces_at_point(point, tolerance, bounds), bounds
+            return self._faces_at_point(point, tolerance, bounds, axes), bounds
         if self.domain_sdf is not None:
             face = self.identify_boundary_face(point, tolerance)
             return ([] if face is None else [face]), None
@@ -1148,13 +1174,13 @@ class BoundaryConditions:
         return np.column_stack([np.asarray(box[0], dtype=float), np.asarray(box[1], dtype=float)])
 
     def _faces_at_point(
-        self, point: np.ndarray, tolerance: float, bounds: np.ndarray | None = None
+        self, point: np.ndarray, tolerance: float, bounds: np.ndarray | None = None, axes: Sequence[int] | None = None
     ) -> list[BoundaryFace]:
         """Every box face ``point`` lies on: one on a face's interior, two or more at a corner. ``bounds``
-        defaults to ``domain_bounds``."""
+        defaults to ``domain_bounds``, and ``axes`` to every axis."""
         bounds = np.asarray(self.domain_bounds if bounds is None else bounds, dtype=float)
         faces = []
-        for axis in range(bounds.shape[0]):
+        for axis in range(bounds.shape[0]) if axes is None else axes:
             for side, bound in (("min", bounds[axis, 0]), ("max", bounds[axis, 1])):
                 if abs(point[axis] - bound) <= tolerance + abs(bound) * BOUNDARY_REL_TOL:
                     faces.append(BoundaryFace(axis, side))

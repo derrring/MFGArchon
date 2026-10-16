@@ -621,10 +621,11 @@ def test_fixture_c_one_wall_is_not_read_by_two_rules_in_one_solve_2624():
 
 
 # ---- The point family through its own caller (#2634, B-2): `ParticleApplicator.apply` asks the owner at each particle
-# on the boundary (`get_bc_at_point` -> `segment_for_point`), so these read what a particle does there: absorbed by a
+# on the boundary (`particle_action_at` -> `segment_for_point`), so these read what a particle does there: absorbed by a
 # DIRICHLET exit, reflected by a wall, refused. One pin per branch of `segment_for_point` and `matches_point` that a
-# particle reaches. It does not reach the corner rule or a blended `corner_strategy` (the applicator's own
-# `_get_boundary_id`, row B1d, picks one face first), nor a `region_name` segment (it passes no geometry).
+# particle reaches. The corner rule is pinned beside the owner (`test_particle_action_at_a_boundary_point_2490.py`,
+# #2490 B1d). A `region_name` segment is read on the grid its BC is bound to, as the solver binds its BC; the BCs here
+# are bound to none, so none of them carries one.
 
 _BOUNDS = [(0.0, 1.0), (0.0, 1.0)]
 
