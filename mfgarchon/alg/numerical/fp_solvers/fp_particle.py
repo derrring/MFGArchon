@@ -306,13 +306,18 @@ class FPParticleSolver(BaseFPSolver):
             own = self._with_geometry_periodic_convention(self._fp_own_bc(boundary_conditions))
             # Bound to the grid, as the grid binds its own (`TensorProductGrid.set_boundary_conditions`), so the owner
             # reads a region or sdf_region placement on the grid this solver steps on (#2490 B1d).
-            from mfgarchon.geometry.grids.tensor_grid import TensorProductGrid
+            from mfgarchon.geometry.base import CartesianGrid
 
-            if isinstance(problem.geometry, TensorProductGrid):
+            if isinstance(problem.geometry, CartesianGrid):
                 own = own.bind_geometry(problem.geometry)
             self.boundary_conditions = own
         else:
             self.boundary_conditions = self._fp_view_of_shared(problem.get_boundary_conditions())
+        # The box every step reads the faces from, given here as `ParticleApplicator.apply` gives it at its first
+        # step -- to the same object, in place -- so the reading at construction and the steps read the same faces
+        # (#2490 B1d).
+        if self.boundary_conditions is not None and self.boundary_conditions.domain_bounds is None:
+            self.boundary_conditions.domain_bounds = np.asarray(self._get_grid_params()["bounds"], dtype=float)
 
         # Issue #1456: fail loud if the resolved BC requests a type this solver cannot honor.
         self._validate_bc_support(self.boundary_conditions)
@@ -331,7 +336,19 @@ class FPParticleSolver(BaseFPSolver):
             return
         import itertools
 
+        from mfgarchon.geometry.base import CartesianGrid
         from mfgarchon.geometry.boundary.applicator_particle import particle_action_at, periodic_axes
+
+        if not isinstance(self.problem.geometry, CartesianGrid):
+            off_grid = self.boundary_conditions.segments_covering_only_on_a_grid()
+            if off_grid:
+                raise ValueError(
+                    f"FPParticleSolver: BC segment(s) {off_grid} are placed by sdf_region, whose cover of a face is "
+                    "decided on a grid's boundary nodes, and this solve's geometry is "
+                    f"{type(self.problem.geometry).__name__}, which has none, so a particle at a corner could not be "
+                    "read. Solve on a TensorProductGrid, or place the segment with boundary= and region=, which are "
+                    "read on the box (#2490 B1d)."
+                )
 
         bounds = np.asarray(self._get_grid_params()["bounds"], dtype=float)
         periodic = periodic_axes(self.boundary_conditions, len(bounds))
@@ -2450,8 +2467,10 @@ class FPParticleSolver(BaseFPSolver):
             raise NotImplementedError(
                 "FPParticleSolver: the GPU path applies one particle action, reflect or wrap, on every wall; it "
                 "implements no segment-aware absorbing boundary and no mix of actions (Issue #535 Phase 1, #1910). "
-                "This BC is not one such action: its walls take different actions -- absorb on some and reflect on "
-                "others, or wrap on one axis and reflect on another -- or every wall absorbs. The GPU "
+                "This BC is not read as one such action: its walls take different actions -- absorb on some and "
+                "reflect on others, or wrap on one axis and reflect on another -- or every wall absorbs, or it has no "
+                "default_bc and no segment covering every wall, so its walls' action is not read without their "
+                "placements. The GPU "
                 "evolution loop never consults `_needs_segment_aware_bc()`, so it would apply one action everywhere "
                 "and report a plausible density. Use backend='numpy' for this BC, or a BC whose every wall reflects "
                 "or every wall wraps on the GPU path."

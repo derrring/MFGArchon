@@ -111,8 +111,8 @@ def needs_segment_aware_bc(boundary_conditions: BoundaryConditions | None) -> bo
     - the walls do not all take one particle action: absorb on some, reflect on others, or wrap on one axis and
       reflect on another
     - every wall absorbs
-    - no action is defined: no segment governs everywhere and ``default_bc`` is unset, which the per-point path
-      refuses by name
+    - no segment covers every wall and ``default_bc`` is unset, so the walls' action is not read without their
+      placements: the per-point path reads each particle's segment, and refuses by name a point no segment governs
 
     Returns False where every wall reflects, or every wall wraps -- a REFLECTING segment beside a NO_FLUX
     ``default_bc`` included.

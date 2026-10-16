@@ -36,6 +36,8 @@ import numpy as np
 from .types import BCType
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from numpy.typing import NDArray
 
     from .conditions import BoundaryConditions
@@ -44,7 +46,8 @@ if TYPE_CHECKING:
 ParticleAction = Literal["reflecting", "absorbing", "periodic"]
 
 # How far off a face a particle may lie and still be on it: the applicator's test for a boundary particle, and the
-# owner's for which faces the particle's clamp lies on (#2490 B1d) -- one tolerance, so the two cannot disagree.
+# tolerance the owner reads the faces of the particle's clamp with (#2490 B1d). The owner's face test adds
+# |bound| * BOUNDARY_REL_TOL to it, and its sub-face covers read SDF_BOUNDARY_TOL.
 PARTICLE_BOUNDARY_TOL = 1e-10
 
 
@@ -151,6 +154,12 @@ def same_particle_action(first: BCSegment, second: BCSegment) -> bool:
     return segment_particle_action(first) == segment_particle_action(second)
 
 
+def same_particle_exit(first: BCSegment, second: BCSegment) -> bool:
+    """The flux-limited applicator's sameness: the same action and the same ``flux_capacity``, since two exits that
+    differ only in capacity let out different mass (as `_same_condition` counts them)."""
+    return same_particle_action(first, second) and first.flux_capacity == second.flux_capacity
+
+
 def periodic_axes(bc: BoundaryConditions, dimension: int, geometry: object = None) -> tuple[int, ...]:
     """The axes a particle wraps on: both their faces PERIODIC, read through the face owner (`periodic_faces`). A BC
     that declares nothing periodic has none, and no face is read."""
@@ -171,6 +180,7 @@ def particle_action_at(
     *,
     tolerance: float = PARTICLE_BOUNDARY_TOL,
     periodic: tuple[int, ...] = (),
+    equivalent: Callable[[BCSegment, BCSegment], bool] = same_particle_action,
 ) -> tuple[ParticleAction, BCSegment]:
     """What a particle at or beyond the box ``bounds`` does there, and the segment that says so (#2490 B1d): the one
     owner of that decision for the particle family.
@@ -184,13 +194,14 @@ def particle_action_at(
     That is the rule until #2733 passes the exact contact point here. A region or sdf_region placement is read at the
     clamp too, on the wall where it is placed, not at the particle beyond it.
 
-    The owner is asked with the particle's sameness: two segments are one where they do the same to a particle, so a
-    REFLECTING face beside a NO_FLUX one is one wall. A ``corner_strategy`` other than ``"priority"`` does not choose
-    between two actions at a corner, and that corner is refused by name.
+    The owner is asked with the particle's sameness, ``equivalent``: by default two segments are one where they do the
+    same to a particle, so a REFLECTING face beside a NO_FLUX one is one wall; the flux-limited applicator asks with
+    `same_particle_exit`. A ``corner_strategy`` other than ``"priority"`` does not choose between two actions at a
+    corner, and that corner is refused by name.
 
     ``periodic`` names the axes the caller has already wrapped (`periodic_axes`): a periodic axis is identified, not
-    walled, so its faces take no part in the reading. The point is read at its own coordinate there, held
-    ``2 * tolerance`` off those faces, so a particle beyond a periodic face and a wall reads the wall alone.
+    walled, so the owner reads the point's faces on the other axes alone (``axes=``). A particle beyond a periodic
+    face and a wall reads the wall alone, wherever the box lies.
 
     A box with an axis of no width is refused: a particle there lies on both faces of that axis at once, and every
     step off the line leaves the box, so no wall action describes it.
@@ -204,12 +215,11 @@ def particle_action_at(
             "pose the problem in the dimensions that have one (#2490 B1d)."
         )
     query = np.clip(np.asarray(point, dtype=float), box[:, 0], box[:, 1])
-    for axis in periodic:
-        query[axis] = min(max(query[axis], box[axis, 0] + 2 * tolerance), box[axis, 1] - 2 * tolerance)
+    walls = [axis for axis in range(len(box)) if axis not in periodic] if periodic else None
     from .conditions import UndecidedCornerError
 
     try:
-        segment = bc.segment_for_point(query, geometry=geometry, tolerance=tolerance, equivalent=same_particle_action)
+        segment = bc.segment_for_point(query, geometry=geometry, tolerance=tolerance, equivalent=equivalent, axes=walls)
     except UndecidedCornerError as undecided:
         actions = sorted({segment_particle_action(seg) for seg in undecided.governing})
         governing = ", ".join(f"{seg.name!r} ({segment_particle_action(seg)})" for seg in undecided.governing)
@@ -381,7 +391,12 @@ class ParticleApplicator:
         for idx in boundary_indices:
             particle = result_particles[idx]
             action, segment = particle_action_at(
-                bc, particle, bounds_arr, tolerance=self._boundary_tolerance, periodic=periodic
+                bc,
+                particle,
+                bounds_arr,
+                tolerance=self._boundary_tolerance,
+                periodic=periodic,
+                equivalent=same_particle_exit,
             )
 
             if action == "absorbing":

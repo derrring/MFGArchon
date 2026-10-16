@@ -55,7 +55,7 @@ from .types import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
 
 class UndecidedCornerError(ValueError):
@@ -693,6 +693,7 @@ class BoundaryConditions:
         tolerance: float = SDF_BOUNDARY_TOL,
         axis_names: dict[int, str] | None = None,
         equivalent: Callable[[BCSegment, BCSegment], bool] | None = None,
+        axes: Sequence[int] | None = None,
     ) -> BCSegment:
         """The segment that governs the boundary point ``point`` (#2512 row B1).
 
@@ -724,11 +725,14 @@ class BoundaryConditions:
                 :meth:`segment_for_corner` take it; by default `_same_condition`. At a corner it decides whether a
                 face answers and which segment the corner takes, so the point and the node asked with the same
                 ``equivalent`` agree.
+            axes: The axes whose faces the point may lie on, read from a box; by default every axis. A consumer for
+                which an axis has no wall -- a particle's periodic axis, which it wraps -- leaves it out, so a point
+                on that axis's face reads the other faces alone.
         """
         point = np.asarray(point, dtype=float)
         geometry = self._query_geometry(geometry)
         if face is None:
-            on, bounds = self._point_faces(point, geometry, tolerance, "segment_for_point")
+            on, bounds = self._point_faces(point, geometry, tolerance, "segment_for_point", axes)
             if len(on) > 1:
                 at_point = [
                     seg for _, seg in self._corner_readings(point, on, geometry, tolerance, axis_names, equivalent)
@@ -800,7 +804,7 @@ class BoundaryConditions:
         ]
 
     def _point_faces(
-        self, point: np.ndarray, geometry: Any, tolerance: float, reader: str
+        self, point: np.ndarray, geometry: Any, tolerance: float, reader: str, axes: Sequence[int] | None = None
     ) -> tuple[list[BoundaryFace], np.ndarray | None]:
         """The faces ``point`` lies on, for both point readers (#2512 row B1), and the box they were read from: every
         face of the box (:meth:`_query_bounds`) within ``tolerance``; else, for a BC with ``domain_sdf``, the one face
@@ -809,7 +813,7 @@ class BoundaryConditions:
         there (#2675)."""
         bounds = self._query_bounds(geometry)
         if bounds is not None:
-            return self._faces_at_point(point, tolerance, bounds), bounds
+            return self._faces_at_point(point, tolerance, bounds, axes), bounds
         if self.domain_sdf is not None:
             face = self.identify_boundary_face(point, tolerance)
             return ([] if face is None else [face]), None
@@ -1170,13 +1174,13 @@ class BoundaryConditions:
         return np.column_stack([np.asarray(box[0], dtype=float), np.asarray(box[1], dtype=float)])
 
     def _faces_at_point(
-        self, point: np.ndarray, tolerance: float, bounds: np.ndarray | None = None
+        self, point: np.ndarray, tolerance: float, bounds: np.ndarray | None = None, axes: Sequence[int] | None = None
     ) -> list[BoundaryFace]:
         """Every box face ``point`` lies on: one on a face's interior, two or more at a corner. ``bounds``
-        defaults to ``domain_bounds``."""
+        defaults to ``domain_bounds``, and ``axes`` to every axis."""
         bounds = np.asarray(self.domain_bounds if bounds is None else bounds, dtype=float)
         faces = []
-        for axis in range(bounds.shape[0]):
+        for axis in range(bounds.shape[0]) if axes is None else axes:
             for side, bound in (("min", bounds[axis, 0]), ("max", bounds[axis, 1])):
                 if abs(point[axis] - bound) <= tolerance + abs(bound) * BOUNDARY_REL_TOL:
                     faces.append(BoundaryFace(axis, side))
@@ -1204,6 +1208,12 @@ class BoundaryConditions:
         if segment.region is not None or segment.sdf_region is not None:
             return self._sub_face_cover(segment, face, geometry)
         return "whole"
+
+    def segments_covering_only_on_a_grid(self) -> list[str]:
+        """The names of the segments whose cover of a face only a grid's boundary nodes decide -- those placed by
+        ``sdf_region`` (:meth:`_sub_face_cover`) -- so a reader off a grid can refuse them before it reads a corner
+        (#2490 B1d)."""
+        return [segment.name for segment in self.segments if segment.sdf_region is not None]
 
     def _sub_face_cover(self, segment: BCSegment, face: BoundaryFace, geometry: Any) -> str:
         """``"whole"``, ``"partial"`` or ``"none"``: how much of ``face`` a region/sdf placement holds."""

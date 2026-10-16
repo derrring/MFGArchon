@@ -14,6 +14,7 @@ from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonia
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc
 from mfgarchon.geometry.boundary.applicator_particle import ParticleApplicator
+from mfgarchon.geometry.implicit import Hyperrectangle
 
 
 @pytest.mark.parametrize(
@@ -86,22 +87,29 @@ def _segment(name, bc_type, **placement):
     return BCSegment(name=name, bc_type=bc_type, value=0.0, **placement)
 
 
-def _drift_into_the_corner(bc, n=200):
-    """``n`` particles from [0.8, 0.95]^2 drifting at (3, 3) for t = 0.2 on the unit square: how many remain."""
+def _unit_square_grid(bounds=((0.0, 1.0), (0.0, 1.0))):
+    return TensorProductGrid(bounds=list(bounds), Nx_points=[11, 11], boundary_conditions=no_flux_bc(dimension=2))
+
+
+def _solver(bc, domain=None, n=200, density=1.0, **kwargs):
+    """The solver on the unit-square grid, or ``domain``; ``density`` is m_0, of mass 1 on its box."""
     problem = MFGProblem(
         model=Model(
             hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.05
         ),
-        domain=TensorProductGrid(
-            bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[11, 11], boundary_conditions=no_flux_bc(dimension=2)
-        ),
-        conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.2),
+        domain=_unit_square_grid() if domain is None else domain,
+        conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: density, T=0.2),
         Nt=5,
     )
-    solver = FPParticleSolver(problem, num_particles=n, seed=0, boundary_conditions=bc)
+    return FPParticleSolver(problem, num_particles=n, seed=0, boundary_conditions=bc, **kwargs)
+
+
+def _drift_into_the_corner(bc, n=200, domain=None, drift=(3.0, 3.0), **kwargs):
+    """``n`` particles from [0.8, 0.95]^2 drifting at ``drift`` for t = 0.2 on the unit square: how many remain."""
+    solver = _solver(bc, domain, n, **kwargs)
     solver.solve_fp_system(
         initial_particles=np.random.default_rng(0).uniform(0.8, 0.95, (n, 2)),
-        drift_field=lambda t, x, m: np.full(np.shape(x), 3.0),
+        drift_field=lambda t, x, m: np.broadcast_to(np.asarray(drift), np.shape(x)),
         drift_needs_density=False,
         show_progress=False,
     )
@@ -160,14 +168,28 @@ def test_the_fast_path_is_one_particle_action_on_every_wall(segments):
 @pytest.mark.parametrize("x_first", [True, False], ids=["x declared first", "y declared first"])
 def test_a_particle_beyond_a_periodic_face_and_a_wall_wraps_on_one_and_reflects_on_the_other(x_first):
     """Periodic in x and no-flux in y. A periodic axis is identified, not walled: the applicator wraps it first and
-    reads the walls alone, so (1.05, 1.05) goes to (0.05, 0.95), in either declaration order. It applied one action to
-    the whole particle: wrapped in both, or, read at the corner, whichever face was declared first."""
+    the owner reads the faces of the other axes alone, so (1.05, 1.05) goes to (0.05, 0.95), in either declaration
+    order. It applied one action to the whole particle: wrapped in both, or, read at the corner, whichever face was
+    declared first.
+
+    On a box 1000 long in x, a particle 1e-10 inside x_max and beyond y_max reflects in y. The owner counts a point
+    on a face within ``tolerance + |bound| * 1e-12``, so a periodic coordinate held 2e-10 off the face still lay on
+    it there, and the particle wrapped in y; and ``"average"`` refused the solver at construction, reading the
+    periodic face and a wall as a corner."""
     xs = [_segment("xl", BCType.PERIODIC, boundary="x_min"), _segment("xr", BCType.PERIODIC, boundary="x_max")]
     ys = [_segment("yl", BCType.NO_FLUX, boundary="y_min"), _segment("yr", BCType.NO_FLUX, boundary="y_max")]
     bc = BoundaryConditions(segments=xs + ys if x_first else ys + xs, dimension=2)
     remaining, absorbed, _ = ParticleApplicator().apply(np.array([[1.05, 1.05]]), bc, [(0.0, 1.0), (0.0, 1.0)])
     assert absorbed.tolist() == [False]
     np.testing.assert_allclose(remaining, [[0.05, 0.95]], rtol=0, atol=1e-12)
+
+    long_box = [(0.0, 1000.0), (0.0, 1.0)]
+    near = BoundaryConditions(segments=xs + ys if x_first else ys + xs, dimension=2)
+    remaining, absorbed, _ = ParticleApplicator().apply(np.array([[1000.0 - 1e-10, 1.05]]), near, long_box)
+    assert absorbed.tolist() == [False]
+    np.testing.assert_allclose(remaining, [[1000.0 - 1e-10, 0.95]], rtol=0, atol=1e-9)
+    averaged = BoundaryConditions(segments=xs + ys if x_first else ys + xs, dimension=2, corner_strategy="average")
+    _solver(averaged, domain=_unit_square_grid(long_box), density=1e-3)
 
 
 def test_what_no_particle_action_describes_is_refused_at_construction():
@@ -195,3 +217,75 @@ def test_what_no_particle_action_describes_is_refused_at_construction():
     flat = BoundaryConditions(segments=exit_on_x, dimension=2, default_bc=BCType.NO_FLUX)
     with pytest.raises(ValueError, match=r"has no interior along axis \[1\]"):
         ParticleApplicator().apply(np.array([[0.3, 0.5]]), flat, [(0.0, 1.0), (0.5, 0.5)])
+
+
+def test_off_a_grid_the_solver_reads_its_own_box_and_refuses_an_sdf_region():
+    """On a Hyperrectangle, which binds no BC:
+    - a BC with no ``domain_bounds`` is given the solver's box at construction, as the applicator gave it at its first
+      step, so the construction's reading of the vertices sees the faces: an exit on x_max absorbs all 200 particles
+      drifting at (3, 0). The vertex reading raised for want of a box;
+    - an ``sdf_region`` segment is refused by name at construction: its cover of a face is decided on a grid's nodes.
+      The remedies the message gives run: on a TensorProductGrid the same exit constructs, and placed by ``region=``
+      on the Hyperrectangle it absorbs all 200 particles drifting at (3, 0)."""
+    square = np.array([[0.0, 1.0], [0.0, 1.0]])
+    exit_on_x = BoundaryConditions(
+        segments=[_segment("exit", BCType.DIRICHLET, boundary="x_max")], dimension=2, default_bc=BCType.NO_FLUX
+    )
+    assert (
+        _drift_into_the_corner(exit_on_x, domain=Hyperrectangle(square), drift=(3.0, 0.0), density_mode="query_only")
+        == 0
+    )
+
+    def disk(q):
+        return float(np.hypot(q[0] - 1.0, q[1] - 0.5) - 0.6)
+
+    def sdf_exit():
+        return BoundaryConditions(
+            segments=[_segment("exit", BCType.DIRICHLET, sdf_region=disk)],
+            dimension=2,
+            default_bc=BCType.NO_FLUX,
+            domain_bounds=square,
+        )
+
+    with pytest.raises(
+        ValueError, match=r"\['exit'\] are placed by sdf_region.*Hyperrectangle.*TensorProductGrid.*region="
+    ):
+        _solver(sdf_exit(), domain=Hyperrectangle(square), density_mode="query_only")
+    _solver(sdf_exit())
+    region_exit = BoundaryConditions(
+        segments=[_segment("exit", BCType.DIRICHLET, region={"x": (1.0, 1.0), "y": (0.0, 1.0)})],
+        dimension=2,
+        default_bc=BCType.NO_FLUX,
+        domain_bounds=square,
+    )
+    assert (
+        _drift_into_the_corner(region_exit, domain=Hyperrectangle(square), drift=(3.0, 0.0), density_mode="query_only")
+        == 0
+    )
+
+
+def test_a_capped_exit_keeps_its_corner_when_its_cap_is_full():
+    """``exit_a`` (capacity 0.1, priority 1) on the upper half of x_max sits ahead of ``exit_rest`` (x_max, no
+    capacity). With ``exit_a``'s limit of 1 used by the first particle, the second, beyond the corner (1, 1), queues:
+    it is reflected. The flux-limited applicator asks the owner with "the same action and the same capacity"; asked
+    with the action alone, the two exits were one at the corner, and the particle left through ``exit_rest``."""
+    capped = BoundaryConditions(
+        segments=[
+            BCSegment(
+                name="exit_a",
+                bc_type=BCType.DIRICHLET,
+                value=0.0,
+                priority=1,
+                region={"x": (1.0, 1.0), "y": (0.5, 1.0)},
+                flux_capacity=0.1,
+            ),
+            _segment("exit_rest", BCType.DIRICHLET, boundary="x_max"),
+        ],
+        dimension=2,
+        default_bc=BCType.NO_FLUX,
+    )
+    _, absorbed, _, counts = ParticleApplicator().apply_with_flux_limits(
+        np.array([[1.05, 0.9], [1.05, 1.05]]), capped, [(0.0, 1.0), (0.0, 1.0)], {"exit_a": 1}
+    )
+    assert absorbed.tolist() == [True, False]
+    assert counts == {"exit_a": 1}
