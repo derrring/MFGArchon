@@ -575,17 +575,19 @@ class BoundaryConditions:
         return governing, next((part for part in partial if not same(part, governing)), None)
 
     def segments_placed_off_face_labels(self) -> list[BCSegment]:
-        """The segments a reader that integrates over whole box faces cannot place where it matters to a DIRICHLET
-        condition (#2490, #2717): those placed by ``region``, by ``sdf_region`` or by a ``region_name`` that is no face
-        label, that are DIRICHLET, come before a DIRICHLET segment in the face order, or sit beside a DIRICHLET
-        ``default_bc``.
+        """The segments a reader that integrates over whole box faces cannot place where it can matter to a DIRICHLET
+        condition (#2490, #2717): those placed by ``region``, by ``sdf_region``, or by a ``region_name`` that the bound
+        grid marks or that is no face label, and that are DIRICHLET, come before a DIRICHLET segment in the face order,
+        or sit beside a DIRICHLET ``default_bc``.
 
-        A face label -- ``boundary``, a ``region_name`` such as ``"x_max"``, or ``"all"`` -- and ``normal_direction``
-        on an axis-aligned face decide a whole face exactly. A ``region``, an ``sdf_region`` and a region marked on a
-        grid are decided on that grid's nodes (:meth:`segment_for_face`), which need not be the faces such a reader
-        integrates; placing a condition on part of a face is per-point resolution (#2712).
+        A face label -- ``boundary``, an unmarked ``region_name`` such as ``"x_max"``, or ``"all"`` -- and
+        ``normal_direction`` on an axis-aligned face decide a whole face exactly. A ``region``, an ``sdf_region`` and a
+        marked region, whatever its name, are decided on the grid's nodes (:meth:`segment_for_face`,
+        `region_name_governs_face`), which need not be the faces such a reader integrates; placing a condition on part
+        of a face is per-point resolution (#2712).
         """
         order = self._face_order()
+        geometry = self._query_geometry(None)
         dirichlet_default = self.default_bc is not None and self._resolve_default_bc("placement") == BCType.DIRICHLET
         last_dirichlet = max((i for i, seg in enumerate(order) if seg.bc_type == BCType.DIRICHLET), default=-1)
         return [
@@ -594,7 +596,10 @@ class BoundaryConditions:
             if (
                 seg.region is not None
                 or seg.sdf_region is not None
-                or (seg.region_name is not None and parse_boundary_face(seg.region_name) is None)
+                or (
+                    seg.region_name is not None
+                    and (parse_boundary_face(seg.region_name) is None or _marks_region(geometry, seg.region_name))
+                )
             )
             and (seg.bc_type == BCType.DIRICHLET or i < last_dirichlet or dirichlet_default)
         ]
@@ -2364,6 +2369,12 @@ def faces_covered_by_region(geometry: Any, region_name: str) -> frozenset[Bounda
     return frozenset(covered)
 
 
+def _marks_region(geometry: Any, name: str) -> bool:
+    """Whether ``geometry`` marks a region called ``name``. Then the region's mask places a ``region_name`` segment,
+    whatever the name spells -- "x_max" included -- and a face label decides nothing (#2472, #2717)."""
+    return isinstance(geometry, SupportsRegionMarking) and name in geometry.get_region_names()
+
+
 def region_name_governs_face(segment: BCSegment, face: BoundaryFace, geometry: Any = None) -> bool:
     """Does a ``region_name`` segment govern ``face``? The one resolver for the face-level readers. #2472
 
@@ -2379,7 +2390,7 @@ def region_name_governs_face(segment: BCSegment, face: BoundaryFace, geometry: A
         ValueError: if the region cannot be resolved to faces.
     """
     name = segment.region_name
-    if isinstance(geometry, SupportsRegionMarking) and name in geometry.get_region_names():
+    if _marks_region(geometry, name):
         return face in faces_covered_by_region(geometry, name)
     label = parse_boundary_face(name)
     if label is not None:

@@ -66,6 +66,7 @@ def _bound_to_a_grid(bc, n, bounds=((0.0, 1.0), (0.0, 1.0))):
         "2-D region on 90% of x_max, a 5x5 grid",
         "2-D region beyond the cloud's face",
         "2-D region marked on a 3x3 grid, named by region_name",
+        "2-D region marked on a 3x3 grid, named x_max",
     ],
 )
 def test_a_region_or_sdf_region_placement_is_refused_and_a_face_label_is_the_remedy(case):
@@ -73,7 +74,8 @@ def test_a_region_or_sdf_region_placement_is_refused_and_a_face_label_is_the_rem
     faces Nitsche integrates, so a Dirichlet condition placed that way is refused, as before B1c-2. On a 3x3 grid a
     region over 70% of x_max read as the whole face and imposed Dirichlet on all of it; a region over 90% did the same
     on 5x5; a region at x > 0.95 gave a cloud on [0.1, 0.9]^2 its x_max face; a region marked on a 3x3 grid over 70%
-    of x_max and named by ``region_name`` read as the whole face too. The refusal names #2712, and its remedy,
+    of x_max and named by ``region_name`` read as the whole face too, and so did one named "x_max", since the grid's mark
+    decides before the label (review 2). The refusal names #2712, and its remedy,
     a face label, assembles. A natural condition placed by a region is refused where it decides where a Dirichlet
     condition lies: before a Dirichlet segment in the face order, or beside a Dirichlet default."""
     from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
@@ -100,7 +102,8 @@ def test_a_region_or_sdf_region_placement_is_refused_and_a_face_label_is_the_rem
         segment, n, delta = _dirichlet(region={0: (0.95, 1.0)}), 11, 0.35
     elif marked:
         side = np.linspace(0.0, 1.0, 9)
-        segment, n, delta = _dirichlet(region_name="exit"), 3, 3.5 / 8
+        name = "x_max" if case.endswith("x_max") else "exit"
+        segment, n, delta = _dirichlet(region_name=name), 3, 3.5 / 8
     else:
         side = np.linspace(0.0, 1.0, 9)
         span = (0.3, 1.0) if "70%" in case else (0.05, 0.95)
@@ -109,7 +112,7 @@ def test_a_region_or_sdf_region_placement_is_refused_and_a_face_label_is_the_rem
     disc = discretization_from_cloud(cloud, delta=delta, degree=2, n_gauss=4)
     grid, bc = _bound_to_a_grid(BoundaryConditions(dimension=2, segments=[segment], default_bc=BCType.NO_FLUX), n)
     if marked:
-        grid.mark_region("exit", predicate=lambda x: (np.asarray(x)[..., 0] > 0.99) & (np.asarray(x)[..., 1] > 0.3))
+        grid.mark_region(name, predicate=lambda x: (np.asarray(x)[..., 0] > 0.99) & (np.asarray(x)[..., 1] > 0.3))
     with pytest.raises(NotImplementedError, match=refusal):
         refuse_what_nitsche_cannot_place(bc, 2)
     face = BoundaryConditions(dimension=2, segments=[_dirichlet(boundary="x_max")], default_bc=BCType.NO_FLUX)

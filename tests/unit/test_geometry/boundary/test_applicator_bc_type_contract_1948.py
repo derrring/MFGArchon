@@ -251,7 +251,7 @@ def test_each_cell_either_applies_or_refuses(name, cls, call, field, bc_type):
     happened to change nothing, which is why it cannot be allowed even where it is harmless.
     """
     # `getattr` with a default, not attribute access: the convention has THREE states, not two.
-    # `FDMApplicator` declares 8, `MeshfreeApplicator` 2, `ImplicitApplicator` 7;
+    # `FDMApplicator` declares 8, `MeshfreeApplicator` 2, `ImplicitApplicator` 5;
     # `GraphApplicator` declares `None` ("not migrated", #1456), `InterpolationApplicator` 6 since #1948; and
     # `ParticleApplicator` has no such attribute at all. Bare `cls._SUPPORTED_BC_TYPES` raises
     # `AttributeError` on the third state, which reads as a test bug rather than as the missing

@@ -74,6 +74,8 @@ class ImplicitApplicator(MeshfreeApplicator):
     #: nearest interior neighbour, the normal interpolation collapses to a no-op, and NO_FLUX reads
     #: as silent when it is not. PERIODIC is genuinely SILENT here and is deliberately NOT declared,
     #: so the gate refuses it rather than returning the field untouched. #1948
+    #: REFLECTING is a zero normal flux on a field. The two EXTRAPOLATION types have no branch here: they fell
+    #: to a fallback that imposed u = 0, so they are not declared, and the gate refuses them (#2717, review 2).
     _SUPPORTED_BC_TYPES: frozenset[BCType] = frozenset(
         {
             BCType.DIRICHLET,
@@ -81,8 +83,6 @@ class ImplicitApplicator(MeshfreeApplicator):
             BCType.ROBIN,
             BCType.REFLECTING,
             BCType.NO_FLUX,
-            BCType.EXTRAPOLATION_LINEAR,
-            BCType.EXTRAPOLATION_QUADRATIC,
         }
     )
 
@@ -159,7 +159,7 @@ class ImplicitApplicator(MeshfreeApplicator):
 
         if bc_type == BCType.DIRICHLET:
             result[boundary_mask] = self._apply_dirichlet(result[boundary_mask], bc_value)
-        elif bc_type in (BCType.NEUMANN, BCType.NO_FLUX):
+        elif bc_type in (BCType.NEUMANN, BCType.NO_FLUX, BCType.REFLECTING):
             result[boundary_mask] = self._apply_neumann_along_normal(
                 result, boundary_mask, normals, bc_value, points, spacing
             )
@@ -171,8 +171,8 @@ class ImplicitApplicator(MeshfreeApplicator):
         elif bc_type == BCType.PERIODIC:
             result[boundary_mask] = self._apply_periodic(result, boundary_mask, points)
         else:
-            # Fallback: treat as Dirichlet with zero value
-            result[boundary_mask] = 0.0
+            # The gate refuses every type without a branch above; this is reached only past it.
+            raise NotImplementedError(f"ImplicitApplicator has no branch for {bc_type.name} (#1948, #2717)")
 
         return result
 

@@ -460,8 +460,9 @@ class TestAgainstAPackageGeometry:
         assert on_boundary.any()
         np.testing.assert_allclose(applicator.apply(np.zeros(len(points)), uniform, points)[on_boundary], 7.0)
 
+    @pytest.mark.parametrize("bc_type", [BCType.NO_FLUX, BCType.REFLECTING])
     @pytest.mark.parametrize("stray_value", [2.5, -1.0])
-    def test_no_flux_never_carries_a_flux_whatever_value_it_is_given(self, package_applicator, stray_value):
+    def test_no_flux_never_carries_a_flux_whatever_value_it_is_given(self, package_applicator, stray_value, bc_type):
         """NO_FLUX means `du/dn = 0` by definition, so no value it carries can be a normal derivative.
 
         Three other paths in this package already state that convention -- `applicator_fdm.py:1149`
@@ -472,6 +473,9 @@ class TestAgainstAPackageGeometry:
 
         Not hypothetical: `with_resolved_providers`, the documented pre-solve step, turns
         `BCSegment(NO_FLUX, value=<provider>)` into a uniform NO_FLUX segment carrying a number.
+
+        REFLECTING is the same zero flux. Since the applicator reads the BC's one condition (#2717), a REFLECTING
+        segment beside a NO_FLUX default dispatches on REFLECTING, which fell to a fallback imposing u = 0 (review 2).
         """
         applicator, geometry = package_applicator
         points = self._on_sphere(geometry, n=24)
@@ -480,7 +484,7 @@ class TestAgainstAPackageGeometry:
 
         field = np.full(len(points), 3.8)
         bc = BoundaryConditions(
-            segments=[BCSegment(name="wall", bc_type=BCType.NO_FLUX, value=stray_value)],
+            segments=[BCSegment(name="wall", bc_type=bc_type, value=stray_value)],
             dimension=2,
             default_bc=BCType.NO_FLUX,
         )

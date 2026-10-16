@@ -118,10 +118,10 @@ def _dirichlet_faces(bc: BoundaryConditions | None, d: int) -> list[tuple[BCSegm
         names = ", ".join(repr(seg.name) for seg in off_labels)
         raise NotImplementedError(
             f"Meshless Galerkin: segment(s) {names} are placed by region, sdf_region or a marked region_name, where "
-            "their placement decides a Dirichlet condition. The owner decides such a placement on a grid's nodes, not "
-            "on the box faces Nitsche integrates, so it is refused as before #2512's stage B1c-2 (#2717). Place the "
-            "condition with a face label -- boundary='x_max', region_name='x_max', or 'all' -- or normal_direction "
-            "on an axis-aligned face; a condition on part of a face is #2712."
+            "their placement can decide a Dirichlet condition. The owner decides such a placement on a grid's nodes, "
+            "not on the box faces Nitsche integrates, so it is refused as before #2512's stage B1c-2 (#2717). Place "
+            "the condition with a face label -- boundary='x_max', or 'all' -- or normal_direction on an axis-aligned "
+            "face; a condition on part of a face is #2712."
         )
     by_rank: dict[int, tuple[BCSegment, list[tuple[int, str]]]] = {}
     for axis in range(d):
