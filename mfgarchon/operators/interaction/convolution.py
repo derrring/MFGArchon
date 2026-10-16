@@ -197,8 +197,7 @@ class ConvolutionCouplingOperator(LinearOperator):
             raise ValueError(
                 f"ConvolutionCouplingOperator.from_problem: axis {wrapped} of the problem's grid is periodic, and "
                 "this convolution is Euclidean: it does not wrap, so near one wall it would miss the mass just beyond "
-                "the other. A periodic interaction is not implemented; pose the problem on a non-periodic grid "
-                "(#1642)."
+                "the other. A periodic interaction is #2725; pose the problem on a non-periodic grid (#1642)."
             )
         weights = problem.spatial_measure().weights
         if geometry.is_uniform:
