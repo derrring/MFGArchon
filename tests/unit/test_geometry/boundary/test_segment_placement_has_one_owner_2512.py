@@ -47,7 +47,6 @@ FACE_NAME = re.compile(r"\}_(min|max)\b|_\{(side|lo|hi|s|end)\}")
 _NOT_A_SEGMENT = "matches a rival form and reads no segment"
 #: (file, function) -> (site count, why it is allowed).
 ALLOWED = {
-    ("mfgarchon/alg/numerical/meshless_galerkin/nitsche.py", "_segment_faces"): (8, "B1c: Nitsche faces"),
     ("mfgarchon/geometry/boundary/applicator_particle.py", "_get_boundary_id"): (2, "B1d: particle boundary id"),
     ("mfgarchon/alg/base_solver.py", "get_domain_constraints"): (1, "B1e: one constraint per segment, from its region"),
     ("mfgarchon/alg/numerical/adjoint/diagnostics.py", "_get_boundary_indices"): (4, f"{_NOT_A_SEGMENT}: index keys"),
@@ -180,15 +179,15 @@ def test_a_planted_rival_is_found(package_copy, form):
 
 
 def test_a_new_rival_inside_an_allowed_function_is_found(package_copy):
-    """The allowance pins its site count, so a second rival in Nitsche's allowed function fails too."""
-    rel = "mfgarchon/alg/numerical/meshless_galerkin/nitsche.py"
+    """The allowance pins its site count, so a second rival in the particle applicator's allowed function fails too."""
+    rel = "mfgarchon/geometry/boundary/applicator_particle.py"
     target = package_copy / rel
     original = target.read_text()
-    anchor = "    from mfgarchon.geometry.boundary.types import BCType, parse_boundary_face\n"
+    anchor = "        # Handle 1D special case (uses directional naming)\n"
     assert original.count(anchor) == 1
     try:
-        target.write_text(original.replace(anchor, anchor + "    _ = [seg.priority for seg in ()]\n"))
+        target.write_text(original.replace(anchor, anchor + "        _ = [seg.priority for seg in ()]\n"))
         violations = _violations(scan(package_copy))
     finally:
         target.write_text(original)
-    assert any("_segment_faces" in v for v in violations), violations
+    assert any("_get_boundary_id" in v for v in violations), violations

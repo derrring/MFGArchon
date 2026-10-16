@@ -43,7 +43,9 @@
       If a segment that takes one of its nodes imposes its own condition, that condition holds at that node, and it is
       not refused;
     - a tag that also holds facets inside the domain, which main condensed;
-    - under `corner_strategy="average"` or `"mollify"`, a node whose facets' segments impose different conditions.
+    - under `corner_strategy="average"` or `"mollify"`, a node a DIRICHLET segment shares with a segment imposing a
+      different condition. A node only natural segments share needs no choice, since a natural condition is imposed on
+      facets (#2512 B1c-2).
   - **API changes.** `fem.bc_adapter.is_pure_neumann(mesh, bc)` and `refuse_what_fem_cannot_impose(basis, bc,
     consumer)` take the mesh and the basis. New: `BoundaryConditions.segments_for_facets`, `segment_for_shared_node`,
     `refuse_a_segment_left_no_node`, `conditions.BoundaryFacets`, and `fem.bc_adapter.has_dirichlet_dofs`.
@@ -52,5 +54,5 @@
     (`region_holds`, `sdf_region_holds`). Two answers of `BCSegment.matches_point` change: a `region` naming an axis
     the point lacks raises even when an earlier axis already excludes the point, where it returned False; and a NaN
     coordinate or SDF value no longer matches.
-  - **Not here.** GFDM and meshless Nitsche read faces by their own rules until stage B1c, the particle solver until
-    B1d.
+  - **Not here.** The particle solver reads faces by its own rule until stage B1d; GFDM and meshless Nitsche read
+    the owner since stages B1c-1 and B1c-2.

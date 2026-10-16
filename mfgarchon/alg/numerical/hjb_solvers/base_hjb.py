@@ -678,9 +678,6 @@ def require_batch_safe_hamiltonian(problem: Any, t: float = 0.0) -> None:
     outside a bounded domain in p still passes, because NaN must only match NaN; one that raises there is
     refused with the reason. The tolerance is scaled by the finite values only, so one infinite value cannot
     make the comparison vacuous.
-
-    The batch call comes first: ``SeparableHamiltonian`` decides once, on its first batch, whether its
-    potential is vectorised, and a one-row first call would decide no.
     """
     H = problem.hamiltonian_class
     x_all = np.asarray(problem.geometry.get_spatial_grid(), dtype=float).reshape(-1, 1)
