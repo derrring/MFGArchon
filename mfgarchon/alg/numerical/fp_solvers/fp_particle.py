@@ -1212,8 +1212,8 @@ class FPParticleSolver(BaseFPSolver):
         # The whole step is searched, as `place_step` searches it, and its first crossing must lie before the cut: a
         # search of the cut segment alone can see a feature thinner than the whole step's scan step, which
         # `place_step` then passes over to the wall (#2710).
-        before = np.where(np.isfinite(first_wall), np.clip(first_wall, 0.0, 1.0), np.inf)
-        meets = domain.legs_leave(previous, raw, before=before)
+        cut = np.where(np.isfinite(first_wall), np.clip(first_wall, 0.0, 1.0), np.inf)
+        meets = domain.legs_leave(previous, raw, before=cut)
         before: dict[str, int] = {}
         if meets.any():
             raw = raw.copy()
