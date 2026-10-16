@@ -839,11 +839,12 @@ if __name__ == "__main__":
     # The conserved quantity is the GRID MEASURE, not sum(m). #708 recorded sum(m), which was the
     # right pairing for the `half_wall` diffusion of the day; since #2243 both half-steps carry the
     # trapezoid instead. `x` is this block's own grid, defined above.
+    from mfgarchon.utils.numerical.quadrature import integrate_on_weights
     from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d as _w1d
 
     weights = _w1d(x)
-    mass_initial = float(weights @ M[0])
-    mass_final = float(weights @ M[-1])
+    mass_initial = float(integrate_on_weights(M[0], weights))
+    mass_final = float(integrate_on_weights(M[-1], weights))
     mass_error = abs(mass_final - mass_initial) / mass_initial
 
     print(f"   grid measure initial: {mass_initial:.6f}")

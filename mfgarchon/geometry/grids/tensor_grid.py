@@ -44,7 +44,7 @@ from mfgarchon.geometry.protocols import (
     SupportsRegionMarking,
 )
 from mfgarchon.utils.deprecation import deprecated, deprecated_parameter
-from mfgarchon.utils.numerical.quadrature import quadrature_weights_1d, quadrature_weights_nd
+from mfgarchon.utils.numerical.quadrature import integrate_on_weights, quadrature_weights_1d, quadrature_weights_nd
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -695,27 +695,22 @@ class TensorProductGrid(
         x = np.asarray(self.coordinates[dimension_idx], dtype=float)
         return quadrature_weights_1d(x)
 
+    def measure_weights(self) -> NDArray:
+        """This grid's measure as per-node weights, shaped like the grid.
+
+        The tensor product of :meth:`quadrature_weights` along each axis, so a corner node owns ``prod(h_d / 2)``.
+        :meth:`integrate` and ``MFGProblem.spatial_measure`` both read it (#1642).
+        """
+        return quadrature_weights_nd(tuple(self.coordinates[: len(self._Nx_points)]))
+
     def integrate(self, field: NDArray) -> NDArray | float:
-        """Integrate ``field`` over this grid, with this grid's own weights.
+        """Integrate ``field`` over this grid, with this grid's own weights, :meth:`measure_weights`.
 
         Accepts a spatial field shaped like the grid, or a stack whose TRAILING axes are spatial --
         a ``(time, *spatial)`` history integrates to one value per time row, which is the shape
         every mass-conservation check wants.
-
-        The weights are the tensor product of :meth:`quadrature_weights` along each axis, so a
-        corner node owns ``prod(h_d / 2)`` and the identity holds in any dimension.
         """
-        arr = np.asarray(field, dtype=float)
-        spatial = tuple(self._Nx_points)
-        nd = len(spatial)
-        if arr.ndim < nd or tuple(arr.shape[-nd:]) != spatial:
-            raise ValueError(
-                f"field trailing axes {tuple(arr.shape[-nd:]) if arr.ndim >= nd else arr.shape} "
-                f"do not match the grid {spatial}; integrate() reduces the TRAILING axes so that a "
-                f"(time, *spatial) history returns one value per time row"
-            )
-        weights = quadrature_weights_nd(tuple(self.coordinates[:nd]))
-        return (arr * weights).sum(axis=tuple(range(arr.ndim - nd, arr.ndim)))
+        return integrate_on_weights(field, self.measure_weights(), "the grid")
 
     def integrate_boundary(self, field: NDArray, axis: int) -> NDArray | float:
         """Integrate over the boundary face whose normal is ``axis``.
@@ -735,14 +730,9 @@ class TensorProductGrid(
         nd = len(face_shape)
         if nd == 0:
             return arr
-        if arr.ndim < nd or tuple(arr.shape[-nd:]) != face_shape:
-            raise ValueError(
-                f"field trailing axes {tuple(arr.shape[-nd:]) if arr.ndim >= nd else arr.shape} do "
-                f"not match the face {face_shape} of axis {axis}"
-            )
         axes = [d for d in range(self._dimension) if d != axis]
         weights = quadrature_weights_nd([self.coordinates[d] for d in axes])
-        return (arr * weights).sum(axis=tuple(range(arr.ndim - nd, arr.ndim)))
+        return integrate_on_weights(arr, weights, f"the face of axis {axis}")
 
     # ============================================================================
     # Geometry ABC implementation (data interface)
