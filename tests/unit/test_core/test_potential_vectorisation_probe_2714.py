@@ -1,9 +1,10 @@
 """The potential's vectorisation probe must not have d rows (#2714).
 
 `SeparableHamiltonian` decides once, on its first batch call, whether the user's potential takes a
-batch (N, d) -> (N,). It used to probe with two rows and accept a result of shape (2,). A potential
-written per point indexes coordinates, x[0], x[1], which on a batch are its rows, so in 2-D it
-returned row 0 squared plus row 1 squared -- shape (2,) -- and passed. Measured at `0b5481fd` on
+batch (N, d) -> (N,). It used to probe with two rows and accept a result of shape (2,). A 2-D
+potential written per point and elementwise in the coordinates it indexes, x[0]**2 + x[1]**2, reads
+them on a batch as rows, so it returned row 0 squared plus row 1 squared -- shape (2,) -- and
+passed. Measured at `0b5481fd` on
 `x[0]**2 + x[1]**2`: max error 0.071 at N = 2, and a broadcast ValueError at every N >= 3, on every
 later batch call too, the decision being cached.
 
