@@ -407,7 +407,9 @@ def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
     """- A plain ``F[m] -> float`` carries its own quadrature, so it is refused; the route the message names, the
       finite-difference Lions source on the grid's weights, recovers ``delta F / delta m = V`` for F = int V m. Run as
       written through ``MFGProblem`` on a 7 x 5 grid, where the composer hands it a (7, 5) slice, it is V within
-      4.2e-10, with the grid's weights or with one scalar weight, dx dy.
+      4.2e-10, with the grid's weights or with one scalar weight, dx dy. The other two Lions sources read that slice
+      too: ``create_nonlocal_source(W, w)`` gives W @ (w m), and ``create_lions_source`` on a bound energy its flat
+      derivative (#2728). Each refused the slice as a trajectory.
     - ``PotentialCost(V)`` with a ``V(t, x)`` is refused: binding reads V once. The route it names, the Hamiltonian's
       ``potential(t, x)``, reads V at each time, at an array of points, so the 1-D V reads ``x[..., 0]`` as the
       message says: with ``5 x (1 + 10 t)`` it solves 0.57 away from ``5 x``. A V the reader cannot take, ``V(x, t)``,
@@ -465,6 +467,27 @@ def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
         ),
     )
     np.testing.assert_allclose(compose_hjb_source(scalar, M, 0 * M)(0.0, nodes), V2, rtol=0, atol=1e-8)
+    from mfgarchon.alg.numerical.coupling.lions_correction import create_nonlocal_source
+
+    W = np.exp(-(np.linalg.norm(nodes[:, None] - nodes[None], axis=2) ** 2))
+    energy = InteractionCost(GaussianKernel(amplitude=1.0, length_scale=0.5)).bind(advised)
+    m2 = (1.0 + nodes[:, 0] + 2.0 * nodes[:, 1] ** 2).reshape(7, 5)
+    for source, expected in (
+        (
+            create_nonlocal_source(W, plane.measure_weights().ravel()),
+            W @ (plane.measure_weights().ravel() * m2.ravel()),
+        ),
+        (create_lions_source(energy), energy.flat_derivative(m2.ravel())),
+    ):
+        routed = MFGProblem(
+            model=Model(hamiltonian=_hamiltonian(), volatility=0.3),
+            domain=plane,
+            conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 0.5, T=0.2),
+            Nt=2,
+            source_term_hjb=source,
+        )
+        Ms = np.array([m2] * 3)
+        np.testing.assert_allclose(compose_hjb_source(routed, Ms, 0 * Ms)(0.0, nodes), expected, rtol=1e-12, atol=1e-12)
 
     def timed(**kwargs):
         return MFGProblem(
