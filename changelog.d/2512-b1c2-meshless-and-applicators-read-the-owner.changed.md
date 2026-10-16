@@ -3,9 +3,9 @@
   - **Nitsche** asks `BoundaryConditions.segment_for_face` which segment governs each bounding-box face, and imposes
     Dirichlet data on the faces a Dirichlet condition governs. Its own face reader, `nitsche._segment_faces`, is gone.
     - A segment placed by `normal_direction` on an axis-aligned face now governs that face; it was refused.
-    - A segment placed by `region` or `sdf_region` is still refused where its placement decides a Dirichlet condition:
-      the owner decides such a placement on the problem's grid, not on the box faces Nitsche integrates, and a
-      condition on part of a face is #2712. Place it with a face label.
+    - A segment placed by `region`, by `sdf_region` or by a `region_name` that names a marked region is still refused
+      where its placement decides a Dirichlet condition: the owner decides such a placement on the problem's grid,
+      not on the box faces Nitsche integrates, and a condition on part of a face is #2712. Place it with a face label.
     - A DIRICHLET `default_bc` is imposed, with `default_value`, on the faces it governs; it was refused. A
       time-dependent `default_value` is read at each time level, as a segment's value is.
     - A face no segment governs, with no `default_bc`, is refused; it got the natural condition. Pass

@@ -43,9 +43,9 @@ Scope (interim, #1138):
   refuses a Dirichlet value (#2532). Either way the FP's data load is zero: ``m = 0``.
 - Which face each condition governs is the face owner's answer, ``BoundaryConditions.segment_for_face``
   (#2512 row B1, stage B1c-2): a face label or a ``normal_direction`` governs its face, and a face no segment
-  governs takes ``default_bc`` (#2490). A ``region`` or ``sdf_region`` placement that decides a Dirichlet
-  condition is refused: the owner decides it on the problem's grid, not on these faces (#2717); a condition on
-  part of a face is #2712.
+  governs takes ``default_bc`` (#2490). A ``region``, ``sdf_region`` or marked-region ``region_name`` placement
+  that decides a Dirichlet condition is refused: the owner decides it on the problem's grid, not on these faces
+  (#2717); a condition on part of a face is #2712.
 
 Issue #1138.
 """
@@ -117,11 +117,11 @@ def _dirichlet_faces(bc: BoundaryConditions | None, d: int) -> list[tuple[BCSegm
     if off_labels:
         names = ", ".join(repr(seg.name) for seg in off_labels)
         raise NotImplementedError(
-            f"Meshless Galerkin: segment(s) {names} are placed by region or sdf_region, where their placement decides "
-            "a Dirichlet condition. The owner decides such a placement on a grid's nodes, not on the box faces Nitsche "
-            "integrates, so it is refused as before #2512's stage B1c-2 (#2717). Place the condition with a face "
-            "label -- boundary='x_max', region_name, or 'all' -- or normal_direction on an axis-aligned face; a "
-            "condition on part of a face is #2712."
+            f"Meshless Galerkin: segment(s) {names} are placed by region, sdf_region or a marked region_name, where "
+            "their placement decides a Dirichlet condition. The owner decides such a placement on a grid's nodes, not "
+            "on the box faces Nitsche integrates, so it is refused as before #2512's stage B1c-2 (#2717). Place the "
+            "condition with a face label -- boundary='x_max', region_name='x_max', or 'all' -- or normal_direction "
+            "on an axis-aligned face; a condition on part of a face is #2712."
         )
     by_rank: dict[int, tuple[BCSegment, list[tuple[int, str]]]] = {}
     for axis in range(d):

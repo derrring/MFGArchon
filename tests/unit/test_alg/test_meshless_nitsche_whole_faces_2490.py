@@ -65,13 +65,15 @@ def _bound_to_a_grid(bc, n, bounds=((0.0, 1.0), (0.0, 1.0))):
         "2-D region on 70% of x_max, a 5x5 grid",
         "2-D region on 90% of x_max, a 5x5 grid",
         "2-D region beyond the cloud's face",
+        "2-D region marked on a 3x3 grid, named by region_name",
     ],
 )
 def test_a_region_or_sdf_region_placement_is_refused_and_a_face_label_is_the_remedy(case):
     """#2717 review 1, B2: the owner decides a ``region`` or an ``sdf_region`` on the problem's grid, not on the box
     faces Nitsche integrates, so a Dirichlet condition placed that way is refused, as before B1c-2. On a 3x3 grid a
     region over 70% of x_max read as the whole face and imposed Dirichlet on all of it; a region over 90% did the same
-    on 5x5; a region at x > 0.95 gave a cloud on [0.1, 0.9]^2 its x_max face. The refusal names #2712, and its remedy,
+    on 5x5; a region at x > 0.95 gave a cloud on [0.1, 0.9]^2 its x_max face; a region marked on a 3x3 grid over 70%
+    of x_max and named by ``region_name`` read as the whole face too. The refusal names #2712, and its remedy,
     a face label, assembles. A natural condition placed by a region is refused where it decides where a Dirichlet
     condition lies: before a Dirichlet segment in the face order, or beside a Dirichlet default."""
     from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
@@ -80,7 +82,7 @@ def test_a_region_or_sdf_region_placement_is_refused_and_a_face_label_is_the_rem
         refuse_what_nitsche_cannot_place,
     )
 
-    refusal = r"placed by region or sdf_region.*#2712"
+    refusal = r"placed by region, sdf_region or a marked region_name.*#2712"
     if case.startswith("1-D"):
         wall = BCSegment(name="w", bc_type=BCType.NO_FLUX, region={0: (0.5, 1.0)}, priority=1)
         bc = {
@@ -92,16 +94,22 @@ def test_a_region_or_sdf_region_placement_is_refused_and_a_face_label_is_the_rem
         with pytest.raises(NotImplementedError, match=refusal):
             MeshlessGalerkinFPSolver(_problem(bc), XS, delta=0.35)
         return
+    marked = case.startswith("2-D region marked")
     if case == "2-D region beyond the cloud's face":
         side = np.linspace(0.1, 0.9, 9)
         segment, n, delta = _dirichlet(region={0: (0.95, 1.0)}), 11, 0.35
+    elif marked:
+        side = np.linspace(0.0, 1.0, 9)
+        segment, n, delta = _dirichlet(region_name="exit"), 3, 3.5 / 8
     else:
         side = np.linspace(0.0, 1.0, 9)
         span = (0.3, 1.0) if "70%" in case else (0.05, 0.95)
         segment, n, delta = _dirichlet(boundary="x_max", region={1: span}), 3 if "3x3" in case else 5, 3.5 / 8
     cloud = np.array([[x, y] for x in side for y in side])
     disc = discretization_from_cloud(cloud, delta=delta, degree=2, n_gauss=4)
-    _grid, bc = _bound_to_a_grid(BoundaryConditions(dimension=2, segments=[segment], default_bc=BCType.NO_FLUX), n)
+    grid, bc = _bound_to_a_grid(BoundaryConditions(dimension=2, segments=[segment], default_bc=BCType.NO_FLUX), n)
+    if marked:
+        grid.mark_region("exit", predicate=lambda x: (np.asarray(x)[..., 0] > 0.99) & (np.asarray(x)[..., 1] > 0.3))
     with pytest.raises(NotImplementedError, match=refusal):
         refuse_what_nitsche_cannot_place(bc, 2)
     face = BoundaryConditions(dimension=2, segments=[_dirichlet(boundary="x_max")], default_bc=BCType.NO_FLUX)
