@@ -93,6 +93,23 @@ class TestGate3LionsBridgeEquivalence:
             source(t=0.0, x=x, v=np.zeros_like(x), m=m), W @ quadrature_weights_1d(x), atol=1e-14
         )
 
+    @pytest.mark.parametrize("form", ["dense", "csr_matrix", "LinearOperator"])
+    def test_the_nonlocal_source_applies_a_sparse_or_matrix_free_kernel(self, form):
+        """The nonlocal source is the path for a kernel that is not translation-invariant, which is where a sparse or
+        matrix-free W is used: each is applied as it is. np.asarray wrapped them in a 0-d object array, and the shape
+        check refused them (#2726, review 1)."""
+        from scipy.sparse import csr_matrix
+        from scipy.sparse.linalg import aslinearoperator
+
+        from mfgarchon.operators.interaction.kernels import WendlandKernel
+
+        x = np.linspace(0.0, 1.0, 41)
+        W = WendlandKernel(1.0, 0.1).matrix(x)
+        kernel = {"dense": W, "csr_matrix": csr_matrix(W), "LinearOperator": aslinearoperator(W)}[form]
+        w, m = quadrature_weights_1d(x), 1.0 + x
+        source = create_nonlocal_source(kernel, w)
+        np.testing.assert_allclose(source(t=0.0, x=x, v=np.zeros_like(x), m=m), W @ (w * m), atol=1e-15)
+
     def test_analytic_matches_fd_lambda_path(self):
         """The two branches of create_lions_source agree on ONE energy object.
 

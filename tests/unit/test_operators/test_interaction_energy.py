@@ -29,7 +29,7 @@ from scipy.special import erf
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import no_flux_bc, periodic_bc
+from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc, periodic_bc
 from mfgarchon.geometry.implicit import Hyperrectangle
 from mfgarchon.operators.interaction.convolution import ConvolutionCouplingOperator
 from mfgarchon.operators.interaction.energy_functionals import (
@@ -607,6 +607,9 @@ class TestConstruction:
         for op, expected in ((grid_op, quadrature_weights_1d(x)), (cloud_op, np.full(N, dx))):
             assert op.weights.shape == (N,)
             np.testing.assert_allclose(op.weights, expected)
+        # On a regular grid one weight for every node is the rectangle rule, and is refused (#1642).
+        with pytest.raises(ValueError, match="got the scalar"):
+            ConvolutionCouplingOperator(GaussianKernel(1.0, 0.1), grid_shape=(N,), spacings=[dx], cell_volume=dx)
 
     def test_kernel_matrix_times_weights_is_as_dense(self):
         """Pins the two matrix accessors against each other: ``as_dense`` is the
@@ -688,10 +691,14 @@ def _problem(domain):
     )
 
 
-@pytest.mark.parametrize("case", ["uniform grid", "graded grid", "periodic grid", "not a grid"])
+@pytest.mark.parametrize(
+    "case", ["uniform grid", "graded grid", "periodic grid", "periodic in x only", "periodic in y only", "not a grid"]
+)
 def test_from_problem_reads_the_grid_the_measure_and_the_topology(case):
     """The operator's weights are the problem's measure, on a uniform grid (where FFT is available) and on a graded one
-    (direct). A periodic axis is refused by name, and so is a geometry that is not a grid."""
+    (direct). On the uniform grid, whose two spacings differ, ``op @ m`` is the sum written out on the grid's own nodes.
+    A periodic axis is refused by name, read face by face, so a 2-D grid periodic in one axis names that axis (#2726,
+    review 1); a geometry that is not a grid is refused too."""
     kernel = GaussianKernel(1.0, _ELL)
     if case == "uniform grid":
         problem = _problem(
@@ -699,6 +706,11 @@ def test_from_problem_reads_the_grid_the_measure_and_the_topology(case):
         )
         op = ConvolutionCouplingOperator.from_problem(kernel, problem)
         assert op.uses_fft
+        nodes = problem.geometry.get_spatial_grid().reshape(-1, 2)
+        w = problem.spatial_measure().weights.ravel()
+        m = 1.0 + nodes[:, 0] + 2.0 * nodes[:, 1] ** 2
+        written_out = kernel(np.linalg.norm(nodes[:, None, :] - nodes[None, :, :], axis=-1)) @ (w * m)
+        np.testing.assert_allclose(op @ m, written_out, atol=1e-14)
     elif case == "graded grid":
         axis = np.linspace(0.0, 1.0, 11) ** 2
         problem = _problem(
@@ -716,6 +728,17 @@ def test_from_problem_reads_the_grid_the_measure_and_the_topology(case):
     elif case == "periodic grid":
         problem = _problem(TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[11], boundary_conditions=periodic_bc(1)))
         with pytest.raises(ValueError, match=r"axis \[0\] of the problem's grid is periodic"):
+            ConvolutionCouplingOperator.from_problem(kernel, problem)
+        return
+    elif case.startswith("periodic in"):
+        axis = 0 if case.endswith("x only") else 1
+        faces = [
+            BCSegment(name=f"p{side}", bc_type=BCType.PERIODIC, boundary=f"{'xy'[axis]}_{side}")
+            for side in ("min", "max")
+        ]
+        bc = BoundaryConditions(dimension=2, segments=faces, default_bc=BCType.NO_FLUX)
+        problem = _problem(TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[11, 9], boundary_conditions=bc))
+        with pytest.raises(ValueError, match=rf"axis \[{axis}\] of the problem's grid is periodic"):
             ConvolutionCouplingOperator.from_problem(kernel, problem)
         return
     else:

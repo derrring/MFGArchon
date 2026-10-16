@@ -63,4 +63,5 @@ the required member set for diagnostics.
 `ConvolutionCouplingOperator` gains `weights` (always an `(N,)` array) and
 `kernel_matrix()` (the unweighted `W`); the scalar-or-array `cell_volume`
 property is removed in favour of the single spelling. The `cell_volume=`
-constructor keyword is unchanged.
+constructor keyword stays; on a regular grid it is now per node, and a scalar is
+refused there (see the entry on the interaction convolution, #1642).

@@ -43,16 +43,15 @@ Usage:
     >>> from mfgarchon.utils.functional_calculus import FiniteDifferenceFunctionalDerivative
     >>> from mfgarchon.alg.numerical.coupling.lions_correction import create_lions_source
     >>>
-    >>> # Define nonlocal energy functional (physical: both quadrature factors)
-    >>> W = ...  # interaction kernel matrix (Nx, Nx)
-    >>> dx = 1.0 / Nx
+    >>> # A nonlocal energy on the problem's measure: both quadrature factors are its weights (#1642)
+    >>> problem = MFGProblem(...)
+    >>> W = ...  # interaction kernel matrix W(x_i, x_j), shape (Nx, Nx), on problem.geometry's nodes
+    >>> w = problem.spatial_measure().weights
     >>> def energy(m):
-    ...     return 0.5 * np.sum(m * (W @ m)) * dx**2
+    ...     return 0.5 * np.sum(w * m * (W @ (w * m)))
     >>>
     >>> fd = FiniteDifferenceFunctionalDerivative(epsilon=1e-4)
-    >>> source_hjb = create_lions_source(energy, fd, weights=dx)
-    >>>
-    >>> problem = MFGProblem(..., source_term_hjb=source_hjb)
+    >>> problem.source_term_hjb = create_lions_source(energy, fd, weights=w)
     >>> result = problem.solve()
 """
 
@@ -299,9 +298,11 @@ def create_nonlocal_source(
     by computing the convolution directly.
 
     Args:
-        interaction_kernel: W(x_i, x_j) matrix, shape (N, N) where N is the
-            total number of spatial grid points (N = Nx for 1D, Nx*Ny for 2D, etc.).
-            Symmetric for undirected interaction. Operates on flattened density arrays.
+        interaction_kernel: W(x_i, x_j), shape (N, N) where N is the
+            total number of spatial grid points (N = Nx for 1D, Nx*Ny for 2D, etc.):
+            a dense array, a sparse matrix or a ``LinearOperator``, applied as
+            ``W @ v``. Symmetric for undirected interaction. Operates on flattened
+            density arrays.
         weights: The measure's per-node weights, ``problem.spatial_measure().weights``:
             shape (N,), or the grid's shape. A scalar is refused. One cell volume for
             every node is the rectangle rule, which gives each end node a full cell
@@ -316,6 +317,9 @@ def create_nonlocal_source(
         >>> W = np.exp(-((x[:, None] - x[None, :]) ** 2) / (2 * 0.1**2))
         >>> source = create_nonlocal_source(W, problem.spatial_measure().weights)
     """
+    from scipy.sparse import issparse
+    from scipy.sparse.linalg import LinearOperator
+
     from mfgarchon.operators.interaction.energy_functionals import validate_weights
 
     if np.ndim(weights) == 0:
@@ -324,7 +328,12 @@ def create_nonlocal_source(
             "rectangle rule, which gives each end node a full cell past the domain. Pass the measure's per-node "
             "weights, problem.spatial_measure().weights (#1642)."
         )
-    W = np.asarray(interaction_kernel)
+    # A sparse matrix or a LinearOperator is applied as it is: np.asarray would wrap it in a 0-d object array.
+    W = (
+        interaction_kernel
+        if isinstance(interaction_kernel, (np.ndarray, LinearOperator)) or issparse(interaction_kernel)
+        else np.asarray(interaction_kernel)
+    )
     w = validate_weights(weights, "create_nonlocal_source")
     if W.shape != (w.size, w.size):
         raise ValueError(

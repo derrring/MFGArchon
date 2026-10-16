@@ -150,7 +150,7 @@ class ConvolutionCouplingOperator(LinearOperator):
             self._grid_shape = None
             self._spacings = None
             self._use_fft = False
-            w = np.asarray(cell_volume, dtype=float)
+            w = np.array(cell_volume, dtype=float)  # a copy, as on a regular grid
             if w.ndim == 0:
                 self._w = np.full(N, float(w))
             else:
@@ -219,12 +219,16 @@ class ConvolutionCouplingOperator(LinearOperator):
             from mfgarchon.utils.numerical.quadrature import quadrature_weights_nd
 
             return quadrature_weights_nd(self._grid_axes()).ravel()
-        w = np.asarray(cell_volume, dtype=float)
+        w = np.array(cell_volume, dtype=float)  # a copy: the operator's weights are not the caller's array
+        if w.ndim == 0:
+            raise ValueError(
+                f"cell_volume on a regular grid is per node, shape ({N},) or {self._grid_shape}; got the scalar "
+                f"{float(w)!r}. One weight for every node is the rectangle rule, which gives each end node a full cell "
+                "past the domain; leave cell_volume out for the trapezoid weights (#1642)."
+            )
         if w.shape not in ((N,), self._grid_shape):
             raise ValueError(
-                f"cell_volume on a regular grid is per node, shape ({N},) or {self._grid_shape}; got {w.shape}. "
-                "One weight for every node is the rectangle rule, which gives each end node a full cell past the "
-                "domain; leave cell_volume out for the trapezoid weights (#1642)."
+                f"cell_volume on a regular grid is per node, shape ({N},) or {self._grid_shape}; got {w.shape}."
             )
         return w.ravel()
 
@@ -294,7 +298,8 @@ class ConvolutionCouplingOperator(LinearOperator):
 
     @property
     def points(self) -> NDArray:
-        """The point set backing the operator, shape ``(N, d)``."""
+        """The point set backing the operator, shape ``(N, d)``. On a regular grid its first node is the origin; only
+        differences between points enter the kernel."""
         return self._points
 
     @property
