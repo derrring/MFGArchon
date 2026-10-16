@@ -360,29 +360,18 @@ class TestAgainstAPackageGeometry:
 
         np.testing.assert_allclose(result[on_boundary], 42.0, atol=1e-12)
 
-    def test_the_value_follows_the_resolved_type_and_not_the_segment_order(self, package_applicator):
-        """A segment's value is read only for a *uniform* BC whose type is the one resolved.
+    def test_the_one_condition_is_the_bcs_uniform_segment_and_a_mixed_bc_is_refused(self, package_applicator):
+        """The applicator imposes one condition at every boundary point: the BC's uniform segment, the owner's one
+        condition for every location (`the_one_condition`, #2512 row B1, stage B1c-2). Its type and value are that
+        segment's, whatever ``default_bc`` says when a global segment leaves the default no location. A BC with no
+        one condition is refused by name rather than flattened onto every point (#1947, #2712).
 
-        `apply()` resolves ONE `bc_type` for the whole boundary and this applicator has no spatial
-        dispatch -- review measured that moving a segment's `normal_direction` to a different arc,
-        or deleting its region spec, gives byte-identical output, on base as well. So for a mixed BC
-        no segment's value is the right one: whichever is chosen gets imposed everywhere, including
-        where that segment was never meant to act. `default_value` is the field that means "where no
-        segment governs".
-
-        Three versions of this selector have been wrong, and each row below killed one of them:
-
-        * D killed the `NEUMANN`/`NO_FLUX` family clause, which let a NO_FLUX resolution impose
-          `du/dn = 2.5`. NO_FLUX means zero flux by definition.
-        * A and C killed the sort-order form (`segments[0]` in disguise).
-        * F and G kill any within-type selection among several matches, which the by-type form still
-          had: review showed that taking the *last* match instead of the first passed all 6027 tests
-          while changing behaviour on a real configuration.
-
-        E carries a non-zero `default_value` deliberately. With `default_value=0.0` it returned 0.0
-        in every version of this code and discriminated nothing -- review measured that, and that a
-        mutation replacing the fallback with a literal `0.0` passed the entire suite.
+        Before, the type came from ``default_bc`` and the value from ``default_value`` unless a uniform segment had
+        the resolved type: the rows marked "moved" answered 0.0 (D, the default's NO_FLUX) and 4.0 (H, the default's
+        ROBIN value), and A to C, F and G answered ``default_value`` for a BC this applicator cannot represent.
         """
+        from mfgarchon.geometry.boundary.applicator_meshfree import the_one_condition
+
         applicator, geometry = package_applicator
         points = self._on_sphere(geometry)
         on_boundary = applicator._detect_boundary_points(points)
@@ -391,82 +380,89 @@ class TestAgainstAPackageGeometry:
 
         def bc_of(segments, default_bc, default_value=0.0):
             return BoundaryConditions(
-                segments=segments,
-                dimension=2,
-                default_bc=default_bc,
-                default_value=default_value,
+                segments=segments, dimension=2, default_bc=default_bc, default_value=default_value
             )
 
-        exit_hi = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=7.0, priority=5)
         walls = BCSegment(name="walls", bc_type=BCType.NO_FLUX, value=0.0)
-        walls_hi = BCSegment(name="walls", bc_type=BCType.NO_FLUX, value=0.0, priority=5)
-        exit_lo = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=7.0)
         robin_wall = BCSegment(name="wall", bc_type=BCType.ROBIN, alpha=2.0, beta=3.0, value=1.0)
-        neumann_only = BCSegment(name="n", bc_type=BCType.NEUMANN, value=2.5)
-        dir_a = BCSegment(name="a", bc_type=BCType.DIRICHLET, value=7.0, priority=5)
         dir_b = BCSegment(name="b", bc_type=BCType.DIRICHLET, value=0.0)
 
-        cases = [
-            ("A mixed, exit sorts first, resolved NO_FLUX", bc_of([exit_hi, walls], BCType.NO_FLUX), 0.0),
-            ("B mixed, walls sort first (control)", bc_of([walls_hi, exit_lo], BCType.NO_FLUX), 0.0),
-            ("C mixed, Robin resolved, Dirichlet sorts first", bc_of([exit_hi, robin_wall], BCType.ROBIN, 4.0), 4.0),
-            ("D NEUMANN segment under default NO_FLUX", bc_of([neumann_only], BCType.NO_FLUX), 0.0),
-            ("E no segments, non-zero default_value", bc_of([], BCType.DIRICHLET, 9.0), 9.0),
-            # H is what keeps the gate's `bc_type` check honest. D used to do that, but the NO_FLUX
-            # clamp now intercepts D before the gate is reached -- measured: dropping the type check
-            # left the whole file green once the clamp landed. H is uniform, so the gate is entered,
-            # and its segment type differs from the resolved one with neither being NO_FLUX, so only
-            # the type check can reject it.
+        read = [
             (
-                "H uniform DIRICHLET segment, resolved ROBIN",
-                bc_of([BCSegment(name="d", bc_type=BCType.DIRICHLET, value=7.0)], BCType.ROBIN, 4.0),
-                4.0,
+                "D a NEUMANN segment everywhere, default NO_FLUX (moved)",
+                bc_of([BCSegment(name="n", bc_type=BCType.NEUMANN, value=2.5)], BCType.NO_FLUX),
+                BCType.NEUMANN,
+                2.5,
             ),
-            ("F two DIRICHLET, high priority first", bc_of([dir_a, dir_b], BCType.DIRICHLET, 9.0), 9.0),
-            ("G two DIRICHLET, order swapped", bc_of([dir_b, dir_a], BCType.DIRICHLET, 9.0), 9.0),
+            ("E no segments, default DIRICHLET 9", bc_of([], BCType.DIRICHLET, 9.0), BCType.DIRICHLET, 9.0),
+            (
+                "H a DIRICHLET segment everywhere, default ROBIN (moved)",
+                bc_of([BCSegment(name="d", bc_type=BCType.DIRICHLET, value=7.0)], BCType.ROBIN, 4.0),
+                BCType.DIRICHLET,
+                7.0,
+            ),
+            (
+                "a DIRICHLET segment everywhere, default_value 99",
+                bc_of([BCSegment(name="d", bc_type=BCType.DIRICHLET, value=-7.5)], BCType.DIRICHLET, 99.0),
+                BCType.DIRICHLET,
+                -7.5,
+            ),
         ]
-
-        for label, bc, expected in cases:
-            resolved = bc._resolve_default_bc("test")
-            value = applicator._resolve_bc_value(bc, boundary_points, 0.0, resolved)
+        for label, bc, kind, expected in read:
+            segment = the_one_condition(bc, "test")
+            assert segment.bc_type == kind, label
             np.testing.assert_allclose(
-                value,
-                expected,
-                atol=1e-12,
-                err_msg=f"{label}: resolved {resolved.name} but took the value from somewhere else",
+                applicator._resolve_bc_value(segment, boundary_points, 0.0), expected, atol=1e-12, err_msg=label
             )
 
-    def test_a_uniform_bc_still_reads_its_own_segment(self, package_applicator):
-        """The gate must not throw away the case this PR exists to fix.
+        # Mixed BCs the owner answers per face (an exit on x_max beside a global wall), which one condition cannot carry.
+        exit_ = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=7.0, boundary="x_max")
+        refused = [
+            ("A an exit beside a no-flux wall", bc_of([exit_, walls], BCType.NO_FLUX)),
+            ("C an exit beside a Robin wall", bc_of([exit_, robin_wall], BCType.ROBIN, 4.0)),
+            ("F two Dirichlet values", bc_of([exit_, dir_b], BCType.DIRICHLET, 9.0)),
+        ]
+        for _label, bc in refused:
+            with pytest.raises(NotImplementedError, match=r"cannot represent this boundary condition.*'exit'.*#2712"):
+                applicator.apply(np.zeros(len(points)), bc, points)
+        # The refusal's remedy, run: a uniform BC, one segment with no placement. Its default_bc, PERIODIC, governs no
+        # location and is a type this applicator does not declare, so the type gate reads the one condition (#2717).
+        uniform = bc_of([BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=7.0)], BCType.PERIODIC, 9.0)
+        result = applicator.apply(np.zeros(len(points)), uniform, points)
+        np.testing.assert_allclose(result[on_boundary], 7.0, atol=1e-12)
 
-        The `default_value` here is deliberately DIFFERENT from the segment's. ~~`dirichlet_bc(value=v)`~~
-        [CORRECTED 2026-08-15] was the original fixture and it does not discriminate: that factory
-        writes `v` into **both** `segment.value` and `default_value` (`uniform_bc` in `conditions.py`), so
-        "always return `default_value`" satisfies it. Review measured this test passing under exactly
-        that mutation -- what killed it was the callable test, for the same reason, by accident.
-        """
-        applicator, geometry = package_applicator
+    def test_the_meshfree_applicator_refuses_a_mixed_bc_and_imposes_a_uniform_one(self, package_applicator):
+        """#1947 for the parent class, by the same function (`the_one_condition`): `apply` and `apply_particles`
+        refuse a BC with no one condition, naming its segments and #2712, where they flattened it to ``default_bc``
+        and ``default_value``; the refusal's remedy, a uniform BC, then imposes its segment's value."""
+        from mfgarchon.geometry.boundary.applicator_meshfree import MeshfreeApplicator
+
+        _, geometry = package_applicator
+        applicator = MeshfreeApplicator(geometry)
         points = self._on_sphere(geometry)
-        on_boundary = applicator._detect_boundary_points(points)
-        assert on_boundary.any(), "no boundary points detected, so the assertions below are vacuous"
-        boundary_points = points[on_boundary]
+        exit_ = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=7.0, boundary="x_max")
+        wall = BCSegment(name="wall", bc_type=BCType.DIRICHLET, value=0.0)
+        mixed = BoundaryConditions(segments=[exit_, wall], dimension=2, default_bc=BCType.DIRICHLET, default_value=9.0)
+        refusal = r"cannot represent this boundary condition.*'exit' \(DIRICHLET\).*#2712"
+        with pytest.raises(NotImplementedError, match=refusal):
+            applicator.apply(np.zeros(len(points)), mixed, points)
+        with pytest.raises(NotImplementedError, match=refusal):
+            applicator.apply_particles(points.copy(), mixed)
+        # The remedy, run: one segment with no placement. Its default_bc, NO_FLUX, governs no location and is a type
+        # this applicator does not declare, so the type gate reads the one condition (#2717).
+        uniform = BoundaryConditions(
+            segments=[BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=7.0)],
+            dimension=2,
+            default_bc=BCType.NO_FLUX,
+            default_value=9.0,
+        )
+        on_boundary = geometry.is_on_boundary(points)
+        assert on_boundary.any()
+        np.testing.assert_allclose(applicator.apply(np.zeros(len(points)), uniform, points)[on_boundary], 7.0)
 
-        for segment_value in (3.0, -7.5):
-            bc = BoundaryConditions(
-                segments=[BCSegment(name="d", bc_type=BCType.DIRICHLET, value=segment_value)],
-                dimension=2,
-                default_bc=BCType.DIRICHLET,
-                default_value=99.0,
-            )
-            assert bc.is_uniform, "this test is about the uniform path and the fixture is not uniform"
-            assert bc.default_value != segment_value, "the two must differ or this test discriminates nothing"
-
-            resolved = bc._resolve_default_bc("test")
-            got = applicator._resolve_bc_value(bc, boundary_points, 0.0, resolved)
-            np.testing.assert_allclose(got, segment_value, atol=1e-12)
-
+    @pytest.mark.parametrize("bc_type", [BCType.NO_FLUX, BCType.REFLECTING])
     @pytest.mark.parametrize("stray_value", [2.5, -1.0])
-    def test_no_flux_never_carries_a_flux_whatever_value_it_is_given(self, package_applicator, stray_value):
+    def test_no_flux_never_carries_a_flux_whatever_value_it_is_given(self, package_applicator, stray_value, bc_type):
         """NO_FLUX means `du/dn = 0` by definition, so no value it carries can be a normal derivative.
 
         Three other paths in this package already state that convention -- `applicator_fdm.py:1149`
@@ -477,6 +473,9 @@ class TestAgainstAPackageGeometry:
 
         Not hypothetical: `with_resolved_providers`, the documented pre-solve step, turns
         `BCSegment(NO_FLUX, value=<provider>)` into a uniform NO_FLUX segment carrying a number.
+
+        REFLECTING is the same zero flux. Since the applicator reads the BC's one condition (#2717), a REFLECTING
+        segment beside a NO_FLUX default dispatches on REFLECTING, which fell to a fallback imposing u = 0 (review 2).
         """
         applicator, geometry = package_applicator
         points = self._on_sphere(geometry, n=24)
@@ -485,7 +484,7 @@ class TestAgainstAPackageGeometry:
 
         field = np.full(len(points), 3.8)
         bc = BoundaryConditions(
-            segments=[BCSegment(name="wall", bc_type=BCType.NO_FLUX, value=stray_value)],
+            segments=[BCSegment(name="wall", bc_type=bc_type, value=stray_value)],
             dimension=2,
             default_bc=BCType.NO_FLUX,
         )

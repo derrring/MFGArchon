@@ -228,7 +228,10 @@ def _facet_groups(mesh: skfem.Mesh, bc: BoundaryConditions) -> list[tuple[BCSegm
 
 def _dirichlet_segments_at_dofs(basis: skfem.Basis, bc: BoundaryConditions) -> list[tuple[BCSegment, NDArray]]:
     """Each DIRICHLET segment with the DOFs it holds: the DOFs of the facets it governs, less the nodes it shares
-    with facets of another segment that the owner gives to that one (`segment_for_shared_node`).
+    with facets of another segment that the owner gives to that one (`segment_for_shared_node`). The owner is asked
+    only where a DIRICHLET segment is among the sharers: a natural condition is imposed on facets, not nodes, so a
+    node only natural segments share needs no choice, and ``corner_strategy="average"`` refused one whose segments
+    differ (#2490 B1c-2; B1b's review 1, S1).
 
     Issue #1489 (F2): DOFs come from ``basis.get_dofs`` on the boundary FACETS (which includes P2 edge-midpoint
     DOFs), NOT ``mesh.boundary_nodes()`` (vertices only -> half the P2 boundary left free -> Dirichlet silently
@@ -246,6 +249,8 @@ def _dirichlet_segments_at_dofs(basis: skfem.Basis, bc: BoundaryConditions) -> l
     owner = pairs[first, 1].copy()
     for i in np.flatnonzero(count > 1):
         sharing = [groups[k][0] for k in pairs[first[i] : first[i] + count[i], 1]]
+        if not any(segment.bc_type == BCType.DIRICHLET for segment in sharing):
+            continue
         where = f"boundary facets at the mesh node {np.round(basis.doflocs[:, dofs[i]], 12).tolist()}"
         chosen = bc.segment_for_shared_node(sharing, where)
         owner[i] = next(k for k, (segment, _) in enumerate(groups) if segment is chosen)

@@ -25,9 +25,11 @@ behaviour:
   reflect them silently.
 
 The coefficients now come off the **matched segment** on the segment-aware path, so a mixed BC
-with a different Robin coefficient per wall is read per wall. The uniform path's
-`_robin_alpha_beta` cannot do that -- it takes the first Robin segment in the whole
-specification whichever face is being processed -- and that remains open.
+with a different Robin coefficient per wall is read per wall. The uniform path,
+`MeshfreeApplicator.apply_particles`, imposes one condition at every boundary point: it reads
+the BC's one condition, `uniform_segment`, and refuses a BC with a different Robin coefficient
+per wall (#1947, #2512 stage B1c-2). Its `_robin_alpha_beta`, which took the first Robin segment
+in the whole specification whichever face was being processed, is gone.
 
 **Behaviour changes**, all of them repairs: `MeshfreeApplicator` accepts `REFLECTING` instead
 of raising; `ParticleApplicator` absorbs at a `beta = 0` Robin wall instead of reflecting, and
