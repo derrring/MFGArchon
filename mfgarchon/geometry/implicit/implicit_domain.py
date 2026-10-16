@@ -719,16 +719,26 @@ class ImplicitDomain(
                 None,
             )
             centres, normals = [], []
-            candidate = None
+            candidate, why = None, ""
             for _ in range(max_faces):
                 if crossing is None:
                     candidate = None
+                    why = (
+                        "no crossing of the domain's boundary was found where one was sought: on its path, or on the "
+                        "segment from the last inside point to the point projected onto the faces met"
+                    )
                     break
                 inside, crossed = crossing
                 centres.append(crossed)
                 normals.append(self.crossing_normal(inside, crossed))
                 candidate = _project_onto_half_spaces(target, np.array(centres), np.array(normals), tolerance)
                 if candidate is None:
+                    why = (
+                        "no nearest point of their intersection was found. That is the active-set solve's limit "
+                        "(`_project_onto_half_spaces`): faces so nearly parallel that the Gram matrix of the set "
+                        "holding the nearest point is too close to singular -- two faces facing apart at half-angle "
+                        "1e-7 or less, with the placement's gap 1e-10"
+                    )
                     break
                 if float(np.atleast_1d(self.signed_distance(candidate[None, :]))[0]) <= 0:
                     placed[i] = candidate
@@ -736,15 +746,12 @@ class ImplicitDomain(
                 crossing = self._leg_crossing(inside, candidate)
             else:
                 candidate = None
+                why = f"projected onto the intersection of these {max_faces} faces it is still outside the domain"
             if candidate is None:
                 faces = "; ".join(f"at {c} with outward normal {n}" for c, n in zip(centres, normals, strict=True))
                 raise RuntimeError(
                     f"project_to_interior: the point {target}, whose step began at {previous[i]}, is not placed by "
-                    f"the {len(centres)} face(s) its step met ({faces}): projected onto their intersection it is still "
-                    f"outside the domain, or no nearest point of their intersection was found. That is the "
-                    f"active-set solve's limit (`_project_onto_half_spaces`): faces so nearly parallel that the Gram "
-                    f"matrix of the set holding the nearest point is too close to singular -- two faces facing apart "
-                    f"at half-angle 1e-7 or less, with the placement's gap 1e-10. The face-of-entry placement does "
+                    f"the {len(centres)} face(s) its step met ({faces}): {why}. The face-of-entry placement does "
                     f"not cover this geometry (#2688); report it with the domain."
                 )
         return placed

@@ -206,7 +206,9 @@ def leave_out_or_raise(
     if fraction > threshold:
         raise ValueError(
             f"{context}: {why} Leaving it out would drop a fraction {fraction:.3e} of the total mass (threshold "
-            f"{threshold:.0e}), so the solve is stopped rather than run on a measure the caller did not give. {remedy}"
+            f"{threshold:.0e}), so the solve is stopped rather than run on a measure the caller did not give. The "
+            f"total is the net sum, so a negative entry lowers it and raises this fraction: a density must also be "
+            f"non-negative. {remedy}"
         )
     kept = np.where(blocked, 0.0, probs)
     return kept / kept.sum()

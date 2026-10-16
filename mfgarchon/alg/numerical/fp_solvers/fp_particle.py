@@ -1138,25 +1138,26 @@ class FPParticleSolver(BaseFPSolver):
         return self._project_obstacle_violations(recorded, survivors_previous, via), absorbed_mask, n_absorbed
 
     def _refuse_what_the_obstacle_placement_cannot_do(self, dimension: int, bounds: list[tuple[float, float]]) -> None:
-        """What the obstacle placement cannot do, refused at the start of a solve: an obstacle with any periodic face,
-        since a wrapped particle's straight segment from its previous position is not its path (#2688; the capability
-        is #2704); and an implicit_domain whose bounding box is not the grid's box (#2706)."""
+        """What the obstacle placement cannot do, refused at the start of a solve: an obstacle with any periodic
+        condition, since a wrapped particle's straight segment from its previous position is not its path (#2688; the
+        capability is #2704); and an implicit_domain whose bounding box is not the grid's box (#2706)."""
         # Any periodic face, not a periodic axis: a BC periodic on one face of an axis reads as a bounded topology, yet
         # the applicator wraps a particle through that face (#2706, review 2).
         if self._implicit_domain is not None and declares_periodic(self.boundary_conditions):
             raise NotImplementedError(
-                "FPParticleSolver: an implicit_domain with a periodic face on the outer boundary is not supported. "
+                "FPParticleSolver: an implicit_domain with a periodic condition on the outer boundary (a periodic "
+                "segment or default_bc) is not supported. "
                 "A particle that ends a step inside an obstacle is placed by the face its step crossed, and a "
                 "wrapped particle's step is not the straight segment from where it started (#2688). Placing it by "
                 "the wrapped image of its step is #2704."
             )
-        # The BC and the placement must each land inside the other's reach, which is two inclusions, and together they
-        # are equality. (i) The BC's output is inside the grid's box, and the placement defers to the BC whatever lies
-        # outside the domain's bounding box, so grid box within domain box (#2706, review 1). (ii) The placement's
-        # output is navigable, so inside the domain's bounding box, and it must be inside the grid's box the BC has
-        # already applied: domain box within grid box. Review 2's counter-case broke (ii) alone: the domain's box
-        # reached past the wall, and the projection put a particle on an obstacle's far face beyond it. Do not narrow
-        # this to one inclusion again.
+        # The BC and the placement must each land inside the other's reach: two inclusions, which equal boxes give.
+        # (i) The BC's output is inside the grid's box, and the placement defers to the BC whatever lies outside the
+        # domain's bounding box, so grid box within domain box (#2706, review 1). (ii) The placement's output is
+        # navigable, so inside the domain's bounding box, and it must be inside the grid's box the BC has already
+        # applied: domain box within grid box is enough for that, though not needed. Review 2's counter-case broke
+        # (ii): the domain's box reached past the wall, and the projection put a particle on an obstacle's far face
+        # beyond it. Do not narrow this to one inclusion again.
         box = np.asarray(self._implicit_domain.get_bounding_box(), dtype=float).reshape(dimension, 2)
         grid = np.asarray(bounds, dtype=float).reshape(dimension, 2)
         slack = 1e-12 * max(1.0, float(np.abs(grid).max()))

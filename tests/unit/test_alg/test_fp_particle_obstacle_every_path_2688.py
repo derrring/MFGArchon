@@ -189,7 +189,9 @@ def test_what_the_placement_cannot_do_is_refused(case):
     the caller's measure), an implicit_domain whose box is not the grid's, and the GPU path (its particles never meet
     the placement) are refused."""
     if case.startswith("periodic"):
-        with pytest.raises(NotImplementedError, match=r"periodic face on the outer boundary is not supported.*#2704"):
+        with pytest.raises(
+            NotImplementedError, match=r"periodic condition on the outer boundary.*not supported.*#2704"
+        ):
             _solve(2, periodic_bc(dimension=2), "grid" if "grid" in case else "callable")
     elif case == "a periodic face on one side only":
         # #2706 review 2: periodic on x_min alone reads as a bounded topology, yet the applicator wraps through it.
@@ -200,7 +202,7 @@ def test_what_the_placement_cannot_do_is_refused(case):
             ],
             dimension=2,
         )
-        with pytest.raises(NotImplementedError, match=r"periodic face on the outer boundary is not supported"):
+        with pytest.raises(NotImplementedError, match=r"periodic condition on the outer boundary.*not supported"):
             _solve(2, one_sided, "callable", initial_particles=_navigable_start())
     elif case.startswith("initial_particles"):
         start = _navigable_start()
@@ -468,19 +470,36 @@ def test_mass_inside_an_obstacle_is_left_out_up_to_the_gates_threshold(route, sh
     assert domain.contains(x).all()
 
 
-def test_the_gate_leaves_out_the_blocked_entries_and_renormalises_the_rest():
-    """#2706 review 2: what the two leave-out routes hand to the draw. Pinned here, at the owner, because no draw can
-    see it: numpy's choice divides its cdf by the last entry itself and accepts a deficit up to sqrt(eps) = 1.49e-8,
-    above the gate's 1e-8, and a cell holding 1e-8 of the mass is not drawn once in 200,000 draws
-    (i2688/r2fix/t0/choice_renorm.py, numpy 2.5.3). The blocked entries are 0, the rest keep their ratios and sum to 1."""
+@pytest.mark.parametrize("route", ["the gate", "the sampler's cells", "the 1-D grid's nodes"])
+def test_the_gate_leaves_out_the_blocked_entries_and_renormalises_the_rest(route):
+    """#2706 review 2: what the two leave-out routes hand to the draw. Pinned at the owner and at each caller's use of
+    what the owner returns (review 3, S1), because no draw can see it: numpy's choice divides its cdf by the last entry
+    itself, and Generator's accepts a deficit of 1.4e-8, above the gate's 1e-8; a cell holding 1e-8 of the mass is not
+    drawn once in 200,000 draws (i2688/r2fix/t0/choice_renorm.py, numpy 2.5.3). The blocked entries are 0, the rest
+    keep their ratios and sum to 1."""
     from mfgarchon.utils.numerical.mass_fabrication_gate import leave_out_or_raise
+    from mfgarchon.utils.numerical.particle.sampling import _leave_out_cells_with_no_navigable_point
 
-    probs = np.array([0.5, 0.3, 0.2 - 4e-9, 4e-9])
-    blocked = np.array([False, False, False, True])
-    kept = leave_out_or_raise(probs, blocked, context="test", why="", remedy="")
-    assert kept[3] == 0.0
+    if route == "the gate":
+        probs = np.array([0.5, 0.3, 0.2 - 4e-9, 4e-9])
+        blocked = np.array([False, False, False, True])
+        kept = leave_out_or_raise(probs, blocked, context="test", why="", remedy="")
+    elif route == "the sampler's cells":
+        probs = np.zeros(11)  # the cell of the node 0.6 lies wholly inside the obstacle [0.45, 0.75]
+        probs[2], probs[6] = 1.0 - 4e-9, 4e-9
+        blocked = np.arange(11) == 6
+        kept = _leave_out_cells_with_no_navigable_point(probs, [_XS], _interval_minus(0.45, 0.75).contains)
+    else:
+        problem, n = _problem(1, no_flux_bc(dimension=1))
+        solver = FPParticleSolver(problem, num_particles=10, implicit_domain=_DOMAIN[1], seed=0)
+        probs = np.zeros(n)  # the node 0.5 is inside the obstacle (0.4, 0.6)
+        probs[30], probs[50] = 1.0 - 4e-9, 4e-9
+        blocked = np.arange(n) == 50
+        kept = solver._leave_out_nodes_inside_an_obstacle(np.linspace(0.0, 1.0, n), probs)
+    assert (kept[blocked] == 0.0).all()
     assert kept.sum() == pytest.approx(1.0, abs=1e-15)
-    np.testing.assert_allclose(kept[:3] / kept[0], probs[:3] / probs[0], rtol=1e-15)
+    unblocked = ~blocked & (probs > 0)
+    np.testing.assert_allclose(kept[unblocked] / kept[unblocked][0], probs[unblocked] / probs[unblocked][0], rtol=1e-15)
 
 
 def test_a_reflected_step_off_two_walls_is_placed_by_the_face_its_folded_path_met():
