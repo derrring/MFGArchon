@@ -271,7 +271,7 @@ def test_every_refusal_the_owner_makes_is_reported_per_point():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         with pytest.raises(
-            ValueError, match=r"refused by the boundary owner: .*doesn't implement SupportsRegionMarking"
+            ValueError, match=r"refused by the boundary owner: .*Hyperrectangle defines no region of that name"
         ):
             HJBGFDMSolver(problem, collocation_points=points, boundary_indices=on_box, monotonicity_scheme="none")
 
