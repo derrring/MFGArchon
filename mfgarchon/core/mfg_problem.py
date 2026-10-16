@@ -2317,15 +2317,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
                 f"solver's own discretization, its dof coordinates and the quadrature weights it sees, which is "
                 f"stage 1b of #1642."
             )
-        from mfgarchon.operators.interaction.energy_functionals import missing_energy_functional_members
+        from mfgarchon.operators.interaction.energy_functionals import bound_energy_functional
 
-        energy = cost.bind(self)
-        missing = missing_energy_functional_members(energy)
-        if missing:
-            raise TypeError(
-                f"{type(cost).__name__}.bind(problem) returned {type(energy).__name__}, which is not an "
-                f"EnergyFunctional: it lacks {', '.join(missing)} (#1642)."
-            )
+        energy = bound_energy_functional(cost, self)
         nodes = int(np.asarray(self.geometry.get_spatial_grid()).shape[0])
         if np.shape(energy.weights) != (nodes,):
             raise ValueError(

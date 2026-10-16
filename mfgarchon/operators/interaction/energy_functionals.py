@@ -54,7 +54,7 @@ Issue #1642: contract freeze (D-1..D-5) and the ``energy()`` quadrature repair.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 import numpy as np
 
@@ -167,6 +167,20 @@ def energy_functional_members() -> tuple[str, ...]:
     when a member is added or removed.
     """
     return tuple(sorted(EnergyFunctional.__protocol_attrs__))
+
+
+def bound_energy_functional(cost: Any, problem: Any) -> EnergyFunctional:
+    """``cost.bind(problem)``, refused by the cost's name where what it returns is not an `EnergyFunctional` (#1642):
+    the one check for every binding, a part of a sum included, so a near-miss is refused at construction rather than
+    at the first evaluation."""
+    energy = cost.bind(problem)
+    missing = missing_energy_functional_members(energy)
+    if missing:
+        raise TypeError(
+            f"{type(cost).__name__}.bind(problem) returned {type(energy).__name__}, which is not an "
+            f"EnergyFunctional: it lacks {', '.join(missing)} (#1642)."
+        )
+    return cast("EnergyFunctional", energy)
 
 
 def missing_energy_functional_members(obj: object) -> tuple[str, ...]:

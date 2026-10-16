@@ -123,8 +123,8 @@ class Model:
                 what = type(cost).__name__
             raise TypeError(
                 f"Model(coupling_cost=...) takes a coupling cost the library binds to the problem's grid and measure -- "
-                f"InteractionCost(kernel), PotentialCost(V) or their sum, from mfgarchon.operators.interaction -- not "
-                f"{what}. A plain F[m] -> float carries its own quadrature, so it is bound to one grid (#1642). Give "
+                f"InteractionCost(kernel), PotentialCost(V) or their sum, from mfgarchon.operators.interaction, or an "
+                f"instance of a class of your own whose bind(problem) returns an EnergyFunctional -- not {what}. A plain F[m] -> float carries its own quadrature, so it is bound to one grid (#1642). Give "
                 f"such an F to the problem's HJB source explicitly, on that grid: MFGProblem(..., domain=grid, "
                 f"source_term_hjb=create_lions_source(F, FiniteDifferenceFunctionalDerivative(), "
                 f"weights=grid.measure_weights().ravel())), with create_lions_source from "

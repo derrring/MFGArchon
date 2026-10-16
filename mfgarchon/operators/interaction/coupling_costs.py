@@ -41,7 +41,8 @@ if TYPE_CHECKING:
 
 class _SummableCost:
     """``a + b`` for coupling costs: their `CombinedCost`, with either side any `CouplingCost`; and ``0 + a``, so
-    ``sum`` of costs is their sum."""
+    ``sum`` of costs whose first is the library's is their sum. ``sum`` starts from ``0 + costs[0]``, which a user's
+    class without ``__radd__`` cannot answer; ``CombinedCost([...])`` takes the costs in any order."""
 
     def __add__(self, other: object) -> CombinedCost:
         if not _is_coupling_cost(other):
@@ -113,14 +114,24 @@ class PotentialCost(_SummableCost):
         nodes = np.asarray(problem.geometry.get_spatial_grid(), dtype=float)
         nodes = nodes.reshape(nodes.shape[0], -1)
         d = nodes.shape[1]
-        signature, V = adapt_ic_callable(
-            self.V, dimension=d, sample_point=float(nodes[0, 0]) if d == 1 else nodes[0], role="V"
+        in_the_hamiltonian = (
+            "A time-dependent potential goes in the Hamiltonian, SeparableHamiltonian(potential=lambda t, x: ...), "
+            "which reads it at each time; there x is an array of points of shape (N, d), so a V written for one "
+            "point reads x[..., 0] in 1-D (#1642)."
         )
+        try:
+            signature, V = adapt_ic_callable(
+                self.V, dimension=d, sample_point=float(nodes[0, 0]) if d == 1 else nodes[0], role="V"
+            )
+        except TypeError as unread:
+            raise TypeError(
+                f"PotentialCost(V): V takes the point x alone -- a float in 1-D, an array of shape (d,) in n-D -- and "
+                f"this V does not read as that. {in_the_hamiltonian} What the reader found: {unread}"
+            ) from unread
         if signature is CallableSignature.SPATIOTEMPORAL_TX:
             raise TypeError(
                 "PotentialCost(V): V takes (t, x), and this F[m] = integral V m is autonomous -- binding V once would "
-                "read it at t = 0 for the whole horizon. A time-dependent potential goes in the Hamiltonian, "
-                "SeparableHamiltonian(potential=lambda t, x: ...), which reads it at each time (#1642)."
+                f"read it at t = 0 for the whole horizon. {in_the_hamiltonian}"
             )
         values = np.array([V(float(x[0])) if d == 1 else V(x) for x in nodes], dtype=float)
         energy = PotentialEnergy(values, np.asarray(problem.spatial_measure().weights, dtype=float).ravel())
@@ -143,7 +154,11 @@ class CombinedCost(_SummableCost):
         flat = [part for cost in costs for part in _parts(cost)]
         if not flat:
             raise ValueError("CombinedCost: no parts. A coupling cost of zero is Model(coupling_cost=None).")
-        not_costs = [type(part).__name__ for part in flat if not _is_coupling_cost(part)]
+        not_costs = [
+            f"the class {part.__name__}, not an instance of it" if isinstance(part, type) else type(part).__name__
+            for part in flat
+            if not _is_coupling_cost(part)
+        ]
         if not_costs:
             raise TypeError(
                 f"CombinedCost: {', '.join(not_costs)} is not a CouplingCost, an object with bind(problem) returning "
@@ -152,7 +167,9 @@ class CombinedCost(_SummableCost):
         self.costs = flat
 
     def bind(self, problem: MFGProblem) -> EnergyFunctional:
-        return cast("EnergyFunctional", CombinedEnergy([cost.bind(problem) for cost in self.costs]))
+        from mfgarchon.operators.interaction.energy_functionals import bound_energy_functional
+
+        return cast("EnergyFunctional", CombinedEnergy([bound_energy_functional(cost, problem) for cost in self.costs]))
 
     def __repr__(self) -> str:
         return f"CombinedCost({self.costs!r})"

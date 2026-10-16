@@ -318,8 +318,10 @@ def test_the_coupling_part_reads_the_density_slice_at_the_time_it_is_given(solve
 def test_each_population_s_coupling_cost_reads_its_own_density():
     """Population k's ``Model`` carries its own F_k, composed on m_k (``hjb_solve_kwargs(populations[k], ...,
     M=M[k])``). Two populations with no cross-coupling, each with its own kernel and its own initial density,
-    solve as two separate single-population games. F is what each solves: without it, U is 0, and with it 0.40 and
-    0.23 at most, so two games that never composed F would agree as well."""
+    solve as two separate games: each population with the other present equals it alone in the iterator, and that
+    equals the single-population Picard solve, to 1e-9. The last comparison is the oracle: the first runs one route
+    twice, so an error the iterator makes for every K cancels in it. F is what each solves: without it, U is 0, and
+    with it 0.40 and 0.23 at most, so two games that never composed F would agree as well."""
 
     def problem(amplitude, centre, cost=True):
         return MFGProblem(
@@ -342,7 +344,7 @@ def test_each_population_s_coupling_cost_reads_its_own_density():
     def solve(problems):
         result = MultiPopulationIterator(
             MultiPopulationProblem(populations=problems, population_names=[f"p{k}" for k in range(len(problems))]),
-            [HJBFDMSolver(p) for p in problems],
+            [HJBFDMSolver(p, newton_tolerance=1e-13) for p in problems],
             [FPFDMSolver(p) for p in problems],
             relaxation=0.5,
         ).solve(max_iterations=200, tolerance=1e-12)
@@ -355,13 +357,26 @@ def test_each_population_s_coupling_cost_reads_its_own_density():
         alone = solve([problem(*spec)])[0]
         gap = np.max(np.abs(np.asarray(together[k]) - np.asarray(alone)))
         assert gap < 1e-9, f"population {k} with the other present differs from it alone by {gap:.3e}"
+        single = problem(*spec)
+        result = single.solve(
+            hjb_solver=HJBFDMSolver(single, newton_tolerance=1e-13),
+            fp_solver=FPFDMSolver(single),
+            max_iterations=200,
+            tolerance=1e-12,
+        )
+        assert result.converged
+        gap = np.max(np.abs(np.asarray(alone) - np.asarray(result.U)))
+        assert gap < 1e-9, f"population {k} in the iterator differs from its single-population solve by {gap:.3e}"
         moved = np.max(np.abs(np.asarray(together[k]) - np.asarray(without[k])))
         assert moved > 0.1, f"F_{k} moves population {k}'s U by {moved:.3e}: the fixture does not see it"
 
 
 def test_a_users_coupling_cost_sums_with_the_librarys():
-    """A ``CouplingCost`` is anything with ``bind(problem)``; ``+`` and ``sum`` take a user's beside the library's, in
-    either order, and bind to the sum of the parts' flat derivatives."""
+    """A ``CouplingCost`` is an instance of anything with ``bind(problem)``. ``+`` takes a user's beside the library's
+    in either order; ``sum`` does where its first element is the library's, since it starts from ``0 + costs[0]``,
+    which a user's class without ``__radd__`` cannot answer. Each binds to the sum of the parts' flat derivatives.
+    A part whose binding is not an ``EnergyFunctional`` is refused at construction by its own name, as it is alone; in
+    a sum it was admitted, and the first evaluation raised an AttributeError."""
 
     class Mine:
         def bind(self, problem):
@@ -374,19 +389,35 @@ def test_a_users_coupling_cost_sums_with_the_librarys():
             cost.bind(problem).flat_derivative(np.ones(x.size)), _V(x) + 2.0 * x, rtol=0, atol=1e-14, err_msg=repr(cost)
         )
 
+    class Broken:
+        def bind(self, problem):
+            energy = PotentialCost(_V).bind(problem)
+            return SimpleNamespace(weights=energy.weights, energy=energy.energy)
+
+    with pytest.raises(TypeError, match=r"Broken\.bind\(problem\) returned SimpleNamespace.*lacks .*flat_derivative"):
+        MFGProblem(
+            model=Model(hamiltonian=_hamiltonian(), volatility=0.3, coupling_cost=PotentialCost(_V) + Broken()),
+            domain=_grid(11),
+            conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.2),
+            Nt=2,
+        )
+
 
 def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
     """- A plain ``F[m] -> float`` carries its own quadrature, so it is refused; the route the message names, the
       finite-difference Lions source on the grid's weights, recovers ``delta F / delta m = V`` for F = int V m. Run as
       written through ``MFGProblem`` on a 7 x 5 grid, where the composer hands it a (7, 5) slice, it is V within
-      4.2e-10.
+      4.2e-10, with the grid's weights or with one scalar weight, dx dy.
     - ``PotentialCost(V)`` with a ``V(t, x)`` is refused: binding reads V once. The route it names, the Hamiltonian's
-      ``potential(t, x)``, reads V at each time: with ``5 x (1 + 10 t)`` it solves 0.57 away from ``5 x``.
-    - ``terminal_coupling`` is read by nothing until stage 2.
+      ``potential(t, x)``, reads V at each time, at an array of points, so the 1-D V reads ``x[..., 0]`` as the
+      message says: with ``5 x (1 + 10 t)`` it solves 0.57 away from ``5 x``. A V the reader cannot take, ``V(x, t)``,
+      is refused naming the same route.
+    - ``terminal_coupling`` is read by nothing until stage 2, and is refused where a problem binds the ``Model`` too:
+      set after the ``Model`` was built, it was ignored.
     - On a network no solve takes a ``Model`` (#2045); the network's own route, ``node_potential_func``, reaches its
       HJB's source.
     - The part evaluates only at the nodes it was bound on: an x of another row count, the nodes in another order, or
-      other points are refused."""
+      other points are refused, at the part and through the composer, which passes the grid's nodes."""
     from mfgarchon.alg.numerical.coupling.lions_correction import create_lions_source
     from mfgarchon.utils.functional_calculus import FiniteDifferenceFunctionalDerivative
 
@@ -421,6 +452,19 @@ def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
     )
     M = np.ones((3, 7, 5))
     np.testing.assert_allclose(compose_hjb_source(advised, M, 0 * M)(0.0, nodes), V2, rtol=0, atol=1e-8)
+    cell = float(np.prod(plane.get_grid_spacing()))
+    scalar = MFGProblem(
+        model=Model(hamiltonian=_hamiltonian(), volatility=0.3),
+        domain=plane,
+        conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 0.5, T=0.2),
+        Nt=2,
+        source_term_hjb=create_lions_source(
+            lambda m: float(np.sum(cell * V2 * np.asarray(m, dtype=float).ravel())),
+            FiniteDifferenceFunctionalDerivative(),
+            weights=cell,
+        ),
+    )
+    np.testing.assert_allclose(compose_hjb_source(scalar, M, 0 * M)(0.0, nodes), V2, rtol=0, atol=1e-8)
 
     def timed(**kwargs):
         return MFGProblem(
@@ -430,8 +474,12 @@ def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
             Nt=4,
         )
 
-    with pytest.raises(TypeError, match=r"V takes \(t, x\).*SeparableHamiltonian\(potential=lambda t, x"):
+    with pytest.raises(
+        TypeError, match=r"V takes \(t, x\).*SeparableHamiltonian\(potential=lambda t, x.*x\[\.\.\., 0\]"
+    ):
         timed(hamiltonian=_hamiltonian(), coupling_cost=PotentialCost(lambda t, x: x * (1 + t)))
+    with pytest.raises(TypeError, match=r"V takes the point x alone.*SeparableHamiltonian\(potential=lambda t, x"):
+        timed(hamiltonian=_hamiltonian(), coupling_cost=PotentialCost(lambda x, t: x * (1 + t)))
     sweeps = MFGSolverConfig(picard=PicardConfig(max_iterations=3, tolerance=1e-6, verbose=False))
     moving, frozen = (
         np.asarray(timed(hamiltonian=_hamiltonian(potential=V)).solve(config=sweeps).U)
@@ -444,6 +492,15 @@ def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
 
     with pytest.raises(NotImplementedError, match=r"terminal_coupling.*stage 2"):
         Model(hamiltonian=_hamiltonian(), terminal_coupling=lambda x, m: 0.0)
+    mutated = Model(hamiltonian=_hamiltonian(), volatility=0.3, coupling_cost=PotentialCost(_V))
+    mutated.terminal_coupling = lambda x, m: 0.0
+    with pytest.raises(NotImplementedError, match=r"terminal_coupling.*stage 2"):
+        MFGProblem(
+            model=mutated,
+            domain=grid,
+            conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.2),
+            Nt=2,
+        )
 
     from scipy.sparse import csr_matrix
 
@@ -478,3 +535,7 @@ def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
         ):
             _coupling_part(energy, x[:, None], np.ones(21), other, 0.0)
     np.testing.assert_allclose(_coupling_part(energy, x[:, None], np.ones(21), x[:, None], 0.0), _V(x), rtol=0, atol=0)
+    composed = _plumbing_problem("F", n=21, nt=2)
+    M = np.ones((3, 21))
+    with pytest.raises(ValueError, match=r"x with 21 rows that are not.*#2737"):
+        compose_hjb_source(composed, M, 0 * M)(0.0, x[::-1, None])

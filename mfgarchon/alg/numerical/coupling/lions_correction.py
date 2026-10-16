@@ -279,7 +279,7 @@ def create_lions_source(
         Returns:
             Source term values, shape (Nx,)
         """
-        m_flat = _spatial_density(m, None if w_scalar is not None else w_array.size)
+        m_flat = _spatial_density(m, int(np.shape(x)[0]) if w_scalar is not None else w_array.size)
         Nx = len(m_flat)
 
         # Compute dF/dm_k at each grid point
