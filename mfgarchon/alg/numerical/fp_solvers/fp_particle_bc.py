@@ -102,20 +102,17 @@ def needs_segment_aware_bc(boundary_conditions: BoundaryConditions | None) -> bo
     """
     Check if boundary conditions require segment-aware handling.
 
-    Decided on what a particle does, not on the condition (#2490 B1d): the fast path applies one action, reflect or
-    wrap, on every wall, so it is taken where `BoundaryConditions.uniform_segment_under` the particle's sameness names
-    one non-absorbing action. That counts ``default_bc`` wherever it governs a location, and every segment, a shadowed
-    one too -- which can only send a BC to the per-point path, where the owner answers per particle.
+    The fast path applies one action, reflect or wrap, on every wall, so it is taken where
+    `BoundaryConditions.uniform_segment` names one condition every location of the boundary carries -- counting
+    ``default_bc`` wherever no global segment covers the boundary -- and a particle does not absorb under it (#2490).
 
     Returns True if:
-    - the walls do not all take one particle action: absorb on some, reflect on others, or wrap on one axis and
-      reflect on another
-    - every wall absorbs
-    - no segment covers every wall and ``default_bc`` is unset, so the walls' action is not read without their
-      placements: the per-point path reads each particle's segment, and refuses by name a point no segment governs
+    - the walls do not all carry one condition: two segments of different conditions, or a segment beside a
+      ``default_bc`` of another condition (a REFLECTING segment beside a NO_FLUX default counts as two)
+    - every wall carries one condition and it absorbs
+    - no segment covers every wall and ``default_bc`` is unset
 
-    Returns False where every wall reflects, or every wall wraps -- a REFLECTING segment beside a NO_FLUX
-    ``default_bc`` included.
+    Returns False where every wall carries one reflecting or periodic condition.
 
     Parameters
     ----------
@@ -139,15 +136,15 @@ def needs_segment_aware_bc(boundary_conditions: BoundaryConditions | None) -> bo
     if isinstance(bc, str):
         raise ValueError(f"needs_segment_aware_bc: a BC is a BoundaryConditions, not the string {bc!r}")
 
-    # The owner's one answer to "one action everywhere", which counts default_bc wherever no global segment covers the
-    # boundary (#2490 B1d): a BC whose walls absorb by default_bc alone took the reflecting fast path, and asked by
-    # condition, a REFLECTING wall beside a NO_FLUX default left it.
-    from mfgarchon.geometry.boundary.applicator_particle import same_particle_action, segment_particle_action
+    # The owner's one answer to "one condition everywhere", which counts default_bc wherever no global segment covers
+    # the boundary (#2490): read by the segments alone, a reflecting segment beside default_bc=DIRICHLET took the
+    # reflecting fast path, and the walls the default makes absorbing reflected.
+    from mfgarchon.geometry.boundary.applicator_particle import particle_action_for_bc_type
 
-    segment = bc.uniform_segment_under(same_particle_action)
+    segment = bc.uniform_segment
     if segment is None:
         return True
-    return segment_particle_action(segment) == "absorbing"
+    return particle_action_for_bc_type(segment.bc_type, segment.beta) == "absorbing"
 
 
 # =============================================================================

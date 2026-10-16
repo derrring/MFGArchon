@@ -257,9 +257,7 @@ class TestBoundaryConditionRequirements:
         # Explicit periodic BC should take priority
         bc = periodic_bc(dimension=1)
         solver = FPParticleSolver(problem, num_particles=100, boundary_conditions=bc)
-        # The explicit BC, completed with the grid's periodic node layout as every other route completes it (#1822,
-        # #2490 B1d): a copy, so compared by its segments.
-        assert solver.boundary_conditions.segments == bc.segments
+        assert solver.boundary_conditions is bc
         assert solver.boundary_conditions is not problem.geometry.get_boundary_conditions()
 
 

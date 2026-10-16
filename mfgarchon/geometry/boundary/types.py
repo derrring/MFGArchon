@@ -356,9 +356,9 @@ def parse_boundary_face(boundary: str | int | BoundaryFace | None) -> BoundaryFa
             return _BOUNDARY_STRING_TO_FACE[boundary]
         # Numeric-axis formats. Both spellings exist in the tree and mean the same thing:
         # `BoundaryEntity.to_string` emits "axis{N}_{side}" for axes past w, and `dim{N}_{side}` is
-        # emitted by `flux_diagnostics.py`. Two other emitters were deleted when they began asking an owner:
-        # `applicator_particle._get_boundary_id` (#2490 B1d), and `_compat._get_boundary_name_nd`, when `_compat`
-        # began asking the face owner by `BoundaryFace` (#2512 row B1, #2628). Accepting only the first
+        # emitted by `applicator_particle._get_boundary_id` and `flux_diagnostics.py`. A third emitter,
+        # `_compat._get_boundary_name_nd`, was deleted when `_compat` began asking the face owner by
+        # `BoundaryFace` (#2512 row B1, #2628). Accepting only the first
         # spelling meant a segment declared on "dim3_min" resolved to axis 0 -- see below.
         #
         # Two further spellings exist and are deliberately NOT accepted: `geometry/base.py:739`

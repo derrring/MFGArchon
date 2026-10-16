@@ -192,7 +192,8 @@ def test_an_enum_value_is_not_a_boundary_value(package_copy):
 COEFFICIENT_READS_ALLOWED = {
     # Classifiers of a segment, which read no number: validation, and the particle wall's action by the sign of beta.
     ("mfgarchon/geometry/boundary/conditions.py", "validate_values"): "a None check",
-    ("mfgarchon/geometry/boundary/applicator_particle.py", "segment_particle_action"): "classifies the wall by beta",
+    ("mfgarchon/geometry/boundary/applicator_particle.py", "apply"): "classifies the wall by beta",
+    ("mfgarchon/geometry/boundary/applicator_particle.py", "apply_with_flux_limits"): "classifies the wall by beta",
     # A `ResolvedBC`, which the owner already read (`resolution._resolve_passthrough`).
     ("mfgarchon/geometry/boundary/resolution.py", "<module>"): "ResolvedBC",
     ("mfgarchon/geometry/boundary/resolution.py", "resolved_bc_to_calculator"): "ResolvedBC",
