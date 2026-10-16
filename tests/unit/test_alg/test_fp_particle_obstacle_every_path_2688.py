@@ -373,10 +373,12 @@ def test_a_step_into_two_touching_components_lands_at_their_concave_corner(case)
     """#2732 review 1: the arms [0.8, 1.05] x [0.2, 0.45] and [0.9, 1.05] x [0.45, 0.9] touch along y = 0.45, where
     the union's phi is 0 inside the closed obstacle. Each step enters the lower arm and lands at the arms' concave
     corner (0.9, 0.45), to the 1e-10 of each face, with a blended normal at the upper arm's own corner (#2698):
-    - toward the seam: the projection stayed on the seam, where phi's gradient is 0, and read as placed. A degenerate
-      normal now counts as not placed;
-    - beyond the wall at the seam: the projection is the wall's point of the seam, (1 - 1e-10, 0.45), phi = 0, which
-      the normals' test alone kept. The end is outside the arm the path entered, so rule (a) refuses it."""
+    - toward the seam: the domain's projection stayed on the seam, where phi's gradient is 0, and read as placed. The
+      projection onto the lower arm is that seam point too, now moved off it along the arm's normal into the upper
+      arm, and check (c), the moved point in the domain, refuses it (#2732 review 2);
+    - beyond the wall at the seam: the domain's projection was the wall's point of the seam, (1 - 1e-10, 0.45),
+      phi = 0, which the normals' test alone kept. The end is outside the arm the path entered, so rule (a) refuses
+      it, and (c) would too: the arm's own projection, moved, is beyond the wall."""
     previous, end = {
         "toward the seam": ([0.7828459091496743, 0.5135627060726424], [0.9249879579933417, 0.39948193165556767]),
         "beyond the wall at the seam": (
@@ -391,10 +393,10 @@ def test_a_step_into_two_touching_components_lands_at_their_concave_corner(case)
 
 def test_a_step_through_a_lens_lands_by_the_disc_it_entered():
     """#2732 review 1: a step enters the lens of the discs centred (0.55, 0.5) and (0.4, 0.5), radius 0.1, through
-    the right disc and ends in the left one. The end's projection is on the left disc's far side, which the normals'
-    test alone kept; the end is outside the disc the path entered, so rule (a) refuses it, and the face map places it
-    on the tangent half-space at the entry, in closed form: the end minus its depth past that plane along the plane's
-    normal, then 1e-10 out."""
+    the right disc and ends in the left one. The domain's projection was on the left disc's far side, which the
+    normals' test alone kept. The end is outside the disc the path entered, so rule (a) refuses it, and (c) would too:
+    the right disc's own projection lies in the left one. The face map places it on the tangent half-space at the
+    entry, in closed form: the end minus its depth past that plane along the plane's normal, then 1e-10 out."""
     centre, radius = np.array([0.55, 0.5]), 0.1
     lens = DifferenceDomain(
         _BOX,
@@ -425,6 +427,28 @@ def test_a_step_from_outside_the_domain_is_refused_on_every_branch():
     with pytest.raises(ValueError, match=r"previous position \[0\.5 +0\.31\] is not inside the domain"):
         disc.place_step(np.array([[0.5, 0.31]]), end)
     np.testing.assert_allclose(disc.place_step(np.array([[0.5, 0.25]]), end), [[0.5, 0.3 - 1e-10]], rtol=0, atol=1e-12)
+
+
+def test_a_step_through_a_discs_chord_lands_by_the_face_it_entered():
+    """#2732 review 2: rule (a) on its own. The step from (0.403, 0.716) cuts a chord of the disc centred (0.5, 0.5),
+    radius 0.15, and ends just beyond it, at (0.3467, 0.4824), inside the domain. The disc's own nearest point to the
+    end, (0.351, 0.483), is on the far side of the chord. Its normal agrees with the entry's, so rule (b) keeps it,
+    and it is in the domain, so check (c) keeps it too. The path left the disc before its end, so (a) refuses it. The
+    face map places the end on the tangent half-space at the entry, in closed form. In random leaving steps over
+    eleven domains, (a) decides 70 of 23,336 (`i2707/r2fix/a_decisive_r2.py`)."""
+    centre, radius = np.array([0.5, 0.5]), 0.15
+    disc = DifferenceDomain(_BOX, Hypersphere(center=centre, radius=radius))
+    previous, end = np.array([0.403, 0.716]), np.array([0.3467, 0.4824])
+    direction = end - previous
+    a, b, c = (
+        direction @ direction,
+        2 * direction @ (previous - centre),
+        (previous - centre) @ (previous - centre) - radius**2,
+    )
+    entry = previous + (-b - np.sqrt(b * b - 4 * a * c)) / (2 * a) * direction
+    inward = (centre - entry) / radius  # the domain's outward normal there points into the disc
+    expected = end - ((end - entry) @ inward + 1e-10) * inward
+    np.testing.assert_allclose(disc.place_step(previous[None, :], end[None, :]), [expected], rtol=0, atol=1e-9)
 
 
 @pytest.mark.parametrize(
