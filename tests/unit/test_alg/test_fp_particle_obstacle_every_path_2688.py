@@ -207,7 +207,9 @@ def test_what_the_placement_cannot_do_is_refused(case):
     elif case.startswith("initial_particles"):
         start = _navigable_start()
         start[:3] = [0.95, 0.5]
-        with pytest.raises(ValueError, match=r"initial_particles, 3 of 600 are inside an obstacle"):
+        with pytest.raises(
+            ValueError, match=r"initial_particles, 3 of 600 are outside the particles' domain \(inside an obstacle"
+        ):
             _solve(2, no_flux_bc(dimension=2), "callable", initial_particles=start)
     elif case == "M_initial inside the obstacle, n-D":
         with pytest.raises(
@@ -228,7 +230,7 @@ def test_what_the_placement_cannot_do_is_refused(case):
     elif case == "M_initial inside the obstacle, 1-D nodes":
         with pytest.raises(
             ValueError,
-            match=r"grid node\(s\) carrying m_initial's mass are inside an obstacle.*Leaving it out would drop",
+            match=r"grid node\(s\) carrying m_initial's mass are outside the particles' domain \(inside an obstacle.*Leaving it out would drop",
         ):
             _solve(1, no_flux_bc(dimension=1), "grid", centres=[0.5])
     elif case == "an implicit_domain box short of the grid's":
