@@ -43,22 +43,21 @@ Usage:
     >>> from mfgarchon.utils.functional_calculus import FiniteDifferenceFunctionalDerivative
     >>> from mfgarchon.alg.numerical.coupling.lions_correction import create_lions_source
     >>>
-    >>> # Define nonlocal energy functional (physical: both quadrature factors)
-    >>> W = ...  # interaction kernel matrix (Nx, Nx)
-    >>> dx = 1.0 / Nx
+    >>> # A nonlocal energy on the grid's measure: both quadrature factors are its weights (#1642)
+    >>> grid = TensorProductGrid(...)
+    >>> w = grid.measure_weights().ravel()  # problem.spatial_measure().weights on this grid, flattened
+    >>> W = ...  # interaction kernel matrix W(x_i, x_j), shape (Nx, Nx), on the grid's nodes
     >>> def energy(m):
-    ...     return 0.5 * np.sum(m * (W @ m)) * dx**2
+    ...     return 0.5 * np.sum(w * m * (W @ (w * m)))
     >>>
     >>> fd = FiniteDifferenceFunctionalDerivative(epsilon=1e-4)
-    >>> source_hjb = create_lions_source(energy, fd, weights=dx)
-    >>>
-    >>> problem = MFGProblem(..., source_term_hjb=source_hjb)
+    >>> problem = MFGProblem(..., domain=grid, source_term_hjb=create_lions_source(energy, fd, weights=w))
     >>> result = problem.solve()
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -69,6 +68,16 @@ if TYPE_CHECKING:
 
     from mfgarchon.operators.interaction.energy_functionals import EnergyFunctional
     from mfgarchon.utils.functional_calculus import FunctionalDerivative, FunctionalOnMeasures
+
+
+@runtime_checkable
+class _AppliedWithMatmul(Protocol):
+    """A kernel ``create_nonlocal_source`` applies as it is: it applies itself with ``@``. This check finds
+    ``__matmul__`` statically, on the type or on the instance, while Python's ``@`` uses the type's alone. Its shape is
+    read apart, as an attribute, since a wrapper can forward one through ``__getattr__``, which this check does not see
+    (#2726)."""
+
+    def __matmul__(self, other: Any) -> Any: ...
 
 
 def _spatial_density(m: NDArray) -> NDArray:
@@ -284,35 +293,102 @@ def create_lions_source(
 
 
 def create_nonlocal_source(
-    interaction_kernel: NDArray,
-    grid_spacing: float,
+    interaction_kernel: Any,
+    weights: NDArray,
 ) -> Callable[[float, NDArray, NDArray, NDArray], NDArray]:
     """Create source_term_hjb for nonlocal interaction coupling.
 
     Optimized path for the common case F[m] = (1/2) int int W(x,y) m(x) m(y) dx dy,
-    where delta F / delta m[m](x) = int W(x,y) m(y) dy = (W @ m) * dx.
+    where delta F / delta m[m](x) = int W(x,y) m(y) dy = W @ (w * m), with ``w`` the
+    per-node weights of the problem's measure. ``W`` need not be translation-invariant;
+    for a kernel K(x - y), ``ConvolutionCouplingOperator.from_problem`` is the same
+    integral with an FFT path.
 
     This avoids the overhead of finite-difference functional derivatives
     by computing the convolution directly.
 
     Args:
-        interaction_kernel: W(x_i, x_j) matrix, shape (N, N) where N is the
-            total number of spatial grid points (N = Nx for 1D, Nx*Ny for 2D, etc.).
-            Symmetric for undirected interaction. Operates on flattened density arrays.
-        grid_spacing: Spatial grid spacing dx for quadrature (1D cell volume).
-            For nD, pass the cell volume dx*dy*... instead.
+        interaction_kernel: The unweighted kernel W(x_i, x_j), shape (N, N) where N is the
+            total number of spatial grid points (N = Nx for 1D, Nx*Ny for 2D, etc.):
+            anything with that shape that applies itself with ``@`` -- a dense array,
+            a sparse matrix, a ``LinearOperator``, a matrix-free object of the
+            caller's -- applied as ``W @ v``, or anything ``np.asarray`` makes a numeric
+            matrix. Symmetric for undirected interaction. Operates on flattened
+            density arrays. ``W`` must not carry the measure's weights itself: those
+            are ``weights``, and a weighted form is weighted twice. The library's
+            weighted operators, a ``ConvolutionCouplingOperator`` or a
+            ``GraphonCouplingOperator`` passed as built, are refused; a form derived
+            from one (``op.T``, ``op.H``, ``2 * op``, ``op.as_dense()``, a wrapper of
+            one) cannot be told from an unweighted kernel and is not.
+        weights: The measure's per-node weights, ``problem.spatial_measure().weights``:
+            shape (N,), or the grid's shape. A scalar is refused. One cell volume for
+            every node is the rectangle rule, which gives each end node a full cell
+            past the domain (#1642).
 
     Returns:
         source_term_hjb(t, x, v, m) -> NDArray.
 
     Example:
-        >>> # Gaussian interaction kernel
-        >>> x = np.linspace(0, 1, 50)
+        >>> # Gaussian interaction kernel on a problem's grid
+        >>> x = problem.geometry.get_spatial_grid().ravel()
         >>> W = np.exp(-((x[:, None] - x[None, :]) ** 2) / (2 * 0.1**2))
-        >>> source = create_nonlocal_source(W, grid_spacing=x[1] - x[0])
+        >>> source = create_nonlocal_source(W, problem.spatial_measure().weights)
     """
-    W = interaction_kernel
-    dx = grid_spacing
+    from mfgarchon.operators.interaction.energy_functionals import validate_weights
+
+    if np.ndim(weights) == 0:
+        raise ValueError(
+            f"create_nonlocal_source: weights is the scalar {weights!r}, one cell volume for every node. That is the "
+            "rectangle rule, which gives each end node a full cell past the domain. Pass the measure's per-node "
+            "weights, problem.spatial_measure().weights (#1642)."
+        )
+    from mfgarchon.operators.integro_diff.graphon_coupling import GraphonCouplingOperator
+    from mfgarchon.operators.interaction.convolution import ConvolutionCouplingOperator
+
+    # The library's own weighted operators, passed as built: their @ is the integral, weights included. A form derived
+    # from one is not refused, since whether a matrix carries the measure's weights cannot be read from it (#2726).
+    if isinstance(interaction_kernel, ConvolutionCouplingOperator):
+        raise ValueError(
+            "create_nonlocal_source: the interaction kernel is a ConvolutionCouplingOperator, whose @ already carries "
+            "its weights, so W @ (w * m) would weight m twice. Its own channel to the HJB source is "
+            "create_lions_source(QuadraticInteractionEnergy(op)); or pass its unweighted matrix, op.kernel_matrix() "
+            "(#1642)."
+        )
+    if isinstance(interaction_kernel, GraphonCouplingOperator):
+        raise ValueError(
+            "create_nonlocal_source: the interaction kernel is a GraphonCouplingOperator, whose @ is already the "
+            "integral over [0, 1], quadrature weights included, so W @ (w * m) would weight m twice. Pass the "
+            "unweighted matrix of the graphon kernel it was built with, kernel.evaluate(x, x) on the grid's nodes x "
+            "(#1642)."
+        )
+    w = validate_weights(weights, "create_nonlocal_source")
+    applied_as_given = isinstance(interaction_kernel, _AppliedWithMatmul)
+    if applied_as_given:
+        # Applied as it is -- an ndarray, a sparse matrix, a LinearOperator, a matrix-free object of the caller's, a
+        # wrapper of one; np.asarray would wrap the matrix-free ones in a 0-d object array.
+        W = interaction_kernel
+        try:
+            shape = tuple(interaction_kernel.shape)
+        except AttributeError:
+            raise ValueError(
+                f"create_nonlocal_source: the interaction kernel, a {type(W).__name__}, applies itself with @ but has "
+                f"no shape, so it cannot be checked against the weights' {w.size} nodes. Give it a shape "
+                f"({w.size}, {w.size}), as a LinearOperator has (#2726)."
+            ) from None
+    else:
+        W = np.asarray(interaction_kernel)
+        shape = W.shape
+        if W.dtype == object:
+            raise ValueError(
+                f"create_nonlocal_source: the interaction kernel, a {type(interaction_kernel).__name__}, neither "
+                f"applies itself with @ nor converts to a numeric array (np.asarray gives an object array of shape "
+                f"{W.shape}) (#2726)."
+            )
+    if shape != (w.size, w.size):
+        raise ValueError(
+            f"create_nonlocal_source: the interaction kernel has shape {shape} and the weights {w.size} nodes; it "
+            f"must be ({w.size}, {w.size})"
+        )
 
     def source_term_hjb(
         t: float,
@@ -322,6 +398,6 @@ def create_nonlocal_source(
     ) -> NDArray:
         """Evaluate (W * m)(x) = int W(x,y) m(y) dy."""
         m_spatial = _spatial_density(m)
-        return (W @ m_spatial) * dx
+        return W @ (w * m_spatial)
 
     return source_term_hjb
