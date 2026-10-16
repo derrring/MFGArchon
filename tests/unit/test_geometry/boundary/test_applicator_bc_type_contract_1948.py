@@ -524,23 +524,25 @@ def test_a_declaration_that_is_absent_disables_the_gate_rather_than_failing_clos
 
 
 def test_the_gate_reads_default_bc_and_not_only_the_segments():
-    """`_validate_bc_support` adds `bc.default_bc` to the requested set.
+    """The base gate, `BaseBCApplicator._validate_bc_support`, adds `bc.default_bc` to the requested set.
 
     Every cell above puts the same type in both the segment and `default_bc`, so dropping the
     `default_bc` line changes nothing there -- measured, that mutation passes the whole table. Here
     the segment is a type the applicator declares and the default is one it does not, so only a gate
-    that reads both can refuse it.
+    that reads both can refuse it. The meshfree and implicit applicators gate the one condition they impose
+    instead (`the_one_condition`, #2717), which `test_implicit_applicator` pins; FDM keeps the base gate.
     """
+
+    class _DirichletOnly(FDMApplicator):
+        _SUPPORTED_BC_TYPES = frozenset({BCType.DIRICHLET})
+
     bc = BoundaryConditions(
         segments=[BCSegment(name="s", bc_type=BCType.DIRICHLET, value=1.0)],
-        dimension=2,
-        default_bc=BCType.PERIODIC,  # ImplicitApplicator deliberately does not declare this
+        dimension=1,
+        default_bc=BCType.PERIODIC,
     )
-    assert BCType.DIRICHLET in ImplicitApplicator._SUPPORTED_BC_TYPES
-    assert BCType.PERIODIC not in ImplicitApplicator._SUPPORTED_BC_TYPES
-
     with pytest.raises(NotImplementedError, match="does not support"):
-        ImplicitApplicator(_sphere(), boundary_tolerance=1e-8).apply(_RADIAL.copy(), bc, _CLOUD, spacing=0.13)
+        _DirichletOnly(dimension=1).apply(_LINE.copy(), bc, grid_spacing=0.25)
 
 
 def test_the_refusing_branch_still_refuses_if_the_gate_is_bypassed():

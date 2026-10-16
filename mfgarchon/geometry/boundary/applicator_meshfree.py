@@ -56,12 +56,12 @@ def the_one_condition(boundary_conditions: BoundaryConditions, where: str) -> BC
         seen = ", ".join(f"{s.name!r} ({s.bc_type.name})" for s in boundary_conditions.segments) or "none"
         default = getattr(boundary_conditions.default_bc, "name", None)
         raise NotImplementedError(
-            f"{where}: this applicator cannot represent this boundary condition, which is a valid one. The applicator "
-            f"imposes one condition at every boundary point, and the BC has no one condition for every location "
-            f"(segments {seen}; default_bc {default}): its conditions differ by location, or a location falls to a "
-            "default_bc that cannot govern it (unset, or ROBIN). Imposing one of them everywhere would drop the others "
-            "(#1947). Give this applicator a uniform BC -- one segment with no placement, or a default_bc alone; "
-            "resolving each point's condition is #2712."
+            f"{where}: this applicator cannot represent this boundary condition. It imposes one condition at every "
+            f"boundary point, and the BC has no one condition for every location (segments {seen}; default_bc "
+            f"{default}): its conditions differ by location, or a location falls to a default_bc that cannot govern it "
+            "(unset, or ROBIN). Imposing one of them everywhere would drop the others (#1947). Give this applicator a "
+            "uniform BC -- one segment with no placement, or a default_bc other than ROBIN alone; a solver that "
+            "resolves each location's condition takes this one, and resolving it here is #2712."
         )
     return segment
 
@@ -101,6 +101,20 @@ class MeshfreeApplicator(BaseMeshfreeApplicator):
     #: -- they are why "four different behaviours for an unhandled type" understates the problem:
     #: one of the four was already right. #1948
     _SUPPORTED_BC_TYPES: frozenset[BCType] = frozenset({BCType.DIRICHLET, BCType.ROBIN})
+
+    def _validate_bc_support(self, bc: BoundaryConditions) -> None:
+        """The #1948 type gate on the one condition this applicator imposes (`the_one_condition`), not on every type
+        the BC names: a ``default_bc`` that governs no location is not imposed, so it is not refused (#2717)."""
+        if self._SUPPORTED_BC_TYPES is None or bc is None:
+            return
+        segment = the_one_condition(bc, type(self).__name__)
+        if segment.bc_type not in self._SUPPORTED_BC_TYPES:
+            have = sorted(t.name for t in self._SUPPORTED_BC_TYPES)
+            raise NotImplementedError(
+                f"{type(self).__name__} does not support boundary condition type(s) {[segment.bc_type.name]} "
+                f"(supported: {have}). An unsupported type would otherwise be applied as whatever the dispatch falls "
+                f"through to, which is not the condition that was asked for."
+            )
 
     def __init__(self, geometry: GeometryProtocol):
         """

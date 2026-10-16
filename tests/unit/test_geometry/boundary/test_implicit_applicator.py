@@ -383,7 +383,6 @@ class TestAgainstAPackageGeometry:
                 segments=segments, dimension=2, default_bc=default_bc, default_value=default_value
             )
 
-        exit_hi = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=7.0, priority=5)
         walls = BCSegment(name="walls", bc_type=BCType.NO_FLUX, value=0.0)
         robin_wall = BCSegment(name="wall", bc_type=BCType.ROBIN, alpha=2.0, beta=3.0, value=1.0)
         dir_b = BCSegment(name="b", bc_type=BCType.DIRICHLET, value=0.0)
@@ -416,18 +415,19 @@ class TestAgainstAPackageGeometry:
                 applicator._resolve_bc_value(segment, boundary_points, 0.0), expected, atol=1e-12, err_msg=label
             )
 
+        # Mixed BCs the owner answers per face (an exit on x_max beside a global wall), which one condition cannot carry.
+        exit_ = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=7.0, boundary="x_max")
         refused = [
-            ("A two global segments", bc_of([exit_hi, walls], BCType.NO_FLUX)),
-            ("C a Dirichlet and a Robin segment", bc_of([exit_hi, robin_wall], BCType.ROBIN, 4.0)),
-            ("F two Dirichlet values", bc_of([exit_hi, dir_b], BCType.DIRICHLET, 9.0)),
+            ("A an exit beside a no-flux wall", bc_of([exit_, walls], BCType.NO_FLUX)),
+            ("C an exit beside a Robin wall", bc_of([exit_, robin_wall], BCType.ROBIN, 4.0)),
+            ("F two Dirichlet values", bc_of([exit_, dir_b], BCType.DIRICHLET, 9.0)),
         ]
         for _label, bc in refused:
-            with pytest.raises(
-                NotImplementedError, match=r"cannot represent this boundary condition, which is a valid one"
-            ):
+            with pytest.raises(NotImplementedError, match=r"cannot represent this boundary condition.*'exit'.*#2712"):
                 applicator.apply(np.zeros(len(points)), bc, points)
-        # The refusal's remedy, run: a uniform BC, here one segment with no placement.
-        uniform = bc_of([BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=7.0)], BCType.DIRICHLET, 9.0)
+        # The refusal's remedy, run: a uniform BC, one segment with no placement. Its default_bc, PERIODIC, governs no
+        # location and is a type this applicator does not declare, so the type gate reads the one condition (#2717).
+        uniform = bc_of([BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=7.0)], BCType.PERIODIC, 9.0)
         result = applicator.apply(np.zeros(len(points)), uniform, points)
         np.testing.assert_allclose(result[on_boundary], 7.0, atol=1e-12)
 
@@ -440,18 +440,20 @@ class TestAgainstAPackageGeometry:
         _, geometry = package_applicator
         applicator = MeshfreeApplicator(geometry)
         points = self._on_sphere(geometry)
-        exit_ = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=7.0, priority=5)
+        exit_ = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=7.0, boundary="x_max")
         wall = BCSegment(name="wall", bc_type=BCType.DIRICHLET, value=0.0)
         mixed = BoundaryConditions(segments=[exit_, wall], dimension=2, default_bc=BCType.DIRICHLET, default_value=9.0)
-        refusal = r"cannot represent this boundary condition, which is a valid one.*'exit' \(DIRICHLET\).*#2712"
+        refusal = r"cannot represent this boundary condition.*'exit' \(DIRICHLET\).*#2712"
         with pytest.raises(NotImplementedError, match=refusal):
             applicator.apply(np.zeros(len(points)), mixed, points)
         with pytest.raises(NotImplementedError, match=refusal):
             applicator.apply_particles(points.copy(), mixed)
+        # The remedy, run: one segment with no placement. Its default_bc, NO_FLUX, governs no location and is a type
+        # this applicator does not declare, so the type gate reads the one condition (#2717).
         uniform = BoundaryConditions(
             segments=[BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=7.0)],
             dimension=2,
-            default_bc=BCType.DIRICHLET,
+            default_bc=BCType.NO_FLUX,
             default_value=9.0,
         )
         on_boundary = geometry.is_on_boundary(points)

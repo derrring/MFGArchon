@@ -1,10 +1,11 @@
 """The meshless Nitsche path places conditions on whole faces, by the face owner (#2490, #2512 row B1 stage B1c-2).
 
 `nitsche._dirichlet_faces` asks `BoundaryConditions.segment_for_face` which segment governs each bounding-box face,
-and imposes Dirichlet data on the faces a Dirichlet condition governs, ``default_bc`` included. The owner places
-``region``, ``sdf_region``, ``normal_direction`` and ``region_name`` where they cover a whole face, and refuses a
-partial cover, a segment that governs no face, a placement it cannot decide, and a face nothing governs. Before
-B1c-2 this path had its own face reader, `_segment_faces`, which refused every restricted placement, and before
+and imposes Dirichlet data on the faces a Dirichlet condition governs, ``default_bc`` included. The owner places a
+face label and ``normal_direction`` on an axis-aligned face, and refuses a segment that governs no face and a face
+nothing governs. A ``region`` or ``sdf_region`` placement that decides a Dirichlet condition is refused here, since the
+owner decides it on the problem's grid, not on the faces Nitsche integrates (#2717, #2712). Before B1c-2 this path had
+its own face reader, `_segment_faces`, which refused every restricted placement, and before
 #2490 it applied such a segment to every face it named (a 1-D Dirichlet segment on ``region={0: (0.5, 1)}`` absorbed
 0.6652, the both-walls figure, where x_max alone gives 0.8326).
 """
@@ -37,19 +38,77 @@ def _dirichlet(**where):
     return BCSegment(name="d", bc_type=BCType.DIRICHLET, value=0.0, **where)
 
 
+def test_normal_direction_on_an_axis_aligned_face_governs_that_face():
+    """An axis-aligned face has one outward normal, so ``normal_direction`` names a whole face exactly in any
+    dimension, and the owner gives it that face: the same solve as ``boundary="x_max"``."""
+    assert _fp_mass_ratio(_bc(_dirichlet(normal_direction=np.array([1.0])))) == _fp_mass_ratio(
+        _bc(_dirichlet(boundary="x_max"))
+    )
+
+
+def _bound_to_a_grid(bc, n, bounds=((0.0, 1.0), (0.0, 1.0))):
+    """``bc`` as the problem's grid binds it, which is where the owner decides a ``region``."""
+    from mfgarchon.geometry import TensorProductGrid
+
+    grid = TensorProductGrid(bounds=list(bounds), Nx_points=[n, n], boundary_conditions=bc)
+    return grid, grid.get_boundary_conditions()
+
+
 @pytest.mark.parametrize(
-    ("restriction", "face"),
+    "case",
     [
-        ({"region": {0: (0.5, 1.0)}}, "x_max"),
-        ({"sdf_region": lambda x: np.asarray(x)[..., 0] - 0.5}, "x_min"),
-        ({"normal_direction": np.array([1.0])}, "x_max"),
+        "1-D region",
+        "1-D sdf_region",
+        "1-D no-flux region before a Dirichlet face",
+        "1-D no-flux region beside a Dirichlet default",
+        "2-D region on 70% of x_max, a 3x3 grid",
+        "2-D region on 70% of x_max, a 5x5 grid",
+        "2-D region on 90% of x_max, a 5x5 grid",
+        "2-D region beyond the cloud's face",
     ],
-    ids=["region", "sdf_region", "normal_direction"],
 )
-def test_a_placement_that_covers_a_whole_face_governs_that_face(restriction, face):
-    """In 1-D a face is one point, so each of these placements covers one face whole, and the owner gives it that
-    face: the same solve as ``boundary=face``. This path refused all three before B1c-2."""
-    assert _fp_mass_ratio(_bc(_dirichlet(**restriction))) == _fp_mass_ratio(_bc(_dirichlet(boundary=face)))
+def test_a_region_or_sdf_region_placement_is_refused_and_a_face_label_is_the_remedy(case):
+    """#2717 review 1, B2: the owner decides a ``region`` or an ``sdf_region`` on the problem's grid, not on the box
+    faces Nitsche integrates, so a Dirichlet condition placed that way is refused, as before B1c-2. On a 3x3 grid a
+    region over 70% of x_max read as the whole face and imposed Dirichlet on all of it; a region over 90% did the same
+    on 5x5; a region at x > 0.95 gave a cloud on [0.1, 0.9]^2 its x_max face. The refusal names #2712, and its remedy,
+    a face label, assembles. A natural condition placed by a region is refused where it decides where a Dirichlet
+    condition lies: before a Dirichlet segment in the face order, or beside a Dirichlet default."""
+    from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
+    from mfgarchon.alg.numerical.meshless_galerkin.nitsche import (
+        assemble_nitsche_terms,
+        refuse_what_nitsche_cannot_place,
+    )
+
+    refusal = r"placed by region or sdf_region.*#2712"
+    if case.startswith("1-D"):
+        wall = BCSegment(name="w", bc_type=BCType.NO_FLUX, region={0: (0.5, 1.0)}, priority=1)
+        bc = {
+            "1-D region": _bc(_dirichlet(region={0: (0.5, 1.0)})),
+            "1-D sdf_region": _bc(_dirichlet(sdf_region=lambda x: np.asarray(x)[..., 0] - 0.5)),
+            "1-D no-flux region before a Dirichlet face": _bc(wall, _dirichlet(boundary="x_max")),
+            "1-D no-flux region beside a Dirichlet default": _bc(wall, default=BCType.DIRICHLET, default_value=0.0),
+        }[case]
+        with pytest.raises(NotImplementedError, match=refusal):
+            MeshlessGalerkinFPSolver(_problem(bc), XS, delta=0.35)
+        return
+    if case == "2-D region beyond the cloud's face":
+        side = np.linspace(0.1, 0.9, 9)
+        segment, n, delta = _dirichlet(region={0: (0.95, 1.0)}), 11, 0.35
+    else:
+        side = np.linspace(0.0, 1.0, 9)
+        span = (0.3, 1.0) if "70%" in case else (0.05, 0.95)
+        segment, n, delta = _dirichlet(boundary="x_max", region={1: span}), 3 if "3x3" in case else 5, 3.5 / 8
+    cloud = np.array([[x, y] for x in side for y in side])
+    disc = discretization_from_cloud(cloud, delta=delta, degree=2, n_gauss=4)
+    _grid, bc = _bound_to_a_grid(BoundaryConditions(dimension=2, segments=[segment], default_bc=BCType.NO_FLUX), n)
+    with pytest.raises(NotImplementedError, match=refusal):
+        refuse_what_nitsche_cannot_place(bc, 2)
+    face = BoundaryConditions(dimension=2, segments=[_dirichlet(boundary="x_max")], default_bc=BCType.NO_FLUX)
+    refuse_what_nitsche_cannot_place(face, 2)
+    block, _ = assemble_nitsche_terms(disc, face, 0.045, 20.0, 4)
+    assert block is not None
+    assert block.nnz > 0
 
 
 def test_a_region_named_face_is_that_face_only():

@@ -574,6 +574,26 @@ class BoundaryConditions:
             governing = self._default_segment(context, f"the {target.to_string()} face")
         return governing, next((part for part in partial if not same(part, governing)), None)
 
+    def segments_placed_off_face_labels(self) -> list[BCSegment]:
+        """The segments a reader that integrates over whole box faces cannot place where it matters to a DIRICHLET
+        condition (#2490, #2717): those placed by ``region`` or ``sdf_region`` that are DIRICHLET, that come before a
+        DIRICHLET segment in the face order, or that sit beside a DIRICHLET ``default_bc``.
+
+        A face label -- ``boundary``, ``region_name`` or ``"all"`` -- and ``normal_direction`` on an axis-aligned face
+        decide a whole face exactly. A ``region`` or an ``sdf_region`` is decided on a grid's nodes
+        (:meth:`segment_for_face`), which need not be the faces such a reader integrates; placing a condition on part
+        of a face is per-point resolution (#2712).
+        """
+        order = self._face_order()
+        dirichlet_default = self.default_bc is not None and self._resolve_default_bc("placement") == BCType.DIRICHLET
+        last_dirichlet = max((i for i, seg in enumerate(order) if seg.bc_type == BCType.DIRICHLET), default=-1)
+        return [
+            seg
+            for i, seg in enumerate(order)
+            if (seg.region is not None or seg.sdf_region is not None)
+            and (seg.bc_type == BCType.DIRICHLET or i < last_dirichlet or dirichlet_default)
+        ]
+
     def segment_for_corner(
         self,
         faces: list[BoundaryFace],
