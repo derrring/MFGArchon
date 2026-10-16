@@ -144,7 +144,7 @@ class ConvolutionCouplingOperator(LinearOperator):
                 raise ValueError("irregular point set requires cell_volume")
             if use_fft:
                 raise ValueError("FFT path requires a regular grid; got irregular points")
-            pts = np.asarray(points, dtype=float)
+            pts = np.array(points, dtype=float)  # a copy: the kernel matrix below is built from these points
             self._points = pts
             N = pts.shape[0]
             self._grid_shape = None
@@ -220,16 +220,15 @@ class ConvolutionCouplingOperator(LinearOperator):
 
             return quadrature_weights_nd(self._grid_axes()).ravel()
         w = np.array(cell_volume, dtype=float)  # a copy: the operator's weights are not the caller's array
+        shapes = f"({N},)" if self._grid_shape == (N,) else f"({N},) or {self._grid_shape}"
         if w.ndim == 0:
             raise ValueError(
-                f"cell_volume on a regular grid is per node, shape ({N},) or {self._grid_shape}; got the scalar "
+                f"cell_volume on a regular grid is per node, shape {shapes}; got the scalar "
                 f"{float(w)!r}. One weight for every node is the rectangle rule, which gives each end node a full cell "
                 "past the domain; leave cell_volume out for the trapezoid weights (#1642)."
             )
         if w.shape not in ((N,), self._grid_shape):
-            raise ValueError(
-                f"cell_volume on a regular grid is per node, shape ({N},) or {self._grid_shape}; got {w.shape}."
-            )
+            raise ValueError(f"cell_volume on a regular grid is per node, shape {shapes}; got {w.shape}.")
         return w.ravel()
 
     def _build_grid_points(self) -> NDArray:
@@ -298,8 +297,8 @@ class ConvolutionCouplingOperator(LinearOperator):
 
     @property
     def points(self) -> NDArray:
-        """The point set backing the operator, shape ``(N, d)``. On a regular grid its first node is the origin; only
-        differences between points enter the kernel."""
+        """The point set backing the operator: shape ``(N, d)`` on a regular grid, whose first node is the origin; the
+        ``points`` given, copied, in point mode. Only differences between points enter the kernel."""
         return self._points
 
     @property

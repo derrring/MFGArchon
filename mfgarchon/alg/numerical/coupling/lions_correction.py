@@ -43,21 +43,21 @@ Usage:
     >>> from mfgarchon.utils.functional_calculus import FiniteDifferenceFunctionalDerivative
     >>> from mfgarchon.alg.numerical.coupling.lions_correction import create_lions_source
     >>>
-    >>> # A nonlocal energy on the problem's measure: both quadrature factors are its weights (#1642)
-    >>> problem = MFGProblem(...)
-    >>> W = ...  # interaction kernel matrix W(x_i, x_j), shape (Nx, Nx), on problem.geometry's nodes
-    >>> w = problem.spatial_measure().weights
+    >>> # A nonlocal energy on the grid's measure: both quadrature factors are its weights (#1642)
+    >>> grid = TensorProductGrid(...)
+    >>> w = grid.measure_weights().ravel()  # what problem.spatial_measure().weights will be on this grid
+    >>> W = ...  # interaction kernel matrix W(x_i, x_j), shape (Nx, Nx), on the grid's nodes
     >>> def energy(m):
     ...     return 0.5 * np.sum(w * m * (W @ (w * m)))
     >>>
     >>> fd = FiniteDifferenceFunctionalDerivative(epsilon=1e-4)
-    >>> problem.source_term_hjb = create_lions_source(energy, fd, weights=w)
+    >>> problem = MFGProblem(..., domain=grid, source_term_hjb=create_lions_source(energy, fd, weights=w))
     >>> result = problem.solve()
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -68,6 +68,15 @@ if TYPE_CHECKING:
 
     from mfgarchon.operators.interaction.energy_functionals import EnergyFunctional
     from mfgarchon.utils.functional_calculus import FunctionalDerivative, FunctionalOnMeasures
+
+
+@runtime_checkable
+class _AppliedWithMatmul(Protocol):
+    """A kernel ``create_nonlocal_source`` applies as it is: it has a shape and applies itself with ``@``."""
+
+    shape: tuple[int, ...]
+
+    def __matmul__(self, other: Any) -> Any: ...
 
 
 def _spatial_density(m: NDArray) -> NDArray:
@@ -317,9 +326,6 @@ def create_nonlocal_source(
         >>> W = np.exp(-((x[:, None] - x[None, :]) ** 2) / (2 * 0.1**2))
         >>> source = create_nonlocal_source(W, problem.spatial_measure().weights)
     """
-    from scipy.sparse import issparse
-    from scipy.sparse.linalg import LinearOperator
-
     from mfgarchon.operators.interaction.energy_functionals import validate_weights
 
     if np.ndim(weights) == 0:
@@ -328,12 +334,17 @@ def create_nonlocal_source(
             "rectangle rule, which gives each end node a full cell past the domain. Pass the measure's per-node "
             "weights, problem.spatial_measure().weights (#1642)."
         )
-    # A sparse matrix or a LinearOperator is applied as it is: np.asarray would wrap it in a 0-d object array.
-    W = (
-        interaction_kernel
-        if isinstance(interaction_kernel, (np.ndarray, LinearOperator)) or issparse(interaction_kernel)
-        else np.asarray(interaction_kernel)
-    )
+    from mfgarchon.operators.interaction.convolution import ConvolutionCouplingOperator
+
+    if isinstance(interaction_kernel, ConvolutionCouplingOperator):
+        raise ValueError(
+            "create_nonlocal_source: the interaction kernel is a ConvolutionCouplingOperator, whose @ already carries "
+            "its weights, so W @ (w * m) would weight m twice. Pass its unweighted matrix, op.kernel_matrix(), or use "
+            "create_lions_source(QuadraticInteractionEnergy(op)) (#1642)."
+        )
+    # Anything that has a shape and applies itself with @ -- an ndarray, a sparse matrix, a LinearOperator, a
+    # matrix-free object of the caller's -- is applied as it is; np.asarray would wrap it in a 0-d object array.
+    W = interaction_kernel if isinstance(interaction_kernel, _AppliedWithMatmul) else np.asarray(interaction_kernel)
     w = validate_weights(weights, "create_nonlocal_source")
     if W.shape != (w.size, w.size):
         raise ValueError(

@@ -93,22 +93,48 @@ class TestGate3LionsBridgeEquivalence:
             source(t=0.0, x=x, v=np.zeros_like(x), m=m), W @ quadrature_weights_1d(x), atol=1e-14
         )
 
-    @pytest.mark.parametrize("form", ["dense", "csr_matrix", "LinearOperator"])
+    @pytest.mark.parametrize("form", ["dense", "csr_matrix", "csr_array", "LinearOperator", "an object with @"])
     def test_the_nonlocal_source_applies_a_sparse_or_matrix_free_kernel(self, form):
         """The nonlocal source is the path for a kernel that is not translation-invariant, which is where a sparse or
-        matrix-free W is used: each is applied as it is. np.asarray wrapped them in a 0-d object array, and the shape
-        check refused them (#2726, review 1)."""
-        from scipy.sparse import csr_matrix
+        matrix-free W is used: anything with a shape that applies itself with @ is applied as it is. np.asarray wrapped
+        them in a 0-d object array, and the shape check refused them (#2726, reviews 1 and 2)."""
+        from scipy.sparse import csr_array, csr_matrix
         from scipy.sparse.linalg import aslinearoperator
 
         from mfgarchon.operators.interaction.kernels import WendlandKernel
 
         x = np.linspace(0.0, 1.0, 41)
         W = WendlandKernel(1.0, 0.1).matrix(x)
-        kernel = {"dense": W, "csr_matrix": csr_matrix(W), "LinearOperator": aslinearoperator(W)}[form]
+
+        class _AppliesItself:
+            shape = W.shape
+
+            def __matmul__(self, v):
+                return W @ v
+
+        kernel = {
+            "dense": W,
+            "csr_matrix": csr_matrix(W),
+            "csr_array": csr_array(W),
+            "LinearOperator": aslinearoperator(W),
+            "an object with @": _AppliesItself(),
+        }[form]
         w, m = quadrature_weights_1d(x), 1.0 + x
         source = create_nonlocal_source(kernel, w)
         np.testing.assert_allclose(source(t=0.0, x=x, v=np.zeros_like(x), m=m), W @ (w * m), atol=1e-15)
+
+    def test_the_nonlocal_source_refuses_the_weighted_operator(self):
+        """A ConvolutionCouplingOperator's @ already carries its weights, so as W it would weight m twice (#2726,
+        review 2). It is refused, and the remedy the message names, its kernel_matrix(), matches the operator."""
+        x = np.linspace(0.0, 1.0, 21)
+        w = quadrature_weights_1d(x)
+        op = ConvolutionCouplingOperator(GaussianKernel(1.0, 0.1), grid_shape=(21,), spacings=[x[1]])
+        with pytest.raises(ValueError, match=r"weight m twice.*op\.kernel_matrix\(\)"):
+            create_nonlocal_source(op, w)
+        m = 1.0 + x
+        np.testing.assert_allclose(
+            create_nonlocal_source(op.kernel_matrix(), w)(t=0.0, x=x, v=np.zeros_like(x), m=m), op @ m, atol=1e-14
+        )
 
     def test_analytic_matches_fd_lambda_path(self):
         """The two branches of create_lions_source agree on ONE energy object.
