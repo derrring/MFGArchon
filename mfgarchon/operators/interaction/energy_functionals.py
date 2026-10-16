@@ -105,11 +105,7 @@ class EnergyFunctional(Protocol):
     itself.
     """
 
-    @property
-    def weights(self) -> NDArray:
-        """The measure's quadrature weights, read-only: every implementer returns a frozen copy (#1642 stage 1, which
-        binds these behind the protocol)."""
-        ...
+    weights: NDArray
 
     def energy(self, m: NDArray, *, t: float = 0.0) -> float:
         """Evaluate the physical coupling energy ``F[m]`` (scalar)."""

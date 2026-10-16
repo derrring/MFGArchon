@@ -69,9 +69,9 @@ class NewtonMFGSolver(BaseCouplingIterator):
         - Automatic Jacobian (finite diff or JAX)
         - Line search for globalization
 
-    Source / nonlocal / obstacle terms (Issue #1361):
-        ``source_term_hjb``, ``source_term_fp``, ``nonlocal_operator``, and
-        ``obstacle`` flow through the residual ``MFGResidual`` and are composed
+    Source / nonlocal terms (Issue #1361):
+        ``source_term_hjb``, a bound ``coupling_cost``, ``nonlocal_operator`` and
+        ``source_term_fp`` flow through the residual ``MFGResidual`` and are composed
         from the ``(U, M)`` residual arguments via the single-source
         ``source_composition`` helpers shared with the Picard
         ``FixedPointIterator``. The FD Jacobian differentiates through the source

@@ -2295,7 +2295,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
     def _bind_coupling_cost(self) -> EnergyFunctional | None:
         """``model.coupling_cost.bind(self)``, where this stage binds one; the reason by name where it does not."""
-        cost = None if self._v1_model is None else self._v1_model.coupling_cost
+        if self._v1_model is None:
+            return None
+        self._v1_model.refuse_what_is_not_bound()
+        cost = self._v1_model.coupling_cost
         if cost is None:
             return None
         if self.is_network:

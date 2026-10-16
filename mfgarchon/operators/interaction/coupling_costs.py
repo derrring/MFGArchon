@@ -19,7 +19,7 @@ slice the same way (`source_composition`).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
@@ -34,25 +34,36 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.core.model import CouplingCost
     from mfgarchon.operators.interaction.energy_functionals import EnergyFunctional
     from mfgarchon.operators.interaction.kernels import RadialKernel
 
 
 class _SummableCost:
-    """``a + b`` for coupling costs: their `CombinedCost`."""
+    """``a + b`` for coupling costs: their `CombinedCost`, with either side any `CouplingCost`; and ``0 + a``, so
+    ``sum`` of costs is their sum."""
 
     def __add__(self, other: object) -> CombinedCost:
-        if not isinstance(other, _SummableCost):
+        if not _is_coupling_cost(other):
             return NotImplemented
-        return CombinedCost([*_parts(self), *_parts(other)])
+        return CombinedCost([cast("CouplingCost", self), cast("CouplingCost", other)])
+
+    def __radd__(self, other: object) -> _SummableCost:
+        if isinstance(other, int) and other == 0:
+            return self
+        if not _is_coupling_cost(other):
+            return NotImplemented
+        return CombinedCost([cast("CouplingCost", other), cast("CouplingCost", self)])
 
 
-def _parts(cost: _SummableCost) -> list[InteractionCost | PotentialCost]:
-    if isinstance(cost, CombinedCost):
-        return list(cost.costs)
-    if isinstance(cost, (InteractionCost, PotentialCost)):
-        return [cost]
-    raise TypeError(f"{type(cost).__name__} is not a coupling cost: InteractionCost, PotentialCost or their sum")
+def _is_coupling_cost(obj: object) -> bool:
+    from mfgarchon.core.model import CouplingCost
+
+    return isinstance(obj, CouplingCost) and not isinstance(obj, type)
+
+
+def _parts(cost: CouplingCost) -> list[CouplingCost]:
+    return list(cost.costs) if isinstance(cost, CombinedCost) else [cost]
 
 
 class InteractionCost(_SummableCost):
@@ -72,12 +83,13 @@ class InteractionCost(_SummableCost):
         self.use_fft = use_fft
 
     def bind(self, problem: MFGProblem) -> EnergyFunctional:
-        return QuadraticInteractionEnergy(
+        energy = QuadraticInteractionEnergy(
             ConvolutionCouplingOperator.from_problem(self.kernel, problem, use_fft=self.use_fft)
         )
+        return cast("EnergyFunctional", energy)
 
     def __repr__(self) -> str:
-        return f"InteractionCost({self.kernel!r})"
+        return f"InteractionCost({self.kernel!r}, use_fft={self.use_fft!r})"
 
 
 class PotentialCost(_SummableCost):
@@ -88,21 +100,31 @@ class PotentialCost(_SummableCost):
 
     Args:
         V: The potential, cost-signed (positive repels), called once per node as ``m_initial`` is: ``V(x)`` with
-            ``x`` a float in 1-D and an array of shape ``(d,)`` in n-D, returning one number.
+            ``x`` a float in 1-D and an array of shape ``(d,)`` in n-D, returning one number. A ``V(t, x)`` is refused:
+            this F is autonomous, and a time-dependent potential goes in the Hamiltonian, ``potential(t, x)``.
     """
 
     def __init__(self, V: Callable):
         self.V = V
 
     def bind(self, problem: MFGProblem) -> EnergyFunctional:
-        from mfgarchon.utils.callable_adapter import adapt_ic_callable
+        from mfgarchon.utils.callable_adapter import CallableSignature, adapt_ic_callable
 
         nodes = np.asarray(problem.geometry.get_spatial_grid(), dtype=float)
         nodes = nodes.reshape(nodes.shape[0], -1)
         d = nodes.shape[1]
-        _, V = adapt_ic_callable(self.V, dimension=d, sample_point=float(nodes[0, 0]) if d == 1 else nodes[0], role="V")
+        signature, V = adapt_ic_callable(
+            self.V, dimension=d, sample_point=float(nodes[0, 0]) if d == 1 else nodes[0], role="V"
+        )
+        if signature is CallableSignature.SPATIOTEMPORAL_TX:
+            raise TypeError(
+                "PotentialCost(V): V takes (t, x), and this F[m] = integral V m is autonomous -- binding V once would "
+                "read it at t = 0 for the whole horizon. A time-dependent potential goes in the Hamiltonian, "
+                "SeparableHamiltonian(potential=lambda t, x: ...), which reads it at each time (#1642)."
+            )
         values = np.array([V(float(x[0])) if d == 1 else V(x) for x in nodes], dtype=float)
-        return PotentialEnergy(values, np.asarray(problem.spatial_measure().weights, dtype=float).ravel())
+        energy = PotentialEnergy(values, np.asarray(problem.spatial_measure().weights, dtype=float).ravel())
+        return cast("EnergyFunctional", energy)
 
     def __repr__(self) -> str:
         return f"PotentialCost({self.V!r})"
@@ -113,17 +135,24 @@ class CombinedCost(_SummableCost):
     measure. ``InteractionCost(K) + PotentialCost(V)`` builds it.
 
     Args:
-        costs: The parts, each an `InteractionCost`, a `PotentialCost` or a `CombinedCost` (flattened).
+        costs: The parts, each a `CouplingCost` -- the library's or the user's; a `CombinedCost` among them is
+            flattened.
     """
 
-    def __init__(self, costs: Sequence[_SummableCost]):
+    def __init__(self, costs: Sequence[CouplingCost]):
         flat = [part for cost in costs for part in _parts(cost)]
         if not flat:
             raise ValueError("CombinedCost: no parts. A coupling cost of zero is Model(coupling_cost=None).")
+        not_costs = [type(part).__name__ for part in flat if not _is_coupling_cost(part)]
+        if not_costs:
+            raise TypeError(
+                f"CombinedCost: {', '.join(not_costs)} is not a CouplingCost, an object with bind(problem) returning "
+                "an EnergyFunctional (#1642)."
+            )
         self.costs = flat
 
     def bind(self, problem: MFGProblem) -> EnergyFunctional:
-        return CombinedEnergy([cost.bind(problem) for cost in self.costs])
+        return cast("EnergyFunctional", CombinedEnergy([cost.bind(problem) for cost in self.costs]))
 
     def __repr__(self) -> str:
         return f"CombinedCost({self.costs!r})"

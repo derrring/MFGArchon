@@ -71,8 +71,9 @@ class Model:
             meshless geometries until #1642's stage 1b, and on a network, where no solve takes a ``Model`` (#2045).
             In a multi-population problem each population's own ``Model`` carries
             its own F_k, which reads that population's density m_k alone; coupling across populations belongs in each
-            H_k, through the stacked densities (#2173). A plain ``F[m] -> float`` is refused: it would carry its own
-            quadrature, so it is bound to one grid (#1642, the user's ruling 3).
+            H_k, through the stacked densities (#2173). The same holds per regime of a regime-switching problem and per
+            node problem of a graph solve: each composes its own F on its own density. A plain ``F[m] -> float`` is
+            refused: it would carry its own quadrature, so it is bound to one grid (#1642, the user's ruling 3).
         terminal_coupling: G(x, m(T)), the terminal coupling cost. Refused until #1642's stage 2, which binds it: it
             was accepted and read by nothing.
     """
@@ -101,17 +102,35 @@ class Model:
             raise ValueError(
                 "Provide hamiltonian OR lagrangian, not both. They are dual descriptions of the same game; supply one."
             )
-        if self.coupling_cost is not None and not isinstance(self.coupling_cost, CouplingCost):
+        self.refuse_what_is_not_bound()
+
+    def refuse_what_is_not_bound(self) -> None:
+        """The refusals of the fields this stage does not bind, read at construction and again where a problem binds
+        this model, since a ``Model`` is a mutable dataclass (#1642): a ``coupling_cost`` that is not a
+        `CouplingCost`, and any ``terminal_coupling``."""
+        cost = self.coupling_cost
+        if cost is not None and (isinstance(cost, type) or not isinstance(cost, CouplingCost)):
+            from mfgarchon.operators.interaction.energy_functionals import missing_energy_functional_members
+
+            if isinstance(cost, type):
+                what = f"the class {cost.__name__}, not an instance of it"
+            elif not missing_energy_functional_members(cost):
+                what = (
+                    f"{type(cost).__name__}, an EnergyFunctional -- F already bound to a grid. Give the specification "
+                    "it was bound from, or pass create_lions_source(energy) as source_term_hjb"
+                )
+            else:
+                what = type(cost).__name__
             raise TypeError(
                 f"Model(coupling_cost=...) takes a coupling cost the library binds to the problem's grid and measure -- "
                 f"InteractionCost(kernel), PotentialCost(V) or their sum, from mfgarchon.operators.interaction -- not "
-                f"{type(self.coupling_cost).__name__}. A plain F[m] -> float carries its own quadrature, so it is bound "
-                f"to one grid (#1642). Give such an F to the problem's HJB source explicitly, on that grid: "
-                f"MFGProblem(..., domain=grid, source_term_hjb=create_lions_source(F, "
-                f"FiniteDifferenceFunctionalDerivative(), weights=grid.measure_weights().ravel())), with "
-                f"create_lions_source from mfgarchon.alg.numerical.coupling.lions_correction and "
-                f"FiniteDifferenceFunctionalDerivative from mfgarchon.utils.functional_calculus; or pass its flat "
-                f"derivative delta F / delta m as source_term_hjb directly."
+                f"{what}. A plain F[m] -> float carries its own quadrature, so it is bound to one grid (#1642). Give "
+                f"such an F to the problem's HJB source explicitly, on that grid: MFGProblem(..., domain=grid, "
+                f"source_term_hjb=create_lions_source(F, FiniteDifferenceFunctionalDerivative(), "
+                f"weights=grid.measure_weights().ravel())), with create_lions_source from "
+                f"mfgarchon.alg.numerical.coupling.lions_correction and FiniteDifferenceFunctionalDerivative from "
+                f"mfgarchon.utils.functional_calculus; or pass its flat derivative delta F / delta m as source_term_hjb "
+                f"directly."
             )
         if self.terminal_coupling is not None:
             raise NotImplementedError(

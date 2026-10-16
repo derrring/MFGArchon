@@ -115,24 +115,32 @@ def hjb_source_is_active(problem: MFGProblem) -> bool:
     return bool(hjb_source_fields(problem))
 
 
-def _coupling_part(energy: EnergyFunctional, m_t: NDArray, x: NDArray, t: float) -> NDArray:
+def _coupling_part(energy: EnergyFunctional, nodes: NDArray, m_t: NDArray, x: NDArray, t: float) -> NDArray:
     """The coupling cost's part of the HJB source: ``delta F / delta m`` at the density slice ``m_t``, at the nodes F
     was bound on (#1642 stage 1).
 
-    ``m_t`` is flattened in the grid's C order, the order of ``geometry.get_spatial_grid()``'s rows, which F was bound
-    in. The part evaluates only at those nodes, so an ``x`` whose row count is not theirs is refused rather than
-    evaluated at other points: a solver whose evaluation points are its own dofs binds F against them, which is
-    stage 1b.
+    ``nodes`` are the grid's, the rows of ``geometry.get_spatial_grid()`` in the grid's C order, which F was bound in,
+    and ``m_t`` is flattened in that order. The part evaluates only at those nodes: an ``x`` that is not them -- other
+    points, or the same points in another order -- is refused rather than given the nodes' values. Evaluating it at a
+    solver's own points, such as HJB-GFDM's collocation points, is #2737.
     """
     flat = np.asarray(m_t, dtype=float).ravel()
-    n = int(np.shape(energy.weights)[0])
-    rows = int(np.asarray(x).shape[0])
-    if rows != n or flat.size != n:
+    nodes = np.asarray(nodes, dtype=float).reshape(np.shape(energy.weights)[0], -1)
+    points = np.asarray(x, dtype=float).reshape(np.shape(x)[0], -1) if np.ndim(x) else np.zeros((0, 1))
+    axes = [np.unique(column) for column in nodes.T]
+    spacing = min((float(np.min(np.diff(a))) for a in axes if a.size > 1), default=1.0)
+    if (
+        points.shape != nodes.shape
+        or flat.size != len(nodes)
+        or not np.allclose(points, nodes, rtol=0, atol=1e-9 * spacing)
+    ):
         raise ValueError(
-            f"The coupling cost was bound on this problem's {n} nodes, and this HJB evaluation has x with {rows} rows "
-            f"and a density slice of {flat.size} values. It evaluates only at the nodes it was bound on (#1642); a "
-            f"solver that evaluates its source elsewhere needs the coupling cost bound against its own discretization, "
-            f"stage 1b of #1642."
+            f"The coupling cost was bound on this problem's {len(nodes)} grid nodes, and this HJB evaluation passes x "
+            f"with {points.shape[0]} rows that are not those nodes in their order, and a density slice of {flat.size} "
+            "values. The coupling cost evaluates only at the nodes it was bound on (#1642): a solver that evaluates "
+            "its source at its own points, such as HJB-GFDM's collocation points, cannot carry it until #2737. Solve "
+            "with a grid solver -- HJB-FDM, HJB-SL, or HJB-WENO in 1-D -- or, for a linear F = integral V m, give V "
+            "to the Hamiltonian as its potential."
         )
     return np.asarray(energy.flat_derivative(flat, t=t), dtype=float)
 
@@ -172,7 +180,9 @@ def _problem_hjb_source_terms(
     if "source_term_hjb" in fields:
         out["source"] = _call_problem_source(problem, "source_term_hjb", t=t, x=x, m=m_t, v=v_t)
     if "coupling_cost" in fields:
-        out["coupling"] = _coupling_part(problem.coupling_energy, m_t, x, t)
+        out["coupling"] = _coupling_part(
+            problem.coupling_energy, np.asarray(problem.geometry.get_spatial_grid()), m_t, x, t
+        )
     if "nonlocal_operator" in fields:
         out["nonlocal"] = problem.nonlocal_operator @ v_t
     return out
@@ -214,10 +224,11 @@ def compose_hjb_source(
         # `(1/eps) * max(0, psi)` with `eps = 1e6`, i.e. 5e-07 at psi = 0.5, so its removal is
         # visible in the last bits of any problem that set it -- and every such problem now
         # raises at construction instead.
-        # [source, coupling, nonlocal]: the coupling part (#1642) sits after the source, so a problem without it sums
-        # the other two in their pre-#1642 order, bit for bit.
+        # The parts in the primitive's own order, source -> coupling -> nonlocal, the one order every consumer sums
+        # in: the coupling part (#1642) sits after the source, so a problem without it sums the other two in their
+        # pre-#1642 order, bit for bit.
         parts = _problem_hjb_source_terms(problem, m_current, u_current, t, x, problem.dt)
-        terms = [parts[key] for key in ("source", "coupling", "nonlocal") if key in parts]
+        terms = list(parts.values())
         return sum(terms) if terms else np.zeros(x.shape[0])
 
     return composed

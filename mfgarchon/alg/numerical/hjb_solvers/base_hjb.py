@@ -471,6 +471,13 @@ class BaseHJBSolver(BaseNumericalSolver):
                 "source_term=compose_hjb_source(problem, M, U_guess)), with compose_hjb_source from "
                 "mfgarchon.alg.numerical.coupling.source_composition. That binds the M and U_guess you pass, so a "
                 "nonlocal term reads U_guess, not the solution."
+                + (
+                    " A coupling cost evaluates only at the grid's nodes, so that route carries it only for a solver "
+                    "that evaluates there -- HJB-FDM, HJB-SL, HJB-WENO in 1-D -- and refuses it at other points, such "
+                    "as HJB-GFDM's collocation points (#2737)."
+                    if "coupling_cost" in named
+                    else ""
+                )
             )
 
         # Solve using the specific solver's implementation
