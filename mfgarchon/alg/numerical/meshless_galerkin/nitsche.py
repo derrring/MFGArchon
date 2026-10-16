@@ -41,10 +41,11 @@ Scope (interim, #1138):
   read through ``bc_utils.fp_view_of_shared_bc``, where a Dirichlet is an exit (``g = 0``,
   absorbing; #2512, convention row 5), or its own BC, where ``MeshlessGalerkinFPSolver._validate_bc_support``
   refuses a Dirichlet value (#2532). Either way the FP's data load is zero: ``m = 0``.
-- A segment placed by ``region``, ``sdf_region`` or ``normal_direction`` is refused when its placement
-  matters: a Dirichlet one, one that outranks a Dirichlet segment, or any with a DIRICHLET ``default_bc``.
-  This path places conditions by face name only, with the BC's precedence (#2490). Otherwise such a
-  segment carries the natural condition, which needs no placement.
+- Which face each condition governs is the face owner's answer, ``BoundaryConditions.segment_for_face``
+  (#2512 row B1, stage B1c-2): a face label or a ``normal_direction`` governs its face, and a face no segment
+  governs takes ``default_bc`` (#2490). A ``region``, ``sdf_region`` or marked-region ``region_name`` placement
+  before or beside a Dirichlet condition is refused: the owner decides it on the problem's grid, not on these faces
+  (#2717); a condition on part of a face is #2712.
 
 Issue #1138.
 """
@@ -66,43 +67,17 @@ if TYPE_CHECKING:
     from mfgarchon.geometry.boundary.types import BCSegment
 
 
-def refuse_what_nitsche_cannot_place(bc: BoundaryConditions | None) -> None:
-    """Refuse, at construction, a BC the meshless pair's Nitsche path would misplace.
+def refuse_what_nitsche_cannot_place(bc: BoundaryConditions | None, d: int) -> None:
+    """Refuse, at construction, a BC whose placement the face owner refuses -- the terms are assembled at the
+    first solve, and this asks at construction what they would ask (`_dirichlet_faces`).
 
-    The terms are assembled at the first solve; this checks at construction what they would read.
-
-    - **A Dirichlet segment this path cannot place** (``region``, ``sdf_region``, ``normal_direction``, or
-      a ``region_name`` that is not a face), or any segment it cannot place that outranks a Dirichlet one,
-      is refused by `_segment_faces` rather than dropped (#2490).
-    - **A DIRICHLET ``default_bc`` that governs some face** is refused. Nitsche reads only segments
-      (`_dirichlet_faces`, `places_no_dirichlet_face`), so before this the faces it governed got the
-      natural condition: a default-DIRICHLET right wall kept all its mass (ratio 1.0000) where the same
-      wall as an explicit segment absorbs (0.8326 at 11 points, delta 0.35, sigma 0.3, T 0.5, zero drift)
-      (#2512 S4). Coverage is `_segment_faces` too, so a segment it cannot place is refused here rather
-      than counted as covering a face.
+    The owner (`BoundaryConditions.segment_for_face`, #2512 row B1) refuses a segment that covers part of a face
+    ahead of the one governing the rest with another condition, one that governs no face, a placement it cannot
+    decide without a grid, and a face nothing governs when ``default_bc`` cannot (unset, or ROBIN).
     """
     if bc is None:
         return
-    from mfgarchon.geometry.boundary.types import BCType
-
-    _dirichlet_faces(bc, bc.dimension or 0)
-    if getattr(bc, "default_bc", None) == BCType.DIRICHLET and _faces_left_to_the_default(bc):
-        raise NotImplementedError(
-            "Meshless Galerkin: a DIRICHLET default_bc is not imposed -- Nitsche reads only segments, so "
-            "the faces it governs would get the natural condition instead. Give each Dirichlet face its "
-            "own BCSegment(boundary=...)."
-        )
-
-
-def _faces_left_to_the_default(bc: BoundaryConditions) -> list[str]:
-    """Bounding-box faces no segment governs, so ``default_bc`` would. Coverage is `_segment_faces`."""
-    from mfgarchon.geometry.boundary.types import BoundaryFace
-
-    d = bc.dimension or 0
-    covered = {face for seg in bc.segments for face in _segment_faces(seg, d)}
-    return [
-        BoundaryFace(ax, side).to_string() for ax in range(d) for side in ("min", "max") if (ax, side) not in covered
-    ]
+    _dirichlet_faces(bc, d)
 
 
 def places_no_dirichlet_face(bc: BoundaryConditions | None, d: int) -> bool:
@@ -121,96 +96,43 @@ def _domain_bounds(disc: MeshlessGalerkinDiscretization) -> list[tuple[float, fl
     return [(float(X[:, k].min()), float(X[:, k].max())) for k in range(X.shape[1])]
 
 
-def _segment_faces(segment, d: int) -> list[tuple[int, str]]:
-    """Bounding-box faces a segment names, whole faces only. Which of them it governs is
-    `_dirichlet_faces`'s answer, which applies the BC's precedence.
-
-    A face named by ``boundary`` (aliases such as ``"left"`` included) or by a ``region_name`` that is a
-    face label maps to that face; ``boundary=None`` or ``"all"`` names every face. A segment carrying
-    ``region``, ``sdf_region`` or ``normal_direction`` is refused: this path places conditions by face name
-    and cannot read those fields. It used to drop them, sending a segment with no ``boundary`` to every face
-    and one with a ``boundary`` to that whole face (#2490).
-    Measured before: a 1-D Dirichlet segment on ``region={0: (0.5, 1)}`` absorbed 0.6652, the both-walls
-    figure, where x_max alone gives 0.8326. A Dirichlet ``sdf_region`` was integrated on its zero level
-    set -- for a ball centred on a corner of the unit square, a quarter circle inside the domain.
-
-    The readers that take one condition per face (the semi-Lagrangian pair, FP-FDM's periodicity) read the
-    face owner, `BoundaryConditions.segment_for_face`, which places these fields where it can and refuses the
-    rest (#2512 row B1); this path moves to it in that row's stage B1c.
-    """
-    from mfgarchon.geometry.boundary.types import BCType, parse_boundary_face
-
-    if segment.bc_type == BCType.DIRICHLET and getattr(segment, "sdf_region", None) is not None:
-        raise NotImplementedError(
-            f"Meshless Galerkin: Dirichlet segment {segment.name!r} carries sdf_region, which BCSegment defines as "
-            "selecting part of the boundary; this path integrated its zero level set instead -- in general not "
-            "the part it selects, and for a ball on a box corner a curve inside the domain. The curved-domain "
-            "Dirichlet route (#1139) is withdrawn until curved "
-            "boundaries have their own field, distinct from sdf_region (#2490). On a box, name the face with "
-            "boundary='x_min' etc."
-        )
-    restricted = [f for f in ("region", "sdf_region", "normal_direction") if getattr(segment, f, None) is not None]
-    if restricted:
-        raise NotImplementedError(
-            f"Meshless Galerkin: segment {segment.name!r} is placed by {', '.join(restricted)}, which the interim "
-            "Nitsche path cannot read -- it places conditions by face name only -- so it is refused rather than "
-            "dropped (#2490). Name the face with boundary='x_min' etc."
-        )
-    if segment.region_name is not None:
-        face = parse_boundary_face(segment.region_name)
-        if face is None:
-            raise NotImplementedError(
-                f"Meshless Galerkin: segment {segment.name!r} names region {segment.region_name!r}, which is not a "
-                "bounding-box face; the interim Nitsche path cannot place it (#2490)."
-            )
-        return [(face.axis, face.side)]
-    if segment.boundary is None or segment.boundary == "all":
-        return [(ax, side) for ax in range(d) for side in ("min", "max")]
-    face = parse_boundary_face(segment.boundary)
-    if face is not None:
-        return [(face.axis, face.side)]
-    raise NotImplementedError(
-        f"Meshless Galerkin: boundary {segment.boundary!r} is not an axis-aligned bounding-box face; only named "
-        "faces (e.g. 'x_min') or every face (boundary=None or 'all') are supported by the interim Nitsche path "
-        "(#1138)."
-    )
-
-
 def _dirichlet_faces(bc: BoundaryConditions | None, d: int) -> list[tuple[BCSegment, list[tuple[int, str]]]]:
-    """Each Dirichlet segment with the faces it governs: those it names that no earlier segment in the BC's
-    priority order already claims -- the order `BoundaryConditions.get_bc_at_point` reads, highest first.
+    """Each Dirichlet condition with the bounding-box faces it governs, in the BC's priority order: the face
+    owner's answer (`BoundaryConditions.segment_for_face`, #2512 row B1, stage B1c-2).
 
-    A face named by both a priority -1 Dirichlet ``boundary="all"`` and a priority 1 no-flux ``x_min`` is
-    the no-flux segment's; imposing the Dirichlet there too absorbed 0.6652 where the resolver's answer gives
-    0.8326 (#2490). Segments after the last Dirichlet one cannot take a face from it and are not read, so a
-    lower-priority segment this path cannot place is not refused here.
+    The owner applies the precedence, places face labels and ``normal_direction``, refuses what it cannot place,
+    and gives a face no segment governs to ``default_bc``. A DIRICHLET default is therefore imposed, with
+    ``default_value``, on the faces it governs. The segments the owner would place on a grid's nodes rather than
+    on these faces (`BoundaryConditions.segments_placed_off_face_labels`) are refused before it is asked.
     """
-    from mfgarchon.geometry.boundary.types import BCType
+    from mfgarchon.geometry.boundary.types import BCType, BoundaryFace
 
     if bc is None:
         return []
-    segments = list(bc.segments)  # sorted by priority, highest first (BoundaryConditions.__post_init__)
-    dirichlet_at = [i for i, seg in enumerate(segments) if seg.bc_type == BCType.DIRICHLET]
-    if not dirichlet_at:
-        return []
-    claimed: set[tuple[int, str]] = set()
-    placed = []
-    for seg in segments[: dirichlet_at[-1] + 1]:
-        if seg.bc_type == BCType.DIRICHLET:
-            faces = _segment_faces(seg, d)
-        else:
-            try:
-                faces = _segment_faces(seg, d)
-            except NotImplementedError as exc:
-                raise NotImplementedError(
-                    f"Meshless Galerkin: segment {seg.name!r} outranks a Dirichlet segment in the BC's priority order, "
-                    "so the faces it claims decide where the Dirichlet one applies, and this path cannot place it "
-                    f"(#2490): {exc}"
-                ) from exc
-        if seg.bc_type == BCType.DIRICHLET:
-            placed.append((seg, [face for face in faces if face not in claimed]))
-        claimed.update(faces)
-    return placed
+    if bc.dimension is None:
+        # The owner refuses a segment that governs no face only on a BC that knows its dimension, so a BC built
+        # without one is asked as the discretisation's (#2717, review 1).
+        bc = bc.bind_dimension(d)
+    off_labels = bc.segments_placed_off_face_labels()
+    if off_labels:
+        names = ", ".join(repr(seg.name) for seg in off_labels)
+        raise NotImplementedError(
+            f"Meshless Galerkin: segment(s) {names} are placed by region, sdf_region or a region_name the BC's grid "
+            "marks, and stand before or beside a Dirichlet condition. The owner decides such a placement on a grid's "
+            "nodes, not on the box faces Nitsche integrates, so it is refused (#2717). Place the condition with a face "
+            "label -- boundary='x_max', or 'all' -- or normal_direction on an axis-aligned face; a condition on part "
+            "of a face is #2712."
+        )
+    by_rank: dict[int, tuple[BCSegment, list[tuple[int, str]]]] = {}
+    for axis in range(d):
+        for side in ("min", "max"):
+            segment = bc.segment_for_face(BoundaryFace(axis, side))
+            if segment.bc_type != BCType.DIRICHLET:
+                continue
+            # The default is built afresh on each query, so it is keyed after every segment, not by identity.
+            rank = next((i for i, s in enumerate(bc.segments) if s is segment), len(bc.segments))
+            by_rank.setdefault(rank, (segment, []))[1].append((axis, side))
+    return [by_rank[rank] for rank in sorted(by_rank)]
 
 
 def _segment_quadrature(faces, disc, bounds, n_gauss):

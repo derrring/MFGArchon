@@ -1300,7 +1300,7 @@ def _leave_out_cells_with_no_navigable_point(
     """The cell probabilities with the cells that hold no navigable point left out, or a refusal (#2688, #2706).
 
     A cell carrying mass whose probe lattice -- 5 points per axis, the node among them -- has no navigable point holds
-    mass inside an obstacle, which no redraw within the cell can place. Its share of the mass, over every cell that
+    mass outside the navigable set, which no redraw within the cell can place. Its share of the mass, over every cell that
     carries any, goes to `mass_fabrication_gate.leave_out_or_raise`, the owner of how much a library may leave out:
     above its threshold the sample is refused, naming the share; at or below it those cells are left out and the
     rest renormalised. Only cells whose node is not navigable are probed.
@@ -1331,12 +1331,13 @@ def _leave_out_cells_with_no_navigable_point(
         context="sample_from_density",
         why=(
             f"{int(blocked.sum())} cell(s) carrying mass have no navigable point on a {_PROBES_PER_AXIS}-per-axis "
-            f"lattice -- the first centred at {centres[blocked_here][0]}: that mass is inside an obstacle, and no "
+            f"lattice -- the first centred at {centres[blocked_here][0]}: that mass is outside the navigable set "
+            "(inside an obstacle, or beyond the domain's outer boundary), and no "
             "redraw within its cell can place it. It is not moved elsewhere, since that would change the measure the "
             "caller gave."
         ),
         remedy=(
-            "Set the density to zero at the nodes inside the obstacles: density * "
+            "Set the density to zero at the nodes outside the navigable set: density * "
             "navigable(nodes).reshape(density.shape), with nodes = np.stack(np.meshgrid(*coordinates, "
             'indexing="ij"), axis=-1).reshape(-1, len(coordinates)).'
         ),

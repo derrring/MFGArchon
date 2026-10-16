@@ -108,31 +108,81 @@ def test_the_hjb_still_imposes_a_nonzero_dirichlet_value():
     np.testing.assert_allclose(U[0, [0, -1]], 0.7, atol=5e-2)
 
 
-@pytest.mark.parametrize("cls", [MeshlessGalerkinHJBSolver, MeshlessGalerkinFPSolver])
-def test_a_dirichlet_default_bc_is_refused_not_solved_as_the_natural_condition(cls):
-    """Nitsche reads only segments: a default-DIRICHLET right wall kept all its mass on the FP. The
-    Nitsche terms are built at construction, so that is where it is refused."""
-    bc = BoundaryConditions(
-        dimension=1,
-        segments=[BCSegment(name="l", bc_type=BCType.NO_FLUX, boundary="x_min")],
-        default_bc=BCType.DIRICHLET,
-        default_value=0.0,
-    )
-    with pytest.raises(NotImplementedError, match="default_bc"):
-        cls(_problem(bc), XS, delta=0.35)
+def test_a_dirichlet_default_is_imposed_on_the_faces_it_governs():
+    """A face no segment governs takes ``default_bc``, with ``default_value``: the face owner's answer
+    (`BoundaryConditions.segment_for_face`, #2490 B1c-2). So a DIRICHLET default solves as the same wall written as a
+    segment, on the FP and, with its value, on the HJB, a ``region_name`` face label included. Before, Nitsche read
+    only segments and these BCs were refused at construction."""
+
+    def bc(*segments, default_value=0.0):
+        return BoundaryConditions(
+            dimension=1, segments=list(segments), default_bc=BCType.DIRICHLET, default_value=default_value
+        )
+
+    def fp_mass(bc):
+        solver = MeshlessGalerkinFPSolver(_problem(bc), XS, delta=0.35)
+        M = np.asarray(solver.solve_fp_system(np.ones(solver.n_dof), np.zeros((5, solver.n_dof))))
+        return np.trapezoid(M[-1], XS[:, 0])
+
+    def hjb_u(bc):
+        solver = MeshlessGalerkinHJBSolver(_problem(bc), XS, delta=0.35)
+        n = solver.n_dof
+        return np.asarray(
+            solver.solve_hjb_system(
+                M_density=np.ones((5, n)), U_terminal=np.cos(np.pi * XS[:, 0]), U_coupling_prev=np.zeros((5, n))
+            )
+        )
+
+    wall = BCSegment(name="l", bc_type=BCType.NO_FLUX, boundary="x_min")
+    exit_ = BCSegment(name="r", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max")
+    assert fp_mass(bc(wall)) == fp_mass(bc(wall, exit_))
+    named = BCSegment(name="r", bc_type=BCType.NO_FLUX, region_name="x_max")
+    written = [
+        BCSegment(name="r", bc_type=BCType.NO_FLUX, boundary="x_max"),
+        BCSegment(name="l", bc_type=BCType.DIRICHLET, value=0.7, boundary="x_min"),
+    ]
+    np.testing.assert_array_equal(hjb_u(bc(named, default_value=0.7)), hjb_u(bc(*written, default_value=0.7)))
 
 
-@pytest.mark.parametrize("cls", [MeshlessGalerkinHJBSolver, MeshlessGalerkinFPSolver])
-def test_a_region_named_segment_leaves_its_other_faces_to_the_default(cls):
-    """A region-named segment governs only its own face; the default still governs the rest."""
+@pytest.mark.parametrize(
+    "g", [pytest.param(0.7, id="constant"), pytest.param(lambda t, x: 1.0 + 4.0 * t, id="g = 1 + 4t")]
+)
+def test_a_dirichlet_default_is_read_at_each_level_like_a_segment(g):
+    """#2717 review 1, B1: the HJB caches its Nitsche terms per level only when a Dirichlet value it imposes declares
+    the time. That test read the segments alone, so a time-dependent DIRICHLET default was frozen at the first level:
+    with g = 1 + 4t the solution was 1.4888 away from the same wall written as a segment, while a constant matched."""
+    wall = BCSegment(name="l", bc_type=BCType.NO_FLUX, boundary="x_min")
+    exit_ = BCSegment(name="r", bc_type=BCType.DIRICHLET, value=g, boundary="x_max")
+
+    def hjb_u(*segments, default_value):
+        bc = BoundaryConditions(
+            dimension=1, segments=list(segments), default_bc=BCType.DIRICHLET, default_value=default_value
+        )
+        solver = MeshlessGalerkinHJBSolver(_problem(bc), XS, delta=0.35)
+        n = solver.n_dof
+        return np.asarray(
+            solver.solve_hjb_system(
+                M_density=np.ones((5, n)), U_terminal=np.cos(np.pi * XS[:, 0]), U_coupling_prev=np.zeros((5, n))
+            )
+        )
+
+    np.testing.assert_array_equal(hjb_u(wall, default_value=g), hjb_u(wall, exit_, default_value=0.0))
+
+
+def test_a_segment_that_governs_no_face_is_refused_without_a_dimension():
+    """#2717 review 1, B3: an explicit FP BC built with no dimension, its Dirichlet exit outranked by a global
+    no-flux segment, is refused at construction as one with a dimension is. The construction check asked with no
+    faces, so it passed, and assembly dropped the exit."""
     bc = BoundaryConditions(
-        dimension=1,
-        segments=[BCSegment(name="r", bc_type=BCType.NO_FLUX, region_name="x_max")],
-        default_bc=BCType.DIRICHLET,
-        default_value=0.0,
+        segments=[
+            BCSegment(name="nf", bc_type=BCType.NO_FLUX, priority=1),
+            BCSegment(name="d", bc_type=BCType.DIRICHLET, value=0.0, boundary="x_max"),
+        ],
+        default_bc=BCType.NO_FLUX,
     )
-    with pytest.raises(NotImplementedError, match="default_bc"):
-        cls(_problem(bc), XS, delta=0.35)
+    assert bc.dimension is None
+    with pytest.raises(ValueError, match="govern no face"):
+        MeshlessGalerkinFPSolver(_problem(no_flux_bc(dimension=1)), XS, delta=0.35, boundary_conditions=bc)
 
 
 @pytest.mark.parametrize("cls", [MeshlessGalerkinHJBSolver, MeshlessGalerkinFPSolver])

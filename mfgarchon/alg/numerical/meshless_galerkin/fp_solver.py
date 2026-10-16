@@ -78,7 +78,7 @@ class MeshlessGalerkinFPSolver(WeakFormFPSolver):
         with a value, a NEUMANN and a ROBIN are refused."""
         disc = discretization_from_cloud(collocation_points, delta, degree, n_gauss, backend, domain=domain)
         super().__init__(problem, disc, boundary_conditions=boundary_conditions)
-        refuse_what_nitsche_cannot_place(self._bc)
+        refuse_what_nitsche_cannot_place(self._bc, self._disc.dim)
         self._G_grad: list[sparse.csr_matrix] | None = None
         self._n_gauss = n_gauss
         self._nitsche_penalty = nitsche_penalty

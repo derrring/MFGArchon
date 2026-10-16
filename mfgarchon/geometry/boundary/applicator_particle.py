@@ -238,9 +238,9 @@ class ParticleApplicator:
                 continue
 
             # alpha/beta come off the matched segment, so a mixed BC with a different
-            # Robin coefficient per wall is read per wall. The uniform path's
-            # `_robin_alpha_beta` cannot do that -- it takes the first Robin segment in
-            # the whole specification, whichever face is being processed.
+            # Robin coefficient per wall is read per wall. The meshfree applicator's
+            # uniform path reads the BC's one condition and refuses a mixed BC
+            # (`applicator_meshfree.the_one_condition`).
             action = particle_action_for_bc_type(segment.bc_type, segment.beta)
 
             if action == "absorbing":

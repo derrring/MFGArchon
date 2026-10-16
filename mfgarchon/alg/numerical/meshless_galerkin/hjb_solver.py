@@ -24,7 +24,7 @@ import numpy as np
 
 from mfgarchon.alg.base_solver import SchemeFamily
 from mfgarchon.alg.numerical.meshless_galerkin.discretization import discretization_from_cloud
-from mfgarchon.alg.numerical.meshless_galerkin.nitsche import refuse_what_nitsche_cannot_place
+from mfgarchon.alg.numerical.meshless_galerkin.nitsche import _dirichlet_faces, refuse_what_nitsche_cannot_place
 from mfgarchon.alg.numerical.weak_form_hjb_solver import WeakFormHJBSolver
 from mfgarchon.geometry.boundary.types import BCType, _declares_time
 from mfgarchon.utils.pde_coefficients import fp_drift_coefficient
@@ -67,7 +67,7 @@ class MeshlessGalerkinHJBSolver(WeakFormHJBSolver):
     ) -> None:
         disc = discretization_from_cloud(collocation_points, delta, degree, n_gauss, backend, domain=domain)
         super().__init__(problem, disc)
-        refuse_what_nitsche_cannot_place(self._bc)
+        refuse_what_nitsche_cannot_place(self._bc, self._disc.dim)
         self.hjb_method_name = "MeshlessGalerkin"
         self._n_gauss = n_gauss
         self._nitsche_penalty = nitsche_penalty
@@ -121,10 +121,9 @@ class MeshlessGalerkinHJBSolver(WeakFormHJBSolver):
         ``(None, None)`` if no Dirichlet face is placed (then the natural
         Neumann/no-flux path is used). Cached on ``D``, which is constant across a solve, and on ``t`` only
         when a Dirichlet value declares it, since only then does the data load move with the level
-        (#2512 row B2)."""
-        reads_t = self._bc is not None and any(
-            s.bc_type == BCType.DIRICHLET and _declares_time(s.value, s) for s in self._bc.segments
-        )
+        (#2512 row B2). The values are those of the conditions Nitsche imposes, ``default_bc``'s included
+        (#2717, review 1)."""
+        reads_t = any(_declares_time(s.value, s) for s, _ in _dirichlet_faces(self._bc, self._disc.dim))
         key = (D, t if reads_t else None)
         if self._nitsche_cache is not None and self._nitsche_cache_key == key:
             return self._nitsche_cache
