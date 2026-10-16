@@ -71,7 +71,8 @@ def _bound_to_a_grid(bc, n, bounds=((0.0, 1.0), (0.0, 1.0))):
 )
 def test_a_region_or_sdf_region_placement_is_refused_and_a_face_label_is_the_remedy(case):
     """#2717 review 1, B2: the owner decides a ``region`` or an ``sdf_region`` on the problem's grid, not on the box
-    faces Nitsche integrates, so a Dirichlet condition placed that way is refused, as before B1c-2. On a 3x3 grid a
+    faces Nitsche integrates, so a Dirichlet condition placed that way is refused, as before B1c-2; a region_name the
+    BC's grid marks is refused too, which is new: it was placed by its spelling when it spelt a face. On a 3x3 grid a
     region over 70% of x_max read as the whole face and imposed Dirichlet on all of it; a region over 90% did the same
     on 5x5; a region at x > 0.95 gave a cloud on [0.1, 0.9]^2 its x_max face; a region marked on a 3x3 grid over 70%
     of x_max and named by ``region_name`` read as the whole face too, and so did one named "x_max", since the grid's mark
@@ -84,7 +85,7 @@ def test_a_region_or_sdf_region_placement_is_refused_and_a_face_label_is_the_rem
         refuse_what_nitsche_cannot_place,
     )
 
-    refusal = r"placed by region, sdf_region or a marked region_name.*#2712"
+    refusal = r"placed by region, sdf_region or a region_name the BC's grid marks.*#2712"
     if case.startswith("1-D"):
         wall = BCSegment(name="w", bc_type=BCType.NO_FLUX, region={0: (0.5, 1.0)}, priority=1)
         bc = {

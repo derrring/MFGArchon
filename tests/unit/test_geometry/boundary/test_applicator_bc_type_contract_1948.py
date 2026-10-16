@@ -563,3 +563,20 @@ def test_the_refusing_branch_still_refuses_if_the_gate_is_bypassed():
 
     with pytest.raises(NotImplementedError, match="derivative operators"):
         _DeclaresNoFlux(_sphere()).apply(_RADIAL.copy(), _uniform_bc(BCType.NO_FLUX, 2), _CLOUD)
+
+
+@pytest.mark.parametrize("bc_type", [BCType.EXTRAPOLATION_LINEAR, BCType.EXTRAPOLATION_QUADRATIC])
+def test_the_implicit_applicator_refuses_an_extrapolation_by_gate_and_by_branch(bc_type):
+    """`ImplicitApplicator` has no branch for either EXTRAPOLATION type. Both were declared and fell to
+    `else: result = 0.0`, a homogeneous Dirichlet wall (#2717, review 2). Neither is declared now, so the gate refuses
+    it; past the gate the `else` raises, which a subclass that declares them reaches. The table above cannot see
+    this: it passes "declared and applied" as readily as "undeclared and refused" (#2717, review 3)."""
+
+    class _DeclaresExtrapolation(ImplicitApplicator):
+        _SUPPORTED_BC_TYPES = ImplicitApplicator._SUPPORTED_BC_TYPES | {bc_type}
+
+    bc = _uniform_bc(bc_type, 2)
+    with pytest.raises(NotImplementedError, match="does not support"):
+        ImplicitApplicator(_sphere(), boundary_tolerance=1e-8).apply(_RADIAL.copy(), bc, _CLOUD, spacing=0.13)
+    with pytest.raises(NotImplementedError, match="has no branch"):
+        _DeclaresExtrapolation(_sphere(), boundary_tolerance=1e-8).apply(_RADIAL.copy(), bc, _CLOUD, spacing=0.13)

@@ -3,10 +3,14 @@
   - **Nitsche** asks `BoundaryConditions.segment_for_face` which segment governs each bounding-box face, and imposes
     Dirichlet data on the faces a Dirichlet condition governs. Its own face reader, `nitsche._segment_faces`, is gone.
     - A segment placed by `normal_direction` on an axis-aligned face now governs that face; it was refused.
-    - A segment placed by `region`, by `sdf_region`, or by a `region_name` that the grid marks (whatever its name) or
-      that is no face label, is still refused where its placement can decide a Dirichlet condition: the owner decides
-      such a placement on the problem's grid, not on the box faces Nitsche integrates, and a condition on part of a
-      face is #2712. Place it with `boundary=`.
+    - A segment placed by `region` or `sdf_region`, or by a `region_name` that is no face label, is still refused
+      where it stands before or beside a Dirichlet condition: the owner decides such a placement on the problem's
+      grid, not on the box faces Nitsche integrates, and a condition on part of a face is #2712. Place it with
+      `boundary=`.
+    - **Newly refused:** a `region_name` that the grid the BC is bound to marks, whatever it spells. One spelt as a
+      face label ("x_max", "right") was placed on that whole face by its spelling, which was right only when the mark
+      covered the whole face. A BC bound to no grid, such as an FP solver's own `boundary_conditions=`, still reads
+      such a name as the face it spells.
     - A DIRICHLET `default_bc` is imposed, with `default_value`, on the faces it governs; it was refused. A
       time-dependent `default_value` is read at each time level, as a segment's value is.
     - A face no segment governs, with no `default_bc`, is refused; it got the natural condition. Pass
@@ -22,8 +26,7 @@
     same condition, so a `default_bc` that governs no location is not refused for its type. The three methods refuse a
     BC with no one condition even when no point is on the boundary, where they returned their input unchanged.
   - **`ImplicitApplicator`** imposes REFLECTING as the zero normal flux it is; it fell to a fallback that imposed
-    u = 0. The two EXTRAPOLATION types, which had no branch and fell to the same fallback, are no longer declared, so
-    they are refused.
+    u = 0. The two EXTRAPOLATION types, which had no branch and fell to the same fallback, are now refused.
   - **FEM** asks the owner to choose a node's segment only where a DIRICHLET segment shares the node. A natural
     condition is imposed on facets, not nodes, so under `corner_strategy="average"` or `"mollify"` a node only natural
     segments share is no longer refused.
