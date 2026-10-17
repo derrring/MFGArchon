@@ -295,7 +295,6 @@ CALLABLE_CALLS_ALLOWED = {
     ("mfgarchon/core/mfg_problem.py", "diffusion"): "non-boundary: volatility",
     ("mfgarchon/core/mfg_problem.py", "spatial_measure"): "non-boundary: get_spacing",
     ("mfgarchon/geometry/boundary/invariants.py", "mass_drift"): "non-boundary: integrate",
-    ("mfgarchon/geometry/boundary/types.py", "matches_point"): "non-boundary: point_to_indices",
     ("mfgarchon/geometry/level_set/core.py", "evolve_step"): "non-boundary: a velocity",
     ("mfgarchon/utils/pde_coefficients.py", "resolve_diffusion_source"): "non-boundary: a source",
     ("mfgarchon/visualization/convergence_plots.py", "plot_from_monitor"): "non-boundary: get_plot_data",
