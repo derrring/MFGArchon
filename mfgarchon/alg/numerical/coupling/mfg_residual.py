@@ -100,7 +100,8 @@ class MFGResidual:
         hjb_solver: HJB solver instance
         fp_solver: FP solver instance
         M_initial: Initial density condition
-        U_terminal: Terminal value function
+        U_terminal: u(T) at the initial density, the cold start's terminal row; each HJB solve reads
+            ``terminal_at(M)`` instead (#1642)
 
     Example:
         >>> residual_computer = MFGResidual(problem, hjb_solver, fp_solver)
@@ -146,7 +147,7 @@ class MFGResidual:
 
         # Cache initial/terminal conditions
         self.M_initial: NDArray | None = None
-        self.U_terminal: NDArray | None = None
+        self.U_terminal: NDArray
         self._initialize_conditions()
 
         # Cache solver method signatures for parameter passing
@@ -440,8 +441,8 @@ class MFGResidual:
         """
         Get initial guess for Newton iteration.
 
-        Returns cold start initialization: U = U_terminal, M = M_initial
-        propagated through time.
+        Returns the cold start: U(T) = U_terminal, the terminal at the initial density, and
+        M(0) = M_initial; every other row is zero.
 
         Returns:
             x0: Flattened initial state
@@ -450,8 +451,7 @@ class MFGResidual:
         M = np.zeros(self.solution_shape)
 
         # Set boundary conditions
-        if self.U_terminal is not None:
-            U[-1] = self.U_terminal
+        U[-1] = self.U_terminal
         if self.M_initial is not None:
             M[0] = self.M_initial
 

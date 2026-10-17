@@ -238,14 +238,10 @@ class FixedPointIterator(BaseCouplingIterator):
         Returns:
             (M_initial, U_terminal): Initial density and terminal value function
 
-        The terminal value is the problem's ``terminal_value`` at the initial density (#1642). The
-        initial density is resolved independently of it (Issue #1425), in priority order:
-            1. get_m_init() method (preferred modern API)
-            2. m_initial attribute (Issue #670 unified naming)
-            3. get_initial_m() method (alternate modern API)
-            4. initial_density() callable (functional API)
+        The initial density is the problem's ``get_m_init()``, and the terminal value its ``terminal_value`` at that
+        density (#1642).
         """
-        M_initial = self._resolve_initial_density(shape)
+        M_initial = self._reshape_to(self.problem.get_m_init(), shape)
         # The terminal datum's one owner (#1642 stage 2). A cold start writes M_initial into every row, so it is the
         # density at t = T of the first iterate; each iteration re-reads it at the density its HJB solve uses.
         return M_initial, self._reshape_to(self.problem.terminal_value(M_initial), shape)

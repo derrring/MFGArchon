@@ -171,15 +171,6 @@ def test_the_diverged_iterate_is_published_with_its_terminal_row_restored():
     )
 
 
-def test_a_missing_terminal_condition_is_not_written_into_the_array():
-    """NewtonMFGSolver's residual carries an optional terminal condition."""
-    diverged_value_function, _ = _owner()
-    U = np.ones((3, 4))
-    U[0, 0] = np.nan
-    out = diverged_value_function(U, None, site="probe")
-    np.testing.assert_array_equal(out[-1], np.ones(4))
-
-
 # --- the call sites -----------------------------------------------------------------------------
 
 

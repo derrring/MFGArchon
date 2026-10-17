@@ -133,15 +133,15 @@ class MultiPopulationIterator:
             iterations, and convergence info.
         """
         K = self.multi_problem.K
-        # The terminal coupling is single-population (#1642, the user's ruling 5): this loop's terminal path hands
-        # every population the stacked densities, so G[m_k(T)] has no single density to be read at.
+        # The terminal coupling is single-population (#1642, the user's ruling 5): this loop couples the populations
+        # through the stacked densities it hands each HJB as its cross-density.
         coupled = [k for k in range(K) if self.multi_problem.get_population(k).terminal_energy is not None]
         if coupled:
             raise NotImplementedError(
                 f"MultiPopulationIterator: population(s) {coupled} set Model(terminal_coupling=...). A terminal coupling "
-                "is single-population (#1642): this iterator's terminal path passes the stacked densities, so G[m(T)] "
-                "has no single density to be read at. Give each population's terminal cost through "
-                "Conditions(u_terminal=...), or solve the population alone."
+                "is single-population (#1642): this iterator couples the populations through the stacked densities it "
+                "hands each population's HJB, and a G read at them is not defined. Give each population's terminal "
+                "cost through Conditions(u_terminal=...), or solve the population alone."
             )
 
         # Initialize from each population's problem
@@ -215,7 +215,8 @@ class MultiPopulationIterator:
             diverged_population = None
             for k in range(K):
                 solver_k = self.hjb_solvers[k]
-                U_terminal_k = U[k][-1]
+                # u(T) at the density this population's HJB solve uses: g, since a terminal coupling is refused above.
+                U_terminal_k = np.asarray(populations[k].terminal_value(M[k][-1]))
 
                 # Issue #1071 (lock-faithful): pass the stacked cross-density trajectory ``m_all``
                 # directly. The HJB solver indexes it at each integer timestep and feeds it to the

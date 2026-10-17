@@ -506,31 +506,6 @@ class BaseCouplingIterator(ABC):
     def _reshape_to(arr: np.ndarray, shape: tuple) -> np.ndarray:
         return arr.reshape(shape) if arr.shape != shape else arr
 
-    def _resolve_initial_density(self, shape: tuple) -> np.ndarray:
-        """Resolve the initial density via the 4-priority cascade, for the Picard and fictitious-play loops (Issue #1425:
-        independent of the terminal, which is ``problem.terminal_value``, #1642).
-
-        Uses explicit ``getattr(..., None)`` + ``callable()`` probes (the project's optional-accessor
-        pattern) rather than ``try/except AttributeError`` so a real error inside an accessor
-        propagates instead of being swallowed (and no silent ``pass``).
-        """
-        get_m_init = getattr(self.problem, "get_m_init", None)
-        if callable(get_m_init):
-            return self._reshape_to(get_m_init(), shape)
-        m_initial = getattr(self.problem, "m_initial", None)
-        if m_initial is not None:
-            return self._reshape_to(m_initial, shape)
-        get_initial_m = getattr(self.problem, "get_initial_m", None)
-        if callable(get_initial_m):
-            return get_initial_m()
-        initial_density = getattr(self.problem, "initial_density", None)
-        if callable(initial_density):
-            return initial_density(self.problem.geometry.get_spatial_grid()).reshape(shape)
-        raise ValueError(
-            "Problem must provide an initial density via one of: get_m_init() / m_initial / "
-            "get_initial_m() / initial_density()."
-        )
-
     def _init_solver_signatures(self, hjb_solver: Any, fp_solver: Any) -> None:
         """Cache solver method signatures for conditional parameter passing.
 

@@ -479,7 +479,7 @@ def value_function_is_finite(U: np.ndarray) -> bool:
 
 def diverged_value_function(
     U_new: np.ndarray,
-    U_terminal: np.ndarray | None,
+    U_terminal: np.ndarray,
     *,
     site: str,
     iteration: int | None = None,
@@ -511,8 +511,7 @@ def diverged_value_function(
 
     Args:
         U_new: The value function the HJB solve just produced.
-        U_terminal: Terminal condition g(x) at t=T, or ``None`` where the site has no
-            terminal row to restore (see the note in the body).
+        U_terminal: The terminal value the HJB solve was given, u(T) at that solve's m(T) (#1642).
         site: Which coupling loop is reporting, named in the log line. The whole point of the
             check is attribution, so an unnamed one would be half a fix.
         iteration: Iteration index, 0-based, if the site has one. Reported 1-based.
@@ -531,12 +530,6 @@ def diverged_value_function(
         site,
     )
     published = np.asarray(U_new).copy()
-    if U_terminal is None:
-        # `NewtonMFGSolver._run_picard_warmup` runs against an `MFGResidual` whose `U_terminal`
-        # is optional, and that path already guards its own restore the same way. Restoring
-        # against None would write None into the last row and destroy the diagnostic this
-        # function exists to publish.
-        return published
     return preserve_terminal_condition(published, U_terminal)
 
 

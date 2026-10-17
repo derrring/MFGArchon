@@ -141,7 +141,7 @@ not claimed for them, and the library does not check it either way.
   specifications and binds as `problem.terminal_energy`. The terminal condition is then
   $u(T, x) = g(x) + \delta G/\delta m$ at $m(T, \cdot)$, the density of the HJB solve it is the terminal
   of, cost-signed as $g$ is; `problem.terminal_value(m_T)` is its one owner. It binds on a
-  `TensorProductGrid`, and is refused by name on a network and in a multi-population problem.
+  `TensorProductGrid`, and is refused by name on a network and in `MultiPopulationIterator`.
 
 ### Worked example — 1-D LQ Riccati
 

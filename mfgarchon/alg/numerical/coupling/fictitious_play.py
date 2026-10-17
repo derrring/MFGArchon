@@ -214,7 +214,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         """
         Retrieve the initial density and the terminal value function from the problem.
 
-        The initial density by `BaseCouplingIterator._resolve_initial_density`; the terminal value from its one owner,
+        The initial density is the problem's ``get_m_init()``; the terminal value is its one owner,
         ``problem.terminal_value``, at that density, which a cold start writes into every row (#1642 stage 2).
 
         Args:
@@ -222,14 +222,8 @@ class FictitiousPlayIterator(BaseCouplingIterator):
 
         Returns:
             (M_initial, U_terminal): Initial density and terminal value function
-
-        Initial density, in priority order:
-            1. get_m_init() method (preferred modern API)
-            2. m_initial attribute (Issue #670 unified naming)
-            3. get_initial_m() method (alternate modern API)
-            4. initial_density() callable (functional API)
         """
-        M_initial = self._resolve_initial_density(shape)
+        M_initial = self._reshape_to(self.problem.get_m_init(), shape)
         U_terminal = np.asarray(self.problem.terminal_value(M_initial))
         return M_initial, self._reshape_to(U_terminal, shape)
 
