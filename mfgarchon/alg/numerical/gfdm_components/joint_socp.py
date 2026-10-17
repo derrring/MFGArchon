@@ -563,10 +563,25 @@ class PrecomputedJointSocpStencils:
     Attributes
     ----------
     stencils : dict[int, JointSocpStencilData]
-        Precomputed weights at each feasible interior node.
+        Precomputed weights at each interior node the joint SOCP placed, and, with
+        ``use_relaxed_fallback``, at each relaxed row.
+    relaxed_rows : dict[int, float]
+        Each relaxed row, with the largest M-matrix slack ``eps_M`` its relaxed
+        SOCP needed (#1689). Its weights are in ``stencils``; it is not monotone and
+        not counted in ``n_feasible``.
+    unplaced_rows : dict[int, str]
+        Each interior node with no stencil, and why: no neighbourhood; a
+        neighbourhood that does not contain the node, which the visibility filter
+        leaves for a node whose ``obstacle_sdf`` is at most ``visibility_margin``,
+        a node on or inside the obstacle included; or no
+        feasible SOCP after the tiers that ran (C-bisection when
+        ``cone_constant_C_max`` allows a step, enlargement when enabled, the
+        relaxed SOCP when enabled) (#1689). ``HJBGFDMSolver`` refuses a cloud
+        with any.
     stats : dict
-        Precomputation statistics: n_feasible, n_infeasible, n_fast_path,
-        n_socp, n_enlarged, max_enlargement_steps, time_ms.
+        Precomputation statistics: n_feasible (exact rows only), n_infeasible,
+        n_fast_path, n_socp, n_relaxed_fallback, max_eps_M, n_enlarged,
+        max_enlargement_steps, time_ms.
     """
 
     # Extra candidate margin queried from the kD-tree beyond the requested
@@ -616,10 +631,9 @@ class PrecomputedJointSocpStencils:
         # until feasible or C exceeds C_max.
         self._C_max = float(cone_constant_C_max) if cone_constant_C_max is not None else None
         self._C_growth = float(cone_constant_C_growth)
-        # Always-feasible relaxed-SOCP fallback for stencils that fail
-        # C-bisection. When True, n_infeasible should be 0 (every interior
-        # point gets joint-SOCP-style (L, D), with slack penalties handling
-        # marginally infeasible cases continuously).
+        # Relaxed-SOCP rows for stencils no exact tier places. They carry slack on the
+        # M-matrix or the cone constraint, so they are recorded in `relaxed_rows` and not
+        # counted as feasible (#1689).
         self._use_relaxed_fallback = bool(use_relaxed_fallback)
         self._lambda_M = float(lambda_M)
         self._lambda_C = float(lambda_C)
@@ -645,10 +659,12 @@ class PrecomputedJointSocpStencils:
             raise ValueError(f"Joint SOCP currently supports 1D or 2D, got dimension {self._dimension}")
 
         self.stencils: dict[int, JointSocpStencilData] = {}
+        self.relaxed_rows: dict[int, float] = {}
+        self.unplaced_rows: dict[int, str] = {}
         self.achieved_C: dict[int, float] = {}
         self.stats = {
             "n_interior": len(self._interior_indices),
-            "n_feasible": 0,
+            "n_feasible": 0,  # rows the exact joint SOCP placed; relaxed rows are counted apart (#1689)
             "n_infeasible": 0,
             "n_fast_path": 0,
             "n_socp": 0,
@@ -760,9 +776,11 @@ class PrecomputedJointSocpStencils:
             # NeighborhoodBuilder convention: center index is one of the entries.
             nh = self._neighborhoods.get(int(i))
             if nh is None:
+                self.unplaced_rows[i] = "no neighbourhood"
                 continue
             nbr = np.asarray(nh["indices"])
             if not np.any(nbr == i):
+                self.unplaced_rows[i] = "its neighbourhood does not contain it"
                 continue
 
             A, center_in_nbr, h_i, w_neighbor = self._build_stencil_arrays(i, nbr)
@@ -798,13 +816,9 @@ class PrecomputedJointSocpStencils:
                 self.stats["n_enlarged"] += 1
                 self.stats["max_enlargement_steps"] = max(self.stats["max_enlargement_steps"], n_steps_used)
 
-            # Final resort: always-feasible relaxed SOCP. This eliminates the
-            # discrete scheme switch between joint_socp and Phase-2 M-matrix-QP
-            # that creates discontinuous discretization on irregular clouds. For
-            # well-conditioned stencils (the C-bisection feasible cases) the
-            # original joint_socp solution is used; for marginally infeasible
-            # stencils the relaxed SOCP smoothly degrades while keeping the
-            # equality constraints (consistency).
+            # The relaxed SOCP, when enabled: it keeps the equality constraints
+            # (consistency) and penalises slack on the M-matrix and cone
+            # constraints, so its row is not monotone (#1689).
             #
             # Issue #1106/#1107/#1108 hook: this point is reached only when both
             # C-bisection AND adaptive enlargement (#1106) failed to find an exact
@@ -828,6 +842,18 @@ class PrecomputedJointSocpStencils:
 
             if res["status"] != "feasible":
                 self.stats["n_infeasible"] += 1
+                tiers = [
+                    name
+                    for name, ran in (
+                        ("C-bisection", self._C_max is not None and self._C * self._C_growth <= self._C_max + 1e-12),
+                        ("enlargement", self._max_enlargements > 0),
+                        ("the relaxed SOCP", self._use_relaxed_fallback),
+                    )
+                    if ran
+                ]
+                self.unplaced_rows[i] = f"SOCP-infeasible at C = {self._C:g}" + (
+                    f", after {', '.join(tiers)}" if tiers else ""
+                )
                 continue
 
             self.stencils[i] = JointSocpStencilData(
@@ -839,7 +865,8 @@ class PrecomputedJointSocpStencils:
                 via=res.get("via", "socp_clarabel"),
             )
             self.achieved_C[i] = C_try
-            self.stats["n_feasible"] += 1
+            if res.get("via") != "relaxed_socp_clarabel":
+                self.stats["n_feasible"] += 1
             if C_try > self._C + 1e-12:
                 self.stats["n_relaxed_C"] += 1
                 if C_try > self.stats["max_achieved_C"]:
@@ -847,6 +874,7 @@ class PrecomputedJointSocpStencils:
             if res.get("via") == "wendland_lsq_fast_path":
                 self.stats["n_fast_path"] += 1
             elif res.get("via") == "relaxed_socp_clarabel":
+                self.relaxed_rows[i] = float(res.get("eps_M_max", 0.0))
                 self.stats["n_relaxed_fallback"] += 1
                 self.stats["max_eps_M"] = max(self.stats["max_eps_M"], res.get("eps_M_max", 0.0))
                 self.stats["max_eps_C"] = max(self.stats["max_eps_C"], res.get("eps_C_max", 0.0))
@@ -856,12 +884,13 @@ class PrecomputedJointSocpStencils:
         self.stats["time_ms"] = (time.time() - t0) * 1000.0
 
     def has_stencil(self, point_idx: int) -> bool:
-        """Whether SOCP-feasible weights were precomputed for this point."""
+        """Whether weights were precomputed for this point: an exact joint-SOCP row, or, with
+        ``use_relaxed_fallback``, a relaxed one (``relaxed_rows``)."""
         return point_idx in self.stencils
 
     def get_weights_dict(self, point_idx: int) -> dict | None:
         """Return weights in mfgarchon's `get_derivative_weights` format,
-        or None if SOCP infeasible at this point.
+        or None if no stencil was placed at this point (``unplaced_rows``).
 
         Returned dict has keys: neighbor_indices, grad_weights (shape (d, n)),
         lap_weights (shape (n,)), center_idx_in_neighbors.
