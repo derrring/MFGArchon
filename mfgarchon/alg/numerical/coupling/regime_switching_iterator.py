@@ -459,19 +459,17 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         self._assert_outflow_horizon_representable(K, Q)
         self._assert_fp_boundary_data_is_homogeneous(K, Q)
 
-        # Initialize: terminal conditions and initial densities
-        Us = [p.get_u_terminal() for p in self._problems]
-        # Expand terminal to full time-space arrays
+        # Initialize: initial densities, then each regime's terminal condition from its one owner at that density, the
+        # density at t = T of the first sweep (#1642 stage 2), expanded to full time-space arrays.
+        Ms = [p.get_m_initial() for p in self._problems]
         Us_full = []
         for k in range(K):
             p = self._problems[k]
             Nt = p.Nt
-            u_terminal = Us[k]
+            u_terminal = np.asarray(p.terminal_value(Ms[k]))
             U_k = np.zeros((Nt + 1, len(u_terminal)))
             U_k[-1] = u_terminal
             Us_full.append(U_k)
-
-        Ms = [p.get_m_initial() for p in self._problems]
 
         error_history = []
         integrates = [p.spatial_measure().integrate for p in self._problems]
@@ -505,9 +503,12 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 else:
                     hjb_kwargs = {"source_term": hjb_source}
 
+                # u(T) at the density this regime's HJB solve uses (#1642 stage 2). The previous iterate's last row, read
+                # here before, is the damped mix of two terminals.
+                terminal_k = np.asarray(self._problems[k].terminal_value(M_k[-1]))
                 U_k = self._hjb[k].solve_hjb_system(
                     M_k,
-                    Us_full[k][-1],  # terminal condition
+                    terminal_k,  # terminal condition
                     Us_full[k],  # previous iterate
                     **hjb_kwargs,
                 )
@@ -517,7 +518,7 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 # below reads the whole `Us_new` list, so one regime's NaN would reach every other
                 # regime's mass-transfer source before the FP solver failed and blamed its own CFL.
                 diverged = diverged_value_function(
-                    U_k, Us_full[k][-1], site=f"RegimeSwitchingIterator[regime {k}]", iteration=iteration
+                    U_k, terminal_k, site=f"RegimeSwitchingIterator[regime {k}]", iteration=iteration
                 )
                 if diverged is not None:
                     Us_new[k] = diverged
