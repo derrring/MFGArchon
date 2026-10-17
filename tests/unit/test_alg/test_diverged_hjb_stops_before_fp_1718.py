@@ -330,8 +330,9 @@ def test_newton_warmup_stops_the_solve_before_fp_sees_the_diverged_u():
     assert info["convergence_reason"] == "diverged_nan"
     assert not np.all(np.isfinite(U)), "the diverged iterate must still be published"
     # The assertion the other call-site tests carry and this one was missing -- at the very site
-    # this commit exists to repair. `mfg_residual.U_terminal` is a real array here, so the
-    # mutation U_terminal -> None is not vacuous: it changes what the solver publishes.
+    # this commit exists to repair. The terminal the guard is given, `mfg_residual.terminal_at(M_old)`,
+    # is a real array here, so a mutation of it to None is not vacuous: it changes what the solver
+    # publishes.
     (
         np.testing.assert_array_equal(np.asarray(U)[-1], np.full(_NX, 4.0)),
         (

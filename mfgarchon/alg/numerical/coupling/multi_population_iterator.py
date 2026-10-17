@@ -133,6 +133,16 @@ class MultiPopulationIterator:
             iterations, and convergence info.
         """
         K = self.multi_problem.K
+        # The terminal coupling is single-population (#1642, the user's ruling 5): this loop's terminal path hands
+        # every population the stacked densities, so G[m_k(T)] has no single density to be read at.
+        coupled = [k for k in range(K) if self.multi_problem.get_population(k).terminal_energy is not None]
+        if coupled:
+            raise NotImplementedError(
+                f"MultiPopulationIterator: population(s) {coupled} set Model(terminal_coupling=...). A terminal coupling "
+                "is single-population (#1642): this iterator's terminal path passes the stacked densities, so G[m(T)] "
+                "has no single density to be read at. Give each population's terminal cost through "
+                "Conditions(u_terminal=...), or solve the population alone."
+            )
 
         # Initialize from each population's problem
         M = []
@@ -150,7 +160,8 @@ class MultiPopulationIterator:
                 M_k[n] = m0_k
             M.append(M_k)
 
-            U_terminal_k = prob_k.get_final_u()
+            # The terminal datum's one owner (#1642 stage 2); no population carries a terminal coupling (refused above).
+            U_terminal_k = prob_k.terminal_value(m0_k)
             U_k = np.zeros((Nt + 1, Nx))
             U_k[-1] = U_terminal_k
             U.append(U_k)

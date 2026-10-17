@@ -401,7 +401,8 @@ class BaseHJBSolver(BaseNumericalSolver):
 
         This method solves the HJB equation in standalone mode, against a frozen density: it passes the uniform
         density ``m = 1 / |Omega|`` at every time. That has no population effect only where the coupling vanishes
-        there; otherwise H is evaluated at that constant density. It is suitable for:
+        there; otherwise H is evaluated at that constant density, and a terminal coupling's derivative is added to
+        u(T) at it. It is suitable for:
         - Single-agent optimal control problems
         - HJB solver comparison and benchmarking
         - Algorithm testing and validation
@@ -445,8 +446,8 @@ class BaseHJBSolver(BaseNumericalSolver):
         full_shape = (Nt_points, *spatial_shape)
         m_uniform = np.ones(full_shape) / volume
 
-        # Get terminal condition from problem
-        U_terminal = self.problem.get_final_u()
+        # u(T) at the frozen density's m(T): a terminal coupling adds its derivative there (#1642)
+        U_terminal = self.problem.terminal_value(m_uniform[-1])
 
         # Initial guess for nonlinear solver: repeat terminal condition across time
         U_prev_picard = np.tile(U_terminal, (Nt_points,) + (1,) * len(spatial_shape))

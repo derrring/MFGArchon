@@ -178,19 +178,13 @@ class MFGResidual:
                 self.M_initial = np.ones(shape) / np.prod(shape)
                 logger.warning("No initial density found, using uniform")
 
-        # Try to get terminal value
-        try:
-            self.U_terminal = self.problem.get_u_terminal()
-            if self.U_terminal.shape != shape:
-                self.U_terminal = self.U_terminal.reshape(shape)
-        except AttributeError:
-            try:
-                self.U_terminal = self.problem.u_terminal  # Issue #670: unified naming
-                if self.U_terminal is not None and self.U_terminal.shape != shape:
-                    self.U_terminal = self.U_terminal.reshape(shape)
-            except AttributeError:
-                # Default: zero terminal cost
-                self.U_terminal = np.zeros(shape)
+        # The terminal value at the initial density: the cold start's U(T). A terminal coupling
+        # moves u(T) with m(T), so each HJB solve reads terminal_at(M) instead (#1642).
+        self.U_terminal = np.asarray(self.problem.terminal_value(self.M_initial), dtype=float).reshape(shape)
+
+    def terminal_at(self, M: NDArray) -> NDArray:
+        """u(T) for the density trajectory ``M``: the problem's terminal value at ``M[-1]`` (#1642)."""
+        return np.asarray(self.problem.terminal_value(M[-1]), dtype=float).reshape(self.spatial_shape)
 
     def _cache_solver_signatures(self) -> None:
         """Cache solver method signatures for parameter passing."""
@@ -264,7 +258,7 @@ class MFGResidual:
                 )
             )
 
-        return self.hjb_solver.solve_hjb_system(M, self.U_terminal, U_prev, **kwargs)
+        return self.hjb_solver.solve_hjb_system(M, self.terminal_at(M), U_prev, **kwargs)
 
     def compute_fp_output(self, U: NDArray, M: NDArray | None = None) -> NDArray:
         """
