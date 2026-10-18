@@ -2455,7 +2455,8 @@ def region_name_holds_point(
 def _region_node(segment: BCSegment, geometry: Any, at: np.ndarray, asked: np.ndarray, tolerance: float) -> int:
     """The flat index, in the grid's C order, of the node of ``geometry`` nearest ``at``, the point ``asked`` as the
     owner reads it, for a region mask: refused where the geometry has no node coordinates, the point has another number
-    of coordinates than the grid has axes, or it lies outside the grid's own box by more than ``tolerance``."""
+    of coordinates than the grid has axes, an axis's nodes do not ascend, or the point lies outside the grid's own box by
+    more than ``tolerance``."""
     region = f"BC segment {segment.name!r} is restricted to the marked region {segment.region_name!r}"
     coordinates = getattr(geometry, "coordinates", None)
     if coordinates is None:
@@ -2474,13 +2475,21 @@ def _region_node(segment: BCSegment, geometry: Any, at: np.ndarray, asked: np.nd
     lo, hi = box if box is not None else ([np.min(c) for c in coordinates], [np.max(c) for c in coordinates])
     index = []
     for axis, nodes in enumerate(coordinates):
+        nodes = np.asarray(nodes, dtype=float)
+        if not np.all(np.diff(nodes) > 0):
+            raise ValueError(
+                f"{region}, and the nodes of the {type(geometry).__name__} that marks it do not ascend on axis {axis}, "
+                f"so its mask is not read at the point {asked.tolist()} (#2490). The face rule reads an axis's first "
+                "node as its min face whatever its coordinate (#2748), and reading the point by coordinate would put "
+                "the region on the other face. Give the grid ascending coordinates."
+            )
         if not (lo[axis] - tolerance <= at[axis] <= hi[axis] + tolerance):
             raise ValueError(
                 f"{region}, and the point {asked.tolist()} lies outside the grid that marks it, whose box on axis "
                 f"{axis} is [{lo[axis]}, {hi[axis]}], so the region cannot be read there (#2490). It is not read as "
                 "outside it: read the BC on the grid that marks the region, with domain_bounds equal to that grid's box."
             )
-        index.append(int(np.argmin(np.abs(np.asarray(nodes, dtype=float) - at[axis]))))
+        index.append(int(np.argmin(np.abs(nodes - at[axis]))))
     return int(np.ravel_multi_index(tuple(index), tuple(len(nodes) for nodes in coordinates)))
 
 
