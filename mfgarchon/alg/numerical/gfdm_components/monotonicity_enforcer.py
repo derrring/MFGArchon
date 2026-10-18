@@ -39,7 +39,9 @@ def verify_assembled_m_matrix(
     The ``joint_socp`` scheme therefore does not provide an a-priori discrete-maximum-principle
     (DMP) guarantee for the assembled system. The DMP claim for a *given* problem and
     discretization should be backed by running this check (the scoped claim): a passing
-    ``is_m_matrix`` result certifies the assembled M-matrix / DMP property for that specific run.
+    ``is_m_matrix`` result certifies the assembled M-matrix / DMP property for that specific run, on the rows it
+    checked. Restricted to ``interior_indices`` it says nothing of the boundary rows, which are the BC rows, and a
+    no-flux or Neumann one is not an M-matrix row (#1689 comment 6246936251).
 
     Args:
         matrix: Assembled iteration matrix (any scipy sparse format).

@@ -62,6 +62,7 @@ ALLOWED = {
     # An attribute named `value` that is not a boundary value: a cvxpy Problem's optimal value.
     ("mfgarchon/alg/numerical/gfdm_components/joint_socp.py", "solve_joint_socp_at_stencil"): "cvxpy",
     ("mfgarchon/alg/numerical/gfdm_components/joint_socp.py", "solve_relaxed_joint_socp_at_stencil"): "cvxpy",
+    ("mfgarchon/alg/numerical/gfdm_components/positive_qp_fan.py", "_positive_laplacian_row"): "cvxpy",
 }
 
 
