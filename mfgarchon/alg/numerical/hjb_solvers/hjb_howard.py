@@ -232,8 +232,7 @@ def _build_upwind_projection(alpha: np.ndarray, points: np.ndarray, socp_data: d
             # `_build_per_axis_upwind_pair`. The previous `mask = np.ones(...)`
             # fallback pulled in downwind neighbours (proj_j < 0 -> w_j < 0),
             # silently emitting negative advective off-diagonals and breaking the
-            # unconditional-M-matrix property of `thm:upwind_comparison`. Such
-            # degenerate stencils are expected to be excluded by the boundary buffer.
+            # unconditional-M-matrix property of `thm:upwind_comparison`.
             continue
         sel_proj = proj[mask]
         sel_nbrs = nbr_idx[mask]

@@ -23,11 +23,9 @@ See docs/development/PARTICLE_SOLVER_TEMPLATE.md for composition pattern guide.
 from .boundary_handler import BoundaryHandler
 from .grid_collocation_mapper import GridCollocationMapper
 from .neighborhood_builder import NeighborhoodBuilder
-from .precomputed_stencils import PrecomputedMonotoneStencils
 
 __all__ = [
     "BoundaryHandler",
     "GridCollocationMapper",
     "NeighborhoodBuilder",
-    "PrecomputedMonotoneStencils",
 ]

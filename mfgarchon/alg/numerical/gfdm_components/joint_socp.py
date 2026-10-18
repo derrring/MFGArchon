@@ -496,9 +496,8 @@ class JointSocpStencilData:
 class PrecomputedJointSocpStencils:
     """Cache for precomputed joint SOCP stencil weights.
 
-    Mirrors `PrecomputedMonotoneStencils` but applies to ALL interior nodes
-    (not just boundary) and enforces the joint SOCP (M-matrix + per-edge
-    cone) rather than just M-matrix.
+    Applies to the interior nodes and enforces the joint SOCP (M-matrix + per-edge cone). A boundary
+    node's row is its BC row, which replaces the PDE row before any solve reads it (#1689).
 
     Parameters
     ----------

@@ -1006,7 +1006,7 @@ __all__ = ["validate_mfg_solution"]
 #: The distributions recorded in every warning census, one owner for the list. Distribution
 #: names, not import names -- `scikit-fem` imports as `skfem`.
 #:
-TOOLCHAIN_NAMES = ("pytest", "numpy", "scipy", "scikit-fem", "torch", "cvxpy", "osqp")
+TOOLCHAIN_NAMES = ("pytest", "numpy", "scipy", "scikit-fem", "torch", "cvxpy")
 
 
 def _blas_of(module) -> str | None:
@@ -1167,8 +1167,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     # identity in that comparison: cvxpy and torch (absent, so their tests skipped or were not
     # collected -- three of the six), numpy (2.2.6 against 2.4.6), pytest (9 added the check).
     # OWNS identities outright in the baseline, so a bump moves their text with no inference:
-    # scikit-fem (3 of 224), osqp (the `OSQP failed: ...` text is the solver's own status string,
-    # and `OSQP_AVAILABLE` selects a different warning entirely). CO-VARYING only: scipy, named in
+    # scikit-fem (3 of 224). osqp owned one too, until #1689 deleted the boundary buffer that emitted it,
+    # and is no longer recorded. CO-VARYING only: scipy, named in
     # that comparison inside a disjunction with numpy and owning no identity, and python, the axis
     # that moved furthest (3.13 -> 3.12) with no single identity attributed to it.
     # Absent is recorded as null, which is itself a cause.

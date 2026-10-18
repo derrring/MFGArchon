@@ -142,7 +142,7 @@ pip install mfgarchon[nn]      # + PyTorch (live: torch backends), gymnasium/SB3
 pip install mfgarchon[all]     # + JAX, Numba, profiling tools
 ```
 
-**Default install** includes: NumPy, SciPy, Matplotlib, Rich, Pydantic, typing-inspection, PyYAML, scikit-fem, meshio, osqp, igraph, Plotly, pandas, h5py, nbformat, psutil.
+**Default install** includes: NumPy, SciPy, Matplotlib, Rich, Pydantic, typing-inspection, PyYAML, scikit-fem, meshio, igraph, Plotly, pandas, h5py, nbformat, psutil.
 
 **Requires**: Python 3.12+
 

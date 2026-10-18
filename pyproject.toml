@@ -70,9 +70,6 @@ dependencies = [
     "scikit-fem>=9.0",         # FEM assembly
     "meshio>=5.3",             # Mesh I/O (Gmsh, VTK)
 
-    # GFDM monotone stencils (used by HJBGFDMSolver)
-    "osqp>=1.0",               # QP solver for monotonicity enforcement (1.0+: polishing=/raise_error= kwargs)
-
     # Network MFG (used by NetworkGeometry)
     "igraph>=0.10.0",          # Graph backend (C-based, fast)
 
@@ -283,7 +280,6 @@ module = [
     "psutil.*",
     "texttable.*",
     "cvxpy.*",
-    "osqp.*",
     "yaml.*",
 ]
 ignore_missing_imports = true
