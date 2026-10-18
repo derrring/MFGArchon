@@ -57,6 +57,7 @@ from scipy.sparse.linalg import spsolve
 from scipy.spatial import cKDTree
 
 import mfgarchon.utils.deprecation as _deprecation
+from mfgarchon.alg.numerical.gfdm_components.positive_qp_fan import cone_policy
 from mfgarchon.types.callable_protocols import ALPHA_STAR_SLOTS, bind_user_callable
 from mfgarchon.utils.pde_coefficients import (
     diffusion_from_volatility,
@@ -66,6 +67,7 @@ from mfgarchon.utils.pde_coefficients import (
 
 if TYPE_CHECKING:
     from mfgarchon.alg.numerical.hjb_solvers.hjb_gfdm import HJBGFDMSolver
+    from mfgarchon.core.hamiltonian import QuadraticControlCost
     from mfgarchon.core.mfg_problem import MFGProblem
 
 
@@ -260,36 +262,40 @@ class HJBHowardSolver:
     """Howard's policy iteration inner solver for HJB on GFDM clouds.
 
     Replaces the Newton inner loop of `HJBGFDMSolver` when the Hamiltonian
-    `H(x, p, m)` is strictly convex in `p`. Reads SOCP-corrected
-    `D_lap`/`D_grad` weights from a `stencil_provider` (constructed
-    `HJBGFDMSolver`).
+    `H(x, p, m)` is strictly convex in `p`. Reads its `D_lap`/`D_grad` weights from a
+    `stencil_provider` (a constructed `HJBGFDMSolver`): SOCP-corrected ones, else its operator's
+    `get_derivative_weights`, or under `discretisation="guarded_fan"` the provider's positive-QP
+    Laplacian and guarded fans.
 
     Parameters
     ----------
     problem : MFGProblem
         The MFG problem (used for `Nt`, `T`, `sigma`).
     stencil_provider : HJBGFDMSolver
-        A constructed `HJBGFDMSolver` with `monotonicity_scheme='joint_socp'`
-        and `monotonicity_application='precompute'`. Howard reads
-        SOCP-corrected `D_lap`/`D_grad` from the provider's
-        `_joint_socp_stencils`. The provider's `collocation_points` and
-        boundary-segment classification (`_bc_segment_per_point`) are also
-        consumed.
-    alpha_star : Callable
+        A constructed `HJBGFDMSolver`. Howard reads SOCP-corrected `D_lap`/`D_grad` from its
+        `_joint_socp_stencils` (`monotonicity_scheme='joint_socp'`,
+        `monotonicity_application='precompute'`), else from its operator's
+        `get_derivative_weights`. Under `discretisation="guarded_fan"` it reads the Laplacian and
+        the fans from `_positive_qp_fan` (`monotonicity_scheme='positive_qp_fan'`) instead, and
+        the boundary type check from the same provider. The provider's `collocation_points` and
+        boundary-segment classification (`_bc_segment_per_point`) are also consumed.
+    alpha_star : Callable | None
         Legendre transform: `alpha_star(t_idx, x, p, m) -> alpha`, bound by name when its
         parameters are named `t` (or `t_idx`), `x`, `p`, `m`, and refused in the old order.
         See module docstring `AlphaStarFn` type alias. For LQ
         `H = |p|²/(2c)`, pass `lambda t, x, p, m: -p / c`. The Hamiltonian
         must be strictly convex in `p` for policy iteration to converge
         (Legendre uniqueness of the optimal control). Separability is
-        neither necessary nor sufficient.
+        neither necessary nor sufficient. Required, except under
+        `discretisation="guarded_fan"`, which refuses it: its policy comes from `control_cost`.
     running_cost : Callable | None
         `running_cost(t_idx) -> array of shape (n,)` returning the
         non-quadratic-in-alpha running cost evaluated at each collocation
-        point. Pass None when there is no running cost beyond
-        `(1/2)|alpha|^2`. The quadratic term is computed internally from
-        `alpha_star`'s output.
-    discretisation : Literal["upwind_projection", "upwind_per_axis", "central"]
+        point. Pass None when there is no running cost beyond the control's
+        Lagrangian, which is computed internally from the policy's control: `control_lagrangian`
+        at `alpha_star`'s output, `(1/2)|alpha|^2` without one, or under `"guarded_fan"`
+        `control_cost.lagrangian`, `lambda/2 |alpha|^2`, at the sector control.
+    discretisation : Literal["upwind_projection", "upwind_per_axis", "central", "guarded_fan"]
         Choice of `A_adv` assembly:
 
         - `"upwind_projection"` (default): single-axis upwind along the
@@ -300,6 +306,13 @@ class HJBHowardSolver:
           BS-monotone by construction.
         - `"central"`: bare central gradient. Does NOT preserve monotonicity
           under advection-dominant regime; included for comparison only.
+        - `"guarded_fan"` (#1689): the provider's positive-QP Laplacian and guarded fans, from
+          `HJBGFDMSolver(monotonicity_scheme="positive_qp_fan")`. The policy is the exact argmin
+          over each node's fan sectors (`positive_qp_fan.cone_policy`), and each advection row has
+          non-negative off-diagonals, so every interior row of the policy-evaluation matrix is an
+          M-matrix row. Its boundary rows are the provider's BC rows, which the provider's
+          boundary type check admits at each step only when every boundary point is Dirichlet.
+          Needs `control_cost` and `use_provider_bc_rows=True`.
     max_iter : int
         Maximum Howard inner iterations per backward time step.
     tol : float
@@ -311,12 +324,36 @@ class HJBHowardSolver:
         `stencil_provider._get_volatility_value(None)`.
     volatility_kind : str | None
         "field" for an array volatility (#2378); a tensor is refused.
+    control_cost : QuadraticControlCost | None
+        The control cost `L(alpha) = lambda/2 |alpha|^2` whose exact argmin over a fan sector is
+        `discretisation="guarded_fan"`'s policy, and whose Lagrangian is its right-hand side.
+        Required by that discretisation, refused by the others.
 
     Raises
     ------
     RuntimeError
-        If `stencil_provider` does not have `_joint_socp_stencils`
-        populated (missing SOCP precompute).
+        If `stencil_provider` offers neither `_joint_socp_stencils` nor an operator
+        with `get_derivative_weights`; under `"guarded_fan"`, if it has no
+        positive-QP fan or no boundary type check. At a solve: when a point has
+        neither a stencil nor a provider BC row (#1254), and when policy evaluation
+        returns a non-finite value (#2072).
+    TypeError
+        Without `alpha_star`, except under `"guarded_fan"`; for an `alpha_star` whose
+        parameters are out of the `(t, x, p, m)` order; for the retired `volatility_field=`;
+        and at a solve, for a callable volatility override.
+    ValueError
+        For an unknown `discretisation`; under `"guarded_fan"`, with `alpha_star` or
+        `control_lagrangian`, without a `QuadraticControlCost`, or without
+        `use_provider_bc_rows`; with `control_cost` under another discretisation; for a
+        negative scalar volatility, an array volatility without `volatility_kind`, or
+        `volatility_kind="field"` without a volatility; and at a solve, under
+        `"guarded_fan"`, when a boundary point has a condition other than Dirichlet (the
+        provider's boundary type check), or when a volatility override is neither a scalar
+        nor a field of shape `(n,)`.
+    NotImplementedError
+        For a `volatility_kind="tensor"` volatility; and at a solve, for `cross_density`,
+        `source_term` or `volatility` passed to `solve_hjb_system`, and for a periodic BC in
+        the provider's BC rows.
     """
 
     @retired_volatility_keywords
@@ -324,67 +361,115 @@ class HJBHowardSolver:
         self,
         problem: MFGProblem,
         stencil_provider: HJBGFDMSolver,
-        alpha_star: AlphaStarFn,
+        alpha_star: AlphaStarFn | None = None,
         running_cost: RunningCostFn | None = None,
         control_lagrangian: ControlLagrangianFn | None = None,
-        discretisation: Literal["upwind_projection", "upwind_per_axis", "central"] = "upwind_projection",
+        discretisation: Literal["upwind_projection", "upwind_per_axis", "central", "guarded_fan"] = "upwind_projection",
         max_iter: int = 20,
         tol: float = 1e-4,
         volatility: float | np.ndarray | None = None,
         use_provider_bc_rows: bool = False,
         volatility_kind: str | None = None,
+        control_cost: QuadraticControlCost | None = None,
     ):
-        # #2066: this REFUSED without `_joint_socp_stencils`, for operators it can obtain
-        # elsewhere. Howard needs D_lap, D_grad and an interior/boundary split; none of those is
-        # SOCP-specific, and `get_derivative_weights` on the live TaylorOperator/LocalRBFOperator
-        # returns the SAME dict keys the SOCP object does -- neighbor_indices, grad_weights,
-        # lap_weights, center_idx_in_neighbors -- which is what `_build_dlap_from_weights` consumes.
-        #
-        # Monotonicity is a real hypothesis (Bokanowski-Maroso-Zidani 2009, see the module
-        # docstring) but it is a hypothesis about CONVERGENCE, not about whether the solve can run,
-        # and this module already ships `discretisation="central"` documented as "Does NOT preserve
-        # monotonicity ... included for comparison only". Refusing here while offering that is
-        # inconsistent. Worse, the old gate did not deliver the property it appeared to guard: a
-        # `joint_socp` run gave SOCP-infeasible interior nodes non-monotone weights -- relaxed rows,
-        # or bare Wendland-Taylor LSQ -- and this check passed anyway, because it tested for the
-        # OBJECT rather than for monotonicity. Since #1689 such a node is refused at construction;
-        # `socp_allow_relaxed_rows=True` lifts the refusal for an infeasible SOCP only, and reports
-        # those rows.
-        _socp = getattr(stencil_provider, "_joint_socp_stencils", None)
-        _generic = getattr(stencil_provider, "_gfdm_operator", None)
-        if _socp is None and getattr(_generic, "get_derivative_weights", None) is None:
-            raise RuntimeError(
-                "HJBHowardSolver: stencil_provider offers neither `_joint_socp_stencils` nor a "
-                "`_gfdm_operator` exposing `get_derivative_weights`, so there is no source for "
-                "the D_lap/D_grad operators policy evaluation needs. Construct the provider with "
-                "monotonicity_scheme='joint_socp', monotonicity_application='precompute' for "
-                "monotone stencils, or with any scheme that builds a Taylor/RBF operator (#2066)."
-            )
-        if _socp is None:
-            warnings.warn(
-                "HJBHowardSolver: running on non-SOCP stencils. Policy iteration's global "
-                "convergence (Bokanowski-Maroso-Zidani 2009) assumes a MONOTONE scheme, and bare "
-                "Wendland-Taylor weights are not monotone in general. The solve will run; its "
-                "convergence is not covered by that hypothesis. Use "
-                "monotonicity_scheme='joint_socp' for the covered case (#2066).",
-                UserWarning,
-                stacklevel=2,
-                # The retired-keyword refusal wraps __init__; without this the warning is attributed
-                # to that wrapper in deprecation.py instead of the caller (#2417).
-                skip_file_prefixes=_deprecation.WRAPPER_FRAMES,
-            )
-        if discretisation not in ("upwind_projection", "upwind_per_axis", "central"):
+        if discretisation not in ("upwind_projection", "upwind_per_axis", "central", "guarded_fan"):
             raise ValueError(
-                f"discretisation must be one of {{upwind_projection, upwind_per_axis, central}}, got {discretisation!r}"
+                "discretisation must be one of {upwind_projection, upwind_per_axis, central, guarded_fan}, got "
+                f"{discretisation!r}"
             )
+        if discretisation == "guarded_fan":
+            from mfgarchon.core.hamiltonian import QuadraticControlCost
+
+            # #1689: the policy is the exact argmin over each node's fan sectors, which for a quadratic cost is a
+            # projection of control_cost.optimal_control, and the right-hand side is control_cost.lagrangian. An
+            # alpha_star or a control_lagrangian would have no reader.
+            if alpha_star is not None or control_lagrangian is not None:
+                raise ValueError(
+                    "HJBHowardSolver(discretisation='guarded_fan') takes its policy and its Lagrangian from "
+                    "control_cost, so alpha_star and control_lagrangian would have no reader (#1689). Pass "
+                    "control_cost only."
+                )
+            if not isinstance(control_cost, QuadraticControlCost):
+                raise ValueError(
+                    "HJBHowardSolver(discretisation='guarded_fan') needs control_cost=QuadraticControlCost(...): its "
+                    "exact argmin over a fan sector is the Euclidean projection that a quadratic cost makes it, got "
+                    f"{type(control_cost).__name__} (#1689). For another cost use another discretisation, or "
+                    "HJBGFDMSolver(monotonicity_scheme='joint_socp')."
+                )
+            if getattr(stencil_provider, "_positive_qp_fan", None) is None or not callable(
+                getattr(stencil_provider, "_refuse_boundary_positive_qp_fan_cannot_close", None)
+            ):
+                raise RuntimeError(
+                    "HJBHowardSolver(discretisation='guarded_fan') reads its Laplacian, its fans and its boundary type "
+                    "check from a stencil_provider built with HJBGFDMSolver(monotonicity_scheme='positive_qp_fan'), "
+                    "and this one does not carry them (#1689)."
+                )
+            if not use_provider_bc_rows:
+                raise ValueError(
+                    "HJBHowardSolver(discretisation='guarded_fan') needs use_provider_bc_rows=True: its boundary rows "
+                    "are the provider's BC rows, which its boundary type check admits (#1689)."
+                )
+        else:
+            if alpha_star is None:
+                raise TypeError(
+                    f"HJBHowardSolver(discretisation={discretisation!r}) needs alpha_star, its policy update."
+                )
+            if control_cost is not None:
+                raise ValueError(
+                    "HJBHowardSolver: control_cost is read only by discretisation='guarded_fan'; with "
+                    f"{discretisation!r} the policy comes from alpha_star and the Lagrangian from control_lagrangian."
+                )
+            # #2066: this REFUSED without `_joint_socp_stencils`, for operators it can obtain
+            # elsewhere. Howard needs D_lap, D_grad and an interior/boundary split; none of those is
+            # SOCP-specific, and `get_derivative_weights` on the live TaylorOperator/LocalRBFOperator
+            # returns the SAME dict keys the SOCP object does -- neighbor_indices, grad_weights,
+            # lap_weights, center_idx_in_neighbors -- which is what `_build_dlap_from_weights` consumes.
+            #
+            # Monotonicity is a real hypothesis (Bokanowski-Maroso-Zidani 2009, see the module
+            # docstring) but it is a hypothesis about CONVERGENCE, not about whether the solve can run,
+            # and this module already ships `discretisation="central"` documented as "Does NOT preserve
+            # monotonicity ... included for comparison only". Refusing here while offering that is
+            # inconsistent. Worse, the old gate did not deliver the property it appeared to guard: a
+            # `joint_socp` run gave SOCP-infeasible interior nodes non-monotone weights -- relaxed rows,
+            # or bare Wendland-Taylor LSQ -- and this check passed anyway, because it tested for the
+            # OBJECT rather than for monotonicity. Since #1689 such a node is refused at construction;
+            # `socp_allow_relaxed_rows=True` lifts the refusal for an infeasible SOCP only, and reports
+            # those rows.
+            _socp = getattr(stencil_provider, "_joint_socp_stencils", None)
+            _generic = getattr(stencil_provider, "_gfdm_operator", None)
+            if _socp is None and getattr(_generic, "get_derivative_weights", None) is None:
+                raise RuntimeError(
+                    "HJBHowardSolver: stencil_provider offers neither `_joint_socp_stencils` nor a "
+                    "`_gfdm_operator` exposing `get_derivative_weights`, so there is no source for "
+                    "the D_lap/D_grad operators policy evaluation needs. Construct the provider with "
+                    "monotonicity_scheme='joint_socp', monotonicity_application='precompute' for "
+                    "monotone stencils, or with any scheme that builds a Taylor/RBF operator (#2066)."
+                )
+            if _socp is None:
+                warnings.warn(
+                    "HJBHowardSolver: running on non-SOCP stencils. Policy iteration's global "
+                    "convergence (Bokanowski-Maroso-Zidani 2009) assumes a MONOTONE scheme, and bare "
+                    "Wendland-Taylor weights are not monotone in general. The solve will run; its "
+                    "convergence is not covered by that hypothesis. monotonicity_scheme='joint_socp' gives "
+                    "monotone interior rows (#2066); a boundary row is its BC row, and a no-flux one is not an "
+                    "M-matrix row (#1689 comment 6246936251).",
+                    UserWarning,
+                    stacklevel=2,
+                    # The retired-keyword refusal wraps __init__; without this the warning is attributed
+                    # to that wrapper in deprecation.py instead of the caller (#2417).
+                    skip_file_prefixes=_deprecation.WRAPPER_FRAMES,
+                )
 
         self.problem = problem
         self.stencil_provider = stencil_provider
         self.alpha_star = alpha_star
         # Bound once at acceptance and invoked by keyword (#2375 ruling 8)
-        self._alpha_star = bind_user_callable(alpha_star, ALPHA_STAR_SLOTS, role="alpha_star")
+        self._alpha_star = (
+            bind_user_callable(alpha_star, ALPHA_STAR_SLOTS, role="alpha_star") if alpha_star is not None else None
+        )
         self.running_cost = running_cost
-        self.control_lagrangian = control_lagrangian
+        self.control_lagrangian = control_cost.lagrangian if control_cost is not None else control_lagrangian
+        self.control_cost = control_cost
         self.discretisation = discretisation
         self.max_iter = int(max_iter)
         self.tol = float(tol)
@@ -417,6 +502,20 @@ class HJBHowardSolver:
             pts = pts.reshape(-1, 1)
         n = pts.shape[0]
         dimension = pts.shape[1]
+        if self.discretisation == "guarded_fan":
+            # The provider's certified operator (#1689): positive Laplacian rows and fan sectors on its interior
+            # nodes; the boundary nodes are its boundary_indices, whose rows are the provider's BC rows.
+            fan = s._positive_qp_fan
+            return {
+                "pts": pts,
+                "n": n,
+                "dimension": dimension,
+                "D_lap": fan.laplacian,
+                "sectors": fan.sectors,
+                "boundary_idx": np.asarray(s.boundary_indices, dtype=int),
+                "is_dirichlet": None,
+                "nearest_int": None,
+            }
 
         # #2066: SOCP when it is there, the provider's own operator when it is not. Both return
         # the same dict -- neighbor_indices, grad_weights, lap_weights, center_idx_in_neighbors --
@@ -533,8 +632,13 @@ class HJBHowardSolver:
         nearest_int = static["nearest_int"]
 
         # Initial policy: from previous time step's policy (warm start) or
-        # from central gradient of u_next.
-        if alpha_init is not None:
+        # from central gradient of u_next. guarded_fan starts from its exact policy at u_next, as the research's
+        # cone Howard did (#1689); it carries no warm start.
+        guarded = self.discretisation == "guarded_fan"
+        if guarded:
+            policy = cone_policy(u_next, static["sectors"], self.control_cost)
+            alpha = policy.control
+        elif alpha_init is not None:
             alpha = alpha_init.copy()
         else:
             p = np.zeros((n, dimension))
@@ -547,6 +651,11 @@ class HJBHowardSolver:
 
         # Issue #1118 PR2: value-form BC rows from the provider's shared builder. Constant
         # across inner iterations at this time step; None -> the legacy self-contained scheme.
+        if guarded:
+            # #1689: the scheme takes Dirichlet boundary points only until its reflecting closure lands. A reflecting
+            # point's row is, at taylor_order 2, a mixed-sign normal-gradient stencil, and on a degenerate stencil an
+            # identity imposing u = 0; the provider's type check refuses it, on the BC whose rows are read next.
+            self.stencil_provider._refuse_boundary_positive_qp_fan_cannot_close()
         bc_rows = self.stencil_provider._value_form_bc_rows(t_idx) if self.use_provider_bc_rows else None
         if isinstance(volatility, np.ndarray):
             diffusion_operator = diags(diffusion_from_volatility(volatility, kind="field")) @ D_lap
@@ -554,7 +663,7 @@ class HJBHowardSolver:
             diffusion_operator = diffusion_from_volatility(volatility) * D_lap
 
         for _iteration in range(self.max_iter):  # named for the #2072 diagnostic below
-            A_adv = self._build_A_adv(alpha, static)
+            A_adv = policy.advection(n) if guarded else self._build_A_adv(alpha, static)
             A = eye(n, format="csr") / dt - A_adv - diffusion_operator
 
             # RHS: u_next/dt + L(alpha) + running_cost. L(alpha) is the control-cost
@@ -636,14 +745,23 @@ class HJBHowardSolver:
                     f"previous timestep and return a finite field that answers a different "
                     f"problem. Check the Hamiltonian's decomposition (inner_solver='howard' "
                     f"assumes a quadratic control cost) and the stencil conditioning; "
-                    f"inner_solver='newton' needs no decomposition. (Issue #2072)"
+                    + (
+                        "monotonicity_scheme='joint_socp' with inner_solver='newton'"
+                        if guarded
+                        else "inner_solver='newton'"
+                    )
+                    + " needs no decomposition. (Issue #2072)"
                 )
 
             # Policy update.
-            p_new = np.zeros((n, dimension))
-            for d in range(dimension):
-                p_new[:, d] = static["D_grad_central"][d] @ u_new
-            alpha_new = self._alpha_star(t=t_idx, x=pts, p=p_new, m=m_n)
+            if guarded:
+                policy = cone_policy(u_new, static["sectors"], self.control_cost)
+                alpha_new = policy.control
+            else:
+                p_new = np.zeros((n, dimension))
+                for d in range(dimension):
+                    p_new[:, d] = static["D_grad_central"][d] @ u_new
+                alpha_new = self._alpha_star(t=t_idx, x=pts, p=p_new, m=m_n)
 
             # Convergence on policy.
             denom = max(float(np.linalg.norm(alpha, ord=np.inf)), 1e-10)
@@ -675,7 +793,9 @@ class HJBHowardSolver:
             Density field at every time step, shape `(Nt+1, n)`. It reaches the
             solve only through ``alpha_star(t, x, p, m)``. When None, ``alpha_star``
             receives ``m = 0``, which is no MFG coupling only for an ``alpha_star``
-            that does not depend on ``m``.
+            that does not depend on ``m``. Under ``"guarded_fan"``, which has no
+            ``alpha_star``, it is not read: a coupling reaches that solve through
+            ``running_cost``.
         U_terminal : np.ndarray
             Terminal condition `U(T, x)`, shape `(n,)`.
         volatility, volatility_kind, source_term
