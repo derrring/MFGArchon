@@ -71,7 +71,7 @@ def initialize_cold_start(
         U: Value function array to initialize (modified in-place)
         M: Density array to initialize (modified in-place)
         M_initial: Initial density distribution m_0(x)
-        U_terminal: Terminal condition g(x) for value function
+        U_terminal: The terminal value at the initial density, ``problem.terminal_value(M_initial)``
         Nt: Number of time steps
 
     Returns:
@@ -446,20 +446,21 @@ def preserve_terminal_condition(
     """
     Preserve terminal condition for value function after updates.
 
-    After damping or Anderson acceleration, U[-1, :] may be modified,
-    but the terminal condition must remain fixed.
+    After damping or Anderson acceleration, U[-1, :] may be modified, but it must be the terminal value of
+    the HJB solve this sweep made.
 
     Args:
         U: Value function array (modified in-place)
-        U_terminal: Terminal condition g(x) at t=T
+        U_terminal: The terminal value that HJB solve was given, ``problem.terminal_value`` at its m(T) (#1642)
 
     Returns:
         Modified U with preserved terminal condition
 
     Note:
         This is critical for maintaining physical correctness of the solution.
-        The terminal condition is a boundary condition that must not change.
-        Without this, damping dilutes the terminal condition, causing the
+        The terminal condition is a boundary condition; damping must not change it. With a terminal coupling it
+        moves with m(T) from sweep to sweep, and the row takes this sweep's value. Without this, damping dilutes the
+        terminal condition, causing the
         value function gradient to vanish and agents to not move toward targets.
     """
     U[-1] = U_terminal
@@ -479,7 +480,7 @@ def value_function_is_finite(U: np.ndarray) -> bool:
 
 def diverged_value_function(
     U_new: np.ndarray,
-    U_terminal: np.ndarray | None,
+    U_terminal: np.ndarray,
     *,
     site: str,
     iteration: int | None = None,
@@ -511,8 +512,7 @@ def diverged_value_function(
 
     Args:
         U_new: The value function the HJB solve just produced.
-        U_terminal: Terminal condition g(x) at t=T, or ``None`` where the site has no
-            terminal row to restore (see the note in the body).
+        U_terminal: The terminal value the HJB solve was given, u(T) at that solve's m(T) (#1642).
         site: Which coupling loop is reporting, named in the log line. The whole point of the
             check is attribution, so an unnamed one would be half a fix.
         iteration: Iteration index, 0-based, if the site has one. Reported 1-based.
@@ -531,12 +531,6 @@ def diverged_value_function(
         site,
     )
     published = np.asarray(U_new).copy()
-    if U_terminal is None:
-        # `NewtonMFGSolver._run_picard_warmup` runs against an `MFGResidual` whose `U_terminal`
-        # is optional, and that path already guards its own restore the same way. Restoring
-        # against None would write None into the last row and destroy the diagnostic this
-        # function exists to publish.
-        return published
     return preserve_terminal_condition(published, U_terminal)
 
 

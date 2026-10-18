@@ -171,15 +171,6 @@ def test_the_diverged_iterate_is_published_with_its_terminal_row_restored():
     )
 
 
-def test_a_missing_terminal_condition_is_not_written_into_the_array():
-    """NewtonMFGSolver's residual carries an optional terminal condition."""
-    diverged_value_function, _ = _owner()
-    U = np.ones((3, 4))
-    U[0, 0] = np.nan
-    out = diverged_value_function(U, None, site="probe")
-    np.testing.assert_array_equal(out[-1], np.ones(4))
-
-
 # --- the call sites -----------------------------------------------------------------------------
 
 
@@ -330,8 +321,9 @@ def test_newton_warmup_stops_the_solve_before_fp_sees_the_diverged_u():
     assert info["convergence_reason"] == "diverged_nan"
     assert not np.all(np.isfinite(U)), "the diverged iterate must still be published"
     # The assertion the other call-site tests carry and this one was missing -- at the very site
-    # this commit exists to repair. `mfg_residual.U_terminal` is a real array here, so the
-    # mutation U_terminal -> None is not vacuous: it changes what the solver publishes.
+    # this commit exists to repair. The terminal the guard is given, `mfg_residual.terminal_at(M_old)`,
+    # is a real array here, so a mutation of it to None is not vacuous: it changes what the solver
+    # publishes.
     (
         np.testing.assert_array_equal(np.asarray(U)[-1], np.full(_NX, 4.0)),
         (

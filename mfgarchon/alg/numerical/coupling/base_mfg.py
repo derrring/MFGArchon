@@ -502,6 +502,10 @@ class BaseCouplingIterator(ABC):
         self._hjb_solver_name: str = "<hjb solver>"
         self._fp_solver_name: str = "<fp solver>"
 
+    @staticmethod
+    def _reshape_to(arr: np.ndarray, shape: tuple) -> np.ndarray:
+        return arr.reshape(shape) if arr.shape != shape else arr
+
     def _init_solver_signatures(self, hjb_solver: Any, fp_solver: Any) -> None:
         """Cache solver method signatures for conditional parameter passing.
 

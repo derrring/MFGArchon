@@ -272,7 +272,7 @@ class BlockIterator(BaseCouplingIterator):
 
     def _initialize_conditions(self, shape: tuple[int, ...]) -> tuple[NDArray, NDArray]:
         """Initialize initial density and terminal value from problem."""
-        # Try get_m_initial() / get_u_terminal() methods (preferred)
+        # Try the get_m_initial() method (preferred)
         try:
             M_initial = self.problem.get_m_initial()
             if M_initial.shape != shape:
@@ -286,17 +286,11 @@ class BlockIterator(BaseCouplingIterator):
                 M_initial = np.ones(shape) / np.prod(shape)
                 logger.warning("No initial density found, using uniform")
 
-        try:
-            U_terminal = self.problem.get_u_terminal()
-            if U_terminal.shape != shape:
-                U_terminal = U_terminal.reshape(shape)
-        except AttributeError:
-            try:
-                U_terminal = self.problem.u_terminal  # Issue #670: unified naming
-                if U_terminal is not None and U_terminal.shape != shape:
-                    U_terminal = U_terminal.reshape(shape)
-            except AttributeError:
-                U_terminal = np.zeros(shape)
+        # The terminal datum's one owner (#1642 stage 2), at the initial density, which a cold start writes into every
+        # row; each iteration re-reads it at the density its HJB solve uses.
+        U_terminal = np.asarray(self.problem.terminal_value(M_initial))
+        if U_terminal.shape != shape:
+            U_terminal = U_terminal.reshape(shape)
 
         return M_initial, U_terminal
 
@@ -741,6 +735,8 @@ class BlockIterator(BaseCouplingIterator):
 
             U_old = self.U.copy()
             M_old = self.M.copy()
+            # u(T) at the density this iteration's HJB solve uses: both steps solve the HJB with M_old (#1642 stage 2).
+            self._U_terminal = np.asarray(self.problem.terminal_value(M_old[-1])).reshape(shape)
 
             # Perform block iteration step
             U_new, M_new = step_fn(U_old, M_old, self._M_initial, self._U_terminal)

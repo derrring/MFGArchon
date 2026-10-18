@@ -74,8 +74,12 @@ class Model:
             H_k, through the stacked densities (#2173). The same holds per regime of a regime-switching problem and per
             node problem of a graph solve: each composes its own F on its own density. A plain ``F[m] -> float`` is
             refused: it would carry its own quadrature, so it is bound to one grid (#1642, the user's ruling 3).
-        terminal_coupling: G(x, m(T)), the terminal coupling cost. Refused until #1642's stage 2, which binds it: it
-            was accepted and read by nothing.
+        terminal_coupling: The terminal coupling cost G[m(T)], a `CouplingCost` like ``coupling_cost``. ``MFGProblem``
+            binds it to its grid and measure, and the terminal condition is ``u(T, x) = g(x) + delta G / delta m`` at the
+            density m(T) the HJB solve uses (`MFGProblem.terminal_value`, #1642 stage 2). Bound on a
+            ``TensorProductGrid``; refused on FEM and meshless geometries until #1642's stage 1b, on a network (#2568),
+            and in `MultiPopulationIterator`, which with more than one population couples them through their stacked
+            densities (#1642).
     """
 
     hamiltonian: HamiltonianBase | None = None
@@ -84,7 +88,7 @@ class Model:
     volatility_kind: str | None = None
     drift_field: Callable | None = None
     coupling_cost: CouplingCost | None = None
-    terminal_coupling: Callable | None = None
+    terminal_coupling: CouplingCost | None = None
 
     @property
     def sigma(self) -> Any:
@@ -105,38 +109,11 @@ class Model:
         self.refuse_what_is_not_bound()
 
     def refuse_what_is_not_bound(self) -> None:
-        """The refusals of the fields this stage does not bind, read at construction and again where a problem binds
-        this model, since a ``Model`` is a mutable dataclass (#1642): a ``coupling_cost`` that is not a
-        `CouplingCost`, and any ``terminal_coupling``."""
-        cost = self.coupling_cost
-        if cost is not None and (isinstance(cost, type) or not isinstance(cost, CouplingCost)):
-            from mfgarchon.operators.interaction.energy_functionals import missing_energy_functional_members
-
-            if isinstance(cost, type):
-                what = f"the class {cost.__name__}, not an instance of it"
-            elif not missing_energy_functional_members(cost):
-                what = (
-                    f"{type(cost).__name__}, an EnergyFunctional -- F already bound to a grid. Give the specification "
-                    "it was bound from, or pass create_lions_source(energy) as source_term_hjb"
-                )
-            else:
-                what = type(cost).__name__
-            raise TypeError(
-                f"Model(coupling_cost=...) takes a coupling cost the library binds to the problem's grid and measure -- "
-                f"InteractionCost(kernel), PotentialCost(V) or their sum, from mfgarchon.operators.interaction, or an "
-                f"instance of a class of your own whose bind(problem) returns an EnergyFunctional -- not {what}. A plain F[m] -> float carries its own quadrature, so it is bound to one grid (#1642). Give "
-                f"such an F to the problem's HJB source explicitly, on that grid: MFGProblem(..., domain=grid, "
-                f"source_term_hjb=create_lions_source(F, FiniteDifferenceFunctionalDerivative(), "
-                f"weights=grid.measure_weights().ravel())), with create_lions_source from "
-                f"mfgarchon.alg.numerical.coupling.lions_correction and FiniteDifferenceFunctionalDerivative from "
-                f"mfgarchon.utils.functional_calculus; or pass its flat derivative delta F / delta m as source_term_hjb "
-                f"directly."
-            )
-        if self.terminal_coupling is not None:
-            raise NotImplementedError(
-                "Model(terminal_coupling=...) is refused until stage 2 of #1642 binds it: no solver reads it, and it "
-                "was accepted and ignored. A terminal cost that does not depend on m(T) is Conditions(u_terminal=...)."
-            )
+        """The refusals of what a problem cannot bind, read at construction and again where a problem binds this model,
+        since a ``Model`` is a mutable dataclass (#1642): a ``coupling_cost`` or ``terminal_coupling`` that is not a
+        `CouplingCost`."""
+        for field in ("coupling_cost", "terminal_coupling"):
+            _refuse_unbindable_cost(field, getattr(self, field))
 
     @property
     def effective_hamiltonian(self) -> HamiltonianBase:
@@ -235,3 +212,43 @@ class Conditions:
             )
         if self.T <= 0:
             raise ValueError(f"T must be positive, got {self.T}")
+
+
+def _refuse_unbindable_cost(field: str, cost: object) -> None:
+    """Refuse a ``Model.coupling_cost`` or ``Model.terminal_coupling`` the library cannot bind: a class, an
+    ``EnergyFunctional`` already bound to a grid, or anything that is not a `CouplingCost` (#1642). None passes."""
+    if cost is None or (not isinstance(cost, type) and isinstance(cost, CouplingCost)):
+        return
+    from mfgarchon.operators.interaction.energy_functionals import missing_energy_functional_members
+
+    bound = not isinstance(cost, type) and not missing_energy_functional_members(cost)
+    if isinstance(cost, type):
+        what = f"the class {cost.__name__}, not an instance of it"
+    elif bound and field == "coupling_cost":
+        what = (
+            f"{type(cost).__name__}, an EnergyFunctional -- F already bound to a grid. Give the specification "
+            "it was bound from, or pass create_lions_source(energy) as source_term_hjb"
+        )
+    elif bound:
+        what = f"{type(cost).__name__}, an EnergyFunctional -- G already bound to a grid. Give the specification it was bound from"
+    else:
+        what = type(cost).__name__
+    if field == "terminal_coupling":
+        raise TypeError(
+            f"Model(terminal_coupling=...) takes a coupling cost the library binds to the problem's grid and measure -- "
+            f"InteractionCost(kernel), PotentialCost(V) or their sum, from mfgarchon.operators.interaction, or an "
+            f"instance of a class of your own whose bind(problem) returns an EnergyFunctional -- not {what}. The "
+            f"problem adds its flat derivative delta G / delta m at m(T) to u(T) (#1642). A terminal cost that does not "
+            f"depend on m(T) is Conditions(u_terminal=...)."
+        )
+    raise TypeError(
+        f"Model(coupling_cost=...) takes a coupling cost the library binds to the problem's grid and measure -- "
+        f"InteractionCost(kernel), PotentialCost(V) or their sum, from mfgarchon.operators.interaction, or an "
+        f"instance of a class of your own whose bind(problem) returns an EnergyFunctional -- not {what}. A plain F[m] -> float carries its own quadrature, so it is bound to one grid (#1642). Give "
+        f"such an F to the problem's HJB source explicitly, on that grid: MFGProblem(..., domain=grid, "
+        f"source_term_hjb=create_lions_source(F, FiniteDifferenceFunctionalDerivative(), "
+        f"weights=grid.measure_weights().ravel())), with create_lions_source from "
+        f"mfgarchon.alg.numerical.coupling.lions_correction and FiniteDifferenceFunctionalDerivative from "
+        f"mfgarchon.utils.functional_calculus; or pass its flat derivative delta F / delta m as source_term_hjb "
+        f"directly."
+    )

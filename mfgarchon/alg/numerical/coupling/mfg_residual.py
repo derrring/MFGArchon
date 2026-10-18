@@ -100,7 +100,8 @@ class MFGResidual:
         hjb_solver: HJB solver instance
         fp_solver: FP solver instance
         M_initial: Initial density condition
-        U_terminal: Terminal value function
+        U_terminal: u(T) at the initial density, the cold start's terminal row; each HJB solve reads
+            ``terminal_at(M)`` instead (#1642)
 
     Example:
         >>> residual_computer = MFGResidual(problem, hjb_solver, fp_solver)
@@ -146,7 +147,7 @@ class MFGResidual:
 
         # Cache initial/terminal conditions
         self.M_initial: NDArray | None = None
-        self.U_terminal: NDArray | None = None
+        self.U_terminal: NDArray
         self._initialize_conditions()
 
         # Cache solver method signatures for parameter passing
@@ -178,19 +179,13 @@ class MFGResidual:
                 self.M_initial = np.ones(shape) / np.prod(shape)
                 logger.warning("No initial density found, using uniform")
 
-        # Try to get terminal value
-        try:
-            self.U_terminal = self.problem.get_u_terminal()
-            if self.U_terminal.shape != shape:
-                self.U_terminal = self.U_terminal.reshape(shape)
-        except AttributeError:
-            try:
-                self.U_terminal = self.problem.u_terminal  # Issue #670: unified naming
-                if self.U_terminal is not None and self.U_terminal.shape != shape:
-                    self.U_terminal = self.U_terminal.reshape(shape)
-            except AttributeError:
-                # Default: zero terminal cost
-                self.U_terminal = np.zeros(shape)
+        # The terminal value at the initial density: the cold start's U(T). A terminal coupling
+        # moves u(T) with m(T), so each HJB solve reads terminal_at(M) instead (#1642).
+        self.U_terminal = np.asarray(self.problem.terminal_value(self.M_initial), dtype=float).reshape(shape)
+
+    def terminal_at(self, M: NDArray) -> NDArray:
+        """u(T) for the density trajectory ``M``: the problem's terminal value at ``M[-1]`` (#1642)."""
+        return np.asarray(self.problem.terminal_value(M[-1]), dtype=float).reshape(self.spatial_shape)
 
     def _cache_solver_signatures(self) -> None:
         """Cache solver method signatures for parameter passing."""
@@ -264,7 +259,7 @@ class MFGResidual:
                 )
             )
 
-        return self.hjb_solver.solve_hjb_system(M, self.U_terminal, U_prev, **kwargs)
+        return self.hjb_solver.solve_hjb_system(M, self.terminal_at(M), U_prev, **kwargs)
 
     def compute_fp_output(self, U: NDArray, M: NDArray | None = None) -> NDArray:
         """
@@ -446,8 +441,8 @@ class MFGResidual:
         """
         Get initial guess for Newton iteration.
 
-        Returns cold start initialization: U = U_terminal, M = M_initial
-        propagated through time.
+        Returns the cold start: U(T) = U_terminal, the terminal at the initial density, and
+        M(0) = M_initial; every other row is zero.
 
         Returns:
             x0: Flattened initial state
@@ -456,8 +451,7 @@ class MFGResidual:
         M = np.zeros(self.solution_shape)
 
         # Set boundary conditions
-        if self.U_terminal is not None:
-            U[-1] = self.U_terminal
+        U[-1] = self.U_terminal
         if self.M_initial is not None:
             M[0] = self.M_initial
 
