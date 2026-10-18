@@ -41,11 +41,13 @@ if TYPE_CHECKING:
 #: The 2-D Laplacian in the Taylor columns of `build_taylor_matrix_2d`: (1, x, y, x^2/2, xy, y^2/2).
 _E_LAP = np.array([0.0, 0.0, 0.0, 1.0, 0.0, 1.0])
 
-#: A Laplacian row is admitted when its moment residual is at most this and every off-centre weight is at least
-#: its negative. It is a numerical tolerance, not a method parameter.
+#: A Laplacian row is admitted when each moment's residual is at most this times that moment's scale, and every
+#: off-centre weight is at least minus this times the row's largest weight. Relative, so a cloud's unit of length
+#: does not decide it. A numerical tolerance, not a method parameter.
 CERTIFICATE_TOL = 1e-8
 
-#: A sector whose rays' cross product is below this is degenerate and not emitted.
+#: A sector whose rays' cross product is below this times the product of their lengths -- the sine of its aperture
+#: -- is degenerate and not emitted.
 _DET_TOL = 1e-10
 
 
@@ -65,8 +67,9 @@ class GuardedFanParameters:
         boundary. Default 125, 130, ..., 175. Supported: increasing, each above ``theta0_deg`` and below 180.
         Empty: such a node is refused.
     thin_deg : float
-        Smallest angular gap between adjacent rays, in degrees. Default 25. Supported: above 0 and below
-        ``theta0_deg``. Its sine bounds a control's sector coordinates, and so the scheme's constant.
+        Smallest angular gap between adjacent rays, in degrees. Default 25. Supported: above 0, below
+        ``theta0_deg`` and below 120, since a fan has at least three gaps summing to 360. With the widest gap's, its
+        sine bounds a control's sector coordinates: the smaller of the two enters the scheme's constant.
     radius_factor : float
         A fan's rays first reach ``radius_factor * h6``, ``h6`` the node's mean distance to its six nearest
         nodes. Default 2. Supported: above 0.
@@ -75,11 +78,12 @@ class GuardedFanParameters:
     max_expansions : int
         Radii tried at a cap before the next cap. Default 8. Supported: at least 1.
     n_candidates : int
-        Nearest nodes considered as rays. Default 40. Supported: at least 3, the fewest rays of a fan.
+        Nearest nodes queried for a node's rays, the node itself among them. Default 40. Supported: at least 4,
+        the node and the three rays of the smallest fan.
     laplacian_pools : tuple of int
         Pool sizes, the k nearest nodes with the centre, tried in order for a node's Laplacian row. Default
-        21, 31, 41, 61. Supported: increasing, each at least 7: the row has six P2 moments to match, and the
-        centre is one of the pool.
+        21, 31, 41, 61. Supported: increasing, each at least 2. Whether a pool places a row is its certificate's
+        to decide: a regular grid's five-point stencil is a positive P2 row.
     """
 
     theta0_deg: float = 120.0
@@ -93,12 +97,12 @@ class GuardedFanParameters:
 
     def __post_init__(self) -> None:
         where = "GuardedFanParameters"
-        if not 0.0 < self.thin_deg < self.theta0_deg < 180.0:
+        if not 0.0 < self.thin_deg < self.theta0_deg < 180.0 or not self.thin_deg < 120.0:
             raise ValueError(
-                f"{where}: need 0 < thin_deg < theta0_deg < 180, got thin_deg={self.thin_deg}, "
+                f"{where}: need 0 < thin_deg < theta0_deg < 180 and thin_deg < 120, got thin_deg={self.thin_deg}, "
                 f"theta0_deg={self.theta0_deg}. A sector's aperture must stay below 180 degrees for its rays to span "
-                "a pointed cone, in which a control has non-negative coordinates (the monotonicity argument), and a "
-                "fan needs thin_deg below theta0_deg to exist."
+                "a pointed cone, in which a control has non-negative coordinates (the monotonicity argument). A fan "
+                "needs thin_deg below theta0_deg, and below 120, since it has at least three gaps summing to 360."
             )
         caps = tuple(float(c) for c in self.widened_caps_deg)
         if any(not self.theta0_deg < c < 180.0 for c in caps) or any(b <= a for a, b in pairwise(caps)):
@@ -112,15 +116,16 @@ class GuardedFanParameters:
                 f"{where}: need radius_factor > 0, radius_growth > 1 and max_expansions >= 1, got "
                 f"{self.radius_factor}, {self.radius_growth}, {self.max_expansions}."
             )
-        if self.n_candidates < 3:
+        if self.n_candidates < 4:
             raise ValueError(
-                f"{where}: n_candidates must be at least 3, the fewest rays of a fan, got {self.n_candidates}."
+                f"{where}: n_candidates must be at least 4, the node itself and the three rays of the smallest fan, "
+                f"got {self.n_candidates}."
             )
         pools = tuple(int(k) for k in self.laplacian_pools)
-        if not pools or pools[0] < 7 or any(b <= a for a, b in pairwise(pools)):
+        if not pools or pools[0] < 2 or any(b <= a for a, b in pairwise(pools)):
             raise ValueError(
-                f"{where}: laplacian_pools must be non-empty and increasing, each at least 7 (six P2 moments and the "
-                f"centre), got {pools}."
+                f"{where}: laplacian_pools must be non-empty and increasing, each at least 2 (the centre and a "
+                f"neighbour), got {pools}."
             )
 
 
@@ -187,10 +192,11 @@ def select_guarded_rays(
 def _positive_laplacian_row(displacement: np.ndarray, center: int) -> tuple[np.ndarray, float, int] | None:
     """The positive P2 Laplacian row over ``displacement`` (the centre at index ``center``), or None.
 
-    Admitted only by its certificate: moment residual at most `CERTIFICATE_TOL` and every off-centre weight at
-    least its negative. Off-centre weights in ``[-CERTIFICATE_TOL, 0)`` are then set to 0 and the centre to minus
-    the off-centre sum, so the row's off-centre weights are exactly non-negative, and the residual is measured
-    again. Returns the weights, that residual, and how many weights were set to 0.
+    Admitted only by its certificate, never by the solver's status: finite weights, each moment's residual at most
+    `CERTIFICATE_TOL` times its scale ``1 + sum_j |w_j A_jk|``, and every off-centre weight at least
+    ``-CERTIFICATE_TOL * max|w|``. Off-centre weights in that band below 0 are then set to 0 and the centre to minus the
+    off-centre sum, so the row's off-centre weights are exactly non-negative, and the residual is measured again.
+    Returns the weights, the largest relative residual, and how many weights were set to 0.
     """
     cp = joint_socp.cp
     A, _ = build_taylor_matrix_2d(displacement)
@@ -205,13 +211,19 @@ def _positive_laplacian_row(displacement: np.ndarray, center: int) -> tuple[np.n
     if weights.value is None:
         return None
     w = np.asarray(weights.value, dtype=float)
-    if np.linalg.norm(A.T @ w - _E_LAP) > CERTIFICATE_TOL or w[off].min() < -CERTIFICATE_TOL:
+    if not np.all(np.isfinite(w)):
+        return None
+
+    def relative_residual(w: np.ndarray) -> float:
+        return float(np.max(np.abs(A.T @ w - _E_LAP) / (1.0 + np.abs(A.T * w).sum(axis=1))))
+
+    if not (relative_residual(w) <= CERTIFICATE_TOL and w[off].min() >= -CERTIFICATE_TOL * np.abs(w).max()):
         return None
     snapped = int(np.count_nonzero(w[off] < 0.0))
     w[off] = np.maximum(w[off], 0.0)
     w[center] = -w[off].sum()
-    residual = float(np.linalg.norm(A.T @ w - _E_LAP))
-    if residual > CERTIFICATE_TOL:
+    residual = relative_residual(w)
+    if not residual <= CERTIFICATE_TOL:
         return None
     return w, residual, snapped
 
@@ -329,7 +341,7 @@ class PositiveQPFan:
             fan_nodes, fan_rays = fan_nodes[order], fan_rays[order]
             for r in range(len(fan_nodes)):
                 a, b = fan_rays[r], fan_rays[(r + 1) % len(fan_nodes)]
-                if abs(a[0] * b[1] - a[1] * b[0]) < _DET_TOL:
+                if abs(a[0] * b[1] - a[1] * b[0]) < _DET_TOL * np.linalg.norm(a) * np.linalg.norm(b):
                     continue
                 node.append(i)
                 j0.append(int(fan_nodes[r]))
@@ -356,7 +368,7 @@ class PositiveQPFan:
             "rows_per_pool": per_pool,
             "n_widened": len(widened),
             "widened_cap_max_deg": max(widened.values(), default=None),
-            "laplacian_residual_max": residual_max,
+            "laplacian_relative_residual_max": residual_max,
             "weights_set_to_zero": snapped_total,
             "n_sectors": len(node),
         }

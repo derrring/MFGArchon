@@ -253,6 +253,24 @@ def _build_upwind_projection(alpha: np.ndarray, points: np.ndarray, socp_data: d
     return A.tocsr()
 
 
+def _refuse_rows_without_the_m_matrix_pattern(bc_rows: dict, t_idx: int) -> None:
+    """The certificate of `"guarded_fan"`'s BC rows, read where they are installed (#1689): scaled so its centre is
+    positive, every off-centre entry of a row is non-positive. A Dirichlet row, e_i, has it; a reflecting face's GFDM
+    normal-gradient row has mixed signs. A non-finite entry fails it."""
+    failing = []
+    for i, (row, _target) in bc_rows.items():
+        row = np.asarray(row, dtype=float).ravel()
+        off = np.delete(row * np.sign(row[i]), i)
+        if not (np.all(np.isfinite(row)) and row[i] != 0.0 and off.max(initial=0.0) <= 0.0):
+            failing.append(int(i))
+    if failing:
+        raise ValueError(
+            f"HJBHowardSolver(discretisation='guarded_fan'): at time index {t_idx}, {len(failing)} BC row(s) have no "
+            f"M-matrix sign pattern, so the policy-evaluation matrix would not be monotone (#1689). Rows, first 10: "
+            f"{failing[:10]}. The scheme takes Dirichlet faces only."
+        )
+
+
 # ---------------------------------------------------------------------------
 # HJBHowardSolver
 # ---------------------------------------------------------------------------
@@ -291,8 +309,9 @@ class HJBHowardSolver:
         non-quadratic-in-alpha running cost evaluated at each collocation
         point. Pass None when there is no running cost beyond
         `(1/2)|alpha|^2`. The quadratic term is computed internally from
-        `alpha_star`'s output.
-    discretisation : Literal["upwind_projection", "upwind_per_axis", "central"]
+        the policy's control: `alpha_star`'s output, or under `"guarded_fan"`
+        the sector control `control_cost.lagrangian` is evaluated at.
+    discretisation : Literal["upwind_projection", "upwind_per_axis", "central", "guarded_fan"]
         Choice of `A_adv` assembly:
 
         - `"upwind_projection"` (default): single-axis upwind along the
@@ -327,8 +346,16 @@ class HJBHowardSolver:
     Raises
     ------
     RuntimeError
-        If `stencil_provider` does not have `_joint_socp_stencils`
-        populated (missing SOCP precompute).
+        If `stencil_provider` offers neither `_joint_socp_stencils` nor an operator
+        with `get_derivative_weights`; under `"guarded_fan"`, if it has no
+        positive-QP fan.
+    TypeError
+        Without `alpha_star`, except under `"guarded_fan"`.
+    ValueError
+        Under `"guarded_fan"`, with `alpha_star` or `control_lagrangian`, without a
+        `QuadraticControlCost`, or without `use_provider_bc_rows`; with
+        `control_cost` under another discretisation; and at a solve, when a BC
+        row it would install has no M-matrix sign pattern.
     """
 
     @retired_volatility_keywords
@@ -423,8 +450,9 @@ class HJBHowardSolver:
                     "HJBHowardSolver: running on non-SOCP stencils. Policy iteration's global "
                     "convergence (Bokanowski-Maroso-Zidani 2009) assumes a MONOTONE scheme, and bare "
                     "Wendland-Taylor weights are not monotone in general. The solve will run; its "
-                    "convergence is not covered by that hypothesis. Use "
-                    "monotonicity_scheme='joint_socp' for the covered case (#2066).",
+                    "convergence is not covered by that hypothesis. monotonicity_scheme='joint_socp' gives "
+                    "monotone interior rows (#2066); a boundary row is its BC row, and a no-flux one is not an "
+                    "M-matrix row (#1689 comment 6246936251).",
                     UserWarning,
                     stacklevel=2,
                     # The retired-keyword refusal wraps __init__; without this the warning is attributed
@@ -624,6 +652,8 @@ class HJBHowardSolver:
         # Issue #1118 PR2: value-form BC rows from the provider's shared builder. Constant
         # across inner iterations at this time step; None -> the legacy self-contained scheme.
         bc_rows = self.stencil_provider._value_form_bc_rows(t_idx) if self.use_provider_bc_rows else None
+        if guarded:
+            _refuse_rows_without_the_m_matrix_pattern(bc_rows, t_idx)
         if isinstance(volatility, np.ndarray):
             diffusion_operator = diags(diffusion_from_volatility(volatility, kind="field")) @ D_lap
         else:
@@ -712,7 +742,12 @@ class HJBHowardSolver:
                     f"previous timestep and return a finite field that answers a different "
                     f"problem. Check the Hamiltonian's decomposition (inner_solver='howard' "
                     f"assumes a quadratic control cost) and the stencil conditioning; "
-                    f"inner_solver='newton' needs no decomposition. (Issue #2072)"
+                    + (
+                        "monotonicity_scheme='joint_socp' (or 'none') with inner_solver='newton'"
+                        if guarded
+                        else "inner_solver='newton'"
+                    )
+                    + " needs no decomposition. (Issue #2072)"
                 )
 
             # Policy update.
@@ -755,7 +790,9 @@ class HJBHowardSolver:
             Density field at every time step, shape `(Nt+1, n)`. It reaches the
             solve only through ``alpha_star(t, x, p, m)``. When None, ``alpha_star``
             receives ``m = 0``, which is no MFG coupling only for an ``alpha_star``
-            that does not depend on ``m``.
+            that does not depend on ``m``. Under ``"guarded_fan"``, which has no
+            ``alpha_star``, it is not read: a coupling reaches that solve through
+            ``running_cost``.
         U_terminal : np.ndarray
             Terminal condition `U(T, x)`, shape `(n,)`.
         volatility, volatility_kind, source_term

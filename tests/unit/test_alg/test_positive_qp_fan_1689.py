@@ -17,13 +17,16 @@ import warnings
 import pytest
 
 import numpy as np
+from scipy.sparse import eye
 from scipy.stats import qmc
 
 from mfgarchon import Conditions, MFGProblem, Model
+from mfgarchon.alg.numerical.gfdm_components import GuardedFanParameters
+from mfgarchon.alg.numerical.gfdm_components.positive_qp_fan import cone_policy
 from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
-from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions
+from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc
 
 L_BOX, T_END, SIGMA, COST, G_TERM = 20.0, 4.0, 0.3, 1.0, 0.5
 
@@ -76,41 +79,119 @@ def _lq_problem(nt, control_cost=None, hamiltonian=None):
     )
 
 
-def _mid_time_errors(n_interior, kind):
-    points, boundary = _cloud(n_interior, kind)
-    nt = round(float(120 * np.sqrt(n_interior / 225)))
+def _solve(problem, points, boundary, nt, terminal, **extra):
     solver = HJBGFDMSolver(
-        _lq_problem(nt),
+        problem,
         collocation_points=points,
         boundary_indices=boundary,
         delta=4.0,
         monotonicity_scheme="positive_qp_fan",
         inner_solver="howard",
+        **extra,
     )
-    U = solver.solve_hjb_system(M_density=np.zeros((nt + 1, len(points))), U_terminal=_u_star(T_END, points))
+    return solver, solver.solve_hjb_system(M_density=np.zeros((nt + 1, len(points))), U_terminal=terminal)
+
+
+def _lq_run(n_interior, kind):
+    points, boundary = _cloud(n_interior, kind)
+    nt = round(float(120 * np.sqrt(n_interior / 225)))
+    solver, U = _solve(_lq_problem(nt), points, boundary, nt, _u_star(T_END, points))
     interior = np.setdiff1d(np.arange(len(points)), boundary)
     err = np.abs(U[nt // 2] - _u_star((nt // 2) * T_END / nt, points))[interior]
-    return float(np.sqrt(np.mean(err**2)) * L_BOX), solver
+    return float(np.sqrt(np.mean(err**2)) * L_BOX), solver, U, nt, points, interior
 
 
 @pytest.mark.parametrize("kind", ["sobol", "jittered"])
 def test_positive_qp_fan_converges_at_first_order_to_the_closed_form_lq_value(kind):
-    """Between N_int = 225 and 400 the mid-time L2 error falls at an order of at least 0.6, and every interior row of
-    the operator has non-negative off-centre Laplacian weights. Discrimination is shown in the PR by mutation."""
-    (e_coarse, solver), (e_fine, _) = _mid_time_errors(225, kind), _mid_time_errors(400, kind)
+    """Between N_int = 225 and 400 the mid-time L2 error falls at an order of at least 0.6. And on the operator that
+    reached it, at N_int = 225:
+
+    - the Laplacian is exact on P2, the diffusion half the error rate alone cannot see (#2750 review 1 measured the
+      rate green with the diffusion flipped, dropped or scaled ten-fold);
+    - every interior row of the policy-evaluation matrix, at the mid-time policy, has non-positive off-diagonals;
+    - every step solves the discrete Bellman equation: the largest interior residual over the steps is at most 1e-7 of
+      the largest |u_next / dt|. Measured 1.1e-10 to 2.9e-10 of it with Howard's loop, and 5.2e-5 to 1.7e-3 with one
+      policy evaluation per step (#2750, both clouds at N_int 225 and 400).
+
+    The policy's argmin is shown discriminating in the PR, by a first-sector mutant."""
+    (e_coarse, solver, U, nt, points, interior), (e_fine, *_) = _lq_run(225, kind), _lq_run(400, kind)
     order = np.log(e_coarse / e_fine) / np.log(np.sqrt(L_BOX**2 / 225) / np.sqrt(L_BOX**2 / 400))
     assert order >= 0.6, f"{kind}: EOC {order:.3f} from L2 errors {e_coarse:.4e} -> {e_fine:.4e}"
-    laplacian = solver._positive_qp_fan.laplacian.tocoo()
-    off = laplacian.row != laplacian.col
-    assert laplacian.data[off].min() >= 0.0
+
+    fan, n = solver._positive_qp_fan, len(points)
+    x, y = points[:, 0], points[:, 1]
+    for f, lap in ((np.ones(n), 0.0), (x, 0.0), (y, 0.0), (x**2, 2.0), (x * y, 0.0), (y**2, 2.0)):
+        assert np.max(np.abs((fan.laplacian @ f)[interior] - lap)) <= 1e-6
+
+    cost, dt, diffusion = QuadraticControlCost(lambda_=COST), T_END / nt, 0.5 * SIGMA**2
+    policy = cone_policy(U[nt // 2], fan.sectors, cost)
+    rows = (eye(n, format="csr") / dt - policy.advection(n) - diffusion * fan.laplacian)[interior].tocoo()
+    assert rows.data[interior[rows.row] != rows.col].max() <= 0.0
+
+    worst, scale = 0.0, 0.0
+    for k in range(nt):
+        policy = cone_policy(U[k], fan.sectors, cost)
+        residual = (
+            (U[k] - U[k + 1]) / dt
+            - policy.advection(n) @ U[k]
+            - diffusion * (fan.laplacian @ U[k])
+            - cost.lagrangian(policy.control)
+        )
+        worst = max(worst, float(np.max(np.abs(residual[interior]))))
+        scale = max(scale, float(np.max(np.abs(U[k + 1][interior] / dt))))
+    assert worst <= 1e-7 * scale, f"{kind}: Bellman residual {worst:.3e} against max|u_next / dt| {scale:.3e}"
+
+
+@pytest.mark.parametrize("lam", [0.25, 4.0])
+def test_positive_qp_fan_is_exact_on_a_linear_value_at_any_control_cost(lam):
+    """``u* = a.x + 1 - (|a|^2 / (2 lam) - V)(T - t)`` solves ``-u_t + |grad u|^2 / (2 lam) - V - (sigma^2/2) Lap u = 0``
+    with V = 0.5, a potential that reaches the solve through the running cost. The scheme is exact on it: a linear u's
+    sector gradient is ``a``, the projection of ``-a / lam`` onto its sector is exact, and L is exact on P2. #2750's
+    review 1 measured 7e-12 and 3e-11 here, against 0.87 and more when the control cost's lambda was dropped."""
+    a, potential = np.array([0.3, -0.2]), 0.5
+
+    def u_linear(t, x):
+        return np.atleast_2d(np.asarray(x, dtype=float)) @ a + 1.0 - (a @ a / (2.0 * lam) - potential) * (T_END - t)
+
+    nt = 20
+    bc = BoundaryConditions(
+        segments=[BCSegment(name="frame", bc_type=BCType.DIRICHLET, value=lambda t, x: float(u_linear(t, x)[0]))],
+        dimension=2,
+        domain_bounds=np.array([[0.0, L_BOX], [0.0, L_BOX]]),
+    )
+    grid = TensorProductGrid(bounds=[(0.0, L_BOX), (0.0, L_BOX)], Nx_points=[5, 5], boundary_conditions=bc)
+    hamiltonian = SeparableHamiltonian(control_cost=QuadraticControlCost(lambda_=lam), potential=lambda t, x: potential)
+    problem = MFGProblem(
+        model=Model(hamiltonian=hamiltonian, volatility=SIGMA),
+        domain=grid,
+        conditions=Conditions(m_initial=lambda x: 1.0 / L_BOX**2, u_terminal=lambda x: 0.0, T=T_END),
+        Nt=nt,
+    )
+    points, boundary = _cloud(225, "jittered")
+    _, U = _solve(problem, points, boundary, nt, u_linear(T_END, points))
+    for k in range(nt + 1):
+        assert np.max(np.abs(U[k] - u_linear(k * T_END / nt, points))) <= 1e-8
 
 
 @pytest.mark.parametrize(
     "row",
-    ["one dimension", "an L1 control cost", "the Newton inner solver", "a no-flux face", "a fan that cannot close"],
+    [
+        "one dimension",
+        "an L1 control cost",
+        "a congestion Hamiltonian",
+        "the Newton inner solver",
+        "ghost nodes",
+        "positive_qp_fan= with another scheme",
+        "a no-flux face",
+        "a no-flux face with degenerate stencils",
+        "a no-flux face set after construction",
+        "a fan that cannot close",
+    ],
 )
 def test_positive_qp_fan_refuses_what_it_cannot_make_monotone(row):
-    """Each refusal names what it cannot do (D5 and P3-D1 of #1689 comment 6246915117)."""
+    """Each refusal names what it cannot do (D5 and P3-D1 of #1689 comment 6246915117). A boundary point of any other
+    condition than Dirichlet is refused by its type: at construction, also where its stencil is degenerate and its
+    row an identity, and at the solve, for a condition set on the grid after construction (#2750 review 1)."""
     if row == "one dimension":
         from mfgarchon.geometry.boundary import dirichlet_bc
 
@@ -130,32 +211,70 @@ def test_positive_qp_fan_refuses_what_it_cannot_make_monotone(row):
             )
         return
     points, boundary = _cloud(225, "jittered")
-    kwargs = {
-        "collocation_points": points,
-        "boundary_indices": boundary,
-        "delta": 4.0,
-        "monotonicity_scheme": "positive_qp_fan",
-    }
+    kwargs = {"collocation_points": points, "boundary_indices": boundary, "monotonicity_scheme": "positive_qp_fan"}
+    with_howard = {**kwargs, "delta": 4.0, "inner_solver": "howard"}
     if row == "an L1 control cost":
         from mfgarchon.core.hamiltonian import L1ControlCost
 
         with pytest.raises(ValueError, match=r"QuadraticControlCost.*joint_socp"):
-            HJBGFDMSolver(_lq_problem(4, control_cost=L1ControlCost()), inner_solver="howard", **kwargs)
-        return
-    if row == "the Newton inner solver":
+            HJBGFDMSolver(_lq_problem(4, control_cost=L1ControlCost()), **with_howard)
+    elif row == "a congestion Hamiltonian":
+        from mfgarchon.core.hamiltonian import CongestionHamiltonian
+
+        congestion = CongestionHamiltonian(control_cost=QuadraticControlCost(), congestion_factor=lambda m: 1.0 + m)
+        with pytest.raises(ValueError, match=r"SeparableHamiltonian with a QuadraticControlCost"):
+            HJBGFDMSolver(_lq_problem(4, hamiltonian=congestion), **with_howard)
+    elif row == "the Newton inner solver":
         with pytest.raises(ValueError, match=r"inner_solver='howard'"):
-            HJBGFDMSolver(_lq_problem(4), inner_solver="newton", **kwargs)
-        return
-    if row == "a no-flux face":
-        from mfgarchon.geometry.boundary import no_flux_bc
+            HJBGFDMSolver(_lq_problem(4), **{**with_howard, "inner_solver": "newton"})
+    elif row == "ghost nodes":
+        with pytest.raises(ValueError, match=r"use_ghost_nodes=True\) is refused"):
+            HJBGFDMSolver(_lq_problem(4), use_ghost_nodes=True, **with_howard)
+    elif row == "positive_qp_fan= with another scheme":
+        with pytest.raises(ValueError, match=r"read only by monotonicity_scheme='positive_qp_fan'"):
+            HJBGFDMSolver(
+                _lq_problem(4), positive_qp_fan=GuardedFanParameters(), **{**with_howard, "monotonicity_scheme": "none"}
+            )
+    elif row == "a no-flux face":
+        with pytest.raises(ValueError, match=r"condition other than Dirichlet"):
+            HJBGFDMSolver(_lq_problem(4), boundary_conditions=no_flux_bc(dimension=2), **with_howard)
+    elif row == "a no-flux face with degenerate stencils":
+        # A radius of 0.5 on a 1.33 spacing leaves the boundary stencils degenerate, and their no-flux rows identities.
+        with pytest.raises(ValueError, match=r"condition other than Dirichlet"):
+            HJBGFDMSolver(
+                _lq_problem(4),
+                boundary_conditions=no_flux_bc(dimension=2),
+                **{**with_howard, "delta": 0.5, "neighborhood_mode": "radius"},
+            )
+    elif row == "a no-flux face set after construction":
+        problem = _lq_problem(4)
+        solver = HJBGFDMSolver(problem, **with_howard)
+        problem.geometry.set_boundary_conditions(no_flux_bc(dimension=2))
+        with pytest.raises(ValueError, match=r"condition other than Dirichlet"):
+            solver.solve_hjb_system(M_density=np.zeros((5, len(points))), U_terminal=_u_star(T_END, points))
+    else:
+        # Without the widened caps, the nodes within about 0.3h of the frame have no fan with every gap below 120.
+        with pytest.raises(ValueError, match=r"interior row\(s\) cannot be built.*no fan with every gap at most 120"):
+            HJBGFDMSolver(_lq_problem(4), positive_qp_fan=GuardedFanParameters(widened_caps_deg=()), **with_howard)
 
-        with pytest.raises(ValueError, match=r"not M-matrix rows"):
-            HJBGFDMSolver(_lq_problem(4), inner_solver="howard", boundary_conditions=no_flux_bc(dimension=2), **kwargs)
-        return
-    # Without the widened caps, the nodes within about 0.3h of the frame have no fan with every gap below 120 degrees.
-    from mfgarchon.alg.numerical.gfdm_components.positive_qp_fan import GuardedFanParameters
 
-    with pytest.raises(ValueError, match=r"interior row\(s\) cannot be built.*no fan with every gap at most 120"):
-        HJBGFDMSolver(
-            _lq_problem(4), inner_solver="howard", positive_qp_fan=GuardedFanParameters(widened_caps_deg=()), **kwargs
-        )
+def test_a_dirichlet_frame_valued_by_a_provider_constructs():
+    """The scheme's boundary check reads each point's condition type and evaluates no value, so a Dirichlet frame whose
+    value a provider resolves per iteration is admitted (#2750 review 1)."""
+    from mfgarchon.geometry.boundary import ConstantProvider
+
+    bc = BoundaryConditions(
+        segments=[BCSegment(name="frame", bc_type=BCType.DIRICHLET, value=ConstantProvider(0.0))],
+        dimension=2,
+        domain_bounds=np.array([[0.0, L_BOX], [0.0, L_BOX]]),
+    )
+    points, boundary = _cloud(225, "jittered")
+    HJBGFDMSolver(
+        _lq_problem(4),
+        collocation_points=points,
+        boundary_indices=boundary,
+        boundary_conditions=bc,
+        delta=4.0,
+        monotonicity_scheme="positive_qp_fan",
+        inner_solver="howard",
+    )
