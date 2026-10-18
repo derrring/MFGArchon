@@ -16,13 +16,14 @@ from mfgarchon.alg.numerical.gfdm_components import (
     GridCollocationMapper,
     NeighborhoodBuilder,
 )
-
-# GFDM infrastructure (Strategy Pattern)
 from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import (
     DirectCollocationHandler,
     TaylorOperator,
     create_operator,
 )
+
+# GFDM infrastructure (Strategy Pattern)
+from mfgarchon.alg.numerical.gfdm_components.positive_qp_fan import GuardedFanParameters, PositiveQPFan
 from mfgarchon.alg.numerical.hjb_solvers.h_eval import (
     assemble_hjb_jacobian_diag,
     assemble_hjb_residual,
@@ -348,7 +349,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Collocation geometry for periodic domains (Issue #711)
         collocation_geometry: object | None = None,
         # Obstacle-aware visibility filtering for stencil neighbors
-        obstacle_sdf: object | None = None,
+        obstacle_sdf: Callable[[np.ndarray], np.ndarray] | None = None,
         visibility_samples: int = 10,
         visibility_margin: float = 0.0,
         # DMP runtime guard (Issue #1074): warn when the solved drift exceeds the
@@ -378,6 +379,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         # joint_socp scheme only: accept relaxed-SOCP rows where the exact SOCP is infeasible (#1689). Default False
         # refuses such a cloud by naming its rows.
         socp_allow_relaxed_rows: bool = False,
+        # positive_qp_fan scheme only: its fan and Laplacian parameters, defaults at the paper's values (#1689).
+        positive_qp_fan: GuardedFanParameters | None = None,
     ):
         """
         Initialize the GFDM HJB solver.
@@ -397,9 +400,10 @@ class HJBGFDMSolver(BaseHJBSolver):
             monotonicity_scheme: Which monotonicity construction to enforce on the GFDM
                 Laplacian (and, for joint_socp, the per-edge cone on the gradient stencil):
                 - "none": no constraints (fastest; no monotonicity guarantee).
-                - "joint_socp": joint SOCP — M-matrix on $-\\Delta_h$
+                - "joint_socp": joint SOCP — M-matrix on the interior rows of $-\\Delta_h$
                   + per-edge cone $\\|D_{ij}\\|_2 \\leq C h_i L_{ij}$, closing the discrete
-                  comparison principle (audit-major contribution).
+                  comparison principle on those rows (audit-major contribution). A boundary row is its
+                  BC row, and a no-flux or Neumann one is not an M-matrix row (#1689 comment 6246936251).
                   Scope (Issue #1074): joint_socp enforces the M-matrix property PER
                   STENCIL (each row's off-diagonals satisfy the sign/dominance
                   constraints). This does NOT in general guarantee that the ASSEMBLED
@@ -410,6 +414,14 @@ class HJBGFDMSolver(BaseHJBSolver):
                   or ``monotonicity_enforcer.verify_assembled_m_matrix(...)`` to check
                   the assembled M-matrix / DMP property for a specific problem and
                   discretization.
+                - "positive_qp_fan" (#1689): the positive-QP Laplacian and the guarded fan, with Howard's
+                  exact sectorwise policy (``inner_solver="howard"``). Every interior row of the
+                  policy-evaluation matrix is an M-matrix row, for every policy: off-centre Laplacian weights
+                  are non-negative by certificate, and a control's advection row has non-negative
+                  off-diagonals by its sector. Two-dimensional, ``SeparableHamiltonian`` with
+                  ``QuadraticControlCost``, and Dirichlet faces only: a reflecting face's BC row is a GFDM
+                  normal-gradient stencil with mixed signs, refused (#1689 comment 6246936251). A row the
+                  scheme cannot build is refused by name. Parameters: ``positive_qp_fan``.
                 Default: "none". The derivative-coefficient QP, ``"qp_m_matrix"``, is deleted (#1689): it
                 constrained the solution's Taylor coefficients, not the stencil's weights.
             monotonicity_application: ``"precompute"`` (the only one ``joint_socp`` has: its weights
@@ -528,6 +540,9 @@ class HJBGFDMSolver(BaseHJBSolver):
                 are reported in one WARNING, with their count and the largest M-matrix
                 slack ``eps_M``, and are not counted as feasible. A row whose
                 neighbourhood does not contain it is refused either way.
+            positive_qp_fan: ``positive_qp_fan`` scheme only (#1689): a ``GuardedFanParameters`` of the
+                fan's apertures and radii and the Laplacian's pools, each validated against the range the
+                scheme's monotonicity argument supports. None takes the defaults, the paper's values.
         """
         super().__init__(problem)
 
@@ -561,9 +576,12 @@ class HJBGFDMSolver(BaseHJBSolver):
                 "stencils whose M-matrix structure is not enforced — boundary "
                 "stencils can produce oscillatory derivatives that destabilize "
                 "FP-Particle coupling on long-time-horizon problems. For a "
-                "monotone scheme, pass `monotonicity_scheme='joint_socp'` "
+                "monotone scheme on a 2-D problem with Dirichlet faces and a SeparableHamiltonian with a "
+                "quadratic control cost, pass "
+                "`monotonicity_scheme='positive_qp_fan', inner_solver='howard'`, whose every interior row is an "
+                "M-matrix row (#1689). Otherwise pass `monotonicity_scheme='joint_socp'` "
                 "(non-negative off-centre Laplacian weights and a per-edge cone, "
-                "solved per stencil; whether its discrete maximum principle holds is "
+                "solved per stencil, for interior rows; whether its discrete maximum principle holds is "
                 "decided per problem and run, not a priori; `check_dmp=True` checks it). "
                 "See Issue #1034. Pass `monotonicity_scheme='none'` explicitly "
                 "to suppress this warning if the bare scheme is intentional.",
@@ -574,7 +592,7 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         if monotonicity_scheme is not None or monotonicity_application is not None:
             scheme = monotonicity_scheme if monotonicity_scheme is not None else "none"
-            valid_schemes = ("none", "joint_socp")
+            valid_schemes = ("none", "joint_socp", "positive_qp_fan")
             if scheme not in valid_schemes:
                 raise ValueError(f"monotonicity_scheme must be one of {valid_schemes}; got '{scheme}'.")
             valid_apps = ("precompute", None)
@@ -605,9 +623,15 @@ class HJBGFDMSolver(BaseHJBSolver):
             # numerical equivalence with the legacy `precompute_socp_weights +
             # patch_operator` workflow used in research code.
             self.qp_optimization_level = "precompute"
+        else:
+            # positive_qp_fan solves its HJB through Howard on its own operator (#1689); every other reader of
+            # this solver's derivatives takes the default operator, as under "none".
+            self.qp_optimization_level = "none"
 
         # Method name
-        self.hjb_method_name = "GFDM" if scheme == "none" else f"GFDM-JointSOCP-{application}"
+        self.hjb_method_name = {"none": "GFDM", "positive_qp_fan": "GFDM-PositiveQPFan"}.get(
+            scheme, f"GFDM-JointSOCP-{application}"
+        )
 
         # Set defaults if still None
         if max_newton_iterations is None:
@@ -632,6 +656,14 @@ class HJBGFDMSolver(BaseHJBSolver):
         if inner_solver not in ("newton", "howard"):
             raise ValueError(f"inner_solver must be 'newton' or 'howard', got {inner_solver!r}")
         self.inner_solver = inner_solver
+        if positive_qp_fan is not None and scheme != "positive_qp_fan":
+            raise ValueError(
+                f"HJBGFDMSolver: positive_qp_fan= parameters are read only by monotonicity_scheme='positive_qp_fan', "
+                f"and the scheme is {scheme!r}."
+            )
+        if scheme == "positive_qp_fan":
+            self._refuse_outside_positive_qp_fan_scope()
+        self._positive_qp_fan_parameters = positive_qp_fan if positive_qp_fan is not None else GuardedFanParameters()
 
         # ONE source for "which domain is this", resolved before anything reads it (#1841).
         # Boundary detection and the operator's periodic wrap both need to know which axes are
@@ -820,10 +852,11 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Ghost nodes keep the PDE row at a Neumann boundary node and close it with mirrored neighbour values, so that
         # row's Laplacian is read; joint_socp builds monotone rows for interior nodes only, and a boundary row would
         # carry bare Wendland-Taylor weights under a scheme that names monotone ones (#1689).
-        if self._use_ghost_nodes and self.monotonicity_scheme == "joint_socp":
+        if self._use_ghost_nodes and self.monotonicity_scheme in ("joint_socp", "positive_qp_fan"):
+            scheme = self.monotonicity_scheme
             raise ValueError(
-                "HJBGFDMSolver(monotonicity_scheme='joint_socp', use_ghost_nodes=True) is refused: ghost nodes keep the "
-                "PDE row at a Neumann boundary node, and joint_socp gives monotone weights to interior rows only, so that "
+                f"HJBGFDMSolver(monotonicity_scheme={scheme!r}, use_ghost_nodes=True) is refused: ghost nodes keep the "
+                f"PDE row at a Neumann boundary node, and {scheme} gives monotone weights to interior rows only, so that "
                 "row would carry bare Wendland-Taylor weights (#1689). Use use_ghost_nodes=False, where a Neumann node's "
                 "row is its BC row, or monotonicity_scheme='none'."
             )
@@ -1075,11 +1108,77 @@ class HJBGFDMSolver(BaseHJBSolver):
                     f"first 10: {rows[:10]}."
                 )
 
+        # positive_qp_fan's operator (#1689): the positive Laplacian rows and the guarded fans of the interior nodes,
+        # each admitted by its certificate, read by HJBHowardSolver(discretisation="guarded_fan").
+        self._positive_qp_fan: PositiveQPFan | None = None
+        if self.monotonicity_scheme == "positive_qp_fan":
+            self._refuse_boundary_positive_qp_fan_cannot_close()
+            interior_indices = np.setdiff1d(np.arange(self.n_points), self.boundary_indices)
+            self._positive_qp_fan = PositiveQPFan(
+                self.collocation_points,
+                interior_indices,
+                self._positive_qp_fan_parameters,
+                obstacle_sdf=obstacle_sdf,
+                visibility_samples=visibility_samples,
+                visibility_margin=visibility_margin,
+            )
+            logger.info(f"positive_qp_fan: {len(interior_indices)} interior rows, {self._positive_qp_fan.report}")
+
         # Lazy-initialized cache attributes
         # These are expensive to compute and only created when needed
         self._D_grad: list | None = None  # Gradient differentiation matrices
         self._D_lap: Any | None = None  # Laplacian differentiation matrix
         self._cached_derivative_weights: dict | None = None  # Pre-computed GFDM weights
+
+    def _refuse_outside_positive_qp_fan_scope(self) -> None:
+        """D5 of #1689 (comment 6191566926): what monotonicity_scheme='positive_qp_fan' can make monotone."""
+        from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+
+        head = "HJBGFDMSolver(monotonicity_scheme='positive_qp_fan')"
+        if self.dimension != 2:
+            raise ValueError(
+                f"{head} is two-dimensional: its fan is angular, and this cloud has dimension {self.dimension} (#1689). "
+                "Use monotonicity_scheme='joint_socp'."
+            )
+        if self.inner_solver != "howard":
+            raise ValueError(
+                f"{head} needs inner_solver='howard': its policy is Howard's exact argmin over each node's fan "
+                f"sectors, and inner_solver is {self.inner_solver!r} (#1689)."
+            )
+        hamiltonian = getattr(self.problem, "hamiltonian_class", None)
+        control_cost = getattr(hamiltonian, "control_cost", None)
+        if not isinstance(hamiltonian, SeparableHamiltonian) or not isinstance(control_cost, QuadraticControlCost):
+            raise ValueError(
+                f"{head} needs a SeparableHamiltonian with a QuadraticControlCost: its exact sector argmin is the "
+                f"projection a quadratic cost makes it, and this problem's Hamiltonian is {type(hamiltonian).__name__} "
+                f"with {type(control_cost).__name__} (#1689). Use monotonicity_scheme='joint_socp' with "
+                "inner_solver='newton'."
+            )
+
+    def _refuse_boundary_positive_qp_fan_cannot_close(self) -> None:
+        """P3-D1 of #1689: the scheme takes Dirichlet faces only until its reflecting closure lands. At taylor_order 2 a
+        reflecting face's BC row is a GFDM normal-gradient stencil with mixed signs, 0 of 40 rows with the M-matrix sign
+        pattern on an 11 x 11 no-flux box (#1689 comment 6246936251); at taylor_order 1, 4 of those 40 still have mixed
+        signs; and a degenerate one falls back to an identity row that imposes u = 0. Decided on each boundary
+        point's classified type, so no BC value is evaluated and a Dirichlet frame valued by a provider is admitted.
+        Run at construction, before the operator is built, and by HJBHowardSolver(discretisation="guarded_fan") at
+        each step, before it reads the BC rows it installs, so a BC adopted after construction is checked too."""
+        failing = [
+            (i, bc_enum) for i, bc_enum, _, _ in self._classified_boundary_points() if bc_enum != BCType.DIRICHLET
+        ]
+        if failing:
+            shown = [
+                (i, np.round(self.collocation_points[i], 6).tolist(), getattr(bc_enum, "value", bc_enum))
+                for i, bc_enum in failing[:10]
+            ]
+            raise ValueError(
+                f"HJBGFDMSolver(monotonicity_scheme='positive_qp_fan'): {len(failing)} boundary point(s) have a condition "
+                f"other than Dirichlet, for which the scheme has no row (#1689). First 10 (index, point, BC): {shown}. The "
+                "scheme takes Dirichlet faces only until its reflecting closure lands: a reflecting face's GFDM "
+                "normal-gradient row is not certified an M-matrix row (at taylor_order 2 it has mixed signs), and where "
+                "the stencil is degenerate it is an identity row, which imposes u = 0 there. "
+                "monotonicity_scheme='joint_socp' runs such a problem, with monotone interior rows only."
+            )
 
     def _compute_n_spatial_grid_points(self) -> int:
         """Compute total number of spatial grid points from geometry."""
@@ -2269,6 +2368,20 @@ class HJBGFDMSolver(BaseHJBSolver):
             g = values
         return factories[kind](value=g, dimension=dimension)
 
+    def _classified_boundary_points(self):
+        """``(i, bc_enum, segment, normal)`` for every boundary point, by `_classify_boundary_point`, in the order of
+        ``self.boundary_indices``. No BC value is evaluated. The one loop `_value_form_bc_rows` and positive_qp_fan's
+        boundary check read."""
+        try:
+            use_per_point_bc = self.boundary_conditions.is_mixed
+        except AttributeError:
+            use_per_point_bc = False
+        global_bc_type = self._get_boundary_condition_property("type") if not use_per_point_bc else None
+        legacy_normals = self._bc_config.get("normals", None) if not use_per_point_bc and self._bc_config else None
+        for local_idx, i in enumerate(self.boundary_indices):
+            i = int(i)
+            yield (i, *self._classify_boundary_point(i, local_idx, use_per_point_bc, global_bc_type, legacy_normals))
+
     def _classify_boundary_point(self, i: int, local_idx: int, use_per_point_bc: bool, global_bc_type, legacy_normals):
         """Resolve ``(bc_enum, segment, normal)`` for boundary point ``i``.
 
@@ -2388,22 +2501,12 @@ class HJBGFDMSolver(BaseHJBSolver):
         omitted (their PDE row stands) — only relevant when ``_use_ghost_nodes`` is on, which
         the joint_socp Howard path does not use.
         """
-        try:
-            use_per_point_bc = self.boundary_conditions.is_mixed
-        except AttributeError:
-            use_per_point_bc = False
-        global_bc_type = self._get_boundary_condition_property("type") if not use_per_point_bc else None
-        legacy_normals = self._bc_config.get("normals", None) if not use_per_point_bc and self._bc_config else None
         dimension = self.dimension
         n = self.n_points
         current_time = time_idx * (self.problem.T / self.problem.Nt) if getattr(self.problem, "Nt", 0) > 0 else 0.0
 
         rows: dict[int, tuple[np.ndarray, float]] = {}
-        for local_idx, i in enumerate(self.boundary_indices):
-            i = int(i)
-            bc_enum, segment, normal = self._classify_boundary_point(
-                i, local_idx, use_per_point_bc, global_bc_type, legacy_normals
-            )
+        for i, bc_enum, segment, normal in self._classified_boundary_points():
             if (
                 bc_enum in (BCType.NEUMANN, BCType.NO_FLUX)
                 and self._use_ghost_nodes
@@ -3008,13 +3111,21 @@ class HJBGFDMSolver(BaseHJBSolver):
         dp(). SOCP stencils are used when present and are no longer required (#2066).
 
         Issue #1247 (#1118 PR2): the separable Hamiltonian's potential V(t, x) and density
-        coupling f(m), plus any caller-supplied running cost, are wired into Howard's
+        coupling f(m), and the MMS source, are wired into Howard's
         running_cost slot (see `running_cost` closure below), so Howard solves the full non-LQ
-        HJB ``-d_t u + (1/2)|grad u|^2 - V(x) - f(m) - (sigma^2/2) Lap u = 0`` (#2375 ruling 3). Still deferred
-        (fail-loud below): non-unit control cost lambda and non-quadratic control cost (the
-        Lagrangian-scaling work tracked alongside #1071).
+        HJB ``-d_t u + |grad u|^2 / (2 lambda) - V(x) - f(m) - (sigma^2/2) Lap u = 0`` (#2375 ruling 3). Refused
+        below: a non-quadratic control cost (#1071). A quadratic one's lambda reaches the solve twice: in the policy,
+        through ``alpha_star`` from ``dp()`` or, under positive_qp_fan, ``optimal_control`` in ``cone_policy``; and in
+        the right-hand side, through ``control_cost.lagrangian``.
         """
         from mfgarchon.alg.numerical.hjb_solvers.hjb_howard import HJBHowardSolver
+
+        # The Newton route the refusals below name. positive_qp_fan is a Howard discretisation and refuses Newton.
+        newton = (
+            "monotonicity_scheme='joint_socp' with inner_solver='newton'"
+            if self.monotonicity_scheme == "positive_qp_fan"
+            else "inner_solver='newton'"
+        )
 
         # Issue #2066: this gate used to refuse here, duplicating a check HJBHowardSolver no
         # longer makes. Howard needs D_lap, D_grad and an interior/boundary split; none is
@@ -3252,7 +3363,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 raise NotImplementedError(
                     f"inner_solver='howard' could not probe {type(H_class).__name__} to verify its "
                     f"policy-evaluation assumptions ({type(_exc).__name__}: {_exc}). Howard needs a "
-                    f"batch-callable H(t, x, p, m); use inner_solver='newton' (Issue #2011)."
+                    f"batch-callable H(t, x, p, m); use {newton} (Issue #2011)."
                 ) from _exc
             # RELATIVE, not absolute: an algebraically exact unit quadratic whose alpha-free part
             # cancels from terms of magnitude K leaves a residue ~K*eps, and an absolute 1e-10 bound
@@ -3270,7 +3381,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                     f"A non-finite probe cannot certify that Howard's substituted Lagrangian holds, "
                     f"and comparing it against a tolerance silently ACCEPTS -- `nan > tol` is False. "
                     f"Probed at momentum magnitudes {[round(float(m), 4) for m in _mags]} over "
-                    f"{len(_dirs)} directions. Use inner_solver='newton', which reads the "
+                    f"{len(_dirs)} directions. Use {newton}, which reads the "
                     f"Hamiltonian through H() and dp() and needs no decomposition. (Issue #2072)"
                 )
 
@@ -3316,7 +3427,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                     f"(scaled to a terminal-gradient bound of {_gT:.4g}). Howard would silently substitute "
                     f"L(alpha) = {'its declared quadratic Lagrangian' if control_cost is not None else '(1/2)|alpha|^2'} "
                     f"and drop the alpha-free part bitwise (Issue #2011). "
-                    f"Use inner_solver='newton', which reads the Hamiltonian through H() and dp() "
+                    f"Use {newton}, which reads the Hamiltonian through H() and dp() "
                     f"and needs no decomposition."
                 )
 
@@ -3445,13 +3556,16 @@ class HJBGFDMSolver(BaseHJBSolver):
         # gate above guarantees a QuadraticControlCost, so L(alpha) = lambda/2 |alpha|^2.
         control_lagrangian = control_cost.lagrangian if control_cost is not None else None
         assembly_sigma = self._sigma_for_assembly()
+        # positive_qp_fan (#1689): its policy and its Lagrangian are both the control cost's.
+        guarded = self.monotonicity_scheme == "positive_qp_fan"
         howard = HJBHowardSolver(
             self.problem,
             stencil_provider=self,
-            alpha_star=alpha_star,
+            alpha_star=None if guarded else alpha_star,
             running_cost=howard_running_cost,
-            control_lagrangian=control_lagrangian,
-            discretisation="central" if self.dimension == 1 else "upwind_projection",
+            control_lagrangian=None if guarded else control_lagrangian,
+            control_cost=control_cost if guarded else None,
+            discretisation="guarded_fan" if guarded else ("central" if self.dimension == 1 else "upwind_projection"),
             volatility=assembly_sigma,
             # _sigma_for_assembly yields a scalar or a collocation-space (N,) field, never a tensor.
             volatility_kind="field" if isinstance(assembly_sigma, np.ndarray) else None,
