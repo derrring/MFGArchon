@@ -1597,8 +1597,9 @@ class HJBGFDMSolver(BaseHJBSolver):
 
             # Override BOTH Laplacian and gradient weights with joint SOCP weights at
             # interior nodes where SOCP is feasible (audit-major Phase 1B). Every other node keeps the
-            # default Wendland-Taylor weights: a boundary node's row is replaced by its BC row before any
-            # solve reads it (`_apply_boundary_conditions_to_sparse_system`, `_value_form_bc_rows`; #1689).
+            # default Wendland-Taylor weights: under joint_socp, whose ghost nodes are refused, a boundary node's
+            # row is replaced by its BC row before any solve reads it (`_apply_boundary_conditions_to_sparse_system`,
+            # `_value_form_bc_rows`; #1689).
             if self._joint_socp_stencils is not None and self._joint_socp_stencils.has_stencil(i):
                 socp_weights = self._joint_socp_stencils.get_weights_dict(i)
                 if socp_weights is not None:

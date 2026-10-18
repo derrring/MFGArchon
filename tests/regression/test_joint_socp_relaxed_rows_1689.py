@@ -139,8 +139,8 @@ def test_a_row_its_neighbourhood_does_not_contain_is_refused(allow_relaxed):
 
 def test_ghost_nodes_with_joint_socp_are_refused_by_name():
     """Ghost nodes keep the PDE row at a Neumann boundary node; joint_socp builds monotone rows for interior nodes only,
-    so that row would carry bare Wendland-Taylor weights. Refused by name. At main it raised IndexError inside the
-    boundary buffer #1689 deleted; without the refusal it now constructs and solves on those rows."""
+    so that row would carry bare Wendland-Taylor weights. Refused by name. On this cloud main raised IndexError inside
+    the boundary buffer #1689 deleted; without the refusal it now constructs and solves on those rows."""
     xs = np.linspace(0.0, 1.0, 11)
     X, Y = np.meshgrid(xs, xs, indexing="ij")
     points = np.column_stack([X.ravel(), Y.ravel()])

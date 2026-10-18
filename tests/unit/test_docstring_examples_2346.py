@@ -205,7 +205,7 @@ def test_the_allowlist_states_its_own_coverage():
     # `geometry.graph.maze_config`. The retirement docstrings of #2002 took it to 177 by withdrawing the
     # example of `PenaltyHJBSolver`, whose constructor raises, and #1689's PR 1 to 175 by deleting
     # `utils.numerical.qp_utils` and `MonotonicityEnforcer`, whose module keeps two functions without examples, and
-    # its PR 2 to 174 by deleting `gfdm_components.precomputed_stencils`, joint_socp's unread boundary buffer.
+    # its PR 2 to 174 by deleting `gfdm_components.precomputed_stencils`, joint_socp's boundary buffer.
     assert with_examples == 174, (
         f"modules carrying examples moved {174} -> {with_examples}. This file's docstring states the ratio "
         f"23 of 174; update it and this number together, or the coverage claim overstates itself silently."
