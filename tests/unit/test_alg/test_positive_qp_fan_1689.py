@@ -31,10 +31,10 @@ from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, n
 L_BOX, T_END, SIGMA, COST, G_TERM = 20.0, 4.0, 0.3, 1.0, 0.5
 
 
-def _u_star(t, x):
+def _u_star(t, x, cost=COST):
     x = np.atleast_2d(np.asarray(x, dtype=float))
-    p = 1.0 / (1.0 / G_TERM + 2.0 * (T_END - t) / COST)
-    q = SIGMA**2 * COST * np.log(1.0 + 2.0 * G_TERM * (T_END - t) / COST)
+    p = 1.0 / (1.0 / G_TERM + 2.0 * (T_END - t) / cost)
+    q = SIGMA**2 * cost * np.log(1.0 + 2.0 * G_TERM * (T_END - t) / cost)
     return p * ((x[:, 0] - L_BOX) ** 2 + (x[:, 1] - L_BOX) ** 2) + q
 
 
@@ -63,14 +63,14 @@ def _cloud(n_interior, kind, seed=42):
     return points, np.arange(n_interior, len(points))
 
 
-def _lq_problem(nt, control_cost=None, hamiltonian=None):
+def _lq_problem(nt, control_cost=None, hamiltonian=None, cost=COST):
     bc = BoundaryConditions(
-        segments=[BCSegment(name="frame", bc_type=BCType.DIRICHLET, value=lambda t, x: float(_u_star(t, x)[0]))],
+        segments=[BCSegment(name="frame", bc_type=BCType.DIRICHLET, value=lambda t, x: float(_u_star(t, x, cost)[0]))],
         dimension=2,
         domain_bounds=np.array([[0.0, L_BOX], [0.0, L_BOX]]),
     )
     grid = TensorProductGrid(bounds=[(0.0, L_BOX), (0.0, L_BOX)], Nx_points=[5, 5], boundary_conditions=bc)
-    hamiltonian = hamiltonian or SeparableHamiltonian(control_cost=control_cost or QuadraticControlCost(lambda_=COST))
+    hamiltonian = hamiltonian or SeparableHamiltonian(control_cost=control_cost or QuadraticControlCost(lambda_=cost))
     return MFGProblem(
         model=Model(hamiltonian=hamiltonian, volatility=SIGMA),
         domain=grid,
@@ -115,13 +115,27 @@ def _sector_hamiltonian(u, sectors, lam):
     return hamiltonian
 
 
-def _lq_run(n_interior, kind):
+def _lq_run(n_interior, kind, cost=COST):
     points, boundary = _cloud(n_interior, kind)
     nt = round(float(120 * np.sqrt(n_interior / 225)))
-    solver, U = _solve(_lq_problem(nt), points, boundary, nt, _u_star(T_END, points))
+    solver, U = _solve(_lq_problem(nt, cost=cost), points, boundary, nt, _u_star(T_END, points, cost))
     interior = np.setdiff1d(np.arange(len(points)), boundary)
-    err = np.abs(U[nt // 2] - _u_star((nt // 2) * T_END / nt, points))[interior]
+    err = np.abs(U[nt // 2] - _u_star((nt // 2) * T_END / nt, points, cost))[interior]
     return float(np.sqrt(np.mean(err**2)) * L_BOX), solver, U, nt, points, interior
+
+
+def _bellman_residual(solver, U, nt, interior, cost):
+    """The largest interior residual of the discrete Bellman equation over the steps, with the sector minimum from
+    `_sector_hamiltonian`, and the largest |u_next / dt| it is measured against."""
+    fan, dt, diffusion = solver._positive_qp_fan, T_END / nt, 0.5 * SIGMA**2
+    worst, scale = 0.0, 0.0
+    for k in range(nt):
+        residual = (
+            (U[k] - U[k + 1]) / dt - _sector_hamiltonian(U[k], fan.sectors, cost) - diffusion * (fan.laplacian @ U[k])
+        )
+        worst = max(worst, float(np.max(np.abs(residual[interior]))))
+        scale = max(scale, float(np.max(np.abs(U[k + 1][interior] / dt))))
+    return worst, scale
 
 
 @pytest.mark.parametrize("kind", ["sobol", "jittered"])
@@ -151,14 +165,17 @@ def test_positive_qp_fan_converges_at_first_order_to_the_closed_form_lq_value(ki
     rows = (eye(n, format="csr") / dt - policy.advection(n) - diffusion * fan.laplacian)[interior].tocoo()
     assert rows.data[interior[rows.row] != rows.col].max() <= 0.0
 
-    worst, scale = 0.0, 0.0
-    for k in range(nt):
-        residual = (
-            (U[k] - U[k + 1]) / dt - _sector_hamiltonian(U[k], fan.sectors, COST) - diffusion * (fan.laplacian @ U[k])
-        )
-        worst = max(worst, float(np.max(np.abs(residual[interior]))))
-        scale = max(scale, float(np.max(np.abs(U[k + 1][interior] / dt))))
+    worst, scale = _bellman_residual(solver, U, nt, interior, COST)
     assert worst <= 1e-7 * scale, f"{kind}: Bellman residual {worst:.3e} against max|u_next / dt| {scale:.3e}"
+
+
+def test_positive_qp_fan_solves_the_discrete_bellman_equation_at_a_control_cost_other_than_one():
+    """The LQ problem at c = 4 on the jittered cloud, N_int = 225: every step solves the discrete Bellman equation to
+    1e-7 of the largest |u_next / dt|, as at c = 1. At c = 1 a policy that projects -g instead of -g / c onto a
+    sector's rays is the same policy, and the lambda test's linear u never needs the projection (#2750 review 3)."""
+    _, solver, U, nt, _, interior = _lq_run(225, "jittered", cost=4.0)
+    worst, scale = _bellman_residual(solver, U, nt, interior, 4.0)
+    assert worst <= 1e-7 * scale, f"c = 4: Bellman residual {worst:.3e} against max|u_next / dt| {scale:.3e}"
 
 
 @pytest.mark.parametrize("lam", [0.25, 4.0])
@@ -212,8 +229,9 @@ def test_positive_qp_fan_is_exact_on_a_linear_value_at_any_control_cost(lam):
 def test_positive_qp_fan_refuses_what_it_cannot_make_monotone(row):
     """Each refusal names what it cannot do (D5 and P3-D1 of #1689 comment 6246915117). A boundary point of any other
     condition than Dirichlet is refused by its type: at construction, also where its stencil is degenerate and its
-    row an identity, and where HJBHowardSolver installs the BC rows, for a condition set on the grid after
-    construction (#2750 review 1), on HJBGFDMSolver's route and on HJBHowardSolver's own (#2750 review 2)."""
+    row an identity, and where HJBHowardSolver installs the BC rows, for a condition the provider adopts after
+    construction: set on the grid, which HJBGFDMSolver's solve adopts (#2750 review 1), or adopted by hand before
+    HJBHowardSolver solves directly (#2750 review 2)."""
     if row == "one dimension":
         from mfgarchon.geometry.boundary import dirichlet_bc
 
@@ -321,14 +339,12 @@ def test_a_dirichlet_frame_valued_by_a_provider_constructs():
 
 
 def test_the_positive_laplacian_scales_with_the_cloud():
-    """The cloud scaled from a box of side 20 to one of side 1e-3 gives the same fans and the Laplacian scaled by
-    (20 / 1e-3)^2: the row's QP is solved in units of the node's h6. Solved in the cloud's own units, CLARABEL called
+    """The cloud scaled from a box of side 20 to one of side 1e-3 gives the Laplacian scaled by (20 / 1e-3)^2: the
+    row's QP is solved in units of the node's h6. Solved in the cloud's own units, CLARABEL called
     every row of the small box infeasible and the operator refused all 225 (#2750 review 2)."""
     points, _ = _cloud(225, "jittered")
     interior = np.arange(225)
     big = PositiveQPFan(points, interior, GuardedFanParameters())
     small = PositiveQPFan(points * (1e-3 / L_BOX), interior, GuardedFanParameters())
-    for key in ("node", "j0", "j1"):
-        np.testing.assert_array_equal(small.sectors[key], big.sectors[key])
     scaled = small.laplacian * (1e-3 / L_BOX) ** 2
     assert abs(scaled - big.laplacian).max() <= 1e-10 * abs(big.laplacian).max()

@@ -1156,9 +1156,10 @@ class HJBGFDMSolver(BaseHJBSolver):
             )
 
     def _refuse_boundary_positive_qp_fan_cannot_close(self) -> None:
-        """P3-D1 of #1689: the scheme takes Dirichlet faces only. A reflecting face's BC row is a GFDM normal-gradient
-        stencil with mixed signs, 0 of 40 rows with the M-matrix sign pattern on an 11 x 11 no-flux box (#1689 comment
-        6246936251), and a degenerate one falls back to an identity row that imposes u = 0. Decided on each boundary
+        """P3-D1 of #1689: the scheme takes Dirichlet faces only until its reflecting closure lands. At taylor_order 2 a
+        reflecting face's BC row is a GFDM normal-gradient stencil with mixed signs, 0 of 40 rows with the M-matrix sign
+        pattern on an 11 x 11 no-flux box (#1689 comment 6246936251); at taylor_order 1, 4 of those 40 still have mixed
+        signs; and a degenerate one falls back to an identity row that imposes u = 0. Decided on each boundary
         point's classified type, so no BC value is evaluated and a Dirichlet frame valued by a provider is admitted.
         Run at construction, before the operator is built, and by HJBHowardSolver(discretisation="guarded_fan") at
         each step, before it reads the BC rows it installs, so a BC adopted after construction is checked too."""
@@ -1172,11 +1173,11 @@ class HJBGFDMSolver(BaseHJBSolver):
             ]
             raise ValueError(
                 f"HJBGFDMSolver(monotonicity_scheme='positive_qp_fan'): {len(failing)} boundary point(s) have a condition "
-                f"other than Dirichlet, for which the scheme has no row (#1689). First 10 (index, point, BC): {shown}. A "
-                "reflecting face (no-flux, Neumann, Robin) gives a GFDM normal-gradient row with mixed signs, which is "
-                "not an M-matrix row, and where the stencil is degenerate an identity row, which imposes u = 0 there. The "
-                "scheme takes Dirichlet faces only until its reflecting closure lands. monotonicity_scheme='joint_socp' "
-                "runs such a problem, with monotone interior rows only."
+                f"other than Dirichlet, for which the scheme has no row (#1689). First 10 (index, point, BC): {shown}. The "
+                "scheme takes Dirichlet faces only until its reflecting closure lands: a reflecting face's GFDM "
+                "normal-gradient row is not certified an M-matrix row (at taylor_order 2 it has mixed signs), and where "
+                "the stencil is degenerate it is an identity row, which imposes u = 0 there. "
+                "monotonicity_scheme='joint_socp' runs such a problem, with monotone interior rows only."
             )
 
     def _compute_n_spatial_grid_points(self) -> int:
@@ -3110,7 +3111,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         dp(). SOCP stencils are used when present and are no longer required (#2066).
 
         Issue #1247 (#1118 PR2): the separable Hamiltonian's potential V(t, x) and density
-        coupling f(m), plus any caller-supplied running cost, are wired into Howard's
+        coupling f(m), and the MMS source, are wired into Howard's
         running_cost slot (see `running_cost` closure below), so Howard solves the full non-LQ
         HJB ``-d_t u + |grad u|^2 / (2 lambda) - V(x) - f(m) - (sigma^2/2) Lap u = 0`` (#2375 ruling 3). Refused
         below: a non-quadratic control cost (#1071). A quadratic one's lambda reaches the solve twice: in the policy,

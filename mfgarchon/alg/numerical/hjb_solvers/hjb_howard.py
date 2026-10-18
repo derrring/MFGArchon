@@ -263,8 +263,9 @@ class HJBHowardSolver:
 
     Replaces the Newton inner loop of `HJBGFDMSolver` when the Hamiltonian
     `H(x, p, m)` is strictly convex in `p`. Reads its `D_lap`/`D_grad` weights from a
-    `stencil_provider` (a constructed `HJBGFDMSolver`): SOCP-corrected ones, or under
-    `discretisation="guarded_fan"` the provider's positive-QP Laplacian and guarded fans.
+    `stencil_provider` (a constructed `HJBGFDMSolver`): SOCP-corrected ones, else its operator's
+    `get_derivative_weights`, or under `discretisation="guarded_fan"` the provider's positive-QP
+    Laplacian and guarded fans.
 
     Parameters
     ----------
@@ -337,17 +338,22 @@ class HJBHowardSolver:
         neither a stencil nor a provider BC row (#1254), and when policy evaluation
         returns a non-finite value (#2072).
     TypeError
-        Without `alpha_star`, except under `"guarded_fan"`.
+        Without `alpha_star`, except under `"guarded_fan"`; for an `alpha_star` whose
+        parameters are out of the `(t, x, p, m)` order; for the retired `volatility_field=`;
+        and at a solve, for a callable volatility override.
     ValueError
         For an unknown `discretisation`; under `"guarded_fan"`, with `alpha_star` or
         `control_lagrangian`, without a `QuadraticControlCost`, or without
-        `use_provider_bc_rows`; with `control_cost` under another discretisation; and at
-        a solve, under `"guarded_fan"`, when a boundary point has a condition other than
-        Dirichlet (the provider's boundary type check), or when a volatility override is
-        neither a scalar nor a field of shape `(n,)`.
+        `use_provider_bc_rows`; with `control_cost` under another discretisation; for a
+        negative scalar volatility, an array volatility without `volatility_kind`, or
+        `volatility_kind="field"` without a volatility; and at a solve, under
+        `"guarded_fan"`, when a boundary point has a condition other than Dirichlet (the
+        provider's boundary type check), or when a volatility override is neither a scalar
+        nor a field of shape `(n,)`.
     NotImplementedError
         For a `volatility_kind="tensor"` volatility; and at a solve, for `cross_density`,
-        `source_term` or `volatility` passed to `solve_hjb_system`.
+        `source_term` or `volatility` passed to `solve_hjb_system`, and for a periodic BC in
+        the provider's BC rows.
     """
 
     @retired_volatility_keywords
@@ -646,9 +652,9 @@ class HJBHowardSolver:
         # Issue #1118 PR2: value-form BC rows from the provider's shared builder. Constant
         # across inner iterations at this time step; None -> the legacy self-contained scheme.
         if guarded:
-            # #1689: the scheme has an M-matrix boundary row for a Dirichlet point only. A reflecting point's row is a
-            # mixed-sign normal-gradient stencil, or on a degenerate stencil an identity imposing u = 0; the provider's
-            # type check refuses both, on the BC whose rows are read next.
+            # #1689: the scheme takes Dirichlet boundary points only until its reflecting closure lands. A reflecting
+            # point's row is, at taylor_order 2, a mixed-sign normal-gradient stencil, and on a degenerate stencil an
+            # identity imposing u = 0; the provider's type check refuses it, on the BC whose rows are read next.
             self.stencil_provider._refuse_boundary_positive_qp_fan_cannot_close()
         bc_rows = self.stencil_provider._value_form_bc_rows(t_idx) if self.use_provider_bc_rows else None
         if isinstance(volatility, np.ndarray):
@@ -740,7 +746,7 @@ class HJBHowardSolver:
                     f"problem. Check the Hamiltonian's decomposition (inner_solver='howard' "
                     f"assumes a quadratic control cost) and the stencil conditioning; "
                     + (
-                        "monotonicity_scheme='joint_socp' (or 'none') with inner_solver='newton'"
+                        "monotonicity_scheme='joint_socp' with inner_solver='newton'"
                         if guarded
                         else "inner_solver='newton'"
                     )
