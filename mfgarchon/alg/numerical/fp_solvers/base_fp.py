@@ -201,10 +201,17 @@ class BaseFPSolver(BaseNumericalSolver):
         return fp_view_of_shared_bc(bc, consumer=type(self).__name__)
 
     def _fp_own_bc(self, bc: _BC) -> _BC:
-        """A BC handed to this solver, which is the FP's own: a NEUMANN in it is refused (#2512, row B3)."""
+        """A BC handed to this solver, which is the FP's own: a NEUMANN in it is refused (#2512, row B3), and it is bound
+        to the problem's geometry, as the shared BC is by its grid, so a reader that asks the owner without a geometry
+        decides on the grid (#2490): a ``region_name`` is read on the grid that marks it. ``bind_geometry`` returns a
+        copy, so the caller's BC is not written into, and refuses a BC of another dimension than the geometry."""
+        from mfgarchon.geometry.boundary import BoundaryConditions
         from mfgarchon.geometry.boundary.bc_utils import refuse_explicit_fp_neumann
 
-        return refuse_explicit_fp_neumann(bc, type(self).__name__)
+        bc = refuse_explicit_fp_neumann(bc, type(self).__name__)
+        if isinstance(bc, BoundaryConditions):
+            return bc.bind_geometry(self.problem.geometry)
+        return bc
 
     def _lookup_boundary_conditions(self) -> Any:
         """The base chain, read as an FP solver reads it: its own BC refused if NEUMANN, the shared one translated."""

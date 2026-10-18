@@ -216,7 +216,8 @@ class BoundaryConditions:
         """
         if self.dimension is not None and self.dimension != dim:
             raise ValueError(
-                f"BC dimension mismatch: BC has dimension={self.dimension}, but geometry has dimension={dim}"
+                f"BC dimension mismatch: BC has dimension={self.dimension}, but geometry has dimension={dim}. Build "
+                f"the BC with dimension={dim}, the geometry's."
             )
         if self.dimension == dim:
             return self  # Already bound to correct dimension
