@@ -7,8 +7,8 @@
     geometry" at the first boundary particle; it now absorbs there, as the same BC set on the grid does.
   - A `region_name` that is also a face label (`"x_max"`), on a grid that marks a region of that name over part of
     the face, was read by the explicit route as the whole face. It is now read by the mark, as the grid's own BC is:
-    `FPParticleSolver` reflects a particle that reaches the face where the mark does not, and
-    `MeshlessGalerkinFPSolver` refuses it (#2717), as each does with the BC set on the grid.
+    `FPParticleSolver` absorbs only on the marked part of the face and reflects elsewhere on it, and
+    `MeshlessGalerkinFPSolver`, which solved, now raises #2717's refusal, as each does with the BC set on the grid.
   - Over the five FP solvers and four exits the binding was measured on, those are the only answers that change.
   - **Behaviour change:** a BC of another dimension than the problem's geometry is refused, naming the dimension to
     build it in. `FPParticleSolver`, `FPFDMSolver`, `FPFVMSolver`, `FPSLSolver`, `FPFEMSolver` and

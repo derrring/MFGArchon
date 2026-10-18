@@ -23,11 +23,11 @@ from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, n
 UNIT_SQUARE = np.array([[0.0, 1.0], [0.0, 1.0]])
 
 
-def _grid_marking_a_gate():
+def _grid_marking_a_gate(name="gate"):
     grid = TensorProductGrid(
         bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[11, 11], boundary_conditions=no_flux_bc(dimension=2)
     )
-    grid.mark_region("gate", predicate=lambda x: (x[:, 0] > 0.95) & (x[:, 1] > 0.35) & (x[:, 1] < 0.65))
+    grid.mark_region(name, predicate=lambda x: (x[:, 0] > 0.95) & (x[:, 1] > 0.35) & (x[:, 1] < 0.65))
     return grid
 
 
@@ -40,22 +40,32 @@ def _problem(grid):
     )
 
 
-def _gate_exit(dimension=2):
+def _gate_exit(dimension=2, name="gate"):
     return BoundaryConditions(
-        segments=[BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0, region_name="gate", priority=1)],
+        segments=[BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0, region_name=name, priority=1)],
         dimension=dimension,
         default_bc=BCType.NO_FLUX,
         domain_bounds=UNIT_SQUARE.copy() if dimension == 2 else None,
     )
 
 
-def test_an_explicit_region_name_exit_is_read_on_the_grid_that_marks_it():
-    """200 particles drift right from (0.9, 0.5) into the gate, the x_max nodes y = 0.4 ... 0.6, and all are absorbed,
-    as with the same BC set on the grid. At main the first boundary particle raised "This reader has no geometry"."""
+@pytest.mark.parametrize(
+    ("name", "start_y", "remaining"),
+    [("gate", 0.5, 0), ("x_max", 0.2, 200)],
+    ids=["a marked region name", "a face label the grid marks"],
+)
+def test_an_explicit_region_name_exit_is_read_on_the_grid_that_marks_it(name, start_y, remaining):
+    """200 particles drift right from (0.9, start_y) to x_max, where the grid marks the exit on the nodes y = 0.4 ... 0.6.
+    They meet it as with the same BC set on the grid:
+
+    - a marked region name: absorbed at the gate. At main the first boundary particle raised "This reader has no
+      geometry";
+    - a face label the grid marks (#2753 review 1): reflected at y = 0.2, where the mark does not reach. At main the
+      explicit route read the label as the whole x_max face and absorbed all 200."""
     solver = FPParticleSolver(
-        _problem(_grid_marking_a_gate()), num_particles=200, seed=0, boundary_conditions=_gate_exit()
+        _problem(_grid_marking_a_gate(name)), num_particles=200, seed=0, boundary_conditions=_gate_exit(name=name)
     )
-    start = np.column_stack([np.full(200, 0.9), np.full(200, 0.5)])
+    start = np.column_stack([np.full(200, 0.9), np.full(200, start_y)])
     solver.solve_fp_system(
         initial_particles=start,
         drift_field=lambda t, x, m: np.broadcast_to([3.0, 0.0], np.shape(x)),
@@ -63,7 +73,7 @@ def test_an_explicit_region_name_exit_is_read_on_the_grid_that_marks_it():
         show_progress=False,
     )
     final = np.asarray(solver.M_particles_trajectory[-1], dtype=float).reshape(-1, 2)
-    assert np.count_nonzero(np.all(np.isfinite(final), axis=1)) == 0
+    assert np.count_nonzero(np.all(np.isfinite(final), axis=1)) == remaining
 
 
 def test_the_solver_binds_a_copy_and_leaves_the_callers_bc_unbound():
