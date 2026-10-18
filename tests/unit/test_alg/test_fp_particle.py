@@ -257,8 +257,10 @@ class TestBoundaryConditionRequirements:
         # Explicit periodic BC should take priority
         bc = periodic_bc(dimension=1)
         solver = FPParticleSolver(problem, num_particles=100, boundary_conditions=bc)
-        assert solver.boundary_conditions is bc
-        assert solver.boundary_conditions is not problem.geometry.get_boundary_conditions()
+        # The solver holds the explicit BC bound to the grid, a copy, so the caller's object is not written into (#2490).
+        assert solver.boundary_conditions == bc
+        assert solver.boundary_conditions._geometry_ref() is geometry
+        assert solver.boundary_conditions != problem.geometry.get_boundary_conditions()
 
 
 if __name__ == "__main__":

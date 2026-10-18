@@ -772,7 +772,7 @@ class TestFPFDMSolverTensorDiffusion:
         )
         problem = MFGProblem(geometry=domain, T=0.05, Nt=10, volatility=0.1, components=_default_components_2d())
 
-        boundary_conditions = no_flux_bc(dimension=1)
+        boundary_conditions = no_flux_bc(dimension=2)
         solver = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
 
         Nx, Ny = domain.num_points[0], domain.num_points[1]
@@ -813,7 +813,7 @@ class TestFPFDMSolverTensorDiffusion:
             bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[26, 26], boundary_conditions=no_flux_bc(dimension=2)
         )
         problem = MFGProblem(geometry=domain, T=0.05, Nt=10, volatility=sigma, components=_default_components_2d())
-        solver = FPFDMSolver(problem, boundary_conditions=no_flux_bc(dimension=1))
+        solver = FPFDMSolver(problem, boundary_conditions=no_flux_bc(dimension=2))
 
         Nt = problem.Nt + 1
         Nx, Ny = domain.num_points[0], domain.num_points[1]
@@ -842,7 +842,9 @@ class TestFPFDMSolverTensorDiffusion:
         )
         problem = MFGProblem(geometry=domain, T=0.05, Nt=10, volatility=0.1, components=_default_components_2d())
 
-        boundary_conditions = periodic_bc(dimension=1)
+        # The geometry's BC (#2490): a 1-D periodic_bc on this 2D grid is refused now. It was not periodic
+        # here either, as test_tensor_with_drift records (#1822).
+        boundary_conditions = no_flux_bc(dimension=2)
         solver = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
 
         Nx, Ny = domain.num_points[0], domain.num_points[1]
@@ -874,7 +876,7 @@ class TestFPFDMSolverTensorDiffusion:
         )
         problem = MFGProblem(geometry=domain, T=0.05, Nt=10, volatility=0.1, components=_default_components_2d())
 
-        boundary_conditions = no_flux_bc(dimension=1)
+        boundary_conditions = no_flux_bc(dimension=2)
         solver = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
 
         Nx, Ny = domain.num_points[0], domain.num_points[1]
@@ -912,7 +914,7 @@ class TestFPFDMSolverTensorDiffusion:
         )
         problem = MFGProblem(geometry=domain, T=0.05, Nt=10, volatility=0.1, components=_default_components_2d())
 
-        boundary_conditions = no_flux_bc(dimension=1)
+        boundary_conditions = no_flux_bc(dimension=2)
         solver = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
 
         Nx, Ny = domain.num_points[0], domain.num_points[1]
@@ -1028,7 +1030,7 @@ class TestFPFDMSolverTensorDiffusion:
         )
         problem = MFGProblem(geometry=domain, T=0.05, Nt=5, volatility=0.1, components=_default_components_2d())
 
-        boundary_conditions = no_flux_bc(dimension=1)
+        boundary_conditions = no_flux_bc(dimension=2)
         solver = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
 
         Nx, Ny = domain.num_points[0], domain.num_points[1]
@@ -1050,7 +1052,7 @@ class TestFPFDMSolverTensorDiffusion:
         )
         problem = MFGProblem(geometry=domain, T=0.05, Nt=50, volatility=0.1, components=_default_components_2d())
 
-        boundary_conditions = no_flux_bc(dimension=1)
+        boundary_conditions = no_flux_bc(dimension=2)
         solver = FPFDMSolver(problem, boundary_conditions=boundary_conditions)
 
         # Diagonal tensor (smaller values for stability)
