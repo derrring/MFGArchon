@@ -91,7 +91,8 @@ def test_a_region_named_segment_is_read_or_refused_truly_off_the_grid(row):
     - A cell-centred grid, nodes 0.05 ... 0.95 on the box [0, 1]: its walls lie half a cell past its end nodes, inside
       its box, and are read at the end nodes, as at main.
     - x nodes 1, 0.75, ..., 0 and "exit" at x > 0.5: the face rule reads the first node as x_min (#2748) and puts the
-      exit on x_min, so a point reading by coordinate would put it on x_max. It is refused."""
+      exit on x_min, so a point reading by coordinate would put it on x_max. It is refused, by the point the caller
+      passed: (1.2, 0.5), past the wall, is read at (1, 0.5)."""
     if row == "a particle past a wall":
         from mfgarchon import Conditions, MFGProblem, Model
         from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
@@ -166,8 +167,8 @@ def test_a_region_named_segment_is_read_or_refused_truly_off_the_grid(row):
         return
     bc = BoundaryConditions(segments=segments, dimension=2, domain_bounds=np.array([[0.0, 1.0], [0.0, 1.0]]))
     if row == "a descending axis":
-        with pytest.raises(ValueError, match=r"do not ascend on axis 0.*#2748"):
-            bc.segment_for_point(np.array([1.0, 0.5]), geometry=grid)
+        with pytest.raises(ValueError, match=r"do not strictly ascend on axis 0, .*the point \[1.2, 0.5\].*#2748"):
+            bc.segment_for_point(np.array([1.2, 0.5]), geometry=grid)
         return
     assert bc.segment_for_point(np.array([1.0, 0.5]), geometry=grid).name == "exit"
     assert bc.segment_for_point(np.array([0.0, 0.5]), geometry=grid).name == "rest"

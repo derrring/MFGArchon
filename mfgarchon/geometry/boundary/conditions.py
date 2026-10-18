@@ -2414,7 +2414,8 @@ def region_name_holds_point(
       its nearest point of that box. That is the interim reading of a point past the boundary: the nearest point stands
       in for the point where the particle crossed it, which #2733 will pass instead, as B1d's interim did. A point
       outside the marking grid's own box, where the BC's box reaches past the grid's, or of another dimension than the
-      grid, is refused, not read as outside the region;
+      grid, is refused, not read as outside the region; so is a point on a grid whose nodes do not strictly ascend on
+      an axis, where the face rule reads the axis's first node as its min face whatever its coordinate (#2748);
     - otherwise a region name that is a face label ("x_max", "left") holds the points on that face: the face the
       point is read on (``boundary_id``), or, with none, the face of ``domain_bounds`` it lies on within ``tolerance``;
     - otherwise refused, as the face rule refuses.
@@ -2455,8 +2456,8 @@ def region_name_holds_point(
 def _region_node(segment: BCSegment, geometry: Any, at: np.ndarray, asked: np.ndarray, tolerance: float) -> int:
     """The flat index, in the grid's C order, of the node of ``geometry`` nearest ``at``, the point ``asked`` as the
     owner reads it, for a region mask: refused where the geometry has no node coordinates, the point has another number
-    of coordinates than the grid has axes, an axis's nodes do not ascend, or the point lies outside the grid's own box by
-    more than ``tolerance``."""
+    of coordinates than the grid has axes, an axis's nodes do not strictly ascend, or the point lies outside the grid's
+    own box by more than ``tolerance``."""
     region = f"BC segment {segment.name!r} is restricted to the marked region {segment.region_name!r}"
     coordinates = getattr(geometry, "coordinates", None)
     if coordinates is None:
@@ -2477,11 +2478,16 @@ def _region_node(segment: BCSegment, geometry: Any, at: np.ndarray, asked: np.nd
     for axis, nodes in enumerate(coordinates):
         nodes = np.asarray(nodes, dtype=float)
         if not np.all(np.diff(nodes) > 0):
+            mirrored = (
+                "The face rule reads an axis's first node as its min face whatever its coordinate (#2748), and reading "
+                "the point by coordinate would put the region on the other face. "
+                if nodes[-1] < nodes[0]
+                else ""
+            )
             raise ValueError(
-                f"{region}, and the nodes of the {type(geometry).__name__} that marks it do not ascend on axis {axis}, "
-                f"so its mask is not read at the point {asked.tolist()} (#2490). The face rule reads an axis's first "
-                "node as its min face whatever its coordinate (#2748), and reading the point by coordinate would put "
-                "the region on the other face. Give the grid ascending coordinates."
+                f"{region}, and the nodes of the {type(geometry).__name__} that marks it do not strictly ascend on axis "
+                f"{axis}, so its mask is not read at the point {asked.tolist()} (#2490). {mirrored}Give the grid "
+                "strictly ascending coordinates, with no repeated node."
             )
         if not (lo[axis] - tolerance <= at[axis] <= hi[axis] + tolerance):
             raise ValueError(
