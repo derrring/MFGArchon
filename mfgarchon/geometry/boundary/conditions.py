@@ -221,7 +221,8 @@ class BoundaryConditions:
             )
         if self.dimension == dim:
             return self  # Already bound to correct dimension
-        return replace(self, dimension=dim)
+        # A list of its own: __post_init__ sorts the segments in place, and the caller's list is not this copy's.
+        return replace(self, dimension=dim, segments=list(self.segments))
 
     def bind_geometry(self, geometry: Any) -> BoundaryConditions:
         """This BC bound to ``geometry``: its dimension, and the geometry the owner decides a placement on when a reader
@@ -230,7 +231,7 @@ class BoundaryConditions:
         bound = self.bind_dimension(geometry.dimension)
         if bound._geometry_ref is not None and bound._geometry_ref() is geometry:
             return bound
-        return replace(bound, _geometry_ref=weakref.ref(geometry))
+        return replace(bound, segments=list(bound.segments), _geometry_ref=weakref.ref(geometry))
 
     def _query_geometry(self, geometry: Any) -> Any:
         """The geometry a query is decided on: the one passed, else the one this BC is bound to, if it is alive."""
