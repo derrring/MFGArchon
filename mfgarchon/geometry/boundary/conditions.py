@@ -698,8 +698,8 @@ class BoundaryConditions:
             point: Spatial coordinates, shape (dimension,).
             face: The face the caller knows the point is on. Without it, every face the point lies on
                 is read from the bounds, or the boundary is identified from ``domain_sdf``.
-            geometry: Required by a ``region_name`` segment (its marked-region mask), and the source of the
-                bounds when the BC carries none.
+            geometry: The grid whose marked-region mask places a ``region_name`` segment (a name that is a face
+                label is read without one), and the source of the bounds when the BC carries none.
             tolerance: How far off a face a point may lie and still be on it.
             equivalent: The consumer's sameness of two segments, as :meth:`segment_for_face` and
                 :meth:`segment_for_corner` take it; by default `_same_condition`. At a corner it decides whether a
@@ -2409,8 +2409,10 @@ def region_name_holds_point(
     """Does a ``region_name`` segment hold the boundary point ``point``? The point-level reading of
     :func:`region_name_governs_face`, in its order (#2490 B1e-1):
 
+    - a point outside ``domain_bounds``, a particle past a wall, is read at its nearest point of that box;
     - a geometry that marks the region decides by its mask, at the grid node nearest the point; a point the grid
-      cannot place on a node -- off the grid by more than half a cell -- is refused, not read as outside the region;
+      cannot place on a node -- beyond its end nodes by more than half the end cell -- is refused, not read as outside
+      the region;
     - otherwise a region name that is a face label ("x_max", "left") holds the points on that face: the face the
       point is read on (``boundary_id``), or, with none, the face of ``domain_bounds`` it lies on within ``tolerance``;
     - otherwise refused, as the face rule refuses.
@@ -2424,6 +2426,9 @@ def region_name_holds_point(
     """
     name = segment.region_name
     point = np.asarray(point, dtype=float)
+    if domain_bounds is not None and point.size == len(domain_bounds):
+        bounds = np.asarray(domain_bounds, dtype=float)
+        point = np.clip(point, bounds[:, 0], bounds[:, 1])
     if _marks_region(geometry, name):
         return bool(np.asarray(geometry.get_region_mask(name)).ravel()[_region_node(segment, geometry, point)])
     label = parse_boundary_face(name)
@@ -2445,37 +2450,54 @@ def region_name_holds_point(
 
 def _region_node(segment: BCSegment, geometry: Any, point: np.ndarray) -> int:
     """The flat index, in the grid's C order, of the node of ``geometry`` nearest ``point``, for a region mask:
-    refused where the geometry has no node coordinates or the point lies more than half a cell off the grid."""
+    refused where the geometry has no node coordinates, the point has another number of coordinates than the grid has
+    axes, or the point lies beyond the grid's end nodes by more than half the end cell."""
+    region = f"BC segment {segment.name!r} is restricted to the marked region {segment.region_name!r}"
     coordinates = getattr(geometry, "coordinates", None)
-    if coordinates is None or len(coordinates) != point.size:
+    if coordinates is None:
         raise ValueError(
-            f"BC segment {segment.name!r} is restricted to the marked region {segment.region_name!r}, and "
-            f"{type(geometry).__name__} gives no node coordinates to read its mask at the point {point.tolist()} "
-            "(#2490). Read the region on a TensorProductGrid, or name the face with BCSegment(boundary=...)."
+            f"{region}, and {type(geometry).__name__} gives no node coordinates to read its mask at the point "
+            f"{point.tolist()} (#2490). Read the region on a TensorProductGrid, or place the segment by "
+            "sdf_region=... or boundary=..."
+        )
+    if len(coordinates) != point.size:
+        raise ValueError(
+            f"{region}, and the point {point.tolist()} has {point.size} coordinates where the "
+            f"{type(geometry).__name__} that marks it has {len(coordinates)} axes, so its mask cannot be read there "
+            "(#2490). It is not read as outside the region: read the point in the grid's dimension."
         )
     index = []
     for axis, nodes in enumerate(coordinates):
         nodes = np.asarray(nodes, dtype=float)
         k = int(np.argmin(np.abs(nodes - point[axis])))
-        half_cell = 0.5 * float(np.max(np.diff(nodes))) if nodes.size > 1 else 0.0
-        if abs(nodes[k] - point[axis]) > half_cell:
+        if nodes.size > 1 and not (
+            nodes[0] - 0.5 * (nodes[1] - nodes[0]) <= point[axis] <= nodes[-1] + 0.5 * (nodes[-1] - nodes[-2])
+        ):
             raise ValueError(
-                f"BC segment {segment.name!r} is restricted to the marked region {segment.region_name!r}, and the "
-                f"point {point.tolist()} lies off the grid that marks it, more than half a cell from its nearest "
-                f"node on axis {axis}, so the region cannot be read there (#2490). It is not read as outside it: "
-                "read the BC on the grid that marks the region, with domain_bounds inside that grid's box."
+                f"{region}, and the point {point.tolist()} lies off the grid that marks it, beyond its end node on "
+                f"axis {axis} by more than half the end cell, so the region cannot be read there (#2490). It is not "
+                "read as outside it: read the BC on the grid that marks the region, with domain_bounds equal to that "
+                "grid's box."
             )
         index.append(k)
     return int(np.ravel_multi_index(tuple(index), tuple(len(nodes) for nodes in coordinates)))
 
 
 def _region_name_refusal(segment: BCSegment, geometry: Any, what: str) -> str:
-    """Why a ``region_name`` segment cannot be read: no geometry marks its region, and its name is no face label.
-    The one message of the face rule and the point rule."""
+    """Why a ``region_name`` segment cannot be read: no grid the owner reads marks its region, and its name is no face
+    label. The one message of the face rule and the point rule."""
     name = segment.region_name
+    head = f"BC segment {segment.name!r} is restricted to the marked region {name!r}"
+    get_region_names = getattr(geometry, "get_region_names", None)
+    if callable(get_region_names) and name in get_region_names():
+        return (
+            f"{head}, and {type(geometry).__name__} marks a region of that name, but the boundary owner reads a "
+            f"region by its mask on a grid's nodes, and {type(geometry).__name__} is no such grid (it does not "
+            f"implement SupportsRegionMarking), so it cannot tell whether the segment {what} (#2490). Place the "
+            "segment by sdf_region=..., a signed distance the owner reads at any point, or by boundary=..."
+        )
     return (
-        f"BC segment {segment.name!r} is restricted to the marked region {name!r}, and which locations a "
-        "region covers is known only to the geometry that marked it. "
+        f"{head}, and which locations a region covers is known only to the geometry that marked it. "
         + (
             "This reader has no geometry"
             if geometry is None

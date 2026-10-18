@@ -21,7 +21,7 @@ def test_a_region_named_segment_is_read_at_a_point_as_on_its_face(row):
     - A grid that marks "strip" (y > 0.4), read through a BC whose box reaches x = 2: the point (2, 0.5) lies on its
       x_max, a whole grid width off the grid. The point rule read the mask at the node it clamped the point to,
       (1, 0.5), so the strip governed a point the grid never marked. It is refused, and the message's remedy -- the
-      BC's box inside the grid's -- reads the strip at (1, 0.5).
+      BC's box equal to the grid's -- reads the strip at (1, 0.5).
     - Between the nodes the mask is read at the nearest node: (1, 0.45) lies 0.05 from the marked node y = 0.5 and 0.2
       from the unmarked y = 0.25, and reads the strip. The point rule truncated the index to the node below, 0.25."""
     if row == "a face label, read by both readers":
@@ -49,6 +49,65 @@ def test_a_region_named_segment_is_read_at_a_point_as_on_its_face(row):
         assert inside.segment_for_point(np.array([1.0, 0.3]), geometry=grid).name == "rest"
         return
     wide = BoundaryConditions(segments=segments, dimension=2, domain_bounds=np.array([[0.0, 2.0], [0.0, 1.0]]))
-    with pytest.raises(ValueError, match=r"lies off the grid that marks it.*domain_bounds inside that grid's box"):
+    with pytest.raises(ValueError, match=r"lies off the grid that marks it.*domain_bounds equal to that grid's box"):
         wide.segment_for_point(np.array([2.0, 0.5]), geometry=grid)
     assert inside.segment_for_point(np.array([1.0, 0.5]), geometry=grid).name == "strip"
+
+
+@pytest.mark.parametrize("row", ["a particle past a wall", "an implicit domain that marks it", "another dimension"])
+def test_a_region_named_segment_is_read_or_refused_truly_off_the_grid(row):
+    """- A grid that marks the whole x_max face as "exit", its own BC that exit beside walls: FP-particle steps a
+      particle past a wall and reads it there. It is read at its nearest point of the BC's box, as main read it at the
+      grid's clamped node: (1.2, 0.75) on x_max is the exit and (0.6, -0.3) on y_min a wall, and the solve absorbs.
+      (#2744's review 1 measured the solve raising "lies off the grid" when such a point was refused.)
+    - A Hypersphere marks "exit" but the owner reads a region by its mask on a grid's nodes: the refusal says so and
+      names ``sdf_region``, where it said the Hypersphere defined no region of that name.
+    - A point of three coordinates on a 2-D marking grid, which main read as outside the region, is refused for its
+      dimension, not for coordinates the grid has."""
+    if row == "a particle past a wall":
+        from mfgarchon import Conditions, MFGProblem, Model
+        from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
+        from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
+
+        grid = TensorProductGrid(
+            bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[11, 11], boundary_conditions=no_flux_bc(dimension=2)
+        )
+        grid.mark_region("exit", boundary="x_max")
+        bc = BoundaryConditions(
+            segments=[
+                BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0, region_name="exit"),
+                BCSegment(name="walls", bc_type=BCType.NO_FLUX, value=0.0),
+            ],
+            dimension=2,
+            domain_bounds=np.array([[0.0, 1.0], [0.0, 1.0]]),
+        )
+        grid.set_boundary_conditions(bc)
+        assert bc.get_bc_at_point(np.array([1.2, 0.75]), "x_max", geometry=grid).name == "exit"
+        assert bc.get_bc_at_point(np.array([0.6, -0.3]), "y_min", geometry=grid).name == "walls"
+        problem = MFGProblem(
+            model=Model(
+                hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.3
+            ),
+            domain=grid,
+            conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.3),
+            Nt=3,
+        )
+        solver = FPParticleSolver(problem, num_particles=400, seed=0)
+        solver.solve_fp_system(M_initial=np.ones((11, 11)), show_progress=False)
+        assert solver.total_absorbed > 0, "no particle reached the exit"
+        return
+    from mfgarchon.geometry import Hypersphere
+
+    segment = BCSegment(name="exit", bc_type=BCType.DIRICHLET, value=0.0, region_name="exit")
+    if row == "an implicit domain that marks it":
+        disk = Hypersphere(center=[0.5, 0.5], radius=0.5)
+        disk.mark_region("exit", predicate=lambda x: x[:, 0] > 0.9)
+        with pytest.raises(ValueError, match=r"Hypersphere marks a region of that name.*sdf_region"):
+            segment.matches_point(np.array([1.0, 0.5]), "x_max", np.array([[0.0, 1.0], [0.0, 1.0]]), geometry=disk)
+        return
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[5, 5], boundary_conditions=no_flux_bc(dimension=2)
+    )
+    grid.mark_region("exit", predicate=lambda x: x[:, 1] > 0.4)
+    with pytest.raises(ValueError, match=r"has 3 coordinates where the TensorProductGrid that marks it has 2 axes"):
+        segment.matches_point(np.array([1.0, 0.75, 0.0]), None, None, geometry=grid)

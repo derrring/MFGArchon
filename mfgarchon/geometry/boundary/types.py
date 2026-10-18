@@ -672,15 +672,16 @@ class BCSegment:
             tolerance: Tolerance for geometric comparisons
             axis_names: Optional mapping from axis index to name (e.g., {0: "x", 1: "y"})
             domain_sdf: Optional domain SDF for normal-based matching
-            geometry: Geometry object with marked regions (Issue #596 Phase 2.5).
-                     Required if this segment uses region_name.
+            geometry: The grid whose marked-region mask places a region_name segment
+                     (Issue #596 Phase 2.5); a region name that is a face label is read
+                     without one (#2490).
 
         Returns:
             True if this BC segment applies to the given point
 
         Raises:
-            ValueError: If point is empty, domain_bounds are invalid, or geometry is
-                       missing when region_name is used
+            ValueError: If point is empty, domain_bounds are invalid, or a region_name
+                       segment cannot be read at the point (region_name_holds_point)
         """
         # Input validation
         point = np.asarray(point, dtype=float)
