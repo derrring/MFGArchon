@@ -654,6 +654,10 @@ class NetworkMFGProblem(MFGProblem):
         """Get terminal value function (legacy interface)."""
         return self.get_terminal_value()
 
+    def terminal_value(self, m_terminal: np.ndarray | None) -> np.ndarray:
+        """u(T) on the nodes: ``terminal_node_value_func``. A network binds no terminal coupling (#1642, #2568)."""
+        return self.get_terminal_value()
+
     # The continuum spatial fields Nx / xmin / xmax / Dx are not defined here (Issue #1472). They are
     # not part of the base MFGProblem interface and no network-path consumer reads them — the network
     # solvers use num_nodes; graph geometry has no continuum coordinates. The former dummies (Nx =

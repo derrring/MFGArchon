@@ -11,6 +11,7 @@ derivative ``delta F / delta m`` as a cost-signed source.
 
 from __future__ import annotations
 
+import warnings
 from types import SimpleNamespace
 
 import pytest
@@ -414,8 +415,8 @@ def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
       ``potential(t, x)``, reads V at each time, at an array of points, so the 1-D V reads ``x[..., 0]`` as the
       message says: with ``5 x (1 + 10 t)`` it solves 0.57 away from ``5 x``. A V the reader cannot take, ``V(x, t)``,
       is refused naming the same route.
-    - ``terminal_coupling`` is read by nothing until stage 2, and is refused where a problem binds the ``Model`` too:
-      set after the ``Model`` was built, it was ignored.
+    - A ``terminal_coupling`` that is not a coupling cost, a plain ``G(x, m)``, is refused, at the ``Model`` and again where
+      a problem binds it, so one set after the ``Model`` was built is refused there too.
     - On a network no solve takes a ``Model`` (#2045); the network's own route, ``node_potential_func``, reaches its
       HJB's source.
     - The part evaluates only at the nodes it was bound on: an x of another row count, the nodes in another order, or
@@ -513,11 +514,11 @@ def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
     )
     assert np.max(np.abs(moving - frozen)) > 0.1, "the Hamiltonian's potential(t, x) is not read at each time"
 
-    with pytest.raises(NotImplementedError, match=r"terminal_coupling.*stage 2"):
+    with pytest.raises(TypeError, match=r"Model\(terminal_coupling=\.\.\.\) takes a coupling cost.*not function"):
         Model(hamiltonian=_hamiltonian(), terminal_coupling=lambda x, m: 0.0)
     mutated = Model(hamiltonian=_hamiltonian(), volatility=0.3, coupling_cost=PotentialCost(_V))
     mutated.terminal_coupling = lambda x, m: 0.0
-    with pytest.raises(NotImplementedError, match=r"terminal_coupling.*stage 2"):
+    with pytest.raises(TypeError, match=r"Model\(terminal_coupling=\.\.\.\) takes a coupling cost.*not function"):
         MFGProblem(
             model=mutated,
             domain=grid,
@@ -562,3 +563,263 @@ def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
     M = np.ones((3, 21))
     with pytest.raises(ValueError, match=r"x with 21 rows that are not.*#2737"):
         compose_hjb_source(composed, M, 0 * M)(0.0, x[::-1, None])
+
+
+def test_a_terminal_coupling_solves_the_linear_quadratic_game():
+    """Bensoussan, Frehse and Yam (2013), ch. 6, pp. 45-47, with the mean field at T only (#1642 stage 2).
+
+    In 1-D take A = Abar = Q = Qbar = 0, B = R = 1, Q_T = 0, Qbar_T = k, S_T = c. The terminal cost (6.3), (6.4) is
+    then ``(k/2)(x - c z(T))^2``, z the mean of m: up to a constant in x, the flat derivative at m(T), of mass 1, of
+    ``G[m] = int (k/2)(1 - c) x^2 m + (1/2) int int (kc/2)|x - y|^2 m(x) m(y)``, PotentialCost plus InteractionCost.
+    (6.9) gives ``P' = P^2``, P(T) = k; (6.12), (6.13) ``r' = P r``, ``r(T) = -k c z(T)``; (6.10) ``z' = -(P z + r)``.
+    So P z + r is constant, k (1 - c) z(T), and ``z(T) = z0 / (1 + k (1 - c) T)``, whatever sigma.
+
+    k = 2, c = 1/2, T = 1, z0 = 1/2: z(T) = 1/4. On [-3, 3] with 61 nodes and 25 steps the solve's mean at T misses it
+    by 2.0e-2, first order: 1.0e-2 and 5.1e-3 at twice and four times the resolution. With the terminal frozen at m_0
+    the solve converges to ``z0 (1 + k c T) / (1 + k T)`` = 1/3 instead, and misses 1/4 by 9.3e-2."""
+    k, c, T, z0, s0 = 2.0, 0.5, 1.0, 0.5, 0.3
+    problem = MFGProblem(
+        model=Model(
+            hamiltonian=_hamiltonian(),
+            volatility=0.4,
+            terminal_coupling=PotentialCost(lambda x: 0.5 * k * (1 - c) * x**2)
+            + InteractionCost(_Quadratic(k * c / 2)),
+        ),
+        domain=_grid(61, (-3.0, 3.0)),
+        conditions=Conditions(
+            u_terminal=lambda x: 0.0,
+            m_initial=lambda x: (
+                np.exp(-((np.asarray(x, dtype=float) - z0) ** 2) / (2 * s0**2)) / np.sqrt(2 * np.pi * s0**2)
+            ),
+            T=T,
+        ),
+        Nt=25,
+    )
+    x = _x(problem)
+    w = np.asarray(problem.spatial_measure().weights, dtype=float).ravel()
+    m0 = np.asarray(problem.get_m_initial(), dtype=float).ravel()
+    offset = np.asarray(problem.terminal_value(m0), dtype=float) - (0.5 * k * x**2 - k * c * (w @ (x * m0)) * x)
+    assert np.ptp(offset) < 1e-12, (
+        f"u(T) at m_0 is not (k/2) x^2 - k c z x up to a constant: spread {np.ptp(offset):.3e}"
+    )
+    result = problem.solve(
+        config=MFGSolverConfig(picard=PicardConfig(max_iterations=80, tolerance=1e-6, relaxation=0.7, verbose=False))
+    )
+    assert result.converged
+    mT = np.asarray(result.M, dtype=float)[-1]
+    gap = abs(float((w @ (x * mT)) / (w @ mT)) - z0 / (1 + k * (1 - c) * T))
+    assert gap < 0.03, f"the mean at T misses z0 / (1 + k (1 - c) T) = 1/4 by {gap:.3e}"
+
+
+def _terminal_coupled(n=21, nt=5, centre=0.3):
+    """G = (1/2) int int |x - y|^2 m m + int 3 x m on [0, 1]: u(T) moves with m(T), and m(T) moves from sweep to sweep
+    because the initial density is off-centre. Two nodes or regimes take different centres, so neither holds the other's
+    density."""
+    return MFGProblem(
+        model=Model(
+            hamiltonian=_hamiltonian(),
+            volatility=0.3,
+            terminal_coupling=InteractionCost(_Quadratic(1.0)) + PotentialCost(lambda x: 3.0 * x),
+        ),
+        domain=_grid(n),
+        conditions=Conditions(
+            u_terminal=lambda x: 0.0, m_initial=_unit_mass(lambda x: np.exp(-40 * (x - centre) ** 2), n), T=0.3
+        ),
+        Nt=nt,
+    )
+
+
+def _recording(solver, calls, diverge_at=None):
+    """``solver.solve_hjb_system`` recording its problem, the density and the terminal of each call, its signature
+    kept. From call ``diverge_at`` on, counted over every solver sharing ``calls``, it returns a value function with one
+    NaN, as a diverged inner Newton does."""
+    import functools
+
+    original = solver.solve_hjb_system
+
+    @functools.wraps(original)
+    def solve_hjb_system(M_density, U_terminal, *args, **kwargs):
+        calls.append((solver.problem, np.array(M_density, dtype=float), np.array(U_terminal, dtype=float)))
+        U = original(M_density, U_terminal, *args, **kwargs)
+        if diverge_at is not None and len(calls) > diverge_at:
+            U = np.array(U, dtype=float)
+            U[0, 0] = np.nan
+        return U
+
+    solver.solve_hjb_system = solve_hjb_system
+    return solver
+
+
+def _run_loop(name, calls, diverge_at=None):
+    """``(published, expected)``: the U(T) row a loop publishes and the u(T) it must equal, or ``(None, None)`` where
+    the loop publishes no re-imposed or restored row."""
+    from mfgarchon.alg.numerical.coupling.block_iterators import BlockGaussSeidelIterator, BlockJacobiIterator
+    from mfgarchon.alg.numerical.coupling.fictitious_play import FictitiousPlayIterator
+    from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
+    from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling
+    from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGSolver
+    from mfgarchon.alg.numerical.coupling.regime_switching_iterator import RegimeSwitchingIterator
+    from mfgarchon.core.regime_switching import RegimeSwitchingConfig
+
+    loops = {
+        "FixedPointIterator": FixedPointIterator,
+        "FictitiousPlayIterator": FictitiousPlayIterator,
+        "BlockGaussSeidelIterator": BlockGaussSeidelIterator,
+        "BlockJacobiIterator": BlockJacobiIterator,
+    }
+    if name in loops:
+        problem = _terminal_coupled()
+        loop = loops[name](problem, _recording(HJBFDMSolver(problem), calls, diverge_at), FPFDMSolver(problem))
+        loop.solve(max_iterations=4, tolerance=1e-6)
+        return np.asarray(loop.U, dtype=float)[-1], calls[-1][2]
+    if name == "NewtonMFGSolver":
+        problem = _terminal_coupled(n=11)
+        NewtonMFGSolver(
+            problem,
+            _recording(HJBFDMSolver(problem), calls),
+            FPFDMSolver(problem),
+            picard_warmup=2,
+            newton_max_iterations=1,
+        ).solve(max_iterations=1, tolerance=1e-14, verbose=False)
+        return None, None
+    if name == "NewtonMFGSolver warm-up":
+        # A warm start whose m(T) is not m_0, and a tolerance the warm-up meets at once: Newton never runs, and the
+        # solve publishes the warm-up's iterate, re-imposed (or restored, when its solve diverged) at that solve's u(T).
+        problem = _terminal_coupled(n=11)
+        solver = NewtonMFGSolver(
+            problem, _recording(HJBFDMSolver(problem), calls, diverge_at), FPFDMSolver(problem), picard_warmup=1
+        )
+        M_w = np.tile(_unit_mass(lambda x: np.exp(-40 * (x - 0.7) ** 2), 11)(_x(problem)), (problem.Nt + 1, 1))
+        solver.set_warm_start_data((np.zeros_like(M_w), M_w))
+        U, _, info = solver.solve(max_iterations=1, tolerance=1e30, verbose=False)
+        reason = "diverged_nan" if diverge_at is not None else "Converged during Picard warm-up"
+        assert info["convergence_reason"] == reason, info["convergence_reason"]
+        return np.asarray(U, dtype=float)[-1], np.asarray(problem.terminal_value(M_w[-1]), dtype=float)
+    if name == "BaseHJBSolver.solve":
+        problem = _terminal_coupled()
+        _recording(HJBFDMSolver(problem), calls).solve()
+        return None, None
+    problems = [_terminal_coupled(centre=0.3), _terminal_coupled(centre=0.7)]
+    hjb = [_recording(HJBFDMSolver(p), calls, diverge_at) for p in problems]
+    fp = [FPFDMSolver(p) for p in problems]
+    if name == "RegimeSwitchingIterator":
+        result = RegimeSwitchingIterator(
+            problems,
+            RegimeSwitchingConfig(transition_matrix=np.array([[-0.5, 0.5], [0.5, -0.5]])),
+            hjb,
+            fp,
+            max_iterations=4,
+            tolerance=1e-6,
+            damping=0.3,
+        ).solve()
+    else:
+        result = GraphMFGSolver(
+            problems,
+            AdjacencyCoupling(np.array([[0.0, 1.0], [1.0, 0.0]]), alpha=0.05, beta=0.02),
+            hjb,
+            fp,
+            max_iterations=4,
+            tolerance=1e-6,
+            damping=0.3,
+        ).solve()
+    if diverge_at is None:
+        return None, None  # neither re-imposes u(T) after damping
+    k = next(i for i, p in enumerate(problems) if p is calls[-1][0])
+    return np.asarray(result.values[k], dtype=float)[-1], calls[-1][2]
+
+
+_LOOPS = [
+    "FixedPointIterator",
+    "FictitiousPlayIterator",
+    "BlockGaussSeidelIterator",
+    "BlockJacobiIterator",
+    "NewtonMFGSolver",
+    "NewtonMFGSolver warm-up",
+    "RegimeSwitchingIterator",
+    "GraphMFGSolver",
+    "BaseHJBSolver.solve",
+]
+#: The loops that restore u(T) after a diverged HJB solve (#1718), each diverging at the first call whose density is not
+#: m_0's: the second sweep's, the second sweep's first node, or the warm start's.
+_RESTORING = dict.fromkeys(_LOOPS[:4], 1) | {"NewtonMFGSolver warm-up": 0} | dict.fromkeys(_LOOPS[6:8], 2)
+
+
+@pytest.mark.parametrize(
+    ("loop", "diverge_at"),
+    [(loop, None) for loop in _LOOPS] + [(loop, at) for loop, at in _RESTORING.items()],
+    ids=list(_LOOPS) + [f"{loop}, diverged" for loop in _RESTORING],
+)
+def test_each_hjb_solve_is_given_u_T_at_its_own_density(loop, diverge_at):
+    """Every HJB solve receives ``problem.terminal_value`` at the density at t = T of that same call (#1642 stage 2):
+    each Picard sweep, each step of Newton's warm-up and each residual evaluation of its finite-difference Jacobian,
+    each regime and graph node, and the standalone solve at its frozen density. A loop that re-imposes u(T) after its
+    update publishes that solve's u(T), and so does each loop's restore after a diverged solve (#1718), Newton's warm-up
+    included, where Newton never runs.
+
+    A terminal frozen at m_0, lagged by a sweep, read one time step early, read at another node's density, or cached in
+    Newton's residual or its warm-up each gives some call, or some published row, another density's u(T). The rows are
+    built so that none passes unseen: the bound terminal moves over the solve, two nodes hold different densities, and
+    each published row's u(T) is not the one at m_0."""
+    calls = []
+    published, expected = _run_loop(loop, calls, diverge_at)
+    assert calls, f"{loop}: no HJB solve was recorded"
+    for i, (problem, M, U_T) in enumerate(calls):
+        own = np.asarray(problem.terminal_value(M[-1]), dtype=float).reshape(U_T.shape)
+        np.testing.assert_array_equal(U_T, own, err_msg=f"{loop}: HJB call {i} received another density's u(T)")
+    if len(calls) > 1:
+        moved = max(np.max(np.abs(U_T - calls[0][2])) for _, _, U_T in calls)
+        assert moved > 1e-3, f"{loop}: u(T) moved {moved:.3e} over the solve; the fixture cannot see a stale terminal"
+    if published is not None:
+        at_m0 = np.asarray(calls[-1][0].terminal_value(calls[-1][0].get_m_initial()), dtype=float).ravel()
+        assert np.max(np.abs(expected.ravel() - at_m0)) > 1e-3, f"{loop}: the expected u(T) is the one at m_0"
+        np.testing.assert_array_equal(
+            published.ravel(), expected.ravel(), err_msg=f"{loop}: the published U(T) is not its own solve's u(T)"
+        )
+
+
+def test_what_stage_two_does_not_bind_is_refused():
+    """A terminal coupling is refused in the multi-population iterator, which passes the stacked densities (#1642, the
+    user's ruling 5), and on a network, where no coupled solve takes a problem (#2568); the network's message names its
+    own route for u(T), ``terminal_node_value_func``. F and G alike are refused on FEM and meshless geometries, whose
+    HJB solvers own their discretization (stage 1b)."""
+    from scipy.sparse import csr_matrix
+
+    from mfgarchon.geometry import Hyperrectangle
+    from mfgarchon.geometry.graph.network_geometry import CustomNetwork
+    from mfgarchon.geometry.meshes.mesh_1d import Mesh1D
+
+    mesh = Mesh1D(bounds=(0.0, 1.0), num_elements=16)
+    mesh.generate_mesh()
+    mesh.boundary_conditions = no_flux_bc(dimension=1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)  # the density's mass on these measures is not this pin's subject
+        for field in ("coupling_cost", "terminal_coupling"):
+            for domain in (Hyperrectangle(np.array([[0.0, 1.0]])), mesh):
+                refusal = rf"Model\({field}=\.\.\.\) binds on a TensorProductGrid.*{type(domain).__name__}"
+                with pytest.raises(NotImplementedError, match=refusal):
+                    MFGProblem(
+                        model=Model(hamiltonian=_hamiltonian(), volatility=0.3, **{field: PotentialCost(lambda x: x)}),
+                        domain=domain,
+                        conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.5),
+                        Nt=4,
+                    )
+
+    problems = [_terminal_coupled(), _terminal_coupled()]
+    with pytest.raises(NotImplementedError, match=r"population\(s\) \[0, 1\] set Model\(terminal_coupling=\.\.\.\)"):
+        MultiPopulationIterator(
+            MultiPopulationProblem(populations=problems, population_names=["a", "b"]),
+            [HJBFDMSolver(p) for p in problems],
+            [FPFDMSolver(p) for p in problems],
+        ).solve(max_iterations=2, tolerance=1e-6)
+
+    pytest.importorskip("igraph")
+    ring = np.zeros((6, 6))
+    for i in range(6):
+        ring[i, (i + 1) % 6] = ring[(i + 1) % 6, i] = 1.0
+    with pytest.raises(NotImplementedError, match=r"terminal_coupling.*network.*terminal_node_value_func="):
+        MFGProblem(
+            model=Model(hamiltonian=_hamiltonian(), terminal_coupling=PotentialCost(lambda x: 0.0)),
+            domain=CustomNetwork(csr_matrix(ring)),
+            conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0 / 6.0, T=0.2),
+            Nt=4,
+        )

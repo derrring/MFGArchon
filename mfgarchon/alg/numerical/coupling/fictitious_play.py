@@ -212,83 +212,20 @@ class FictitiousPlayIterator(BaseCouplingIterator):
 
     def _get_initial_and_terminal_conditions(self, shape: tuple) -> tuple[np.ndarray, np.ndarray]:
         """
-        Retrieve initial density and terminal value function from problem.
+        Retrieve the initial density and the terminal value function from the problem.
 
-        Issue #543 Phase 2: Centralizes initial/terminal condition retrieval
-        with 4-priority cascade (eliminates 8 hasattr checks).
+        The initial density is the problem's ``get_m_init()``; the terminal value is its one owner,
+        ``problem.terminal_value``, at that density, which a cold start writes into every row (#1642 stage 2).
 
         Args:
             shape: Spatial grid shape
 
         Returns:
             (M_initial, U_terminal): Initial density and terminal value function
-
-        Priority order:
-            1. get_m_init() / get_u_terminal() methods (preferred modern API)
-            2. m_initial / u_terminal attributes (Issue #670 unified naming)
-            3. get_initial_m() / get_final_u() methods (alternate modern API)
-            4. initial_density() / terminal_cost() callables (functional API)
         """
-        # Priority 1: get_m_init() / get_u_terminal() methods
-        try:
-            M_initial = self.problem.get_m_init()
-            if M_initial.shape != shape:
-                M_initial = M_initial.reshape(shape)
-
-            try:
-                U_terminal = self.problem.get_u_terminal()
-            except AttributeError:
-                # No terminal condition - use zeros
-                U_terminal = np.zeros(shape)
-
-            if U_terminal.shape != shape:
-                U_terminal = U_terminal.reshape(shape)
-
-            return M_initial, U_terminal
-        except AttributeError:
-            pass  # Try next priority
-
-        # Priority 2: m_initial / u_terminal attributes (Issue #670: unified naming)
-        try:
-            M_initial = self.problem.m_initial
-            if M_initial is not None:
-                if M_initial.shape != shape:
-                    M_initial = M_initial.reshape(shape)
-
-                try:
-                    U_terminal = self.problem.u_terminal
-                except AttributeError:
-                    U_terminal = np.zeros(shape)
-
-                if U_terminal.shape != shape:
-                    U_terminal = U_terminal.reshape(shape)
-
-                return M_initial, U_terminal
-        except AttributeError:
-            pass  # Try next priority
-
-        # Priority 3: get_initial_m() / get_final_u() methods
-        try:
-            M_initial = self.problem.get_initial_m()
-            U_terminal = self.problem.get_final_u()
-            return M_initial, U_terminal
-        except AttributeError:
-            pass  # Try next priority
-
-        # Priority 4: initial_density() / terminal_cost() callables
-        try:
-            x_grid = self.problem.geometry.get_spatial_grid()
-            M_initial = self.problem.initial_density(x_grid).reshape(shape)
-            U_terminal = self.problem.terminal_cost(x_grid).reshape(shape)
-            return M_initial, U_terminal
-        except AttributeError as e:
-            raise ValueError(
-                "Problem must provide initial/terminal conditions via one of:\n"
-                "  1. get_m_init()/get_u_terminal() methods (preferred)\n"
-                "  2. m_initial/u_terminal attributes\n"
-                "  3. get_initial_m()/get_final_u() methods\n"
-                "  4. initial_density()/terminal_cost() callables"
-            ) from e
+        M_initial = self._reshape_to(self.problem.get_m_init(), shape)
+        U_terminal = np.asarray(self.problem.terminal_value(M_initial))
+        return M_initial, self._reshape_to(U_terminal, shape)
 
     def solve(
         self,
@@ -409,6 +346,9 @@ class FictitiousPlayIterator(BaseCouplingIterator):
 
             U_old = self.U.copy()
             M_old = self.M.copy()
+            # u(T) at the density this iteration's HJB solve uses (#1642 stage 2), for the solve, the restore and the
+            # re-imposition alike.
+            U_terminal = np.asarray(self.problem.terminal_value(M_old[-1])).reshape(shape)
 
             # Compute learning rate for this iteration
             alpha = self.get_learning_rate(k)

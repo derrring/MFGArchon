@@ -15,7 +15,6 @@ from mfgarchon.alg.numerical.gfdm_components import (
     BoundaryHandler,
     GridCollocationMapper,
     NeighborhoodBuilder,
-    PrecomputedMonotoneStencils,
 )
 
 # GFDM infrastructure (Strategy Pattern)
@@ -54,7 +53,6 @@ logger = get_logger(__name__)
 
 # Optional QP solver imports
 CVXPY_AVAILABLE = importlib.util.find_spec("cvxpy") is not None
-OSQP_AVAILABLE = importlib.util.find_spec("osqp") is not None
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -819,6 +817,17 @@ class HJBGFDMSolver(BaseHJBSolver):
                 skip_file_prefixes=WRAPPER_FRAMES,  # past `deprecated_value`'s wrapper (#2579)
             )
 
+        # Ghost nodes keep the PDE row at a Neumann boundary node and close it with mirrored neighbour values, so that
+        # row's Laplacian is read; joint_socp builds monotone rows for interior nodes only, and a boundary row would
+        # carry bare Wendland-Taylor weights under a scheme that names monotone ones (#1689).
+        if self._use_ghost_nodes and self.monotonicity_scheme == "joint_socp":
+            raise ValueError(
+                "HJBGFDMSolver(monotonicity_scheme='joint_socp', use_ghost_nodes=True) is refused: ghost nodes keep the "
+                "PDE row at a Neumann boundary node, and joint_socp gives monotone weights to interior rows only, so that "
+                "row would carry bare Wendland-Taylor weights (#1689). Use use_ghost_nodes=False, where a Neumann node's "
+                "row is its BC row, or monotonicity_scheme='none'."
+            )
+
         # Wind-dependent BC requires ghost nodes
         if self._use_wind_dependent_bc and not self._use_ghost_nodes:
             raise ValueError(
@@ -1065,28 +1074,6 @@ class HJBGFDMSolver(BaseHJBSolver):
                     f"the cone constraint, so they are not monotone and are not counted as feasible (#1689). Rows, "
                     f"first 10: {rows[:10]}."
                 )
-
-        # Precomputed M-matrix QP stencils at boundary nodes, for joint_socp (the scheme
-        # `qp_optimization_level == "precompute"` routes). #1689's PR 2 replaces them with
-        # certified positive P2 rows (site h of #1689 comment 6191566926).
-        # An interior node the joint SOCP cannot place is refused above (#1689);
-        # extending this buffer set to cover such nodes was empirically destabilizing
-        # (Lap-only correction creates Lap/Grad inconsistency at those nodes).
-        self._precomputed_stencils: PrecomputedMonotoneStencils | None = None
-        if self.qp_optimization_level == "precompute":
-            is_buffer = np.zeros(self.n_points, dtype=bool)
-            is_buffer[self.boundary_indices] = True
-            self._precomputed_stencils = PrecomputedMonotoneStencils(
-                is_boundary=is_buffer,
-                neighborhoods=self.neighborhoods,
-                points=self.collocation_points,
-                delta=delta,
-                tolerance=1e-6,
-            )
-            logger.info(
-                f"Precomputed monotone stencils: {self._precomputed_stencils.stats['n_monotonized']}/{self._precomputed_stencils.stats['n_boundary']} "
-                f"buffer points in {self._precomputed_stencils.stats['time_ms']:.1f}ms"
-            )
 
         # Lazy-initialized cache attributes
         # These are expensive to compute and only created when needed
@@ -1608,19 +1595,11 @@ class HJBGFDMSolver(BaseHJBSolver):
             grad_weights = weights["grad_weights"]  # shape: (d, n_neighbors)
             lap_weights = weights["lap_weights"]  # shape: (n_neighbors,)
 
-            # Override Laplacian weights with joint_socp's precomputed boundary-buffer
-            # weights where it has them (`self._precomputed_stencils`). The
-            # `joint_socp_stencils` override below takes priority at every interior
-            # node it placed (exact, or relaxed under the #1689 opt-in).
-            if self._precomputed_stencils is not None and self._precomputed_stencils.has_stencil(i):
-                precomputed = self._precomputed_stencils.get_laplacian_weights(i)
-                if precomputed is not None:
-                    lap_weights = precomputed[0]  # (weights, neighbor_indices)
-
             # Override BOTH Laplacian and gradient weights with joint SOCP weights at
-            # interior nodes where SOCP is feasible (audit-major Phase 1B). This takes
-            # priority over the boundary-buffer weights above; a node neither covers keeps
-            # the default Wendland-Taylor weights (#1689 sites g and h, PR 2).
+            # interior nodes where SOCP is feasible (audit-major Phase 1B). Every other node keeps the
+            # default Wendland-Taylor weights: under joint_socp, whose ghost nodes are refused, a boundary node's
+            # row is replaced by its BC row before any solve reads it (`_apply_boundary_conditions_to_sparse_system`,
+            # `_value_form_bc_rows`; #1689).
             if self._joint_socp_stencils is not None and self._joint_socp_stencils.has_stencil(i):
                 socp_weights = self._joint_socp_stencils.get_weights_dict(i)
                 if socp_weights is not None:
@@ -1832,7 +1811,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         #
         # Precedence (matches `_build_derivative_matrices` / `_cached_derivative_weights`):
         #   joint SOCP at every interior node it placed (exact, or relaxed under the #1689 opt-in)
-        #   > M-matrix QP at boundary > bare W-T.
+        #   > bare W-T.
         if self._joint_socp_stencils is not None and self._joint_socp_stencils.has_stencil(point_idx):
             socp = self._joint_socp_stencils.get_weights_dict(point_idx)
             if socp is not None:
@@ -1843,8 +1822,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                 # the SOCP stencil can have MORE neighbors than the runtime
                 # `neighborhood["indices"]` that the outer `b` was built on;
                 # contracting `D_w @ b` / `L_w @ b` on the mismatched-length outer
-                # `b` would raise a matmul size error (the #1102 / G-013 pattern,
-                # already handled for the M-matrix elif via `b_precomp`). SOCP
+                # `b` would raise a matmul size error (the #1102 / G-013 pattern). SOCP
                 # applies to interior cloud points only, so these indices are pure
                 # cloud indices (no ghosts). When enlargement is off the SOCP
                 # neighbor_indices equal the runtime ones, so `b_socp == b`
@@ -1864,34 +1842,6 @@ class HJBGFDMSolver(BaseHJBSolver):
                 # Preserves bare-WT off-diagonal Hessian entries (e.g. (1,1) in 2D)
                 # while enforcing target_lap = L_w · b on the trace.
                 target_lap = float(L_w @ b_socp)
-                current_lap = sum(
-                    float(derivatives.get(beta, 0.0))
-                    for beta in self.multi_indices
-                    if len(beta) == self.dimension and sum(beta) == 2 and max(beta) == 2
-                )
-                adjustment = (target_lap - current_lap) / self.dimension
-                for d in range(self.dimension):
-                    beta = tuple(2 if k == d else 0 for k in range(self.dimension))
-                    if beta in derivatives:
-                        derivatives[beta] = float(derivatives[beta]) + adjustment
-        elif self._precomputed_stencils is not None and self._precomputed_stencils.has_stencil(point_idx):
-            precomputed = self._precomputed_stencils.get_laplacian_weights(point_idx)
-            if precomputed is not None:
-                L_w = precomputed[0]  # shape (n_precomp_neighbors,)
-                precomp_nbr = precomputed[1]
-                # Rebuild b on the PRECOMP stencil. When runtime
-                # ``self.neighborhoods[i]["indices"]`` has been augmented
-                # (ghost-node reflection points, or adaptive δ-enlargement),
-                # its length differs from the precomp stencil that L_w was
-                # built on. Contracting ``L_w @ b`` of mismatched length
-                # produced ``ValueError: matmul: size N is different from
-                # K`` (Issue #1102, G-013 pattern). The fix re-evaluates
-                # ``b = u_neighbors - u_center`` on precomp's stored
-                # ``neighbor_indices`` (cloud-only, no ghosts), aligning
-                # with L_w's stencil source.
-                b_precomp = u_values[precomp_nbr] - u_center
-                # M-matrix QP only corrects the Laplacian; gradient stays bare W-T.
-                target_lap = float(L_w @ b_precomp)
                 current_lap = sum(
                     float(derivatives.get(beta, 0.0))
                     for beta in self.multi_indices
@@ -2157,7 +2107,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Lazy initialization: Pre-cache all derivative weights (expensive computation)
         # self._cached_derivative_weights initialized as None in __init__
         #
-        # Override precedence (joint SOCP > M-matrix QP > default operator weights):
+        # Override precedence (joint SOCP > default operator weights):
         # this keeps the per-point HJB Jacobian consistent with the differentiation
         # matrices `_D_lap` / `_D_grad` (which apply the same precedence in
         # `_build_derivative_matrices`). v3 research code achieved this by monkey-
@@ -2171,13 +2121,6 @@ class HJBGFDMSolver(BaseHJBSolver):
                         socp_w = self._joint_socp_stencils.get_weights_dict(i)
                         if socp_w is not None:
                             self._cached_derivative_weights[i] = socp_w
-            if self._precomputed_stencils is not None:
-                for i in range(n):
-                    if self._precomputed_stencils.has_stencil(i):
-                        pre = self._precomputed_stencils.get_laplacian_weights(i)
-                        base = self._cached_derivative_weights[i]
-                        if pre is not None and base is not None:
-                            base["lap_weights"] = pre[0]
 
         # Use LIL format for efficient construction
         jacobian = lil_matrix((n, n))

@@ -226,16 +226,17 @@ class NewtonMFGSolver(BaseCouplingIterator):
             U_old = U.copy()
             M_old = M.copy()
 
-            # HJB solve: U_new = HJB(M_old)
+            # HJB solve: U_new = HJB(M_old), whose terminal is u(T) at M_old's m(T) (#1642)
+            U_terminal = self.mfg_residual.terminal_at(M_old)
             U_new = self.mfg_residual.compute_hjb_output(M_old, U_old)
 
             # Issue #1718: compute_fp_output below builds its drift from U_new, so a non-finite
             # U_new makes the FP solver raise a CFL diagnostic for an HJB failure. The warmup
             # stops and hands back what it has; the residual history it returns is the record of
-            # how far it got. `U_terminal` is optional on MFGResidual, which the owner handles.
+            # how far it got.
             diverged = diverged_value_function(
                 U_new,
-                self.mfg_residual.U_terminal,
+                U_terminal,
                 site="NewtonMFGSolver._run_picard_warmup",
                 iteration=i,
             )
@@ -254,8 +255,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
             # Preserve boundary conditions
             if self.mfg_residual.M_initial is not None:
                 M[0] = self.mfg_residual.M_initial
-            if self.mfg_residual.U_terminal is not None:
-                U[-1] = self.mfg_residual.U_terminal
+            U[-1] = U_terminal
 
             # Compute residual norm
             res_norm = self.mfg_residual.compute_residual_norm(U, M)

@@ -888,9 +888,10 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         if self.state_penalty is not None:
             self._compose_state_penalty_into_potential()
 
-        # The coupling cost F, bound once to this problem's nodes and measure (#1642 stage 1). A rebuild binds it again:
-        # `_rebuilt` rebuilds from the Model.
-        self._coupling_energy = self._bind_coupling_cost()
+        # The coupling cost F and the terminal coupling G, each bound once to this problem's nodes and measure (#1642
+        # stages 1 and 2). A rebuild binds them again: `_rebuilt` rebuilds from the Model.
+        self._coupling_energy = self._bind_cost("coupling_cost")
+        self._terminal_energy = self._bind_cost("terminal_coupling")
 
         # Validate custom components if provided
         if self.is_custom:
@@ -2293,26 +2294,67 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         """
         return self._coupling_energy
 
-    def _bind_coupling_cost(self) -> EnergyFunctional | None:
-        """``model.coupling_cost.bind(self)``, where this stage binds one; the reason by name where it does not."""
+    @property
+    def terminal_energy(self) -> EnergyFunctional | None:
+        """``Model.terminal_coupling`` bound to this problem's nodes and measure, or None (#1642 stage 2).
+
+        The terminal condition carries its flat derivative ``delta G / delta m`` at the density m(T) the HJB solve
+        uses (`terminal_value`). Read-only, as ``coupling_energy`` is.
+        """
+        return self._terminal_energy
+
+    def terminal_value(self, m_terminal: NDArray | None) -> NDArray:
+        """u(T, .) on this problem's grid: the terminal cost g, plus ``delta G / delta m`` at ``m_terminal`` when
+        ``Model.terminal_coupling`` is bound (#1642 stage 2).
+
+        The one owner of the terminal datum. Every coupler, the Newton residual and ``BaseHJBSolver.solve`` read it,
+        with the density at t = T of the solve it is the terminal of: an iteration's HJB solve, its re-imposition and
+        its restore after a diverged step all take the m that HJB solve used. Without a terminal coupling
+        ``m_terminal`` is not read, and None is accepted. With one it is required, in the grid's shape or flattened
+        in the grid's C order.
+        """
+        g = self.get_u_terminal()
+        if self._terminal_energy is None:
+            return g
+        if m_terminal is None:
+            raise ValueError(
+                "MFGProblem.terminal_value: this problem binds Model(terminal_coupling=...), so u(T) depends on m(T), "
+                "and no m(T) was given (#1642). Pass the density at t = T of the solve this terminal belongs to."
+            )
+        flat = np.asarray(m_terminal, dtype=float).ravel()
+        if flat.size != g.size:
+            raise ValueError(
+                f"MFGProblem.terminal_value: m(T) has {flat.size} values and this problem's grid has {g.size} nodes "
+                f"(#1642). Pass one time slice of m, the one at t = T, on the grid the terminal coupling was bound on."
+            )
+        return g + np.asarray(self._terminal_energy.flat_derivative(flat, t=self.T), dtype=float).reshape(g.shape)
+
+    def _bind_cost(self, field: str) -> EnergyFunctional | None:
+        """``model.<field>.bind(self)`` for ``coupling_cost`` and ``terminal_coupling``, where this stage binds one; the
+        reason by name where it does not (#1642)."""
         if self._v1_model is None:
             return None
         self._v1_model.refuse_what_is_not_bound()
-        cost = self._v1_model.coupling_cost
+        cost = getattr(self._v1_model, field)
         if cost is None:
             return None
         if self.is_network:
+            route = (
+                "give the potential through the network's own route, NetworkMFGComponents(node_potential_func=...)"
+                if field == "coupling_cost"
+                else "give the terminal values through NetworkMFGComponents(terminal_node_value_func=...)"
+            )
             raise NotImplementedError(
-                "Model(coupling_cost=...) on a network: no network solve takes a problem built from a Model -- the "
-                "network solvers take a NetworkMFGProblem, which has no continuous-domain path (#2045), and their HJB "
-                "takes no source term. On a network, give the potential through the network's own route, "
-                "NetworkMFGComponents(node_potential_func=...). F on a network is a later stage of #1642."
+                f"Model({field}=...) on a network: no network solve takes a problem built from a Model -- the "
+                "network solvers take a NetworkMFGProblem, which has no continuous-domain path (#2045), and "
+                "create_network_mfg_solver's coupled iterator refuses every network geometry (#2568). On a network, "
+                f"{route}. F and G on a network are a later stage of #1642."
             )
         from mfgarchon.geometry import TensorProductGrid
 
         if not isinstance(self.geometry, TensorProductGrid):
             raise NotImplementedError(
-                f"Model(coupling_cost=...) binds on a TensorProductGrid; this problem's geometry is "
+                f"Model({field}=...) binds on a TensorProductGrid; this problem's geometry is "
                 f"{type(self.geometry).__name__}. On FEM and meshless geometries the coupling cost binds against the HJB "
                 f"solver's own discretization, its dof coordinates and the quadrature weights it sees, which is "
                 f"stage 1b of #1642."

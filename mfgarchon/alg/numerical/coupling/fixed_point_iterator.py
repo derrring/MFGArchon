@@ -11,7 +11,6 @@ Modern fixed-point iterator for MFG systems with full feature support:
 from __future__ import annotations
 
 import time
-import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -233,87 +232,19 @@ class FixedPointIterator(BaseCouplingIterator):
         """
         Retrieve initial density and terminal value function from problem.
 
-        Issue #543 Phase 2: Centralizes initial/terminal condition retrieval
-        with 4-priority cascade (eliminates 8 hasattr checks).
-
         Args:
             shape: Spatial grid shape
 
         Returns:
             (M_initial, U_terminal): Initial density and terminal value function
 
-        Issue #1425: the initial density and the terminal value are resolved by *independent*
-        cascades. Previously they were resolved together per priority, so a problem supplying its
-        initial density via Priority 1 (``get_m_init()``) but its terminal via a lower priority
-        (e.g. the ``u_terminal`` attribute) silently received ``u(T,·)=0`` — the Priority-1 terminal
-        accessor raised and the method returned zeros before the attribute was tried. Decoupling
-        fixes the mixed-API case; standard single-API problems resolve both fields via the same
-        priority as before (byte-identical).
-
-        Priority order (applied independently to each field):
-            1. get_m_init() / get_u_terminal() methods (preferred modern API)
-            2. m_initial / u_terminal attributes (Issue #670 unified naming)
-            3. get_initial_m() / get_final_u() methods (alternate modern API)
-            4. initial_density() / terminal_cost() callables (functional API)
+        The initial density is the problem's ``get_m_init()``, and the terminal value its ``terminal_value`` at that
+        density (#1642).
         """
-        return self._resolve_initial_density(shape), self._resolve_terminal_value(shape)
-
-    @staticmethod
-    def _reshape_to(arr: np.ndarray, shape: tuple) -> np.ndarray:
-        return arr.reshape(shape) if arr.shape != shape else arr
-
-    def _resolve_initial_density(self, shape: tuple) -> np.ndarray:
-        """Resolve the initial density via the 4-priority cascade (Issue #1425: independent of terminal).
-
-        Uses explicit ``getattr(..., None)`` + ``callable()`` probes (the project's optional-accessor
-        pattern) rather than ``try/except AttributeError`` so a real error inside an accessor
-        propagates instead of being swallowed (and no silent ``pass``).
-        """
-        get_m_init = getattr(self.problem, "get_m_init", None)
-        if callable(get_m_init):
-            return self._reshape_to(get_m_init(), shape)
-        m_initial = getattr(self.problem, "m_initial", None)
-        if m_initial is not None:
-            return self._reshape_to(m_initial, shape)
-        get_initial_m = getattr(self.problem, "get_initial_m", None)
-        if callable(get_initial_m):
-            return get_initial_m()
-        initial_density = getattr(self.problem, "initial_density", None)
-        if callable(initial_density):
-            return initial_density(self.problem.geometry.get_spatial_grid()).reshape(shape)
-        raise ValueError(
-            "Problem must provide an initial density via one of: get_m_init() / m_initial / "
-            "get_initial_m() / initial_density()."
-        )
-
-    def _resolve_terminal_value(self, shape: tuple) -> np.ndarray:
-        """Resolve the terminal value via the 4-priority cascade, INDEPENDENT of the initial density.
-
-        Issue #1425: previously a successful Priority-1 initial density forced the terminal from the
-        same priority, so a mixed-API problem (e.g. ``get_m_init()`` + ``u_terminal`` attribute)
-        silently received ``u(T,·)=0``. Each terminal accessor is tried in turn (explicit
-        ``getattr(..., None)`` + ``callable()`` probes, not ``try/except AttributeError``, so a real
-        error inside an accessor propagates); only if all are absent does it default to zero terminal
-        cost — with a warning, not a silent fallback.
-        """
-        get_u_terminal = getattr(self.problem, "get_u_terminal", None)
-        if callable(get_u_terminal):
-            return self._reshape_to(get_u_terminal(), shape)
-        u_terminal = getattr(self.problem, "u_terminal", None)
-        if u_terminal is not None:
-            return self._reshape_to(u_terminal, shape)
-        get_final_u = getattr(self.problem, "get_final_u", None)
-        if callable(get_final_u):
-            return get_final_u()
-        terminal_cost = getattr(self.problem, "terminal_cost", None)
-        if callable(terminal_cost):
-            return terminal_cost(self.problem.geometry.get_spatial_grid()).reshape(shape)
-        warnings.warn(
-            "No terminal condition found on the problem (get_u_terminal / u_terminal / get_final_u / "
-            "terminal_cost all absent); defaulting to u(T,·)=0.",
-            stacklevel=2,
-        )
-        return np.zeros(shape)
+        M_initial = self._reshape_to(self.problem.get_m_init(), shape)
+        # The terminal datum's one owner (#1642 stage 2). A cold start writes M_initial into every row, so it is the
+        # density at t = T of the first iterate; each iteration re-reads it at the density its HJB solve uses.
+        return M_initial, self._reshape_to(self.problem.terminal_value(M_initial), shape)
 
     def solve(
         self,
@@ -552,6 +483,9 @@ class FixedPointIterator(BaseCouplingIterator):
 
                 U_old = self.U.copy()
                 M_old = self.M.copy()
+                # u(T) at the density this iteration's HJB solve uses (#1642 stage 2): the solve, the restore after a
+                # diverged step and the re-imposition after the update all read this one.
+                U_terminal = self._reshape_to(self.problem.terminal_value(M_old[-1]), shape)
 
                 # Build iteration state for BC provider resolution (Issue #625)
                 # This state is passed to BCValueProvider.compute() for dynamic BCs

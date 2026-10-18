@@ -192,19 +192,20 @@ class GraphMFGSolver(BaseCouplingIterator):
         """
         N = self._N
 
-        # Initialize: terminal conditions and initial densities
-        Us_full = []
-        for k in range(N):
-            p = self._problems[k]
-            u_terminal = p.get_u_terminal()
-            U_k = np.zeros((p.Nt + 1, len(u_terminal)))
-            U_k[-1] = u_terminal
-            Us_full.append(U_k)
-
+        # Initialize: initial densities, then each node's terminal condition from its one owner at that density, the
+        # density at t = T of the first sweep (#1642 stage 2).
         Ms = []
         for k in range(N):
             m_init = self._problems[k].get_m_initial()
             Ms.append(m_init)
+
+        Us_full = []
+        for k in range(N):
+            p = self._problems[k]
+            u_terminal = np.asarray(p.terminal_value(Ms[k]))
+            U_k = np.zeros((p.Nt + 1, len(u_terminal)))
+            U_k[-1] = u_terminal
+            Us_full.append(U_k)
 
         error_history: list[float] = []
         integrates = [p.spatial_measure().integrate for p in self._problems]
@@ -219,10 +220,13 @@ class GraphMFGSolver(BaseCouplingIterator):
             for k in range(N):
                 raw_coupling = self._coupling.compute_hjb_source(k, Us_full, Ms_expanded, self._dt)
                 hjb_source = self._compose_hjb_source(k, Us_full, Ms_expanded, raw_coupling)
+                # u(T) at the density this node's HJB solve uses (#1642 stage 2). The previous iterate's last row,
+                # read here before, is the damped mix of two terminals.
+                terminal_k = np.asarray(self._problems[k].terminal_value(Ms_expanded[k][-1]))
 
                 U_k = self._hjb[k].solve_hjb_system(
                     Ms_expanded[k],
-                    Us_full[k][-1],  # terminal condition
+                    terminal_k,  # terminal condition
                     Us_full[k],  # previous iterate
                     source_term=hjb_source,
                 )
@@ -233,7 +237,7 @@ class GraphMFGSolver(BaseCouplingIterator):
                 # before anything noticed, and the FP solver would then report a CFL condition for
                 # what is an HJB failure.
                 diverged = diverged_value_function(
-                    U_k, Us_full[k][-1], site=f"GraphMFGSolver[node {k}]", iteration=iteration
+                    U_k, terminal_k, site=f"GraphMFGSolver[node {k}]", iteration=iteration
                 )
                 if diverged is not None:
                     Us_new[k] = diverged
