@@ -2409,7 +2409,9 @@ def region_name_holds_point(
     """Does a ``region_name`` segment hold the boundary point ``point``? The point-level reading of
     :func:`region_name_governs_face`, in its order (#2490 B1e-1):
 
-    - a point outside ``domain_bounds``, a particle past a wall, is read at its nearest point of that box;
+    - a point outside ``domain_bounds``, a particle past a wall, is read at its nearest point of that box. That is the
+      interim reading of a point past the boundary: the nearest point stands in for the point where the particle
+      crossed it, which #2733 will pass instead, as B1d's interim did;
     - a geometry that marks the region decides by its mask, at the grid node nearest the point; a point the grid
       cannot place on a node -- beyond its end nodes by more than half the end cell -- is refused, not read as outside
       the region;
