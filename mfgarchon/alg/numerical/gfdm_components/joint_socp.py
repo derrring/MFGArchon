@@ -25,6 +25,9 @@ Scope of the guarantee (Issue #1074):
     `monotonicity_enforcer.verify_assembled_m_matrix(...)` (and the
     `critical_drift_for_dmp(...)` threshold) to check the assembled M-matrix
     / DMP property for a specific problem and discretization.
+    They hold on interior rows only. A boundary row is its BC row, and a
+    no-flux or Neumann row is a GFDM normal-gradient stencil with mixed signs,
+    not an M-matrix row (#1689 comment 6246936251).
 
 Solver: cvxpy + CLARABEL.
 

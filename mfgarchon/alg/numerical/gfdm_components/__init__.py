@@ -8,6 +8,7 @@ Components:
 - GridCollocationMapper: Bidirectional grid ↔ collocation interpolation
 - BoundaryHandler: Boundary operations, LCR, ghost nodes
 - NeighborhoodBuilder: Stencil construction, Taylor matrices
+- GuardedFanParameters: the parameters of ``monotonicity_scheme="positive_qp_fan"``
 
 Benefits of Composition:
 ------------------------
@@ -23,9 +24,11 @@ See docs/development/PARTICLE_SOLVER_TEMPLATE.md for composition pattern guide.
 from .boundary_handler import BoundaryHandler
 from .grid_collocation_mapper import GridCollocationMapper
 from .neighborhood_builder import NeighborhoodBuilder
+from .positive_qp_fan import GuardedFanParameters
 
 __all__ = [
     "BoundaryHandler",
     "GridCollocationMapper",
+    "GuardedFanParameters",
     "NeighborhoodBuilder",
 ]
