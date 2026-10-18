@@ -135,3 +135,29 @@ def test_a_row_its_neighbourhood_does_not_contain_is_refused(allow_relaxed):
     assert f"{node} at " in message, f"node {node} is not named: {message}"
     assert "its neighbourhood does not contain it" in message
     assert "move it out of the margin, or reduce visibility_margin" in message
+
+
+def test_ghost_nodes_with_joint_socp_are_refused_by_name():
+    """Ghost nodes keep the PDE row at a Neumann boundary node; joint_socp builds monotone rows for interior nodes only,
+    so that row would carry bare Wendland-Taylor weights. Refused by name. At main it raised IndexError inside the
+    boundary buffer #1689 deleted; without the refusal it now constructs and solves on those rows."""
+    xs = np.linspace(0.0, 1.0, 11)
+    X, Y = np.meshgrid(xs, xs, indexing="ij")
+    points = np.column_stack([X.ravel(), Y.ravel()])
+    problem = MFGProblem(
+        model=Model(
+            hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)), volatility=0.6
+        ),
+        domain=TensorProductGrid(bounds=[(0, 1.0), (0, 1.0)], Nx_points=[11, 11], boundary_conditions=no_flux_bc(2)),
+        conditions=Conditions(m_initial=lambda x: 1.0, u_terminal=lambda x: 0.0, T=0.2),
+        Nt=4,
+    )
+    with pytest.raises(ValueError, match=r"use_ghost_nodes=True\) is refused.*interior rows only"):
+        HJBGFDMSolver(
+            problem,
+            collocation_points=points,
+            boundary_indices=np.flatnonzero(np.min(np.abs(np.column_stack([points, 1.0 - points])), axis=1) < 1e-12),
+            delta=0.3,
+            monotonicity_scheme="joint_socp",
+            use_ghost_nodes=True,
+        )
