@@ -216,11 +216,13 @@ class BoundaryConditions:
         """
         if self.dimension is not None and self.dimension != dim:
             raise ValueError(
-                f"BC dimension mismatch: BC has dimension={self.dimension}, but geometry has dimension={dim}"
+                f"BC dimension mismatch: BC has dimension={self.dimension}, but geometry has dimension={dim}. Build "
+                f"the BC with dimension={dim}, the geometry's."
             )
         if self.dimension == dim:
             return self  # Already bound to correct dimension
-        return replace(self, dimension=dim)
+        # A list of its own: __post_init__ sorts the segments in place, and the caller's list is not this copy's.
+        return replace(self, dimension=dim, segments=list(self.segments))
 
     def bind_geometry(self, geometry: Any) -> BoundaryConditions:
         """This BC bound to ``geometry``: its dimension, and the geometry the owner decides a placement on when a reader
@@ -229,7 +231,7 @@ class BoundaryConditions:
         bound = self.bind_dimension(geometry.dimension)
         if bound._geometry_ref is not None and bound._geometry_ref() is geometry:
             return bound
-        return replace(bound, _geometry_ref=weakref.ref(geometry))
+        return replace(bound, segments=list(bound.segments), _geometry_ref=weakref.ref(geometry))
 
     def _query_geometry(self, geometry: Any) -> Any:
         """The geometry a query is decided on: the one passed, else the one this BC is bound to, if it is alive."""
@@ -2415,7 +2417,7 @@ def region_name_holds_point(
       in for the point where the particle crossed it, which #2733 will pass instead, as B1d's interim did. A point
       outside the marking grid's own box, where the BC's box reaches past the grid's, or of another dimension than the
       grid, is refused, not read as outside the region; so is a point on a grid whose nodes do not strictly ascend on
-      an axis, where the face rule reads the axis's first node as its min face whatever its coordinate (#2748);
+      an axis, where the face rule reads the axis's first node as its min face whatever its coordinate (#2490);
     - otherwise a region name that is a face label ("x_max", "left") holds the points on that face: the face the
       point is read on (``boundary_id``), or, with none, the face of ``domain_bounds`` it lies on within ``tolerance``;
     - otherwise refused, as the face rule refuses.
@@ -2479,7 +2481,7 @@ def _region_node(segment: BCSegment, geometry: Any, at: np.ndarray, asked: np.nd
         nodes = np.asarray(nodes, dtype=float)
         if not np.all(np.diff(nodes) > 0):
             mirrored = (
-                "The face rule reads an axis's first node as its min face whatever its coordinate (#2748), and reading "
+                "The face rule reads an axis's first node as its min face whatever its coordinate, and reading "
                 "the point by coordinate would put the region on the other face. "
                 if nodes[-1] < nodes[0]
                 else ""

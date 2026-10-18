@@ -12,7 +12,7 @@
     main. A reader that resolves its points at construction, HJB-GFDM's classification, refuses there.
   - A point on a marking grid whose nodes do not strictly ascend on an axis is refused by name. Main read such a point
     by index, as the face rule does, and on a descending axis the face rule reads the first node as the min face
-    whatever its coordinate (#2748), so reading by coordinate would put the region on the other face.
+    whatever its coordinate (#2490), so reading by coordinate would put the region on the other face.
   - A geometry that marks the region but is no grid the owner reads, such as a `Hypersphere`, is refused with a
     message that says so and names `sdf_region`; main raised a `TypeError` naming the protocol alone.
   - A point between the marking grid's nodes is read at the nearest node. Main read it at the node below it on each
