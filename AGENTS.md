@@ -447,6 +447,14 @@ gh pr create --title "…" --body "Fixes #N" --label "priority: medium,area: alg
 ```
 Feature process: issue (labelled) → branch → core code in `mfgarchon/<sub>` → examples → tests → docs → benchmarks → label PR to match.
 
+**Before filing an issue** (user rulings, 2026-10-09 and 2026-10-18). Search open issues by family label and by code site or owner.
+- **Fold it** when an open issue's fix would also fix the finding, or when an open issue carries an approved staged plan for the finding's family whose change would remove it. Being in the same family is not enough: the fix or the plan must cover it. Comment there with the reproducer, and add a line under `## Folded findings` in that issue's body, leaving the rest of the body unchanged. No new issue.
+- **Ledger it** when it is a low-priority behaviour defect off the default path, a duplicate or a dead surface: one line in the phase ledger (#2573 for the #2512 phase), with the command that shows it. Not there: anything where `problem.solve()` with the default scheme can return a wrong result without an error, and any medium-or-higher behaviour defect.
+- **Open a new issue** only for a different fix (different code or owner), a separate decision, or a priority or size that folding would lose.
+- **A closed issue with the same cause is reopened.** A new issue is opened only for a new gap.
+
+**Before merging** (user ruling, 2026-10-18). Search open issues for the functions and files the diff changes (`gh issue list --search "<name> in:title,body"`), and judge each hit as still live or fixed. An issue the diff fixes is closed by reference (`Fixes #N`) or, found at merge, closed with the commit named.
+
 ### Ruff pinning
 Pin the ruff version (reproducible formatting, no surprise CI failures). Monthly automated update via GitHub Action, or `python scripts/update_ruff_version.py`.
 
