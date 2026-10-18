@@ -239,8 +239,12 @@ def test_positive_qp_fan_refuses_what_it_cannot_make_monotone(row):
         with pytest.raises(ValueError, match=r"condition other than Dirichlet"):
             HJBGFDMSolver(_lq_problem(4), boundary_conditions=no_flux_bc(dimension=2), **with_howard)
     elif row == "a no-flux face with degenerate stencils":
-        # A radius of 0.5 on a 1.33 spacing leaves the boundary stencils degenerate, and their no-flux rows identities.
-        with pytest.raises(ValueError, match=r"condition other than Dirichlet"):
+        # A radius of 0.5 on a 1.33 spacing leaves the stencils degenerate, and the no-flux rows identities; the
+        # operator says so, and the scheme refuses the face.
+        with (
+            pytest.warns(UserWarning, match=r"degenerate stencils"),
+            pytest.raises(ValueError, match=r"condition other than Dirichlet"),
+        ):
             HJBGFDMSolver(
                 _lq_problem(4),
                 boundary_conditions=no_flux_bc(dimension=2),
