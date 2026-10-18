@@ -2409,12 +2409,12 @@ def region_name_holds_point(
     """Does a ``region_name`` segment hold the boundary point ``point``? The point-level reading of
     :func:`region_name_governs_face`, in its order (#2490 B1e-1):
 
-    - a point outside ``domain_bounds``, a particle past a wall, is read at its nearest point of that box. That is the
-      interim reading of a point past the boundary: the nearest point stands in for the point where the particle
-      crossed it, which #2733 will pass instead, as B1d's interim did;
-    - a geometry that marks the region decides by its mask, at the grid node nearest the point; a point the grid
-      cannot place on a node -- beyond its end nodes by more than half the end cell -- is refused, not read as outside
-      the region;
+    - a grid that marks the region decides by its mask, at the grid node nearest the point (the first of two
+      equidistant ones in the grid's order). A point outside ``domain_bounds``, a particle past a wall, is read there at
+      its nearest point of that box. That is the interim reading of a point past the boundary: the nearest point stands
+      in for the point where the particle crossed it, which #2733 will pass instead, as B1d's interim did. A point
+      outside the marking grid's own box, where the BC's box reaches past the grid's, or of another dimension than the
+      grid, is refused, not read as outside the region;
     - otherwise a region name that is a face label ("x_max", "left") holds the points on that face: the face the
       point is read on (``boundary_id``), or, with none, the face of ``domain_bounds`` it lies on within ``tolerance``;
     - otherwise refused, as the face rule refuses.
@@ -2428,11 +2428,13 @@ def region_name_holds_point(
     """
     name = segment.region_name
     point = np.asarray(point, dtype=float)
-    if domain_bounds is not None and point.size == len(domain_bounds):
-        bounds = np.asarray(domain_bounds, dtype=float)
-        point = np.clip(point, bounds[:, 0], bounds[:, 1])
     if _marks_region(geometry, name):
-        return bool(np.asarray(geometry.get_region_mask(name)).ravel()[_region_node(segment, geometry, point)])
+        at = point
+        if domain_bounds is not None and point.size == len(domain_bounds):
+            bounds = np.asarray(domain_bounds, dtype=float)
+            at = np.clip(point, bounds[:, 0], bounds[:, 1])
+        node = _region_node(segment, geometry, at, point, tolerance)
+        return bool(np.asarray(geometry.get_region_mask(name)).ravel()[node])
     label = parse_boundary_face(name)
     if label is None:
         raise ValueError(_region_name_refusal(segment, geometry, f"holds the boundary point {point.tolist()}"))
@@ -2450,38 +2452,35 @@ def region_name_holds_point(
     return bool(abs(point[label.axis] - side) <= tolerance)
 
 
-def _region_node(segment: BCSegment, geometry: Any, point: np.ndarray) -> int:
-    """The flat index, in the grid's C order, of the node of ``geometry`` nearest ``point``, for a region mask:
-    refused where the geometry has no node coordinates, the point has another number of coordinates than the grid has
-    axes, or the point lies beyond the grid's end nodes by more than half the end cell."""
+def _region_node(segment: BCSegment, geometry: Any, at: np.ndarray, asked: np.ndarray, tolerance: float) -> int:
+    """The flat index, in the grid's C order, of the node of ``geometry`` nearest ``at``, the point ``asked`` as the
+    owner reads it, for a region mask: refused where the geometry has no node coordinates, the point has another number
+    of coordinates than the grid has axes, or it lies outside the grid's own box by more than ``tolerance``."""
     region = f"BC segment {segment.name!r} is restricted to the marked region {segment.region_name!r}"
     coordinates = getattr(geometry, "coordinates", None)
     if coordinates is None:
         raise ValueError(
             f"{region}, and {type(geometry).__name__} gives no node coordinates to read its mask at the point "
-            f"{point.tolist()} (#2490). Read the region on a TensorProductGrid, or place the segment by "
+            f"{asked.tolist()} (#2490). Read the region on a TensorProductGrid, or place the segment by "
             "sdf_region=... or boundary=..."
         )
-    if len(coordinates) != point.size:
+    if len(coordinates) != at.size:
         raise ValueError(
-            f"{region}, and the point {point.tolist()} has {point.size} coordinates where the "
+            f"{region}, and the point {asked.tolist()} has {asked.size} coordinates where the "
             f"{type(geometry).__name__} that marks it has {len(coordinates)} axes, so its mask cannot be read there "
             "(#2490). It is not read as outside the region: read the point in the grid's dimension."
         )
+    box = geometry.get_bounds()
+    lo, hi = box if box is not None else ([np.min(c) for c in coordinates], [np.max(c) for c in coordinates])
     index = []
     for axis, nodes in enumerate(coordinates):
-        nodes = np.asarray(nodes, dtype=float)
-        k = int(np.argmin(np.abs(nodes - point[axis])))
-        if nodes.size > 1 and not (
-            nodes[0] - 0.5 * (nodes[1] - nodes[0]) <= point[axis] <= nodes[-1] + 0.5 * (nodes[-1] - nodes[-2])
-        ):
+        if not (lo[axis] - tolerance <= at[axis] <= hi[axis] + tolerance):
             raise ValueError(
-                f"{region}, and the point {point.tolist()} lies off the grid that marks it, beyond its end node on "
-                f"axis {axis} by more than half the end cell, so the region cannot be read there (#2490). It is not "
-                "read as outside it: read the BC on the grid that marks the region, with domain_bounds equal to that "
-                "grid's box."
+                f"{region}, and the point {asked.tolist()} lies outside the grid that marks it, whose box on axis "
+                f"{axis} is [{lo[axis]}, {hi[axis]}], so the region cannot be read there (#2490). It is not read as "
+                "outside it: read the BC on the grid that marks the region, with domain_bounds equal to that grid's box."
             )
-        index.append(k)
+        index.append(int(np.argmin(np.abs(np.asarray(nodes, dtype=float) - at[axis]))))
     return int(np.ravel_multi_index(tuple(index), tuple(len(nodes) for nodes in coordinates)))
 
 

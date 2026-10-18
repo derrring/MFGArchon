@@ -49,12 +49,23 @@ def test_a_region_named_segment_is_read_at_a_point_as_on_its_face(row):
         assert inside.segment_for_point(np.array([1.0, 0.3]), geometry=grid).name == "rest"
         return
     wide = BoundaryConditions(segments=segments, dimension=2, domain_bounds=np.array([[0.0, 2.0], [0.0, 1.0]]))
-    with pytest.raises(ValueError, match=r"lies off the grid that marks it.*domain_bounds equal to that grid's box"):
+    with pytest.raises(
+        ValueError, match=r"lies outside the grid that marks it.*domain_bounds equal to that grid's box"
+    ):
         wide.segment_for_point(np.array([2.0, 0.5]), geometry=grid)
     assert inside.segment_for_point(np.array([1.0, 0.5]), geometry=grid).name == "strip"
 
 
-@pytest.mark.parametrize("row", ["a particle past a wall", "an implicit domain that marks it", "another dimension"])
+@pytest.mark.parametrize(
+    "row",
+    [
+        "a particle past a wall",
+        "an implicit domain that marks it",
+        "another dimension",
+        "outside the grid's own box",
+        "the walls of a cell-centred grid",
+    ],
+)
 def test_a_region_named_segment_is_read_or_refused_truly_off_the_grid(row):
     """- A grid that marks the whole x_max face as "exit", its own BC that exit beside walls: FP-particle steps a
       particle past a wall and reads it there. It is read at its nearest point of the BC's box, as main read it at the
@@ -63,7 +74,11 @@ def test_a_region_named_segment_is_read_or_refused_truly_off_the_grid(row):
     - A Hypersphere marks "exit" but the owner reads a region by its mask on a grid's nodes: the refusal says so and
       names ``sdf_region``, where it said the Hypersphere defined no region of that name.
     - A point of three coordinates on a 2-D marking grid, which main read as outside the region, is refused for its
-      dimension, not for coordinates the grid has."""
+      dimension, not for coordinates the grid has.
+    - A BC box that reaches past the marking grid's own box, here from x = -0.2 on a grid on [0, 1]: (-0.2, 0.5) is
+      refused, where main read it at the clamped node. On this non-uniform grid (end cell 0.05) it is four end cells off.
+    - A cell-centred grid, nodes 0.05 ... 0.95 on the box [0, 1]: its walls lie half a cell past its end nodes, inside
+      its box, and are read at the end nodes, as at main."""
     if row == "a particle past a wall":
         from mfgarchon import Conditions, MFGProblem, Model
         from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
@@ -105,9 +120,31 @@ def test_a_region_named_segment_is_read_or_refused_truly_off_the_grid(row):
         with pytest.raises(ValueError, match=r"Hypersphere marks a region of that name.*sdf_region"):
             segment.matches_point(np.array([1.0, 0.5]), "x_max", np.array([[0.0, 1.0], [0.0, 1.0]]), geometry=disk)
         return
+    if row == "another dimension":
+        grid = TensorProductGrid(
+            bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[5, 5], boundary_conditions=no_flux_bc(dimension=2)
+        )
+        grid.mark_region("exit", predicate=lambda x: x[:, 1] > 0.4)
+        with pytest.raises(ValueError, match=r"has 3 coordinates where the TensorProductGrid that marks it has 2 axes"):
+            segment.matches_point(np.array([1.0, 0.75, 0.0]), None, None, geometry=grid)
+        return
+    xs = [0.0, 0.05, 0.1, 0.55, 1.0] if row == "outside the grid's own box" else list(np.linspace(0.05, 0.95, 10))
     grid = TensorProductGrid(
-        bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[5, 5], boundary_conditions=no_flux_bc(dimension=2)
+        bounds=[(0.0, 1.0), (0.0, 1.0)],
+        Nx_points=[len(xs), 3],
+        spacing_type="custom",
+        custom_coordinates=[np.array(xs), np.array([0.0, 0.5, 1.0])],
+        boundary_conditions=no_flux_bc(dimension=2),
     )
-    grid.mark_region("exit", predicate=lambda x: x[:, 1] > 0.4)
-    with pytest.raises(ValueError, match=r"has 3 coordinates where the TensorProductGrid that marks it has 2 axes"):
-        segment.matches_point(np.array([1.0, 0.75, 0.0]), None, None, geometry=grid)
+    grid.mark_region("exit", predicate=lambda x: x[:, 0] > 0.5)
+    segments = [segment, BCSegment(name="rest", bc_type=BCType.NO_FLUX, value=0.0)]
+    if row == "outside the grid's own box":
+        wide = BoundaryConditions(segments=segments, dimension=2, domain_bounds=np.array([[-0.2, 1.0], [0.0, 1.0]]))
+        with pytest.raises(
+            ValueError, match=r"lies outside the grid that marks it, whose box on axis 0 is \[0.0, 1.0\]"
+        ):
+            wide.segment_for_point(np.array([-0.2, 0.5]), geometry=grid)
+        return
+    bc = BoundaryConditions(segments=segments, dimension=2, domain_bounds=np.array([[0.0, 1.0], [0.0, 1.0]]))
+    assert bc.segment_for_point(np.array([1.0, 0.5]), geometry=grid).name == "exit"
+    assert bc.segment_for_point(np.array([0.0, 0.5]), geometry=grid).name == "rest"
