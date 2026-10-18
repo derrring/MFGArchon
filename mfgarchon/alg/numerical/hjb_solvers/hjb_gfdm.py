@@ -1151,7 +1151,8 @@ class HJBGFDMSolver(BaseHJBSolver):
             raise ValueError(
                 f"{head} needs a SeparableHamiltonian with a QuadraticControlCost: its exact sector argmin is the "
                 f"projection a quadratic cost makes it, and this problem's Hamiltonian is {type(hamiltonian).__name__} "
-                f"with {type(control_cost).__name__} (#1689). Use monotonicity_scheme='joint_socp'."
+                f"with {type(control_cost).__name__} (#1689). Use monotonicity_scheme='joint_socp' with "
+                "inner_solver='newton'."
             )
 
     def _refuse_boundary_positive_qp_fan_cannot_close(self) -> None:
@@ -1159,7 +1160,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         stencil with mixed signs, 0 of 40 rows with the M-matrix sign pattern on an 11 x 11 no-flux box (#1689 comment
         6246936251), and a degenerate one falls back to an identity row that imposes u = 0. Decided on each boundary
         point's classified type, so no BC value is evaluated and a Dirichlet frame valued by a provider is admitted.
-        Run at construction, before the operator is built, and at each solve, after the BC is refreshed."""
+        Run at construction, before the operator is built, and by HJBHowardSolver(discretisation="guarded_fan") at
+        each step, before it reads the BC rows it installs, so a BC adopted after construction is checked too."""
         failing = [
             (i, bc_enum) for i, bc_enum, _, _ in self._classified_boundary_points() if bc_enum != BCType.DIRICHLET
         ]
@@ -1170,10 +1172,11 @@ class HJBGFDMSolver(BaseHJBSolver):
             ]
             raise ValueError(
                 f"HJBGFDMSolver(monotonicity_scheme='positive_qp_fan'): {len(failing)} boundary point(s) have a condition "
-                f"other than Dirichlet, whose rows are not M-matrix rows, so the scheme's matrix would not be monotone "
-                f"(#1689). First 10 (index, point, BC): {shown}. A reflecting face (no-flux, Neumann, Robin) gives a GFDM "
-                "normal-gradient row with mixed signs; the scheme takes Dirichlet faces only until its reflecting closure "
-                "lands. monotonicity_scheme='joint_socp' runs such a problem, with monotone interior rows only."
+                f"other than Dirichlet, for which the scheme has no row (#1689). First 10 (index, point, BC): {shown}. A "
+                "reflecting face (no-flux, Neumann, Robin) gives a GFDM normal-gradient row with mixed signs, which is "
+                "not an M-matrix row, and where the stencil is degenerate an identity row, which imposes u = 0 there. The "
+                "scheme takes Dirichlet faces only until its reflecting closure lands. monotonicity_scheme='joint_socp' "
+                "runs such a problem, with monotone interior rows only."
             )
 
     def _compute_n_spatial_grid_points(self) -> int:
@@ -3109,18 +3112,16 @@ class HJBGFDMSolver(BaseHJBSolver):
         Issue #1247 (#1118 PR2): the separable Hamiltonian's potential V(t, x) and density
         coupling f(m), plus any caller-supplied running cost, are wired into Howard's
         running_cost slot (see `running_cost` closure below), so Howard solves the full non-LQ
-        HJB ``-d_t u + (1/2)|grad u|^2 - V(x) - f(m) - (sigma^2/2) Lap u = 0`` (#2375 ruling 3). Refused below: a
-        non-quadratic control cost (#1071). A quadratic one, its lambda included, reaches the solve through
-        ``control_cost.lagrangian``.
+        HJB ``-d_t u + |grad u|^2 / (2 lambda) - V(x) - f(m) - (sigma^2/2) Lap u = 0`` (#2375 ruling 3). Refused
+        below: a non-quadratic control cost (#1071). A quadratic one's lambda reaches the solve twice: in the policy,
+        through ``alpha_star`` from ``dp()`` or, under positive_qp_fan, ``optimal_control`` in ``cone_policy``; and in
+        the right-hand side, through ``control_cost.lagrangian``.
         """
         from mfgarchon.alg.numerical.hjb_solvers.hjb_howard import HJBHowardSolver
 
-        if self.monotonicity_scheme == "positive_qp_fan":
-            # Again here: a BC set on the geometry after construction was adopted by the refresh before this solve.
-            self._refuse_boundary_positive_qp_fan_cannot_close()
         # The Newton route the refusals below name. positive_qp_fan is a Howard discretisation and refuses Newton.
         newton = (
-            "monotonicity_scheme='joint_socp' (or 'none') with inner_solver='newton'"
+            "monotonicity_scheme='joint_socp' with inner_solver='newton'"
             if self.monotonicity_scheme == "positive_qp_fan"
             else "inner_solver='newton'"
         )

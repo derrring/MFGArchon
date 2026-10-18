@@ -22,8 +22,8 @@ from scipy.stats import qmc
 
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.gfdm_components import GuardedFanParameters
-from mfgarchon.alg.numerical.gfdm_components.positive_qp_fan import cone_policy
-from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver
+from mfgarchon.alg.numerical.gfdm_components.positive_qp_fan import PositiveQPFan, cone_policy
+from mfgarchon.alg.numerical.hjb_solvers import HJBGFDMSolver, HJBHowardSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import TensorProductGrid
 from mfgarchon.geometry.boundary import BCSegment, BCType, BoundaryConditions, no_flux_bc
@@ -92,6 +92,29 @@ def _solve(problem, points, boundary, nt, terminal, **extra):
     return solver, solver.solve_hjb_system(M_density=np.zeros((nt + 1, len(points))), U_terminal=terminal)
 
 
+def _sector_hamiltonian(u, sectors, lam):
+    """Per node, the minimum over its sectors and over ``l >= 0`` of ``l . (u_j0 - u_i, u_j1 - u_i) + lam/2 |Z l|^2``,
+    ``Z = [z0 z1]``: the discrete ``min_alpha alpha . grad u + L(alpha)`` over the fan. Found here by enumerating the
+    KKT points in the rays' coordinates (both rays, either ray alone, the apex), not by ``cone_policy``'s projection
+    of ``optimal_control``, so a wrong sector or a wrong projection in the scheme's policy shows in the residual."""
+    node = sectors["node"]
+    du = np.stack([u[sectors["j0"]] - u[node], u[sectors["j1"]] - u[node]], axis=1)
+    z = np.stack([sectors["z0"], sectors["z1"]], axis=2)
+    gram = np.einsum("mki,mkj->mij", z, z)
+
+    def value(coords):
+        return np.einsum("mi,mi->m", coords, du) + 0.5 * lam * np.einsum("mi,mij,mj->m", coords, gram, coords)
+
+    both = np.linalg.solve(lam * gram, -du[:, :, None])[:, :, 0]
+    on0 = np.column_stack([np.maximum(0.0, -du[:, 0] / (lam * gram[:, 0, 0])), np.zeros(len(du))])
+    on1 = np.column_stack([np.zeros(len(du)), np.maximum(0.0, -du[:, 1] / (lam * gram[:, 1, 1]))])
+    best = np.minimum(np.minimum(value(on0), value(on1)), 0.0)
+    best = np.where(np.all(both >= 0.0, axis=1), np.minimum(best, value(both)), best)
+    hamiltonian = np.full(len(u), np.inf)
+    np.minimum.at(hamiltonian, node, best)
+    return hamiltonian
+
+
 def _lq_run(n_interior, kind):
     points, boundary = _cloud(n_interior, kind)
     nt = round(float(120 * np.sqrt(n_interior / 225)))
@@ -108,12 +131,12 @@ def test_positive_qp_fan_converges_at_first_order_to_the_closed_form_lq_value(ki
 
     - the Laplacian is exact on P2, the diffusion half the error rate alone cannot see (#2750 review 1 measured the
       rate green with the diffusion flipped, dropped or scaled ten-fold);
-    - every interior row of the policy-evaluation matrix, at the mid-time policy, has non-positive off-diagonals;
-    - every step solves the discrete Bellman equation: the largest interior residual over the steps is at most 1e-7 of
-      the largest |u_next / dt|. Measured 1.1e-10 to 2.9e-10 of it with Howard's loop, and 5.2e-5 to 1.7e-3 with one
-      policy evaluation per step (#2750, both clouds at N_int 225 and 400).
-
-    The policy's argmin is shown discriminating in the PR, by a first-sector mutant."""
+    - the policy-evaluation matrix's parts at the mid-time policy, ``I/dt - A_adv - (sigma^2/2) L`` built here from
+      the operator, have non-positive interior off-diagonals. This reads the parts, not the matrix Howard assembles;
+      the residual below ties the solve to them;
+    - every step solves the discrete Bellman equation, with the minimum over each node's fan sectors taken here
+      (`_sector_hamiltonian`) and not from the scheme's policy: the largest interior residual over the steps is at
+      most 1e-7 of the largest |u_next / dt|."""
     (e_coarse, solver, U, nt, points, interior), (e_fine, *_) = _lq_run(225, kind), _lq_run(400, kind)
     order = np.log(e_coarse / e_fine) / np.log(np.sqrt(L_BOX**2 / 225) / np.sqrt(L_BOX**2 / 400))
     assert order >= 0.6, f"{kind}: EOC {order:.3f} from L2 errors {e_coarse:.4e} -> {e_fine:.4e}"
@@ -130,12 +153,8 @@ def test_positive_qp_fan_converges_at_first_order_to_the_closed_form_lq_value(ki
 
     worst, scale = 0.0, 0.0
     for k in range(nt):
-        policy = cone_policy(U[k], fan.sectors, cost)
         residual = (
-            (U[k] - U[k + 1]) / dt
-            - policy.advection(n) @ U[k]
-            - diffusion * (fan.laplacian @ U[k])
-            - cost.lagrangian(policy.control)
+            (U[k] - U[k + 1]) / dt - _sector_hamiltonian(U[k], fan.sectors, COST) - diffusion * (fan.laplacian @ U[k])
         )
         worst = max(worst, float(np.max(np.abs(residual[interior]))))
         scale = max(scale, float(np.max(np.abs(U[k + 1][interior] / dt))))
@@ -147,7 +166,8 @@ def test_positive_qp_fan_is_exact_on_a_linear_value_at_any_control_cost(lam):
     """``u* = a.x + 1 - (|a|^2 / (2 lam) - V)(T - t)`` solves ``-u_t + |grad u|^2 / (2 lam) - V - (sigma^2/2) Lap u = 0``
     with V = 0.5, a potential that reaches the solve through the running cost. The scheme is exact on it: a linear u's
     sector gradient is ``a``, the projection of ``-a / lam`` onto its sector is exact, and L is exact on P2. #2750's
-    review 1 measured 7e-12 and 3e-11 here, against 0.87 and more when the control cost's lambda was dropped."""
+    round 2 measured max|U - u*| 1.6e-12 (lam 0.25) and 7.8e-12 (lam 4) here; with the control cost's lambda set to 1
+    in the policy and the Lagrangian, 0.78 and 0.19; in the policy alone, 0.59 and 7.6e+111."""
     a, potential = np.array([0.3, -0.2]), 0.5
 
     def u_linear(t, x):
@@ -185,13 +205,15 @@ def test_positive_qp_fan_is_exact_on_a_linear_value_at_any_control_cost(lam):
         "a no-flux face",
         "a no-flux face with degenerate stencils",
         "a no-flux face set after construction",
+        "a no-flux face adopted after construction, solved by HJBHowardSolver directly",
         "a fan that cannot close",
     ],
 )
 def test_positive_qp_fan_refuses_what_it_cannot_make_monotone(row):
     """Each refusal names what it cannot do (D5 and P3-D1 of #1689 comment 6246915117). A boundary point of any other
     condition than Dirichlet is refused by its type: at construction, also where its stencil is degenerate and its
-    row an identity, and at the solve, for a condition set on the grid after construction (#2750 review 1)."""
+    row an identity, and where HJBHowardSolver installs the BC rows, for a condition set on the grid after
+    construction (#2750 review 1), on HJBGFDMSolver's route and on HJBHowardSolver's own (#2750 review 2)."""
     if row == "one dimension":
         from mfgarchon.geometry.boundary import dirichlet_bc
 
@@ -256,6 +278,20 @@ def test_positive_qp_fan_refuses_what_it_cannot_make_monotone(row):
         problem.geometry.set_boundary_conditions(no_flux_bc(dimension=2))
         with pytest.raises(ValueError, match=r"condition other than Dirichlet"):
             solver.solve_hjb_system(M_density=np.zeros((5, len(points))), U_terminal=_u_star(T_END, points))
+    elif row == "a no-flux face adopted after construction, solved by HJBHowardSolver directly":
+        problem = _lq_problem(4)
+        provider = HJBGFDMSolver(problem, **with_howard)
+        problem.geometry.set_boundary_conditions(no_flux_bc(dimension=2))
+        provider._refresh_boundary_conditions_if_changed()  # the adoption the provider's own solve begins with
+        howard = HJBHowardSolver(
+            problem,
+            stencil_provider=provider,
+            discretisation="guarded_fan",
+            control_cost=QuadraticControlCost(lambda_=COST),
+            use_provider_bc_rows=True,
+        )
+        with pytest.raises(ValueError, match=r"condition other than Dirichlet"):
+            howard.solve_hjb_system(np.zeros((5, len(points))), _u_star(T_END, points))
     else:
         # Without the widened caps, the nodes within about 0.3h of the frame have no fan with every gap below 120.
         with pytest.raises(ValueError, match=r"interior row\(s\) cannot be built.*no fan with every gap at most 120"):
@@ -282,3 +318,17 @@ def test_a_dirichlet_frame_valued_by_a_provider_constructs():
         monotonicity_scheme="positive_qp_fan",
         inner_solver="howard",
     )
+
+
+def test_the_positive_laplacian_scales_with_the_cloud():
+    """The cloud scaled from a box of side 20 to one of side 1e-3 gives the same fans and the Laplacian scaled by
+    (20 / 1e-3)^2: the row's QP is solved in units of the node's h6. Solved in the cloud's own units, CLARABEL called
+    every row of the small box infeasible and the operator refused all 225 (#2750 review 2)."""
+    points, _ = _cloud(225, "jittered")
+    interior = np.arange(225)
+    big = PositiveQPFan(points, interior, GuardedFanParameters())
+    small = PositiveQPFan(points * (1e-3 / L_BOX), interior, GuardedFanParameters())
+    for key in ("node", "j0", "j1"):
+        np.testing.assert_array_equal(small.sectors[key], big.sectors[key])
+    scaled = small.laplacian * (1e-3 / L_BOX) ** 2
+    assert abs(scaled - big.laplacian).max() <= 1e-10 * abs(big.laplacian).max()

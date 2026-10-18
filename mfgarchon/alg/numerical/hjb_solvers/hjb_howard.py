@@ -253,24 +253,6 @@ def _build_upwind_projection(alpha: np.ndarray, points: np.ndarray, socp_data: d
     return A.tocsr()
 
 
-def _refuse_rows_without_the_m_matrix_pattern(bc_rows: dict, t_idx: int) -> None:
-    """The certificate of `"guarded_fan"`'s BC rows, read where they are installed (#1689): scaled so its centre is
-    positive, every off-centre entry of a row is non-positive. A Dirichlet row, e_i, has it; a reflecting face's GFDM
-    normal-gradient row has mixed signs. A non-finite entry fails it."""
-    failing = []
-    for i, (row, _target) in bc_rows.items():
-        row = np.asarray(row, dtype=float).ravel()
-        off = np.delete(row * np.sign(row[i]), i)
-        if not (np.all(np.isfinite(row)) and row[i] != 0.0 and off.max(initial=0.0) <= 0.0):
-            failing.append(int(i))
-    if failing:
-        raise ValueError(
-            f"HJBHowardSolver(discretisation='guarded_fan'): at time index {t_idx}, {len(failing)} BC row(s) have no "
-            f"M-matrix sign pattern, so the policy-evaluation matrix would not be monotone (#1689). Rows, first 10: "
-            f"{failing[:10]}. The scheme takes Dirichlet faces only."
-        )
-
-
 # ---------------------------------------------------------------------------
 # HJBHowardSolver
 # ---------------------------------------------------------------------------
@@ -280,21 +262,22 @@ class HJBHowardSolver:
     """Howard's policy iteration inner solver for HJB on GFDM clouds.
 
     Replaces the Newton inner loop of `HJBGFDMSolver` when the Hamiltonian
-    `H(x, p, m)` is strictly convex in `p`. Reads SOCP-corrected
-    `D_lap`/`D_grad` weights from a `stencil_provider` (constructed
-    `HJBGFDMSolver`).
+    `H(x, p, m)` is strictly convex in `p`. Reads its `D_lap`/`D_grad` weights from a
+    `stencil_provider` (a constructed `HJBGFDMSolver`): SOCP-corrected ones, or under
+    `discretisation="guarded_fan"` the provider's positive-QP Laplacian and guarded fans.
 
     Parameters
     ----------
     problem : MFGProblem
         The MFG problem (used for `Nt`, `T`, `sigma`).
     stencil_provider : HJBGFDMSolver
-        A constructed `HJBGFDMSolver` with `monotonicity_scheme='joint_socp'`
-        and `monotonicity_application='precompute'`. Howard reads
-        SOCP-corrected `D_lap`/`D_grad` from the provider's
-        `_joint_socp_stencils`. The provider's `collocation_points` and
-        boundary-segment classification (`_bc_segment_per_point`) are also
-        consumed.
+        A constructed `HJBGFDMSolver`. Howard reads SOCP-corrected `D_lap`/`D_grad` from its
+        `_joint_socp_stencils` (`monotonicity_scheme='joint_socp'`,
+        `monotonicity_application='precompute'`), else from its operator's
+        `get_derivative_weights`. Under `discretisation="guarded_fan"` it reads the Laplacian and
+        the fans from `_positive_qp_fan` (`monotonicity_scheme='positive_qp_fan'`) instead, and
+        the boundary type check from the same provider. The provider's `collocation_points` and
+        boundary-segment classification (`_bc_segment_per_point`) are also consumed.
     alpha_star : Callable | None
         Legendre transform: `alpha_star(t_idx, x, p, m) -> alpha`, bound by name when its
         parameters are named `t` (or `t_idx`), `x`, `p`, `m`, and refused in the old order.
@@ -307,10 +290,10 @@ class HJBHowardSolver:
     running_cost : Callable | None
         `running_cost(t_idx) -> array of shape (n,)` returning the
         non-quadratic-in-alpha running cost evaluated at each collocation
-        point. Pass None when there is no running cost beyond
-        `(1/2)|alpha|^2`. The quadratic term is computed internally from
-        the policy's control: `alpha_star`'s output, or under `"guarded_fan"`
-        the sector control `control_cost.lagrangian` is evaluated at.
+        point. Pass None when there is no running cost beyond the control's
+        Lagrangian, which is computed internally from the policy's control: `control_lagrangian`
+        at `alpha_star`'s output, `(1/2)|alpha|^2` without one, or under `"guarded_fan"`
+        `control_cost.lagrangian`, `lambda/2 |alpha|^2`, at the sector control.
     discretisation : Literal["upwind_projection", "upwind_per_axis", "central", "guarded_fan"]
         Choice of `A_adv` assembly:
 
@@ -326,7 +309,9 @@ class HJBHowardSolver:
           `HJBGFDMSolver(monotonicity_scheme="positive_qp_fan")`. The policy is the exact argmin
           over each node's fan sectors (`positive_qp_fan.cone_policy`), and each advection row has
           non-negative off-diagonals, so every interior row of the policy-evaluation matrix is an
-          M-matrix row. Needs `control_cost` and `use_provider_bc_rows=True`.
+          M-matrix row. Its boundary rows are the provider's BC rows, which the provider's
+          boundary type check admits at each step only when every boundary point is Dirichlet.
+          Needs `control_cost` and `use_provider_bc_rows=True`.
     max_iter : int
         Maximum Howard inner iterations per backward time step.
     tol : float
@@ -348,14 +333,21 @@ class HJBHowardSolver:
     RuntimeError
         If `stencil_provider` offers neither `_joint_socp_stencils` nor an operator
         with `get_derivative_weights`; under `"guarded_fan"`, if it has no
-        positive-QP fan.
+        positive-QP fan or no boundary type check. At a solve: when a point has
+        neither a stencil nor a provider BC row (#1254), and when policy evaluation
+        returns a non-finite value (#2072).
     TypeError
         Without `alpha_star`, except under `"guarded_fan"`.
     ValueError
-        Under `"guarded_fan"`, with `alpha_star` or `control_lagrangian`, without a
-        `QuadraticControlCost`, or without `use_provider_bc_rows`; with
-        `control_cost` under another discretisation; and at a solve, when a BC
-        row it would install has no M-matrix sign pattern.
+        For an unknown `discretisation`; under `"guarded_fan"`, with `alpha_star` or
+        `control_lagrangian`, without a `QuadraticControlCost`, or without
+        `use_provider_bc_rows`; with `control_cost` under another discretisation; and at
+        a solve, under `"guarded_fan"`, when a boundary point has a condition other than
+        Dirichlet (the provider's boundary type check), or when a volatility override is
+        neither a scalar nor a field of shape `(n,)`.
+    NotImplementedError
+        For a `volatility_kind="tensor"` volatility; and at a solve, for `cross_density`,
+        `source_term` or `volatility` passed to `solve_hjb_system`.
     """
 
     @retired_volatility_keywords
@@ -398,16 +390,18 @@ class HJBHowardSolver:
                     f"{type(control_cost).__name__} (#1689). For another cost use another discretisation, or "
                     "HJBGFDMSolver(monotonicity_scheme='joint_socp')."
                 )
-            if getattr(stencil_provider, "_positive_qp_fan", None) is None:
+            if getattr(stencil_provider, "_positive_qp_fan", None) is None or not callable(
+                getattr(stencil_provider, "_refuse_boundary_positive_qp_fan_cannot_close", None)
+            ):
                 raise RuntimeError(
-                    "HJBHowardSolver(discretisation='guarded_fan') reads its Laplacian and its fans from a "
-                    "stencil_provider built with HJBGFDMSolver(monotonicity_scheme='positive_qp_fan'), and this one "
-                    "has none (#1689)."
+                    "HJBHowardSolver(discretisation='guarded_fan') reads its Laplacian, its fans and its boundary type "
+                    "check from a stencil_provider built with HJBGFDMSolver(monotonicity_scheme='positive_qp_fan'), "
+                    "and this one does not carry them (#1689)."
                 )
             if not use_provider_bc_rows:
                 raise ValueError(
                     "HJBHowardSolver(discretisation='guarded_fan') needs use_provider_bc_rows=True: its boundary rows "
-                    "are the provider's BC rows, whose sign pattern the provider certifies (#1689)."
+                    "are the provider's BC rows, which its boundary type check admits (#1689)."
                 )
         else:
             if alpha_star is None:
@@ -651,9 +645,12 @@ class HJBHowardSolver:
 
         # Issue #1118 PR2: value-form BC rows from the provider's shared builder. Constant
         # across inner iterations at this time step; None -> the legacy self-contained scheme.
-        bc_rows = self.stencil_provider._value_form_bc_rows(t_idx) if self.use_provider_bc_rows else None
         if guarded:
-            _refuse_rows_without_the_m_matrix_pattern(bc_rows, t_idx)
+            # #1689: the scheme has an M-matrix boundary row for a Dirichlet point only. A reflecting point's row is a
+            # mixed-sign normal-gradient stencil, or on a degenerate stencil an identity imposing u = 0; the provider's
+            # type check refuses both, on the BC whose rows are read next.
+            self.stencil_provider._refuse_boundary_positive_qp_fan_cannot_close()
+        bc_rows = self.stencil_provider._value_form_bc_rows(t_idx) if self.use_provider_bc_rows else None
         if isinstance(volatility, np.ndarray):
             diffusion_operator = diags(diffusion_from_volatility(volatility, kind="field")) @ D_lap
         else:

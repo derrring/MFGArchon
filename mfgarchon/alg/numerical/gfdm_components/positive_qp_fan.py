@@ -42,8 +42,8 @@ if TYPE_CHECKING:
 _E_LAP = np.array([0.0, 0.0, 0.0, 1.0, 0.0, 1.0])
 
 #: A Laplacian row is admitted when each moment's residual is at most this times that moment's scale, and every
-#: off-centre weight is at least minus this times the row's largest weight. Relative, so a cloud's unit of length
-#: does not decide it. A numerical tolerance, not a method parameter.
+#: off-centre weight is at least minus this times the row's largest weight, both measured on the row's QP in units of
+#: the node's ``h6``. So a cloud's unit of length does not decide it. A numerical tolerance, not a method parameter.
 CERTIFICATE_TOL = 1e-8
 
 #: A sector whose rays' cross product is below this times the product of their lengths -- the sine of its aperture
@@ -189,17 +189,23 @@ def select_guarded_rays(
     return None
 
 
-def _positive_laplacian_row(displacement: np.ndarray, center: int) -> tuple[np.ndarray, float, int] | None:
+def _positive_laplacian_row(
+    displacement: np.ndarray, center: int, length: float
+) -> tuple[np.ndarray, float, int] | None:
     """The positive P2 Laplacian row over ``displacement`` (the centre at index ``center``), or None.
 
+    The QP is solved on ``displacement / length``, ``length`` the node's ``h6``, and its weights ``w`` returned as
+    ``w / length**2``: the row of a cloud scaled by ``s`` is the row scaled by ``1 / s**2``. Unnormalised, CLARABEL
+    reported a node of a unit box scaled by 1e-6 to 0.1 infeasible, which it solves at scale 1 (#2750 review 2).
     Admitted only by its certificate, never by the solver's status: finite weights, each moment's residual at most
     `CERTIFICATE_TOL` times its scale ``1 + sum_j |w_j A_jk|``, and every off-centre weight at least
-    ``-CERTIFICATE_TOL * max|w|``. Off-centre weights in that band below 0 are then set to 0 and the centre to minus the
-    off-centre sum, so the row's off-centre weights are exactly non-negative, and the residual is measured again.
-    Returns the weights, the largest relative residual, and how many weights were set to 0.
+    ``-CERTIFICATE_TOL * max|w|``, all in units of ``length``. Off-centre weights in that band below 0 are then set to
+    0 and the centre to minus the off-centre sum, so the row's off-centre weights are exactly non-negative, and the
+    residual is measured again. Returns the weights, the largest relative residual, and how many weights were set
+    to 0.
     """
     cp = joint_socp.cp
-    A, _ = build_taylor_matrix_2d(displacement)
+    A, _ = build_taylor_matrix_2d(displacement / length)
     n = len(displacement)
     off = np.flatnonzero(np.arange(n) != center)
     weights = cp.Variable(n)
@@ -225,7 +231,7 @@ def _positive_laplacian_row(displacement: np.ndarray, center: int) -> tuple[np.n
     residual = relative_residual(w)
     if not residual <= CERTIFICATE_TOL:
         return None
-    return w, residual, snapped
+    return w / length**2, residual, snapped
 
 
 class PositiveQPFan:
@@ -307,7 +313,7 @@ class PositiveQPFan:
                 _, pool = tree.query(points[i], k=min(k, n))
                 pool = visible(i, np.atleast_1d(pool).astype(int))
                 center = int(np.flatnonzero(pool == i)[0])
-                placed = _positive_laplacian_row(points[pool] - points[i], center)
+                placed = _positive_laplacian_row(points[pool] - points[i], center, h6[i])
                 if placed is not None:
                     weights, residual, snapped = placed
                     rows.extend([i] * len(pool))
