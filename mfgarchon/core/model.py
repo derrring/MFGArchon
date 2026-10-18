@@ -78,7 +78,8 @@ class Model:
             binds it to its grid and measure, and the terminal condition is ``u(T, x) = g(x) + delta G / delta m`` at the
             density m(T) the HJB solve uses (`MFGProblem.terminal_value`, #1642 stage 2). Bound on a
             ``TensorProductGrid``; refused on FEM and meshless geometries until #1642's stage 1b, on a network (#2568),
-            and in `MultiPopulationIterator`, which couples the populations through their stacked densities (#1642).
+            and in `MultiPopulationIterator`, which with more than one population couples them through their stacked
+            densities (#1642).
     """
 
     hamiltonian: HamiltonianBase | None = None

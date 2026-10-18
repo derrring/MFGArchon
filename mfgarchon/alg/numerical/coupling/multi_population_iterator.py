@@ -133,15 +133,16 @@ class MultiPopulationIterator:
             iterations, and convergence info.
         """
         K = self.multi_problem.K
-        # The terminal coupling is single-population (#1642, the user's ruling 5): this loop couples the populations
-        # through the stacked densities it hands each HJB as its cross-density.
+        # The terminal coupling is single-population (#1642, the user's ruling 5): with more than one population this
+        # loop couples them through the stacked densities it hands each HJB as its cross-density.
         coupled = [k for k in range(K) if self.multi_problem.get_population(k).terminal_energy is not None]
         if coupled:
             raise NotImplementedError(
                 f"MultiPopulationIterator: population(s) {coupled} set Model(terminal_coupling=...). A terminal coupling "
-                "is single-population (#1642): this iterator couples the populations through the stacked densities it "
-                "hands each population's HJB, and a G read at them is not defined. Give each population's terminal "
-                "cost through Conditions(u_terminal=...), or solve the population alone."
+                "is single-population (#1642): with more than one population this iterator couples them through the "
+                "stacked densities it hands each population's HJB, and a G read at them is not defined. Solve a single "
+                "population alone, with its own MFGProblem.solve(), or give each population's terminal cost through "
+                "Conditions(u_terminal=...)."
             )
 
         # Initialize from each population's problem
