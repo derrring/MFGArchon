@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from enum import Enum
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from mfgarchon.alg.base_solver import BaseNumericalSolver, SchemeFamily
 
@@ -210,7 +210,8 @@ class BaseFPSolver(BaseNumericalSolver):
 
         bc = refuse_explicit_fp_neumann(bc, type(self).__name__)
         if isinstance(bc, BoundaryConditions):
-            return bc.bind_geometry(self.problem.geometry)
+            # A BoundaryConditions in, a BoundaryConditions out: mypy does not carry the isinstance into _BC.
+            return cast("_BC", bc.bind_geometry(self.problem.geometry))
         return bc
 
     def _lookup_boundary_conditions(self) -> Any:
