@@ -167,9 +167,12 @@ def test_the_grid_s_domain_is_what_its_measure_integrates_over():
 
 
 def test_a_v_that_writes_into_its_point_moves_no_point_off_the_nodes():
-    """``PotentialCost(V)`` hands V a copy of every point. Off the nodes, a V that adds 0.3 to its argument moved the
+    """Off the nodes, ``PotentialCost(V)`` hands V a copy of every point. A V that adds 0.3 to its argument moved the
     caller's points before, so in ``PotentialCost(V) + InteractionCost(K)`` the interaction was read at the moved
-    points: [0.7437, 0.9436] where its parts on their own copies give [0.6745, 1.0406] (bc9a0371 and ca8241bc)."""
+    points: [0.7437, 0.9436] where its parts on their own copies give [0.6745, 1.0406] (bc9a0371 and ca8241bc). The
+    assertions read the off-node half. The copies at binding and in the adapter's probe are reached only because the
+    grid's points are read-only: without them, V's write raises at binding, so this test fails with that exception
+    rather than with its own message."""
 
     def V(x):
         x += 0.3

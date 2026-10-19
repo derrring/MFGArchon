@@ -146,8 +146,9 @@ class PotentialCost(_SummableCost):
         from mfgarchon.utils.callable_adapter import CallableSignature, adapt_ic_callable
 
         def copies(points: np.ndarray) -> np.ndarray:
-            # Every point V is handed is its own float64 copy -- at binding, in the adapter's probe and off the
-            # nodes -- so a V that writes into its x moves neither the measure's points nor a caller's (#1642)
+            # In n-D every point V is handed is its own float64 copy -- at binding, in the adapter's probes (one copy
+            # serves them all) and off the nodes; in 1-D V gets a float -- so a V that writes into its x moves neither
+            # the measure's points nor a caller's (#1642)
             points = np.asarray(points).astype(np.float64)
             return points.reshape(points.shape[0], -1)
 
