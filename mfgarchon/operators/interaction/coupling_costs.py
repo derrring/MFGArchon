@@ -21,9 +21,10 @@ for a potential, the bound quadrature applied at x for an interaction. That is w
 its own points, such as HJB-GFDM's collocation points, reads (#1642 stage 1b-1).
 
 Every library cost binds on a point measure, `bind_on(measure)` (`point_measure`): points with one quadrature weight
-each. ``bind(problem)`` is ``bind_on`` on the problem's grid, `GridPointMeasure`, through `bind_on_measure`, the one
-place a measure is put to use. A solver that integrates on its own points, such as a finite-element space, binds the
-same cost on its own measure (stage 1b-2).
+each. For `InteractionCost` and `PotentialCost`, ``bind(problem)`` is ``bind_on`` on the problem's grid,
+`GridPointMeasure`, through `bind_on_measure`, the one place a measure is put to use. `CombinedCost.bind` binds each part
+through its own ``bind(problem)``, so a user's part with ``bind`` alone still binds on a grid. A solver that integrates
+on its own points, such as a finite-element space, binds the same cost on its own measure (stage 1b-2).
 """
 
 from __future__ import annotations
@@ -103,6 +104,12 @@ class InteractionCost(_SummableCost):
         if isinstance(measure, GridPointMeasure):
             conv = ConvolutionCouplingOperator.from_problem(self.kernel, measure.problem, use_fft=self.use_fft)
         else:
+            if self.use_fft:
+                raise ValueError(
+                    f"InteractionCost(use_fft=True) binds on {type(measure).__name__}, a point measure that is not a "
+                    "problem's grid: the FFT path needs a uniform grid, and on other points the interaction is the "
+                    "direct quadrature on their weights. Leave use_fft unset (#1642)."
+                )
             conv = ConvolutionCouplingOperator(
                 self.kernel, points=measure.points, cell_volume=measure.weights, use_fft=self.use_fft
             )
