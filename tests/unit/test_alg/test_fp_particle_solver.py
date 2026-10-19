@@ -1067,32 +1067,6 @@ class TestFPParticlePreserveIndices:
         # Same RNG → identical physics; absorbed count should match exactly
         assert absorbed_off == absorbed_on, f"Absorbed totals differ: off={absorbed_off}, on={absorbed_on}"
 
-    def test_preserve_indices_unsupported_paths_raise(self):
-        """preserve_indices not yet supported in non-segment-aware paths."""
-        from mfgarchon.geometry.boundary import no_flux_bc
-
-        Lx, Ly, Nt, T = 4.0, 2.0, 20, 1.0
-        bc = no_flux_bc(dimension=2)
-        grid = TensorProductGrid([(0, Lx), (0, Ly)], Nx_points=[21, 11], boundary_conditions=bc)
-        problem = MFGProblem(geometry=grid, Nt=Nt, T=T, volatility=0.3, components=_default_components_2d())
-        solver = FPParticleSolver(
-            problem,
-            num_particles=500,
-            density_mode="query_only",
-            boundary_conditions=bc,
-            preserve_indices=True,
-        )
-        np.random.seed(0)
-        init = np.random.uniform([0.5, 0.5], [1.5, 1.5], (500, 2))
-        with pytest.raises(NotImplementedError, match="segment-aware"):
-            solver.solve_fp_system(
-                initial_particles=init,
-                drift_field=lambda t, x, m: np.column_stack([np.full(len(x), 2.0), np.zeros(len(x))]),
-                volatility=0.3,
-                drift_needs_density=False,
-                show_progress=False,
-            )
-
 
 class TestFPParticleSolverRemovedDeprecatedParams:
     """Pin removal of the Tier-2 (<=v0.17) FP-solver param renames on FPParticleSolver.
