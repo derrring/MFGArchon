@@ -34,6 +34,7 @@ from mfgarchon.geometry.boundary.applicator_base import DiscretizationType
 from mfgarchon.geometry.boundary.conditions import BoundaryConditions, _equal_as_stored
 from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL
 from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace, segment_robin_coefficients
+from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes, points_are_grid_nodes
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.deprecation import NEVER_READ, WRAPPER_FRAMES, deprecated_value, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
@@ -315,7 +316,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         # per-timestep Newton + Armijo line search. 'howard': delegate the backward
         # sweep to HJBHowardSolver (policy iteration; no line search, so it avoids the
         # MIN_ALPHA stall that freezes Newton on advection-dominant / no-flux-BC regimes).
-        # 'howard' needs unit control cost and a homogeneous no-flux BC (validated in solve).
+        # 'howard' needs a quadratic control cost, of any lambda (validated in solve), and takes the value-form BC rows
+        # of _bc_row_for_point: Dirichlet, Neumann or no-flux, and ROBIN(alpha=0, beta=1).
         # It no longer requires monotonicity_scheme='joint_socp' (#2066): without SOCP stencils
         # it takes its operators from the collocation operator and warns that monotonicity --
         # a convergence hypothesis, not a runnability one -- is not guaranteed.
@@ -981,12 +983,21 @@ class HJBGFDMSolver(BaseHJBSolver):
         # get_grid_shape() returns node counts (Nx+1, Ny+1), not cell counts
         self._output_spatial_shape = tuple(self.problem.geometry.get_grid_shape())
 
-        # Initialize grid-collocation mapper (Issue #545: composition over mixins)
-        self._mapper = GridCollocationMapper(
-            collocation_points=collocation_points,
-            grid_shape=self._output_spatial_shape,
-            domain_bounds=self.domain_bounds,
-        )
+        # Initialize grid-collocation mapper (Issue #545: composition over mixins), on the grid's own node axes so a
+        # graded grid is interpolated on its nodes (#2756). A geometry whose nodes are not a tensor grid, such as an
+        # implicit domain's sampled points, has no grid to map from: its input must already be at the collocation
+        # points.
+        self._mapper: GridCollocationMapper | None = None
+        self._points_are_grid_nodes = False
+        grid_axes = geometry_grid_axes(self.problem.geometry)
+        if grid_axes is not None:
+            self._mapper = GridCollocationMapper(
+                collocation_points=collocation_points,
+                grid_shape=self._output_spatial_shape,
+                grid_axes=grid_axes,
+            )
+            grid_nodes = np.stack([g.ravel() for g in np.meshgrid(*grid_axes, indexing="ij")], axis=1)
+            self._points_are_grid_nodes = points_are_grid_nodes(collocation_points, grid_nodes)
         if self.llf_augmentation:
             self._llf_sigma_eff = self._compute_llf_sigma_eff()
 
@@ -2434,7 +2445,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         - the Newton path forms the #1116 residual RHS ``row_coeffs @ u_current - bc_target``;
         - the Howard value-form path uses ``bc_target`` as the RHS directly.
         Keeping one source prevents the two paths from drifting (the recurring dual-source BC
-        bug class). Raises for BC types with no row builder (PERIODIC/ROBIN).
+        bug class). Raises for PERIODIC, which has no row builder, and for a ROBIN segment other than
+        ROBIN(alpha=0, beta=1), which is built as the Neumann row n.grad u = g.
         """
         match bc_enum:
             case BCType.DIRICHLET:
@@ -2541,9 +2553,11 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         BC type dispatch is now an exhaustive ``match`` over ``BCType`` with
         ``case _: raise``, so any unhandled enum value surfaces immediately
-        rather than silently leaving a cleared zero row. PERIODIC and ROBIN
-        raise ``NotImplementedError`` because this solver doesn't support them
-        via row replacement (see error messages for alternatives).
+        rather than silently leaving a cleared zero row. PERIODIC raises
+        ``NotImplementedError``, since this solver does not support it via row
+        replacement, and so does a ROBIN segment other than ROBIN(alpha=0, beta=1),
+        which is built as the Neumann row n.grad u = g (see error messages for
+        alternatives).
 
         Row construction is **atomic**: we build the full replacement row in a
         local ``np.ndarray`` and assign in one shot, instead of clearing first
@@ -2859,7 +2873,7 @@ class HJBGFDMSolver(BaseHJBSolver):
         problem_field_is_grid_indexed = source_is_problem_field and getattr(self.problem, "domain_type", None) == "grid"
         grid_indexed = not is_meshfree_input or problem_field_is_grid_indexed
         if grid_indexed:
-            grid_shape = tuple(self._mapper.grid_shape)
+            grid_shape = tuple(self._grid_mapper().grid_shape)
             grid_size = int(np.prod(grid_shape))
             if sigma.shape == grid_shape:
                 sigma_grid = sigma.reshape(-1)
@@ -2872,7 +2886,7 @@ class HJBGFDMSolver(BaseHJBSolver):
                     f"({grid_size},), got {sigma.shape}; collocation space has "
                     f"{self.n_points} points."
                 )
-            resolved = np.asarray(self._mapper.map_grid_to_collocation(sigma_grid), dtype=float)
+            resolved = np.asarray(self._grid_mapper().map_grid_to_collocation(sigma_grid), dtype=float)
         else:
             if sigma.shape != (self.n_points,):
                 raise ValueError(
@@ -2916,7 +2930,14 @@ class HJBGFDMSolver(BaseHJBSolver):
         Solve the HJB system using GFDM collocation method.
 
         Args:
-            M_density: (Nt, *spatial_shape) density from FP solver
+            M_density: the density, either on the problem's grid, ``(Nt, *grid_shape)`` or ``(Nt, n_grid_nodes)``,
+                or at the collocation points, ``(Nt, n_points)``. Its shape decides which, and the terminal value and
+                the returned U follow the same representation. When the shape fits both, a grid with as many nodes as
+                there are collocation points, M is read as the grid's and mapped to the points, which is what the
+                coupling iterators pass; only where the points are the grid's nodes in its order, so that the two
+                readings agree, is it used as it stands. A density at the points whose count happens to equal the
+                grid's is therefore read as grid values (#2756). On a geometry with no tensor grid, M must be at the
+                collocation points.
             U_terminal: (*spatial_shape,) terminal condition u(T,x)
             U_coupling_prev: Accepted for interface conformance with the coupling's call; no GFDM path
                 reads it (#1055).
@@ -3027,10 +3048,8 @@ class HJBGFDMSolver(BaseHJBSolver):
 
             self._mms_source_fn = _source_at
 
-        # Detect if input is already in collocation format (pure meshfree mode)
-        # Grid format: M_density.shape = (Nt, Nx, Ny, ...)
-        # Collocation format: M_density.shape = (Nt, n_points)
-        is_meshfree_input = M_density.ndim == 2 and M_density.shape[1] == self.n_points
+        # Collocation format: M_density.shape = (Nt, n_points); grid format: (Nt, *grid_shape) or (Nt, n_grid_nodes)
+        is_meshfree_input = self._density_is_at_collocation_points(M_density)
 
         # Issue #1725: resolve once, after the input representation is known and before
         # any interpolation, Newton probe, sparse assembly, LLF, DMP, or Howard path.
@@ -3052,9 +3071,11 @@ class HJBGFDMSolver(BaseHJBSolver):
             U_solution_collocation[n_time_points - 1, :] = U_terminal.copy()
         else:
             # Hybrid mode: map grid data to collocation points
-            M_collocation = self._mapper.map_grid_to_collocation_batch(M_density)
+            M_collocation = self._grid_mapper().map_grid_to_collocation_batch(M_density)
             # Set final condition at t=T (last time index = n_time_points - 1)
-            U_solution_collocation[n_time_points - 1, :] = self._mapper.map_grid_to_collocation(U_terminal.flatten())
+            U_solution_collocation[n_time_points - 1, :] = self._grid_mapper().map_grid_to_collocation(
+                U_terminal.flatten()
+            )
 
         if self.inner_solver == "howard":
             # Issue #1118: delegate the backward sweep to Howard's policy iteration (no
@@ -3099,8 +3120,45 @@ class HJBGFDMSolver(BaseHJBSolver):
             return U_solution_collocation
         else:
             # Hybrid mode: map back to grid
-            U_solution = self._mapper.map_collocation_to_grid_batch(U_solution_collocation)
+            U_solution = self._grid_mapper().map_collocation_to_grid_batch(U_solution_collocation)
             return U_solution
+
+    def _grid_mapper(self) -> GridCollocationMapper:
+        """The grid-to-collocation mapper, refused by name where the geometry has no tensor grid to map from."""
+        if self._mapper is None:
+            raise ValueError(
+                "HJBGFDMSolver: this field is grid-indexed, and the problem's geometry "
+                f"({type(self.problem.geometry).__name__}) has no tensor grid to map it from: its get_spatial_grid() "
+                "rows are not the C-order nodes of get_grid_shape(). Pass it at the collocation points, "
+                f"shape ({self.n_points},) per time (#2756)."
+            )
+        return self._mapper
+
+    def _density_is_at_collocation_points(self, M_density: np.ndarray) -> bool:
+        """Whether ``M_density`` is already at the collocation points, rather than on the problem's grid (#2756).
+
+        The spatial shape decides when it fits only one of the two. When it fits both, a grid with as many nodes as
+        there are collocation points, the density is at the points only where the points are the grid's nodes in
+        its order, where the two readings agree. Otherwise it is the grid's, which is what the coupling iterators
+        pass: read by index, it would put node i's value at point i.
+        """
+        spatial = tuple(M_density.shape[1:])
+        at_points = spatial == (self.n_points,)
+        grid_shape = None if self._mapper is None else tuple(self._mapper.grid_shape)
+        on_grid = grid_shape is not None and spatial in (grid_shape, (int(np.prod(grid_shape)),))
+        if at_points and on_grid:
+            return self._points_are_grid_nodes
+        if at_points or on_grid:
+            return at_points
+        grid_text = (
+            f"the problem's grid {grid_shape} (or {int(np.prod(grid_shape))} flattened)"
+            if grid_shape is not None
+            else f"a grid: the problem's geometry ({type(self.problem.geometry).__name__}) has none to map from"
+        )
+        raise ValueError(
+            f"HJBGFDMSolver.solve_hjb_system: M_density has spatial shape {spatial}, which is neither the "
+            f"{self.n_points} collocation points' ({self.n_points},) nor {grid_text} (#2756)."
+        )
 
     def _solve_backward_howard(self, M_collocation: np.ndarray, U_terminal_colloc: np.ndarray) -> np.ndarray:
         """Issue #1118: backward HJB sweep via Howard's policy iteration (inner_solver='howard').

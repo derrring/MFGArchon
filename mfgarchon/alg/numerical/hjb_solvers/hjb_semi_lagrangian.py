@@ -32,6 +32,7 @@ from mfgarchon.geometry.boundary.applicator_interpolation import InterpolationAp
 from mfgarchon.geometry.boundary.bc_utils import per_axis_diffusion_types, per_axis_operations
 from mfgarchon.geometry.boundary.enforcement import enforce_periodic_value_nd
 from mfgarchon.geometry.boundary.types import BCType
+from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
 from mfgarchon.operators.differential.gradient import value_gradient
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
@@ -361,11 +362,14 @@ class HJBSemiLagrangianSolver(BaseHJBSolver):
 
         # Precompute grid and time parameters (dimension-agnostic)
         if self.dimension == 1:
-            # 1D problem: Use geometry API
-            bounds = problem.geometry.get_bounds()
-            xmin, xmax = bounds[0][0], bounds[1][0]
-            Nx = problem.geometry.get_grid_shape()[0]
-            self.x_grid = np.linspace(xmin, xmax, Nx)
+            # 1D problem: the grid's own node axis, from its one owner (#2756)
+            axes = geometry_grid_axes(problem.geometry)
+            if axes is None:
+                raise ValueError(
+                    f"HJB semi-Lagrangian (1D): the problem's geometry ({type(problem.geometry).__name__}) has no "
+                    "tensor grid to solve on (#2756)."
+                )
+            self.x_grid = axes[0]
             self.dt = problem.dt
             self.dx = problem.geometry.get_grid_spacing()[0]
             self.grid = None  # 1D uses direct arrays, not grid object

@@ -561,7 +561,7 @@ def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
     np.testing.assert_allclose(_coupling_part(energy, x[:, None], np.ones(21), x[:, None], 0.0), _V(x), rtol=0, atol=0)
     composed = _plumbing_problem("F", n=21, nt=2)
     M = np.ones((3, 21))
-    with pytest.raises(ValueError, match=r"x with 21 rows that are not.*#2737"):
+    with pytest.raises(ValueError, match=r"x with 21 rows that are not.*until #1642's stage 1b-1"):
         compose_hjb_source(composed, M, 0 * M)(0.0, x[::-1, None])
 
 
