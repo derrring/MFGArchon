@@ -6,8 +6,9 @@ BC is the problem's own; so on the legacy route, where the grid holds a bound co
 ``problem.get_boundary_conditions()`` refused the two as declaring the BC twice. Only the per-point path calls
 ``apply``; the fast path never wrote.
 
-The applicator now reads a copy. The copy keeps the BC's geometry binding: a copy that dropped it refuses a
-``region_name`` exit the grid marks, at the first particle that reaches it (the last test).
+The applicator now writes nothing. Which face a point is on, the BC's owner reads from the BC's own box: its
+``domain_bounds``, or the bounds of the grid it is bound to. An exit placed by a ``region_name`` the grid marks is
+decided only on that grid (the last test).
 
 The rows of the end-to-end test are the BCs the per-point path reaches. #2738's exit is per point at any routing. B1,
 a REFLECTING segment placed by ``region_name``, and the absorbing ``default_bc`` with no segment are per point once
@@ -101,11 +102,11 @@ def test_a_particle_solve_leaves_the_problem_s_bc_readable(bc):
     problem.get_boundary_conditions()
 
 
-def test_a_grid_marked_exit_is_read_through_the_copy():
-    """An exit placed by a ``region_name`` the grid marks is decided only on the grid the BC is bound to. The
-    applicator's copy keeps that binding: 2000 particles drifting onto x = 1 leave through the door, and the problem's
-    BC is still unwritten after the solve. A copy that dropped the binding refused the door at the first particle
-    reaching it, which no other test in the suite sees (#2767 review 1)."""
+def test_a_grid_marked_exit_is_read_on_the_grid_the_bc_is_bound_to():
+    """An exit placed by a ``region_name`` the grid marks is decided only on the grid the BC is bound to: 2000
+    particles drifting onto x = 1 leave through the door, and the problem's BC is still unwritten after the solve. A
+    point query that lost the grid refused the door at the first particle reaching it, which no other test in the suite
+    sees (#2767 review 1)."""
     from mfgarchon import Conditions, Model
     from mfgarchon.geometry import TensorProductGrid
 
