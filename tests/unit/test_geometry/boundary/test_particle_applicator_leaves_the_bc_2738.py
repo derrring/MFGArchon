@@ -6,9 +6,9 @@ BC is the problem's own; so on the legacy route, where the grid holds a bound co
 ``problem.get_boundary_conditions()`` refused the two as declaring the BC twice. Only the per-point path calls
 ``apply``; the fast path never wrote.
 
-The applicator now writes nothing. Which face a point is on, the BC's owner reads from the BC's own box: its
-``domain_bounds``, or the bounds of the grid it is bound to. An exit placed by a ``region_name`` the grid marks is
-decided only on that grid (the last test).
+The applicator now writes nothing. The face a particle leaves through comes from the step's box; where a segment
+covers part of that face, the BC's owner decides it on the BC's own box, its ``domain_bounds`` or the bounds of the
+grid it is bound to. An exit placed by a ``region_name`` the grid marks is decided only on that grid (the last test).
 
 The rows of the end-to-end test are the BCs the per-point path reaches. #2738's exit is per point at any routing. B1,
 a REFLECTING segment placed by ``region_name``, and the absorbing ``default_bc`` with no segment are per point once

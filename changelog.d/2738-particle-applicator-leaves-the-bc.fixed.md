@@ -5,6 +5,7 @@
     (`MFGProblem(spatial_bounds=..., components=MFGComponents(boundary_conditions=bc))`), every later
     `problem.get_boundary_conditions()`, and every solve that reads it, then refused the problem as declaring its
     boundary conditions twice. In a coupled loop that is the first BC read after the first particle solve.
-  - The applicator now writes nothing. The BC's owner reads a point's box from the BC itself, its `domain_bounds` or
+  - The applicator now writes nothing. The face a particle leaves through comes from the step's box, as before.
+    Where a segment covers part of that face, the BC's owner decides it on the BC's own box: its `domain_bounds`, or
     the bounds of the grid it is bound to, which is the box every solve passed. The particles and the density are
     bit-identical to before.

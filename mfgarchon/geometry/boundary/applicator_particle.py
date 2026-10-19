@@ -182,8 +182,9 @@ class ParticleApplicator:
             particles: Particle positions, shape (N, d)
             bc: BoundaryConditions with segment definitions. Read, never written: it can be the problem's own BC,
                 and setting its domain_bounds made every later reader of the problem's BC refuse it (#2738).
-            bounds: Domain bounds per dimension [(xmin, xmax), ...]: where a particle has left the box. Which face a
-                point is on, the BC's owner reads from its own box, domain_bounds or its bound geometry's.
+            bounds: Domain bounds per dimension [(xmin, xmax), ...]: the step's box, where a particle has left it
+                and through which face, passed to the BC as boundary_id. Where a segment covers part of a face, the
+                BC's owner decides it on its own box, domain_bounds or its bound geometry's.
 
         Returns:
             Tuple of:
@@ -224,7 +225,8 @@ class ParticleApplicator:
             # Determine which boundary the particle is at
             boundary_id = self._get_boundary_id(particle, domain_min, domain_max, dimension)
 
-            # The BC's owner decides the point, on its own box: domain_bounds, else the bound geometry's
+            # The face is the step's box's; the segment on it is the BC owner's, on its own box where a segment
+            # covers part of the face: domain_bounds, else the bound geometry's
             segment = bc.get_bc_at_point(
                 particle,
                 boundary_id=boundary_id,
