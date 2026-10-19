@@ -3,8 +3,9 @@
 Two defects of one owner, the solver's grid-to-collocation transfer:
 
 1. The representation was chosen by shape. A grid density whose node count equals the number of collocation points
-   was read as already at the points, so grid node i's value went to collocation point i. With the 21 nodes reversed
-   as the collocation set, U moved by 4.592e-01 (main at f74312f9).
+   was read as already at the points, so grid node i's value went to collocation point i, and the terminal value's
+   with it. With the 21 nodes reversed as the collocation set, U moved by 4.592e-01 at f74312f9, in a run with no
+   coupling term, where only the terminal value read by index moved it.
 2. The mapper rebuilt the grid's axes as ``linspace(bounds, shape)``. On a graded grid, m = x mapped to 31 points
    was 2.500e-01 off x.
 
@@ -47,7 +48,7 @@ def _problem(geometry, u_terminal):
     return MFGProblem(
         model=Model(hamiltonian=H, volatility=0.3),
         domain=geometry,
-        conditions=Conditions(u_terminal=u_terminal, m_initial=lambda x: 1.0 + 0.0 * np.asarray(x, dtype=float), T=_T),
+        conditions=Conditions(u_terminal=u_terminal, m_initial=lambda x: 1.0, T=_T),
         Nt=_NT,
     )
 
@@ -55,7 +56,7 @@ def _problem(geometry, u_terminal):
 def _solve(problem, points, M, u_terminal_values, **solver_kwargs):
     solver = HJBGFDMSolver(
         problem,
-        collocation_points=np.asarray(points, dtype=float).reshape(-1, 1),
+        collocation_points=np.asarray(points, dtype=float).reshape(len(points), -1),
         monotonicity_scheme="none",
         **solver_kwargs,
     )
@@ -75,9 +76,31 @@ def test_a_grid_density_reaches_permuted_collocation_points_by_position_not_inde
         U_permuted = _solve(problem, x[order], M, u_T)
 
         # The same points in another order are the same discretisation, and the output is on the grid's nodes either
-        # way. Reading the density by index gave 4.592e-01 on the reversed nodes (no coupling term) at f74312f9.
+        # way. At f74312f9, reading the terminal value by index moved U by 4.592e-01 on the reversed nodes (a run with
+        # no coupling term).
         assert U_permuted.shape == U_in_order.shape == (_NT + 1, 21)
         assert np.max(np.abs(U_permuted - U_in_order)) < 1e-10
+
+
+def test_a_2d_grid_density_reaches_its_nodes_in_f_order_by_position():
+    # The 2-D case of the test above, for the C-order node test: the grid's nodes in F order are not its nodes in its
+    # order, so a flattened density of the grid's count is the grid's and is mapped. A node test against F order would
+    # read it by index.
+    grid = TensorProductGrid(
+        bounds=[(0.0, 1.0), (0.0, 1.0)], Nx_points=[6, 5], boundary_conditions=no_flux_bc(dimension=2)
+    )
+    problem = _problem(grid, lambda x: float((np.asarray(x, dtype=float)[0] - 0.7) ** 2 + 0.5 * np.asarray(x)[1]))
+    nodes = np.asarray(grid.get_spatial_grid(), dtype=float)
+    M = np.tile(1.0 + 0.5 * np.cos(np.pi * nodes[:, 0]) + 0.3 * nodes[:, 1], (_NT + 1, 1))
+    u_T = (nodes[:, 0] - 0.7) ** 2 + 0.5 * nodes[:, 1]
+    f_order = np.arange(30).reshape(6, 5).T.ravel()
+
+    U_in_order = _solve(problem, nodes, M, u_T, boundary_conditions=no_flux_bc(dimension=2))
+    U_f_order = _solve(problem, nodes[f_order], M, u_T, boundary_conditions=no_flux_bc(dimension=2))
+
+    assert U_in_order.shape == (_NT + 1, 30)
+    assert U_f_order.shape == (_NT + 1, 6, 5)
+    assert np.max(np.abs(U_f_order.reshape(_NT + 1, 30) - U_in_order)) < 1e-10
 
 
 def test_a_graded_grid_density_is_interpolated_on_its_own_nodes():
@@ -149,3 +172,34 @@ def test_a_density_that_fits_neither_the_points_nor_a_grid_is_refused():
             np.zeros(n_samples),
             boundary_conditions=no_flux_bc(dimension=1),
         )
+
+
+def test_the_particle_drift_reaches_a_particle_on_the_last_node():
+    # FPParticleSolver's 1-D drift is read on the grid's axes (#2756). At 2034e5a9 it was read on
+    # linspace(xmin, xmin + Lx), which over (0.2, 0.9) ends at 0.8999999999999999: a particle sampled on the last node
+    # lay past the axis and got the fill value, zero drift. With no noise every particle moves by exactly drift * dt.
+    from mfgarchon.alg.numerical.fp_solvers.fp_particle import FPParticleSolver
+
+    grid = TensorProductGrid([(0.2, 0.9)], Nx_points=[15], boundary_conditions=no_flux_bc(dimension=1))
+    H = SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0))
+    with warnings.catch_warnings():
+        # m = 1 has mass 0.7 on (0.2, 0.9); the drift below does not depend on it.
+        warnings.filterwarnings("ignore", message="initial density mass")
+        problem = MFGProblem(
+            model=Model(hamiltonian=H, volatility=0.0),
+            domain=grid,
+            conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.2),
+            Nt=4,
+        )
+    x = np.asarray(grid.get_spatial_grid(), dtype=float).ravel()
+    solver = FPParticleSolver(problem, num_particles=3000, seed=7)
+    # U = x/2: the drift -grad U is -0.5 everywhere
+    solver.solve_fp_system(M_initial=np.ones(15), drift_field=np.tile(0.5 * x, (5, 1)), show_progress=False)
+    first, second = (np.asarray(solver.M_particles_trajectory[k], dtype=float).ravel() for k in (0, 1))
+
+    assert int(np.isclose(first, 0.9, rtol=0, atol=1e-12).sum()) > 0, (
+        "the fixture must start particles on the last node"
+    )
+    # The particles that start within a step of the reflecting x_min are placed back by the wall; every other one moves.
+    away = first >= 0.2 + 0.5 * 0.2 / 4 + 1e-9
+    assert np.max(np.abs((second[away] - first[away]) - (-0.5 * 0.2 / 4))) < 1e-12

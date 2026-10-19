@@ -2991,7 +2991,7 @@ class FPParticleSolver(BaseFPSolver):
         field : np.ndarray
             Field values on grid, shape (*grid_shape)
         coordinates : list of np.ndarray
-            Grid coordinates per dimension (unused, kept for API compatibility)
+            The grid's node axes, on which the field is read (#2756)
         bounds : list of tuple
             Domain bounds per dimension
         fill_value : float
