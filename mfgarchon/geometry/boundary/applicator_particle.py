@@ -137,8 +137,10 @@ def particle_action_for_bc_type(
 
 def _with_box(bc: BoundaryConditions, bounds: NDArray[np.floating]) -> BoundaryConditions:
     """``bc`` as the point queries read it: itself when it carries ``domain_bounds``, else a copy that carries ``bounds``,
-    the box the step was taken in. Never a write to ``bc``. On the shared route it is the problem's own BC, and setting
-    ``domain_bounds`` on it made every later reader of the problem's BC refuse it (#2738)."""
+    the box the step was taken in. Never a write to ``bc``. It can be the problem's own BC: on the shared route when the
+    solver's view of it translates nothing (`fp_view_of_shared_bc`), or when a caller hands the solver the grid's own
+    BC. Setting ``domain_bounds`` on it made every later reader of the problem's BC refuse it (#2738). The copy keeps the
+    BC's geometry binding, so a placement only the grid can decide, a marked ``region_name``, still reads the grid."""
     if bc.domain_bounds is not None:
         return bc
     return replace(bc, segments=list(bc.segments), domain_bounds=bounds)
