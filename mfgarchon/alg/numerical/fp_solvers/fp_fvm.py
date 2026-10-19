@@ -84,6 +84,7 @@ from mfgarchon.alg.numerical.fp_solvers.base_fp import BaseFPSolver, DriftConven
 from mfgarchon.alg.numerical.fp_solvers.fp_fvm_flux import advective_divergence, advective_outflow_rate
 from mfgarchon.geometry.boundary.conditions import periodic_axis_span
 from mfgarchon.geometry.boundary.types import BCType
+from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
 from mfgarchon.operators.differential.laplacian import LaplacianOperator
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.mfg_logging import get_logger
@@ -324,9 +325,15 @@ class FPFVMSolver(BaseFPSolver):
         # wrong-sign / wrong-form drift (that capability is Phase 1, not this byte-safe PR).
         assert_quadratic_drift(self.problem, context="FP FVM potential_field")
         spacing = list(self.problem.geometry.get_grid_spacing())
-        bounds = self.problem.geometry.get_bounds()
         ndim = u_slice.ndim
         shape = u_slice.shape
+        # The grid's own node axes, from their one owner (#2756).
+        axes = geometry_grid_axes(self.problem.geometry)
+        if axes is None or tuple(axis.size for axis in axes) != tuple(shape):
+            raise ValueError(
+                f"FP FVM: the value slice has shape {tuple(shape)}, and the problem's geometry "
+                f"({type(self.problem.geometry).__name__}) has no tensor grid of that shape to place it on (#2756)."
+            )
         alpha_faces: list[np.ndarray] = []
         alpha_wrap: list[np.ndarray | None] = []
         for d in range(ndim):
@@ -337,7 +344,7 @@ class FPFVMSolver(BaseFPSolver):
             # otherwise -- materializing p_d = (U_{i+1}-U_i)/dx then dividing by lambda is two
             # divisions vs. the old multiply-then-divide (Issue #1528).
             p_d = np.diff(u_slice, axis=d) / dx
-            nodes_d = np.linspace(bounds[0][d], bounds[1][d], shape[d])
+            nodes_d = axes[d]
             face_coord = 0.5 * (nodes_d[:-1] + nodes_d[1:])
             coord_shape = [1] * ndim
             coord_shape[d] = shape[d] - 1

@@ -13,6 +13,8 @@ value are asymmetric in x and enter the HJB through a coupling f(m) = m, so a re
 both move U.
 """
 
+import warnings
+
 import pytest
 
 import numpy as np
@@ -20,10 +22,10 @@ import numpy as np
 from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical import HJBGFDMSolver
 from mfgarchon.alg.numerical.gfdm_components import GridCollocationMapper
-from mfgarchon.alg.numerical.gfdm_components.grid_collocation_mapper import tensor_grid_axes
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.geometry import Hyperrectangle, TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
+from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes, tensor_grid_axes
 
 _NT, _T = 10, 0.5
 
@@ -51,7 +53,12 @@ def _problem(geometry, u_terminal):
 
 
 def _solve(problem, points, M, u_terminal_values, **solver_kwargs):
-    solver = HJBGFDMSolver(problem, collocation_points=np.asarray(points, dtype=float).reshape(-1, 1), **solver_kwargs)
+    solver = HJBGFDMSolver(
+        problem,
+        collocation_points=np.asarray(points, dtype=float).reshape(-1, 1),
+        monotonicity_scheme="none",
+        **solver_kwargs,
+    )
     U0 = np.tile(u_terminal_values, (_NT + 1, 1))
     return solver.solve_hjb_system(M, u_terminal_values, U0)
 
@@ -108,7 +115,7 @@ def test_the_mapper_reads_a_graded_2d_grid_from_its_nodes():
         boundary_conditions=no_flux_bc(dimension=2),
     )
     nodes = np.asarray(grid.get_spatial_grid(), dtype=float)
-    axes = tensor_grid_axes(nodes, tuple(grid.get_grid_shape()))
+    axes = geometry_grid_axes(grid)
     assert axes is not None
     assert np.array_equal(axes[0], xs)
     assert np.array_equal(axes[1], ys)
@@ -118,13 +125,17 @@ def test_the_mapper_reads_a_graded_2d_grid_from_its_nodes():
     m = nodes[:, 0] + 2.0 * nodes[:, 1]
     assert np.max(np.abs(mapper.map_grid_to_collocation(m) - (points[:, 0] + 2.0 * points[:, 1]))) < 1e-12
 
-    # Sampled points, or a C-order grid read with the wrong shape, are no tensor grid.
+    # Sampled points, or a C-order grid read with the wrong shape, are no tensor grid; an implicit domain declares none.
     assert tensor_grid_axes(points, (40,)) is None
     assert tensor_grid_axes(nodes, (7, 9)) is None
+    assert geometry_grid_axes(Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]]))) is None
 
 
 def test_a_density_that_fits_neither_the_points_nor_a_grid_is_refused():
-    problem = _problem(Hyperrectangle(np.array([[0.0, 1.0]])), lambda x: 0.0 * np.asarray(x, dtype=float))
+    with warnings.catch_warnings():
+        # m = 1 has mass n*dx on the domain's uniform-cell measure, not 1; the refusal below does not depend on it.
+        warnings.filterwarnings("ignore", message="initial density mass")
+        problem = _problem(Hyperrectangle(np.array([[0.0, 1.0]])), lambda x: 0.0 * np.asarray(x, dtype=float))
     n_samples = problem.geometry.get_grid_shape()[0]
     points = np.linspace(0.0, 1.0, 31)
     assert n_samples != 31

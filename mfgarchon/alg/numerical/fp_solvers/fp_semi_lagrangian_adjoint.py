@@ -50,6 +50,7 @@ from mfgarchon.geometry.boundary.bc_utils import (
 )
 from mfgarchon.geometry.boundary.enforcement import enforce_periodic_value_nd
 from mfgarchon.geometry.boundary.types import BCType
+from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
 from mfgarchon.operators.differential.gradient import value_gradient
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.deprecation import deprecated_parameter
@@ -235,7 +236,14 @@ class FPSLSolver(BaseFPSolver):
             bounds = problem.geometry.get_bounds()
             self.xmin, self.xmax = bounds[0][0], bounds[1][0]
             Nx = problem.geometry.get_grid_shape()[0]
-            self.x_grid = np.linspace(self.xmin, self.xmax, Nx)
+            # The grid's own node axis, from its one owner (#2756).
+            axes = geometry_grid_axes(problem.geometry)
+            if axes is None:
+                raise ValueError(
+                    f"FP semi-Lagrangian adjoint (1D): the problem's geometry ({type(problem.geometry).__name__}) "
+                    "has no tensor grid to solve on (#2756)."
+                )
+            self.x_grid = axes[0]
             self.dx = problem.geometry.get_grid_spacing()[0]
             self.Nx = Nx
             # nD attributes set to None for 1D

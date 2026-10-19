@@ -21,7 +21,6 @@ from mfgarchon.alg.numerical.gfdm_components.gfdm_strategies import (
     TaylorOperator,
     create_operator,
 )
-from mfgarchon.alg.numerical.gfdm_components.grid_collocation_mapper import tensor_grid_axes
 
 # GFDM infrastructure (Strategy Pattern)
 from mfgarchon.alg.numerical.gfdm_components.positive_qp_fan import GuardedFanParameters, PositiveQPFan
@@ -35,7 +34,7 @@ from mfgarchon.geometry.boundary.applicator_base import DiscretizationType
 from mfgarchon.geometry.boundary.conditions import BoundaryConditions, _equal_as_stored
 from mfgarchon.geometry.boundary.tolerances import BOUNDARY_TOL
 from mfgarchon.geometry.boundary.types import BCSegment, BCType, BoundaryFace, segment_robin_coefficients
-from mfgarchon.geometry.grids.tensor_grid import points_are_grid_nodes
+from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes, points_are_grid_nodes
 from mfgarchon.types.callable_protocols import evaluate_solver_source
 from mfgarchon.utils.deprecation import NEVER_READ, WRAPPER_FRAMES, deprecated_value, retired_parameters
 from mfgarchon.utils.mfg_logging import get_logger
@@ -986,19 +985,17 @@ class HJBGFDMSolver(BaseHJBSolver):
         # Initialize grid-collocation mapper (Issue #545: composition over mixins), on the grid's own node axes so a
         # graded grid is interpolated on its nodes (#2756). A geometry whose nodes are not a tensor grid, such as an
         # implicit domain's sampled points, has no grid to map from: its input must already be at the collocation
-        # points. Only a grid domain is asked for its nodes, since an implicit domain samples them on each call.
+        # points.
         self._mapper: GridCollocationMapper | None = None
         self._points_are_grid_nodes = False
-        if getattr(self.problem, "domain_type", None) == "grid":
-            grid_nodes = np.asarray(self.problem.geometry.get_spatial_grid(), dtype=float)
-            grid_nodes = grid_nodes.reshape(grid_nodes.shape[0], -1)
-            grid_axes = tensor_grid_axes(grid_nodes, self._output_spatial_shape)
-            if grid_axes is not None:
-                self._mapper = GridCollocationMapper(
-                    collocation_points=collocation_points,
-                    grid_shape=self._output_spatial_shape,
-                    grid_axes=grid_axes,
-                )
+        grid_axes = geometry_grid_axes(self.problem.geometry)
+        if grid_axes is not None:
+            self._mapper = GridCollocationMapper(
+                collocation_points=collocation_points,
+                grid_shape=self._output_spatial_shape,
+                grid_axes=grid_axes,
+            )
+            grid_nodes = np.stack([g.ravel() for g in np.meshgrid(*grid_axes, indexing="ij")], axis=1)
             self._points_are_grid_nodes = points_are_grid_nodes(collocation_points, grid_nodes)
         if self.llf_augmentation:
             self._llf_sigma_eff = self._compute_llf_sigma_eff()
@@ -2929,7 +2926,14 @@ class HJBGFDMSolver(BaseHJBSolver):
         Solve the HJB system using GFDM collocation method.
 
         Args:
-            M_density: (Nt, *spatial_shape) density from FP solver
+            M_density: the density, either on the problem's grid, ``(Nt, *grid_shape)`` or ``(Nt, n_grid_nodes)``,
+                or at the collocation points, ``(Nt, n_points)``. Its shape decides which, and the terminal value and
+                the returned U follow the same representation. When the shape fits both, a grid with as many nodes as
+                there are collocation points, M is read as the grid's and mapped to the points, which is what the
+                coupling iterators pass; only where the points are the grid's nodes in its order, so that the two
+                readings agree, is it used as it stands. A density at the points whose count happens to equal the
+                grid's is therefore read as grid values (#2756). On a geometry with no tensor grid, M must be at the
+                collocation points.
             U_terminal: (*spatial_shape,) terminal condition u(T,x)
             U_coupling_prev: Accepted for interface conformance with the coupling's call; no GFDM path
                 reads it (#1055).

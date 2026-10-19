@@ -282,7 +282,7 @@ def estimate_density_kde(
     # Edge case: degenerate distribution (all at same location)
     unique_count = len(np.unique(particles_nd, axis=0))
     if unique_count < 2:
-        return _handle_degenerate_particles(particles_nd, grid_shape, bounds, num_particles)
+        return _handle_degenerate_particles(particles_nd, grid_shape, bounds, num_particles, coordinates)
 
     # Route to optimal implementation
     if dimension == 1:
@@ -301,6 +301,7 @@ def estimate_density_kde(
             grid_shape,
             bounds,
             kde_bandwidth,
+            coordinates,
         )
 
 
@@ -309,6 +310,7 @@ def _handle_degenerate_particles(
     grid_shape: tuple[int, ...],
     bounds: tuple[tuple[float, float], ...],
     num_particles: int,
+    coordinates: np.ndarray | list[np.ndarray] | None,
 ) -> np.ndarray:
     """Handle edge case where all particles are at the same location."""
     dimension = len(bounds)
@@ -317,7 +319,7 @@ def _handle_degenerate_particles(
 
     indices = []
     for d in range(dimension):
-        coords = np.linspace(bounds[d][0], bounds[d][1], grid_shape[d])
+        coords = np.linspace(bounds[d][0], bounds[d][1], grid_shape[d]) if coordinates is None else coordinates[d]
         idx = np.argmin(np.abs(coords - mean_pos[d]))
         indices.append(idx)
 
@@ -408,9 +410,10 @@ def _estimate_density_kde_nd(
     grid_shape: tuple[int, ...],
     bounds: tuple[tuple[float, float], ...],
     kde_bandwidth: Any,
+    coordinates: np.ndarray | list[np.ndarray] | None,
 ) -> np.ndarray:
     """
-    nD KDE implementation using interpolate_particles_to_grid utility.
+    nD KDE implementation using interpolate_particles_to_grid utility, on the grid's axes when given (#2756).
 
     Future: Will support GPU backends when nD KDE is implemented.
     """
@@ -424,6 +427,7 @@ def _estimate_density_kde_nd(
             grid_shape=grid_shape,
             grid_bounds=bounds,
             method="kde",
+            grid_axes=coordinates,
             bandwidth=kde_bandwidth,
         )
 

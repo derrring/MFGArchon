@@ -39,6 +39,8 @@ from scipy.interpolate import RBFInterpolator, RegularGridInterpolator
 from scipy.stats import gaussian_kde
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from numpy.typing import NDArray
 
 InterpolationMethod = Literal["linear", "cubic", "rbf", "kde", "nearest"]
@@ -49,6 +51,8 @@ def interpolate_grid_to_particles(
     grid_bounds: tuple[float, float] | tuple[tuple[float, float], ...],
     particle_positions: NDArray[np.floating],
     method: InterpolationMethod = "linear",
+    *,
+    grid_axes: Sequence[NDArray[np.floating]] | None = None,
 ) -> NDArray[np.floating]:
     """
     Interpolate values from regular grid to particle positions.
@@ -78,6 +82,9 @@ def interpolate_grid_to_particles(
         - "linear": Fast, C0 continuous
         - "cubic": Smooth, C1 continuous (1D/2D only)
         - "nearest": Fastest, discontinuous
+    grid_axes : sequence of ndarray, optional
+        The grid's node coordinates per dimension. Without them the axes are uniform over ``grid_bounds``,
+        ``np.linspace(lo, hi, n)``, which misplaces the values of a graded grid; pass a graded grid's own (#2756).
 
     Returns
     -------
@@ -124,7 +131,7 @@ def interpolate_grid_to_particles(
         else:
             xmin, xmax = grid_bounds[0]
 
-        x = np.linspace(xmin, xmax, len(grid_values))
+        x = np.linspace(xmin, xmax, len(grid_values)) if grid_axes is None else np.asarray(grid_axes[0])
 
         # Ensure particle_positions is 1D
         if particle_positions.ndim == 2 and particle_positions.shape[1] == 1:
@@ -140,8 +147,7 @@ def interpolate_grid_to_particles(
         # 2D case
         (xmin, xmax), (ymin, ymax) = grid_bounds
         nx, ny = grid_values.shape
-        x = np.linspace(xmin, xmax, nx)
-        y = np.linspace(ymin, ymax, ny)
+        x, y = (np.linspace(xmin, xmax, nx), np.linspace(ymin, ymax, ny)) if grid_axes is None else grid_axes
 
         # scipy wants (linear, cubic, quintic) for method name
         scipy_method = "linear" if method in ["linear", "cubic"] else "nearest"
@@ -154,9 +160,11 @@ def interpolate_grid_to_particles(
         # 3D case
         (xmin, xmax), (ymin, ymax), (zmin, zmax) = grid_bounds
         nx, ny, nz = grid_values.shape
-        x = np.linspace(xmin, xmax, nx)
-        y = np.linspace(ymin, ymax, ny)
-        z = np.linspace(zmin, zmax, nz)
+        x, y, z = (
+            (np.linspace(xmin, xmax, nx), np.linspace(ymin, ymax, ny), np.linspace(zmin, zmax, nz))
+            if grid_axes is None
+            else grid_axes
+        )
 
         interp = RegularGridInterpolator(
             (x, y, z),
@@ -178,6 +186,8 @@ def interpolate_particles_to_grid(
     grid_shape: tuple[int, ...],
     grid_bounds: tuple[float, float] | tuple[tuple[float, float], ...],
     method: Literal["rbf", "kde", "nearest"] = "rbf",
+    *,
+    grid_axes: Sequence[NDArray[np.floating]] | None = None,
     **kwargs,
 ) -> NDArray[np.floating]:
     """
@@ -202,6 +212,9 @@ def interpolate_particles_to_grid(
         - 3D: (Nx, Ny, Nz)
     grid_bounds : tuple
         Grid bounds (same format as interpolate_grid_to_particles)
+    grid_axes : sequence of ndarray, optional
+        The grid's node coordinates per dimension, as in ``interpolate_grid_to_particles``; without them the grid is
+        uniform over ``grid_bounds``.
     method : {"rbf", "kde", "nearest"}
         Interpolation method:
         - "rbf": Radial Basis Functions (smooth, accurate, slower)
@@ -254,21 +267,30 @@ def interpolate_particles_to_grid(
     # Create grid points
     if ndim == 1:
         xmin, xmax = grid_bounds if not isinstance(grid_bounds[0], (tuple, list)) else grid_bounds[0]
-        x = np.linspace(xmin, xmax, grid_shape[0])
+        x = np.linspace(xmin, xmax, grid_shape[0]) if grid_axes is None else np.asarray(grid_axes[0])
         grid_points = x.reshape(-1, 1)
 
     elif ndim == 2:
         (xmin, xmax), (ymin, ymax) = grid_bounds
-        x = np.linspace(xmin, xmax, grid_shape[0])
-        y = np.linspace(ymin, ymax, grid_shape[1])
+        x, y = (
+            (np.linspace(xmin, xmax, grid_shape[0]), np.linspace(ymin, ymax, grid_shape[1]))
+            if grid_axes is None
+            else grid_axes
+        )
         X, Y = np.meshgrid(x, y, indexing="ij")
         grid_points = np.column_stack([X.ravel(), Y.ravel()])
 
     elif ndim == 3:
         (xmin, xmax), (ymin, ymax), (zmin, zmax) = grid_bounds
-        x = np.linspace(xmin, xmax, grid_shape[0])
-        y = np.linspace(ymin, ymax, grid_shape[1])
-        z = np.linspace(zmin, zmax, grid_shape[2])
+        x, y, z = (
+            (
+                np.linspace(xmin, xmax, grid_shape[0]),
+                np.linspace(ymin, ymax, grid_shape[1]),
+                np.linspace(zmin, zmax, grid_shape[2]),
+            )
+            if grid_axes is None
+            else grid_axes
+        )
         X, Y, Z = np.meshgrid(x, y, z, indexing="ij")
         grid_points = np.column_stack([X.ravel(), Y.ravel(), Z.ravel()])
 

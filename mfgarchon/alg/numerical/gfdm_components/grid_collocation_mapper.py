@@ -12,30 +12,8 @@ Uses composition pattern instead of inheritance for better testability and reusa
 from __future__ import annotations
 
 import numpy as np
-from scipy.interpolate import RegularGridInterpolator
 
-from mfgarchon.geometry.grids.tensor_grid import points_are_grid_nodes
-
-
-def tensor_grid_axes(nodes: np.ndarray, grid_shape: tuple[int, ...]) -> list[np.ndarray] | None:
-    """The axes of the tensor grid whose nodes, in C order, are ``nodes``; None when ``nodes`` are not such a grid.
-
-    A geometry's ``get_spatial_grid()`` rows are the grid's nodes, and its ``get_grid_shape()`` their count per axis.
-    The axes are read off the nodes rather than rebuilt from the bounds, so a graded grid keeps its own spacing
-    (#2756). A point set that is not the tensor product of increasing axes, such as an implicit domain's sampled
-    points, has no axes.
-    """
-    nodes = np.asarray(nodes, dtype=float)
-    shape = tuple(int(n) for n in grid_shape)
-    dimension = len(shape)
-    if nodes.ndim != 2 or nodes.shape != (int(np.prod(shape)), dimension):
-        return None
-    lattice = nodes.reshape(*shape, dimension)
-    axes = [lattice[(0,) * k + (slice(None),) + (0,) * (dimension - k - 1) + (k,)].copy() for k in range(dimension)]
-    if any(axis.size > 1 and not np.all(np.diff(axis) > 0) for axis in axes):
-        return None
-    product = np.stack([g.ravel() for g in np.meshgrid(*axes, indexing="ij")], axis=1)
-    return axes if points_are_grid_nodes(product, nodes) else None
+from mfgarchon.utils.numerical.particle.interpolation import interpolate_grid_to_particles
 
 
 class GridCollocationMapper:
@@ -147,7 +125,7 @@ class GridCollocationMapper:
         """
         Map values from regular grid to collocation points using interpolation.
 
-        Uses scipy RegularGridInterpolator on the grid's axes.
+        Uses scipy RegularGridInterpolator via particle interpolation utilities, on the grid's axes.
 
         Parameters
         ----------
@@ -159,10 +137,15 @@ class GridCollocationMapper:
         np.ndarray
             Values at collocation points, shape (n_points,)
         """
-        axes = tuple(self.grid_axes[k] for k in self._active)
+        axes = [self.grid_axes[k] for k in self._active]
         values = np.asarray(u_grid).reshape(tuple(axis.size for axis in axes))
-        interp = RegularGridInterpolator(axes, values, method="linear", bounds_error=False, fill_value=0.0)
-        return interp(self.collocation_points[:, self._active]).ravel()
+        return interpolate_grid_to_particles(
+            values,
+            grid_bounds=tuple((float(axis[0]), float(axis[-1])) for axis in axes),
+            particle_positions=self.collocation_points[:, self._active],
+            method="linear",
+            grid_axes=axes,
+        )
 
     def map_collocation_to_grid(self, u_collocation: np.ndarray) -> np.ndarray:
         """

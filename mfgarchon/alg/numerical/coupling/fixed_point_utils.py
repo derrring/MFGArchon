@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
 from mfgarchon.utils.convergence.convergence_metrics import refuse_non_finite_change
 from mfgarchon.utils.mfg_logging import get_logger
 
@@ -579,14 +580,20 @@ def compute_fp_velocity_field(
     spatial_shape = U.shape[1:]
     ndim = len(spatial_shape)
 
-    bounds = geometry.get_bounds()
+    # The grid's own node axes, from their one owner (#2756).
+    axes = geometry_grid_axes(geometry)
+    if axes is None or tuple(axis.size for axis in axes) != tuple(spatial_shape):
+        raise ValueError(
+            f"compute_fp_velocity_field: U has spatial shape {tuple(spatial_shape)}, and the problem's geometry "
+            f"({type(geometry).__name__}) has no tensor grid of that shape to place it on (#2756)."
+        )
 
     if ndim == 1:
         dx = grid_spacing[0]
         Nx = spatial_shape[0]
 
         # Face centers: x_{i+1/2}
-        x_nodes = np.linspace(bounds[0][0], bounds[1][0], Nx)
+        x_nodes = axes[0]
         x_faces = 0.5 * (x_nodes[:-1] + x_nodes[1:])  # (Nx-1,)
 
         # Face gradient: p_{i+1/2} = (U[i+1] - U[i]) / dx
@@ -621,8 +628,7 @@ def compute_fp_velocity_field(
         # point. This called it on grid-shaped ``(nx, ny, d)`` arrays: `CongestionHamiltonian` and a user subclass
         # written to the documented shapes raised, and a return that broadcast against the grid was spread into every
         # velocity component. So call on the flattened batch, and refuse a return of any other shape.
-        coords = [np.linspace(bounds[0][d], bounds[1][d], spatial_shape[d]) for d in range(ndim)]
-        x_points = np.stack(np.meshgrid(*coords, indexing="ij"), axis=-1).reshape(-1, ndim)
+        x_points = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape(-1, ndim)
         n_points = x_points.shape[0]
 
         alpha_field = np.zeros((Nt, ndim, *spatial_shape))
