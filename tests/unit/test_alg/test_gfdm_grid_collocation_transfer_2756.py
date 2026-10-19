@@ -78,8 +78,13 @@ def test_a_grid_density_reaches_permuted_collocation_points_by_position_not_inde
         # The same points in another order are the same discretisation, and the output is on the grid's nodes either
         # way. At f74312f9 the reversed nodes gave U 4.000e-01 off once its point order was undone, from the terminal
         # value read by index (a run with no coupling term), and 4.592e-01 off as returned.
+        # The two solves differ in round-off only, by an amount that depends on the order and the BLAS: on macOS
+        # 2.2e-16 reversed and 2.1e-12 permuted. Unmeasured on the Ubuntu runner, where the 2-D row below is 270 times
+        # its macOS value.
+        # Reading the density by index, at 2034e5a9 before #2756's fix, puts U 0.480 off reversed and 0.602 permuted.
+        # The bound sits between the two.
         assert U_permuted.shape == U_in_order.shape == (_NT + 1, 21)
-        assert np.max(np.abs(U_permuted - U_in_order)) < 1e-10
+        assert np.max(np.abs(U_permuted - U_in_order)) < 1e-6
 
 
 def test_a_2d_grid_density_reaches_its_nodes_in_f_order_by_position():
@@ -102,7 +107,7 @@ def test_a_2d_grid_density_reaches_its_nodes_in_f_order_by_position():
     assert U_f_order.shape == (_NT + 1, 6, 5)
     # The two solves differ in round-off only, and how much depends on the point order and the BLAS: 7.6e-12 on macOS
     # (Accelerate) and 2.05e-9 on the Ubuntu runner (discrimination run 39231402975), both at the fix. Reading the
-    # density by index puts it 1.33 off. The bound sits between the two.
+    # density by index, at 2034e5a9 before #2756's fix, puts it 1.331 off. The bound sits between the two.
     assert np.max(np.abs(U_f_order.reshape(_NT + 1, 30) - U_in_order)) < 1e-6
 
 
