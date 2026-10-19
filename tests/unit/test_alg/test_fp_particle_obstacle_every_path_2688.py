@@ -1,15 +1,17 @@
 """Every forward-step path of `FPParticleSolver` records its particles inside an obstacle domain, or refuses (#2688).
 
 Three CPU paths step particles -- the 1-D grid drift, the n-D grid drift, and the callable drift -- and each crossed
-with the outer boundary condition it can take, uniform or segment-aware (absorbing), and with `preserve_indices` and
-the caller's `initial_particles` where those exist. Each ends its step in `_finish_step`: the outer boundary condition
-on the raw step, then the obstacle placement for the survivors with their positions before the step. Before, the 1-D
-grid path never placed (1990 of 2000 particles inside the obstacle at the peak, i2688/prod/product_base.log) and the
-n-D paths placed BEFORE the wall reflection, which put particles back inside an obstacle that meets the wall (13438
-particle-times). The GPU path, a periodic outer boundary and initial mass inside an obstacle are refused by name.
+with the outer boundary condition it can take, uniform or segment-aware (absorbing); each absorbing path again with
+`preserve_indices`, and the callable path with the caller's `initial_particles`, which only it takes. Each ends its
+step in `_finish_step`: the outer boundary condition on the raw step, then the obstacle placement for the survivors
+with their positions before the step. Before, the 1-D grid path never placed (1990 of 2000 particles inside the
+obstacle at the peak, i2688/prod/product_base.log) and the n-D paths placed BEFORE the wall reflection, which put
+particles back inside an obstacle that meets the wall (13438 particle-times). The GPU path, a periodic outer
+boundary and initial mass inside an obstacle are refused by name.
 
 What reddens this file: any path whose step stops calling the placement, or calls it before the boundary condition
-(its cell); the placement indexing ``previous`` without the absorbed mask (the mask test); the initial sampler
+(its cell); a path recording its `preserve_indices` slice before the placement (its `preserve_indices` cell); the
+placement indexing ``previous`` without the absorbed mask (the mask test); the initial sampler
 dropping ``navigable=`` (the cells' t = 0, whose jitter at the box's edge nodes leaves the domain).
 """
 
@@ -115,8 +117,10 @@ def _navigable_start():
 _CELLS = {
     "1-D grid, reflecting": (1, "reflecting", "grid", {}),
     "1-D grid, absorbing": (1, "absorbing", "grid", {}),
+    "1-D grid, absorbing, preserve_indices": (1, "absorbing", "grid", {"preserve_indices": True}),
     "n-D grid, reflecting": (2, "reflecting", "grid", {}),
     "n-D grid, absorbing": (2, "absorbing", "grid", {}),
+    "n-D grid, absorbing, preserve_indices": (2, "absorbing", "grid", {"preserve_indices": True}),
     "callable 1-D, reflecting": (1, "reflecting", "callable", {}),
     "callable 1-D, absorbing": (1, "absorbing", "callable", {}),
     "callable 2-D, reflecting": (2, "reflecting", "callable", {}),
@@ -132,11 +136,12 @@ def test_no_step_path_records_a_particle_outside_the_domain(cell):
     acted, and an absorbing cell absorbed."""
     d, wall, path, options = _CELLS[cell]
     bc = _absorbing_at_x_max(d) if wall == "absorbing" else no_flux_bc(dimension=d)
-    kwargs = {}
-    if options.get("preserve_indices"):
-        kwargs = {"preserve_indices": True, "density_mode": "query_only"}
+    kwargs = {"preserve_indices": True} if options.get("preserve_indices") else {}
+    on_callable = kwargs and path == "callable"
+    if on_callable:
+        kwargs["density_mode"] = "query_only"
     solver = _solve(
-        d, bc, path, initial_particles=_navigable_start() if options.get("initial") or kwargs else None, **kwargs
+        d, bc, path, initial_particles=_navigable_start() if options.get("initial") or on_callable else None, **kwargs
     )
 
     outside = []
