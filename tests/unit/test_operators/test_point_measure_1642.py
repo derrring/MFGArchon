@@ -1,9 +1,9 @@
 """A coupling cost binds on a point measure, points with one quadrature weight each (#1642 stage 1b-2).
 
-The grid is one point measure (`GridPointMeasure`), and its interaction takes the convolution's FFT path. That fast
-path must keep the protocol's semantics: on a uniform grid it equals the direct quadrature on the same points and
-weights handed in as a plain point measure. The contract, weights positive and summing to the domain's measure, is
-checked where a measure is put to use (`bind_on_measure`), and a violation refuses the binding.
+The grid is one point measure (`GridPointMeasure`), and its interaction takes the convolution's grid path, by FFT on a
+uniform grid. That path must keep the protocol's semantics: on a uniform grid it equals the direct quadrature on the
+same points and weights handed in as a plain point measure. The contract, weights positive and summing to the domain's
+measure, is checked where a measure is put to use (`bind_on_measure`), and a violation refuses the binding.
 """
 
 from __future__ import annotations
@@ -164,3 +164,23 @@ def test_the_grid_s_domain_is_what_its_measure_integrates_over():
     problem = _problem(cells, cost, m0=1 / 0.95)
     assert GridPointMeasure(problem).domain_measure == pytest.approx(0.95, rel=1e-15)
     np.testing.assert_allclose(np.sum(problem.coupling_energy.weights), 0.95, rtol=1e-15)
+
+
+def test_a_v_that_writes_into_its_point_moves_no_point_off_the_nodes():
+    """``PotentialCost(V)`` hands V a copy of every point. Off the nodes, a V that adds 0.3 to its argument moved the
+    caller's points before, so in ``PotentialCost(V) + InteractionCost(K)`` the interaction was read at the moved
+    points: [0.7437, 0.9436] where its parts on their own copies give [0.6745, 1.0406] (bc9a0371 and ca8241bc)."""
+
+    def V(x):
+        x += 0.3
+        return float(x[0])
+
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[9, 9], boundary_conditions=no_flux_bc(dimension=2))
+    K = GaussianKernel(amplitude=1.0, length_scale=0.2)
+    both = _problem(grid, PotentialCost(V) + InteractionCost(K), m0=1.0).coupling_energy
+    parts = [_problem(grid, cost, m0=1.0).coupling_energy for cost in (PotentialCost(V), InteractionCost(K))]
+    m, x = np.ones(81), np.array([[0.2, 0.2], [0.5, 0.6]])
+    asked = x.copy()
+    got = both.flat_derivative_at(m, asked)
+    np.testing.assert_array_equal(asked, x, err_msg="V moved the points it was asked at")
+    np.testing.assert_allclose(got, sum(p.flat_derivative_at(m, x.copy()) for p in parts), rtol=1e-12, atol=0.0)

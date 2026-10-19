@@ -10,11 +10,14 @@
     nodes span, which is what that measure integrates over (#2769). `InteractionCost(K).bind(problem)` and
     `PotentialCost(V).bind(problem)` bind through it, and so do the library parts of a sum. Every bound array is
     bit-identical to before, and the interaction keeps its grid path, by FFT on a uniform grid. The measure holds only
-    its problem and derives its points and weights from it as read-only arrays, and it refuses subclassing, because the
-    interaction's grid path reads the problem's grid and measure and would ignore a measure that differed from them.
-  - Two inputs behave differently. A `V` that writes into its argument is handed copies: before, the library's
-    first call to it shifted the first node's value. A direct `cost.bind(problem)` on a problem whose geometry is not
-    a grid, such as a `Hyperrectangle` or a `Mesh1D`, is refused by name: before, it bound on weights that are not a
-    quadrature there. `MFGProblem` never makes that call.
+    its problem and derives its points and weights from it as read-only arrays, because the interaction's grid path
+    reads the problem's grid and measure and would ignore a measure that differed from them; for the same reason it
+    refuses subclassing, so that nothing but the problem's own measure claims to be one.
+  - **Fixed: `PotentialCost(V)` hands V a copy of every point**, at binding and off the nodes. A `V` that wrote into
+    its argument moved the points it was handed: the first node's value at binding, and off the nodes the caller's
+    points, such as HJB-GFDM's collocation points, and with them the other parts of a sum.
+  - A direct `PotentialCost(V).bind(problem)` on a problem whose geometry is not a grid, such as a `Hyperrectangle`
+    or a `Mesh1D`, is refused by name: before, it bound on weights that are not a quadrature there.
+    `InteractionCost` was refused there already. `MFGProblem` never makes that call.
   - A finite-element space's dofs with their weights, and a collocation cloud's points with theirs, are the
     measures stage 1b-2 and #2761 add.

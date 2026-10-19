@@ -88,7 +88,7 @@ def checked_point_measure(measure: PointMeasure, owner: str) -> tuple[NDArray, N
             f"numbers of shape ({points.shape[0]},)"
         )
     else:
-        points, weights = points.astype(float), weights.astype(float)
+        points, weights = points.astype(np.float64), weights.astype(np.float64)
         if not np.all(np.isfinite(points)) or not np.all(np.isfinite(weights)):
             problems.append("non-finite points or weights")
         elif np.any(weights <= 0):
@@ -106,19 +106,26 @@ def checked_point_measure(measure: PointMeasure, owner: str) -> tuple[NDArray, N
 
 
 def _real(array: NDArray) -> bool:
-    """Whether ``array`` holds real numbers, integer or floating, and not booleans, complex numbers or objects."""
+    """Whether ``array`` holds real numbers, integer or floating, and not booleans, complex numbers, time deltas or
+    objects."""
+    if np.issubdtype(array.dtype, np.timedelta64):
+        return False
     return bool(np.issubdtype(array.dtype, np.integer) or np.issubdtype(array.dtype, np.floating))
 
 
 def _one_real(value: Any) -> float | None:
     """``value`` as a float when it is one real number -- a Python or numpy real, a ``Fraction``, a 0-d real array --
-    and None otherwise: a boolean, a complex number, an array of another shape, None."""
-    if isinstance(value, (bool, np.bool_)):
+    and None otherwise: a boolean, a complex number, a time delta, an array of another shape, None, or a real beyond
+    float64's range."""
+    if isinstance(value, (bool, np.bool_, np.timedelta64)):
         return None
-    if isinstance(value, numbers.Real):
-        return float(value)
-    if isinstance(value, np.ndarray) and value.shape == () and _real(value):
-        return float(value)
+    try:
+        if isinstance(value, numbers.Real):
+            return float(value)
+        if isinstance(value, np.ndarray) and value.shape == () and _real(value):
+            return float(value)
+    except OverflowError:
+        return None
     return None
 
 
@@ -160,17 +167,20 @@ class GridPointMeasure:
     integrates over: trapezoid weights over the nodes. It is the grid's box wherever the nodes lie on the bounds, which
     the default grid's do. Where they do not, the problem's measure integrates over another region than the box: less
     of it for cell-centred nodes or a periodic axis whose endpoint is excluded, more for nodes beyond the bounds. Every
-    integral it takes is then off by O(h), and that is the measure's defect, not this adapter's (#2769). Its fix
-    returns ``domain_measure`` to the box in the same change.
+    integral it takes then misses or adds the region between the two boxes: O(h) where the nodes stop short of the
+    bounds, and the whole overhang where they lie beyond them. That is the measure's defect, not this adapter's (#2769),
+    and its fix returns ``domain_measure`` to the box in the same change.
 
     It holds its problem and nothing else. `InteractionCost` reads the grid and its measure from the problem for the
     convolution's grid path, and the problem's topology to refuse a periodic axis (#2725), so this measure must be
     exactly the problem's: ``points``, ``weights`` and ``domain_measure`` are derived from the problem at each read,
-    the arrays as read-only copies, ``problem`` cannot be reassigned, and the class refuses subclassing. A copy or a
-    pickle of it carries a copy of the problem, and stays the measure of that copy. Another measure on the grid's
-    points implements `PointMeasure` itself. Deliberate circumvention is outside the contract: assigning
-    ``__class__``, setting ``flags.writeable`` on a returned array, replacing a private attribute, or a mixin whose
-    ``__init_subclass__`` skips ``super()``.
+    the arrays as read-only copies, ``problem`` cannot be reassigned, and the class refuses subclassing. A deep copy or
+    a pickle carries a copy of the problem and a shallow copy shares it; either way it stays its problem's measure.
+    Another measure on the grid's points implements `PointMeasure` itself. Outside the contract: assigning
+    ``__class__``, setting ``flags.writeable`` on a returned array, replacing a private attribute, a mixin whose
+    ``__init_subclass__`` skips ``super()``, and patching the class's properties (``mock.patch.object``), which the grid
+    path does not read. A ``weakref.proxy`` of the measure is not the measure's type, so it takes the direct path,
+    where a periodic axis is not refused (#1642's condition on a measure that carries no topology).
     """
 
     def __init_subclass__(cls, **kwargs: Any) -> None:

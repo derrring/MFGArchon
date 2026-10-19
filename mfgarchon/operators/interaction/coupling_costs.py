@@ -22,9 +22,9 @@ its own points, such as HJB-GFDM's collocation points, reads (#1642 stage 1b-1).
 
 Every library cost binds on a point measure, `bind_on(measure)` (`point_measure`): points with one quadrature weight
 each. For `InteractionCost` and `PotentialCost`, ``bind(problem)`` is ``bind_on`` on the problem's grid,
-`GridPointMeasure`, through `bind_on_measure`, the one place a measure is put to use. `CombinedCost.bind` binds each part
-through its own ``bind(problem)``, so a user's part with ``bind`` alone still binds on a grid. A solver that integrates
-on its own points, such as a finite-element space, binds the same cost on its own measure (stage 1b-2).
+`GridPointMeasure`, through `bind_on_measure`, the one place a measure is put to use. `CombinedCost.bind` binds each
+part through its own ``bind(problem)``, so a user's part with ``bind`` alone still binds on a grid. A solver that
+integrates on its own points, such as a finite-element space, binds the same cost on its own measure (stage 1b-2).
 """
 
 from __future__ import annotations
@@ -86,7 +86,8 @@ class InteractionCost(_SummableCost):
     Binds to `QuadraticInteractionEnergy` on a point measure, ``sum_j K(|x - y_j|) w_j m_j`` over its points and
     weights. On a problem's grid (`GridPointMeasure`) the convolution is ``ConvolutionCouplingOperator.from_problem``,
     the grid path: the same quadrature, by FFT on a uniform grid, with the problem's topology, so a periodic axis is
-    refused there by name (#2725). The measure's points go with it, so the energy evaluates ``(K * m)(x)`` at points that are not nodes.
+    refused there by name (#2725). The measure's points go with it, so the energy evaluates ``(K * m)(x)`` at points
+    that are not nodes.
 
     Args:
         kernel: The interaction kernel K, a `RadialKernel` (``GaussianKernel``, ``WendlandKernel``, ...).
@@ -111,7 +112,10 @@ class InteractionCost(_SummableCost):
                     "direct quadrature on their weights. Leave use_fft unset (#1642)."
                 )
             conv = ConvolutionCouplingOperator(
-                self.kernel, points=measure.points, cell_volume=measure.weights, use_fft=self.use_fft
+                self.kernel,
+                points=np.asarray(measure.points).astype(np.float64),
+                cell_volume=np.asarray(measure.weights).astype(np.float64),
+                use_fft=self.use_fft,
             )
         return cast("EnergyFunctional", QuadraticInteractionEnergy(conv, nodes=measure.points))
 
@@ -141,9 +145,13 @@ class PotentialCost(_SummableCost):
     def bind_on(self, measure: PointMeasure) -> EnergyFunctional:
         from mfgarchon.utils.callable_adapter import CallableSignature, adapt_ic_callable
 
-        # V is sampled on a copy of the points, and probed on a copy of the first, so a V that writes into its x
-        # changes neither the measure's points nor the value read at the first node
-        nodes = np.array(measure.points, dtype=float)
+        def copies(points: np.ndarray) -> np.ndarray:
+            # Every point V is handed is its own float64 copy -- at binding, in the adapter's probe and off the
+            # nodes -- so a V that writes into its x moves neither the measure's points nor a caller's (#1642)
+            points = np.asarray(points).astype(np.float64)
+            return points.reshape(points.shape[0], -1)
+
+        nodes = np.asarray(measure.points)
         nodes = nodes.reshape(nodes.shape[0], -1)
         d = nodes.shape[1]
         in_the_hamiltonian = (
@@ -154,7 +162,7 @@ class PotentialCost(_SummableCost):
         )
         try:
             signature, V = adapt_ic_callable(
-                self.V, dimension=d, sample_point=float(nodes[0, 0]) if d == 1 else nodes[0].copy(), role="V"
+                self.V, dimension=d, sample_point=float(nodes[0, 0]) if d == 1 else copies(nodes[:1])[0], role="V"
             )
         except TypeError as unread:
             raise TypeError(
@@ -168,7 +176,7 @@ class PotentialCost(_SummableCost):
             )
 
         def at(points: np.ndarray) -> np.ndarray:
-            return np.array([V(float(x[0])) if d == 1 else V(x) for x in points], dtype=float)
+            return np.array([V(float(x[0])) if d == 1 else V(x) for x in copies(points)], dtype=float)
 
         energy = PotentialEnergy(at(nodes), np.asarray(measure.weights, dtype=float).ravel(), V=at)
         return cast("EnergyFunctional", energy)
