@@ -130,6 +130,29 @@ def _same_box(domain: ImplicitDomain, dimension: int, bounds: list[tuple[float, 
     return not bool(np.any(np.abs(grid - box) > slack))
 
 
+class _IndexPreservingTrajectory:
+    """The trajectory ``preserve_indices=True`` asks for (#1119): particle j keeps row j in every slice, NaN once absorbed.
+
+    The step loop keeps compact arrays of the live particles. This keeps the original index of each live row and a
+    full-size slice per step, which the solve returns as its trajectory. Every particle path uses it (#2490), so the
+    representation has one owner.
+    """
+
+    def __init__(self, initial: np.ndarray, n_slices: int) -> None:
+        self._shape = initial.shape
+        self._alive = np.arange(initial.shape[0])
+        self.slices: list[np.ndarray] = [np.full(self._shape, np.nan)] * n_slices
+        self.record(0, initial, None)
+
+    def record(self, t: int, alive_particles: np.ndarray, absorbed_mask: np.ndarray | None) -> None:
+        """Slice ``t`` from the live particles after a step; ``absorbed_mask`` marks the rows of the step's input that left."""
+        if absorbed_mask is not None and np.any(absorbed_mask):
+            self._alive = self._alive[~absorbed_mask]
+        full = np.full(self._shape, np.nan)
+        full[self._alive] = alive_particles
+        self.slices[t] = full
+
+
 class FPParticleSolver(BaseFPSolver):
     """
     Particle-based Fokker-Planck solver using Monte Carlo sampling and KDE.
@@ -1960,9 +1983,9 @@ class FPParticleSolver(BaseFPSolver):
         self._show_progress = show_progress
         self._drift_is_precomputed = drift_is_precomputed
 
-        # Initialize particle history for direct query modes (Issue #489).
-        # Issue #1119: NB this is the n-D grid-drift entry; preserve_indices is
-        # NOT supported here (the segment-aware callsite raises NotImplementedError).
+        # Initialize particle history for direct query modes (Issue #489). preserve_indices does not force it here: a
+        # history makes the solve return an FPParticleResult, and the coupling iterators read the grid paths' return as
+        # the density array. The preserved trajectory is M_particles_trajectory (#2490).
         if self.density_mode in ("hybrid", "query_only"):
             self._particle_history = []
 
@@ -2130,9 +2153,15 @@ class FPParticleSolver(BaseFPSolver):
             init_particles = current_M_particles_t[0, :]
 
         M_density_on_grid[0, :] = self._estimate_density_from_particles(init_particles)
+        # preserve_indices under an absorbing BC (#1119, #2490); with nothing absorbed the trajectory already keeps them
+        preserved = (
+            _IndexPreservingTrajectory(init_particles, Nt) if use_segment_aware_bc and self._preserve_indices else None
+        )
 
         if Nt == 1:
-            if use_segment_aware_bc:
+            if preserved is not None:
+                self.M_particles_trajectory = preserved.slices
+            elif use_segment_aware_bc:
                 self.M_particles_trajectory = particles_list
             else:
                 self.M_particles_trajectory = current_M_particles_t
@@ -2154,6 +2183,8 @@ class FPParticleSolver(BaseFPSolver):
             if n_particles_t == 0:
                 if use_segment_aware_bc:
                     particles_list[n_time_idx + 1] = np.array([])
+                if preserved is not None:
+                    preserved.record(n_time_idx + 1, particles_list[n_time_idx + 1], None)
                 M_density_on_grid[n_time_idx + 1, :] = np.zeros(Nx)
                 continue
 
@@ -2190,23 +2221,25 @@ class FPParticleSolver(BaseFPSolver):
             new_particles = particles_t + alpha_optimal_at_particles * Dt + sigma_sde * dW
 
             # The outer boundary condition, then the obstacle placement (#2688): see `_finish_step`.
-            if use_segment_aware_bc and self._preserve_indices:
-                raise NotImplementedError(
-                    "preserve_indices=True not supported in 1D path; use callable-drift n-D path (Issue #1119)."
-                )
             recorded_2d, _absorbed_mask, _n_absorbed = self._finish_step(
                 new_particles.reshape(-1, 1), particles_t.reshape(-1, 1), [(xmin, xmin + Lx)], use_segment_aware_bc
             )
             new_particles = recorded_2d[:, 0]
             if use_segment_aware_bc:
                 particles_list[n_time_idx + 1] = new_particles
+                if preserved is not None:
+                    preserved.record(n_time_idx + 1, new_particles, _absorbed_mask)
             else:
                 current_M_particles_t[n_time_idx + 1, :] = new_particles
 
             M_density_on_grid[n_time_idx + 1, :] = self._estimate_density_from_particles(new_particles)
 
         # Finalize: store trajectory, build history, return result
-        trajectory = particles_list if use_segment_aware_bc else current_M_particles_t
+        trajectory: list[np.ndarray] | np.ndarray
+        if preserved is not None:
+            trajectory = preserved.slices
+        else:
+            trajectory = particles_list if use_segment_aware_bc else current_M_particles_t
         return self._finalize_particle_solve(
             M_density_on_grid, trajectory, Nt, dimension=1, use_segment_aware_bc=use_segment_aware_bc
         )
@@ -2287,9 +2320,15 @@ class FPParticleSolver(BaseFPSolver):
 
         # Restore the caller's mass ALWAYS; the KDE-drift correction stays conditional (#2181).
         M_density_on_grid[0] = self._normalize_density_nd(M_density_on_grid[0], spacings, particles=init_particles)
+        # preserve_indices under an absorbing BC (#1119, #2490); with nothing absorbed the trajectory already keeps them
+        preserved = (
+            _IndexPreservingTrajectory(init_particles, Nt) if use_segment_aware_bc and self._preserve_indices else None
+        )
 
         if Nt == 1:
-            if use_segment_aware_bc:
+            if preserved is not None:
+                self.M_particles_trajectory = preserved.slices
+            elif use_segment_aware_bc:
                 self.M_particles_trajectory = particles_list  # List of arrays
             else:
                 self.M_particles_trajectory = current_particles
@@ -2315,6 +2354,8 @@ class FPParticleSolver(BaseFPSolver):
             if n_particles_t == 0:
                 if use_segment_aware_bc:
                     particles_list[t_idx + 1] = np.array([]).reshape(0, dimension)
+                if preserved is not None:
+                    preserved.record(t_idx + 1, particles_list[t_idx + 1], None)
                 M_density_on_grid[t_idx + 1] = np.zeros(grid_shape)
                 continue
 
@@ -2356,15 +2397,13 @@ class FPParticleSolver(BaseFPSolver):
             new_particles = particles_t + drift * Dt + dW
 
             # The outer boundary condition, then the obstacle placement (#2688): see `_finish_step`.
-            if use_segment_aware_bc and self._preserve_indices:
-                raise NotImplementedError(
-                    "preserve_indices=True not supported in grid-drift n-D path; use callable-drift path (Issue #1119)."
-                )
             new_particles, _absorbed_mask, _n_absorbed = self._finish_step(
                 new_particles, particles_t, bounds, use_segment_aware_bc
             )
             if use_segment_aware_bc:
                 particles_list[t_idx + 1] = new_particles
+                if preserved is not None:
+                    preserved.record(t_idx + 1, new_particles, _absorbed_mask)
             else:
                 current_particles[t_idx + 1] = new_particles
 
@@ -2377,7 +2416,11 @@ class FPParticleSolver(BaseFPSolver):
             )
 
         # Finalize: store trajectory, build history, return result
-        trajectory = particles_list if use_segment_aware_bc else current_particles
+        trajectory: list[np.ndarray] | np.ndarray
+        if preserved is not None:
+            trajectory = preserved.slices
+        else:
+            trajectory = particles_list if use_segment_aware_bc else current_particles
         return self._finalize_particle_solve(
             M_density_on_grid, trajectory, Nt, dimension=dimension, use_segment_aware_bc=use_segment_aware_bc
         )
@@ -2754,25 +2797,11 @@ class FPParticleSolver(BaseFPSolver):
         # from the particles directly; otherwise the first KDE slice, one absorbing step later, would.
         self._n_particles_initial = self._count_alive(init_p)
 
-        # Issue #1119: preserve_indices bookkeeping. Maintain orig_indices mapping
-        # live particles → their original index, and a parallel full-size NaN-marked
-        # history. Internal SDE/KDE loop still uses compact arrays for performance;
-        # NaN-marked array is only built for storage.
-        if self._preserve_indices:
-            if not use_segment_aware_bc:
-                raise NotImplementedError(
-                    "preserve_indices=True requires segment-aware BC (Dirichlet absorbing). "
-                    "With purely reflecting BC, no particles are absorbed, so the default "
-                    "compact array already preserves all indices (Issue #1119)."
-                )
-            preserve_orig_indices: np.ndarray | None = np.arange(self.num_particles)
-            preserve_full_history: list[np.ndarray] | None = [None] * (Nt + 1)
-            full_t0 = np.full((self.num_particles, dimension), np.nan)
-            full_t0[preserve_orig_indices] = init_p
-            preserve_full_history[0] = full_t0
-        else:
-            preserve_orig_indices = None
-            preserve_full_history = None
+        # preserve_indices under an absorbing BC (#1119, #2490); with nothing absorbed the trajectory already keeps them.
+        # The step loop keeps compact arrays of the live particles; the full-size NaN-marked slices are for storage.
+        preserved = (
+            _IndexPreservingTrajectory(init_p, Nt + 1) if use_segment_aware_bc and self._preserve_indices else None
+        )
 
         # Allocate density array (only used if density_mode != "query_only")
         M_density_on_grid = np.zeros((Nt + 1, *grid_shape))
@@ -2807,9 +2836,8 @@ class FPParticleSolver(BaseFPSolver):
             if n_particles_t == 0:
                 if use_segment_aware_bc:
                     particles_list[t_idx + 1] = np.empty((0, dimension), dtype=particles_t.dtype)
-                # Issue #1119: maintain full-NaN history once all particles absorbed
-                if self._preserve_indices:
-                    preserve_full_history[t_idx + 1] = np.full((self.num_particles, dimension), np.nan)
+                if preserved is not None:
+                    preserved.record(t_idx + 1, particles_list[t_idx + 1], None)
                 if self.density_mode != "query_only":
                     M_density_on_grid[t_idx + 1] = np.zeros(grid_shape)
                 continue
@@ -2916,13 +2944,8 @@ class FPParticleSolver(BaseFPSolver):
             )
             if use_segment_aware_bc:
                 particles_list[t_idx + 1] = new_particles
-                # Issue #1119: update orig_indices + build NaN-marked full array
-                if self._preserve_indices:
-                    if _n_absorbed > 0:
-                        preserve_orig_indices = preserve_orig_indices[~absorbed_mask]
-                    full_t = np.full((self.num_particles, dimension), np.nan)
-                    full_t[preserve_orig_indices] = new_particles
-                    preserve_full_history[t_idx + 1] = full_t
+                if preserved is not None:
+                    preserved.record(t_idx + 1, new_particles, absorbed_mask)
             else:
                 current_particles[t_idx + 1] = new_particles
 
@@ -2945,8 +2968,9 @@ class FPParticleSolver(BaseFPSolver):
         # the BC routing path taken in the loop.
         # Issue #1119: when preserve_indices=True, swap trajectory to the
         # NaN-marked full-size history (fixed (Nt+1, N, d) shape).
-        if self._preserve_indices and use_segment_aware_bc:
-            trajectory = preserve_full_history
+        trajectory: list[np.ndarray] | np.ndarray
+        if preserved is not None:
+            trajectory = preserved.slices
         else:
             trajectory = particles_list if use_segment_aware_bc else current_particles
         return self._finalize_particle_solve(
