@@ -80,7 +80,7 @@ def interpolate_grid_to_particles(
     method : {"linear", "cubic", "nearest"}
         Interpolation method:
         - "linear": Fast, C0 continuous
-        - "cubic": Smooth, C1 continuous (1D/2D only)
+        - "cubic": accepted, and interpolated linearly: no cubic path exists
         - "nearest": Fastest, discontinuous
     grid_axes : sequence of ndarray, optional
         The grid's node coordinates per dimension. Without them the axes are uniform over ``grid_bounds``,

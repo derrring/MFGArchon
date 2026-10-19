@@ -316,7 +316,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         # per-timestep Newton + Armijo line search. 'howard': delegate the backward
         # sweep to HJBHowardSolver (policy iteration; no line search, so it avoids the
         # MIN_ALPHA stall that freezes Newton on advection-dominant / no-flux-BC regimes).
-        # 'howard' needs unit control cost and a homogeneous no-flux BC (validated in solve).
+        # 'howard' needs a quadratic control cost, of any lambda (validated in solve), and takes the value-form BC rows
+        # of _bc_row_for_point: Dirichlet, Neumann or no-flux, and ROBIN(alpha=0, beta=1).
         # It no longer requires monotonicity_scheme='joint_socp' (#2066): without SOCP stencils
         # it takes its operators from the collocation operator and warns that monotonicity --
         # a convergence hypothesis, not a runnability one -- is not guaranteed.
@@ -2444,7 +2445,8 @@ class HJBGFDMSolver(BaseHJBSolver):
         - the Newton path forms the #1116 residual RHS ``row_coeffs @ u_current - bc_target``;
         - the Howard value-form path uses ``bc_target`` as the RHS directly.
         Keeping one source prevents the two paths from drifting (the recurring dual-source BC
-        bug class). Raises for BC types with no row builder (PERIODIC/ROBIN).
+        bug class). Raises for PERIODIC, which has no row builder, and for a ROBIN segment other than
+        ROBIN(alpha=0, beta=1), which is built as the Neumann row n.grad u = g.
         """
         match bc_enum:
             case BCType.DIRICHLET:
@@ -2551,9 +2553,11 @@ class HJBGFDMSolver(BaseHJBSolver):
 
         BC type dispatch is now an exhaustive ``match`` over ``BCType`` with
         ``case _: raise``, so any unhandled enum value surfaces immediately
-        rather than silently leaving a cleared zero row. PERIODIC and ROBIN
-        raise ``NotImplementedError`` because this solver doesn't support them
-        via row replacement (see error messages for alternatives).
+        rather than silently leaving a cleared zero row. PERIODIC raises
+        ``NotImplementedError``, since this solver does not support it via row
+        replacement, and so does a ROBIN segment other than ROBIN(alpha=0, beta=1),
+        which is built as the Neumann row n.grad u = g (see error messages for
+        alternatives).
 
         Row construction is **atomic**: we build the full replacement row in a
         local ``np.ndarray`` and assign in one shot, instead of clearing first
