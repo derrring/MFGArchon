@@ -136,7 +136,9 @@ not claimed for them, and the library does not check it either way.
   specification, `InteractionCost(kernel)`, `PotentialCost(V)` or their sum. `MFGProblem` binds it
   on its grid and measure (`problem.coupling_energy`), and the HJB carries
   $\delta F/\delta m$ at each density slice, summed with the Hamiltonian's own $f$ and with
-  `source_term_hjb`. It binds on a `TensorProductGrid` and is refused elsewhere by name.
+  `source_term_hjb`. It binds on a `TensorProductGrid` and is refused elsewhere by name. A solver
+  that evaluates its source at its own points, such as HJB-GFDM's collocation points, reads
+  $\delta F/\delta m$ there: $V(x)$, or the grid's quadrature applied at $x$.
 - **`Model(terminal_coupling=...)` is its terminal counterpart G** (#1642). It takes the same
   specifications and binds as `problem.terminal_energy`. The terminal condition is then
   $u(T, x) = g(x) + \delta G/\delta m$ at $m(T, \cdot)$, the density of the HJB solve it is the terminal

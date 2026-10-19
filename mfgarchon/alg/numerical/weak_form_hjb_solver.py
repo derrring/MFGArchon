@@ -59,6 +59,19 @@ class WeakFormHJBSolver(BaseHJBSolver):
 
     def __init__(self, problem: MFGProblem, discretization: WeakFormDiscretization) -> None:
         super().__init__(problem)
+        # #1642 ruling (ii): a weak-form solver binds a coupling cost against its own discretization or refuses it.
+        # Neither has its own binding yet (stage 1b-2), and on a grid problem the coupled route reads a grid-bound
+        # energy at the dofs by index, a coefficient as a point value (#2672).
+        bound = [name for name in ("coupling_energy", "terminal_energy") if getattr(problem, name, None) is not None]
+        if bound:
+            raise NotImplementedError(
+                f"{type(self).__name__} solves on its own discretization, and this problem declares "
+                f"{' and '.join(bound)}, bound on the problem's grid nodes and measure. This solver has no binding "
+                "of its own yet, so it would read that energy at its dofs by index, a coefficient as a point value "
+                "(#2672); binding against a weak-form solver's own discretization is #1642's stage 1b-2. Solve with "
+                "a solver that evaluates on the grid's measure -- HJB-FDM, HJB-SL, or HJB-GFDM at its collocation "
+                "points -- or, for a linear F = integral V m, give V to the Hamiltonian as its potential."
+            )
         self._disc = discretization
         self._n_dof = discretization.n_dof
         self._K = discretization.stiffness()
