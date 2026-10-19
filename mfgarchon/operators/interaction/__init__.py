@@ -55,6 +55,7 @@ from .kernels import (
     TentKernel,
     WendlandKernel,
 )
+from .point_measure import BindsOnPointMeasure, GridPointMeasure, PointMeasure, bind_on_measure
 
 __all__ = [
     # Kernels
@@ -70,6 +71,11 @@ __all__ = [
     "InteractionCost",
     "PotentialCost",
     "CombinedCost",
+    # What a coupling cost binds against (#1642 stage 1b-2)
+    "PointMeasure",
+    "BindsOnPointMeasure",
+    "GridPointMeasure",
+    "bind_on_measure",
     # Energy functionals
     "EnergyFunctional",
     "QuadraticInteractionEnergy",

@@ -19,6 +19,12 @@ slice the same way (`source_composition`).
 Each bound energy also evaluates its flat derivative at points that are not the nodes, `PointwiseFlatDerivative`: V(x)
 for a potential, the bound quadrature applied at x for an interaction. That is what a solver evaluating its source at
 its own points, such as HJB-GFDM's collocation points, reads (#1642 stage 1b-1).
+
+Every library cost binds on a point measure, `bind_on(measure)` (`point_measure`): points with one quadrature weight
+each. For `InteractionCost` and `PotentialCost`, ``bind(problem)`` is ``bind_on`` on the problem's grid,
+`GridPointMeasure`, through `bind_on_measure`, the one place a measure is put to use. `CombinedCost.bind` binds each
+part through its own ``bind(problem)``, so a user's part with ``bind`` alone still binds on a grid. A solver that
+integrates on its own points, such as a finite-element space, binds the same cost on its own measure (stage 1b-2).
 """
 
 from __future__ import annotations
@@ -33,6 +39,7 @@ from mfgarchon.operators.interaction.energy_functionals import (
     PotentialEnergy,
     QuadraticInteractionEnergy,
 )
+from mfgarchon.operators.interaction.point_measure import GridPointMeasure, bind_on_measure
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -41,6 +48,7 @@ if TYPE_CHECKING:
     from mfgarchon.core.model import CouplingCost
     from mfgarchon.operators.interaction.energy_functionals import EnergyFunctional
     from mfgarchon.operators.interaction.kernels import RadialKernel
+    from mfgarchon.operators.interaction.point_measure import PointMeasure
 
 
 class _SummableCost:
@@ -75,9 +83,11 @@ class InteractionCost(_SummableCost):
     """The interaction cost ``F[m] = (1/2) integral integral K(x - y) m(x) m(y) dx dy`` of a translation-invariant
     kernel K, whose flat derivative is ``(K * m)(x)``.
 
-    Binds to `QuadraticInteractionEnergy` on ``ConvolutionCouplingOperator.from_problem(kernel, problem)``: the
-    problem's grid, its measure, and its topology, so a periodic axis is refused there by name (#2725). The grid's
-    nodes go with it, so the energy evaluates ``(K * m)(x)`` at points that are not nodes.
+    Binds to `QuadraticInteractionEnergy` on a point measure, ``sum_j K(|x - y_j|) w_j m_j`` over its points and
+    weights. On a problem's grid (`GridPointMeasure`) the convolution is ``ConvolutionCouplingOperator.from_problem``,
+    the grid path: the same quadrature, by FFT on a uniform grid, with the problem's topology, so a periodic axis is
+    refused there by name (#2725). The measure's points go with it, so the energy evaluates ``(K * m)(x)`` at points
+    that are not nodes.
 
     Args:
         kernel: The interaction kernel K, a `RadialKernel` (``GaussianKernel``, ``WendlandKernel``, ...).
@@ -89,11 +99,25 @@ class InteractionCost(_SummableCost):
         self.use_fft = use_fft
 
     def bind(self, problem: MFGProblem) -> EnergyFunctional:
-        energy = QuadraticInteractionEnergy(
-            ConvolutionCouplingOperator.from_problem(self.kernel, problem, use_fft=self.use_fft),
-            nodes=np.asarray(problem.geometry.get_spatial_grid(), dtype=float),
-        )
-        return cast("EnergyFunctional", energy)
+        return bind_on_measure(self, GridPointMeasure(problem))
+
+    def bind_on(self, measure: PointMeasure) -> EnergyFunctional:
+        if type(measure) is GridPointMeasure:
+            conv = ConvolutionCouplingOperator.from_problem(self.kernel, measure.problem, use_fft=self.use_fft)
+        else:
+            if self.use_fft:
+                raise ValueError(
+                    f"InteractionCost(use_fft=True) binds on {type(measure).__name__}, a point measure that is not a "
+                    "problem's grid: the FFT path needs a uniform grid, and on other points the interaction is the "
+                    "direct quadrature on their weights. Leave use_fft unset (#1642)."
+                )
+            conv = ConvolutionCouplingOperator(
+                self.kernel,
+                points=np.asarray(measure.points).astype(np.float64),
+                cell_volume=np.asarray(measure.weights).astype(np.float64),
+                use_fft=self.use_fft,
+            )
+        return cast("EnergyFunctional", QuadraticInteractionEnergy(conv, nodes=measure.points))
 
     def __repr__(self) -> str:
         return f"InteractionCost({self.kernel!r}, use_fft={self.use_fft!r})"
@@ -102,8 +126,9 @@ class InteractionCost(_SummableCost):
 class PotentialCost(_SummableCost):
     """The potential cost ``F[m] = integral V(x) m(x) dx``, whose flat derivative is ``V(x)``.
 
-    Binds to `PotentialEnergy` with V sampled at the problem's nodes and the problem's measure,
-    ``problem.spatial_measure().weights``, and with V itself, which it evaluates at points that are not nodes.
+    Binds to `PotentialEnergy` on a point measure: V sampled at its points, its weights, and V itself, which it
+    evaluates at points that are not nodes. On a problem's grid those are its nodes and its measure,
+    ``problem.spatial_measure().weights`` (`GridPointMeasure`).
 
     Args:
         V: The potential, cost-signed (positive repels), called once per node as ``m_initial`` is: ``V(x)`` with
@@ -115,9 +140,19 @@ class PotentialCost(_SummableCost):
         self.V = V
 
     def bind(self, problem: MFGProblem) -> EnergyFunctional:
+        return bind_on_measure(self, GridPointMeasure(problem))
+
+    def bind_on(self, measure: PointMeasure) -> EnergyFunctional:
         from mfgarchon.utils.callable_adapter import CallableSignature, adapt_ic_callable
 
-        nodes = np.asarray(problem.geometry.get_spatial_grid(), dtype=float)
+        def copies(points: np.ndarray) -> np.ndarray:
+            # In n-D every point V is handed is its own float64 copy -- at binding, in the adapter's probes (one copy
+            # serves them all) and off the nodes; in 1-D V gets a float -- so a V that writes into its x moves neither
+            # the measure's points nor a caller's (#1642)
+            points = np.asarray(points).astype(np.float64)
+            return points.reshape(points.shape[0], -1)
+
+        nodes = np.asarray(measure.points)
         nodes = nodes.reshape(nodes.shape[0], -1)
         d = nodes.shape[1]
         in_the_hamiltonian = (
@@ -128,7 +163,7 @@ class PotentialCost(_SummableCost):
         )
         try:
             signature, V = adapt_ic_callable(
-                self.V, dimension=d, sample_point=float(nodes[0, 0]) if d == 1 else nodes[0], role="V"
+                self.V, dimension=d, sample_point=float(nodes[0, 0]) if d == 1 else copies(nodes[:1])[0], role="V"
             )
         except TypeError as unread:
             raise TypeError(
@@ -142,9 +177,9 @@ class PotentialCost(_SummableCost):
             )
 
         def at(points: np.ndarray) -> np.ndarray:
-            return np.array([V(float(x[0])) if d == 1 else V(x) for x in points], dtype=float)
+            return np.array([V(float(x[0])) if d == 1 else V(x) for x in copies(points)], dtype=float)
 
-        energy = PotentialEnergy(at(nodes), np.asarray(problem.spatial_measure().weights, dtype=float).ravel(), V=at)
+        energy = PotentialEnergy(at(nodes), np.asarray(measure.weights, dtype=float).ravel(), V=at)
         return cast("EnergyFunctional", energy)
 
     def __repr__(self) -> str:
@@ -180,6 +215,11 @@ class CombinedCost(_SummableCost):
         from mfgarchon.operators.interaction.energy_functionals import bound_energy_functional
 
         return cast("EnergyFunctional", CombinedEnergy([bound_energy_functional(cost, problem) for cost in self.costs]))
+
+    def bind_on(self, measure: PointMeasure) -> EnergyFunctional:
+        """Each part's ``bind_on`` through `bind_on_measure`, so a part that cannot bind on a point measure, a user's
+        cost with ``bind`` alone, is refused by its name."""
+        return cast("EnergyFunctional", CombinedEnergy([bind_on_measure(cost, measure) for cost in self.costs]))
 
     def __repr__(self) -> str:
         return f"CombinedCost({self.costs!r})"
