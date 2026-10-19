@@ -2,11 +2,12 @@
 
 Three CPU paths step particles -- the 1-D grid drift, the n-D grid drift, and the callable drift -- and each crossed
 with the outer boundary condition it can take, uniform or segment-aware (absorbing); each absorbing path again with
-`preserve_indices`, and the callable path with the caller's `initial_particles`, which only it takes. Each ends its step in `_finish_step`: the outer boundary condition
-on the raw step, then the obstacle placement for the survivors with their positions before the step. Before, the 1-D
-grid path never placed (1990 of 2000 particles inside the obstacle at the peak, i2688/prod/product_base.log) and the
-n-D paths placed BEFORE the wall reflection, which put particles back inside an obstacle that meets the wall (13438
-particle-times). The GPU path, a periodic outer boundary and initial mass inside an obstacle are refused by name.
+`preserve_indices`, and the callable path with the caller's `initial_particles`, which only it takes. Each ends its
+step in `_finish_step`: the outer boundary condition on the raw step, then the obstacle placement for the survivors
+with their positions before the step. Before, the 1-D grid path never placed (1990 of 2000 particles inside the
+obstacle at the peak, i2688/prod/product_base.log) and the n-D paths placed BEFORE the wall reflection, which put
+particles back inside an obstacle that meets the wall (13438 particle-times). The GPU path, a periodic outer
+boundary and initial mass inside an obstacle are refused by name.
 
 What reddens this file: any path whose step stops calling the placement, or calls it before the boundary condition
 (its cell); a path recording its `preserve_indices` slice before the placement (its `preserve_indices` cell); the

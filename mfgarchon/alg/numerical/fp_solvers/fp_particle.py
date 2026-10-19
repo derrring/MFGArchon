@@ -136,7 +136,7 @@ class _IndexPreservingTrajectory:
 
     The step loop keeps compact arrays of the live particles. This keeps the original index of each live row and a
     full-size slice per step, which the solve returns as its trajectory. Every CPU particle path uses it (#2490), so the
-    representation has one owner; the GPU path refuses an absorbing BC (#1910).
+    representation has one owner; the GPU path refuses a segment-aware BC (#1910).
     """
 
     def __init__(self, initial: np.ndarray, n_slices: int) -> None:
@@ -304,7 +304,8 @@ class FPParticleSolver(BaseFPSolver):
         # Issue #1119: preserve_indices flag for particle ID tracking
         # When True, absorbed particles are NaN-marked instead of compact-removed, so every slice of
         # M_particles_trajectory keeps its full size and particle j keeps row j, on every CPU path (#2490). Under a BC
-        # that absorbs nothing the trajectory already keeps them. The GPU path refuses an absorbing BC (#1910).
+        # that is not segment-aware nothing is absorbed, and the trajectory already keeps them. The GPU path refuses a
+        # segment-aware BC (#1910).
         self._preserve_indices: bool = preserve_indices
 
         # Initialize backend (defaults to NumPy)
@@ -2160,8 +2161,8 @@ class FPParticleSolver(BaseFPSolver):
             init_particles = current_M_particles_t[0, :]
 
         M_density_on_grid[0, :] = self._estimate_density_from_particles(init_particles)
-        # preserve_indices under a segment-aware BC (#1119, #2490); under a uniform one nothing is absorbed, and the
-        # trajectory already keeps every row
+        # preserve_indices under a segment-aware BC (#1119, #2490); otherwise nothing is absorbed, and the trajectory
+        # already keeps every row
         preserved = (
             _IndexPreservingTrajectory(init_particles, Nt) if use_segment_aware_bc and self._preserve_indices else None
         )
@@ -2329,8 +2330,8 @@ class FPParticleSolver(BaseFPSolver):
 
         # Restore the caller's mass ALWAYS; the KDE-drift correction stays conditional (#2181).
         M_density_on_grid[0] = self._normalize_density_nd(M_density_on_grid[0], spacings, particles=init_particles)
-        # preserve_indices under a segment-aware BC (#1119, #2490); under a uniform one nothing is absorbed, and the
-        # trajectory already keeps every row
+        # preserve_indices under a segment-aware BC (#1119, #2490); otherwise nothing is absorbed, and the trajectory
+        # already keeps every row
         preserved = (
             _IndexPreservingTrajectory(init_particles, Nt) if use_segment_aware_bc and self._preserve_indices else None
         )
@@ -2811,8 +2812,8 @@ class FPParticleSolver(BaseFPSolver):
         # from the particles directly; otherwise the first KDE slice, one absorbing step later, would.
         self._n_particles_initial = self._count_alive(init_p)
 
-        # preserve_indices under a segment-aware BC (#1119, #2490); under a uniform one nothing is absorbed, and the
-        # trajectory already keeps every row.
+        # preserve_indices under a segment-aware BC (#1119, #2490); otherwise nothing is absorbed, and the trajectory
+        # already keeps every row.
         # The step loop keeps compact arrays of the live particles; the full-size NaN-marked slices are for storage.
         preserved = (
             _IndexPreservingTrajectory(init_p, Nt + 1) if use_segment_aware_bc and self._preserve_indices else None

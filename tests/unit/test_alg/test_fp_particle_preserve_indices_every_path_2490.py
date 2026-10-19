@@ -2,7 +2,7 @@
 
 #1119 implemented the flag for the callable-drift path only. The 1-D path and the grid-drift n-D path raised under a
 segment-aware BC, absorbing or not, which is the per-point route #2490's routing needs. Now the three share one owner
-of the bookkeeping. The GPU path refuses an absorbing BC (#1910), so it has no absorbed rows to keep.
+of the bookkeeping. The GPU path refuses a segment-aware BC (#1910), so it has no absorbed rows to keep.
 
 The oracle is the flag's contract, read against the same solve with the flag off and the same seed:
 - the density is bit-identical, since the flag changes only what is stored;
