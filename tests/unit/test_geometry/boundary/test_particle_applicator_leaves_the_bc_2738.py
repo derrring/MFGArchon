@@ -150,11 +150,12 @@ def test_a_grid_marked_exit_is_read_on_the_grid_the_bc_is_bound_to(domain_sdf, r
 # The components route on a geometry that declares no BC is deprecated; that warning is not this pin's subject.
 @pytest.mark.filterwarnings("ignore:Specifying boundary conditions via MFGComponents:DeprecationWarning")
 def test_a_door_marked_off_the_domain_lets_no_particle_out():
-    """A BC bound to a grid that is not the problem's geometry: on the components route over a ``Hyperrectangle``,
-    which declares no BC, the problem's BC is the one the caller bound to a grid on x in [0, 1.2], whose door, x > 1.05,
-    lies outside the domain [0, 1]^2. 500 particles driven onto x = 1 are read where they crossed, on the step's box,
-    and none leaves. A query that read the bound grid's box instead read a particle past x = 1.05 as in the door: 492
-    left (#2767 review 3)."""
+    """A BC with no ``domain_bounds`` of its own, bound to a grid that is not the problem's geometry: on the components
+    route over a ``Hyperrectangle``, which declares no BC, the problem's BC is the one the caller bound to a grid on x in
+    [0, 1.2], whose door, x > 1.05, lies outside the domain [0, 1]^2. 500 particles driven onto x = 1 are read at their
+    nearest point of the step's box, which stands in for where they crossed it (#2733 will pass that point), and none
+    leaves. A query that read the bound grid's box instead read a particle past x = 1.05 as in the door: 492 left (#2767
+    review 3). A BC that carries its own ``domain_bounds`` is read on them, and is not this row's case (#2733)."""
     from mfgarchon.geometry import TensorProductGrid
     from mfgarchon.geometry.implicit import Hyperrectangle
 

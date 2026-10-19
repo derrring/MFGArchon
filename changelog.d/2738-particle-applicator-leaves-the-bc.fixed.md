@@ -9,5 +9,6 @@
     and never writes the BC it is handed. The face a particle leaves through and the point a door the grid marks is
     read at past the wall come from that one box, as when it was written, and the copy keeps the BC's grid binding.
     The particles and the density are bit-identical to before in every solve measured. The one difference is a BC
-    stepped in two boxes in turn: the write kept the first step's box for the second, and the copy reads each step in
-    its own.
+    stepped in two boxes in turn, as one BC object shared by two solves on different domains is: the write kept the
+    first solve's box for the second, so a door the second domain reaches was read as if it lay outside, and the copy
+    reads each step in its own box.

@@ -137,17 +137,19 @@ def particle_action_for_bc_type(
 
 def _with_box(bc: BoundaryConditions, bounds: NDArray[np.floating]) -> BoundaryConditions:
     """``bc`` as the point queries read it: itself when it carries ``domain_bounds``, else a copy that carries ``bounds``,
-    the box the step was taken in, in the ``domain_bounds`` slot where the write this replaces put it. So the face a
-    particle leaves through (``boundary_id``, from ``bounds``) and the point a marked ``region_name`` reads past the wall
-    (its nearest point of ``domain_bounds``) come from one box, even where the BC is bound to a grid whose box is not
-    the step's. The copy keeps the BC's geometry binding, so a placement only the grid can decide, a marked
-    ``region_name``, still reads the grid.
+    the box the step was taken in, in the ``domain_bounds`` slot where the write this replaces put it. So, for a BC with
+    no ``domain_bounds``, the face a particle leaves through (``boundary_id``, from ``bounds``) and the point a marked
+    ``region_name`` reads past the wall (its nearest point of ``domain_bounds``) come from one box, even where the BC is
+    bound to a grid whose box is not the step's. A BC that carries its own ``domain_bounds`` is read on them, as before,
+    while its face still comes from ``bounds`` (#2733). The copy keeps the BC's geometry binding, so a placement only
+    the grid can decide, a marked ``region_name``, still reads the grid.
 
     Never a write to ``bc``. It can be the problem's own BC: on the shared route when the solver's view of it translates
     nothing (`fp_view_of_shared_bc`), or when a caller hands the solver the grid's own BC. On the legacy route, setting
     its ``domain_bounds`` made every later read of the problem's BC refuse it as declaring the BC twice (#2738). The
     write also kept the first step's box for every later step; the copy reads each step in its own box, which differs
-    from the write only where one BC is stepped in two boxes in turn."""
+    from the write only where one BC is stepped in two boxes in turn, as one BC object shared by two solves on
+    different domains is."""
     if bc.domain_bounds is not None:
         return bc
     return replace(bc, segments=list(bc.segments), domain_bounds=bounds)
