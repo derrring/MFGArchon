@@ -54,6 +54,25 @@ if TYPE_CHECKING:
     from mfgarchon.geometry.boundary.conditions import BoundaryConditions
 
 
+def points_are_grid_nodes(points: NDArray, nodes: NDArray) -> bool:
+    """Whether ``points`` are a grid's ``nodes`` in their order, row for row.
+
+    ``nodes`` are the rows of the grid's ``get_spatial_grid()``, in its C order. A row matches to 1e-9 of the finest
+    axis spacing, so a node recomputed through other arithmetic still matches and its neighbour does not. This decides
+    whether a field on the nodes can be read as the field at ``points`` with no interpolation, which the coupling
+    cost's evaluation (#1642) and HJB-GFDM's grid-to-collocation transfer (#2756) both need.
+    """
+    nodes = np.asarray(nodes, dtype=float)
+    nodes = nodes.reshape(nodes.shape[0], -1)
+    points = np.asarray(points, dtype=float)
+    points = points.reshape(points.shape[0], -1) if points.ndim else np.zeros((0, nodes.shape[1]))
+    if points.shape != nodes.shape:
+        return False
+    axes = [np.unique(column) for column in nodes.T]
+    spacing = min((float(np.min(np.diff(a))) for a in axes if a.size > 1), default=1.0)
+    return bool(np.allclose(points, nodes, rtol=0, atol=1e-9 * spacing))
+
+
 class TensorProductGrid(
     CartesianGrid,
     # Boundary traits (Issue #590 Phase 1.2)

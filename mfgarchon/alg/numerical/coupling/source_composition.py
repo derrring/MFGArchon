@@ -70,6 +70,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from mfgarchon.geometry.grids.tensor_grid import points_are_grid_nodes
 from mfgarchon.types.callable_protocols import SOURCE_TERM_SLOTS, bound_attribute
 
 from .graph_coupling import _get_time_slice
@@ -123,24 +124,18 @@ def _coupling_part(energy: EnergyFunctional, nodes: NDArray, m_t: NDArray, x: ND
     and ``m_t`` is flattened in that order. The part evaluates only at those nodes: an ``x`` that is not them -- other
     points, or the same points in another order -- is refused rather than given the nodes' values. Evaluating it at a
     solver's own points, such as HJB-GFDM's collocation points where they are not the grid's nodes in their order, is
-    #2737.
+    #1642's stage 1b-1.
     """
     flat = np.asarray(m_t, dtype=float).ravel()
     nodes = np.asarray(nodes, dtype=float).reshape(np.shape(energy.weights)[0], -1)
-    points = np.asarray(x, dtype=float).reshape(np.shape(x)[0], -1) if np.ndim(x) else np.zeros((0, 1))
-    axes = [np.unique(column) for column in nodes.T]
-    spacing = min((float(np.min(np.diff(a))) for a in axes if a.size > 1), default=1.0)
-    if (
-        points.shape != nodes.shape
-        or flat.size != len(nodes)
-        or not np.allclose(points, nodes, rtol=0, atol=1e-9 * spacing)
-    ):
+    if flat.size != len(nodes) or not points_are_grid_nodes(x, nodes):
+        n_rows = np.shape(x)[0] if np.ndim(x) else 0
         raise ValueError(
             f"The coupling cost was bound on this problem's {len(nodes)} grid nodes, and this HJB evaluation passes x "
-            f"with {points.shape[0]} rows that are not those nodes in their order, and a density slice of {flat.size} "
+            f"with {n_rows} rows that are not those nodes in their order, and a density slice of {flat.size} "
             "values. The coupling cost evaluates only at the nodes it was bound on (#1642): a solver that evaluates "
             "its source at its own points, such as HJB-GFDM's collocation points where they are not the grid's "
-            "nodes in their order, cannot carry it until #2737. Solve "
+            "nodes in their order, cannot carry it until #1642's stage 1b-1. Solve "
             "with a grid solver -- HJB-FDM, HJB-SL, or HJB-WENO in 1-D -- or, for a linear F = integral V m, give V "
             "to the Hamiltonian as its potential."
         )
