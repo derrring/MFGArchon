@@ -4,8 +4,8 @@ Two defects of one owner, the solver's grid-to-collocation transfer:
 
 1. The representation was chosen by shape. A grid density whose node count equals the number of collocation points
    was read as already at the points, so grid node i's value went to collocation point i, and the terminal value's
-   with it. With the 21 nodes reversed as the collocation set, U moved by 4.592e-01 at f74312f9, in a run with no
-   coupling term, where only the terminal value read by index moved it.
+   with it. With the 21 nodes reversed as the collocation set, at f74312f9, in a run with no coupling term: U came back
+   4.592e-01 off, in point order, and 4.000e-01 off with that order undone, which is the terminal value read by index.
 2. The mapper rebuilt the grid's axes as ``linspace(bounds, shape)``. On a graded grid, m = x mapped to 31 points
    was 2.500e-01 off x.
 
@@ -76,8 +76,8 @@ def test_a_grid_density_reaches_permuted_collocation_points_by_position_not_inde
         U_permuted = _solve(problem, x[order], M, u_T)
 
         # The same points in another order are the same discretisation, and the output is on the grid's nodes either
-        # way. At f74312f9, reading the terminal value by index moved U by 4.592e-01 on the reversed nodes (a run with
-        # no coupling term).
+        # way. At f74312f9 the reversed nodes gave U 4.000e-01 off once its point order was undone, from the terminal
+        # value read by index (a run with no coupling term), and 4.592e-01 off as returned.
         assert U_permuted.shape == U_in_order.shape == (_NT + 1, 21)
         assert np.max(np.abs(U_permuted - U_in_order)) < 1e-10
 

@@ -2,8 +2,8 @@
   silent wrong answers of one owner, the solver's grid-to-collocation transfer:
   - A grid density whose node count equalled the number of collocation points was read as already at the points, so
     grid node i's value went to collocation point i, and the terminal value's with it. With the 21 nodes of a grid
-    reversed as the collocation set, U moved by 4.592e-01, in a run with no coupling term, where the terminal value read
-    by index moved it. Such a density is now the grid's, mapped to the points, unless the points are the grid's nodes
+    reversed as the collocation set, in a run with no coupling term, U came back 4.592e-01 off in point order, and
+    4.000e-01 off with that order undone, from the terminal value read by index. Such a density is now the grid's, mapped to the points, unless the points are the grid's nodes
     in its order, where the two readings agree and nothing is interpolated.
   - `GridCollocationMapper` rebuilt the grid's axes from its bounds, `np.linspace(lo, hi, n)`, so a graded
     `TensorProductGrid` was interpolated as if uniform in both directions: m = x mapped to 31 points was 2.500e-01
