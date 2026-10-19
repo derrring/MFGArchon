@@ -28,6 +28,7 @@ Part of: Unified Boundary Condition Architecture (Issue #536)
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -134,6 +135,15 @@ def particle_action_for_bc_type(
     )
 
 
+def _with_box(bc: BoundaryConditions, bounds: NDArray[np.floating]) -> BoundaryConditions:
+    """``bc`` as the point queries read it: itself when it carries ``domain_bounds``, else a copy that carries ``bounds``,
+    the box the step was taken in. Never a write to ``bc``. On the shared route it is the problem's own BC, and setting
+    ``domain_bounds`` on it made every later reader of the problem's BC refuse it (#2738)."""
+    if bc.domain_bounds is not None:
+        return bc
+    return replace(bc, segments=list(bc.segments), domain_bounds=bounds)
+
+
 class ParticleApplicator:
     """
     Segment-aware boundary condition applicator for particle methods.
@@ -180,8 +190,8 @@ class ParticleApplicator:
 
         Args:
             particles: Particle positions, shape (N, d)
-            bc: BoundaryConditions with segment definitions (must have domain_bounds set)
-            bounds: Domain bounds per dimension [(xmin, xmax), ...] - used if bc.domain_bounds is None
+            bc: BoundaryConditions with segment definitions. Read, never written (#2738).
+            bounds: Domain bounds per dimension [(xmin, xmax), ...] - the queries' box if bc.domain_bounds is None
 
         Returns:
             Tuple of:
@@ -203,9 +213,7 @@ class ParticleApplicator:
         domain_max = bounds_arr[:, 1]
         domain_size = domain_max - domain_min
 
-        # Ensure BC has domain_bounds for segment matching
-        if bc.domain_bounds is None:
-            bc.domain_bounds = bounds_arr
+        bc = _with_box(bc, bounds_arr)
 
         # Find particles at or beyond boundary
         at_min = particles <= domain_min + self._boundary_tolerance
@@ -226,7 +234,7 @@ class ParticleApplicator:
             # Determine which boundary the particle is at
             boundary_id = self._get_boundary_id(particle, domain_min, domain_max, dimension)
 
-            # Query BC at this point (uses bc.domain_bounds internally)
+            # Query BC at this point (its domain_bounds, or the step's box)
             segment = bc.get_bc_at_point(
                 particle,
                 boundary_id=boundary_id,
@@ -302,8 +310,7 @@ class ParticleApplicator:
         domain_max = bounds_arr[:, 1]
         domain_size = domain_max - domain_min
 
-        if bc.domain_bounds is None:
-            bc.domain_bounds = bounds_arr
+        bc = _with_box(bc, bounds_arr)
 
         # Find boundary particles
         at_min = particles <= domain_min + self._boundary_tolerance
