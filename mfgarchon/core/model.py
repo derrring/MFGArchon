@@ -67,10 +67,10 @@ class Model:
         coupling_cost: The coupling cost F[m], a `CouplingCost` -- ``InteractionCost(kernel)``,
             ``PotentialCost(V)`` or their sum (``mfgarchon.operators.interaction``). ``MFGProblem`` binds it to its grid
             and measure, and the HJB carries its flat derivative ``delta F / delta m`` as a source, cost-signed, summed
-            with the Hamiltonian's own coupling ``f`` (#1642). Bound on a ``TensorProductGrid``; a solver that evaluates
-            its source at its own points, such as HJB-GFDM's collocation points, reads ``delta F / delta m`` there.
-            Refused on FEM and meshless geometries until #1642's stage 1b, and on a network, where no solve takes a
-            ``Model`` (#2045).
+            with the Hamiltonian's own coupling ``f`` (#1642). Bound on a ``TensorProductGrid``; HJB-GFDM, which
+            evaluates its source at its collocation points, reads ``delta F / delta m`` there. Refused on FEM and
+            meshless geometries until #1642's stage 1b, by a weak-form HJB solver, which has no binding of its own yet,
+            and on a network, where no solve takes a ``Model`` (#2045).
             In a multi-population problem each population's own ``Model`` carries
             its own F_k, which reads that population's density m_k alone; coupling across populations belongs in each
             H_k, through the stacked densities (#2173). The same holds per regime of a regime-switching problem and per
@@ -79,9 +79,9 @@ class Model:
         terminal_coupling: The terminal coupling cost G[m(T)], a `CouplingCost` like ``coupling_cost``. ``MFGProblem``
             binds it to its grid and measure, and the terminal condition is ``u(T, x) = g(x) + delta G / delta m`` at the
             density m(T) the HJB solve uses (`MFGProblem.terminal_value`, #1642 stage 2). Bound on a
-            ``TensorProductGrid``; refused on FEM and meshless geometries until #1642's stage 1b, on a network (#2568),
-            and in `MultiPopulationIterator`, which with more than one population couples them through their stacked
-            densities (#1642).
+            ``TensorProductGrid``; refused on FEM and meshless geometries until #1642's stage 1b, by a weak-form HJB
+            solver, on a network (#2568), and in `MultiPopulationIterator`, which with more than one population couples
+            them through their stacked densities (#1642).
     """
 
     hamiltonian: HamiltonianBase | None = None

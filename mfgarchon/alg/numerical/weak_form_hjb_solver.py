@@ -70,7 +70,8 @@ class WeakFormHJBSolver(BaseHJBSolver):
                 "of its own yet, so it would read that energy at its dofs by index, a coefficient as a point value "
                 "(#2672); binding against a weak-form solver's own discretization is #1642's stage 1b-2. Solve with "
                 "a solver that evaluates on the grid's measure -- HJB-FDM, HJB-SL, or HJB-GFDM at its collocation "
-                "points -- or, for a linear F = integral V m, give V to the Hamiltonian as its potential."
+                "points -- or, for a linear F = integral V m, give V to the Hamiltonian as its potential, and for a "
+                "linear G = integral V m(T), add V to u_terminal."
             )
         self._disc = discretization
         self._n_dof = discretization.n_dof
