@@ -9,7 +9,7 @@ Two defects of one owner, the solver's grid-to-collocation transfer:
 2. The mapper rebuilt the grid's axes as ``linspace(bounds, shape)``. On a graded grid, m = x mapped to 31 points
    was 2.500e-01 off x.
 
-Both oracles are exact, so they fail by orders of magnitude when either defect returns. The density and the terminal
+Both oracles are exact up to round-off, so they fail by orders of magnitude when either defect returns. The density and the terminal
 value are asymmetric in x and enter the HJB through a coupling f(m) = m, so a reversal and a uniform-axes reading
 both move U.
 """
@@ -100,7 +100,10 @@ def test_a_2d_grid_density_reaches_its_nodes_in_f_order_by_position():
 
     assert U_in_order.shape == (_NT + 1, 30)
     assert U_f_order.shape == (_NT + 1, 6, 5)
-    assert np.max(np.abs(U_f_order.reshape(_NT + 1, 30) - U_in_order)) < 1e-10
+    # The two solves differ in round-off only, and how much depends on the point order and the BLAS: 7.6e-12 on macOS
+    # (Accelerate) and 2.05e-9 on the Ubuntu runner (discrimination run 39231402975), both at the fix. Reading the
+    # density by index puts it 1.33 off. The bound sits between the two.
+    assert np.max(np.abs(U_f_order.reshape(_NT + 1, 30) - U_in_order)) < 1e-6
 
 
 def test_a_graded_grid_density_is_interpolated_on_its_own_nodes():
