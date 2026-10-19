@@ -117,29 +117,51 @@ def hjb_source_is_active(problem: MFGProblem) -> bool:
 
 
 def _coupling_part(energy: EnergyFunctional, nodes: NDArray, m_t: NDArray, x: NDArray, t: float) -> NDArray:
-    """The coupling cost's part of the HJB source: ``delta F / delta m`` at the density slice ``m_t``, at the nodes F
-    was bound on (#1642 stage 1).
+    """The coupling cost's part of the HJB source: ``delta F / delta m`` at the density slice ``m_t``, evaluated at
+    ``x`` (#1642).
 
     ``nodes`` are the grid's, the rows of ``geometry.get_spatial_grid()`` in the grid's C order, which F was bound in,
-    and ``m_t`` is flattened in that order. The part evaluates only at those nodes: an ``x`` that is not them -- other
-    points, or the same points in another order -- is refused rather than given the nodes' values. Evaluating it at a
-    solver's own points, such as HJB-GFDM's collocation points where they are not the grid's nodes in their order, is
-    #1642's stage 1b-1.
+    and ``m_t`` is flattened in that order. At those nodes, in that order, the part is ``flat_derivative``. At other
+    points -- a solver's own, such as HJB-GFDM's collocation points, or the nodes in another order -- it is
+    ``flat_derivative_at``, which the bound energy has when it is a `PointwiseFlatDerivative` and is refused by name
+    when it is not (stage 1b-1).
     """
+    from mfgarchon.operators.interaction.energy_functionals import PointwiseFlatDerivative
+
     flat = np.asarray(m_t, dtype=float).ravel()
     nodes = np.asarray(nodes, dtype=float).reshape(np.shape(energy.weights)[0], -1)
-    if flat.size != len(nodes) or not points_are_grid_nodes(x, nodes):
-        n_rows = np.shape(x)[0] if np.ndim(x) else 0
+    if flat.size != len(nodes):
         raise ValueError(
-            f"The coupling cost was bound on this problem's {len(nodes)} grid nodes, and this HJB evaluation passes x "
-            f"with {n_rows} rows that are not those nodes in their order, and a density slice of {flat.size} "
-            "values. The coupling cost evaluates only at the nodes it was bound on (#1642): a solver that evaluates "
-            "its source at its own points, such as HJB-GFDM's collocation points where they are not the grid's "
-            "nodes in their order, cannot carry it until #1642's stage 1b-1. Solve "
-            "with a grid solver -- HJB-FDM, HJB-SL, or HJB-WENO in 1-D -- or, for a linear F = integral V m, give V "
-            "to the Hamiltonian as its potential."
+            f"The coupling cost was bound on this problem's {len(nodes)} grid nodes, and this HJB evaluation passes a "
+            f"density slice of {flat.size} values. The density the coupling part reads is the grid's, one value per "
+            "node in the grid's order (#1642)."
         )
-    return np.asarray(energy.flat_derivative(flat, t=t), dtype=float)
+    if points_are_grid_nodes(x, nodes):
+        return np.asarray(energy.flat_derivative(flat, t=t), dtype=float)
+    d = nodes.shape[1]
+    points = np.asarray(x, dtype=float)
+    if points.ndim == 1 and d == 1:
+        points = points[:, None]
+    if points.ndim != 2 or points.shape[1] != d:
+        raise ValueError(
+            f"The coupling cost was bound on a grid in {d}-D, and this HJB evaluation passes x of shape "
+            f"{np.shape(x)}, not points of shape (n, {d}) (#1642)."
+        )
+    if not isinstance(energy, PointwiseFlatDerivative):
+        raise NotImplementedError(
+            f"The coupling cost's bound energy, {type(energy).__name__}, has no flat_derivative_at(m, x, *, t), so "
+            f"it evaluates only at the {len(nodes)} grid nodes it was bound on, in their order; this HJB evaluation "
+            f"passes {len(points)} other points, such as HJB-GFDM's collocation points. Give the energy a "
+            "flat_derivative_at (PointwiseFlatDerivative, in mfgarchon.operators.interaction.energy_functionals), or "
+            "solve with a solver that evaluates at the grid's nodes -- HJB-FDM, HJB-SL, or HJB-WENO in 1-D (#1642)."
+        )
+    values = np.asarray(energy.flat_derivative_at(flat, points, t=t), dtype=float)
+    if values.shape != (len(points),):
+        raise ValueError(
+            f"{type(energy).__name__}.flat_derivative_at at {len(points)} points returned shape {values.shape}, "
+            f"not ({len(points)},) (#1642)."
+        )
+    return values
 
 
 def _problem_hjb_source_terms(

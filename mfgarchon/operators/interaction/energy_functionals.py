@@ -48,6 +48,11 @@ Concretely, for the two shipped forms:
 - Potential ``F[m] = integral V(x) m(x) dx`` has ``delta F / delta m = V(x)``
   and ``delta^2 F / delta m^2 = 0``.
 
+``flat_derivative(m)`` evaluates at the nodes ``m`` is given at. A solver that
+evaluates its source at its own points, such as HJB-GFDM's collocation points,
+needs ``delta F / delta m`` there: :class:`PointwiseFlatDerivative`, which the
+shipped energies implement when bound to a problem (#1642 stage 1b-1).
+
 Issue #1023: ``operators/interaction/`` subpackage (Phase 2 Lions bridge).
 Issue #1642: contract freeze (D-1..D-5) and the ``energy()`` quadrature repair.
 """
@@ -59,7 +64,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 import numpy as np
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from numpy.typing import NDArray
 
@@ -127,6 +132,33 @@ class EnergyFunctional(Protocol):
         ``None`` means "not available for this functional", not "zero".
         """
         return None
+
+
+@runtime_checkable
+class PointwiseFlatDerivative(Protocol):
+    """An energy whose flat derivative evaluates at points other than the nodes it was bound on (#1642 stage 1b-1).
+
+    A protocol of its own rather than a member of :class:`EnergyFunctional`, so a user's energy without it still is
+    one; the HJB source refuses to evaluate such an energy anywhere but at its nodes, by name
+    (``source_composition._coupling_part``). The shipped energies implement it when bound to a problem:
+    ``PotentialEnergy`` evaluates V(x), ``QuadraticInteractionEnergy`` applies the bound quadrature at x, and
+    ``CombinedEnergy`` sums its parts.
+    """
+
+    def flat_derivative_at(self, m: NDArray, x: NDArray, *, t: float = 0.0) -> NDArray:
+        """``delta F / delta m`` at the density ``m``, given at the nodes in their order, evaluated at the points ``x``,
+        shape ``(n, d)`` in the problem's frame (``(n,)`` in 1-D). Returns shape ``(n,)``."""
+        ...
+
+
+def _as_points(x: NDArray, owner: str) -> NDArray:
+    """``x`` as an ``(n, d)`` float array of points; a 1-D array is n points in 1-D."""
+    pts = np.asarray(x, dtype=float)
+    if pts.ndim == 1:
+        return pts[:, None]
+    if pts.ndim != 2:
+        raise ValueError(f"{owner}: points are an array of shape (n, d), got shape {pts.shape}")
+    return pts
 
 
 def validate_weights(weights: NDArray, owner: str) -> NDArray:
@@ -262,11 +294,28 @@ class QuadraticInteractionEnergy:
     convolution_operator : ConvolutionCouplingOperator
         The interaction convolution ``F_op[m] = integral K(x-y) m(y) dy``. Its
         ``weights`` become this functional's quadrature weights.
+    nodes : NDArray | None
+        Where the nodes are, shape ``(N, d)`` in the problem's frame and in the
+        order of ``m``: what :meth:`flat_derivative_at` needs, and only it. The
+        operator's own ``points`` will not do, since on a regular grid they start
+        at the origin, which differences between nodes cannot see and an
+        evaluation at x can. ``InteractionCost.bind`` passes the grid's nodes.
     """
 
-    def __init__(self, convolution_operator: ConvolutionCouplingOperator):
+    def __init__(self, convolution_operator: ConvolutionCouplingOperator, *, nodes: NDArray | None = None):
         self._conv = convolution_operator
         self._w = validate_weights(convolution_operator.weights, "QuadraticInteractionEnergy")
+        self._nodes: NDArray | None = None
+        if nodes is not None:
+            pts = _as_points(np.array(nodes, dtype=float), "QuadraticInteractionEnergy")  # a copy, as the weights are
+            d = np.asarray(convolution_operator.points).reshape(self._w.size, -1).shape[1]
+            if pts.shape != (self._w.size, d):
+                raise ValueError(
+                    f"QuadraticInteractionEnergy: nodes= is one point per node, shape ({self._w.size}, {d}) for this "
+                    f"convolution; got {pts.shape}"
+                )
+            pts.flags.writeable = False
+            self._nodes = pts
 
     @property
     def weights(self) -> NDArray:
@@ -282,6 +331,27 @@ class QuadraticInteractionEnergy:
         """``delta F / delta m = (K * m)(x)`` (autonomous: ``t`` is ignored)."""
         arr = as_single_population(m, self._w, "QuadraticInteractionEnergy")
         return np.asarray(self._conv @ arr, dtype=float)
+
+    def flat_derivative_at(self, m: NDArray, x: NDArray, *, t: float = 0.0) -> NDArray:
+        """``(K * m)(x)`` at points ``x`` that need not be nodes: the bound quadrature applied at x,
+        ``sum_j K(|x - y_j|) w_j m_j`` over the nodes y_j, formed densely, O(n N) (#1642 stage 1b-1). Autonomous:
+        ``t`` is ignored. Refused by name when the energy was not given its ``nodes``."""
+        arr = as_single_population(m, self._w, "QuadraticInteractionEnergy")
+        if self._nodes is None:
+            raise NotImplementedError(
+                "QuadraticInteractionEnergy.flat_derivative_at: this energy was built without nodes=, so it does not "
+                "know where its nodes are and evaluates only at them. Bind InteractionCost(kernel) to the problem, "
+                "or pass nodes= in the problem's frame (#1642)."
+            )
+        pts = _as_points(x, "QuadraticInteractionEnergy")
+        if pts.shape[1] != self._nodes.shape[1]:
+            raise ValueError(
+                f"QuadraticInteractionEnergy.flat_derivative_at: x has points of dimension {pts.shape[1]}, and the "
+                f"nodes are of dimension {self._nodes.shape[1]}"
+            )
+        diff = pts[:, None, :] - self._nodes[None, :, :]
+        r = np.sqrt(np.einsum("ijk,ijk->ij", diff, diff))
+        return np.asarray(self._conv.kernel(r) @ (self._w * arr), dtype=float)
 
     def second_variation(self, m: NDArray, *, t: float = 0.0) -> NDArray:
         """``delta^2 F / delta m^2 = K(x - y)``, the raw kernel matrix, shape ``(N, N)``.
@@ -317,10 +387,15 @@ class PotentialEnergy:
         Quadrature weights of the measure representation, shape ``(N,)`` (or a
         scalar cell volume, broadcast to ``(N,)``). Required -- a default would
         silently substitute a mesh-independent number for a mesh-dependent one.
+    V : Callable | None
+        V itself, at points: ``V(x)`` with ``x`` of shape ``(n, d)`` returns
+        shape ``(n,)``. What :meth:`flat_derivative_at` evaluates, and only it;
+        ``PotentialCost.bind`` passes it.
     """
 
-    def __init__(self, potential: NDArray, weights: NDArray | float):
+    def __init__(self, potential: NDArray, weights: NDArray | float, *, V: Callable[[NDArray], NDArray] | None = None):
         self._V = np.asarray(potential, dtype=float).ravel()
+        self._V_at = V
         w = np.asarray(weights, dtype=float)
         if w.ndim == 0:
             w = np.full(self._V.shape, float(w))
@@ -344,6 +419,24 @@ class PotentialEnergy:
         """``delta F / delta m = V(x)`` (autonomous: ``t`` is ignored)."""
         as_single_population(m, self._w, "PotentialEnergy")
         return self._V.copy()
+
+    def flat_derivative_at(self, m: NDArray, x: NDArray, *, t: float = 0.0) -> NDArray:
+        """``delta F / delta m = V(x)`` at points ``x`` that need not be nodes (#1642 stage 1b-1). Autonomous: ``t``
+        is ignored. Refused by name when the energy was given V's values and not V."""
+        as_single_population(m, self._w, "PotentialEnergy")
+        if self._V_at is None:
+            raise NotImplementedError(
+                "PotentialEnergy.flat_derivative_at: this energy holds V sampled at its nodes, not V, so it evaluates "
+                "only at them. Bind PotentialCost(V) to the problem, or pass V= (#1642)."
+            )
+        pts = _as_points(x, "PotentialEnergy")
+        values = np.asarray(self._V_at(pts), dtype=float)
+        if values.shape != (pts.shape[0],):
+            raise ValueError(
+                f"PotentialEnergy.flat_derivative_at: V at {pts.shape[0]} points returned shape {values.shape}, not "
+                f"({pts.shape[0]},)"
+            )
+        return values
 
     def second_variation(self, m: NDArray, *, t: float = 0.0) -> NDArray:
         """``delta^2 F / delta m^2 = 0``, shape ``(N, N)``. Identically zero (F is linear)."""
@@ -412,6 +505,24 @@ class CombinedEnergy:
         total = np.zeros_like(arr)
         for c in self._components:
             total = total + np.asarray(c.flat_derivative(arr, t=t), dtype=float).ravel()
+        return total
+
+    def flat_derivative_at(self, m: NDArray, x: NDArray, *, t: float = 0.0) -> NDArray:
+        """Sum of the components' ``flat_derivative_at`` (#1642 stage 1b-1). Refused by name, naming the component,
+        when one is not a :class:`PointwiseFlatDerivative`: the others' sum alone would be a different F."""
+        arr = as_single_population(m, self._w, "CombinedEnergy")
+        pts = _as_points(x, "CombinedEnergy")
+        for c in self._components:
+            if not isinstance(c, PointwiseFlatDerivative):
+                raise NotImplementedError(
+                    f"CombinedEnergy.flat_derivative_at: its part, {type(c).__name__}, has no flat_derivative_at, so "
+                    "it evaluates only at its nodes, and the sum with it does too (#1642)."
+                )
+        total = np.zeros(pts.shape[0])
+        for c in self._components:
+            total = total + np.asarray(
+                cast("PointwiseFlatDerivative", c).flat_derivative_at(arr, pts, t=t), dtype=float
+            )
         return total
 
     def second_variation(self, m: NDArray, *, t: float = 0.0) -> NDArray | None:
