@@ -84,9 +84,9 @@ class InteractionCost(_SummableCost):
     kernel K, whose flat derivative is ``(K * m)(x)``.
 
     Binds to `QuadraticInteractionEnergy` on a point measure, ``sum_j K(|x - y_j|) w_j m_j`` over its points and
-    weights. On a problem's grid (`GridPointMeasure`) the convolution is ``ConvolutionCouplingOperator.from_problem``:
-    the same quadrature, by FFT on a uniform grid, with the problem's topology, so a periodic axis is refused there by
-    name (#2725). The measure's points go with it, so the energy evaluates ``(K * m)(x)`` at points that are not nodes.
+    weights. On a problem's grid (`GridPointMeasure`) the convolution is ``ConvolutionCouplingOperator.from_problem``,
+    the grid path: the same quadrature, by FFT on a uniform grid, with the problem's topology, so a periodic axis is
+    refused there by name (#2725). The measure's points go with it, so the energy evaluates ``(K * m)(x)`` at points that are not nodes.
 
     Args:
         kernel: The interaction kernel K, a `RadialKernel` (``GaussianKernel``, ``WendlandKernel``, ...).
@@ -101,7 +101,7 @@ class InteractionCost(_SummableCost):
         return bind_on_measure(self, GridPointMeasure(problem))
 
     def bind_on(self, measure: PointMeasure) -> EnergyFunctional:
-        if isinstance(measure, GridPointMeasure):
+        if type(measure) is GridPointMeasure:
             conv = ConvolutionCouplingOperator.from_problem(self.kernel, measure.problem, use_fft=self.use_fft)
         else:
             if self.use_fft:
@@ -141,7 +141,9 @@ class PotentialCost(_SummableCost):
     def bind_on(self, measure: PointMeasure) -> EnergyFunctional:
         from mfgarchon.utils.callable_adapter import CallableSignature, adapt_ic_callable
 
-        nodes = np.asarray(measure.points, dtype=float)
+        # V is sampled on a copy of the points, and probed on a copy of the first, so a V that writes into its x
+        # changes neither the measure's points nor the value read at the first node
+        nodes = np.array(measure.points, dtype=float)
         nodes = nodes.reshape(nodes.shape[0], -1)
         d = nodes.shape[1]
         in_the_hamiltonian = (
@@ -152,7 +154,7 @@ class PotentialCost(_SummableCost):
         )
         try:
             signature, V = adapt_ic_callable(
-                self.V, dimension=d, sample_point=float(nodes[0, 0]) if d == 1 else nodes[0], role="V"
+                self.V, dimension=d, sample_point=float(nodes[0, 0]) if d == 1 else nodes[0].copy(), role="V"
             )
         except TypeError as unread:
             raise TypeError(

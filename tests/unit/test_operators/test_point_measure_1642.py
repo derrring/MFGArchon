@@ -78,9 +78,10 @@ def test_the_grid_s_fft_path_is_the_direct_quadrature_on_the_same_measure():
 def test_a_measure_that_is_not_a_quadrature_on_its_domain_is_refused():
     """A measure whose points or weights have another shape, whose weights are not positive or do not sum to the
     domain's measure, or whose domain measure is not a number refuses the binding by name; so do a cost with no
-    ``bind_on``, and one whose ``bind_on`` returns no energy on the measure's points. The grid's measure refuses being
-    subclassed or written, so that the FFT path, which reads the problem, cannot ignore a change; a periodic grid's
-    interaction is refused there (#2725); and ``use_fft=True`` off a grid is refused."""
+    ``bind_on``, and one whose ``bind_on`` returns no energy on the measure's points. A float32 measure is checked in
+    float64, so one whose weights sum to its domain's measure binds. The grid's measure refuses being subclassed, and
+    its points and weights refuse writes, so that the grid path, which reads the problem, cannot ignore a change; a
+    periodic grid's interaction is refused there (#2725); and ``use_fft=True`` off a grid is refused."""
     problem = _problem()
     measure = GridPointMeasure(problem)
     points, weights, total = measure.points, measure.weights, measure.domain_measure
@@ -93,6 +94,8 @@ def test_a_measure_that_is_not_a_quadrature_on_its_domain_is_refused():
     ):
         with pytest.raises(ValueError, match=rf"not a quadrature on its domain: .*{reason}"):
             bind_on_measure(PotentialCost(lambda x: x[0]), bad)
+    single = weights.astype(np.float32)
+    bind_on_measure(PotentialCost(lambda x: x[0]), _Points(points, single, float(single.astype(float).sum())))
 
     class GridOnly:
         def bind(self, problem):
@@ -126,6 +129,8 @@ def test_a_measure_that_is_not_a_quadrature_on_its_domain_is_refused():
 
     with pytest.raises(ValueError, match="read-only"):
         measure.weights[0] = 1.0
+    with pytest.raises(ValueError, match="read-only"):
+        measure.points[0, 0] = 1.0
 
     ring = TensorProductGrid(
         bounds=[(0.0, 1.0)],

@@ -9,8 +9,12 @@
   - A problem's grid is one such measure, `GridPointMeasure`: its nodes and the problem's measure, on the box the
     nodes span, which is what that measure integrates over (#2769). `InteractionCost(K).bind(problem)` and
     `PotentialCost(V).bind(problem)` bind through it, and so do the library parts of a sum. Every bound array is
-    bit-identical to before, and the interaction keeps its FFT path on a uniform grid. It refuses subclassing, and
-    its points and weights are read-only, because the interaction's FFT path reads the problem's grid and measure
-    and would ignore a change to either.
+    bit-identical to before, and the interaction keeps its grid path, by FFT on a uniform grid. The measure holds only
+    its problem and derives its points and weights from it as read-only arrays, and it refuses subclassing, because the
+    interaction's grid path reads the problem's grid and measure and would ignore a measure that differed from them.
+  - Two inputs behave differently. A `V` that writes into its argument is handed copies: before, the library's
+    first call to it shifted the first node's value. A direct `cost.bind(problem)` on a problem whose geometry is not
+    a grid, such as a `Hyperrectangle` or a `Mesh1D`, is refused by name: before, it bound on weights that are not a
+    quadrature there. `MFGProblem` never makes that call.
   - A finite-element space's dofs with their weights, and a collocation cloud's points with theirs, are the
     measures stage 1b-2 and #2761 add.
