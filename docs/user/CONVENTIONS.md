@@ -136,12 +136,16 @@ not claimed for them, and the library does not check it either way.
   specification, `InteractionCost(kernel)`, `PotentialCost(V)` or their sum. `MFGProblem` binds it
   on its grid and measure (`problem.coupling_energy`), and the HJB carries
   $\delta F/\delta m$ at each density slice, summed with the Hamiltonian's own $f$ and with
-  `source_term_hjb`. It binds on a `TensorProductGrid` and is refused elsewhere by name.
+  `source_term_hjb`. It binds on a `TensorProductGrid` and is refused elsewhere by name. HJB-GFDM,
+  which evaluates its source at its collocation points, reads $\delta F/\delta m$ there: $V(x)$, or
+  the grid's quadrature applied at $x$. A weak-form HJB solver (FEM, meshless Galerkin) has no
+  binding of its own yet and refuses the problem by name (#1642 stage 1b-2).
 - **`Model(terminal_coupling=...)` is its terminal counterpart G** (#1642). It takes the same
   specifications and binds as `problem.terminal_energy`. The terminal condition is then
   $u(T, x) = g(x) + \delta G/\delta m$ at $m(T, \cdot)$, the density of the HJB solve it is the terminal
   of, cost-signed as $g$ is; `problem.terminal_value(m_T)` is its one owner. It binds on a
-  `TensorProductGrid`, and is refused by name on a network and in `MultiPopulationIterator`.
+  `TensorProductGrid`, and is refused by name on a network, in `MultiPopulationIterator`, and by a
+  weak-form HJB solver, as $F$ is.
 
 ### Worked example — 1-D LQ Riccati
 

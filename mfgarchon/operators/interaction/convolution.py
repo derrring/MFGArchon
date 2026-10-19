@@ -297,6 +297,11 @@ class ConvolutionCouplingOperator(LinearOperator):
         return self._dense_matrix().copy()
 
     @property
+    def kernel(self) -> RadialKernel:
+        """The radial kernel ``K`` the operator convolves with."""
+        return self._kernel
+
+    @property
     def points(self) -> NDArray:
         """The point set backing the operator: shape ``(N, d)`` on a regular grid, whose first node is the origin; the
         ``points`` given, copied, in point mode. Only differences between points enter the kernel."""

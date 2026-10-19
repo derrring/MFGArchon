@@ -7,6 +7,8 @@ derivative ``delta F / delta m`` as a cost-signed source.
 - The pairing: what the coupling part receives, slice and time, per solver.
 - Per population: each population's F reads its own density.
 - What is refused, and the route each refusal names, run.
+- Stage 1b-1: off the grid's nodes, at HJB-GFDM's collocation points, the coupling part is the bound energy evaluated
+  there.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from mfgarchon.alg.numerical.coupling import NewtonMFGSolver
 from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
 from mfgarchon.alg.numerical.coupling.source_composition import _coupling_part, compose_hjb_source
 from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
-from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver, HJBSemiLagrangianSolver, HJBWENOSolver
+from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver, HJBGFDMSolver, HJBSemiLagrangianSolver, HJBWENOSolver
 from mfgarchon.config import MFGSolverConfig, PicardConfig
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.multi_population import MultiPopulationProblem
@@ -418,9 +420,7 @@ def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
     - A ``terminal_coupling`` that is not a coupling cost, a plain ``G(x, m)``, is refused, at the ``Model`` and again where
       a problem binds it, so one set after the ``Model`` was built is refused there too.
     - On a network no solve takes a ``Model`` (#2045); the network's own route, ``node_potential_func``, reaches its
-      HJB's source.
-    - The part evaluates only at the nodes it was bound on: an x of another row count, the nodes in another order, or
-      other points are refused, at the part and through the composer, which passes the grid's nodes."""
+      HJB's source."""
     from mfgarchon.alg.numerical.coupling.lions_correction import create_lions_source
     from mfgarchon.utils.functional_calculus import FiniteDifferenceFunctionalDerivative
 
@@ -552,17 +552,155 @@ def test_what_stage_one_does_not_bind_is_refused_and_each_named_route_runs():
     spread = np.ptp(NetworkHJBSolver(network)._source_terms(np.ones(n) / n, 0.0))
     assert spread > 0.5, f"the node potential 0.3 i over 5 nodes spans 1.2 in the source; it spans {spread:.3e}"
 
-    energy = PotentialCost(_V).bind(SimpleNamespace(geometry=grid, spatial_measure=lambda: SimpleNamespace(weights=w)))
-    for other, rows in ((x[:20, None], 20), (x[::-1, None], 21), (x[:, None] + 0.01, 21)):
-        with pytest.raises(
-            ValueError, match=rf"bound on this problem's 21 grid nodes.*x with {rows} rows that are not"
-        ):
-            _coupling_part(energy, x[:, None], np.ones(21), other, 0.0)
-    np.testing.assert_allclose(_coupling_part(energy, x[:, None], np.ones(21), x[:, None], 0.0), _V(x), rtol=0, atol=0)
-    composed = _plumbing_problem("F", n=21, nt=2)
+
+@pytest.mark.parametrize("route", ["standalone", "coupled"])
+def test_a_linear_coupling_cost_solves_as_the_same_potential_at_hjb_gfdm_collocation_points(route):
+    """Stage 1b-1. HJB-GFDM evaluates its source at its own collocation points, here 31 against the grid's 41 nodes,
+    and the coupling part gives ``delta F / delta m`` there: V(x) for ``PotentialCost(V)``. So V in H and
+    ``PotentialCost(V)`` pose one game on HJB-GFDM too. Standalone, through ``solve_hjb_system`` with the composed
+    source, and coupled, five Picard sweeps with FP-FDM, the two agree to 0.000e+00. Without V, U moves by 0.28 and 0.27.
+    At 14cb5839 the part refused those points."""
+    points = np.linspace(0.0, 1.0, 31)[:, None]
+
+    def solve(where):
+        problem = _plumbing_problem(where)
+        with warnings.catch_warnings():
+            # The neighbourhoods' and the pair's diagnostics (duality mismatch) are not this pin's subject.
+            warnings.simplefilter("ignore", UserWarning)
+            hjb = HJBGFDMSolver(problem, collocation_points=points, monotonicity_scheme="none")
+            if route == "coupled":
+                return np.asarray(problem.solve(hjb_solver=hjb, fp_solver=FPFDMSolver(problem), config=_PICARD).U)
+            x = _x(problem)
+            M = np.tile(np.exp(-30 * (x - 0.3) ** 2), (problem.Nt + 1, 1))
+            U = np.tile((x - 0.7) ** 2, (problem.Nt + 1, 1))
+            return np.asarray(hjb.solve_hjb_system(M, U[-1], U, source_term=compose_hjb_source(problem, M, U)))
+
+    gap = np.max(np.abs(solve("H") - solve("F")))
+    assert gap <= 1e-14, f"{route}: PotentialCost(V) and V in H differ by {gap:.3e} on HJB-GFDM's collocation points"
+    dropped = np.max(np.abs(solve("H") - solve("neither")))
+    assert dropped > 0.1, f"the fixture does not see V: dropping it moves U by {dropped:.3e}"
+
+
+def _box_gaussian(x, a, b, z, s, length):
+    """``int_a^b exp(-(x - y)^2 / (2 l^2)) exp(-(y - z)^2 / (2 s^2)) dy``, in closed form."""
+    tau = np.sqrt(length**2 * s**2 / (length**2 + s**2))
+    mu = (x * s**2 + z * length**2) / (length**2 + s**2)
+    spread = np.sqrt(2) * tau
+    return (
+        np.exp(-((x - z) ** 2) / (2 * (length**2 + s**2)))
+        * tau
+        * np.sqrt(np.pi / 2)
+        * (erf((b - mu) / spread) - erf((a - mu) / spread))
+    )
+
+
+@pytest.mark.parametrize("d", [1, 2])
+def test_the_coupling_part_evaluates_off_the_nodes_by_the_bound_energy(d):
+    """Stage 1b-1. At points that are not the grid's nodes the part is the bound energy's ``flat_derivative_at``:
+    the bound quadrature applied at x for ``InteractionCost``, ``sum_j K(|x - y_j|) w_j m_j``; V(x) for
+    ``PotentialCost``; their sum for the sum. The oracle is the closed form for a Gaussian K and a Gaussian m on a box,
+    which factor by axis (`_box_gaussian`), plus V.
+
+    The grid starts at -1 and m is off-centre, so an evaluation that put the nodes at the convolution's own points,
+    which start at 0, or read m in another order, would miss by orders of magnitude; the 2-D grid is 81 x 41 on
+    [-1, 1] x [0, 2], so the nodes in F order would too. At 50 random points the part misses the closed form by
+    5.3e-7 in 1-D at N = 161 and by 9.0e-6 in 2-D, the quadrature's own error, second order: at the nodes it is
+    5.3e-7 and 1.2e-5."""
+    amplitude, length = 1.0, 0.15
+    if d == 1:
+        bounds, shape, centre, width = [(-1.0, 1.0)], [161], [0.3], [0.2]
+
+        def V(x):
+            return _V(x)
+
+        bound = 1e-6
+    else:
+        bounds, shape, centre, width = [(-1.0, 1.0), (0.0, 2.0)], [81, 41], [0.3, 1.4], [0.25, 0.2]
+
+        def V(x):
+            return x[0] + 3.0 * x[1] ** 2
+
+        bound = 2e-5
+    grid = TensorProductGrid(bounds=bounds, Nx_points=shape, boundary_conditions=no_flux_bc(dimension=d))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)  # m_initial's mass is not this pin's subject; m is passed below
+        problem = MFGProblem(
+            model=Model(
+                hamiltonian=_hamiltonian(),
+                volatility=0.1,
+                coupling_cost=InteractionCost(GaussianKernel(amplitude=amplitude, length_scale=length))
+                + PotentialCost(V),
+            ),
+            domain=grid,
+            conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.1),
+            Nt=2,
+        )
+    nodes = np.asarray(grid.get_spatial_grid(), dtype=float).reshape(-1, d)
+    m = np.prod([np.exp(-((nodes[:, k] - centre[k]) ** 2) / (2 * width[k] ** 2)) for k in range(d)], axis=0)
+    lo, hi = np.array([b[0] for b in bounds]), np.array([b[1] for b in bounds])
+    points = np.random.default_rng(1).uniform(lo, hi, (50, d))
+
+    def exact(pts):
+        interaction = amplitude * np.prod(
+            [_box_gaussian(pts[:, k], *bounds[k], centre[k], width[k], length) for k in range(d)], axis=0
+        )
+        return interaction + np.array([V(float(p[0])) if d == 1 else V(p) for p in pts])
+
+    at_x = _coupling_part(problem.coupling_energy, nodes, m.reshape(shape), points, 0.0)
+    gap = np.max(np.abs(at_x - exact(points)))
+    assert gap < bound, f"{d}-D: off the nodes the part misses (K * m)(x) + V(x) by {gap:.3e}"
+    at_nodes = _coupling_part(problem.coupling_energy, nodes, m.reshape(shape), nodes, 0.0)
+    gap = np.max(np.abs(at_nodes - exact(nodes)))
+    assert gap < 2 * bound, f"{d}-D: at the nodes the part misses (K * m)(x) + V(x) by {gap:.3e}"
+
+
+def test_an_energy_that_evaluates_only_at_its_nodes_is_refused_elsewhere():
+    """Stage 1b-1. A user's bound energy that is not a ``PointwiseFlatDerivative`` evaluates only at its nodes, in
+    their order. At other points the part refuses it by name, and names the solvers that evaluate at the nodes; so it
+    does a sum with such a part, and a library energy built without what an evaluation at x needs, V itself or the
+    nodes. Reading the nodes' values by index at other points instead put the source 2.646 off V(x) on the nodes
+    reordered (#2737, at 98d732b3)."""
+    from mfgarchon.operators.interaction.convolution import ConvolutionCouplingOperator
+    from mfgarchon.operators.interaction.energy_functionals import PotentialEnergy, QuadraticInteractionEnergy
+
+    class AtNodes:
+        def bind(self, problem):
+            energy = PotentialCost(_V).bind(problem)
+            return SimpleNamespace(
+                weights=energy.weights,
+                energy=energy.energy,
+                flat_derivative=energy.flat_derivative,
+                second_variation=energy.second_variation,
+            )
+
+    x = np.linspace(0.0, 1.0, 21)
     M = np.ones((3, 21))
-    with pytest.raises(ValueError, match=r"x with 21 rows that are not.*until #1642's stage 1b-1"):
-        compose_hjb_source(composed, M, 0 * M)(0.0, x[::-1, None])
+    for cost, parts, refusal in (
+        (AtNodes(), 1, r"SimpleNamespace, has no flat_derivative_at.*21 grid nodes.*HJB-FDM, HJB-SL"),
+        (PotentialCost(_V) + AtNodes(), 2, r"its part, SimpleNamespace, has no flat_derivative_at"),
+    ):
+        problem = MFGProblem(
+            model=Model(hamiltonian=_hamiltonian(), volatility=0.3, coupling_cost=cost),
+            domain=_grid(21),
+            conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.2),
+            Nt=2,
+        )
+        source = compose_hjb_source(problem, M, 0 * M)
+        np.testing.assert_allclose(source(0.0, x[:, None]), parts * _V(x), rtol=0, atol=1e-14)
+        with pytest.raises(NotImplementedError, match=refusal):
+            source(0.0, x[::-1, None])
+
+    grid = _grid(21)
+    w = grid.measure_weights().ravel()
+    for energy, refusal in (
+        (PotentialEnergy(_V(x), w), r"holds V sampled at its nodes, not V.*PotentialCost\(V\)"),
+        (
+            QuadraticInteractionEnergy(ConvolutionCouplingOperator(GaussianKernel(1.0, 0.1), points=x, cell_volume=w)),
+            r"built without nodes=.*InteractionCost\(kernel\)",
+        ),
+    ):
+        with pytest.raises(NotImplementedError, match=refusal):
+            _coupling_part(energy, x[:, None], np.ones(21), x[::-1, None], 0.0)
 
 
 def test_a_terminal_coupling_solves_the_linear_quadratic_game():
@@ -781,9 +919,13 @@ def test_what_stage_two_does_not_bind_is_refused():
     """A terminal coupling is refused in the multi-population iterator, which passes the stacked densities (#1642, the
     user's ruling 5), and on a network, where no coupled solve takes a problem (#2568); the network's message names its
     own route for u(T), ``terminal_node_value_func``. F and G alike are refused on FEM and meshless geometries, whose
-    HJB solvers own their discretization (stage 1b)."""
+    HJB solvers own their discretization (stage 1b); and by a weak-form HJB solver on a grid problem, meshless Galerkin
+    on its own cloud, which has no binding of its own (stage 1b-2) and would read the grid-bound energy at its dofs by
+    index (#2672). At 14cb5839 that solver ran with either energy on a cloud of the grid's 21 nodes, and with G on the
+    nodes reversed or shifted by 0.01, with nothing raised."""
     from scipy.sparse import csr_matrix
 
+    from mfgarchon.alg.numerical.meshless_galerkin import MeshlessGalerkinHJBSolver
     from mfgarchon.geometry import Hyperrectangle
     from mfgarchon.geometry.graph.network_geometry import CustomNetwork
     from mfgarchon.geometry.meshes.mesh_1d import Mesh1D
@@ -803,6 +945,15 @@ def test_what_stage_two_does_not_bind_is_refused():
                         conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.5),
                         Nt=4,
                     )
+    for field, energy in (("coupling_cost", "coupling_energy"), ("terminal_coupling", "terminal_energy")):
+        on_grid = MFGProblem(
+            model=Model(hamiltonian=_hamiltonian(), volatility=0.3, **{field: PotentialCost(lambda x: x)}),
+            domain=_grid(21),
+            conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.5),
+            Nt=4,
+        )
+        with pytest.raises(NotImplementedError, match=rf"MeshlessGalerkinHJBSolver .* declares {energy}.*#2672.*1b-2"):
+            MeshlessGalerkinHJBSolver(on_grid, collocation_points=_x(on_grid)[:, None], delta=0.15)
 
     problems = [_terminal_coupled(), _terminal_coupled()]
     with pytest.raises(NotImplementedError, match=r"population\(s\) \[0, 1\] set Model\(terminal_coupling=\.\.\.\)"):

@@ -15,6 +15,10 @@ The protocol they satisfy is `mfgarchon.core.model.CouplingCost`.
 Node order: every bound array is in the order of ``problem.geometry.get_spatial_grid()``'s rows, which is the grid's own
 C-order ravel, the order ``MFGProblem`` evaluates ``m_initial`` in. The HJB source's coupling part flattens a density
 slice the same way (`source_composition`).
+
+Each bound energy also evaluates its flat derivative at points that are not the nodes, `PointwiseFlatDerivative`: V(x)
+for a potential, the bound quadrature applied at x for an interaction. That is what a solver evaluating its source at
+its own points, such as HJB-GFDM's collocation points, reads (#1642 stage 1b-1).
 """
 
 from __future__ import annotations
@@ -72,7 +76,8 @@ class InteractionCost(_SummableCost):
     kernel K, whose flat derivative is ``(K * m)(x)``.
 
     Binds to `QuadraticInteractionEnergy` on ``ConvolutionCouplingOperator.from_problem(kernel, problem)``: the
-    problem's grid, its measure, and its topology, so a periodic axis is refused there by name (#2725).
+    problem's grid, its measure, and its topology, so a periodic axis is refused there by name (#2725). The grid's
+    nodes go with it, so the energy evaluates ``(K * m)(x)`` at points that are not nodes.
 
     Args:
         kernel: The interaction kernel K, a `RadialKernel` (``GaussianKernel``, ``WendlandKernel``, ...).
@@ -85,7 +90,8 @@ class InteractionCost(_SummableCost):
 
     def bind(self, problem: MFGProblem) -> EnergyFunctional:
         energy = QuadraticInteractionEnergy(
-            ConvolutionCouplingOperator.from_problem(self.kernel, problem, use_fft=self.use_fft)
+            ConvolutionCouplingOperator.from_problem(self.kernel, problem, use_fft=self.use_fft),
+            nodes=np.asarray(problem.geometry.get_spatial_grid(), dtype=float),
         )
         return cast("EnergyFunctional", energy)
 
@@ -97,7 +103,7 @@ class PotentialCost(_SummableCost):
     """The potential cost ``F[m] = integral V(x) m(x) dx``, whose flat derivative is ``V(x)``.
 
     Binds to `PotentialEnergy` with V sampled at the problem's nodes and the problem's measure,
-    ``problem.spatial_measure().weights``.
+    ``problem.spatial_measure().weights``, and with V itself, which it evaluates at points that are not nodes.
 
     Args:
         V: The potential, cost-signed (positive repels), called once per node as ``m_initial`` is: ``V(x)`` with
@@ -134,8 +140,11 @@ class PotentialCost(_SummableCost):
                 "PotentialCost(V): V takes (t, x), and this F[m] = integral V m is autonomous -- binding V once would "
                 f"read it at t = 0 for the whole horizon. {in_the_hamiltonian}"
             )
-        values = np.array([V(float(x[0])) if d == 1 else V(x) for x in nodes], dtype=float)
-        energy = PotentialEnergy(values, np.asarray(problem.spatial_measure().weights, dtype=float).ravel())
+
+        def at(points: np.ndarray) -> np.ndarray:
+            return np.array([V(float(x[0])) if d == 1 else V(x) for x in points], dtype=float)
+
+        energy = PotentialEnergy(at(nodes), np.asarray(problem.spatial_measure().weights, dtype=float).ravel(), V=at)
         return cast("EnergyFunctional", energy)
 
     def __repr__(self) -> str:

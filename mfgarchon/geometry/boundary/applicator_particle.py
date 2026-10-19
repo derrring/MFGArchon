@@ -28,6 +28,7 @@ Part of: Unified Boundary Condition Architecture (Issue #536)
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -134,6 +135,26 @@ def particle_action_for_bc_type(
     )
 
 
+def _with_box(bc: BoundaryConditions, bounds: NDArray[np.floating]) -> BoundaryConditions:
+    """``bc`` as the point queries read it: itself when it carries ``domain_bounds``, else a copy that carries ``bounds``,
+    the box the step was taken in, in the ``domain_bounds`` slot where the write this replaces put it. So, for a BC with
+    no ``domain_bounds``, the face a particle leaves through (``boundary_id``, from ``bounds``) and the point a marked
+    ``region_name`` reads past the wall (its nearest point of ``domain_bounds``) come from one box, even where the BC is
+    bound to a grid whose box is not the step's. A BC that carries its own ``domain_bounds`` is read on them, as before,
+    while its face still comes from ``bounds`` (#2733). The copy keeps the BC's geometry binding, so a placement only
+    the grid can decide, a marked ``region_name``, still reads the grid.
+
+    Never a write to ``bc``. It can be the problem's own BC: on the shared route when the solver's view of it translates
+    nothing (`fp_view_of_shared_bc`), or when a caller hands the solver the grid's own BC. On the legacy route, setting
+    its ``domain_bounds`` made every later read of the problem's BC refuse it as declaring the BC twice (#2738). The
+    write also kept the first step's box for every later step; the copy reads each step in its own box, which differs
+    from the write only where one BC is stepped in two boxes in turn, as one BC object shared by two solves on
+    different domains is."""
+    if bc.domain_bounds is not None:
+        return bc
+    return replace(bc, segments=list(bc.segments), domain_bounds=bounds)
+
+
 class ParticleApplicator:
     """
     Segment-aware boundary condition applicator for particle methods.
@@ -180,8 +201,8 @@ class ParticleApplicator:
 
         Args:
             particles: Particle positions, shape (N, d)
-            bc: BoundaryConditions with segment definitions (must have domain_bounds set)
-            bounds: Domain bounds per dimension [(xmin, xmax), ...] - used if bc.domain_bounds is None
+            bc: BoundaryConditions with segment definitions. Read, never written (#2738).
+            bounds: Domain bounds per dimension [(xmin, xmax), ...] - the queries' box if bc.domain_bounds is None
 
         Returns:
             Tuple of:
@@ -203,9 +224,7 @@ class ParticleApplicator:
         domain_max = bounds_arr[:, 1]
         domain_size = domain_max - domain_min
 
-        # Ensure BC has domain_bounds for segment matching
-        if bc.domain_bounds is None:
-            bc.domain_bounds = bounds_arr
+        bc = _with_box(bc, bounds_arr)
 
         # Find particles at or beyond boundary
         at_min = particles <= domain_min + self._boundary_tolerance
@@ -226,7 +245,7 @@ class ParticleApplicator:
             # Determine which boundary the particle is at
             boundary_id = self._get_boundary_id(particle, domain_min, domain_max, dimension)
 
-            # Query BC at this point (uses bc.domain_bounds internally)
+            # Query BC at this point (its domain_bounds, or the step's box)
             segment = bc.get_bc_at_point(
                 particle,
                 boundary_id=boundary_id,
@@ -302,8 +321,7 @@ class ParticleApplicator:
         domain_max = bounds_arr[:, 1]
         domain_size = domain_max - domain_min
 
-        if bc.domain_bounds is None:
-            bc.domain_bounds = bounds_arr
+        bc = _with_box(bc, bounds_arr)
 
         # Find boundary particles
         at_min = particles <= domain_min + self._boundary_tolerance
