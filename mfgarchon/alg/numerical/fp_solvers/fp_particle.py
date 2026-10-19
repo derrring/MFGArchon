@@ -23,6 +23,7 @@ except ImportError:  # pragma: no cover - graceful fallback when SciPy missing
 from mfgarchon.geometry.boundary.applicator_particle import ParticleApplicator
 from mfgarchon.geometry.boundary.bc_utils import declares_periodic
 from mfgarchon.geometry.boundary.types import BCType
+from mfgarchon.geometry.grids.tensor_grid import geometry_grid_axes
 
 # Issue #625: Migrated from tensor_calculus to operators/stencils
 from mfgarchon.utils.mfg_logging import get_logger
@@ -416,14 +417,17 @@ class FPParticleSolver(BaseFPSolver):
                 # Compute spacing from bounds and grid_shape: dx = (xmax - xmin) / (N - 1)
                 spacings = [(bounds[d][1] - bounds[d][0]) / max(grid_shape[d] - 1, 1) for d in range(dimension)]
 
-            # Get coordinate arrays per dimension
-            try:
-                if len(geom.coordinates) > 0:
-                    coordinates = [np.array(c) for c in geom.coordinates]
-                else:
+            # Coordinate arrays per dimension: a grid's own node axes, from their one owner (#2756). A geometry with no
+            # tensor grid has none, and its density is estimated on axes made up from its bounds (#2757).
+            coordinates = geometry_grid_axes(geom)
+            if coordinates is None:
+                try:
+                    if len(geom.coordinates) > 0:
+                        coordinates = [np.array(c) for c in geom.coordinates]
+                    else:
+                        coordinates = [np.linspace(bounds[d][0], bounds[d][1], grid_shape[d]) for d in range(dimension)]
+                except AttributeError:
                     coordinates = [np.linspace(bounds[d][0], bounds[d][1], grid_shape[d]) for d in range(dimension)]
-            except AttributeError:
-                coordinates = [np.linspace(bounds[d][0], bounds[d][1], grid_shape[d]) for d in range(dimension)]
 
         except AttributeError as e:
             # Geometry is always available after MFGProblem initialization
@@ -1394,6 +1398,7 @@ class FPParticleSolver(BaseFPSolver):
     def _interpolate_grid_to_particles_nd(
         self,
         grid_values: np.ndarray,
+        coordinates: list[np.ndarray],
         bounds: list[tuple[float, float]],
         particles: np.ndarray,
     ) -> np.ndarray:
@@ -1406,6 +1411,8 @@ class FPParticleSolver(BaseFPSolver):
         ----------
         grid_values : np.ndarray
             Values on grid, shape (N1, N2, ..., Nd)
+        coordinates : list[np.ndarray]
+            The grid's node axes, so a graded grid is read on its own nodes (#2756)
         bounds : list[tuple[float, float]]
             Domain bounds per dimension
         particles : np.ndarray
@@ -1423,6 +1430,7 @@ class FPParticleSolver(BaseFPSolver):
             grid_bounds=grid_bounds,
             particle_positions=particles,
             method="linear",
+            grid_axes=coordinates,
         )
 
     def _estimate_density_from_particles_nd(
@@ -2174,6 +2182,7 @@ class FPParticleSolver(BaseFPSolver):
                     grid_bounds=(xmin, xmin + Lx),
                     particle_positions=particles_1d,
                     method="linear",
+                    grid_axes=[x_grid],
                 )
             else:
                 dUdx_at_particles = np.zeros(n_particles_t)
@@ -2328,7 +2337,9 @@ class FPParticleSolver(BaseFPSolver):
                 for d in range(dimension):
                     # Extract d-th component of drift vector field
                     drift_d = drift_or_U_t[..., d]  # Shape: (*grid_shape,)
-                    drift_at_particles[:, d] = self._interpolate_grid_to_particles_nd(drift_d, bounds, particles_t)
+                    drift_at_particles[:, d] = self._interpolate_grid_to_particles_nd(
+                        drift_d, coordinates, bounds, particles_t
+                    )
 
                 # Use precomputed drift directly (no coupling_coefficient multiplication)
                 drift = drift_at_particles
@@ -2344,7 +2355,9 @@ class FPParticleSolver(BaseFPSolver):
                 grad_at_particles = np.zeros((n_particles_t, dimension))
 
                 for d in range(dimension):
-                    grad_at_particles[:, d] = self._interpolate_grid_to_particles_nd(gradients[d], bounds, particles_t)
+                    grad_at_particles[:, d] = self._interpolate_grid_to_particles_nd(
+                        gradients[d], coordinates, bounds, particles_t
+                    )
 
                 # Compute drift alpha* via the single owner H.optimal_control (Issue #1528).
                 drift = self._advective_drift(particles_t, grad_at_particles, t_idx * Dt, coupling_coefficient)
@@ -2873,7 +2886,7 @@ class FPParticleSolver(BaseFPSolver):
                     # Σ(x): interpolate each matrix entry to particles (same linear
                     # grid-to-particle path used for spatial scalar volatility).
                     sigma_matrix_at_particles = self._interpolate_matrix_field_at_particles(
-                        particles_t, volatility, bounds, dimension
+                        particles_t, volatility, coordinates, bounds, dimension
                     )
                     dW = np.einsum("pij,pj->pi", sigma_matrix_at_particles, dW_unit)
                 else:
@@ -2978,7 +2991,7 @@ class FPParticleSolver(BaseFPSolver):
         field : np.ndarray
             Field values on grid, shape (*grid_shape)
         coordinates : list of np.ndarray
-            Grid coordinates per dimension (unused, kept for API compatibility)
+            The grid's node axes, on which the field is read (#2756)
         bounds : list of tuple
             Domain bounds per dimension
         fill_value : float
@@ -2989,12 +3002,13 @@ class FPParticleSolver(BaseFPSolver):
         np.ndarray
             Field values at particle positions, shape (N_particles,)
         """
-        return self._interpolate_grid_to_particles_nd(field, bounds, particles)
+        return self._interpolate_grid_to_particles_nd(field, coordinates, bounds, particles)
 
     def _interpolate_matrix_field_at_particles(
         self,
         particles: np.ndarray,
         matrix_field: np.ndarray,
+        coordinates: list[np.ndarray],
         bounds: list[tuple[float, float]],
         dimension: int,
     ) -> np.ndarray:
@@ -3012,6 +3026,8 @@ class FPParticleSolver(BaseFPSolver):
             Particle positions, shape (N_particles, dimension).
         matrix_field : np.ndarray
             Volatility matrix field Σ(x), shape (*grid_shape, dimension, dimension).
+        coordinates : list[np.ndarray]
+            The grid's node axes (#2756).
         bounds : list[tuple[float, float]]
             Domain bounds per dimension.
         dimension : int
@@ -3027,7 +3043,7 @@ class FPParticleSolver(BaseFPSolver):
         for i in range(dimension):
             for j in range(dimension):
                 sigma_matrix[:, i, j] = self._interpolate_grid_to_particles_nd(
-                    matrix_field[..., i, j], bounds, particles
+                    matrix_field[..., i, j], coordinates, bounds, particles
                 )
         return sigma_matrix
 

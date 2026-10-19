@@ -196,15 +196,9 @@ def test_fp_velocity_consumes_cross_density_1071():
                 other = float(m.reshape(*m.shape[:-1], self._K, grid)[..., 1 - self.population_index, :].mean())
             return p.ravel() + other
 
-    class _Geom:
-        def get_grid_spacing(self):
-            return [1.0 / _NX]
-
-        def get_bounds(self):
-            return [(0.0,), (1.0,)]
-
     class _Prob:
-        geometry = _Geom()
+        # A real grid, not a stand-in: the velocity reads the grid's node axes from their owner (#2756).
+        geometry = TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[Nx], boundary_conditions=no_flux_bc(dimension=1))
 
     prob = _Prob()
     prob.dt = dt

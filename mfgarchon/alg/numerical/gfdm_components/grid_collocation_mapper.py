@@ -13,9 +13,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from mfgarchon.utils.numerical.particle.interpolation import (
-    interpolate_grid_to_particles,
-)
+from mfgarchon.utils.numerical.particle.interpolation import interpolate_grid_to_particles
 
 
 class GridCollocationMapper:
@@ -28,6 +26,9 @@ class GridCollocationMapper:
 
     Grid → Collocation: Uses scipy RegularGridInterpolator for smooth mapping
     Collocation → Grid: Uses Delaunay triangulation with barycentric interpolation
+
+    Both directions work on the grid's axes, its node coordinates per dimension. Given only bounds, the axes are
+    uniform, ``np.linspace(lo, hi, n)``, which is a uniform grid's own; a graded grid passes its axes (#2756).
 
     The collocation-to-grid direction uses a pre-computed sparse interpolation
     matrix for efficiency (O(n*m) vs O(n^3) for repeated mappings).
@@ -42,8 +43,11 @@ class GridCollocationMapper:
         Collocation points, shape (n_points, dimension)
     grid_shape : tuple[int, ...]
         Shape of output grid (Nx, Ny, Nz, ...)
-    domain_bounds : list[tuple[float, float]]
-        Domain bounds per dimension: [(xmin, xmax), (ymin, ymax), ...]
+    domain_bounds : list[tuple[float, float]], optional
+        Domain bounds per dimension: [(xmin, xmax), (ymin, ymax), ...], for a uniform grid. Needed only when
+        ``grid_axes`` is not given.
+    grid_axes : list[np.ndarray], optional
+        The grid's node coordinates per dimension, of lengths ``grid_shape``.
 
     Attributes
     ----------
@@ -53,8 +57,10 @@ class GridCollocationMapper:
         Number of collocation points
     grid_shape : tuple[int, ...]
         Output grid shape
+    grid_axes : list[np.ndarray]
+        The grid's node coordinates per dimension
     domain_bounds : list[tuple[float, float]]
-        Domain bounds per dimension
+        Domain bounds per dimension, the axes' end points
     _interp_matrix : scipy.sparse matrix | None
         Cached sparse interpolation matrix (collocation → grid)
     _coll_tree : scipy.spatial.cKDTree | None
@@ -78,19 +84,38 @@ class GridCollocationMapper:
     >>> # Map collocation values back to grid
     >>> u_grid_reconstructed = mapper.map_collocation_to_grid(u_coll)
     >>> assert u_grid_reconstructed.shape == (441,)  # 21*21
+    >>>
+    >>> # A graded 1D grid passes its own nodes: a linear field maps exactly
+    >>> nodes = np.linspace(0, 1, 11) ** 2
+    >>> graded = GridCollocationMapper(np.linspace(0, 1, 7).reshape(-1, 1), grid_shape=(11,), grid_axes=[nodes])
+    >>> bool(np.allclose(graded.map_grid_to_collocation(nodes), np.linspace(0, 1, 7)))
+    True
     """
 
     def __init__(
         self,
         collocation_points: np.ndarray,
         grid_shape: tuple[int, ...],
-        domain_bounds: list[tuple[float, float]],
+        domain_bounds: list[tuple[float, float]] | None = None,
+        *,
+        grid_axes: list[np.ndarray] | None = None,
     ):
         """Initialize grid-collocation mapper."""
         self.collocation_points = np.asarray(collocation_points)
         self.n_points = len(collocation_points)
         self.grid_shape = grid_shape
-        self.domain_bounds = domain_bounds
+        if grid_axes is None:
+            if domain_bounds is None:
+                raise ValueError("GridCollocationMapper needs the grid's axes, or the bounds of a uniform grid.")
+            grid_axes = [np.linspace(lo, hi, n) for (lo, hi), n in zip(domain_bounds, grid_shape, strict=True)]
+        self.grid_axes = [np.asarray(axis, dtype=float) for axis in grid_axes]
+        if tuple(axis.size for axis in self.grid_axes) != tuple(grid_shape):
+            raise ValueError(
+                f"grid_axes have lengths {tuple(axis.size for axis in self.grid_axes)}, not grid_shape {tuple(grid_shape)}."
+            )
+        self.domain_bounds = [(float(axis[0]), float(axis[-1])) for axis in self.grid_axes]
+        # A singleton axis carries no interpolation: e.g. (21, 1) is read as a 1D grid of 21 nodes.
+        self._active = [k for k, axis in enumerate(self.grid_axes) if axis.size > 1] or [0]
 
         # Cached interpolation matrix (built lazily on first use)
         self._interp_matrix = None
@@ -100,7 +125,7 @@ class GridCollocationMapper:
         """
         Map values from regular grid to collocation points using interpolation.
 
-        Uses scipy RegularGridInterpolator via particle interpolation utilities.
+        Uses scipy RegularGridInterpolator via particle interpolation utilities, on the grid's axes.
 
         Parameters
         ----------
@@ -112,21 +137,14 @@ class GridCollocationMapper:
         np.ndarray
             Values at collocation points, shape (n_points,)
         """
-        # Reshape to spatial dimensions
-        u_grid_shaped = u_grid.reshape(self.grid_shape)
-
-        # Squeeze singleton dimensions for proper interpolation
-        # e.g., (21, 1) -> (21,) for 1D problems
-        u_grid_squeezed = np.squeeze(u_grid_shaped)
-
-        # Format bounds for interpolation utility (matches squeezed dimensions)
-        grid_bounds = self._format_grid_bounds_for_interpolation()
-
+        axes = [self.grid_axes[k] for k in self._active]
+        values = np.asarray(u_grid).reshape(tuple(axis.size for axis in axes))
         return interpolate_grid_to_particles(
-            u_grid_squeezed,
-            grid_bounds=grid_bounds,
-            particle_positions=self.collocation_points,
+            values,
+            grid_bounds=tuple((float(axis[0]), float(axis[-1])) for axis in axes),
+            particle_positions=self.collocation_points[:, self._active],
             method="linear",
+            grid_axes=axes,
         )
 
     def map_collocation_to_grid(self, u_collocation: np.ndarray) -> np.ndarray:
@@ -212,31 +230,12 @@ class GridCollocationMapper:
         """
         from scipy.spatial import Delaunay
 
-        # Remove singleton dimensions from grid shape
-        non_singleton = tuple(s for s in self.grid_shape if s > 1)
-        squeezed_shape = non_singleton if non_singleton else (self.grid_shape[0],)
+        axes = [self.grid_axes[k] for k in self._active]
+        ndim = len(axes)
+        coll = self.collocation_points[:, self._active]
 
-        grid_bounds = self._format_grid_bounds_for_interpolation()
-        ndim = len(squeezed_shape)
-
-        # Create grid points
-        if ndim == 1:
-            xmin, xmax = grid_bounds if not isinstance(grid_bounds[0], (tuple, list)) else grid_bounds[0]
-            x = np.linspace(xmin, xmax, squeezed_shape[0])
-            grid_points = x.reshape(-1, 1)
-        elif ndim == 2:
-            (xmin, xmax), (ymin, ymax) = grid_bounds
-            x = np.linspace(xmin, xmax, squeezed_shape[0])
-            y = np.linspace(ymin, ymax, squeezed_shape[1])
-            X, Y = np.meshgrid(x, y, indexing="ij")
-            grid_points = np.column_stack([X.ravel(), Y.ravel()])
-        else:
-            (xmin, xmax), (ymin, ymax), (zmin, zmax) = grid_bounds
-            x = np.linspace(xmin, xmax, squeezed_shape[0])
-            y = np.linspace(ymin, ymax, squeezed_shape[1])
-            z = np.linspace(zmin, zmax, squeezed_shape[2])
-            X, Y, Z = np.meshgrid(x, y, z, indexing="ij")
-            grid_points = np.column_stack([X.ravel(), Y.ravel(), Z.ravel()])
+        # The grid's nodes, in its C order
+        grid_points = np.stack([g.ravel() for g in np.meshgrid(*axes, indexing="ij")], axis=1)
 
         n_grid = grid_points.shape[0]
         n_coll = self.n_points
@@ -252,7 +251,7 @@ class GridCollocationMapper:
                 interp_matrix = lil_matrix((n_grid, n_coll))
 
                 # Sort collocation points for 1D interpolation
-                coll_x = self.collocation_points[:, 0]
+                coll_x = coll[:, 0]
                 sort_idx = np.argsort(coll_x)
                 coll_x_sorted = coll_x[sort_idx]
                 grid_x = grid_points[:, 0]
@@ -284,7 +283,7 @@ class GridCollocationMapper:
                 self._interp_matrix = interp_matrix.tocsr()
             else:
                 # For 2D+, use Delaunay triangulation
-                tri = Delaunay(self.collocation_points)
+                tri = Delaunay(coll)
                 simplex_indices = tri.find_simplex(grid_points)
 
                 # Build sparse matrix
@@ -305,19 +304,10 @@ class GridCollocationMapper:
                         from scipy.spatial import cKDTree
 
                         if self._coll_tree is None:
-                            self._coll_tree = cKDTree(self.collocation_points)
+                            self._coll_tree = cKDTree(coll)
                         _, nearest_idx = self._coll_tree.query(pt)
                         interp_matrix[i, nearest_idx] = 1.0
 
                 self._interp_matrix = interp_matrix.tocsr()
         except Exception as e:
             raise RuntimeError(f"Failed to build interpolation matrix: {e}") from e
-
-    def _format_grid_bounds_for_interpolation(self) -> tuple:
-        """Format domain_bounds for interpolation utility."""
-        if len(self.domain_bounds) == 1:
-            # 1D: return (xmin, xmax)
-            return self.domain_bounds[0]
-        else:
-            # nD: return tuple of (min, max) tuples
-            return tuple(self.domain_bounds)
