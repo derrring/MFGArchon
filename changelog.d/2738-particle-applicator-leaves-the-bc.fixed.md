@@ -6,6 +6,9 @@
     `problem.get_boundary_conditions()`, and every solve that reads it, then refused the problem as declaring its
     boundary conditions twice. In a coupled loop that is the first BC read after the first particle solve.
   - The applicator now writes nothing. The face a particle leaves through comes from the step's box, as before.
-    Where a segment covers part of that face, the BC's owner decides it on the BC's own box: its `domain_bounds`, or
-    the bounds of the grid it is bound to, which is the box every solve passed. The particles and the density are
-    bit-identical to before.
+    Given the face, the BC's owner reads each segment's placement at the particle. For a `region_name` the grid
+    marks, a particle past the wall is read at its nearest point of the BC's box: its `domain_bounds`, else the box
+    of the grid that marks the region. That second box is new for a BC whose domain is its `domain_sdf`, which has no
+    box of its own: it is the box the deleted write handed such a BC, so a door it places solves as before instead of
+    being refused as outside the grid. In every solve measured, the particles and the density are bit-identical to
+    before.

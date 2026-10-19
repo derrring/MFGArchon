@@ -181,10 +181,12 @@ class ParticleApplicator:
         Args:
             particles: Particle positions, shape (N, d)
             bc: BoundaryConditions with segment definitions. Read, never written: it can be the problem's own BC,
-                and setting its domain_bounds made every later reader of the problem's BC refuse it (#2738).
+                and on the legacy route setting its domain_bounds made every later read of the problem's BC refuse
+                it as declaring the BC twice (#2738).
             bounds: Domain bounds per dimension [(xmin, xmax), ...]: the step's box, where a particle has left it
-                and through which face, passed to the BC as boundary_id. Where a segment covers part of a face, the
-                BC's owner decides it on its own box, domain_bounds or its bound geometry's.
+                and through which face, passed to the BC as boundary_id. Given the face, the BC's owner reads each
+                segment's placement at the particle; for a region_name the grid marks, a particle past the wall is
+                read at its nearest point of the BC's box, domain_bounds, else the marking grid's.
 
         Returns:
             Tuple of:
@@ -225,8 +227,8 @@ class ParticleApplicator:
             # Determine which boundary the particle is at
             boundary_id = self._get_boundary_id(particle, domain_min, domain_max, dimension)
 
-            # The face is the step's box's; the segment on it is the BC owner's, on its own box where a segment
-            # covers part of the face: domain_bounds, else the bound geometry's
+            # The face is the step's box's; the segment on it is the BC owner's, read at the particle (a region the
+            # grid marks at its nearest point of the BC's box, domain_bounds, else the marking grid's)
             segment = bc.get_bc_at_point(
                 particle,
                 boundary_id=boundary_id,

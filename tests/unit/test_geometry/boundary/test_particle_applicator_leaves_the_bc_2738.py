@@ -6,9 +6,10 @@ BC is the problem's own; so on the legacy route, where the grid holds a bound co
 ``problem.get_boundary_conditions()`` refused the two as declaring the BC twice. Only the per-point path calls
 ``apply``; the fast path never wrote.
 
-The applicator now writes nothing. The face a particle leaves through comes from the step's box; where a segment
-covers part of that face, the BC's owner decides it on the BC's own box, its ``domain_bounds`` or the bounds of the
-grid it is bound to. An exit placed by a ``region_name`` the grid marks is decided only on that grid (the last test).
+The applicator now writes nothing. The face a particle leaves through comes from the step's box; given the face, the
+BC's owner reads each segment's placement at the particle. An exit placed by a ``region_name`` the grid marks is read
+on that grid, a particle past the wall at its nearest point of the BC's box, ``domain_bounds``, else the marking grid's
+(the last test).
 
 The rows of the end-to-end test are the BCs the per-point path reaches. #2738's exit is per point at any routing. B1,
 a REFLECTING segment placed by ``region_name``, and the absorbing ``default_bc`` with no segment are per point once
@@ -102,21 +103,34 @@ def test_a_particle_solve_leaves_the_problem_s_bc_readable(bc):
     problem.get_boundary_conditions()
 
 
-def test_a_grid_marked_exit_is_read_on_the_grid_the_bc_is_bound_to():
-    """An exit placed by a ``region_name`` the grid marks is decided only on the grid the BC is bound to: 2000
-    particles drifting onto x = 1 leave through the door, and the problem's BC is still unwritten after the solve. A
-    point query that lost the grid refused the door at the first particle reaching it, which no other test in the suite
-    sees (#2767 review 1)."""
+def _box_sdf(x):
+    return np.max(np.abs(np.asarray(x, dtype=float) - 0.5)) - 0.5
+
+
+@pytest.mark.parametrize("route", ["the problem's BC", "a BC handed to the solver"])
+@pytest.mark.parametrize("domain_sdf", [None, _box_sdf], ids=["a box BC", "a BC whose domain is its domain_sdf"])
+def test_a_grid_marked_exit_is_read_on_the_grid_the_bc_is_bound_to(domain_sdf, route):
+    """An exit placed by a ``region_name`` the grid marks is decided on the grid the BC is bound to: 2000 particles
+    drifting onto x = 1 leave through the door, and the problem's BC is still unwritten after the solve. A point query
+    that lost the grid refuses the door at the first particle reaching it (#2767 review 1).
+
+    A particle past the wall is read at its nearest point of the BC's box. A BC whose domain is its ``domain_sdf`` has
+    none (``_query_bounds``), and is read on the marking grid's own box, the box the deleted write handed it: without
+    that, the door refused it as outside the grid (#2767 review 2)."""
     from mfgarchon import Conditions, Model
     from mfgarchon.geometry import TensorProductGrid
 
     n = 21
-    door = BoundaryConditions(
-        segments=[BCSegment(name="door", bc_type=BCType.DIRICHLET, value=0.0, region_name="door", priority=1)],
-        dimension=2,
-        default_bc=BCType.NO_FLUX,
-    )
-    grid = TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[n] * 2, boundary_conditions=door)
+
+    def door():
+        return BoundaryConditions(
+            segments=[BCSegment(name="door", bc_type=BCType.DIRICHLET, value=0.0, region_name="door", priority=1)],
+            dimension=2,
+            default_bc=BCType.NO_FLUX,
+            domain_sdf=domain_sdf,
+        )
+
+    grid = TensorProductGrid(bounds=[(0.0, 1.0)] * 2, Nx_points=[n] * 2, boundary_conditions=door())
     grid.mark_region("door", predicate=lambda x: x[:, 0] > 0.99)
     problem = MFGProblem(
         model=Model(
@@ -127,7 +141,8 @@ def test_a_grid_marked_exit_is_read_on_the_grid_the_bc_is_bound_to():
         Nt=20,
     )
     x = np.meshgrid(*[np.linspace(0.0, 1.0, n)] * 2, indexing="ij")[0]
-    solver = FPParticleSolver(problem, num_particles=2000, seed=3)
+    handed = {} if route == "the problem's BC" else {"boundary_conditions": door()}
+    solver = FPParticleSolver(problem, num_particles=2000, seed=3, **handed)
     solver.solve_fp_system(np.ones((n, n)), np.broadcast_to(-2.0 * x, (21, n, n)).copy(), show_progress=False)
     assert solver.total_absorbed > 1000, f"{solver.total_absorbed} of 2000 left through the door"
     assert grid.get_boundary_conditions().domain_bounds is None, "the solve wrote domain_bounds into the grid's BC"
