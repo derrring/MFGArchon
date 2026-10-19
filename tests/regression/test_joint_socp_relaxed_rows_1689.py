@@ -1,5 +1,5 @@
 """#1689 PR 2a: ``joint_socp`` refuses an interior row its SOCP cannot place, and ``socp_allow_relaxed_rows=True``
-gives main's relaxed rows, bit for bit on the capture machine.
+gives main's relaxed rows.
 
 The cloud is the smallest of a search that makes main relax rows: 120 Sobol points in [0, 2] x [0, 1] with the band
 0.7 < x < 1.3 emptied, as exp09's cull empties the band beside its wall, plus 8 boundary nodes per side. The rows
@@ -9,8 +9,18 @@ ADMISSION (#2227): class 2, an oracle against pre-change output. ``fixtures/join
 main aec3d361's own output on this cloud, captured before the change: the cloud, delta and k, and for each relaxed
 row its neighbour indices, L, D and the eps_M its relaxed SOCP returned, recorded by wrapping
 ``solve_relaxed_joint_socp_at_stencil`` because main keeps only the maximum. The row set and the indices are
-compared exactly; L, D and eps_M at rtol 0, atol 1e-12, a floor for cross-platform last bits, as
-``test_solver_golden_baseline.py`` does. On the capture machine the difference is 0.
+compared exactly. L, D and eps_M are compared at tolerances set from three measurements at 0e7eed70 (#2751, #2754):
+
+- moving every coordinate of the cloud by one ULP moves the relaxed rows by up to 3.4e-9 in L, 2.7e-8 in D and 1.2e-11
+  in eps_M, and leaves every relaxed solve's iteration count as it was;
+- CLARABEL stopping one iteration earlier or later in a relaxed solve, each solve's own count, moves them by up to
+  2.5e-6 in L, 3.0e-5 in D and 6.8e-9 in eps_M (two iterations, 2.6e-4 in D). A platform's last bits can move a stop
+  that sits near CLARABEL's threshold, and this band, not the one-ULP band, is the floor;
+- a 1% change in either slack penalty moves them by at least 3.8e-2 in L, 8.4e-3 in D and 2.0e-4 in eps_M.
+
+Each tolerance sits near the geometric centre between ten times the stopping band and a tenth of the penalty change.
+A CLARABEL stop 100 times looser passes: it ends each relaxed solve two or three iterations early, and its largest move
+in D, 2.6e-4, is under ten times the one-iteration band, so no D tolerance that meets that floor refuses it.
 """
 
 from __future__ import annotations
@@ -65,9 +75,9 @@ def test_opted_in_relaxed_rows_are_mains(mfg_caplog):
     for r in rows:
         row = stencils.stencils[r]
         np.testing.assert_array_equal(row.neighbor_indices, ref[f"row{r}_neighbor_indices"])
-        np.testing.assert_allclose(row.L, ref[f"row{r}_L"], rtol=0, atol=1e-12, err_msg=f"row {r}: L")
-        np.testing.assert_allclose(row.D, ref[f"row{r}_D"], rtol=0, atol=1e-12, err_msg=f"row {r}: D")
-        assert abs(stencils.relaxed_rows[r] - float(ref[f"row{r}_eps_M"])) <= 1e-12, f"row {r}: eps_M"
+        np.testing.assert_allclose(row.L, ref[f"row{r}_L"], rtol=0, atol=3e-4, err_msg=f"row {r}: L")
+        np.testing.assert_allclose(row.D, ref[f"row{r}_D"], rtol=0, atol=5e-4, err_msg=f"row {r}: D")
+        assert abs(stencils.relaxed_rows[r] - float(ref[f"row{r}_eps_M"])) <= 1e-6, f"row {r}: eps_M"
     assert stencils.stats["n_feasible"] == int(ref["n_interior"]) - len(rows), "a relaxed row counted as feasible"
     report = [m for m in mfg_caplog.messages if "socp_allow_relaxed_rows=True" in m]
     assert len(report) == 1, mfg_caplog.messages
