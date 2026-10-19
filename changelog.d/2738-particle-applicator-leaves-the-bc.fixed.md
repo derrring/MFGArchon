@@ -5,10 +5,9 @@
     (`MFGProblem(spatial_bounds=..., components=MFGComponents(boundary_conditions=bc))`), every later
     `problem.get_boundary_conditions()`, and every solve that reads it, then refused the problem as declaring its
     boundary conditions twice. In a coupled loop that is the first BC read after the first particle solve.
-  - The applicator now writes nothing. The face a particle leaves through comes from the step's box, as before.
-    Given the face, the BC's owner reads each segment's placement at the particle. For a `region_name` the grid
-    marks, a particle past the wall is read at its nearest point of the BC's box: its `domain_bounds`, else the box
-    of the grid that marks the region. That second box is new for a BC whose domain is its `domain_sdf`, which has no
-    box of its own: it is the box the deleted write handed such a BC, so a door it places solves as before instead of
-    being refused as outside the grid. In every solve measured, the particles and the density are bit-identical to
-    before.
+  - The applicator now queries a BC with no `domain_bounds` through a copy that carries the step's box in that slot,
+    and never writes the BC it is handed. The face a particle leaves through and the point a door the grid marks is
+    read at past the wall come from that one box, as when it was written, and the copy keeps the BC's grid binding.
+    The particles and the density are bit-identical to before in every solve measured. The one difference is a BC
+    stepped in two boxes in turn: the write kept the first step's box for the second, and the copy reads each step in
+    its own.

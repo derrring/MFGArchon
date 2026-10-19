@@ -2412,9 +2412,8 @@ def region_name_holds_point(
     :func:`region_name_governs_face`, in its order (#2490 B1e-1):
 
     - a grid that marks the region decides by its mask, at the grid node nearest the point (the first of two
-      equidistant ones in the grid's order). A point past a wall is read there at its nearest point of the BC's box,
-      ``domain_bounds``, or of the marking grid's own box where the BC has none, as for a BC whose domain is its
-      ``domain_sdf`` (#2738). That is the interim reading of a point past the boundary: the nearest point stands
+      equidistant ones in the grid's order). A point outside ``domain_bounds``, a particle past a wall, is read there at
+      its nearest point of that box. That is the interim reading of a point past the boundary: the nearest point stands
       in for the point where the particle crossed it, which #2733 will pass instead, as B1d's interim did. A point
       outside the marking grid's own box, where the BC's box reaches past the grid's, or of another dimension than the
       grid, is refused, not read as outside the region; so is a point on a grid whose nodes do not strictly ascend on
@@ -2433,7 +2432,11 @@ def region_name_holds_point(
     name = segment.region_name
     point = np.asarray(point, dtype=float)
     if _marks_region(geometry, name):
-        node = _region_node(segment, geometry, point, domain_bounds, tolerance)
+        at = point
+        if domain_bounds is not None and point.size == len(domain_bounds):
+            bounds = np.asarray(domain_bounds, dtype=float)
+            at = np.clip(point, bounds[:, 0], bounds[:, 1])
+        node = _region_node(segment, geometry, at, point, tolerance)
         return bool(np.asarray(geometry.get_region_mask(name)).ravel()[node])
     label = parse_boundary_face(name)
     if label is None:
@@ -2452,14 +2455,11 @@ def region_name_holds_point(
     return bool(abs(point[label.axis] - side) <= tolerance)
 
 
-def _region_node(
-    segment: BCSegment, geometry: Any, asked: np.ndarray, domain_bounds: np.ndarray | None, tolerance: float
-) -> int:
-    """The flat index, in the grid's C order, of the node of ``geometry`` nearest the point ``asked`` as the owner
-    reads it, for a region mask: at its nearest point of the BC's box, ``domain_bounds``, or of the grid's own box
-    where the BC has none. Refused where the geometry has no node coordinates, the point has another number of
-    coordinates than the grid has axes, an axis's nodes do not strictly ascend, or the point as read lies outside the
-    grid's own box by more than ``tolerance``, which only a BC box reaching past the grid's leaves possible."""
+def _region_node(segment: BCSegment, geometry: Any, at: np.ndarray, asked: np.ndarray, tolerance: float) -> int:
+    """The flat index, in the grid's C order, of the node of ``geometry`` nearest ``at``, the point ``asked`` as the
+    owner reads it, for a region mask: refused where the geometry has no node coordinates, the point has another number
+    of coordinates than the grid has axes, an axis's nodes do not strictly ascend, or the point lies outside the grid's
+    own box by more than ``tolerance``."""
     region = f"BC segment {segment.name!r} is restricted to the marked region {segment.region_name!r}"
     coordinates = getattr(geometry, "coordinates", None)
     if coordinates is None:
@@ -2468,7 +2468,7 @@ def _region_node(
             f"{asked.tolist()} (#2490). Read the region on a TensorProductGrid, or place the segment by "
             "sdf_region=... or boundary=..."
         )
-    if len(coordinates) != asked.size:
+    if len(coordinates) != at.size:
         raise ValueError(
             f"{region}, and the point {asked.tolist()} has {asked.size} coordinates where the "
             f"{type(geometry).__name__} that marks it has {len(coordinates)} axes, so its mask cannot be read there "
@@ -2476,8 +2476,6 @@ def _region_node(
         )
     box = geometry.get_bounds()
     lo, hi = box if box is not None else ([np.min(c) for c in coordinates], [np.max(c) for c in coordinates])
-    reach = np.column_stack([lo, hi]).astype(float) if domain_bounds is None else np.asarray(domain_bounds, dtype=float)
-    at = np.clip(asked, reach[:, 0], reach[:, 1])
     index = []
     for axis, nodes in enumerate(coordinates):
         nodes = np.asarray(nodes, dtype=float)

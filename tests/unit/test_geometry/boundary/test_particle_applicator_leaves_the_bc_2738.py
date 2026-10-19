@@ -6,10 +6,9 @@ BC is the problem's own; so on the legacy route, where the grid holds a bound co
 ``problem.get_boundary_conditions()`` refused the two as declaring the BC twice. Only the per-point path calls
 ``apply``; the fast path never wrote.
 
-The applicator now writes nothing. The face a particle leaves through comes from the step's box; given the face, the
-BC's owner reads each segment's placement at the particle. An exit placed by a ``region_name`` the grid marks is read
-on that grid, a particle past the wall at its nearest point of the BC's box, ``domain_bounds``, else the marking grid's
-(the last test).
+The applicator now writes nothing. A BC with no ``domain_bounds`` is queried through a copy that carries the step's box
+in that slot, so the face a particle leaves through and the point a marked ``region_name`` reads past the wall come
+from one box, as they did when the box was written, and the copy keeps the BC's grid binding (the last two tests).
 
 The rows of the end-to-end test are the BCs the per-point path reaches. #2738's exit is per point at any routing. B1,
 a REFLECTING segment placed by ``region_name``, and the absorbing ``default_bc`` with no segment are per point once
@@ -114,9 +113,9 @@ def test_a_grid_marked_exit_is_read_on_the_grid_the_bc_is_bound_to(domain_sdf, r
     drifting onto x = 1 leave through the door, and the problem's BC is still unwritten after the solve. A point query
     that lost the grid refuses the door at the first particle reaching it (#2767 review 1).
 
-    A particle past the wall is read at its nearest point of the BC's box. A BC whose domain is its ``domain_sdf`` has
-    none (``_query_bounds``), and is read on the marking grid's own box, the box the deleted write handed it: without
-    that, the door refused it as outside the grid (#2767 review 2)."""
+    A particle past the wall is read at its nearest point of the step's box, which the copy carries. A BC whose domain
+    is its ``domain_sdf`` has no box of its own (``_query_bounds``): a query that read none refused the door as outside
+    the grid (#2767 review 2)."""
     from mfgarchon import Conditions, Model
     from mfgarchon.geometry import TensorProductGrid
 
@@ -146,3 +145,52 @@ def test_a_grid_marked_exit_is_read_on_the_grid_the_bc_is_bound_to(domain_sdf, r
     solver.solve_fp_system(np.ones((n, n)), np.broadcast_to(-2.0 * x, (21, n, n)).copy(), show_progress=False)
     assert solver.total_absorbed > 1000, f"{solver.total_absorbed} of 2000 left through the door"
     assert grid.get_boundary_conditions().domain_bounds is None, "the solve wrote domain_bounds into the grid's BC"
+
+
+# The components route on a geometry that declares no BC is deprecated; that warning is not this pin's subject.
+@pytest.mark.filterwarnings("ignore:Specifying boundary conditions via MFGComponents:DeprecationWarning")
+def test_a_door_marked_off_the_domain_lets_no_particle_out():
+    """A BC bound to a grid that is not the problem's geometry: on the components route over a ``Hyperrectangle``,
+    which declares no BC, the problem's BC is the one the caller bound to a grid on x in [0, 1.2], whose door, x > 1.05,
+    lies outside the domain [0, 1]^2. 500 particles driven onto x = 1 are read where they crossed, on the step's box,
+    and none leaves. A query that read the bound grid's box instead read a particle past x = 1.05 as in the door: 492
+    left (#2767 review 3)."""
+    from mfgarchon.geometry import TensorProductGrid
+    from mfgarchon.geometry.implicit import Hyperrectangle
+
+    marking = TensorProductGrid(
+        bounds=[(0.0, 1.2), (0.0, 1.0)],
+        Nx_points=[13, 11],
+        boundary_conditions=BoundaryConditions(
+            segments=[BCSegment(name="door", bc_type=BCType.DIRICHLET, value=0.0, region_name="door", priority=1)],
+            dimension=2,
+            default_bc=BCType.NO_FLUX,
+        ),
+    )
+    marking.mark_region("door", predicate=lambda x: (x[:, 0] > 1.05) & (x[:, 1] > 0.3) & (x[:, 1] < 0.7))
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="The components= form", category=PendingDeprecationWarning)
+        problem = MFGProblem(
+            geometry=Hyperrectangle(np.array([[0.0, 1.0], [0.0, 1.0]])),
+            components=MFGComponents(
+                hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
+                m_initial=lambda x: 1.0,
+                u_terminal=lambda x: 0.0,
+                boundary_conditions=marking.get_boundary_conditions(),
+            ),
+            T=0.5,
+            Nt=20,
+            volatility=0.05,
+        )
+    solver = FPParticleSolver(problem, num_particles=500, seed=1, density_mode="query_only")
+    start = np.column_stack(
+        [np.random.default_rng(1).uniform(0.6, 0.9, 500), np.random.default_rng(2).uniform(0.35, 0.65, 500)]
+    )
+    solver.solve_fp_system(
+        initial_particles=start,
+        drift_field=lambda t, x, m: np.tile([3.0, 0.0], (len(x), 1)),
+        drift_needs_density=False,
+        show_progress=False,
+    )
+    assert solver.total_absorbed == 0, f"{solver.total_absorbed} of 500 left through a door outside the domain"
+    assert marking.get_boundary_conditions().domain_bounds is None, "the solve wrote domain_bounds into the BC"
