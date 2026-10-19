@@ -182,11 +182,10 @@ class TestNonParticleSolversAreUnaffected:
 class TestBothAbsorbingRepresentationsAgreeThroughARealSolve:
     """The `preserve_indices=True` representation, driven through an actual solver.
 
-    The 1-D fixtures above cannot reach it: `preserve_indices=True` raises
-    `NotImplementedError` on the 1-D path, so every other test in this file exercises only the
-    compact-removal encoding. This class uses the 2-D absorbing corridor -- the same construction
-    `test_fp_particle_solver.py::TestFPParticlePreserveIndices` uses -- because it is the only
-    harness in the suite that can produce the NaN-marked encoding at all.
+    The 1-D fixtures above leave `preserve_indices` off, so every other test in this file
+    exercises only the compact-removal encoding. This class produces the NaN-marked encoding
+    through the 2-D absorbing corridor -- the same construction
+    `test_fp_particle_solver.py::TestFPParticlePreserveIndices` uses.
 
     Without this, representation 3 would be verified solely by hand-built arrays, and the claim
     that the two encodings agree on real solver output would rest on nothing committed.

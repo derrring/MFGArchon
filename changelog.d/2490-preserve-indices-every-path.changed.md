@@ -1,6 +1,10 @@
-- **`preserve_indices=True` with a BC that absorbs nothing is accepted on every particle path** (#2490). The
-  callable-drift path refused it, although with nothing absorbed the trajectory already keeps every particle's row; the
-  grid paths accepted it. The trajectory is then the one the solve keeps without the flag.
+- **`preserve_indices=True` with a BC that absorbs nothing is accepted on every CPU particle path** (#2490). Which
+  paths accepted it depended on the BC's form: under a uniform BC the grid paths accepted it and the callable-drift path
+  refused it; under no-flux segments placed on the faces the callable-drift path accepted it and the grid paths
+  refused it. With nothing absorbed the trajectory keeps every particle's row, and is the one the solve keeps without
+  the flag.
+- On the callable-drift path the flag turns on the per-step particle history, as before, so under a uniform BC
+  `solve_fp_system` now returns an `FPParticleResult` where it raised.
 - The flag does not turn on the per-step particle history on the grid paths: a history makes `solve_fp_system`
   return an `FPParticleResult`, and the coupling iterators read their return as the density array. The preserved
-  trajectory is `M_particles_trajectory`. The callable-drift path keeps the history on, as before.
+  trajectory is `M_particles_trajectory`.

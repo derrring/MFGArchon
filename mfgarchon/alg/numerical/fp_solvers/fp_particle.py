@@ -135,14 +135,14 @@ class _IndexPreservingTrajectory:
     """The trajectory ``preserve_indices=True`` asks for (#1119): particle j keeps row j in every slice, NaN once absorbed.
 
     The step loop keeps compact arrays of the live particles. This keeps the original index of each live row and a
-    full-size slice per step, which the solve returns as its trajectory. Every particle path uses it (#2490), so the
-    representation has one owner.
+    full-size slice per step, which the solve returns as its trajectory. Every CPU particle path uses it (#2490), so the
+    representation has one owner; the GPU path refuses an absorbing BC (#1910).
     """
 
     def __init__(self, initial: np.ndarray, n_slices: int) -> None:
         self._shape = initial.shape
         self._alive = np.arange(initial.shape[0])
-        self.slices: list[np.ndarray] = [np.full(self._shape, np.nan)] * n_slices
+        self.slices: list[np.ndarray] = [np.full(self._shape, np.nan) for _ in range(n_slices)]
         self.record(0, initial, None)
 
     def record(self, t: int, alive_particles: np.ndarray, absorbed_mask: np.ndarray | None) -> None:
@@ -302,10 +302,9 @@ class FPParticleSolver(BaseFPSolver):
         self._implicit_domain = self._obstacle_domain(implicit_domain)
 
         # Issue #1119: preserve_indices flag for particle ID tracking
-        # When True, absorbed particles are NaN-marked instead of compact-removed,
-        # so particle_history[t] has constant shape (num_particles, d) and original
-        # indices are preserved across timesteps. Currently supported only in the
-        # callable-drift n-D path with segment-aware BC (other paths raise).
+        # When True, absorbed particles are NaN-marked instead of compact-removed, so every slice of
+        # M_particles_trajectory keeps its full size and particle j keeps row j, on every CPU path (#2490). Under a BC
+        # that absorbs nothing the trajectory already keeps them. The GPU path refuses an absorbing BC (#1910).
         self._preserve_indices: bool = preserve_indices
 
         # Initialize backend (defaults to NumPy)
@@ -2161,7 +2160,8 @@ class FPParticleSolver(BaseFPSolver):
             init_particles = current_M_particles_t[0, :]
 
         M_density_on_grid[0, :] = self._estimate_density_from_particles(init_particles)
-        # preserve_indices under an absorbing BC (#1119, #2490); with nothing absorbed the trajectory already keeps them
+        # preserve_indices under a segment-aware BC (#1119, #2490); under a uniform one nothing is absorbed, and the
+        # trajectory already keeps every row
         preserved = (
             _IndexPreservingTrajectory(init_particles, Nt) if use_segment_aware_bc and self._preserve_indices else None
         )
@@ -2329,7 +2329,8 @@ class FPParticleSolver(BaseFPSolver):
 
         # Restore the caller's mass ALWAYS; the KDE-drift correction stays conditional (#2181).
         M_density_on_grid[0] = self._normalize_density_nd(M_density_on_grid[0], spacings, particles=init_particles)
-        # preserve_indices under an absorbing BC (#1119, #2490); with nothing absorbed the trajectory already keeps them
+        # preserve_indices under a segment-aware BC (#1119, #2490); under a uniform one nothing is absorbed, and the
+        # trajectory already keeps every row
         preserved = (
             _IndexPreservingTrajectory(init_particles, Nt) if use_segment_aware_bc and self._preserve_indices else None
         )
@@ -2810,7 +2811,8 @@ class FPParticleSolver(BaseFPSolver):
         # from the particles directly; otherwise the first KDE slice, one absorbing step later, would.
         self._n_particles_initial = self._count_alive(init_p)
 
-        # preserve_indices under an absorbing BC (#1119, #2490); with nothing absorbed the trajectory already keeps them.
+        # preserve_indices under a segment-aware BC (#1119, #2490); under a uniform one nothing is absorbed, and the
+        # trajectory already keeps every row.
         # The step loop keeps compact arrays of the live particles; the full-size NaN-marked slices are for storage.
         preserved = (
             _IndexPreservingTrajectory(init_p, Nt + 1) if use_segment_aware_bc and self._preserve_indices else None
@@ -2979,7 +2981,7 @@ class FPParticleSolver(BaseFPSolver):
         # Note: callable drift uses Nt+1 time points (0 to Nt inclusive)
         # Issue #1042: trajectory storage and use_segment_aware_bc flag now match
         # the BC routing path taken in the loop.
-        # Issue #1119: when preserve_indices=True, swap trajectory to the
+        # Issue #1119: when preserve_indices=True under a segment-aware BC, swap trajectory to the
         # NaN-marked full-size history (fixed (Nt+1, N, d) shape).
         trajectory: list[np.ndarray] | np.ndarray
         if preserved is not None:
