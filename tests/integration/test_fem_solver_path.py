@@ -65,6 +65,39 @@ def _fem_problem(refine: int = 2):
 
 @pytest.mark.integration
 class TestFEMSolverPath:
+    def test_coupled_fem_rejects_same_count_different_dof_coordinates(self):
+        """Equal FEM DOF counts do not establish a shared layout."""
+        from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
+        from mfgarchon.alg.numerical.fem.fp_fem_solver import FPFEMSolver
+        from mfgarchon.alg.numerical.fem.hjb_fem_solver import HJBFEMSolver
+        from mfgarchon.alg.numerical.fem.mesh_adapter import skfem_to_meshdata
+
+        problem, mesh = _fem_problem()
+        moved = mesh.p.copy()
+        interior = np.all((moved > 0.0) & (moved < 1.0), axis=0)
+        moved[0, interior] += 0.02
+        other_mesh = skfem.MeshTri(moved, mesh.t)
+        other_domain = problem.geometry
+        from mfgarchon.geometry.meshes.mesh_2d import Mesh2D
+
+        other_domain = Mesh2D(domain_type="rectangle", bounds=(0.0, 1.0, 0.0, 1.0))
+        other_domain.mesh_data = skfem_to_meshdata(other_mesh)
+        other_domain.boundary_conditions = problem.geometry.boundary_conditions
+        from mfgarchon.core.mfg_problem import MFGProblem
+
+        solved = MFGProblem(
+            geometry=other_domain,
+            T=problem.T,
+            Nt=problem.Nt,
+            volatility=problem.volatility,
+            components=problem.components,
+            coupling_coefficient=problem.coupling_coefficient,
+        )
+        iterator = FixedPointIterator(solved, HJBFEMSolver(problem), FPFEMSolver(solved))
+
+        with pytest.raises(ValueError, match="different DOF coordinates"):
+            iterator.solve(max_iterations=1)
+
     @pytest.mark.parametrize("order", [1, 2])
     def test_fp_advection_is_mass_conserving(self, order):
         """The FP advection operator must have zero column sums (mass conservation). The raw

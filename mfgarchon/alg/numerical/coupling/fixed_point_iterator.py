@@ -378,6 +378,17 @@ class FixedPointIterator(BaseCouplingIterator):
                     f"Paired HJB and FP solvers report different DOF counts (HJB n_dof={hjb_n}, "
                     f"FP n_dof={fp_n}); a coupled solve needs a shared DOF layout (Issue #1489)."
                 )
+            fp_disc = getattr(self.fp_solver, "_disc", None)
+            hjb_disc = getattr(self.hjb_solver, "_disc", None)
+            fp_points = getattr(fp_disc, "dof_coordinates", None)
+            hjb_points = getattr(hjb_disc, "dof_coordinates", None)
+            if fp_points is not None and hjb_points is not None and not np.allclose(
+                fp_points, hjb_points, rtol=0.0, atol=1e-12
+            ):
+                raise ValueError(
+                    "Paired HJB and FP solvers report different DOF coordinates; "
+                    "a coupled solve needs a shared DOF layout (Issue #1489)."
+                )
             n = fp_n if fp_n is not None else (hjb_n if hjb_n is not None else int(self.problem.num_spatial_points))
             shape = (int(n),)
         else:
