@@ -150,7 +150,7 @@ class HJBSolverProtocol(Protocol):
     ``problem``, the problem it was built for: the loop compares its geometry with the problem it solves, and refuses
     a solver without one by name (#2775). A solver whose DOFs sit at points of its own, not its geometry's, declares
     them as ``dof_points``, an (N, d) array in the DOFs' order, and the loop requires them to equal the points of the
-    problem it solves, bit for bit.
+    problem it solves, bit for bit; on an implicit domain, whose data have no fixed points (#2778), it refuses them.
     """
 
     def solve(
@@ -194,7 +194,7 @@ class FPSolverProtocol(Protocol):
     ``problem``, the problem it was built for: the loop compares its geometry with the problem it solves, and refuses
     a solver without one by name (#2775). A solver whose DOFs sit at points of its own, not its geometry's, declares
     them as ``dof_points``, an (N, d) array in the DOFs' order, and the loop requires them to equal the points of the
-    problem it solves, bit for bit.
+    problem it solves, bit for bit; on an implicit domain, whose data have no fixed points (#2778), it refuses them.
     """
 
     def solve(

@@ -27,7 +27,7 @@ from mfgarchon.alg.numerical.meshless_galerkin import MeshlessGalerkinFPSolver, 
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.multi_population import MultiPopulationProblem
 from mfgarchon.core.regime_switching import RegimeSwitchingConfig
-from mfgarchon.geometry import Hyperrectangle, PointCloudGeometry, TensorProductGrid
+from mfgarchon.geometry import Hyperrectangle, Hypersphere, PointCloudGeometry, TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
 skfem = pytest.importorskip("skfem", reason="scikit-fem required for the mesh pair")
@@ -149,7 +149,8 @@ def test_a_pair_whose_halves_hold_their_values_at_other_points_is_refused():
       grid's nodes. HJB-FEM P2 beside FP-FEM P1 or P2 on one mesh, whose 289 DOFs are not its 81 vertices.
     - A grid whose coordinates differ from the solved one's by 1.1e-16, and a cloud one ulp off the nodes at one point:
       both comparisons are exact. An FP alone declaring a cloud off the nodes.
-    - On an implicit domain, any pair with a declared side: its data have no fixed points to check them against (#2778).
+    - On an implicit domain, a Hyperrectangle or a Hypersphere, any pair with a declared side: its data have no fixed
+      points to check them against (#2778).
       At bbf94e5e a meshless pair on one cloud there, and a meshless HJB beside a particle FP, solved, and fail the
       relabelling oracle by amounts that change from run to run. The refusal reads no points, so numpy's global random
       state, which the domain samples from, does not move.
@@ -186,6 +187,18 @@ def test_a_pair_whose_halves_hold_their_values_at_other_points_is_refused():
         now = np.random.get_state()
         assert np.array_equal(state[1], now[1]), "the refusal read the implicit domain's points"
         assert state[2:] == now[2:], "the refusal read the implicit domain's points"
+    sphere = _problem(Hypersphere(center=[0.5, 0.5], radius=0.5))  # every implicit domain, not one class of it
+    declares = _CountOnly(sphere, None)
+    declares.dof_points = np.zeros((3, 2))
+    with pytest.raises(ValueError, match=r"^FixedPointIterator: the HJB solver declares the points .* Hypersphere"):
+        FixedPointIterator(sphere, declares, _CountOnly(sphere, None))
+    with pytest.raises(
+        ValueError,
+        match=r"^FixedPointIterator: the HJB solver was built for a Hypersphere that is not the problem's own",
+    ):
+        FixedPointIterator(
+            sphere, _CountOnly(_problem(Hypersphere(center=[0.5, 0.5], radius=0.5)), None), _CountOnly(sphere, None)
+        )
     reversed_nodes = np.ascontiguousarray(_CLOUD[::-1])
     for side, hjb, fp in (
         (
@@ -281,8 +294,8 @@ def test_a_pair_whose_halves_hold_their_values_at_other_points_is_refused():
 
 
 def test_a_pair_on_the_solved_points_or_undeclared_on_an_implicit_domain_is_admitted():
-    """Each loop constructs where both halves hold their values at the solved problem's points, and on an implicit
-    domain where neither half declares points of its own:
+    """Each loop constructs where the check admits the pair: a half that declares points declares the solved problem's,
+    and a half that declares none was built for the solved geometry; on an implicit domain, neither half declares:
 
     - HJB-FDM built from an equal grid built separately, through every loop; at bbf94e5e that pair solved equal to the
       one built from the problem itself;

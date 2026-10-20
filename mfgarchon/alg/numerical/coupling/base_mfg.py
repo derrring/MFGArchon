@@ -74,15 +74,15 @@ def assert_paired_solver_geometry(hjb_solver: Any, fp_solver: Any, context: str,
     - The solver carries ``problem``, the problem it was built for; one without is refused by name.
     - Its problem's geometry is the solved problem's: the same object, or one whose ``get_spatial_grid()`` is
       bit-identical (shape, then ``np.array_equal``), so two separately built equal grids or meshes are one geometry. An
-      `ImplicitDomain`'s points are a fresh random sample on every read (#2778), so two implicit domains are one geometry
-      only as one object.
+      `ImplicitDomain`'s points are a fresh random sample on every read (#2778), so where either side is one, the two
+      are one geometry only as one object: an equal one built separately, or another geometry in its place, is refused.
     - A solver whose DOFs are its own points declares them as ``dof_points`` (the weak-form solvers: HJB-FEM, FP-FEM and
       the meshless Galerkin pair), an (N, d) array in the DOFs' order. One whose values come back at its geometry's
       points declares none: HJB-GFDM maps its collocation points onto a tensor grid's nodes (#2756), and a particle FP
-      deposits its particles on a grid or a mesh. Each side's points -- ``dof_points`` where declared, its geometry's
-      points otherwise -- are the solved problem's points, bit for bit; for a side that declares none, the geometry's
-      check above holds it. A user's solver with DOFs of its own that does not declare them is its implementer's
-      responsibility.
+      deposits its particles on a grid's nodes (on a mesh it cannot sample, #2757). Each side's points --
+      ``dof_points`` where declared, its geometry's points otherwise -- are the solved problem's points, bit for bit;
+      for a side that declares none, the geometry's check above holds it. A user's solver with DOFs of its own that does
+      not declare them is its implementer's responsibility.
     - On an implicit domain the problem's own data have no fixed points: its initial density and terminal value are
       evaluated on other samples than the points it stores (#2778). A declared side cannot be checked against them, so
       it is refused by name until #2778 settles; the test reads the declaration and the domain's class, not its points,
@@ -131,8 +131,9 @@ def assert_paired_solver_geometry(hjb_solver: Any, fp_solver: Any, context: str,
                     f"{context}: the {side} solver declares the points its DOFs sit at, and the problem is solved on a "
                     f"{type(problem.geometry).__name__}, whose own data have no fixed points: its initial density and "
                     "terminal value are evaluated on other samples than the points it stores (#2778), so the declared "
-                    "points cannot be checked against them (#2775). Solve on a PointCloudGeometry of those points, "
-                    "MFGProblem(domain=PointCloudGeometry(points), ...), in a block or Newton loop."
+                    "points cannot be checked against them (#2775). A meshless Galerkin pair on those points runs on a "
+                    "PointCloudGeometry of them, MFGProblem(domain=PointCloudGeometry(points), ...), in a block or "
+                    "Newton loop."
                 )
     else:
         problem_points = None
