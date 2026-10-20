@@ -47,6 +47,7 @@ from .base_mfg import (
     BaseCouplingIterator,
     allocate_state_arrays,
     assert_bc_providers_resolvable,
+    assert_paired_solver_geometry,
     assert_paired_solver_sigma,
     resolve_backend,
 )
@@ -156,6 +157,7 @@ class FictitiousPlayIterator(BaseCouplingIterator):
         assert_paired_solver_sigma(
             hjb_solver, fp_solver, "FictitiousPlayIterator", problem=problem, override=volatility
         )
+        assert_paired_solver_geometry(hjb_solver, fp_solver, "FictitiousPlayIterator", problem=problem)
         self.config = config
 
         # Fictitious play parameters

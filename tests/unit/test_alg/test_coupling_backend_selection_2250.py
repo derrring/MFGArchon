@@ -28,6 +28,8 @@ from mfgarchon import Conditions, MFGProblem, Model
 from mfgarchon.alg.numerical.coupling.base_mfg import allocate_state_arrays, resolve_backend
 from mfgarchon.alg.numerical.coupling.fictitious_play import FictitiousPlayIterator
 from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
+from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.backends import create_backend
 from mfgarchon.backends.base_backend import BaseBackend
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
@@ -59,13 +61,19 @@ def _problem():
     )
 
 
+def _iterator(iterator_cls, backend):
+    """The iterator on ``_problem()`` with solvers built from it: a loop refuses a solver with no ``problem`` (#2775)."""
+    problem = _problem()
+    return iterator_cls(problem, hjb_solver=HJBFDMSolver(problem), fp_solver=FPFDMSolver(problem), backend=backend)
+
+
 class TestBackendSelectionIsResolvedOrRefused:
     """A name resolves, an object passes through, and one that cannot carry a solve is refused."""
 
     @pytest.mark.parametrize("iterator_cls", ITERATORS, ids=lambda c: c.__name__)
     def test_a_backend_name_is_resolved_to_an_object(self, iterator_cls):
         """Storing the NAME is what raised `'str' object has no attribute 'zeros'`."""
-        it = iterator_cls(_problem(), hjb_solver=None, fp_solver=None, backend="numpy")
+        it = _iterator(iterator_cls, "numpy")
         assert not isinstance(it.backend, str)
         assert hasattr(it.backend, "zeros")
 
@@ -74,12 +82,12 @@ class TestBackendSelectionIsResolvedOrRefused:
         """A NumPyBackend object solved end to end before this change, so refusing it would be
         a capability regression rather than a fix -- `acceleration_comparison.py` passes one."""
         backend = create_backend("numpy")
-        it = iterator_cls(_problem(), hjb_solver=None, fp_solver=None, backend=backend)
+        it = _iterator(iterator_cls, backend)
         assert it.backend is backend
 
     @pytest.mark.parametrize("iterator_cls", ITERATORS, ids=lambda c: c.__name__)
     def test_none_stays_none(self, iterator_cls):
-        assert iterator_cls(_problem(), hjb_solver=None, fp_solver=None, backend=None).backend is None
+        assert _iterator(iterator_cls, None).backend is None
 
     def test_a_non_backend_value_is_refused_by_type(self):
         with pytest.raises(TypeError, match="#2250"):

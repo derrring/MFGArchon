@@ -29,7 +29,12 @@ from mfgarchon.geometry.boundary import no_flux_bc
 from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import retired_volatility_keywords
 
-from .base_mfg import assert_bc_providers_resolvable, resolve_source_kwarg, resolve_volatility_kwarg
+from .base_mfg import (
+    assert_bc_providers_resolvable,
+    assert_paired_solver_geometry,
+    resolve_source_kwarg,
+    resolve_volatility_kwarg,
+)
 from .fixed_point_utils import resolve_fp_drift_kwargs
 from .source_composition import compose_fp_source, compose_hjb_source
 
@@ -136,6 +141,7 @@ class MFGResidual:
         assert_bc_providers_resolvable(self.problem, "MFGResidual (NewtonMFGSolver)")
         self.hjb_solver = hjb_solver
         self.fp_solver = fp_solver
+        assert_paired_solver_geometry(hjb_solver, fp_solver, "MFGResidual", problem=problem)
         self.volatility = volatility
         self.volatility_kind = volatility_kind
         self.drift_field = drift_field

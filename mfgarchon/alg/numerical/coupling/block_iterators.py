@@ -43,7 +43,12 @@ from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import resolve_volatility_override, retired_volatility_keywords
 from mfgarchon.utils.solver_result import SolverResult
 
-from .base_mfg import BaseCouplingIterator, assert_bc_providers_resolvable, assert_paired_solver_sigma
+from .base_mfg import (
+    BaseCouplingIterator,
+    assert_bc_providers_resolvable,
+    assert_paired_solver_geometry,
+    assert_paired_solver_sigma,
+)
 from .fixed_point_utils import (
     apply_damping,
     check_convergence_criteria,
@@ -160,6 +165,7 @@ class BlockIterator(BaseCouplingIterator):
         self.hjb_solver = hjb_solver
         self.fp_solver = fp_solver
         assert_paired_solver_sigma(hjb_solver, fp_solver, "BlockIterator", problem=problem, override=volatility)
+        assert_paired_solver_geometry(hjb_solver, fp_solver, "BlockIterator", problem=problem)
 
         # Parse method
         if isinstance(method, str):

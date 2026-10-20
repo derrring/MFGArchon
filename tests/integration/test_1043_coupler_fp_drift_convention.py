@@ -406,6 +406,8 @@ class TestBlockIteratorFPDriftConvention:
         class _DriftOnlySpySolver:
             """Spy with drift_field-only signature (no potential_field, simulating FPGFDMSolver)."""
 
+            problem = problem_l1  # the problem it was built for, whose geometry the coupler compares (#2775)
+
             def solve_fp_system(
                 self,
                 M_initial: np.ndarray,

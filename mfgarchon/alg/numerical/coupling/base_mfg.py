@@ -48,6 +48,52 @@ def assert_bc_providers_resolvable(problem: MFGProblem, iterator_name: str) -> N
         )
 
 
+def assert_paired_solver_geometry(hjb_solver: Any, fp_solver: Any, context: str, *, problem: Any) -> None:
+    """Fail loud if a coupled HJB / FP solver was built for another geometry than the problem the loop solves (#2775).
+
+    Each solver discretizes on its own problem's geometry, fixed when it was built, and the loop hands the two halves
+    each other's arrays point for point. A solver built for a geometry whose points are not the solved problem's -- a
+    mesh with its interior moved, a grid over another interval -- coupled with nothing raised whenever the number of
+    points agreed: the only check was #1489's DOF count, in ``FixedPointIterator`` alone. This is the one owner, read by
+    every loop that pairs an HJB and an FP solver; a list-based loop calls it once per pair, with that pair's problem.
+
+    The geometries compare by ``get_spatial_grid()``, exactly (shape, then ``np.array_equal``), after identity: two
+    separately built equal grids or meshes are one geometry, which Expert Mode admits. An implicit domain's
+    ``get_spatial_grid`` is a fresh random sample, so two such domains compare equal only when they are one object. A
+    solver's own points that are not its geometry's -- HJB-GFDM's collocation points, a particle FP's particles -- are
+    that solver's to map onto them; FEM P2's extra dofs are what the DOF-count check below refuses beside P1 (#1489).
+
+    Not checked here: the boundary conditions, T, Nt (#2446), and the volatility (`assert_paired_solver_sigma`).
+    """
+    for side, solver in (("HJB", hjb_solver), ("FP", fp_solver)):
+        solver_problem = getattr(solver, "problem", None)
+        if solver_problem is None:
+            raise TypeError(
+                f"{context}: the {side} solver, {type(solver).__name__}, has no `problem`, so the geometry it "
+                "discretizes cannot be compared with the problem being solved (#2775). Every built-in HJB and FP "
+                "solver sets it (BaseMFGSolver); a solver written to the protocol sets `self.problem` to the problem "
+                "it was built for."
+            )
+        if solver_problem is problem or solver_problem.geometry is problem.geometry:
+            continue
+        theirs = np.asarray(solver_problem.geometry.get_spatial_grid())
+        mine = np.asarray(problem.geometry.get_spatial_grid())
+        if theirs.shape != mine.shape or not np.array_equal(theirs, mine):
+            how = f"{theirs.shape} points against {mine.shape}" if theirs.shape != mine.shape else "other coordinates"
+            raise ValueError(
+                f"{context}: the {side} solver was built for a {type(solver_problem.geometry).__name__} whose points "
+                f"are not those of the problem being solved, a {type(problem.geometry).__name__} ({how}). The two "
+                "halves exchange arrays point for point, so each would read the other's values at its own points "
+                "(#2775). Build the solvers from the problem being solved, or from one with the same geometry."
+            )
+    hjb_n, fp_n = getattr(hjb_solver, "n_dof", None), getattr(fp_solver, "n_dof", None)
+    if isinstance(hjb_n, numbers.Integral) and isinstance(fp_n, numbers.Integral) and hjb_n != fp_n:
+        raise ValueError(
+            f"{context}: paired HJB and FP solvers report different DOF counts (HJB n_dof={hjb_n}, FP n_dof={fp_n}); "
+            "a coupled solve needs a shared DOF layout (Issue #1489)."
+        )
+
+
 def _volatilities_differ(a: Any, b: Any, kind_a: Any = None, kind_b: Any = None) -> bool:
     """Whether two volatilities are shown to differ: by value, by content, and by volatility_kind.
 

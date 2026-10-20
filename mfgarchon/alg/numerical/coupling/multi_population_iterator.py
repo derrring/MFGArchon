@@ -22,6 +22,7 @@ from mfgarchon.utils.mfg_logging import get_logger
 
 from .base_mfg import (
     assert_bc_providers_resolvable,
+    assert_paired_solver_geometry,
     assert_paired_solver_sigma,
     fp_solve_kwargs,
     hjb_coupling_binding,
@@ -93,6 +94,12 @@ class MultiPopulationIterator:
         # pair, not just population 0, against silent sigma desync.
         for _k in range(K):
             assert_paired_solver_sigma(hjb_solvers[_k], fp_solvers[_k], f"MultiPopulationIterator[population {_k}]")
+            assert_paired_solver_geometry(
+                hjb_solvers[_k],
+                fp_solvers[_k],
+                f"MultiPopulationIterator[population {_k}]",
+                problem=multi_problem.get_population(_k),
+            )
 
         # Issue #1043: cache each FP solver's solve_fp_system signature so the drift/potential
         # convention can be resolved via the shared resolve_fp_drift_kwargs (same as single-pop).

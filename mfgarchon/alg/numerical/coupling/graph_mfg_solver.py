@@ -25,7 +25,11 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mfgarchon.alg.numerical.coupling.base_mfg import BaseCouplingIterator, assert_paired_solver_sigma
+from mfgarchon.alg.numerical.coupling.base_mfg import (
+    BaseCouplingIterator,
+    assert_paired_solver_geometry,
+    assert_paired_solver_sigma,
+)
 from mfgarchon.alg.numerical.coupling.fixed_point_utils import (
     check_convergence_criteria,
     fp_solver_sig_params,
@@ -167,6 +171,9 @@ class GraphMFGSolver(BaseCouplingIterator):
         # RFC #1574 C14 / Issue #1603: each node HJB-FP pair is an adjoint pair; guard every pair.
         for _k in range(N):
             assert_paired_solver_sigma(hjb_solvers[_k], fp_solvers[_k], f"GraphMFGSolver[node {_k}]")
+            assert_paired_solver_geometry(
+                hjb_solvers[_k], fp_solvers[_k], f"GraphMFGSolver[node {_k}]", problem=problems[_k]
+            )
 
         # All nodes must share the same time grid for coupling to be well-defined.
         # dt enters _get_time_slice when the coupling callable is invoked by each
