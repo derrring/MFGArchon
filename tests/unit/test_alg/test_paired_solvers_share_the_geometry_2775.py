@@ -27,7 +27,7 @@ from mfgarchon.alg.numerical.meshless_galerkin import MeshlessGalerkinFPSolver, 
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.multi_population import MultiPopulationProblem
 from mfgarchon.core.regime_switching import RegimeSwitchingConfig
-from mfgarchon.geometry import Hyperrectangle, TensorProductGrid
+from mfgarchon.geometry import Hyperrectangle, PointCloudGeometry, TensorProductGrid
 from mfgarchon.geometry.boundary import no_flux_bc
 
 skfem = pytest.importorskip("skfem", reason="scikit-fem required for the mesh pair")
@@ -142,15 +142,23 @@ def test_a_pair_whose_halves_hold_their_values_at_other_points_is_refused():
       loop. At bbf94e5e the loops that run on a mesh solved it, FixedPointIterator 3.711e-02 off the pair built on the
       solved mesh (FictitiousPlayIterator refuses every mesh). The FP side too.
     - A meshless Galerkin pair on two clouds of 21 points, the interior of one moved by up to 1.959e-02: at bbf94e5e and
-      at fc6c77ea it solved, M 7.675e-02 off the pair on one cloud. A meshless HJB on that moved cloud beside an FDM FP
-      on the grid: at bbf94e5e, M 7.572e-02 off the HJB on the grid's nodes. HJB-FEM P2 beside FP-FEM P1 on one mesh.
-    - A grid whose coordinates differ from the solved one's by 1.1e-16, and two clouds one ulp apart at one point: both
-      comparisons are exact. The two clouds on an implicit domain, where the declared points are still compared.
+      at fc6c77ea it solved, M 7.675e-02 off the pair on one cloud. A meshless pair sharing one cloud that is not the
+      grid's nodes, since the loop hands both halves the problem's data at its nodes: the nodes reversed, at bbf94e5e U
+      4.000e-01 and M 8.433e-01 off the pair on the nodes once put back in their order; the moved cloud, U 1.468e-02 and
+      M 4.766e-02 off. A meshless HJB on the moved cloud beside an FDM FP: at bbf94e5e, M 7.572e-02 off the HJB on the
+      grid's nodes. HJB-FEM P2 beside FP-FEM P1 or P2 on one mesh, whose 289 DOFs are not its 81 vertices.
+    - A grid whose coordinates differ from the solved one's by 1.1e-16, and a cloud one ulp off the nodes at one point:
+      both comparisons are exact. An FP alone declaring a cloud off the nodes.
+    - On an implicit domain, any pair with a declared side: its data have no fixed points to check them against (#2778).
+      At bbf94e5e a meshless pair on one cloud there, and a meshless HJB beside a particle FP, solved, and fail the
+      relabelling oracle by amounts that change from run to run. The refusal reads no points, so numpy's global random
+      state, which the domain samples from, does not move.
     - An equal Hyperrectangle built separately, and a grid against a Hyperrectangle either way round: an implicit
       domain is one geometry only as one object.
     - Node, regime or population 1's pair built for node 0's geometry, not its own: each pair is read against its own
       problem.
-    - A solver with no ``problem``, on either side; and a protocol pair that reports ``n_dof`` only, in either order.
+    - A solver with no ``problem``, on either side; a protocol pair that reports ``n_dof`` only, in either order and as
+      floats; and a declared ``dof_points`` that raises AttributeError, which is not read as no declaration.
     """
     solved, built = _problem(_mesh(moved=True)), _problem(_mesh(moved=False))
     for name, make in _COUPLERS:
@@ -161,17 +169,54 @@ def test_a_pair_whose_halves_hold_their_values_at_other_points_is_refused():
     ):
         FixedPointIterator(solved, HJBFEMSolver(solved), FPFEMSolver(built))
 
-    apart = r"^FixedPointIterator: the HJB and FP solvers hold their values at different points"
     grid, box = _problem(_grid()), _box()
-    pairs = [
-        (MeshlessGalerkinHJBSolver(box, _CLOUD, delta=0.18), MeshlessGalerkinFPSolver(box, _MOVED_CLOUD, delta=0.18)),
-        (MeshlessGalerkinHJBSolver(grid, _CLOUD, delta=0.18), MeshlessGalerkinFPSolver(grid, _MOVED_CLOUD, delta=0.18)),
-        (MeshlessGalerkinHJBSolver(grid, _CLOUD, delta=0.18), MeshlessGalerkinFPSolver(grid, _ULP_CLOUD, delta=0.18)),
-        (MeshlessGalerkinHJBSolver(grid, _MOVED_CLOUD, delta=0.18), FPFDMSolver(grid)),
-        (HJBFEMSolver(solved, order=2), FPFEMSolver(solved)),
-    ]
-    for hjb, fp in pairs:
-        with pytest.raises(ValueError, match=apart):
+    points = np.linspace(0.0, 1.0, box.geometry.num_spatial_points)[:, None]
+    gfdm_on_box = HJBGFDMSolver(box, collocation_points=points, delta=0.3, monotonicity_scheme="none")
+    for side, hjb, fp in (
+        ("HJB", MeshlessGalerkinHJBSolver(box, points, delta=0.05), MeshlessGalerkinFPSolver(box, points, delta=0.05)),
+        ("HJB", MeshlessGalerkinHJBSolver(box, points, delta=0.05), FPParticleSolver(box, seed=7)),
+        ("FP", gfdm_on_box, MeshlessGalerkinFPSolver(box, points, delta=0.05)),
+    ):
+        state = np.random.get_state()
+        with pytest.raises(
+            ValueError,
+            match=rf"^BlockIterator: the {side} solver declares the points its DOFs sit at, .* Hyperrectangle",
+        ):
+            BlockGaussSeidelIterator(box, hjb, fp)
+        now = np.random.get_state()
+        assert np.array_equal(state[1], now[1]), "the refusal read the implicit domain's points"
+        assert state[2:] == now[2:], "the refusal read the implicit domain's points"
+    reversed_nodes = np.ascontiguousarray(_CLOUD[::-1])
+    for side, hjb, fp in (
+        (
+            "HJB",
+            MeshlessGalerkinHJBSolver(grid, reversed_nodes, delta=0.18),
+            MeshlessGalerkinFPSolver(grid, reversed_nodes, delta=0.18),
+        ),
+        (
+            "HJB",
+            MeshlessGalerkinHJBSolver(grid, _MOVED_CLOUD, delta=0.18),
+            MeshlessGalerkinFPSolver(grid, _MOVED_CLOUD, delta=0.18),
+        ),
+        (
+            "FP",
+            MeshlessGalerkinHJBSolver(grid, _CLOUD, delta=0.18),
+            MeshlessGalerkinFPSolver(grid, _MOVED_CLOUD, delta=0.18),
+        ),
+        (
+            "FP",
+            MeshlessGalerkinHJBSolver(grid, _CLOUD, delta=0.18),
+            MeshlessGalerkinFPSolver(grid, _ULP_CLOUD, delta=0.18),
+        ),
+        ("HJB", MeshlessGalerkinHJBSolver(grid, _MOVED_CLOUD, delta=0.18), FPFDMSolver(grid)),
+        ("FP", HJBFDMSolver(grid), MeshlessGalerkinFPSolver(grid, _MOVED_CLOUD, delta=0.18)),
+        ("HJB", HJBFEMSolver(solved, order=2), FPFEMSolver(solved)),
+        ("HJB", HJBFEMSolver(solved, order=2), FPFEMSolver(solved, order=2)),
+    ):
+        with pytest.raises(
+            ValueError,
+            match=rf"^FixedPointIterator: the {side} solver holds its values at points that are not those of",
+        ):
             FixedPointIterator(hjb.problem, hjb, fp)
 
     with pytest.raises(
@@ -220,27 +265,35 @@ def test_a_pair_whose_halves_hold_their_values_at_other_points_is_refused():
     for side, hjb, fp in (("HJB", NoProblem(), FPFDMSolver(grid)), ("FP", HJBFDMSolver(grid), NoProblem())):
         with pytest.raises(TypeError, match=rf"^FixedPointIterator: the {side} solver, NoProblem, has no `problem`"):
             FixedPointIterator(grid, hjb, fp)
-    for counts in ((21, 25), (25, 21)):
+    for counts in ((21, 25), (25, 21), (21.0, 25.0)):
         with pytest.raises(
             ValueError, match=r"^FixedPointIterator: paired HJB and FP solvers report different DOF counts"
         ):
             FixedPointIterator(grid, _CountOnly(grid, counts[0]), _CountOnly(grid, counts[1]))
 
+    class DeclaresAndFails(_CountOnly):
+        @property
+        def dof_points(self):
+            raise AttributeError("a declared dof_points that fails to read")
 
-def test_a_pair_on_the_solved_points_is_admitted():
-    """Each loop constructs where both halves hold their values at the solved problem's points:
+    with pytest.raises(AttributeError, match="a declared dof_points that fails to read"):
+        FixedPointIterator(grid, DeclaresAndFails(grid, None), FPFDMSolver(grid))
+
+
+def test_a_pair_on_the_solved_points_or_undeclared_on_an_implicit_domain_is_admitted():
+    """Each loop constructs where both halves hold their values at the solved problem's points, and on an implicit
+    domain where neither half declares points of its own:
 
     - HJB-FDM built from an equal grid built separately, through every loop; at bbf94e5e that pair solved equal to the
       one built from the problem itself;
-    - a meshless pair on one cloud, and a meshless HJB on the grid's nodes beside an FDM FP;
-    - HJB-FEM P1 beside a particle FP, and HJB-FEM P2 beside FP-FEM P2. Neither solves, at bbf94e5e or here, for reasons
-      outside this check: the particle FP cannot sample its initial density on a mesh (#2757), and a P2 state is filled
-      from the vertices (#2573's FEM_P2 line);
+    - a meshless pair on one cloud, and a meshless HJB on the grid's nodes beside an FDM FP; and one whose caller moves
+      its cloud after building it, which declares the points it was built on (#2779);
+    - HJB-FEM P1 beside a particle FP. It does not solve, at bbf94e5e or here, for a reason outside this check: the
+      particle FP cannot sample its initial density on a mesh (#2757);
     - HJB-GFDM at its own collocation points beside a particle FP on an implicit domain, in the Block Gauss-Seidel loop
-      that solves on one, built from the problem solved or from a rebuild that shares its domain object;
-    - a meshless pair on one cloud there, and a meshless HJB beside a particle FP: an implicit domain has no points to
-      read, so the check reads none, and numpy's global random state, which the domain samples from (#2778), does not
-      move.
+      that solves on one, built from the problem solved or from a rebuild that shares its domain object: compared by
+      identity only;
+    - a meshless pair on a PointCloudGeometry of its cloud, which the implicit-domain refusal advises.
     """
     grid, twin = _problem(_grid()), _problem(_grid())
     for _, make in _COUPLERS:
@@ -249,9 +302,18 @@ def test_a_pair_on_the_solved_points_is_admitted():
         grid, MeshlessGalerkinHJBSolver(grid, _CLOUD, delta=0.18), MeshlessGalerkinFPSolver(grid, _CLOUD, delta=0.18)
     )
     FixedPointIterator(grid, MeshlessGalerkinHJBSolver(grid, _CLOUD, delta=0.18), FPFDMSolver(grid))
+    moved_later = _CLOUD.copy()
+    hjb, fp = (
+        MeshlessGalerkinHJBSolver(grid, moved_later, delta=0.18),
+        MeshlessGalerkinFPSolver(grid, moved_later, delta=0.18),
+    )
+    moved_later[:] = _MOVED_CLOUD  # the caller moves its array after the solvers are built (#2779)
+    for solver in (hjb, fp):
+        assert np.array_equal(solver.dof_points, _CLOUD)
+        assert not solver.dof_points.flags.writeable
+    FixedPointIterator(grid, hjb, fp)
     mesh = _problem(_mesh(moved=False))
     FixedPointIterator(mesh, HJBFEMSolver(mesh), FPParticleSolver(mesh, seed=7))
-    FixedPointIterator(mesh, HJBFEMSolver(mesh, order=2), FPFEMSolver(mesh, order=2))
     box = _box()
     points = np.linspace(0.0, 1.0, box.geometry.num_spatial_points)[:, None]
     with warnings.catch_warnings():
@@ -269,10 +331,8 @@ def test_a_pair_on_the_solved_points_is_admitted():
             HJBGFDMSolver(built, collocation_points=points, delta=0.3, monotonicity_scheme="none"),
             FPParticleSolver(box, seed=7),
         )
-    for fp in (MeshlessGalerkinFPSolver(box, points, delta=0.05), FPParticleSolver(box, seed=7)):
-        hjb = MeshlessGalerkinHJBSolver(box, points, delta=0.05)
-        state = np.random.get_state()
-        BlockGaussSeidelIterator(box, hjb, fp)
-        now = np.random.get_state()
-        assert np.array_equal(state[1], now[1]), "the check read the implicit domain's points"
-        assert state[2:] == now[2:], "the check read the implicit domain's points"
+    cloud = _problem(PointCloudGeometry(points.copy()))
+    cloud.components.boundary_conditions = no_flux_bc(dimension=1)
+    BlockGaussSeidelIterator(
+        cloud, MeshlessGalerkinHJBSolver(cloud, points, delta=0.05), MeshlessGalerkinFPSolver(cloud, points, delta=0.05)
+    )

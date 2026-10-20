@@ -149,7 +149,8 @@ class HJBSolverProtocol(Protocol):
     Note: Solvers should implement at least one of these methods. A solver handed to a coupling loop also carries
     ``problem``, the problem it was built for: the loop compares its geometry with the problem it solves, and refuses
     a solver without one by name (#2775). A solver whose DOFs sit at points of its own, not its geometry's, declares
-    them as ``dof_points``, and the loop compares the two solvers' points.
+    them as ``dof_points``, an (N, d) array in the DOFs' order, and the loop requires them to equal the points of the
+    problem it solves, bit for bit.
     """
 
     def solve(
@@ -192,7 +193,8 @@ class FPSolverProtocol(Protocol):
     Note: Solvers should implement at least one of these methods. A solver handed to a coupling loop also carries
     ``problem``, the problem it was built for: the loop compares its geometry with the problem it solves, and refuses
     a solver without one by name (#2775). A solver whose DOFs sit at points of its own, not its geometry's, declares
-    them as ``dof_points``, and the loop compares the two solvers' points.
+    them as ``dof_points``, an (N, d) array in the DOFs' order, and the loop requires them to equal the points of the
+    problem it solves, bit for bit.
     """
 
     def solve(

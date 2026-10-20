@@ -66,6 +66,9 @@ class WeakFormFPSolver(BaseFPSolver):
         self._boundary_conditions = boundary_conditions
         self._disc = discretization
         self._n_dof = discretization.n_dof
+        # A discretization may keep the caller's array (#2779), so the points it was built on are copied here.
+        self._dof_points = np.array(discretization.dof_coordinates, dtype=float)
+        self._dof_points.flags.writeable = False
         self._K = discretization.stiffness()
         self._M = discretization.mass()
         # Single source of truth for BCs (matches WeakFormHJBSolver); plain
@@ -85,11 +88,10 @@ class WeakFormFPSolver(BaseFPSolver):
 
     @property
     def dof_points(self) -> NDArray:
-        """The points this solver's DOFs sit at, in their order: the discretization's dof coordinates, as a read-only
-        copy. A coupling loop compares them with its other solver's points (`assert_paired_solver_geometry`, #2775)."""
-        points = np.array(self._disc.dof_coordinates, dtype=float)
-        points.flags.writeable = False
-        return points
+        """The points this solver's DOFs sat at when it was built, in their order: an (N, d) read-only copy taken
+        then. A coupling loop compares them with the points of the problem it solves (`assert_paired_solver_geometry`,
+        #2775)."""
+        return self._dof_points
 
     # --- Boundary-condition strategy (subclass-supplied) ----------------------
     def _is_pure_neumann(self) -> bool:
