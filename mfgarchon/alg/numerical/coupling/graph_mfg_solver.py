@@ -35,6 +35,8 @@ from mfgarchon.alg.numerical.coupling.graph_coupling import _get_time_slice
 from mfgarchon.alg.numerical.coupling.source_composition import (
     _call_problem_source,
     _problem_hjb_source_terms,
+    coupling_binding_for,
+    hjb_source_fields,
     hjb_source_is_active,
 )
 from mfgarchon.types.callable_protocols import evaluate_solver_source
@@ -370,7 +372,7 @@ class GraphMFGSolver(BaseCouplingIterator):
 
         The graph coupling source from `GraphCouplingOperator` is layered on top
         of each node problem's own HJB source, the parts `hjb_source_fields` names
-        (`source_term_hjb`, a bound `coupling_cost`, `nonlocal_operator`),
+        (`source_term_hjb`, a `coupling_cost`, `nonlocal_operator`),
         so that all Layer 1 feature dimensions (Levy, custom sources, graph)
         compose at each node, matching Binding Constraint #1 of the Plan.
 
@@ -385,6 +387,9 @@ class GraphMFGSolver(BaseCouplingIterator):
         p = self._problems[k]
         if not hjb_source_is_active(p):
             return coupling_source
+        # A node problem's coupling cost through the problem's own binding, on its grid; off a grid it is refused here,
+        # before the first evaluation (#1642 stage 1b-2).
+        binding = coupling_binding_for(p, reader="GraphMFGSolver") if "coupling_cost" in hjb_source_fields(p) else None
 
         dt = self._dt
 
@@ -394,7 +399,7 @@ class GraphMFGSolver(BaseCouplingIterator):
             # graph coupling source and summed in the primitive's own order (source, F's part, nonlocal), which
             # preserves byte-for-byte agreement with the pre-#1382 graph closure. Uses self._dt so the slice index
             # matches the grid couplers.
-            for part in _problem_hjb_source_terms(p, Ms_expanded[k], Us_full[k], t, x_eval, dt).values():
+            for part in _problem_hjb_source_terms(p, Ms_expanded[k], Us_full[k], t, x_eval, dt, binding).values():
                 s = s + part
             return s
 

@@ -14,7 +14,10 @@ Issue #1131 Phase 1.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+import numpy as np
 
 from .assembly import (
     assemble_advection,
@@ -28,6 +31,26 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
     from scipy import sparse
+
+
+@dataclass(frozen=True)
+class LumpedMassPointMeasure:
+    """A finite-element space's dofs as a point measure (`PointMeasure`, #1642 stage 1b-2): each dof with its consistent
+    mass matrix's row sum, ``integral phi_i``, as its weight, on the mesh's measure, the sum of its element volumes.
+
+    For P1 every row sum is positive and the row sums sum to the mesh's measure, by the partition of unity; the
+    quadrature they make is the lumped mass. The arrays are held as read-only float64 copies.
+    """
+
+    points: NDArray
+    weights: NDArray
+    domain_measure: float
+
+    def __post_init__(self) -> None:
+        for name in ("points", "weights"):
+            array = np.array(getattr(self, name), dtype=np.float64)
+            array.flags.writeable = False
+            object.__setattr__(self, name, array)
 
 
 class FEMDiscretization:

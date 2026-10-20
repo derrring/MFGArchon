@@ -66,6 +66,7 @@ Conventions (mirrored verbatim from the prior ``FixedPointIterator`` copy):
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -92,21 +93,46 @@ def _call_problem_source(problem: MFGProblem, name: str, *, t: float, x: NDArray
     return bound_attribute(problem, name, SOURCE_TERM_SLOTS, role=name)(x=x, m=m, v=v, t=t)
 
 
+@dataclass(frozen=True)
+class CouplingBinding:
+    """A coupling cost bound for one HJB evaluation: its energy, and the points it was bound on, in the order of the
+    density the energy reads (#1642 stage 1b-2).
+
+    On a grid it is the problem's, `problem_coupling_binding`. Off a grid the problem binds nothing, since the cost is
+    bound where it is put to use: by the HJB solver that evaluates it, on its own points and weights
+    (``BaseHJBSolver.coupling_binding``), which the coupler hands to `compose_hjb_source`.
+    """
+
+    energy: EnergyFunctional
+    nodes: NDArray
+
+
+def problem_coupling_binding(problem: MFGProblem) -> CouplingBinding | None:
+    """The problem's own binding of ``Model.coupling_cost``: ``problem.coupling_energy`` on the grid's nodes, the rows
+    of ``geometry.get_spatial_grid()``; None where the problem binds none, on a geometry that is not a grid, or with no
+    cost (#1642)."""
+    energy = problem.coupling_energy
+    if energy is None:
+        return None
+    return CouplingBinding(energy, np.asarray(problem.geometry.get_spatial_grid(), dtype=float))
+
+
 def hjb_source_fields(problem: MFGProblem) -> list[str]:
     """The fields that declare a problem-level HJB source, of those this problem sets: the one owner of that
     predicate (#2666, #1642 stage 1).
 
-    ``"source_term_hjb"``, ``"nonlocal_operator"``, and ``"coupling_cost"`` for a bound ``Model.coupling_cost``
-    (``problem.coupling_energy``). Every consumer reads this rather than the fields, so a part added here is composed,
-    and refused where it cannot be, everywhere at once: the grid couplers (`compose_hjb_source`), ``GraphMFGSolver``,
-    and ``BaseHJBSolver.solve``'s refusal.
+    ``"source_term_hjb"``, ``"nonlocal_operator"``, and ``"coupling_cost"`` wherever the model declares a
+    ``coupling_cost``, bound by the problem on its grid (``problem.coupling_energy``) or left to the HJB solver off a
+    grid (stage 1b-2). Every consumer reads this rather than the fields, so a part added here is composed, and refused
+    where it cannot be, everywhere at once: the grid couplers (`compose_hjb_source`), ``GraphMFGSolver``, and
+    ``BaseHJBSolver.solve``'s refusal.
     """
     fields = []
     if problem.source_term_hjb is not None:
         fields.append("source_term_hjb")
     if problem.nonlocal_operator is not None:
         fields.append("nonlocal_operator")
-    if problem.coupling_energy is not None:
+    if problem.declared_coupling_cost is not None:
         fields.append("coupling_cost")
     return fields
 
@@ -120,11 +146,11 @@ def _coupling_part(energy: EnergyFunctional, nodes: NDArray, m_t: NDArray, x: ND
     """The coupling cost's part of the HJB source: ``delta F / delta m`` at the density slice ``m_t``, evaluated at
     ``x`` (#1642).
 
-    ``nodes`` are the grid's, the rows of ``geometry.get_spatial_grid()`` in the grid's C order, which F was bound in,
-    and ``m_t`` is flattened in that order. At those nodes, in that order, the part is ``flat_derivative``. At other
-    points -- a solver's own, such as HJB-GFDM's collocation points, or the nodes in another order -- it is
-    ``flat_derivative_at``, which the bound energy has when it is a `PointwiseFlatDerivative` and is refused by name
-    when it is not (stage 1b-1).
+    ``nodes`` are the points F was bound on (`CouplingBinding`): on a grid, the rows of ``geometry.get_spatial_grid()``
+    in the grid's C order; for HJB-FEM, its dofs. ``m_t`` is flattened in that order. At those points, in that order,
+    the part is ``flat_derivative``. At other points -- a solver's own, such as HJB-GFDM's collocation points, or the
+    nodes in another order -- it is ``flat_derivative_at``, which the bound energy has when it is a
+    `PointwiseFlatDerivative` and is refused by name when it is not (stage 1b-1).
     """
     from mfgarchon.operators.interaction.energy_functionals import PointwiseFlatDerivative
 
@@ -132,9 +158,9 @@ def _coupling_part(energy: EnergyFunctional, nodes: NDArray, m_t: NDArray, x: ND
     nodes = np.asarray(nodes, dtype=float).reshape(np.shape(energy.weights)[0], -1)
     if flat.size != len(nodes):
         raise ValueError(
-            f"The coupling cost was bound on this problem's {len(nodes)} grid nodes, and this HJB evaluation passes a "
-            f"density slice of {flat.size} values. The density the coupling part reads is the grid's, one value per "
-            "node in the grid's order (#1642)."
+            f"The coupling cost was bound on {len(nodes)} points, and this HJB evaluation passes a density slice of "
+            f"{flat.size} values. The density the coupling part reads is the one it was bound on, one value per point "
+            "in their order (#1642)."
         )
     if points_are_grid_nodes(x, nodes):
         return np.asarray(energy.flat_derivative(flat, t=t), dtype=float)
@@ -144,13 +170,13 @@ def _coupling_part(energy: EnergyFunctional, nodes: NDArray, m_t: NDArray, x: ND
         points = points[:, None]
     if points.ndim != 2 or points.shape[1] != d:
         raise ValueError(
-            f"The coupling cost was bound on a grid in {d}-D, and this HJB evaluation passes x of shape "
+            f"The coupling cost was bound on points in {d}-D, and this HJB evaluation passes x of shape "
             f"{np.shape(x)}, not points of shape (n, {d}) (#1642)."
         )
     if not isinstance(energy, PointwiseFlatDerivative):
         raise NotImplementedError(
             f"The coupling cost's bound energy, {type(energy).__name__}, has no flat_derivative_at(m, x, *, t), so "
-            f"it evaluates only at the {len(nodes)} grid nodes it was bound on, in their order; this HJB evaluation "
+            f"it evaluates only at the {len(nodes)} points it was bound on, in their order; this HJB evaluation "
             f"passes {len(points)} other points, such as HJB-GFDM's collocation points. Give the energy a "
             "flat_derivative_at (PointwiseFlatDerivative, in mfgarchon.operators.interaction.energy_functionals), or "
             "solve with a solver that evaluates at the grid's nodes -- HJB-FDM, HJB-SL, or HJB-WENO in 1-D (#1642)."
@@ -164,6 +190,26 @@ def _coupling_part(energy: EnergyFunctional, nodes: NDArray, m_t: NDArray, x: ND
     return values
 
 
+def coupling_binding_for(
+    problem: MFGProblem, binding: CouplingBinding | None = None, reader: str | None = None
+) -> CouplingBinding:
+    """The binding a declared ``Model.coupling_cost`` is read through: ``binding``, from the HJB solver the source is
+    for (``BaseHJBSolver.coupling_binding``), or else the problem's own on its grid (`problem_coupling_binding`).
+    Where neither exists it is refused by name, naming ``reader``: off a grid the problem binds none (#1642 stage 1b-2).
+    """
+    bound = binding if binding is not None else problem_coupling_binding(problem)
+    if bound is not None:
+        return bound
+    raise NotImplementedError(
+        f"{reader or 'compose_hjb_source'} has no binding of Model(coupling_cost=...) on this "
+        f"{type(problem.geometry).__name__}: off a grid the problem binds none, since a coupling cost is bound where it "
+        "is put to use, by the HJB solver that evaluates it, on its own points and weights (#1642). HJB-FEM P1 on a "
+        "mesh binds it, through a coupler that passes its binding: problem.solve(), FixedPointIterator, a "
+        "BlockIterator, or MultiPopulationIterator with one population. On a point cloud or an implicit domain, "
+        "HJB-GFDM's binding at its collocation points is #2761."
+    )
+
+
 def _problem_hjb_source_terms(
     problem: MFGProblem,
     m_current: NDArray,
@@ -171,6 +217,8 @@ def _problem_hjb_source_terms(
     t: float,
     x: NDArray,
     dt: float,
+    binding: CouplingBinding | None = None,
+    reader: str | None = None,
 ) -> dict[str, NDArray]:
     """The convention-bearing HJB source terms shared by every coupler (Issue #1382).
 
@@ -187,6 +235,9 @@ def _problem_hjb_source_terms(
 
     ``dt`` is passed explicitly (rather than read from ``problem.dt``) so the graph
     coupler — which carries its own ``self._dt`` — slices identically.
+
+    ``binding`` is the coupling cost's, from the HJB solver the source is for (`CouplingBinding`); by default the
+    problem's grid binding. A declared cost with neither is refused by name, naming ``reader`` (`coupling_binding_for`).
     """
     out: dict[str, NDArray] = {}
     fields = hjb_source_fields(problem)
@@ -197,9 +248,8 @@ def _problem_hjb_source_terms(
     if "source_term_hjb" in fields:
         out["source"] = _call_problem_source(problem, "source_term_hjb", t=t, x=x, m=m_t, v=v_t)
     if "coupling_cost" in fields:
-        out["coupling"] = _coupling_part(
-            problem.coupling_energy, np.asarray(problem.geometry.get_spatial_grid()), m_t, x, t
-        )
+        bound = coupling_binding_for(problem, binding, reader)
+        out["coupling"] = _coupling_part(bound.energy, bound.nodes, m_t, x, t)
     if "nonlocal_operator" in fields:
         out["nonlocal"] = problem.nonlocal_operator @ v_t
     return out
@@ -209,6 +259,8 @@ def compose_hjb_source(
     problem: MFGProblem,
     m_current: NDArray,
     u_current: NDArray,
+    binding: CouplingBinding | None = None,
+    reader: str | None = None,
 ) -> Callable[[float, NDArray], NDArray] | None:
     """Compose problem-level HJB source terms into a solver-level callable.
 
@@ -221,6 +273,10 @@ def compose_hjb_source(
         m_current: Density iterate ``(Nt+1, Nx)`` bound for time-``t`` slicing.
         u_current: Value-function iterate ``(Nt+1, Nx)`` bound for the nonlocal
             term's time-``t`` slicing.
+        binding: The coupling cost's binding from the HJB solver the source is for (`CouplingBinding`); by default
+            the problem's grid binding. Off a grid a declared cost has no other, and is refused by name here, before
+            any evaluation (`coupling_binding_for`).
+        reader: Who reads the source, for that refusal's message.
 
     Returns:
         Callable, or ``None`` if the problem declares no HJB source (`hjb_source_is_active`).
@@ -233,6 +289,8 @@ def compose_hjb_source(
     # a composition that only ADDS an owner has not consolidated anything.
     if not hjb_source_is_active(problem):
         return None
+    if "coupling_cost" in hjb_source_fields(problem):
+        binding = coupling_binding_for(problem, binding, reader)
 
     def composed(t: float, x: NDArray) -> NDArray:
         # Source + nonlocal via the shared single-source primitive (Issue #1382). Order
@@ -244,7 +302,7 @@ def compose_hjb_source(
         # The parts in the primitive's own order, source -> coupling -> nonlocal, the one order every consumer sums
         # in: the coupling part (#1642) sits after the source, so a problem without it sums the other two in their
         # pre-#1642 order, bit for bit.
-        parts = _problem_hjb_source_terms(problem, m_current, u_current, t, x, problem.dt)
+        parts = _problem_hjb_source_terms(problem, m_current, u_current, t, x, problem.dt, binding, reader)
         terms = list(parts.values())
         return sum(terms) if terms else np.zeros(x.shape[0])
 

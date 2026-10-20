@@ -17,7 +17,7 @@ Issue #1131 Phase 2.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from scipy import sparse
@@ -38,8 +38,10 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
+    from mfgarchon.alg.numerical.coupling.source_composition import CouplingBinding
     from mfgarchon.alg.numerical.weak_form_discretization import WeakFormDiscretization
     from mfgarchon.core.mfg_problem import MFGProblem
+    from mfgarchon.operators.interaction.point_measure import PointMeasure
 
 logger = get_logger(__name__)
 
@@ -59,19 +61,19 @@ class WeakFormHJBSolver(BaseHJBSolver):
 
     def __init__(self, problem: MFGProblem, discretization: WeakFormDiscretization) -> None:
         super().__init__(problem)
-        # #1642 ruling (ii): a weak-form solver binds a coupling cost against its own discretization or refuses it.
-        # Neither has its own binding yet (stage 1b-2), and on a grid problem the coupled route reads a grid-bound
-        # energy at the dofs by index, a coefficient as a point value (#2672).
+        # #1642 ruling (ii): a weak-form solver binds a coupling cost against its own discretization or refuses it. On a
+        # grid problem the energies are the problem's, bound on its grid nodes and measure, and the coupled route would
+        # read them at the dofs by index, a coefficient as a point value (#2672). Off a grid the problem binds no
+        # coupling cost, and this solver binds it on its own discretization below (stage 1b-2).
         bound = [name for name in ("coupling_energy", "terminal_energy") if getattr(problem, name, None) is not None]
         if bound:
             raise NotImplementedError(
                 f"{type(self).__name__} solves on its own discretization, and this problem declares "
-                f"{' and '.join(bound)}, bound on the problem's grid nodes and measure. This solver has no binding "
-                "of its own yet, so it would read that energy at its dofs by index, a coefficient as a point value "
-                "(#2672); binding against a weak-form solver's own discretization is #1642's stage 1b-2. Solve with "
-                "a solver that evaluates on the grid's measure -- HJB-FDM, HJB-SL, or HJB-GFDM at its collocation "
-                "points -- or, for a linear F = integral V m, give V to the Hamiltonian as its potential, and for a "
-                "linear G = integral V m(T), add V to u_terminal."
+                f"{' and '.join(bound)}, bound on the problem's grid nodes and measure. It would read that energy at "
+                "its dofs by index, a coefficient as a point value (#2672). Solve with a solver that evaluates on the "
+                "grid's measure -- HJB-FDM, HJB-SL, or HJB-GFDM at its collocation points -- or, for a linear "
+                "F = integral V m, give V to the Hamiltonian as its potential, and for a linear G = integral V m(T), "
+                "add V to u_terminal."
             )
         self._disc = discretization
         self._n_dof = discretization.n_dof
@@ -81,10 +83,40 @@ class WeakFormHJBSolver(BaseHJBSolver):
         self._G_grad: list[sparse.csr_matrix] | None = None
         self._M_lumped_inv: NDArray | None = None
         self._bc = self.get_boundary_conditions()
+        self._coupling_binding = self._bind_coupling_cost(getattr(problem, "declared_coupling_cost", None))
 
     @property
     def n_dof(self) -> int:
         return self._n_dof
+
+    # --- The coupling cost, bound on this solver's own discretization (#1642 stage 1b-2) ------------------------
+    def _coupling_point_measure(self) -> PointMeasure | None:
+        """The point measure this solver binds ``Model.coupling_cost`` on: its dofs, in the order of the density it
+        reads, each with its quadrature weight. None, the default, binds none, and a declared cost is then refused at
+        construction. HJB-FEM P1 overrides it."""
+        return None
+
+    def _bind_coupling_cost(self, cost: Any) -> CouplingBinding | None:
+        """``cost`` bound on `_coupling_point_measure` through ``bind_on_measure``, the one place a point measure is put
+        to use; None with no cost, and refused by name where this solver has no measure to bind it on."""
+        if cost is None:
+            return None
+        measure = self._coupling_point_measure()
+        if measure is None:
+            raise NotImplementedError(
+                f"{type(self).__name__} solves on its own discretization and binds no Model(coupling_cost=...) there "
+                "(#1642 stage 1b-2). HJB-FEM P1 binds it on a mesh, HJBFEMSolver(problem, order=1); for a linear "
+                "F = integral V m, V can also go to the Hamiltonian as its potential."
+            )
+        from mfgarchon.alg.numerical.coupling.source_composition import CouplingBinding
+        from mfgarchon.operators.interaction.point_measure import bind_on_measure
+
+        return CouplingBinding(bind_on_measure(cost, measure), np.asarray(measure.points, dtype=float))
+
+    def coupling_binding(self) -> CouplingBinding | None:
+        """``Model.coupling_cost`` bound on this solver's own discretization at construction, or None with no cost
+        (#1642 stage 1b-2): never the problem's grid binding, which this solver refuses."""
+        return self._coupling_binding
 
     # --- Boundary-condition strategy (subclass-supplied) ----------------------
     def _is_pure_neumann(self) -> bool:

@@ -7,7 +7,8 @@ and every cost binds through one route:
 
 - `GridPointMeasure`: a problem's grid nodes in the grid's C order, with the problem's measure (its trapezoid
   weights);
-- a finite-element space's dofs with its consistent-mass row sums (stage 1b-2);
+- ``LumpedMassPointMeasure`` (``alg.numerical.fem``): HJB-FEM P1's dofs with its consistent-mass row sums, which
+  ``HJBFEMSolver`` binds the cost on (stage 1b-2);
 - a collocation cloud's points with their clipped Voronoi cells (#2761, item 7).
 
 `bind_on_measure` is the one place a measure is put to use. It checks the measure's contract and refuses a cost
@@ -45,6 +46,11 @@ class PointMeasure(Protocol):
       the check whatever its weights are, so the check would hold nothing. The grid's, `GridPointMeasure`, is the box
       its nodes span, the domain the problem's grid measure integrates over, until #2769 moves that measure onto the
       grid's box.
+
+    The points are read as points of Euclidean space: `InteractionCost`'s direct quadrature takes their differences
+    ``x - y``, so on a domain with a periodic axis the interaction is the implementer's responsibility, since a measure
+    carries no topology. The grid's measure is refused on a periodic axis by name (#2725), and HJB-FEM refuses a
+    PERIODIC condition at construction (#1456).
     """
 
     @property

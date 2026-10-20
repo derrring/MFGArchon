@@ -248,7 +248,7 @@ class MFGResidual:
             # dropping a composed source the solver cannot accept. Compose unconditionally; if
             # the problem defines a source but this HJB solver's signature lacks source_term,
             # raise rather than solve the wrong problem. (Picard: base_mfg._build_hjb_kwargs.)
-            hjb_source = compose_hjb_source(self.problem, M, U_prev)
+            hjb_source = compose_hjb_source(self.problem, M, U_prev, reader="MFGResidual")
             kwargs.update(
                 resolve_source_kwarg(
                     self._hjb_sig_params,

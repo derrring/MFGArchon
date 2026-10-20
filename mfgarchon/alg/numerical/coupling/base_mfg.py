@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from mfgarchon.alg.numerical.fp_solvers.base_fp import DriftConvention
     from mfgarchon.core.mfg_problem import MFGProblem
     from mfgarchon.types.solver_types import SolverReturnTuple
+
+    from .source_composition import CouplingBinding
 else:
     pass
 
@@ -407,6 +409,15 @@ def resolve_source_kwarg(
     )
 
 
+def hjb_coupling_binding(hjb_solver: Any) -> CouplingBinding | None:
+    """The coupling cost's binding from ``hjb_solver``, ``BaseHJBSolver.coupling_binding``, for `hjb_solve_kwargs`
+    (#1642 stage 1b-2). None for a solver that is not a ``BaseHJBSolver``: its source takes the problem's own binding,
+    which off a grid is none, and a declared cost is then refused by name."""
+    from mfgarchon.alg.numerical.hjb_solvers.base_hjb import BaseHJBSolver
+
+    return hjb_solver.coupling_binding() if isinstance(hjb_solver, BaseHJBSolver) else None
+
+
 def hjb_solve_kwargs(
     problem: Any,
     params: set[str] | None,
@@ -416,6 +427,7 @@ def hjb_solve_kwargs(
     U: np.ndarray,
     volatility: float | np.ndarray | Any | None = None,
     volatility_kind: str | None = None,
+    binding: CouplingBinding | None = None,
 ) -> dict[str, Any]:
     """The kwargs an HJB solve receives from ``problem``: its composed source and any volatility override.
 
@@ -427,7 +439,8 @@ def hjb_solve_kwargs(
     (``RegimeSwitchingIterator``'s cross-regime term) composes it with ``compose_hjb_source`` and forwards the
     sum through ``resolve_source_kwarg``; neither decision is restated there.
 
-    ``params`` is the solver's ``solve_hjb_system`` parameter names, ``None`` when introspection failed.
+    ``params`` is the solver's ``solve_hjb_system`` parameter names, ``None`` when introspection failed. ``binding`` is
+    the solver's binding of the coupling cost (`hjb_coupling_binding`); off a grid the source has no other.
     """
     kwargs: dict[str, Any] = {}
     if params is None:
@@ -436,7 +449,7 @@ def hjb_solve_kwargs(
         # dropped here in silence -- the same shape as #2207 one level up. Deciding what an
         # unreadable signature should mean (refuse, or assume it accepts) is not this change's.
         return kwargs
-    source_term = compose_hjb_source(problem, M, U)
+    source_term = compose_hjb_source(problem, M, U, binding=binding, reader=solver_name)
     kwargs.update(
         resolve_volatility_kwarg(params, volatility, volatility_kind, problem, solver_name, "solve_hjb_system", "HJB")
     )
@@ -501,6 +514,8 @@ class BaseCouplingIterator(ABC):
         self._fp_drift_convention: DriftConvention | None = None
         self._hjb_solver_name: str = "<hjb solver>"
         self._fp_solver_name: str = "<fp solver>"
+        # #1642 stage 1b-2: the HJB solver's binding of the coupling cost, cached beside its signature.
+        self._hjb_coupling_binding: CouplingBinding | None = None
 
     @staticmethod
     def _reshape_to(arr: np.ndarray, shape: tuple) -> np.ndarray:
@@ -514,6 +529,7 @@ class BaseCouplingIterator(ABC):
         """
         self._hjb_solver_name = type(hjb_solver).__name__
         self._fp_solver_name = type(fp_solver).__name__
+        self._hjb_coupling_binding = hjb_coupling_binding(hjb_solver)
         try:
             sig = inspect.signature(hjb_solver.solve_hjb_system)
             self._hjb_sig_params = set(sig.parameters.keys())
@@ -558,6 +574,7 @@ class BaseCouplingIterator(ABC):
             U=U,
             volatility=volatility,
             volatility_kind=volatility_kind,
+            binding=self._hjb_coupling_binding,
         )
 
     def _build_fp_kwargs(

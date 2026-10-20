@@ -17,8 +17,7 @@
     - `PotentialCost(V)` with a `V(t, x)`: F is autonomous, and binding would read V at t = 0 only. The message
       names the Hamiltonian's `potential(t, x)`;
     - a coupling cost on a network, where no solve takes a `Model` (#2045). The message names
-      `NetworkMFGComponents(node_potential_func=...)`;
-    - FEM and meshless geometries, until stage 1b.
+      `NetworkMFGComponents(node_potential_func=...)`.
   - Which fields declare a problem's HJB source now has one owner, `hjb_source_fields`. The grid couplers,
     `GraphMFGSolver`, `BaseHJBSolver.solve`'s refusal and multi-D WENO's refusal read it, so each refusal names
     `coupling_cost` too.
