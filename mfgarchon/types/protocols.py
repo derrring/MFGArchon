@@ -146,7 +146,11 @@ class HJBSolverProtocol(Protocol):
         solve(...): Main solve method (preferred modern API)
         solve_hjb_system(...): Legacy solve method (for backward compatibility)
 
-    Note: Solvers should implement at least one of these methods.
+    Note: Solvers should implement at least one of these methods. A solver handed to a coupling loop also carries
+    ``problem``, the problem it was built for: the loop compares its geometry with the problem it solves, and refuses
+    a solver without one by name (#2775). A solver whose DOFs sit at points of its own, not its geometry's, declares
+    them as ``dof_points``, an (N, d) array in the DOFs' order, and the loop requires them to equal the points of the
+    problem it solves, bit for bit; on an implicit domain, whose data have no fixed points (#2778), it refuses them.
     """
 
     def solve(
@@ -186,7 +190,11 @@ class FPSolverProtocol(Protocol):
         solve(...): Main solve method (preferred modern API)
         solve_fp_system(...): Legacy solve method (for backward compatibility)
 
-    Note: Solvers should implement at least one of these methods.
+    Note: Solvers should implement at least one of these methods. A solver handed to a coupling loop also carries
+    ``problem``, the problem it was built for: the loop compares its geometry with the problem it solves, and refuses
+    a solver without one by name (#2775). A solver whose DOFs sit at points of its own, not its geometry's, declares
+    them as ``dof_points``, an (N, d) array in the DOFs' order, and the loop requires them to equal the points of the
+    problem it solves, bit for bit; on an implicit domain, whose data have no fixed points (#2778), it refuses them.
     """
 
     def solve(

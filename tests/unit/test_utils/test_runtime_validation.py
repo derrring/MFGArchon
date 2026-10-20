@@ -16,6 +16,8 @@ import pytest
 import numpy as np
 
 from mfgarchon.alg.numerical.coupling.fixed_point_iterator import FixedPointIterator
+from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
 from mfgarchon.core.hamiltonian import QuadraticControlCost, SeparableHamiltonian
 from mfgarchon.core.mfg_components import MFGComponents
 from mfgarchon.core.mfg_problem import MFGProblem
@@ -196,7 +198,7 @@ def test_fixed_point_nan_early_termination():
     spatial_shape = problem.spatial_shape
 
     # Mock HJB solver: returns NaN on second call
-    hjb_solver = Mock()
+    hjb_solver = Mock(spec=HJBFDMSolver)  # spec'd: a bare Mock invents the `dof_points` the pairing check reads (#2775)
     hjb_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
     call_count = [0]
 
@@ -209,7 +211,7 @@ def test_fixed_point_nan_early_termination():
     hjb_solver.solve_hjb_system.side_effect = hjb_side_effect
 
     # Mock FP solver: returns valid density
-    fp_solver = Mock()
+    fp_solver = Mock(spec=FPFDMSolver)
     fp_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
     fp_solver.solve_fp_system.return_value = np.ones((num_time_steps, *spatial_shape)) / Nx
     # #2188: this FP step completes, so the iterator reaches the override call. A bare Mock would
@@ -261,7 +263,7 @@ def test_fp_is_not_solved_after_hjb_returns_nonfinite():
         # Second HJB solve diverges.
         return np.full(shape, np.nan) if hjb_calls[0] >= 2 else np.zeros(shape)
 
-    hjb_solver = Mock()
+    hjb_solver = Mock(spec=HJBFDMSolver)  # spec'd: a bare Mock invents the `dof_points` the pairing check reads (#2775)
     hjb_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
     hjb_solver.solve_hjb_system.side_effect = hjb_side_effect
 
@@ -278,7 +280,7 @@ def test_fp_is_not_solved_after_hjb_returns_nonfinite():
         u_seen_by_fp.append(any(not np.all(np.isfinite(c)) for c in candidates))
         return np.ones(shape) / Nx
 
-    fp_solver = Mock()
+    fp_solver = Mock(spec=FPFDMSolver)
     fp_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
     fp_solver.solve_fp_system.side_effect = fp_side_effect
     fp_solver.mass_conservation_error_override.return_value = None  # #2188, see above
@@ -312,10 +314,10 @@ def test_mass_conservation_is_unmeasured_when_fp_never_ran():
     Nx = _NX
     shape = (problem.Nt + 1, *problem.spatial_shape)
 
-    hjb_solver = Mock()
+    hjb_solver = Mock(spec=HJBFDMSolver)  # spec'd: a bare Mock invents the `dof_points` the pairing check reads (#2775)
     hjb_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
     hjb_solver.solve_hjb_system.side_effect = lambda *a, **k: np.full(shape, np.nan)
-    fp_solver = Mock()
+    fp_solver = Mock(spec=FPFDMSolver)
     fp_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
     fp_solver.solve_fp_system.side_effect = lambda *a, **k: np.ones(shape) / Nx
 
@@ -352,12 +354,12 @@ def test_mass_conservation_is_still_measured_when_fp_ran_before_the_divergence()
         # Diverge on the SECOND solve, so one full FP step has already completed.
         return np.full(shape, np.nan) if hjb_calls[0] >= 2 else np.zeros(shape)
 
-    hjb_solver = Mock()
+    hjb_solver = Mock(spec=HJBFDMSolver)  # spec'd: a bare Mock invents the `dof_points` the pairing check reads (#2775)
     hjb_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
     hjb_solver.solve_hjb_system.side_effect = hjb_side_effect
     # A density that sheds mass down the time axis: a real, measurable conservation defect.
     losing_mass = np.ones(shape) / Nx * np.linspace(1.0, 0.1, shape[0])[:, None]
-    fp_solver = Mock()
+    fp_solver = Mock(spec=FPFDMSolver)
     fp_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
     fp_solver.solve_fp_system.side_effect = lambda *a, **k: losing_mass
     # #2188: a real BaseFPSolver's mass_conservation_error_override() returns None by default,
@@ -393,10 +395,10 @@ def test_terminal_condition_survives_an_hjb_divergence():
     Nx = _NX
     shape = (problem.Nt + 1, *problem.spatial_shape)
 
-    hjb_solver = Mock()
+    hjb_solver = Mock(spec=HJBFDMSolver)  # spec'd: a bare Mock invents the `dof_points` the pairing check reads (#2775)
     hjb_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
     hjb_solver.solve_hjb_system.side_effect = lambda *a, **k: np.full(shape, np.nan)
-    fp_solver = Mock()
+    fp_solver = Mock(spec=FPFDMSolver)
     fp_solver.problem = problem  # built for the problem it is paired to (#2420 pairing guard)
     fp_solver.solve_fp_system.side_effect = lambda *a, **k: np.ones(shape) / Nx
 

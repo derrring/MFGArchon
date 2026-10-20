@@ -39,7 +39,7 @@ from mfgarchon.utils.numerical.nonlinear_solvers import NewtonSolver, SolverInfo
 from mfgarchon.utils.pde_coefficients import retired_volatility_keywords
 from mfgarchon.utils.solver_result import SolverResult
 
-from .base_mfg import BaseCouplingIterator, assert_paired_solver_sigma
+from .base_mfg import BaseCouplingIterator, assert_paired_solver_geometry, assert_paired_solver_sigma
 from .fixed_point_utils import check_convergence_criteria, diverged_value_function
 from .mfg_residual import MFGResidual
 
@@ -159,6 +159,7 @@ class NewtonMFGSolver(BaseCouplingIterator):
         self.hjb_solver = hjb_solver
         self.fp_solver = fp_solver
         assert_paired_solver_sigma(hjb_solver, fp_solver, "NewtonMFGSolver", problem=problem, override=volatility)
+        assert_paired_solver_geometry(hjb_solver, fp_solver, "NewtonMFGSolver", problem=problem)
 
         # Picard warm-up parameters
         self.picard_warmup = picard_warmup

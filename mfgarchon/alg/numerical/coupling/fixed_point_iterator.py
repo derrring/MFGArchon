@@ -21,7 +21,13 @@ from mfgarchon.utils.mfg_logging import get_logger
 from mfgarchon.utils.pde_coefficients import retired_volatility_keywords
 from mfgarchon.utils.solver_result import SolverResult
 
-from .base_mfg import BaseCouplingIterator, allocate_state_arrays, assert_paired_solver_sigma, resolve_backend
+from .base_mfg import (
+    BaseCouplingIterator,
+    allocate_state_arrays,
+    assert_paired_solver_geometry,
+    assert_paired_solver_sigma,
+    resolve_backend,
+)
 from .fixed_point_utils import (
     check_convergence_criteria,
     diverged_value_function,
@@ -187,6 +193,7 @@ class FixedPointIterator(BaseCouplingIterator):
         # A volatility override needs no guard of its own: resolve_volatility_kwarg forwards it
         # to both sides or refuses the solve (#1783).
         assert_paired_solver_sigma(hjb_solver, fp_solver, "FixedPointIterator", problem=problem, override=volatility)
+        assert_paired_solver_geometry(hjb_solver, fp_solver, "FixedPointIterator", problem=problem)
 
         # Anderson acceleration support
         self.use_anderson = use_anderson
@@ -369,15 +376,10 @@ class FixedPointIterator(BaseCouplingIterator):
             # Issue #1489 (S6): size the state on the SOLVER's DOF count, not num_spatial_points
             # (= num_vertices). For P2 FEM n_dof = vertices + edges > num_vertices, so a
             # (Nt+1, num_vertices) state mismatches the (Nt+1, n_dof) the solver returns -> an opaque
-            # broadcast ValueError deep in the damping step. Prefer the solver n_dof and fail loud on a
-            # HJB/FP DOF mismatch (a coupled solve needs a shared DOF layout).
+            # broadcast ValueError deep in the damping step. Prefer the solver n_dof; a HJB/FP DOF mismatch was refused
+            # at construction (`assert_paired_solver_geometry`, #1489, #2775).
             fp_n = getattr(self.fp_solver, "n_dof", None)
             hjb_n = getattr(self.hjb_solver, "n_dof", None)
-            if fp_n is not None and hjb_n is not None and fp_n != hjb_n:
-                raise ValueError(
-                    f"Paired HJB and FP solvers report different DOF counts (HJB n_dof={hjb_n}, "
-                    f"FP n_dof={fp_n}); a coupled solve needs a shared DOF layout (Issue #1489)."
-                )
             n = fp_n if fp_n is not None else (hjb_n if hjb_n is not None else int(self.problem.num_spatial_points))
             shape = (int(n),)
         else:

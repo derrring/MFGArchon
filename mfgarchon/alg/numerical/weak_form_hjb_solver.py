@@ -77,6 +77,9 @@ class WeakFormHJBSolver(BaseHJBSolver):
             )
         self._disc = discretization
         self._n_dof = discretization.n_dof
+        # A discretization may keep the caller's array (#2779), so the points it was built on are copied here.
+        self._dof_points = np.array(discretization.dof_coordinates, dtype=float)
+        self._dof_points.flags.writeable = False
         self._K = discretization.stiffness()
         self._M = discretization.mass()
         self._R_grad = discretization.gradient_projection()
@@ -88,6 +91,13 @@ class WeakFormHJBSolver(BaseHJBSolver):
     @property
     def n_dof(self) -> int:
         return self._n_dof
+
+    @property
+    def dof_points(self) -> NDArray:
+        """The points this solver's DOFs sat at when it was built, in their order: an (N, d) read-only copy taken
+        then. A coupling loop compares them with the points of the problem it solves (`assert_paired_solver_geometry`,
+        #2775)."""
+        return self._dof_points
 
     # --- The coupling cost, bound on this solver's own discretization (#1642 stage 1b-2) ------------------------
     def _coupling_point_measure(self) -> PointMeasure | None:

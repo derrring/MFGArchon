@@ -33,6 +33,7 @@ import numpy as np
 from mfgarchon.alg.numerical.coupling.base_mfg import (
     BaseCouplingIterator,
     assert_bc_providers_resolvable,
+    assert_paired_solver_geometry,
     assert_paired_solver_sigma,
     resolve_source_kwarg,
 )
@@ -224,6 +225,9 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
         # AFTER the count validation above, so a wrong-length list raises the clean count error first.
         for _k in range(K):
             assert_paired_solver_sigma(hjb_solvers[_k], fp_solvers[_k], f"RegimeSwitchingIterator[regime {_k}]")
+            assert_paired_solver_geometry(
+                hjb_solvers[_k], fp_solvers[_k], f"RegimeSwitchingIterator[regime {_k}]", problem=problems[_k]
+            )
 
         regime_config.validate()
         # Only meaningful once validate() has established the generator structure the

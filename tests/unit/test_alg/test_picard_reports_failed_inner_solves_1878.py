@@ -213,9 +213,11 @@ def test_the_verdict_reads_the_sweep_that_met_the_criteria(label, rule):
 
 
 class _DuckTypedHJB:
-    """A plain object with ``solve_hjb_system``: the coupling layer duck-types, so this is a supported solver."""
+    """A plain object with ``solve_hjb_system`` and the ``problem`` it was built for: the coupling layer duck-types, so
+    this is a supported solver. The loop compares that problem's geometry with the one it solves (#2775)."""
 
     def __init__(self, problem):
+        self.problem = problem
         self.inner = HJBFDMSolver(problem)
 
     def solve_hjb_system(self, M_density, U_terminal, U_coupling_prev, volatility=None, source_term=None, **kwargs):

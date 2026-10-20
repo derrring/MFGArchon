@@ -147,7 +147,11 @@ def test_nonfdm_backend_multipop_fails_loud():
     loud (the half-coupled silent-wrong equilibrium is the bug), not run silently."""
 
     class _StubHJB:
-        # Deliberately lacks _honors_multipop_cross_density.
+        # Deliberately lacks _honors_multipop_cross_density. Carries the problem it was built for, whose geometry the
+        # iterator compares with its population's (#2775).
+        def __init__(self, problem):
+            self.problem = problem
+
         def solve_hjb_system(self, *args, **kwargs):  # pragma: no cover - must not be reached
             raise AssertionError("solve_hjb_system should not be called; iterator must fail loud first")
 
@@ -156,7 +160,7 @@ def test_nonfdm_backend_multipop_fails_loud():
     multi = MultiPopulationProblem(populations=probs, population_names=["A", "B"])
     it = MultiPopulationIterator(
         multi,
-        [_StubHJB() for _ in range(K)],
+        [_StubHJB(p) for p in probs],
         [FPFDMSolver(p) for p in probs],
         relaxation=0.5,
     )
