@@ -892,6 +892,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         # stages 1 and 2). A rebuild binds them again: `_rebuilt` rebuilds from the Model.
         self._coupling_energy = self._bind_cost("coupling_cost")
         self._terminal_energy = self._bind_cost("terminal_coupling")
+        # Off a grid the HJB solver binds F as declared (stage 1b-2). Read with the binding, so that a Model changed
+        # after this build moves neither (#2745).
+        self._declared_coupling_cost = None if self._v1_model is None else self._v1_model.coupling_cost
 
         # Validate custom components if provided
         if self.is_custom:
@@ -2286,13 +2289,22 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
     @property
     def coupling_energy(self) -> EnergyFunctional | None:
-        """``Model.coupling_cost`` bound to this problem's nodes and measure, or None (#1642 stage 1).
+        """``Model.coupling_cost`` bound to this problem's grid nodes and measure, or None (#1642 stage 1).
 
         The HJB carries its flat derivative ``delta F / delta m`` at each time slice of m as a cost-signed source
         (`source_composition`), summed with the Hamiltonian's own coupling ``f``. Read-only: the binding is the
-        problem's, and a different F is a different ``Model`` (``with_model``).
+        problem's, and a different F is a different ``Model`` (``with_model``). None off a grid even when the model
+        declares a cost (`declared_coupling_cost`): there it is bound by the HJB solver that evaluates it, on its own
+        points and weights (stage 1b-2).
         """
         return self._coupling_energy
+
+    @property
+    def declared_coupling_cost(self) -> Any:
+        """``Model.coupling_cost`` as this problem was built with it, bound or not: the specification, not its binding
+        (#1642 stage 1b-2). Not None wherever ``coupling_energy`` is not None. None for a problem not built from a
+        ``Model``, or with no cost."""
+        return self._declared_coupling_cost
 
     @property
     def terminal_energy(self) -> EnergyFunctional | None:
@@ -2331,7 +2343,12 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
 
     def _bind_cost(self, field: str) -> EnergyFunctional | None:
         """``model.<field>.bind(self)`` for ``coupling_cost`` and ``terminal_coupling``, where this stage binds one; the
-        reason by name where it does not (#1642)."""
+        reason by name where it does not (#1642).
+
+        On a geometry that is neither a grid nor a network a ``coupling_cost`` is left unbound (stage 1b-2): it is bound
+        where it is put to use, by the HJB solver that evaluates it on its own points and weights, and a reader that
+        cannot bind it refuses it by name at solve time. Both fields are refused here on a network, and a
+        ``terminal_coupling`` everywhere off a grid."""
         if self._v1_model is None:
             return None
         self._v1_model.refuse_what_is_not_bound()
@@ -2353,11 +2370,12 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         from mfgarchon.geometry import TensorProductGrid
 
         if not isinstance(self.geometry, TensorProductGrid):
+            if field == "coupling_cost":
+                return None
             raise NotImplementedError(
                 f"Model({field}=...) binds on a TensorProductGrid; this problem's geometry is "
-                f"{type(self.geometry).__name__}. On FEM and meshless geometries the coupling cost binds against the HJB "
-                f"solver's own discretization, its dof coordinates and the quadrature weights it sees, which is "
-                f"stage 1b of #1642."
+                f"{type(self.geometry).__name__}. Off a grid a terminal coupling binds against the HJB solver's own "
+                "discretization, which is the remaining part of #1642's stage 1b (the issue's 'Stage 1b remaining')."
             )
         from mfgarchon.operators.interaction.energy_functionals import bound_energy_functional
 

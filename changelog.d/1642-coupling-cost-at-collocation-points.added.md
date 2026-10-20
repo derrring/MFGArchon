@@ -11,8 +11,8 @@
   - **Refused by name**, at points other than the nodes: a user's energy without `flat_derivative_at`; a sum with
     such a part; and an energy built without V or without its nodes. The first refusal names the solvers that
     evaluate at the grid's nodes.
-  - **A weak-form HJB solver refuses a problem that declares `coupling_cost` or `terminal_coupling`**, by name, at
-    construction. Such a solver has no binding of its own yet (stage 1b-2). On a grid problem, meshless Galerkin on its
-    own cloud read the grid-bound energy at its dofs by index, a coefficient taken as a point value (#2672). It ran
+  - **A weak-form HJB solver refuses a grid problem that declares `coupling_cost` or `terminal_coupling`**, by name,
+    at construction. Meshless Galerkin on its own cloud read the grid-bound energy at its dofs by index, a coefficient
+    taken as a point value (#2672). It ran
     silently with either energy on a cloud of the grid's nodes, and with a terminal coupling on any cloud of the
     grid's size.

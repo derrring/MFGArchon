@@ -18,6 +18,7 @@ from mfgarchon.utils.pde_coefficients import diffusion_from_volatility
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from mfgarchon.alg.numerical.coupling.source_composition import CouplingBinding
     from mfgarchon.geometry.boundary import BoundaryConditions, ConstraintProtocol
 
 # BC-aware gradient computation (Issue #542 fix)
@@ -277,6 +278,18 @@ class BaseHJBSolver(BaseNumericalSolver):
         """
         return None
 
+    def coupling_binding(self) -> CouplingBinding | None:
+        """``Model.coupling_cost`` bound on this solver's own points and weights, or None (#1642 stage 1b-2).
+
+        None by default: the solver evaluates the solved problem's own binding, on its grid (`coupling_binding_for`).
+        A solver that integrates on its own points and weights binds the cost of the problem it was built from there,
+        as HJB-FEM P1 does on its dofs. It is read off a grid only: on a grid the solved problem's own binding is read,
+        whatever this returns. The couplers built on ``BaseCouplingIterator``, ``MultiPopulationIterator`` and
+        the standalone ``solve()`` hand it to ``compose_hjb_source``; off a grid, a declared cost with no binding of its
+        own is refused there.
+        """
+        return None
+
     def __init__(self, problem: MFGProblem, config: BaseConfig | None = None) -> None:
         # Maintain backward compatibility - if no config provided, create a minimal one
         if config is None:
@@ -416,8 +429,8 @@ class BaseHJBSolver(BaseNumericalSolver):
 
         Raises:
             NotImplementedError: The problem declares an HJB source (`hjb_source_fields`: ``source_term_hjb``,
-                ``nonlocal_operator``, a bound ``coupling_cost``), which this entry has no route for; the message
-                names the routes that do (#2666).
+                ``nonlocal_operator``, a ``coupling_cost``), which this entry has no route for; the message names the
+                routes that do (#2666). A coupling cost this solver does not bind is refused for that instead (#1642).
 
         Example:
             >>> from mfgarchon.core.mfg_problem import MFGProblem
@@ -458,7 +471,16 @@ class BaseHJBSolver(BaseNumericalSolver):
         # source from the iterates every sweep, and a nonlocal term bound here would read the initial guess.
         from mfgarchon.alg.numerical.coupling.source_composition import compose_hjb_source, hjb_source_fields
 
-        if compose_hjb_source(self.problem, m_uniform, U_prev_picard) is not None:
+        if (
+            compose_hjb_source(
+                self.problem,
+                m_uniform,
+                U_prev_picard,
+                binding=self.coupling_binding(),
+                reader=f"{type(self).__name__}.solve()",
+            )
+            is not None
+        ):
             # Named for the message only; the predicate above decides, so a field the owner learns to compose
             # is refused even before it is named here.
             named = hjb_source_fields(self.problem)
@@ -469,9 +491,9 @@ class BaseHJBSolver(BaseNumericalSolver):
                 "instead -- problem.solve(), "
                 "or a coupling iterator such as FixedPointIterator, which composes the source from its iterates "
                 "every sweep -- or pass the source yourself: solver.solve_hjb_system(M, U_terminal, U_guess, "
-                "source_term=compose_hjb_source(problem, M, U_guess)), with compose_hjb_source from "
-                "mfgarchon.alg.numerical.coupling.source_composition. That binds the M and U_guess you pass, so a "
-                "nonlocal term reads U_guess, not the solution."
+                "source_term=compose_hjb_source(problem, M, U_guess, binding=solver.coupling_binding())), with "
+                "compose_hjb_source from mfgarchon.alg.numerical.coupling.source_composition. That binds the M and "
+                "U_guess you pass, so a nonlocal term reads U_guess, not the solution."
             )
 
         # Solve using the specific solver's implementation

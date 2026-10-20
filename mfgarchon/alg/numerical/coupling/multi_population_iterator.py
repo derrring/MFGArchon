@@ -20,7 +20,13 @@ import numpy as np
 from mfgarchon.utils.deprecation import deprecated_parameter
 from mfgarchon.utils.mfg_logging import get_logger
 
-from .base_mfg import assert_bc_providers_resolvable, assert_paired_solver_sigma, fp_solve_kwargs, hjb_solve_kwargs
+from .base_mfg import (
+    assert_bc_providers_resolvable,
+    assert_paired_solver_sigma,
+    fp_solve_kwargs,
+    hjb_coupling_binding,
+    hjb_solve_kwargs,
+)
 from .fixed_point_utils import diverged_value_function, hjb_solver_sig_params
 
 if TYPE_CHECKING:
@@ -238,7 +244,12 @@ class MultiPopulationIterator:
                 # Issue #2666: the population's own source, composed from the iterates this sweep starts
                 # from -- the previous U, as every single-population loop binds it (#1259).
                 hjb_kwargs = hjb_solve_kwargs(
-                    populations[k], self._hjb_sig_params[k], type(solver_k).__name__, M=M[k], U=U[k]
+                    populations[k],
+                    self._hjb_sig_params[k],
+                    type(solver_k).__name__,
+                    M=M[k],
+                    U=U[k],
+                    binding=hjb_coupling_binding(solver_k),
                 )
                 if honors_cross_density:
                     U[k] = solver_k.solve_hjb_system(

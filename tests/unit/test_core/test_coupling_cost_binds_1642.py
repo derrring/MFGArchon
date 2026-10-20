@@ -676,7 +676,7 @@ def test_an_energy_that_evaluates_only_at_its_nodes_is_refused_elsewhere():
     x = np.linspace(0.0, 1.0, 21)
     M = np.ones((3, 21))
     for cost, parts, refusal in (
-        (AtNodes(), 1, r"SimpleNamespace, has no flat_derivative_at.*21 grid nodes.*HJB-FDM, HJB-SL"),
+        (AtNodes(), 1, r"SimpleNamespace, has no flat_derivative_at.*21 points it was bound on.*HJB-FDM, HJB-SL"),
         (PotentialCost(_V) + AtNodes(), 2, r"its part, SimpleNamespace, has no flat_derivative_at"),
     ):
         problem = MFGProblem(
@@ -918,11 +918,11 @@ def test_each_hjb_solve_is_given_u_T_at_its_own_density(loop, diverge_at):
 def test_what_stage_two_does_not_bind_is_refused():
     """A terminal coupling is refused in the multi-population iterator, which passes the stacked densities (#1642, the
     user's ruling 5), and on a network, where no coupled solve takes a problem (#2568); the network's message names its
-    own route for u(T), ``terminal_node_value_func``. F and G alike are refused on FEM and meshless geometries, whose
-    HJB solvers own their discretization (stage 1b); and by a weak-form HJB solver on a grid problem, meshless Galerkin
-    on its own cloud, which has no binding of its own (stage 1b-2) and would read the grid-bound energy at its dofs by
-    index (#2672). At 14cb5839 that solver ran with either energy on a cloud of the grid's 21 nodes, and with G on the
-    nodes reversed or shifted by 0.01, with nothing raised."""
+    own route for u(T), ``terminal_node_value_func``. G is refused on FEM and meshless geometries, whose HJB solvers own
+    their discretization (stage 1b; F binds there on HJB-FEM P1, ``test_hjb_fem_binds_the_coupling_cost_1642``); and F
+    and G alike by a weak-form HJB solver on a grid problem, meshless Galerkin on its own cloud, which would read the
+    grid-bound energy at its dofs by index (#2672). At 14cb5839 that solver ran with either energy on a cloud of the
+    grid's 21 nodes, and with G on the nodes reversed or shifted by 0.01, with nothing raised."""
     from scipy.sparse import csr_matrix
 
     from mfgarchon.alg.numerical.meshless_galerkin import MeshlessGalerkinHJBSolver
@@ -935,16 +935,17 @@ def test_what_stage_two_does_not_bind_is_refused():
     mesh.boundary_conditions = no_flux_bc(dimension=1)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)  # the density's mass on these measures is not this pin's subject
-        for field in ("coupling_cost", "terminal_coupling"):
-            for domain in (Hyperrectangle(np.array([[0.0, 1.0]])), mesh):
-                refusal = rf"Model\({field}=\.\.\.\) binds on a TensorProductGrid.*{type(domain).__name__}"
-                with pytest.raises(NotImplementedError, match=refusal):
-                    MFGProblem(
-                        model=Model(hamiltonian=_hamiltonian(), volatility=0.3, **{field: PotentialCost(lambda x: x)}),
-                        domain=domain,
-                        conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.5),
-                        Nt=4,
-                    )
+        for domain in (Hyperrectangle(np.array([[0.0, 1.0]])), mesh):
+            refusal = rf"Model\(terminal_coupling=\.\.\.\) binds on a TensorProductGrid.*{type(domain).__name__}"
+            with pytest.raises(NotImplementedError, match=refusal):
+                MFGProblem(
+                    model=Model(
+                        hamiltonian=_hamiltonian(), volatility=0.3, terminal_coupling=PotentialCost(lambda x: x)
+                    ),
+                    domain=domain,
+                    conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.5),
+                    Nt=4,
+                )
     for field, energy in (("coupling_cost", "coupling_energy"), ("terminal_coupling", "terminal_energy")):
         on_grid = MFGProblem(
             model=Model(hamiltonian=_hamiltonian(), volatility=0.3, **{field: PotentialCost(lambda x: x)}),
@@ -952,7 +953,7 @@ def test_what_stage_two_does_not_bind_is_refused():
             conditions=Conditions(u_terminal=lambda x: 0.0, m_initial=lambda x: 1.0, T=0.5),
             Nt=4,
         )
-        with pytest.raises(NotImplementedError, match=rf"MeshlessGalerkinHJBSolver .* declares {energy}.*#2672.*1b-2"):
+        with pytest.raises(NotImplementedError, match=rf"MeshlessGalerkinHJBSolver .* declares {energy}.*#2672"):
             MeshlessGalerkinHJBSolver(on_grid, collocation_points=_x(on_grid)[:, None], delta=0.15)
 
     problems = [_terminal_coupled(), _terminal_coupled()]

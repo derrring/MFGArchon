@@ -488,7 +488,12 @@ class RegimeSwitchingIterator(BaseCouplingIterator):
                 )
                 # Issue #2666: regime k's own source, composed from the iterates this solve starts from.
                 hjb_source = self._make_hjb_source(
-                    k, K, Q, Us_full, Us_new, compose_hjb_source(self._problems[k], M_k, Us_full[k])
+                    k,
+                    K,
+                    Q,
+                    Us_full,
+                    Us_new,
+                    compose_hjb_source(self._problems[k], M_k, Us_full[k], reader="RegimeSwitchingIterator"),
                 )
                 hjb_sig_params_k = self._hjb_sig_params_k[k]
                 if hjb_sig_params_k is not None:
