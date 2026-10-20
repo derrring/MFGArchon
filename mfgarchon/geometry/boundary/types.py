@@ -679,7 +679,8 @@ class BCSegment:
             normal_at: Where the outward normal of ``domain_sdf`` is read; by default ``point``.
                      `BoundaryConditions.segment_for_point` passes the point as it was asked, and reads the
                      regions at its nearest point of the box (#2780). Moved onto a corner of a box SDF, the
-                     point would read the kink's diagonal and match neither face.
+                     point would read the kink's diagonal, which matches neither face above a ``normal_tolerance``
+                     of 1/sqrt(2) and both at or below it.
 
         Returns:
             True if this BC segment applies to the given point

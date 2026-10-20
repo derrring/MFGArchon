@@ -6,11 +6,12 @@
   `default_bc`. Both now absorb as the same part of the face written with `boundary="x_max"` does, and a flux limit on
   such an exit binds.
   - Past a corner the nearest point moves two coordinates, and a corner particle is not read right in general,
-    before or now: the applicator receives only the stepped point, so the face it crossed is unknown. A particle at
-    (1.2, 1.05), read on x_max, is now read at (1, 1), so an exit on x_max whose y range ends at 1 absorbs it. That is
-    right for one that crossed x = 1 first (from (0.9, 0.95) it crosses at y = 0.983), and wrong for one that crossed a
-    reflecting y_max first: (1.05, 1.2), reached from (0.95, 0.9) across y = 1 at x = 0.983, is now absorbed at the
-    x_max exit. #2490's corner reading and #2733's crossing point decide which.
+    before or now: the applicator receives only the stepped point, so where it crossed is unknown. Particles at
+    (1.2, 1.05) and (1.05, 1.2), read on x_max, are now read at (1, 1), so an exit on x_max whose y range ends at 1
+    absorbs them. Reached from (0.9, 0.95), the first crosses x = 1 at y = 0.983; reached from (0.95, 0.9), the second
+    reflects off a reflecting y_max at x = 0.983 and crosses x = 1 at y = 0.95. Under an exit y = (0.5, 1.0) both
+    should be absorbed, and now are. Under an exit y = (0.97, 1.0) the second should be reflected, and is now absorbed.
+    #2490's corner reading and #2733's crossing point decide which.
   - A collocation point of HJB-GFDM within its boundary tolerance outside a face is read at the face, so an
     `sdf_region` whose edge crosses the face beside it can now hold it.
   - A marked `region_name` read at a point outside the box with no face is refused by name, where it was read at the

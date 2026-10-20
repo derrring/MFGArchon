@@ -72,7 +72,7 @@ def test_a_normal_direction_exit_reads_the_sdf_normal_at_the_particle():
     """A BC carrying the unit box's SDF reads a ``normal_direction`` exit by the SDF's gradient. The particle applicator
     gives such a BC the step's box, so a particle past the corner (1, 1) read at its nearest point of the box would be
     read at the corner, a kink, where the gradient is the diagonal: an exit whose ``normal_tolerance`` exceeds 1/sqrt(2)
-    would hold no such particle. #2781's review 1 measured it: of these 200 particles, driven past the corner, 85
+    would hold no such particle. #2781's review 1 measured it: of these 200 particles, driven toward the corner, 85
     stayed under an exit with normal (1, 0) and tolerance 0.85, where the ``boundary="x_max"`` twin left none. Read
     at the particle, as before #2780, the exit leaves none either."""
     corner = {"start": ((0.85, 0.9), (0.95, 0.98)), "drift": (3.0, 1.5), "domain_sdf": _unit_box_sdf}
