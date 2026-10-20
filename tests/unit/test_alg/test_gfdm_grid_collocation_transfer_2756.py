@@ -16,9 +16,9 @@ asymmetric in x and enter the HJB through a coupling f(m) = m, so a reversal and
 
 The permutation rows' tie term: on a tensor grid the k-th nearest neighbour is often an exact distance tie, which the
 stencil search breaks by point order, so two orders can give one centre different stencils. The tied neighbour enters
-with a small weight, so U moves at the round-off scale: at 3458110f on macOS (OpenBLAS), with the same tie choices in
-both orders, the 2-D row's two solves agree to 8.9e-16. The Ubuntu runner breaks the ties differently, so the gap
-depends on the platform as well as on the order.
+with a small weight, so U moves little, though above round-off: at 3458110f on macOS (OpenBLAS) the 2-D row's gap is
+7.6e-12, and with the same tie choices in both orders its two solves agree to 8.9e-16. On the Ubuntu runner its gap
+is 2.05e-9, which other tie choices reproduce on macOS; why the runner's ties fall that way is not measured.
 """
 
 import warnings
@@ -111,9 +111,9 @@ def test_a_2d_grid_density_reaches_its_nodes_in_f_order_by_position():
 
     assert U_in_order.shape == (_NT + 1, 30)
     assert U_f_order.shape == (_NT + 1, 6, 5)
-    # In F order 1 of 30 centres' stencils changes (module docstring): the gap is 7.6e-12 at 3458110f on macOS and
-    # 2.05e-9 on the Ubuntu runner (discrimination run 39231402975, at 14cb5839). Reading the density by index, at
-    # 2034e5a9 before #2756's fix, puts it 1.331 off. The bound sits between the two.
+    # In F order, at 3458110f on macOS, 1 of 30 centres' stencils changes (module docstring) and the gap is 7.6e-12;
+    # on the Ubuntu runner it is 2.05e-9 (discrimination run 39231402975, at 14cb5839), with its stencils unmeasured.
+    # Reading the density by index, at 2034e5a9 before #2756's fix, puts it 1.331 off. The bound sits between the two.
     assert np.max(np.abs(U_f_order.reshape(_NT + 1, 30) - U_in_order)) < 1e-6
 
 
