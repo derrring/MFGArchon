@@ -279,15 +279,15 @@ class BaseHJBSolver(BaseNumericalSolver):
         return None
 
     def coupling_binding(self) -> CouplingBinding | None:
-        """``Model.coupling_cost`` bound where this solver evaluates its HJB source, or None (#1642 stage 1b-2).
+        """``Model.coupling_cost`` bound on this solver's own points and weights, or None (#1642 stage 1b-2).
 
-        By default the problem's own binding, on its grid's nodes and measure (`problem_coupling_binding`); off a grid
-        there is none. A solver that integrates on its own points and weights binds the cost there instead, as HJB-FEM
-        P1 does on its dofs. The couplers hand it to ``compose_hjb_source``, which refuses a declared cost with none.
+        None by default: the solver evaluates the solved problem's own binding, on its grid (`coupling_binding_for`).
+        A solver that integrates on its own points and weights binds the cost of the problem it was built from there,
+        as HJB-FEM P1 does on its dofs. The couplers built on ``BaseCouplingIterator``, ``MultiPopulationIterator`` and
+        the standalone ``solve()`` hand it to ``compose_hjb_source``; off a grid, a declared cost with no binding of its
+        own is refused there.
         """
-        from mfgarchon.alg.numerical.coupling.source_composition import problem_coupling_binding
-
-        return problem_coupling_binding(self.problem)
+        return None
 
     def __init__(self, problem: MFGProblem, config: BaseConfig | None = None) -> None:
         # Maintain backward compatibility - if no config provided, create a minimal one

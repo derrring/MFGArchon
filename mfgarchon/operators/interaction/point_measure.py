@@ -49,8 +49,8 @@ class PointMeasure(Protocol):
 
     The points are read as points of Euclidean space: `InteractionCost`'s direct quadrature takes their differences
     ``x - y``, so on a domain with a periodic axis the interaction is the implementer's responsibility, since a measure
-    carries no topology. The grid's measure is refused on a periodic axis by name (#2725), and HJB-FEM refuses a
-    PERIODIC condition at construction (#1456).
+    carries no topology. On the grid's measure `InteractionCost` takes the grid path, which refuses a periodic axis by
+    name (#2725); HJB-FEM refuses a PERIODIC condition at construction (#1456).
     """
 
     @property

@@ -69,8 +69,8 @@ class Model:
             and measure, and the HJB carries its flat derivative ``delta F / delta m`` as a source, cost-signed, summed
             with the Hamiltonian's own coupling ``f`` (#1642). Bound on a ``TensorProductGrid``; HJB-GFDM, which
             evaluates its source at its collocation points, reads ``delta F / delta m`` there. Off a grid the HJB solver
-            that evaluates it binds it on its own points and weights: HJB-FEM P1 on its dofs and lumped mass (#1642
-            stage 1b-2). There a solver or a loop that binds none refuses it by name at solve time, the meshless Galerkin
+            that evaluates it binds it on its own points and weights: HJB-FEM P1 on its dofs and lumped mass, on a
+            triangle or tetrahedron mesh or a generated ``Mesh1D`` (#1642 stage 1b-2). There a solver or a loop that binds none refuses it by name at solve time, the meshless Galerkin
             solver at construction. Refused on a network, where no solve takes a ``Model`` (#2045).
             In a multi-population problem each population's own ``Model`` carries
             its own F_k, which reads that population's density m_k alone; coupling across populations belongs in each

@@ -1,12 +1,15 @@
-- **HJB-FEM P1 binds `Model(coupling_cost=...)` on its own discretization** (#1642, stage 1b-2). A problem on a mesh
-  can now carry a coupling cost. Before, the problem refused it when it was built.
+- **HJB-FEM P1 binds `Model(coupling_cost=...)` on its own discretization** (#1642, stage 1b-2). A problem on a
+  triangle or tetrahedron mesh, or on a generated `Mesh1D`, can now carry a coupling cost. Before, the problem refused
+  it when it was built.
   - The measure is `LumpedMassPointMeasure`, in `mfgarchon.alg.numerical.fem.discretization`. Each dof, which for P1
     is a mesh vertex, has its consistent-mass row sum, the integral of its basis function, as its weight. The domain's
     measure is the sum of the element volumes. `HJBFEMSolver(order=1)` binds the cost on this measure through
     `bind_on_measure` when it is constructed.
-  - `BaseHJBSolver.coupling_binding()` returns that binding. For any other solver it is the problem's own binding on
-    its grid. The couplers built on `BaseCouplingIterator`, and `MultiPopulationIterator`, hand it to
-    `compose_hjb_source(..., binding=)`. On a mesh, a coupling cost solves through `problem.solve()`,
+  - `BaseHJBSolver.coupling_binding()` returns that binding, and None for a solver that binds none of its own. The
+    couplers built on `BaseCouplingIterator`, and `MultiPopulationIterator`, hand it to
+    `compose_hjb_source(..., binding=)`. On a grid the solved problem's own binding is read whatever the solver; off a
+    grid the solver's is read only when it was bound from the solved problem's cost, and a solver built from another
+    problem is refused by name. On a mesh, a coupling cost solves through `problem.solve()`,
     `FixedPointIterator`, the `BlockIterator` family, and `MultiPopulationIterator` with one population.
   - With `PotentialCost(V)` the solve gives the same U as V in the Hamiltonian, to 2.2e-16. `InteractionCost`
     converges at second order to the exact integral on a polygon.
@@ -21,7 +24,10 @@
   - The meshless Galerkin solver refuses the cost at construction.
   - On a network the problem still refuses a cost when it is built.
 - **Refused by name:**
-  - `HJBFEMSolver(order=2)` with a coupling cost. In 2-D its vertex row sums are 0, and in 3-D they are negative.
+  - `HJBFEMSolver(order=2)` with a coupling cost. On triangles its vertex row sums are 0, and on tetrahedra they are
+    negative.
+  - HJB-FEM on a quad or hexahedron mesh with a coupling cost: the mesh holds no element volumes to read the
+    domain's measure from.
   - A user's cost without `bind_on`.
   - `InteractionCost(use_fft=True)`.
 - HJB-FEM already refused a PERIODIC condition at construction (#1456), so this measure never integrates over a

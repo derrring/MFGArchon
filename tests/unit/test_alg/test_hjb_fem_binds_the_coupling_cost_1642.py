@@ -105,7 +105,8 @@ _PICARD = MFGSolverConfig(picard=PicardConfig(max_iterations=5, tolerance=1e-12,
 def test_the_p1_measure_is_the_dofs_with_the_lumped_mass():
     """The binding's points are the P1 dofs, which are the mesh's vertices in the order the problem evaluates
     ``m_initial`` in; its weights are the consistent mass matrix's row sums; its domain measure is the sum of the
-    element areas, read from the mesh and not from the weights. The arrays refuse writes."""
+    element areas, read from the mesh and not from the weights, so element volumes 1% too large are refused by the
+    measure's contract. The arrays are read-only copies, sharing no memory with the basis."""
     problem = _problem(cost=PotentialCost(lambda x: 0.0))
     hjb = HJBFEMSolver(problem)
     measure = hjb._coupling_point_measure()
@@ -118,6 +119,11 @@ def test_the_p1_measure_is_the_dofs_with_the_lumped_mass():
     for array in (measure.points, measure.weights):
         with pytest.raises(ValueError, match="read-only"):
             array[0] = 0.0
+    assert not np.shares_memory(measure.points, hjb.basis.doflocs)
+    mesh_data = problem.geometry.mesh_data
+    mesh_data.element_volumes = 1.01 * mesh_data.compute_element_volumes()
+    with pytest.raises(ValueError, match=r"weights summing to .* not to the domain's measure"):
+        HJBFEMSolver(problem)
 
 
 @pytest.mark.parametrize("route", ["problem.solve()", "MultiPopulationIterator", "solve_hjb_system"])
@@ -155,6 +161,132 @@ def test_a_linear_coupling_cost_solves_as_the_same_potential_on_hjb_fem(route):
         logging.disable(logging.NOTSET)
     assert gap <= 1e-14, f"{route}: PotentialCost(V) and V in H differ by {gap:.3e} on HJB-FEM P1"
     assert dropped > 0.1, f"the fixture does not see V: dropping it moves U by {dropped:.3e}"
+
+
+def _grid_problem(model):
+    from mfgarchon.geometry import TensorProductGrid
+
+    return MFGProblem(
+        model=model,
+        domain=TensorProductGrid(bounds=[(0.0, 1.0)], Nx_points=[31], boundary_conditions=no_flux_bc(dimension=1)),
+        conditions=Conditions(
+            u_terminal=lambda x: (np.asarray(x, dtype=float) - 0.7) ** 2,
+            m_initial=lambda x: np.exp(-40 * (np.asarray(x, dtype=float) - 0.3) ** 2),
+            T=0.3,
+        ),
+        Nt=6,
+    )
+
+
+def _cost_model(V):
+    return Model(
+        hamiltonian=SeparableHamiltonian(control_cost=QuadraticControlCost(control_cost=1.0)),
+        volatility=0.3,
+        coupling_cost=None if V is None else PotentialCost(V),
+    )
+
+
+# The fixtures' unnormalised densities and the HJB solvers' tolerance notices are not this pin's subject.
+@pytest.mark.filterwarnings("ignore::UserWarning")
+@pytest.mark.parametrize(
+    "case", ["grid, another cost", "grid, swapped populations", "mesh, a rebuild", "mesh, no cost solved"]
+)
+def test_an_hjb_solver_built_from_another_problem_reads_the_solved_problems_cost(case):
+    """A coupler may pair the problem it solves with an HJB solver built from another problem whose volatility agrees
+    (#2378). The coupling part is the solved problem's F, as at e6c9df6d, and not the solver's problem's:
+
+    - on a grid it is the solved problem's own binding, whatever the solver, with ``FixedPointIterator`` and with
+      ``MultiPopulationIterator``'s solvers swapped: equal to the solve with each solver built from its own problem,
+      to 0.0. At f591dddf, where the solver's own problem's binding won, they differed by 3.0e-01 and
+      3.4e-01;
+    - on a mesh HJB-FEM's binding is read when it was bound from the solved problem's cost: a rebuild with other
+      conditions shares it, and solves equal to 0.0;
+    - a solved problem with no cost reads none, whatever the solver binds.
+    """
+    from mfgarchon.alg.numerical.coupling import FixedPointIterator
+    from mfgarchon.alg.numerical.fp_solvers import FPFDMSolver
+    from mfgarchon.alg.numerical.hjb_solvers import HJBFDMSolver
+
+    def V1(x):
+        return 0.8 * np.sin(2 * np.pi * np.asarray(x, dtype=float))
+
+    def V2(x):
+        return -1.5 * np.cos(3 * np.pi * np.asarray(x, dtype=float))
+
+    def fpi(solved, hjb, fp):
+        U, *_ = FixedPointIterator(solved, hjb, fp, relaxation=0.5).solve(max_iterations=3, tolerance=1e-12)
+        return np.asarray(U)
+
+    logging.disable(logging.WARNING)
+    try:
+        if case == "grid, another cost":
+            built, solved = _grid_problem(_cost_model(V1)), _grid_problem(_cost_model(V2))
+            got = fpi(solved, HJBFDMSolver(built), FPFDMSolver(solved))
+            want = fpi(solved, HJBFDMSolver(solved), FPFDMSolver(solved))
+            other = fpi(built, HJBFDMSolver(built), FPFDMSolver(built))
+        elif case == "grid, swapped populations":
+            from mfgarchon.alg.numerical.coupling.multi_population_iterator import MultiPopulationIterator
+            from mfgarchon.core.multi_population import MultiPopulationProblem
+
+            ps = [_grid_problem(_cost_model(V1)), _grid_problem(_cost_model(V2))]
+
+            def solve(hjbs):
+                result = MultiPopulationIterator(
+                    MultiPopulationProblem(populations=ps, population_names=["a", "b"]),
+                    hjbs,
+                    [FPFDMSolver(p) for p in ps],
+                ).solve(max_iterations=3, tolerance=1e-12)
+                return np.asarray(result.U)
+
+            got = solve([HJBFDMSolver(ps[1]), HJBFDMSolver(ps[0])])
+            want = solve([HJBFDMSolver(p) for p in ps])
+            other = None
+        elif case == "mesh, a rebuild":
+            built = _problem("F")
+            solved = built.with_conditions(
+                Conditions(
+                    u_terminal=lambda x: float(np.sum(np.asarray(x) ** 2)),
+                    m_initial=lambda x: float(np.exp(-10 * np.sum((np.asarray(x) - 0.6) ** 2))),
+                    T=0.5,
+                )
+            )
+            assert solved.declared_coupling_cost is built.declared_coupling_cost
+            got = fpi(solved, HJBFEMSolver(built), FPFEMSolver(solved))
+            want = fpi(solved, HJBFEMSolver(solved), FPFEMSolver(solved))
+            other = fpi(built, HJBFEMSolver(built), FPFEMSolver(built))
+        else:
+            built, solved = _problem("F"), _problem(None)
+            got = fpi(solved, HJBFEMSolver(built), FPFEMSolver(solved))
+            want = fpi(solved, HJBFEMSolver(solved), FPFEMSolver(solved))
+            other = fpi(built, HJBFEMSolver(built), FPFEMSolver(built))
+    finally:
+        logging.disable(logging.NOTSET)
+    assert np.array_equal(got, want), f"{case}: the solve reads another F, {np.max(np.abs(got - want)):.3e} off"
+    if other is not None:
+        assert np.max(np.abs(other - want)) > 0.1, f"{case}: the two problems do not tell their costs apart"
+
+
+@pytest.mark.parametrize("built_from", ["another cost", "no cost"])
+def test_hjb_fem_built_from_another_problem_is_refused_on_a_mesh(built_from):
+    """Off a grid the solved problem binds no F, and HJB-FEM's binding is of the problem it was built from. Built from
+    one with another cost, or with none, it is refused by name, before the first evaluation, and the message says that
+    a solver binds the cost of the problem it was built from. At f591dddf the first solved with the other F, in
+    silence."""
+    from mfgarchon.alg.numerical.coupling import FixedPointIterator
+
+    built = _problem(
+        cost=InteractionCost(GaussianKernel(amplitude=1.0, length_scale=0.3)) if built_from == "another cost" else None
+    )
+    solved = _problem("F")
+    loop = FixedPointIterator(solved, HJBFEMSolver(built), FPFEMSolver(solved))
+    refusal = (
+        r"HJBFEMSolver was handed a binding of another problem's coupling cost.*InteractionCost.*PotentialCost"
+        if built_from == "another cost"
+        else r"HJBFEMSolver has no binding of Model\(coupling_cost=\.\.\.\) on this Mesh2D.*a solver binds the cost "
+        r"of the problem it was built from"
+    )
+    with pytest.raises(NotImplementedError, match=refusal):
+        loop.solve(max_iterations=1, tolerance=1e-12)
 
 
 class _Constant(RadialKernel):
@@ -223,10 +355,12 @@ def test_the_p1_binding_integrates_an_interaction_at_second_order():
 def test_what_hjb_fem_p1_does_not_bind_is_refused_by_name():
     """Each refusal by its owner and its reason:
 
-    - P2, out of this stage; in 2-D its vertex row sums are 0 and in 3-D negative, which the message says, and in 1-D,
-      where they are positive (Simpson's weights), it says only the stage;
+    - P2, out of this stage; on triangles its vertex row sums are 0 and on tetrahedra negative, which the message
+      says, and on a line, where they are positive (Simpson's weights), it says only the stage;
+    - a quad or hexahedron mesh, at either order, which holds no element volumes to read the domain's measure from;
     - a user cost with ``bind`` alone, by ``bind_on_measure``; ``use_fft=True``, by ``InteractionCost``;
     - a PERIODIC condition, by the BC gate (#1456) before any binding is read;
+    - a weak-form subclass whose measure is not its dofs in their order;
     - the meshless solver on an implicit domain, which binds none of its own.
     """
     from mfgarchon.geometry import Hyperrectangle
@@ -237,6 +371,15 @@ def test_what_hjb_fem_p1_does_not_bind_is_refused_by_name():
     for d, reason in ((1, r"stage 1b-2\)\. Solve with order=1"), (2, "zero at the vertices"), (3, "negative at the")):
         with pytest.raises(NotImplementedError, match=rf"HJBFEMSolver\(order=2\) binds .* P1 only.*{reason}"):
             HJBFEMSolver(_problem(cost=cost, d=d), order=2)
+    for element, d, mesh in (
+        ("quad", 2, skfem.MeshQuad.init_tensor(*[np.linspace(0.0, 1.0, 5)] * 2)),
+        ("hexahedron", 3, skfem.MeshHex.init_tensor(*[np.linspace(0.0, 1.0, 3)] * 3)),
+    ):
+        problem = _problem(cost=cost, d=d)
+        problem.geometry.mesh_data = skfem_to_meshdata(mesh)
+        for order in (1, 2):
+            with pytest.raises(NotImplementedError, match=rf"this mesh of {element} elements has none"):
+                HJBFEMSolver(problem, order=order)
 
     class BindOnly:
         def bind(self, problem):
@@ -254,6 +397,16 @@ def test_what_hjb_fem_p1_does_not_bind_is_refused_by_name():
     )
     with pytest.raises(NotImplementedError, match=r"does not support boundary condition type\(s\) \['PERIODIC'\]"):
         HJBFEMSolver(_problem(cost=cost, bc=periodic))
+
+    from mfgarchon.alg.numerical.fem.discretization import LumpedMassPointMeasure
+
+    class Reversed(HJBFEMSolver):
+        def _coupling_point_measure(self):
+            measure = super()._coupling_point_measure()
+            return LumpedMassPointMeasure(measure.points[::-1], measure.weights[::-1], measure.domain_measure)
+
+    with pytest.raises(ValueError, match=r"whose points are not this solver's dofs in their order"):
+        Reversed(_problem(cost=cost))
 
     from mfgarchon.alg.numerical.meshless_galerkin import MeshlessGalerkinHJBSolver
 
@@ -278,7 +431,8 @@ def test_what_hjb_fem_p1_does_not_bind_is_refused_by_name():
 @pytest.mark.parametrize("reader", ["MFGResidual", "RegimeSwitchingIterator", "GraphMFGSolver", "HJBGFDMSolver"])
 def test_a_reader_that_passes_no_binding_refuses_by_its_name(reader):
     """Off a grid the problem binds no coupling cost, so a reader that hands the source no solver binding refuses it,
-    naming itself, before the first evaluation: Newton's residual, the regime-switching and graph loops on HJB-FEM P1,
+    naming itself, before the first evaluation (for the graph loop, when it composes a node's source): Newton's
+    residual, the regime-switching and graph loops on HJB-FEM P1,
     and HJB-GFDM, which binds none of its own, through a coupler on an implicit domain (its binding is #2761). Each of
     these constructed nothing at e6c9df6d: the problem refused the cost."""
     from mfgarchon.geometry import Hyperrectangle
@@ -339,13 +493,20 @@ def test_a_reader_that_passes_no_binding_refuses_by_its_name(reader):
         from mfgarchon.alg.numerical.coupling.graph_coupling import AdjacencyCoupling
         from mfgarchon.alg.numerical.coupling.graph_mfg_solver import GraphMFGSolver
 
-        solve = GraphMFGSolver(
+        graph = GraphMFGSolver(
             problems,
             AdjacencyCoupling(np.ones((2, 2)) - np.eye(2), alpha=0.05, beta=0.02),
             [h for h, _ in pairs],
             [f for _, f in pairs],
             max_iterations=2,
             tolerance=1e-12,
-        ).solve
+        )
+        M = np.ones((problems[0].Nt + 1, pairs[0][0].n_dof))
+
+        def solve():
+            # Composing node 0's source is where the graph solver refuses: before any evaluation, so a refusal deferred
+            # to the source's first call would return a callable here.
+            return graph._compose_hjb_source(0, [M, M], [M, M], lambda t, x: np.zeros(len(x)))
+
     with pytest.raises(NotImplementedError, match=rf"{refusal} Mesh2D"):
         solve()

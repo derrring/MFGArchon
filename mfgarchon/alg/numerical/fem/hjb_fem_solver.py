@@ -106,29 +106,33 @@ class HJBFEMSolver(WeakFormHJBSolver):
         """P1's dofs, the mesh's vertices in its order, with the consistent mass matrix's row sums as their weights, on
         the mesh's measure, the sum of its element volumes (#1642 stage 1b-2). ``Model.coupling_cost`` binds on it.
 
-        A PERIODIC condition is refused at construction, by the BC gate (``_SUPPORTED_BC_TYPES``, #1456) before the
-        adapter's own refusal (#1237), so the domain this measure integrates over has no periodic axis, which the direct
-        quadrature of an interaction cost, Euclidean differences of the points, would not see. Higher orders are out of
-        this stage.
+        The element volumes are the mesh's own (``MeshData.compute_element_volumes``): a mesh without them, such as a
+        quad or hexahedron mesh, refuses the cost by name. A PERIODIC condition is refused at construction, by the BC
+        gate (``_SUPPORTED_BC_TYPES``, #1456) before the adapter's own refusal (#1237), so the domain this measure
+        integrates over has no periodic axis, which the direct quadrature of an interaction cost, Euclidean
+        differences of the points, would not see. Higher orders are out of this stage.
         """
+        element = self._mesh_data.element_type
+        try:
+            domain_measure = float(np.sum(self._mesh_data.compute_element_volumes()))
+        except NotImplementedError as unread:
+            raise NotImplementedError(
+                f"HJBFEMSolver binds Model(coupling_cost=...) on the measure of its mesh, the sum of its element "
+                f"volumes, and this mesh of {element} elements has none: {unread} (#1642 stage 1b-2). Triangle and "
+                "tetrahedron meshes, and a generated Mesh1D, have them."
+            ) from unread
         if self.order != 1:
-            dim = self._skfem_mesh.dim()
-            reason = (
-                {
-                    2: "On triangles P2's consistent-mass row sums are zero at the vertices, since integral of "
-                    "lambda (2 lambda - 1) over a triangle is 0, so they are no positive quadrature. ",
-                    3: "On tetrahedra P2's consistent-mass row sums are negative at the vertices, so they are no positive "
-                    "quadrature. ",
-                }.get(dim, "")
-                if self.order == 2
-                else ""
-            )
+            reason = {
+                "triangle": "On triangles P2's consistent-mass row sums are zero at the vertices, since integral of "
+                "lambda (2 lambda - 1) over a triangle is 0, so they are no positive quadrature. ",
+                "tetrahedron": "On tetrahedra P2's consistent-mass row sums are negative at the vertices, so they are "
+                "no positive quadrature. ",
+            }.get(element, "")
             raise NotImplementedError(
                 f"HJBFEMSolver(order={self.order}) binds Model(coupling_cost=...) on P1 only (#1642 stage 1b-2). "
                 f"{reason}Solve with order=1."
             )
         weights = np.asarray(self._M.sum(axis=1)).ravel()
-        domain_measure = float(np.sum(self._mesh_data.compute_element_volumes()))
         return LumpedMassPointMeasure(self._disc.dof_coordinates, weights, domain_measure)
 
     # --- P2+ consistent-mass gradient recovery (#1252) -----------------------

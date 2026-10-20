@@ -67,7 +67,7 @@ Conventions (mirrored verbatim from the prior ``FixedPointIterator`` copy):
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -95,16 +95,20 @@ def _call_problem_source(problem: MFGProblem, name: str, *, t: float, x: NDArray
 
 @dataclass(frozen=True)
 class CouplingBinding:
-    """A coupling cost bound for one HJB evaluation: its energy, and the points it was bound on, in the order of the
-    density the energy reads (#1642 stage 1b-2).
+    """A coupling cost bound for one HJB evaluation: its energy, the points it was bound on, in the order of the
+    density the energy reads, and the cost it was bound from, the problem's ``declared_coupling_cost`` (#1642 stage
+    1b-2).
 
     On a grid it is the problem's, `problem_coupling_binding`. Off a grid the problem binds nothing, since the cost is
     bound where it is put to use: by the HJB solver that evaluates it, on its own points and weights
-    (``BaseHJBSolver.coupling_binding``), which the coupler hands to `compose_hjb_source`.
+    (``BaseHJBSolver.coupling_binding``), which the coupler hands to `compose_hjb_source`. ``cost`` is what
+    `coupling_binding_for` compares with the solved problem's, since a solver binds the cost of the problem it was
+    built from.
     """
 
     energy: EnergyFunctional
     nodes: NDArray
+    cost: Any
 
 
 def problem_coupling_binding(problem: MFGProblem) -> CouplingBinding | None:
@@ -114,7 +118,9 @@ def problem_coupling_binding(problem: MFGProblem) -> CouplingBinding | None:
     energy = problem.coupling_energy
     if energy is None:
         return None
-    return CouplingBinding(energy, np.asarray(problem.geometry.get_spatial_grid(), dtype=float))
+    return CouplingBinding(
+        energy, np.asarray(problem.geometry.get_spatial_grid(), dtype=float), problem.declared_coupling_cost
+    )
 
 
 def hjb_source_fields(problem: MFGProblem) -> list[str]:
@@ -193,20 +199,33 @@ def _coupling_part(energy: EnergyFunctional, nodes: NDArray, m_t: NDArray, x: ND
 def coupling_binding_for(
     problem: MFGProblem, binding: CouplingBinding | None = None, reader: str | None = None
 ) -> CouplingBinding:
-    """The binding a declared ``Model.coupling_cost`` is read through: ``binding``, from the HJB solver the source is
-    for (``BaseHJBSolver.coupling_binding``), or else the problem's own on its grid (`problem_coupling_binding`).
-    Where neither exists it is refused by name, naming ``reader``: off a grid the problem binds none (#1642 stage 1b-2).
+    """The binding a declared ``Model.coupling_cost`` is read through (#1642 stage 1b-2).
+
+    On a grid, the problem's own (`problem_coupling_binding`), whatever HJB solver evaluates it. Off a grid the problem
+    binds none, and the binding is ``binding``, the HJB solver's (``BaseHJBSolver.coupling_binding``), when it was bound
+    from this problem's cost: a solver binds the cost of the problem it was built from, and a coupler may pair it with
+    another problem. Otherwise it is refused by name, naming ``reader``.
     """
-    bound = binding if binding is not None else problem_coupling_binding(problem)
-    if bound is not None:
-        return bound
+    own = problem_coupling_binding(problem)
+    if own is not None:
+        return own
+    who = reader or "compose_hjb_source"
+    if binding is not None and binding.cost is problem.declared_coupling_cost:
+        return binding
+    if binding is not None:
+        raise NotImplementedError(
+            f"{who} was handed a binding of another problem's coupling cost: the HJB solver was built from a problem "
+            f"whose Model(coupling_cost=...), a {type(binding.cost).__name__}, is not the "
+            f"{type(problem.declared_coupling_cost).__name__} the problem solved declares (#1642). A solver binds the "
+            "cost of the problem it was built from, so build the HJB solver from the problem it solves."
+        )
     raise NotImplementedError(
-        f"{reader or 'compose_hjb_source'} has no binding of Model(coupling_cost=...) on this "
-        f"{type(problem.geometry).__name__}: off a grid the problem binds none, since a coupling cost is bound where it "
-        "is put to use, by the HJB solver that evaluates it, on its own points and weights (#1642). HJB-FEM P1 on a "
-        "mesh binds it, through a coupler that passes its binding: problem.solve(), FixedPointIterator, a "
-        "BlockIterator, or MultiPopulationIterator with one population. On a point cloud or an implicit domain, "
-        "HJB-GFDM's binding at its collocation points is #2761."
+        f"{who} has no binding of Model(coupling_cost=...) on this {type(problem.geometry).__name__}: off a grid the "
+        "problem binds none, since a coupling cost is bound where it is put to use, by the HJB solver that evaluates "
+        "it, on its own points and weights, and a solver binds the cost of the problem it was built from (#1642). "
+        "HJB-FEM P1 on a mesh binds it, built from this problem, through a coupler that passes its binding: "
+        "problem.solve(), FixedPointIterator, a BlockIterator, or MultiPopulationIterator with one population. On a "
+        "point cloud or an implicit domain, HJB-GFDM's binding at its collocation points is #2761."
     )
 
 

@@ -91,9 +91,12 @@ class WeakFormHJBSolver(BaseHJBSolver):
 
     # --- The coupling cost, bound on this solver's own discretization (#1642 stage 1b-2) ------------------------
     def _coupling_point_measure(self) -> PointMeasure | None:
-        """The point measure this solver binds ``Model.coupling_cost`` on: its dofs, in the order of the density it
-        reads, each with its quadrature weight. None, the default, binds none, and a declared cost is then refused at
-        construction. HJB-FEM P1 overrides it."""
+        """The point measure this solver binds ``Model.coupling_cost`` on: its dofs, in their order, which is the order of
+        the density it reads, each with its quadrature weight. None, the default, binds none, and a declared cost is then
+        refused at construction. HJB-FEM P1 overrides it.
+
+        It runs inside ``WeakFormHJBSolver.__init__``, once the discretization's operators are assembled, so a subclass
+        sets whatever else it reads before calling ``super().__init__``."""
         return None
 
     def _bind_coupling_cost(self, cost: Any) -> CouplingBinding | None:
@@ -108,10 +111,17 @@ class WeakFormHJBSolver(BaseHJBSolver):
                 "(#1642 stage 1b-2). HJB-FEM P1 binds it on a mesh, HJBFEMSolver(problem, order=1); for a linear "
                 "F = integral V m, V can also go to the Hamiltonian as its potential."
             )
+        points = np.asarray(measure.points, dtype=float)
+        if not np.array_equal(points, self._disc.dof_coordinates):
+            raise ValueError(
+                f"{type(self).__name__}._coupling_point_measure returned {type(measure).__name__}, whose points are not "
+                "this solver's dofs in their order: the density the coupling part reads is one value per dof, in the "
+                "dofs' order, and a measure on other points would pair each weight with another dof's value (#1642)."
+            )
         from mfgarchon.alg.numerical.coupling.source_composition import CouplingBinding
         from mfgarchon.operators.interaction.point_measure import bind_on_measure
 
-        return CouplingBinding(bind_on_measure(cost, measure), np.asarray(measure.points, dtype=float))
+        return CouplingBinding(bind_on_measure(cost, measure), points, cost)
 
     def coupling_binding(self) -> CouplingBinding | None:
         """``Model.coupling_cost`` bound on this solver's own discretization at construction, or None with no cost
