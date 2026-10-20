@@ -87,12 +87,13 @@ def test_a_region_named_segment_is_read_or_refused_truly_off_the_grid(row):
       dimension, not for coordinates the grid has.
     - A BC box that reaches past the marking grid's own box, here from x = -0.2 on a grid on [0, 1]: (-0.2, 0.5) is
       refused, where main read it at the clamped node. On this non-uniform grid (end cell 0.05) it is four end cells off.
-      A point past the BC's box too, (-0.5, 0.5), is refused by the point the caller passed.
+      A point past the BC's box too, (-0.5, 0.5), read on no face, is refused as such: no face was passed to read it on
+      (#2780). Read on x_min, it is read at (-0.2, 0.5) and refused as that point is.
     - A cell-centred grid, nodes 0.05 ... 0.95 on the box [0, 1]: its walls lie half a cell past its end nodes, inside
       its box, and are read at the end nodes, as at main.
     - x nodes 1, 0.75, ..., 0 and "exit" at x > 0.5: the face rule reads the first node as x_min (#2490) and puts the
-      exit on x_min, so a point reading by coordinate would put it on x_max. It is refused, by the point the caller
-      passed: (1.2, 0.5), past the wall, is read at (1, 0.5)."""
+      exit on x_min, so a point reading by coordinate would put it on x_max. It is refused, by the point it is read
+      at: (1.2, 0.5), past the wall and read on x_max, is read at (1, 0.5) (#2780)."""
     if row == "a particle past a wall":
         from mfgarchon import Conditions, MFGProblem, Model
         from mfgarchon.alg.numerical.fp_solvers import FPParticleSolver
@@ -162,15 +163,20 @@ def test_a_region_named_segment_is_read_or_refused_truly_off_the_grid(row):
             ValueError, match=r"lies outside the grid that marks it, whose box on axis 0 is \[0.0, 1.0\]"
         ):
             wide.segment_for_point(np.array([-0.2, 0.5]), geometry=grid)
-        with pytest.raises(ValueError, match=r"the point \[-0.5, 0.5\] lies outside the grid that marks it"):
+        with pytest.raises(
+            ValueError,
+            match=r"the point \[-0.5, 0.5\] lies outside the box .* with no face passed.*read it on the face it crossed",
+        ):
             wide.segment_for_point(np.array([-0.5, 0.5]), geometry=grid)
+        with pytest.raises(ValueError, match=r"the point \[-0.2, 0.5\] lies outside the grid that marks it"):
+            wide.segment_for_point(np.array([-0.5, 0.5]), "x_min", geometry=grid)
         return
     bc = BoundaryConditions(segments=segments, dimension=2, domain_bounds=np.array([[0.0, 1.0], [0.0, 1.0]]))
     if row == "a descending axis":
         with pytest.raises(
-            ValueError, match=r"do not strictly ascend on axis 0, .*the point \[1.2, 0.5\].*first node as its min face"
+            ValueError, match=r"do not strictly ascend on axis 0, .*the point \[1.0, 0.5\].*first node as its min face"
         ):
-            bc.segment_for_point(np.array([1.2, 0.5]), geometry=grid)
+            bc.segment_for_point(np.array([1.2, 0.5]), "x_max", geometry=grid)
         return
     assert bc.segment_for_point(np.array([1.0, 0.5]), geometry=grid).name == "exit"
     assert bc.segment_for_point(np.array([0.0, 0.5]), geometry=grid).name == "rest"
