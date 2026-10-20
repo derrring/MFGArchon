@@ -77,8 +77,8 @@ def test_one_condition_on_every_wall_takes_the_fast_path():
 def _reflected(dimension: int, bc: BoundaryConditions, preserve_indices: bool) -> np.ndarray:
     """The final particles of a grid-drift solve under U = 3 * sum(x): every particle
     is driven toward x_min at speed 3, so x_min and, in 2-D, y_min reflect particles. Reflected, all 200 end pressed
-    against those walls, below 0.6 on every axis; a wrap would carry the ones crossing x_min to near 1 (0.995 under
-    periodic_bc), and an absorbing wall would leave NaN rows."""
+    against those walls, below 0.6 on every axis; a wrap would carry the ones crossing x_min to near 1 (0.9998 under
+    periodic_bc in 1-D), and with ``preserve_indices=True`` an absorbing wall would leave NaN rows."""
     n = 41 if dimension == 1 else 11
     shape = (n,) * dimension
     grid = np.meshgrid(*[np.linspace(0.0, 1.0, n)] * dimension, indexing="ij")
@@ -133,8 +133,8 @@ def test_two_reflecting_conditions_keep_the_fast_path(dimension):
 )
 def test_reflecting_conditions_with_a_placed_segment_reflect_per_point(dimension, bc, preserve_indices):
     """Reflecting conditions with a segment placed by more than a face label route per point, and reflect there as
-    the fast path did. These were the blockers of #2739's review 3: the 1-D BC, explicit and so unbound, raised
-    "no geometry provided" at its first boundary particle, and the 2-D door raised on the grid-drift path with
-    ``preserve_indices=True``. B1e-1 (#2744), the binding (#2753) and #2762 closed the per-point gaps."""
+    the fast path did. These were #2739's review 3 B1, a blocker, and M1, a must-fix: the 1-D BC, explicit and so
+    unbound, raised "no geometry provided" at its first boundary particle, and the 2-D door raised on the grid-drift
+    path with ``preserve_indices=True``. B1e-1 (#2744), the binding (#2753) and #2762 closed the per-point gaps."""
     assert needs_segment_aware_bc(bc) is True
     _reflected(dimension, bc, preserve_indices)

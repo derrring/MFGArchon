@@ -111,15 +111,18 @@ def needs_segment_aware_bc(boundary_conditions: BoundaryConditions | None) -> bo
     ``default_bc``'s whenever it is set (#2490).
 
     Returns True if:
-    - one condition covers the boundary and it absorbs
-    - the conditions differ and a segment is placed by more than a face label (`BoundaryConditions.placed_segments`)
-    - the conditions differ and one of them does not reflect: an exit, or a periodic face beside reflecting walls
-    - ``default_bc`` is set to a condition that does not reflect, even where the face segments leave it no wall: two
-      REFLECTING faces beside a DIRICHLET default route per point
+    - one condition covers the boundary (`BoundaryConditions.uniform_segment`) and it absorbs
+    - the conditions differ and a segment is placed by more than a face label (`BoundaryConditions.placed_segments`),
+      even where every condition reflects
+    - the conditions differ and one of them does not reflect: an exit, or a periodic condition, including PERIODIC
+      declared face by face with no ``default_bc``
+    - no global segment covers the boundary and ``default_bc`` is set to a condition that does not reflect, even where
+      the face segments leave it no wall: two REFLECTING faces beside a DIRICHLET default route per point
     - the conditions differ and ``default_bc`` is ROBIN, which carries no coefficients (#2042)
 
-    Returns False where one reflecting or periodic condition covers the boundary, or every condition in play reflects:
-    a REFLECTING segment beside a NO_FLUX default reflects on both.
+    Returns False where `uniform_segment` names one reflecting or periodic condition (a global segment, or
+    ``default_bc`` with no segment differing from it), or where no segment is placed and every condition in play
+    reflects: a REFLECTING segment beside a NO_FLUX default reflects on both.
 
     Parameters
     ----------
@@ -162,7 +165,7 @@ def needs_segment_aware_bc(boundary_conditions: BoundaryConditions | None) -> bo
     if uniform is not None:
         return action(uniform) == "absorbing"
     # Several conditions: the fast path reflects every particle. A segment placed by more than a face label routes per
-    # point, since the fast path's topology read refuses one (#2739 review 1).
+    # point, where the BC's owner reads the placement; the fast path reads whole faces (#2739 review 1).
     if bc.placed_segments():
         return True
     # default_bc counts whenever it is set, even where the face segments leave it no wall; per point the owner decides

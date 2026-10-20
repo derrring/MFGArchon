@@ -1054,8 +1054,8 @@ class FPParticleSolver(BaseFPSolver):
 
     def _needs_segment_aware_bc(self) -> bool:
         """Whether this solver's BC takes the per-point path: `needs_segment_aware_bc` -- True unless one reflecting
-        or periodic condition covers the boundary, or no segment is placed on part of a face and every condition in
-        play, default_bc whenever it is set, reflects a particle (#2490)."""
+        or periodic condition covers the boundary (`uniform_segment`), or no segment is placed by more than a face
+        label and every condition in play, default_bc whenever it is set, reflects a particle (#2490)."""
         return _needs_segment_bc(self.boundary_conditions)
 
     def _get_topology_per_dimension(
@@ -2463,7 +2463,9 @@ class FPParticleSolver(BaseFPSolver):
 
         Note (Issue #535 Phase 1): Segment-aware absorbing BC not yet implemented
         for GPU solver. Use CPU solver for mixed BC with DIRICHLET segments.
-        GPU solver currently supports uniform BC only (periodic/reflecting).
+        The GPU solver runs a BC that takes the fast path -- one reflecting or periodic
+        condition everywhere, or reflecting conditions on face labels alone -- and
+        refuses one that routes per point (#2490, #2764).
 
         That limitation is now refused rather than delivered (#1910). It was true, documented, and
         silent: `_needs_segment_aware_bc()` is consulted at :1605, :1794 and :2257 and nowhere in
@@ -2477,13 +2479,15 @@ class FPParticleSolver(BaseFPSolver):
                 "FPParticleSolver: the GPU path applies one particle action, reflect or wrap, on every wall; it "
                 "implements no segment-aware absorbing boundary and no per-point boundary (#1910, #2764). This BC "
                 "routes per point (needs_segment_aware_bc): one condition covers its boundary and absorbs; or its "
-                "conditions differ and one of them does not reflect a particle -- an exit, or a periodic face beside "
-                "reflecting walls; or its conditions differ and a segment is placed by region, sdf_region, region_name "
-                "or normal_direction, even where every condition reflects; or default_bc is set to a condition that "
-                "does not reflect, which counts even where the face segments leave it no wall. The GPU evolution loop "
-                "never consults `_needs_segment_aware_bc()`, so it would apply one action everywhere and report a "
-                "plausible density. Use backend='numpy' for this BC; on the GPU path, declare one reflecting or "
-                "periodic condition everywhere, or reflecting conditions on face labels alone (boundary=)."
+                "conditions differ and one of them does not reflect a particle, such as an exit or a periodic "
+                "condition declared face by face; or its conditions differ and a segment is placed by region, "
+                "sdf_region, region_name or normal_direction, even where every condition reflects; or default_bc is "
+                "set to a condition that does not reflect and no global segment covers the boundary, which counts even "
+                "where the face segments leave it no wall. The GPU evolution loop never consults "
+                "`_needs_segment_aware_bc()`, so it would apply one action everywhere and report a plausible density. "
+                "Use backend='numpy' for this BC; an axis periodic on one face only is refused on every path (#2713). "
+                "On the GPU path, declare one reflecting or periodic condition everywhere, as one global segment or "
+                "as default_bc with no other segment, or reflecting conditions on face labels alone (boundary=)."
             )
         if self._implicit_domain is not None:
             raise NotImplementedError(
