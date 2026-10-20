@@ -576,6 +576,20 @@ class BoundaryConditions:
             governing = self._default_segment(context, f"the {target.to_string()} face")
         return governing, next((part for part in partial if not same(part, governing)), None)
 
+    def placed_segments(self) -> list[BCSegment]:
+        """The segments placed by anything but a face label: by ``region``, ``sdf_region``, ``region_name`` or
+        ``normal_direction`` (#2490). A reader that resolves whole faces by label alone sends a BC carrying one down its
+        per-point path. An unmarked ``region_name`` such as ``"x_max"`` and an axis-aligned ``normal_direction`` count,
+        conservatively, although each decides a whole face (:meth:`segments_placed_off_face_labels`)."""
+        return [
+            seg
+            for seg in self.segments
+            if seg.region is not None
+            or seg.sdf_region is not None
+            or seg.region_name is not None
+            or seg.normal_direction is not None
+        ]
+
     def segments_placed_off_face_labels(self) -> list[BCSegment]:
         """The segments a reader that integrates over whole box faces cannot place where it can matter to a DIRICHLET
         condition (#2490, #2717): those placed by ``region``, by ``sdf_region``, or by a ``region_name`` that the bound
