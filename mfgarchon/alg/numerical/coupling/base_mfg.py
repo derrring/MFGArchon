@@ -49,33 +49,53 @@ def assert_bc_providers_resolvable(problem: MFGProblem, iterator_name: str) -> N
 
 
 def assert_paired_solver_geometry(hjb_solver: Any, fp_solver: Any, context: str, *, problem: Any) -> None:
-    """Fail loud if a coupled HJB / FP solver was built for another geometry than the problem the loop solves (#2775).
+    """Fail loud if a coupled HJB / FP pair does not hold its values at the points of the problem the loop solves (#2775).
 
-    Each solver discretizes on its own problem's geometry, fixed when it was built, and the loop hands the two halves
-    each other's arrays point for point. A solver built for a geometry whose points are not the solved problem's -- a
-    mesh with its interior moved, a grid over another interval -- coupled with nothing raised whenever the number of
-    points agreed: the only check was #1489's DOF count, in ``FixedPointIterator`` alone. This is the one owner, read by
-    every loop that pairs an HJB and an FP solver; a list-based loop calls it once per pair, with that pair's problem.
+    The loop hands the two halves each other's arrays point for point. Before this check, a pair whose halves held
+    their values at other points coupled with nothing raised whenever the number of points agreed: a solver built for a
+    mesh with its interior moved, or a grid over another interval, or two meshless solvers on two clouds of one size.
+    The only check was #1489's DOF count, in ``FixedPointIterator`` alone. This is the one owner, read by every loop that
+    pairs an HJB and an FP solver; a list-based loop calls it once per pair, with that pair's problem.
 
-    The geometries compare by ``get_spatial_grid()``, exactly (shape, then ``np.array_equal``), after identity: two
-    separately built equal grids or meshes are one geometry, which Expert Mode admits. An implicit domain's
-    ``get_spatial_grid`` is a fresh random sample, so two such domains compare equal only when they are one object. A
-    solver's own points that are not its geometry's -- HJB-GFDM's collocation points, a particle FP's particles -- are
-    that solver's to map onto them; FEM P2's extra dofs are what the DOF-count check below refuses beside P1 (#1489).
+    The contract, on each side:
 
-    Not checked here: the boundary conditions, T, Nt (#2446), and the volatility (`assert_paired_solver_sigma`).
+    - The solver carries ``problem``, the problem it was built for; one without is refused by name.
+    - Its problem's geometry is the solved problem's: the same object, or one whose ``get_spatial_grid()`` is
+      bit-identical (shape, then ``np.array_equal``), so two separately built equal grids or meshes are one geometry. An
+      `ImplicitDomain`'s points are a fresh random sample on every read (#2778), so two implicit domains are one geometry
+      only as one object.
+    - A solver whose DOFs are its own points declares them as ``dof_points`` (the weak-form solvers: HJB-FEM, FP-FEM and
+      the meshless Galerkin pair). One that does not is taken to hold its values at its geometry's points; one that maps
+      its own points onto them, as HJB-GFDM's collocation points (#2756) and a particle FP's particles do, declares
+      none. The two halves' points -- ``dof_points`` where declared, the geometry's points otherwise -- are equal, bit for
+      bit. An implicit domain has no points to read (#2778), so on one a side that declares none is not compared, and
+      two declared sides are. A user's solver with DOFs of its own that does not declare them is its implementer's
+      responsibility.
+
+    A pair that declares ``n_dof`` on both sides without ``dof_points`` is checked by #1489's count.
+
+    Not checked here: the boundary conditions, T and Nt (#2446), and the volatility (`assert_paired_solver_sigma`).
     """
+    from mfgarchon.geometry.implicit.implicit_domain import ImplicitDomain
+
     for side, solver in (("HJB", hjb_solver), ("FP", fp_solver)):
         solver_problem = getattr(solver, "problem", None)
         if solver_problem is None:
             raise TypeError(
                 f"{context}: the {side} solver, {type(solver).__name__}, has no `problem`, so the geometry it "
                 "discretizes cannot be compared with the problem being solved (#2775). Every built-in HJB and FP "
-                "solver sets it (BaseMFGSolver); a solver written to the protocol sets `self.problem` to the problem "
-                "it was built for."
+                "solver sets it; a solver written to the protocol sets `self.problem` to the problem it was built for."
             )
         if solver_problem is problem or solver_problem.geometry is problem.geometry:
             continue
+        if isinstance(problem.geometry, ImplicitDomain) or isinstance(solver_problem.geometry, ImplicitDomain):
+            raise ValueError(
+                f"{context}: the {side} solver was built for a {type(solver_problem.geometry).__name__} that is not the "
+                f"problem's own {type(problem.geometry).__name__} object. An implicit domain's points are a fresh random "
+                "sample on every read (#2778), so two such domains are one geometry only as one object (#2775). Build "
+                "the solvers from the problem being solved, or from a problem that shares its domain object, such as one "
+                "made from it by with_conditions or with_model."
+            )
         theirs = np.asarray(solver_problem.geometry.get_spatial_grid())
         mine = np.asarray(problem.geometry.get_spatial_grid())
         if theirs.shape != mine.shape or not np.array_equal(theirs, mine):
@@ -84,10 +104,29 @@ def assert_paired_solver_geometry(hjb_solver: Any, fp_solver: Any, context: str,
                 f"{context}: the {side} solver was built for a {type(solver_problem.geometry).__name__} whose points "
                 f"are not those of the problem being solved, a {type(problem.geometry).__name__} ({how}). The two "
                 "halves exchange arrays point for point, so each would read the other's values at its own points "
-                "(#2775). Build the solvers from the problem being solved, or from one with the same geometry."
+                "(#2775). Build the solvers from the problem being solved, or from one whose geometry is bit-identical."
+            )
+    declared = getattr(hjb_solver, "dof_points", None), getattr(fp_solver, "dof_points", None)
+    both = all(points is not None for points in declared)
+    if both or (any(points is not None for points in declared) and not isinstance(problem.geometry, ImplicitDomain)):
+        hjb_points, fp_points = (
+            np.asarray(problem.geometry.get_spatial_grid()) if points is None else np.asarray(points)
+            for points in declared
+        )
+        if hjb_points.shape != fp_points.shape or not np.array_equal(hjb_points, fp_points):
+            how = (
+                f"{hjb_points.shape} points against {fp_points.shape}"
+                if hjb_points.shape != fp_points.shape
+                else "other coordinates"
+            )
+            raise ValueError(
+                f"{context}: the HJB and FP solvers hold their values at different points ({how}). A solver whose DOFs "
+                "are its own points declares them as `dof_points`, and one that does not holds its values at its "
+                "geometry's points; the loop hands each half the other's arrays point for point (#2775). Build both "
+                "halves on the same points: the same mesh and element order, or the same collocation cloud."
             )
     hjb_n, fp_n = getattr(hjb_solver, "n_dof", None), getattr(fp_solver, "n_dof", None)
-    if isinstance(hjb_n, numbers.Integral) and isinstance(fp_n, numbers.Integral) and hjb_n != fp_n:
+    if hjb_n is not None and fp_n is not None and hjb_n != fp_n:
         raise ValueError(
             f"{context}: paired HJB and FP solvers report different DOF counts (HJB n_dof={hjb_n}, FP n_dof={fp_n}); "
             "a coupled solve needs a shared DOF layout (Issue #1489)."

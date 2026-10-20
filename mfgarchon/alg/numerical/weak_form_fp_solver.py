@@ -83,6 +83,14 @@ class WeakFormFPSolver(BaseFPSolver):
     def n_dof(self) -> int:
         return self._n_dof
 
+    @property
+    def dof_points(self) -> NDArray:
+        """The points this solver's DOFs sit at, in their order: the discretization's dof coordinates, as a read-only
+        copy. A coupling loop compares them with its other solver's points (`assert_paired_solver_geometry`, #2775)."""
+        points = np.array(self._disc.dof_coordinates, dtype=float)
+        points.flags.writeable = False
+        return points
+
     # --- Boundary-condition strategy (subclass-supplied) ----------------------
     def _is_pure_neumann(self) -> bool:
         raise NotImplementedError

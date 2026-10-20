@@ -89,6 +89,14 @@ class WeakFormHJBSolver(BaseHJBSolver):
     def n_dof(self) -> int:
         return self._n_dof
 
+    @property
+    def dof_points(self) -> NDArray:
+        """The points this solver's DOFs sit at, in their order: the discretization's dof coordinates, as a read-only
+        copy. A coupling loop compares them with its other solver's points (`assert_paired_solver_geometry`, #2775)."""
+        points = np.array(self._disc.dof_coordinates, dtype=float)
+        points.flags.writeable = False
+        return points
+
     # --- The coupling cost, bound on this solver's own discretization (#1642 stage 1b-2) ------------------------
     def _coupling_point_measure(self) -> PointMeasure | None:
         """The point measure this solver binds ``Model.coupling_cost`` on: its dofs, in their order, which is the order
