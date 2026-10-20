@@ -140,9 +140,10 @@ not claimed for them, and the library does not check it either way.
   source at its collocation points, reads $\delta F/\delta m$ there: $V(x)$, or the grid's quadrature
   applied at $x$. A weak-form HJB solver refuses a problem bound on a grid. Off a grid the HJB solver
   binds it on its own points and weights: HJB-FEM P1 on its dofs with the consistent mass matrix's
-  row sums, on a triangle or tetrahedron mesh (#1642 stage 1b-2). There a solver or loop that binds
-  none refuses it by name at solve time, and the meshless Galerkin solver at construction. On a
-  network it is refused when the problem is built.
+  row sums, on a triangle or tetrahedron mesh or a generated `Mesh1D` (#1642 stage 1b-2). HJB-FEM
+  refuses it at construction at a higher order, and on a mesh with no element volumes, such as a quad
+  or hexahedron mesh; the meshless Galerkin solver refuses it at construction. A solver or loop that
+  binds none refuses it by name at solve time. On a network it is refused when the problem is built.
 - **`Model(terminal_coupling=...)` is its terminal counterpart G** (#1642). It takes the same
   specifications and binds as `problem.terminal_energy`. The terminal condition is then
   $u(T, x) = g(x) + \delta G/\delta m$ at $m(T, \cdot)$, the density of the HJB solve it is the terminal

@@ -8,8 +8,8 @@
   - `BaseHJBSolver.coupling_binding()` returns that binding, and None for a solver that binds none of its own. The
     couplers built on `BaseCouplingIterator`, and `MultiPopulationIterator`, hand it to
     `compose_hjb_source(..., binding=)`. On a grid the solved problem's own binding is read whatever the solver; off a
-    grid the solver's is read only when it was bound from the solved problem's cost, and a solver built from another
-    problem is refused by name. On a mesh, a coupling cost solves through `problem.solve()`,
+    grid the solver's is read only when it was bound from the solved problem's own cost object, and a solver bound
+    from another cost, an equal one built again or a copy included, is refused by name. On a mesh, a coupling cost solves through `problem.solve()`,
     `FixedPointIterator`, the `BlockIterator` family, and `MultiPopulationIterator` with one population.
   - With `PotentialCost(V)` the solve gives the same U as V in the Hamiltonian, to 2.2e-16. `InteractionCost`
     converges at second order to the exact integral on a polygon.
@@ -26,8 +26,8 @@
 - **Refused by name:**
   - `HJBFEMSolver(order=2)` with a coupling cost. On triangles its vertex row sums are 0, and on tetrahedra they are
     negative.
-  - HJB-FEM on a quad or hexahedron mesh with a coupling cost: the mesh holds no element volumes to read the
-    domain's measure from.
+  - HJB-FEM with a coupling cost on a mesh whose `MeshData` has no element volumes to read the domain's measure
+    from: quad and hexahedron meshes, unless their `element_volumes` are set.
   - A user's cost without `bind_on`.
   - `InteractionCost(use_fft=True)`.
 - HJB-FEM already refused a PERIODIC condition at construction (#1456), so this measure never integrates over a

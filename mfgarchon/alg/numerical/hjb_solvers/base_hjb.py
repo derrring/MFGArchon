@@ -283,7 +283,8 @@ class BaseHJBSolver(BaseNumericalSolver):
 
         None by default: the solver evaluates the solved problem's own binding, on its grid (`coupling_binding_for`).
         A solver that integrates on its own points and weights binds the cost of the problem it was built from there,
-        as HJB-FEM P1 does on its dofs. The couplers built on ``BaseCouplingIterator``, ``MultiPopulationIterator`` and
+        as HJB-FEM P1 does on its dofs. It is read off a grid only: on a grid the solved problem's own binding is read,
+        whatever this returns. The couplers built on ``BaseCouplingIterator``, ``MultiPopulationIterator`` and
         the standalone ``solve()`` hand it to ``compose_hjb_source``; off a grid, a declared cost with no binding of its
         own is refused there.
         """

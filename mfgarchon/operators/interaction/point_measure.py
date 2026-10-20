@@ -37,7 +37,8 @@ class PointMeasure(Protocol):
     """Points with one quadrature weight each, on a domain of known measure.
 
     - ``points``: shape ``(n, d)``, in the problem's frame, in the order the density is given in. That order is the
-      implementer's responsibility: no cheap check can tell a permuted measure from its own.
+      implementer's responsibility: no cheap check can tell a permuted measure from its own in general. A weak-form
+      HJB solver, whose density is on its dofs, checks its measure's points against them.
     - ``weights``: shape ``(n,)``, positive, summing to ``domain_measure`` (checked where the measure is put to use,
       `bind_on_measure`). Positive, not merely non-negative: every library energy refuses a zero weight
       (``validate_weights``), so the contract states that rule once.

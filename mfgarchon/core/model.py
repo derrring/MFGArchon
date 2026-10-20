@@ -70,13 +70,15 @@ class Model:
             with the Hamiltonian's own coupling ``f`` (#1642). Bound on a ``TensorProductGrid``; HJB-GFDM, which
             evaluates its source at its collocation points, reads ``delta F / delta m`` there. Off a grid the HJB solver
             that evaluates it binds it on its own points and weights: HJB-FEM P1 on its dofs and lumped mass, on a
-            triangle or tetrahedron mesh or a generated ``Mesh1D`` (#1642 stage 1b-2). There a solver or a loop that binds none refuses it by name at solve time, the meshless Galerkin
-            solver at construction. Refused on a network, where no solve takes a ``Model`` (#2045).
+            triangle or tetrahedron mesh or a generated ``Mesh1D`` (#1642 stage 1b-2). There a solver or a loop that
+            binds none refuses it by name at solve time, the meshless Galerkin solver at construction. Refused on a
+            network, where no solve takes a ``Model`` (#2045).
             In a multi-population problem each population's own ``Model`` carries
             its own F_k, which reads that population's density m_k alone; coupling across populations belongs in each
             H_k, through the stacked densities (#2173). The same holds per regime of a regime-switching problem and per
-            node problem of a graph solve, on a grid: each composes its own F on its own density. A plain ``F[m] -> float`` is
-            refused: it would carry its own quadrature, so it is bound to one grid (#1642, the user's ruling 3).
+            node problem of a graph solve, on a grid: each composes its own F on its own density. A plain
+            ``F[m] -> float`` is refused: it would carry its own quadrature, so it is bound to one grid (#1642, the
+            user's ruling 3).
         terminal_coupling: The terminal coupling cost G[m(T)], a `CouplingCost` like ``coupling_cost``. ``MFGProblem``
             binds it to its grid and measure, and the terminal condition is ``u(T, x) = g(x) + delta G / delta m`` at the
             density m(T) the HJB solve uses (`MFGProblem.terminal_value`, #1642 stage 2). Bound on a

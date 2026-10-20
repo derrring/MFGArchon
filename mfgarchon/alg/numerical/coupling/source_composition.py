@@ -215,9 +215,10 @@ def coupling_binding_for(
     if binding is not None:
         raise NotImplementedError(
             f"{who} was handed a binding of another problem's coupling cost: the HJB solver was built from a problem "
-            f"whose Model(coupling_cost=...), a {type(binding.cost).__name__}, is not the "
-            f"{type(problem.declared_coupling_cost).__name__} the problem solved declares (#1642). A solver binds the "
-            "cost of the problem it was built from, so build the HJB solver from the problem it solves."
+            f"whose Model(coupling_cost=...), a {type(binding.cost).__name__}, is not the same object as the "
+            f"{type(problem.declared_coupling_cost).__name__} the problem solved declares (#1642). The costs are "
+            "compared as objects, so an equal cost built again, or a copy, is another. A solver binds the cost of the "
+            "problem it was built from, so build the HJB solver from the problem it solves."
         )
     raise NotImplementedError(
         f"{who} has no binding of Model(coupling_cost=...) on this {type(problem.geometry).__name__}: off a grid the "
@@ -255,8 +256,10 @@ def _problem_hjb_source_terms(
     ``dt`` is passed explicitly (rather than read from ``problem.dt``) so the graph
     coupler — which carries its own ``self._dt`` — slices identically.
 
-    ``binding`` is the coupling cost's, from the HJB solver the source is for (`CouplingBinding`); by default the
-    problem's grid binding. A declared cost with neither is refused by name, naming ``reader`` (`coupling_binding_for`).
+    ``binding`` is the coupling cost's, from the HJB solver the source is for (`CouplingBinding`). On a grid the
+    problem's own binding is read instead; off a grid ``binding`` is read when it was bound from this problem's cost. A
+    declared cost with neither, or with another problem's, is refused by name, naming ``reader``
+    (`coupling_binding_for`).
     """
     out: dict[str, NDArray] = {}
     fields = hjb_source_fields(problem)
@@ -292,9 +295,10 @@ def compose_hjb_source(
         m_current: Density iterate ``(Nt+1, Nx)`` bound for time-``t`` slicing.
         u_current: Value-function iterate ``(Nt+1, Nx)`` bound for the nonlocal
             term's time-``t`` slicing.
-        binding: The coupling cost's binding from the HJB solver the source is for (`CouplingBinding`); by default
-            the problem's grid binding. Off a grid a declared cost has no other, and is refused by name here, before
-            any evaluation (`coupling_binding_for`).
+        binding: The coupling cost's binding from the HJB solver the source is for (`CouplingBinding`). On a grid
+            the problem's own binding is read instead. Off a grid it is read when it was bound from this problem's
+            cost; a declared cost with no such binding is refused by name here, before any evaluation
+            (`coupling_binding_for`).
         reader: Who reads the source, for that refusal's message.
 
     Returns:
