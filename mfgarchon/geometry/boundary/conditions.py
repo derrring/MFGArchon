@@ -710,11 +710,14 @@ class BoundaryConditions:
         the node's segment; and where the node refuses only because a face is partly covered, the point answers.
         With ``face``, the point is read on that face alone and the corner rule does not apply.
 
-        **A point read on a face is read at its nearest point of the box** (#2780), by every placement field. A particle
-        past a wall, read on the face it crossed, takes the segment holding that nearest point, which stands in for the
-        point where it crossed until #2733 passes that point. Before, only a marked ``region_name`` read it there, and a
-        ``region`` or ``sdf_region`` exit holding only the face's own coordinate never held a stepped point, so the
-        particles crossed it under ``default_bc``. A point on no face is read where it is.
+        **A point read on a face is read at its nearest point of the box** (#2780), by every placement region
+        (``region``, ``sdf_region``, ``region_name``). A particle past a wall, read on the face it crossed, takes the
+        segment holding that nearest point, which stands in for the point where it crossed until #2733 passes that
+        point. Before, only a marked ``region_name`` read it there: a ``region`` exit holding only the face's own
+        coordinate never held a stepped point, and an ``sdf_region`` exit held only the stepped points inside it, so
+        the others crossed it under ``default_bc``. A point on no face is read where it is. The outward normal a
+        ``normal_direction`` reads under ``domain_sdf`` is read at the point as asked: moved onto a corner of a box
+        SDF, it would read the kink's diagonal.
 
         Args:
             point: Spatial coordinates, shape (dimension,).
@@ -755,6 +758,7 @@ class BoundaryConditions:
                     axis_names,
                     domain_sdf=self.domain_sdf,
                     geometry=geometry,
+                    normal_at=point,
                 ):
                     governing.append(segment)
                     break
@@ -2437,7 +2441,7 @@ def region_name_holds_point(
     - a grid that marks the region decides by its mask, at the grid node nearest the point (the first of two
       equidistant ones in the grid's order). A particle past a wall reaches it at its nearest point of the BC's box,
       where `BoundaryConditions.segment_for_point` reads every point it reads on a face (#2780); a point outside
-      ``domain_bounds`` read on no face is refused, since which face it crossed is unknown. A point
+      ``domain_bounds`` read on no face is refused, since no face was passed to read it on. A point
       outside the marking grid's own box, where the BC's box reaches past the grid's, or of another dimension than the
       grid, is refused, not read as outside the region; so is a point on a grid whose nodes do not strictly ascend on
       an axis, where the face rule reads the axis's first node as its min face whatever its coordinate (#2490);
@@ -2460,8 +2464,8 @@ def region_name_holds_point(
             if np.any(point < box[:, 0] - tolerance) or np.any(point > box[:, 1] + tolerance):
                 raise ValueError(
                     f"BC segment {segment.name!r} is restricted to the marked region {name!r}, and the point "
-                    f"{point.tolist()} lies outside the box {box.tolist()} it is read in, on no face, so which face it "
-                    "crossed is unknown (#2780). It is not read as outside the region: read it on the face it crossed, "
+                    f"{point.tolist()} lies outside the box {box.tolist()} it is read in, with no face passed to read "
+                    "it on (#2780). It is not read as outside the region: read it on the face it crossed, "
                     "segment_for_point(point, face), which reads it at its nearest point of the box."
                 )
         node = _region_node(segment, geometry, point, tolerance)

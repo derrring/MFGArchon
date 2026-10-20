@@ -87,7 +87,7 @@ def test_a_region_named_segment_is_read_or_refused_truly_off_the_grid(row):
       dimension, not for coordinates the grid has.
     - A BC box that reaches past the marking grid's own box, here from x = -0.2 on a grid on [0, 1]: (-0.2, 0.5) is
       refused, where main read it at the clamped node. On this non-uniform grid (end cell 0.05) it is four end cells off.
-      A point past the BC's box too, (-0.5, 0.5), read on no face, is refused as such: which face it crossed is unknown
+      A point past the BC's box too, (-0.5, 0.5), read on no face, is refused as such: no face was passed to read it on
       (#2780). Read on x_min, it is read at (-0.2, 0.5) and refused as that point is.
     - A cell-centred grid, nodes 0.05 ... 0.95 on the box [0, 1]: its walls lie half a cell past its end nodes, inside
       its box, and are read at the end nodes, as at main.
@@ -165,7 +165,7 @@ def test_a_region_named_segment_is_read_or_refused_truly_off_the_grid(row):
             wide.segment_for_point(np.array([-0.2, 0.5]), geometry=grid)
         with pytest.raises(
             ValueError,
-            match=r"the point \[-0.5, 0.5\] lies outside the box .* on no face.*read it on the face it crossed",
+            match=r"the point \[-0.5, 0.5\] lies outside the box .* with no face passed.*read it on the face it crossed",
         ):
             wide.segment_for_point(np.array([-0.5, 0.5]), geometry=grid)
         with pytest.raises(ValueError, match=r"the point \[-0.2, 0.5\] lies outside the grid that marks it"):

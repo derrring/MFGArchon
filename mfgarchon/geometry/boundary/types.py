@@ -651,6 +651,7 @@ class BCSegment:
         axis_names: dict[int, str] | None = None,
         domain_sdf: Callable[[np.ndarray], float] | None = None,
         geometry: SupportsRegionMarking | None = None,
+        normal_at: np.ndarray | None = None,
     ) -> bool:
         """
         Check if this BC segment applies to a given boundary point.
@@ -675,6 +676,10 @@ class BCSegment:
             geometry: The grid whose marked-region mask places a region_name segment
                      (Issue #596 Phase 2.5); a region name that is a face label is read
                      without one (#2490).
+            normal_at: Where the outward normal of ``domain_sdf`` is read; by default ``point``.
+                     `BoundaryConditions.segment_for_point` passes the point as it was asked, and reads the
+                     regions at its nearest point of the box (#2780). Moved onto a corner of a box SDF, the
+                     point would read the kink's diagonal and match neither face.
 
         Returns:
             True if this BC segment applies to the given point
@@ -746,7 +751,7 @@ class BCSegment:
                 return False
         if self.normal_direction is not None and domain_sdf is not None:
             # Compute outward normal via SDF gradient (finite differences)
-            normal = _compute_sdf_gradient(point, domain_sdf, epsilon=1e-5)
+            normal = _compute_sdf_gradient(point if normal_at is None else normal_at, domain_sdf, epsilon=1e-5)
             normal_norm = np.linalg.norm(normal)
             if normal_norm > 1e-12:
                 normal = normal / normal_norm
