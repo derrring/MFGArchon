@@ -9,9 +9,16 @@ Two defects of one owner, the solver's grid-to-collocation transfer:
 2. The mapper rebuilt the grid's axes as ``linspace(bounds, shape)``. On a graded grid, m = x mapped to 31 points
    was 2.500e-01 off x.
 
-Both oracles are exact, so they fail by orders of magnitude when either defect returns. The density and the terminal
-value are asymmetric in x and enter the HJB through a coupling f(m) = m, so a reversal and a uniform-axes reading
-both move U.
+The permutation rows read defect 1 and the graded rows defect 2; on a uniform grid the rebuilt axes are the grid's own,
+so the permutation rows cannot see defect 2. Each oracle is exact up to round-off and, for the permutation rows, the
+stencil tie term below, so a returning defect fails it by orders of magnitude. The density and the terminal value are
+asymmetric in x and enter the HJB through a coupling f(m) = m, so a reversal and a uniform-axes reading both move U.
+
+The permutation rows' tie term: on a tensor grid the k-th nearest neighbour is often an exact distance tie, which the
+stencil search breaks by point order, so two orders can give one centre different stencils. The tied neighbour enters
+with a small weight, so U moves little, though above round-off: at 3458110f on macOS (OpenBLAS) the 2-D row's gap is
+7.6e-12, and with the same tie choices in both orders its two solves agree to 8.9e-16. On the Ubuntu runner its gap
+is 2.05e-9, which other tie choices reproduce on macOS; why the runner's ties fall that way is not measured.
 """
 
 import warnings
@@ -75,11 +82,15 @@ def test_a_grid_density_reaches_permuted_collocation_points_by_position_not_inde
     for order in (np.arange(21)[::-1], np.random.default_rng(3).permutation(21)):
         U_permuted = _solve(problem, x[order], M, u_T)
 
-        # The same points in another order are the same discretisation, and the output is on the grid's nodes either
-        # way. At f74312f9 the reversed nodes gave U 4.000e-01 off once its point order was undone, from the terminal
-        # value read by index (a run with no coupling term), and 4.592e-01 off as returned.
+        # The same points in another order are the same discretisation except where a stencil tie falls the other way
+        # (module docstring), and the output is on the grid's nodes either way. At f74312f9 the reversed nodes gave U
+        # 4.000e-01 off once its point order was undone, from the terminal value read by index (a run with no coupling
+        # term), and 4.592e-01 off as returned.
+        # At 3458110f on macOS: reversed, no centre's stencil changes and the gap is 2.2e-16; permuted, 1 of 21 centres
+        # changes and the gap is 2.1e-12. Unmeasured on the Ubuntu runner. Reading the density by index, at 2034e5a9
+        # before #2756's fix, puts U 0.480 off reversed and 0.602 permuted. The bound sits between the two.
         assert U_permuted.shape == U_in_order.shape == (_NT + 1, 21)
-        assert np.max(np.abs(U_permuted - U_in_order)) < 1e-10
+        assert np.max(np.abs(U_permuted - U_in_order)) < 1e-6
 
 
 def test_a_2d_grid_density_reaches_its_nodes_in_f_order_by_position():
@@ -100,7 +111,10 @@ def test_a_2d_grid_density_reaches_its_nodes_in_f_order_by_position():
 
     assert U_in_order.shape == (_NT + 1, 30)
     assert U_f_order.shape == (_NT + 1, 6, 5)
-    assert np.max(np.abs(U_f_order.reshape(_NT + 1, 30) - U_in_order)) < 1e-10
+    # In F order, at 3458110f on macOS, 1 of 30 centres' stencils changes (module docstring) and the gap is 7.6e-12;
+    # on the Ubuntu runner it is 2.05e-9 (discrimination run 39231402975, at 14cb5839), with its stencils unmeasured.
+    # Reading the density by index, at 2034e5a9 before #2756's fix, puts it 1.331 off. The bound sits between the two.
+    assert np.max(np.abs(U_f_order.reshape(_NT + 1, 30) - U_in_order)) < 1e-6
 
 
 def test_a_graded_grid_density_is_interpolated_on_its_own_nodes():
