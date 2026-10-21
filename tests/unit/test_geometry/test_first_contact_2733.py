@@ -378,8 +378,8 @@ _ORACLE_DOMAINS = [
 def test_the_intervals_are_where_contains_holds(case, domain, dim):
     """Dense sampling against the intervals, and every contact against the surface it names.
 
-    - 300 uniform segments, half of whose starts are snapped onto [0, 1]^d's faces (on the L some of those lie outside
-      it), and 100 built on the domain's own box leaves: starts on a face or a corner, a still axis, a step along a
+    - 300 uniform segments, 75 of whose starts are snapped onto a face of [0, 1]^d, 38 of those onto two faces in 2-D
+      and 3-D (on the L some of those lie outside it), and 100 built on the domain's own box leaves: starts on a face or a corner, a still axis, a step along a
       face, a zero-length step. At 2001 points along each, a point lies in an interval exactly where `contains` holds,
       away from 1e-9 of an interval end, where the ends' rounding decides; whether the start is inside agrees with
       `contains` with no band (#2732's A2); and the first contact is the first interval's end.
