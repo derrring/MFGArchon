@@ -10,14 +10,14 @@
     face points along was dropped with no word, and every particle stayed. Two segments are the same to a particle
     when they take one action and neither carries a `flux_capacity` (`same_particle_action`); a segment's value is
     never read.
-  - Refused for particles with a reason of its own, though it catches particles today, only because a particle is
-    read where its step ends rather than where it crossed (#2733):
+  - Refused for particles with a reason of its own. Where one catches particles today, it is only because a particle
+    is read where its step ends rather than where it crossed (#2733):
     - a set of no width on a face -- a `region` meeting the face only at a corner or an edge, or in a range that is
       one coordinate -- which a crossing particle meets with probability zero; an exit at the corner (1, 1) absorbed
       all 200 particles driven into it at f2dcb164. Give it a range of positive width, or place it by `boundary=`;
     - a `region` lying where the BC's `domain_bounds` reach past the solver's box -- across the face its `boundary=`
-      names, or on that face past the box, where it names one: an exit at x = (1.05, 1.2) of a
-      BC bounded at x = 1.2 absorbed 200 of 200 at f2dcb164. Give the BC the solver's box and place the exit on its
+      names, or on that face's plane past the box, where it names one: an exit at x = (1.05, 1.2) of a BC bounded at
+      x = 1.2 absorbed 200 of 200 at f2dcb164. Give the BC the solver's box and place the exit on its
       faces, or place it on the solver's face by `boundary=`;
     - a `normal_direction` no face's normal lies within its `normal_tolerance` of, read under a box `domain_sdf` past
       a corner: (1, 1)/sqrt(2) at 0.9 absorbed 199 of 200 at f2dcb164. Point it along a face's normal, or lower the

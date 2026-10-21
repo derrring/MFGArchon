@@ -1042,8 +1042,9 @@ class BoundaryConditions:
         B1e-2): a ``normal_direction`` no face's outward normal lies within; a ``region`` that meets every face it
         reaches in a set of no width; ``domain_bounds`` reaching past ``box`` where the ``region`` lies -- across the face
         its ``boundary`` names, where it names one; a ``boundary`` naming no face is not this reason. None where none of
-        these is the reason. Each is a set a reader of where particles cross the faces never meets; each catches
-        particles today only because a particle is read where its step ends, not where it crossed (#2733)."""
+        these is the reason. Each is a set a reader of where particles cross the faces never meets; where `apply`
+        catches particles in one today, it is only because a particle is read where its step ends, not where it
+        crossed (#2733)."""
         box = np.asarray(box, dtype=float)
         faces = [BoundaryFace(axis, side) for axis in range(box.shape[0]) for side in ("min", "max")]
         reasons = []
@@ -1086,9 +1087,11 @@ class BoundaryConditions:
         segment: BCSegment, own: np.ndarray, box: np.ndarray, tolerance: float, face: BoundaryFace | None = None
     ) -> bool:
         """Whether ``segment.region`` holds a part of the box ``own`` that lies outside ``box``. Where ``face`` is given,
-        the face its ``boundary`` names, only a part a particle crossing that face is read at: past ``box`` across it,
-        or on its plane (read within ``own``) and past ``box`` along another axis."""
-        if segment.region is None:
+        the face its ``boundary`` names, only a part past ``box`` across it, or on its plane (read within ``own``) and
+        past ``box`` along another axis. That reads the face's plane, not the face `apply` assigns a particle, which is
+        the first axis whose bound it reaches (`_get_boundary_id`): a part past ``box`` along an earlier axis is never
+        read on ``face`` there. A face on an axis ``own`` does not have holds none of it."""
+        if segment.region is None or (face is not None and face.axis >= own.shape[0]):
             return False
         low, high = own[:, 0].copy(), own[:, 1].copy()
         for key, (a, b) in segment.region.items():

@@ -302,6 +302,20 @@ def test_a_corner_compares_a_segment_with_its_own_faces_segment():
     with pytest.raises(ValueError, match=r"'S' \(priority 0\) -- outranked .*: raise its priority above theirs"):
         _gfdm(top_strip(BCType.NEUMANN, 1.0, 0), lattice, delta=0.45)
     assert _reading(_gfdm(top_strip(BCType.NEUMANN, 1.0, 10), lattice, delta=0.45), "S") == 1
+    # Review 4: the sameness is the reader's. NEUMANN 0 writes the wall's row in HJB-GFDM, so raised it changes no
+    # face's answer, though `_same_condition` calls it another condition.
+    for priority in (0, 10):
+        with pytest.raises(
+            ValueError, match=r"'S' \(priority \d+\) -- outranked .*: it is held only at corners, where"
+        ):
+            _gfdm(top_strip(BCType.NEUMANN, 0.0, priority), lattice, delta=0.45)
+    # A segment covering a face whole, held only at its corners because no point lies inside it: raised, it becomes
+    # the face's segment.
+    no_x_max = lattice[(lattice[:, 0] < 1.0) | np.isin(lattice[:, 1], (0.0, 1.0))]
+    behind = [_seg("wall", NF, priority=1), _seg("S", D, 1.0, boundary="x_max")]
+    with pytest.raises(ValueError, match=r"'S' \(priority 0\) -- outranked .*: raise its priority above theirs"):
+        _gfdm(behind, no_x_max, delta=0.45)
+    assert _reading(_gfdm([behind[0], _seg("S", D, 1.0, boundary="x_max", priority=2)], no_x_max, delta=0.45), "S") == 2
 
     disk = lambda x: float(np.linalg.norm(np.asarray(x, dtype=float) - [0.0, 1.0]) - 0.08)  # noqa: E731
     unread = BoundaryConditions(
@@ -404,6 +418,37 @@ def test_a_refusal_names_why_and_its_advice_is_admitted(refused, bc_kw, reason, 
         return
     for placement in advised:
         _particle_solver([_seg("exit", D, **placement)], **bc_kw)
+
+
+@pytest.mark.parametrize(
+    ("own", "placement", "said"),
+    [
+        ([[0, 1.2], [0, 1]], {"boundary": "x_max", "region": {"x": (1.05, 1.2), "y": (0.3, 0.7)}}, "reach past"),
+        ([[0, 0.8], [0, 1.2]], {"boundary": "x_max", "region": {"y": (1.05, 1.2)}}, "reach past"),
+        ([[0, 1], [0, 1.2]], {"boundary": "x_max", "region": {"x": (0.9, 1.0), "y": (1.05, 1.2)}}, "reach past"),
+        ([[0, 1.2], [0, 1]], {"boundary": "all", "region": {"x": (1.05, 1.2), "y": (0.3, 0.7)}}, "reach past"),
+        (None, {"boundary": "all", "region": {"x": (1.0, 1.0), "y": (1.0, 1.0)}}, "or place it by boundary="),
+    ],
+    ids=["past the box across x_max", "on x_max's plane, read within a narrower box", "on x_max's plane", "all", "(a)"],
+)
+def test_reason_b_reads_the_face_boundary_names(own, placement, said):
+    """Review 4 of #2782: (b) for a region past the solver's box across the face `boundary=` names, or on that face's
+    plane (read within the BC's own box, here narrower on x) past the box along another axis; and for `boundary="all"`,
+    as for no `boundary=`, which is offered (a)'s `boundary=` advice too. Read by the particle check itself."""
+    bounds = None if own is None else np.array(own, dtype=float)
+    bc = BoundaryConditions(segments=[_seg("exit", D, **placement)], dimension=2, default_bc=NF, domain_bounds=bounds)
+    with pytest.raises(ValueError, match=r"'exit': ") as refusal:
+        ParticleApplicator().refuse_segments_it_would_drop(bc, [(0.0, 1.0), (0.0, 1.0)])
+    assert said in str(refusal.value)
+
+
+def test_a_boundary_naming_an_axis_the_bc_box_lacks_is_refused_not_crashed():
+    """Review 4 of #2782, S3: a BC with no dimension, whose box has two axes, and a segment named on a third axis' face
+    is refused by the particle check with the generic cause, as at ea27ab8c, not an IndexError."""
+    segment = _seg("exit", D, boundary="z_min", region={"y": (0.3, 0.7)})
+    bc = BoundaryConditions(segments=[segment], default_bc=NF, domain_bounds=np.array([[0.0, 1.2], [0.0, 1.0]]))
+    with pytest.raises(ValueError, match=r"'exit': the placement holds none of these points"):
+        ParticleApplicator().refuse_segments_it_would_drop(bc, [(0.0, 1.0), (0.0, 1.0)])
 
 
 def _particles_remaining_with(segments, **bc_kw):
