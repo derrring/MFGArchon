@@ -82,9 +82,11 @@ class Model:
         terminal_coupling: The terminal coupling cost G[m(T)], a `CouplingCost` like ``coupling_cost``. ``MFGProblem``
             binds it to its grid and measure, and the terminal condition is ``u(T, x) = g(x) + delta G / delta m`` at the
             density m(T) the HJB solve uses (`MFGProblem.terminal_value`, #1642 stage 2). Bound on a
-            ``TensorProductGrid``; refused on FEM and meshless geometries until #1642's stage 1b, by a weak-form HJB
-            solver, on a network (#2568), and in `MultiPopulationIterator`, which with more than one population couples
-            them through their stacked densities (#1642).
+            ``TensorProductGrid``. Off a grid the HJB solver binds it beside F, on the same points and weights: HJB-FEM
+            P1 on its dofs (#1642, stage 1b's G line). HJB-FEM P2 and the meshless Galerkin solver refuse it at
+            construction, and a solver or loop that binds none refuses it by name where it reads u(T). Refused on a
+            network (#2568), and in `MultiPopulationIterator`, which with more than one population couples them through
+            their stacked densities (#1642).
     """
 
     hamiltonian: HamiltonianBase | None = None

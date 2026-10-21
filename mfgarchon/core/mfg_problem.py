@@ -2313,7 +2313,9 @@ class MFGProblem(HamiltonianMixin, ConditionsMixin):
         """``Model.terminal_coupling`` bound to this problem's nodes and measure, or None (#1642 stage 2).
 
         The terminal condition carries its flat derivative ``delta G / delta m`` at the density m(T) the HJB solve
-        uses (`terminal_value`). Read-only, as ``coupling_energy`` is.
+        uses (`terminal_value`). Read-only, as ``coupling_energy`` is. None off a grid even when the model declares a
+        terminal coupling (`declared_terminal_coupling`): there it is bound by the HJB solver, beside F and on the same
+        points and weights (stage 1b's G line).
         """
         return self._terminal_energy
 

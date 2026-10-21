@@ -145,11 +145,14 @@ not claimed for them, and the library does not check it either way.
   or hexahedron mesh; the meshless Galerkin solver refuses it at construction. A solver or loop that
   binds none refuses it by name at solve time. On a network it is refused when the problem is built.
 - **`Model(terminal_coupling=...)` is its terminal counterpart G** (#1642). It takes the same
-  specifications and binds as `problem.terminal_energy`. The terminal condition is then
-  $u(T, x) = g(x) + \delta G/\delta m$ at $m(T, \cdot)$, the density of the HJB solve it is the terminal
-  of, cost-signed as $g$ is; `problem.terminal_value(m_T)` is its one owner. It binds on a
-  `TensorProductGrid`, and is refused by name on a network, in `MultiPopulationIterator`, and by a
-  weak-form HJB solver. Off a grid, unlike $F$, it is refused when the problem is built.
+  specifications. The terminal condition is then $u(T, x) = g(x) + \delta G/\delta m$ at $m(T, \cdot)$,
+  the density of the HJB solve it is the terminal of, cost-signed as $g$ is;
+  `problem.terminal_value(m_T, binding=...)` is its one owner. On a `TensorProductGrid` the problem
+  binds it (`problem.terminal_energy`). Off a grid, as $F$ is, it is held by the problem
+  (`problem.declared_terminal_coupling`) and bound by the HJB solver beside $F$, on the same points
+  and weights: HJB-FEM P1 on its dofs (#1642, stage 1b's G line). HJB-FEM P2 and the meshless
+  Galerkin solver refuse it at construction, and a solver or loop that binds none refuses it by name
+  where it reads $u(T)$. It is refused by name on a network and in `MultiPopulationIterator`.
 
 ### Worked example — 1-D LQ Riccati
 
@@ -831,9 +834,9 @@ physics and belongs to `Conditions`; $N_t$ is discretisation and belongs to the 
 Composition is by whole component — `with_model`, `with_domain`, `with_conditions` — and single fields
 change through `dataclasses.replace`. There are no per-field shortcuts.
 
-*Not yet met (#2429): `Model(lagrangian=...)` cannot yet be assembled; `coupling_cost` binds only on
-a `TensorProductGrid` and through HJB-FEM P1 on a simplex mesh, and `terminal_coupling` only on a
-`TensorProductGrid` (#1642); and `Model`
+*Not yet met (#2429): `Model(lagrangian=...)` cannot yet be assembled; `coupling_cost` and
+`terminal_coupling` bind only on a `TensorProductGrid` and through HJB-FEM P1 on a simplex mesh
+(#1642); and `Model`
 defaults the volatility to `0.1` where the legacy constructor gives `0.0`. There is no stationary (ergodic) problem: `ErgodicConditions`, which
 declared one that no `MFGProblem` accepted, is removed (#2648).*
 

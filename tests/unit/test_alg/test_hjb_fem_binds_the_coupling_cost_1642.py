@@ -554,8 +554,9 @@ def test_a_linear_terminal_coupling_solves_as_the_same_terminal_cost_on_hjb_fem(
     game. On HJB-FEM P1 the binding gives V at the dofs, the points ``u_terminal`` is read at, so u(T) is g + V either
     way, and a solve through any route that hands the solver's binding to ``terminal_value`` on a mesh is bitwise the
     same. One row per such route: ``FixedPointIterator`` (``problem.solve()`` builds one with HJB-FEM and FP-FEM here)
-    and ``BlockIterator``. ``FictitiousPlayIterator`` and the solver's own ``solve()`` hand it over too, and run on no
-    mesh: the first takes a ``CartesianGrid`` only, and HJB-FEM refuses a standalone Picard solve (#2642)."""
+    and ``BlockIterator``. ``FictitiousPlayIterator`` hands it over too and runs on no mesh, taking a ``CartesianGrid``
+    only. ``BaseHJBSolver.solve`` hands it over on its Newton branch, which HJB-FEM reaches only through the private
+    ``_use_newton_default``: its public ``solve()`` refuses a standalone Picard solve first (#2642)."""
     from mfgarchon.alg.numerical.coupling.block_iterators import BlockIterator
 
     def solve(where):
@@ -692,8 +693,9 @@ def test_a_terminal_coupling_that_cannot_be_read_is_refused_by_name(case):
 
 def test_a_network_problem_refuses_a_terminal_binding():
     """``NetworkMFGProblem.terminal_value``, the protocol's second implementer, takes ``binding`` and ``reader`` as
-    ``MFGProblem.terminal_value`` does, since ``FixedPointIterator`` hands both on the network route, and refuses a
-    binding, since a network binds no terminal coupling (#1642, #2568)."""
+    ``MFGProblem.terminal_value`` does, since ``BaseHJBSolver.solve`` hands both on the network route
+    (``NetworkHJBSolver.solve()`` on a ``GridNetwork``), and refuses a binding, since a network binds no terminal
+    coupling (#1642, #2568)."""
     from mfgarchon.extensions.topology import NetworkMFGProblem
 
     terminal_value = NetworkMFGProblem.terminal_value
